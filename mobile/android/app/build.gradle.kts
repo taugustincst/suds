@@ -7,8 +7,8 @@ android {
         applicationId = "gov.county.suds"
         minSdk = 29 // Android 10+: SslCertificate.x509Certificate, NSD attributes
         targetSdk = 34
-        versionCode = 4
-        versionName = "1.2.0"
+        versionCode = 5
+        versionName = "1.2.1"
     }
     signingConfigs {
         // Release signing: set SUDS_KEYSTORE, SUDS_KEYSTORE_PASSWORD, SUDS_KEY_ALIAS, SUDS_KEY_PASSWORD (CI secrets or local env).
@@ -37,4 +37,5 @@ dependencies {
     implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
 }

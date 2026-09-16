@@ -14,7 +14,7 @@ function cols(table) { return db.all(`PRAGMA table_info(${table})`).map(c => c.n
 function exportRow(t, r) { const o = { ...r }; for (const c of t.enc) if (o[c]) { try { o[c] = decrypt(o[c]); } catch { o[c] = null; } } for (const k of Object.keys(o)) if (k.endsWith('_idx')) delete o[k]; if (t.name === 'users') { delete o.failed_attempts; delete o.locked_until; } return o; }
 function importRow(t, r, existingCols) {
   const o = {};
-  for (const [k, v] of Object.entries(r)) if (existingCols.includes(k) && !k.endsWith('_idx')) o[k] = v;
+  for (const [k, v] of Object.entries(r)) if (existingCols.includes(k) && !k.endsWith('_idx') && v !== undefined) o[k] = v;
   for (const c of t.enc) if (o[c] !== undefined && o[c] !== null) o[c] = encrypt(o[c]);
   if (t.name === 'clients') { const fn = r.first_name_enc || '', ln = r.last_name_enc || ''; o.last_name_idx = blindIndex(ln); o.full_name_idx = blindIndex(ln + fn); o.dob_idx = blindIndex(r.dob_enc || ''); o.phone_idx = blindIndex(String(r.phone_enc || '').replace(/\D/g, '')); }
   return o;
@@ -34,7 +34,9 @@ function pull(user, since) {
     const sc = scopeSql(t, user, 'x');
     const hasUpd = cols(t.name).includes('updated_at');
     let rows = db.all(`SELECT x.* FROM ${t.name} x WHERE COALESCE(x.updated_at, x.created_at) > ? AND ${sc.sql}`, since, ...sc.params);
-    if (t.name === 'users') rows = rows.map(r => (r.id === user.id ? r : { ...r, password_hash: 'scrypt$0$0$0$AA==$AA==', mfa_secret_enc: null, mfa_enabled: 0 })); // other staff: identity only, no credentials
+    if (t.name === 'users') rows = rows.map(r => ({ ...(r.id === user.id ? r : { ...r, password_hash: 'scrypt$0$0$0$AA==$AA==' }), mfa_secret_enc: null, mfa_enabled: 0 })); // devices get own password hash for offline login; never MFA secrets
+    if (t.name === 'notes' && !auth.hasPerm(user, 'notes:clinical:read')) rows = rows.filter(r => r.kind !== 'clinical'); // minimum necessary
+    if (t.name === 'note_addenda' && !auth.hasPerm(user, 'notes:clinical:read')) rows = rows.filter(r => db.one(`SELECT kind FROM notes WHERE id=?`, r.note_id)?.kind !== 'clinical');
     out.tables[t.name] = rows.map(r => exportRow(t, r));
   }
   for (const k of SYNC.settings_keys) out.settings[k] = db.getSetting(k, null);
@@ -53,9 +55,19 @@ function push(user, payload) {
         if (!raw || typeof raw.id !== 'string') continue;
         if (t.scope === 'client' && raw[t.clientCol] && !auth.canAccessClient(user, raw[t.clientCol]) && t.name !== 'clients') { rejected.push({ table: t.name, id: raw.id, reason: 'not on caseload' }); continue; }
         const existing = db.one(`SELECT * FROM ${t.name} WHERE id=?`, raw.id);
+        if (t.name === 'clients' && existing && !auth.canAccessClient(user, raw.id)) { rejected.push({ table: t.name, id: raw.id, reason: 'not on caseload' }); continue; }
+        if (t.scope === 'via-note') { const n = db.one(`SELECT client_id, kind FROM notes WHERE id=?`, raw.note_id); if (!n || !auth.canAccessClient(user, n.client_id) || (n.kind === 'clinical' && !auth.hasPerm(user, 'notes:clinical:write'))) { rejected.push({ table: t.name, id: raw.id, reason: 'not permitted' }); continue; } }
+        if (t.name === 'notes' && raw.kind === 'clinical' && !auth.hasPerm(user, 'notes:clinical:write')) { rejected.push({ table: t.name, id: raw.id, reason: 'clinical notes not permitted for this role' }); continue; }
         const incomingAt = raw.updated_at || raw.created_at || NEVER;
         if (existing && (existing.updated_at || existing.created_at || NEVER) >= incomingAt) continue; // server copy is newer or same
+        // Records from a device are attributed to the syncing user unless they manage all clients
+        const OWNER = { interventions: 'user_id', calls: 'user_id', time_entries: 'user_id', referrals: 'user_id', expenditures: 'user_id', notes: 'author_id' }[t.name];
+        if (OWNER && !auth.hasPerm(user, 'clients:all')) { if (!existing) raw[OWNER] = user.id; else raw[OWNER] = existing[OWNER]; }
+        if (t.name === 'expenditures') { if (!existing) { raw.status = 'pending'; raw.approved_by = null; raw.approved_at = null; } else if (!auth.hasPerm(user, 'budget:approve')) { raw.status = existing.status; raw.approved_by = existing.approved_by; raw.approved_at = existing.approved_at; } }
+        if (t.name === 'notes' && existing && existing.status !== 'draft') { raw.content_enc = undefined; raw.structured_enc = undefined; raw.status = existing.status; raw.signed_by = existing.signed_by; raw.signed_at = existing.signed_at; raw.signature_hash = existing.signature_hash; } // signed notes are immutable
         if (db.one(`SELECT 1 FROM tombstones WHERE table_name=? AND id=? AND deleted_at > ?`, t.name, raw.id, incomingAt)) continue; // deleted on server after device edit
+        // user references that the server does not know (e.g. the device's local account) become the syncing user
+        for (const c of ['created_by', 'author_id', 'user_id', 'assigned_to', 'approved_by', 'signed_by', 'disclosed_by', 'imported_by']) if (existingCols.includes(c) && raw[c] && !db.one(`SELECT 1 FROM users WHERE id=?`, raw[c])) raw[c] = user.id;
         const o = importRow(t, raw, existingCols);
         if (t.name === 'clients' && !existing) { if (db.one(`SELECT 1 FROM clients WHERE client_code=?`, o.client_code)) o.client_code = o.client_code + '-D'; }
         const keys = Object.keys(o).filter(k => k !== 'id');
@@ -69,7 +81,13 @@ function push(user, payload) {
     for (const ts of payload.tombstones || []) {
       const t = SYNC.tables.find(x => x.name === ts.table_name); if (!t || t.name === 'users' || typeof ts.id !== 'string') continue;
       const existing = db.one(`SELECT * FROM ${t.name} WHERE id=?`, ts.id);
-      if (existing && (existing.updated_at || existing.created_at || NEVER) < ts.deleted_at) { db.run(`DELETE FROM ${t.name} WHERE id=?`, ts.id); db.tombstone(t.name, ts.id); }
+      if (!existing) continue;
+      if (t.name === 'clients' || t.name === 'notes' || t.name === 'consents' || t.name === 'disclosures' || t.name === 'note_addenda') continue; // never hard-deleted through sync (legal record)
+      const clientId = t.clientCol ? existing[t.clientCol] : null;
+      if (clientId && !auth.canAccessClient(user, clientId)) { rejected.push({ table: t.name, id: ts.id, reason: 'not on caseload' }); continue; }
+      if (t.scope === 'all' && !auth.hasPerm(user, 'clients:all')) continue; // shared reference data is not deleted from devices
+      if (t.name === 'expenditures' && existing.status !== 'pending') continue;
+      if ((existing.updated_at || existing.created_at || NEVER) < ts.deleted_at) { db.run(`DELETE FROM ${t.name} WHERE id=?`, ts.id); db.tombstone(t.name, ts.id); }
     }
     for (const a of (payload.audit || []).slice(0, 5000)) if (a && a.action) audit.log({ user, action: `device.${a.action}`, entity: a.entity, entityId: a.entity_id, clientId: a.client_id, ip: 'device', success: a.success !== 0, details: { at: a.at, device: true, ...(a.details ? safeJson(a.details) : {}) } });
   });

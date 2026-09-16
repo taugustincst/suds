@@ -329,12 +329,14 @@ test('sync: bearer login, scoped pull, push with last-write-wins and tombstones'
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='device.client.create' AND client_id=?`, devId));
   const stale = await bare.post('/api/sync/push', { tables: { clients: [{ id: devId, client_code: 'M26-0001', first_name_enc: 'Older', last_name_enc: 'Client', status: 'active', created_at: now, updated_at: '2020-01-01T00:00:00.000Z' }] } }, B);
   assert.equal(stale.data.applied.clients, 0, 'older device edit does not overwrite');
-  // tombstone from device deletes the server note; a tombstone for a row updated later on the server is ignored
-  const ts = new Date(Date.now() + 1000).toISOString();
-  await bare.post('/api/sync/push', { tombstones: [{ table_name: 'notes', id: noteId, deleted_at: ts }] }, B);
-  assert.equal(H.db.one(`SELECT COUNT(*) n FROM notes WHERE id=?`, noteId).n, 0);
+  // tombstones from a device delete own-caseload operational rows; notes are part of the legal record and are never hard-deleted via sync
+  const ts = new Date(Date.now() + 1000).toISOString(); const ivId = require('node:crypto').randomUUID();
+  await bare.post('/api/sync/push', { tables: { interventions: [{ id: ivId, client_id: devId, user_id: 'x', type: 'outreach', occurred_at: now, duration_minutes: 5, created_at: now, updated_at: now }] } }, B);
+  await bare.post('/api/sync/push', { tombstones: [{ table_name: 'interventions', id: ivId, deleted_at: ts }, { table_name: 'notes', id: noteId, deleted_at: ts }] }, B);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM interventions WHERE id=?`, ivId).n, 0);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM notes WHERE id=?`, noteId).n, 1);
   const pull2 = await bare.get(`/api/sync/pull?since=${encodeURIComponent(now)}`, B);
-  assert.ok(pull2.data.tombstones.some(t => t.id === noteId));
+  assert.ok(pull2.data.tombstones.some(t => t.id === ivId));
   // caseload enforcement: nav2 cannot push a note for a client not on their caseload
   H.makeUser('outsider', 'navigator'); const o = H.client(); const ol = await o.post('/api/auth/login', { username: 'outsider', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' });
   const rej = await bare.post('/api/sync/push', { tables: { notes: [{ id: require('node:crypto').randomUUID(), client_id: clientId, author_id: 'x', kind: 'admin', content_enc: 'x', occurred_at: now, created_at: now, updated_at: now }] } }, { Authorization: 'Bearer ' + ol.data.token, Cookie: '' });
@@ -373,4 +375,45 @@ test('spreadsheet import: template, preview mapping/validation, commit; Excel ex
   const wb = await nav.get('/api/reports/export/workbook');
   assert.equal(wb.status, 200);
   const x = await nav.get('/api/reports/export/clients?format=xlsx'); assert.equal(x.status, 200); assert.ok(x.headers.get('content-disposition').includes('.xlsx'));
+});
+
+test('sync hardening: caseload on existing clients, tombstone limits, ownership, approvals, clinical filtering', async () => {
+  const uuid = () => require('node:crypto').randomUUID(); const now = new Date().toISOString(); const later = new Date(Date.now() + 5000).toISOString();
+  const bare = H.client();
+  H.makeUser('syncnav', 'navigator'); const l = await bare.post('/api/auth/login', { username: 'syncnav', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' }); const B = { Authorization: 'Bearer ' + l.data.token, Cookie: '' };
+  // cannot overwrite a client not on caseload even with a newer timestamp
+  const r1 = await bare.post('/api/sync/push', { tables: { clients: [{ id: clientId, client_code: 'C26-0001', first_name_enc: 'Hacked', last_name_enc: 'X', status: 'active', created_at: now, updated_at: later }] } }, B);
+  assert.equal(r1.data.rejected.length, 1); assert.notEqual(require('../server/crypto').decrypt(H.db.one(`SELECT first_name_enc FROM clients WHERE id=?`, clientId).first_name_enc), 'Hacked');
+  // cannot delete another caseload's intervention; clients/notes are never hard-deleted via sync
+  const iv = H.db.one(`SELECT id FROM interventions WHERE client_id=? LIMIT 1`, clientId);
+  const r2 = await bare.post('/api/sync/push', { tombstones: [{ table_name: 'interventions', id: iv.id, deleted_at: later }, { table_name: 'clients', id: clientId, deleted_at: later }] }, B);
+  assert.ok(H.db.one(`SELECT 1 FROM interventions WHERE id=?`, iv.id)); assert.ok(H.db.one(`SELECT 1 FROM clients WHERE id=?`, clientId)); assert.equal(r2.data.rejected.length, 1);
+  // a navigator's device cannot attribute work to someone else or self-approve spending
+  const devClient = uuid(); const otherUser = H.db.one(`SELECT id FROM users WHERE username='nav1'`).id; const fund = H.db.one(`SELECT id FROM funding_sources LIMIT 1`).id; const expId = uuid(); const ivId = uuid();
+  await bare.post('/api/sync/push', { tables: { clients: [{ id: devClient, client_code: 'M26-0009', first_name_enc: 'Dev', last_name_enc: 'Own', status: 'active', created_at: now, updated_at: now }],
+    interventions: [{ id: ivId, client_id: devClient, user_id: otherUser, type: 'outreach', occurred_at: now, duration_minutes: 5, created_at: now, updated_at: now }],
+    expenditures: [{ id: expId, funding_source_id: fund, client_id: devClient, user_id: otherUser, spent_at: '2026-09-10', amount: 500, category: 'client_assistance', status: 'approved', approved_by: otherUser, approved_at: now, created_at: now, updated_at: now }] } }, B);
+  const me = H.db.one(`SELECT id FROM users WHERE username='syncnav'`).id;
+  assert.equal(H.db.one(`SELECT user_id FROM interventions WHERE id=?`, ivId).user_id, me);
+  const e = H.db.one(`SELECT status, approved_by, user_id FROM expenditures WHERE id=?`, expId); assert.equal(e.status, 'pending'); assert.equal(e.approved_by, null); assert.equal(e.user_id, me);
+  // signed notes cannot be altered from a device; clinical notes are not pulled by navigators and cannot be pushed by them
+  const signed = H.db.one(`SELECT id, content_enc FROM notes WHERE status IN ('signed','amended') LIMIT 1`);
+  const clinCount = H.db.one(`SELECT COUNT(*) n FROM notes WHERE kind='clinical'`).n; assert.ok(clinCount > 0);
+  const pull = await bare.get('/api/sync/pull', B); assert.ok(pull.data.tables.notes.every(n => n.kind !== 'clinical')); assert.ok(pull.data.tables.users.every(u => u.mfa_secret_enc === null));
+  const r4 = await bare.post('/api/sync/push', { tables: { notes: [{ id: uuid(), client_id: devClient, author_id: me, kind: 'clinical', format: 'SOAP', content_enc: 'x', occurred_at: now, status: 'draft', created_at: now, updated_at: now }] } }, B);
+  assert.equal(r4.data.rejected.length, 1);
+  // supervisor pulls clinical notes
+  const s = H.client(); const sl = await s.post('/api/auth/login', { username: 'sup1', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' });
+  const sp = await bare.get('/api/sync/pull', { Authorization: 'Bearer ' + sl.data.token, Cookie: '' }); assert.ok(sp.data.tables.notes.some(n => n.kind === 'clinical'));
+  if (signed) { const sc = H.db.one(`SELECT client_id FROM notes WHERE id=?`, signed.id).client_id; await bare.post('/api/sync/push', { tables: { notes: [{ id: signed.id, client_id: sc, author_id: me, kind: 'admin', content_enc: 'tampered', occurred_at: now, status: 'draft', created_at: now, updated_at: later }] } }, { Authorization: 'Bearer ' + sl.data.token, Cookie: '' }); assert.equal(H.db.one(`SELECT content_enc FROM notes WHERE id=?`, signed.id).content_enc, signed.content_enc); }
+});
+
+test('sync push maps unknown user references to the syncing user instead of failing', async () => {
+  const bare = H.client(); const l = await bare.post('/api/auth/login', { username: 'nav2', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' }); const B = { Authorization: 'Bearer ' + l.data.token, Cookie: '' };
+  const now = new Date().toISOString(); const id = require('node:crypto').randomUUID(); const ghost = require('node:crypto').randomUUID();
+  const r = await bare.post('/api/sync/push', { tables: { clients: [{ id, client_code: 'M26-0077', first_name_enc: 'Ghost', last_name_enc: 'Owner', status: 'active', created_by: ghost, created_at: now, updated_at: now }], tasks: [{ id: require('node:crypto').randomUUID(), client_id: id, assigned_to: ghost, created_by: ghost, title: 'from device', status: 'open', priority: 'normal', created_at: now, updated_at: now }] } }, B);
+  assert.equal(r.status, 200); assert.equal(r.data.applied.clients, 1); assert.equal(r.data.applied.tasks, 1);
+  const me = H.db.one(`SELECT id FROM users WHERE username='nav2'`).id;
+  assert.equal(H.db.one(`SELECT created_by FROM clients WHERE id=?`, id).created_by, me);
+  assert.equal(H.db.one(`SELECT assigned_to FROM tasks WHERE client_id=?`, id).assigned_to, me);
 });

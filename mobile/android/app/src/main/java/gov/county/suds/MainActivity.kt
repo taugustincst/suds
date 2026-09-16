@@ -17,6 +17,9 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
+import java.security.SecureRandom
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.webkit.WebViewAssetLoader
 import com.journeyapps.barcodescanner.ScanContract
@@ -84,8 +87,20 @@ class MainActivity : AppCompatActivity() {
         startDiscovery()
     }
 
+    /** Database encryption keys, generated on first use and kept in an Android Keystore-encrypted preferences file. */
+    private val secrets by lazy {
+        val master = MasterKey.Builder(this).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build()
+        EncryptedSharedPreferences.create(this, "suds_secrets", master, EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV, EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
+    }
+    private fun secret(name: String): String {
+        secrets.getString(name, null)?.let { return it }
+        val b = ByteArray(32); SecureRandom().nextBytes(b); val hex = b.joinToString("") { "%02x".format(it) }
+        secrets.edit().putString(name, hex).apply(); return hex
+    }
+
     /** Exposed to the web app as window.SudsNative */
     inner class Bridge {
+        @JavascriptInterface fun getSecret(name: String): String? = if (name.startsWith("suds.local.")) secret(name) else null
         @JavascriptInterface fun discover(): String? = discovered?.let { "\"$it\"" }
         @JavascriptInterface fun scanQr() { runOnUiThread { scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setPrompt("Scan the office SUDS QR code").setBeepEnabled(false)) } }
         @JavascriptInterface fun forgetCertificate() { prefs.certFingerprint = null }

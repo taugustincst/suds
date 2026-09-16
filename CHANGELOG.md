@@ -2,6 +2,14 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## 1.2.1 — 2026-09-16
+
+### Security review fixes
+- Sync: a device can no longer overwrite clients outside its user's caseload, delete rows it may not access, attribute work to other staff, self-approve spending, alter signed notes, or hard-delete clients, notes, consents or disclosures. Clinical notes are only synced to roles allowed to read them; MFA secrets never leave the server.
+- Phone apps: database keys now live in the Android Keystore-backed encrypted store / iOS Keychain instead of web storage.
+- iOS: the bundled app is served through a custom URL scheme so modules, fetch and WebAssembly work (file:// could not run the kernel).
+- Local mode hides server-only settings (network, API keys, backups) and phone-connection cards.
+
 ## 1.2.0 — 2026-09-16
 
 ### Excel and CSV import / export
