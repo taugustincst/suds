@@ -43,6 +43,17 @@ export async function start({ wasmUrl }) {
     audit.log({ user: { username: v.username }, action: 'local.setup' });
     return { ok: true };
   });
+  // Sample data on the phone: the device user is a navigator, so expose it here (not behind settings:manage)
+  const demo = require('../server/demo.js');
+  router.get('/api/local/demo', (ctx) => { if (!ctx.user) throw new HttpError(401, 'Sign in first'); return demo.status(); });
+  router.post('/api/local/demo', (ctx) => {
+    if (!ctx.user) throw new HttpError(401, 'Sign in first');
+    const st = demo.status();
+    if (st.loaded) throw new HttpError(400, 'Sample data is already loaded');
+    if (st.clients_total > 0) throw new HttpError(400, 'Sample data can only be added while this device has no clients yet');
+    return demo.seed({ actor: ctx.user.id, workers: [ctx.user.id], clinician: null, supervisor: ctx.user.id });
+  });
+  router.delete('/api/local/demo', (ctx) => { if (!ctx.user) throw new HttpError(401, 'Sign in first'); return demo.remove({ actor: ctx.user.id }); });
   window.SUDS_LOCAL = { handle, flush: () => sqlite.flush(), wipe: async () => { await sqlite.wipe(); localStorage.removeItem('suds.local.session'); }, sync: (opts) => sync.run(opts) };
   return window.SUDS_LOCAL;
 }

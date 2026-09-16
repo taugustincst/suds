@@ -15,7 +15,7 @@ export async function wipe() { const d = await idb(); await new Promise((res) =>
 
 let current = null; let saveTimer = null; let dirty = false;
 export function flush() { if (!current || !dirty) return Promise.resolve(); dirty = false; return saveBytes(current.export()); }
-function markDirty() { dirty = true; clearTimeout(saveTimer); saveTimer = setTimeout(() => flush().catch(e => console.error('[suds-local] save failed', e)), 400); }
+function markDirty() { dirty = true; clearTimeout(saveTimer); saveTimer = setTimeout(() => flush().catch(e => console.error('[suds-local] save failed', e)), 1500); }
 
 class Statement {
   constructor(db, sql) { this.db = db; this.sql = sql; }

@@ -317,14 +317,15 @@ export async function render() {
   if (state.mfaPending && r.name !== 'mfa') { nav('mfa'); return; }
   if (r.name === 'mfa' || r.name === 'login') { clear(app).append(await routes[r.name === 'mfa' ? 'mfa' : 'dashboard'](r)); return; }
   if (state.user.must_change_password && r.name !== 'profile') { nav('profile?force=1'); return; }
-  const loader = routes[r.name] || routes.dashboard;
+  const navItem = NAV.find(n => n.name === r.name);
+  const loader = navItem?.perm && !can(navItem.perm) ? (async () => emptyState('Not available for your role', `Your account does not have access to ${navItem.label}. Ask your supervisor or administrator if you need it.`, h('button', { class: 'btn', onClick: () => nav('dashboard') }, 'Back to home'))) : (routes[r.name] || routes.dashboard);
   const main = h('div', { class: 'main' }, h('div', { class: 'boot' }, 'Loading…'));
   const side = sidebar(r);
   const qa = quickActions();
   const layout = h('div', { class: 'layout' }, mobileBar(r, side), side, h('div', { class: 'content' }, h('div', { class: 'appbar' }, can('clients:read') ? globalSearch() : h('div', { class: 'grow' }), qa), main), qa ? h('div', { class: 'fab' }, qa.cloneNode(true)) : null);
   if (qa) layout.querySelector('.fab button')?.addEventListener('click', () => qa.click());
   clear(app).append(layout);
-  if (r.name === 'dashboard') setTimeout(maybeTour, 400);
+  if (r.name === 'dashboard') setTimeout(() => { if (parseHash().name === 'dashboard') maybeTour(); }, 400);
   try { const view = await loader(r); clear(main).append(view); }
   catch (e) { clear(main).append(h('div', { class: 'banner danger' }, e.message)); }
   current = r;

@@ -7,6 +7,10 @@ import { encrypt, decrypt, blindIndex, uuid } from '../server/crypto.js';
 import SYNC from '../server/sync-tables.js';
 
 const NEVER = '1970-01-01T00:00:00.000Z';
+// sync_seen records each row exactly as last exchanged with the server (table, id, updated_at); a row is only
+// uploaded when it no longer matches, so pulled rows are never echoed back and device clocks do not matter.
+export function ensureTables() { db.get().exec(`CREATE TABLE IF NOT EXISTS sync_seen (table_name TEXT NOT NULL, id TEXT NOT NULL, updated_at TEXT, PRIMARY KEY (table_name, id))`); }
+const seen = (t, id, at) => db.run(`INSERT OR REPLACE INTO sync_seen(table_name,id,updated_at) VALUES(?,?,?)`, t, id, at || null);
 const cols = (t) => db.all(`PRAGMA table_info(${t})`).map(c => c.name);
 
 function exportRow(t, r) { const o = { ...r }; for (const c of t.enc) if (o[c]) { try { o[c] = decrypt(o[c]); } catch { o[c] = null; } } for (const k of Object.keys(o)) if (k.endsWith('_idx')) delete o[k]; return o; }
@@ -25,6 +29,10 @@ function mergeUser(localId, serverId) {
 // Apply server rows locally: server wins on equal timestamps; users are replaced wholesale (credentials for offline login).
 function applyPull(payload) {
   const counts = {};
+  // Server timestamps are authoritative; local rows carry device time. Compare in server time using the measured offset.
+  const offset = payload.server_now ? Date.parse(payload.server_now) - Date.now() : 0;
+  const toServer = (ts) => { const t = Date.parse(ts || NEVER); return Number.isFinite(t) ? new Date(t + offset).toISOString() : NEVER; };
+  db.setSetting('sync_clock_offset_ms', String(offset));
   db.transaction(() => {
     for (const t of SYNC.tables) {
       const rows = payload.tables?.[t.name] || []; const existingCols = cols(t.name); let n = 0;
@@ -33,25 +41,26 @@ function applyPull(payload) {
         if (t.name === 'users' && !existing) { const same = db.one(`SELECT id FROM users WHERE username=?`, raw.username); if (same) mergeUser(same.id, raw.id); }
         if (t.name === 'clients') { const clash = db.one(`SELECT id FROM clients WHERE client_code=? AND id<>?`, raw.client_code, raw.id); if (clash) db.run(`UPDATE clients SET client_code=?, updated_at=? WHERE id=?`, raw.client_code + '-D', db.now(), clash.id); }
         const incomingAt = raw.updated_at || raw.created_at || NEVER;
-        if (existing && t.name !== 'users' && (existing.updated_at || existing.created_at || NEVER) > incomingAt) continue; // local edit is newer; it will be pushed
+        if (existing && t.name !== 'users' && toServer(existing.updated_at || existing.created_at) > incomingAt) continue; // local edit is newer (in server time); it will be pushed
         const o = importRow(t, raw, existingCols); const keys = Object.keys(o).filter(k => k !== 'id');
         if (existing) db.run(`UPDATE ${t.name} SET ${keys.map(k => `${k}=?`).join(', ')} WHERE id=?`, ...keys.map(k => o[k]), raw.id);
         else db.run(`INSERT INTO ${t.name}(id,${keys.join(',')}) VALUES(?,${keys.map(() => '?').join(',')})`, raw.id, ...keys.map(k => o[k]));
+        seen(t.name, raw.id, o.updated_at || o.created_at || null);
         n++;
       }
       counts[t.name] = n;
     }
-    for (const ts of payload.tombstones || []) { const t = SYNC.tables.find(x => x.name === ts.table_name); if (!t) continue; db.run(`DELETE FROM ${t.name} WHERE id=? AND COALESCE(updated_at, created_at) < ?`, ts.id, ts.deleted_at); db.run(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, t.name, ts.id, ts.deleted_at); }
+    for (const ts of payload.tombstones || []) { const t = SYNC.tables.find(x => x.name === ts.table_name); if (!t) continue; const localDeleted = new Date(Date.parse(ts.deleted_at) - offset).toISOString(); db.run(`DELETE FROM ${t.name} WHERE id=? AND COALESCE(updated_at, created_at) < ?`, ts.id, localDeleted); db.run(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, t.name, ts.id, ts.deleted_at); }
     for (const [k, v] of Object.entries(payload.settings || {})) if (v !== null && v !== undefined) db.setSetting(k, v);
   });
   return counts;
 }
 function localChanges(since) {
   const tables = {};
-  for (const t of SYNC.tables) { if (t.name === 'users') continue; const rows = db.all(`SELECT * FROM ${t.name} WHERE COALESCE(updated_at, created_at) > ?`, since); if (rows.length) tables[t.name] = rows.map(r => exportRow(t, r)); }
+  for (const t of SYNC.tables) { if (t.name === 'users') continue; const rows = db.all(`SELECT x.* FROM ${t.name} x WHERE NOT EXISTS (SELECT 1 FROM sync_seen s WHERE s.table_name=? AND s.id=x.id AND s.updated_at IS COALESCE(x.updated_at, x.created_at))`, t.name); if (rows.length) tables[t.name] = rows.map(r => exportRow(t, r)); }
   const tombstones = db.all(`SELECT table_name, id, deleted_at FROM tombstones WHERE deleted_at > ?`, since);
   const auditRows = db.all(`SELECT at, action, entity, entity_id, client_id, success, details FROM audit_log WHERE at > ? AND action NOT LIKE 'sync.%' ORDER BY id LIMIT 5000`, since);
-  return { tables, tombstones, audit: auditRows };
+  return { tables, tombstones, audit: auditRows, device_now: db.now() };
 }
 
 async function call(server, path, opts = {}, token) {
@@ -69,6 +78,8 @@ export async function run({ server, username, password, code, onProgress = () =>
   const token = login.token; if (!token) throw new HttpError(400, 'The office server did not return a sync token (update the server to 1.1 or newer)');
   if (login.mfaPending) { if (!code) throw new HttpError(401, 'MFA code required', { mfaRequired: true }); await call(server, '/api/auth/mfa/verify', { method: 'POST', body: JSON.stringify({ code }) }, token); }
   try {
+    const demo = require('../server/demo.js');
+    if (demo.status().loaded) { onProgress('Removing sample data before the first sync…'); demo.remove({ actor: null, tombstones: false }); }
     const since = db.getSetting('sync_cursor', NEVER);
     onProgress('Downloading changes from the office…');
     const pulled = await call(server, `/api/sync/pull?since=${encodeURIComponent(since)}`, {}, token);
@@ -76,6 +87,8 @@ export async function run({ server, username, password, code, onProgress = () =>
     onProgress('Uploading this device\'s changes…');
     const changes = localChanges(db.getSetting('sync_pushed', NEVER));
     const pushed = await call(server, '/api/sync/push', { method: 'POST', body: JSON.stringify(changes) }, token);
+    const rejectedIds = new Set((pushed.rejected || []).map(r => r.table + ':' + r.id));
+    db.transaction(() => { for (const [t, rows] of Object.entries(changes.tables)) for (const r of rows) if (!rejectedIds.has(t + ':' + r.id)) seen(t, r.id, r.updated_at || r.created_at || null); db.run(`DELETE FROM tombstones WHERE deleted_at <= ?`, changes.device_now); });
     db.setSetting('sync_cursor', pulled.cursor); db.setSetting('sync_pushed', db.now()); db.setSetting('last_sync_at', db.now()); db.setSetting('sync_server', server); db.setSetting('sync_username', username);
     audit.log({ user: { username }, action: 'sync.completed', details: { server, pulled: applied, pushed: pushed.applied, rejected: pushed.rejected?.length || 0 } });
     return { ok: true, pulled: applied, pushed: pushed.applied, rejected: pushed.rejected || [], at: db.now() };
@@ -83,6 +96,7 @@ export async function run({ server, username, password, code, onProgress = () =>
 }
 
 export function register(router) {
+  ensureTables();
   router.post('/api/local/sync', auth.requireAuth, async (ctx) => {
     const { server, username, password, code } = ctx.body || {};
     return run({ server, username: username || ctx.user.username, password, code });

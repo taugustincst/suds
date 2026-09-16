@@ -1,4 +1,5 @@
 import { h, route, get, post, state, form, toast, nav, render, loadSession, badge, fmt, pageHead, modal, confirmDialog, kv } from '../app.js';
+import { sampleDataCard } from './admin.js';
 
 // First run on a device: create the local account (no server needed)
 route('localsetup', async () => {
@@ -46,5 +47,6 @@ route('sync', async () => {
       h('div', { class: 'card' }, h('h3', {}, 'Status'), kv([['This device', badge('Local copy', 'info')], ['Last sync', st.last_sync_at ? fmt.dt(st.last_sync_at) : 'never'], ['Changes waiting to send', String(st.pending)], ['Office server', st.server || 'not set yet']]),
         h('p', { class: 'small muted mt' }, 'Sync exchanges clients, visits, calls, notes, reminders, referrals and everything else in both directions. The newest change wins. The office computer does not need to be on at any other time.')),
       h('div', { class: 'card' }, h('h3', {}, 'Sync now'), h('p', { class: 'small muted' }, 'Connect this phone to the office Wi-Fi (or the address IT gave you), then sign in with your office account.'), f, log,
-        h('div', { class: 'btn-row' }, h('button', { class: 'btn danger sm', onClick: async () => { if (await confirmDialog('Erase this device', 'Remove all SUDS data from this device? Anything not yet synced will be lost.', { danger: true, okText: 'Erase', requireReason: true })) { await window.SUDS_LOCAL.wipe(); location.reload(); } } }, 'Erase data on this device')))));
+        h('div', { class: 'btn-row' }, h('button', { class: 'btn danger sm', onClick: async () => { if (await confirmDialog('Erase this device', 'Remove all SUDS data from this device? Anything not yet synced will be lost.', { danger: true, okText: 'Erase', requireReason: true })) { await window.SUDS_LOCAL.wipe(); location.reload(); } } }, 'Erase data on this device'))),
+      await sampleDataCard(() => nav('sync?_=' + Date.now()))));
 });

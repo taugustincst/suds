@@ -33,11 +33,13 @@ Full walkthrough with screenshots-free steps: [docs/INSTALL.md](docs/INSTALL.md)
 
 ```bash
 git clone <repo> suds && cd suds
-npm run seed          # creates a dev database with demo users and fictional clients
+npm run seed          # dev database with demo staff logins and the fictional sample data set (server/demo.js)
 npm start             # http://127.0.0.1:8080
 ```
 
 Demo logins (password `Navigator2026!!`): `mrivera` / `dchen` (navigators), `kpatel` (clinician), `jwalker` (supervisor), `afinance` (finance), `admin`.
+
+Without a terminal, an administrator can add the same fictional data set from inside the app (**Load sample data** on the empty home screen or under Settings) and remove it again in one click; phones offer it on their Sync screen.
 
 Without seeding, the first start creates an `admin` user and prints a temporary password.
 
@@ -82,7 +84,7 @@ npm test
 
 Runs unit tests (crypto, TOTP, importers) and API integration tests (auth, lockout, MFA, RBAC, caseload scoping, encryption at rest, note signing, consents, budget, imports, intake, audit chain).
 
-A browser smoke test of the full navigator workflow lives in `scripts/ui-smoke.mjs` (needs a seeded running server and a global Playwright install).
+The browser regression suite (`scripts/ui/run-all.sh`) seeds a throwaway server and drives Chromium through the desktop screens, the navigator workflow, phone-only mode, two-way sync, spreadsheet import/export and sample data. CI runs it on every push; locally it needs `npm i --no-save playwright && npx playwright install chromium`.
 
 ## License
 

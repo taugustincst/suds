@@ -29,7 +29,7 @@ function scopeSql(t, user, alias) {
 
 // Pull everything changed since `since` that the user may see.
 function pull(user, since) {
-  const out = { cursor: db.now(), tables: {}, tombstones: db.all(`SELECT table_name, id, deleted_at FROM tombstones WHERE deleted_at > ?`, since), settings: {} };
+  const out = { cursor: db.now(), server_now: db.now(), tables: {}, tombstones: db.all(`SELECT table_name, id, deleted_at FROM tombstones WHERE deleted_at > ?`, since), settings: {} };
   for (const t of SYNC.tables) {
     const sc = scopeSql(t, user, 'x');
     const hasUpd = cols(t.name).includes('updated_at');
@@ -46,6 +46,11 @@ function pull(user, since) {
 // Apply rows from a device. Last write wins by updated_at; users are never overwritten from devices.
 function push(user, payload) {
   const applied = {}; const rejected = [];
+  // Device clocks are not trusted: shift the device's timestamps by the measured offset so last-write-wins compares server time.
+  const deviceNow = payload.device_now ? Date.parse(payload.device_now) : NaN;
+  const offsetMs = Number.isFinite(deviceNow) ? Date.now() - deviceNow : 0;
+  const shift = (ts) => { if (!ts || !offsetMs) return ts; const t = Date.parse(ts); return Number.isFinite(t) ? new Date(t + offsetMs).toISOString() : ts; };
+  const TS_COLS = ['created_at', 'updated_at', 'signed_at', 'approved_at', 'completed_at', 'deleted_at', 'closed_at', 'admitted_at', 'revoked_at'];
   db.transaction(() => {
     for (const t of SYNC.tables) {
       const rows = (payload.tables || {})[t.name]; if (!Array.isArray(rows) || !rows.length) continue;
@@ -53,6 +58,7 @@ function push(user, payload) {
       const existingCols = cols(t.name); let n = 0;
       for (const raw of rows) {
         if (!raw || typeof raw.id !== 'string') continue;
+        for (const c of TS_COLS) if (raw[c]) raw[c] = shift(raw[c]);
         if (t.scope === 'client' && raw[t.clientCol] && !auth.canAccessClient(user, raw[t.clientCol]) && t.name !== 'clients') { rejected.push({ table: t.name, id: raw.id, reason: 'not on caseload' }); continue; }
         const existing = db.one(`SELECT * FROM ${t.name} WHERE id=?`, raw.id);
         if (t.name === 'clients' && existing && !auth.canAccessClient(user, raw.id)) { rejected.push({ table: t.name, id: raw.id, reason: 'not on caseload' }); continue; }
@@ -80,6 +86,7 @@ function push(user, payload) {
     }
     for (const ts of payload.tombstones || []) {
       const t = SYNC.tables.find(x => x.name === ts.table_name); if (!t || t.name === 'users' || typeof ts.id !== 'string') continue;
+      ts.deleted_at = shift(ts.deleted_at);
       const existing = db.one(`SELECT * FROM ${t.name} WHERE id=?`, ts.id);
       if (!existing) continue;
       if (t.name === 'clients' || t.name === 'notes' || t.name === 'consents' || t.name === 'disclosures' || t.name === 'note_addenda') continue; // never hard-deleted through sync (legal record)
@@ -91,7 +98,7 @@ function push(user, payload) {
     }
     for (const a of (payload.audit || []).slice(0, 5000)) if (a && a.action) audit.log({ user, action: `device.${a.action}`, entity: a.entity, entityId: a.entity_id, clientId: a.client_id, ip: 'device', success: a.success !== 0, details: { at: a.at, device: true, ...(a.details ? safeJson(a.details) : {}) } });
   });
-  return { applied, rejected };
+  return { applied, rejected, server_now: db.now(), clock_offset_ms: offsetMs };
 }
 function safeJson(s) { try { return typeof s === 'string' ? JSON.parse(s) : s; } catch { return {}; } }
 
