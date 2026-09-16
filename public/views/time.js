@@ -30,7 +30,7 @@ route('time', async (r) => {
   const fromI = h('input', { type: 'date', value: from }), toI = h('input', { type: 'date', value: to });
   const total = sum.by_category.reduce((s, x) => s + x.minutes, 0);
   return h('div', {},
-    pageHead('My time', can('time:write') ? h('button', { class: 'btn primary', onClick: () => openTimeForm(null, { onDone: refresh }) }, '+ Log time') : null, h('button', { class: 'btn', onClick: () => downloadCsv(`/api/reports/export/time?from=${from}&to=${to}`) }, 'Export CSV')),
+    pageHead('My time', can('time:write') ? h('button', { class: 'btn primary', onClick: () => openTimeForm(null, { onDone: refresh }) }, '+ Log time') : null, h('button', { class: 'btn', onClick: () => downloadCsv(`/api/reports/export/time?from=${from}&to=${to}&format=xlsx`) }, 'Export to Excel')),
     h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'From'), fromI), h('div', { class: 'field' }, h('label', {}, 'To'), toI), h('button', { class: 'btn', onClick: () => nav(`time?from=${fromI.value}&to=${toI.value}`) }, 'Apply'),
       h('button', { class: 'btn ghost sm', onClick: () => { const d = new Date(); const day = d.getDay(); const mon = new Date(d); mon.setDate(d.getDate() - ((day + 6) % 7)); nav(`time?from=${mon.toISOString().slice(0, 10)}&to=${fmt.today()}`); } }, 'This week'),
       h('button', { class: 'btn ghost sm', onClick: () => nav(`time?from=${to.slice(0, 8)}01&to=${to}`) }, 'This month')),

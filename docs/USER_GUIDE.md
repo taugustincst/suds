@@ -46,8 +46,11 @@ Record client assistance (bus passes, IDs, motel nights, phone minutes…) again
 ## Importing notes
 See *Import Notes* in the sidebar and [docs/IMPORTS.md](IMPORTS.md).
 
-## Reports
-Choose a date range for program summaries, monthly trends and CSV exports. Exports use client codes rather than names.
+## Reports and Excel
+Choose a date range for program summaries and monthly trends. **Export to Excel** (or CSV) is available on Reports (every table, or everything as one workbook) and on the Clients, Resources, Visits, Calls, Time, Referrals and Budget pages. Exports use client codes rather than names; supervisors can produce an identified workbook, which is recorded in the audit log.
+
+## Importing spreadsheets
+Import → *Import from Excel or CSV*. Choose what you are importing (clients, resources, visits, calls, time, to-dos, expenditures), download the template or upload the spreadsheet you already keep. SUDS matches your column names automatically (you can adjust them), checks every row, tells you exactly what is wrong with any row, flags people who already exist, and only saves when you click Import. For visits, calls and other client records, refer to the client by code (C26-0012) or "Last, First".
 
 ## Privacy reminders
 * Only look up clients you are serving. Every record view is logged.

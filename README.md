@@ -59,7 +59,8 @@ The launcher + wizard route above is production mode (`SUDS_ENV=production`) wit
 | Notes | Clinical vs. administrative notes with role-based visibility, SOAP / DAP / BIRP / GIRP structured formats, electronic signature with tamper-evident hash, addenda, break-glass access for administrators |
 | Consents | 42 CFR Part 2 disclosure consents, releases of information, expirations/revocations, and an accounting of disclosures |
 | Imports | Pocket AI JSON/Markdown/text exports, OneNote MHT/HTML/DOCX/text exports, Microsoft Graph OneNote sync, pasted text, and an API-key intake endpoint — all staged for review and client matching before becoming notes |
-| Reports | Dashboard, program summary, monthly trends, CSV exports (de-identified by default) |
+| Reports | Dashboard, program summary, monthly trends, Excel / CSV exports of every table or one workbook (de-identified by default) |
+| Spreadsheets | Import clients, resources, visits, calls, time, to-dos and expenditures from Excel or CSV with templates, automatic column matching and row validation |
 | Administration | Users and roles, MFA enforcement, settings, tamper-evident audit log viewer, API keys |
 
 ## Roles

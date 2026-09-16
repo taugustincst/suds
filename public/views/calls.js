@@ -36,7 +36,7 @@ route('calls', async (r) => {
   const refresh = () => nav(`calls?${qs}&_=${Date.now()}`);
   const tog = (k, v) => nav(`calls?${crisis !== (k === 'crisis') ? 'crisis=1&' : ''}${fu !== (k === 'fu') ? 'follow_up=1&' : ''}${mine !== (k === 'mine') ? 'mine=1' : ''}`);
   return h('div', {},
-    pageHead('Calls', can('calls:write') ? h('button', { class: 'btn primary', onClick: () => openCallForm(null, { onDone: refresh }) }, '+ Log call') : null, h('button', { class: 'btn', onClick: () => downloadCsv('/api/reports/export/calls?from=2000-01-01') }, 'Export CSV')),
+    pageHead('Calls', can('calls:write') ? h('button', { class: 'btn primary', onClick: () => openCallForm(null, { onDone: refresh }) }, '+ Log call') : null, h('button', { class: 'btn', onClick: () => downloadCsv('/api/reports/export/calls?from=2000-01-01&format=xlsx') }, 'Export to Excel')),
     h('div', { class: 'filters' }, h('button', { class: `btn sm ${crisis ? 'primary' : ''}`, onClick: () => tog('crisis') }, 'Crisis only'), h('button', { class: `btn sm ${fu ? 'primary' : ''}`, onClick: () => tog('fu') }, 'Needs follow-up'), h('button', { class: `btn sm ${mine ? 'primary' : ''}`, onClick: () => tog('mine') }, 'Mine')),
     h('div', { class: 'muted small mb' }, `${data.total} calls · ${fmt.mins(data.rows.reduce((s, x) => s + x.duration_minutes, 0))}`),
     callTable(data.rows, { onChange: refresh }));
