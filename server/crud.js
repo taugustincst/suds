@@ -86,7 +86,7 @@ function build(r, opts) {
     if (row.client_id) auth.assertClientAccess(ctx, row.client_id);
     if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden('You cannot delete this record');
     if (opts.canDelete && !opts.canDelete(ctx, row)) throw forbidden('You cannot delete this record');
-    db.run(`DELETE FROM ${table} WHERE id=?`, row.id);
+    db.run(`DELETE FROM ${table} WHERE id=?`, row.id); db.tombstone(table, row.id);
     audit.log({ user: ctx.user, action: `${entity}.delete`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip });
     return { ok: true };
   });

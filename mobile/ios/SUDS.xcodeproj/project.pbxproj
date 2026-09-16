@@ -9,19 +9,19 @@
 /* Begin PBXBuildFile section */
 		A1000001 /* SUDSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001 /* SUDSApp.swift */; };
 		A1000002 /* ConnectionModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000002 /* ConnectionModel.swift */; };
-		A1000003 /* ConnectScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000003 /* ConnectScreen.swift */; };
 		A1000004 /* WebScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000004 /* WebScreen.swift */; };
 		A1000005 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A2000005 /* Assets.xcassets */; };
+		A1000006 /* public in Resources */ = {isa = PBXBuildFile; fileRef = A2000007 /* public */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		A2000000 /* SUDS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SUDS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A2000001 /* SUDSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SUDSApp.swift; sourceTree = "<group>"; };
 		A2000002 /* ConnectionModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionModel.swift; sourceTree = "<group>"; };
-		A2000003 /* ConnectScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectScreen.swift; sourceTree = "<group>"; };
 		A2000004 /* WebScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebScreen.swift; sourceTree = "<group>"; };
 		A2000005 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A2000006 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A2000007 /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; name = public; path = ../../public; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -30,7 +30,7 @@
 
 /* Begin PBXGroup section */
 		A4000001 = {isa = PBXGroup; children = ( A4000002 /* SUDS */, A4000003 /* Products */, ); sourceTree = "<group>"; };
-		A4000002 /* SUDS */ = {isa = PBXGroup; children = ( A2000001 /* SUDSApp.swift */, A2000002 /* ConnectionModel.swift */, A2000003 /* ConnectScreen.swift */, A2000004 /* WebScreen.swift */, A2000005 /* Assets.xcassets */, A2000006 /* Info.plist */, ); path = SUDS; sourceTree = "<group>"; };
+		A4000002 /* SUDS */ = {isa = PBXGroup; children = ( A2000001 /* SUDSApp.swift */, A2000002 /* ConnectionModel.swift */, A2000004 /* WebScreen.swift */, A2000005 /* Assets.xcassets */, A2000006 /* Info.plist */, A2000007 /* public */, ); path = SUDS; sourceTree = "<group>"; };
 		A4000003 /* Products */ = {isa = PBXGroup; children = ( A2000000 /* SUDS.app */, ); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
@@ -66,11 +66,11 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		A7000001 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = ( A1000005 /* Assets.xcassets in Resources */, ); runOnlyForDeploymentPostprocessing = 0; };
+		A7000001 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = ( A1000005 /* Assets.xcassets in Resources */, A1000006 /* public in Resources */, ); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		A6000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = ( A1000001 /* SUDSApp.swift in Sources */, A1000002 /* ConnectionModel.swift in Sources */, A1000003 /* ConnectScreen.swift in Sources */, A1000004 /* WebScreen.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
+		A6000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = ( A1000001 /* SUDSApp.swift in Sources */, A1000002 /* ConnectionModel.swift in Sources */, A1000004 /* WebScreen.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */

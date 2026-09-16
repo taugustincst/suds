@@ -119,7 +119,7 @@ module.exports = (r) => {
     if (!auth.hasPerm(ctx.user, kindPerm(n.kind, 'write'))) throw forbidden();
     if (n.status !== 'draft') throw badRequest('Signed notes are part of the legal record and cannot be deleted');
     if (n.author_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'clients:all')) throw forbidden();
-    db.run(`UPDATE notes SET deleted_at=? WHERE id=?`, db.now(), n.id);
+    db.run(`UPDATE notes SET deleted_at=?, updated_at=? WHERE id=?`, db.now(), db.now(), n.id);
     audit.log({ user: ctx.user, action: 'note.delete', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip });
     return { ok: true };
   });

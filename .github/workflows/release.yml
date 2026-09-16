@@ -20,9 +20,9 @@ jobs:
     steps:
       - name: Check out
         run: git clone --branch "${GITHUB_REF_NAME}" "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src
-      - name: Test
+      - name: Test and rebuild local kernel
         working-directory: src
-        run: npm test
+        run: npm ci --no-audit --no-fund && npm test && npm run build:local && git diff --quiet -- public/local || echo "::warning::public/local was rebuilt with changes; commit the rebuilt kernel" 
       - name: Package and publish
         working-directory: src
         run: |

@@ -1,0 +1,11084 @@
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __glob = (map) => (path) => {
+  var fn = map[path];
+  if (fn) return fn();
+  throw new Error("Module not found in bundle: " + path);
+};
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __commonJS = (cb, mod) => function __require() {
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+
+// node_modules/base64-js/index.js
+var require_base64_js = __commonJS({
+  "node_modules/base64-js/index.js"(exports) {
+    "use strict";
+    init_globals_inject();
+    exports.byteLength = byteLength;
+    exports.toByteArray = toByteArray;
+    exports.fromByteArray = fromByteArray;
+    var lookup = [];
+    var revLookup = [];
+    var Arr = typeof Uint8Array !== "undefined" ? Uint8Array : Array;
+    var code = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    for (i = 0, len = code.length; i < len; ++i) {
+      lookup[i] = code[i];
+      revLookup[code.charCodeAt(i)] = i;
+    }
+    var i;
+    var len;
+    revLookup["-".charCodeAt(0)] = 62;
+    revLookup["_".charCodeAt(0)] = 63;
+    function getLens(b64) {
+      var len2 = b64.length;
+      if (len2 % 4 > 0) {
+        throw new Error("Invalid string. Length must be a multiple of 4");
+      }
+      var validLen = b64.indexOf("=");
+      if (validLen === -1) validLen = len2;
+      var placeHoldersLen = validLen === len2 ? 0 : 4 - validLen % 4;
+      return [validLen, placeHoldersLen];
+    }
+    function byteLength(b64) {
+      var lens = getLens(b64);
+      var validLen = lens[0];
+      var placeHoldersLen = lens[1];
+      return (validLen + placeHoldersLen) * 3 / 4 - placeHoldersLen;
+    }
+    function _byteLength(b64, validLen, placeHoldersLen) {
+      return (validLen + placeHoldersLen) * 3 / 4 - placeHoldersLen;
+    }
+    function toByteArray(b64) {
+      var tmp;
+      var lens = getLens(b64);
+      var validLen = lens[0];
+      var placeHoldersLen = lens[1];
+      var arr = new Arr(_byteLength(b64, validLen, placeHoldersLen));
+      var curByte = 0;
+      var len2 = placeHoldersLen > 0 ? validLen - 4 : validLen;
+      var i2;
+      for (i2 = 0; i2 < len2; i2 += 4) {
+        tmp = revLookup[b64.charCodeAt(i2)] << 18 | revLookup[b64.charCodeAt(i2 + 1)] << 12 | revLookup[b64.charCodeAt(i2 + 2)] << 6 | revLookup[b64.charCodeAt(i2 + 3)];
+        arr[curByte++] = tmp >> 16 & 255;
+        arr[curByte++] = tmp >> 8 & 255;
+        arr[curByte++] = tmp & 255;
+      }
+      if (placeHoldersLen === 2) {
+        tmp = revLookup[b64.charCodeAt(i2)] << 2 | revLookup[b64.charCodeAt(i2 + 1)] >> 4;
+        arr[curByte++] = tmp & 255;
+      }
+      if (placeHoldersLen === 1) {
+        tmp = revLookup[b64.charCodeAt(i2)] << 10 | revLookup[b64.charCodeAt(i2 + 1)] << 4 | revLookup[b64.charCodeAt(i2 + 2)] >> 2;
+        arr[curByte++] = tmp >> 8 & 255;
+        arr[curByte++] = tmp & 255;
+      }
+      return arr;
+    }
+    function tripletToBase64(num) {
+      return lookup[num >> 18 & 63] + lookup[num >> 12 & 63] + lookup[num >> 6 & 63] + lookup[num & 63];
+    }
+    function encodeChunk(uint8, start2, end) {
+      var tmp;
+      var output3 = [];
+      for (var i2 = start2; i2 < end; i2 += 3) {
+        tmp = (uint8[i2] << 16 & 16711680) + (uint8[i2 + 1] << 8 & 65280) + (uint8[i2 + 2] & 255);
+        output3.push(tripletToBase64(tmp));
+      }
+      return output3.join("");
+    }
+    function fromByteArray(uint8) {
+      var tmp;
+      var len2 = uint8.length;
+      var extraBytes = len2 % 3;
+      var parts = [];
+      var maxChunkLength = 16383;
+      for (var i2 = 0, len22 = len2 - extraBytes; i2 < len22; i2 += maxChunkLength) {
+        parts.push(encodeChunk(uint8, i2, i2 + maxChunkLength > len22 ? len22 : i2 + maxChunkLength));
+      }
+      if (extraBytes === 1) {
+        tmp = uint8[len2 - 1];
+        parts.push(
+          lookup[tmp >> 2] + lookup[tmp << 4 & 63] + "=="
+        );
+      } else if (extraBytes === 2) {
+        tmp = (uint8[len2 - 2] << 8) + uint8[len2 - 1];
+        parts.push(
+          lookup[tmp >> 10] + lookup[tmp >> 4 & 63] + lookup[tmp << 2 & 63] + "="
+        );
+      }
+      return parts.join("");
+    }
+  }
+});
+
+// node_modules/ieee754/index.js
+var require_ieee754 = __commonJS({
+  "node_modules/ieee754/index.js"(exports) {
+    init_globals_inject();
+    exports.read = function(buffer, offset, isLE3, mLen, nBytes) {
+      var e, m;
+      var eLen = nBytes * 8 - mLen - 1;
+      var eMax = (1 << eLen) - 1;
+      var eBias = eMax >> 1;
+      var nBits = -7;
+      var i = isLE3 ? nBytes - 1 : 0;
+      var d = isLE3 ? -1 : 1;
+      var s = buffer[offset + i];
+      i += d;
+      e = s & (1 << -nBits) - 1;
+      s >>= -nBits;
+      nBits += eLen;
+      for (; nBits > 0; e = e * 256 + buffer[offset + i], i += d, nBits -= 8) {
+      }
+      m = e & (1 << -nBits) - 1;
+      e >>= -nBits;
+      nBits += mLen;
+      for (; nBits > 0; m = m * 256 + buffer[offset + i], i += d, nBits -= 8) {
+      }
+      if (e === 0) {
+        e = 1 - eBias;
+      } else if (e === eMax) {
+        return m ? NaN : (s ? -1 : 1) * Infinity;
+      } else {
+        m = m + Math.pow(2, mLen);
+        e = e - eBias;
+      }
+      return (s ? -1 : 1) * m * Math.pow(2, e - mLen);
+    };
+    exports.write = function(buffer, value, offset, isLE3, mLen, nBytes) {
+      var e, m, c;
+      var eLen = nBytes * 8 - mLen - 1;
+      var eMax = (1 << eLen) - 1;
+      var eBias = eMax >> 1;
+      var rt = mLen === 23 ? Math.pow(2, -24) - Math.pow(2, -77) : 0;
+      var i = isLE3 ? 0 : nBytes - 1;
+      var d = isLE3 ? 1 : -1;
+      var s = value < 0 || value === 0 && 1 / value < 0 ? 1 : 0;
+      value = Math.abs(value);
+      if (isNaN(value) || value === Infinity) {
+        m = isNaN(value) ? 1 : 0;
+        e = eMax;
+      } else {
+        e = Math.floor(Math.log(value) / Math.LN2);
+        if (value * (c = Math.pow(2, -e)) < 1) {
+          e--;
+          c *= 2;
+        }
+        if (e + eBias >= 1) {
+          value += rt / c;
+        } else {
+          value += rt * Math.pow(2, 1 - eBias);
+        }
+        if (value * c >= 2) {
+          e++;
+          c /= 2;
+        }
+        if (e + eBias >= eMax) {
+          m = 0;
+          e = eMax;
+        } else if (e + eBias >= 1) {
+          m = (value * c - 1) * Math.pow(2, mLen);
+          e = e + eBias;
+        } else {
+          m = value * Math.pow(2, eBias - 1) * Math.pow(2, mLen);
+          e = 0;
+        }
+      }
+      for (; mLen >= 8; buffer[offset + i] = m & 255, i += d, m /= 256, mLen -= 8) {
+      }
+      e = e << mLen | m;
+      eLen += mLen;
+      for (; eLen > 0; buffer[offset + i] = e & 255, i += d, e /= 256, eLen -= 8) {
+      }
+      buffer[offset + i - d] |= s * 128;
+    };
+  }
+});
+
+// node_modules/buffer/index.js
+var require_buffer = __commonJS({
+  "node_modules/buffer/index.js"(exports) {
+    "use strict";
+    init_globals_inject();
+    var base64 = require_base64_js();
+    var ieee754 = require_ieee754();
+    var customInspectSymbol = typeof Symbol === "function" && typeof Symbol["for"] === "function" ? Symbol["for"]("nodejs.util.inspect.custom") : null;
+    exports.Buffer = Buffer2;
+    exports.SlowBuffer = SlowBuffer;
+    exports.INSPECT_MAX_BYTES = 50;
+    var K_MAX_LENGTH = 2147483647;
+    exports.kMaxLength = K_MAX_LENGTH;
+    Buffer2.TYPED_ARRAY_SUPPORT = typedArraySupport();
+    if (!Buffer2.TYPED_ARRAY_SUPPORT && typeof console !== "undefined" && typeof console.error === "function") {
+      console.error(
+        "This browser lacks typed array (Uint8Array) support which is required by `buffer` v5.x. Use `buffer` v4.x if you require old browser support."
+      );
+    }
+    function typedArraySupport() {
+      try {
+        const arr = new Uint8Array(1);
+        const proto = { foo: function() {
+          return 42;
+        } };
+        Object.setPrototypeOf(proto, Uint8Array.prototype);
+        Object.setPrototypeOf(arr, proto);
+        return arr.foo() === 42;
+      } catch (e) {
+        return false;
+      }
+    }
+    Object.defineProperty(Buffer2.prototype, "parent", {
+      enumerable: true,
+      get: function() {
+        if (!Buffer2.isBuffer(this)) return void 0;
+        return this.buffer;
+      }
+    });
+    Object.defineProperty(Buffer2.prototype, "offset", {
+      enumerable: true,
+      get: function() {
+        if (!Buffer2.isBuffer(this)) return void 0;
+        return this.byteOffset;
+      }
+    });
+    function createBuffer(length) {
+      if (length > K_MAX_LENGTH) {
+        throw new RangeError('The value "' + length + '" is invalid for option "size"');
+      }
+      const buf = new Uint8Array(length);
+      Object.setPrototypeOf(buf, Buffer2.prototype);
+      return buf;
+    }
+    function Buffer2(arg, encodingOrOffset, length) {
+      if (typeof arg === "number") {
+        if (typeof encodingOrOffset === "string") {
+          throw new TypeError(
+            'The "string" argument must be of type string. Received type number'
+          );
+        }
+        return allocUnsafe(arg);
+      }
+      return from(arg, encodingOrOffset, length);
+    }
+    Buffer2.poolSize = 8192;
+    function from(value, encodingOrOffset, length) {
+      if (typeof value === "string") {
+        return fromString(value, encodingOrOffset);
+      }
+      if (ArrayBuffer.isView(value)) {
+        return fromArrayView(value);
+      }
+      if (value == null) {
+        throw new TypeError(
+          "The first argument must be one of type string, Buffer, ArrayBuffer, Array, or Array-like Object. Received type " + typeof value
+        );
+      }
+      if (isInstance(value, ArrayBuffer) || value && isInstance(value.buffer, ArrayBuffer)) {
+        return fromArrayBuffer(value, encodingOrOffset, length);
+      }
+      if (typeof SharedArrayBuffer !== "undefined" && (isInstance(value, SharedArrayBuffer) || value && isInstance(value.buffer, SharedArrayBuffer))) {
+        return fromArrayBuffer(value, encodingOrOffset, length);
+      }
+      if (typeof value === "number") {
+        throw new TypeError(
+          'The "value" argument must not be of type number. Received type number'
+        );
+      }
+      const valueOf = value.valueOf && value.valueOf();
+      if (valueOf != null && valueOf !== value) {
+        return Buffer2.from(valueOf, encodingOrOffset, length);
+      }
+      const b = fromObject(value);
+      if (b) return b;
+      if (typeof Symbol !== "undefined" && Symbol.toPrimitive != null && typeof value[Symbol.toPrimitive] === "function") {
+        return Buffer2.from(value[Symbol.toPrimitive]("string"), encodingOrOffset, length);
+      }
+      throw new TypeError(
+        "The first argument must be one of type string, Buffer, ArrayBuffer, Array, or Array-like Object. Received type " + typeof value
+      );
+    }
+    Buffer2.from = function(value, encodingOrOffset, length) {
+      return from(value, encodingOrOffset, length);
+    };
+    Object.setPrototypeOf(Buffer2.prototype, Uint8Array.prototype);
+    Object.setPrototypeOf(Buffer2, Uint8Array);
+    function assertSize(size) {
+      if (typeof size !== "number") {
+        throw new TypeError('"size" argument must be of type number');
+      } else if (size < 0) {
+        throw new RangeError('The value "' + size + '" is invalid for option "size"');
+      }
+    }
+    function alloc(size, fill, encoding) {
+      assertSize(size);
+      if (size <= 0) {
+        return createBuffer(size);
+      }
+      if (fill !== void 0) {
+        return typeof encoding === "string" ? createBuffer(size).fill(fill, encoding) : createBuffer(size).fill(fill);
+      }
+      return createBuffer(size);
+    }
+    Buffer2.alloc = function(size, fill, encoding) {
+      return alloc(size, fill, encoding);
+    };
+    function allocUnsafe(size) {
+      assertSize(size);
+      return createBuffer(size < 0 ? 0 : checked(size) | 0);
+    }
+    Buffer2.allocUnsafe = function(size) {
+      return allocUnsafe(size);
+    };
+    Buffer2.allocUnsafeSlow = function(size) {
+      return allocUnsafe(size);
+    };
+    function fromString(string, encoding) {
+      if (typeof encoding !== "string" || encoding === "") {
+        encoding = "utf8";
+      }
+      if (!Buffer2.isEncoding(encoding)) {
+        throw new TypeError("Unknown encoding: " + encoding);
+      }
+      const length = byteLength(string, encoding) | 0;
+      let buf = createBuffer(length);
+      const actual = buf.write(string, encoding);
+      if (actual !== length) {
+        buf = buf.slice(0, actual);
+      }
+      return buf;
+    }
+    function fromArrayLike(array) {
+      const length = array.length < 0 ? 0 : checked(array.length) | 0;
+      const buf = createBuffer(length);
+      for (let i = 0; i < length; i += 1) {
+        buf[i] = array[i] & 255;
+      }
+      return buf;
+    }
+    function fromArrayView(arrayView) {
+      if (isInstance(arrayView, Uint8Array)) {
+        const copy = new Uint8Array(arrayView);
+        return fromArrayBuffer(copy.buffer, copy.byteOffset, copy.byteLength);
+      }
+      return fromArrayLike(arrayView);
+    }
+    function fromArrayBuffer(array, byteOffset, length) {
+      if (byteOffset < 0 || array.byteLength < byteOffset) {
+        throw new RangeError('"offset" is outside of buffer bounds');
+      }
+      if (array.byteLength < byteOffset + (length || 0)) {
+        throw new RangeError('"length" is outside of buffer bounds');
+      }
+      let buf;
+      if (byteOffset === void 0 && length === void 0) {
+        buf = new Uint8Array(array);
+      } else if (length === void 0) {
+        buf = new Uint8Array(array, byteOffset);
+      } else {
+        buf = new Uint8Array(array, byteOffset, length);
+      }
+      Object.setPrototypeOf(buf, Buffer2.prototype);
+      return buf;
+    }
+    function fromObject(obj) {
+      if (Buffer2.isBuffer(obj)) {
+        const len = checked(obj.length) | 0;
+        const buf = createBuffer(len);
+        if (buf.length === 0) {
+          return buf;
+        }
+        obj.copy(buf, 0, 0, len);
+        return buf;
+      }
+      if (obj.length !== void 0) {
+        if (typeof obj.length !== "number" || numberIsNaN(obj.length)) {
+          return createBuffer(0);
+        }
+        return fromArrayLike(obj);
+      }
+      if (obj.type === "Buffer" && Array.isArray(obj.data)) {
+        return fromArrayLike(obj.data);
+      }
+    }
+    function checked(length) {
+      if (length >= K_MAX_LENGTH) {
+        throw new RangeError("Attempt to allocate Buffer larger than maximum size: 0x" + K_MAX_LENGTH.toString(16) + " bytes");
+      }
+      return length | 0;
+    }
+    function SlowBuffer(length) {
+      if (+length != length) {
+        length = 0;
+      }
+      return Buffer2.alloc(+length);
+    }
+    Buffer2.isBuffer = function isBuffer(b) {
+      return b != null && b._isBuffer === true && b !== Buffer2.prototype;
+    };
+    Buffer2.compare = function compare(a, b) {
+      if (isInstance(a, Uint8Array)) a = Buffer2.from(a, a.offset, a.byteLength);
+      if (isInstance(b, Uint8Array)) b = Buffer2.from(b, b.offset, b.byteLength);
+      if (!Buffer2.isBuffer(a) || !Buffer2.isBuffer(b)) {
+        throw new TypeError(
+          'The "buf1", "buf2" arguments must be one of type Buffer or Uint8Array'
+        );
+      }
+      if (a === b) return 0;
+      let x = a.length;
+      let y = b.length;
+      for (let i = 0, len = Math.min(x, y); i < len; ++i) {
+        if (a[i] !== b[i]) {
+          x = a[i];
+          y = b[i];
+          break;
+        }
+      }
+      if (x < y) return -1;
+      if (y < x) return 1;
+      return 0;
+    };
+    Buffer2.isEncoding = function isEncoding(encoding) {
+      switch (String(encoding).toLowerCase()) {
+        case "hex":
+        case "utf8":
+        case "utf-8":
+        case "ascii":
+        case "latin1":
+        case "binary":
+        case "base64":
+        case "ucs2":
+        case "ucs-2":
+        case "utf16le":
+        case "utf-16le":
+          return true;
+        default:
+          return false;
+      }
+    };
+    Buffer2.concat = function concat2(list, length) {
+      if (!Array.isArray(list)) {
+        throw new TypeError('"list" argument must be an Array of Buffers');
+      }
+      if (list.length === 0) {
+        return Buffer2.alloc(0);
+      }
+      let i;
+      if (length === void 0) {
+        length = 0;
+        for (i = 0; i < list.length; ++i) {
+          length += list[i].length;
+        }
+      }
+      const buffer = Buffer2.allocUnsafe(length);
+      let pos = 0;
+      for (i = 0; i < list.length; ++i) {
+        let buf = list[i];
+        if (isInstance(buf, Uint8Array)) {
+          if (pos + buf.length > buffer.length) {
+            if (!Buffer2.isBuffer(buf)) buf = Buffer2.from(buf);
+            buf.copy(buffer, pos);
+          } else {
+            Uint8Array.prototype.set.call(
+              buffer,
+              buf,
+              pos
+            );
+          }
+        } else if (!Buffer2.isBuffer(buf)) {
+          throw new TypeError('"list" argument must be an Array of Buffers');
+        } else {
+          buf.copy(buffer, pos);
+        }
+        pos += buf.length;
+      }
+      return buffer;
+    };
+    function byteLength(string, encoding) {
+      if (Buffer2.isBuffer(string)) {
+        return string.length;
+      }
+      if (ArrayBuffer.isView(string) || isInstance(string, ArrayBuffer)) {
+        return string.byteLength;
+      }
+      if (typeof string !== "string") {
+        throw new TypeError(
+          'The "string" argument must be one of type string, Buffer, or ArrayBuffer. Received type ' + typeof string
+        );
+      }
+      const len = string.length;
+      const mustMatch = arguments.length > 2 && arguments[2] === true;
+      if (!mustMatch && len === 0) return 0;
+      let loweredCase = false;
+      for (; ; ) {
+        switch (encoding) {
+          case "ascii":
+          case "latin1":
+          case "binary":
+            return len;
+          case "utf8":
+          case "utf-8":
+            return utf8ToBytes3(string).length;
+          case "ucs2":
+          case "ucs-2":
+          case "utf16le":
+          case "utf-16le":
+            return len * 2;
+          case "hex":
+            return len >>> 1;
+          case "base64":
+            return base64ToBytes(string).length;
+          default:
+            if (loweredCase) {
+              return mustMatch ? -1 : utf8ToBytes3(string).length;
+            }
+            encoding = ("" + encoding).toLowerCase();
+            loweredCase = true;
+        }
+      }
+    }
+    Buffer2.byteLength = byteLength;
+    function slowToString(encoding, start2, end) {
+      let loweredCase = false;
+      if (start2 === void 0 || start2 < 0) {
+        start2 = 0;
+      }
+      if (start2 > this.length) {
+        return "";
+      }
+      if (end === void 0 || end > this.length) {
+        end = this.length;
+      }
+      if (end <= 0) {
+        return "";
+      }
+      end >>>= 0;
+      start2 >>>= 0;
+      if (end <= start2) {
+        return "";
+      }
+      if (!encoding) encoding = "utf8";
+      while (true) {
+        switch (encoding) {
+          case "hex":
+            return hexSlice(this, start2, end);
+          case "utf8":
+          case "utf-8":
+            return utf8Slice(this, start2, end);
+          case "ascii":
+            return asciiSlice(this, start2, end);
+          case "latin1":
+          case "binary":
+            return latin1Slice(this, start2, end);
+          case "base64":
+            return base64Slice(this, start2, end);
+          case "ucs2":
+          case "ucs-2":
+          case "utf16le":
+          case "utf-16le":
+            return utf16leSlice(this, start2, end);
+          default:
+            if (loweredCase) throw new TypeError("Unknown encoding: " + encoding);
+            encoding = (encoding + "").toLowerCase();
+            loweredCase = true;
+        }
+      }
+    }
+    Buffer2.prototype._isBuffer = true;
+    function swap(b, n, m) {
+      const i = b[n];
+      b[n] = b[m];
+      b[m] = i;
+    }
+    Buffer2.prototype.swap16 = function swap16() {
+      const len = this.length;
+      if (len % 2 !== 0) {
+        throw new RangeError("Buffer size must be a multiple of 16-bits");
+      }
+      for (let i = 0; i < len; i += 2) {
+        swap(this, i, i + 1);
+      }
+      return this;
+    };
+    Buffer2.prototype.swap32 = function swap32() {
+      const len = this.length;
+      if (len % 4 !== 0) {
+        throw new RangeError("Buffer size must be a multiple of 32-bits");
+      }
+      for (let i = 0; i < len; i += 4) {
+        swap(this, i, i + 3);
+        swap(this, i + 1, i + 2);
+      }
+      return this;
+    };
+    Buffer2.prototype.swap64 = function swap64() {
+      const len = this.length;
+      if (len % 8 !== 0) {
+        throw new RangeError("Buffer size must be a multiple of 64-bits");
+      }
+      for (let i = 0; i < len; i += 8) {
+        swap(this, i, i + 7);
+        swap(this, i + 1, i + 6);
+        swap(this, i + 2, i + 5);
+        swap(this, i + 3, i + 4);
+      }
+      return this;
+    };
+    Buffer2.prototype.toString = function toString() {
+      const length = this.length;
+      if (length === 0) return "";
+      if (arguments.length === 0) return utf8Slice(this, 0, length);
+      return slowToString.apply(this, arguments);
+    };
+    Buffer2.prototype.toLocaleString = Buffer2.prototype.toString;
+    Buffer2.prototype.equals = function equals(b) {
+      if (!Buffer2.isBuffer(b)) throw new TypeError("Argument must be a Buffer");
+      if (this === b) return true;
+      return Buffer2.compare(this, b) === 0;
+    };
+    Buffer2.prototype.inspect = function inspect() {
+      let str = "";
+      const max2 = exports.INSPECT_MAX_BYTES;
+      str = this.toString("hex", 0, max2).replace(/(.{2})/g, "$1 ").trim();
+      if (this.length > max2) str += " ... ";
+      return "<Buffer " + str + ">";
+    };
+    if (customInspectSymbol) {
+      Buffer2.prototype[customInspectSymbol] = Buffer2.prototype.inspect;
+    }
+    Buffer2.prototype.compare = function compare(target, start2, end, thisStart, thisEnd) {
+      if (isInstance(target, Uint8Array)) {
+        target = Buffer2.from(target, target.offset, target.byteLength);
+      }
+      if (!Buffer2.isBuffer(target)) {
+        throw new TypeError(
+          'The "target" argument must be one of type Buffer or Uint8Array. Received type ' + typeof target
+        );
+      }
+      if (start2 === void 0) {
+        start2 = 0;
+      }
+      if (end === void 0) {
+        end = target ? target.length : 0;
+      }
+      if (thisStart === void 0) {
+        thisStart = 0;
+      }
+      if (thisEnd === void 0) {
+        thisEnd = this.length;
+      }
+      if (start2 < 0 || end > target.length || thisStart < 0 || thisEnd > this.length) {
+        throw new RangeError("out of range index");
+      }
+      if (thisStart >= thisEnd && start2 >= end) {
+        return 0;
+      }
+      if (thisStart >= thisEnd) {
+        return -1;
+      }
+      if (start2 >= end) {
+        return 1;
+      }
+      start2 >>>= 0;
+      end >>>= 0;
+      thisStart >>>= 0;
+      thisEnd >>>= 0;
+      if (this === target) return 0;
+      let x = thisEnd - thisStart;
+      let y = end - start2;
+      const len = Math.min(x, y);
+      const thisCopy = this.slice(thisStart, thisEnd);
+      const targetCopy = target.slice(start2, end);
+      for (let i = 0; i < len; ++i) {
+        if (thisCopy[i] !== targetCopy[i]) {
+          x = thisCopy[i];
+          y = targetCopy[i];
+          break;
+        }
+      }
+      if (x < y) return -1;
+      if (y < x) return 1;
+      return 0;
+    };
+    function bidirectionalIndexOf(buffer, val, byteOffset, encoding, dir) {
+      if (buffer.length === 0) return -1;
+      if (typeof byteOffset === "string") {
+        encoding = byteOffset;
+        byteOffset = 0;
+      } else if (byteOffset > 2147483647) {
+        byteOffset = 2147483647;
+      } else if (byteOffset < -2147483648) {
+        byteOffset = -2147483648;
+      }
+      byteOffset = +byteOffset;
+      if (numberIsNaN(byteOffset)) {
+        byteOffset = dir ? 0 : buffer.length - 1;
+      }
+      if (byteOffset < 0) byteOffset = buffer.length + byteOffset;
+      if (byteOffset >= buffer.length) {
+        if (dir) return -1;
+        else byteOffset = buffer.length - 1;
+      } else if (byteOffset < 0) {
+        if (dir) byteOffset = 0;
+        else return -1;
+      }
+      if (typeof val === "string") {
+        val = Buffer2.from(val, encoding);
+      }
+      if (Buffer2.isBuffer(val)) {
+        if (val.length === 0) {
+          return -1;
+        }
+        return arrayIndexOf(buffer, val, byteOffset, encoding, dir);
+      } else if (typeof val === "number") {
+        val = val & 255;
+        if (typeof Uint8Array.prototype.indexOf === "function") {
+          if (dir) {
+            return Uint8Array.prototype.indexOf.call(buffer, val, byteOffset);
+          } else {
+            return Uint8Array.prototype.lastIndexOf.call(buffer, val, byteOffset);
+          }
+        }
+        return arrayIndexOf(buffer, [val], byteOffset, encoding, dir);
+      }
+      throw new TypeError("val must be string, number or Buffer");
+    }
+    function arrayIndexOf(arr, val, byteOffset, encoding, dir) {
+      let indexSize = 1;
+      let arrLength = arr.length;
+      let valLength = val.length;
+      if (encoding !== void 0) {
+        encoding = String(encoding).toLowerCase();
+        if (encoding === "ucs2" || encoding === "ucs-2" || encoding === "utf16le" || encoding === "utf-16le") {
+          if (arr.length < 2 || val.length < 2) {
+            return -1;
+          }
+          indexSize = 2;
+          arrLength /= 2;
+          valLength /= 2;
+          byteOffset /= 2;
+        }
+      }
+      function read(buf, i2) {
+        if (indexSize === 1) {
+          return buf[i2];
+        } else {
+          return buf.readUInt16BE(i2 * indexSize);
+        }
+      }
+      let i;
+      if (dir) {
+        let foundIndex = -1;
+        for (i = byteOffset; i < arrLength; i++) {
+          if (read(arr, i) === read(val, foundIndex === -1 ? 0 : i - foundIndex)) {
+            if (foundIndex === -1) foundIndex = i;
+            if (i - foundIndex + 1 === valLength) return foundIndex * indexSize;
+          } else {
+            if (foundIndex !== -1) i -= i - foundIndex;
+            foundIndex = -1;
+          }
+        }
+      } else {
+        if (byteOffset + valLength > arrLength) byteOffset = arrLength - valLength;
+        for (i = byteOffset; i >= 0; i--) {
+          let found = true;
+          for (let j = 0; j < valLength; j++) {
+            if (read(arr, i + j) !== read(val, j)) {
+              found = false;
+              break;
+            }
+          }
+          if (found) return i;
+        }
+      }
+      return -1;
+    }
+    Buffer2.prototype.includes = function includes(val, byteOffset, encoding) {
+      return this.indexOf(val, byteOffset, encoding) !== -1;
+    };
+    Buffer2.prototype.indexOf = function indexOf(val, byteOffset, encoding) {
+      return bidirectionalIndexOf(this, val, byteOffset, encoding, true);
+    };
+    Buffer2.prototype.lastIndexOf = function lastIndexOf(val, byteOffset, encoding) {
+      return bidirectionalIndexOf(this, val, byteOffset, encoding, false);
+    };
+    function hexWrite(buf, string, offset, length) {
+      offset = Number(offset) || 0;
+      const remaining = buf.length - offset;
+      if (!length) {
+        length = remaining;
+      } else {
+        length = Number(length);
+        if (length > remaining) {
+          length = remaining;
+        }
+      }
+      const strLen = string.length;
+      if (length > strLen / 2) {
+        length = strLen / 2;
+      }
+      let i;
+      for (i = 0; i < length; ++i) {
+        const parsed = parseInt(string.substr(i * 2, 2), 16);
+        if (numberIsNaN(parsed)) return i;
+        buf[offset + i] = parsed;
+      }
+      return i;
+    }
+    function utf8Write(buf, string, offset, length) {
+      return blitBuffer(utf8ToBytes3(string, buf.length - offset), buf, offset, length);
+    }
+    function asciiWrite(buf, string, offset, length) {
+      return blitBuffer(asciiToBytes(string), buf, offset, length);
+    }
+    function base64Write(buf, string, offset, length) {
+      return blitBuffer(base64ToBytes(string), buf, offset, length);
+    }
+    function ucs2Write(buf, string, offset, length) {
+      return blitBuffer(utf16leToBytes(string, buf.length - offset), buf, offset, length);
+    }
+    Buffer2.prototype.write = function write(string, offset, length, encoding) {
+      if (offset === void 0) {
+        encoding = "utf8";
+        length = this.length;
+        offset = 0;
+      } else if (length === void 0 && typeof offset === "string") {
+        encoding = offset;
+        length = this.length;
+        offset = 0;
+      } else if (isFinite(offset)) {
+        offset = offset >>> 0;
+        if (isFinite(length)) {
+          length = length >>> 0;
+          if (encoding === void 0) encoding = "utf8";
+        } else {
+          encoding = length;
+          length = void 0;
+        }
+      } else {
+        throw new Error(
+          "Buffer.write(string, encoding, offset[, length]) is no longer supported"
+        );
+      }
+      const remaining = this.length - offset;
+      if (length === void 0 || length > remaining) length = remaining;
+      if (string.length > 0 && (length < 0 || offset < 0) || offset > this.length) {
+        throw new RangeError("Attempt to write outside buffer bounds");
+      }
+      if (!encoding) encoding = "utf8";
+      let loweredCase = false;
+      for (; ; ) {
+        switch (encoding) {
+          case "hex":
+            return hexWrite(this, string, offset, length);
+          case "utf8":
+          case "utf-8":
+            return utf8Write(this, string, offset, length);
+          case "ascii":
+          case "latin1":
+          case "binary":
+            return asciiWrite(this, string, offset, length);
+          case "base64":
+            return base64Write(this, string, offset, length);
+          case "ucs2":
+          case "ucs-2":
+          case "utf16le":
+          case "utf-16le":
+            return ucs2Write(this, string, offset, length);
+          default:
+            if (loweredCase) throw new TypeError("Unknown encoding: " + encoding);
+            encoding = ("" + encoding).toLowerCase();
+            loweredCase = true;
+        }
+      }
+    };
+    Buffer2.prototype.toJSON = function toJSON() {
+      return {
+        type: "Buffer",
+        data: Array.prototype.slice.call(this._arr || this, 0)
+      };
+    };
+    function base64Slice(buf, start2, end) {
+      if (start2 === 0 && end === buf.length) {
+        return base64.fromByteArray(buf);
+      } else {
+        return base64.fromByteArray(buf.slice(start2, end));
+      }
+    }
+    function utf8Slice(buf, start2, end) {
+      end = Math.min(buf.length, end);
+      const res = [];
+      let i = start2;
+      while (i < end) {
+        const firstByte = buf[i];
+        let codePoint = null;
+        let bytesPerSequence = firstByte > 239 ? 4 : firstByte > 223 ? 3 : firstByte > 191 ? 2 : 1;
+        if (i + bytesPerSequence <= end) {
+          let secondByte, thirdByte, fourthByte, tempCodePoint;
+          switch (bytesPerSequence) {
+            case 1:
+              if (firstByte < 128) {
+                codePoint = firstByte;
+              }
+              break;
+            case 2:
+              secondByte = buf[i + 1];
+              if ((secondByte & 192) === 128) {
+                tempCodePoint = (firstByte & 31) << 6 | secondByte & 63;
+                if (tempCodePoint > 127) {
+                  codePoint = tempCodePoint;
+                }
+              }
+              break;
+            case 3:
+              secondByte = buf[i + 1];
+              thirdByte = buf[i + 2];
+              if ((secondByte & 192) === 128 && (thirdByte & 192) === 128) {
+                tempCodePoint = (firstByte & 15) << 12 | (secondByte & 63) << 6 | thirdByte & 63;
+                if (tempCodePoint > 2047 && (tempCodePoint < 55296 || tempCodePoint > 57343)) {
+                  codePoint = tempCodePoint;
+                }
+              }
+              break;
+            case 4:
+              secondByte = buf[i + 1];
+              thirdByte = buf[i + 2];
+              fourthByte = buf[i + 3];
+              if ((secondByte & 192) === 128 && (thirdByte & 192) === 128 && (fourthByte & 192) === 128) {
+                tempCodePoint = (firstByte & 15) << 18 | (secondByte & 63) << 12 | (thirdByte & 63) << 6 | fourthByte & 63;
+                if (tempCodePoint > 65535 && tempCodePoint < 1114112) {
+                  codePoint = tempCodePoint;
+                }
+              }
+          }
+        }
+        if (codePoint === null) {
+          codePoint = 65533;
+          bytesPerSequence = 1;
+        } else if (codePoint > 65535) {
+          codePoint -= 65536;
+          res.push(codePoint >>> 10 & 1023 | 55296);
+          codePoint = 56320 | codePoint & 1023;
+        }
+        res.push(codePoint);
+        i += bytesPerSequence;
+      }
+      return decodeCodePointsArray(res);
+    }
+    var MAX_ARGUMENTS_LENGTH = 4096;
+    function decodeCodePointsArray(codePoints) {
+      const len = codePoints.length;
+      if (len <= MAX_ARGUMENTS_LENGTH) {
+        return String.fromCharCode.apply(String, codePoints);
+      }
+      let res = "";
+      let i = 0;
+      while (i < len) {
+        res += String.fromCharCode.apply(
+          String,
+          codePoints.slice(i, i += MAX_ARGUMENTS_LENGTH)
+        );
+      }
+      return res;
+    }
+    function asciiSlice(buf, start2, end) {
+      let ret = "";
+      end = Math.min(buf.length, end);
+      for (let i = start2; i < end; ++i) {
+        ret += String.fromCharCode(buf[i] & 127);
+      }
+      return ret;
+    }
+    function latin1Slice(buf, start2, end) {
+      let ret = "";
+      end = Math.min(buf.length, end);
+      for (let i = start2; i < end; ++i) {
+        ret += String.fromCharCode(buf[i]);
+      }
+      return ret;
+    }
+    function hexSlice(buf, start2, end) {
+      const len = buf.length;
+      if (!start2 || start2 < 0) start2 = 0;
+      if (!end || end < 0 || end > len) end = len;
+      let out2 = "";
+      for (let i = start2; i < end; ++i) {
+        out2 += hexSliceLookupTable[buf[i]];
+      }
+      return out2;
+    }
+    function utf16leSlice(buf, start2, end) {
+      const bytes3 = buf.slice(start2, end);
+      let res = "";
+      for (let i = 0; i < bytes3.length - 1; i += 2) {
+        res += String.fromCharCode(bytes3[i] + bytes3[i + 1] * 256);
+      }
+      return res;
+    }
+    Buffer2.prototype.slice = function slice(start2, end) {
+      const len = this.length;
+      start2 = ~~start2;
+      end = end === void 0 ? len : ~~end;
+      if (start2 < 0) {
+        start2 += len;
+        if (start2 < 0) start2 = 0;
+      } else if (start2 > len) {
+        start2 = len;
+      }
+      if (end < 0) {
+        end += len;
+        if (end < 0) end = 0;
+      } else if (end > len) {
+        end = len;
+      }
+      if (end < start2) end = start2;
+      const newBuf = this.subarray(start2, end);
+      Object.setPrototypeOf(newBuf, Buffer2.prototype);
+      return newBuf;
+    };
+    function checkOffset(offset, ext, length) {
+      if (offset % 1 !== 0 || offset < 0) throw new RangeError("offset is not uint");
+      if (offset + ext > length) throw new RangeError("Trying to access beyond buffer length");
+    }
+    Buffer2.prototype.readUintLE = Buffer2.prototype.readUIntLE = function readUIntLE(offset, byteLength2, noAssert) {
+      offset = offset >>> 0;
+      byteLength2 = byteLength2 >>> 0;
+      if (!noAssert) checkOffset(offset, byteLength2, this.length);
+      let val = this[offset];
+      let mul3 = 1;
+      let i = 0;
+      while (++i < byteLength2 && (mul3 *= 256)) {
+        val += this[offset + i] * mul3;
+      }
+      return val;
+    };
+    Buffer2.prototype.readUintBE = Buffer2.prototype.readUIntBE = function readUIntBE(offset, byteLength2, noAssert) {
+      offset = offset >>> 0;
+      byteLength2 = byteLength2 >>> 0;
+      if (!noAssert) {
+        checkOffset(offset, byteLength2, this.length);
+      }
+      let val = this[offset + --byteLength2];
+      let mul3 = 1;
+      while (byteLength2 > 0 && (mul3 *= 256)) {
+        val += this[offset + --byteLength2] * mul3;
+      }
+      return val;
+    };
+    Buffer2.prototype.readUint8 = Buffer2.prototype.readUInt8 = function readUInt8(offset, noAssert) {
+      offset = offset >>> 0;
+      if (!noAssert) checkOffset(offset, 1, this.length);
+      return this[offset];
+    };
+    Buffer2.prototype.readUint16LE = Buffer2.prototype.readUInt16LE = function readUInt16LE(offset, noAssert) {
+      offset = offset >>> 0;
+      if (!noAssert) checkOffset(offset, 2, this.length);
+      return this[offset] | this[offset + 1] << 8;
+    };
+    Buffer2.prototype.readUint16BE = Buffer2.prototype.readUInt16BE = function readUInt16BE(offset, noAssert) {
+      offset = offset >>> 0;
+      if (!noAssert) checkOffset(offset, 2, this.length);
+      return this[offset] << 8 | this[offset + 1];
+    };
+    Buffer2.prototype.readUint32LE = Buffer2.prototype.readUInt32LE = function readUInt32LE(offset, noAssert) {
+      offset = offset >>> 0;
+      if (!noAssert) checkOffset(offset, 4, this.length);
+      return (this[offset] | this[offset + 1] << 8 | this[offset + 2] << 16) + this[offset + 3] * 16777216;
+    };
+    Buffer2.prototype.readUint32BE = Buffer2.prototype.readUInt32BE = function readUInt32BE(offset, noAssert) {
+      offset = offset >>> 0;
+      if (!noAssert) checkOffset(offset, 4, this.length);
+      return this[offset] * 16777216 + (this[offset + 1] << 16 | this[offset + 2] << 8 | this[offset + 3]);
+    };
+    Buffer2.prototype.readBigUInt64LE = defineBigIntMethod(function readBigUInt64LE(offset) {
+      offset = offset >>> 0;
+      validateNumber(offset, "offset");
+      const first = this[offset];
+      const last = this[offset + 7];
+      if (first === void 0 || last === void 0) {
+        boundsError(offset, this.length - 8);
+      }
+      const lo = first + this[++offset] * 2 ** 8 + this[++offset] * 2 ** 16 + this[++offset] * 2 ** 24;
+      const hi = this[++offset] + this[++offset] * 2 ** 8 + this[++offset] * 2 ** 16 + last * 2 ** 24;
+      return BigInt(lo) + (BigInt(hi) << BigInt(32));
+    });
+    Buffer2.prototype.readBigUInt64BE = defineBigIntMethod(function readBigUInt64BE(offset) {
+      offset = offset >>> 0;
+      validateNumber(offset, "offset");
+      const first = this[offset];
+      const last = this[offset + 7];
+      if (first === void 0 || last === void 0) {
+        boundsError(offset, this.length - 8);
+      }
+      const hi = first * 2 ** 24 + this[++offset] * 2 ** 16 + this[++offset] * 2 ** 8 + this[++offset];
+      const lo = this[++offset] * 2 ** 24 + this[++offset] * 2 ** 16 + this[++offset] * 2 ** 8 + last;
+      return (BigInt(hi) << BigInt(32)) + BigInt(lo);
+    });
+    Buffer2.prototype.readIntLE = function readIntLE(offset, byteLength2, noAssert) {
+      offset = offset >>> 0;
+      byteLength2 = byteLength2 >>> 0;
+      if (!noAssert) checkOffset(offset, byteLength2, this.length);
+      let val = this[offset];
+      let mul3 = 1;
+      let i = 0;
+      while (++i < byteLength2 && (mul3 *= 256)) {
+        val += this[offset + i] * mul3;
+      }
+      mul3 *= 128;
+      if (val >= mul3) val -= Math.pow(2, 8 * byteLength2);
+      return val;
+    };
+    Buffer2.prototype.readIntBE = function readIntBE(offset, byteLength2, noAssert) {
+      offset = offset >>> 0;
+      byteLength2 = byteLength2 >>> 0;
+      if (!noAssert) checkOffset(offset, byteLength2, this.length);
+      let i = byteLength2;
+      let mul3 = 1;
+      let val = this[offset + --i];
+      while (i > 0 && (mul3 *= 256)) {
+        val += this[offset + --i] * mul3;
+      }
+      mul3 *= 128;
+      if (val >= mul3) val -= Math.pow(2, 8 * byteLength2);
+      return val;
+    };
+    Buffer2.prototype.readInt8 = function readInt8(offset, noAssert) {
+      offset = offset >>> 0;
+      if (!noAssert) checkOffset(offset, 1, this.length);
+      if (!(this[offset] & 128)) return this[offset];
+      return (255 - this[offset] + 1) * -1;
+    };
+    Buffer2.prototype.readInt16LE = function readInt16LE(offset, noAssert) {
+      offset = offset >>> 0;
+      if (!noAssert) checkOffset(offset, 2, this.length);
+      const val = this[offset] | this[offset + 1] << 8;
+      return val & 32768 ? val | 4294901760 : val;
+    };
+    Buffer2.prototype.readInt16BE = function readInt16BE(offset, noAssert) {
+      offset = offset >>> 0;
+      if (!noAssert) checkOffset(offset, 2, this.length);
+      const val = this[offset + 1] | this[offset] << 8;
+      return val & 32768 ? val | 4294901760 : val;
+    };
+    Buffer2.prototype.readInt32LE = function readInt32LE(offset, noAssert) {
+      offset = offset >>> 0;
+      if (!noAssert) checkOffset(offset, 4, this.length);
+      return this[offset] | this[offset + 1] << 8 | this[offset + 2] << 16 | this[offset + 3] << 24;
+    };
+    Buffer2.prototype.readInt32BE = function readInt32BE(offset, noAssert) {
+      offset = offset >>> 0;
+      if (!noAssert) checkOffset(offset, 4, this.length);
+      return this[offset] << 24 | this[offset + 1] << 16 | this[offset + 2] << 8 | this[offset + 3];
+    };
+    Buffer2.prototype.readBigInt64LE = defineBigIntMethod(function readBigInt64LE(offset) {
+      offset = offset >>> 0;
+      validateNumber(offset, "offset");
+      const first = this[offset];
+      const last = this[offset + 7];
+      if (first === void 0 || last === void 0) {
+        boundsError(offset, this.length - 8);
+      }
+      const val = this[offset + 4] + this[offset + 5] * 2 ** 8 + this[offset + 6] * 2 ** 16 + (last << 24);
+      return (BigInt(val) << BigInt(32)) + BigInt(first + this[++offset] * 2 ** 8 + this[++offset] * 2 ** 16 + this[++offset] * 2 ** 24);
+    });
+    Buffer2.prototype.readBigInt64BE = defineBigIntMethod(function readBigInt64BE(offset) {
+      offset = offset >>> 0;
+      validateNumber(offset, "offset");
+      const first = this[offset];
+      const last = this[offset + 7];
+      if (first === void 0 || last === void 0) {
+        boundsError(offset, this.length - 8);
+      }
+      const val = (first << 24) + // Overflow
+      this[++offset] * 2 ** 16 + this[++offset] * 2 ** 8 + this[++offset];
+      return (BigInt(val) << BigInt(32)) + BigInt(this[++offset] * 2 ** 24 + this[++offset] * 2 ** 16 + this[++offset] * 2 ** 8 + last);
+    });
+    Buffer2.prototype.readFloatLE = function readFloatLE(offset, noAssert) {
+      offset = offset >>> 0;
+      if (!noAssert) checkOffset(offset, 4, this.length);
+      return ieee754.read(this, offset, true, 23, 4);
+    };
+    Buffer2.prototype.readFloatBE = function readFloatBE(offset, noAssert) {
+      offset = offset >>> 0;
+      if (!noAssert) checkOffset(offset, 4, this.length);
+      return ieee754.read(this, offset, false, 23, 4);
+    };
+    Buffer2.prototype.readDoubleLE = function readDoubleLE(offset, noAssert) {
+      offset = offset >>> 0;
+      if (!noAssert) checkOffset(offset, 8, this.length);
+      return ieee754.read(this, offset, true, 52, 8);
+    };
+    Buffer2.prototype.readDoubleBE = function readDoubleBE(offset, noAssert) {
+      offset = offset >>> 0;
+      if (!noAssert) checkOffset(offset, 8, this.length);
+      return ieee754.read(this, offset, false, 52, 8);
+    };
+    function checkInt(buf, value, offset, ext, max2, min) {
+      if (!Buffer2.isBuffer(buf)) throw new TypeError('"buffer" argument must be a Buffer instance');
+      if (value > max2 || value < min) throw new RangeError('"value" argument is out of bounds');
+      if (offset + ext > buf.length) throw new RangeError("Index out of range");
+    }
+    Buffer2.prototype.writeUintLE = Buffer2.prototype.writeUIntLE = function writeUIntLE(value, offset, byteLength2, noAssert) {
+      value = +value;
+      offset = offset >>> 0;
+      byteLength2 = byteLength2 >>> 0;
+      if (!noAssert) {
+        const maxBytes = Math.pow(2, 8 * byteLength2) - 1;
+        checkInt(this, value, offset, byteLength2, maxBytes, 0);
+      }
+      let mul3 = 1;
+      let i = 0;
+      this[offset] = value & 255;
+      while (++i < byteLength2 && (mul3 *= 256)) {
+        this[offset + i] = value / mul3 & 255;
+      }
+      return offset + byteLength2;
+    };
+    Buffer2.prototype.writeUintBE = Buffer2.prototype.writeUIntBE = function writeUIntBE(value, offset, byteLength2, noAssert) {
+      value = +value;
+      offset = offset >>> 0;
+      byteLength2 = byteLength2 >>> 0;
+      if (!noAssert) {
+        const maxBytes = Math.pow(2, 8 * byteLength2) - 1;
+        checkInt(this, value, offset, byteLength2, maxBytes, 0);
+      }
+      let i = byteLength2 - 1;
+      let mul3 = 1;
+      this[offset + i] = value & 255;
+      while (--i >= 0 && (mul3 *= 256)) {
+        this[offset + i] = value / mul3 & 255;
+      }
+      return offset + byteLength2;
+    };
+    Buffer2.prototype.writeUint8 = Buffer2.prototype.writeUInt8 = function writeUInt8(value, offset, noAssert) {
+      value = +value;
+      offset = offset >>> 0;
+      if (!noAssert) checkInt(this, value, offset, 1, 255, 0);
+      this[offset] = value & 255;
+      return offset + 1;
+    };
+    Buffer2.prototype.writeUint16LE = Buffer2.prototype.writeUInt16LE = function writeUInt16LE(value, offset, noAssert) {
+      value = +value;
+      offset = offset >>> 0;
+      if (!noAssert) checkInt(this, value, offset, 2, 65535, 0);
+      this[offset] = value & 255;
+      this[offset + 1] = value >>> 8;
+      return offset + 2;
+    };
+    Buffer2.prototype.writeUint16BE = Buffer2.prototype.writeUInt16BE = function writeUInt16BE(value, offset, noAssert) {
+      value = +value;
+      offset = offset >>> 0;
+      if (!noAssert) checkInt(this, value, offset, 2, 65535, 0);
+      this[offset] = value >>> 8;
+      this[offset + 1] = value & 255;
+      return offset + 2;
+    };
+    Buffer2.prototype.writeUint32LE = Buffer2.prototype.writeUInt32LE = function writeUInt32LE(value, offset, noAssert) {
+      value = +value;
+      offset = offset >>> 0;
+      if (!noAssert) checkInt(this, value, offset, 4, 4294967295, 0);
+      this[offset + 3] = value >>> 24;
+      this[offset + 2] = value >>> 16;
+      this[offset + 1] = value >>> 8;
+      this[offset] = value & 255;
+      return offset + 4;
+    };
+    Buffer2.prototype.writeUint32BE = Buffer2.prototype.writeUInt32BE = function writeUInt32BE(value, offset, noAssert) {
+      value = +value;
+      offset = offset >>> 0;
+      if (!noAssert) checkInt(this, value, offset, 4, 4294967295, 0);
+      this[offset] = value >>> 24;
+      this[offset + 1] = value >>> 16;
+      this[offset + 2] = value >>> 8;
+      this[offset + 3] = value & 255;
+      return offset + 4;
+    };
+    function wrtBigUInt64LE(buf, value, offset, min, max2) {
+      checkIntBI(value, min, max2, buf, offset, 7);
+      let lo = Number(value & BigInt(4294967295));
+      buf[offset++] = lo;
+      lo = lo >> 8;
+      buf[offset++] = lo;
+      lo = lo >> 8;
+      buf[offset++] = lo;
+      lo = lo >> 8;
+      buf[offset++] = lo;
+      let hi = Number(value >> BigInt(32) & BigInt(4294967295));
+      buf[offset++] = hi;
+      hi = hi >> 8;
+      buf[offset++] = hi;
+      hi = hi >> 8;
+      buf[offset++] = hi;
+      hi = hi >> 8;
+      buf[offset++] = hi;
+      return offset;
+    }
+    function wrtBigUInt64BE(buf, value, offset, min, max2) {
+      checkIntBI(value, min, max2, buf, offset, 7);
+      let lo = Number(value & BigInt(4294967295));
+      buf[offset + 7] = lo;
+      lo = lo >> 8;
+      buf[offset + 6] = lo;
+      lo = lo >> 8;
+      buf[offset + 5] = lo;
+      lo = lo >> 8;
+      buf[offset + 4] = lo;
+      let hi = Number(value >> BigInt(32) & BigInt(4294967295));
+      buf[offset + 3] = hi;
+      hi = hi >> 8;
+      buf[offset + 2] = hi;
+      hi = hi >> 8;
+      buf[offset + 1] = hi;
+      hi = hi >> 8;
+      buf[offset] = hi;
+      return offset + 8;
+    }
+    Buffer2.prototype.writeBigUInt64LE = defineBigIntMethod(function writeBigUInt64LE(value, offset = 0) {
+      return wrtBigUInt64LE(this, value, offset, BigInt(0), BigInt("0xffffffffffffffff"));
+    });
+    Buffer2.prototype.writeBigUInt64BE = defineBigIntMethod(function writeBigUInt64BE(value, offset = 0) {
+      return wrtBigUInt64BE(this, value, offset, BigInt(0), BigInt("0xffffffffffffffff"));
+    });
+    Buffer2.prototype.writeIntLE = function writeIntLE(value, offset, byteLength2, noAssert) {
+      value = +value;
+      offset = offset >>> 0;
+      if (!noAssert) {
+        const limit2 = Math.pow(2, 8 * byteLength2 - 1);
+        checkInt(this, value, offset, byteLength2, limit2 - 1, -limit2);
+      }
+      let i = 0;
+      let mul3 = 1;
+      let sub = 0;
+      this[offset] = value & 255;
+      while (++i < byteLength2 && (mul3 *= 256)) {
+        if (value < 0 && sub === 0 && this[offset + i - 1] !== 0) {
+          sub = 1;
+        }
+        this[offset + i] = (value / mul3 >> 0) - sub & 255;
+      }
+      return offset + byteLength2;
+    };
+    Buffer2.prototype.writeIntBE = function writeIntBE(value, offset, byteLength2, noAssert) {
+      value = +value;
+      offset = offset >>> 0;
+      if (!noAssert) {
+        const limit2 = Math.pow(2, 8 * byteLength2 - 1);
+        checkInt(this, value, offset, byteLength2, limit2 - 1, -limit2);
+      }
+      let i = byteLength2 - 1;
+      let mul3 = 1;
+      let sub = 0;
+      this[offset + i] = value & 255;
+      while (--i >= 0 && (mul3 *= 256)) {
+        if (value < 0 && sub === 0 && this[offset + i + 1] !== 0) {
+          sub = 1;
+        }
+        this[offset + i] = (value / mul3 >> 0) - sub & 255;
+      }
+      return offset + byteLength2;
+    };
+    Buffer2.prototype.writeInt8 = function writeInt8(value, offset, noAssert) {
+      value = +value;
+      offset = offset >>> 0;
+      if (!noAssert) checkInt(this, value, offset, 1, 127, -128);
+      if (value < 0) value = 255 + value + 1;
+      this[offset] = value & 255;
+      return offset + 1;
+    };
+    Buffer2.prototype.writeInt16LE = function writeInt16LE(value, offset, noAssert) {
+      value = +value;
+      offset = offset >>> 0;
+      if (!noAssert) checkInt(this, value, offset, 2, 32767, -32768);
+      this[offset] = value & 255;
+      this[offset + 1] = value >>> 8;
+      return offset + 2;
+    };
+    Buffer2.prototype.writeInt16BE = function writeInt16BE(value, offset, noAssert) {
+      value = +value;
+      offset = offset >>> 0;
+      if (!noAssert) checkInt(this, value, offset, 2, 32767, -32768);
+      this[offset] = value >>> 8;
+      this[offset + 1] = value & 255;
+      return offset + 2;
+    };
+    Buffer2.prototype.writeInt32LE = function writeInt32LE(value, offset, noAssert) {
+      value = +value;
+      offset = offset >>> 0;
+      if (!noAssert) checkInt(this, value, offset, 4, 2147483647, -2147483648);
+      this[offset] = value & 255;
+      this[offset + 1] = value >>> 8;
+      this[offset + 2] = value >>> 16;
+      this[offset + 3] = value >>> 24;
+      return offset + 4;
+    };
+    Buffer2.prototype.writeInt32BE = function writeInt32BE(value, offset, noAssert) {
+      value = +value;
+      offset = offset >>> 0;
+      if (!noAssert) checkInt(this, value, offset, 4, 2147483647, -2147483648);
+      if (value < 0) value = 4294967295 + value + 1;
+      this[offset] = value >>> 24;
+      this[offset + 1] = value >>> 16;
+      this[offset + 2] = value >>> 8;
+      this[offset + 3] = value & 255;
+      return offset + 4;
+    };
+    Buffer2.prototype.writeBigInt64LE = defineBigIntMethod(function writeBigInt64LE(value, offset = 0) {
+      return wrtBigUInt64LE(this, value, offset, -BigInt("0x8000000000000000"), BigInt("0x7fffffffffffffff"));
+    });
+    Buffer2.prototype.writeBigInt64BE = defineBigIntMethod(function writeBigInt64BE(value, offset = 0) {
+      return wrtBigUInt64BE(this, value, offset, -BigInt("0x8000000000000000"), BigInt("0x7fffffffffffffff"));
+    });
+    function checkIEEE754(buf, value, offset, ext, max2, min) {
+      if (offset + ext > buf.length) throw new RangeError("Index out of range");
+      if (offset < 0) throw new RangeError("Index out of range");
+    }
+    function writeFloat(buf, value, offset, littleEndian, noAssert) {
+      value = +value;
+      offset = offset >>> 0;
+      if (!noAssert) {
+        checkIEEE754(buf, value, offset, 4, 34028234663852886e22, -34028234663852886e22);
+      }
+      ieee754.write(buf, value, offset, littleEndian, 23, 4);
+      return offset + 4;
+    }
+    Buffer2.prototype.writeFloatLE = function writeFloatLE(value, offset, noAssert) {
+      return writeFloat(this, value, offset, true, noAssert);
+    };
+    Buffer2.prototype.writeFloatBE = function writeFloatBE(value, offset, noAssert) {
+      return writeFloat(this, value, offset, false, noAssert);
+    };
+    function writeDouble(buf, value, offset, littleEndian, noAssert) {
+      value = +value;
+      offset = offset >>> 0;
+      if (!noAssert) {
+        checkIEEE754(buf, value, offset, 8, 17976931348623157e292, -17976931348623157e292);
+      }
+      ieee754.write(buf, value, offset, littleEndian, 52, 8);
+      return offset + 8;
+    }
+    Buffer2.prototype.writeDoubleLE = function writeDoubleLE(value, offset, noAssert) {
+      return writeDouble(this, value, offset, true, noAssert);
+    };
+    Buffer2.prototype.writeDoubleBE = function writeDoubleBE(value, offset, noAssert) {
+      return writeDouble(this, value, offset, false, noAssert);
+    };
+    Buffer2.prototype.copy = function copy(target, targetStart, start2, end) {
+      if (!Buffer2.isBuffer(target)) throw new TypeError("argument should be a Buffer");
+      if (!start2) start2 = 0;
+      if (!end && end !== 0) end = this.length;
+      if (targetStart >= target.length) targetStart = target.length;
+      if (!targetStart) targetStart = 0;
+      if (end > 0 && end < start2) end = start2;
+      if (end === start2) return 0;
+      if (target.length === 0 || this.length === 0) return 0;
+      if (targetStart < 0) {
+        throw new RangeError("targetStart out of bounds");
+      }
+      if (start2 < 0 || start2 >= this.length) throw new RangeError("Index out of range");
+      if (end < 0) throw new RangeError("sourceEnd out of bounds");
+      if (end > this.length) end = this.length;
+      if (target.length - targetStart < end - start2) {
+        end = target.length - targetStart + start2;
+      }
+      const len = end - start2;
+      if (this === target && typeof Uint8Array.prototype.copyWithin === "function") {
+        this.copyWithin(targetStart, start2, end);
+      } else {
+        Uint8Array.prototype.set.call(
+          target,
+          this.subarray(start2, end),
+          targetStart
+        );
+      }
+      return len;
+    };
+    Buffer2.prototype.fill = function fill(val, start2, end, encoding) {
+      if (typeof val === "string") {
+        if (typeof start2 === "string") {
+          encoding = start2;
+          start2 = 0;
+          end = this.length;
+        } else if (typeof end === "string") {
+          encoding = end;
+          end = this.length;
+        }
+        if (encoding !== void 0 && typeof encoding !== "string") {
+          throw new TypeError("encoding must be a string");
+        }
+        if (typeof encoding === "string" && !Buffer2.isEncoding(encoding)) {
+          throw new TypeError("Unknown encoding: " + encoding);
+        }
+        if (val.length === 1) {
+          const code = val.charCodeAt(0);
+          if (encoding === "utf8" && code < 128 || encoding === "latin1") {
+            val = code;
+          }
+        }
+      } else if (typeof val === "number") {
+        val = val & 255;
+      } else if (typeof val === "boolean") {
+        val = Number(val);
+      }
+      if (start2 < 0 || this.length < start2 || this.length < end) {
+        throw new RangeError("Out of range index");
+      }
+      if (end <= start2) {
+        return this;
+      }
+      start2 = start2 >>> 0;
+      end = end === void 0 ? this.length : end >>> 0;
+      if (!val) val = 0;
+      let i;
+      if (typeof val === "number") {
+        for (i = start2; i < end; ++i) {
+          this[i] = val;
+        }
+      } else {
+        const bytes3 = Buffer2.isBuffer(val) ? val : Buffer2.from(val, encoding);
+        const len = bytes3.length;
+        if (len === 0) {
+          throw new TypeError('The value "' + val + '" is invalid for argument "value"');
+        }
+        for (i = 0; i < end - start2; ++i) {
+          this[i + start2] = bytes3[i % len];
+        }
+      }
+      return this;
+    };
+    var errors = {};
+    function E(sym, getMessage, Base) {
+      errors[sym] = class NodeError extends Base {
+        constructor() {
+          super();
+          Object.defineProperty(this, "message", {
+            value: getMessage.apply(this, arguments),
+            writable: true,
+            configurable: true
+          });
+          this.name = `${this.name} [${sym}]`;
+          this.stack;
+          delete this.name;
+        }
+        get code() {
+          return sym;
+        }
+        set code(value) {
+          Object.defineProperty(this, "code", {
+            configurable: true,
+            enumerable: true,
+            value,
+            writable: true
+          });
+        }
+        toString() {
+          return `${this.name} [${sym}]: ${this.message}`;
+        }
+      };
+    }
+    E(
+      "ERR_BUFFER_OUT_OF_BOUNDS",
+      function(name) {
+        if (name) {
+          return `${name} is outside of buffer bounds`;
+        }
+        return "Attempt to access memory outside buffer bounds";
+      },
+      RangeError
+    );
+    E(
+      "ERR_INVALID_ARG_TYPE",
+      function(name, actual) {
+        return `The "${name}" argument must be of type number. Received type ${typeof actual}`;
+      },
+      TypeError
+    );
+    E(
+      "ERR_OUT_OF_RANGE",
+      function(str, range, input) {
+        let msg = `The value of "${str}" is out of range.`;
+        let received = input;
+        if (Number.isInteger(input) && Math.abs(input) > 2 ** 32) {
+          received = addNumericalSeparator(String(input));
+        } else if (typeof input === "bigint") {
+          received = String(input);
+          if (input > BigInt(2) ** BigInt(32) || input < -(BigInt(2) ** BigInt(32))) {
+            received = addNumericalSeparator(received);
+          }
+          received += "n";
+        }
+        msg += ` It must be ${range}. Received ${received}`;
+        return msg;
+      },
+      RangeError
+    );
+    function addNumericalSeparator(val) {
+      let res = "";
+      let i = val.length;
+      const start2 = val[0] === "-" ? 1 : 0;
+      for (; i >= start2 + 4; i -= 3) {
+        res = `_${val.slice(i - 3, i)}${res}`;
+      }
+      return `${val.slice(0, i)}${res}`;
+    }
+    function checkBounds(buf, offset, byteLength2) {
+      validateNumber(offset, "offset");
+      if (buf[offset] === void 0 || buf[offset + byteLength2] === void 0) {
+        boundsError(offset, buf.length - (byteLength2 + 1));
+      }
+    }
+    function checkIntBI(value, min, max2, buf, offset, byteLength2) {
+      if (value > max2 || value < min) {
+        const n = typeof min === "bigint" ? "n" : "";
+        let range;
+        if (byteLength2 > 3) {
+          if (min === 0 || min === BigInt(0)) {
+            range = `>= 0${n} and < 2${n} ** ${(byteLength2 + 1) * 8}${n}`;
+          } else {
+            range = `>= -(2${n} ** ${(byteLength2 + 1) * 8 - 1}${n}) and < 2 ** ${(byteLength2 + 1) * 8 - 1}${n}`;
+          }
+        } else {
+          range = `>= ${min}${n} and <= ${max2}${n}`;
+        }
+        throw new errors.ERR_OUT_OF_RANGE("value", range, value);
+      }
+      checkBounds(buf, offset, byteLength2);
+    }
+    function validateNumber(value, name) {
+      if (typeof value !== "number") {
+        throw new errors.ERR_INVALID_ARG_TYPE(name, "number", value);
+      }
+    }
+    function boundsError(value, length, type) {
+      if (Math.floor(value) !== value) {
+        validateNumber(value, type);
+        throw new errors.ERR_OUT_OF_RANGE(type || "offset", "an integer", value);
+      }
+      if (length < 0) {
+        throw new errors.ERR_BUFFER_OUT_OF_BOUNDS();
+      }
+      throw new errors.ERR_OUT_OF_RANGE(
+        type || "offset",
+        `>= ${type ? 1 : 0} and <= ${length}`,
+        value
+      );
+    }
+    var INVALID_BASE64_RE = /[^+/0-9A-Za-z-_]/g;
+    function base64clean(str) {
+      str = str.split("=")[0];
+      str = str.trim().replace(INVALID_BASE64_RE, "");
+      if (str.length < 2) return "";
+      while (str.length % 4 !== 0) {
+        str = str + "=";
+      }
+      return str;
+    }
+    function utf8ToBytes3(string, units) {
+      units = units || Infinity;
+      let codePoint;
+      const length = string.length;
+      let leadSurrogate = null;
+      const bytes3 = [];
+      for (let i = 0; i < length; ++i) {
+        codePoint = string.charCodeAt(i);
+        if (codePoint > 55295 && codePoint < 57344) {
+          if (!leadSurrogate) {
+            if (codePoint > 56319) {
+              if ((units -= 3) > -1) bytes3.push(239, 191, 189);
+              continue;
+            } else if (i + 1 === length) {
+              if ((units -= 3) > -1) bytes3.push(239, 191, 189);
+              continue;
+            }
+            leadSurrogate = codePoint;
+            continue;
+          }
+          if (codePoint < 56320) {
+            if ((units -= 3) > -1) bytes3.push(239, 191, 189);
+            leadSurrogate = codePoint;
+            continue;
+          }
+          codePoint = (leadSurrogate - 55296 << 10 | codePoint - 56320) + 65536;
+        } else if (leadSurrogate) {
+          if ((units -= 3) > -1) bytes3.push(239, 191, 189);
+        }
+        leadSurrogate = null;
+        if (codePoint < 128) {
+          if ((units -= 1) < 0) break;
+          bytes3.push(codePoint);
+        } else if (codePoint < 2048) {
+          if ((units -= 2) < 0) break;
+          bytes3.push(
+            codePoint >> 6 | 192,
+            codePoint & 63 | 128
+          );
+        } else if (codePoint < 65536) {
+          if ((units -= 3) < 0) break;
+          bytes3.push(
+            codePoint >> 12 | 224,
+            codePoint >> 6 & 63 | 128,
+            codePoint & 63 | 128
+          );
+        } else if (codePoint < 1114112) {
+          if ((units -= 4) < 0) break;
+          bytes3.push(
+            codePoint >> 18 | 240,
+            codePoint >> 12 & 63 | 128,
+            codePoint >> 6 & 63 | 128,
+            codePoint & 63 | 128
+          );
+        } else {
+          throw new Error("Invalid code point");
+        }
+      }
+      return bytes3;
+    }
+    function asciiToBytes(str) {
+      const byteArray = [];
+      for (let i = 0; i < str.length; ++i) {
+        byteArray.push(str.charCodeAt(i) & 255);
+      }
+      return byteArray;
+    }
+    function utf16leToBytes(str, units) {
+      let c, hi, lo;
+      const byteArray = [];
+      for (let i = 0; i < str.length; ++i) {
+        if ((units -= 2) < 0) break;
+        c = str.charCodeAt(i);
+        hi = c >> 8;
+        lo = c % 256;
+        byteArray.push(lo);
+        byteArray.push(hi);
+      }
+      return byteArray;
+    }
+    function base64ToBytes(str) {
+      return base64.toByteArray(base64clean(str));
+    }
+    function blitBuffer(src, dst, offset, length) {
+      let i;
+      for (i = 0; i < length; ++i) {
+        if (i + offset >= dst.length || i >= src.length) break;
+        dst[i + offset] = src[i];
+      }
+      return i;
+    }
+    function isInstance(obj, type) {
+      return obj instanceof type || obj != null && obj.constructor != null && obj.constructor.name != null && obj.constructor.name === type.name;
+    }
+    function numberIsNaN(obj) {
+      return obj !== obj;
+    }
+    var hexSliceLookupTable = function() {
+      const alphabet = "0123456789abcdef";
+      const table = new Array(256);
+      for (let i = 0; i < 16; ++i) {
+        const i16 = i * 16;
+        for (let j = 0; j < 16; ++j) {
+          table[i16 + j] = alphabet[i] + alphabet[j];
+        }
+      }
+      return table;
+    }();
+    function defineBigIntMethod(fn) {
+      return typeof BigInt === "undefined" ? BufferBigIntNotDefined : fn;
+    }
+    function BufferBigIntNotDefined() {
+      throw new Error("BigInt not supported");
+    }
+  }
+});
+
+// local/shims/globals-inject.js
+var import_buffer, proc;
+var init_globals_inject = __esm({
+  "local/shims/globals-inject.js"() {
+    import_buffer = __toESM(require_buffer());
+    proc = { env: {}, versions: {}, on() {
+    }, exit() {
+    }, stdout: { write() {
+    } } };
+  }
+});
+
+// local/shims/fs.js
+var fs_exports = {};
+__export(fs_exports, {
+  chmodSync: () => chmodSync,
+  default: () => fs_default,
+  existsSync: () => existsSync,
+  mkdirSync: () => mkdirSync,
+  readFileSync: () => readFileSync,
+  statSync: () => statSync,
+  unlinkSync: () => unlinkSync,
+  writeFileSync: () => writeFileSync
+});
+var nofs, existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, statSync, unlinkSync, fs_default;
+var init_fs = __esm({
+  "local/shims/fs.js"() {
+    init_globals_inject();
+    nofs = () => {
+      const e = new Error("ENOENT: no filesystem in local mode");
+      e.code = "ENOENT";
+      throw e;
+    };
+    existsSync = () => false;
+    readFileSync = nofs;
+    writeFileSync = () => {
+    };
+    mkdirSync = () => {
+    };
+    chmodSync = () => {
+    };
+    statSync = nofs;
+    unlinkSync = () => {
+    };
+    fs_default = { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, statSync, unlinkSync };
+  }
+});
+
+// local/shims/path.js
+var path_exports = {};
+__export(path_exports, {
+  basename: () => basename,
+  default: () => path_default,
+  dirname: () => dirname,
+  extname: () => extname,
+  join: () => join,
+  resolve: () => resolve,
+  sep: () => sep
+});
+function join(...p) {
+  return p.filter(Boolean).join("/").replace(/\/+/g, "/");
+}
+function resolve(...p) {
+  return join(...p);
+}
+function dirname(p) {
+  return p.split("/").slice(0, -1).join("/") || "/";
+}
+function extname(p) {
+  const m = /\.[^./]+$/.exec(p);
+  return m ? m[0] : "";
+}
+function basename(p) {
+  return p.split("/").pop();
+}
+var sep, path_default;
+var init_path = __esm({
+  "local/shims/path.js"() {
+    init_globals_inject();
+    sep = "/";
+    path_default = { join, resolve, dirname, extname, basename, sep };
+  }
+});
+
+// node_modules/@noble/ciphers/esm/_assert.js
+function isBytes(a) {
+  return a instanceof Uint8Array || a != null && typeof a === "object" && a.constructor.name === "Uint8Array";
+}
+function bytes(b, ...lengths) {
+  if (!isBytes(b))
+    throw new Error("Uint8Array expected");
+  if (lengths.length > 0 && !lengths.includes(b.length))
+    throw new Error(`Uint8Array expected of length ${lengths}, not of length=${b.length}`);
+}
+function exists(instance, checkFinished = true) {
+  if (instance.destroyed)
+    throw new Error("Hash instance has been destroyed");
+  if (checkFinished && instance.finished)
+    throw new Error("Hash#digest() has already been called");
+}
+function output(out2, instance) {
+  bytes(out2);
+  const min = instance.outputLen;
+  if (out2.length < min) {
+    throw new Error(`digestInto() expects output buffer of length at least ${min}`);
+  }
+}
+var init_assert = __esm({
+  "node_modules/@noble/ciphers/esm/_assert.js"() {
+    init_globals_inject();
+  }
+});
+
+// node_modules/@noble/ciphers/esm/utils.js
+function utf8ToBytes(str) {
+  if (typeof str !== "string")
+    throw new Error(`string expected, got ${typeof str}`);
+  return new Uint8Array(new TextEncoder().encode(str));
+}
+function toBytes(data) {
+  if (typeof data === "string")
+    data = utf8ToBytes(data);
+  else if (isBytes(data))
+    data = copyBytes(data);
+  else
+    throw new Error(`Uint8Array expected, got ${typeof data}`);
+  return data;
+}
+function concatBytes(...arrays) {
+  let sum = 0;
+  for (let i = 0; i < arrays.length; i++) {
+    const a = arrays[i];
+    bytes(a);
+    sum += a.length;
+  }
+  const res = new Uint8Array(sum);
+  for (let i = 0, pad = 0; i < arrays.length; i++) {
+    const a = arrays[i];
+    res.set(a, pad);
+    pad += a.length;
+  }
+  return res;
+}
+function equalBytes(a, b) {
+  if (a.length !== b.length)
+    return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++)
+    diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+function setBigUint64(view, byteOffset, value, isLE3) {
+  if (typeof view.setBigUint64 === "function")
+    return view.setBigUint64(byteOffset, value, isLE3);
+  const _32n = BigInt(32);
+  const _u32_max = BigInt(4294967295);
+  const wh = Number(value >> _32n & _u32_max);
+  const wl = Number(value & _u32_max);
+  const h = isLE3 ? 4 : 0;
+  const l = isLE3 ? 0 : 4;
+  view.setUint32(byteOffset + h, wh, isLE3);
+  view.setUint32(byteOffset + l, wl, isLE3);
+}
+function isAligned32(bytes3) {
+  return bytes3.byteOffset % 4 === 0;
+}
+function copyBytes(bytes3) {
+  return Uint8Array.from(bytes3);
+}
+function clean(...arrays) {
+  for (let i = 0; i < arrays.length; i++) {
+    arrays[i].fill(0);
+  }
+}
+var u8, u32, createView, isLE, wrapCipher;
+var init_utils = __esm({
+  "node_modules/@noble/ciphers/esm/utils.js"() {
+    init_globals_inject();
+    init_assert();
+    u8 = (arr) => new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
+    u32 = (arr) => new Uint32Array(arr.buffer, arr.byteOffset, Math.floor(arr.byteLength / 4));
+    createView = (arr) => new DataView(arr.buffer, arr.byteOffset, arr.byteLength);
+    isLE = new Uint8Array(new Uint32Array([287454020]).buffer)[0] === 68;
+    if (!isLE)
+      throw new Error("Non little-endian hardware is not supported");
+    wrapCipher = /* @__NO_SIDE_EFFECTS__ */ (params, c) => {
+      Object.assign(c, params);
+      return c;
+    };
+  }
+});
+
+// node_modules/@noble/ciphers/esm/_polyval.js
+function _toGHASHKey(k) {
+  k.reverse();
+  const hiBit = k[15] & 1;
+  let carry = 0;
+  for (let i = 0; i < k.length; i++) {
+    const t = k[i];
+    k[i] = t >>> 1 | carry;
+    carry = (t & 1) << 7;
+  }
+  k[0] ^= -hiBit & 225;
+  return k;
+}
+function wrapConstructorWithKey(hashCons) {
+  const hashC = (msg, key) => hashCons(key, msg.length).update(toBytes(msg)).digest();
+  const tmp = hashCons(new Uint8Array(16), 0);
+  hashC.outputLen = tmp.outputLen;
+  hashC.blockLen = tmp.blockLen;
+  hashC.create = (key, expectedLength) => hashCons(key, expectedLength);
+  return hashC;
+}
+var BLOCK_SIZE, ZEROS16, ZEROS32, POLY, mul2, swapLE, estimateWindow, GHASH, Polyval, ghash, polyval;
+var init_polyval = __esm({
+  "node_modules/@noble/ciphers/esm/_polyval.js"() {
+    init_globals_inject();
+    init_assert();
+    init_utils();
+    BLOCK_SIZE = 16;
+    ZEROS16 = /* @__PURE__ */ new Uint8Array(16);
+    ZEROS32 = u32(ZEROS16);
+    POLY = 225;
+    mul2 = (s0, s1, s2, s3) => {
+      const hiBit = s3 & 1;
+      return {
+        s3: s2 << 31 | s3 >>> 1,
+        s2: s1 << 31 | s2 >>> 1,
+        s1: s0 << 31 | s1 >>> 1,
+        s0: s0 >>> 1 ^ POLY << 24 & -(hiBit & 1)
+        // reduce % poly
+      };
+    };
+    swapLE = (n) => (n >>> 0 & 255) << 24 | (n >>> 8 & 255) << 16 | (n >>> 16 & 255) << 8 | n >>> 24 & 255 | 0;
+    estimateWindow = (bytes3) => {
+      if (bytes3 > 64 * 1024)
+        return 8;
+      if (bytes3 > 1024)
+        return 4;
+      return 2;
+    };
+    GHASH = class {
+      // We select bits per window adaptively based on expectedLength
+      constructor(key, expectedLength) {
+        this.blockLen = BLOCK_SIZE;
+        this.outputLen = BLOCK_SIZE;
+        this.s0 = 0;
+        this.s1 = 0;
+        this.s2 = 0;
+        this.s3 = 0;
+        this.finished = false;
+        key = toBytes(key);
+        bytes(key, 16);
+        const kView = createView(key);
+        let k0 = kView.getUint32(0, false);
+        let k1 = kView.getUint32(4, false);
+        let k2 = kView.getUint32(8, false);
+        let k3 = kView.getUint32(12, false);
+        const doubles = [];
+        for (let i = 0; i < 128; i++) {
+          doubles.push({ s0: swapLE(k0), s1: swapLE(k1), s2: swapLE(k2), s3: swapLE(k3) });
+          ({ s0: k0, s1: k1, s2: k2, s3: k3 } = mul2(k0, k1, k2, k3));
+        }
+        const W = estimateWindow(expectedLength || 1024);
+        if (![1, 2, 4, 8].includes(W))
+          throw new Error(`ghash: wrong window size=${W}, should be 2, 4 or 8`);
+        this.W = W;
+        const bits2 = 128;
+        const windows = bits2 / W;
+        const windowSize = this.windowSize = 2 ** W;
+        const items = [];
+        for (let w = 0; w < windows; w++) {
+          for (let byte = 0; byte < windowSize; byte++) {
+            let s0 = 0, s1 = 0, s2 = 0, s3 = 0;
+            for (let j = 0; j < W; j++) {
+              const bit = byte >>> W - j - 1 & 1;
+              if (!bit)
+                continue;
+              const { s0: d0, s1: d1, s2: d2, s3: d3 } = doubles[W * w + j];
+              s0 ^= d0, s1 ^= d1, s2 ^= d2, s3 ^= d3;
+            }
+            items.push({ s0, s1, s2, s3 });
+          }
+        }
+        this.t = items;
+      }
+      _updateBlock(s0, s1, s2, s3) {
+        s0 ^= this.s0, s1 ^= this.s1, s2 ^= this.s2, s3 ^= this.s3;
+        const { W, t, windowSize } = this;
+        let o0 = 0, o1 = 0, o2 = 0, o3 = 0;
+        const mask = (1 << W) - 1;
+        let w = 0;
+        for (const num of [s0, s1, s2, s3]) {
+          for (let bytePos = 0; bytePos < 4; bytePos++) {
+            const byte = num >>> 8 * bytePos & 255;
+            for (let bitPos = 8 / W - 1; bitPos >= 0; bitPos--) {
+              const bit = byte >>> W * bitPos & mask;
+              const { s0: e0, s1: e1, s2: e2, s3: e3 } = t[w * windowSize + bit];
+              o0 ^= e0, o1 ^= e1, o2 ^= e2, o3 ^= e3;
+              w += 1;
+            }
+          }
+        }
+        this.s0 = o0;
+        this.s1 = o1;
+        this.s2 = o2;
+        this.s3 = o3;
+      }
+      update(data) {
+        data = toBytes(data);
+        exists(this);
+        const b32 = u32(data);
+        const blocks = Math.floor(data.length / BLOCK_SIZE);
+        const left = data.length % BLOCK_SIZE;
+        for (let i = 0; i < blocks; i++) {
+          this._updateBlock(b32[i * 4 + 0], b32[i * 4 + 1], b32[i * 4 + 2], b32[i * 4 + 3]);
+        }
+        if (left) {
+          ZEROS16.set(data.subarray(blocks * BLOCK_SIZE));
+          this._updateBlock(ZEROS32[0], ZEROS32[1], ZEROS32[2], ZEROS32[3]);
+          clean(ZEROS32);
+        }
+        return this;
+      }
+      destroy() {
+        const { t } = this;
+        for (const elm of t) {
+          elm.s0 = 0, elm.s1 = 0, elm.s2 = 0, elm.s3 = 0;
+        }
+      }
+      digestInto(out2) {
+        exists(this);
+        output(out2, this);
+        this.finished = true;
+        const { s0, s1, s2, s3 } = this;
+        const o32 = u32(out2);
+        o32[0] = s0;
+        o32[1] = s1;
+        o32[2] = s2;
+        o32[3] = s3;
+        return out2;
+      }
+      digest() {
+        const res = new Uint8Array(BLOCK_SIZE);
+        this.digestInto(res);
+        this.destroy();
+        return res;
+      }
+    };
+    Polyval = class extends GHASH {
+      constructor(key, expectedLength) {
+        key = toBytes(key);
+        const ghKey = _toGHASHKey(copyBytes(key));
+        super(ghKey, expectedLength);
+        clean(ghKey);
+      }
+      update(data) {
+        data = toBytes(data);
+        exists(this);
+        const b32 = u32(data);
+        const left = data.length % BLOCK_SIZE;
+        const blocks = Math.floor(data.length / BLOCK_SIZE);
+        for (let i = 0; i < blocks; i++) {
+          this._updateBlock(swapLE(b32[i * 4 + 3]), swapLE(b32[i * 4 + 2]), swapLE(b32[i * 4 + 1]), swapLE(b32[i * 4 + 0]));
+        }
+        if (left) {
+          ZEROS16.set(data.subarray(blocks * BLOCK_SIZE));
+          this._updateBlock(swapLE(ZEROS32[3]), swapLE(ZEROS32[2]), swapLE(ZEROS32[1]), swapLE(ZEROS32[0]));
+          clean(ZEROS32);
+        }
+        return this;
+      }
+      digestInto(out2) {
+        exists(this);
+        output(out2, this);
+        this.finished = true;
+        const { s0, s1, s2, s3 } = this;
+        const o32 = u32(out2);
+        o32[0] = s0;
+        o32[1] = s1;
+        o32[2] = s2;
+        o32[3] = s3;
+        return out2.reverse();
+      }
+    };
+    ghash = wrapConstructorWithKey((key, expectedLength) => new GHASH(key, expectedLength));
+    polyval = wrapConstructorWithKey((key, expectedLength) => new Polyval(key, expectedLength));
+  }
+});
+
+// node_modules/@noble/ciphers/esm/aes.js
+function mul22(n) {
+  return n << 1 ^ POLY2 & -(n >> 7);
+}
+function mul(a, b) {
+  let res = 0;
+  for (; b > 0; b >>= 1) {
+    res ^= a & -(b & 1);
+    a = mul22(a);
+  }
+  return res;
+}
+function genTtable(sbox2, fn) {
+  if (sbox2.length !== 256)
+    throw new Error("Wrong sbox length");
+  const T0 = new Uint32Array(256).map((_, j) => fn(sbox2[j]));
+  const T1 = T0.map(rotl32_8);
+  const T2 = T1.map(rotl32_8);
+  const T3 = T2.map(rotl32_8);
+  const T01 = new Uint32Array(256 * 256);
+  const T23 = new Uint32Array(256 * 256);
+  const sbox22 = new Uint16Array(256 * 256);
+  for (let i = 0; i < 256; i++) {
+    for (let j = 0; j < 256; j++) {
+      const idx = i * 256 + j;
+      T01[idx] = T0[i] ^ T1[j];
+      T23[idx] = T2[i] ^ T3[j];
+      sbox22[idx] = sbox2[i] << 8 | sbox2[j];
+    }
+  }
+  return { sbox: sbox2, sbox2: sbox22, T0, T1, T2, T3, T01, T23 };
+}
+function expandKeyLE(key) {
+  bytes(key);
+  const len = key.length;
+  if (![16, 24, 32].includes(len))
+    throw new Error(`aes: wrong key size: should be 16, 24 or 32, got: ${len}`);
+  const { sbox2 } = tableEncoding;
+  const toClean = [];
+  if (!isAligned32(key))
+    toClean.push(key = copyBytes(key));
+  const k32 = u32(key);
+  const Nk = k32.length;
+  const subByte = (n) => applySbox(sbox2, n, n, n, n);
+  const xk = new Uint32Array(len + 28);
+  xk.set(k32);
+  for (let i = Nk; i < xk.length; i++) {
+    let t = xk[i - 1];
+    if (i % Nk === 0)
+      t = subByte(rotr32_8(t)) ^ xPowers[i / Nk - 1];
+    else if (Nk > 6 && i % Nk === 4)
+      t = subByte(t);
+    xk[i] = xk[i - Nk] ^ t;
+  }
+  clean(...toClean);
+  return xk;
+}
+function expandKeyDecLE(key) {
+  const encKey = expandKeyLE(key);
+  const xk = encKey.slice();
+  const Nk = encKey.length;
+  const { sbox2 } = tableEncoding;
+  const { T0, T1, T2, T3 } = tableDecoding;
+  for (let i = 0; i < Nk; i += 4) {
+    for (let j = 0; j < 4; j++)
+      xk[i + j] = encKey[Nk - i - 4 + j];
+  }
+  clean(encKey);
+  for (let i = 4; i < Nk - 4; i++) {
+    const x = xk[i];
+    const w = applySbox(sbox2, x, x, x, x);
+    xk[i] = T0[w & 255] ^ T1[w >>> 8 & 255] ^ T2[w >>> 16 & 255] ^ T3[w >>> 24];
+  }
+  return xk;
+}
+function apply0123(T01, T23, s0, s1, s2, s3) {
+  return T01[s0 << 8 & 65280 | s1 >>> 8 & 255] ^ T23[s2 >>> 8 & 65280 | s3 >>> 24 & 255];
+}
+function applySbox(sbox2, s0, s1, s2, s3) {
+  return sbox2[s0 & 255 | s1 & 65280] | sbox2[s2 >>> 16 & 255 | s3 >>> 16 & 65280] << 16;
+}
+function encrypt(xk, s0, s1, s2, s3) {
+  const { sbox2, T01, T23 } = tableEncoding;
+  let k = 0;
+  s0 ^= xk[k++], s1 ^= xk[k++], s2 ^= xk[k++], s3 ^= xk[k++];
+  const rounds = xk.length / 4 - 2;
+  for (let i = 0; i < rounds; i++) {
+    const t02 = xk[k++] ^ apply0123(T01, T23, s0, s1, s2, s3);
+    const t12 = xk[k++] ^ apply0123(T01, T23, s1, s2, s3, s0);
+    const t22 = xk[k++] ^ apply0123(T01, T23, s2, s3, s0, s1);
+    const t32 = xk[k++] ^ apply0123(T01, T23, s3, s0, s1, s2);
+    s0 = t02, s1 = t12, s2 = t22, s3 = t32;
+  }
+  const t0 = xk[k++] ^ applySbox(sbox2, s0, s1, s2, s3);
+  const t1 = xk[k++] ^ applySbox(sbox2, s1, s2, s3, s0);
+  const t2 = xk[k++] ^ applySbox(sbox2, s2, s3, s0, s1);
+  const t3 = xk[k++] ^ applySbox(sbox2, s3, s0, s1, s2);
+  return { s0: t0, s1: t1, s2: t2, s3: t3 };
+}
+function decrypt(xk, s0, s1, s2, s3) {
+  const { sbox2, T01, T23 } = tableDecoding;
+  let k = 0;
+  s0 ^= xk[k++], s1 ^= xk[k++], s2 ^= xk[k++], s3 ^= xk[k++];
+  const rounds = xk.length / 4 - 2;
+  for (let i = 0; i < rounds; i++) {
+    const t02 = xk[k++] ^ apply0123(T01, T23, s0, s3, s2, s1);
+    const t12 = xk[k++] ^ apply0123(T01, T23, s1, s0, s3, s2);
+    const t22 = xk[k++] ^ apply0123(T01, T23, s2, s1, s0, s3);
+    const t32 = xk[k++] ^ apply0123(T01, T23, s3, s2, s1, s0);
+    s0 = t02, s1 = t12, s2 = t22, s3 = t32;
+  }
+  const t0 = xk[k++] ^ applySbox(sbox2, s0, s3, s2, s1);
+  const t1 = xk[k++] ^ applySbox(sbox2, s1, s0, s3, s2);
+  const t2 = xk[k++] ^ applySbox(sbox2, s2, s1, s0, s3);
+  const t3 = xk[k++] ^ applySbox(sbox2, s3, s2, s1, s0);
+  return { s0: t0, s1: t1, s2: t2, s3: t3 };
+}
+function getDst(len, dst) {
+  if (dst === void 0)
+    return new Uint8Array(len);
+  bytes(dst);
+  if (dst.length < len)
+    throw new Error(`aes: wrong destination length, expected at least ${len}, got: ${dst.length}`);
+  if (!isAligned32(dst))
+    throw new Error("unaligned dst");
+  return dst;
+}
+function ctrCounter(xk, nonce, src, dst) {
+  bytes(nonce, BLOCK_SIZE2);
+  bytes(src);
+  const srcLen = src.length;
+  dst = getDst(srcLen, dst);
+  const ctr3 = nonce;
+  const c32 = u32(ctr3);
+  let { s0, s1, s2, s3 } = encrypt(xk, c32[0], c32[1], c32[2], c32[3]);
+  const src32 = u32(src);
+  const dst32 = u32(dst);
+  for (let i = 0; i + 4 <= src32.length; i += 4) {
+    dst32[i + 0] = src32[i + 0] ^ s0;
+    dst32[i + 1] = src32[i + 1] ^ s1;
+    dst32[i + 2] = src32[i + 2] ^ s2;
+    dst32[i + 3] = src32[i + 3] ^ s3;
+    let carry = 1;
+    for (let i2 = ctr3.length - 1; i2 >= 0; i2--) {
+      carry = carry + (ctr3[i2] & 255) | 0;
+      ctr3[i2] = carry & 255;
+      carry >>>= 8;
+    }
+    ({ s0, s1, s2, s3 } = encrypt(xk, c32[0], c32[1], c32[2], c32[3]));
+  }
+  const start2 = BLOCK_SIZE2 * Math.floor(src32.length / BLOCK_SIZE32);
+  if (start2 < srcLen) {
+    const b32 = new Uint32Array([s0, s1, s2, s3]);
+    const buf = u8(b32);
+    for (let i = start2, pos = 0; i < srcLen; i++, pos++)
+      dst[i] = src[i] ^ buf[pos];
+    clean(b32);
+  }
+  return dst;
+}
+function ctr32(xk, isLE3, nonce, src, dst) {
+  bytes(nonce, BLOCK_SIZE2);
+  bytes(src);
+  dst = getDst(src.length, dst);
+  const ctr3 = nonce;
+  const c32 = u32(ctr3);
+  const view = createView(ctr3);
+  const src32 = u32(src);
+  const dst32 = u32(dst);
+  const ctrPos = isLE3 ? 0 : 12;
+  const srcLen = src.length;
+  let ctrNum = view.getUint32(ctrPos, isLE3);
+  let { s0, s1, s2, s3 } = encrypt(xk, c32[0], c32[1], c32[2], c32[3]);
+  for (let i = 0; i + 4 <= src32.length; i += 4) {
+    dst32[i + 0] = src32[i + 0] ^ s0;
+    dst32[i + 1] = src32[i + 1] ^ s1;
+    dst32[i + 2] = src32[i + 2] ^ s2;
+    dst32[i + 3] = src32[i + 3] ^ s3;
+    ctrNum = ctrNum + 1 >>> 0;
+    view.setUint32(ctrPos, ctrNum, isLE3);
+    ({ s0, s1, s2, s3 } = encrypt(xk, c32[0], c32[1], c32[2], c32[3]));
+  }
+  const start2 = BLOCK_SIZE2 * Math.floor(src32.length / BLOCK_SIZE32);
+  if (start2 < srcLen) {
+    const b32 = new Uint32Array([s0, s1, s2, s3]);
+    const buf = u8(b32);
+    for (let i = start2, pos = 0; i < srcLen; i++, pos++)
+      dst[i] = src[i] ^ buf[pos];
+    clean(b32);
+  }
+  return dst;
+}
+function validateBlockDecrypt(data) {
+  bytes(data);
+  if (data.length % BLOCK_SIZE2 !== 0) {
+    throw new Error(`aes/(cbc-ecb).decrypt ciphertext should consist of blocks with size ${BLOCK_SIZE2}`);
+  }
+}
+function validateBlockEncrypt(plaintext, pcks5, dst) {
+  bytes(plaintext);
+  let outLen = plaintext.length;
+  const remaining = outLen % BLOCK_SIZE2;
+  if (!pcks5 && remaining !== 0)
+    throw new Error("aec/(cbc-ecb): unpadded plaintext with disabled padding");
+  if (!isAligned32(plaintext))
+    plaintext = copyBytes(plaintext);
+  const b = u32(plaintext);
+  if (pcks5) {
+    let left = BLOCK_SIZE2 - remaining;
+    if (!left)
+      left = BLOCK_SIZE2;
+    outLen = outLen + left;
+  }
+  const out2 = getDst(outLen, dst);
+  const o = u32(out2);
+  return { b, o, out: out2 };
+}
+function validatePCKS(data, pcks5) {
+  if (!pcks5)
+    return data;
+  const len = data.length;
+  if (!len)
+    throw new Error("aes/pcks5: empty ciphertext not allowed");
+  const lastByte = data[len - 1];
+  if (lastByte <= 0 || lastByte > 16)
+    throw new Error("aes/pcks5: wrong padding");
+  const out2 = data.subarray(0, -lastByte);
+  for (let i = 0; i < lastByte; i++)
+    if (data[len - i - 1] !== lastByte)
+      throw new Error("aes/pcks5: wrong padding");
+  return out2;
+}
+function padPCKS(left) {
+  const tmp = new Uint8Array(16);
+  const tmp32 = u32(tmp);
+  tmp.set(left);
+  const paddingByte = BLOCK_SIZE2 - left.length;
+  for (let i = BLOCK_SIZE2 - paddingByte; i < BLOCK_SIZE2; i++)
+    tmp[i] = paddingByte;
+  return tmp32;
+}
+function computeTag(fn, isLE3, key, data, AAD) {
+  const aadLength = AAD == null ? 0 : AAD.length;
+  const h = fn.create(key, data.length + aadLength);
+  if (AAD)
+    h.update(AAD);
+  h.update(data);
+  const num = new Uint8Array(16);
+  const view = createView(num);
+  if (AAD)
+    setBigUint64(view, 0, BigInt(aadLength * 8), isLE3);
+  setBigUint64(view, 8, BigInt(data.length * 8), isLE3);
+  h.update(num);
+  const res = h.digest();
+  clean(num);
+  return res;
+}
+function isBytes32(a) {
+  return a != null && typeof a === "object" && (a instanceof Uint32Array || a.constructor.name === "Uint32Array");
+}
+function encryptBlock(xk, block) {
+  bytes(block, 16);
+  if (!isBytes32(xk))
+    throw new Error("_encryptBlock accepts result of expandKeyLE");
+  const b32 = u32(block);
+  let { s0, s1, s2, s3 } = encrypt(xk, b32[0], b32[1], b32[2], b32[3]);
+  b32[0] = s0, b32[1] = s1, b32[2] = s2, b32[3] = s3;
+  return block;
+}
+function decryptBlock(xk, block) {
+  bytes(block, 16);
+  if (!isBytes32(xk))
+    throw new Error("_decryptBlock accepts result of expandKeyLE");
+  const b32 = u32(block);
+  let { s0, s1, s2, s3 } = decrypt(xk, b32[0], b32[1], b32[2], b32[3]);
+  b32[0] = s0, b32[1] = s1, b32[2] = s2, b32[3] = s3;
+  return block;
+}
+var BLOCK_SIZE2, BLOCK_SIZE32, EMPTY_BLOCK, POLY2, sbox, invSbox, rotr32_8, rotl32_8, byteSwap, tableEncoding, tableDecoding, xPowers, ctr, ecb, cbc, cfb, gcm, limit, siv, AESW, AESKW_IV, aeskw, AESKWP_IV, aeskwp;
+var init_aes = __esm({
+  "node_modules/@noble/ciphers/esm/aes.js"() {
+    init_globals_inject();
+    init_assert();
+    init_polyval();
+    init_utils();
+    BLOCK_SIZE2 = 16;
+    BLOCK_SIZE32 = 4;
+    EMPTY_BLOCK = new Uint8Array(BLOCK_SIZE2);
+    POLY2 = 283;
+    sbox = /* @__PURE__ */ (() => {
+      const t = new Uint8Array(256);
+      for (let i = 0, x = 1; i < 256; i++, x ^= mul22(x))
+        t[i] = x;
+      const box = new Uint8Array(256);
+      box[0] = 99;
+      for (let i = 0; i < 255; i++) {
+        let x = t[255 - i];
+        x |= x << 8;
+        box[t[i]] = (x ^ x >> 4 ^ x >> 5 ^ x >> 6 ^ x >> 7 ^ 99) & 255;
+      }
+      clean(t);
+      return box;
+    })();
+    invSbox = /* @__PURE__ */ sbox.map((_, j) => sbox.indexOf(j));
+    rotr32_8 = (n) => n << 24 | n >>> 8;
+    rotl32_8 = (n) => n << 8 | n >>> 24;
+    byteSwap = (word) => word << 24 & 4278190080 | word << 8 & 16711680 | word >>> 8 & 65280 | word >>> 24 & 255;
+    tableEncoding = /* @__PURE__ */ genTtable(sbox, (s) => mul(s, 3) << 24 | s << 16 | s << 8 | mul(s, 2));
+    tableDecoding = /* @__PURE__ */ genTtable(invSbox, (s) => mul(s, 11) << 24 | mul(s, 13) << 16 | mul(s, 9) << 8 | mul(s, 14));
+    xPowers = /* @__PURE__ */ (() => {
+      const p = new Uint8Array(16);
+      for (let i = 0, x = 1; i < 16; i++, x = mul22(x))
+        p[i] = x;
+      return p;
+    })();
+    ctr = wrapCipher({ blockSize: 16, nonceLength: 16 }, function ctr2(key, nonce) {
+      bytes(key);
+      bytes(nonce, BLOCK_SIZE2);
+      function processCtr(buf, dst) {
+        bytes(buf);
+        if (dst !== void 0) {
+          bytes(dst);
+          if (!isAligned32(dst))
+            throw new Error("unaligned destination");
+        }
+        const xk = expandKeyLE(key);
+        const n = copyBytes(nonce);
+        const toClean = [xk, n];
+        if (!isAligned32(buf))
+          toClean.push(buf = copyBytes(buf));
+        const out2 = ctrCounter(xk, n, buf, dst);
+        clean(...toClean);
+        return out2;
+      }
+      return {
+        encrypt: (plaintext, dst) => processCtr(plaintext, dst),
+        decrypt: (ciphertext, dst) => processCtr(ciphertext, dst)
+      };
+    });
+    ecb = wrapCipher({ blockSize: 16 }, function ecb2(key, opts = {}) {
+      bytes(key);
+      const pcks5 = !opts.disablePadding;
+      return {
+        encrypt(plaintext, dst) {
+          const { b, o, out: _out } = validateBlockEncrypt(plaintext, pcks5, dst);
+          const xk = expandKeyLE(key);
+          let i = 0;
+          for (; i + 4 <= b.length; ) {
+            const { s0, s1, s2, s3 } = encrypt(xk, b[i + 0], b[i + 1], b[i + 2], b[i + 3]);
+            o[i++] = s0, o[i++] = s1, o[i++] = s2, o[i++] = s3;
+          }
+          if (pcks5) {
+            const tmp32 = padPCKS(plaintext.subarray(i * 4));
+            const { s0, s1, s2, s3 } = encrypt(xk, tmp32[0], tmp32[1], tmp32[2], tmp32[3]);
+            o[i++] = s0, o[i++] = s1, o[i++] = s2, o[i++] = s3;
+          }
+          clean(xk);
+          return _out;
+        },
+        decrypt(ciphertext, dst) {
+          validateBlockDecrypt(ciphertext);
+          const xk = expandKeyDecLE(key);
+          const out2 = getDst(ciphertext.length, dst);
+          const toClean = [xk];
+          if (!isAligned32(ciphertext))
+            toClean.push(ciphertext = copyBytes(ciphertext));
+          const b = u32(ciphertext);
+          const o = u32(out2);
+          for (let i = 0; i + 4 <= b.length; ) {
+            const { s0, s1, s2, s3 } = decrypt(xk, b[i + 0], b[i + 1], b[i + 2], b[i + 3]);
+            o[i++] = s0, o[i++] = s1, o[i++] = s2, o[i++] = s3;
+          }
+          clean(...toClean);
+          return validatePCKS(out2, pcks5);
+        }
+      };
+    });
+    cbc = wrapCipher({ blockSize: 16, nonceLength: 16 }, function cbc2(key, iv, opts = {}) {
+      bytes(key);
+      bytes(iv, 16);
+      const pcks5 = !opts.disablePadding;
+      return {
+        encrypt(plaintext, dst) {
+          const xk = expandKeyLE(key);
+          const { b, o, out: _out } = validateBlockEncrypt(plaintext, pcks5, dst);
+          let _iv = iv;
+          const toClean = [xk];
+          if (!isAligned32(_iv))
+            toClean.push(_iv = copyBytes(_iv));
+          const n32 = u32(_iv);
+          let s0 = n32[0], s1 = n32[1], s2 = n32[2], s3 = n32[3];
+          let i = 0;
+          for (; i + 4 <= b.length; ) {
+            s0 ^= b[i + 0], s1 ^= b[i + 1], s2 ^= b[i + 2], s3 ^= b[i + 3];
+            ({ s0, s1, s2, s3 } = encrypt(xk, s0, s1, s2, s3));
+            o[i++] = s0, o[i++] = s1, o[i++] = s2, o[i++] = s3;
+          }
+          if (pcks5) {
+            const tmp32 = padPCKS(plaintext.subarray(i * 4));
+            s0 ^= tmp32[0], s1 ^= tmp32[1], s2 ^= tmp32[2], s3 ^= tmp32[3];
+            ({ s0, s1, s2, s3 } = encrypt(xk, s0, s1, s2, s3));
+            o[i++] = s0, o[i++] = s1, o[i++] = s2, o[i++] = s3;
+          }
+          clean(...toClean);
+          return _out;
+        },
+        decrypt(ciphertext, dst) {
+          validateBlockDecrypt(ciphertext);
+          const xk = expandKeyDecLE(key);
+          let _iv = iv;
+          const toClean = [xk];
+          if (!isAligned32(_iv))
+            toClean.push(_iv = copyBytes(_iv));
+          const n32 = u32(_iv);
+          const out2 = getDst(ciphertext.length, dst);
+          if (!isAligned32(ciphertext))
+            toClean.push(ciphertext = copyBytes(ciphertext));
+          const b = u32(ciphertext);
+          const o = u32(out2);
+          let s0 = n32[0], s1 = n32[1], s2 = n32[2], s3 = n32[3];
+          for (let i = 0; i + 4 <= b.length; ) {
+            const ps0 = s0, ps1 = s1, ps2 = s2, ps3 = s3;
+            s0 = b[i + 0], s1 = b[i + 1], s2 = b[i + 2], s3 = b[i + 3];
+            const { s0: o0, s1: o1, s2: o2, s3: o3 } = decrypt(xk, s0, s1, s2, s3);
+            o[i++] = o0 ^ ps0, o[i++] = o1 ^ ps1, o[i++] = o2 ^ ps2, o[i++] = o3 ^ ps3;
+          }
+          clean(...toClean);
+          return validatePCKS(out2, pcks5);
+        }
+      };
+    });
+    cfb = wrapCipher({ blockSize: 16, nonceLength: 16 }, function cfb2(key, iv) {
+      bytes(key);
+      bytes(iv, 16);
+      function processCfb(src, isEncrypt, dst) {
+        bytes(src);
+        const srcLen = src.length;
+        dst = getDst(srcLen, dst);
+        const xk = expandKeyLE(key);
+        let _iv = iv;
+        const toClean = [xk];
+        if (!isAligned32(_iv))
+          toClean.push(_iv = copyBytes(_iv));
+        if (!isAligned32(src))
+          toClean.push(src = copyBytes(src));
+        const src32 = u32(src);
+        const dst32 = u32(dst);
+        const next32 = isEncrypt ? dst32 : src32;
+        const n32 = u32(_iv);
+        let s0 = n32[0], s1 = n32[1], s2 = n32[2], s3 = n32[3];
+        for (let i = 0; i + 4 <= src32.length; ) {
+          const { s0: e0, s1: e1, s2: e2, s3: e3 } = encrypt(xk, s0, s1, s2, s3);
+          dst32[i + 0] = src32[i + 0] ^ e0;
+          dst32[i + 1] = src32[i + 1] ^ e1;
+          dst32[i + 2] = src32[i + 2] ^ e2;
+          dst32[i + 3] = src32[i + 3] ^ e3;
+          s0 = next32[i++], s1 = next32[i++], s2 = next32[i++], s3 = next32[i++];
+        }
+        const start2 = BLOCK_SIZE2 * Math.floor(src32.length / BLOCK_SIZE32);
+        if (start2 < srcLen) {
+          ({ s0, s1, s2, s3 } = encrypt(xk, s0, s1, s2, s3));
+          const buf = u8(new Uint32Array([s0, s1, s2, s3]));
+          for (let i = start2, pos = 0; i < srcLen; i++, pos++)
+            dst[i] = src[i] ^ buf[pos];
+          clean(buf);
+        }
+        clean(...toClean);
+        return dst;
+      }
+      return {
+        encrypt: (plaintext, dst) => processCfb(plaintext, true, dst),
+        decrypt: (ciphertext, dst) => processCfb(ciphertext, false, dst)
+      };
+    });
+    gcm = wrapCipher({ blockSize: 16, nonceLength: 12, tagLength: 16 }, function gcm2(key, nonce, AAD) {
+      bytes(key);
+      bytes(nonce);
+      if (AAD !== void 0)
+        bytes(AAD);
+      if (nonce.length < 8)
+        throw new Error("aes/gcm: invalid nonce length");
+      const tagLength = 16;
+      function _computeTag(authKey, tagMask, data) {
+        const tag = computeTag(ghash, false, authKey, data, AAD);
+        for (let i = 0; i < tagMask.length; i++)
+          tag[i] ^= tagMask[i];
+        return tag;
+      }
+      function deriveKeys() {
+        const xk = expandKeyLE(key);
+        const authKey = EMPTY_BLOCK.slice();
+        const counter = EMPTY_BLOCK.slice();
+        ctr32(xk, false, counter, counter, authKey);
+        if (nonce.length === 12) {
+          counter.set(nonce);
+        } else {
+          const nonceLen = EMPTY_BLOCK.slice();
+          const view = createView(nonceLen);
+          setBigUint64(view, 8, BigInt(nonce.length * 8), false);
+          const g = ghash.create(authKey).update(nonce).update(nonceLen);
+          g.digestInto(counter);
+          g.destroy();
+        }
+        const tagMask = ctr32(xk, false, counter, EMPTY_BLOCK);
+        return { xk, authKey, counter, tagMask };
+      }
+      return {
+        encrypt(plaintext) {
+          bytes(plaintext);
+          const { xk, authKey, counter, tagMask } = deriveKeys();
+          const out2 = new Uint8Array(plaintext.length + tagLength);
+          const toClean = [xk, authKey, counter, tagMask];
+          if (!isAligned32(plaintext))
+            toClean.push(plaintext = copyBytes(plaintext));
+          ctr32(xk, false, counter, plaintext, out2);
+          const tag = _computeTag(authKey, tagMask, out2.subarray(0, out2.length - tagLength));
+          toClean.push(tag);
+          out2.set(tag, plaintext.length);
+          clean(...toClean);
+          return out2;
+        },
+        decrypt(ciphertext) {
+          bytes(ciphertext);
+          if (ciphertext.length < tagLength)
+            throw new Error(`aes/gcm: ciphertext less than tagLen (${tagLength})`);
+          const { xk, authKey, counter, tagMask } = deriveKeys();
+          const toClean = [xk, authKey, tagMask, counter];
+          if (!isAligned32(ciphertext))
+            toClean.push(ciphertext = copyBytes(ciphertext));
+          const data = ciphertext.subarray(0, -tagLength);
+          const passedTag = ciphertext.subarray(-tagLength);
+          const tag = _computeTag(authKey, tagMask, data);
+          toClean.push(tag);
+          if (!equalBytes(tag, passedTag))
+            throw new Error("aes/gcm: invalid ghash tag");
+          const out2 = ctr32(xk, false, counter, data);
+          clean(...toClean);
+          return out2;
+        }
+      };
+    });
+    limit = (name, min, max2) => (value) => {
+      if (!Number.isSafeInteger(value) || min > value || value > max2)
+        throw new Error(`${name}: invalid value=${value}, must be [${min}..${max2}]`);
+    };
+    siv = wrapCipher({ blockSize: 16, nonceLength: 12, tagLength: 16 }, function siv2(key, nonce, AAD) {
+      const tagLength = 16;
+      const AAD_LIMIT = limit("AAD", 0, 2 ** 36);
+      const PLAIN_LIMIT = limit("plaintext", 0, 2 ** 36);
+      const NONCE_LIMIT = limit("nonce", 12, 12);
+      const CIPHER_LIMIT = limit("ciphertext", 16, 2 ** 36 + 16);
+      bytes(key, 16, 24, 32);
+      bytes(nonce);
+      NONCE_LIMIT(nonce.length);
+      if (AAD !== void 0) {
+        bytes(AAD);
+        AAD_LIMIT(AAD.length);
+      }
+      function deriveKeys() {
+        const xk = expandKeyLE(key);
+        const encKey = new Uint8Array(key.length);
+        const authKey = new Uint8Array(16);
+        const toClean = [xk, encKey];
+        let _nonce = nonce;
+        if (!isAligned32(_nonce))
+          toClean.push(_nonce = copyBytes(_nonce));
+        const n32 = u32(_nonce);
+        let s0 = 0, s1 = n32[0], s2 = n32[1], s3 = n32[2];
+        let counter = 0;
+        for (const derivedKey of [authKey, encKey].map(u32)) {
+          const d32 = u32(derivedKey);
+          for (let i = 0; i < d32.length; i += 2) {
+            const { s0: o0, s1: o1 } = encrypt(xk, s0, s1, s2, s3);
+            d32[i + 0] = o0;
+            d32[i + 1] = o1;
+            s0 = ++counter;
+          }
+        }
+        const res = { authKey, encKey: expandKeyLE(encKey) };
+        clean(...toClean);
+        return res;
+      }
+      function _computeTag(encKey, authKey, data) {
+        const tag = computeTag(polyval, true, authKey, data, AAD);
+        for (let i = 0; i < 12; i++)
+          tag[i] ^= nonce[i];
+        tag[15] &= 127;
+        const t32 = u32(tag);
+        let s0 = t32[0], s1 = t32[1], s2 = t32[2], s3 = t32[3];
+        ({ s0, s1, s2, s3 } = encrypt(encKey, s0, s1, s2, s3));
+        t32[0] = s0, t32[1] = s1, t32[2] = s2, t32[3] = s3;
+        return tag;
+      }
+      function processSiv(encKey, tag, input) {
+        let block = copyBytes(tag);
+        block[15] |= 128;
+        const res = ctr32(encKey, true, block, input);
+        clean(block);
+        return res;
+      }
+      return {
+        encrypt(plaintext) {
+          bytes(plaintext);
+          PLAIN_LIMIT(plaintext.length);
+          const { encKey, authKey } = deriveKeys();
+          const tag = _computeTag(encKey, authKey, plaintext);
+          const toClean = [encKey, authKey, tag];
+          if (!isAligned32(plaintext))
+            toClean.push(plaintext = copyBytes(plaintext));
+          const out2 = new Uint8Array(plaintext.length + tagLength);
+          out2.set(tag, plaintext.length);
+          out2.set(processSiv(encKey, tag, plaintext));
+          clean(...toClean);
+          return out2;
+        },
+        decrypt(ciphertext) {
+          bytes(ciphertext);
+          CIPHER_LIMIT(ciphertext.length);
+          const tag = ciphertext.subarray(-tagLength);
+          const { encKey, authKey } = deriveKeys();
+          const toClean = [encKey, authKey];
+          if (!isAligned32(ciphertext))
+            toClean.push(ciphertext = copyBytes(ciphertext));
+          const plaintext = processSiv(encKey, tag, ciphertext.subarray(0, -tagLength));
+          const expectedTag = _computeTag(encKey, authKey, plaintext);
+          toClean.push(expectedTag);
+          if (!equalBytes(tag, expectedTag)) {
+            clean(...toClean);
+            throw new Error("invalid polyval tag");
+          }
+          clean(...toClean);
+          return plaintext;
+        }
+      };
+    });
+    AESW = {
+      /*
+      High-level pseudocode:
+      ```
+      A: u64 = IV
+      out = []
+      for (let i=0, ctr = 0; i<6; i++) {
+        for (const chunk of chunks(plaintext, 8)) {
+          A ^= swapEndianess(ctr++)
+          [A, res] = chunks(encrypt(A || chunk), 8);
+          out ||= res
+        }
+      }
+      out = A || out
+      ```
+      Decrypt is the same, but reversed.
+      */
+      encrypt(kek, out2) {
+        if (out2.length >= 2 ** 32)
+          throw new Error("plaintext should be less than 4gb");
+        const xk = expandKeyLE(kek);
+        if (out2.length === 16)
+          encryptBlock(xk, out2);
+        else {
+          const o32 = u32(out2);
+          let a0 = o32[0], a1 = o32[1];
+          for (let j = 0, ctr3 = 1; j < 6; j++) {
+            for (let pos = 2; pos < o32.length; pos += 2, ctr3++) {
+              const { s0, s1, s2, s3 } = encrypt(xk, a0, a1, o32[pos], o32[pos + 1]);
+              a0 = s0, a1 = s1 ^ byteSwap(ctr3), o32[pos] = s2, o32[pos + 1] = s3;
+            }
+          }
+          o32[0] = a0, o32[1] = a1;
+        }
+        xk.fill(0);
+      },
+      decrypt(kek, out2) {
+        if (out2.length - 8 >= 2 ** 32)
+          throw new Error("ciphertext should be less than 4gb");
+        const xk = expandKeyDecLE(kek);
+        const chunks = out2.length / 8 - 1;
+        if (chunks === 1)
+          decryptBlock(xk, out2);
+        else {
+          const o32 = u32(out2);
+          let a0 = o32[0], a1 = o32[1];
+          for (let j = 0, ctr3 = chunks * 6; j < 6; j++) {
+            for (let pos = chunks * 2; pos >= 1; pos -= 2, ctr3--) {
+              a1 ^= byteSwap(ctr3);
+              const { s0, s1, s2, s3 } = decrypt(xk, a0, a1, o32[pos], o32[pos + 1]);
+              a0 = s0, a1 = s1, o32[pos] = s2, o32[pos + 1] = s3;
+            }
+          }
+          o32[0] = a0, o32[1] = a1;
+        }
+        xk.fill(0);
+      }
+    };
+    AESKW_IV = new Uint8Array(8).fill(166);
+    aeskw = wrapCipher({ blockSize: 8 }, (kek) => ({
+      encrypt(plaintext) {
+        bytes(plaintext);
+        if (!plaintext.length || plaintext.length % 8 !== 0)
+          throw new Error("invalid plaintext length");
+        if (plaintext.length === 8)
+          throw new Error("8-byte keys not allowed in AESKW, use AESKWP instead");
+        const out2 = concatBytes(AESKW_IV, plaintext);
+        AESW.encrypt(kek, out2);
+        return out2;
+      },
+      decrypt(ciphertext) {
+        bytes(ciphertext);
+        if (ciphertext.length % 8 !== 0 || ciphertext.length < 3 * 8)
+          throw new Error("invalid ciphertext length");
+        const out2 = copyBytes(ciphertext);
+        AESW.decrypt(kek, out2);
+        if (!equalBytes(out2.subarray(0, 8), AESKW_IV))
+          throw new Error("integrity check failed");
+        out2.subarray(0, 8).fill(0);
+        return out2.subarray(8);
+      }
+    }));
+    AESKWP_IV = 2790873510;
+    aeskwp = wrapCipher({ blockSize: 8 }, (kek) => ({
+      encrypt(plaintext) {
+        bytes(plaintext);
+        if (!plaintext.length)
+          throw new Error("invalid plaintext length");
+        const padded = Math.ceil(plaintext.length / 8) * 8;
+        const out2 = new Uint8Array(8 + padded);
+        out2.set(plaintext, 8);
+        const out32 = u32(out2);
+        out32[0] = AESKWP_IV;
+        out32[1] = byteSwap(plaintext.length);
+        AESW.encrypt(kek, out2);
+        return out2;
+      },
+      decrypt(ciphertext) {
+        bytes(ciphertext);
+        if (ciphertext.length < 16)
+          throw new Error("invalid ciphertext length");
+        const out2 = copyBytes(ciphertext);
+        const o32 = u32(out2);
+        AESW.decrypt(kek, out2);
+        const len = byteSwap(o32[1]) >>> 0;
+        const padded = Math.ceil(len / 8) * 8;
+        if (o32[0] !== AESKWP_IV || out2.length - 8 !== padded)
+          throw new Error("integrity check failed");
+        for (let i = len; i < padded; i++)
+          if (out2[8 + i] !== 0)
+            throw new Error("integrity check failed");
+        out2.subarray(0, 8).fill(0);
+        return out2.subarray(8, 8 + len);
+      }
+    }));
+  }
+});
+
+// node_modules/@noble/hashes/esm/_assert.js
+function number(n) {
+  if (!Number.isSafeInteger(n) || n < 0)
+    throw new Error(`positive integer expected, not ${n}`);
+}
+function isBytes2(a) {
+  return a instanceof Uint8Array || a != null && typeof a === "object" && a.constructor.name === "Uint8Array";
+}
+function bytes2(b, ...lengths) {
+  if (!isBytes2(b))
+    throw new Error("Uint8Array expected");
+  if (lengths.length > 0 && !lengths.includes(b.length))
+    throw new Error(`Uint8Array expected of length ${lengths}, not of length=${b.length}`);
+}
+function hash(h) {
+  if (typeof h !== "function" || typeof h.create !== "function")
+    throw new Error("Hash should be wrapped by utils.wrapConstructor");
+  number(h.outputLen);
+  number(h.blockLen);
+}
+function exists2(instance, checkFinished = true) {
+  if (instance.destroyed)
+    throw new Error("Hash instance has been destroyed");
+  if (checkFinished && instance.finished)
+    throw new Error("Hash#digest() has already been called");
+}
+function output2(out2, instance) {
+  bytes2(out2);
+  const min = instance.outputLen;
+  if (out2.length < min) {
+    throw new Error(`digestInto() expects output buffer of length at least ${min}`);
+  }
+}
+var init_assert2 = __esm({
+  "node_modules/@noble/hashes/esm/_assert.js"() {
+    init_globals_inject();
+  }
+});
+
+// node_modules/@noble/hashes/esm/crypto.js
+var crypto2;
+var init_crypto = __esm({
+  "node_modules/@noble/hashes/esm/crypto.js"() {
+    init_globals_inject();
+    crypto2 = typeof globalThis === "object" && "crypto" in globalThis ? globalThis.crypto : void 0;
+  }
+});
+
+// node_modules/@noble/hashes/esm/utils.js
+function byteSwap32(arr) {
+  for (let i = 0; i < arr.length; i++) {
+    arr[i] = byteSwap2(arr[i]);
+  }
+}
+function utf8ToBytes2(str) {
+  if (typeof str !== "string")
+    throw new Error(`utf8ToBytes expected string, got ${typeof str}`);
+  return new Uint8Array(new TextEncoder().encode(str));
+}
+function toBytes2(data) {
+  if (typeof data === "string")
+    data = utf8ToBytes2(data);
+  bytes2(data);
+  return data;
+}
+function checkOpts(defaults, opts) {
+  if (opts !== void 0 && toStr.call(opts) !== "[object Object]")
+    throw new Error("Options should be object or undefined");
+  const merged = Object.assign(defaults, opts);
+  return merged;
+}
+function wrapConstructor(hashCons) {
+  const hashC = (msg) => hashCons().update(toBytes2(msg)).digest();
+  const tmp = hashCons();
+  hashC.outputLen = tmp.outputLen;
+  hashC.blockLen = tmp.blockLen;
+  hashC.create = () => hashCons();
+  return hashC;
+}
+function randomBytes(bytesLength = 32) {
+  if (crypto2 && typeof crypto2.getRandomValues === "function") {
+    return crypto2.getRandomValues(new Uint8Array(bytesLength));
+  }
+  if (crypto2 && typeof crypto2.randomBytes === "function") {
+    return crypto2.randomBytes(bytesLength);
+  }
+  throw new Error("crypto.getRandomValues must be defined");
+}
+var u322, createView2, rotr, rotl, isLE2, byteSwap2, Hash, toStr;
+var init_utils2 = __esm({
+  "node_modules/@noble/hashes/esm/utils.js"() {
+    init_globals_inject();
+    init_crypto();
+    init_assert2();
+    u322 = (arr) => new Uint32Array(arr.buffer, arr.byteOffset, Math.floor(arr.byteLength / 4));
+    createView2 = (arr) => new DataView(arr.buffer, arr.byteOffset, arr.byteLength);
+    rotr = (word, shift) => word << 32 - shift | word >>> shift;
+    rotl = (word, shift) => word << shift | word >>> 32 - shift >>> 0;
+    isLE2 = new Uint8Array(new Uint32Array([287454020]).buffer)[0] === 68;
+    byteSwap2 = (word) => word << 24 & 4278190080 | word << 8 & 16711680 | word >>> 8 & 65280 | word >>> 24 & 255;
+    Hash = class {
+      // Safe version that clones internal state
+      clone() {
+        return this._cloneInto();
+      }
+    };
+    toStr = {}.toString;
+  }
+});
+
+// node_modules/@noble/hashes/esm/_md.js
+function setBigUint642(view, byteOffset, value, isLE3) {
+  if (typeof view.setBigUint64 === "function")
+    return view.setBigUint64(byteOffset, value, isLE3);
+  const _32n = BigInt(32);
+  const _u32_max = BigInt(4294967295);
+  const wh = Number(value >> _32n & _u32_max);
+  const wl = Number(value & _u32_max);
+  const h = isLE3 ? 4 : 0;
+  const l = isLE3 ? 0 : 4;
+  view.setUint32(byteOffset + h, wh, isLE3);
+  view.setUint32(byteOffset + l, wl, isLE3);
+}
+var Chi, Maj, HashMD;
+var init_md = __esm({
+  "node_modules/@noble/hashes/esm/_md.js"() {
+    init_globals_inject();
+    init_assert2();
+    init_utils2();
+    Chi = (a, b, c) => a & b ^ ~a & c;
+    Maj = (a, b, c) => a & b ^ a & c ^ b & c;
+    HashMD = class extends Hash {
+      constructor(blockLen, outputLen, padOffset, isLE3) {
+        super();
+        this.blockLen = blockLen;
+        this.outputLen = outputLen;
+        this.padOffset = padOffset;
+        this.isLE = isLE3;
+        this.finished = false;
+        this.length = 0;
+        this.pos = 0;
+        this.destroyed = false;
+        this.buffer = new Uint8Array(blockLen);
+        this.view = createView2(this.buffer);
+      }
+      update(data) {
+        exists2(this);
+        const { view, buffer, blockLen } = this;
+        data = toBytes2(data);
+        const len = data.length;
+        for (let pos = 0; pos < len; ) {
+          const take = Math.min(blockLen - this.pos, len - pos);
+          if (take === blockLen) {
+            const dataView = createView2(data);
+            for (; blockLen <= len - pos; pos += blockLen)
+              this.process(dataView, pos);
+            continue;
+          }
+          buffer.set(data.subarray(pos, pos + take), this.pos);
+          this.pos += take;
+          pos += take;
+          if (this.pos === blockLen) {
+            this.process(view, 0);
+            this.pos = 0;
+          }
+        }
+        this.length += data.length;
+        this.roundClean();
+        return this;
+      }
+      digestInto(out2) {
+        exists2(this);
+        output2(out2, this);
+        this.finished = true;
+        const { buffer, view, blockLen, isLE: isLE3 } = this;
+        let { pos } = this;
+        buffer[pos++] = 128;
+        this.buffer.subarray(pos).fill(0);
+        if (this.padOffset > blockLen - pos) {
+          this.process(view, 0);
+          pos = 0;
+        }
+        for (let i = pos; i < blockLen; i++)
+          buffer[i] = 0;
+        setBigUint642(view, blockLen - 8, BigInt(this.length * 8), isLE3);
+        this.process(view, 0);
+        const oview = createView2(out2);
+        const len = this.outputLen;
+        if (len % 4)
+          throw new Error("_sha2: outputLen should be aligned to 32bit");
+        const outLen = len / 4;
+        const state = this.get();
+        if (outLen > state.length)
+          throw new Error("_sha2: outputLen bigger than state");
+        for (let i = 0; i < outLen; i++)
+          oview.setUint32(4 * i, state[i], isLE3);
+      }
+      digest() {
+        const { buffer, outputLen } = this;
+        this.digestInto(buffer);
+        const res = buffer.slice(0, outputLen);
+        this.destroy();
+        return res;
+      }
+      _cloneInto(to) {
+        to || (to = new this.constructor());
+        to.set(...this.get());
+        const { blockLen, buffer, length, finished, destroyed, pos } = this;
+        to.length = length;
+        to.pos = pos;
+        to.finished = finished;
+        to.destroyed = destroyed;
+        if (length % blockLen)
+          to.buffer.set(buffer);
+        return to;
+      }
+    };
+  }
+});
+
+// node_modules/@noble/hashes/esm/sha256.js
+var SHA256_K, SHA256_IV, SHA256_W, SHA256, sha256;
+var init_sha256 = __esm({
+  "node_modules/@noble/hashes/esm/sha256.js"() {
+    init_globals_inject();
+    init_md();
+    init_utils2();
+    SHA256_K = /* @__PURE__ */ new Uint32Array([
+      1116352408,
+      1899447441,
+      3049323471,
+      3921009573,
+      961987163,
+      1508970993,
+      2453635748,
+      2870763221,
+      3624381080,
+      310598401,
+      607225278,
+      1426881987,
+      1925078388,
+      2162078206,
+      2614888103,
+      3248222580,
+      3835390401,
+      4022224774,
+      264347078,
+      604807628,
+      770255983,
+      1249150122,
+      1555081692,
+      1996064986,
+      2554220882,
+      2821834349,
+      2952996808,
+      3210313671,
+      3336571891,
+      3584528711,
+      113926993,
+      338241895,
+      666307205,
+      773529912,
+      1294757372,
+      1396182291,
+      1695183700,
+      1986661051,
+      2177026350,
+      2456956037,
+      2730485921,
+      2820302411,
+      3259730800,
+      3345764771,
+      3516065817,
+      3600352804,
+      4094571909,
+      275423344,
+      430227734,
+      506948616,
+      659060556,
+      883997877,
+      958139571,
+      1322822218,
+      1537002063,
+      1747873779,
+      1955562222,
+      2024104815,
+      2227730452,
+      2361852424,
+      2428436474,
+      2756734187,
+      3204031479,
+      3329325298
+    ]);
+    SHA256_IV = /* @__PURE__ */ new Uint32Array([
+      1779033703,
+      3144134277,
+      1013904242,
+      2773480762,
+      1359893119,
+      2600822924,
+      528734635,
+      1541459225
+    ]);
+    SHA256_W = /* @__PURE__ */ new Uint32Array(64);
+    SHA256 = class extends HashMD {
+      constructor() {
+        super(64, 32, 8, false);
+        this.A = SHA256_IV[0] | 0;
+        this.B = SHA256_IV[1] | 0;
+        this.C = SHA256_IV[2] | 0;
+        this.D = SHA256_IV[3] | 0;
+        this.E = SHA256_IV[4] | 0;
+        this.F = SHA256_IV[5] | 0;
+        this.G = SHA256_IV[6] | 0;
+        this.H = SHA256_IV[7] | 0;
+      }
+      get() {
+        const { A, B: B2, C, D, E, F, G, H } = this;
+        return [A, B2, C, D, E, F, G, H];
+      }
+      // prettier-ignore
+      set(A, B2, C, D, E, F, G, H) {
+        this.A = A | 0;
+        this.B = B2 | 0;
+        this.C = C | 0;
+        this.D = D | 0;
+        this.E = E | 0;
+        this.F = F | 0;
+        this.G = G | 0;
+        this.H = H | 0;
+      }
+      process(view, offset) {
+        for (let i = 0; i < 16; i++, offset += 4)
+          SHA256_W[i] = view.getUint32(offset, false);
+        for (let i = 16; i < 64; i++) {
+          const W15 = SHA256_W[i - 15];
+          const W2 = SHA256_W[i - 2];
+          const s0 = rotr(W15, 7) ^ rotr(W15, 18) ^ W15 >>> 3;
+          const s1 = rotr(W2, 17) ^ rotr(W2, 19) ^ W2 >>> 10;
+          SHA256_W[i] = s1 + SHA256_W[i - 7] + s0 + SHA256_W[i - 16] | 0;
+        }
+        let { A, B: B2, C, D, E, F, G, H } = this;
+        for (let i = 0; i < 64; i++) {
+          const sigma1 = rotr(E, 6) ^ rotr(E, 11) ^ rotr(E, 25);
+          const T1 = H + sigma1 + Chi(E, F, G) + SHA256_K[i] + SHA256_W[i] | 0;
+          const sigma0 = rotr(A, 2) ^ rotr(A, 13) ^ rotr(A, 22);
+          const T2 = sigma0 + Maj(A, B2, C) | 0;
+          H = G;
+          G = F;
+          F = E;
+          E = D + T1 | 0;
+          D = C;
+          C = B2;
+          B2 = A;
+          A = T1 + T2 | 0;
+        }
+        A = A + this.A | 0;
+        B2 = B2 + this.B | 0;
+        C = C + this.C | 0;
+        D = D + this.D | 0;
+        E = E + this.E | 0;
+        F = F + this.F | 0;
+        G = G + this.G | 0;
+        H = H + this.H | 0;
+        this.set(A, B2, C, D, E, F, G, H);
+      }
+      roundClean() {
+        SHA256_W.fill(0);
+      }
+      destroy() {
+        this.set(0, 0, 0, 0, 0, 0, 0, 0);
+        this.buffer.fill(0);
+      }
+    };
+    sha256 = /* @__PURE__ */ wrapConstructor(() => new SHA256());
+  }
+});
+
+// node_modules/@noble/hashes/esm/sha1.js
+var SHA1_IV, SHA1_W, SHA1, sha1;
+var init_sha1 = __esm({
+  "node_modules/@noble/hashes/esm/sha1.js"() {
+    init_globals_inject();
+    init_md();
+    init_utils2();
+    SHA1_IV = /* @__PURE__ */ new Uint32Array([
+      1732584193,
+      4023233417,
+      2562383102,
+      271733878,
+      3285377520
+    ]);
+    SHA1_W = /* @__PURE__ */ new Uint32Array(80);
+    SHA1 = class extends HashMD {
+      constructor() {
+        super(64, 20, 8, false);
+        this.A = SHA1_IV[0] | 0;
+        this.B = SHA1_IV[1] | 0;
+        this.C = SHA1_IV[2] | 0;
+        this.D = SHA1_IV[3] | 0;
+        this.E = SHA1_IV[4] | 0;
+      }
+      get() {
+        const { A, B: B2, C, D, E } = this;
+        return [A, B2, C, D, E];
+      }
+      set(A, B2, C, D, E) {
+        this.A = A | 0;
+        this.B = B2 | 0;
+        this.C = C | 0;
+        this.D = D | 0;
+        this.E = E | 0;
+      }
+      process(view, offset) {
+        for (let i = 0; i < 16; i++, offset += 4)
+          SHA1_W[i] = view.getUint32(offset, false);
+        for (let i = 16; i < 80; i++)
+          SHA1_W[i] = rotl(SHA1_W[i - 3] ^ SHA1_W[i - 8] ^ SHA1_W[i - 14] ^ SHA1_W[i - 16], 1);
+        let { A, B: B2, C, D, E } = this;
+        for (let i = 0; i < 80; i++) {
+          let F, K;
+          if (i < 20) {
+            F = Chi(B2, C, D);
+            K = 1518500249;
+          } else if (i < 40) {
+            F = B2 ^ C ^ D;
+            K = 1859775393;
+          } else if (i < 60) {
+            F = Maj(B2, C, D);
+            K = 2400959708;
+          } else {
+            F = B2 ^ C ^ D;
+            K = 3395469782;
+          }
+          const T = rotl(A, 5) + F + E + K + SHA1_W[i] | 0;
+          E = D;
+          D = C;
+          C = rotl(B2, 30);
+          B2 = A;
+          A = T;
+        }
+        A = A + this.A | 0;
+        B2 = B2 + this.B | 0;
+        C = C + this.C | 0;
+        D = D + this.D | 0;
+        E = E + this.E | 0;
+        this.set(A, B2, C, D, E);
+      }
+      roundClean() {
+        SHA1_W.fill(0);
+      }
+      destroy() {
+        this.set(0, 0, 0, 0, 0);
+        this.buffer.fill(0);
+      }
+    };
+    sha1 = /* @__PURE__ */ wrapConstructor(() => new SHA1());
+  }
+});
+
+// node_modules/@noble/hashes/esm/hmac.js
+var HMAC, hmac;
+var init_hmac = __esm({
+  "node_modules/@noble/hashes/esm/hmac.js"() {
+    init_globals_inject();
+    init_assert2();
+    init_utils2();
+    HMAC = class extends Hash {
+      constructor(hash2, _key) {
+        super();
+        this.finished = false;
+        this.destroyed = false;
+        hash(hash2);
+        const key = toBytes2(_key);
+        this.iHash = hash2.create();
+        if (typeof this.iHash.update !== "function")
+          throw new Error("Expected instance of class which extends utils.Hash");
+        this.blockLen = this.iHash.blockLen;
+        this.outputLen = this.iHash.outputLen;
+        const blockLen = this.blockLen;
+        const pad = new Uint8Array(blockLen);
+        pad.set(key.length > blockLen ? hash2.create().update(key).digest() : key);
+        for (let i = 0; i < pad.length; i++)
+          pad[i] ^= 54;
+        this.iHash.update(pad);
+        this.oHash = hash2.create();
+        for (let i = 0; i < pad.length; i++)
+          pad[i] ^= 54 ^ 92;
+        this.oHash.update(pad);
+        pad.fill(0);
+      }
+      update(buf) {
+        exists2(this);
+        this.iHash.update(buf);
+        return this;
+      }
+      digestInto(out2) {
+        exists2(this);
+        bytes2(out2, this.outputLen);
+        this.finished = true;
+        this.iHash.digestInto(out2);
+        this.oHash.update(out2);
+        this.oHash.digestInto(out2);
+        this.destroy();
+      }
+      digest() {
+        const out2 = new Uint8Array(this.oHash.outputLen);
+        this.digestInto(out2);
+        return out2;
+      }
+      _cloneInto(to) {
+        to || (to = Object.create(Object.getPrototypeOf(this), {}));
+        const { oHash, iHash, finished, destroyed, blockLen, outputLen } = this;
+        to = to;
+        to.finished = finished;
+        to.destroyed = destroyed;
+        to.blockLen = blockLen;
+        to.outputLen = outputLen;
+        to.oHash = oHash._cloneInto(to.oHash);
+        to.iHash = iHash._cloneInto(to.iHash);
+        return to;
+      }
+      destroy() {
+        this.destroyed = true;
+        this.oHash.destroy();
+        this.iHash.destroy();
+      }
+    };
+    hmac = (hash2, key, message) => new HMAC(hash2, key).update(message).digest();
+    hmac.create = (hash2, key) => new HMAC(hash2, key);
+  }
+});
+
+// node_modules/@noble/hashes/esm/pbkdf2.js
+function pbkdf2Init(hash2, _password, _salt, _opts) {
+  hash(hash2);
+  const opts = checkOpts({ dkLen: 32, asyncTick: 10 }, _opts);
+  const { c, dkLen, asyncTick } = opts;
+  number(c);
+  number(dkLen);
+  number(asyncTick);
+  if (c < 1)
+    throw new Error("PBKDF2: iterations (c) should be >= 1");
+  const password = toBytes2(_password);
+  const salt = toBytes2(_salt);
+  const DK = new Uint8Array(dkLen);
+  const PRF = hmac.create(hash2, password);
+  const PRFSalt = PRF._cloneInto().update(salt);
+  return { c, dkLen, asyncTick, DK, PRF, PRFSalt };
+}
+function pbkdf2Output(PRF, PRFSalt, DK, prfW, u) {
+  PRF.destroy();
+  PRFSalt.destroy();
+  if (prfW)
+    prfW.destroy();
+  u.fill(0);
+  return DK;
+}
+function pbkdf2(hash2, password, salt, opts) {
+  const { c, dkLen, DK, PRF, PRFSalt } = pbkdf2Init(hash2, password, salt, opts);
+  let prfW;
+  const arr = new Uint8Array(4);
+  const view = createView2(arr);
+  const u = new Uint8Array(PRF.outputLen);
+  for (let ti = 1, pos = 0; pos < dkLen; ti++, pos += PRF.outputLen) {
+    const Ti = DK.subarray(pos, pos + PRF.outputLen);
+    view.setInt32(0, ti, false);
+    (prfW = PRFSalt._cloneInto(prfW)).update(arr).digestInto(u);
+    Ti.set(u.subarray(0, Ti.length));
+    for (let ui = 1; ui < c; ui++) {
+      PRF._cloneInto(prfW).update(u).digestInto(u);
+      for (let i = 0; i < Ti.length; i++)
+        Ti[i] ^= u[i];
+    }
+  }
+  return pbkdf2Output(PRF, PRFSalt, DK, prfW, u);
+}
+var init_pbkdf2 = __esm({
+  "node_modules/@noble/hashes/esm/pbkdf2.js"() {
+    init_globals_inject();
+    init_assert2();
+    init_hmac();
+    init_utils2();
+  }
+});
+
+// node_modules/@noble/hashes/esm/scrypt.js
+function XorAndSalsa(prev, pi, input, ii, out2, oi) {
+  let y00 = prev[pi++] ^ input[ii++], y01 = prev[pi++] ^ input[ii++];
+  let y02 = prev[pi++] ^ input[ii++], y03 = prev[pi++] ^ input[ii++];
+  let y04 = prev[pi++] ^ input[ii++], y05 = prev[pi++] ^ input[ii++];
+  let y06 = prev[pi++] ^ input[ii++], y07 = prev[pi++] ^ input[ii++];
+  let y08 = prev[pi++] ^ input[ii++], y09 = prev[pi++] ^ input[ii++];
+  let y10 = prev[pi++] ^ input[ii++], y11 = prev[pi++] ^ input[ii++];
+  let y12 = prev[pi++] ^ input[ii++], y13 = prev[pi++] ^ input[ii++];
+  let y14 = prev[pi++] ^ input[ii++], y15 = prev[pi++] ^ input[ii++];
+  let x00 = y00, x01 = y01, x02 = y02, x03 = y03, x04 = y04, x05 = y05, x06 = y06, x07 = y07, x08 = y08, x09 = y09, x10 = y10, x11 = y11, x12 = y12, x13 = y13, x14 = y14, x15 = y15;
+  for (let i = 0; i < 8; i += 2) {
+    x04 ^= rotl(x00 + x12 | 0, 7);
+    x08 ^= rotl(x04 + x00 | 0, 9);
+    x12 ^= rotl(x08 + x04 | 0, 13);
+    x00 ^= rotl(x12 + x08 | 0, 18);
+    x09 ^= rotl(x05 + x01 | 0, 7);
+    x13 ^= rotl(x09 + x05 | 0, 9);
+    x01 ^= rotl(x13 + x09 | 0, 13);
+    x05 ^= rotl(x01 + x13 | 0, 18);
+    x14 ^= rotl(x10 + x06 | 0, 7);
+    x02 ^= rotl(x14 + x10 | 0, 9);
+    x06 ^= rotl(x02 + x14 | 0, 13);
+    x10 ^= rotl(x06 + x02 | 0, 18);
+    x03 ^= rotl(x15 + x11 | 0, 7);
+    x07 ^= rotl(x03 + x15 | 0, 9);
+    x11 ^= rotl(x07 + x03 | 0, 13);
+    x15 ^= rotl(x11 + x07 | 0, 18);
+    x01 ^= rotl(x00 + x03 | 0, 7);
+    x02 ^= rotl(x01 + x00 | 0, 9);
+    x03 ^= rotl(x02 + x01 | 0, 13);
+    x00 ^= rotl(x03 + x02 | 0, 18);
+    x06 ^= rotl(x05 + x04 | 0, 7);
+    x07 ^= rotl(x06 + x05 | 0, 9);
+    x04 ^= rotl(x07 + x06 | 0, 13);
+    x05 ^= rotl(x04 + x07 | 0, 18);
+    x11 ^= rotl(x10 + x09 | 0, 7);
+    x08 ^= rotl(x11 + x10 | 0, 9);
+    x09 ^= rotl(x08 + x11 | 0, 13);
+    x10 ^= rotl(x09 + x08 | 0, 18);
+    x12 ^= rotl(x15 + x14 | 0, 7);
+    x13 ^= rotl(x12 + x15 | 0, 9);
+    x14 ^= rotl(x13 + x12 | 0, 13);
+    x15 ^= rotl(x14 + x13 | 0, 18);
+  }
+  out2[oi++] = y00 + x00 | 0;
+  out2[oi++] = y01 + x01 | 0;
+  out2[oi++] = y02 + x02 | 0;
+  out2[oi++] = y03 + x03 | 0;
+  out2[oi++] = y04 + x04 | 0;
+  out2[oi++] = y05 + x05 | 0;
+  out2[oi++] = y06 + x06 | 0;
+  out2[oi++] = y07 + x07 | 0;
+  out2[oi++] = y08 + x08 | 0;
+  out2[oi++] = y09 + x09 | 0;
+  out2[oi++] = y10 + x10 | 0;
+  out2[oi++] = y11 + x11 | 0;
+  out2[oi++] = y12 + x12 | 0;
+  out2[oi++] = y13 + x13 | 0;
+  out2[oi++] = y14 + x14 | 0;
+  out2[oi++] = y15 + x15 | 0;
+}
+function BlockMix(input, ii, out2, oi, r) {
+  let head = oi + 0;
+  let tail = oi + 16 * r;
+  for (let i = 0; i < 16; i++)
+    out2[tail + i] = input[ii + (2 * r - 1) * 16 + i];
+  for (let i = 0; i < r; i++, head += 16, ii += 16) {
+    XorAndSalsa(out2, tail, input, ii, out2, head);
+    if (i > 0)
+      tail += 16;
+    XorAndSalsa(out2, head, input, ii += 16, out2, tail);
+  }
+}
+function scryptInit(password, salt, _opts) {
+  const opts = checkOpts({
+    dkLen: 32,
+    asyncTick: 10,
+    maxmem: 1024 ** 3 + 1024
+  }, _opts);
+  const { N, r, p, dkLen, asyncTick, maxmem, onProgress } = opts;
+  number(N);
+  number(r);
+  number(p);
+  number(dkLen);
+  number(asyncTick);
+  number(maxmem);
+  if (onProgress !== void 0 && typeof onProgress !== "function")
+    throw new Error("progressCb should be function");
+  const blockSize = 128 * r;
+  const blockSize32 = blockSize / 4;
+  if (N <= 1 || (N & N - 1) !== 0 || N > 2 ** 32) {
+    throw new Error("Scrypt: N must be larger than 1, a power of 2, and less than 2^32");
+  }
+  if (p < 0 || p > (2 ** 32 - 1) * 32 / blockSize) {
+    throw new Error("Scrypt: p must be a positive integer less than or equal to ((2^32 - 1) * 32) / (128 * r)");
+  }
+  if (dkLen < 0 || dkLen > (2 ** 32 - 1) * 32) {
+    throw new Error("Scrypt: dkLen should be positive integer less than or equal to (2^32 - 1) * 32");
+  }
+  const memUsed = blockSize * (N + p);
+  if (memUsed > maxmem) {
+    throw new Error(`Scrypt: parameters too large, ${memUsed} (128 * r * (N + p)) > ${maxmem} (maxmem)`);
+  }
+  const B2 = pbkdf2(sha256, password, salt, { c: 1, dkLen: blockSize * p });
+  const B32 = u322(B2);
+  const V = u322(new Uint8Array(blockSize * N));
+  const tmp = u322(new Uint8Array(blockSize));
+  let blockMixCb = () => {
+  };
+  if (onProgress) {
+    const totalBlockMix = 2 * N * p;
+    const callbackPer = Math.max(Math.floor(totalBlockMix / 1e4), 1);
+    let blockMixCnt = 0;
+    blockMixCb = () => {
+      blockMixCnt++;
+      if (onProgress && (!(blockMixCnt % callbackPer) || blockMixCnt === totalBlockMix))
+        onProgress(blockMixCnt / totalBlockMix);
+    };
+  }
+  return { N, r, p, dkLen, blockSize32, V, B32, B: B2, tmp, blockMixCb, asyncTick };
+}
+function scryptOutput(password, dkLen, B2, V, tmp) {
+  const res = pbkdf2(sha256, password, B2, { c: 1, dkLen });
+  B2.fill(0);
+  V.fill(0);
+  tmp.fill(0);
+  return res;
+}
+function scrypt(password, salt, opts) {
+  const { N, r, p, dkLen, blockSize32, V, B32, B: B2, tmp, blockMixCb } = scryptInit(password, salt, opts);
+  if (!isLE2)
+    byteSwap32(B32);
+  for (let pi = 0; pi < p; pi++) {
+    const Pi = blockSize32 * pi;
+    for (let i = 0; i < blockSize32; i++)
+      V[i] = B32[Pi + i];
+    for (let i = 0, pos = 0; i < N - 1; i++) {
+      BlockMix(V, pos, V, pos += blockSize32, r);
+      blockMixCb();
+    }
+    BlockMix(V, (N - 1) * blockSize32, B32, Pi, r);
+    blockMixCb();
+    for (let i = 0; i < N; i++) {
+      const j = B32[Pi + blockSize32 - 16] % N;
+      for (let k = 0; k < blockSize32; k++)
+        tmp[k] = B32[Pi + k] ^ V[j * blockSize32 + k];
+      BlockMix(tmp, 0, B32, Pi, r);
+      blockMixCb();
+    }
+  }
+  if (!isLE2)
+    byteSwap32(B32);
+  return scryptOutput(password, dkLen, B2, V, tmp);
+}
+var init_scrypt = __esm({
+  "node_modules/@noble/hashes/esm/scrypt.js"() {
+    init_globals_inject();
+    init_assert2();
+    init_sha256();
+    init_pbkdf2();
+    init_utils2();
+  }
+});
+
+// local/shims/crypto.js
+var crypto_exports = {};
+__export(crypto_exports, {
+  X509Certificate: () => X509Certificate,
+  createCipheriv: () => createCipheriv,
+  createDecipheriv: () => createDecipheriv,
+  createHash: () => createHash,
+  createHmac: () => createHmac,
+  default: () => crypto_default,
+  generateKeyPairSync: () => generateKeyPairSync,
+  randomBytes: () => randomBytes2,
+  randomUUID: () => randomUUID,
+  scryptSync: () => scryptSync,
+  sign: () => sign,
+  timingSafeEqual: () => timingSafeEqual
+});
+function randomBytes2(n) {
+  return import_buffer.Buffer.from(randomBytes(n));
+}
+function randomUUID() {
+  return crypto.randomUUID();
+}
+function toU8(x, enc) {
+  if (import_buffer.Buffer.isBuffer(x) || x instanceof Uint8Array) return new Uint8Array(x.buffer, x.byteOffset, x.byteLength);
+  return new Uint8Array(import_buffer.Buffer.from(String(x), enc || "utf8"));
+}
+function out(u83, enc) {
+  const b = import_buffer.Buffer.from(u83);
+  return enc ? b.toString(enc) : b;
+}
+function createHash(alg) {
+  const h = HASHES[alg];
+  if (!h) throw new Error("Unsupported hash " + alg);
+  const parts = [];
+  return { update(d, e) {
+    parts.push(toU8(d, e));
+    return this;
+  }, digest(e) {
+    const all = concat(parts);
+    return out(h(all), e);
+  } };
+}
+function createHmac(alg, key) {
+  const h = HASHES[alg];
+  if (!h) throw new Error("Unsupported hmac " + alg);
+  const parts = [];
+  const k = toU8(key);
+  return { update(d, e) {
+    parts.push(toU8(d, e));
+    return this;
+  }, digest(e) {
+    return out(hmac(h, k, concat(parts)), e);
+  } };
+}
+function concat(parts) {
+  const n = parts.reduce((s, p) => s + p.length, 0);
+  const r = new Uint8Array(n);
+  let o = 0;
+  for (const p of parts) {
+    r.set(p, o);
+    o += p.length;
+  }
+  return r;
+}
+function createCipheriv(alg, key, iv) {
+  if (alg !== "aes-256-gcm") throw new Error("Unsupported cipher " + alg);
+  const parts = [];
+  let tag = null;
+  return { update(d, e) {
+    parts.push(toU8(d, e));
+    return import_buffer.Buffer.alloc(0);
+  }, final() {
+    const ct = gcm(toU8(key), toU8(iv)).encrypt(concat(parts));
+    tag = import_buffer.Buffer.from(ct.subarray(ct.length - 16));
+    return import_buffer.Buffer.from(ct.subarray(0, ct.length - 16));
+  }, getAuthTag() {
+    return tag;
+  } };
+}
+function createDecipheriv(alg, key, iv) {
+  if (alg !== "aes-256-gcm") throw new Error("Unsupported cipher " + alg);
+  const parts = [];
+  let tag = null;
+  return { setAuthTag(t) {
+    tag = toU8(t);
+  }, update(d, e) {
+    parts.push(toU8(d, e));
+    return import_buffer.Buffer.alloc(0);
+  }, final() {
+    const data = concat(parts);
+    const ct = new Uint8Array(data.length + 16);
+    ct.set(data);
+    ct.set(tag, data.length);
+    try {
+      return import_buffer.Buffer.from(gcm(toU8(key), toU8(iv)).decrypt(ct));
+    } catch {
+      throw new Error("Unsupported state or unable to authenticate data");
+    }
+  } };
+}
+function scryptSync(password, salt, keylen, opts = {}) {
+  return import_buffer.Buffer.from(scrypt(toU8(password), toU8(salt), { N: opts.N || 16384, r: opts.r || 8, p: opts.p || 1, dkLen: keylen, maxmem: 2 ** 31 }));
+}
+function timingSafeEqual(a, b) {
+  const x = toU8(a), y = toU8(b);
+  if (x.length !== y.length) return false;
+  let d = 0;
+  for (let i = 0; i < x.length; i++) d |= x[i] ^ y[i];
+  return d === 0;
+}
+function sign() {
+  throw new Error("sign not available in local mode");
+}
+function generateKeyPairSync() {
+  throw new Error("not available in local mode");
+}
+var HASHES, X509Certificate, crypto_default;
+var init_crypto2 = __esm({
+  "local/shims/crypto.js"() {
+    init_globals_inject();
+    init_aes();
+    init_sha256();
+    init_sha1();
+    init_hmac();
+    init_scrypt();
+    init_utils2();
+    HASHES = { sha256, sha1 };
+    X509Certificate = class {
+      constructor() {
+        throw new Error("X509 not available in local mode");
+      }
+    };
+    crypto_default = { randomBytes: randomBytes2, randomUUID, createHash, createHmac, createCipheriv, createDecipheriv, scryptSync, timingSafeEqual, X509Certificate, sign, generateKeyPairSync };
+  }
+});
+
+// node_modules/sql.js/dist/sql-wasm.js
+var require_sql_wasm = __commonJS({
+  "node_modules/sql.js/dist/sql-wasm.js"(exports, module) {
+    init_globals_inject();
+    var initSqlJsPromise = void 0;
+    var initSqlJs = function(moduleConfig) {
+      if (initSqlJsPromise) {
+        return initSqlJsPromise;
+      }
+      initSqlJsPromise = new Promise(function(resolveModule, reject) {
+        var Module = typeof moduleConfig !== "undefined" ? moduleConfig : {};
+        var originalOnAbortFunction = Module["onAbort"];
+        Module["onAbort"] = function(errorThatCausedAbort) {
+          reject(new Error(errorThatCausedAbort));
+          if (originalOnAbortFunction) {
+            originalOnAbortFunction(errorThatCausedAbort);
+          }
+        };
+        Module["postRun"] = Module["postRun"] || [];
+        Module["postRun"].push(function() {
+          resolveModule(Module);
+        });
+        module = void 0;
+        var f;
+        f ||= typeof Module != "undefined" ? Module : {};
+        var aa = "object" == typeof window, ba = "function" == typeof importScripts, ca = "object" == typeof proc && "object" == typeof proc.versions && "string" == typeof proc.versions.node;
+        "use strict";
+        f.onRuntimeInitialized = function() {
+          function a(g, l) {
+            switch (typeof l) {
+              case "boolean":
+                fc(g, l ? 1 : 0);
+                break;
+              case "number":
+                gc(g, l);
+                break;
+              case "string":
+                hc(g, l, -1, -1);
+                break;
+              case "object":
+                if (null === l) ib(g);
+                else if (null != l.length) {
+                  var n = da(l, ea);
+                  ic(g, n, l.length, -1);
+                  fa(n);
+                } else xa(g, "Wrong API use : tried to return a value of an unknown type (" + l + ").", -1);
+                break;
+              default:
+                ib(g);
+            }
+          }
+          function b(g, l) {
+            for (var n = [], t = 0; t < g; t += 1) {
+              var w = m(l + 4 * t, "i32"), A = jc(w);
+              if (1 === A || 2 === A) w = kc(w);
+              else if (3 === A) w = lc2(w);
+              else if (4 === A) {
+                A = w;
+                w = mc(A);
+                A = nc(A);
+                for (var N = new Uint8Array(w), M = 0; M < w; M += 1) N[M] = p[A + M];
+                w = N;
+              } else w = null;
+              n.push(w);
+            }
+            return n;
+          }
+          function c(g, l) {
+            this.Ka = g;
+            this.db = l;
+            this.Ia = 1;
+            this.eb = [];
+          }
+          function d(g, l) {
+            this.db = l;
+            l = ha(g) + 1;
+            this.Xa = ia(l);
+            if (null === this.Xa) throw Error("Unable to allocate memory for the SQL string");
+            q(g, u, this.Xa, l);
+            this.cb = this.Xa;
+            this.Ta = this.hb = null;
+          }
+          function e(g) {
+            this.filename = "dbfile_" + (4294967295 * Math.random() >>> 0);
+            if (null != g) {
+              var l = this.filename, n = "/", t = l;
+              n && (n = "string" == typeof n ? n : ja(n), t = l ? x(n + "/" + l) : n);
+              l = ka(true, true);
+              t = la(t, (void 0 !== l ? l : 438) & 4095 | 32768, 0);
+              if (g) {
+                if ("string" == typeof g) {
+                  n = Array(g.length);
+                  for (var w = 0, A = g.length; w < A; ++w) n[w] = g.charCodeAt(w);
+                  g = n;
+                }
+                ma(t, l | 146);
+                n = na(t, 577);
+                oa(n, g, 0, g.length, 0);
+                pa(n);
+                ma(t, l);
+              }
+            }
+            this.handleError(r(this.filename, h));
+            this.db = m(h, "i32");
+            lb(this.db);
+            this.Ya = {};
+            this.Ma = {};
+          }
+          var h = y(4), k = f.cwrap, r = k("sqlite3_open", "number", ["string", "number"]), z = k("sqlite3_close_v2", "number", ["number"]), v = k("sqlite3_exec", "number", ["number", "string", "number", "number", "number"]), E = k(
+            "sqlite3_changes",
+            "number",
+            ["number"]
+          ), H = k("sqlite3_prepare_v2", "number", ["number", "string", "number", "number", "number"]), mb = k("sqlite3_sql", "string", ["number"]), oc = k("sqlite3_normalized_sql", "string", ["number"]), nb = k("sqlite3_prepare_v2", "number", ["number", "number", "number", "number", "number"]), pc = k("sqlite3_bind_text", "number", ["number", "number", "number", "number", "number"]), ob = k("sqlite3_bind_blob", "number", ["number", "number", "number", "number", "number"]), qc = k("sqlite3_bind_double", "number", ["number", "number", "number"]), rc = k("sqlite3_bind_int", "number", ["number", "number", "number"]), sc = k("sqlite3_bind_parameter_index", "number", ["number", "string"]), tc = k("sqlite3_step", "number", ["number"]), uc = k("sqlite3_errmsg", "string", ["number"]), vc = k("sqlite3_column_count", "number", ["number"]), wc = k("sqlite3_data_count", "number", ["number"]), xc = k("sqlite3_column_double", "number", ["number", "number"]), pb = k("sqlite3_column_text", "string", ["number", "number"]), yc = k("sqlite3_column_blob", "number", ["number", "number"]), zc = k(
+            "sqlite3_column_bytes",
+            "number",
+            ["number", "number"]
+          ), Ac = k("sqlite3_column_type", "number", ["number", "number"]), Bc = k("sqlite3_column_name", "string", ["number", "number"]), Cc = k("sqlite3_reset", "number", ["number"]), Dc = k("sqlite3_clear_bindings", "number", ["number"]), Ec = k("sqlite3_finalize", "number", ["number"]), qb = k("sqlite3_create_function_v2", "number", "number string number number number number number number number".split(" ")), jc = k("sqlite3_value_type", "number", ["number"]), mc = k("sqlite3_value_bytes", "number", ["number"]), lc2 = k(
+            "sqlite3_value_text",
+            "string",
+            ["number"]
+          ), nc = k("sqlite3_value_blob", "number", ["number"]), kc = k("sqlite3_value_double", "number", ["number"]), gc = k("sqlite3_result_double", "", ["number", "number"]), ib = k("sqlite3_result_null", "", ["number"]), hc = k("sqlite3_result_text", "", ["number", "string", "number", "number"]), ic = k("sqlite3_result_blob", "", ["number", "number", "number", "number"]), fc = k("sqlite3_result_int", "", ["number", "number"]), xa = k("sqlite3_result_error", "", ["number", "string", "number"]), rb = k(
+            "sqlite3_aggregate_context",
+            "number",
+            ["number", "number"]
+          ), lb = k("RegisterExtensionFunctions", "number", ["number"]);
+          c.prototype.bind = function(g) {
+            if (!this.Ka) throw "Statement closed";
+            this.reset();
+            return Array.isArray(g) ? this.vb(g) : null != g && "object" === typeof g ? this.wb(g) : true;
+          };
+          c.prototype.step = function() {
+            if (!this.Ka) throw "Statement closed";
+            this.Ia = 1;
+            var g = tc(this.Ka);
+            switch (g) {
+              case 100:
+                return true;
+              case 101:
+                return false;
+              default:
+                throw this.db.handleError(g);
+            }
+          };
+          c.prototype.qb = function(g) {
+            null == g && (g = this.Ia, this.Ia += 1);
+            return xc(this.Ka, g);
+          };
+          c.prototype.zb = function(g) {
+            null == g && (g = this.Ia, this.Ia += 1);
+            g = pb(this.Ka, g);
+            if ("function" !== typeof BigInt) throw Error("BigInt is not supported");
+            return BigInt(g);
+          };
+          c.prototype.Ab = function(g) {
+            null == g && (g = this.Ia, this.Ia += 1);
+            return pb(this.Ka, g);
+          };
+          c.prototype.getBlob = function(g) {
+            null == g && (g = this.Ia, this.Ia += 1);
+            var l = zc(this.Ka, g);
+            g = yc(this.Ka, g);
+            for (var n = new Uint8Array(l), t = 0; t < l; t += 1) n[t] = p[g + t];
+            return n;
+          };
+          c.prototype.get = function(g, l) {
+            l = l || {};
+            null != g && this.bind(g) && this.step();
+            g = [];
+            for (var n = wc(this.Ka), t = 0; t < n; t += 1) switch (Ac(this.Ka, t)) {
+              case 1:
+                var w = l.useBigInt ? this.zb(t) : this.qb(t);
+                g.push(w);
+                break;
+              case 2:
+                g.push(this.qb(t));
+                break;
+              case 3:
+                g.push(this.Ab(t));
+                break;
+              case 4:
+                g.push(this.getBlob(t));
+                break;
+              default:
+                g.push(null);
+            }
+            return g;
+          };
+          c.prototype.getColumnNames = function() {
+            for (var g = [], l = vc(this.Ka), n = 0; n < l; n += 1) g.push(Bc(this.Ka, n));
+            return g;
+          };
+          c.prototype.getAsObject = function(g, l) {
+            g = this.get(g, l);
+            l = this.getColumnNames();
+            for (var n = {}, t = 0; t < l.length; t += 1) n[l[t]] = g[t];
+            return n;
+          };
+          c.prototype.getSQL = function() {
+            return mb(this.Ka);
+          };
+          c.prototype.getNormalizedSQL = function() {
+            return oc(this.Ka);
+          };
+          c.prototype.run = function(g) {
+            null != g && this.bind(g);
+            this.step();
+            return this.reset();
+          };
+          c.prototype.mb = function(g, l) {
+            null == l && (l = this.Ia, this.Ia += 1);
+            g = qa(g);
+            var n = da(g, ea);
+            this.eb.push(n);
+            this.db.handleError(pc(this.Ka, l, n, g.length - 1, 0));
+          };
+          c.prototype.ub = function(g, l) {
+            null == l && (l = this.Ia, this.Ia += 1);
+            var n = da(g, ea);
+            this.eb.push(n);
+            this.db.handleError(ob(this.Ka, l, n, g.length, 0));
+          };
+          c.prototype.lb = function(g, l) {
+            null == l && (l = this.Ia, this.Ia += 1);
+            this.db.handleError((g === (g | 0) ? rc : qc)(this.Ka, l, g));
+          };
+          c.prototype.xb = function(g) {
+            null == g && (g = this.Ia, this.Ia += 1);
+            ob(this.Ka, g, 0, 0, 0);
+          };
+          c.prototype.nb = function(g, l) {
+            null == l && (l = this.Ia, this.Ia += 1);
+            switch (typeof g) {
+              case "string":
+                this.mb(g, l);
+                return;
+              case "number":
+                this.lb(g, l);
+                return;
+              case "bigint":
+                this.mb(g.toString(), l);
+                return;
+              case "boolean":
+                this.lb(g + 0, l);
+                return;
+              case "object":
+                if (null === g) {
+                  this.xb(l);
+                  return;
+                }
+                if (null != g.length) {
+                  this.ub(g, l);
+                  return;
+                }
+            }
+            throw "Wrong API use : tried to bind a value of an unknown type (" + g + ").";
+          };
+          c.prototype.wb = function(g) {
+            var l = this;
+            Object.keys(g).forEach(function(n) {
+              var t = sc(l.Ka, n);
+              0 !== t && l.nb(g[n], t);
+            });
+            return true;
+          };
+          c.prototype.vb = function(g) {
+            for (var l = 0; l < g.length; l += 1) this.nb(g[l], l + 1);
+            return true;
+          };
+          c.prototype.reset = function() {
+            this.freemem();
+            return 0 === Dc(this.Ka) && 0 === Cc(this.Ka);
+          };
+          c.prototype.freemem = function() {
+            for (var g; void 0 !== (g = this.eb.pop()); ) fa(g);
+          };
+          c.prototype.free = function() {
+            this.freemem();
+            var g = 0 === Ec(this.Ka);
+            delete this.db.Ya[this.Ka];
+            this.Ka = 0;
+            return g;
+          };
+          d.prototype.next = function() {
+            if (null === this.Xa) return { done: true };
+            null !== this.Ta && (this.Ta.free(), this.Ta = null);
+            if (!this.db.db) throw this.fb(), Error("Database closed");
+            var g = ra(), l = y(4);
+            sa(h);
+            sa(l);
+            try {
+              this.db.handleError(nb(this.db.db, this.cb, -1, h, l));
+              this.cb = m(l, "i32");
+              var n = m(h, "i32");
+              if (0 === n) return this.fb(), { done: true };
+              this.Ta = new c(n, this.db);
+              this.db.Ya[n] = this.Ta;
+              return { value: this.Ta, done: false };
+            } catch (t) {
+              throw this.hb = ta(this.cb), this.fb(), t;
+            } finally {
+              ua(g);
+            }
+          };
+          d.prototype.fb = function() {
+            fa(this.Xa);
+            this.Xa = null;
+          };
+          d.prototype.getRemainingSQL = function() {
+            return null !== this.hb ? this.hb : ta(this.cb);
+          };
+          "function" === typeof Symbol && "symbol" === typeof Symbol.iterator && (d.prototype[Symbol.iterator] = function() {
+            return this;
+          });
+          e.prototype.run = function(g, l) {
+            if (!this.db) throw "Database closed";
+            if (l) {
+              g = this.prepare(g, l);
+              try {
+                g.step();
+              } finally {
+                g.free();
+              }
+            } else this.handleError(v(this.db, g, 0, 0, h));
+            return this;
+          };
+          e.prototype.exec = function(g, l, n) {
+            if (!this.db) throw "Database closed";
+            var t = ra(), w = null;
+            try {
+              var A = va(g), N = y(4);
+              for (g = []; 0 !== m(A, "i8"); ) {
+                sa(h);
+                sa(N);
+                this.handleError(nb(
+                  this.db,
+                  A,
+                  -1,
+                  h,
+                  N
+                ));
+                var M = m(h, "i32");
+                A = m(N, "i32");
+                if (0 !== M) {
+                  var K = null;
+                  w = new c(M, this);
+                  for (null != l && w.bind(l); w.step(); ) null === K && (K = { columns: w.getColumnNames(), values: [] }, g.push(K)), K.values.push(w.get(null, n));
+                  w.free();
+                }
+              }
+              return g;
+            } catch (O) {
+              throw w && w.free(), O;
+            } finally {
+              ua(t);
+            }
+          };
+          e.prototype.each = function(g, l, n, t, w) {
+            "function" === typeof l && (t = n, n = l, l = void 0);
+            g = this.prepare(g, l);
+            try {
+              for (; g.step(); ) n(g.getAsObject(null, w));
+            } finally {
+              g.free();
+            }
+            if ("function" === typeof t) return t();
+          };
+          e.prototype.prepare = function(g, l) {
+            sa(h);
+            this.handleError(H(this.db, g, -1, h, 0));
+            g = m(h, "i32");
+            if (0 === g) throw "Nothing to prepare";
+            var n = new c(g, this);
+            null != l && n.bind(l);
+            return this.Ya[g] = n;
+          };
+          e.prototype.iterateStatements = function(g) {
+            return new d(g, this);
+          };
+          e.prototype["export"] = function() {
+            Object.values(this.Ya).forEach(function(l) {
+              l.free();
+            });
+            Object.values(this.Ma).forEach(wa);
+            this.Ma = {};
+            this.handleError(z(this.db));
+            var g = ya(this.filename);
+            this.handleError(r(this.filename, h));
+            this.db = m(h, "i32");
+            lb(this.db);
+            return g;
+          };
+          e.prototype.close = function() {
+            null !== this.db && (Object.values(this.Ya).forEach(function(g) {
+              g.free();
+            }), Object.values(this.Ma).forEach(wa), this.Ma = {}, this.handleError(z(this.db)), za("/" + this.filename), this.db = null);
+          };
+          e.prototype.handleError = function(g) {
+            if (0 === g) return null;
+            g = uc(this.db);
+            throw Error(g);
+          };
+          e.prototype.getRowsModified = function() {
+            return E(this.db);
+          };
+          e.prototype.create_function = function(g, l) {
+            Object.prototype.hasOwnProperty.call(this.Ma, g) && (wa(this.Ma[g]), delete this.Ma[g]);
+            var n = Aa(function(t, w, A) {
+              w = b(w, A);
+              try {
+                var N = l.apply(
+                  null,
+                  w
+                );
+              } catch (M) {
+                xa(t, M, -1);
+                return;
+              }
+              a(t, N);
+            }, "viii");
+            this.Ma[g] = n;
+            this.handleError(qb(this.db, g, l.length, 1, 0, n, 0, 0, 0));
+            return this;
+          };
+          e.prototype.create_aggregate = function(g, l) {
+            var n = l.init || function() {
+              return null;
+            }, t = l.finalize || function(K) {
+              return K;
+            }, w = l.step;
+            if (!w) throw "An aggregate function must have a step function in " + g;
+            var A = {};
+            Object.hasOwnProperty.call(this.Ma, g) && (wa(this.Ma[g]), delete this.Ma[g]);
+            l = g + "__finalize";
+            Object.hasOwnProperty.call(this.Ma, l) && (wa(this.Ma[l]), delete this.Ma[l]);
+            var N = Aa(function(K, O, Ra) {
+              var Y = rb(K, 1);
+              Object.hasOwnProperty.call(A, Y) || (A[Y] = n());
+              O = b(O, Ra);
+              O = [A[Y]].concat(O);
+              try {
+                A[Y] = w.apply(null, O);
+              } catch (Gc) {
+                delete A[Y], xa(K, Gc, -1);
+              }
+            }, "viii"), M = Aa(function(K) {
+              var O = rb(K, 1);
+              try {
+                var Ra = t(A[O]);
+              } catch (Y) {
+                delete A[O];
+                xa(K, Y, -1);
+                return;
+              }
+              a(K, Ra);
+              delete A[O];
+            }, "vi");
+            this.Ma[g] = N;
+            this.Ma[l] = M;
+            this.handleError(qb(this.db, g, w.length - 1, 1, 0, 0, N, M, 0));
+            return this;
+          };
+          f.Database = e;
+        };
+        var Ba = Object.assign({}, f), Ca = "./this.program", B2 = "", Da, Ea;
+        if (ca) {
+          var fs = (init_fs(), __toCommonJS(fs_exports)), Fa = (init_path(), __toCommonJS(path_exports));
+          B2 = "//";
+          Ea = (a) => {
+            a = Ga(a) ? new URL(a) : Fa.normalize(a);
+            return fs.readFileSync(a);
+          };
+          Da = (a) => {
+            a = Ga(a) ? new URL(a) : Fa.normalize(a);
+            return new Promise((b, c) => {
+              fs.readFile(a, void 0, (d, e) => {
+                d ? c(d) : b(e.buffer);
+              });
+            });
+          };
+          !f.thisProgram && 1 < proc.argv.length && (Ca = proc.argv[1].replace(/\\/g, "/"));
+          proc.argv.slice(2);
+          "undefined" != typeof module && (module.exports = f);
+        } else if (aa || ba) ba ? B2 = self.location.href : "undefined" != typeof document && document.currentScript && (B2 = document.currentScript.src), B2 = B2.startsWith("blob:") ? "" : B2.substr(0, B2.replace(/[?#].*/, "").lastIndexOf("/") + 1), ba && (Ea = (a) => {
+          var b = new XMLHttpRequest();
+          b.open("GET", a, false);
+          b.responseType = "arraybuffer";
+          b.send(null);
+          return new Uint8Array(b.response);
+        }), Da = (a) => Ga(a) ? new Promise((b, c) => {
+          var d = new XMLHttpRequest();
+          d.open("GET", a, true);
+          d.responseType = "arraybuffer";
+          d.onload = () => {
+            (200 == d.status || 0 == d.status && d.response) && c(d.response);
+            b(d.status);
+          };
+          d.onerror = b;
+          d.send(null);
+        }) : fetch(a, { credentials: "same-origin" }).then((b) => b.ok ? b.arrayBuffer() : Promise.reject(Error(b.status + " : " + b.url)));
+        var Ha = f.print || console.log.bind(console), C = f.printErr || console.error.bind(console);
+        Object.assign(f, Ba);
+        Ba = null;
+        f.thisProgram && (Ca = f.thisProgram);
+        var Ia;
+        f.wasmBinary && (Ia = f.wasmBinary);
+        var Ja, Ka = false, p, u, La, D, F, Ma, Na;
+        function Oa() {
+          var a = Ja.buffer;
+          f.HEAP8 = p = new Int8Array(a);
+          f.HEAP16 = La = new Int16Array(a);
+          f.HEAPU8 = u = new Uint8Array(a);
+          f.HEAPU16 = new Uint16Array(a);
+          f.HEAP32 = D = new Int32Array(a);
+          f.HEAPU32 = F = new Uint32Array(a);
+          f.HEAPF32 = Ma = new Float32Array(a);
+          f.HEAPF64 = Na = new Float64Array(a);
+        }
+        var Pa = [], Qa = [], Sa = [];
+        function Ta() {
+          var a = f.preRun.shift();
+          Pa.unshift(a);
+        }
+        var Ua = 0, Va = null, Wa = null;
+        function G(a) {
+          f.onAbort?.(a);
+          a = "Aborted(" + a + ")";
+          C(a);
+          Ka = true;
+          throw new WebAssembly.RuntimeError(a + ". Build with -sASSERTIONS for more info.");
+        }
+        var Xa = (a) => a.startsWith("data:application/octet-stream;base64,"), Ga = (a) => a.startsWith("file://"), Ya;
+        function Za(a) {
+          if (a == Ya && Ia) return new Uint8Array(Ia);
+          if (Ea) return Ea(a);
+          throw "both async and sync fetching of the wasm failed";
+        }
+        function $a(a) {
+          return Ia ? Promise.resolve().then(() => Za(a)) : Da(a).then((b) => new Uint8Array(b), () => Za(a));
+        }
+        function ab(a, b, c) {
+          return $a(a).then((d) => WebAssembly.instantiate(d, b)).then(c, (d) => {
+            C(`failed to asynchronously prepare wasm: ${d}`);
+            G(d);
+          });
+        }
+        function bb(a, b) {
+          var c = Ya;
+          Ia || "function" != typeof WebAssembly.instantiateStreaming || Xa(c) || Ga(c) || ca || "function" != typeof fetch ? ab(c, a, b) : fetch(c, { credentials: "same-origin" }).then((d) => WebAssembly.instantiateStreaming(d, a).then(b, function(e) {
+            C(`wasm streaming compile failed: ${e}`);
+            C("falling back to ArrayBuffer instantiation");
+            return ab(c, a, b);
+          }));
+        }
+        var I, J, cb = (a) => {
+          for (; 0 < a.length; ) a.shift()(f);
+        };
+        function m(a, b = "i8") {
+          b.endsWith("*") && (b = "*");
+          switch (b) {
+            case "i1":
+              return p[a];
+            case "i8":
+              return p[a];
+            case "i16":
+              return La[a >> 1];
+            case "i32":
+              return D[a >> 2];
+            case "i64":
+              G("to do getValue(i64) use WASM_BIGINT");
+            case "float":
+              return Ma[a >> 2];
+            case "double":
+              return Na[a >> 3];
+            case "*":
+              return F[a >> 2];
+            default:
+              G(`invalid type for getValue: ${b}`);
+          }
+        }
+        function sa(a) {
+          var b = "i32";
+          b.endsWith("*") && (b = "*");
+          switch (b) {
+            case "i1":
+              p[a] = 0;
+              break;
+            case "i8":
+              p[a] = 0;
+              break;
+            case "i16":
+              La[a >> 1] = 0;
+              break;
+            case "i32":
+              D[a >> 2] = 0;
+              break;
+            case "i64":
+              G("to do setValue(i64) use WASM_BIGINT");
+            case "float":
+              Ma[a >> 2] = 0;
+              break;
+            case "double":
+              Na[a >> 3] = 0;
+              break;
+            case "*":
+              F[a >> 2] = 0;
+              break;
+            default:
+              G(`invalid type for setValue: ${b}`);
+          }
+        }
+        var db3 = "undefined" != typeof TextDecoder ? new TextDecoder() : void 0, L = (a, b, c) => {
+          var d = b + c;
+          for (c = b; a[c] && !(c >= d); ) ++c;
+          if (16 < c - b && a.buffer && db3) return db3.decode(a.subarray(b, c));
+          for (d = ""; b < c; ) {
+            var e = a[b++];
+            if (e & 128) {
+              var h = a[b++] & 63;
+              if (192 == (e & 224)) d += String.fromCharCode((e & 31) << 6 | h);
+              else {
+                var k = a[b++] & 63;
+                e = 224 == (e & 240) ? (e & 15) << 12 | h << 6 | k : (e & 7) << 18 | h << 12 | k << 6 | a[b++] & 63;
+                65536 > e ? d += String.fromCharCode(e) : (e -= 65536, d += String.fromCharCode(55296 | e >> 10, 56320 | e & 1023));
+              }
+            } else d += String.fromCharCode(e);
+          }
+          return d;
+        }, ta = (a, b) => a ? L(u, a, b) : "", eb = (a, b) => {
+          for (var c = 0, d = a.length - 1; 0 <= d; d--) {
+            var e = a[d];
+            "." === e ? a.splice(d, 1) : ".." === e ? (a.splice(d, 1), c++) : c && (a.splice(d, 1), c--);
+          }
+          if (b) for (; c; c--) a.unshift("..");
+          return a;
+        }, x = (a) => {
+          var b = "/" === a.charAt(0), c = "/" === a.substr(-1);
+          (a = eb(a.split("/").filter((d) => !!d), !b).join("/")) || b || (a = ".");
+          a && c && (a += "/");
+          return (b ? "/" : "") + a;
+        }, fb = (a) => {
+          var b = /^(\/?|)([\s\S]*?)((?:\.{1,2}|[^\/]+?|)(\.[^.\/]*|))(?:[\/]*)$/.exec(a).slice(1);
+          a = b[0];
+          b = b[1];
+          if (!a && !b) return ".";
+          b &&= b.substr(0, b.length - 1);
+          return a + b;
+        }, gb = (a) => {
+          if ("/" === a) return "/";
+          a = x(a);
+          a = a.replace(/\/$/, "");
+          var b = a.lastIndexOf("/");
+          return -1 === b ? a : a.substr(b + 1);
+        }, hb = () => {
+          if ("object" == typeof crypto && "function" == typeof crypto.getRandomValues) return (c) => crypto.getRandomValues(c);
+          if (ca) try {
+            var a = (init_crypto2(), __toCommonJS(crypto_exports));
+            if (a.randomFillSync) return (c) => a.randomFillSync(c);
+            var b = a.randomBytes;
+            return (c) => (c.set(b(c.byteLength)), c);
+          } catch (c) {
+          }
+          G("initRandomDevice");
+        }, jb = (a) => (jb = hb())(a), kb = (...a) => {
+          for (var b = "", c = false, d = a.length - 1; -1 <= d && !c; d--) {
+            c = 0 <= d ? a[d] : "/";
+            if ("string" != typeof c) throw new TypeError("Arguments to path.resolve must be strings");
+            if (!c) return "";
+            b = c + "/" + b;
+            c = "/" === c.charAt(0);
+          }
+          b = eb(b.split("/").filter((e) => !!e), !c).join("/");
+          return (c ? "/" : "") + b || ".";
+        }, sb = [], ha = (a) => {
+          for (var b = 0, c = 0; c < a.length; ++c) {
+            var d = a.charCodeAt(c);
+            127 >= d ? b++ : 2047 >= d ? b += 2 : 55296 <= d && 57343 >= d ? (b += 4, ++c) : b += 3;
+          }
+          return b;
+        }, q = (a, b, c, d) => {
+          if (!(0 < d)) return 0;
+          var e = c;
+          d = c + d - 1;
+          for (var h = 0; h < a.length; ++h) {
+            var k = a.charCodeAt(h);
+            if (55296 <= k && 57343 >= k) {
+              var r = a.charCodeAt(++h);
+              k = 65536 + ((k & 1023) << 10) | r & 1023;
+            }
+            if (127 >= k) {
+              if (c >= d) break;
+              b[c++] = k;
+            } else {
+              if (2047 >= k) {
+                if (c + 1 >= d) break;
+                b[c++] = 192 | k >> 6;
+              } else {
+                if (65535 >= k) {
+                  if (c + 2 >= d) break;
+                  b[c++] = 224 | k >> 12;
+                } else {
+                  if (c + 3 >= d) break;
+                  b[c++] = 240 | k >> 18;
+                  b[c++] = 128 | k >> 12 & 63;
+                }
+                b[c++] = 128 | k >> 6 & 63;
+              }
+              b[c++] = 128 | k & 63;
+            }
+          }
+          b[c] = 0;
+          return c - e;
+        };
+        function qa(a, b) {
+          var c = Array(ha(a) + 1);
+          a = q(a, c, 0, c.length);
+          b && (c.length = a);
+          return c;
+        }
+        var tb = [];
+        function ub(a, b) {
+          tb[a] = { input: [], output: [], Wa: b };
+          vb(a, wb);
+        }
+        var wb = { open(a) {
+          var b = tb[a.node.rdev];
+          if (!b) throw new P2(43);
+          a.tty = b;
+          a.seekable = false;
+        }, close(a) {
+          a.tty.Wa.fsync(a.tty);
+        }, fsync(a) {
+          a.tty.Wa.fsync(a.tty);
+        }, read(a, b, c, d) {
+          if (!a.tty || !a.tty.Wa.rb) throw new P2(60);
+          for (var e = 0, h = 0; h < d; h++) {
+            try {
+              var k = a.tty.Wa.rb(a.tty);
+            } catch (r) {
+              throw new P2(29);
+            }
+            if (void 0 === k && 0 === e) throw new P2(6);
+            if (null === k || void 0 === k) break;
+            e++;
+            b[c + h] = k;
+          }
+          e && (a.node.timestamp = Date.now());
+          return e;
+        }, write(a, b, c, d) {
+          if (!a.tty || !a.tty.Wa.ib) throw new P2(60);
+          try {
+            for (var e = 0; e < d; e++) a.tty.Wa.ib(a.tty, b[c + e]);
+          } catch (h) {
+            throw new P2(29);
+          }
+          d && (a.node.timestamp = Date.now());
+          return e;
+        } }, xb = { rb() {
+          a: {
+            if (!sb.length) {
+              var a = null;
+              if (ca) {
+                var b = import_buffer.Buffer.alloc(256), c = 0, d = proc.stdin.fd;
+                try {
+                  c = fs.readSync(d, b, 0, 256);
+                } catch (e) {
+                  if (e.toString().includes("EOF")) c = 0;
+                  else throw e;
+                }
+                0 < c && (a = b.slice(0, c).toString("utf-8"));
+              } else "undefined" != typeof window && "function" == typeof window.prompt && (a = window.prompt("Input: "), null !== a && (a += "\n"));
+              if (!a) {
+                a = null;
+                break a;
+              }
+              sb = qa(a, true);
+            }
+            a = sb.shift();
+          }
+          return a;
+        }, ib(a, b) {
+          null === b || 10 === b ? (Ha(L(
+            a.output,
+            0
+          )), a.output = []) : 0 != b && a.output.push(b);
+        }, fsync(a) {
+          a.output && 0 < a.output.length && (Ha(L(a.output, 0)), a.output = []);
+        }, Lb() {
+          return { Gb: 25856, Ib: 5, Fb: 191, Hb: 35387, Eb: [3, 28, 127, 21, 4, 0, 1, 0, 17, 19, 26, 0, 18, 15, 23, 22, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] };
+        }, Mb() {
+          return 0;
+        }, Nb() {
+          return [24, 80];
+        } }, yb = { ib(a, b) {
+          null === b || 10 === b ? (C(L(a.output, 0)), a.output = []) : 0 != b && a.output.push(b);
+        }, fsync(a) {
+          a.output && 0 < a.output.length && (C(L(a.output, 0)), a.output = []);
+        } };
+        function zb(a, b) {
+          var c = a.Ha ? a.Ha.length : 0;
+          c >= b || (b = Math.max(b, c * (1048576 > c ? 2 : 1.125) >>> 0), 0 != c && (b = Math.max(b, 256)), c = a.Ha, a.Ha = new Uint8Array(b), 0 < a.La && a.Ha.set(c.subarray(0, a.La), 0));
+        }
+        var Q = {
+          Pa: null,
+          Qa() {
+            return Q.createNode(null, "/", 16895, 0);
+          },
+          createNode(a, b, c, d) {
+            if (24576 === (c & 61440) || 4096 === (c & 61440)) throw new P2(63);
+            Q.Pa || (Q.Pa = { dir: { node: { Oa: Q.Fa.Oa, Na: Q.Fa.Na, lookup: Q.Fa.lookup, $a: Q.Fa.$a, rename: Q.Fa.rename, unlink: Q.Fa.unlink, rmdir: Q.Fa.rmdir, readdir: Q.Fa.readdir, symlink: Q.Fa.symlink }, stream: { Sa: Q.Ga.Sa } }, file: { node: { Oa: Q.Fa.Oa, Na: Q.Fa.Na }, stream: { Sa: Q.Ga.Sa, read: Q.Ga.read, write: Q.Ga.write, kb: Q.Ga.kb, ab: Q.Ga.ab, bb: Q.Ga.bb } }, link: {
+              node: { Oa: Q.Fa.Oa, Na: Q.Fa.Na, readlink: Q.Fa.readlink },
+              stream: {}
+            }, ob: { node: { Oa: Q.Fa.Oa, Na: Q.Fa.Na }, stream: Ab } });
+            c = Bb(a, b, c, d);
+            R(c.mode) ? (c.Fa = Q.Pa.dir.node, c.Ga = Q.Pa.dir.stream, c.Ha = {}) : 32768 === (c.mode & 61440) ? (c.Fa = Q.Pa.file.node, c.Ga = Q.Pa.file.stream, c.La = 0, c.Ha = null) : 40960 === (c.mode & 61440) ? (c.Fa = Q.Pa.link.node, c.Ga = Q.Pa.link.stream) : 8192 === (c.mode & 61440) && (c.Fa = Q.Pa.ob.node, c.Ga = Q.Pa.ob.stream);
+            c.timestamp = Date.now();
+            a && (a.Ha[b] = c, a.timestamp = c.timestamp);
+            return c;
+          },
+          Kb(a) {
+            return a.Ha ? a.Ha.subarray ? a.Ha.subarray(0, a.La) : new Uint8Array(a.Ha) : new Uint8Array(0);
+          },
+          Fa: { Oa(a) {
+            var b = {};
+            b.dev = 8192 === (a.mode & 61440) ? a.id : 1;
+            b.ino = a.id;
+            b.mode = a.mode;
+            b.nlink = 1;
+            b.uid = 0;
+            b.gid = 0;
+            b.rdev = a.rdev;
+            R(a.mode) ? b.size = 4096 : 32768 === (a.mode & 61440) ? b.size = a.La : 40960 === (a.mode & 61440) ? b.size = a.link.length : b.size = 0;
+            b.atime = new Date(a.timestamp);
+            b.mtime = new Date(a.timestamp);
+            b.ctime = new Date(a.timestamp);
+            b.yb = 4096;
+            b.blocks = Math.ceil(b.size / b.yb);
+            return b;
+          }, Na(a, b) {
+            void 0 !== b.mode && (a.mode = b.mode);
+            void 0 !== b.timestamp && (a.timestamp = b.timestamp);
+            if (void 0 !== b.size && (b = b.size, a.La != b)) if (0 == b) a.Ha = null, a.La = 0;
+            else {
+              var c = a.Ha;
+              a.Ha = new Uint8Array(b);
+              c && a.Ha.set(c.subarray(0, Math.min(b, a.La)));
+              a.La = b;
+            }
+          }, lookup() {
+            throw Cb[44];
+          }, $a(a, b, c, d) {
+            return Q.createNode(a, b, c, d);
+          }, rename(a, b, c) {
+            if (R(a.mode)) {
+              try {
+                var d = Db(b, c);
+              } catch (h) {
+              }
+              if (d) for (var e in d.Ha) throw new P2(55);
+            }
+            delete a.parent.Ha[a.name];
+            a.parent.timestamp = Date.now();
+            a.name = c;
+            b.Ha[c] = a;
+            b.timestamp = a.parent.timestamp;
+          }, unlink(a, b) {
+            delete a.Ha[b];
+            a.timestamp = Date.now();
+          }, rmdir(a, b) {
+            var c = Db(a, b), d;
+            for (d in c.Ha) throw new P2(55);
+            delete a.Ha[b];
+            a.timestamp = Date.now();
+          }, readdir(a) {
+            var b = [".", ".."], c;
+            for (c of Object.keys(a.Ha)) b.push(c);
+            return b;
+          }, symlink(a, b, c) {
+            a = Q.createNode(a, b, 41471, 0);
+            a.link = c;
+            return a;
+          }, readlink(a) {
+            if (40960 !== (a.mode & 61440)) throw new P2(28);
+            return a.link;
+          } },
+          Ga: {
+            read(a, b, c, d, e) {
+              var h = a.node.Ha;
+              if (e >= a.node.La) return 0;
+              a = Math.min(a.node.La - e, d);
+              if (8 < a && h.subarray) b.set(h.subarray(e, e + a), c);
+              else for (d = 0; d < a; d++) b[c + d] = h[e + d];
+              return a;
+            },
+            write(a, b, c, d, e, h) {
+              b.buffer === p.buffer && (h = false);
+              if (!d) return 0;
+              a = a.node;
+              a.timestamp = Date.now();
+              if (b.subarray && (!a.Ha || a.Ha.subarray)) {
+                if (h) return a.Ha = b.subarray(c, c + d), a.La = d;
+                if (0 === a.La && 0 === e) return a.Ha = b.slice(c, c + d), a.La = d;
+                if (e + d <= a.La) return a.Ha.set(b.subarray(c, c + d), e), d;
+              }
+              zb(a, e + d);
+              if (a.Ha.subarray && b.subarray) a.Ha.set(b.subarray(c, c + d), e);
+              else for (h = 0; h < d; h++) a.Ha[e + h] = b[c + h];
+              a.La = Math.max(a.La, e + d);
+              return d;
+            },
+            Sa(a, b, c) {
+              1 === c ? b += a.position : 2 === c && 32768 === (a.node.mode & 61440) && (b += a.node.La);
+              if (0 > b) throw new P2(28);
+              return b;
+            },
+            kb(a, b, c) {
+              zb(a.node, b + c);
+              a.node.La = Math.max(a.node.La, b + c);
+            },
+            ab(a, b, c, d, e) {
+              if (32768 !== (a.node.mode & 61440)) throw new P2(43);
+              a = a.node.Ha;
+              if (e & 2 || a.buffer !== p.buffer) {
+                if (0 < c || c + b < a.length) a.subarray ? a = a.subarray(c, c + b) : a = Array.prototype.slice.call(a, c, c + b);
+                c = true;
+                b = 65536 * Math.ceil(b / 65536);
+                (e = Eb(65536, b)) ? (u.fill(0, e, e + b), b = e) : b = 0;
+                if (!b) throw new P2(48);
+                p.set(a, b);
+              } else c = false, b = a.byteOffset;
+              return { Cb: b, tb: c };
+            },
+            bb(a, b, c, d) {
+              Q.Ga.write(a, b, 0, d, c, false);
+              return 0;
+            }
+          }
+        }, ka = (a, b) => {
+          var c = 0;
+          a && (c |= 365);
+          b && (c |= 146);
+          return c;
+        }, Fb = null, Gb = {}, Hb = [], Ib = 1, S = null, Jb = true, P2 = class {
+          constructor(a) {
+            this.name = "ErrnoError";
+            this.Ja = a;
+          }
+        }, Cb = {}, Kb = class {
+          constructor() {
+            this.Za = {};
+            this.node = null;
+          }
+          get flags() {
+            return this.Za.flags;
+          }
+          set flags(a) {
+            this.Za.flags = a;
+          }
+          get position() {
+            return this.Za.position;
+          }
+          set position(a) {
+            this.Za.position = a;
+          }
+        }, Lb = class {
+          constructor(a, b, c, d) {
+            a ||= this;
+            this.parent = a;
+            this.Qa = a.Qa;
+            this.Ua = null;
+            this.id = Ib++;
+            this.name = b;
+            this.mode = c;
+            this.Fa = {};
+            this.Ga = {};
+            this.rdev = d;
+          }
+          get read() {
+            return 365 === (this.mode & 365);
+          }
+          set read(a) {
+            a ? this.mode |= 365 : this.mode &= -366;
+          }
+          get write() {
+            return 146 === (this.mode & 146);
+          }
+          set write(a) {
+            a ? this.mode |= 146 : this.mode &= -147;
+          }
+        };
+        function T(a, b = {}) {
+          a = kb(a);
+          if (!a) return { path: "", node: null };
+          b = Object.assign({ pb: true, jb: 0 }, b);
+          if (8 < b.jb) throw new P2(32);
+          a = a.split("/").filter((k) => !!k);
+          for (var c = Fb, d = "/", e = 0; e < a.length; e++) {
+            var h = e === a.length - 1;
+            if (h && b.parent) break;
+            c = Db(c, a[e]);
+            d = x(d + "/" + a[e]);
+            c.Ua && (!h || h && b.pb) && (c = c.Ua.root);
+            if (!h || b.Ra) {
+              for (h = 0; 40960 === (c.mode & 61440); ) if (c = Mb(d), d = kb(fb(d), c), c = T(d, { jb: b.jb + 1 }).node, 40 < h++) throw new P2(32);
+            }
+          }
+          return { path: d, node: c };
+        }
+        function ja(a) {
+          for (var b; ; ) {
+            if (a === a.parent) return a = a.Qa.sb, b ? "/" !== a[a.length - 1] ? `${a}/${b}` : a + b : a;
+            b = b ? `${a.name}/${b}` : a.name;
+            a = a.parent;
+          }
+        }
+        function Nb(a, b) {
+          for (var c = 0, d = 0; d < b.length; d++) c = (c << 5) - c + b.charCodeAt(d) | 0;
+          return (a + c >>> 0) % S.length;
+        }
+        function Ob(a) {
+          var b = Nb(a.parent.id, a.name);
+          if (S[b] === a) S[b] = a.Va;
+          else for (b = S[b]; b; ) {
+            if (b.Va === a) {
+              b.Va = a.Va;
+              break;
+            }
+            b = b.Va;
+          }
+        }
+        function Db(a, b) {
+          var c = R(a.mode) ? (c = Pb(a, "x")) ? c : a.Fa.lookup ? 0 : 2 : 54;
+          if (c) throw new P2(c);
+          for (c = S[Nb(a.id, b)]; c; c = c.Va) {
+            var d = c.name;
+            if (c.parent.id === a.id && d === b) return c;
+          }
+          return a.Fa.lookup(a, b);
+        }
+        function Bb(a, b, c, d) {
+          a = new Lb(a, b, c, d);
+          b = Nb(a.parent.id, a.name);
+          a.Va = S[b];
+          return S[b] = a;
+        }
+        function R(a) {
+          return 16384 === (a & 61440);
+        }
+        function Qb(a) {
+          var b = ["r", "w", "rw"][a & 3];
+          a & 512 && (b += "w");
+          return b;
+        }
+        function Pb(a, b) {
+          if (Jb) return 0;
+          if (!b.includes("r") || a.mode & 292) {
+            if (b.includes("w") && !(a.mode & 146) || b.includes("x") && !(a.mode & 73)) return 2;
+          } else return 2;
+          return 0;
+        }
+        function Rb(a, b) {
+          try {
+            return Db(a, b), 20;
+          } catch (c) {
+          }
+          return Pb(a, "wx");
+        }
+        function Sb(a, b, c) {
+          try {
+            var d = Db(a, b);
+          } catch (e) {
+            return e.Ja;
+          }
+          if (a = Pb(a, "wx")) return a;
+          if (c) {
+            if (!R(d.mode)) return 54;
+            if (d === d.parent || "/" === ja(d)) return 10;
+          } else if (R(d.mode)) return 31;
+          return 0;
+        }
+        function U2(a) {
+          a = Hb[a];
+          if (!a) throw new P2(8);
+          return a;
+        }
+        function Tb(a, b = -1) {
+          a = Object.assign(new Kb(), a);
+          if (-1 == b) a: {
+            for (b = 0; 4096 >= b; b++) if (!Hb[b]) break a;
+            throw new P2(33);
+          }
+          a.fd = b;
+          return Hb[b] = a;
+        }
+        function Ub(a, b = -1) {
+          a = Tb(a, b);
+          a.Ga?.Jb?.(a);
+          return a;
+        }
+        var Ab = { open(a) {
+          a.Ga = Gb[a.node.rdev].Ga;
+          a.Ga.open?.(a);
+        }, Sa() {
+          throw new P2(70);
+        } };
+        function vb(a, b) {
+          Gb[a] = { Ga: b };
+        }
+        function Vb(a, b) {
+          var c = "/" === b;
+          if (c && Fb) throw new P2(10);
+          if (!c && b) {
+            var d = T(b, { pb: false });
+            b = d.path;
+            d = d.node;
+            if (d.Ua) throw new P2(10);
+            if (!R(d.mode)) throw new P2(54);
+          }
+          b = { type: a, Ob: {}, sb: b, Bb: [] };
+          a = a.Qa(b);
+          a.Qa = b;
+          b.root = a;
+          c ? Fb = a : d && (d.Ua = b, d.Qa && d.Qa.Bb.push(b));
+        }
+        function la(a, b, c) {
+          var d = T(a, { parent: true }).node;
+          a = gb(a);
+          if (!a || "." === a || ".." === a) throw new P2(28);
+          var e = Rb(d, a);
+          if (e) throw new P2(e);
+          if (!d.Fa.$a) throw new P2(63);
+          return d.Fa.$a(d, a, b, c);
+        }
+        function V(a, b) {
+          return la(a, (void 0 !== b ? b : 511) & 1023 | 16384, 0);
+        }
+        function Wb(a, b, c) {
+          "undefined" == typeof c && (c = b, b = 438);
+          la(a, b | 8192, c);
+        }
+        function Xb(a, b) {
+          if (!kb(a)) throw new P2(44);
+          var c = T(b, { parent: true }).node;
+          if (!c) throw new P2(44);
+          b = gb(b);
+          var d = Rb(c, b);
+          if (d) throw new P2(d);
+          if (!c.Fa.symlink) throw new P2(63);
+          c.Fa.symlink(c, b, a);
+        }
+        function Yb(a) {
+          var b = T(a, { parent: true }).node;
+          a = gb(a);
+          var c = Db(b, a), d = Sb(b, a, true);
+          if (d) throw new P2(d);
+          if (!b.Fa.rmdir) throw new P2(63);
+          if (c.Ua) throw new P2(10);
+          b.Fa.rmdir(b, a);
+          Ob(c);
+        }
+        function za(a) {
+          var b = T(a, { parent: true }).node;
+          if (!b) throw new P2(44);
+          a = gb(a);
+          var c = Db(b, a), d = Sb(b, a, false);
+          if (d) throw new P2(d);
+          if (!b.Fa.unlink) throw new P2(63);
+          if (c.Ua) throw new P2(10);
+          b.Fa.unlink(b, a);
+          Ob(c);
+        }
+        function Mb(a) {
+          a = T(a).node;
+          if (!a) throw new P2(44);
+          if (!a.Fa.readlink) throw new P2(28);
+          return kb(ja(a.parent), a.Fa.readlink(a));
+        }
+        function Zb(a, b) {
+          a = T(a, { Ra: !b }).node;
+          if (!a) throw new P2(44);
+          if (!a.Fa.Oa) throw new P2(63);
+          return a.Fa.Oa(a);
+        }
+        function $b(a) {
+          return Zb(a, true);
+        }
+        function ma(a, b) {
+          a = "string" == typeof a ? T(a, { Ra: true }).node : a;
+          if (!a.Fa.Na) throw new P2(63);
+          a.Fa.Na(a, { mode: b & 4095 | a.mode & -4096, timestamp: Date.now() });
+        }
+        function ac(a, b) {
+          if (0 > b) throw new P2(28);
+          a = "string" == typeof a ? T(a, { Ra: true }).node : a;
+          if (!a.Fa.Na) throw new P2(63);
+          if (R(a.mode)) throw new P2(31);
+          if (32768 !== (a.mode & 61440)) throw new P2(28);
+          var c = Pb(a, "w");
+          if (c) throw new P2(c);
+          a.Fa.Na(a, { size: b, timestamp: Date.now() });
+        }
+        function na(a, b, c) {
+          if ("" === a) throw new P2(44);
+          if ("string" == typeof b) {
+            var d = { r: 0, "r+": 2, w: 577, "w+": 578, a: 1089, "a+": 1090 }[b];
+            if ("undefined" == typeof d) throw Error(`Unknown file open mode: ${b}`);
+            b = d;
+          }
+          c = b & 64 ? ("undefined" == typeof c ? 438 : c) & 4095 | 32768 : 0;
+          if ("object" == typeof a) var e = a;
+          else {
+            a = x(a);
+            try {
+              e = T(a, { Ra: !(b & 131072) }).node;
+            } catch (h) {
+            }
+          }
+          d = false;
+          if (b & 64) if (e) {
+            if (b & 128) throw new P2(20);
+          } else e = la(a, c, 0), d = true;
+          if (!e) throw new P2(44);
+          8192 === (e.mode & 61440) && (b &= -513);
+          if (b & 65536 && !R(e.mode)) throw new P2(54);
+          if (!d && (c = e ? 40960 === (e.mode & 61440) ? 32 : R(e.mode) && ("r" !== Qb(b) || b & 512) ? 31 : Pb(e, Qb(b)) : 44)) throw new P2(c);
+          b & 512 && !d && ac(e, 0);
+          b &= -131713;
+          e = Tb({ node: e, path: ja(e), flags: b, seekable: true, position: 0, Ga: e.Ga, Db: [], error: false });
+          e.Ga.open && e.Ga.open(e);
+          !f.logReadFiles || b & 1 || (bc ||= {}, a in bc || (bc[a] = 1));
+          return e;
+        }
+        function pa(a) {
+          if (null === a.fd) throw new P2(8);
+          a.gb && (a.gb = null);
+          try {
+            a.Ga.close && a.Ga.close(a);
+          } catch (b) {
+            throw b;
+          } finally {
+            Hb[a.fd] = null;
+          }
+          a.fd = null;
+        }
+        function cc(a, b, c) {
+          if (null === a.fd) throw new P2(8);
+          if (!a.seekable || !a.Ga.Sa) throw new P2(70);
+          if (0 != c && 1 != c && 2 != c) throw new P2(28);
+          a.position = a.Ga.Sa(a, b, c);
+          a.Db = [];
+        }
+        function dc(a, b, c, d, e) {
+          if (0 > d || 0 > e) throw new P2(28);
+          if (null === a.fd) throw new P2(8);
+          if (1 === (a.flags & 2097155)) throw new P2(8);
+          if (R(a.node.mode)) throw new P2(31);
+          if (!a.Ga.read) throw new P2(28);
+          var h = "undefined" != typeof e;
+          if (!h) e = a.position;
+          else if (!a.seekable) throw new P2(70);
+          b = a.Ga.read(a, b, c, d, e);
+          h || (a.position += b);
+          return b;
+        }
+        function oa(a, b, c, d, e) {
+          if (0 > d || 0 > e) throw new P2(28);
+          if (null === a.fd) throw new P2(8);
+          if (0 === (a.flags & 2097155)) throw new P2(8);
+          if (R(a.node.mode)) throw new P2(31);
+          if (!a.Ga.write) throw new P2(28);
+          a.seekable && a.flags & 1024 && cc(a, 0, 2);
+          var h = "undefined" != typeof e;
+          if (!h) e = a.position;
+          else if (!a.seekable) throw new P2(70);
+          b = a.Ga.write(a, b, c, d, e, void 0);
+          h || (a.position += b);
+          return b;
+        }
+        function ya(a) {
+          var b = "binary";
+          if ("utf8" !== b && "binary" !== b) throw Error(`Invalid encoding type "${b}"`);
+          var c;
+          var d = na(a, d || 0);
+          a = Zb(a).size;
+          var e = new Uint8Array(a);
+          dc(d, e, 0, a, 0);
+          "utf8" === b ? c = L(e, 0) : "binary" === b && (c = e);
+          pa(d);
+          return c;
+        }
+        var ec2;
+        function Fc(a, b, c) {
+          a = x("/dev/" + a);
+          var d = ka(!!b, !!c);
+          Hc ||= 64;
+          var e = Hc++ << 8 | 0;
+          vb(e, { open(h) {
+            h.seekable = false;
+          }, close() {
+            c?.buffer?.length && c(10);
+          }, read(h, k, r, z) {
+            for (var v = 0, E = 0; E < z; E++) {
+              try {
+                var H = b();
+              } catch (mb) {
+                throw new P2(29);
+              }
+              if (void 0 === H && 0 === v) throw new P2(6);
+              if (null === H || void 0 === H) break;
+              v++;
+              k[r + E] = H;
+            }
+            v && (h.node.timestamp = Date.now());
+            return v;
+          }, write(h, k, r, z) {
+            for (var v = 0; v < z; v++) try {
+              c(k[r + v]);
+            } catch (E) {
+              throw new P2(29);
+            }
+            z && (h.node.timestamp = Date.now());
+            return v;
+          } });
+          Wb(a, d, e);
+        }
+        var Hc, W = {}, bc;
+        function Ic(a, b, c) {
+          if ("/" === b.charAt(0)) return b;
+          a = -100 === a ? "/" : U2(a).path;
+          if (0 == b.length) {
+            if (!c) throw new P2(44);
+            return a;
+          }
+          return x(a + "/" + b);
+        }
+        function Jc(a, b, c) {
+          a = a(b);
+          D[c >> 2] = a.dev;
+          D[c + 4 >> 2] = a.mode;
+          F[c + 8 >> 2] = a.nlink;
+          D[c + 12 >> 2] = a.uid;
+          D[c + 16 >> 2] = a.gid;
+          D[c + 20 >> 2] = a.rdev;
+          J = [a.size >>> 0, (I = a.size, 1 <= +Math.abs(I) ? 0 < I ? +Math.floor(I / 4294967296) >>> 0 : ~~+Math.ceil((I - +(~~I >>> 0)) / 4294967296) >>> 0 : 0)];
+          D[c + 24 >> 2] = J[0];
+          D[c + 28 >> 2] = J[1];
+          D[c + 32 >> 2] = 4096;
+          D[c + 36 >> 2] = a.blocks;
+          b = a.atime.getTime();
+          var d = a.mtime.getTime(), e = a.ctime.getTime();
+          J = [Math.floor(b / 1e3) >>> 0, (I = Math.floor(b / 1e3), 1 <= +Math.abs(I) ? 0 < I ? +Math.floor(I / 4294967296) >>> 0 : ~~+Math.ceil((I - +(~~I >>> 0)) / 4294967296) >>> 0 : 0)];
+          D[c + 40 >> 2] = J[0];
+          D[c + 44 >> 2] = J[1];
+          F[c + 48 >> 2] = b % 1e3 * 1e3;
+          J = [Math.floor(d / 1e3) >>> 0, (I = Math.floor(d / 1e3), 1 <= +Math.abs(I) ? 0 < I ? +Math.floor(I / 4294967296) >>> 0 : ~~+Math.ceil((I - +(~~I >>> 0)) / 4294967296) >>> 0 : 0)];
+          D[c + 56 >> 2] = J[0];
+          D[c + 60 >> 2] = J[1];
+          F[c + 64 >> 2] = d % 1e3 * 1e3;
+          J = [Math.floor(e / 1e3) >>> 0, (I = Math.floor(e / 1e3), 1 <= +Math.abs(I) ? 0 < I ? +Math.floor(I / 4294967296) >>> 0 : ~~+Math.ceil((I - +(~~I >>> 0)) / 4294967296) >>> 0 : 0)];
+          D[c + 72 >> 2] = J[0];
+          D[c + 76 >> 2] = J[1];
+          F[c + 80 >> 2] = e % 1e3 * 1e3;
+          J = [a.ino >>> 0, (I = a.ino, 1 <= +Math.abs(I) ? 0 < I ? +Math.floor(I / 4294967296) >>> 0 : ~~+Math.ceil((I - +(~~I >>> 0)) / 4294967296) >>> 0 : 0)];
+          D[c + 88 >> 2] = J[0];
+          D[c + 92 >> 2] = J[1];
+          return 0;
+        }
+        var Kc = void 0;
+        function Lc() {
+          var a = D[+Kc >> 2];
+          Kc += 4;
+          return a;
+        }
+        var Mc = (a, b) => b + 2097152 >>> 0 < 4194305 - !!a ? (a >>> 0) + 4294967296 * b : NaN, Nc = [0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335], Oc = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334], Pc = {}, Rc = () => {
+          if (!Qc) {
+            var a = { USER: "web_user", LOGNAME: "web_user", PATH: "/", PWD: "/", HOME: "/home/web_user", LANG: ("object" == typeof navigator && navigator.languages && navigator.languages[0] || "C").replace("-", "_") + ".UTF-8", _: Ca || "./this.program" }, b;
+            for (b in Pc) void 0 === Pc[b] ? delete a[b] : a[b] = Pc[b];
+            var c = [];
+            for (b in a) c.push(`${b}=${a[b]}`);
+            Qc = c;
+          }
+          return Qc;
+        }, Qc, va = (a) => {
+          var b = ha(a) + 1, c = y(b);
+          q(a, u, c, b);
+          return c;
+        }, Sc = (a, b, c, d) => {
+          var e = { string: (v) => {
+            var E = 0;
+            null !== v && void 0 !== v && 0 !== v && (E = va(v));
+            return E;
+          }, array: (v) => {
+            var E = y(v.length);
+            p.set(v, E);
+            return E;
+          } };
+          a = f["_" + a];
+          var h = [], k = 0;
+          if (d) for (var r = 0; r < d.length; r++) {
+            var z = e[c[r]];
+            z ? (0 === k && (k = ra()), h[r] = z(d[r])) : h[r] = d[r];
+          }
+          c = a(...h);
+          return c = function(v) {
+            0 !== k && ua(k);
+            return "string" === b ? v ? L(u, v) : "" : "boolean" === b ? !!v : v;
+          }(c);
+        }, ea = 0, da = (a, b) => {
+          b = 1 == b ? y(a.length) : ia(a.length);
+          a.subarray || a.slice || (a = new Uint8Array(a));
+          u.set(
+            a,
+            b
+          );
+          return b;
+        }, Tc, Uc = [], X, wa = (a) => {
+          Tc.delete(X.get(a));
+          X.set(a, null);
+          Uc.push(a);
+        }, Aa = (a, b) => {
+          if (!Tc) {
+            Tc = /* @__PURE__ */ new WeakMap();
+            var c = X.length;
+            if (Tc) for (var d = 0; d < 0 + c; d++) {
+              var e = X.get(d);
+              e && Tc.set(e, d);
+            }
+          }
+          if (c = Tc.get(a) || 0) return c;
+          if (Uc.length) c = Uc.pop();
+          else {
+            try {
+              X.grow(1);
+            } catch (r) {
+              if (!(r instanceof RangeError)) throw r;
+              throw "Unable to grow wasm table. Set ALLOW_TABLE_GROWTH.";
+            }
+            c = X.length - 1;
+          }
+          try {
+            X.set(c, a);
+          } catch (r) {
+            if (!(r instanceof TypeError)) throw r;
+            if ("function" == typeof WebAssembly.Function) {
+              d = WebAssembly.Function;
+              e = { i: "i32", j: "i64", f: "f32", d: "f64", e: "externref", p: "i32" };
+              for (var h = { parameters: [], results: "v" == b[0] ? [] : [e[b[0]]] }, k = 1; k < b.length; ++k) h.parameters.push(e[b[k]]);
+              b = new d(h, a);
+            } else {
+              d = [1];
+              e = b.slice(0, 1);
+              b = b.slice(1);
+              h = { i: 127, p: 127, j: 126, f: 125, d: 124, e: 111 };
+              d.push(96);
+              k = b.length;
+              128 > k ? d.push(k) : d.push(k % 128 | 128, k >> 7);
+              for (k = 0; k < b.length; ++k) d.push(h[b[k]]);
+              "v" == e ? d.push(0) : d.push(1, h[e]);
+              b = [0, 97, 115, 109, 1, 0, 0, 0, 1];
+              e = d.length;
+              128 > e ? b.push(e) : b.push(e % 128 | 128, e >> 7);
+              b.push(...d);
+              b.push(
+                2,
+                7,
+                1,
+                1,
+                101,
+                1,
+                102,
+                0,
+                0,
+                7,
+                5,
+                1,
+                1,
+                102,
+                0,
+                0
+              );
+              b = new WebAssembly.Module(new Uint8Array(b));
+              b = new WebAssembly.Instance(b, { e: { f: a } }).exports.f;
+            }
+            X.set(c, b);
+          }
+          Tc.set(a, c);
+          return c;
+        };
+        [44].forEach((a) => {
+          Cb[a] = new P2(a);
+          Cb[a].stack = "<generic error, no stack>";
+        });
+        S = Array(4096);
+        Vb(Q, "/");
+        V("/tmp");
+        V("/home");
+        V("/home/web_user");
+        (function() {
+          V("/dev");
+          vb(259, { read: () => 0, write: (d, e, h, k) => k });
+          Wb("/dev/null", 259);
+          ub(1280, xb);
+          ub(1536, yb);
+          Wb("/dev/tty", 1280);
+          Wb("/dev/tty1", 1536);
+          var a = new Uint8Array(1024), b = 0, c = () => {
+            0 === b && (b = jb(a).byteLength);
+            return a[--b];
+          };
+          Fc("random", c);
+          Fc("urandom", c);
+          V("/dev/shm");
+          V("/dev/shm/tmp");
+        })();
+        (function() {
+          V("/proc");
+          var a = V("/proc/self");
+          V("/proc/self/fd");
+          Vb({ Qa() {
+            var b = Bb(a, "fd", 16895, 73);
+            b.Fa = { lookup(c, d) {
+              var e = U2(+d);
+              c = { parent: null, Qa: { sb: "fake" }, Fa: { readlink: () => e.path } };
+              return c.parent = c;
+            } };
+            return b;
+          } }, "/proc/self/fd");
+        })();
+        var Vc = {
+          a: (a, b, c, d) => {
+            G(`Assertion failed: ${a ? L(u, a) : ""}, at: ` + [b ? b ? L(u, b) : "" : "unknown filename", c, d ? d ? L(u, d) : "" : "unknown function"]);
+          },
+          h: function(a, b) {
+            try {
+              return a = a ? L(u, a) : "", ma(a, b), 0;
+            } catch (c) {
+              if ("undefined" == typeof W || "ErrnoError" !== c.name) throw c;
+              return -c.Ja;
+            }
+          },
+          H: function(a, b, c) {
+            try {
+              b = b ? L(u, b) : "";
+              b = Ic(a, b);
+              if (c & -8) return -28;
+              var d = T(b, { Ra: true }).node;
+              if (!d) return -44;
+              a = "";
+              c & 4 && (a += "r");
+              c & 2 && (a += "w");
+              c & 1 && (a += "x");
+              return a && Pb(d, a) ? -2 : 0;
+            } catch (e) {
+              if ("undefined" == typeof W || "ErrnoError" !== e.name) throw e;
+              return -e.Ja;
+            }
+          },
+          i: function(a, b) {
+            try {
+              var c = U2(a);
+              ma(c.node, b);
+              return 0;
+            } catch (d) {
+              if ("undefined" == typeof W || "ErrnoError" !== d.name) throw d;
+              return -d.Ja;
+            }
+          },
+          g: function(a) {
+            try {
+              var b = U2(a).node;
+              var c = "string" == typeof b ? T(b, { Ra: true }).node : b;
+              if (!c.Fa.Na) throw new P2(63);
+              c.Fa.Na(c, { timestamp: Date.now() });
+              return 0;
+            } catch (d) {
+              if ("undefined" == typeof W || "ErrnoError" !== d.name) throw d;
+              return -d.Ja;
+            }
+          },
+          b: function(a, b, c) {
+            Kc = c;
+            try {
+              var d = U2(a);
+              switch (b) {
+                case 0:
+                  var e = Lc();
+                  if (0 > e) break;
+                  for (; Hb[e]; ) e++;
+                  return Ub(d, e).fd;
+                case 1:
+                case 2:
+                  return 0;
+                case 3:
+                  return d.flags;
+                case 4:
+                  return e = Lc(), d.flags |= e, 0;
+                case 12:
+                  return e = Lc(), La[e + 0 >> 1] = 2, 0;
+                case 13:
+                case 14:
+                  return 0;
+              }
+              return -28;
+            } catch (h) {
+              if ("undefined" == typeof W || "ErrnoError" !== h.name) throw h;
+              return -h.Ja;
+            }
+          },
+          f: function(a, b) {
+            try {
+              var c = U2(a);
+              return Jc(Zb, c.path, b);
+            } catch (d) {
+              if ("undefined" == typeof W || "ErrnoError" !== d.name) throw d;
+              return -d.Ja;
+            }
+          },
+          n: function(a, b, c) {
+            b = Mc(b, c);
+            try {
+              if (isNaN(b)) return 61;
+              var d = U2(a);
+              if (0 === (d.flags & 2097155)) throw new P2(28);
+              ac(d.node, b);
+              return 0;
+            } catch (e) {
+              if ("undefined" == typeof W || "ErrnoError" !== e.name) throw e;
+              return -e.Ja;
+            }
+          },
+          C: function(a, b) {
+            try {
+              if (0 === b) return -28;
+              var c = ha("/") + 1;
+              if (b < c) return -68;
+              q("/", u, a, b);
+              return c;
+            } catch (d) {
+              if ("undefined" == typeof W || "ErrnoError" !== d.name) throw d;
+              return -d.Ja;
+            }
+          },
+          F: function(a, b) {
+            try {
+              return a = a ? L(u, a) : "", Jc($b, a, b);
+            } catch (c) {
+              if ("undefined" == typeof W || "ErrnoError" !== c.name) throw c;
+              return -c.Ja;
+            }
+          },
+          z: function(a, b, c) {
+            try {
+              return b = b ? L(u, b) : "", b = Ic(a, b), b = x(b), "/" === b[b.length - 1] && (b = b.substr(0, b.length - 1)), V(b, c), 0;
+            } catch (d) {
+              if ("undefined" == typeof W || "ErrnoError" !== d.name) throw d;
+              return -d.Ja;
+            }
+          },
+          E: function(a, b, c, d) {
+            try {
+              b = b ? L(u, b) : "";
+              var e = d & 256;
+              b = Ic(a, b, d & 4096);
+              return Jc(e ? $b : Zb, b, c);
+            } catch (h) {
+              if ("undefined" == typeof W || "ErrnoError" !== h.name) throw h;
+              return -h.Ja;
+            }
+          },
+          x: function(a, b, c, d) {
+            Kc = d;
+            try {
+              b = b ? L(u, b) : "";
+              b = Ic(a, b);
+              var e = d ? Lc() : 0;
+              return na(b, c, e).fd;
+            } catch (h) {
+              if ("undefined" == typeof W || "ErrnoError" !== h.name) throw h;
+              return -h.Ja;
+            }
+          },
+          v: function(a, b, c, d) {
+            try {
+              b = b ? L(u, b) : "";
+              b = Ic(a, b);
+              if (0 >= d) return -28;
+              var e = Mb(b), h = Math.min(d, ha(e)), k = p[c + h];
+              q(e, u, c, d + 1);
+              p[c + h] = k;
+              return h;
+            } catch (r) {
+              if ("undefined" == typeof W || "ErrnoError" !== r.name) throw r;
+              return -r.Ja;
+            }
+          },
+          u: function(a) {
+            try {
+              return a = a ? L(u, a) : "", Yb(a), 0;
+            } catch (b) {
+              if ("undefined" == typeof W || "ErrnoError" !== b.name) throw b;
+              return -b.Ja;
+            }
+          },
+          G: function(a, b) {
+            try {
+              return a = a ? L(u, a) : "", Jc(Zb, a, b);
+            } catch (c) {
+              if ("undefined" == typeof W || "ErrnoError" !== c.name) throw c;
+              return -c.Ja;
+            }
+          },
+          r: function(a, b, c) {
+            try {
+              return b = b ? L(u, b) : "", b = Ic(a, b), 0 === c ? za(b) : 512 === c ? Yb(b) : G("Invalid flags passed to unlinkat"), 0;
+            } catch (d) {
+              if ("undefined" == typeof W || "ErrnoError" !== d.name) throw d;
+              return -d.Ja;
+            }
+          },
+          q: function(a, b, c) {
+            try {
+              b = b ? L(u, b) : "";
+              b = Ic(a, b, true);
+              if (c) {
+                var d = F[c >> 2] + 4294967296 * D[c + 4 >> 2], e = D[c + 8 >> 2];
+                h = 1e3 * d + e / 1e6;
+                c += 16;
+                d = F[c >> 2] + 4294967296 * D[c + 4 >> 2];
+                e = D[c + 8 >> 2];
+                k = 1e3 * d + e / 1e6;
+              } else var h = Date.now(), k = h;
+              a = h;
+              var r = T(b, { Ra: true }).node;
+              r.Fa.Na(r, { timestamp: Math.max(a, k) });
+              return 0;
+            } catch (z) {
+              if ("undefined" == typeof W || "ErrnoError" !== z.name) throw z;
+              return -z.Ja;
+            }
+          },
+          l: function(a, b, c) {
+            a = new Date(1e3 * Mc(a, b));
+            D[c >> 2] = a.getSeconds();
+            D[c + 4 >> 2] = a.getMinutes();
+            D[c + 8 >> 2] = a.getHours();
+            D[c + 12 >> 2] = a.getDate();
+            D[c + 16 >> 2] = a.getMonth();
+            D[c + 20 >> 2] = a.getFullYear() - 1900;
+            D[c + 24 >> 2] = a.getDay();
+            b = a.getFullYear();
+            D[c + 28 >> 2] = (0 !== b % 4 || 0 === b % 100 && 0 !== b % 400 ? Oc : Nc)[a.getMonth()] + a.getDate() - 1 | 0;
+            D[c + 36 >> 2] = -(60 * a.getTimezoneOffset());
+            b = new Date(a.getFullYear(), 6, 1).getTimezoneOffset();
+            var d = new Date(a.getFullYear(), 0, 1).getTimezoneOffset();
+            D[c + 32 >> 2] = (b != d && a.getTimezoneOffset() == Math.min(d, b)) | 0;
+          },
+          j: function(a, b, c, d, e, h, k, r) {
+            e = Mc(e, h);
+            try {
+              if (isNaN(e)) return 61;
+              var z = U2(d);
+              if (0 !== (b & 2) && 0 === (c & 2) && 2 !== (z.flags & 2097155)) throw new P2(2);
+              if (1 === (z.flags & 2097155)) throw new P2(2);
+              if (!z.Ga.ab) throw new P2(43);
+              var v = z.Ga.ab(z, a, e, b, c);
+              var E = v.Cb;
+              D[k >> 2] = v.tb;
+              F[r >> 2] = E;
+              return 0;
+            } catch (H) {
+              if ("undefined" == typeof W || "ErrnoError" !== H.name) throw H;
+              return -H.Ja;
+            }
+          },
+          k: function(a, b, c, d, e, h, k) {
+            h = Mc(h, k);
+            try {
+              var r = U2(e);
+              if (c & 2) {
+                if (32768 !== (r.node.mode & 61440)) throw new P2(43);
+                if (!(d & 2)) {
+                  var z = u.slice(a, a + b);
+                  r.Ga.bb && r.Ga.bb(r, z, h, b, d);
+                }
+              }
+            } catch (v) {
+              if ("undefined" == typeof W || "ErrnoError" !== v.name) throw v;
+              return -v.Ja;
+            }
+          },
+          y: (a, b, c, d) => {
+            var e = (/* @__PURE__ */ new Date()).getFullYear(), h = new Date(e, 0, 1).getTimezoneOffset();
+            e = new Date(e, 6, 1).getTimezoneOffset();
+            F[a >> 2] = 60 * Math.max(h, e);
+            D[b >> 2] = Number(h != e);
+            b = (k) => {
+              var r = Math.abs(k);
+              return `UTC${0 <= k ? "-" : "+"}${String(Math.floor(r / 60)).padStart(2, "0")}${String(r % 60).padStart(2, "0")}`;
+            };
+            a = b(h);
+            b = b(e);
+            e < h ? (q(a, u, c, 17), q(b, u, d, 17)) : (q(a, u, d, 17), q(b, u, c, 17));
+          },
+          d: () => Date.now(),
+          s: () => 2147483648,
+          c: () => performance.now(),
+          o: (a) => {
+            var b = u.length;
+            a >>>= 0;
+            if (2147483648 < a) return false;
+            for (var c = 1; 4 >= c; c *= 2) {
+              var d = b * (1 + 0.2 / c);
+              d = Math.min(d, a + 100663296);
+              var e = Math;
+              d = Math.max(a, d);
+              a: {
+                e = (e.min.call(e, 2147483648, d + (65536 - d % 65536) % 65536) - Ja.buffer.byteLength + 65535) / 65536;
+                try {
+                  Ja.grow(e);
+                  Oa();
+                  var h = 1;
+                  break a;
+                } catch (k) {
+                }
+                h = void 0;
+              }
+              if (h) return true;
+            }
+            return false;
+          },
+          A: (a, b) => {
+            var c = 0;
+            Rc().forEach((d, e) => {
+              var h = b + c;
+              e = F[a + 4 * e >> 2] = h;
+              for (h = 0; h < d.length; ++h) p[e++] = d.charCodeAt(h);
+              p[e] = 0;
+              c += d.length + 1;
+            });
+            return 0;
+          },
+          B: (a, b) => {
+            var c = Rc();
+            F[a >> 2] = c.length;
+            var d = 0;
+            c.forEach((e) => d += e.length + 1);
+            F[b >> 2] = d;
+            return 0;
+          },
+          e: function(a) {
+            try {
+              var b = U2(a);
+              pa(b);
+              return 0;
+            } catch (c) {
+              if ("undefined" == typeof W || "ErrnoError" !== c.name) throw c;
+              return c.Ja;
+            }
+          },
+          p: function(a, b) {
+            try {
+              var c = U2(a);
+              p[b] = c.tty ? 2 : R(c.mode) ? 3 : 40960 === (c.mode & 61440) ? 7 : 4;
+              La[b + 2 >> 1] = 0;
+              J = [0, (I = 0, 1 <= +Math.abs(I) ? 0 < I ? +Math.floor(I / 4294967296) >>> 0 : ~~+Math.ceil((I - +(~~I >>> 0)) / 4294967296) >>> 0 : 0)];
+              D[b + 8 >> 2] = J[0];
+              D[b + 12 >> 2] = J[1];
+              J = [0, (I = 0, 1 <= +Math.abs(I) ? 0 < I ? +Math.floor(I / 4294967296) >>> 0 : ~~+Math.ceil((I - +(~~I >>> 0)) / 4294967296) >>> 0 : 0)];
+              D[b + 16 >> 2] = J[0];
+              D[b + 20 >> 2] = J[1];
+              return 0;
+            } catch (d) {
+              if ("undefined" == typeof W || "ErrnoError" !== d.name) throw d;
+              return d.Ja;
+            }
+          },
+          w: function(a, b, c, d) {
+            try {
+              a: {
+                var e = U2(a);
+                a = b;
+                for (var h, k = b = 0; k < c; k++) {
+                  var r = F[a >> 2], z = F[a + 4 >> 2];
+                  a += 8;
+                  var v = dc(e, p, r, z, h);
+                  if (0 > v) {
+                    var E = -1;
+                    break a;
+                  }
+                  b += v;
+                  if (v < z) break;
+                  "undefined" != typeof h && (h += v);
+                }
+                E = b;
+              }
+              F[d >> 2] = E;
+              return 0;
+            } catch (H) {
+              if ("undefined" == typeof W || "ErrnoError" !== H.name) throw H;
+              return H.Ja;
+            }
+          },
+          m: function(a, b, c, d, e) {
+            b = Mc(b, c);
+            try {
+              if (isNaN(b)) return 61;
+              var h = U2(a);
+              cc(h, b, d);
+              J = [h.position >>> 0, (I = h.position, 1 <= +Math.abs(I) ? 0 < I ? +Math.floor(I / 4294967296) >>> 0 : ~~+Math.ceil((I - +(~~I >>> 0)) / 4294967296) >>> 0 : 0)];
+              D[e >> 2] = J[0];
+              D[e + 4 >> 2] = J[1];
+              h.gb && 0 === b && 0 === d && (h.gb = null);
+              return 0;
+            } catch (k) {
+              if ("undefined" == typeof W || "ErrnoError" !== k.name) throw k;
+              return k.Ja;
+            }
+          },
+          D: function(a) {
+            try {
+              var b = U2(a);
+              return b.Ga?.fsync ? b.Ga.fsync(b) : 0;
+            } catch (c) {
+              if ("undefined" == typeof W || "ErrnoError" !== c.name) throw c;
+              return c.Ja;
+            }
+          },
+          t: function(a, b, c, d) {
+            try {
+              a: {
+                var e = U2(a);
+                a = b;
+                for (var h, k = b = 0; k < c; k++) {
+                  var r = F[a >> 2], z = F[a + 4 >> 2];
+                  a += 8;
+                  var v = oa(e, p, r, z, h);
+                  if (0 > v) {
+                    var E = -1;
+                    break a;
+                  }
+                  b += v;
+                  "undefined" != typeof h && (h += v);
+                }
+                E = b;
+              }
+              F[d >> 2] = E;
+              return 0;
+            } catch (H) {
+              if ("undefined" == typeof W || "ErrnoError" !== H.name) throw H;
+              return H.Ja;
+            }
+          }
+        }, Z = function() {
+          function a(c) {
+            Z = c.exports;
+            Ja = Z.I;
+            Oa();
+            X = Z.K;
+            Qa.unshift(Z.J);
+            Ua--;
+            f.monitorRunDependencies?.(Ua);
+            0 == Ua && (null !== Va && (clearInterval(Va), Va = null), Wa && (c = Wa, Wa = null, c()));
+            return Z;
+          }
+          var b = { a: Vc };
+          Ua++;
+          f.monitorRunDependencies?.(Ua);
+          if (f.instantiateWasm) try {
+            return f.instantiateWasm(b, a);
+          } catch (c) {
+            return C(`Module.instantiateWasm callback failed with error: ${c}`), false;
+          }
+          Ya ||= Xa("sql-wasm.wasm") ? "sql-wasm.wasm" : f.locateFile ? f.locateFile(
+            "sql-wasm.wasm",
+            B2
+          ) : B2 + "sql-wasm.wasm";
+          bb(b, function(c) {
+            a(c.instance);
+          });
+          return {};
+        }();
+        f._sqlite3_free = (a) => (f._sqlite3_free = Z.L)(a);
+        f._sqlite3_value_text = (a) => (f._sqlite3_value_text = Z.M)(a);
+        f._sqlite3_prepare_v2 = (a, b, c, d, e) => (f._sqlite3_prepare_v2 = Z.N)(a, b, c, d, e);
+        f._sqlite3_step = (a) => (f._sqlite3_step = Z.O)(a);
+        f._sqlite3_reset = (a) => (f._sqlite3_reset = Z.P)(a);
+        f._sqlite3_exec = (a, b, c, d, e) => (f._sqlite3_exec = Z.Q)(a, b, c, d, e);
+        f._sqlite3_finalize = (a) => (f._sqlite3_finalize = Z.R)(a);
+        f._sqlite3_column_name = (a, b) => (f._sqlite3_column_name = Z.S)(a, b);
+        f._sqlite3_column_text = (a, b) => (f._sqlite3_column_text = Z.T)(a, b);
+        f._sqlite3_column_type = (a, b) => (f._sqlite3_column_type = Z.U)(a, b);
+        f._sqlite3_errmsg = (a) => (f._sqlite3_errmsg = Z.V)(a);
+        f._sqlite3_clear_bindings = (a) => (f._sqlite3_clear_bindings = Z.W)(a);
+        f._sqlite3_value_blob = (a) => (f._sqlite3_value_blob = Z.X)(a);
+        f._sqlite3_value_bytes = (a) => (f._sqlite3_value_bytes = Z.Y)(a);
+        f._sqlite3_value_double = (a) => (f._sqlite3_value_double = Z.Z)(a);
+        f._sqlite3_value_int = (a) => (f._sqlite3_value_int = Z._)(a);
+        f._sqlite3_value_type = (a) => (f._sqlite3_value_type = Z.$)(a);
+        f._sqlite3_result_blob = (a, b, c, d) => (f._sqlite3_result_blob = Z.aa)(a, b, c, d);
+        f._sqlite3_result_double = (a, b) => (f._sqlite3_result_double = Z.ba)(a, b);
+        f._sqlite3_result_error = (a, b, c) => (f._sqlite3_result_error = Z.ca)(a, b, c);
+        f._sqlite3_result_int = (a, b) => (f._sqlite3_result_int = Z.da)(a, b);
+        f._sqlite3_result_int64 = (a, b, c) => (f._sqlite3_result_int64 = Z.ea)(a, b, c);
+        f._sqlite3_result_null = (a) => (f._sqlite3_result_null = Z.fa)(a);
+        f._sqlite3_result_text = (a, b, c, d) => (f._sqlite3_result_text = Z.ga)(a, b, c, d);
+        f._sqlite3_aggregate_context = (a, b) => (f._sqlite3_aggregate_context = Z.ha)(a, b);
+        f._sqlite3_column_count = (a) => (f._sqlite3_column_count = Z.ia)(a);
+        f._sqlite3_data_count = (a) => (f._sqlite3_data_count = Z.ja)(a);
+        f._sqlite3_column_blob = (a, b) => (f._sqlite3_column_blob = Z.ka)(a, b);
+        f._sqlite3_column_bytes = (a, b) => (f._sqlite3_column_bytes = Z.la)(a, b);
+        f._sqlite3_column_double = (a, b) => (f._sqlite3_column_double = Z.ma)(a, b);
+        f._sqlite3_bind_blob = (a, b, c, d, e) => (f._sqlite3_bind_blob = Z.na)(a, b, c, d, e);
+        f._sqlite3_bind_double = (a, b, c) => (f._sqlite3_bind_double = Z.oa)(a, b, c);
+        f._sqlite3_bind_int = (a, b, c) => (f._sqlite3_bind_int = Z.pa)(a, b, c);
+        f._sqlite3_bind_text = (a, b, c, d, e) => (f._sqlite3_bind_text = Z.qa)(a, b, c, d, e);
+        f._sqlite3_bind_parameter_index = (a, b) => (f._sqlite3_bind_parameter_index = Z.ra)(a, b);
+        f._sqlite3_sql = (a) => (f._sqlite3_sql = Z.sa)(a);
+        f._sqlite3_normalized_sql = (a) => (f._sqlite3_normalized_sql = Z.ta)(a);
+        f._sqlite3_changes = (a) => (f._sqlite3_changes = Z.ua)(a);
+        f._sqlite3_close_v2 = (a) => (f._sqlite3_close_v2 = Z.va)(a);
+        f._sqlite3_create_function_v2 = (a, b, c, d, e, h, k, r, z) => (f._sqlite3_create_function_v2 = Z.wa)(a, b, c, d, e, h, k, r, z);
+        f._sqlite3_open = (a, b) => (f._sqlite3_open = Z.xa)(a, b);
+        var ia = f._malloc = (a) => (ia = f._malloc = Z.ya)(a), fa = f._free = (a) => (fa = f._free = Z.za)(a);
+        f._RegisterExtensionFunctions = (a) => (f._RegisterExtensionFunctions = Z.Aa)(a);
+        var Eb = (a, b) => (Eb = Z.Ba)(a, b), ua = (a) => (ua = Z.Ca)(a), y = (a) => (y = Z.Da)(a), ra = () => (ra = Z.Ea)();
+        f.stackSave = () => ra();
+        f.stackRestore = (a) => ua(a);
+        f.stackAlloc = (a) => y(a);
+        f.cwrap = (a, b, c, d) => {
+          var e = !c || c.every((h) => "number" === h || "boolean" === h);
+          return "string" !== b && e && !d ? f["_" + a] : (...h) => Sc(a, b, c, h);
+        };
+        f.addFunction = Aa;
+        f.removeFunction = wa;
+        f.UTF8ToString = ta;
+        f.ALLOC_NORMAL = ea;
+        f.allocate = da;
+        f.allocateUTF8OnStack = va;
+        var Wc;
+        Wa = function Xc() {
+          Wc || Yc();
+          Wc || (Wa = Xc);
+        };
+        function Yc() {
+          function a() {
+            if (!Wc && (Wc = true, f.calledRun = true, !Ka)) {
+              f.noFSInit || ec2 || (ec2 = true, f.stdin = f.stdin, f.stdout = f.stdout, f.stderr = f.stderr, f.stdin ? Fc("stdin", f.stdin) : Xb("/dev/tty", "/dev/stdin"), f.stdout ? Fc("stdout", null, f.stdout) : Xb("/dev/tty", "/dev/stdout"), f.stderr ? Fc("stderr", null, f.stderr) : Xb("/dev/tty1", "/dev/stderr"), na("/dev/stdin", 0), na("/dev/stdout", 1), na("/dev/stderr", 1));
+              Jb = false;
+              cb(Qa);
+              f.onRuntimeInitialized?.();
+              if (f.postRun) for ("function" == typeof f.postRun && (f.postRun = [f.postRun]); f.postRun.length; ) {
+                var b = f.postRun.shift();
+                Sa.unshift(b);
+              }
+              cb(Sa);
+            }
+          }
+          if (!(0 < Ua)) {
+            if (f.preRun) for ("function" == typeof f.preRun && (f.preRun = [f.preRun]); f.preRun.length; ) Ta();
+            cb(Pa);
+            0 < Ua || (f.setStatus ? (f.setStatus("Running..."), setTimeout(function() {
+              setTimeout(function() {
+                f.setStatus("");
+              }, 1);
+              a();
+            }, 1)) : a());
+          }
+        }
+        if (f.preInit) for ("function" == typeof f.preInit && (f.preInit = [f.preInit]); 0 < f.preInit.length; ) f.preInit.pop()();
+        Yc();
+        return Module;
+      });
+      return initSqlJsPromise;
+    };
+    if (typeof exports === "object" && typeof module === "object") {
+      module.exports = initSqlJs;
+      module.exports.default = initSqlJs;
+    } else if (typeof define === "function" && define["amd"]) {
+      define([], function() {
+        return initSqlJs;
+      });
+    } else if (typeof exports === "object") {
+      exports["Module"] = initSqlJs;
+    }
+  }
+});
+
+// local/shims/sqlite.js
+var sqlite_exports = {};
+__export(sqlite_exports, {
+  DatabaseSync: () => DatabaseSync,
+  default: () => sqlite_default,
+  flush: () => flush,
+  init: () => init,
+  loadBytes: () => loadBytes,
+  saveBytes: () => saveBytes,
+  wipe: () => wipe
+});
+async function init(wasmUrl) {
+  if (SQL) return SQL;
+  const initSqlJs = (await Promise.resolve().then(() => __toESM(require_sql_wasm()))).default;
+  SQL = await initSqlJs({ locateFile: () => wasmUrl });
+  return SQL;
+}
+function idb() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(STORE, 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("kv");
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function loadBytes() {
+  try {
+    const d = await idb();
+    return await new Promise((res, rej) => {
+      const t = d.transaction("kv", "readonly").objectStore("kv").get(KEY);
+      t.onsuccess = () => res(t.result || null);
+      t.onerror = () => rej(t.error);
+    });
+  } catch {
+    return null;
+  }
+}
+async function saveBytes(bytes3) {
+  const d = await idb();
+  await new Promise((res, rej) => {
+    const t = d.transaction("kv", "readwrite");
+    t.objectStore("kv").put(bytes3, KEY);
+    t.oncomplete = res;
+    t.onerror = () => rej(t.error);
+  });
+}
+async function wipe() {
+  const d = await idb();
+  await new Promise((res) => {
+    const t = d.transaction("kv", "readwrite");
+    t.objectStore("kv").delete(KEY);
+    t.oncomplete = res;
+  });
+}
+function flush() {
+  if (!current || !dirty) return Promise.resolve();
+  dirty = false;
+  return saveBytes(current.export());
+}
+function markDirty() {
+  dirty = true;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => flush().catch((e) => console.error("[suds-local] save failed", e)), 400);
+}
+var SQL, STORE, KEY, current, saveTimer, dirty, Statement, DatabaseSync, sqlite_default;
+var init_sqlite = __esm({
+  "local/shims/sqlite.js"() {
+    init_globals_inject();
+    SQL = null;
+    STORE = "suds-local";
+    KEY = "db";
+    current = null;
+    saveTimer = null;
+    dirty = false;
+    Statement = class {
+      constructor(db3, sql) {
+        this.db = db3;
+        this.sql = sql;
+      }
+      _bind(params) {
+        return params.map((p) => p === void 0 ? null : typeof p === "boolean" ? p ? 1 : 0 : p);
+      }
+      all(...params) {
+        const st = this.db.prepare(this.sql);
+        try {
+          st.bind(this._bind(params));
+          const rows = [];
+          while (st.step()) rows.push(st.getAsObject());
+          return rows;
+        } finally {
+          st.free();
+        }
+      }
+      get(...params) {
+        const st = this.db.prepare(this.sql);
+        try {
+          st.bind(this._bind(params));
+          return st.step() ? st.getAsObject() : void 0;
+        } finally {
+          st.free();
+        }
+      }
+      run(...params) {
+        this.db.run(this.sql, this._bind(params));
+        markDirty();
+        return { changes: this.db.getRowsModified(), lastInsertRowid: 0 };
+      }
+    };
+    DatabaseSync = class {
+      constructor(path, bytes3) {
+        if (!SQL) throw new Error("sqlite shim not initialised");
+        this.db = bytes3 ? new SQL.Database(bytes3) : new SQL.Database();
+        current = this.db;
+      }
+      prepare(sql) {
+        return new Statement(this.db, sql);
+      }
+      exec(sql) {
+        this.db.exec(sql);
+        markDirty();
+      }
+      close() {
+        flush();
+      }
+      export() {
+        return this.db.export();
+      }
+    };
+    sqlite_default = { DatabaseSync, init, loadBytes, saveBytes, wipe, flush };
+  }
+});
+
+// local/shims/config.js
+var require_config = __commonJS({
+  "local/shims/config.js"(exports, module) {
+    init_globals_inject();
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    function key(name) {
+      let hex = localStorage.getItem(name);
+      if (!hex) {
+        hex = crypto3.randomBytes(32).toString("hex");
+        localStorage.setItem(name, hex);
+      }
+      return import_buffer.Buffer.from(hex, "hex");
+    }
+    var config = {
+      version: true ? "1.1.0" : "local",
+      env: "local",
+      isProd: true,
+      isTest: false,
+      local: true,
+      port: 0,
+      host: "local",
+      dataDir: "/local",
+      dbPath: ":memory:",
+      serverJsonPath: "",
+      keysJsonPath: "",
+      fileCfg: {},
+      keySource: "device",
+      setupComplete: true,
+      encryptionKey: key("suds.local.enc"),
+      indexKey: key("suds.local.idx"),
+      tls: { cert: "", key: "", mode: "none" },
+      session: { idleMinutes: 15, absoluteHours: 12 },
+      mfaRequiredRoles: [],
+      password: { minLength: 12, maxAgeDays: 90 },
+      lockout: { maxAttempts: 5, minutes: 15 },
+      msGraph: { tenantId: "", clientId: "", clientSecret: "", user: "" },
+      auditRetentionDays: 2555,
+      maxBodyBytes: 60 * 1024 * 1024,
+      trustProxy: false,
+      saveServerJson() {
+      }
+    };
+    module.exports = config;
+  }
+});
+
+// server/schema-text.js
+var require_schema_text = __commonJS({
+  "server/schema-text.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    module.exports = "-- SUDS schema. Fields suffixed _enc hold AES-256-GCM ciphertext (see server/crypto.js).\n-- Fields suffixed _idx hold HMAC blind indexes used for equality search without decrypting.\nPRAGMA journal_mode = WAL;\nPRAGMA foreign_keys = ON;\n\nCREATE TABLE IF NOT EXISTS settings (\n  key TEXT PRIMARY KEY,\n  value TEXT NOT NULL,\n  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))\n);\n\nCREATE TABLE IF NOT EXISTS users (\n  id TEXT PRIMARY KEY,\n  username TEXT NOT NULL UNIQUE COLLATE NOCASE,\n  password_hash TEXT NOT NULL,\n  display_name TEXT NOT NULL,\n  email TEXT,\n  title TEXT,\n  role TEXT NOT NULL CHECK (role IN ('admin','supervisor','clinician','navigator','finance','readonly')),\n  is_active INTEGER NOT NULL DEFAULT 1,\n  mfa_secret_enc TEXT,\n  mfa_enabled INTEGER NOT NULL DEFAULT 0,\n  failed_attempts INTEGER NOT NULL DEFAULT 0,\n  locked_until TEXT,\n  must_change_password INTEGER NOT NULL DEFAULT 0,\n  password_changed_at TEXT,\n  last_login_at TEXT,\n  hourly_cost REAL,\n  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),\n  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))\n);\n\nCREATE TABLE IF NOT EXISTS sessions (\n  id TEXT PRIMARY KEY,               -- sha256 of the bearer token\n  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,\n  created_at TEXT NOT NULL,\n  last_seen_at TEXT NOT NULL,\n  expires_at TEXT NOT NULL,\n  mfa_pending INTEGER NOT NULL DEFAULT 0,\n  ip TEXT,\n  user_agent TEXT,\n  revoked_at TEXT\n);\nCREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);\n\nCREATE TABLE IF NOT EXISTS api_keys (\n  id TEXT PRIMARY KEY,\n  name TEXT NOT NULL,\n  key_hash TEXT NOT NULL UNIQUE,\n  prefix TEXT NOT NULL,\n  scopes TEXT NOT NULL DEFAULT 'intake',\n  created_by TEXT REFERENCES users(id),\n  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),\n  last_used_at TEXT,\n  revoked_at TEXT\n);\n\nCREATE TABLE IF NOT EXISTS clients (\n  id TEXT PRIMARY KEY,\n  client_code TEXT NOT NULL UNIQUE,    -- non-PHI identifier for reports / de-identified views\n  first_name_enc TEXT NOT NULL,\n  last_name_enc TEXT NOT NULL,\n  last_name_idx TEXT,\n  full_name_idx TEXT,\n  preferred_name_enc TEXT,\n  dob_enc TEXT,\n  dob_idx TEXT,\n  phone_enc TEXT,\n  phone_idx TEXT,\n  alt_phone_enc TEXT,\n  email_enc TEXT,\n  address_enc TEXT,\n  city TEXT,\n  zip TEXT,\n  gender TEXT,\n  pronouns TEXT,\n  race_ethnicity TEXT,\n  preferred_language TEXT DEFAULT 'English',\n  veteran INTEGER DEFAULT 0,\n  housing_status TEXT,\n  insurance TEXT,\n  medicaid_id_enc TEXT,\n  emergency_contact_enc TEXT,\n  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('waitlist','active','inactive','closed','deceased')),\n  intake_date TEXT,\n  discharge_date TEXT,\n  discharge_reason TEXT,\n  referral_source TEXT,\n  primary_substance TEXT,\n  secondary_substances TEXT,\n  route_of_use TEXT,\n  asam_level TEXT,\n  mat_status TEXT,                     -- none, interested, referred, active, discontinued\n  mat_medication TEXT,\n  overdose_history INTEGER DEFAULT 0,\n  last_overdose_date TEXT,\n  naloxone_provided INTEGER DEFAULT 0,\n  naloxone_last_date TEXT,\n  risk_level TEXT DEFAULT 'moderate',\n  justice_involved INTEGER DEFAULT 0,\n  pregnant_or_parenting INTEGER DEFAULT 0,\n  co_occurring_mh INTEGER DEFAULT 0,\n  goals TEXT,\n  flags TEXT,                          -- comma separated safety flags\n  contact_preferences TEXT,\n  ok_to_text INTEGER DEFAULT 0,\n  ok_to_voicemail INTEGER DEFAULT 0,\n  created_by TEXT REFERENCES users(id),\n  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),\n  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),\n  deleted_at TEXT\n);\nCREATE INDEX IF NOT EXISTS idx_clients_last_name ON clients(last_name_idx);\nCREATE INDEX IF NOT EXISTS idx_clients_phone ON clients(phone_idx);\nCREATE INDEX IF NOT EXISTS idx_clients_status ON clients(status);\n\nCREATE TABLE IF NOT EXISTS assignments (\n  id TEXT PRIMARY KEY,\n  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,\n  user_id TEXT NOT NULL REFERENCES users(id),\n  role_on_case TEXT NOT NULL DEFAULT 'primary' CHECK (role_on_case IN ('primary','secondary','clinician','peer','supervisor')),\n  start_date TEXT NOT NULL,\n  end_date TEXT,\n  notes TEXT,\n  created_by TEXT REFERENCES users(id),\n  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))\n);\nCREATE INDEX IF NOT EXISTS idx_assign_client ON assignments(client_id);\nCREATE INDEX IF NOT EXISTS idx_assign_user ON assignments(user_id);\n\nCREATE TABLE IF NOT EXISTS funding_sources (\n  id TEXT PRIMARY KEY,\n  name TEXT NOT NULL,\n  source_type TEXT NOT NULL DEFAULT 'other',\n  grant_number TEXT,\n  fiscal_year_start TEXT NOT NULL,\n  fiscal_year_end TEXT NOT NULL,\n  total_amount REAL NOT NULL DEFAULT 0,\n  restrictions TEXT,\n  notes TEXT,\n  is_active INTEGER NOT NULL DEFAULT 1,\n  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),\n  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))\n);\n\nCREATE TABLE IF NOT EXISTS budget_lines (\n  id TEXT PRIMARY KEY,\n  funding_source_id TEXT NOT NULL REFERENCES funding_sources(id) ON DELETE CASCADE,\n  category TEXT NOT NULL,\n  label TEXT,\n  allocated_amount REAL NOT NULL DEFAULT 0,\n  notes TEXT,\n  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))\n);\n\nCREATE TABLE IF NOT EXISTS interventions (\n  id TEXT PRIMARY KEY,\n  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,\n  user_id TEXT NOT NULL REFERENCES users(id),\n  type TEXT NOT NULL,\n  occurred_at TEXT NOT NULL,\n  duration_minutes INTEGER NOT NULL DEFAULT 0,\n  location TEXT DEFAULT 'office',\n  modality TEXT DEFAULT 'in_person',\n  outcome TEXT,\n  stage_of_change TEXT,\n  naloxone_kits INTEGER DEFAULT 0,\n  fentanyl_strips INTEGER DEFAULT 0,\n  funding_source_id TEXT REFERENCES funding_sources(id),\n  cost REAL DEFAULT 0,\n  summary TEXT,\n  follow_up_due TEXT,\n  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),\n  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))\n);\nCREATE INDEX IF NOT EXISTS idx_interventions_client ON interventions(client_id, occurred_at);\nCREATE INDEX IF NOT EXISTS idx_interventions_user ON interventions(user_id, occurred_at);\n\nCREATE TABLE IF NOT EXISTS calls (\n  id TEXT PRIMARY KEY,\n  client_id TEXT REFERENCES clients(id) ON DELETE SET NULL,\n  user_id TEXT NOT NULL REFERENCES users(id),\n  direction TEXT NOT NULL CHECK (direction IN ('inbound','outbound')),\n  started_at TEXT NOT NULL,\n  duration_minutes INTEGER NOT NULL DEFAULT 0,\n  contact_type TEXT NOT NULL DEFAULT 'client',\n  contact_name_enc TEXT,\n  phone_enc TEXT,\n  purpose TEXT,\n  outcome TEXT NOT NULL DEFAULT 'reached',\n  crisis INTEGER NOT NULL DEFAULT 0,\n  follow_up_needed INTEGER NOT NULL DEFAULT 0,\n  follow_up_due TEXT,\n  summary_enc TEXT,\n  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),\n  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))\n);\nCREATE INDEX IF NOT EXISTS idx_calls_client ON calls(client_id, started_at);\nCREATE INDEX IF NOT EXISTS idx_calls_user ON calls(user_id, started_at);\n\nCREATE TABLE IF NOT EXISTS time_entries (\n  id TEXT PRIMARY KEY,\n  user_id TEXT NOT NULL REFERENCES users(id),\n  client_id TEXT REFERENCES clients(id) ON DELETE SET NULL,\n  work_date TEXT NOT NULL,\n  minutes INTEGER NOT NULL,\n  category TEXT NOT NULL DEFAULT 'direct_service',\n  billable INTEGER NOT NULL DEFAULT 0,\n  funding_source_id TEXT REFERENCES funding_sources(id),\n  intervention_id TEXT REFERENCES interventions(id) ON DELETE SET NULL,\n  call_id TEXT REFERENCES calls(id) ON DELETE SET NULL,\n  description TEXT,\n  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),\n  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))\n);\nCREATE INDEX IF NOT EXISTS idx_time_user ON time_entries(user_id, work_date);\nCREATE INDEX IF NOT EXISTS idx_time_client ON time_entries(client_id);\n\nCREATE TABLE IF NOT EXISTS resources (\n  id TEXT PRIMARY KEY,\n  name TEXT NOT NULL,\n  category TEXT NOT NULL DEFAULT 'other',\n  organization TEXT,\n  phone TEXT,\n  fax TEXT,\n  email TEXT,\n  website TEXT,\n  address TEXT,\n  city TEXT,\n  zip TEXT,\n  hours TEXT,\n  eligibility TEXT,\n  services TEXT,\n  languages TEXT,\n  accepts_medicaid INTEGER DEFAULT 0,\n  accepts_uninsured INTEGER DEFAULT 0,\n  mat_offered TEXT,\n  capacity_notes TEXT,\n  contact_person TEXT,\n  is_active INTEGER NOT NULL DEFAULT 1,\n  last_verified_at TEXT,\n  notes TEXT,\n  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),\n  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))\n);\nCREATE INDEX IF NOT EXISTS idx_resources_cat ON resources(category);\n\nCREATE TABLE IF NOT EXISTS referrals (\n  id TEXT PRIMARY KEY,\n  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,\n  resource_id TEXT NOT NULL REFERENCES resources(id),\n  user_id TEXT NOT NULL REFERENCES users(id),\n  referred_at TEXT NOT NULL,\n  status TEXT NOT NULL DEFAULT 'pending',\n  urgency TEXT DEFAULT 'routine',\n  appointment_at TEXT,\n  admitted_at TEXT,\n  closed_at TEXT,\n  outcome TEXT,\n  barrier TEXT,\n  warm_handoff INTEGER DEFAULT 0,\n  consent_id TEXT,\n  follow_up_due TEXT,\n  notes TEXT,\n  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),\n  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))\n);\nCREATE INDEX IF NOT EXISTS idx_referrals_client ON referrals(client_id);\nCREATE INDEX IF NOT EXISTS idx_referrals_status ON referrals(status);\n\nCREATE TABLE IF NOT EXISTS tasks (\n  id TEXT PRIMARY KEY,\n  client_id TEXT REFERENCES clients(id) ON DELETE CASCADE,\n  assigned_to TEXT REFERENCES users(id),\n  created_by TEXT NOT NULL REFERENCES users(id),\n  title TEXT NOT NULL,\n  description TEXT,\n  due_at TEXT,\n  priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('low','normal','high','urgent')),\n  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','in_progress','done','cancelled')),\n  is_milestone INTEGER NOT NULL DEFAULT 0,\n  completed_at TEXT,\n  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),\n  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))\n);\nCREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assigned_to, status);\nCREATE INDEX IF NOT EXISTS idx_tasks_client ON tasks(client_id);\n\nCREATE TABLE IF NOT EXISTS expenditures (\n  id TEXT PRIMARY KEY,\n  funding_source_id TEXT NOT NULL REFERENCES funding_sources(id),\n  budget_line_id TEXT REFERENCES budget_lines(id) ON DELETE SET NULL,\n  client_id TEXT REFERENCES clients(id) ON DELETE SET NULL,\n  user_id TEXT NOT NULL REFERENCES users(id),\n  intervention_id TEXT REFERENCES interventions(id) ON DELETE SET NULL,\n  spent_at TEXT NOT NULL,\n  amount REAL NOT NULL,\n  category TEXT NOT NULL,\n  vendor TEXT,\n  description TEXT,\n  receipt_ref TEXT,\n  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','reimbursed')),\n  approved_by TEXT REFERENCES users(id),\n  approved_at TEXT,\n  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),\n  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))\n);\nCREATE INDEX IF NOT EXISTS idx_exp_fund ON expenditures(funding_source_id, spent_at);\nCREATE INDEX IF NOT EXISTS idx_exp_client ON expenditures(client_id);\n\nCREATE TABLE IF NOT EXISTS notes (\n  id TEXT PRIMARY KEY,\n  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,\n  author_id TEXT NOT NULL REFERENCES users(id),\n  kind TEXT NOT NULL CHECK (kind IN ('clinical','admin')),\n  format TEXT NOT NULL DEFAULT 'narrative',\n  title TEXT,\n  content_enc TEXT NOT NULL,\n  structured_enc TEXT,                 -- JSON of SOAP/DAP/BIRP sections, encrypted\n  occurred_at TEXT NOT NULL,\n  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','signed','amended')),\n  signed_at TEXT,\n  signed_by TEXT REFERENCES users(id),\n  signature_hash TEXT,                 -- sha256 over content at signing time (tamper evidence)\n  source TEXT NOT NULL DEFAULT 'manual',\n  source_ref TEXT,\n  import_item_id TEXT,\n  intervention_id TEXT REFERENCES interventions(id) ON DELETE SET NULL,\n  call_id TEXT REFERENCES calls(id) ON DELETE SET NULL,\n  part2_protected INTEGER NOT NULL DEFAULT 1,\n  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),\n  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),\n  deleted_at TEXT\n);\nCREATE INDEX IF NOT EXISTS idx_notes_client ON notes(client_id, occurred_at);\nCREATE INDEX IF NOT EXISTS idx_notes_author ON notes(author_id);\n\nCREATE TABLE IF NOT EXISTS note_addenda (\n  id TEXT PRIMARY KEY,\n  note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,\n  author_id TEXT NOT NULL REFERENCES users(id),\n  content_enc TEXT NOT NULL,\n  reason TEXT,\n  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))\n);\n\nCREATE TABLE IF NOT EXISTS consents (\n  id TEXT PRIMARY KEY,\n  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,\n  type TEXT NOT NULL,                  -- part2_disclosure, roi, treatment, telehealth, contact, research\n  recipient TEXT,\n  purpose TEXT,\n  scope TEXT,\n  signed_at TEXT NOT NULL,\n  expires_at TEXT,\n  revoked_at TEXT,\n  revoked_reason TEXT,\n  document_ref TEXT,\n  witness TEXT,\n  created_by TEXT NOT NULL REFERENCES users(id),\n  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))\n);\nCREATE INDEX IF NOT EXISTS idx_consents_client ON consents(client_id);\n\nCREATE TABLE IF NOT EXISTS disclosures (\n  id TEXT PRIMARY KEY,\n  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,\n  consent_id TEXT REFERENCES consents(id) ON DELETE SET NULL,\n  disclosed_to TEXT NOT NULL,\n  purpose TEXT NOT NULL,\n  info_disclosed TEXT NOT NULL,\n  method TEXT,\n  disclosed_at TEXT NOT NULL,\n  disclosed_by TEXT NOT NULL REFERENCES users(id),\n  basis TEXT,                          -- consent, court_order, medical_emergency, qsoa, audit, research\n  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))\n);\nCREATE INDEX IF NOT EXISTS idx_disclosures_client ON disclosures(client_id);\n\nCREATE TABLE IF NOT EXISTS imports (\n  id TEXT PRIMARY KEY,\n  source TEXT NOT NULL,                -- pocket_ai, onenote_file, onenote_graph, generic, api\n  filename TEXT,\n  imported_by TEXT REFERENCES users(id),\n  item_count INTEGER NOT NULL DEFAULT 0,\n  status TEXT NOT NULL DEFAULT 'staged',\n  metadata TEXT,\n  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))\n);\n\nCREATE TABLE IF NOT EXISTS import_items (\n  id TEXT PRIMARY KEY,\n  import_id TEXT NOT NULL REFERENCES imports(id) ON DELETE CASCADE,\n  external_id TEXT,\n  title TEXT,\n  content_enc TEXT NOT NULL,\n  captured_at TEXT,\n  metadata TEXT,\n  suggested_client_id TEXT,\n  status TEXT NOT NULL DEFAULT 'staged' CHECK (status IN ('staged','committed','discarded')),\n  note_id TEXT,\n  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))\n);\nCREATE INDEX IF NOT EXISTS idx_import_items ON import_items(import_id, status);\n\nCREATE TABLE IF NOT EXISTS audit_log (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),\n  user_id TEXT,\n  username TEXT,\n  action TEXT NOT NULL,\n  entity TEXT,\n  entity_id TEXT,\n  client_id TEXT,\n  ip TEXT,\n  success INTEGER NOT NULL DEFAULT 1,\n  details TEXT,\n  prev_hash TEXT,\n  hash TEXT\n);\nCREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log(at);\nCREATE INDEX IF NOT EXISTS idx_audit_client ON audit_log(client_id);\nCREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id);\n\nCREATE TABLE IF NOT EXISTS user_prefs (\n  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,\n  key TEXT NOT NULL,\n  value TEXT NOT NULL,\n  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),\n  PRIMARY KEY (user_id, key)\n);\n";
+  }
+});
+
+// server/db.js
+var require_db = __commonJS({
+  "server/db.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var path = (init_path(), __toCommonJS(path_exports));
+    var { DatabaseSync: DatabaseSync2 } = (init_sqlite(), __toCommonJS(sqlite_exports));
+    var config = require_config();
+    var db3;
+    function open(dbPath = config.dbPath) {
+      if (db3) return db3;
+      if (dbPath !== ":memory:") fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+      db3 = new DatabaseSync2(dbPath);
+      db3.exec(fs.readFileSync(path.join("/", "schema.sql"), "utf8"));
+      migrate(db3);
+      if (dbPath !== ":memory:") {
+        try {
+          fs.chmodSync(dbPath, 384);
+        } catch {
+        }
+      }
+      return db3;
+    }
+    function openWith(bytes3) {
+      if (db3) return db3;
+      db3 = new DatabaseSync2(":memory:", bytes3 || void 0);
+      db3.exec(fs.readFileSync ? safeSchema() : "");
+      migrate(db3);
+      return db3;
+    }
+    function safeSchema() {
+      try {
+        return require_schema_text();
+      } catch {
+        return (init_fs(), __toCommonJS(fs_exports)).readFileSync(path.join("/", "schema.sql"), "utf8");
+      }
+    }
+    var addColumn = (d, table, col, def) => {
+      const cols2 = d.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+      if (!cols2.includes(col)) d.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+    };
+    var migrations = [
+      // 1: initial schema (created by schema.sql)
+      () => {
+      },
+      // 2: sync support — updated_at on tables that lacked it, tombstones for hard deletes
+      (d) => {
+        for (const t of ["assignments", "consents", "disclosures", "budget_lines", "note_addenda", "imports", "import_items"]) {
+          addColumn(d, t, "updated_at", "TEXT");
+          d.exec(`UPDATE ${t} SET updated_at = created_at WHERE updated_at IS NULL`);
+        }
+        d.exec(`CREATE TABLE IF NOT EXISTS tombstones (table_name TEXT NOT NULL, id TEXT NOT NULL, deleted_at TEXT NOT NULL, PRIMARY KEY (table_name, id))`);
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_tombstones_at ON tombstones(deleted_at)`);
+      }
+    ];
+    function migrate(d) {
+      const row = d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get();
+      let v = row ? Number(row.value) : 0;
+      for (let i = v; i < migrations.length; i++) {
+        migrations[i](d);
+        d.prepare(`INSERT INTO settings(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`).run(String(i + 1));
+      }
+    }
+    function get() {
+      if (!db3) open();
+      return db3;
+    }
+    function close() {
+      if (db3) {
+        db3.close();
+        db3 = void 0;
+      }
+    }
+    function now() {
+      return (/* @__PURE__ */ new Date()).toISOString();
+    }
+    function all(sql, ...params) {
+      return get().prepare(sql).all(...params);
+    }
+    function one(sql, ...params) {
+      return get().prepare(sql).get(...params);
+    }
+    function run2(sql, ...params) {
+      return get().prepare(sql).run(...params);
+    }
+    function transaction(fn) {
+      const d = get();
+      d.exec("BEGIN");
+      try {
+        const r = fn();
+        d.exec("COMMIT");
+        return r;
+      } catch (e) {
+        try {
+          d.exec("ROLLBACK");
+        } catch {
+        }
+        throw e;
+      }
+    }
+    function getSetting(key, def = null) {
+      const r = one(`SELECT value FROM settings WHERE key=?`, key);
+      return r ? r.value : def;
+    }
+    function setSetting(key, value) {
+      run2(`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, key, String(value));
+    }
+    function tombstone(table, id) {
+      run2(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now());
+    }
+    module.exports = { open, openWith, get, close, now, all, one, run: run2, transaction, getSetting, setSetting, tombstone };
+  }
+});
+
+// local/shims/url.js
+var url_exports = {};
+__export(url_exports, {
+  URL: () => U,
+  URLSearchParams: () => P,
+  default: () => url_default
+});
+var U, P, url_default;
+var init_url = __esm({
+  "local/shims/url.js"() {
+    init_globals_inject();
+    U = globalThis.URL;
+    P = globalThis.URLSearchParams;
+    url_default = { URL: U, URLSearchParams: P };
+  }
+});
+
+// server/http.js
+var require_http = __commonJS({
+  "server/http.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var path = (init_path(), __toCommonJS(path_exports));
+    var { URL: URL2 } = (init_url(), __toCommonJS(url_exports));
+    var config = require_config();
+    var HttpError3 = class extends Error {
+      constructor(status, message, extra) {
+        super(message);
+        this.status = status;
+        this.extra = extra;
+      }
+    };
+    var badRequest = (m, extra) => new HttpError3(400, m, extra);
+    var unauthorized = (m = "Authentication required") => new HttpError3(401, m);
+    var forbidden = (m = "Forbidden") => new HttpError3(403, m);
+    var notFound = (m = "Not found") => new HttpError3(404, m);
+    var conflict = (m) => new HttpError3(409, m);
+    var MIME = {
+      ".html": "text/html; charset=utf-8",
+      ".js": "text/javascript; charset=utf-8",
+      ".css": "text/css; charset=utf-8",
+      ".json": "application/json; charset=utf-8",
+      ".svg": "image/svg+xml",
+      ".png": "image/png",
+      ".ico": "image/x-icon",
+      ".woff2": "font/woff2",
+      ".wasm": "application/wasm",
+      ".txt": "text/plain; charset=utf-8",
+      ".md": "text/markdown; charset=utf-8"
+    };
+    var Router2 = class {
+      constructor() {
+        this.routes = [];
+      }
+      add(method, pattern, ...handlers) {
+        const keys = [];
+        const re = new RegExp("^" + pattern.replace(/\/:([a-zA-Z_]+)/g, (_, k) => {
+          keys.push(k);
+          return "/([^/]+)";
+        }) + "/?$");
+        this.routes.push({ method, re, keys, handlers });
+        return this;
+      }
+      get(p, ...h) {
+        return this.add("GET", p, ...h);
+      }
+      post(p, ...h) {
+        return this.add("POST", p, ...h);
+      }
+      put(p, ...h) {
+        return this.add("PUT", p, ...h);
+      }
+      patch(p, ...h) {
+        return this.add("PATCH", p, ...h);
+      }
+      delete(p, ...h) {
+        return this.add("DELETE", p, ...h);
+      }
+      match(method, pathname) {
+        let pathMatched = false;
+        let best = null;
+        for (const r of this.routes) {
+          const m = r.re.exec(pathname);
+          if (!m) continue;
+          pathMatched = true;
+          if (r.method !== method) continue;
+          if (best && best.r.keys.length <= r.keys.length) continue;
+          best = { r, m };
+        }
+        if (best) {
+          const params = {};
+          best.r.keys.forEach((k, i) => {
+            params[k] = decodeURIComponent(best.m[i + 1]);
+          });
+          return { params, handlers: best.r.handlers };
+        }
+        return pathMatched ? { methodNotAllowed: true } : null;
+      }
+    };
+    function parseCookies(header) {
+      const out2 = {};
+      if (!header) return out2;
+      for (const part of header.split(";")) {
+        const i = part.indexOf("=");
+        if (i < 0) continue;
+        out2[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+      }
+      return out2;
+    }
+    function readBody(req, limit2 = config.maxBodyBytes) {
+      return new Promise((resolve2, reject) => {
+        const chunks = [];
+        let size = 0;
+        req.on("data", (c) => {
+          size += c.length;
+          if (size > limit2) {
+            reject(new HttpError3(413, "Payload too large"));
+            req.destroy();
+            return;
+          }
+          chunks.push(c);
+        });
+        req.on("end", () => resolve2(import_buffer.Buffer.concat(chunks)));
+        req.on("error", reject);
+      });
+    }
+    function securityHeaders(res) {
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("X-Frame-Options", "DENY");
+      res.setHeader("Referrer-Policy", "no-referrer");
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+      res.setHeader("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+      if (config.tls.cert) res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    }
+    function sendJson(res, status, obj) {
+      const body = JSON.stringify(obj ?? null);
+      res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": import_buffer.Buffer.byteLength(body) });
+      res.end(body);
+    }
+    function sendFile(res, filePath) {
+      const ext = path.extname(filePath).toLowerCase();
+      const data = fs.readFileSync(filePath);
+      res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream", "Content-Length": data.length });
+      res.end(data);
+    }
+    function serveStatic(root) {
+      root = path.resolve(root);
+      return (req, res) => {
+        let p = decodeURIComponent(new URL2(req.url, "http://x").pathname);
+        if (p === "/app" || p === "/app/") p = "/get-app.html";
+        else if (p === "/" || !path.extname(p)) p = "/index.html";
+        const file = path.resolve(path.join(root, p));
+        if (!file.startsWith(root + path.sep) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+          sendJson(res, 404, { error: "Not found" });
+          return true;
+        }
+        sendFile(res, file);
+        return true;
+      };
+    }
+    module.exports = { Router: Router2, HttpError: HttpError3, badRequest, unauthorized, forbidden, notFound, conflict, parseCookies, readBody, securityHeaders, sendJson, sendFile, serveStatic };
+  }
+});
+
+// server/crypto.js
+var require_crypto = __commonJS({
+  "server/crypto.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    var config = require_config();
+    var VERSION = "v1";
+    function encrypt3(plain, key = config.encryptionKey) {
+      if (plain === null || plain === void 0) return null;
+      const text = String(plain);
+      const iv = crypto3.randomBytes(12);
+      const cipher = crypto3.createCipheriv("aes-256-gcm", key, iv);
+      const enc = import_buffer.Buffer.concat([cipher.update(text, "utf8"), cipher.final()]);
+      const tag = cipher.getAuthTag();
+      return `${VERSION}:${iv.toString("base64")}:${tag.toString("base64")}:${enc.toString("base64")}`;
+    }
+    function decrypt3(payload, key = config.encryptionKey) {
+      if (payload === null || payload === void 0 || payload === "") return payload ?? null;
+      const parts = String(payload).split(":");
+      if (parts.length !== 4 || parts[0] !== VERSION) throw new Error("Unrecognized ciphertext format");
+      const iv = import_buffer.Buffer.from(parts[1], "base64");
+      const tag = import_buffer.Buffer.from(parts[2], "base64");
+      const data = import_buffer.Buffer.from(parts[3], "base64");
+      const decipher = crypto3.createDecipheriv("aes-256-gcm", key, iv);
+      decipher.setAuthTag(tag);
+      return import_buffer.Buffer.concat([decipher.update(data), decipher.final()]).toString("utf8");
+    }
+    function blindIndex2(value, key = config.indexKey) {
+      if (value === null || value === void 0) return null;
+      const norm = String(value).toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (!norm) return null;
+      return crypto3.createHmac("sha256", key).update(norm).digest("hex");
+    }
+    var SCRYPT = { N: 32768, r: 8, p: 1, keylen: 64, maxmem: 64 * 1024 * 1024 };
+    function hashPassword(password) {
+      const salt = crypto3.randomBytes(16);
+      const hash2 = crypto3.scryptSync(password, salt, SCRYPT.keylen, SCRYPT);
+      return `scrypt$${SCRYPT.N}$${SCRYPT.r}$${SCRYPT.p}$${salt.toString("base64")}$${hash2.toString("base64")}`;
+    }
+    function verifyPassword(password, stored) {
+      try {
+        const [alg, N, r, p, saltB64, hashB64] = String(stored).split("$");
+        if (alg !== "scrypt") return false;
+        const salt = import_buffer.Buffer.from(saltB64, "base64");
+        const expected = import_buffer.Buffer.from(hashB64, "base64");
+        const actual = crypto3.scryptSync(password, salt, expected.length, { N: +N, r: +r, p: +p, maxmem: SCRYPT.maxmem });
+        return crypto3.timingSafeEqual(actual, expected);
+      } catch {
+        return false;
+      }
+    }
+    function randomToken(bytes3 = 32) {
+      return crypto3.randomBytes(bytes3).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    }
+    function sha2562(s) {
+      return crypto3.createHash("sha256").update(s).digest("hex");
+    }
+    function uuid2() {
+      return crypto3.randomUUID();
+    }
+    var B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    function base32Encode(buf) {
+      let bits2 = 0, value = 0, out2 = "";
+      for (const b of buf) {
+        value = value << 8 | b;
+        bits2 += 8;
+        while (bits2 >= 5) {
+          out2 += B32[value >>> bits2 - 5 & 31];
+          bits2 -= 5;
+        }
+      }
+      if (bits2 > 0) out2 += B32[value << 5 - bits2 & 31];
+      return out2;
+    }
+    function base32Decode(str) {
+      const clean2 = str.toUpperCase().replace(/[^A-Z2-7]/g, "");
+      let bits2 = 0, value = 0;
+      const out2 = [];
+      for (const c of clean2) {
+        value = value << 5 | B32.indexOf(c);
+        bits2 += 5;
+        if (bits2 >= 8) {
+          out2.push(value >>> bits2 - 8 & 255);
+          bits2 -= 8;
+        }
+      }
+      return import_buffer.Buffer.from(out2);
+    }
+    function generateTotpSecret() {
+      return base32Encode(crypto3.randomBytes(20));
+    }
+    function hotp(secretB32, counter) {
+      const key = base32Decode(secretB32);
+      const msg = import_buffer.Buffer.alloc(8);
+      msg.writeBigUInt64BE(BigInt(counter));
+      const h = crypto3.createHmac("sha1", key).update(msg).digest();
+      const off = h[h.length - 1] & 15;
+      const code = (h[off] & 127) << 24 | h[off + 1] << 16 | h[off + 2] << 8 | h[off + 3];
+      return String(code % 1e6).padStart(6, "0");
+    }
+    function totp(secretB32, time = Date.now(), step = 30) {
+      return hotp(secretB32, Math.floor(time / 1e3 / step));
+    }
+    function verifyTotp(secretB32, code, window2 = 1, time = Date.now()) {
+      const c = String(code || "").replace(/\s+/g, "");
+      if (!/^\d{6}$/.test(c)) return false;
+      const counter = Math.floor(time / 1e3 / 30);
+      for (let i = -window2; i <= window2; i++) {
+        const expected = hotp(secretB32, counter + i);
+        if (crypto3.timingSafeEqual(import_buffer.Buffer.from(expected), import_buffer.Buffer.from(c))) return true;
+      }
+      return false;
+    }
+    function otpauthUrl(secret, account, issuer = "SUDS") {
+      return `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(account)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
+    }
+    module.exports = {
+      encrypt: encrypt3,
+      decrypt: decrypt3,
+      blindIndex: blindIndex2,
+      hashPassword,
+      verifyPassword,
+      randomToken,
+      sha256: sha2562,
+      uuid: uuid2,
+      generateTotpSecret,
+      totp,
+      verifyTotp,
+      otpauthUrl,
+      base32Encode,
+      base32Decode
+    };
+  }
+});
+
+// server/audit.js
+var require_audit = __commonJS({
+  "server/audit.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var { sha256: sha2562 } = require_crypto();
+    function log({ user, action, entity, entityId, clientId, ip, success = true, details }) {
+      const prev = db3.one(`SELECT hash FROM audit_log ORDER BY id DESC LIMIT 1`);
+      const prevHash = prev ? prev.hash : "GENESIS";
+      const at = db3.now();
+      const detailsStr = details === void 0 ? null : JSON.stringify(details);
+      const payload = [at, user?.id || "", user?.username || "", action, entity || "", entityId || "", clientId || "", ip || "", success ? 1 : 0, detailsStr || "", prevHash].join("|");
+      const hash2 = sha2562(payload);
+      db3.run(
+        `INSERT INTO audit_log(at,user_id,username,action,entity,entity_id,client_id,ip,success,details,prev_hash,hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+        at,
+        user?.id || null,
+        user?.username || null,
+        action,
+        entity || null,
+        entityId || null,
+        clientId || null,
+        ip || null,
+        success ? 1 : 0,
+        detailsStr,
+        prevHash,
+        hash2
+      );
+    }
+    function verifyChain() {
+      const rows = db3.all(`SELECT * FROM audit_log ORDER BY id ASC`);
+      if (!rows.length) return { ok: true, checked: 0 };
+      let prevHash = rows[0].prev_hash;
+      const anchoredAt = rows[0].id;
+      for (const r of rows) {
+        const payload = [r.at, r.user_id || "", r.username || "", r.action, r.entity || "", r.entity_id || "", r.client_id || "", r.ip || "", r.success ? 1 : 0, r.details || "", r.prev_hash].join("|");
+        if (r.prev_hash !== prevHash || sha2562(payload) !== r.hash) return { ok: false, checked: rows.length, firstBadId: r.id, anchoredAt };
+        prevHash = r.hash;
+      }
+      return { ok: true, checked: rows.length, anchoredAt };
+    }
+    function purge(days) {
+      const cutoff = new Date(Date.now() - days * 864e5).toISOString();
+      const last = db3.one(`SELECT id, hash FROM audit_log WHERE at < ? ORDER BY id DESC LIMIT 1`, cutoff);
+      if (!last) return 0;
+      const n = db3.run(`DELETE FROM audit_log WHERE at < ?`, cutoff).changes;
+      log({ user: { username: "system" }, action: "audit.purge", details: { purged: n, before: cutoff, last_purged_id: last.id, last_purged_hash: last.hash } });
+      return n;
+    }
+    module.exports = { log, verifyChain, purge };
+  }
+});
+
+// server/auth.js
+var require_auth = __commonJS({
+  "server/auth.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var config = require_config();
+    var audit3 = require_audit();
+    var { sha256: sha2562, randomToken, verifyPassword, verifyTotp, decrypt: decrypt3 } = require_crypto();
+    var { unauthorized, forbidden, HttpError: HttpError3 } = require_http();
+    function policy() {
+      const num = (k, d) => {
+        const v = Number(db3.getSetting(k, ""));
+        return Number.isFinite(v) && v > 0 ? v : d;
+      };
+      const roles = db3.getSetting("mfa_required_roles", null);
+      return {
+        idleMinutes: num("session_idle_minutes", config.session.idleMinutes),
+        absoluteHours: num("session_absolute_hours", config.session.absoluteHours),
+        passwordMaxAgeDays: num("password_max_age_days", config.password.maxAgeDays),
+        mfaRequiredRoles: roles === null ? config.mfaRequiredRoles : roles.split(",").map((x) => x.trim()).filter(Boolean)
+      };
+    }
+    var PERMS = {
+      admin: [
+        "users:manage",
+        "settings:manage",
+        "audit:read",
+        "apikeys:manage",
+        "clients:read",
+        "clients:write",
+        "clients:all",
+        "interventions:*",
+        "calls:*",
+        "time:*",
+        "resources:*",
+        "referrals:*",
+        "tasks:*",
+        "budget:read",
+        "budget:write",
+        "budget:approve",
+        "notes:admin:read",
+        "notes:admin:write",
+        "notes:clinical:breakglass",
+        "consents:*",
+        "imports:*",
+        "reports:read",
+        "assignments:manage",
+        "export:read"
+      ],
+      supervisor: [
+        "clients:read",
+        "clients:write",
+        "clients:all",
+        "interventions:*",
+        "calls:*",
+        "time:*",
+        "time:all",
+        "resources:*",
+        "referrals:*",
+        "tasks:*",
+        "budget:read",
+        "budget:write",
+        "budget:approve",
+        "notes:admin:read",
+        "notes:admin:write",
+        "notes:clinical:read",
+        "notes:clinical:write",
+        "consents:*",
+        "imports:*",
+        "reports:read",
+        "assignments:manage",
+        "audit:read",
+        "export:read",
+        "users:read"
+      ],
+      clinician: [
+        "clients:read",
+        "clients:write",
+        "interventions:*",
+        "calls:*",
+        "time:*",
+        "resources:read",
+        "referrals:*",
+        "tasks:*",
+        "notes:admin:read",
+        "notes:admin:write",
+        "notes:clinical:read",
+        "notes:clinical:write",
+        "consents:*",
+        "imports:*",
+        "reports:read",
+        "users:read"
+      ],
+      navigator: [
+        "clients:read",
+        "clients:write",
+        "interventions:*",
+        "calls:*",
+        "time:*",
+        "resources:*",
+        "referrals:*",
+        "tasks:*",
+        "budget:read",
+        "budget:write",
+        "notes:admin:read",
+        "notes:admin:write",
+        "consents:*",
+        "imports:*",
+        "reports:read",
+        "users:read"
+      ],
+      finance: ["clients:list-deidentified", "budget:read", "budget:write", "budget:approve", "time:read", "time:all", "reports:read", "export:read", "users:read"],
+      readonly: ["clients:read", "clients:all", "interventions:read", "calls:read", "referrals:read", "tasks:read", "resources:read", "reports:read", "users:read"]
+    };
+    function hasPerm(user, perm) {
+      if (!user) return false;
+      const perms = PERMS[user.role] || [];
+      if (perms.includes(perm)) return true;
+      const [ns] = perm.split(":");
+      if (perms.includes(`${ns}:*`)) return true;
+      if (perm.endsWith(":read") && perms.includes(perm.replace(/:read$/, ":write"))) return true;
+      return false;
+    }
+    function requirePerm(...perms) {
+      return (ctx) => {
+        if (!ctx.user) throw unauthorized();
+        if (!perms.some((p) => hasPerm(ctx.user, p))) {
+          audit3.log({ user: ctx.user, action: "authz.denied", ip: ctx.ip, success: false, details: { perms, path: ctx.path } });
+          throw forbidden("You do not have permission for this action");
+        }
+      };
+    }
+    function caseloadRestricted(user) {
+      if (hasPerm(user, "clients:all") || hasPerm(user, "clients:list-deidentified")) return false;
+      return db3.getSetting("caseload_restriction", "1") === "1";
+    }
+    function canAccessClient(user, clientId) {
+      if (!caseloadRestricted(user)) return true;
+      const r = db3.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND (end_date IS NULL OR end_date >= date('now'))`, clientId, user.id);
+      return !!r;
+    }
+    function assertClientAccess(ctx, clientId) {
+      if (!canAccessClient(ctx.user, clientId)) {
+        audit3.log({ user: ctx.user, action: "authz.denied", entity: "client", entityId: clientId, clientId, ip: ctx.ip, success: false, details: { reason: "not on caseload" } });
+        throw forbidden("This client is not on your caseload");
+      }
+    }
+    function caseloadFilter(user, col = "c.id") {
+      if (!caseloadRestricted(user)) return { sql: "1=1", params: [] };
+      return { sql: `${col} IN (SELECT client_id FROM assignments WHERE user_id=? AND (end_date IS NULL OR end_date >= date('now')))`, params: [user.id] };
+    }
+    var COOKIE = "suds_session";
+    function createSession(user, ctx, { mfaPending = false } = {}) {
+      const token2 = randomToken(32);
+      const now = /* @__PURE__ */ new Date();
+      const expires = new Date(now.getTime() + policy().absoluteHours * 3600 * 1e3);
+      db3.run(
+        `INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent) VALUES(?,?,?,?,?,?,?,?)`,
+        sha2562(token2),
+        user.id,
+        now.toISOString(),
+        now.toISOString(),
+        expires.toISOString(),
+        mfaPending ? 1 : 0,
+        ctx.ip,
+        (ctx.headers["user-agent"] || "").slice(0, 200)
+      );
+      return token2;
+    }
+    function cookieHeader(token2, { clear = false } = {}) {
+      const secure = config.tls.cert || config.isProd ? "; Secure" : "";
+      if (clear) return `${COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`;
+      return `${COOKIE}=${token2}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${policy().absoluteHours * 3600}${secure}`;
+    }
+    function revokeSession(token2) {
+      if (token2) db3.run(`UPDATE sessions SET revoked_at=? WHERE id=?`, db3.now(), sha2562(token2));
+    }
+    function revokeAllForUser(userId) {
+      db3.run(`UPDATE sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL`, db3.now(), userId);
+    }
+    function resolveSession(ctx) {
+      let token2 = ctx.cookies[COOKIE];
+      const authz = ctx.headers["authorization"];
+      if (!token2 && authz && authz.startsWith("Bearer ")) token2 = authz.slice(7).trim();
+      if (!token2) return null;
+      const s = db3.one(`SELECT * FROM sessions WHERE id=? AND revoked_at IS NULL`, sha2562(token2));
+      if (!s) return null;
+      const now = Date.now();
+      if (Date.parse(s.expires_at) < now) return null;
+      const idleMs = policy().idleMinutes * 60 * 1e3;
+      if (now - Date.parse(s.last_seen_at) > idleMs) {
+        db3.run(`UPDATE sessions SET revoked_at=? WHERE id=?`, db3.now(), s.id);
+        return null;
+      }
+      const user = db3.one(`SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,must_change_password,password_changed_at,hourly_cost FROM users WHERE id=?`, s.user_id);
+      if (!user || !user.is_active) return null;
+      if (now - Date.parse(s.last_seen_at) > 6e4) db3.run(`UPDATE sessions SET last_seen_at=? WHERE id=?`, new Date(now).toISOString(), s.id);
+      ctx.sessionToken = token2;
+      ctx.session = s;
+      return user;
+    }
+    function requireAuth(ctx) {
+      if (!ctx.user) throw unauthorized();
+      if (ctx.session?.mfa_pending) throw new HttpError3(401, "MFA verification required", { mfaRequired: true });
+      if (!ctx.path.startsWith("/api/auth/")) {
+        if (ctx.user.must_change_password) throw new HttpError3(403, "Password change required", { passwordChangeRequired: true });
+        const age = ctx.user.password_changed_at ? (Date.now() - Date.parse(ctx.user.password_changed_at)) / 864e5 : Infinity;
+        const maxAge = policy().passwordMaxAgeDays;
+        if (age > maxAge) throw new HttpError3(403, `Password is older than ${maxAge} days and must be changed`, { passwordChangeRequired: true });
+      }
+    }
+    function login({ username, password, ctx }) {
+      const user = db3.one(`SELECT * FROM users WHERE username=?`, String(username || "").trim());
+      const fail = (reason) => {
+        audit3.log({ user: user ? { id: user.id, username: user.username } : { username }, action: "auth.login.failed", ip: ctx.ip, success: false, details: { reason } });
+        throw unauthorized("Invalid username or password");
+      };
+      if (!user) {
+        verifyPassword(password || "", "scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AA==");
+        fail("unknown user");
+      }
+      if (!user.is_active) fail("inactive");
+      if (user.locked_until && Date.parse(user.locked_until) > Date.now()) {
+        audit3.log({ user, action: "auth.login.locked", ip: ctx.ip, success: false });
+        throw new HttpError3(423, "Account locked. Try again later or contact an administrator.");
+      }
+      if (!verifyPassword(password || "", user.password_hash)) {
+        const attempts = user.failed_attempts + 1;
+        const lock = attempts >= config.lockout.maxAttempts ? new Date(Date.now() + config.lockout.minutes * 6e4).toISOString() : null;
+        db3.run(`UPDATE users SET failed_attempts=?, locked_until=? WHERE id=?`, lock ? 0 : attempts, lock, user.id);
+        fail(lock ? "locked after failures" : "bad password");
+      }
+      db3.run(`UPDATE users SET failed_attempts=0, locked_until=NULL, last_login_at=? WHERE id=?`, db3.now(), user.id);
+      const mfaRequiredForRole = policy().mfaRequiredRoles.includes(user.role);
+      const mfaPending = !!user.mfa_enabled;
+      const token2 = createSession(user, ctx, { mfaPending });
+      audit3.log({ user, action: mfaPending ? "auth.login.mfa_pending" : "auth.login", ip: ctx.ip });
+      return { token: token2, user: publicUser(user), mfaPending, mfaSetupRequired: mfaRequiredForRole && !user.mfa_enabled };
+    }
+    function verifyMfa(ctx, code) {
+      if (!ctx.session) throw unauthorized();
+      const user = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
+      const secret = decrypt3(user.mfa_secret_enc);
+      if (!verifyTotp(secret, code)) {
+        audit3.log({ user, action: "auth.mfa.failed", ip: ctx.ip, success: false });
+        throw unauthorized("Invalid verification code");
+      }
+      db3.run(`UPDATE sessions SET mfa_pending=0 WHERE id=?`, ctx.session.id);
+      audit3.log({ user, action: "auth.login", ip: ctx.ip, details: { mfa: true } });
+      return publicUser(user);
+    }
+    function publicUser(u) {
+      const perms = PERMS[u.role] || [];
+      return {
+        id: u.id,
+        username: u.username,
+        display_name: u.display_name,
+        email: u.email,
+        title: u.title,
+        role: u.role,
+        mfa_enabled: !!u.mfa_enabled,
+        must_change_password: !!u.must_change_password,
+        permissions: perms,
+        mfa_required: policy().mfaRequiredRoles.includes(u.role),
+        caseload_restricted: caseloadRestricted(u)
+      };
+    }
+    function passwordPolicy(pw) {
+      const errors = [];
+      if (typeof pw !== "string" || pw.length < config.password.minLength) errors.push(`at least ${config.password.minLength} characters`);
+      if (!/[a-z]/.test(pw) || !/[A-Z]/.test(pw)) errors.push("upper and lower case letters");
+      if (!/[0-9]/.test(pw)) errors.push("a number");
+      if (!/[^A-Za-z0-9]/.test(pw)) errors.push("a symbol");
+      return errors;
+    }
+    module.exports = {
+      policy,
+      PERMS,
+      hasPerm,
+      requirePerm,
+      requireAuth,
+      canAccessClient,
+      assertClientAccess,
+      caseloadFilter,
+      caseloadRestricted,
+      createSession,
+      cookieHeader,
+      revokeSession,
+      revokeAllForUser,
+      resolveSession,
+      login,
+      verifyMfa,
+      publicUser,
+      passwordPolicy,
+      COOKIE
+    };
+  }
+});
+
+// server/sync-tables.js
+var require_sync_tables = __commonJS({
+  "server/sync-tables.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    module.exports = {
+      settings_keys: ["org_name", "county_name", "program_contact", "note_lock_days"],
+      tables: [
+        { name: "users", enc: ["mfa_secret_enc"], scope: "users", cols: null },
+        { name: "resources", enc: [], scope: "all" },
+        { name: "funding_sources", enc: [], scope: "all" },
+        { name: "budget_lines", enc: [], scope: "all" },
+        { name: "clients", enc: ["first_name_enc", "last_name_enc", "preferred_name_enc", "dob_enc", "phone_enc", "alt_phone_enc", "email_enc", "address_enc", "medicaid_id_enc", "emergency_contact_enc"], scope: "client", clientCol: "id", idx: true },
+        { name: "assignments", enc: [], scope: "client", clientCol: "client_id" },
+        { name: "interventions", enc: [], scope: "client", clientCol: "client_id" },
+        { name: "calls", enc: ["contact_name_enc", "phone_enc", "summary_enc"], scope: "client-or-null", clientCol: "client_id" },
+        { name: "time_entries", enc: [], scope: "client-or-null", clientCol: "client_id" },
+        { name: "referrals", enc: [], scope: "client", clientCol: "client_id" },
+        { name: "tasks", enc: [], scope: "client-or-null", clientCol: "client_id" },
+        { name: "expenditures", enc: [], scope: "client-or-null", clientCol: "client_id" },
+        { name: "notes", enc: ["content_enc", "structured_enc"], scope: "client", clientCol: "client_id" },
+        { name: "note_addenda", enc: ["content_enc"], scope: "via-note" },
+        { name: "consents", enc: [], scope: "client", clientCol: "client_id" },
+        { name: "disclosures", enc: [], scope: "client", clientCol: "client_id" }
+      ]
+    };
+  }
+});
+
+// server/validate.js
+var require_validate = __commonJS({
+  "server/validate.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var { badRequest } = require_http();
+    function validate(body, shape, { partial = false } = {}) {
+      if (!body || typeof body !== "object" || Array.isArray(body)) throw badRequest("JSON object body required");
+      const out2 = {};
+      const errors = {};
+      for (const [k, rule] of Object.entries(shape)) {
+        let v = body[k];
+        if (v === "") v = null;
+        if (v === void 0) {
+          if (rule.required && !partial) errors[k] = "required";
+          continue;
+        }
+        if (v === null) {
+          if (rule.required) errors[k] = "required";
+          else out2[k] = null;
+          continue;
+        }
+        switch (rule.type) {
+          case "string":
+            if (typeof v !== "string") {
+              errors[k] = "must be a string";
+              continue;
+            }
+            v = v.trim();
+            if (rule.maxLen && v.length > rule.maxLen) {
+              errors[k] = `max length ${rule.maxLen}`;
+              continue;
+            }
+            if (rule.pattern && !rule.pattern.test(v)) {
+              errors[k] = "invalid format";
+              continue;
+            }
+            if (rule.enum && !rule.enum.includes(v)) {
+              errors[k] = `must be one of ${rule.enum.join(", ")}`;
+              continue;
+            }
+            if (!v && rule.required) {
+              errors[k] = "required";
+              continue;
+            }
+            break;
+          case "number":
+            v = Number(v);
+            if (!Number.isFinite(v)) {
+              errors[k] = "must be a number";
+              continue;
+            }
+            if (rule.min !== void 0 && v < rule.min) {
+              errors[k] = `min ${rule.min}`;
+              continue;
+            }
+            if (rule.max !== void 0 && v > rule.max) {
+              errors[k] = `max ${rule.max}`;
+              continue;
+            }
+            if (rule.integer && !Number.isInteger(v)) {
+              errors[k] = "must be an integer";
+              continue;
+            }
+            break;
+          case "boolean":
+            v = v === true || v === 1 || v === "1" || v === "true" ? 1 : 0;
+            break;
+          case "date":
+            if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v) || isNaN(Date.parse(v))) {
+              errors[k] = "must be YYYY-MM-DD";
+              continue;
+            }
+            break;
+          case "datetime":
+            if (typeof v !== "string" || isNaN(Date.parse(v))) {
+              errors[k] = "must be an ISO datetime";
+              continue;
+            }
+            v = new Date(v).toISOString();
+            break;
+          case "object":
+            if (typeof v !== "object") {
+              errors[k] = "must be an object";
+              continue;
+            }
+            break;
+          case "array":
+            if (!Array.isArray(v)) {
+              errors[k] = "must be an array";
+              continue;
+            }
+            break;
+          default:
+            break;
+        }
+        out2[k] = v;
+      }
+      if (Object.keys(errors).length) throw badRequest("Validation failed", { fields: errors });
+      return out2;
+    }
+    function paging(query, defaults = { limit: 50, max: 500 }) {
+      const limit2 = Math.min(defaults.max, Math.max(1, Number(query.get("limit") || defaults.limit)));
+      const offset = Math.max(0, Number(query.get("offset") || 0));
+      return { limit: limit2, offset };
+    }
+    module.exports = { validate, paging };
+  }
+});
+
+// local/shims/listener.js
+var listener_exports = {};
+__export(listener_exports, {
+  default: () => listener_default,
+  describe: () => describe,
+  lanAddresses: () => lanAddresses,
+  relisten: () => relisten
+});
+function describe() {
+  return { scheme: "local", host: "local", port: 0, tls: false, urls: [], lan: [], hostname: "this-device", mdns: false, friendly: null };
+}
+function lanAddresses() {
+  return [];
+}
+async function relisten() {
+  throw new Error("Not available in local mode");
+}
+var listener_default;
+var init_listener = __esm({
+  "local/shims/listener.js"() {
+    init_globals_inject();
+    listener_default = { describe, lanAddresses, relisten, start() {
+    }, stop() {
+    } };
+  }
+});
+
+// local/shims/os.js
+var os_exports = {};
+__export(os_exports, {
+  default: () => os_default,
+  hostname: () => hostname,
+  networkInterfaces: () => networkInterfaces
+});
+function hostname() {
+  return "this-device";
+}
+function networkInterfaces() {
+  return {};
+}
+var os_default;
+var init_os = __esm({
+  "local/shims/os.js"() {
+    init_globals_inject();
+    os_default = { hostname, networkInterfaces };
+  }
+});
+
+// local/shims/empty.js
+var empty_exports = {};
+__export(empty_exports, {
+  default: () => empty_default
+});
+var empty_default;
+var init_empty = __esm({
+  "local/shims/empty.js"() {
+    init_globals_inject();
+    empty_default = {};
+  }
+});
+
+// server/routes/admin.js
+var require_admin = __commonJS({
+  "server/routes/admin.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var config = require_config();
+    var { badRequest, notFound } = require_http();
+    var { validate, paging } = require_validate();
+    var { uuid: uuid2, randomToken, sha256: sha2562 } = require_crypto();
+    var SETTING_KEYS = ["org_name", "caseload_restriction", "county_name", "program_contact", "default_funding_source_id", "note_lock_days", "session_idle_minutes", "session_absolute_hours", "password_max_age_days", "mfa_required_roles"];
+    var listener = (init_listener(), __toCommonJS(listener_exports));
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var path = (init_path(), __toCommonJS(path_exports));
+    module.exports = (r) => {
+      r.get("/api/admin/settings", auth3.requireAuth, auth3.requirePerm("settings:manage"), () => {
+        const out2 = {};
+        for (const k of SETTING_KEYS) out2[k] = db3.getSetting(k, "");
+        const pol = auth3.policy();
+        out2.policy = pol;
+        out2.env = { env: config.env, tls: !!config.tls.cert, tls_mode: config.tls.mode, key_source: config.keySource, idle_minutes: pol.idleMinutes, absolute_hours: pol.absoluteHours, mfa_required_roles: pol.mfaRequiredRoles, listener: listener.describe(), ms_graph_configured: !!(config.msGraph.tenantId && config.msGraph.clientId && config.msGraph.clientSecret && config.msGraph.user) };
+        return out2;
+      });
+      r.put("/api/admin/settings", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+        const changed = [];
+        for (const k of SETTING_KEYS) if (ctx.body[k] !== void 0) {
+          let v = String(ctx.body[k]).slice(0, 500);
+          if (["session_idle_minutes", "session_absolute_hours", "password_max_age_days"].includes(k) && v !== "" && !(Number(v) > 0)) throw badRequest(`${k} must be a positive number`);
+          if (k === "mfa_required_roles") v = v.split(",").map((x) => x.trim()).filter((x) => ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"].includes(x)).join(",");
+          if (k === "session_idle_minutes" && v !== "" && Number(v) > 60) throw badRequest("Idle timeout may not exceed 60 minutes (HIPAA automatic logoff)");
+          db3.setSetting(k, v);
+          changed.push(k);
+        }
+        audit3.log({ user: ctx.user, action: "settings.update", ip: ctx.ip, details: { changed } });
+        return { ok: true };
+      });
+      r.get("/api/admin/audit", auth3.requireAuth, auth3.requirePerm("audit:read"), (ctx) => {
+        const { limit: limit2, offset } = paging(ctx.query, { limit: 100, max: 1e3 });
+        const where = [];
+        const params = [];
+        for (const [k, col] of [["user_id", "user_id"], ["client_id", "client_id"], ["action", "action"], ["entity", "entity"]]) {
+          const v = ctx.query.get(k);
+          if (v) {
+            where.push(`${col} LIKE ?`);
+            params.push(v + "%");
+          }
+        }
+        if (ctx.query.get("from")) {
+          where.push("at >= ?");
+          params.push(ctx.query.get("from"));
+        }
+        if (ctx.query.get("to")) {
+          where.push("at <= ?");
+          params.push(ctx.query.get("to") + "T23:59:59.999Z");
+        }
+        if (ctx.query.get("failures") === "1") where.push("success=0");
+        const w = where.length ? "WHERE " + where.join(" AND ") : "";
+        const rows = db3.all(`SELECT id,at,user_id,username,action,entity,entity_id,client_id,ip,success,details FROM audit_log ${w} ORDER BY id DESC LIMIT ? OFFSET ?`, ...params, limit2, offset);
+        const total = db3.one(`SELECT COUNT(*) n FROM audit_log ${w}`, ...params).n;
+        audit3.log({ user: ctx.user, action: "audit.read", ip: ctx.ip, details: { filters: Object.fromEntries(ctx.query) } });
+        return { rows: rows.map((x) => ({ ...x, details: x.details ? JSON.parse(x.details) : null })), total, limit: limit2, offset };
+      });
+      r.get("/api/admin/audit/verify", auth3.requireAuth, auth3.requirePerm("audit:read"), (ctx) => {
+        const res = audit3.verifyChain();
+        audit3.log({ user: ctx.user, action: "audit.verify", ip: ctx.ip, details: res });
+        return res;
+      });
+      r.get("/api/admin/api-keys", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), () => ({ keys: db3.all(`SELECT k.id,k.name,k.prefix,k.scopes,k.created_at,k.last_used_at,k.revoked_at,u.display_name AS created_by_name FROM api_keys k LEFT JOIN users u ON u.id=k.created_by ORDER BY k.created_at DESC`) }));
+      r.post("/api/admin/api-keys", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), (ctx) => {
+        const { name } = validate(ctx.body, { name: { type: "string", required: true, maxLen: 100 } });
+        const raw = "suds_" + randomToken(32);
+        const id = uuid2();
+        db3.run(`INSERT INTO api_keys(id,name,key_hash,prefix,scopes,created_by) VALUES(?,?,?,?,?,?)`, id, name, sha2562(raw), raw.slice(0, 12), "intake", ctx.user.id);
+        audit3.log({ user: ctx.user, action: "apikey.create", entity: "api_key", entityId: id, ip: ctx.ip, details: { name } });
+        ctx.status = 201;
+        return { id, key: raw, note: "Store this key now; it will not be shown again." };
+      });
+      r.delete("/api/admin/api-keys/:id", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), (ctx) => {
+        const k = db3.one(`SELECT id FROM api_keys WHERE id=?`, ctx.params.id);
+        if (!k) throw notFound();
+        db3.run(`UPDATE api_keys SET revoked_at=? WHERE id=?`, db3.now(), k.id);
+        audit3.log({ user: ctx.user, action: "apikey.revoke", entity: "api_key", entityId: k.id, ip: ctx.ip });
+        return { ok: true };
+      });
+      r.get("/api/admin/network", auth3.requireAuth, auth3.requirePerm("settings:manage"), () => ({ listener: listener.describe(), file: config.fileCfg, env_overrides: { host: !!proc.env.HOST, port: !!proc.env.PORT, tls: !!proc.env.TLS_CERT_PATH }, cert_expires: certExpiry() }));
+      r.put("/api/admin/network", auth3.requireAuth, auth3.requirePerm("settings:manage"), async (ctx) => {
+        const v = validate(ctx.body, { network: { type: "string", required: true, enum: ["local", "lan"] }, port: { type: "number", integer: true, min: 1, max: 65535 }, https: { type: "boolean" }, regenerate_cert: { type: "boolean" }, extra_hosts: { type: "string", maxLen: 300 }, trust_proxy: { type: "boolean" } });
+        if (proc.env.HOST || proc.env.PORT || proc.env.TLS_CERT_PATH) throw badRequest("Network settings are controlled by environment variables on this server");
+        const host = v.network === "lan" ? "0.0.0.0" : "127.0.0.1";
+        const dir = path.join(config.dataDir, "certs");
+        const crt = path.join(dir, "suds.crt"), key = path.join(dir, "suds.key");
+        let tls = "none";
+        if (v.https) {
+          if (v.regenerate_cert || !fs.existsSync(crt)) {
+            const hosts = ["localhost", "127.0.0.1", "suds.local", (init_os(), __toCommonJS(os_exports)).hostname(), (init_os(), __toCommonJS(os_exports)).hostname() + ".local", ...listener.lanAddresses().map((a) => a.address), ...String(v.extra_hosts || "").split(/[\s,]+/).filter(Boolean)];
+            const c = (init_empty(), __toCommonJS(empty_exports)).generate({ commonName: db3.getSetting("org_name", "SUDS").slice(0, 60), org: db3.getSetting("org_name", "SUDS").slice(0, 60), hosts: [...new Set(hosts)] });
+            fs.mkdirSync(dir, { recursive: true, mode: 448 });
+            fs.writeFileSync(crt, c.cert, { mode: 384 });
+            fs.writeFileSync(key, c.key, { mode: 384 });
+          }
+          tls = "selfsigned";
+        }
+        let desc;
+        try {
+          desc = await listener.relisten({ host, port: v.port || "auto", certPath: tls === "selfsigned" ? crt : "", keyPath: tls === "selfsigned" ? key : "" });
+        } catch (e) {
+          throw badRequest(`Could not start on port ${v.port || "auto"}: ${e.message}`);
+        }
+        config.saveServerJson({ host, port: desc.port, tls, trustProxy: !!v.trust_proxy });
+        config.trustProxy = !!proc.env.TRUST_PROXY || !!v.trust_proxy;
+        audit3.log({ user: ctx.user, action: "network.update", ip: ctx.ip, details: { host, port: desc.port, tls } });
+        return { ok: true, listener: desc };
+      });
+      function certExpiry() {
+        try {
+          const c = fs.readFileSync(path.join(config.dataDir, "certs", "suds.crt"));
+          return new (init_crypto2(), __toCommonJS(crypto_exports)).X509Certificate(c).validTo;
+        } catch {
+          return null;
+        }
+      }
+      r.get("/api/admin/certificate", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+        const crt = path.join(config.dataDir, "certs", "suds.crt");
+        if (!fs.existsSync(crt)) throw notFound("No self-signed certificate");
+        ctx.res.writeHead(200, { "Content-Type": "application/x-x509-ca-cert", "Content-Disposition": 'attachment; filename="suds-certificate.crt"' });
+        ctx.res.end(fs.readFileSync(crt));
+      });
+      r.get("/api/admin/backup", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+        const crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+        const backupKey = crypto3.createHash("sha256").update(import_buffer.Buffer.concat([config.encryptionKey, import_buffer.Buffer.from("suds-backup")])).digest();
+        const tmp = path.join(config.dataDir, `.backup-${Date.now()}.db`);
+        db3.get().exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
+        const plain = fs.readFileSync(tmp);
+        fs.unlinkSync(tmp);
+        const iv = crypto3.randomBytes(12);
+        const c = crypto3.createCipheriv("aes-256-gcm", backupKey, iv);
+        const enc = import_buffer.Buffer.concat([iv, import_buffer.Buffer.alloc(16), c.update(plain), c.final()]);
+        c.getAuthTag().copy(enc, 12);
+        audit3.log({ user: ctx.user, action: "backup.download", ip: ctx.ip, details: { bytes: enc.length } });
+        ctx.res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Disposition": `attachment; filename="suds-backup-${(/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-")}.db.enc"` });
+        ctx.res.end(enc);
+      });
+      r.get("/api/admin/keys-backup", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+        if (config.keySource !== "file") throw badRequest("Keys are provided by the environment on this server");
+        audit3.log({ user: ctx.user, action: "keys.download", ip: ctx.ip });
+        ctx.res.writeHead(200, { "Content-Type": "application/json", "Content-Disposition": 'attachment; filename="suds-keys-KEEP-SECRET.json"' });
+        ctx.res.end(fs.readFileSync(config.keysJsonPath));
+      });
+      r.get("/api/admin/stats", auth3.requireAuth, auth3.requirePerm("settings:manage"), () => ({
+        users: db3.one(`SELECT COUNT(*) n FROM users WHERE is_active=1`).n,
+        clients: db3.one(`SELECT COUNT(*) n FROM clients WHERE deleted_at IS NULL`).n,
+        notes: db3.one(`SELECT COUNT(*) n FROM notes WHERE deleted_at IS NULL`).n,
+        audit_rows: db3.one(`SELECT COUNT(*) n FROM audit_log`).n,
+        active_sessions: db3.one(`SELECT COUNT(*) n FROM sessions WHERE revoked_at IS NULL AND expires_at > ?`, db3.now()).n,
+        db_path: config.dbPath,
+        version: config.version,
+        key_source: config.keySource,
+        listener: listener.describe()
+      }));
+    };
+  }
+});
+
+// server/routes/app.js
+var require_app = __commonJS({
+  "server/routes/app.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var path = (init_path(), __toCommonJS(path_exports));
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    var db3 = require_db();
+    var config = require_config();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var listener = (init_listener(), __toCommonJS(listener_exports));
+    var { badRequest, notFound, HttpError: HttpError3 } = require_http();
+    var dir = () => path.join(config.dataDir, "downloads");
+    var apkPath = () => path.join(dir(), "suds.apk");
+    function apkInfo() {
+      try {
+        const st = fs.statSync(apkPath());
+        const meta = JSON.parse(fs.readFileSync(apkPath() + ".json", "utf8"));
+        return { available: true, size: st.size, uploaded_at: meta.uploaded_at, sha256: meta.sha256, version: meta.version };
+      } catch {
+        return { available: false };
+      }
+    }
+    function certFingerprint() {
+      try {
+        const c = new crypto3.X509Certificate(fs.readFileSync(path.join(config.dataDir, "certs", "suds.crt")));
+        return { sha256: c.fingerprint256, valid_to: c.validTo };
+      } catch {
+        return null;
+      }
+    }
+    module.exports = (r) => {
+      r.get("/api/app/info", () => ({ name: db3.getSetting("org_name", "SUDS"), version: config.version, listener: listener.describe(), android: apkInfo(), certificate: certFingerprint(), service: "_suds._tcp" }));
+      r.get("/api/app/android.apk", (ctx) => {
+        if (!apkInfo().available) throw notFound("The Android app has not been uploaded yet");
+        const data = fs.readFileSync(apkPath());
+        ctx.res.writeHead(200, { "Content-Type": "application/vnd.android.package-archive", "Content-Disposition": 'attachment; filename="SUDS.apk"', "Content-Length": data.length });
+        ctx.res.end(data);
+      });
+      r.get("/api/app/certificate.crt", (ctx) => {
+        const crt = path.join(config.dataDir, "certs", "suds.crt");
+        if (!fs.existsSync(crt)) throw notFound("No certificate");
+        ctx.res.writeHead(200, { "Content-Type": "application/x-x509-ca-cert", "Content-Disposition": 'attachment; filename="suds-certificate.crt"' });
+        ctx.res.end(fs.readFileSync(crt));
+      });
+      r.post("/api/admin/app/android", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+        const buf = ctx.rawBody;
+        if (!buf || buf.length < 1e3) throw badRequest("Upload the .apk file as the request body");
+        if (buf[0] !== 80 || buf[1] !== 75) throw badRequest("That does not look like an APK (zip) file");
+        if (buf.length > config.maxBodyBytes) throw new HttpError3(413, "APK too large");
+        fs.mkdirSync(dir(), { recursive: true, mode: 448 });
+        fs.writeFileSync(apkPath(), buf, { mode: 384 });
+        const sha2562 = crypto3.createHash("sha256").update(buf).digest("hex");
+        fs.writeFileSync(apkPath() + ".json", JSON.stringify({ uploaded_at: db3.now(), sha256: sha2562, version: String(ctx.query.get("version") || config.version), by: ctx.user.id }), { mode: 384 });
+        audit3.log({ user: ctx.user, action: "app.android.upload", ip: ctx.ip, details: { bytes: buf.length, sha256: sha2562 } });
+        return { ok: true, ...apkInfo() };
+      });
+      r.delete("/api/admin/app/android", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+        try {
+          fs.unlinkSync(apkPath());
+          fs.unlinkSync(apkPath() + ".json");
+        } catch {
+        }
+        audit3.log({ user: ctx.user, action: "app.android.remove", ip: ctx.ip });
+        return { ok: true };
+      });
+    };
+  }
+});
+
+// server/clients-model.js
+var require_clients_model = __commonJS({
+  "server/clients-model.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var { encrypt: encrypt3, decrypt: decrypt3, blindIndex: blindIndex2, uuid: uuid2 } = require_crypto();
+    var ENC_FIELDS = ["first_name", "last_name", "preferred_name", "dob", "phone", "alt_phone", "email", "address", "medicaid_id", "emergency_contact"];
+    var PLAIN_FIELDS = [
+      "city",
+      "zip",
+      "gender",
+      "pronouns",
+      "race_ethnicity",
+      "preferred_language",
+      "veteran",
+      "housing_status",
+      "insurance",
+      "status",
+      "intake_date",
+      "discharge_date",
+      "discharge_reason",
+      "referral_source",
+      "primary_substance",
+      "secondary_substances",
+      "route_of_use",
+      "asam_level",
+      "mat_status",
+      "mat_medication",
+      "overdose_history",
+      "last_overdose_date",
+      "naloxone_provided",
+      "naloxone_last_date",
+      "risk_level",
+      "justice_involved",
+      "pregnant_or_parenting",
+      "co_occurring_mh",
+      "goals",
+      "flags",
+      "contact_preferences",
+      "ok_to_text",
+      "ok_to_voicemail"
+    ];
+    function decryptRow(row, { deidentify = false } = {}) {
+      if (!row) return null;
+      const out2 = {};
+      for (const [k, v] of Object.entries(row)) {
+        if (k.endsWith("_enc")) {
+          const plain = k.slice(0, -4);
+          if (deidentify) continue;
+          out2[plain] = v ? decrypt3(v) : null;
+        } else if (k.endsWith("_idx")) continue;
+        else out2[k] = v;
+      }
+      if (deidentify) {
+        out2.display_name = row.client_code;
+      } else out2.display_name = `${out2.last_name || ""}, ${out2.first_name || ""}`.trim().replace(/^,\s*|,\s*$/g, "");
+      return out2;
+    }
+    function encryptFields(v) {
+      const cols2 = {};
+      for (const f of ENC_FIELDS) if (v[f] !== void 0) cols2[`${f}_enc`] = v[f] === null ? null : encrypt3(v[f]);
+      if (v.last_name !== void 0) cols2.last_name_idx = blindIndex2(v.last_name);
+      if (v.first_name !== void 0 || v.last_name !== void 0) cols2.full_name_idx = void 0;
+      if (v.dob !== void 0) cols2.dob_idx = blindIndex2(v.dob);
+      if (v.phone !== void 0) cols2.phone_idx = blindIndex2(String(v.phone || "").replace(/\D/g, ""));
+      return cols2;
+    }
+    function nextClientCode() {
+      const year = (/* @__PURE__ */ new Date()).getFullYear();
+      const prefix = `${require_config().local ? "M" : "C"}${String(year).slice(2)}-`;
+      const last = db3.one(`SELECT client_code FROM clients WHERE client_code LIKE ? ORDER BY client_code DESC LIMIT 1`, prefix + "%");
+      const n = last ? Number(last.client_code.slice(prefix.length)) + 1 : 1;
+      return prefix + String(n).padStart(4, "0");
+    }
+    function summary(row, opts) {
+      const d = decryptRow(row, opts);
+      const keep = ["id", "client_code", "display_name", "first_name", "last_name", "preferred_name", "dob", "phone", "status", "risk_level", "primary_substance", "mat_status", "intake_date", "city", "flags", "ok_to_text", "ok_to_voicemail", "updated_at"];
+      const o = {};
+      for (const k of keep) if (d[k] !== void 0) o[k] = d[k];
+      return o;
+    }
+    module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, summary, uuid: uuid2 };
+  }
+});
+
+// server/routes/assignments.js
+var require_assignments = __commonJS({
+  "server/routes/assignments.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var { badRequest, notFound } = require_http();
+    var { validate } = require_validate();
+    var { uuid: uuid2 } = require_crypto();
+    module.exports = (r) => {
+      r.post("/api/clients/:id/assignments", auth3.requireAuth, auth3.requirePerm("assignments:manage"), (ctx) => {
+        const c = db3.one(`SELECT id FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id);
+        if (!c) throw notFound();
+        const v = validate(ctx.body, { user_id: { type: "string", required: true }, role_on_case: { type: "string", enum: ["primary", "secondary", "clinician", "peer", "supervisor"] }, start_date: { type: "date" }, notes: { type: "string", maxLen: 500 } });
+        const u = db3.one(`SELECT id,is_active FROM users WHERE id=?`, v.user_id);
+        if (!u || !u.is_active) throw badRequest("Unknown or inactive worker");
+        const id = uuid2();
+        db3.transaction(() => {
+          if ((v.role_on_case || "primary") === "primary") db3.run(`UPDATE assignments SET end_date=date('now'), updated_at=? WHERE client_id=? AND role_on_case='primary' AND end_date IS NULL`, db3.now(), c.id);
+          db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,notes,created_by) VALUES(?,?,?,?,?,?,?)`, id, c.id, v.user_id, v.role_on_case || "primary", v.start_date || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), v.notes || null, ctx.user.id);
+        });
+        audit3.log({ user: ctx.user, action: "assignment.create", entity: "assignment", entityId: id, clientId: c.id, ip: ctx.ip, details: { user_id: v.user_id, role: v.role_on_case } });
+        ctx.status = 201;
+        return { id };
+      });
+      r.post("/api/assignments/:id/end", auth3.requireAuth, auth3.requirePerm("assignments:manage"), (ctx) => {
+        const a = db3.one(`SELECT * FROM assignments WHERE id=?`, ctx.params.id);
+        if (!a) throw notFound();
+        db3.run(`UPDATE assignments SET end_date=date('now'), updated_at=? WHERE id=?`, db3.now(), a.id);
+        audit3.log({ user: ctx.user, action: "assignment.end", entity: "assignment", entityId: a.id, clientId: a.client_id, ip: ctx.ip });
+        return { ok: true };
+      });
+      r.get("/api/caseload", auth3.requireAuth, auth3.requirePerm("clients:read"), (ctx) => {
+        const uid = ctx.query.get("user_id") && auth3.hasPerm(ctx.user, "clients:all") ? ctx.query.get("user_id") : ctx.user.id;
+        const rows = db3.all(`SELECT a.role_on_case, c.id, c.client_code, c.status, c.risk_level, c.updated_at,
+        (SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome='reached')) AS last_contact,
+        (SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.status IN ('open','in_progress') AND t.due_at < ?) AS overdue_tasks
+      FROM assignments a JOIN clients c ON c.id=a.client_id WHERE a.user_id=? AND (a.end_date IS NULL OR a.end_date >= date('now')) AND c.deleted_at IS NULL ORDER BY c.risk_level='critical' DESC, c.risk_level='high' DESC, last_contact ASC`, db3.now(), uid);
+        const M = require_clients_model();
+        const full = db3.all(`SELECT * FROM clients WHERE id IN (${rows.map(() => "?").join(",") || "''"})`, ...rows.map((x) => x.id));
+        const byId = Object.fromEntries(full.map((x) => [x.id, M.summary(x)]));
+        return { caseload: rows.map((x) => ({ ...x, ...byId[x.id] })) };
+      });
+    };
+  }
+});
+
+// server/crud.js
+var require_crud = __commonJS({
+  "server/crud.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var { notFound, forbidden } = require_http();
+    var { validate, paging } = require_validate();
+    var { uuid: uuid2 } = require_crypto();
+    function clientExists(id) {
+      return !!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, id);
+    }
+    function build(r, opts) {
+      const { table, entity, perm, shape, dateCol = "created_at", ownerCol = "user_id", joins = "", select = `${table}.*`, clientRequired = true } = opts;
+      const base = opts.base || `/api/${entity}s`;
+      const readPerm = `${perm}:read`, writePerm = `${perm}:write`;
+      function decorate(ctx, rows) {
+        return opts.afterLoad ? rows.map((x) => opts.afterLoad(ctx, x)) : rows;
+      }
+      function checkClient(ctx, clientId) {
+        if (clientId) {
+          if (!clientExists(clientId)) throw notFound("Client not found");
+          auth3.assertClientAccess(ctx, clientId);
+        }
+      }
+      r.get(base, auth3.requireAuth, auth3.requirePerm(readPerm, writePerm), (ctx) => {
+        const { limit: limit2, offset } = paging(ctx.query, { limit: 100, max: 1e3 });
+        const where = ["1=1"];
+        const params = [];
+        if (clientRequired || opts.hasClient !== false) {
+          const cf = auth3.caseloadFilter(ctx.user, `${table}.client_id`);
+          if (cf.sql !== "1=1") {
+            where.push(`(${table}.client_id IS NULL OR ${cf.sql})`);
+            params.push(...cf.params);
+          }
+          const cid = ctx.query.get("client_id");
+          if (cid) {
+            where.push(`${table}.client_id=?`);
+            params.push(cid);
+          }
+        }
+        if (ownerCol && ctx.query.get("user_id")) {
+          where.push(`${table}.${ownerCol}=?`);
+          params.push(ctx.query.get("user_id"));
+        }
+        if (ownerCol && ctx.query.get("mine") === "1") {
+          where.push(`${table}.${ownerCol}=?`);
+          params.push(ctx.user.id);
+        }
+        if (ctx.query.get("from")) {
+          where.push(`${table}.${dateCol} >= ?`);
+          params.push(ctx.query.get("from"));
+        }
+        if (ctx.query.get("to")) {
+          where.push(`${table}.${dateCol} <= ?`);
+          params.push(ctx.query.get("to") + (ctx.query.get("to").length === 10 ? "T23:59:59.999Z" : ""));
+        }
+        if (opts.filters) opts.filters(ctx, where, params);
+        const w = "WHERE " + where.join(" AND ");
+        const order = opts.order || `${table}.${dateCol} DESC`;
+        const rows = db3.all(`SELECT ${select} FROM ${table} ${joins} ${w} ORDER BY ${order} LIMIT ? OFFSET ?`, ...params, limit2, offset);
+        const total = db3.one(`SELECT COUNT(*) n FROM ${table} ${joins} ${w}`, ...params).n;
+        audit3.log({ user: ctx.user, action: `${entity}.list`, ip: ctx.ip, details: { count: rows.length, client_id: ctx.query.get("client_id") || void 0 } });
+        return { rows: decorate(ctx, rows), total, limit: limit2, offset };
+      });
+      r.get(`${base}/:id`, auth3.requireAuth, auth3.requirePerm(readPerm, writePerm), (ctx) => {
+        const row = db3.one(`SELECT ${select} FROM ${table} ${joins} WHERE ${table}.id=?`, ctx.params.id);
+        if (!row) throw notFound();
+        if (row.client_id) auth3.assertClientAccess(ctx, row.client_id);
+        audit3.log({ user: ctx.user, action: `${entity}.view`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip });
+        return { row: decorate(ctx, [row])[0] };
+      });
+      r.post(base, auth3.requireAuth, auth3.requirePerm(writePerm), (ctx) => {
+        const v = validate(ctx.body, shape);
+        if (clientRequired && !v.client_id) throw require_http().badRequest("client_id is required");
+        checkClient(ctx, v.client_id);
+        if (opts.beforeInsert) opts.beforeInsert(ctx, v);
+        const id = uuid2();
+        const cols2 = { id, ...v };
+        if (ownerCol && (cols2[ownerCol] === void 0 || opts.restrictOwner && !auth3.hasPerm(ctx.user, "clients:all"))) cols2[ownerCol] = ctx.user.id;
+        if (opts.creatorCol) cols2[opts.creatorCol] = ctx.user.id;
+        const keys = Object.keys(cols2).filter((k) => cols2[k] !== void 0 && !k.startsWith("_"));
+        db3.run(`INSERT INTO ${table}(${keys.join(",")}) VALUES(${keys.map(() => "?").join(",")})`, ...keys.map((k) => cols2[k]));
+        if (opts.afterInsert) opts.afterInsert(ctx, { id, ...cols2 });
+        audit3.log({ user: ctx.user, action: `${entity}.create`, entity, entityId: id, clientId: v.client_id || null, ip: ctx.ip });
+        ctx.status = 201;
+        return { id };
+      });
+      r.put(`${base}/:id`, auth3.requireAuth, auth3.requirePerm(writePerm), (ctx) => {
+        const row = db3.one(`SELECT * FROM ${table} WHERE id=?`, ctx.params.id);
+        if (!row) throw notFound();
+        if (row.client_id) auth3.assertClientAccess(ctx, row.client_id);
+        if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden("You cannot edit this record");
+        const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
+        if (v.client_id && v.client_id !== row.client_id) checkClient(ctx, v.client_id);
+        if (opts.restrictOwner && v[ownerCol] !== void 0 && !auth3.hasPerm(ctx.user, "clients:all")) delete v[ownerCol];
+        if (opts.beforeUpdate) opts.beforeUpdate(ctx, v, row);
+        const keys = Object.keys(v).filter((k) => v[k] !== void 0 && !k.startsWith("_"));
+        if (keys.length) db3.run(`UPDATE ${table} SET ${keys.map((k) => `${k}=?`).join(", ")}${opts.noUpdatedAt ? "" : ", updated_at=?"} WHERE id=?`, ...keys.map((k) => v[k]), ...opts.noUpdatedAt ? [] : [db3.now()], row.id);
+        audit3.log({ user: ctx.user, action: `${entity}.update`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip, details: { fields: keys } });
+        return { ok: true };
+      });
+      r.delete(`${base}/:id`, auth3.requireAuth, auth3.requirePerm(writePerm), (ctx) => {
+        const row = db3.one(`SELECT * FROM ${table} WHERE id=?`, ctx.params.id);
+        if (!row) throw notFound();
+        if (row.client_id) auth3.assertClientAccess(ctx, row.client_id);
+        if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden("You cannot delete this record");
+        if (opts.canDelete && !opts.canDelete(ctx, row)) throw forbidden("You cannot delete this record");
+        db3.run(`DELETE FROM ${table} WHERE id=?`, row.id);
+        db3.tombstone(table, row.id);
+        audit3.log({ user: ctx.user, action: `${entity}.delete`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip });
+        return { ok: true };
+      });
+    }
+    function ownerOrManager(col = "user_id") {
+      return (ctx, row) => row[col] === ctx.user.id || auth3.hasPerm(ctx.user, "clients:all");
+    }
+    module.exports = { build, ownerOrManager, clientExists };
+  }
+});
+
+// server/constants.js
+var require_constants = __commonJS({
+  "server/constants.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    module.exports = {
+      INTERVENTION_TYPES: ["outreach", "screening_sbirt", "assessment", "intake", "care_coordination", "warm_handoff", "referral", "case_management", "harm_reduction", "naloxone_distribution", "peer_support", "crisis_response", "post_overdose_follow_up", "transport", "housing_assistance", "benefits_enrollment", "employment_support", "family_support", "education", "court_or_probation", "hospital_or_ed_visit", "jail_in_reach", "recovery_check_in", "discharge_planning", "other"],
+      LOCATIONS: ["office", "field", "home", "phone", "telehealth", "hospital", "emergency_dept", "jail", "court", "shelter", "treatment_facility", "community", "other"],
+      MODALITIES: ["in_person", "phone", "video", "text", "email", "collateral"],
+      OUTCOMES: ["completed", "partial", "client_declined", "no_show", "unable_to_locate", "rescheduled", "crisis_resolved", "transported", "admitted", "other"],
+      STAGES: ["precontemplation", "contemplation", "preparation", "action", "maintenance", "relapse"],
+      CALL_CONTACT_TYPES: ["client", "family", "provider", "agency", "hospital", "law_enforcement", "hotline", "pharmacy", "insurance", "other"],
+      CALL_OUTCOMES: ["reached", "voicemail", "no_answer", "busy", "wrong_number", "disconnected", "callback_scheduled", "crisis_escalated"],
+      TIME_CATEGORIES: ["direct_service", "documentation", "travel", "care_coordination", "outreach", "meeting", "training", "supervision", "admin", "on_call"],
+      RESOURCE_CATEGORIES: ["detox_withdrawal_mgmt", "residential", "inpatient", "partial_hospitalization", "intensive_outpatient", "outpatient", "mat_otp", "mat_obot", "sober_living", "housing", "shelter", "mental_health", "primary_care", "harm_reduction", "syringe_services", "naloxone", "crisis_line", "transportation", "employment", "legal", "food", "benefits", "peer_support", "recovery_community", "family_support", "pregnancy_parenting", "veterans", "other"],
+      REFERRAL_STATUSES: ["pending", "contacted", "accepted", "waitlisted", "scheduled", "admitted", "declined_by_client", "declined_by_provider", "no_show", "completed", "closed"],
+      BUDGET_CATEGORIES: ["staffing", "client_assistance", "transportation", "naloxone_supplies", "harm_reduction_supplies", "housing_assistance", "treatment_fees", "medication", "phones_communication", "food_basic_needs", "ids_documents", "training", "outreach_materials", "supplies", "indirect", "other"],
+      FUNDING_TYPES: ["opioid_settlement", "sor_grant", "samhsa", "state_block_grant", "county_general", "medicaid", "foundation", "other"],
+      NOTE_FORMATS: ["narrative", "SOAP", "DAP", "BIRP", "GIRP", "intake", "progress", "discharge", "contact", "collateral", "crisis", "supervision"],
+      CONSENT_TYPES: ["part2_disclosure", "roi", "treatment", "telehealth", "contact_preferences", "research", "photo_media"],
+      SUBSTANCES: ["opioids_fentanyl", "opioids_heroin", "opioids_rx", "alcohol", "methamphetamine", "cocaine", "benzodiazepines", "cannabis", "synthetic_cannabinoids", "xylazine", "nicotine", "other", "unknown"],
+      ASAM: ["0.5", "1.0", "2.1", "2.5", "3.1", "3.3", "3.5", "3.7", "4.0", "OTP", "unknown"]
+    };
+  }
+});
+
+// server/routes/budget.js
+var require_budget = __commonJS({
+  "server/routes/budget.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var crud = require_crud();
+    var C = require_constants();
+    var { badRequest, notFound } = require_http();
+    var { validate } = require_validate();
+    var { uuid: uuid2 } = require_crypto();
+    var fundShape = {
+      name: { type: "string", required: true, maxLen: 200 },
+      source_type: { type: "string", enum: C.FUNDING_TYPES },
+      grant_number: { type: "string", maxLen: 100 },
+      fiscal_year_start: { type: "date", required: true },
+      fiscal_year_end: { type: "date", required: true },
+      total_amount: { type: "number", required: true, min: 0 },
+      restrictions: { type: "string", maxLen: 2e3 },
+      notes: { type: "string", maxLen: 2e3 },
+      is_active: { type: "boolean" }
+    };
+    var lineShape = { category: { type: "string", required: true, enum: C.BUDGET_CATEGORIES }, label: { type: "string", maxLen: 200 }, allocated_amount: { type: "number", required: true, min: 0 }, notes: { type: "string", maxLen: 1e3 } };
+    function fundSummary(f) {
+      const spent = db3.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE funding_source_id=? AND status IN ('approved','reimbursed')`, f.id).n;
+      const pending = db3.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE funding_source_id=? AND status='pending'`, f.id).n;
+      const staffMinutes = db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE funding_source_id=?`, f.id).n;
+      const staffCost = db3.one(`SELECT COALESCE(SUM(t.minutes/60.0*COALESCE(u.hourly_cost,0)),0) n FROM time_entries t JOIN users u ON u.id=t.user_id WHERE t.funding_source_id=?`, f.id).n;
+      const lines = db3.all(`SELECT b.*, (SELECT COALESCE(SUM(amount),0) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status IN ('approved','reimbursed')) AS spent, (SELECT COALESCE(SUM(amount),0) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status='pending') AS pending FROM budget_lines b WHERE b.funding_source_id=? ORDER BY category`, f.id);
+      const allocated = lines.reduce((s, l) => s + l.allocated_amount, 0);
+      const totalDays = Math.max(1, (Date.parse(f.fiscal_year_end) - Date.parse(f.fiscal_year_start)) / 864e5);
+      const elapsed = Math.min(totalDays, Math.max(0, (Date.now() - Date.parse(f.fiscal_year_start)) / 864e5));
+      return {
+        ...f,
+        spent,
+        pending,
+        staff_minutes: staffMinutes,
+        staff_cost: staffCost,
+        allocated,
+        unallocated: f.total_amount - allocated,
+        remaining: f.total_amount - spent - pending,
+        pct_spent: f.total_amount ? spent / f.total_amount * 100 : 0,
+        pct_elapsed: elapsed / totalDays * 100,
+        lines
+      };
+    }
+    module.exports = (r) => {
+      r.get("/api/budget/funds", auth3.requireAuth, auth3.requirePerm("budget:read"), (ctx) => {
+        const rows = db3.all(`SELECT * FROM funding_sources ${ctx.query.get("all") === "1" ? "" : "WHERE is_active=1"} ORDER BY fiscal_year_start DESC, name`);
+        return { funds: rows.map(fundSummary) };
+      });
+      r.post("/api/budget/funds", auth3.requireAuth, auth3.requirePerm("budget:write"), (ctx) => {
+        const v = validate(ctx.body, fundShape);
+        const id = uuid2();
+        const keys = Object.keys(v);
+        db3.run(`INSERT INTO funding_sources(id,${keys.join(",")}) VALUES(?,${keys.map(() => "?").join(",")})`, id, ...keys.map((k) => v[k]));
+        audit3.log({ user: ctx.user, action: "fund.create", entity: "funding_source", entityId: id, ip: ctx.ip });
+        ctx.status = 201;
+        return { id };
+      });
+      r.put("/api/budget/funds/:id", auth3.requireAuth, auth3.requirePerm("budget:write"), (ctx) => {
+        const f = db3.one(`SELECT id FROM funding_sources WHERE id=?`, ctx.params.id);
+        if (!f) throw notFound();
+        const v = validate(ctx.body, Object.fromEntries(Object.entries(fundShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
+        const keys = Object.keys(v);
+        if (!keys.length) return { ok: true };
+        db3.run(`UPDATE funding_sources SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), db3.now(), f.id);
+        audit3.log({ user: ctx.user, action: "fund.update", entity: "funding_source", entityId: f.id, ip: ctx.ip, details: { fields: keys } });
+        return { ok: true };
+      });
+      r.post("/api/budget/funds/:id/lines", auth3.requireAuth, auth3.requirePerm("budget:write"), (ctx) => {
+        const f = db3.one(`SELECT id FROM funding_sources WHERE id=?`, ctx.params.id);
+        if (!f) throw notFound();
+        const v = validate(ctx.body, lineShape);
+        const id = uuid2();
+        db3.run(`INSERT INTO budget_lines(id,funding_source_id,category,label,allocated_amount,notes) VALUES(?,?,?,?,?,?)`, id, f.id, v.category, v.label || null, v.allocated_amount, v.notes || null);
+        audit3.log({ user: ctx.user, action: "budget_line.create", entity: "budget_line", entityId: id, ip: ctx.ip });
+        ctx.status = 201;
+        return { id };
+      });
+      r.put("/api/budget/lines/:id", auth3.requireAuth, auth3.requirePerm("budget:write"), (ctx) => {
+        const l = db3.one(`SELECT id FROM budget_lines WHERE id=?`, ctx.params.id);
+        if (!l) throw notFound();
+        const v = validate(ctx.body, Object.fromEntries(Object.entries(lineShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
+        const keys = Object.keys(v);
+        if (keys.length) db3.run(`UPDATE budget_lines SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), db3.now(), l.id);
+        audit3.log({ user: ctx.user, action: "budget_line.update", entity: "budget_line", entityId: l.id, ip: ctx.ip });
+        return { ok: true };
+      });
+      r.delete("/api/budget/lines/:id", auth3.requireAuth, auth3.requirePerm("budget:write"), (ctx) => {
+        db3.run(`DELETE FROM budget_lines WHERE id=?`, ctx.params.id);
+        db3.tombstone("budget_lines", ctx.params.id);
+        audit3.log({ user: ctx.user, action: "budget_line.delete", entity: "budget_line", entityId: ctx.params.id, ip: ctx.ip });
+        return { ok: true };
+      });
+      crud.build(r, {
+        table: "expenditures",
+        entity: "expenditure",
+        base: "/api/budget/expenditures",
+        perm: "budget",
+        dateCol: "spent_at",
+        clientRequired: false,
+        restrictOwner: true,
+        joins: "JOIN users u ON u.id=expenditures.user_id JOIN funding_sources f ON f.id=expenditures.funding_source_id LEFT JOIN budget_lines b ON b.id=expenditures.budget_line_id LEFT JOIN clients c ON c.id=expenditures.client_id LEFT JOIN users a ON a.id=expenditures.approved_by",
+        select: "expenditures.*, u.display_name AS worker, f.name AS fund, b.label AS line_label, b.category AS line_category, c.client_code, a.display_name AS approver",
+        shape: {
+          client_id: { type: "string" },
+          user_id: { type: "string" },
+          funding_source_id: { type: "string", required: true },
+          budget_line_id: { type: "string" },
+          intervention_id: { type: "string" },
+          spent_at: { type: "date", required: true },
+          amount: { type: "number", required: true, min: 0.01 },
+          category: { type: "string", required: true, enum: C.BUDGET_CATEGORIES },
+          vendor: { type: "string", maxLen: 200 },
+          description: { type: "string", maxLen: 1e3 },
+          receipt_ref: { type: "string", maxLen: 200 }
+        },
+        filters: (ctx, where, params) => {
+          const f = ctx.query.get("fund");
+          if (f) {
+            where.push("expenditures.funding_source_id=?");
+            params.push(f);
+          }
+          const s = ctx.query.get("status");
+          if (s) {
+            where.push("expenditures.status=?");
+            params.push(s);
+          }
+        },
+        beforeInsert: (ctx, v) => {
+          const f = db3.one(`SELECT * FROM funding_sources WHERE id=? AND is_active=1`, v.funding_source_id);
+          if (!f) throw badRequest("Unknown or inactive funding source");
+          if (v.budget_line_id) {
+            const l = db3.one(`SELECT * FROM budget_lines WHERE id=? AND funding_source_id=?`, v.budget_line_id, f.id);
+            if (!l) throw badRequest("Budget line does not belong to fund");
+            if (!v.category) v.category = l.category;
+          }
+        },
+        canEdit: (ctx, row) => row.status === "pending" && (row.user_id === ctx.user.id || auth3.hasPerm(ctx.user, "budget:approve"))
+      });
+      r.post("/api/budget/expenditures/:id/approve", auth3.requireAuth, auth3.requirePerm("budget:approve"), (ctx) => {
+        const e = db3.one(`SELECT * FROM expenditures WHERE id=?`, ctx.params.id);
+        if (!e) throw notFound();
+        const { status, note } = validate(ctx.body, { status: { type: "string", required: true, enum: ["approved", "rejected", "reimbursed"] }, note: { type: "string", maxLen: 500 } });
+        if (e.user_id === ctx.user.id && status === "approved" && ctx.user.role !== "admin") throw badRequest("Separation of duties: you cannot approve your own expenditure");
+        db3.run(`UPDATE expenditures SET status=?, approved_by=?, approved_at=?, updated_at=? WHERE id=?`, status, ctx.user.id, db3.now(), db3.now(), e.id);
+        audit3.log({ user: ctx.user, action: `expenditure.${status}`, entity: "expenditure", entityId: e.id, clientId: e.client_id, ip: ctx.ip, details: { note, amount: e.amount } });
+        return { ok: true };
+      });
+      r.get("/api/budget/summary", auth3.requireAuth, auth3.requirePerm("budget:read"), () => {
+        const funds = db3.all(`SELECT * FROM funding_sources WHERE is_active=1`).map(fundSummary);
+        return {
+          totals: { budget: funds.reduce((s, f) => s + f.total_amount, 0), spent: funds.reduce((s, f) => s + f.spent, 0), pending: funds.reduce((s, f) => s + f.pending, 0), remaining: funds.reduce((s, f) => s + f.remaining, 0) },
+          by_category: db3.all(`SELECT category, SUM(amount) amount, COUNT(*) n FROM expenditures WHERE status IN ('approved','reimbursed') GROUP BY category ORDER BY amount DESC`),
+          by_month: db3.all(`SELECT substr(spent_at,1,7) month, SUM(amount) amount FROM expenditures WHERE status<>'rejected' GROUP BY month ORDER BY month`),
+          per_client: db3.one(`SELECT COUNT(DISTINCT client_id) clients, COALESCE(SUM(amount),0) amount FROM expenditures WHERE client_id IS NOT NULL AND status IN ('approved','reimbursed')`),
+          funds
+        };
+      });
+    };
+  }
+});
+
+// server/routes/calls.js
+var require_calls = __commonJS({
+  "server/routes/calls.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var crud = require_crud();
+    var C = require_constants();
+    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
+    module.exports = (r) => {
+      crud.build(r, {
+        table: "calls",
+        entity: "call",
+        perm: "calls",
+        dateCol: "started_at",
+        clientRequired: false,
+        restrictOwner: true,
+        joins: "JOIN users u ON u.id=calls.user_id LEFT JOIN clients c ON c.id=calls.client_id",
+        select: "calls.*, u.display_name AS worker, c.client_code",
+        shape: {
+          client_id: { type: "string" },
+          user_id: { type: "string" },
+          direction: { type: "string", required: true, enum: ["inbound", "outbound"] },
+          started_at: { type: "datetime", required: true },
+          duration_minutes: { type: "number", integer: true, min: 0, max: 1440 },
+          contact_type: { type: "string", enum: C.CALL_CONTACT_TYPES },
+          contact_name: { type: "string", maxLen: 120 },
+          phone: { type: "string", maxLen: 40 },
+          purpose: { type: "string", maxLen: 300 },
+          outcome: { type: "string", enum: C.CALL_OUTCOMES },
+          crisis: { type: "boolean" },
+          follow_up_needed: { type: "boolean" },
+          follow_up_due: { type: "date" },
+          summary: { type: "string", maxLen: 4e3 },
+          log_time: { type: "boolean" }
+        },
+        filters: (ctx, where, params) => {
+          if (ctx.query.get("crisis") === "1") where.push("calls.crisis=1");
+          if (ctx.query.get("follow_up") === "1") where.push("calls.follow_up_needed=1");
+        },
+        beforeInsert: (ctx, v) => encAll(v),
+        beforeUpdate: (ctx, v) => encAll(v),
+        afterInsert: (ctx, row) => {
+          if (row._log_time && row.duration_minutes > 0) db3.run(
+            `INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,call_id,description) VALUES(?,?,?,?,?,?,?,?)`,
+            uuid2(),
+            row.user_id,
+            row.client_id || null,
+            row.started_at.slice(0, 10),
+            row.duration_minutes,
+            "direct_service",
+            row.id,
+            `${row.direction} call`
+          );
+          if (row.follow_up_needed && row.follow_up_due) db3.run(
+            `INSERT INTO tasks(id,client_id,assigned_to,created_by,title,due_at,priority) VALUES(?,?,?,?,?,?,?)`,
+            uuid2(),
+            row.client_id || null,
+            row.user_id,
+            ctx.user.id,
+            `Call back: ${row.purpose || row.contact_type}`,
+            row.follow_up_due,
+            row.crisis ? "urgent" : "normal"
+          );
+        },
+        afterLoad: (ctx, x) => ({ ...x, contact_name: x.contact_name_enc ? decrypt3(x.contact_name_enc) : null, phone: x.phone_enc ? decrypt3(x.phone_enc) : null, summary: x.summary_enc ? decrypt3(x.summary_enc) : null, contact_name_enc: void 0, phone_enc: void 0, summary_enc: void 0 }),
+        canEdit: crud.ownerOrManager()
+      });
+      function encAll(v) {
+        for (const f of ["contact_name", "phone", "summary"]) if (v[f] !== void 0) {
+          v[`${f}_enc`] = v[f] === null ? null : encrypt3(v[f]);
+          delete v[f];
+        }
+        v._log_time = v.log_time;
+        delete v.log_time;
+      }
+    };
+  }
+});
+
+// server/routes/clients.js
+var require_clients = __commonJS({
+  "server/routes/clients.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var { badRequest, notFound, forbidden } = require_http();
+    var { validate, paging } = require_validate();
+    var { blindIndex: blindIndex2, uuid: uuid2, decrypt: decrypt3 } = require_crypto();
+    var M = require_clients_model();
+    var shape = {
+      first_name: { type: "string", required: true, maxLen: 100 },
+      last_name: { type: "string", required: true, maxLen: 100 },
+      preferred_name: { type: "string", maxLen: 100 },
+      dob: { type: "date" },
+      phone: { type: "string", maxLen: 40 },
+      alt_phone: { type: "string", maxLen: 40 },
+      email: { type: "string", maxLen: 200 },
+      address: { type: "string", maxLen: 300 },
+      city: { type: "string", maxLen: 100 },
+      zip: { type: "string", maxLen: 12 },
+      gender: { type: "string", maxLen: 40 },
+      pronouns: { type: "string", maxLen: 40 },
+      race_ethnicity: { type: "string", maxLen: 100 },
+      preferred_language: { type: "string", maxLen: 60 },
+      veteran: { type: "boolean" },
+      housing_status: { type: "string", maxLen: 60 },
+      insurance: { type: "string", maxLen: 100 },
+      medicaid_id: { type: "string", maxLen: 40 },
+      emergency_contact: { type: "string", maxLen: 300 },
+      status: { type: "string", enum: ["waitlist", "active", "inactive", "closed", "deceased"] },
+      intake_date: { type: "date" },
+      discharge_date: { type: "date" },
+      discharge_reason: { type: "string", maxLen: 200 },
+      referral_source: { type: "string", maxLen: 120 },
+      primary_substance: { type: "string", maxLen: 60 },
+      secondary_substances: { type: "string", maxLen: 200 },
+      route_of_use: { type: "string", maxLen: 60 },
+      asam_level: { type: "string", maxLen: 20 },
+      mat_status: { type: "string", enum: ["none", "interested", "referred", "active", "discontinued", "unknown"] },
+      mat_medication: { type: "string", maxLen: 60 },
+      overdose_history: { type: "boolean" },
+      last_overdose_date: { type: "date" },
+      naloxone_provided: { type: "boolean" },
+      naloxone_last_date: { type: "date" },
+      risk_level: { type: "string", enum: ["low", "moderate", "high", "critical"] },
+      justice_involved: { type: "boolean" },
+      pregnant_or_parenting: { type: "boolean" },
+      co_occurring_mh: { type: "boolean" },
+      goals: { type: "string", maxLen: 2e3 },
+      flags: { type: "string", maxLen: 300 },
+      contact_preferences: { type: "string", maxLen: 300 },
+      ok_to_text: { type: "boolean" },
+      ok_to_voicemail: { type: "boolean" }
+    };
+    function loadClient(ctx, id, { write = false } = {}) {
+      const row = db3.one(`SELECT * FROM clients WHERE id=? AND deleted_at IS NULL`, id);
+      if (!row) throw notFound("Client not found");
+      auth3.assertClientAccess(ctx, id);
+      return row;
+    }
+    module.exports = (r) => {
+      r.get("/api/clients", auth3.requireAuth, auth3.requirePerm("clients:read", "clients:list-deidentified"), (ctx) => {
+        const deidentify = !auth3.hasPerm(ctx.user, "clients:read");
+        const { limit: limit2, offset } = paging(ctx.query);
+        const where = ["c.deleted_at IS NULL"];
+        const params = [];
+        const cf = auth3.caseloadFilter(ctx.user);
+        where.push(cf.sql);
+        params.push(...cf.params);
+        const status = ctx.query.get("status");
+        if (status && status !== "all") {
+          where.push("c.status=?");
+          params.push(status);
+        }
+        const q = (ctx.query.get("q") || "").trim();
+        if (q) {
+          if (/^[CM]\d{2}-\d+(-D)?$/i.test(q)) {
+            where.push("c.client_code=?");
+            params.push(q.toUpperCase());
+          } else if (/^\d{4}-\d{2}-\d{2}$/.test(q)) {
+            where.push("c.dob_idx=?");
+            params.push(blindIndex2(q));
+          } else if (/^[\d\-() .+]{7,}$/.test(q)) {
+            where.push("c.phone_idx=?");
+            params.push(blindIndex2(q.replace(/\D/g, "")));
+          } else {
+            const parts = q.split(/[,\s]+/).filter(Boolean);
+            const idxs = parts.map((p) => blindIndex2(p));
+            where.push(`(c.last_name_idx IN (${idxs.map(() => "?").join(",")}) OR c.full_name_idx IN (?,?))`);
+            params.push(...idxs, blindIndex2(parts.join("")), blindIndex2([...parts].reverse().join("")));
+          }
+        }
+        const assigned = ctx.query.get("assigned_to");
+        if (assigned) {
+          where.push(`c.id IN (SELECT client_id FROM assignments WHERE user_id=? AND (end_date IS NULL OR end_date >= date('now')))`);
+          params.push(assigned);
+        }
+        const w = "WHERE " + where.join(" AND ");
+        const rows = db3.all(`SELECT c.*, (SELECT GROUP_CONCAT(u.display_name, ', ') FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=c.id AND (a.end_date IS NULL OR a.end_date >= date('now'))) AS assigned_workers,
+      (SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome='reached')) AS last_contact
+      FROM clients c ${w} ORDER BY c.updated_at DESC LIMIT ? OFFSET ?`, ...params, limit2, offset);
+        const total = db3.one(`SELECT COUNT(*) n FROM clients c ${w}`, ...params).n;
+        audit3.log({ user: ctx.user, action: "client.list", ip: ctx.ip, details: { q: q ? "[redacted]" : "", status, count: rows.length, deidentified: deidentify } });
+        return { clients: rows.map((x) => ({ ...M.summary(x, { deidentify }), assigned_workers: x.assigned_workers, last_contact: x.last_contact })), total, limit: limit2, offset };
+      });
+      r.post("/api/clients", auth3.requireAuth, auth3.requirePerm("clients:write"), (ctx) => {
+        const v = validate(ctx.body, shape);
+        const id = uuid2();
+        const enc = M.encryptFields(v);
+        enc.full_name_idx = blindIndex2((v.last_name || "") + (v.first_name || ""));
+        const cols2 = { id, client_code: M.nextClientCode(), ...enc, created_by: ctx.user.id };
+        for (const f of M.PLAIN_FIELDS) if (v[f] !== void 0) cols2[f] = v[f];
+        if (!cols2.intake_date) cols2.intake_date = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        const keys = Object.keys(cols2).filter((k) => cols2[k] !== void 0);
+        db3.transaction(() => {
+          db3.run(`INSERT INTO clients(${keys.join(",")}) VALUES(${keys.map(() => "?").join(",")})`, ...keys.map((k) => cols2[k]));
+          if (auth3.caseloadRestricted(ctx.user) || ["navigator", "clinician"].includes(ctx.user.role)) {
+            db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, uuid2(), id, ctx.user.id, "primary", cols2.intake_date, ctx.user.id);
+          }
+        });
+        audit3.log({ user: ctx.user, action: "client.create", entity: "client", entityId: id, clientId: id, ip: ctx.ip });
+        ctx.status = 201;
+        return { id, client_code: cols2.client_code };
+      });
+      r.get("/api/clients/:id", auth3.requireAuth, auth3.requirePerm("clients:read"), (ctx) => {
+        const row = loadClient(ctx, ctx.params.id);
+        const client = M.decryptRow(row);
+        client.assignments = db3.all(`SELECT a.*, u.display_name, u.role AS user_role FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=? ORDER BY a.end_date IS NOT NULL, a.start_date DESC`, row.id);
+        client.active_consents = db3.all(`SELECT id,type,recipient,purpose,signed_at,expires_at FROM consents WHERE client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, row.id);
+        client.counts = {
+          interventions: db3.one(`SELECT COUNT(*) n FROM interventions WHERE client_id=?`, row.id).n,
+          calls: db3.one(`SELECT COUNT(*) n FROM calls WHERE client_id=?`, row.id).n,
+          notes: db3.one(`SELECT COUNT(*) n FROM notes WHERE client_id=? AND deleted_at IS NULL`, row.id).n,
+          referrals: db3.one(`SELECT COUNT(*) n FROM referrals WHERE client_id=?`, row.id).n,
+          open_tasks: db3.one(`SELECT COUNT(*) n FROM tasks WHERE client_id=? AND status IN ('open','in_progress')`, row.id).n,
+          minutes: db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE client_id=?`, row.id).n,
+          spent: db3.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE client_id=? AND status<>'rejected'`, row.id).n
+        };
+        audit3.log({ user: ctx.user, action: "client.view", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip });
+        return { client };
+      });
+      r.put("/api/clients/:id", auth3.requireAuth, auth3.requirePerm("clients:write"), (ctx) => {
+        const row = loadClient(ctx, ctx.params.id);
+        const v = validate(ctx.body, { ...shape, first_name: { ...shape.first_name, required: false }, last_name: { ...shape.last_name, required: false } }, { partial: true });
+        const enc = M.encryptFields(v);
+        if (v.first_name !== void 0 || v.last_name !== void 0) {
+          const cur = M.decryptRow(row);
+          enc.full_name_idx = blindIndex2((v.last_name ?? cur.last_name ?? "") + (v.first_name ?? cur.first_name ?? ""));
+        }
+        const cols2 = { ...enc };
+        for (const f of M.PLAIN_FIELDS) if (v[f] !== void 0) cols2[f] = v[f];
+        const keys = Object.keys(cols2).filter((k) => cols2[k] !== void 0);
+        if (!keys.length) return { ok: true };
+        db3.run(`UPDATE clients SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => cols2[k]), db3.now(), row.id);
+        audit3.log({ user: ctx.user, action: "client.update", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip, details: { fields: Object.keys(v) } });
+        return { ok: true };
+      });
+      r.delete("/api/clients/:id", auth3.requireAuth, auth3.requirePerm("clients:all"), (ctx) => {
+        const row = loadClient(ctx, ctx.params.id);
+        if (!auth3.hasPerm(ctx.user, "clients:write")) throw forbidden();
+        const { reason } = validate(ctx.body || {}, { reason: { type: "string", required: true, maxLen: 300 } });
+        db3.run(`UPDATE clients SET deleted_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), row.id);
+        audit3.log({ user: ctx.user, action: "client.delete", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip, details: { reason } });
+        return { ok: true };
+      });
+      r.get("/api/clients/:id/timeline", auth3.requireAuth, auth3.requirePerm("clients:read"), (ctx) => {
+        const row = loadClient(ctx, ctx.params.id);
+        const id = row.id;
+        const canClinical = auth3.hasPerm(ctx.user, "notes:clinical:read");
+        const events = [];
+        for (const x of db3.all(`SELECT i.*, u.display_name AS worker FROM interventions i JOIN users u ON u.id=i.user_id WHERE client_id=?`, id))
+          events.push({ kind: "intervention", id: x.id, at: x.occurred_at, title: x.type.replace(/_/g, " "), detail: x.summary, worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, location: x.location } });
+        for (const x of db3.all(`SELECT c.*, u.display_name AS worker FROM calls c JOIN users u ON u.id=c.user_id WHERE client_id=?`, id))
+          events.push({ kind: "call", id: x.id, at: x.started_at, title: `${x.direction} call (${x.contact_type})`, detail: x.summary_enc ? decrypt3(x.summary_enc) : x.purpose, worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, crisis: !!x.crisis } });
+        for (const x of db3.all(`SELECT n.id,n.kind,n.format,n.title,n.occurred_at,n.status,n.source,u.display_name AS worker FROM notes n JOIN users u ON u.id=n.author_id WHERE client_id=? AND deleted_at IS NULL`, id))
+          if (x.kind === "admin" || canClinical) events.push({ kind: "note", id: x.id, at: x.occurred_at, title: `${x.kind} note: ${x.title || x.format}`, detail: null, worker: x.worker, meta: { status: x.status, note_kind: x.kind, source: x.source } });
+        for (const x of db3.all(`SELECT r.*, res.name AS resource_name, u.display_name AS worker FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN users u ON u.id=r.user_id WHERE client_id=?`, id))
+          events.push({ kind: "referral", id: x.id, at: x.referred_at, title: `Referral: ${x.resource_name}`, detail: x.notes, worker: x.worker, meta: { status: x.status, outcome: x.outcome } });
+        for (const x of db3.all(`SELECT t.*, u.display_name AS worker FROM tasks t LEFT JOIN users u ON u.id=t.assigned_to WHERE client_id=?`, id))
+          events.push({ kind: x.is_milestone ? "milestone" : "task", id: x.id, at: x.completed_at || x.due_at || x.created_at, title: x.title, detail: x.description, worker: x.worker, meta: { status: x.status, priority: x.priority, due_at: x.due_at } });
+        for (const x of db3.all(`SELECT * FROM consents WHERE client_id=?`, id))
+          events.push({ kind: "consent", id: x.id, at: x.signed_at, title: `Consent: ${x.type.replace(/_/g, " ")}${x.recipient ? " \u2192 " + x.recipient : ""}`, detail: x.purpose, meta: { expires_at: x.expires_at, revoked_at: x.revoked_at } });
+        if (auth3.hasPerm(ctx.user, "budget:read"))
+          for (const x of db3.all(`SELECT e.*, f.name AS fund FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE client_id=?`, id))
+            events.push({ kind: "expense", id: x.id, at: x.spent_at, title: `$${x.amount.toFixed(2)} ${x.category.replace(/_/g, " ")}`, detail: x.description, meta: { fund: x.fund, status: x.status } });
+        events.push({ kind: "milestone", id: "intake", at: row.intake_date, title: "Program intake", meta: {} });
+        if (row.discharge_date) events.push({ kind: "milestone", id: "discharge", at: row.discharge_date, title: `Discharge: ${row.discharge_reason || ""}`, meta: {} });
+        events.sort((a, b) => (b.at || "").localeCompare(a.at || ""));
+        audit3.log({ user: ctx.user, action: "client.timeline", entity: "client", entityId: id, clientId: id, ip: ctx.ip });
+        return { events };
+      });
+    };
+  }
+});
+
+// server/routes/consents.js
+var require_consents = __commonJS({
+  "server/routes/consents.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var C = require_constants();
+    var { badRequest, notFound } = require_http();
+    var { validate } = require_validate();
+    var { uuid: uuid2 } = require_crypto();
+    module.exports = (r) => {
+      r.get("/api/clients/:id/consents", auth3.requireAuth, auth3.requirePerm("consents:read", "consents:write"), (ctx) => {
+        auth3.assertClientAccess(ctx, ctx.params.id);
+        return {
+          consents: db3.all(`SELECT c.*, u.display_name AS created_by_name FROM consents c JOIN users u ON u.id=c.created_by WHERE client_id=? ORDER BY signed_at DESC`, ctx.params.id),
+          disclosures: db3.all(`SELECT d.*, u.display_name AS disclosed_by_name FROM disclosures d JOIN users u ON u.id=d.disclosed_by WHERE client_id=? ORDER BY disclosed_at DESC`, ctx.params.id)
+        };
+      });
+      r.post("/api/clients/:id/consents", auth3.requireAuth, auth3.requirePerm("consents:write"), (ctx) => {
+        if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id)) throw notFound();
+        auth3.assertClientAccess(ctx, ctx.params.id);
+        const v = validate(ctx.body, {
+          type: { type: "string", required: true, enum: C.CONSENT_TYPES },
+          recipient: { type: "string", maxLen: 200 },
+          purpose: { type: "string", maxLen: 500 },
+          scope: { type: "string", maxLen: 1e3 },
+          signed_at: { type: "date", required: true },
+          expires_at: { type: "date" },
+          document_ref: { type: "string", maxLen: 300 },
+          witness: { type: "string", maxLen: 120 }
+        });
+        if (v.type === "part2_disclosure" && (!v.recipient || !v.purpose)) throw badRequest("42 CFR Part 2 consent requires recipient and purpose");
+        const id = uuid2();
+        db3.run(
+          `INSERT INTO consents(id,client_id,type,recipient,purpose,scope,signed_at,expires_at,document_ref,witness,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+          id,
+          ctx.params.id,
+          v.type,
+          v.recipient || null,
+          v.purpose || null,
+          v.scope || null,
+          v.signed_at,
+          v.expires_at || null,
+          v.document_ref || null,
+          v.witness || null,
+          ctx.user.id
+        );
+        audit3.log({ user: ctx.user, action: "consent.create", entity: "consent", entityId: id, clientId: ctx.params.id, ip: ctx.ip, details: { type: v.type } });
+        ctx.status = 201;
+        return { id };
+      });
+      r.post("/api/consents/:id/revoke", auth3.requireAuth, auth3.requirePerm("consents:write"), (ctx) => {
+        const c = db3.one(`SELECT * FROM consents WHERE id=?`, ctx.params.id);
+        if (!c) throw notFound();
+        auth3.assertClientAccess(ctx, c.client_id);
+        const { reason } = validate(ctx.body, { reason: { type: "string", maxLen: 300 } });
+        db3.run(`UPDATE consents SET revoked_at=?, revoked_reason=?, updated_at=? WHERE id=?`, db3.now(), reason || null, db3.now(), c.id);
+        audit3.log({ user: ctx.user, action: "consent.revoke", entity: "consent", entityId: c.id, clientId: c.client_id, ip: ctx.ip });
+        return { ok: true };
+      });
+      r.post("/api/clients/:id/disclosures", auth3.requireAuth, auth3.requirePerm("consents:write"), (ctx) => {
+        if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id)) throw notFound();
+        auth3.assertClientAccess(ctx, ctx.params.id);
+        const v = validate(ctx.body, {
+          consent_id: { type: "string" },
+          disclosed_to: { type: "string", required: true, maxLen: 200 },
+          purpose: { type: "string", required: true, maxLen: 500 },
+          info_disclosed: { type: "string", required: true, maxLen: 1e3 },
+          method: { type: "string", maxLen: 60 },
+          disclosed_at: { type: "datetime", required: true },
+          basis: { type: "string", enum: ["consent", "court_order", "medical_emergency", "qsoa", "audit_evaluation", "research", "crime_on_premises", "child_abuse_report", "other"] }
+        });
+        if (v.basis === "consent" || !v.basis) {
+          const consent = v.consent_id ? db3.one(`SELECT * FROM consents WHERE id=? AND client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, v.consent_id, ctx.params.id) : null;
+          if (!consent) throw badRequest("A valid, unexpired consent must be selected when the basis is consent");
+        }
+        const id = uuid2();
+        db3.run(
+          `INSERT INTO disclosures(id,client_id,consent_id,disclosed_to,purpose,info_disclosed,method,disclosed_at,disclosed_by,basis) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+          id,
+          ctx.params.id,
+          v.consent_id || null,
+          v.disclosed_to,
+          v.purpose,
+          v.info_disclosed,
+          v.method || null,
+          v.disclosed_at,
+          ctx.user.id,
+          v.basis || "consent"
+        );
+        audit3.log({ user: ctx.user, action: "disclosure.record", entity: "disclosure", entityId: id, clientId: ctx.params.id, ip: ctx.ip, details: { to: v.disclosed_to, basis: v.basis } });
+        ctx.status = 201;
+        return { id };
+      });
+    };
+  }
+});
+
+// node_modules/fflate/esm/browser.js
+function deflateSync(data, opts) {
+  return dopt(data, opts || {}, 0, 0);
+}
+function inflateSync(data, opts) {
+  return inflt(data, { i: 2 }, opts && opts.out, opts && opts.dictionary);
+}
+var u82, u16, i32, fleb, fdeb, clim, freb, _a, fl, revfl, _b, fd, revfd, rev, x, i, hMap, flt, i, i, i, i, fdt, i, flm, flrm, fdm, fdrm, max, bits, bits16, shft, slc, ec, err, inflt, wbits, wbits16, hTree, ln, lc, clen, wfblk, wblk, deo, et, dflt, dopt, td, tds;
+var init_browser = __esm({
+  "node_modules/fflate/esm/browser.js"() {
+    init_globals_inject();
+    u82 = Uint8Array;
+    u16 = Uint16Array;
+    i32 = Int32Array;
+    fleb = new u82([
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      1,
+      1,
+      2,
+      2,
+      2,
+      2,
+      3,
+      3,
+      3,
+      3,
+      4,
+      4,
+      4,
+      4,
+      5,
+      5,
+      5,
+      5,
+      0,
+      /* unused */
+      0,
+      0,
+      /* impossible */
+      0
+    ]);
+    fdeb = new u82([
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      2,
+      2,
+      3,
+      3,
+      4,
+      4,
+      5,
+      5,
+      6,
+      6,
+      7,
+      7,
+      8,
+      8,
+      9,
+      9,
+      10,
+      10,
+      11,
+      11,
+      12,
+      12,
+      13,
+      13,
+      /* unused */
+      0,
+      0
+    ]);
+    clim = new u82([16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]);
+    freb = function(eb, start2) {
+      var b = new u16(31);
+      for (var i = 0; i < 31; ++i) {
+        b[i] = start2 += 1 << eb[i - 1];
+      }
+      var r = new i32(b[30]);
+      for (var i = 1; i < 30; ++i) {
+        for (var j = b[i]; j < b[i + 1]; ++j) {
+          r[j] = j - b[i] << 5 | i;
+        }
+      }
+      return { b, r };
+    };
+    _a = freb(fleb, 2);
+    fl = _a.b;
+    revfl = _a.r;
+    fl[28] = 258, revfl[258] = 28;
+    _b = freb(fdeb, 0);
+    fd = _b.b;
+    revfd = _b.r;
+    rev = new u16(32768);
+    for (i = 0; i < 32768; ++i) {
+      x = (i & 43690) >> 1 | (i & 21845) << 1;
+      x = (x & 52428) >> 2 | (x & 13107) << 2;
+      x = (x & 61680) >> 4 | (x & 3855) << 4;
+      rev[i] = ((x & 65280) >> 8 | (x & 255) << 8) >> 1;
+    }
+    hMap = function(cd, mb, r) {
+      var s = cd.length;
+      var i = 0;
+      var l = new u16(mb);
+      for (; i < s; ++i) {
+        if (cd[i])
+          ++l[cd[i] - 1];
+      }
+      var le = new u16(mb);
+      for (i = 1; i < mb; ++i) {
+        le[i] = le[i - 1] + l[i - 1] << 1;
+      }
+      var co;
+      if (r) {
+        co = new u16(1 << mb);
+        var rvb = 15 - mb;
+        for (i = 0; i < s; ++i) {
+          if (cd[i]) {
+            var sv = i << 4 | cd[i];
+            var r_1 = mb - cd[i];
+            var v = le[cd[i] - 1]++ << r_1;
+            for (var m = v | (1 << r_1) - 1; v <= m; ++v) {
+              co[rev[v] >> rvb] = sv;
+            }
+          }
+        }
+      } else {
+        co = new u16(s);
+        for (i = 0; i < s; ++i) {
+          if (cd[i]) {
+            co[i] = rev[le[cd[i] - 1]++] >> 15 - cd[i];
+          }
+        }
+      }
+      return co;
+    };
+    flt = new u82(288);
+    for (i = 0; i < 144; ++i)
+      flt[i] = 8;
+    for (i = 144; i < 256; ++i)
+      flt[i] = 9;
+    for (i = 256; i < 280; ++i)
+      flt[i] = 7;
+    for (i = 280; i < 288; ++i)
+      flt[i] = 8;
+    fdt = new u82(32);
+    for (i = 0; i < 32; ++i)
+      fdt[i] = 5;
+    flm = /* @__PURE__ */ hMap(flt, 9, 0);
+    flrm = /* @__PURE__ */ hMap(flt, 9, 1);
+    fdm = /* @__PURE__ */ hMap(fdt, 5, 0);
+    fdrm = /* @__PURE__ */ hMap(fdt, 5, 1);
+    max = function(a) {
+      var m = a[0];
+      for (var i = 1; i < a.length; ++i) {
+        if (a[i] > m)
+          m = a[i];
+      }
+      return m;
+    };
+    bits = function(d, p, m) {
+      var o = p / 8 | 0;
+      return (d[o] | d[o + 1] << 8) >> (p & 7) & m;
+    };
+    bits16 = function(d, p) {
+      var o = p / 8 | 0;
+      return (d[o] | d[o + 1] << 8 | d[o + 2] << 16) >> (p & 7);
+    };
+    shft = function(p) {
+      return (p + 7) / 8 | 0;
+    };
+    slc = function(v, s, e) {
+      if (s == null || s < 0)
+        s = 0;
+      if (e == null || e > v.length)
+        e = v.length;
+      return new u82(v.subarray(s, e));
+    };
+    ec = [
+      "unexpected EOF",
+      "invalid block type",
+      "invalid length/literal",
+      "invalid distance",
+      "stream finished",
+      "no stream handler",
+      ,
+      "no callback",
+      "invalid UTF-8 data",
+      "extra field too long",
+      "date not in range 1980-2099",
+      "filename too long",
+      "stream finishing",
+      "invalid zip data"
+      // determined by unknown compression method
+    ];
+    err = function(ind, msg, nt) {
+      var e = new Error(msg || ec[ind]);
+      e.code = ind;
+      if (Error.captureStackTrace)
+        Error.captureStackTrace(e, err);
+      if (!nt)
+        throw e;
+      return e;
+    };
+    inflt = function(dat, st, buf, dict) {
+      var sl = dat.length, dl = dict ? dict.length : 0;
+      if (!sl || st.f && !st.l)
+        return buf || new u82(0);
+      var noBuf = !buf;
+      var resize = noBuf || st.i != 2;
+      var noSt = st.i;
+      if (noBuf)
+        buf = new u82(sl * 3);
+      var cbuf = function(l2) {
+        var bl = buf.length;
+        if (l2 > bl) {
+          var nbuf = new u82(Math.max(bl * 2, l2));
+          nbuf.set(buf);
+          buf = nbuf;
+        }
+      };
+      var final = st.f || 0, pos = st.p || 0, bt = st.b || 0, lm = st.l, dm = st.d, lbt = st.m, dbt = st.n;
+      var tbts = sl * 8;
+      do {
+        if (!lm) {
+          final = bits(dat, pos, 1);
+          var type = bits(dat, pos + 1, 3);
+          pos += 3;
+          if (!type) {
+            var s = shft(pos) + 4, l = dat[s - 4] | dat[s - 3] << 8, t = s + l;
+            if (t > sl) {
+              if (noSt)
+                err(0);
+              break;
+            }
+            if (resize)
+              cbuf(bt + l);
+            buf.set(dat.subarray(s, t), bt);
+            st.b = bt += l, st.p = pos = t * 8, st.f = final;
+            continue;
+          } else if (type == 1)
+            lm = flrm, dm = fdrm, lbt = 9, dbt = 5;
+          else if (type == 2) {
+            var hLit = bits(dat, pos, 31) + 257, hcLen = bits(dat, pos + 10, 15) + 4;
+            var tl = hLit + bits(dat, pos + 5, 31) + 1;
+            pos += 14;
+            var ldt = new u82(tl);
+            var clt = new u82(19);
+            for (var i = 0; i < hcLen; ++i) {
+              clt[clim[i]] = bits(dat, pos + i * 3, 7);
+            }
+            pos += hcLen * 3;
+            var clb = max(clt), clbmsk = (1 << clb) - 1;
+            var clm = hMap(clt, clb, 1);
+            for (var i = 0; i < tl; ) {
+              var r = clm[bits(dat, pos, clbmsk)];
+              pos += r & 15;
+              var s = r >> 4;
+              if (s < 16) {
+                ldt[i++] = s;
+              } else {
+                var c = 0, n = 0;
+                if (s == 16)
+                  n = 3 + bits(dat, pos, 3), pos += 2, c = ldt[i - 1];
+                else if (s == 17)
+                  n = 3 + bits(dat, pos, 7), pos += 3;
+                else if (s == 18)
+                  n = 11 + bits(dat, pos, 127), pos += 7;
+                while (n--)
+                  ldt[i++] = c;
+              }
+            }
+            var lt = ldt.subarray(0, hLit), dt = ldt.subarray(hLit);
+            lbt = max(lt);
+            dbt = max(dt);
+            lm = hMap(lt, lbt, 1);
+            dm = hMap(dt, dbt, 1);
+          } else
+            err(1);
+          if (pos > tbts) {
+            if (noSt)
+              err(0);
+            break;
+          }
+        }
+        if (resize)
+          cbuf(bt + 131072);
+        var lms = (1 << lbt) - 1, dms = (1 << dbt) - 1;
+        var lpos = pos;
+        for (; ; lpos = pos) {
+          var c = lm[bits16(dat, pos) & lms], sym = c >> 4;
+          pos += c & 15;
+          if (pos > tbts) {
+            if (noSt)
+              err(0);
+            break;
+          }
+          if (!c)
+            err(2);
+          if (sym < 256)
+            buf[bt++] = sym;
+          else if (sym == 256) {
+            lpos = pos, lm = null;
+            break;
+          } else {
+            var add = sym - 254;
+            if (sym > 264) {
+              var i = sym - 257, b = fleb[i];
+              add = bits(dat, pos, (1 << b) - 1) + fl[i];
+              pos += b;
+            }
+            var d = dm[bits16(dat, pos) & dms], dsym = d >> 4;
+            if (!d)
+              err(3);
+            pos += d & 15;
+            var dt = fd[dsym];
+            if (dsym > 3) {
+              var b = fdeb[dsym];
+              dt += bits16(dat, pos) & (1 << b) - 1, pos += b;
+            }
+            if (pos > tbts) {
+              if (noSt)
+                err(0);
+              break;
+            }
+            if (resize)
+              cbuf(bt + 131072);
+            var end = bt + add;
+            if (bt < dt) {
+              var shift = dl - dt, dend = Math.min(dt, end);
+              if (shift + bt < 0)
+                err(3);
+              for (; bt < dend; ++bt)
+                buf[bt] = dict[shift + bt];
+            }
+            for (; bt < end; ++bt)
+              buf[bt] = buf[bt - dt];
+          }
+        }
+        st.l = lm, st.p = lpos, st.b = bt, st.f = final;
+        if (lm)
+          final = 1, st.m = lbt, st.d = dm, st.n = dbt;
+      } while (!final);
+      return bt != buf.length && noBuf ? slc(buf, 0, bt) : buf.subarray(0, bt);
+    };
+    wbits = function(d, p, v) {
+      v <<= p & 7;
+      var o = p / 8 | 0;
+      d[o] |= v;
+      d[o + 1] |= v >> 8;
+    };
+    wbits16 = function(d, p, v) {
+      v <<= p & 7;
+      var o = p / 8 | 0;
+      d[o] |= v;
+      d[o + 1] |= v >> 8;
+      d[o + 2] |= v >> 16;
+    };
+    hTree = function(d, mb) {
+      var t = [];
+      for (var i = 0; i < d.length; ++i) {
+        if (d[i])
+          t.push({ s: i, f: d[i] });
+      }
+      var s = t.length;
+      var t2 = t.slice();
+      if (!s)
+        return { t: et, l: 0 };
+      if (s == 1) {
+        var v = new u82(t[0].s + 1);
+        v[t[0].s] = 1;
+        return { t: v, l: 1 };
+      }
+      t.sort(function(a, b) {
+        return a.f - b.f;
+      });
+      t.push({ s: -1, f: 25001 });
+      var l = t[0], r = t[1], i0 = 0, i1 = 1, i2 = 2;
+      t[0] = { s: -1, f: l.f + r.f, l, r };
+      while (i1 != s - 1) {
+        l = t[t[i0].f < t[i2].f ? i0++ : i2++];
+        r = t[i0 != i1 && t[i0].f < t[i2].f ? i0++ : i2++];
+        t[i1++] = { s: -1, f: l.f + r.f, l, r };
+      }
+      var maxSym = t2[0].s;
+      for (var i = 1; i < s; ++i) {
+        if (t2[i].s > maxSym)
+          maxSym = t2[i].s;
+      }
+      var tr = new u16(maxSym + 1);
+      var mbt = ln(t[i1 - 1], tr, 0);
+      if (mbt > mb) {
+        var i = 0, dt = 0;
+        var lft = mbt - mb, cst = 1 << lft;
+        t2.sort(function(a, b) {
+          return tr[b.s] - tr[a.s] || a.f - b.f;
+        });
+        for (; i < s; ++i) {
+          var i2_1 = t2[i].s;
+          if (tr[i2_1] > mb) {
+            dt += cst - (1 << mbt - tr[i2_1]);
+            tr[i2_1] = mb;
+          } else
+            break;
+        }
+        dt >>= lft;
+        while (dt > 0) {
+          var i2_2 = t2[i].s;
+          if (tr[i2_2] < mb)
+            dt -= 1 << mb - tr[i2_2]++ - 1;
+          else
+            ++i;
+        }
+        for (; i >= 0 && dt; --i) {
+          var i2_3 = t2[i].s;
+          if (tr[i2_3] == mb) {
+            --tr[i2_3];
+            ++dt;
+          }
+        }
+        mbt = mb;
+      }
+      return { t: new u82(tr), l: mbt };
+    };
+    ln = function(n, l, d) {
+      return n.s == -1 ? Math.max(ln(n.l, l, d + 1), ln(n.r, l, d + 1)) : l[n.s] = d;
+    };
+    lc = function(c) {
+      var s = c.length;
+      while (s && !c[--s])
+        ;
+      var cl = new u16(++s);
+      var cli = 0, cln = c[0], cls = 1;
+      var w = function(v) {
+        cl[cli++] = v;
+      };
+      for (var i = 1; i <= s; ++i) {
+        if (c[i] == cln && i != s)
+          ++cls;
+        else {
+          if (!cln && cls > 2) {
+            for (; cls > 138; cls -= 138)
+              w(32754);
+            if (cls > 2) {
+              w(cls > 10 ? cls - 11 << 5 | 28690 : cls - 3 << 5 | 12305);
+              cls = 0;
+            }
+          } else if (cls > 3) {
+            w(cln), --cls;
+            for (; cls > 6; cls -= 6)
+              w(8304);
+            if (cls > 2)
+              w(cls - 3 << 5 | 8208), cls = 0;
+          }
+          while (cls--)
+            w(cln);
+          cls = 1;
+          cln = c[i];
+        }
+      }
+      return { c: cl.subarray(0, cli), n: s };
+    };
+    clen = function(cf, cl) {
+      var l = 0;
+      for (var i = 0; i < cl.length; ++i)
+        l += cf[i] * cl[i];
+      return l;
+    };
+    wfblk = function(out2, pos, dat) {
+      var s = dat.length;
+      var o = shft(pos + 2);
+      out2[o] = s & 255;
+      out2[o + 1] = s >> 8;
+      out2[o + 2] = out2[o] ^ 255;
+      out2[o + 3] = out2[o + 1] ^ 255;
+      for (var i = 0; i < s; ++i)
+        out2[o + i + 4] = dat[i];
+      return (o + 4 + s) * 8;
+    };
+    wblk = function(dat, out2, final, syms, lf, df, eb, li, bs, bl, p) {
+      wbits(out2, p++, final);
+      ++lf[256];
+      var _a2 = hTree(lf, 15), dlt = _a2.t, mlb = _a2.l;
+      var _b2 = hTree(df, 15), ddt = _b2.t, mdb = _b2.l;
+      var _c = lc(dlt), lclt = _c.c, nlc = _c.n;
+      var _d = lc(ddt), lcdt = _d.c, ndc = _d.n;
+      var lcfreq = new u16(19);
+      for (var i = 0; i < lclt.length; ++i)
+        ++lcfreq[lclt[i] & 31];
+      for (var i = 0; i < lcdt.length; ++i)
+        ++lcfreq[lcdt[i] & 31];
+      var _e = hTree(lcfreq, 7), lct = _e.t, mlcb = _e.l;
+      var nlcc = 19;
+      for (; nlcc > 4 && !lct[clim[nlcc - 1]]; --nlcc)
+        ;
+      var flen = bl + 5 << 3;
+      var ftlen = clen(lf, flt) + clen(df, fdt) + eb;
+      var dtlen = clen(lf, dlt) + clen(df, ddt) + eb + 14 + 3 * nlcc + clen(lcfreq, lct) + 2 * lcfreq[16] + 3 * lcfreq[17] + 7 * lcfreq[18];
+      if (bs >= 0 && flen <= ftlen && flen <= dtlen)
+        return wfblk(out2, p, dat.subarray(bs, bs + bl));
+      var lm, ll, dm, dl;
+      wbits(out2, p, 1 + (dtlen < ftlen)), p += 2;
+      if (dtlen < ftlen) {
+        lm = hMap(dlt, mlb, 0), ll = dlt, dm = hMap(ddt, mdb, 0), dl = ddt;
+        var llm = hMap(lct, mlcb, 0);
+        wbits(out2, p, nlc - 257);
+        wbits(out2, p + 5, ndc - 1);
+        wbits(out2, p + 10, nlcc - 4);
+        p += 14;
+        for (var i = 0; i < nlcc; ++i)
+          wbits(out2, p + 3 * i, lct[clim[i]]);
+        p += 3 * nlcc;
+        var lcts = [lclt, lcdt];
+        for (var it = 0; it < 2; ++it) {
+          var clct = lcts[it];
+          for (var i = 0; i < clct.length; ++i) {
+            var len = clct[i] & 31;
+            wbits(out2, p, llm[len]), p += lct[len];
+            if (len > 15)
+              wbits(out2, p, clct[i] >> 5 & 127), p += clct[i] >> 12;
+          }
+        }
+      } else {
+        lm = flm, ll = flt, dm = fdm, dl = fdt;
+      }
+      for (var i = 0; i < li; ++i) {
+        var sym = syms[i];
+        if (sym > 255) {
+          var len = sym >> 18 & 31;
+          wbits16(out2, p, lm[len + 257]), p += ll[len + 257];
+          if (len > 7)
+            wbits(out2, p, sym >> 23 & 31), p += fleb[len];
+          var dst = sym & 31;
+          wbits16(out2, p, dm[dst]), p += dl[dst];
+          if (dst > 3)
+            wbits16(out2, p, sym >> 5 & 8191), p += fdeb[dst];
+        } else {
+          wbits16(out2, p, lm[sym]), p += ll[sym];
+        }
+      }
+      wbits16(out2, p, lm[256]);
+      return p + ll[256];
+    };
+    deo = /* @__PURE__ */ new i32([65540, 131080, 131088, 131104, 262176, 1048704, 1048832, 2114560, 2117632]);
+    et = /* @__PURE__ */ new u82(0);
+    dflt = function(dat, lvl, plvl, pre, post, st) {
+      var s = st.z || dat.length;
+      var o = new u82(pre + s + 5 * (1 + Math.ceil(s / 7e3)) + post);
+      var w = o.subarray(pre, o.length - post);
+      var lst = st.l;
+      var pos = (st.r || 0) & 7;
+      if (lvl) {
+        if (pos)
+          w[0] = st.r >> 3;
+        var opt = deo[lvl - 1];
+        var n = opt >> 13, c = opt & 8191;
+        var msk_1 = (1 << plvl) - 1;
+        var prev = st.p || new u16(32768), head = st.h || new u16(msk_1 + 1);
+        var bs1_1 = Math.ceil(plvl / 3), bs2_1 = 2 * bs1_1;
+        var hsh = function(i2) {
+          return (dat[i2] ^ dat[i2 + 1] << bs1_1 ^ dat[i2 + 2] << bs2_1) & msk_1;
+        };
+        var syms = new i32(25e3);
+        var lf = new u16(288), df = new u16(32);
+        var lc_1 = 0, eb = 0, i = st.i || 0, li = 0, wi = st.w || 0, bs = 0;
+        for (; i + 2 < s; ++i) {
+          var hv = hsh(i);
+          var imod = i & 32767, pimod = head[hv];
+          prev[imod] = pimod;
+          head[hv] = imod;
+          if (wi <= i) {
+            var rem = s - i;
+            if ((lc_1 > 7e3 || li > 24576) && (rem > 423 || !lst)) {
+              pos = wblk(dat, w, 0, syms, lf, df, eb, li, bs, i - bs, pos);
+              li = lc_1 = eb = 0, bs = i;
+              for (var j = 0; j < 286; ++j)
+                lf[j] = 0;
+              for (var j = 0; j < 30; ++j)
+                df[j] = 0;
+            }
+            var l = 2, d = 0, ch_1 = c, dif = imod - pimod & 32767;
+            if (rem > 2 && hv == hsh(i - dif)) {
+              var maxn = Math.min(n, rem) - 1;
+              var maxd = Math.min(32767, i);
+              var ml = Math.min(258, rem);
+              while (dif <= maxd && --ch_1 && imod != pimod) {
+                if (dat[i + l] == dat[i + l - dif]) {
+                  var nl = 0;
+                  for (; nl < ml && dat[i + nl] == dat[i + nl - dif]; ++nl)
+                    ;
+                  if (nl > l) {
+                    l = nl, d = dif;
+                    if (nl > maxn)
+                      break;
+                    var mmd = Math.min(dif, nl - 2);
+                    var md = 0;
+                    for (var j = 0; j < mmd; ++j) {
+                      var ti = i - dif + j & 32767;
+                      var pti = prev[ti];
+                      var cd = ti - pti & 32767;
+                      if (cd > md)
+                        md = cd, pimod = ti;
+                    }
+                  }
+                }
+                imod = pimod, pimod = prev[imod];
+                dif += imod - pimod & 32767;
+              }
+            }
+            if (d) {
+              syms[li++] = 268435456 | revfl[l] << 18 | revfd[d];
+              var lin = revfl[l] & 31, din = revfd[d] & 31;
+              eb += fleb[lin] + fdeb[din];
+              ++lf[257 + lin];
+              ++df[din];
+              wi = i + l;
+              ++lc_1;
+            } else {
+              syms[li++] = dat[i];
+              ++lf[dat[i]];
+            }
+          }
+        }
+        for (i = Math.max(i, wi); i < s; ++i) {
+          syms[li++] = dat[i];
+          ++lf[dat[i]];
+        }
+        pos = wblk(dat, w, lst, syms, lf, df, eb, li, bs, i - bs, pos);
+        if (!lst) {
+          st.r = pos & 7 | w[pos / 8 | 0] << 3;
+          pos -= 7;
+          st.h = head, st.p = prev, st.i = i, st.w = wi;
+        }
+      } else {
+        for (var i = st.w || 0; i < s + lst; i += 65535) {
+          var e = i + 65535;
+          if (e >= s) {
+            w[pos / 8 | 0] = lst;
+            e = s;
+          }
+          pos = wfblk(w, pos + 1, dat.subarray(i, e));
+        }
+        st.i = s;
+      }
+      return slc(o, 0, pre + shft(pos) + post);
+    };
+    dopt = function(dat, opt, pre, post, st) {
+      if (!st) {
+        st = { l: 1 };
+        if (opt.dictionary) {
+          var dict = opt.dictionary.subarray(-32768);
+          var newDat = new u82(dict.length + dat.length);
+          newDat.set(dict);
+          newDat.set(dat, dict.length);
+          dat = newDat;
+          st.w = dict.length;
+        }
+      }
+      return dflt(dat, opt.level == null ? 6 : opt.level, opt.mem == null ? st.l ? Math.ceil(Math.max(8, Math.min(13, Math.log(dat.length))) * 1.5) : 20 : 12 + opt.mem, pre, post, st);
+    };
+    td = typeof TextDecoder != "undefined" && /* @__PURE__ */ new TextDecoder();
+    tds = 0;
+    try {
+      td.decode(et, { stream: true });
+      tds = 1;
+    } catch (e) {
+    }
+  }
+});
+
+// local/shims/zlib.js
+var zlib_exports = {};
+__export(zlib_exports, {
+  default: () => zlib_default,
+  deflateRawSync: () => deflateRawSync,
+  inflateRawSync: () => inflateRawSync
+});
+function inflateRawSync(buf) {
+  return import_buffer.Buffer.from(inflateSync(new Uint8Array(buf)));
+}
+function deflateRawSync(buf) {
+  return import_buffer.Buffer.from(deflateSync(new Uint8Array(buf)));
+}
+var zlib_default;
+var init_zlib = __esm({
+  "local/shims/zlib.js"() {
+    init_globals_inject();
+    init_browser();
+    zlib_default = { inflateRawSync, deflateRawSync };
+  }
+});
+
+// server/importers/text.js
+var require_text = __commonJS({
+  "server/importers/text.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var zlib = (init_zlib(), __toCommonJS(zlib_exports));
+    function decodeEntities(s) {
+      const map = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", ndash: "\u2013", mdash: "\u2014", hellip: "\u2026", rsquo: "\u2019", lsquo: "\u2018", rdquo: "\u201D", ldquo: "\u201C" };
+      return s.replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z]+);/g, (m, e) => {
+        if (e[0] === "#") {
+          const code = e[1].toLowerCase() === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+          return Number.isFinite(code) ? String.fromCodePoint(code) : m;
+        }
+        return map[e] ?? m;
+      });
+    }
+    function htmlToText(html) {
+      let s = String(html);
+      s = s.replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, "");
+      s = s.replace(/<!--[\s\S]*?-->/g, "");
+      s = s.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li|h[1-6]|tr|blockquote|pre)>/gi, "\n").replace(/<li[^>]*>/gi, "\u2022 ").replace(/<\/td>/gi, "	");
+      s = s.replace(/<[^>]+>/g, "");
+      s = decodeEntities(s);
+      return s.replace(/\r/g, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    }
+    function extractTitle(html) {
+      const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html) || /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html);
+      return m ? htmlToText(m[1]).trim() : "";
+    }
+    function quotedPrintableDecode(s) {
+      return import_buffer.Buffer.from(String(s).replace(/=\r?\n/g, "").replace(/=([0-9A-F]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16))), "binary").toString("utf8");
+    }
+    function parseMime(raw) {
+      const text = import_buffer.Buffer.isBuffer(raw) ? raw.toString("latin1") : String(raw);
+      const headerEnd = text.search(/\r?\n\r?\n/);
+      const headers = text.slice(0, headerEnd);
+      const bm = /boundary="?([^"\r\n;]+)"?/i.exec(headers);
+      if (!bm) {
+        return [{ contentType: (/content-type:\s*([^;\r\n]+)/i.exec(headers) || [, "text/html"])[1].trim(), body: decodePart(headers, text.slice(headerEnd).trim()) }];
+      }
+      const parts = text.split(new RegExp("--" + bm[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?:--)?\\r?\\n"));
+      const out2 = [];
+      for (const p of parts.slice(1)) {
+        const he = p.search(/\r?\n\r?\n/);
+        if (he < 0) continue;
+        const h = p.slice(0, he);
+        const b = p.slice(he).replace(/^\r?\n\r?\n/, "");
+        const ct = (/content-type:\s*([^;\r\n]+)/i.exec(h) || [, ""])[1].trim().toLowerCase();
+        const loc = (/content-location:\s*([^\r\n]+)/i.exec(h) || [, ""])[1].trim();
+        if (!ct) continue;
+        out2.push({ contentType: ct, location: loc, body: decodePart(h, b) });
+      }
+      return out2;
+    }
+    function decodePart(headers, body) {
+      const enc = (/content-transfer-encoding:\s*([^\r\n]+)/i.exec(headers) || [, "7bit"])[1].trim().toLowerCase();
+      if (enc === "quoted-printable") return quotedPrintableDecode(body);
+      if (enc === "base64") return import_buffer.Buffer.from(body.replace(/\s+/g, ""), "base64");
+      return import_buffer.Buffer.from(body, "latin1").toString("utf8");
+    }
+    function unzip(buf) {
+      const files = /* @__PURE__ */ new Map();
+      const eocd = buf.lastIndexOf(import_buffer.Buffer.from([80, 75, 5, 6]));
+      if (eocd < 0) throw new Error("Not a ZIP archive");
+      const count = buf.readUInt16LE(eocd + 10);
+      let off = buf.readUInt32LE(eocd + 16);
+      for (let i = 0; i < count; i++) {
+        if (buf.readUInt32LE(off) !== 33639248) break;
+        const method = buf.readUInt16LE(off + 10);
+        const csize = buf.readUInt32LE(off + 20);
+        const nlen = buf.readUInt16LE(off + 28), elen = buf.readUInt16LE(off + 30), clen2 = buf.readUInt16LE(off + 32);
+        const lho = buf.readUInt32LE(off + 42);
+        const name = buf.toString("utf8", off + 46, off + 46 + nlen);
+        const lnlen = buf.readUInt16LE(lho + 26), lelen = buf.readUInt16LE(lho + 28);
+        const dataStart = lho + 30 + lnlen + lelen;
+        const data = buf.subarray(dataStart, dataStart + csize);
+        files.set(name, method === 8 ? zlib.inflateRawSync(data) : import_buffer.Buffer.from(data));
+        off += 46 + nlen + elen + clen2;
+      }
+      return files;
+    }
+    function docxToText(buf) {
+      const files = unzip(buf);
+      const xml = files.get("word/document.xml");
+      if (!xml) throw new Error("Not a DOCX file (word/document.xml missing)");
+      let s = xml.toString("utf8");
+      s = s.replace(/<w:tab\/>/g, "	").replace(/<w:br\/>|<w:cr\/>/g, "\n").replace(/<\/w:p>/g, "\n").replace(/<[^>]+>/g, "");
+      return decodeEntities(s).replace(/\n{3,}/g, "\n\n").trim();
+    }
+    function sniffDate(text) {
+      const s = String(text || "");
+      let m = /(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?))?/.exec(s);
+      if (m) {
+        const d = /* @__PURE__ */ new Date(m[1] + (m[2] ? "T" + m[2] : "T12:00:00"));
+        if (!isNaN(d)) return d.toISOString();
+      }
+      m = /\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b(?:,?\s+(\d{1,2}:\d{2}\s*(?:AM|PM)?))?/i.exec(s);
+      if (m) {
+        const y = m[3].length === 2 ? "20" + m[3] : m[3];
+        const d = /* @__PURE__ */ new Date(`${y}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}T12:00:00`);
+        if (!isNaN(d)) return d.toISOString();
+      }
+      m = /\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+(\d{1,2}),?\s+(\d{4})/i.exec(s);
+      if (m) {
+        const d = /* @__PURE__ */ new Date(`${m[1].slice(0, 3)} ${m[2]}, ${m[3]} 12:00:00`);
+        if (!isNaN(d)) return d.toISOString();
+      }
+      return null;
+    }
+    function sniffClientHints(text) {
+      const s = String(text || "");
+      const hints = { codes: [], names: [] };
+      for (const m of s.matchAll(/\b([CM]\d{2}-\d{4})\b/gi)) hints.codes.push(m[1].toUpperCase());
+      const kw = /\b(?:(?:client|participant|pt|patient|re|name|regarding)\s*[:\-]\s*|(?:with|for|regarding)\s+)/gi;
+      const nameRe = /^([A-Z][a-zA-Z'\-]+(?:,\s*|\s+)[A-Z][a-zA-Z'\-]+)/;
+      for (const m of s.matchAll(kw)) {
+        const nm = nameRe.exec(s.slice(m.index + m[0].length));
+        if (nm) hints.names.push(nm[1].trim());
+      }
+      hints.codes = [...new Set(hints.codes)];
+      hints.names = [...new Set(hints.names)].slice(0, 5);
+      return hints;
+    }
+    module.exports = { htmlToText, extractTitle, quotedPrintableDecode, parseMime, unzip, docxToText, sniffDate, sniffClientHints, decodeEntities };
+  }
+});
+
+// server/importers/pocketai.js
+var require_pocketai = __commonJS({
+  "server/importers/pocketai.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var { sniffDate, sniffClientHints } = require_text();
+    function pick(o, keys) {
+      for (const k of keys) if (o[k] !== void 0 && o[k] !== null && o[k] !== "") return o[k];
+      return void 0;
+    }
+    function normalizeItem(o, i) {
+      if (typeof o === "string") return normalizeTextNote(o, i);
+      const title = pick(o, ["title", "name", "subject", "heading"]) || `Pocket AI note ${i + 1}`;
+      const transcript = pick(o, ["transcript", "transcription", "text", "content", "body", "raw_text"]);
+      const summary = pick(o, ["summary", "ai_summary", "aiSummary", "abstract"]);
+      const notes = pick(o, ["notes", "note", "key_points", "keyPoints", "highlights"]);
+      const actions = pick(o, ["action_items", "actionItems", "actions", "todos", "tasks"]);
+      const parts = [];
+      if (summary) parts.push("## Summary\n" + str(summary));
+      if (notes) parts.push("## Notes\n" + str(notes));
+      if (actions) parts.push("## Action items\n" + (Array.isArray(actions) ? actions.map((a) => "- " + str(a)).join("\n") : str(actions)));
+      if (transcript) parts.push("## Transcript\n" + str(transcript));
+      const content = parts.join("\n\n").trim() || str(o);
+      const rawDate = pick(o, ["created_at", "createdAt", "date", "timestamp", "recorded_at", "recordedAt", "start_time", "updated_at"]);
+      let captured_at = null;
+      if (rawDate !== void 0) {
+        const d = typeof rawDate === "number" ? new Date(rawDate < 1e12 ? rawDate * 1e3 : rawDate) : new Date(rawDate);
+        if (!isNaN(d)) captured_at = d.toISOString();
+      }
+      if (!captured_at) captured_at = sniffDate(title) || sniffDate(content);
+      const tags = pick(o, ["tags", "labels", "categories"]);
+      const hints = sniffClientHints(`${title}
+${content}`);
+      return {
+        external_id: pick(o, ["id", "uuid", "note_id", "recording_id"]) ? String(pick(o, ["id", "uuid", "note_id", "recording_id"])) : null,
+        title: String(title).slice(0, 200),
+        content,
+        captured_at,
+        metadata: { source: "pocket_ai", tags: Array.isArray(tags) ? tags : tags ? [String(tags)] : [], duration: pick(o, ["duration", "duration_seconds", "length"]), hints, has_transcript: !!transcript, has_summary: !!summary }
+      };
+    }
+    function str(v) {
+      if (v === null || v === void 0) return "";
+      if (typeof v === "string") return v;
+      if (Array.isArray(v)) return v.map(str).join("\n");
+      if (typeof v === "object") {
+        if (v.text) return str(v.text);
+        if (v.content) return str(v.content);
+        return JSON.stringify(v, null, 2);
+      }
+      return String(v);
+    }
+    function normalizeTextNote(text, i) {
+      const lines = text.trim().split("\n");
+      let title = lines[0].replace(/^#+\s*/, "").trim().slice(0, 200) || `Pocket AI note ${i + 1}`;
+      const body = lines.slice(1).join("\n").trim();
+      const dateLine = /^(?:date|created|recorded)\s*[:\-]\s*(.+)$/im.exec(text);
+      const captured_at = dateLine && sniffDate(dateLine[1]) || sniffDate(title) || sniffDate(body.slice(0, 300));
+      return { external_id: null, title, content: body || text.trim(), captured_at, metadata: { source: "pocket_ai", hints: sniffClientHints(text) } };
+    }
+    function splitText(text) {
+      const t = String(text).replace(/\r\n/g, "\n").trim();
+      let chunks = t.split(/\n\s*(?:-{3,}|\*{3,}|_{3,}|={3,})\s*\n/).map((s) => s.trim()).filter(Boolean);
+      if (chunks.length === 1 && /^#\s/m.test(t)) chunks = t.split(/\n(?=#\s)/).map((s) => s.trim()).filter(Boolean);
+      return chunks;
+    }
+    function parse(input, { filename = "" } = {}) {
+      const text = import_buffer.Buffer.isBuffer(input) ? input.toString("utf8") : String(input);
+      const trimmed = text.trim();
+      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        let data;
+        try {
+          data = JSON.parse(trimmed);
+        } catch (e) {
+          throw new Error("Invalid JSON: " + e.message);
+        }
+        let arr = Array.isArray(data) ? data : data.notes || data.recordings || data.items || data.data || data.results;
+        if (!Array.isArray(arr)) arr = [data];
+        return arr.map(normalizeItem);
+      }
+      return splitText(text).map(normalizeTextNote);
+    }
+    module.exports = { parse, normalizeItem };
+  }
+});
+
+// server/importers/onenote.js
+var require_onenote = __commonJS({
+  "server/importers/onenote.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var T = require_text();
+    var config = require_config();
+    function pageFromHtml(html, { filename = "" } = {}) {
+      const title = T.extractTitle(html) || filename.replace(/\.[^.]+$/, "");
+      const meta = /<meta[^>]+name="?(?:created|creation-date|date)"?[^>]+content="([^"]+)"/i.exec(html);
+      const text = T.htmlToText(html);
+      const captured_at = meta && T.sniffDate(meta[1]) || T.sniffDate(text.split("\n").slice(0, 4).join(" ")) || null;
+      return { external_id: null, title: title.slice(0, 200), content: text, captured_at, metadata: { source: "onenote", filename, hints: T.sniffClientHints(`${title}
+${text}`) } };
+    }
+    function splitTextPages(text) {
+      const lines = String(text).replace(/\r\n/g, "\n").split("\n");
+      const pages = [];
+      let cur = null;
+      for (let i = 0; i < lines.length; i++) {
+        const l = lines[i];
+        const isHeader = l.trim() && lines[i + 1] !== void 0 && lines[i + 1].trim() === "" && lines[i + 2] && /^\s*(\w+day, )?\w+ \d{1,2}, \d{4}\s*$/.test(lines[i + 2]);
+        if (isHeader) {
+          if (cur) pages.push(cur);
+          cur = { title: l.trim(), lines: [], date: lines[i + 2].trim() + " " + (lines[i + 3] || "").trim() };
+          i += 3;
+          continue;
+        }
+        if (!cur) cur = { title: "", lines: [], date: "" };
+        cur.lines.push(l);
+      }
+      if (cur) pages.push(cur);
+      return pages.map((p, i) => {
+        const content = p.lines.join("\n").trim();
+        return { external_id: null, title: (p.title || `OneNote page ${i + 1}`).slice(0, 200), content, captured_at: T.sniffDate(p.date) || T.sniffDate(content.slice(0, 300)), metadata: { source: "onenote", hints: T.sniffClientHints(`${p.title}
+${content}`) } };
+      }).filter((p) => p.content || p.title);
+    }
+    function parseFile(buf, filename = "") {
+      const ext = (filename.split(".").pop() || "").toLowerCase();
+      if (ext === "mht" || ext === "mhtml" || /^(From|MIME-Version|Content-Type):/i.test(buf.toString("latin1", 0, 64))) {
+        const parts = T.parseMime(buf);
+        const htmlParts = parts.filter((p) => p.contentType.includes("text/html"));
+        if (!htmlParts.length) throw new Error("MHT file contains no HTML pages");
+        return htmlParts.map((p, i) => pageFromHtml(typeof p.body === "string" ? p.body : p.body.toString("utf8"), { filename: p.location || `${filename}#${i + 1}` }));
+      }
+      if (ext === "html" || ext === "htm" || /^\s*<(!doctype|html)/i.test(buf.toString("utf8", 0, 200))) {
+        const html = buf.toString("utf8");
+        const chunks = html.split(/<div[^>]+page-break-before:\s*always[^>]*>/i);
+        return chunks.length > 1 ? chunks.map((c, i) => pageFromHtml(c, { filename: `${filename}#${i + 1}` })).filter((p) => p.content) : [pageFromHtml(html, { filename })];
+      }
+      if (ext === "docx" || buf[0] === 80 && buf[1] === 75) {
+        const text2 = T.docxToText(buf);
+        const pages2 = splitTextPages(text2);
+        return pages2.length ? pages2 : [{ external_id: null, title: filename.replace(/\.[^.]+$/, ""), content: text2, captured_at: T.sniffDate(text2.slice(0, 300)), metadata: { source: "onenote", filename, hints: T.sniffClientHints(text2) } }];
+      }
+      if (ext === "pdf" || buf.toString("latin1", 0, 5) === "%PDF-") throw new Error("PDF export is not supported. In OneNote use File \u2192 Export \u2192 Single File Web Page (.mht) or Word (.docx).");
+      const text = buf.toString("utf8");
+      const pages = splitTextPages(text);
+      return pages.length > 1 ? pages : [{ external_id: null, title: (text.split("\n")[0] || filename).trim().slice(0, 200), content: text.trim(), captured_at: T.sniffDate(text.slice(0, 300)), metadata: { source: "onenote", filename, hints: T.sniffClientHints(text) } }];
+    }
+    async function graphToken() {
+      const { tenantId, clientId, clientSecret } = config.msGraph;
+      if (!tenantId || !clientId || !clientSecret) throw new Error("Microsoft Graph is not configured (MS_TENANT_ID, MS_CLIENT_ID, MS_CLIENT_SECRET)");
+      const res = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(tenantId)}/oauth2/v2.0/token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, scope: "https://graph.microsoft.com/.default", grant_type: "client_credentials" })
+      });
+      if (!res.ok) throw new Error(`Graph token request failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
+      return (await res.json()).access_token;
+    }
+    function graphBase(user) {
+      return `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(user || config.msGraph.user)}/onenote`;
+    }
+    async function graphGet(url, token2, accept = "application/json") {
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token2}`, Accept: accept } });
+      if (!res.ok) throw new Error(`Graph request failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
+      return accept === "application/json" ? res.json() : res.text();
+    }
+    async function listNotebooks({ token: token2, user } = {}) {
+      token2 = token2 || await graphToken();
+      const nb = await graphGet(`${graphBase(user)}/notebooks?$expand=sections($select=id,displayName)`, token2);
+      return (nb.value || []).map((n) => ({ id: n.id, name: n.displayName, lastModified: n.lastModifiedDateTime, sections: (n.sections || []).map((s) => ({ id: s.id, name: s.displayName })) }));
+    }
+    async function listPages(sectionId, { token: token2, user, since } = {}) {
+      token2 = token2 || await graphToken();
+      let url = `${graphBase(user)}/sections/${encodeURIComponent(sectionId)}/pages?$select=id,title,createdDateTime,lastModifiedDateTime&$top=100${since ? `&$filter=lastModifiedDateTime ge ${since}` : ""}`;
+      const out2 = [];
+      while (url) {
+        const j = await graphGet(url, token2);
+        out2.push(...j.value || []);
+        url = j["@odata.nextLink"];
+      }
+      return out2.map((p) => ({ id: p.id, title: p.title, created: p.createdDateTime, modified: p.lastModifiedDateTime }));
+    }
+    async function fetchPages(pageIds, { token: token2, user } = {}) {
+      token2 = token2 || await graphToken();
+      const items = [];
+      for (const id of pageIds) {
+        const meta = await graphGet(`${graphBase(user)}/pages/${encodeURIComponent(id)}?$select=id,title,createdDateTime,lastModifiedDateTime,parentSection`, token2);
+        const html = await graphGet(`${graphBase(user)}/pages/${encodeURIComponent(id)}/content?includeIDs=false`, token2, "text/html");
+        const page = pageFromHtml(html, { filename: meta.title });
+        page.external_id = id;
+        page.title = (meta.title || page.title || "Untitled").slice(0, 200);
+        page.captured_at = meta.createdDateTime || page.captured_at;
+        page.metadata.modified = meta.lastModifiedDateTime;
+        page.metadata.section = meta.parentSection?.displayName;
+        items.push(page);
+      }
+      return items;
+    }
+    module.exports = { parseFile, pageFromHtml, splitTextPages, listNotebooks, listPages, fetchPages, graphToken };
+  }
+});
+
+// server/routes/imports.js
+var require_imports = __commonJS({
+  "server/routes/imports.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var config = require_config();
+    var { badRequest, notFound, forbidden, HttpError: HttpError3 } = require_http();
+    var { validate, paging } = require_validate();
+    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2, blindIndex: blindIndex2 } = require_crypto();
+    var pocket = require_pocketai();
+    var onenote = require_onenote();
+    var M = require_clients_model();
+    function suggestClient(ctx, hints) {
+      if (!hints) return null;
+      for (const code of hints.codes || []) {
+        const c = db3.one(`SELECT id FROM clients WHERE client_code=? AND deleted_at IS NULL`, code);
+        if (c && auth3.canAccessClient(ctx.user, c.id)) return c.id;
+      }
+      for (const name of hints.names || []) {
+        const parts = name.split(/[,\s]+/).filter(Boolean);
+        if (parts.length < 2) continue;
+        const a = blindIndex2(parts.join("")), b = blindIndex2([...parts].reverse().join(""));
+        const c = db3.one(`SELECT id FROM clients WHERE full_name_idx IN (?,?) AND deleted_at IS NULL`, a, b);
+        if (c && auth3.canAccessClient(ctx.user, c.id)) return c.id;
+      }
+      return null;
+    }
+    function stage(ctx, { source, filename, items, importedBy, metadata }) {
+      if (!items.length) throw badRequest("No notes were found in the input");
+      if (items.length > 500) throw badRequest("Too many items in one import (max 500)");
+      const id = uuid2();
+      db3.transaction(() => {
+        db3.run(`INSERT INTO imports(id,source,filename,imported_by,item_count,metadata) VALUES(?,?,?,?,?,?)`, id, source, filename || null, importedBy || null, items.length, metadata ? JSON.stringify(metadata) : null);
+        for (const it of items) {
+          const suggested = ctx ? suggestClient(ctx, it.metadata?.hints) : null;
+          db3.run(
+            `INSERT INTO import_items(id,import_id,external_id,title,content_enc,captured_at,metadata,suggested_client_id) VALUES(?,?,?,?,?,?,?,?)`,
+            uuid2(),
+            id,
+            it.external_id || null,
+            it.title || null,
+            encrypt3(it.content || ""),
+            it.captured_at || null,
+            JSON.stringify(it.metadata || {}),
+            suggested
+          );
+        }
+      });
+      return id;
+    }
+    function itemView(x, { withContent = true } = {}) {
+      const o = { ...x, metadata: x.metadata ? JSON.parse(x.metadata) : {} };
+      delete o.content_enc;
+      if (withContent) o.content = decrypt3(x.content_enc);
+      if (o.metadata?.hints) {
+        o.hints = o.metadata.hints;
+      }
+      return o;
+    }
+    module.exports = (r) => {
+      r.post("/api/imports/upload", auth3.requireAuth, auth3.requirePerm("imports:write"), (ctx) => {
+        let source, filename, buf;
+        if (ctx.body && ctx.body.text !== void 0) {
+          const v = validate(ctx.body, { source: { type: "string", required: true, enum: ["pocket_ai", "onenote", "generic"] }, filename: { type: "string", maxLen: 200 }, text: { type: "string", required: true, maxLen: 2e7 } });
+          source = v.source;
+          filename = v.filename || "pasted.txt";
+          buf = import_buffer.Buffer.from(v.text, "utf8");
+        } else {
+          source = String(ctx.query.get("source") || ctx.headers["x-import-source"] || "generic");
+          filename = String(ctx.headers["x-filename"] || ctx.query.get("filename") || "upload");
+          buf = ctx.rawBody || import_buffer.Buffer.alloc(0);
+          if (ctx.headers["content-transfer-encoding"] === "base64") buf = import_buffer.Buffer.from(buf.toString("latin1"), "base64");
+        }
+        if (!buf.length) throw badRequest("Empty upload");
+        let items;
+        try {
+          if (source === "pocket_ai") items = pocket.parse(buf, { filename });
+          else if (source === "onenote") items = onenote.parseFile(buf, filename);
+          else {
+            const ext = filename.split(".").pop().toLowerCase();
+            items = ["json"].includes(ext) ? pocket.parse(buf, { filename }) : onenote.parseFile(buf, filename);
+          }
+        } catch (e) {
+          throw badRequest("Could not parse file: " + e.message);
+        }
+        const id = stage(ctx, { source: source === "onenote" ? "onenote_file" : source, filename, items, importedBy: ctx.user.id });
+        audit3.log({ user: ctx.user, action: "import.upload", entity: "import", entityId: id, ip: ctx.ip, details: { source, filename, count: items.length } });
+        ctx.status = 201;
+        return { id, count: items.length };
+      });
+      r.get("/api/imports", auth3.requireAuth, auth3.requirePerm("imports:read", "imports:write"), (ctx) => {
+        const rows = db3.all(`SELECT i.*, u.display_name AS imported_by_name,
+      (SELECT COUNT(*) FROM import_items x WHERE x.import_id=i.id AND x.status='staged') AS staged,
+      (SELECT COUNT(*) FROM import_items x WHERE x.import_id=i.id AND x.status='committed') AS committed,
+      (SELECT COUNT(*) FROM import_items x WHERE x.import_id=i.id AND x.status='discarded') AS discarded
+      FROM imports i LEFT JOIN users u ON u.id=i.imported_by ${auth3.hasPerm(ctx.user, "clients:all") ? "" : "WHERE i.imported_by=? OR i.imported_by IS NULL"} ORDER BY i.created_at DESC LIMIT 200`, ...auth3.hasPerm(ctx.user, "clients:all") ? [] : [ctx.user.id]);
+        return { imports: rows };
+      });
+      r.get("/api/imports/:id", auth3.requireAuth, auth3.requirePerm("imports:read", "imports:write"), (ctx) => {
+        const imp = db3.one(`SELECT * FROM imports WHERE id=?`, ctx.params.id);
+        if (!imp) throw notFound();
+        if (imp.imported_by && imp.imported_by !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden();
+        const items = db3.all(`SELECT x.*, c.client_code AS suggested_client_code FROM import_items x LEFT JOIN clients c ON c.id=x.suggested_client_id WHERE import_id=? ORDER BY captured_at, created_at`, imp.id).map((x) => itemView(x));
+        for (const it of items) if (it.suggested_client_id) {
+          const c = db3.one(`SELECT * FROM clients WHERE id=?`, it.suggested_client_id);
+          it.suggested_client_name = c ? M.summary(c).display_name : null;
+        }
+        audit3.log({ user: ctx.user, action: "import.view", entity: "import", entityId: imp.id, ip: ctx.ip });
+        return { import: imp, items };
+      });
+      r.post("/api/imports/items/:id/commit", auth3.requireAuth, auth3.requirePerm("imports:write"), (ctx) => {
+        const it = db3.one(`SELECT * FROM import_items WHERE id=?`, ctx.params.id);
+        if (!it) throw notFound();
+        if (it.status !== "staged") throw badRequest("Item already processed");
+        const v = validate(ctx.body, {
+          client_id: { type: "string", required: true },
+          kind: { type: "string", required: true, enum: ["clinical", "admin"] },
+          format: { type: "string" },
+          title: { type: "string", maxLen: 200 },
+          content: { type: "string", maxLen: 5e4 },
+          occurred_at: { type: "datetime" },
+          create_intervention: { type: "boolean" },
+          intervention_type: { type: "string" },
+          duration_minutes: { type: "number", integer: true, min: 0 }
+        });
+        if (!auth3.hasPerm(ctx.user, `notes:${v.kind}:write`)) throw forbidden(`You cannot author ${v.kind} notes`);
+        if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, v.client_id)) throw notFound("Client not found");
+        auth3.assertClientAccess(ctx, v.client_id);
+        const imp = db3.one(`SELECT source FROM imports WHERE id=?`, it.import_id);
+        const source = imp.source.startsWith("onenote") ? "onenote" : imp.source === "pocket_ai" || imp.source === "api" ? "pocket_ai" : "import";
+        const content = v.content ?? decrypt3(it.content_enc);
+        const occurred = v.occurred_at || it.captured_at || db3.now();
+        const noteId = uuid2();
+        let interventionId = null;
+        db3.transaction(() => {
+          if (v.create_intervention) {
+            interventionId = uuid2();
+            db3.run(`INSERT INTO interventions(id,client_id,user_id,type,occurred_at,duration_minutes,location,summary) VALUES(?,?,?,?,?,?,?,?)`, interventionId, v.client_id, ctx.user.id, v.intervention_type || "case_management", occurred, v.duration_minutes || 0, "other", (v.title || it.title || "").slice(0, 300));
+          }
+          db3.run(
+            `INSERT INTO notes(id,client_id,author_id,kind,format,title,content_enc,occurred_at,source,source_ref,import_item_id,intervention_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+            noteId,
+            v.client_id,
+            ctx.user.id,
+            v.kind,
+            v.format || "narrative",
+            v.title || it.title || null,
+            encrypt3(content),
+            occurred,
+            source,
+            it.external_id || null,
+            it.id,
+            interventionId
+          );
+          db3.run(`UPDATE import_items SET status='committed', note_id=? WHERE id=?`, noteId, it.id);
+          const left = db3.one(`SELECT COUNT(*) n FROM import_items WHERE import_id=? AND status='staged'`, it.import_id).n;
+          if (left === 0) db3.run(`UPDATE imports SET status='completed' WHERE id=?`, it.import_id);
+        });
+        audit3.log({ user: ctx.user, action: "import.commit", entity: "note", entityId: noteId, clientId: v.client_id, ip: ctx.ip, details: { import_item: it.id, kind: v.kind, intervention: interventionId } });
+        return { note_id: noteId, intervention_id: interventionId };
+      });
+      r.post("/api/imports/items/:id/discard", auth3.requireAuth, auth3.requirePerm("imports:write"), (ctx) => {
+        const it = db3.one(`SELECT * FROM import_items WHERE id=?`, ctx.params.id);
+        if (!it) throw notFound();
+        if (it.status !== "staged") throw badRequest("Item already processed");
+        db3.run(`UPDATE import_items SET status='discarded' WHERE id=?`, it.id);
+        audit3.log({ user: ctx.user, action: "import.discard", entity: "import_item", entityId: it.id, ip: ctx.ip });
+        return { ok: true };
+      });
+      r.delete("/api/imports/:id", auth3.requireAuth, auth3.requirePerm("imports:write"), (ctx) => {
+        const imp = db3.one(`SELECT * FROM imports WHERE id=?`, ctx.params.id);
+        if (!imp) throw notFound();
+        if (imp.imported_by !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden();
+        db3.run(`DELETE FROM import_items WHERE import_id=? AND status<>'committed'`, imp.id);
+        db3.run(`UPDATE imports SET status='purged' WHERE id=?`, imp.id);
+        audit3.log({ user: ctx.user, action: "import.purge", entity: "import", entityId: imp.id, ip: ctx.ip });
+        return { ok: true };
+      });
+      r.get("/api/imports/onenote/status", auth3.requireAuth, auth3.requirePerm("imports:write"), () => ({ configured: !!(config.msGraph.tenantId && config.msGraph.clientId && config.msGraph.clientSecret && config.msGraph.user), user: config.msGraph.user ? config.msGraph.user.replace(/(.{2}).+(@.+)/, "$1***$2") : null }));
+      r.get("/api/imports/onenote/notebooks", auth3.requireAuth, auth3.requirePerm("imports:write"), async (ctx) => {
+        try {
+          return { notebooks: await onenote.listNotebooks({ token: ctx.headers["x-ms-access-token"] }) };
+        } catch (e) {
+          throw new HttpError3(502, e.message);
+        }
+      });
+      r.get("/api/imports/onenote/sections/:id/pages", auth3.requireAuth, auth3.requirePerm("imports:write"), async (ctx) => {
+        try {
+          return { pages: await onenote.listPages(ctx.params.id, { token: ctx.headers["x-ms-access-token"], since: ctx.query.get("since") || void 0 }) };
+        } catch (e) {
+          throw new HttpError3(502, e.message);
+        }
+      });
+      r.post("/api/imports/onenote/fetch", auth3.requireAuth, auth3.requirePerm("imports:write"), async (ctx) => {
+        const { page_ids } = validate(ctx.body, { page_ids: { type: "array", required: true } });
+        if (!page_ids.length || page_ids.length > 200) throw badRequest("Select 1\u2013200 pages");
+        let items;
+        try {
+          items = await onenote.fetchPages(page_ids.map(String), { token: ctx.headers["x-ms-access-token"] });
+        } catch (e) {
+          throw new HttpError3(502, e.message);
+        }
+        const id = stage(ctx, { source: "onenote_graph", filename: null, items, importedBy: ctx.user.id, metadata: { pages: page_ids.length } });
+        audit3.log({ user: ctx.user, action: "import.onenote_graph", entity: "import", entityId: id, ip: ctx.ip, details: { count: items.length } });
+        ctx.status = 201;
+        return { id, count: items.length };
+      });
+      module.exports.stage = stage;
+    };
+    module.exports.stageFn = (args) => stage(null, args);
+  }
+});
+
+// server/routes/intake.js
+var require_intake = __commonJS({
+  "server/routes/intake.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var { rateLimit } = require_app2();
+    var { HttpError: HttpError3, unauthorized, badRequest } = require_http();
+    var { sha256: sha2562 } = require_crypto();
+    var pocket = require_pocketai();
+    var importsRoutes = require_imports();
+    function apiKeyAuth(ctx) {
+      if (!rateLimit(`intake:${ctx.ip}`, 60, 6e4)) throw new HttpError3(429, "Too many requests");
+      const h = ctx.headers["authorization"] || "";
+      const key = h.startsWith("Bearer ") ? h.slice(7).trim() : ctx.headers["x-api-key"] || "";
+      if (!key) throw unauthorized("API key required");
+      const k = db3.one(`SELECT * FROM api_keys WHERE key_hash=? AND revoked_at IS NULL`, sha2562(key));
+      if (!k) {
+        audit3.log({ user: null, action: "intake.denied", ip: ctx.ip, success: false });
+        throw unauthorized("Invalid API key");
+      }
+      db3.run(`UPDATE api_keys SET last_used_at=? WHERE id=?`, db3.now(), k.id);
+      return k;
+    }
+    module.exports = (r) => {
+      r.post("/api/intake/notes", (ctx) => {
+        const k = apiKeyAuth(ctx);
+        let payload = ctx.body;
+        if (ctx.rawBody && (!payload || !Object.keys(payload).length)) payload = ctx.rawBody.toString("utf8");
+        if (!payload || typeof payload === "object" && !Object.keys(payload).length) throw badRequest("Empty payload");
+        let items;
+        try {
+          items = typeof payload === "string" ? pocket.parse(payload) : (Array.isArray(payload) ? payload : payload.notes || payload.items || payload.recordings || [payload]).map(pocket.normalizeItem);
+        } catch (e) {
+          throw badRequest("Could not parse payload: " + e.message);
+        }
+        const id = importsRoutes.stageFn({ source: "api", filename: `api:${k.name}`, items, importedBy: k.created_by, metadata: { api_key: k.prefix } });
+        audit3.log({ user: { id: k.created_by, username: `apikey:${k.name}` }, action: "intake.received", entity: "import", entityId: id, ip: ctx.ip, details: { count: items.length } });
+        ctx.status = 202;
+        return { import_id: id, staged: items.length, message: "Notes staged for review in SUDS \u2192 Imports" };
+      });
+      r.get("/api/intake/ping", (ctx) => {
+        const k = apiKeyAuth(ctx);
+        return { ok: true, key: k.name };
+      });
+    };
+  }
+});
+
+// server/routes/interventions.js
+var require_interventions = __commonJS({
+  "server/routes/interventions.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var crud = require_crud();
+    var C = require_constants();
+    var { uuid: uuid2 } = require_crypto();
+    module.exports = (r) => {
+      crud.build(r, {
+        table: "interventions",
+        entity: "intervention",
+        perm: "interventions",
+        dateCol: "occurred_at",
+        restrictOwner: true,
+        joins: "JOIN users u ON u.id=interventions.user_id JOIN clients c ON c.id=interventions.client_id LEFT JOIN funding_sources f ON f.id=interventions.funding_source_id",
+        select: "interventions.*, u.display_name AS worker, c.client_code, f.name AS funding_source",
+        shape: {
+          client_id: { type: "string", required: true },
+          user_id: { type: "string" },
+          type: { type: "string", required: true, enum: C.INTERVENTION_TYPES },
+          occurred_at: { type: "datetime", required: true },
+          duration_minutes: { type: "number", integer: true, min: 0, max: 1440 },
+          location: { type: "string", enum: C.LOCATIONS },
+          modality: { type: "string", enum: C.MODALITIES },
+          outcome: { type: "string", enum: C.OUTCOMES },
+          stage_of_change: { type: "string", enum: C.STAGES },
+          naloxone_kits: { type: "number", integer: true, min: 0 },
+          fentanyl_strips: { type: "number", integer: true, min: 0 },
+          funding_source_id: { type: "string" },
+          cost: { type: "number", min: 0 },
+          summary: { type: "string", maxLen: 2e3 },
+          follow_up_due: { type: "date" },
+          log_time: { type: "boolean" },
+          time_category: { type: "string", enum: C.TIME_CATEGORIES }
+        },
+        filters: (ctx, where, params) => {
+          const t = ctx.query.get("type");
+          if (t) {
+            where.push("interventions.type=?");
+            params.push(t);
+          }
+        },
+        beforeInsert: (ctx, v) => {
+          v._log_time = v.log_time;
+          delete v.log_time;
+          v._time_category = v.time_category;
+          delete v.time_category;
+        },
+        beforeUpdate: (ctx, v) => {
+          delete v.log_time;
+          delete v.time_category;
+        },
+        afterInsert: (ctx, row) => {
+          if (row._log_time && row.duration_minutes > 0) {
+            db3.run(
+              `INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,funding_source_id,intervention_id,description) VALUES(?,?,?,?,?,?,?,?,?)`,
+              uuid2(),
+              row.user_id,
+              row.client_id,
+              row.occurred_at.slice(0, 10),
+              row.duration_minutes,
+              row._time_category || "direct_service",
+              row.funding_source_id || null,
+              row.id,
+              row.type.replace(/_/g, " ")
+            );
+          }
+          if (row.naloxone_kits > 0) db3.run(`UPDATE clients SET naloxone_provided=1, naloxone_last_date=?, updated_at=? WHERE id=?`, row.occurred_at.slice(0, 10), db3.now(), row.client_id);
+          if (row.follow_up_due) db3.run(
+            `INSERT INTO tasks(id,client_id,assigned_to,created_by,title,due_at,priority) VALUES(?,?,?,?,?,?,?)`,
+            uuid2(),
+            row.client_id,
+            row.user_id,
+            ctx.user.id,
+            `Follow up: ${row.type.replace(/_/g, " ")}`,
+            row.follow_up_due,
+            "normal"
+          );
+        },
+        canEdit: crud.ownerOrManager()
+      });
+      r.get("/api/meta/constants", () => C);
+    };
+  }
+});
+
+// server/routes/me.js
+var require_me = __commonJS({
+  "server/routes/me.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var { badRequest } = require_http();
+    var M = require_clients_model();
+    var MAX_PREF_BYTES = 8e3;
+    module.exports = (r) => {
+      r.get("/api/me/prefs", auth3.requireAuth, (ctx) => {
+        const out2 = {};
+        for (const p of db3.all(`SELECT key, value FROM user_prefs WHERE user_id=?`, ctx.user.id)) {
+          try {
+            out2[p.key] = JSON.parse(p.value);
+          } catch {
+            out2[p.key] = p.value;
+          }
+        }
+        return { prefs: out2 };
+      });
+      r.put("/api/me/prefs", auth3.requireAuth, (ctx) => {
+        const body = ctx.body || {};
+        if (typeof body !== "object" || Array.isArray(body)) throw badRequest("Object expected");
+        const keys = Object.keys(body).slice(0, 50);
+        db3.transaction(() => {
+          for (const k of keys) {
+            if (!/^[a-zA-Z0-9_.-]{1,60}$/.test(k)) throw badRequest(`Invalid preference key ${k}`);
+            const v = JSON.stringify(body[k] ?? null);
+            if (v.length > MAX_PREF_BYTES) throw badRequest(`Preference ${k} is too large`);
+            if (body[k] === null) db3.run(`DELETE FROM user_prefs WHERE user_id=? AND key=?`, ctx.user.id, k);
+            else db3.run(`INSERT INTO user_prefs(user_id,key,value) VALUES(?,?,?) ON CONFLICT(user_id,key) DO UPDATE SET value=excluded.value, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, ctx.user.id, k, v);
+          }
+        });
+        return { ok: true };
+      });
+      r.get("/api/me/continue", auth3.requireAuth, (ctx) => {
+        const uid = ctx.user.id;
+        const recentIds = db3.all(`SELECT client_id, MAX(at) at FROM audit_log WHERE user_id=? AND client_id IS NOT NULL AND action IN ('client.view','client.create','client.update','intervention.create','call.create','note.create','note.update') GROUP BY client_id ORDER BY at DESC LIMIT 8`, uid);
+        const recent = [];
+        for (const x of recentIds) {
+          const c = db3.one(`SELECT * FROM clients WHERE id=? AND deleted_at IS NULL`, x.client_id);
+          if (c && auth3.canAccessClient(ctx.user, c.id)) recent.push({ ...M.summary(c), last_at: x.at });
+        }
+        const drafts = db3.all(`SELECT n.id, n.client_id, n.kind, n.format, n.title, n.updated_at, c.client_code FROM notes n JOIN clients c ON c.id=n.client_id WHERE n.author_id=? AND n.status='draft' AND n.deleted_at IS NULL ORDER BY n.updated_at DESC LIMIT 8`, uid);
+        for (const d of drafts) {
+          const c = db3.one(`SELECT * FROM clients WHERE id=?`, d.client_id);
+          d.client_name = c ? M.summary(c).display_name : d.client_code;
+        }
+        const staged = db3.one(`SELECT COUNT(*) n FROM import_items x JOIN imports i ON i.id=x.import_id WHERE x.status='staged' AND (i.imported_by=? OR i.imported_by IS NULL)`, uid).n;
+        const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        const dueToday = db3.all(`SELECT t.id, t.title, t.due_at, t.priority, t.client_id, c.client_code FROM tasks t LEFT JOIN clients c ON c.id=t.client_id WHERE t.assigned_to=? AND t.status IN ('open','in_progress') AND substr(t.due_at,1,10) <= ? ORDER BY t.due_at LIMIT 10`, uid, today);
+        for (const t of dueToday) {
+          if (t.client_id) {
+            const c = db3.one(`SELECT * FROM clients WHERE id=?`, t.client_id);
+            t.client_name = c ? M.summary(c).display_name : t.client_code;
+          }
+        }
+        const lastSeenElsewhere = db3.one(`SELECT last_seen_at, user_agent FROM sessions WHERE user_id=? AND revoked_at IS NULL AND id<>? ORDER BY last_seen_at DESC LIMIT 1`, uid, ctx.session.id);
+        return { recent, drafts, staged_imports: staged, due_today: dueToday, other_device: lastSeenElsewhere ? { last_seen_at: lastSeenElsewhere.last_seen_at, mobile: /Mobi|Android|iPhone|iPad/i.test(lastSeenElsewhere.user_agent || "") } : null };
+      });
+    };
+  }
+});
+
+// server/routes/notes.js
+var require_notes = __commonJS({
+  "server/routes/notes.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var C = require_constants();
+    var { badRequest, notFound, forbidden } = require_http();
+    var { validate, paging } = require_validate();
+    var { encrypt: encrypt3, decrypt: decrypt3, sha256: sha2562, uuid: uuid2 } = require_crypto();
+    var shape = {
+      client_id: { type: "string", required: true },
+      kind: { type: "string", required: true, enum: ["clinical", "admin"] },
+      format: { type: "string", enum: C.NOTE_FORMATS },
+      title: { type: "string", maxLen: 200 },
+      content: { type: "string", required: true, maxLen: 5e4 },
+      structured: { type: "object" },
+      occurred_at: { type: "datetime", required: true },
+      intervention_id: { type: "string" },
+      call_id: { type: "string" },
+      part2_protected: { type: "boolean" },
+      source: { type: "string", enum: ["manual", "pocket_ai", "onenote", "import", "api"] },
+      source_ref: { type: "string", maxLen: 300 }
+    };
+    function kindPerm(kind, rw) {
+      return `notes:${kind}:${rw}`;
+    }
+    function canRead(ctx, note) {
+      if (auth3.hasPerm(ctx.user, kindPerm(note.kind, "read")) || auth3.hasPerm(ctx.user, kindPerm(note.kind, "write"))) return true;
+      if (note.kind === "clinical" && auth3.hasPerm(ctx.user, "notes:clinical:breakglass") && ctx.headers["x-break-glass-reason"]) return "breakglass";
+      return false;
+    }
+    function present(row, { withContent = true } = {}) {
+      const out2 = { ...row };
+      delete out2.content_enc;
+      delete out2.structured_enc;
+      if (withContent) {
+        out2.content = decrypt3(row.content_enc);
+        out2.structured = row.structured_enc ? JSON.parse(decrypt3(row.structured_enc)) : null;
+      }
+      return out2;
+    }
+    function load(ctx, id) {
+      const n = db3.one(`SELECT n.*, u.display_name AS author, s.display_name AS signer FROM notes n JOIN users u ON u.id=n.author_id LEFT JOIN users s ON s.id=n.signed_by WHERE n.id=? AND n.deleted_at IS NULL`, id);
+      if (!n) throw notFound("Note not found");
+      auth3.assertClientAccess(ctx, n.client_id);
+      return n;
+    }
+    module.exports = (r) => {
+      r.get("/api/notes", auth3.requireAuth, auth3.requirePerm("notes:admin:read", "notes:clinical:read", "notes:admin:write", "notes:clinical:write"), (ctx) => {
+        const { limit: limit2, offset } = paging(ctx.query, { limit: 100, max: 500 });
+        const kinds = ["admin", "clinical"].filter((k) => auth3.hasPerm(ctx.user, kindPerm(k, "read")) || auth3.hasPerm(ctx.user, kindPerm(k, "write")));
+        const where = ["n.deleted_at IS NULL", `n.kind IN (${kinds.map(() => "?").join(",") || "''"})`];
+        const params = [...kinds];
+        const cf = auth3.caseloadFilter(ctx.user, "n.client_id");
+        where.push(cf.sql);
+        params.push(...cf.params);
+        for (const [q, col] of [["client_id", "n.client_id"], ["kind", "n.kind"], ["status", "n.status"], ["author_id", "n.author_id"], ["source", "n.source"]]) {
+          const v = ctx.query.get(q);
+          if (v) {
+            where.push(`${col}=?`);
+            params.push(v);
+          }
+        }
+        if (ctx.query.get("mine") === "1") {
+          where.push("n.author_id=?");
+          params.push(ctx.user.id);
+        }
+        if (ctx.query.get("from")) {
+          where.push("n.occurred_at >= ?");
+          params.push(ctx.query.get("from"));
+        }
+        if (ctx.query.get("to")) {
+          where.push("n.occurred_at <= ?");
+          params.push(ctx.query.get("to") + "T23:59:59.999Z");
+        }
+        const w = "WHERE " + where.join(" AND ");
+        const rows = db3.all(`SELECT n.id,n.client_id,n.kind,n.format,n.title,n.occurred_at,n.status,n.signed_at,n.source,n.author_id,n.created_at,n.updated_at,u.display_name AS author,c.client_code,
+      (SELECT COUNT(*) FROM note_addenda a WHERE a.note_id=n.id) AS addenda FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id ${w} ORDER BY n.occurred_at DESC LIMIT ? OFFSET ?`, ...params, limit2, offset);
+        return { rows, total: db3.one(`SELECT COUNT(*) n FROM notes n ${w}`, ...params).n };
+      });
+      r.post("/api/notes", auth3.requireAuth, (ctx) => {
+        const v = validate(ctx.body, shape);
+        if (!auth3.hasPerm(ctx.user, kindPerm(v.kind, "write"))) throw forbidden(`You cannot author ${v.kind} notes`);
+        if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, v.client_id)) throw notFound("Client not found");
+        auth3.assertClientAccess(ctx, v.client_id);
+        const id = uuid2();
+        db3.run(
+          `INSERT INTO notes(id,client_id,author_id,kind,format,title,content_enc,structured_enc,occurred_at,intervention_id,call_id,part2_protected,source,source_ref) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          id,
+          v.client_id,
+          ctx.user.id,
+          v.kind,
+          v.format || "narrative",
+          v.title || null,
+          encrypt3(v.content),
+          v.structured ? encrypt3(JSON.stringify(v.structured)) : null,
+          v.occurred_at,
+          v.intervention_id || null,
+          v.call_id || null,
+          v.part2_protected ?? 1,
+          v.source || "manual",
+          v.source_ref || null
+        );
+        audit3.log({ user: ctx.user, action: "note.create", entity: "note", entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format } });
+        ctx.status = 201;
+        return { id };
+      });
+      r.get("/api/notes/:id", auth3.requireAuth, (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        const access = canRead(ctx, n);
+        if (!access) {
+          audit3.log({ user: ctx.user, action: "note.view.denied", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, success: false });
+          throw forbidden("You do not have access to this note");
+        }
+        const addenda = db3.all(`SELECT a.id,a.reason,a.created_at,a.content_enc,u.display_name AS author FROM note_addenda a JOIN users u ON u.id=a.author_id WHERE a.note_id=? ORDER BY a.created_at`, n.id).map((a) => ({ ...a, content: decrypt3(a.content_enc), content_enc: void 0 }));
+        audit3.log({ user: ctx.user, action: access === "breakglass" ? "note.view.breakglass" : "note.view", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: access === "breakglass" ? { reason: String(ctx.headers["x-break-glass-reason"]).slice(0, 300) } : { kind: n.kind } });
+        return { note: { ...present(n), addenda } };
+      });
+      r.put("/api/notes/:id", auth3.requireAuth, (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
+        if (n.status !== "draft") throw badRequest("Signed notes cannot be edited; add an addendum instead");
+        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden("Only the author can edit a draft");
+        const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected }, { partial: true });
+        const sets = [];
+        const params = [];
+        for (const k of ["format", "title", "occurred_at", "intervention_id", "call_id", "part2_protected"]) if (v[k] !== void 0) {
+          sets.push(`${k}=?`);
+          params.push(v[k]);
+        }
+        if (v.content !== void 0) {
+          sets.push("content_enc=?");
+          params.push(encrypt3(v.content));
+        }
+        if (v.structured !== void 0) {
+          sets.push("structured_enc=?");
+          params.push(v.structured ? encrypt3(JSON.stringify(v.structured)) : null);
+        }
+        if (sets.length) db3.run(`UPDATE notes SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, db3.now(), n.id);
+        audit3.log({ user: ctx.user, action: "note.update", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { fields: Object.keys(v) } });
+        return { ok: true };
+      });
+      r.post("/api/notes/:id/sign", auth3.requireAuth, (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
+        if (n.status !== "draft") throw badRequest("Note is already signed");
+        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden("Only the author (or a supervisor co-signing) can sign");
+        const { password } = validate(ctx.body, { password: { type: "string", required: true, maxLen: 500 } });
+        const u = db3.one(`SELECT password_hash FROM users WHERE id=?`, ctx.user.id);
+        if (!require_crypto().verifyPassword(password, u.password_hash)) {
+          audit3.log({ user: ctx.user, action: "note.sign.failed", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, success: false });
+          throw forbidden("Password verification failed");
+        }
+        const hash2 = sha2562(`${n.id}|${ctx.user.id}|${n.content_enc}|${n.structured_enc || ""}`);
+        db3.run(`UPDATE notes SET status='signed', signed_at=?, signed_by=?, signature_hash=?, updated_at=? WHERE id=?`, db3.now(), ctx.user.id, hash2, db3.now(), n.id);
+        audit3.log({ user: ctx.user, action: "note.sign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { hash: hash2 } });
+        return { ok: true, signature_hash: hash2 };
+      });
+      r.post("/api/notes/:id/addenda", auth3.requireAuth, (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
+        const { content, reason } = validate(ctx.body, { content: { type: "string", required: true, maxLen: 2e4 }, reason: { type: "string", maxLen: 300 } });
+        const id = uuid2();
+        db3.run(`INSERT INTO note_addenda(id,note_id,author_id,content_enc,reason) VALUES(?,?,?,?,?)`, id, n.id, ctx.user.id, encrypt3(content), reason || null);
+        if (n.status === "signed") db3.run(`UPDATE notes SET status='amended', updated_at=? WHERE id=?`, db3.now(), n.id);
+        audit3.log({ user: ctx.user, action: "note.addendum", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip });
+        ctx.status = 201;
+        return { id };
+      });
+      r.delete("/api/notes/:id", auth3.requireAuth, (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
+        if (n.status !== "draft") throw badRequest("Signed notes are part of the legal record and cannot be deleted");
+        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden();
+        db3.run(`UPDATE notes SET deleted_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), n.id);
+        audit3.log({ user: ctx.user, action: "note.delete", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip });
+        return { ok: true };
+      });
+      r.get("/api/notes/:id/verify", auth3.requireAuth, (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        if (!canRead(ctx, n)) throw forbidden();
+        if (!n.signature_hash) return { signed: false };
+        const hash2 = sha2562(`${n.id}|${n.signed_by}|${n.content_enc}|${n.structured_enc || ""}`);
+        return { signed: true, intact: hash2 === n.signature_hash, signed_at: n.signed_at, signer: n.signer };
+      });
+    };
+  }
+});
+
+// server/routes/referrals.js
+var require_referrals = __commonJS({
+  "server/routes/referrals.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var crud = require_crud();
+    var C = require_constants();
+    var { uuid: uuid2 } = require_crypto();
+    module.exports = (r) => {
+      crud.build(r, {
+        table: "referrals",
+        entity: "referral",
+        perm: "referrals",
+        dateCol: "referred_at",
+        restrictOwner: true,
+        joins: "JOIN users u ON u.id=referrals.user_id JOIN clients c ON c.id=referrals.client_id JOIN resources res ON res.id=referrals.resource_id",
+        select: "referrals.*, u.display_name AS worker, c.client_code, res.name AS resource_name, res.category AS resource_category, res.phone AS resource_phone",
+        shape: {
+          client_id: { type: "string", required: true },
+          resource_id: { type: "string", required: true },
+          user_id: { type: "string" },
+          referred_at: { type: "datetime", required: true },
+          status: { type: "string", enum: C.REFERRAL_STATUSES },
+          urgency: { type: "string", enum: ["routine", "urgent", "emergent"] },
+          appointment_at: { type: "datetime" },
+          admitted_at: { type: "datetime" },
+          closed_at: { type: "datetime" },
+          outcome: { type: "string", maxLen: 500 },
+          barrier: { type: "string", maxLen: 300 },
+          warm_handoff: { type: "boolean" },
+          consent_id: { type: "string" },
+          follow_up_due: { type: "date" },
+          notes: { type: "string", maxLen: 2e3 }
+        },
+        filters: (ctx, where, params) => {
+          const s = ctx.query.get("status");
+          if (s) {
+            where.push("referrals.status=?");
+            params.push(s);
+          }
+          if (ctx.query.get("open") === "1") where.push(`referrals.status IN ('pending','contacted','accepted','waitlisted','scheduled')`);
+          const res = ctx.query.get("resource_id");
+          if (res) {
+            where.push("referrals.resource_id=?");
+            params.push(res);
+          }
+        },
+        beforeInsert: (ctx, v) => {
+          if (!db3.one(`SELECT 1 FROM resources WHERE id=?`, v.resource_id)) throw require_http().badRequest("Unknown resource");
+        },
+        beforeUpdate: (ctx, v, row) => {
+          if (v.status && ["completed", "closed", "declined_by_client", "declined_by_provider"].includes(v.status) && !v.closed_at && !row.closed_at) v.closed_at = db3.now();
+          if (v.status === "admitted" && !v.admitted_at && !row.admitted_at) v.admitted_at = db3.now();
+        },
+        afterInsert: (ctx, row) => {
+          if (row.follow_up_due) db3.run(
+            `INSERT INTO tasks(id,client_id,assigned_to,created_by,title,due_at,priority) VALUES(?,?,?,?,?,?,?)`,
+            uuid2(),
+            row.client_id,
+            row.user_id,
+            ctx.user.id,
+            `Follow up on referral`,
+            row.follow_up_due,
+            row.urgency === "emergent" ? "urgent" : "normal"
+          );
+        },
+        canEdit: crud.ownerOrManager()
+      });
+    };
+  }
+});
+
+// server/routes/reports.js
+var require_reports = __commonJS({
+  "server/routes/reports.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var { sendJson } = require_http();
+    var M = require_clients_model();
+    function range(ctx) {
+      const to = ctx.query.get("to") || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const from = ctx.query.get("from") || new Date(Date.parse(to) - 89 * 864e5).toISOString().slice(0, 10);
+      return { from, to, toEnd: to + "T23:59:59.999Z" };
+    }
+    function csv(rows, columns) {
+      const esc = (v) => {
+        if (v === null || v === void 0) return "";
+        const s = String(v);
+        return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      };
+      return [columns.join(","), ...rows.map((r) => columns.map((c) => esc(r[c])).join(","))].join("\r\n");
+    }
+    module.exports = (r) => {
+      r.get("/api/reports/dashboard", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
+        const { from, to, toEnd } = range(ctx);
+        const cf = auth3.caseloadFilter(ctx.user, "c.id");
+        const expand = (sql, p) => {
+          const before = sql.slice(0, sql.indexOf("{CF}"));
+          const n = (before.match(/\?/g) || []).length;
+          return [sql.replace("{CF}", cf.sql), [...p.slice(0, n), ...cf.params, ...p.slice(n)]];
+        };
+        const scoped = (sql, ...p) => {
+          const [q, a] = expand(sql, p);
+          return db3.all(q, ...a);
+        };
+        const scoped1 = (sql, ...p) => {
+          const [q, a] = expand(sql, p);
+          return db3.one(q, ...a);
+        };
+        const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        const out2 = {
+          from,
+          to,
+          clients: {
+            active: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF}`).n,
+            waitlist: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='waitlist' AND {CF}`).n,
+            new_in_range: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND intake_date BETWEEN ? AND ? AND {CF}`, from, to).n,
+            high_risk: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND risk_level IN ('high','critical') AND {CF}`).n,
+            no_contact_30d: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} AND NOT EXISTS (SELECT 1 FROM interventions i WHERE i.client_id=c.id AND i.occurred_at >= ?) AND NOT EXISTS (SELECT 1 FROM calls ca WHERE ca.client_id=c.id AND ca.outcome='reached' AND ca.started_at >= ?)`, new Date(Date.now() - 30 * 864e5).toISOString(), new Date(Date.now() - 30 * 864e5).toISOString()).n,
+            by_status: scoped(`SELECT status, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND {CF} GROUP BY status`),
+            by_substance: scoped(`SELECT COALESCE(primary_substance,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k ORDER BY n DESC`),
+            mat: scoped(`SELECT COALESCE(mat_status,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k`)
+          },
+          interventions: {
+            total: scoped1(`SELECT COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.occurred_at BETWEEN ? AND ? AND {CF}`, from, toEnd).n,
+            minutes: scoped1(`SELECT COALESCE(SUM(duration_minutes),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.occurred_at BETWEEN ? AND ? AND {CF}`, from, toEnd).n,
+            by_type: db3.all(`SELECT i.type k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.occurred_at BETWEEN ? AND ? AND ${cf.sql} GROUP BY i.type ORDER BY n DESC`, from, toEnd, ...cf.params),
+            by_week: db3.all(`SELECT strftime('%Y-%W', i.occurred_at) k, COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.occurred_at BETWEEN ? AND ? AND ${cf.sql} GROUP BY k ORDER BY k`, from, toEnd, ...cf.params),
+            naloxone_kits: scoped1(`SELECT COALESCE(SUM(naloxone_kits),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.occurred_at BETWEEN ? AND ? AND {CF}`, from, toEnd).n,
+            fentanyl_strips: scoped1(`SELECT COALESCE(SUM(fentanyl_strips),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.occurred_at BETWEEN ? AND ? AND {CF}`, from, toEnd).n,
+            by_worker: db3.all(`SELECT u.display_name k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN users u ON u.id=i.user_id JOIN clients c ON c.id=i.client_id WHERE i.occurred_at BETWEEN ? AND ? AND ${cf.sql} GROUP BY u.id ORDER BY n DESC`, from, toEnd, ...cf.params)
+          },
+          calls: {
+            total: db3.one(`SELECT COUNT(*) n FROM calls WHERE started_at BETWEEN ? AND ?`, from, toEnd).n,
+            minutes: db3.one(`SELECT COALESCE(SUM(duration_minutes),0) n FROM calls WHERE started_at BETWEEN ? AND ?`, from, toEnd).n,
+            crisis: db3.one(`SELECT COUNT(*) n FROM calls WHERE crisis=1 AND started_at BETWEEN ? AND ?`, from, toEnd).n,
+            by_outcome: db3.all(`SELECT outcome k, COUNT(*) n FROM calls WHERE started_at BETWEEN ? AND ? GROUP BY outcome ORDER BY n DESC`, from, toEnd),
+            by_direction: db3.all(`SELECT direction k, COUNT(*) n FROM calls WHERE started_at BETWEEN ? AND ? GROUP BY direction`, from, toEnd)
+          },
+          referrals: {
+            total: db3.one(`SELECT COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE r.referred_at BETWEEN ? AND ? AND ${cf.sql}`, from, toEnd, ...cf.params).n,
+            by_status: db3.all(`SELECT r.status k, COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE r.referred_at BETWEEN ? AND ? AND ${cf.sql} GROUP BY r.status ORDER BY n DESC`, from, toEnd, ...cf.params),
+            by_category: db3.all(`SELECT res.category k, COUNT(*) n, SUM(CASE WHEN r.status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id WHERE r.referred_at BETWEEN ? AND ? AND ${cf.sql} GROUP BY res.category ORDER BY n DESC`, from, toEnd, ...cf.params),
+            open: db3.one(`SELECT COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE r.status IN ('pending','contacted','accepted','waitlisted','scheduled') AND ${cf.sql}`, ...cf.params).n,
+            median_days_to_admit: (() => {
+              const d = db3.all(`SELECT (julianday(admitted_at)-julianday(referred_at)) d FROM referrals WHERE admitted_at IS NOT NULL AND referred_at BETWEEN ? AND ? ORDER BY d`, from, toEnd).map((x) => x.d);
+              return d.length ? d[Math.floor(d.length / 2)] : null;
+            })()
+          },
+          tasks: {
+            open: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (assigned_to=? OR ?)`, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n,
+            overdue: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND due_at < ? AND (assigned_to=? OR ?)`, db3.now(), ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n,
+            due_today: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND substr(due_at,1,10)=? AND (assigned_to=? OR ?)`, today, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n
+          },
+          time: auth3.hasPerm(ctx.user, "time:read") || auth3.hasPerm(ctx.user, "time:write") ? {
+            minutes: db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE work_date BETWEEN ? AND ? AND (user_id=? OR ?)`, from, to, ctx.user.id, auth3.hasPerm(ctx.user, "time:all") ? 1 : 0).n,
+            by_category: db3.all(`SELECT category k, SUM(minutes) n FROM time_entries WHERE work_date BETWEEN ? AND ? AND (user_id=? OR ?) GROUP BY category ORDER BY n DESC`, from, to, ctx.user.id, auth3.hasPerm(ctx.user, "time:all") ? 1 : 0)
+          } : null,
+          notes: {
+            unsigned: db3.one(`SELECT COUNT(*) n FROM notes WHERE status='draft' AND deleted_at IS NULL AND author_id=?`, ctx.user.id).n,
+            unsigned_overdue: db3.one(`SELECT COUNT(*) n FROM notes WHERE status='draft' AND deleted_at IS NULL AND author_id=? AND created_at < ?`, ctx.user.id, new Date(Date.now() - Number(db3.getSetting("note_lock_days", "3")) * 864e5).toISOString()).n,
+            staged_imports: db3.one(`SELECT COUNT(*) n FROM import_items x JOIN imports i ON i.id=x.import_id WHERE x.status='staged' AND (i.imported_by=? OR i.imported_by IS NULL OR ?)`, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n
+          },
+          budget: auth3.hasPerm(ctx.user, "budget:read") ? db3.one(`SELECT (SELECT COALESCE(SUM(total_amount),0) FROM funding_sources WHERE is_active=1) total, (SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status IN ('approved','reimbursed')) spent, (SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status='pending') pending`) : null,
+          consents_expiring: db3.all(`SELECT co.id, co.client_id, co.type, co.recipient, co.expires_at, c.client_code FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY co.expires_at LIMIT 20`, today, new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10), ...cf.params)
+        };
+        return out2;
+      });
+      r.get("/api/reports/monthly", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
+        const months = Math.min(24, Math.max(1, Number(ctx.query.get("months") || 12)));
+        const start2 = /* @__PURE__ */ new Date();
+        start2.setUTCDate(1);
+        start2.setUTCMonth(start2.getUTCMonth() - months + 1);
+        const s = start2.toISOString().slice(0, 10);
+        return {
+          intakes: db3.all(`SELECT substr(intake_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND intake_date >= ? GROUP BY month ORDER BY month`, s),
+          discharges: db3.all(`SELECT substr(discharge_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND discharge_date >= ? GROUP BY month ORDER BY month`, s),
+          interventions: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
+          calls: db3.all(`SELECT substr(started_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes FROM calls WHERE started_at >= ? GROUP BY month ORDER BY month`, s),
+          referrals: db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals WHERE referred_at >= ? GROUP BY month ORDER BY month`, s),
+          naloxone: db3.all(`SELECT substr(occurred_at,1,7) month, SUM(naloxone_kits) kits, SUM(fentanyl_strips) strips FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
+          mat_linkage: db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n FROM referrals r JOIN resources res ON res.id=r.resource_id WHERE res.category IN ('mat_otp','mat_obot') AND r.status IN ('admitted','completed') AND referred_at >= ? GROUP BY month ORDER BY month`, s),
+          spend: auth3.hasPerm(ctx.user, "budget:read") ? db3.all(`SELECT substr(spent_at,1,7) month, SUM(amount) amount FROM expenditures WHERE status IN ('approved','reimbursed') AND spent_at >= ? GROUP BY month ORDER BY month`, s) : [],
+          time: db3.all(`SELECT substr(work_date,1,7) month, SUM(minutes) minutes FROM time_entries WHERE work_date >= ? GROUP BY month ORDER BY month`, s)
+        };
+      });
+      r.get("/api/reports/export/:kind", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
+        const { from, to, toEnd } = range(ctx);
+        const identified = ctx.query.get("identified") === "1" && auth3.hasPerm(ctx.user, "export:read");
+        const cf = auth3.caseloadFilter(ctx.user, "c.id");
+        let rows, cols2;
+        switch (ctx.params.kind) {
+          case "interventions":
+            rows = db3.all(`SELECT i.occurred_at, c.client_code, i.type, i.duration_minutes, i.location, i.modality, i.outcome, i.naloxone_kits, i.fentanyl_strips, u.display_name worker, f.name funding_source, i.cost, i.summary FROM interventions i JOIN clients c ON c.id=i.client_id JOIN users u ON u.id=i.user_id LEFT JOIN funding_sources f ON f.id=i.funding_source_id WHERE i.occurred_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY i.occurred_at`, from, toEnd, ...cf.params);
+            cols2 = ["occurred_at", "client_code", "type", "duration_minutes", "location", "modality", "outcome", "naloxone_kits", "fentanyl_strips", "worker", "funding_source", "cost", "summary"];
+            break;
+          case "calls":
+            rows = db3.all(`SELECT ca.started_at, c.client_code, ca.direction, ca.contact_type, ca.duration_minutes, ca.outcome, ca.crisis, ca.purpose, u.display_name worker FROM calls ca LEFT JOIN clients c ON c.id=ca.client_id JOIN users u ON u.id=ca.user_id WHERE ca.started_at BETWEEN ? AND ? ORDER BY ca.started_at`, from, toEnd);
+            cols2 = ["started_at", "client_code", "direction", "contact_type", "duration_minutes", "outcome", "crisis", "purpose", "worker"];
+            break;
+          case "time":
+            rows = db3.all(`SELECT t.work_date, u.display_name worker, c.client_code, t.category, t.minutes, t.billable, f.name funding_source, t.description FROM time_entries t JOIN users u ON u.id=t.user_id LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN funding_sources f ON f.id=t.funding_source_id WHERE t.work_date BETWEEN ? AND ? AND (t.user_id=? OR ?) ORDER BY t.work_date`, from, to, ctx.user.id, auth3.hasPerm(ctx.user, "time:all") ? 1 : 0);
+            cols2 = ["work_date", "worker", "client_code", "category", "minutes", "billable", "funding_source", "description"];
+            break;
+          case "referrals":
+            rows = db3.all(`SELECT r.referred_at, c.client_code, res.name resource, res.category, r.status, r.urgency, r.warm_handoff, r.appointment_at, r.admitted_at, r.closed_at, r.outcome, r.barrier, u.display_name worker FROM referrals r JOIN clients c ON c.id=r.client_id JOIN resources res ON res.id=r.resource_id JOIN users u ON u.id=r.user_id WHERE r.referred_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY r.referred_at`, from, toEnd, ...cf.params);
+            cols2 = ["referred_at", "client_code", "resource", "category", "status", "urgency", "warm_handoff", "appointment_at", "admitted_at", "closed_at", "outcome", "barrier", "worker"];
+            break;
+          case "expenditures":
+            auth3.requirePerm("budget:read")(ctx);
+            rows = db3.all(`SELECT e.spent_at, f.name fund, b.label line, e.category, e.amount, e.status, c.client_code, e.vendor, e.description, e.receipt_ref, u.display_name worker FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id LEFT JOIN budget_lines b ON b.id=e.budget_line_id LEFT JOIN clients c ON c.id=e.client_id JOIN users u ON u.id=e.user_id WHERE e.spent_at BETWEEN ? AND ? ORDER BY e.spent_at`, from, to);
+            cols2 = ["spent_at", "fund", "line", "category", "amount", "status", "client_code", "vendor", "description", "receipt_ref", "worker"];
+            break;
+          case "clients": {
+            const raw = db3.all(`SELECT c.* FROM clients c WHERE c.deleted_at IS NULL AND ${cf.sql} ORDER BY c.client_code`, ...cf.params);
+            rows = raw.map((x) => {
+              const d = M.decryptRow(x, { deidentify: !identified });
+              return d;
+            });
+            cols2 = ["client_code", ...identified ? ["last_name", "first_name", "dob", "phone"] : [], "status", "intake_date", "discharge_date", "primary_substance", "asam_level", "mat_status", "risk_level", "housing_status", "insurance", "overdose_history", "naloxone_provided", "referral_source", "city", "zip"];
+            break;
+          }
+          default:
+            throw require_http().notFound("Unknown export");
+        }
+        audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: ctx.params.kind, rows: rows.length, identified, from, to } });
+        const body = csv(rows, cols2);
+        ctx.res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="suds-${ctx.params.kind}-${from}_${to}.csv"` });
+        ctx.res.end(body);
+      });
+    };
+  }
+});
+
+// server/routes/resources.js
+var require_resources = __commonJS({
+  "server/routes/resources.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var { notFound } = require_http();
+    var { validate, paging } = require_validate();
+    var { uuid: uuid2 } = require_crypto();
+    var C = require_constants();
+    var shape = {
+      name: { type: "string", required: true, maxLen: 200 },
+      category: { type: "string", required: true, enum: C.RESOURCE_CATEGORIES },
+      organization: { type: "string", maxLen: 200 },
+      phone: { type: "string", maxLen: 40 },
+      fax: { type: "string", maxLen: 40 },
+      email: { type: "string", maxLen: 200 },
+      website: { type: "string", maxLen: 300 },
+      address: { type: "string", maxLen: 300 },
+      city: { type: "string", maxLen: 100 },
+      zip: { type: "string", maxLen: 12 },
+      hours: { type: "string", maxLen: 200 },
+      eligibility: { type: "string", maxLen: 1e3 },
+      services: { type: "string", maxLen: 1e3 },
+      languages: { type: "string", maxLen: 200 },
+      accepts_medicaid: { type: "boolean" },
+      accepts_uninsured: { type: "boolean" },
+      mat_offered: { type: "string", maxLen: 200 },
+      capacity_notes: { type: "string", maxLen: 1e3 },
+      contact_person: { type: "string", maxLen: 200 },
+      is_active: { type: "boolean" },
+      last_verified_at: { type: "date" },
+      notes: { type: "string", maxLen: 2e3 }
+    };
+    module.exports = (r) => {
+      r.get("/api/resources", auth3.requireAuth, auth3.requirePerm("resources:read", "resources:write"), (ctx) => {
+        const { limit: limit2, offset } = paging(ctx.query, { limit: 200, max: 1e3 });
+        const where = [];
+        const params = [];
+        const q = (ctx.query.get("q") || "").trim();
+        if (q) {
+          where.push("(name LIKE ? OR organization LIKE ? OR services LIKE ? OR city LIKE ?)");
+          params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+        }
+        const cat = ctx.query.get("category");
+        if (cat) {
+          where.push("category=?");
+          params.push(cat);
+        }
+        if (ctx.query.get("active") !== "0") where.push("is_active=1");
+        const w = where.length ? "WHERE " + where.join(" AND ") : "";
+        const rows = db3.all(`SELECT r.*, (SELECT COUNT(*) FROM referrals x WHERE x.resource_id=r.id) AS referral_count FROM resources r ${w} ORDER BY category, name LIMIT ? OFFSET ?`, ...params, limit2, offset);
+        return { rows, total: db3.one(`SELECT COUNT(*) n FROM resources r ${w}`, ...params).n };
+      });
+      r.get("/api/resources/:id", auth3.requireAuth, auth3.requirePerm("resources:read", "resources:write"), (ctx) => {
+        const row = db3.one(`SELECT * FROM resources WHERE id=?`, ctx.params.id);
+        if (!row) throw notFound();
+        row.referral_stats = db3.all(`SELECT status, COUNT(*) n FROM referrals WHERE resource_id=? GROUP BY status`, row.id);
+        return { row };
+      });
+      r.post("/api/resources", auth3.requireAuth, auth3.requirePerm("resources:write"), (ctx) => {
+        const v = validate(ctx.body, shape);
+        const id = uuid2();
+        const keys = Object.keys(v);
+        db3.run(`INSERT INTO resources(id,${keys.join(",")}) VALUES(?,${keys.map(() => "?").join(",")})`, id, ...keys.map((k) => v[k]));
+        audit3.log({ user: ctx.user, action: "resource.create", entity: "resource", entityId: id, ip: ctx.ip });
+        ctx.status = 201;
+        return { id };
+      });
+      r.put("/api/resources/:id", auth3.requireAuth, auth3.requirePerm("resources:write"), (ctx) => {
+        const row = db3.one(`SELECT id FROM resources WHERE id=?`, ctx.params.id);
+        if (!row) throw notFound();
+        const v = validate(ctx.body, { ...shape, name: { ...shape.name, required: false }, category: { ...shape.category, required: false } }, { partial: true });
+        const keys = Object.keys(v);
+        if (!keys.length) return { ok: true };
+        db3.run(`UPDATE resources SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), db3.now(), row.id);
+        audit3.log({ user: ctx.user, action: "resource.update", entity: "resource", entityId: row.id, ip: ctx.ip, details: { fields: keys } });
+        return { ok: true };
+      });
+      r.delete("/api/resources/:id", auth3.requireAuth, auth3.requirePerm("resources:write"), (ctx) => {
+        const row = db3.one(`SELECT id FROM resources WHERE id=?`, ctx.params.id);
+        if (!row) throw notFound();
+        db3.run(`UPDATE resources SET is_active=0, updated_at=? WHERE id=?`, db3.now(), row.id);
+        audit3.log({ user: ctx.user, action: "resource.deactivate", entity: "resource", entityId: row.id, ip: ctx.ip });
+        return { ok: true };
+      });
+    };
+  }
+});
+
+// server/routes/setup.js
+var require_setup = __commonJS({
+  "server/routes/setup.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var path = (init_path(), __toCommonJS(path_exports));
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    var db3 = require_db();
+    var config = require_config();
+    var audit3 = require_audit();
+    var auth3 = require_auth();
+    var listener = (init_listener(), __toCommonJS(listener_exports));
+    var { badRequest, HttpError: HttpError3 } = require_http();
+    var { validate } = require_validate();
+    var { hashPassword, uuid: uuid2 } = require_crypto();
+    var selfsigned = (init_empty(), __toCommonJS(empty_exports));
+    function setupNeeded() {
+      return !config.setupComplete && !config.isTest && config.keySource !== "env" && !proc.env.SUDS_SKIP_SETUP;
+    }
+    function onlyBootstrapAdmin() {
+      return db3.one(`SELECT COUNT(*) n FROM users WHERE NOT (username='admin' AND must_change_password=1 AND last_login_at IS NULL)`).n === 0;
+    }
+    module.exports = (r) => {
+      r.get("/api/setup/status", () => ({ needed: setupNeeded() && onlyBootstrapAdmin(), listener: listener.describe(), hostname: (init_os(), __toCommonJS(os_exports)).hostname(), keySource: config.keySource, env: config.env, version: config.version }));
+      r.post("/api/setup/complete", async (ctx) => {
+        if (!(setupNeeded() && onlyBootstrapAdmin())) throw new HttpError3(403, "Setup has already been completed");
+        const ip = ctx.req.socket.remoteAddress || "";
+        if (!/^(127\.|::1|::ffff:127\.)/.test(ip)) throw new HttpError3(403, "Setup must be completed from a browser on the computer running SUDS");
+        const v = validate(ctx.body, {
+          org_name: { type: "string", required: true, maxLen: 200 },
+          county_name: { type: "string", maxLen: 120 },
+          program_contact: { type: "string", maxLen: 200 },
+          admin_username: { type: "string", required: true, maxLen: 60, pattern: /^[a-zA-Z0-9._@-]+$/ },
+          admin_display_name: { type: "string", required: true, maxLen: 120 },
+          admin_password: { type: "string", required: true, maxLen: 500 },
+          network: { type: "string", required: true, enum: ["local", "lan"] },
+          port: { type: "number", integer: true, min: 1, max: 65535 },
+          https: { type: "boolean" },
+          extra_hosts: { type: "string", maxLen: 300 }
+          // port omitted → 'auto' (standard port with fallback)
+        });
+        const errs = auth3.passwordPolicy(v.admin_password);
+        if (errs.length) throw badRequest("Password must contain " + errs.join(", "), { fields: { admin_password: errs.join(", ") } });
+        if (config.keySource !== "env" && !fs.existsSync(config.keysJsonPath)) {
+          const keys = { SUDS_ENCRYPTION_KEY: config.encryptionKey.toString("hex"), SUDS_INDEX_KEY: config.indexKey.toString("hex"), created_at: (/* @__PURE__ */ new Date()).toISOString() };
+          fs.writeFileSync(config.keysJsonPath, JSON.stringify(keys, null, 2), { mode: 384 });
+        }
+        db3.transaction(() => {
+          db3.run(`DELETE FROM users WHERE username='admin' AND must_change_password=1 AND last_login_at IS NULL`);
+          db3.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,0,?)`, uuid2(), v.admin_username, hashPassword(v.admin_password), v.admin_display_name, "admin", db3.now());
+          db3.setSetting("org_name", v.org_name);
+          if (v.county_name) db3.setSetting("county_name", v.county_name);
+          if (v.program_contact) db3.setSetting("program_contact", v.program_contact);
+          db3.setSetting("caseload_restriction", "1");
+        });
+        const port = v.port || "auto";
+        const host = v.network === "lan" ? "0.0.0.0" : "127.0.0.1";
+        let tls = "none";
+        if (v.https && !proc.env.TLS_CERT_PATH) {
+          const hosts = ["localhost", "127.0.0.1", "suds.local", (init_os(), __toCommonJS(os_exports)).hostname(), (init_os(), __toCommonJS(os_exports)).hostname() + ".local", ...listener.lanAddresses().map((a) => a.address), ...String(v.extra_hosts || "").split(/[\s,]+/).filter(Boolean)];
+          const c = selfsigned.generate({ commonName: v.org_name.slice(0, 60), org: v.org_name.slice(0, 60), hosts: [...new Set(hosts)] });
+          const dir = path.join(config.dataDir, "certs");
+          fs.mkdirSync(dir, { recursive: true, mode: 448 });
+          fs.writeFileSync(path.join(dir, "suds.crt"), c.cert, { mode: 384 });
+          fs.writeFileSync(path.join(dir, "suds.key"), c.key, { mode: 384 });
+          tls = "selfsigned";
+        } else if (proc.env.TLS_CERT_PATH) tls = "custom";
+        audit3.log({ user: { username: v.admin_username }, action: "setup.complete", ip: ctx.ip, details: { network: v.network, port, tls } });
+        let desc;
+        try {
+          desc = await listener.relisten({ host, port, certPath: tls === "selfsigned" ? path.join(config.dataDir, "certs", "suds.crt") : config.tls.cert || "", keyPath: tls === "selfsigned" ? path.join(config.dataDir, "certs", "suds.key") : config.tls.key || "" });
+          config.saveServerJson({ setupComplete: true, host, port: desc.port, tls, completedAt: (/* @__PURE__ */ new Date()).toISOString() });
+        } catch (e) {
+          config.saveServerJson({ setupComplete: true, host: "127.0.0.1", port: config.port, tls: "none", completedAt: (/* @__PURE__ */ new Date()).toISOString() });
+          throw new HttpError3(500, `Could not start on the network: ${e.message}. Setup saved with local-only access; change this later in Settings \u2192 Network & devices.`);
+        }
+        return { ok: true, listener: desc, keys_file: config.keySource === "env" ? null : config.keysJsonPath };
+      });
+    };
+  }
+});
+
+// server/routes/sync.js
+var require_sync = __commonJS({
+  "server/routes/sync.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var { badRequest, forbidden } = require_http();
+    var { encrypt: encrypt3, decrypt: decrypt3, blindIndex: blindIndex2 } = require_crypto();
+    var SYNC2 = require_sync_tables();
+    var NEVER2 = "1970-01-01T00:00:00.000Z";
+    function cols2(table) {
+      return db3.all(`PRAGMA table_info(${table})`).map((c) => c.name);
+    }
+    function exportRow2(t, r) {
+      const o = { ...r };
+      for (const c of t.enc) if (o[c]) {
+        try {
+          o[c] = decrypt3(o[c]);
+        } catch {
+          o[c] = null;
+        }
+      }
+      for (const k of Object.keys(o)) if (k.endsWith("_idx")) delete o[k];
+      if (t.name === "users") {
+        delete o.failed_attempts;
+        delete o.locked_until;
+      }
+      return o;
+    }
+    function importRow2(t, r, existingCols) {
+      const o = {};
+      for (const [k, v] of Object.entries(r)) if (existingCols.includes(k) && !k.endsWith("_idx")) o[k] = v;
+      for (const c of t.enc) if (o[c] !== void 0 && o[c] !== null) o[c] = encrypt3(o[c]);
+      if (t.name === "clients") {
+        const fn = r.first_name_enc || "", ln2 = r.last_name_enc || "";
+        o.last_name_idx = blindIndex2(ln2);
+        o.full_name_idx = blindIndex2(ln2 + fn);
+        o.dob_idx = blindIndex2(r.dob_enc || "");
+        o.phone_idx = blindIndex2(String(r.phone_enc || "").replace(/\D/g, ""));
+      }
+      return o;
+    }
+    function scopeSql(t, user, alias) {
+      const cf = auth3.caseloadFilter(user, `${alias}.${t.clientCol}`);
+      if (t.scope === "all" || t.scope === "users") return { sql: "1=1", params: [] };
+      if (t.scope === "via-note") {
+        const nf = auth3.caseloadFilter(user, "n.client_id");
+        return { sql: `${alias}.note_id IN (SELECT n.id FROM notes n WHERE ${nf.sql})`, params: nf.params };
+      }
+      if (t.scope === "client-or-null") return { sql: `(${alias}.${t.clientCol} IS NULL OR ${cf.sql})`, params: cf.params };
+      return cf;
+    }
+    function pull(user, since) {
+      const out2 = { cursor: db3.now(), tables: {}, tombstones: db3.all(`SELECT table_name, id, deleted_at FROM tombstones WHERE deleted_at > ?`, since), settings: {} };
+      for (const t of SYNC2.tables) {
+        const sc = scopeSql(t, user, "x");
+        const hasUpd = cols2(t.name).includes("updated_at");
+        let rows = db3.all(`SELECT x.* FROM ${t.name} x WHERE COALESCE(x.updated_at, x.created_at) > ? AND ${sc.sql}`, since, ...sc.params);
+        if (t.name === "users") rows = rows.map((r) => r.id === user.id ? r : { ...r, password_hash: "scrypt$0$0$0$AA==$AA==", mfa_secret_enc: null, mfa_enabled: 0 });
+        out2.tables[t.name] = rows.map((r) => exportRow2(t, r));
+      }
+      for (const k of SYNC2.settings_keys) out2.settings[k] = db3.getSetting(k, null);
+      return out2;
+    }
+    function push(user, payload) {
+      const applied = {};
+      const rejected = [];
+      db3.transaction(() => {
+        for (const t of SYNC2.tables) {
+          const rows = (payload.tables || {})[t.name];
+          if (!Array.isArray(rows) || !rows.length) continue;
+          if (t.name === "users") continue;
+          const existingCols = cols2(t.name);
+          let n = 0;
+          for (const raw of rows) {
+            if (!raw || typeof raw.id !== "string") continue;
+            if (t.scope === "client" && raw[t.clientCol] && !auth3.canAccessClient(user, raw[t.clientCol]) && t.name !== "clients") {
+              rejected.push({ table: t.name, id: raw.id, reason: "not on caseload" });
+              continue;
+            }
+            const existing = db3.one(`SELECT * FROM ${t.name} WHERE id=?`, raw.id);
+            const incomingAt = raw.updated_at || raw.created_at || NEVER2;
+            if (existing && (existing.updated_at || existing.created_at || NEVER2) >= incomingAt) continue;
+            if (db3.one(`SELECT 1 FROM tombstones WHERE table_name=? AND id=? AND deleted_at > ?`, t.name, raw.id, incomingAt)) continue;
+            const o = importRow2(t, raw, existingCols);
+            if (t.name === "clients" && !existing) {
+              if (db3.one(`SELECT 1 FROM clients WHERE client_code=?`, o.client_code)) o.client_code = o.client_code + "-D";
+            }
+            const keys = Object.keys(o).filter((k) => k !== "id");
+            if (existing) db3.run(`UPDATE ${t.name} SET ${keys.map((k) => `${k}=?`).join(", ")} WHERE id=?`, ...keys.map((k) => o[k]), raw.id);
+            else db3.run(`INSERT INTO ${t.name}(id,${keys.join(",")}) VALUES(?,${keys.map(() => "?").join(",")})`, raw.id, ...keys.map((k) => o[k]));
+            if (t.name === "clients" && !existing && auth3.caseloadRestricted(user)) db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, require_crypto().uuid(), raw.id, user.id, "primary", (raw.intake_date || db3.now()).slice(0, 10), user.id);
+            n++;
+          }
+          applied[t.name] = n;
+        }
+        for (const ts of payload.tombstones || []) {
+          const t = SYNC2.tables.find((x) => x.name === ts.table_name);
+          if (!t || t.name === "users" || typeof ts.id !== "string") continue;
+          const existing = db3.one(`SELECT * FROM ${t.name} WHERE id=?`, ts.id);
+          if (existing && (existing.updated_at || existing.created_at || NEVER2) < ts.deleted_at) {
+            db3.run(`DELETE FROM ${t.name} WHERE id=?`, ts.id);
+            db3.tombstone(t.name, ts.id);
+          }
+        }
+        for (const a of (payload.audit || []).slice(0, 5e3)) if (a && a.action) audit3.log({ user, action: `device.${a.action}`, entity: a.entity, entityId: a.entity_id, clientId: a.client_id, ip: "device", success: a.success !== 0, details: { at: a.at, device: true, ...a.details ? safeJson(a.details) : {} } });
+      });
+      return { applied, rejected };
+    }
+    function safeJson(s) {
+      try {
+        return typeof s === "string" ? JSON.parse(s) : s;
+      } catch {
+        return {};
+      }
+    }
+    module.exports = (r) => {
+      r.get("/api/sync/pull", auth3.requireAuth, (ctx) => {
+        if (!auth3.hasPerm(ctx.user, "clients:read")) throw forbidden("Your role cannot sync client data");
+        const since = ctx.query.get("since") || NEVER2;
+        const out2 = pull(ctx.user, since);
+        audit3.log({ user: ctx.user, action: "sync.pull", ip: ctx.ip, details: { since, rows: Object.fromEntries(Object.entries(out2.tables).map(([k, v]) => [k, v.length])) } });
+        return out2;
+      });
+      r.post("/api/sync/push", auth3.requireAuth, (ctx) => {
+        if (!auth3.hasPerm(ctx.user, "clients:write")) throw forbidden("Your role cannot sync client data");
+        if (!ctx.body || typeof ctx.body !== "object") throw badRequest("JSON body required");
+        const res = push(ctx.user, ctx.body);
+        audit3.log({ user: ctx.user, action: "sync.push", ip: ctx.ip, details: { applied: res.applied, rejected: res.rejected.length } });
+        return res;
+      });
+    };
+    module.exports.pull = pull;
+    module.exports.push = push;
+  }
+});
+
+// server/routes/tasks.js
+var require_tasks = __commonJS({
+  "server/routes/tasks.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var crud = require_crud();
+    module.exports = (r) => {
+      crud.build(r, {
+        table: "tasks",
+        entity: "task",
+        perm: "tasks",
+        dateCol: "due_at",
+        ownerCol: "assigned_to",
+        creatorCol: "created_by",
+        clientRequired: false,
+        order: `CASE tasks.status WHEN 'open' THEN 0 WHEN 'in_progress' THEN 0 ELSE 1 END, tasks.due_at IS NULL, tasks.due_at ASC`,
+        joins: "LEFT JOIN users u ON u.id=tasks.assigned_to LEFT JOIN clients c ON c.id=tasks.client_id",
+        select: "tasks.*, u.display_name AS assignee, c.client_code",
+        shape: {
+          client_id: { type: "string" },
+          assigned_to: { type: "string" },
+          title: { type: "string", required: true, maxLen: 200 },
+          description: { type: "string", maxLen: 2e3 },
+          due_at: { type: "datetime" },
+          priority: { type: "string", enum: ["low", "normal", "high", "urgent"] },
+          status: { type: "string", enum: ["open", "in_progress", "done", "cancelled"] },
+          is_milestone: { type: "boolean" },
+          completed_at: { type: "datetime" }
+        },
+        filters: (ctx, where, params) => {
+          const s = ctx.query.get("status");
+          if (s === "open") where.push(`tasks.status IN ('open','in_progress')`);
+          else if (s) {
+            where.push("tasks.status=?");
+            params.push(s);
+          }
+          if (ctx.query.get("overdue") === "1") {
+            where.push(`tasks.status IN ('open','in_progress') AND tasks.due_at < ?`);
+            params.push(db3.now());
+          }
+          if (ctx.query.get("milestones") === "1") where.push("tasks.is_milestone=1");
+        },
+        beforeInsert: (ctx, v) => {
+          if (!v.assigned_to) v.assigned_to = ctx.user.id;
+          if (v.status === "done" && !v.completed_at) v.completed_at = db3.now();
+        },
+        beforeUpdate: (ctx, v, row) => {
+          if (v.status === "done" && !row.completed_at && !v.completed_at) v.completed_at = db3.now();
+          if (v.status && v.status !== "done") v.completed_at = null;
+        },
+        canEdit: (ctx, row) => row.assigned_to === ctx.user.id || row.created_by === ctx.user.id || auth3.hasPerm(ctx.user, "clients:all")
+      });
+    };
+  }
+});
+
+// server/routes/time.js
+var require_time = __commonJS({
+  "server/routes/time.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var crud = require_crud();
+    var C = require_constants();
+    module.exports = (r) => {
+      crud.build(r, {
+        table: "time_entries",
+        entity: "time_entrie",
+        base: "/api/time",
+        perm: "time",
+        dateCol: "work_date",
+        clientRequired: false,
+        joins: "JOIN users u ON u.id=time_entries.user_id LEFT JOIN clients c ON c.id=time_entries.client_id LEFT JOIN funding_sources f ON f.id=time_entries.funding_source_id",
+        select: "time_entries.*, u.display_name AS worker, c.client_code, f.name AS funding_source",
+        shape: {
+          client_id: { type: "string" },
+          user_id: { type: "string" },
+          work_date: { type: "date", required: true },
+          minutes: { type: "number", required: true, integer: true, min: 1, max: 1440 },
+          category: { type: "string", enum: C.TIME_CATEGORIES },
+          billable: { type: "boolean" },
+          funding_source_id: { type: "string" },
+          description: { type: "string", maxLen: 500 },
+          intervention_id: { type: "string" },
+          call_id: { type: "string" }
+        },
+        filters: (ctx, where, params) => {
+          if (!auth3.hasPerm(ctx.user, "time:all")) {
+            where.push("time_entries.user_id=?");
+            params.push(ctx.user.id);
+          }
+          const cat = ctx.query.get("category");
+          if (cat) {
+            where.push("time_entries.category=?");
+            params.push(cat);
+          }
+        },
+        beforeInsert: (ctx, v) => {
+          if (v.user_id && v.user_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "time:all")) v.user_id = ctx.user.id;
+        },
+        canEdit: (ctx, row) => row.user_id === ctx.user.id || auth3.hasPerm(ctx.user, "time:all")
+      });
+      r.get("/api/time/summary", auth3.requireAuth, auth3.requirePerm("time:read", "time:write"), (ctx) => {
+        const from = ctx.query.get("from") || new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
+        const to = ctx.query.get("to") || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        const all = auth3.hasPerm(ctx.user, "time:all");
+        const scope = all ? "" : "AND t.user_id=?";
+        const p = all ? [] : [ctx.user.id];
+        return {
+          from,
+          to,
+          by_worker: db3.all(`SELECT u.display_name AS worker, t.user_id, SUM(t.minutes) minutes, SUM(CASE WHEN t.billable THEN t.minutes ELSE 0 END) billable_minutes, COUNT(DISTINCT t.client_id) clients FROM time_entries t JOIN users u ON u.id=t.user_id WHERE t.work_date BETWEEN ? AND ? ${scope} GROUP BY t.user_id ORDER BY minutes DESC`, from, to, ...p),
+          by_category: db3.all(`SELECT category, SUM(minutes) minutes FROM time_entries t WHERE work_date BETWEEN ? AND ? ${scope} GROUP BY category ORDER BY minutes DESC`, from, to, ...p),
+          by_day: db3.all(`SELECT work_date, SUM(minutes) minutes FROM time_entries t WHERE work_date BETWEEN ? AND ? ${scope} GROUP BY work_date ORDER BY work_date`, from, to, ...p),
+          by_fund: db3.all(`SELECT COALESCE(f.name,'Unallocated') fund, SUM(t.minutes) minutes FROM time_entries t LEFT JOIN funding_sources f ON f.id=t.funding_source_id WHERE t.work_date BETWEEN ? AND ? ${scope} GROUP BY f.name ORDER BY minutes DESC`, from, to, ...p)
+        };
+      });
+    };
+  }
+});
+
+// server/routes/users.js
+var require_users = __commonJS({
+  "server/routes/users.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var { badRequest, notFound } = require_http();
+    var { validate } = require_validate();
+    var { hashPassword, uuid: uuid2, randomToken } = require_crypto();
+    var ROLES = ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"];
+    var shape = {
+      username: { type: "string", required: true, maxLen: 60, pattern: /^[a-zA-Z0-9._@-]+$/ },
+      display_name: { type: "string", required: true, maxLen: 120 },
+      email: { type: "string", maxLen: 200 },
+      title: { type: "string", maxLen: 120 },
+      role: { type: "string", required: true, enum: ROLES },
+      is_active: { type: "boolean" },
+      hourly_cost: { type: "number", min: 0 },
+      password: { type: "string", maxLen: 500 }
+    };
+    module.exports = (r) => {
+      r.get("/api/users", auth3.requireAuth, auth3.requirePerm("users:read", "users:manage"), (ctx) => {
+        const full = auth3.hasPerm(ctx.user, "users:manage");
+        const rows = db3.all(full ? `SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,last_login_at,locked_until,hourly_cost,created_at FROM users ORDER BY display_name` : `SELECT id,display_name,title,role,is_active FROM users WHERE is_active=1 ORDER BY display_name`);
+        return { users: rows };
+      });
+      r.post("/api/users", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
+        const v = validate(ctx.body, shape);
+        if (db3.one(`SELECT 1 FROM users WHERE username=?`, v.username)) throw badRequest("Username already exists");
+        const temp = v.password || randomToken(10) + "Aa1!";
+        const errs = auth3.passwordPolicy(temp);
+        if (errs.length) throw badRequest("Password must contain " + errs.join(", "));
+        const id = uuid2();
+        db3.run(
+          `INSERT INTO users(id,username,password_hash,display_name,email,title,role,is_active,hourly_cost,must_change_password,password_changed_at) VALUES(?,?,?,?,?,?,?,?,?,1,?)`,
+          id,
+          v.username,
+          hashPassword(temp),
+          v.display_name,
+          v.email || null,
+          v.title || null,
+          v.role,
+          v.is_active ?? 1,
+          v.hourly_cost ?? null,
+          db3.now()
+        );
+        audit3.log({ user: ctx.user, action: "user.create", entity: "user", entityId: id, ip: ctx.ip, details: { username: v.username, role: v.role } });
+        ctx.status = 201;
+        return { id, temporary_password: v.password ? void 0 : temp };
+      });
+      r.put("/api/users/:id", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
+        const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.params.id);
+        if (!u) throw notFound();
+        const v = validate(ctx.body, { ...shape, username: { ...shape.username, required: false }, role: { ...shape.role, required: false }, display_name: { ...shape.display_name, required: false } }, { partial: true });
+        if (u.id === ctx.user.id && (v.role && v.role !== "admin" || v.is_active === 0)) throw badRequest("You cannot demote or deactivate your own account");
+        const sets = [];
+        const params = [];
+        for (const k of ["username", "display_name", "email", "title", "role", "is_active", "hourly_cost"]) if (v[k] !== void 0) {
+          sets.push(`${k}=?`);
+          params.push(v[k]);
+        }
+        if (v.password) {
+          const errs = auth3.passwordPolicy(v.password);
+          if (errs.length) throw badRequest("Password must contain " + errs.join(", "));
+          sets.push("password_hash=?", "must_change_password=1", "password_changed_at=?");
+          params.push(hashPassword(v.password), db3.now());
+          auth3.revokeAllForUser(u.id);
+        }
+        if (ctx.body.unlock) {
+          sets.push("locked_until=NULL", "failed_attempts=0");
+        }
+        if (ctx.body.reset_mfa) {
+          sets.push("mfa_enabled=0", "mfa_secret_enc=NULL");
+        }
+        if (v.is_active === 0) auth3.revokeAllForUser(u.id);
+        if (!sets.length) return { ok: true };
+        sets.push("updated_at=?");
+        params.push(db3.now(), u.id);
+        db3.run(`UPDATE users SET ${sets.join(", ")} WHERE id=?`, ...params);
+        audit3.log({ user: ctx.user, action: "user.update", entity: "user", entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter((k) => k !== "password"), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa } });
+        return { ok: true };
+      });
+    };
+  }
+});
+
+// require("./routes/**/*") in server/app.js
+var globRequire_routes;
+var init_ = __esm({
+  'require("./routes/**/*") in server/app.js'() {
+    globRequire_routes = __glob({
+      "./routes/admin.js": () => require_admin(),
+      "./routes/app.js": () => require_app(),
+      "./routes/assignments.js": () => require_assignments(),
+      "./routes/auth.js": () => require_auth2(),
+      "./routes/budget.js": () => require_budget(),
+      "./routes/calls.js": () => require_calls(),
+      "./routes/clients.js": () => require_clients(),
+      "./routes/consents.js": () => require_consents(),
+      "./routes/imports.js": () => require_imports(),
+      "./routes/intake.js": () => require_intake(),
+      "./routes/interventions.js": () => require_interventions(),
+      "./routes/me.js": () => require_me(),
+      "./routes/notes.js": () => require_notes(),
+      "./routes/referrals.js": () => require_referrals(),
+      "./routes/reports.js": () => require_reports(),
+      "./routes/resources.js": () => require_resources(),
+      "./routes/setup.js": () => require_setup(),
+      "./routes/sync.js": () => require_sync(),
+      "./routes/tasks.js": () => require_tasks(),
+      "./routes/time.js": () => require_time(),
+      "./routes/users.js": () => require_users()
+    });
+  }
+});
+
+// server/app.js
+var require_app2 = __commonJS({
+  "server/app.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    init_();
+    var path = (init_path(), __toCommonJS(path_exports));
+    var { URL: URL2 } = (init_url(), __toCommonJS(url_exports));
+    var config = require_config();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var auth3 = require_auth();
+    var { Router: Router2, HttpError: HttpError3, parseCookies, readBody, securityHeaders, sendJson, serveStatic } = require_http();
+    var buckets = /* @__PURE__ */ new Map();
+    function rateLimit(key, max2, windowMs) {
+      const now = Date.now();
+      let b = buckets.get(key);
+      if (!b || now > b.reset) {
+        b = { count: 0, reset: now + windowMs };
+        buckets.set(key, b);
+      }
+      b.count++;
+      if (buckets.size > 1e4) {
+        for (const [k, v] of buckets) if (now > v.reset) buckets.delete(k);
+      }
+      return b.count <= max2;
+    }
+    function buildRouter() {
+      const r = new Router2();
+      for (const mod of ["setup", "auth", "me", "app", "sync", "users", "clients", "assignments", "interventions", "calls", "time", "resources", "referrals", "tasks", "budget", "notes", "consents", "imports", "reports", "admin", "intake"]) {
+        globRequire_routes(`./routes/${mod}`)(r);
+      }
+      return r;
+    }
+    function createHandler() {
+      db3.open();
+      const router2 = buildRouter();
+      const staticHandler = serveStatic(path.join("/", "..", "public"));
+      return async function handle2(req, res) {
+        securityHeaders(res);
+        const url = new URL2(req.url, "http://localhost");
+        const ctx = {
+          req,
+          res,
+          method: req.method,
+          path: url.pathname,
+          query: url.searchParams,
+          params: {},
+          headers: req.headers,
+          cookies: parseCookies(req.headers.cookie),
+          ip: config.trustProxy && (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket?.remoteAddress || "",
+          user: null,
+          session: null,
+          body: null
+        };
+        try {
+          if (!url.pathname.startsWith("/api/")) {
+            staticHandler(req, res);
+            return;
+          }
+          const m = router2.match(req.method, url.pathname);
+          if (!m) throw new HttpError3(404, "Not found");
+          if (m.methodNotAllowed) throw new HttpError3(405, "Method not allowed");
+          ctx.params = m.params;
+          if (!rateLimit(`api:${ctx.ip}`, 600, 6e4)) throw new HttpError3(429, "Too many requests");
+          ctx.user = auth3.resolveSession(ctx);
+          if (ctx.user && ctx.cookies[auth3.COOKIE] && !["GET", "HEAD", "OPTIONS"].includes(req.method) && req.headers["x-requested-with"] !== "suds") {
+            throw new HttpError3(403, "Missing CSRF header");
+          }
+          if (!["GET", "HEAD"].includes(req.method)) {
+            const raw = await readBody(req);
+            const ct = req.headers["content-type"] || "";
+            if (ct.includes("application/json")) {
+              try {
+                ctx.body = raw.length ? JSON.parse(raw.toString("utf8")) : {};
+              } catch {
+                throw new HttpError3(400, "Invalid JSON");
+              }
+            } else {
+              ctx.rawBody = raw;
+              ctx.body = {};
+            }
+          }
+          let result;
+          for (const h of m.handlers) {
+            result = await h(ctx);
+          }
+          if (!res.headersSent) sendJson(res, result === void 0 ? 204 : ctx.status || 200, result === void 0 ? null : result);
+        } catch (err2) {
+          if (err2 instanceof HttpError3) {
+            sendJson(res, err2.status, { error: err2.message, ...err2.extra || {} });
+          } else {
+            console.error(`[suds] ${req.method} ${url.pathname}:`, err2);
+            try {
+              audit3.log({ user: ctx.user, action: "server.error", ip: ctx.ip, success: false, details: { path: url.pathname, message: String(err2.message).slice(0, 300) } });
+            } catch {
+            }
+            sendJson(res, 500, { error: "Internal server error" });
+          }
+        }
+      };
+    }
+    module.exports = { createHandler, rateLimit };
+  }
+});
+
+// server/routes/auth.js
+var require_auth2 = __commonJS({
+  "server/routes/auth.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var { rateLimit } = require_app2();
+    var { HttpError: HttpError3, badRequest, unauthorized } = require_http();
+    var { validate } = require_validate();
+    var { hashPassword, verifyPassword, generateTotpSecret, verifyTotp, otpauthUrl, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
+    module.exports = (r) => {
+      r.post("/api/auth/login", async (ctx) => {
+        if (!rateLimit(`login:${ctx.ip}`, require_config().isTest ? 1e5 : 20, 15 * 6e4)) throw new HttpError3(429, "Too many login attempts. Try again later.");
+        const { username, password } = validate(ctx.body, { username: { type: "string", required: true, maxLen: 100 }, password: { type: "string", required: true, maxLen: 500 } });
+        const result = auth3.login({ username, password, ctx });
+        ctx.res.setHeader("Set-Cookie", auth3.cookieHeader(result.token));
+        const out2 = { user: result.user, mfaPending: result.mfaPending, mfaSetupRequired: result.mfaSetupRequired };
+        if (ctx.headers["x-sync-client"]) out2.token = result.token;
+        return out2;
+      });
+      r.post("/api/auth/mfa/verify", (ctx) => {
+        if (!ctx.user) throw unauthorized();
+        if (!rateLimit(`mfa:${ctx.user.id}`, 10, 10 * 6e4)) throw new HttpError3(429, "Too many attempts");
+        const { code } = validate(ctx.body, { code: { type: "string", required: true, maxLen: 10 } });
+        return { user: auth3.verifyMfa(ctx, code) };
+      });
+      r.post("/api/auth/logout", (ctx) => {
+        if (ctx.user) audit3.log({ user: ctx.user, action: "auth.logout", ip: ctx.ip });
+        auth3.revokeSession(ctx.sessionToken);
+        ctx.res.setHeader("Set-Cookie", auth3.cookieHeader("", { clear: true }));
+        return { ok: true };
+      });
+      r.get("/api/auth/me", (ctx) => {
+        if (!ctx.user) throw unauthorized();
+        const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
+        return { user: auth3.publicUser(u), mfaPending: !!ctx.session.mfa_pending, org_name: db3.getSetting("org_name", "SUDS"), idle_minutes: auth3.policy().idleMinutes, setup_needed: false };
+      });
+      r.post("/api/auth/password", (ctx) => {
+        if (!ctx.user) throw unauthorized();
+        const { current_password, new_password } = validate(ctx.body, { current_password: { type: "string", required: true, maxLen: 500 }, new_password: { type: "string", required: true, maxLen: 500 } });
+        const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
+        if (!verifyPassword(current_password, u.password_hash)) {
+          audit3.log({ user: u, action: "auth.password.change.failed", ip: ctx.ip, success: false });
+          throw unauthorized("Current password is incorrect");
+        }
+        const errs = auth3.passwordPolicy(new_password);
+        if (errs.length) throw badRequest("Password must contain " + errs.join(", "));
+        if (verifyPassword(new_password, u.password_hash)) throw badRequest("New password must differ from the current password");
+        db3.run(`UPDATE users SET password_hash=?, must_change_password=0, password_changed_at=?, updated_at=? WHERE id=?`, hashPassword(new_password), db3.now(), db3.now(), u.id);
+        db3.run(`UPDATE sessions SET revoked_at=? WHERE user_id=? AND id<>? AND revoked_at IS NULL`, db3.now(), u.id, ctx.session.id);
+        audit3.log({ user: u, action: "auth.password.changed", ip: ctx.ip });
+        return { ok: true };
+      });
+      r.post("/api/auth/mfa/setup", (ctx) => {
+        if (!ctx.user) throw unauthorized();
+        const secret = generateTotpSecret();
+        db3.run(`UPDATE users SET mfa_secret_enc=?, updated_at=? WHERE id=? AND mfa_enabled=0`, encrypt3(secret), db3.now(), ctx.user.id);
+        return { secret, otpauth: otpauthUrl(secret, ctx.user.username, db3.getSetting("org_name", "SUDS")) };
+      });
+      r.post("/api/auth/mfa/enable", (ctx) => {
+        if (!ctx.user) throw unauthorized();
+        const { code } = validate(ctx.body, { code: { type: "string", required: true, maxLen: 10 } });
+        const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
+        if (!u.mfa_secret_enc) throw badRequest("Run MFA setup first");
+        if (!verifyTotp(decrypt3(u.mfa_secret_enc), code)) throw badRequest("Invalid code");
+        db3.run(`UPDATE users SET mfa_enabled=1, updated_at=? WHERE id=?`, db3.now(), u.id);
+        db3.run(`UPDATE sessions SET mfa_pending=0 WHERE id=?`, ctx.session.id);
+        audit3.log({ user: u, action: "auth.mfa.enabled", ip: ctx.ip });
+        return { ok: true };
+      });
+      r.post("/api/auth/mfa/disable", (ctx) => {
+        auth3.requireAuth(ctx);
+        const { password } = validate(ctx.body, { password: { type: "string", required: true, maxLen: 500 } });
+        const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
+        if (!verifyPassword(password, u.password_hash)) throw unauthorized("Password is incorrect");
+        if (auth3.policy().mfaRequiredRoles.includes(u.role)) throw badRequest("MFA is required for your role");
+        db3.run(`UPDATE users SET mfa_enabled=0, mfa_secret_enc=NULL, updated_at=? WHERE id=?`, db3.now(), u.id);
+        audit3.log({ user: u, action: "auth.mfa.disabled", ip: ctx.ip });
+        return { ok: true };
+      });
+      r.get("/api/auth/sessions", (ctx) => {
+        auth3.requireAuth(ctx);
+        return { sessions: db3.all(`SELECT id, created_at, last_seen_at, ip, user_agent, id=? AS current FROM sessions WHERE user_id=? AND revoked_at IS NULL AND expires_at > ? ORDER BY last_seen_at DESC`, ctx.session.id, ctx.user.id, db3.now()) };
+      });
+      r.post("/api/auth/sessions/revoke-others", (ctx) => {
+        auth3.requireAuth(ctx);
+        db3.run(`UPDATE sessions SET revoked_at=? WHERE user_id=? AND id<>? AND revoked_at IS NULL`, db3.now(), ctx.user.id, ctx.session.id);
+        audit3.log({ user: ctx.user, action: "auth.sessions.revoked_others", ip: ctx.ip });
+        return { ok: true };
+      });
+    };
+  }
+});
+
+// local/kernel.js
+init_globals_inject();
+init_sqlite();
+var import_db2 = __toESM(require_db());
+var import_http2 = __toESM(require_http());
+var import_auth2 = __toESM(require_auth());
+var import_audit2 = __toESM(require_audit());
+
+// local/sync.js
+init_globals_inject();
+var import_db = __toESM(require_db());
+var import_auth = __toESM(require_auth());
+var import_audit = __toESM(require_audit());
+var import_http = __toESM(require_http());
+var import_crypto2 = __toESM(require_crypto());
+var import_sync_tables = __toESM(require_sync_tables());
+var NEVER = "1970-01-01T00:00:00.000Z";
+var cols = (t) => import_db.default.all(`PRAGMA table_info(${t})`).map((c) => c.name);
+function exportRow(t, r) {
+  const o = { ...r };
+  for (const c of t.enc) if (o[c]) {
+    try {
+      o[c] = (0, import_crypto2.decrypt)(o[c]);
+    } catch {
+      o[c] = null;
+    }
+  }
+  for (const k of Object.keys(o)) if (k.endsWith("_idx")) delete o[k];
+  return o;
+}
+function importRow(t, r, existingCols) {
+  const o = {};
+  for (const [k, v] of Object.entries(r)) if (existingCols.includes(k) && !k.endsWith("_idx")) o[k] = v;
+  for (const c of t.enc) if (o[c] !== void 0 && o[c] !== null) o[c] = (0, import_crypto2.encrypt)(o[c]);
+  if (t.name === "clients") {
+    const fn = r.first_name_enc || "", ln2 = r.last_name_enc || "";
+    o.last_name_idx = (0, import_crypto2.blindIndex)(ln2);
+    o.full_name_idx = (0, import_crypto2.blindIndex)(ln2 + fn);
+    o.dob_idx = (0, import_crypto2.blindIndex)(r.dob_enc || "");
+    o.phone_idx = (0, import_crypto2.blindIndex)(String(r.phone_enc || "").replace(/\D/g, ""));
+  }
+  return o;
+}
+var USER_REFS = [["clients", "created_by"], ["assignments", "user_id"], ["assignments", "created_by"], ["interventions", "user_id"], ["calls", "user_id"], ["time_entries", "user_id"], ["referrals", "user_id"], ["tasks", "assigned_to"], ["tasks", "created_by"], ["expenditures", "user_id"], ["expenditures", "approved_by"], ["notes", "author_id"], ["notes", "signed_by"], ["note_addenda", "author_id"], ["consents", "created_by"], ["disclosures", "disclosed_by"], ["imports", "imported_by"], ["audit_log", "user_id"], ["sessions", "user_id"], ["user_prefs", "user_id"], ["api_keys", "created_by"]];
+function mergeUser(localId, serverId) {
+  for (const [t, c] of USER_REFS) import_db.default.run(`UPDATE ${t} SET ${c}=? WHERE ${c}=?`, serverId, localId);
+  import_db.default.run(`DELETE FROM users WHERE id=?`, localId);
+}
+function applyPull(payload) {
+  const counts = {};
+  import_db.default.transaction(() => {
+    for (const t of import_sync_tables.default.tables) {
+      const rows = payload.tables?.[t.name] || [];
+      const existingCols = cols(t.name);
+      let n = 0;
+      for (const raw of rows) {
+        let existing = import_db.default.one(`SELECT * FROM ${t.name} WHERE id=?`, raw.id);
+        if (t.name === "users" && !existing) {
+          const same = import_db.default.one(`SELECT id FROM users WHERE username=?`, raw.username);
+          if (same) mergeUser(same.id, raw.id);
+        }
+        if (t.name === "clients") {
+          const clash = import_db.default.one(`SELECT id FROM clients WHERE client_code=? AND id<>?`, raw.client_code, raw.id);
+          if (clash) import_db.default.run(`UPDATE clients SET client_code=?, updated_at=? WHERE id=?`, raw.client_code + "-D", import_db.default.now(), clash.id);
+        }
+        const incomingAt = raw.updated_at || raw.created_at || NEVER;
+        if (existing && t.name !== "users" && (existing.updated_at || existing.created_at || NEVER) > incomingAt) continue;
+        const o = importRow(t, raw, existingCols);
+        const keys = Object.keys(o).filter((k) => k !== "id");
+        if (existing) import_db.default.run(`UPDATE ${t.name} SET ${keys.map((k) => `${k}=?`).join(", ")} WHERE id=?`, ...keys.map((k) => o[k]), raw.id);
+        else import_db.default.run(`INSERT INTO ${t.name}(id,${keys.join(",")}) VALUES(?,${keys.map(() => "?").join(",")})`, raw.id, ...keys.map((k) => o[k]));
+        n++;
+      }
+      counts[t.name] = n;
+    }
+    for (const ts of payload.tombstones || []) {
+      const t = import_sync_tables.default.tables.find((x) => x.name === ts.table_name);
+      if (!t) continue;
+      import_db.default.run(`DELETE FROM ${t.name} WHERE id=? AND COALESCE(updated_at, created_at) < ?`, ts.id, ts.deleted_at);
+      import_db.default.run(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, t.name, ts.id, ts.deleted_at);
+    }
+    for (const [k, v] of Object.entries(payload.settings || {})) if (v !== null && v !== void 0) import_db.default.setSetting(k, v);
+  });
+  return counts;
+}
+function localChanges(since) {
+  const tables = {};
+  for (const t of import_sync_tables.default.tables) {
+    if (t.name === "users") continue;
+    const rows = import_db.default.all(`SELECT * FROM ${t.name} WHERE COALESCE(updated_at, created_at) > ?`, since);
+    if (rows.length) tables[t.name] = rows.map((r) => exportRow(t, r));
+  }
+  const tombstones = import_db.default.all(`SELECT table_name, id, deleted_at FROM tombstones WHERE deleted_at > ?`, since);
+  const auditRows = import_db.default.all(`SELECT at, action, entity, entity_id, client_id, success, details FROM audit_log WHERE at > ? AND action NOT LIKE 'sync.%' ORDER BY id LIMIT 5000`, since);
+  return { tables, tombstones, audit: auditRows };
+}
+async function call(server, path, opts = {}, token2) {
+  const res = await fetch(server.replace(/\/$/, "") + path, { ...opts, credentials: "omit", headers: { "Content-Type": "application/json", "X-Sync-Client": "1", "X-Requested-With": "suds", ...token2 ? { Authorization: "Bearer " + token2 } : {}, ...opts.headers || {} } });
+  const ct = res.headers.get("content-type") || "";
+  const data = ct.includes("json") ? await res.json() : await res.text();
+  if (!res.ok) {
+    const e = new Error(data && data.error || `Server returned ${res.status}`);
+    e.status = res.status;
+    e.data = data;
+    throw e;
+  }
+  return data;
+}
+async function run({ server, username, password, code, onProgress = () => {
+} }) {
+  if (!server) throw new import_http.HttpError(400, "Office server address is required");
+  onProgress("Signing in to the office server\u2026");
+  const login = await call(server, "/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+  const token2 = login.token;
+  if (!token2) throw new import_http.HttpError(400, "The office server did not return a sync token (update the server to 1.1 or newer)");
+  if (login.mfaPending) {
+    if (!code) throw new import_http.HttpError(401, "MFA code required", { mfaRequired: true });
+    await call(server, "/api/auth/mfa/verify", { method: "POST", body: JSON.stringify({ code }) }, token2);
+  }
+  try {
+    const since = import_db.default.getSetting("sync_cursor", NEVER);
+    onProgress("Downloading changes from the office\u2026");
+    const pulled = await call(server, `/api/sync/pull?since=${encodeURIComponent(since)}`, {}, token2);
+    const applied = applyPull(pulled);
+    onProgress("Uploading this device's changes\u2026");
+    const changes = localChanges(import_db.default.getSetting("sync_pushed", NEVER));
+    const pushed = await call(server, "/api/sync/push", { method: "POST", body: JSON.stringify(changes) }, token2);
+    import_db.default.setSetting("sync_cursor", pulled.cursor);
+    import_db.default.setSetting("sync_pushed", import_db.default.now());
+    import_db.default.setSetting("last_sync_at", import_db.default.now());
+    import_db.default.setSetting("sync_server", server);
+    import_db.default.setSetting("sync_username", username);
+    import_audit.default.log({ user: { username }, action: "sync.completed", details: { server, pulled: applied, pushed: pushed.applied, rejected: pushed.rejected?.length || 0 } });
+    return { ok: true, pulled: applied, pushed: pushed.applied, rejected: pushed.rejected || [], at: import_db.default.now() };
+  } finally {
+    try {
+      await call(server, "/api/auth/logout", { method: "POST", body: "{}" }, token2);
+    } catch {
+    }
+  }
+}
+function register(router2) {
+  router2.post("/api/local/sync", import_auth.default.requireAuth, async (ctx) => {
+    const { server, username, password, code } = ctx.body || {};
+    return run({ server, username: username || ctx.user.username, password, code });
+  });
+  router2.get("/api/local/sync/status", import_auth.default.requireAuth, () => ({
+    last_sync_at: import_db.default.getSetting("last_sync_at", null),
+    server: import_db.default.getSetting("sync_server", null),
+    username: import_db.default.getSetting("sync_username", null),
+    pending: import_sync_tables.default.tables.filter((t) => t.name !== "users").reduce((n, t) => n + import_db.default.one(`SELECT COUNT(*) n FROM ${t.name} WHERE COALESCE(updated_at, created_at) > ?`, import_db.default.getSetting("sync_pushed", NEVER)).n, 0)
+  }));
+}
+
+// local/kernel.js
+var ROUTE_MODULES = ["auth", "me", "users", "clients", "assignments", "interventions", "calls", "time", "resources", "referrals", "tasks", "budget", "notes", "consents", "imports", "reports", "admin"];
+var routeLoaders = {
+  auth: () => Promise.resolve().then(() => __toESM(require_auth2())),
+  me: () => Promise.resolve().then(() => __toESM(require_me())),
+  users: () => Promise.resolve().then(() => __toESM(require_users())),
+  clients: () => Promise.resolve().then(() => __toESM(require_clients())),
+  assignments: () => Promise.resolve().then(() => __toESM(require_assignments())),
+  interventions: () => Promise.resolve().then(() => __toESM(require_interventions())),
+  calls: () => Promise.resolve().then(() => __toESM(require_calls())),
+  time: () => Promise.resolve().then(() => __toESM(require_time())),
+  resources: () => Promise.resolve().then(() => __toESM(require_resources())),
+  referrals: () => Promise.resolve().then(() => __toESM(require_referrals())),
+  tasks: () => Promise.resolve().then(() => __toESM(require_tasks())),
+  budget: () => Promise.resolve().then(() => __toESM(require_budget())),
+  notes: () => Promise.resolve().then(() => __toESM(require_notes())),
+  consents: () => Promise.resolve().then(() => __toESM(require_consents())),
+  imports: () => Promise.resolve().then(() => __toESM(require_imports())),
+  reports: () => Promise.resolve().then(() => __toESM(require_reports())),
+  admin: () => Promise.resolve().then(() => __toESM(require_admin()))
+};
+var router;
+var token = localStorage.getItem("suds.local.session") || "";
+var FakeRes = class {
+  constructor() {
+    this.status = 200;
+    this.headers = {};
+    this.chunks = [];
+    this.headersSent = false;
+  }
+  setHeader(k, v) {
+    this.headers[k.toLowerCase()] = v;
+  }
+  writeHead(status, headers = {}) {
+    this.status = status;
+    for (const [k, v] of Object.entries(headers)) this.headers[k.toLowerCase()] = v;
+    this.headersSent = true;
+  }
+  end(body) {
+    if (body !== void 0 && body !== null) this.chunks.push(import_buffer.Buffer.isBuffer(body) ? body : import_buffer.Buffer.from(String(body)));
+    this.headersSent = true;
+  }
+};
+async function start({ wasmUrl }) {
+  await sqlite_default.init(wasmUrl);
+  const bytes3 = await sqlite_default.loadBytes();
+  import_db2.default.openWith(bytes3 ? new Uint8Array(bytes3) : null);
+  router = new import_http2.Router();
+  for (const name of ROUTE_MODULES) {
+    const mod = (await routeLoaders[name]()).default;
+    mod(router);
+  }
+  register(router);
+  router.get("/api/local/status", () => ({ local: true, users: import_db2.default.one(`SELECT COUNT(*) n FROM users`).n, last_sync: import_db2.default.getSetting("last_sync_at", null), sync_server: import_db2.default.getSetting("sync_server", null) }));
+  router.post("/api/local/setup", (ctx) => {
+    if (import_db2.default.one(`SELECT COUNT(*) n FROM users`).n > 0) throw new import_http2.HttpError(403, "Already set up");
+    const { validate } = require_validate();
+    const v = validate(ctx.body, { display_name: { type: "string", required: true, maxLen: 120 }, username: { type: "string", required: true, maxLen: 60, pattern: /^[a-zA-Z0-9._@-]+$/ }, password: { type: "string", required: true, maxLen: 500 }, org_name: { type: "string", maxLen: 200 } });
+    const errs = import_auth2.default.passwordPolicy(v.password);
+    if (errs.length) throw new import_http2.HttpError(400, "Password must contain " + errs.join(", "));
+    const { hashPassword, uuid: uuid2 } = require_crypto();
+    import_db2.default.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,0,?)`, uuid2(), v.username, hashPassword(v.password), v.display_name, "navigator", import_db2.default.now());
+    import_db2.default.setSetting("org_name", v.org_name || "SUDS on this device");
+    import_db2.default.setSetting("caseload_restriction", "0");
+    import_db2.default.setSetting("local_mode", "1");
+    import_audit2.default.log({ user: { username: v.username }, action: "local.setup" });
+    return { ok: true };
+  });
+  window.SUDS_LOCAL = { handle, flush: () => sqlite_default.flush(), wipe: async () => {
+    await sqlite_default.wipe();
+    localStorage.removeItem("suds.local.session");
+  }, sync: (opts) => run(opts) };
+  return window.SUDS_LOCAL;
+}
+async function handle(method, path, body, headers = {}) {
+  const url = new URL(path, "http://local");
+  const res = new FakeRes();
+  const ctx = { req: { socket: { remoteAddress: "127.0.0.1" } }, res, method, path: url.pathname, query: url.searchParams, params: {}, headers: Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v])), cookies: {}, ip: "device", user: null, session: null, body: null, rawBody: null };
+  try {
+    const m = router.match(method, url.pathname);
+    if (!m) throw new import_http2.HttpError(404, "Not found");
+    if (m.methodNotAllowed) throw new import_http2.HttpError(405, "Method not allowed");
+    ctx.params = m.params;
+    if (token) ctx.headers.authorization = "Bearer " + token;
+    ctx.user = import_auth2.default.resolveSession(ctx);
+    if (body instanceof ArrayBuffer || body instanceof Uint8Array) {
+      ctx.rawBody = import_buffer.Buffer.from(body);
+      ctx.body = {};
+    } else if (typeof body === "string") {
+      ctx.rawBody = import_buffer.Buffer.from(body);
+      ctx.body = {};
+    } else ctx.body = body || {};
+    let result;
+    for (const h of m.handlers) result = await h(ctx);
+    const setCookie = res.headers["set-cookie"];
+    if (setCookie) {
+      const mm = /suds_session=([^;]*)/.exec(setCookie);
+      token = mm && mm[1] ? mm[1] : "";
+      if (token) localStorage.setItem("suds.local.session", token);
+      else localStorage.removeItem("suds.local.session");
+    }
+    if (res.headersSent) return { status: res.status, headers: res.headers, body: import_buffer.Buffer.concat(res.chunks) };
+    return { status: result === void 0 ? 204 : ctx.status || 200, headers: { "content-type": "application/json" }, json: result === void 0 ? null : result };
+  } catch (err2) {
+    if (err2 instanceof import_http2.HttpError) return { status: err2.status, headers: { "content-type": "application/json" }, json: { error: err2.message, ...err2.extra || {} } };
+    console.error("[suds-local]", method, path, err2);
+    return { status: 500, headers: { "content-type": "application/json" }, json: { error: "Local error: " + err2.message } };
+  }
+}
+export {
+  start
+};
+/*! Bundled license information:
+
+ieee754/index.js:
+  (*! ieee754. BSD-3-Clause License. Feross Aboukhadijeh <https://feross.org/opensource> *)
+
+buffer/index.js:
+  (*!
+   * The buffer module from node.js, for the browser.
+   *
+   * @author   Feross Aboukhadijeh <https://feross.org>
+   * @license  MIT
+   *)
+
+@noble/ciphers/esm/utils.js:
+  (*! noble-ciphers - MIT License (c) 2023 Paul Miller (paulmillr.com) *)
+
+@noble/hashes/esm/utils.js:
+  (*! noble-hashes - MIT License (c) 2022 Paul Miller (paulmillr.com) *)
+*/

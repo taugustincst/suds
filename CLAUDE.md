@@ -7,3 +7,4 @@
 * Frontend: `public/` vanilla ES modules, no build step. `app.js` has the DOM/form helpers; views register with `route()` and are imported in `main.js`. CSP forbids inline scripts.
 * Tests: `npm test` (node:test). Add an API test for every new permission or route. Run the browser smoke test (`scripts/ui-smoke.mjs`) after UI changes.
 * Dev data: `npm run seed` (fictional clients). Never seed production.
+* Local mode: `local/` holds the browser kernel (shims + sync runner). Rebuild `public/local/kernel.js` with `npm run build:local` after changing anything under `server/` and commit the result; test at `/?local=1`.

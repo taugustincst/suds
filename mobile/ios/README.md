@@ -1,6 +1,6 @@
 # SUDS for iPhone and iPad
 
-Native iOS app (SwiftUI + WKWebView) that hosts the SUDS web app served by your SUDS server — always the same version as the computer, nothing to configure. It finds the server with Bonjour (`_suds._tcp`), then `https://suds.local`, then a typed address; trusts the server's self-signed certificate once by fingerprint; asks for Face ID / passcode when reopened after two minutes; and hands downloads (CSV exports) to the share sheet.
+Native iOS app (SwiftUI + WKWebView). The complete SUDS web app is bundled in the app (the repository's `public/` folder, including the prebuilt local kernel) and runs entirely on the device with its data encrypted at rest; no server is needed to use it. **Sync** in the app exchanges changes with the office SUDS when the user chooses. The wrapper adds Bonjour discovery of the office server, one-time certificate trust by fingerprint, Face ID / passcode when reopened, and the share sheet for exported files.
 
 ## What Apple requires
 Building and installing iOS apps needs a Mac with Xcode and an Apple Developer account. There is no way around this; it is Apple's policy, not a SUDS limitation.

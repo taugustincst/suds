@@ -1,0 +1,76 @@
+// SUDS local kernel: runs the SUDS server logic inside the browser/WebView with an on-device encrypted SQLite
+// database, so the phone app works with no server. Exposes window.SUDS_LOCAL.handle(method, path, body, headers).
+import sqlite from 'node:sqlite';
+import db from '../server/db.js';
+import { Router, HttpError } from '../server/http.js';
+import auth from '../server/auth.js';
+import audit from '../server/audit.js';
+import * as sync from './sync.js';
+
+const ROUTE_MODULES = ['auth', 'me', 'users', 'clients', 'assignments', 'interventions', 'calls', 'time', 'resources', 'referrals', 'tasks', 'budget', 'notes', 'consents', 'imports', 'reports', 'admin'];
+const routeLoaders = {
+  auth: () => import('../server/routes/auth.js'), me: () => import('../server/routes/me.js'), users: () => import('../server/routes/users.js'), clients: () => import('../server/routes/clients.js'),
+  assignments: () => import('../server/routes/assignments.js'), interventions: () => import('../server/routes/interventions.js'), calls: () => import('../server/routes/calls.js'), time: () => import('../server/routes/time.js'),
+  resources: () => import('../server/routes/resources.js'), referrals: () => import('../server/routes/referrals.js'), tasks: () => import('../server/routes/tasks.js'), budget: () => import('../server/routes/budget.js'),
+  notes: () => import('../server/routes/notes.js'), consents: () => import('../server/routes/consents.js'), imports: () => import('../server/routes/imports.js'), reports: () => import('../server/routes/reports.js'), admin: () => import('../server/routes/admin.js'),
+};
+
+let router; let token = localStorage.getItem('suds.local.session') || '';
+
+class FakeRes {
+  constructor() { this.status = 200; this.headers = {}; this.chunks = []; this.headersSent = false; }
+  setHeader(k, v) { this.headers[k.toLowerCase()] = v; }
+  writeHead(status, headers = {}) { this.status = status; for (const [k, v] of Object.entries(headers)) this.headers[k.toLowerCase()] = v; this.headersSent = true; }
+  end(body) { if (body !== undefined && body !== null) this.chunks.push(Buffer.isBuffer(body) ? body : Buffer.from(String(body))); this.headersSent = true; }
+}
+
+export async function start({ wasmUrl }) {
+  await sqlite.init(wasmUrl);
+  const bytes = await sqlite.loadBytes();
+  db.openWith(bytes ? new Uint8Array(bytes) : null);
+  router = new Router();
+  for (const name of ROUTE_MODULES) { const mod = (await routeLoaders[name]()).default; mod(router); }
+  sync.register(router);
+  router.get('/api/local/status', () => ({ local: true, users: db.one(`SELECT COUNT(*) n FROM users`).n, last_sync: db.getSetting('last_sync_at', null), sync_server: db.getSetting('sync_server', null) }));
+  router.post('/api/local/setup', (ctx) => {
+    if (db.one(`SELECT COUNT(*) n FROM users`).n > 0) throw new HttpError(403, 'Already set up');
+    const { validate } = require('../server/validate.js');
+    const v = validate(ctx.body, { display_name: { type: 'string', required: true, maxLen: 120 }, username: { type: 'string', required: true, maxLen: 60, pattern: /^[a-zA-Z0-9._@-]+$/ }, password: { type: 'string', required: true, maxLen: 500 }, org_name: { type: 'string', maxLen: 200 } });
+    const errs = auth.passwordPolicy(v.password); if (errs.length) throw new HttpError(400, 'Password must contain ' + errs.join(', '));
+    const { hashPassword, uuid } = require('../server/crypto.js');
+    db.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,0,?)`, uuid(), v.username, hashPassword(v.password), v.display_name, 'navigator', db.now());
+    db.setSetting('org_name', v.org_name || 'SUDS on this device'); db.setSetting('caseload_restriction', '0'); db.setSetting('local_mode', '1');
+    audit.log({ user: { username: v.username }, action: 'local.setup' });
+    return { ok: true };
+  });
+  window.SUDS_LOCAL = { handle, flush: () => sqlite.flush(), wipe: async () => { await sqlite.wipe(); localStorage.removeItem('suds.local.session'); }, sync: (opts) => sync.run(opts) };
+  return window.SUDS_LOCAL;
+}
+
+async function handle(method, path, body, headers = {}) {
+  const url = new URL(path, 'http://local');
+  const res = new FakeRes();
+  const ctx = { req: { socket: { remoteAddress: '127.0.0.1' } }, res, method, path: url.pathname, query: url.searchParams, params: {}, headers: Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v])), cookies: {}, ip: 'device', user: null, session: null, body: null, rawBody: null };
+  try {
+    const m = router.match(method, url.pathname);
+    if (!m) throw new HttpError(404, 'Not found');
+    if (m.methodNotAllowed) throw new HttpError(405, 'Method not allowed');
+    ctx.params = m.params;
+    if (token) ctx.headers.authorization = 'Bearer ' + token;
+    ctx.user = auth.resolveSession(ctx);
+    if (body instanceof ArrayBuffer || body instanceof Uint8Array) { ctx.rawBody = Buffer.from(body); ctx.body = {}; }
+    else if (typeof body === 'string') { ctx.rawBody = Buffer.from(body); ctx.body = {}; }
+    else ctx.body = body || {};
+    let result;
+    for (const h of m.handlers) result = await h(ctx);
+    // login/logout manage the bearer token that replaces the cookie
+    const setCookie = res.headers['set-cookie'];
+    if (setCookie) { const mm = /suds_session=([^;]*)/.exec(setCookie); token = mm && mm[1] ? mm[1] : ''; if (token) localStorage.setItem('suds.local.session', token); else localStorage.removeItem('suds.local.session'); }
+    if (res.headersSent) return { status: res.status, headers: res.headers, body: Buffer.concat(res.chunks) };
+    return { status: result === undefined ? 204 : (ctx.status || 200), headers: { 'content-type': 'application/json' }, json: result === undefined ? null : result };
+  } catch (err) {
+    if (err instanceof HttpError) return { status: err.status, headers: { 'content-type': 'application/json' }, json: { error: err.message, ...(err.extra || {}) } };
+    console.error('[suds-local]', method, path, err);
+    return { status: 500, headers: { 'content-type': 'application/json' }, json: { error: 'Local error: ' + err.message } };
+  }
+}

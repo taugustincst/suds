@@ -1,11 +1,13 @@
 {
   "name": "suds",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "SUD Navigator Services Tracker — HIPAA-oriented tracking for county substance use disorder navigation services",
   "private": true,
   "type": "commonjs",
   "main": "server/index.js",
-  "engines": { "node": ">=22.13" },
+  "engines": {
+    "node": ">=22.13"
+  },
   "scripts": {
     "start": "node --no-warnings=ExperimentalWarning server/index.js",
     "dev": "SUDS_ENV=development node --no-warnings=ExperimentalWarning --watch server/index.js",
@@ -15,9 +17,21 @@
     "backup": "node --no-warnings=ExperimentalWarning scripts/backup.js",
     "rotate-key": "node --no-warnings=ExperimentalWarning scripts/rotate-key.js",
     "package": "node scripts/package.js",
+    "build:local": "node scripts/build-local.js",
     "gen-api-docs": "node --no-warnings=ExperimentalWarning scripts/gen-api-docs.js",
     "gen-key": "node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
   },
-  "repository": { "type": "git", "url": "https://github.com/taugustincst/suds.git" },
-  "license": "MIT"
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/taugustincst/suds.git"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@noble/ciphers": "^1.0.0",
+    "@noble/hashes": "^1.5.0",
+    "buffer": "^6.0.3",
+    "esbuild": "^0.24.0",
+    "fflate": "^0.8.2",
+    "sql.js": "^1.11.0"
+  }
 }

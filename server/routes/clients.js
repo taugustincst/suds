@@ -39,7 +39,7 @@ module.exports = (r) => {
     if (status && status !== 'all') { where.push('c.status=?'); params.push(status); }
     const q = (ctx.query.get('q') || '').trim();
     if (q) {
-      if (/^C\d{2}-\d+$/i.test(q)) { where.push('c.client_code=?'); params.push(q.toUpperCase()); }
+      if (/^[CM]\d{2}-\d+(-D)?$/i.test(q)) { where.push('c.client_code=?'); params.push(q.toUpperCase()); }
       else if (/^\d{4}-\d{2}-\d{2}$/.test(q)) { where.push('c.dob_idx=?'); params.push(blindIndex(q)); }
       else if (/^[\d\-() .+]{7,}$/.test(q)) { where.push('c.phone_idx=?'); params.push(blindIndex(q.replace(/\D/g, ''))); }
       else {

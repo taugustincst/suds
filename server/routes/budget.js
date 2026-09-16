@@ -57,12 +57,12 @@ module.exports = (r) => {
   r.put('/api/budget/lines/:id', auth.requireAuth, auth.requirePerm('budget:write'), (ctx) => {
     const l = db.one(`SELECT id FROM budget_lines WHERE id=?`, ctx.params.id); if (!l) throw notFound();
     const v = validate(ctx.body, Object.fromEntries(Object.entries(lineShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
-    const keys = Object.keys(v); if (keys.length) db.run(`UPDATE budget_lines SET ${keys.map(k => `${k}=?`).join(', ')} WHERE id=?`, ...keys.map(k => v[k]), l.id);
+    const keys = Object.keys(v); if (keys.length) db.run(`UPDATE budget_lines SET ${keys.map(k => `${k}=?`).join(', ')}, updated_at=? WHERE id=?`, ...keys.map(k => v[k]), db.now(), l.id);
     audit.log({ user: ctx.user, action: 'budget_line.update', entity: 'budget_line', entityId: l.id, ip: ctx.ip });
     return { ok: true };
   });
   r.delete('/api/budget/lines/:id', auth.requireAuth, auth.requirePerm('budget:write'), (ctx) => {
-    db.run(`DELETE FROM budget_lines WHERE id=?`, ctx.params.id);
+    db.run(`DELETE FROM budget_lines WHERE id=?`, ctx.params.id); db.tombstone('budget_lines', ctx.params.id);
     audit.log({ user: ctx.user, action: 'budget_line.delete', entity: 'budget_line', entityId: ctx.params.id, ip: ctx.ip });
     return { ok: true };
   });

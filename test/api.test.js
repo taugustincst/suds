@@ -306,3 +306,41 @@ test('native app distribution: public info, admin upload, download, remove', asy
   assert.equal((await admin.del('/api/admin/app/android')).status, 200);
   assert.equal((await H.client().get('/api/app/info')).data.android.available, false);
 });
+
+test('sync: bearer login, scoped pull, push with last-write-wins and tombstones', async () => {
+  const c = H.client();
+  const login = await c.post('/api/auth/login', { username: 'nav2', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' });
+  assert.ok(login.data.token, 'sync clients receive a bearer token');
+  const B = { Authorization: 'Bearer ' + login.data.token, Cookie: '' };
+  const bare = H.client(); // no cookie, bearer only
+  const pull = await bare.get('/api/sync/pull?since=1970-01-01T00:00:00.000Z', B);
+  assert.equal(pull.status, 200);
+  assert.ok(pull.data.tables.clients.some(x => x.id === clientId), 'nav2 is assigned to the client');
+  assert.ok(pull.data.tables.clients.every(x => typeof x.first_name_enc === 'string' && !x.first_name_enc.startsWith('v1:')), 'PHI is decrypted for transport');
+  assert.ok(pull.data.tables.users.find(u => u.username === 'nav1').password_hash.startsWith('scrypt$0$'), 'other users carry no credentials');
+  assert.ok(pull.data.tables.users.find(u => u.username === 'nav2').password_hash.startsWith('scrypt$32768'), 'own credentials sync for offline login');
+  // push a device-created client + note, then an older edit that must lose
+  const devId = require('node:crypto').randomUUID(); const noteId = require('node:crypto').randomUUID(); const now = new Date().toISOString();
+  const push = await bare.post('/api/sync/push', { tables: { clients: [{ id: devId, client_code: 'M26-0001', first_name_enc: 'Dev', last_name_enc: 'Client', status: 'active', intake_date: '2026-09-10', created_at: now, updated_at: now }], notes: [{ id: noteId, client_id: devId, author_id: H.db.one(`SELECT id FROM users WHERE username='nav2'`).id, kind: 'admin', format: 'contact', content_enc: 'Offline note', occurred_at: now, status: 'draft', created_at: now, updated_at: now }] }, audit: [{ at: now, action: 'client.create', entity: 'client', entity_id: devId, client_id: devId, success: 1 }] }, B);
+  assert.equal(push.status, 200); assert.equal(push.data.applied.clients, 1); assert.equal(push.data.applied.notes, 1);
+  const stored = H.db.one(`SELECT first_name_enc, last_name_idx FROM clients WHERE id=?`, devId);
+  assert.ok(stored.first_name_enc.startsWith('v1:'), 're-encrypted on the server'); assert.ok(stored.last_name_idx, 'blind index recomputed');
+  assert.ok(H.db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=(SELECT id FROM users WHERE username='nav2')`, devId), 'device client assigned to the syncing navigator');
+  assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='device.client.create' AND client_id=?`, devId));
+  const stale = await bare.post('/api/sync/push', { tables: { clients: [{ id: devId, client_code: 'M26-0001', first_name_enc: 'Older', last_name_enc: 'Client', status: 'active', created_at: now, updated_at: '2020-01-01T00:00:00.000Z' }] } }, B);
+  assert.equal(stale.data.applied.clients, 0, 'older device edit does not overwrite');
+  // tombstone from device deletes the server note; a tombstone for a row updated later on the server is ignored
+  const ts = new Date(Date.now() + 1000).toISOString();
+  await bare.post('/api/sync/push', { tombstones: [{ table_name: 'notes', id: noteId, deleted_at: ts }] }, B);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM notes WHERE id=?`, noteId).n, 0);
+  const pull2 = await bare.get(`/api/sync/pull?since=${encodeURIComponent(now)}`, B);
+  assert.ok(pull2.data.tombstones.some(t => t.id === noteId));
+  // caseload enforcement: nav2 cannot push a note for a client not on their caseload
+  H.makeUser('outsider', 'navigator'); const o = H.client(); const ol = await o.post('/api/auth/login', { username: 'outsider', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' });
+  const rej = await bare.post('/api/sync/push', { tables: { notes: [{ id: require('node:crypto').randomUUID(), client_id: clientId, author_id: 'x', kind: 'admin', content_enc: 'x', occurred_at: now, created_at: now, updated_at: now }] } }, { Authorization: 'Bearer ' + ol.data.token, Cookie: '' });
+  assert.equal(rej.data.rejected.length, 1);
+  assert.equal((await bare.get('/api/sync/pull', { Authorization: 'Bearer ' + ol.data.token, Cookie: '' })).data.tables.clients.length, 0, 'outsider pulls no clients');
+  // finance cannot sync
+  const f = H.client(); const fl = await f.post('/api/auth/login', { username: 'fin1', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' });
+  assert.equal((await bare.get('/api/sync/pull', { Authorization: 'Bearer ' + fl.data.token, Cookie: '' })).status, 403);
+});

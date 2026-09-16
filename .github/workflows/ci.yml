@@ -9,7 +9,7 @@ jobs:
         run: git clone --depth 1 "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
       - name: Test
         working-directory: src
-        run: node --version && npm test && node scripts/package.js /tmp/suds.zip
+        run: node --version && npm ci --no-audit --no-fund && npm test && npm run build:local && node scripts/package.js /tmp/suds.zip
       - name: Syntax-check browser modules
         working-directory: src
         run: for f in public/*.js public/views/*.js; do node --input-type=module --check < "$f" || exit 1; done
