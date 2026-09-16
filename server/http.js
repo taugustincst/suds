@@ -103,7 +103,8 @@ function serveStatic(root) {
   root = path.resolve(root);
   return (req, res) => {
     let p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-    if (p === '/' || !path.extname(p)) p = '/index.html'; // SPA fallback
+    if (p === '/app' || p === '/app/') p = '/get-app.html';
+    else if (p === '/' || !path.extname(p)) p = '/index.html'; // SPA fallback
     const file = path.resolve(path.join(root, p));
     if (!file.startsWith(root + path.sep) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
       sendJson(res, 404, { error: 'Not found' }); return true;

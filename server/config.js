@@ -92,7 +92,7 @@ const config = {
   },
   trustProxy: process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true' || !!fileCfg.trustProxy,
   auditRetentionDays: Number(process.env.AUDIT_RETENTION_DAYS || 2555),
-  maxBodyBytes: 25 * 1024 * 1024,
+  maxBodyBytes: 60 * 1024 * 1024,
 };
 
 config.keySource = keySourceHolder.value;

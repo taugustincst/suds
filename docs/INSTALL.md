@@ -46,6 +46,9 @@ Nothing to install or configure on the device. Everything a person does on their
 3. The first time, the browser warns that the certificate is not trusted (it is self-signed by your SUDS). Tap **Advanced → Proceed** (Android/Chrome) or **Show Details → visit this website** (iPhone/Safari). To remove the warning permanently, download the certificate from Administration → Network & devices and install it on the device (IT can push it with MDM).
 4. Add SUDS to the home screen: **Share → Add to Home Screen** (iPhone) or **⋮ → Install app** (Android). It then opens full-screen like an app, with the same 15-minute auto sign-out.
 
+## Native apps (optional)
+Android staff can install a real app instead of the browser shortcut: see `docs/MOBILE_APPS.md`. Once the administrator has uploaded the app under Settings → Network & devices → Native apps, phones get it from **https://suds.local/app**.
+
 ## Backups
 Administration → **System & backups → Download encrypted backup** weekly (or use IT's scheduled backup of the whole `data` folder). Keep backups and the key file in different places.
 

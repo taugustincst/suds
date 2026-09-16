@@ -292,3 +292,17 @@ test('workspace preferences and continue endpoint follow the user', async () => 
   assert.equal((await nav.put('/api/me/prefs', { theme: null })).status, 200);
   assert.equal((await nav.get('/api/me/prefs')).data.prefs.theme, undefined);
 });
+
+test('native app distribution: public info, admin upload, download, remove', async () => {
+  const info = await H.client().get('/api/app/info');
+  assert.equal(info.status, 200); assert.equal(info.data.android.available, false); assert.equal(info.data.service, '_suds._tcp');
+  assert.equal((await H.client().get('/api/app/android.apk')).status, 404);
+  assert.equal((await nav.req('POST', '/api/admin/app/android', Buffer.from('PK' + 'x'.repeat(2000)), { 'Content-Type': 'application/octet-stream' })).status, 403);
+  assert.equal((await admin.req('POST', '/api/admin/app/android', Buffer.from('nope' + 'x'.repeat(2000)), { 'Content-Type': 'application/octet-stream' })).status, 400);
+  const up = await admin.req('POST', '/api/admin/app/android?version=1.0.0', Buffer.from('PK\x03\x04' + 'x'.repeat(2000)), { 'Content-Type': 'application/octet-stream' });
+  assert.equal(up.status, 200); assert.equal(up.data.available, true);
+  const dl = await H.client().get('/api/app/android.apk');
+  assert.equal(dl.status, 200); assert.equal(dl.headers.get('content-type'), 'application/vnd.android.package-archive');
+  assert.equal((await admin.del('/api/admin/app/android')).status, 200);
+  assert.equal((await H.client().get('/api/app/info')).data.android.available, false);
+});

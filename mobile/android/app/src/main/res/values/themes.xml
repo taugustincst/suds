@@ -1,0 +1,8 @@
+<resources>
+    <style name="Theme.SUDS" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="colorPrimary">#1F5F8B</item>
+        <item name="colorPrimaryDark">#17496B</item>
+        <item name="colorAccent">#2A9D8F</item>
+        <item name="android:statusBarColor">#1F5F8B</item>
+    </style>
+</resources>

@@ -17,6 +17,27 @@ function openUserForm(values, onDone) {
   const m = modal(isNew ? 'New user' : `Edit ${values.display_name}`, f, { wide: true });
 }
 
+async function nativeAppsCard(primary) {
+  const info = await get('/api/app/info', { quiet: true }).catch(() => null);
+  const appUrl = primary.replace(/\/$/, '') + '/app';
+  const fileIn = h('input', { type: 'file', accept: '.apk', class: 'hidden' });
+  const status = h('div', { class: 'small muted' });
+  fileIn.addEventListener('change', async () => {
+    const f = fileIn.files[0]; if (!f) return; status.textContent = `Uploading ${f.name}…`;
+    try { const r = await fetch('/api/admin/app/android?version=' + encodeURIComponent(prompt('App version (as shown to staff):', state.constants ? '1.0.0' : '1.0.0') || ''), { method: 'POST', headers: { 'X-Requested-With': 'suds', 'Content-Type': 'application/octet-stream' }, body: f, credentials: 'same-origin' }); const j = await r.json(); if (!r.ok) throw new Error(j.error); toast('Android app published', 'ok'); nav('admin?tab=network&_=' + Date.now()); }
+    catch (e) { status.textContent = e.message; }
+  });
+  const a = info?.android;
+  return h('div', { class: 'card' }, h('h3', {}, 'Native apps'),
+    h('p', { class: 'small' }, 'Staff get the phone app from your own server — no app store. Send them to ', h('b', {}, appUrl), ' or let them scan this code:'),
+    h('div', { class: 'center mb' }, qrSvg(appUrl, { size: 140 })),
+    h('h4', {}, 'Android'),
+    a?.available ? h('div', {}, h('div', { class: 'row' }, badge(`Published · version ${a.version} · ${(a.size / 1048576).toFixed(1)} MB`, 'ok'), h('span', { class: 'small muted' }, `uploaded ${fmt.dt(a.uploaded_at)}`)), h('div', { class: 'small mono muted' }, `SHA-256 ${a.sha256.slice(0, 32)}…`))
+      : h('p', { class: 'small muted' }, 'Not published yet. Build the APK (GitHub Actions "Android app" workflow, or Android Studio → Build APK) and upload it here. See docs/MOBILE_APPS.md.'),
+    h('div', { class: 'row mt' }, h('button', { class: 'btn primary sm', onClick: () => fileIn.click() }, a?.available ? 'Upload new version' : 'Upload APK'), a?.available ? h('button', { class: 'btn sm', onClick: async () => { if (await confirmDialog('Remove app', 'Remove the Android app download from this server?', { danger: true, okText: 'Remove' })) { await del('/api/admin/app/android'); nav('admin?tab=network&_=' + Date.now()); } } }, 'Remove') : null, fileIn), status,
+    h('h4', { class: 'mt' }, 'iPhone / iPad'), h('p', { class: 'small muted' }, 'Apple only allows installs through TestFlight or the App Store. The Xcode project is in mobile/ios; until it is published, iPhone users open ', h('b', {}, primary), ' in Safari → Share → Add to Home Screen.'));
+}
+
 route('admin', async (r) => {
   const tab = r.query.get('tab') || 'users';
   const refresh = () => nav(`admin?tab=${tab}&_=${Date.now()}`);
@@ -75,7 +96,8 @@ route('admin', async (r) => {
           h('div', { class: 'center' }, qrSvg(primary, { size: 200 }), h('div', { class: 'mono' }, primary)),
           h('ul', { class: 'small mt' }, L.urls.map(u => h('li', {}, u))),
           L.tls ? h('div', { class: 'mt small' }, h('p', {}, `The certificate is self-signed${n.cert_expires ? ` (valid until ${fmt.date(n.cert_expires)})` : ''}. Browsers show a one-time warning; choose Advanced → Proceed, or install the certificate on the device to remove the warning.`), h('a', { class: 'btn sm', href: '/api/admin/certificate', download: '' }, 'Download certificate')) : h('div', { class: 'banner danger mt' }, 'HTTPS is off. Enable it before allowing other devices to connect.')),
-        h('div', { class: 'card' }, h('h3', {}, 'Network settings'), locked ? h('div', { class: 'banner' }, 'Network settings are controlled by environment variables on this server (see docs/DEPLOYMENT.md).') : f));
+        h('div', { class: 'card' }, h('h3', {}, 'Network settings'), locked ? h('div', { class: 'banner' }, 'Network settings are controlled by environment variables on this server (see docs/DEPLOYMENT.md).') : f),
+        await nativeAppsCard(primary));
     },
     async system() {
       const s = await get('/api/admin/stats');

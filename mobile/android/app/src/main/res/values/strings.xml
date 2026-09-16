@@ -1,0 +1,17 @@
+<resources>
+    <string name="app_name">SUDS</string>
+    <string name="connect_title">Connect to SUDS</string>
+    <string name="searching">Looking for SUDS on this Wi-Fi…</string>
+    <string name="found">Found %1$s</string>
+    <string name="not_found">SUDS was not found automatically. Make sure the phone is on the office Wi-Fi, then scan the QR code from Settings → Network &amp; devices, or type the address.</string>
+    <string name="scan_qr">Scan QR code</string>
+    <string name="address_hint">https://suds.local</string>
+    <string name="connect">Connect</string>
+    <string name="trust_title">First connection to this SUDS</string>
+    <string name="trust_body">This server uses a certificate created by your SUDS installation. Compare the fingerprint with the one shown under Settings → Network &amp; devices, then tap Trust.\n\n%1$s</string>
+    <string name="trust">Trust</string>
+    <string name="cancel">Cancel</string>
+    <string name="cert_changed">The server certificate has changed. If your administrator renewed it, forget the server and connect again.</string>
+    <string name="unlock">Unlock SUDS</string>
+    <string name="forget_server">Forget server</string>
+</resources>
