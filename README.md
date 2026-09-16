@@ -10,8 +10,9 @@ A HIPAA-oriented, zero-dependency web application for county **substance use dis
 
 | | |
 | --- | --- |
-| **Download (zip)** | https://github.com/taugustincst/suds/releases/latest — unzip and double-click a launcher |
-| **Git** | `git clone https://github.com/taugustincst/suds.git` (upgrade later with `git pull`) |
+| **Download 1.0.0 (zip)** | https://github.com/taugustincst/suds/archive/refs/heads/release/v1.0.0.zip — unzip and double-click a launcher |
+| **Git** | `git clone --branch release/v1.0.0 https://github.com/taugustincst/suds.git` (or clone `main` for the latest; upgrade later with `git pull`) |
+| **Releases page** | https://github.com/taugustincst/suds/releases (populated by the Release workflow once GitHub Actions is enabled for the repository) |
 | **Docker** | `docker compose up -d` |
 
 Current release: see [CHANGELOG.md](CHANGELOG.md). Release process: [docs/RELEASE.md](docs/RELEASE.md).
