@@ -14,7 +14,7 @@ npm version 1.0.1 --no-git-tag-version   # bump, then add the CHANGELOG entry
 git commit -am "Release 1.0.1" && git push
 git tag v1.0.1 && git push origin v1.0.1
 ```
-Pushing the tag runs `.github/workflows/release.yml`, which re-runs the tests, packages `suds-v1.0.1.zip` (`git archive`, so no local data can leak) and publishes a GitHub Release with the zip attached.
+Pushing the tag runs `.github/workflows/release.yml` (it can also be started from the Actions tab with *Run workflow* → type `release`; it then creates the tag itself), which re-runs the tests, packages `suds-v1.0.1.zip` (`git archive`, so no local data can leak) and publishes a GitHub Release with the zip attached.
 
 ## How users get it
 - **Download:** the zip from the Releases page — unzip, then double-click a file in `launchers/` (see `docs/INSTALL.md`).
