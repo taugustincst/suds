@@ -6,7 +6,7 @@ const { encrypt, decrypt, uuid } = require('../crypto');
 
 module.exports = (r) => {
   crud.build(r, {
-    table: 'calls', entity: 'call', perm: 'calls', dateCol: 'started_at', clientRequired: false,
+    table: 'calls', entity: 'call', perm: 'calls', dateCol: 'started_at', clientRequired: false, restrictOwner: true,
     joins: 'JOIN users u ON u.id=calls.user_id LEFT JOIN clients c ON c.id=calls.client_id',
     select: 'calls.*, u.display_name AS worker, c.client_code',
     shape: {

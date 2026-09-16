@@ -68,7 +68,7 @@ module.exports = (r) => {
   });
 
   crud.build(r, {
-    table: 'expenditures', entity: 'expenditure', base: '/api/budget/expenditures', perm: 'budget', dateCol: 'spent_at', clientRequired: false,
+    table: 'expenditures', entity: 'expenditure', base: '/api/budget/expenditures', perm: 'budget', dateCol: 'spent_at', clientRequired: false, restrictOwner: true,
     joins: 'JOIN users u ON u.id=expenditures.user_id JOIN funding_sources f ON f.id=expenditures.funding_source_id LEFT JOIN budget_lines b ON b.id=expenditures.budget_line_id LEFT JOIN clients c ON c.id=expenditures.client_id LEFT JOIN users a ON a.id=expenditures.approved_by',
     select: 'expenditures.*, u.display_name AS worker, f.name AS fund, b.label AS line_label, b.category AS line_category, c.client_code, a.display_name AS approver',
     shape: {

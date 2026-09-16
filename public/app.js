@@ -90,7 +90,7 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     let input; const v = values[f.name] ?? f.value ?? '';
     const opts = (f.options || []).map(o => typeof o === 'string' ? { value: o, label: fmt.label(o) } : o);
     switch (f.type) {
-      case 'select': input = h('select', { name: f.name, required: !!f.required }, f.required && !f.noBlank ? null : h('option', { value: '' }, f.placeholder || '—'), opts.map(o => h('option', { value: o.value, selected: String(o.value) === String(v) }, o.label))); break;
+      case 'select': input = h('select', { name: f.name, required: !!f.required }, f.noBlank ? null : h('option', { value: '' }, f.placeholder || '—'), opts.map(o => h('option', { value: o.value, selected: String(o.value) === String(v) }, o.label))); break;
       case 'textarea': input = h('textarea', { name: f.name, required: !!f.required, rows: f.rows || 4, placeholder: f.placeholder || '' }, v || ''); break;
       case 'checkbox': input = h('input', { type: 'checkbox', name: f.name, checked: !!(v === 1 || v === true || v === '1') }); break;
       case 'datetime': input = h('input', { type: 'datetime-local', name: f.name, required: !!f.required, value: v ? fmt.isoLocal(new Date(v)) : '' }); break;

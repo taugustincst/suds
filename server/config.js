@@ -62,6 +62,7 @@ const config = {
     clientSecret: process.env.MS_CLIENT_SECRET || '',
     user: process.env.MS_ONENOTE_USER || '',
   },
+  trustProxy: process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true',
   auditRetentionDays: Number(process.env.AUDIT_RETENTION_DAYS || 2555),
   maxBodyBytes: 25 * 1024 * 1024,
 };

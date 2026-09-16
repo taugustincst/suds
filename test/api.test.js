@@ -239,3 +239,13 @@ test('user management and self-protection', async () => {
   assert.equal(l.user.must_change_password, true);
   assert.equal((await fresh.get('/api/clients')).status, 403);
 });
+
+test('non-managers cannot record work under another worker', async () => {
+  const otherId = H.db.one(`SELECT id FROM users WHERE username='nav2'`).id;
+  const r = await nav.post('/api/interventions', { client_id: clientId, type: 'outreach', occurred_at: '2026-09-10T10:00:00Z', user_id: otherId });
+  assert.equal(r.status, 201);
+  assert.equal(H.db.one(`SELECT user_id FROM interventions WHERE id=?`, r.data.id).user_id, H.db.one(`SELECT id FROM users WHERE username='nav1'`).id);
+  const s = H.client(); await s.login('sup1', 'StaffPassw0rd!x');
+  const r2 = await s.post('/api/interventions', { client_id: clientId, type: 'outreach', occurred_at: '2026-09-10T10:00:00Z', user_id: otherId });
+  assert.equal(H.db.one(`SELECT user_id FROM interventions WHERE id=?`, r2.data.id).user_id, otherId);
+});

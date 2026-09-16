@@ -38,17 +38,18 @@ export function openClientForm(values, onDone) {
 }
 
 route('clients', async (r) => {
-  const q = r.query.get('q') || ''; const status = r.query.get('status') || 'active';
-  const data = await get(`/api/clients?limit=200&status=${encodeURIComponent(status)}${q ? '&q=' + encodeURIComponent(q) : ''}`);
+  const q = r.query.get('q') || ''; const status = r.query.get('status') || 'active'; const assigned = r.query.get('assigned_to') || '';
+  const data = await get(`/api/clients?limit=200&status=${encodeURIComponent(status)}${q ? '&q=' + encodeURIComponent(q) : ''}${assigned ? '&assigned_to=' + assigned : ''}`);
   let rows = data.clients;
   if (r.query.get('stale') === '1') rows = rows.filter(c => !c.last_contact || Date.now() - Date.parse(c.last_contact) > 30 * 86400000);
   const deid = !can('clients:read');
   const search = h('input', { type: 'search', value: q, placeholder: 'Exact last name, "Last, First", phone, DOB (YYYY-MM-DD) or client code', onKeydown: (e) => { if (e.key === 'Enter') nav(`clients?status=${status}&q=${encodeURIComponent(search.value.trim())}`); } });
-  const statusSel = h('select', { onChange: () => nav(`clients?status=${statusSel.value}&q=${encodeURIComponent(q)}`) }, ['active', 'waitlist', 'inactive', 'closed', 'deceased', 'all'].map(s => h('option', { value: s, selected: s === status }, fmt.label(s))));
+  const statusSel = h('select', { onChange: () => nav(`clients?status=${statusSel.value}&q=${encodeURIComponent(q)}&assigned_to=${assigned}`) }, ['active', 'waitlist', 'inactive', 'closed', 'deceased', 'all'].map(s => h('option', { value: s, selected: s === status }, fmt.label(s))));
+  const assignSel = !state.user.caseload_restricted ? h('select', { onChange: () => nav(`clients?status=${status}&q=${encodeURIComponent(q)}&assigned_to=${assignSel.value}`) }, h('option', { value: '' }, 'Any worker'), h('option', { value: state.user.id, selected: assigned === state.user.id }, 'Me'), state.users.filter(u => u.id !== state.user.id && ['navigator', 'clinician', 'supervisor'].includes(u.role)).map(u => h('option', { value: u.id, selected: u.id === assigned }, u.display_name))) : null;
   return h('div', {},
     pageHead('Clients', can('clients:write') ? h('button', { class: 'btn primary', onClick: () => openClientForm(null) }, '+ New client') : null),
     state.user.caseload_restricted ? h('div', { class: 'banner small' }, 'You are viewing your assigned caseload only. Ask a supervisor to assign additional clients.') : null,
-    h('div', { class: 'filters' }, h('div', { class: 'field grow' }, h('label', {}, 'Search'), search), h('div', { class: 'field' }, h('label', {}, 'Status'), statusSel), h('button', { class: 'btn', onClick: () => nav(`clients?status=${status}&q=${encodeURIComponent(search.value.trim())}`) }, 'Search'), q ? h('button', { class: 'btn ghost', onClick: () => nav(`clients?status=${status}`) }, 'Clear') : null),
+    h('div', { class: 'filters' }, h('div', { class: 'field grow' }, h('label', {}, 'Search'), search), h('div', { class: 'field' }, h('label', {}, 'Status'), statusSel), assignSel ? h('div', { class: 'field' }, h('label', {}, 'Assigned to'), assignSel) : null, h('button', { class: 'btn', onClick: () => nav(`clients?status=${status}&q=${encodeURIComponent(search.value.trim())}&assigned_to=${assigned}`) }, 'Search'), q ? h('button', { class: 'btn ghost', onClick: () => nav(`clients?status=${status}`) }, 'Clear') : null),
     h('div', { class: 'muted small mb' }, `${data.total} client${data.total === 1 ? '' : 's'}`),
     table([
       { label: 'Client', render: c => h('div', {}, h('b', {}, c.display_name), h('div', { class: 'muted small' }, c.client_code, c.dob && !deid ? ` · DOB ${fmt.date(c.dob)}` : '')) },

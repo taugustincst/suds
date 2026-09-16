@@ -56,7 +56,7 @@ function build(r, opts) {
     if (opts.beforeInsert) opts.beforeInsert(ctx, v);
     const id = uuid();
     const cols = { id, ...v };
-    if (ownerCol && cols[ownerCol] === undefined) cols[ownerCol] = ctx.user.id;
+    if (ownerCol && (cols[ownerCol] === undefined || (opts.restrictOwner && !auth.hasPerm(ctx.user, 'clients:all')))) cols[ownerCol] = ctx.user.id;
     if (opts.creatorCol) cols[opts.creatorCol] = ctx.user.id;
     const keys = Object.keys(cols).filter(k => cols[k] !== undefined && !k.startsWith('_'));
     db.run(`INSERT INTO ${table}(${keys.join(',')}) VALUES(${keys.map(() => '?').join(',')})`, ...keys.map(k => cols[k]));
@@ -72,6 +72,7 @@ function build(r, opts) {
     if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden('You cannot edit this record');
     const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
     if (v.client_id && v.client_id !== row.client_id) checkClient(ctx, v.client_id);
+    if (opts.restrictOwner && v[ownerCol] !== undefined && !auth.hasPerm(ctx.user, 'clients:all')) delete v[ownerCol];
     if (opts.beforeUpdate) opts.beforeUpdate(ctx, v, row);
     const keys = Object.keys(v).filter(k => v[k] !== undefined && !k.startsWith('_'));
     if (keys.length) db.run(`UPDATE ${table} SET ${keys.map(k => `${k}=?`).join(', ')}${opts.noUpdatedAt ? '' : ', updated_at=?'} WHERE id=?`, ...keys.map(k => v[k]), ...(opts.noUpdatedAt ? [] : [db.now()]), row.id);

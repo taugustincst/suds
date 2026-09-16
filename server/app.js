@@ -38,7 +38,7 @@ function createHandler() {
     const ctx = {
       req, res, method: req.method, path: url.pathname, query: url.searchParams, params: {},
       headers: req.headers, cookies: parseCookies(req.headers.cookie),
-      ip: (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket?.remoteAddress || '',
+      ip: (config.trustProxy && (req.headers['x-forwarded-for'] || '').split(',')[0].trim()) || req.socket?.remoteAddress || '',
       user: null, session: null, body: null,
     };
     try {

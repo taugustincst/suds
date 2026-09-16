@@ -65,6 +65,8 @@ npm test
 
 Runs unit tests (crypto, TOTP, importers) and API integration tests (auth, lockout, MFA, RBAC, caseload scoping, encryption at rest, note signing, consents, budget, imports, intake, audit chain).
 
+A browser smoke test of the full navigator workflow lives in `scripts/ui-smoke.mjs` (needs a seeded running server and a global Playwright install).
+
 ## License
 
 MIT. This software supports but does not by itself provide HIPAA compliance; see [docs/HIPAA.md](docs/HIPAA.md) for the shared-responsibility model.

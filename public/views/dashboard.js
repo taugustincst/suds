@@ -5,7 +5,7 @@ route('dashboard', async () => {
   const c = d.clients, i = d.interventions;
   const alerts = [];
   if (d.tasks.overdue) alerts.push(['danger', `${d.tasks.overdue} overdue task${d.tasks.overdue > 1 ? 's' : ''}`, '#/tasks?overdue=1']);
-  if (d.notes.unsigned) alerts.push(['warn', `${d.notes.unsigned} unsigned draft note${d.notes.unsigned > 1 ? 's' : ''}`, '#/notes?status=draft&mine=1']);
+  if (d.notes.unsigned) alerts.push([d.notes.unsigned_overdue ? 'danger' : 'warn', `${d.notes.unsigned} unsigned draft note${d.notes.unsigned > 1 ? 's' : ''}${d.notes.unsigned_overdue ? ` (${d.notes.unsigned_overdue} overdue)` : ''}`, '#/notes?status=draft&mine=1']);
   if (d.notes.staged_imports) alerts.push(['info', `${d.notes.staged_imports} imported note${d.notes.staged_imports > 1 ? 's' : ''} awaiting review`, '#/imports']);
   if (c.no_contact_30d) alerts.push(['warn', `${c.no_contact_30d} active client${c.no_contact_30d > 1 ? 's' : ''} with no intervention in 30 days`, '#/clients?stale=1']);
   if (d.consents_expiring.length) alerts.push(['warn', `${d.consents_expiring.length} consent${d.consents_expiring.length > 1 ? 's' : ''} expiring within 30 days`, '#/clients']);

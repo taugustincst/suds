@@ -110,7 +110,11 @@ function resolveSession(ctx) {
 function requireAuth(ctx) {
   if (!ctx.user) throw unauthorized();
   if (ctx.session?.mfa_pending) throw new HttpError(401, 'MFA verification required', { mfaRequired: true });
-  if (ctx.user.must_change_password && !ctx.path.startsWith('/api/auth/')) throw new HttpError(403, 'Password change required', { passwordChangeRequired: true });
+  if (!ctx.path.startsWith('/api/auth/')) {
+    if (ctx.user.must_change_password) throw new HttpError(403, 'Password change required', { passwordChangeRequired: true });
+    const age = ctx.user.password_changed_at ? (Date.now() - Date.parse(ctx.user.password_changed_at)) / 86400000 : Infinity;
+    if (age > config.password.maxAgeDays) throw new HttpError(403, `Password is older than ${config.password.maxAgeDays} days and must be changed`, { passwordChangeRequired: true });
+  }
 }
 
 // ---- Login ----

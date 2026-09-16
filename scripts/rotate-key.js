@@ -35,5 +35,6 @@ db.transaction(() => {
   audit.log({ user: { username: 'cli' }, action: 'security.key_rotated', details: { rows } });
 });
 db.close();
-if (!config.isProd) { const f = require('node:path').join(config.dataDir, '.dev-encryption-key'); if (fs.existsSync(f)) fs.writeFileSync(f, newHex, { mode: 0o600 }); }
+// In development the key normally lives in data/.dev-encryption-key; update it only when rotating that default database.
+if (!config.isProd && !process.env.SUDS_ENCRYPTION_KEY && !process.env.SUDS_DB_PATH) { const f = require('node:path').join(config.dataDir, '.dev-encryption-key'); if (fs.existsSync(f)) { fs.writeFileSync(f, newHex, { mode: 0o600 }); console.log(`Updated ${f}`); } }
 console.log(`Re-encrypted ${rows} rows. Set SUDS_ENCRYPTION_KEY=${newHex.slice(0, 6)}… in the environment and restart the server.`);

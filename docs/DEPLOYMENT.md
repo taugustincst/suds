@@ -17,6 +17,7 @@ Copy `.env.example` to `.env` and set:
 | `SUDS_INDEX_KEY` | yes | 64 hex chars. Used for searchable blind indexes. |
 | `SUDS_DB_PATH` / `SUDS_DATA_DIR` | no | Defaults to `./data/suds.db`. Put on the encrypted volume. |
 | `TLS_CERT_PATH`, `TLS_KEY_PATH` | recommended | If unset, run behind a TLS proxy. |
+| `TRUST_PROXY=1` | when proxied | Use the `X-Forwarded-For` header for audit IPs and rate limiting. Only set behind a proxy you control. |
 | `HOST`, `PORT` | no | Default `127.0.0.1:8080`. Use `HOST=0.0.0.0` only inside a container / behind a firewall. |
 | `SESSION_IDLE_MINUTES` | no | Default 15 (auto sign-out). |
 | `SESSION_ABSOLUTE_HOURS` | no | Default 12. |
