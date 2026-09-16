@@ -1,0 +1,26 @@
+# Example deployment: SUDS behind a TLS-terminating reverse proxy (Caddy). Put real values in .env.
+services:
+  suds:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SUDS_ENV: production
+      HOST: 0.0.0.0
+      PORT: 8080
+      SUDS_DATA_DIR: /data
+    volumes:
+      - suds-data:/data          # place on an encrypted volume (LUKS / BitLocker / cloud KMS-backed disk)
+    expose: ["8080"]
+  proxy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["443:443", "80:80"]
+    environment:
+      SUDS_DOMAIN: ${SUDS_DOMAIN:-suds.example.gov}
+    command: caddy reverse-proxy --from "https://${SUDS_DOMAIN:-suds.example.gov}" --to suds:8080
+    volumes:
+      - caddy-data:/data
+volumes:
+  suds-data:
+  caddy-data:

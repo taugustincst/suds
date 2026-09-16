@@ -1,0 +1,68 @@
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, stat, bars, downloadCsv, loadRefData } from '../app.js';
+
+export function openExpenditureForm(values, { clientId, clientDisplay, onDone } = {}) {
+  const C = state.constants; const isNew = !values;
+  let lineSel;
+  const f = form([
+    { name: 'funding_source_id', label: 'Funding source', type: 'fund', required: true }, { name: 'budget_line_id', label: 'Budget line', type: 'select', options: [] },
+    { name: 'spent_at', label: 'Date', type: 'date', required: true, value: values?.spent_at || fmt.today() }, { name: 'amount', label: 'Amount ($)', type: 'number', min: 0.01, step: 0.01, required: true },
+    { name: 'category', label: 'Category', type: 'select', options: C.BUDGET_CATEGORIES, required: true }, { name: 'client_id', label: 'Client (for client assistance)', type: 'client', value: clientId || values?.client_id, display: clientDisplay },
+    { name: 'vendor', label: 'Vendor / payee' }, { name: 'receipt_ref', label: 'Receipt / invoice #' }, { name: 'description', label: 'Description', type: 'textarea', span: true, rows: 2 },
+  ], { values: values || {}, submitText: isNew ? 'Submit expenditure' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => { if (isNew) await post('/api/budget/expenditures', d); else await put(`/api/budget/expenditures/${values.id}`, d); toast('Expenditure saved (pending approval)', 'ok'); m.close(); onDone && onDone(); } });
+  lineSel = f.inputs.budget_line_id;
+  const fundSel = f.inputs.funding_source_id;
+  const fillLines = () => { const fund = state.funds.find(x => x.id === fundSel.value); lineSel.replaceChildren(h('option', { value: '' }, '— none —'), ...(fund ? fund.lines : []).map(l => h('option', { value: l.id, selected: l.id === values?.budget_line_id }, `${l.label || fmt.label(l.category)} (${fmt.money(l.allocated_amount - l.spent)} left)`))); };
+  fundSel.addEventListener('change', () => { fillLines(); const fund = state.funds.find(x => x.id === fundSel.value); if (fund && !f.inputs.category.value && fund.lines[0]) f.inputs.category.value = fund.lines[0].category; });
+  lineSel.addEventListener('change', () => { const fund = state.funds.find(x => x.id === fundSel.value); const l = fund?.lines.find(x => x.id === lineSel.value); if (l) f.inputs.category.value = l.category; });
+  fillLines();
+  const m = modal(isNew ? 'Record expenditure' : 'Edit expenditure', f, { wide: true });
+}
+export function expenditureTable(rows, { showClient = true, onChange } = {}) {
+  const approve = async (r, status) => { await post(`/api/budget/expenditures/${r.id}/approve`, { status }); toast(`Marked ${status}`, 'ok'); onChange && onChange(); };
+  return table([
+    { label: 'Date', render: r => fmt.date(r.spent_at) }, { label: 'Fund', render: r => h('div', {}, r.fund, r.line_label || r.line_category ? h('div', { class: 'small muted' }, r.line_label || fmt.label(r.line_category)) : null) }, { label: 'Category', render: r => fmt.label(r.category) },
+    showClient ? { label: 'Client', render: r => r.client_id ? h('a', { href: `#/client/${r.client_id}` }, r.client_code) : '—' } : null, { label: 'Amount', render: r => fmt.money(r.amount), num: true },
+    { label: 'Vendor / description', render: r => h('span', { class: 'small' }, r.vendor ? h('b', {}, r.vendor, ' ') : null, r.description || '', r.receipt_ref ? h('span', { class: 'muted' }, ` #${r.receipt_ref}`) : null) },
+    { label: 'Status', render: r => [badge(fmt.label(r.status), statusKind(r.status)), r.approver ? h('div', { class: 'small muted' }, r.approver) : null] }, { label: 'By', key: 'worker' },
+    { label: '', render: r => h('div', { class: 'row nowrap' }, r.status === 'pending' && can('budget:approve') && r.user_id !== state.user.id ? [h('button', { class: 'btn sm primary', onClick: () => approve(r, 'approved') }, 'Approve'), h('button', { class: 'btn sm', onClick: () => approve(r, 'rejected') }, 'Reject')] : null, r.status === 'approved' && can('budget:approve') ? h('button', { class: 'btn sm', onClick: () => approve(r, 'reimbursed') }, 'Reimbursed') : null,
+      r.status === 'pending' && (r.user_id === state.user.id || can('budget:approve')) ? [h('button', { class: 'btn sm', onClick: () => openExpenditureForm(r, { onDone: onChange }) }, 'Edit'), h('button', { class: 'btn sm ghost', onClick: async () => { if (await confirmDialog('Delete', 'Delete this pending expenditure?', { danger: true, okText: 'Delete' })) { await del(`/api/budget/expenditures/${r.id}`); onChange && onChange(); } } }, '✕')] : null) },
+  ].filter(Boolean), rows, { empty: 'No expenditures.' });
+}
+function openFundForm(values, onDone) {
+  const C = state.constants; const isNew = !values;
+  const f = form([{ name: 'name', label: 'Fund / grant name', required: true, span: true }, { name: 'source_type', label: 'Source type', type: 'select', options: C.FUNDING_TYPES, required: true }, { name: 'grant_number', label: 'Grant / award #' },
+    { name: 'fiscal_year_start', label: 'Period start', type: 'date', required: true }, { name: 'fiscal_year_end', label: 'Period end', type: 'date', required: true }, { name: 'total_amount', label: 'Total award ($)', type: 'number', min: 0, step: 0.01, required: true },
+    { name: 'restrictions', label: 'Allowable uses / restrictions', type: 'textarea', span: true, rows: 2 }, { name: 'notes', label: 'Notes', type: 'textarea', span: true, rows: 2 }, { name: 'is_active', label: 'Active', type: 'checkbox', value: values ? values.is_active : true }],
+    { values: values || {}, submitText: isNew ? 'Create fund' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => { if (isNew) await post('/api/budget/funds', d); else await put(`/api/budget/funds/${values.id}`, d); toast('Fund saved', 'ok'); m.close(); await loadRefData(); onDone(); } });
+  const m = modal(isNew ? 'New funding source' : 'Edit funding source', f, { wide: true });
+}
+function openLineForm(fund, values, onDone) {
+  const C = state.constants; const isNew = !values;
+  const f = form([{ name: 'category', label: 'Category', type: 'select', options: C.BUDGET_CATEGORIES, required: true }, { name: 'label', label: 'Label' }, { name: 'allocated_amount', label: 'Allocated ($)', type: 'number', min: 0, step: 0.01, required: true }, { name: 'notes', label: 'Notes', span: true }],
+    { values: values || {}, submitText: 'Save', onCancel: () => m.close(), onSubmit: async (d) => { if (isNew) await post(`/api/budget/funds/${fund.id}/lines`, d); else await put(`/api/budget/lines/${values.id}`, d); m.close(); await loadRefData(); onDone(); } });
+  const m = modal(`${fund.name} — budget line`, f);
+}
+route('budget', async (r) => {
+  const tab = r.query.get('tab') || 'overview';
+  const [sum, exp] = await Promise.all([get('/api/budget/summary'), get(`/api/budget/expenditures?limit=300${r.query.get('status') ? '&status=' + r.query.get('status') : ''}`)]);
+  const refresh = async () => { await loadRefData(); nav(`budget?tab=${tab}&_=${Date.now()}`); };
+  const t = sum.totals;
+  const pct = (a, b) => b ? Math.min(100, (a / b) * 100) : 0;
+  const fundCard = (f) => h('div', { class: 'card' },
+    h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, f.name), h('div', { class: 'small muted' }, `${fmt.label(f.source_type)}${f.grant_number ? ' · ' + f.grant_number : ''} · ${fmt.date(f.fiscal_year_start)} – ${fmt.date(f.fiscal_year_end)}`)), can('budget:write') ? h('div', { class: 'row' }, h('button', { class: 'btn sm', onClick: () => openLineForm(f, null, refresh) }, '+ Line'), h('button', { class: 'btn sm', onClick: () => openFundForm(f, refresh) }, 'Edit')) : null),
+    h('div', { class: 'grid cols-4 mb' }, stat('Award', fmt.money(f.total_amount)), stat('Spent', fmt.money(f.spent), f.pct_spent > 90 ? 'danger' : ''), stat('Pending', fmt.money(f.pending), f.pending ? 'warn' : ''), stat('Remaining', fmt.money(f.remaining), f.remaining < 0 ? 'danger' : 'ok')),
+    h('div', { class: 'row between small muted' }, h('span', {}, `${f.pct_spent.toFixed(0)}% spent`), h('span', {}, `${f.pct_elapsed.toFixed(0)}% of period elapsed`)),
+    h('div', { class: 'progress mb' }, h('div', { class: f.pct_spent > f.pct_elapsed + 15 ? 'danger' : f.pct_spent > f.pct_elapsed + 5 ? 'warn' : '', style: { width: `${pct(f.spent, f.total_amount)}%` } })),
+    f.staff_minutes ? h('div', { class: 'small muted mb' }, `Staff time charged: ${fmt.mins(f.staff_minutes)}${f.staff_cost ? ` (≈ ${fmt.money(f.staff_cost)} at loaded rates)` : ''}`) : null,
+    f.lines.length ? table([{ label: 'Line', render: l => l.label || fmt.label(l.category) }, { label: 'Category', render: l => fmt.label(l.category) }, { label: 'Allocated', render: l => fmt.money(l.allocated_amount), num: true }, { label: 'Spent', render: l => fmt.money(l.spent), num: true }, { label: 'Pending', render: l => fmt.money(l.pending), num: true }, { label: 'Remaining', render: l => h('span', { style: l.allocated_amount - l.spent - l.pending < 0 ? { color: 'var(--danger)' } : {} }, fmt.money(l.allocated_amount - l.spent - l.pending)), num: true },
+      { label: '%', render: l => h('div', { class: 'progress', style: { width: '80px' } }, h('div', { class: pct(l.spent, l.allocated_amount) > 90 ? 'danger' : '', style: { width: `${pct(l.spent, l.allocated_amount)}%` } })) },
+      { label: '', render: l => can('budget:write') ? h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm', onClick: () => openLineForm(f, l, refresh) }, 'Edit'), h('button', { class: 'btn sm ghost', onClick: async () => { if (await confirmDialog('Delete line', 'Delete this budget line? Expenditures keep their fund.', { danger: true, okText: 'Delete' })) { await del(`/api/budget/lines/${l.id}`); refresh(); } } }, '✕')) : null }], f.lines, { wrap: false }) : h('div', { class: 'muted small' }, 'No budget lines yet.'),
+    f.unallocated ? h('div', { class: 'small muted mt' }, `Unallocated: ${fmt.money(f.unallocated)}`) : null);
+  return h('div', {},
+    pageHead('Budget & expenditures', can('budget:write') ? h('button', { class: 'btn primary', onClick: () => openExpenditureForm(null, { onDone: refresh }) }, '+ Record expenditure') : null, can('budget:write') ? h('button', { class: 'btn', onClick: () => openFundForm(null, refresh) }, '+ Funding source') : null, h('button', { class: 'btn', onClick: () => downloadCsv('/api/reports/export/expenditures?from=2000-01-01') }, 'Export CSV')),
+    h('div', { class: 'grid cols-4 mb' }, stat('Total budget', fmt.money(t.budget)), stat('Spent (approved)', fmt.money(t.spent)), stat('Pending approval', fmt.money(t.pending), t.pending ? 'warn' : ''), stat('Remaining', fmt.money(t.remaining), t.remaining < 0 ? 'danger' : 'ok')),
+    h('div', { class: 'tabs' }, [['overview', 'Funds'], ['expenditures', `Expenditures`], ['analysis', 'Analysis']].map(([k, l]) => h('button', { class: k === tab ? 'active' : '', onClick: () => nav(`budget?tab=${k}`) }, l))),
+    tab === 'overview' ? (sum.funds.length ? h('div', { class: 'grid' }, sum.funds.map(fundCard)) : h('div', { class: 'empty' }, 'No funding sources yet. Add your opioid settlement, SOR, or county allocations.')) : null,
+    tab === 'expenditures' ? h('div', {}, h('div', { class: 'filters' }, ['', 'pending', 'approved', 'rejected', 'reimbursed'].map(s => h('button', { class: `btn sm ${(r.query.get('status') || '') === s ? 'primary' : ''}`, onClick: () => nav(`budget?tab=expenditures${s ? '&status=' + s : ''}`) }, s ? fmt.label(s) : 'All'))), expenditureTable(exp.rows, { onChange: refresh })) : null,
+    tab === 'analysis' ? h('div', { class: 'grid cols-2' }, h('div', { class: 'card' }, h('h3', {}, 'Spend by category'), bars(sum.by_category, { valueKey: 'amount', labelKey: 'category', format: fmt.money })), h('div', { class: 'card' }, h('h3', {}, 'Spend by month'), bars(sum.by_month, { valueKey: 'amount', labelKey: 'month', format: fmt.money })), h('div', { class: 'card' }, h('h3', {}, 'Client assistance'), stat('Clients assisted', sum.per_client.clients), h('div', { class: 'mt' }, stat('Avg per client', fmt.money(sum.per_client.clients ? sum.per_client.amount / sum.per_client.clients : 0))))) : null);
+});
