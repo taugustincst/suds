@@ -14,19 +14,20 @@ route('setup', async () => {
     { name: 'admin_password', label: 'Password', type: 'password', required: true, autocomplete: 'new-password', help: '12+ characters with upper and lower case, a number and a symbol.' }, { name: 'confirm', label: 'Confirm password', type: 'password', required: true, autocomplete: 'new-password' },
     { type: 'section', label: 'Who can reach SUDS' },
     { name: 'network', label: 'Access', type: 'select', noBlank: true, required: true, value: 'lan', options: [{ value: 'lan', label: 'Phones, tablets and other computers on the office network (recommended for mobile use)' }, { value: 'local', label: 'Only this computer' }], span: true },
-    { name: 'https', label: 'Encrypt connections with HTTPS (creates a certificate automatically — required for network access)', type: 'checkbox', value: true, span: true },
-    { name: 'port', label: 'Port', type: 'number', value: 8443, min: 1, max: 65535, step: 1, help: 'Leave as is unless IT says otherwise.' },
-    { name: 'extra_hosts', label: 'Extra names for the certificate (optional)', placeholder: 'e.g. suds.county.local', help: 'Only if IT gives this computer a name.' },
+    { name: 'https', label: 'Encrypt connections (HTTPS) — recommended, created automatically', type: 'checkbox', value: true, span: true },
+    { type: 'section', label: 'Advanced (usually not needed)', collapsible: true },
+    { name: 'port', label: 'Port', type: 'number', min: 1, max: 65535, step: 1, help: 'Leave blank: SUDS picks the standard port so the address needs no number.' },
+    { name: 'extra_hosts', label: 'Extra names for the certificate', placeholder: 'e.g. suds.county.local', help: 'Only if IT gives this computer a name.' },
   ], { submitText: 'Finish setup', onSubmit: async (d) => {
     if (d.admin_password !== d.confirm) throw new Error('Passwords do not match');
     if (d.network === 'lan' && !d.https) throw new Error('HTTPS is required when other devices can connect');
     delete d.confirm;
     const r = await post('/api/setup/complete', d);
     f.classList.add('hidden'); done.classList.remove('hidden');
-    const L = r.listener; const primary = L.urls.find(u => !/localhost/.test(u)) || L.urls[0];
+    const L = r.listener; const primary = L.friendly || L.urls.find(u => !/localhost/.test(u)) || L.urls[0];
     done.append(h('div', { class: 'banner' }, h('b', {}, 'Setup complete. '), 'SUDS is now running at the address below. This page will take you there in a moment.'),
       h('div', { class: 'grid cols-2' },
-        h('div', {}, h('h3', {}, 'Addresses'), h('ul', {}, L.urls.map(u => h('li', {}, h('a', { href: u }, u)))), L.tls ? h('p', { class: 'small muted' }, 'Browsers will warn once that the certificate is self-signed. Choose "Advanced → Proceed" or install the certificate from Administration → Network.') : null),
+        h('div', {}, h('h3', {}, 'Open SUDS at'), L.friendly ? h('p', {}, h('a', { href: L.friendly, style: { fontSize: '1.2rem', fontWeight: 700 } }, L.friendly), h('div', { class: 'small muted' }, 'on any phone or computer on the office Wi-Fi')) : null, h('details', {}, h('summary', { class: 'small muted' }, 'Other addresses'), h('ul', {}, L.urls.map(u => h('li', {}, h('a', { href: u }, u))))), L.tls ? h('p', { class: 'small muted' }, 'The first time, browsers warn that the certificate is self-signed. Tap "Advanced → Proceed" once per device.') : null),
         h('div', { class: 'center' }, h('h3', {}, 'Scan with a phone'), qrSvg(primary, { size: 180 }), h('div', { class: 'small muted' }, primary))),
       r.keys_file ? h('div', { class: 'banner danger mt' }, h('b', {}, 'Back up your encryption keys now. '), `They were generated for you and saved to ${r.keys_file}. Sign in, open Administration → System → "Download key backup" and store the file somewhere separate from this computer (e.g. the county password manager). Without the keys, database backups cannot be read.`) : null,
       h('div', { class: 'btn-row' }, h('a', { class: 'btn primary', href: primary + '#/login' }, 'Go to sign-in')));
@@ -34,5 +35,5 @@ route('setup', async () => {
   } });
   return h('div', { class: 'login-wrap' }, h('div', { class: 'card', style: { maxWidth: '760px', width: '100%' } },
     h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('b', {}, 'Welcome to SUDS'), h('small', {}, 'First-run setup — about 2 minutes'))),
-    h('p', { class: 'muted' }, `Running on ${status.hostname}. Setup can only be completed from this computer.`), f, done));
+    h('p', { class: 'muted' }, `Three quick questions and SUDS is ready on this computer and on staff phones. (Running on ${status.hostname}; setup can only be completed from this computer.)`), f, done));
 });

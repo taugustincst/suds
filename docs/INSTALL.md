@@ -32,16 +32,17 @@ The wizard asks for:
 3. **Who can reach SUDS**:
    * *Only this computer* — safest; staff use SUDS on this machine only.
    * *Phones, tablets and other computers on the office network* — enables mobile use. SUDS creates its own HTTPS certificate so traffic is encrypted.
-4. Click **Finish**. SUDS switches to its final address and shows a **QR code** you can scan with a phone.
+4. Click **Finish**. SUDS moves to its final address — normally **https://suds.local** — and shows a QR code you can scan with a phone.
 
 Encryption keys are generated for you and stored in `data/keys.json`. **Immediately download the key backup** offered at the end of the wizard (also available later under Administration → System) and store it somewhere separate from the computer — for example the county password manager. Without the keys, a backup of the database cannot be read.
 
 ## Step 5 — Sign in and add staff
 Sign in with the administrator account, enroll multi-factor authentication when prompted, then go to **Administration → Users** to add navigators, clinicians and supervisors. Give each person their temporary password in person or by phone.
 
-## Using SUDS on a phone or tablet
+## Using SUDS on a phone, tablet or another computer
+Nothing to install or configure on the device. Everything a person does on their phone is immediately on their computer and vice versa, because both talk to the same SUDS.
 1. On the phone, connect to the office Wi-Fi.
-2. Scan the QR code from Administration → Network & devices, or type the address shown there (for example `https://192.168.1.20:8443`).
+2. Open the browser and go to **https://suds.local** (SUDS announces this name on the network), or scan the QR code from Settings → Network & devices.
 3. The first time, the browser warns that the certificate is not trusted (it is self-signed by your SUDS). Tap **Advanced → Proceed** (Android/Chrome) or **Show Details → visit this website** (iPhone/Safari). To remove the warning permanently, download the certificate from Administration → Network & devices and install it on the device (IT can push it with MDM).
 4. Add SUDS to the home screen: **Share → Add to Home Screen** (iPhone) or **⋮ → Install app** (Android). It then opens full-screen like an app, with the same 15-minute auto sign-out.
 

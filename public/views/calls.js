@@ -9,7 +9,7 @@ export function openCallForm(values, { clientId, clientDisplay, onDone } = {}) {
     { name: 'duration_minutes', label: 'Duration (minutes)', type: 'number', min: 0, step: 1, value: values?.duration_minutes ?? 5 },
     { name: 'contact_type', label: 'Who', type: 'select', options: C.CALL_CONTACT_TYPES, value: 'client', noBlank: true, required: true }, { name: 'contact_name', label: 'Contact name (if not client)' }, { name: 'phone', label: 'Phone number' },
     { name: 'purpose', label: 'Purpose', span: true }, { name: 'outcome', label: 'Outcome', type: 'select', options: C.CALL_OUTCOMES, value: 'reached', noBlank: true, required: true },
-    { name: 'crisis', label: 'Crisis call', type: 'checkbox' }, { name: 'follow_up_needed', label: 'Follow-up needed', type: 'checkbox' }, { name: 'follow_up_due', label: 'Follow-up due (creates a task)', type: 'date' },
+    { name: 'crisis', label: 'Crisis call', type: 'checkbox' }, { name: 'follow_up_needed', label: 'Follow-up needed', type: 'checkbox' }, { name: 'follow_up_due', label: 'Remind me to call back on', type: 'date' },
     { name: 'summary', label: 'Summary (encrypted)', type: 'textarea', span: true },
     isNew ? { name: 'log_time', label: 'Also log as time entry', type: 'checkbox', value: true } : null,
   ].filter(Boolean), { values: values || {}, submitText: isNew ? 'Log call' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => {
@@ -27,7 +27,7 @@ export function callTable(rows, { showClient = true, onChange } = {}) {
     { label: 'Flags', render: r => [r.crisis ? badge('Crisis', 'danger') : null, r.follow_up_needed ? [' ', badge('Follow-up', 'warn')] : null] },
     { label: 'Purpose / summary', render: r => h('span', { class: 'small' }, r.purpose || '', r.summary ? h('div', { class: 'muted' }, r.summary.slice(0, 140)) : null) }, { label: 'Worker', key: 'worker' },
     { label: '', render: r => (r.user_id === state.user.id || can('clients:all')) && can('calls:write') ? h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm', onClick: () => openCallForm(r, { onDone: onChange }) }, 'Edit'), h('button', { class: 'btn sm ghost', onClick: async () => { if (await confirmDialog('Delete call', 'Delete this call record?', { danger: true, okText: 'Delete' })) { await del(`/api/calls/${r.id}`); onChange && onChange(); } } }, '✕')) : null },
-  ].filter(Boolean), rows, { empty: 'No calls logged.' });
+  ].filter(Boolean), rows, { empty: 'No calls yet. Use + Log → Phone call after each call, even if it went to voicemail.' });
 }
 route('calls', async (r) => {
   const crisis = r.query.get('crisis') === '1', fu = r.query.get('follow_up') === '1', mine = r.query.get('mine') === '1';
@@ -36,7 +36,7 @@ route('calls', async (r) => {
   const refresh = () => nav(`calls?${qs}&_=${Date.now()}`);
   const tog = (k, v) => nav(`calls?${crisis !== (k === 'crisis') ? 'crisis=1&' : ''}${fu !== (k === 'fu') ? 'follow_up=1&' : ''}${mine !== (k === 'mine') ? 'mine=1' : ''}`);
   return h('div', {},
-    pageHead('Call log', can('calls:write') ? h('button', { class: 'btn primary', onClick: () => openCallForm(null, { onDone: refresh }) }, '+ Log call') : null, h('button', { class: 'btn', onClick: () => downloadCsv('/api/reports/export/calls?from=2000-01-01') }, 'Export CSV')),
+    pageHead('Calls', can('calls:write') ? h('button', { class: 'btn primary', onClick: () => openCallForm(null, { onDone: refresh }) }, '+ Log call') : null, h('button', { class: 'btn', onClick: () => downloadCsv('/api/reports/export/calls?from=2000-01-01') }, 'Export CSV')),
     h('div', { class: 'filters' }, h('button', { class: `btn sm ${crisis ? 'primary' : ''}`, onClick: () => tog('crisis') }, 'Crisis only'), h('button', { class: `btn sm ${fu ? 'primary' : ''}`, onClick: () => tog('fu') }, 'Needs follow-up'), h('button', { class: `btn sm ${mine ? 'primary' : ''}`, onClick: () => tog('mine') }, 'Mine')),
     h('div', { class: 'muted small mb' }, `${data.total} calls · ${fmt.mins(data.rows.reduce((s, x) => s + x.duration_minutes, 0))}`),
     callTable(data.rows, { onChange: refresh }));

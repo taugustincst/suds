@@ -48,6 +48,7 @@ SUDS is designed to help a covered entity meet the HIPAA Security Rule (45 CFR Â
 | interventions, referrals, tasks, time_entries, expenditures | plaintext operational fields linked by client_id | short summaries/descriptions should not contain identifiers â€” the UI says so |
 | audit_log | user, action, entity ids; details never contain names or note text | search terms are redacted |
 | users | MFA secret encrypted; passwords hashed | |
+| user_prefs | UI preferences only (theme, tour state); never PHI | synced across a user's devices |
 
 ## Key management
 

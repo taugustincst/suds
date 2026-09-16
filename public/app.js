@@ -1,5 +1,15 @@
 // SUDS frontend core: API client, hash router, DOM + form helpers, session/idle handling.
-export const state = { user: null, org: 'SUDS', constants: null, users: [], funds: [], idleMinutes: 15 };
+export const state = { user: null, org: 'SUDS', constants: null, users: [], funds: [], idleMinutes: 15, prefs: {} };
+
+// ---------- workspace preferences (follow the user across devices) ----------
+let prefsTimer; const prefsDirty = {};
+export const prefs = {
+  get: (k, d) => (state.prefs[k] === undefined ? d : state.prefs[k]),
+  set(k, v) { state.prefs[k] = v; prefsDirty[k] = v; try { localStorage.setItem('suds.prefs', JSON.stringify(state.prefs)); } catch {} clearTimeout(prefsTimer); prefsTimer = setTimeout(prefs.flush, 800); },
+  async flush() { const body = { ...prefsDirty }; for (const k of Object.keys(prefsDirty)) delete prefsDirty[k]; if (!Object.keys(body).length || !state.user) return; try { await put('/api/me/prefs', body, { quiet: true }); } catch {} },
+  async load() { try { state.prefs = (await get('/api/me/prefs', { quiet: true })).prefs || {}; try { localStorage.setItem('suds.prefs', JSON.stringify(state.prefs)); } catch {} } catch { try { state.prefs = JSON.parse(localStorage.getItem('suds.prefs') || '{}'); } catch { state.prefs = {}; } } applyTheme(); },
+};
+function applyTheme() { const t = state.prefs.theme; if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme; }
 
 // ---------- API ----------
 export async function api(method, path, body, opts = {}) {
@@ -85,8 +95,13 @@ export const can = (perm) => { const u = state.user; if (!u) return false; const
 export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCancel, cancelText = 'Cancel', extra } = {}) {
   const inputs = {};
   const grid = h('div', { class: 'form-grid' });
+  let target = grid;
   for (const f of fields) {
-    if (f.type === 'section') { grid.append(h('div', { class: 'span' }, h('h4', {}, f.label))); continue; }
+    if (f.type === 'section') {
+      if (f.collapsible) { const inner = h('div', { class: 'form-grid' }); grid.append(h('details', { class: 'section', open: !!f.open }, h('summary', {}, f.label, f.hint ? h('span', { class: 'muted small' }, ` — ${f.hint}`) : null), inner)); target = inner; }
+      else { target = grid; grid.append(h('div', { class: 'span' }, h('h4', {}, f.label))); }
+      continue;
+    }
     let input; const v = values[f.name] ?? f.value ?? '';
     const opts = (f.options || []).map(o => typeof o === 'string' ? { value: o, label: fmt.label(o) } : o);
     switch (f.type) {
@@ -106,7 +121,7 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     const wrap = h('div', { class: `field ${f.span ? 'span' : ''}`, 'data-field': f.name },
       f.type === 'checkbox' ? h('label', { class: 'check' }, input, f.label) : [h('label', {}, f.label, f.required ? ' *' : ''), input],
       f.help ? h('div', { class: 'help' }, f.help) : null, h('div', { class: 'err' }));
-    grid.append(wrap);
+    target.append(wrap);
   }
   const errBox = h('div', { class: 'banner danger hidden' });
   const submitBtn = h('button', { class: 'btn primary', type: 'submit' }, submitText);
@@ -181,7 +196,68 @@ export function bars(items, { max, valueKey = 'n', labelKey = 'k', format = fmt.
 export function sparkline(values) { const m = Math.max(1, ...values); return h('div', { class: 'spark' }, values.map(v => h('div', { style: { height: `${(v / m) * 100}%` }, title: String(v) }))); }
 export function stat(label, value, kind = '') { return h('div', { class: `card stat ${kind}` }, h('div', { class: 'v' }, value), h('div', { class: 'l' }, label)); }
 export function kv(pairs) { return h('dl', { class: 'kv' }, pairs.filter(p => p).map(([k, v]) => [h('dt', {}, k), h('dd', {}, v ?? '—')])); }
-export function pageHead(title, ...actions) { return h('div', { class: 'topbar' }, h('h1', {}, title), h('div', { class: 'row' }, actions)); }
+export function pageHead(title, ...actions) {
+  const r = parseHash(); const item = NAV.find(n => n.name === r.name);
+  return h('div', { class: 'topbar' }, h('div', { class: 'row', style: { gap: '.4rem' } }, h('h1', {}, title), item?.help ? helpTip(item.help) : null), h('div', { class: 'row' }, actions));
+}
+// Small "?" that reveals a plain-language explanation
+export function helpTip(text) {
+  const box = h('div', { class: 'helptip hidden' }, text);
+  const btn = h('button', { class: 'help-btn', type: 'button', 'aria-label': 'What is this?', onClick: () => box.classList.toggle('hidden') }, '?');
+  return h('span', { class: 'help-wrap' }, btn, box);
+}
+// Empty state with one obvious next step
+export function emptyState(title, text, action) { return h('div', { class: 'empty-state' }, h('div', { class: 'big' }, title), h('p', { class: 'muted' }, text), action || null); }
+
+// "+ Log" quick action: the one button non-technical users need most
+export function quickActions() {
+  const items = [
+    can('interventions:write') ? ['✚', 'Visit or service', async () => (await import('./views/interventions.js')).openInterventionForm(null, { onDone: render })] : null,
+    can('calls:write') ? ['☎', 'Phone call', async () => (await import('./views/calls.js')).openCallForm(null, { onDone: render })] : null,
+    (can('notes:admin:write') || can('notes:clinical:write')) ? ['✎', 'Note', async () => (await import('./views/notes.js')).openNoteForm(null, { onDone: render })] : null,
+    can('tasks:write') ? ['☑', 'Reminder / to-do', async () => (await import('./views/tasks.js')).openTaskForm(null, { onDone: render })] : null,
+    can('time:write') ? ['◷', 'Time (meeting, travel, paperwork)', async () => (await import('./views/time.js')).openTimeForm(null, { onDone: render })] : null,
+    can('clients:write') ? ['👤', 'New client', async () => (await import('./views/clients.js')).openClientForm(null)] : null,
+  ].filter(Boolean);
+  if (!items.length) return null;
+  return h('button', { class: 'btn primary quick', onClick: () => { const m = modal('What would you like to record?', h('div', { class: 'quick-list' }, items.map(([ico, label, fn]) => h('button', { class: 'btn', onClick: () => { m.close(); fn(); } }, h('span', { class: 'ico' }, ico), label)))); } }, '+ Log');
+}
+// Global client search (top bar / mobile bar)
+export function globalSearch() {
+  const input = h('input', { type: 'search', placeholder: 'Find a client: last name, phone or code…', 'aria-label': 'Find a client' });
+  const list = h('div', { class: 'card tight hidden search-results' });
+  const wrap = h('div', { class: 'gsearch' }, input, list);
+  let t;
+  input.addEventListener('input', () => { clearTimeout(t); t = setTimeout(run, 250); });
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { nav(`clients?status=all&q=${encodeURIComponent(input.value.trim())}`); list.classList.add('hidden'); } if (e.key === 'Escape') list.classList.add('hidden'); });
+  document.addEventListener('click', (e) => { if (!wrap.contains(e.target)) list.classList.add('hidden'); });
+  async function run() {
+    const q = input.value.trim(); if (!q) { list.classList.add('hidden'); return; }
+    try { const r = await get(`/api/clients?limit=8&status=all&q=${encodeURIComponent(q)}`, { quiet: true }); clear(list);
+      if (!r.clients.length) list.append(h('div', { class: 'muted small' }, 'No match. Search uses the exact last name, full phone number, date of birth or client code.'));
+      for (const c of r.clients) list.append(h('a', { class: 'list-item', href: `#/client/${c.id}`, style: { display: 'block' }, onClick: () => list.classList.add('hidden') }, h('b', {}, c.display_name), ' ', h('span', { class: 'muted small' }, c.client_code, ' · ', fmt.label(c.status))));
+      list.classList.remove('hidden'); } catch {}
+  }
+  return wrap;
+}
+// Welcome tour shown once per user (stored in synced preferences)
+let tourOpen = false;
+export function maybeTour() {
+  if (prefs.get('tour_done') || tourOpen || document.querySelector('.modal-bg')) return;
+  tourOpen = true;
+  const steps = [
+    ['Welcome to SUDS', `Hi ${state.user.display_name.split(' ')[0]}. SUDS keeps everything about the people you serve in one place, and it works the same on your phone and your computer. Anything you add on one shows up on the other right away.`],
+    ['Start with Home', 'Home shows what needs attention today: reminders due, clients you have not contacted in a while, and drafts you started on another device.'],
+    ['Record work with + Log', 'The blue + Log button (top of the page, or bottom-right on a phone) records a visit, call, note, reminder or time in a few taps. Visits and calls also fill in your time sheet.'],
+    ['Find anyone fast', 'Use the search box at the top with a last name, phone number or client code. Open a client to see their story: visits, calls, notes, referrals and reminders on one timeline.'],
+    ['Look for the ? marks', 'Every page has a ? that explains it in plain language. You cannot break anything: records are never truly deleted and every change is logged.'],
+  ];
+  let i = 0; const body = h('div', {}); const dots = h('div', { class: 'muted small center' });
+  const draw = () => { clear(body).append(h('h2', {}, steps[i][0]), h('p', { style: { fontSize: '1.05rem' } }, steps[i][1])); dots.textContent = `${i + 1} of ${steps.length}`; };
+  const finish = () => { prefs.set('tour_done', true); tourOpen = false; m.close(); };
+  const m = modal('', h('div', {}, body, h('div', { class: 'btn-row', style: { justifyContent: 'space-between', alignItems: 'center' } }, h('button', { class: 'btn ghost', onClick: finish }, 'Skip'), dots, h('button', { class: 'btn primary', onClick: () => { if (i < steps.length - 1) { i++; draw(); } else finish(); } }, 'Next'))));
+  m.el.querySelector('.card-head').remove(); draw();
+}
 export function downloadCsv(path) { const a = h('a', { href: path, download: '' }); document.body.append(a); a.click(); a.remove(); }
 
 // ---------- routing ----------
@@ -194,23 +270,24 @@ export function parseHash() {
 }
 export function nav(to) { location.hash = to.startsWith('#') ? to : '#/' + to; }
 
-const NAV = [
-  { sec: 'Work' },
-  { name: 'dashboard', label: 'Dashboard', ico: '◫' },
-  { name: 'clients', label: 'Clients', ico: '👤', perm: 'clients:read' },
-  { name: 'tasks', label: 'Tasks & Follow-ups', ico: '☑', perm: 'tasks:read' },
-  { name: 'interventions', label: 'Interventions', ico: '✚', perm: 'interventions:read' },
-  { name: 'calls', label: 'Call Log', ico: '☎', perm: 'calls:read' },
-  { name: 'time', label: 'Time Tracking', ico: '◷', perm: 'time:read' },
-  { sec: 'Coordination' },
-  { name: 'referrals', label: 'Referrals', ico: '⇢', perm: 'referrals:read' },
-  { name: 'resources', label: 'Resource Directory', ico: '☰', perm: 'resources:read' },
-  { name: 'notes', label: 'Notes', ico: '✎', perm: 'notes:admin:read' },
-  { name: 'imports', label: 'Import Notes', ico: '⇩', perm: 'imports:write' },
+export const NAV = [
+  { sec: 'My day' },
+  { name: 'dashboard', label: 'Home', ico: '⌂', help: 'What needs attention today, and where you left off on any device.' },
+  { name: 'clients', label: 'My clients', ico: '👤', perm: 'clients:read', help: 'Everyone you serve. Open a client to see their whole story in one place.' },
+  { name: 'tasks', label: 'To-do list', ico: '☑', perm: 'tasks:read', help: 'Follow-ups and reminders. Check a box when it is done.' },
+  { sec: 'Record work' },
+  { name: 'interventions', label: 'Visits & services', ico: '✚', perm: 'interventions:read', help: 'Every face-to-face or phone service you provide: outreach, screenings, warm handoffs, naloxone, transport and more.' },
+  { name: 'calls', label: 'Calls', ico: '☎', perm: 'calls:read', help: 'Phone calls with clients, families and providers, including ones that went to voicemail.' },
+  { name: 'notes', label: 'Notes', ico: '✎', perm: 'notes:admin:read', help: 'Written documentation. Drafts save automatically and can be finished on any device; sign when complete.' },
+  { name: 'time', label: 'My time', ico: '◷', perm: 'time:read', help: 'Your hours by activity. Visits and calls add time automatically; log meetings, travel and paperwork here.' },
+  { name: 'imports', label: 'Import notes', ico: '⇩', perm: 'imports:write', help: 'Bring in notes from Pocket AI or OneNote, match them to a client, and save them as notes.' },
+  { sec: 'Connect clients' },
+  { name: 'referrals', label: 'Referrals', ico: '⇢', perm: 'referrals:read', help: 'Track each referral from "sent" to "admitted" so nothing falls through the cracks.' },
+  { name: 'resources', label: 'Resource directory', ico: '☰', perm: 'resources:read', help: 'Treatment programs, MAT clinics, shelters, legal aid and other partners you refer to.' },
   { sec: 'Program' },
-  { name: 'budget', label: 'Budget', ico: '$', perm: 'budget:read' },
-  { name: 'reports', label: 'Reports', ico: '▤', perm: 'reports:read' },
-  { name: 'admin', label: 'Administration', ico: '⚙', perm: 'users:manage' },
+  { name: 'budget', label: 'Funding & spending', ico: '$', perm: 'budget:read', help: 'Grants and what has been spent, including client assistance such as bus passes and IDs.' },
+  { name: 'reports', label: 'Reports', ico: '▤', perm: 'reports:read', help: 'Numbers for your funders and supervisors. Exports never include client names unless you ask.' },
+  { name: 'admin', label: 'Settings', ico: '⚙', perm: 'users:manage', help: 'Staff accounts, security, connecting phones, and backups.' },
 ];
 
 let current = null;
@@ -226,8 +303,11 @@ export async function render() {
   const loader = routes[r.name] || routes.dashboard;
   const main = h('div', { class: 'main' }, h('div', { class: 'boot' }, 'Loading…'));
   const side = sidebar(r);
-  const layout = h('div', { class: 'layout' }, mobileBar(r, side), side, main);
+  const qa = quickActions();
+  const layout = h('div', { class: 'layout' }, mobileBar(r, side), side, h('div', { class: 'content' }, h('div', { class: 'appbar' }, can('clients:read') ? globalSearch() : h('div', { class: 'grow' }), qa), main), qa ? h('div', { class: 'fab' }, qa.cloneNode(true)) : null);
+  if (qa) layout.querySelector('.fab button')?.addEventListener('click', () => qa.click());
   clear(app).append(layout);
+  if (r.name === 'dashboard') setTimeout(maybeTour, 400);
   try { const view = await loader(r); clear(main).append(view); }
   catch (e) { clear(main).append(h('div', { class: 'banner danger' }, e.message)); }
   current = r;
@@ -237,7 +317,7 @@ function sidebar(r) {
     h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('b', {}, 'SUDS'), h('small', {}, state.org))),
     h('nav', { class: 'nav' }, NAV.map(n => n.sec ? h('div', { class: 'sec' }, n.sec) : (!n.perm || can(n.perm)) ? h('a', { href: '#/' + n.name, class: r.name === n.name ? 'active' : '' }, h('span', { class: 'ico' }, n.ico), n.label) : null)),
     h('div', { class: 'foot' }, h('div', {}, h('b', {}, state.user.display_name)), h('div', { class: 'muted' }, fmt.label(state.user.role)),
-      h('div', { class: 'row', style: { marginTop: '.5rem' } }, h('a', { href: '#/profile' }, 'Profile'), h('a', { href: '#', onClick: (e) => { e.preventDefault(); logout(); } }, 'Sign out'), h('a', { href: '#', title: 'Toggle theme', onClick: (e) => { e.preventDefault(); toggleTheme(); } }, '☾'))));
+      h('div', { class: 'row', style: { marginTop: '.5rem' } }, h('a', { href: '#/profile' }, 'Profile'), h('a', { href: '#', onClick: (e) => { e.preventDefault(); logout(); } }, 'Sign out'), h('a', { href: '#', title: 'Light / dark', onClick: (e) => { e.preventDefault(); toggleTheme(); } }, 'Light/dark'))));
 }
 function mobileBar(r, side) {
   const item = NAV.find(n => n.name === r.name) || (r.name === 'client' ? { label: 'Client' } : { label: 'SUDS' });
@@ -245,10 +325,10 @@ function mobileBar(r, side) {
   side.addEventListener('click', (e) => { if (e.target.closest('a')) { side.classList.remove('open'); document.body.classList.remove('nav-open'); } });
   return h('div', { class: 'mobilebar' }, h('button', { class: 'btn ghost', 'aria-label': 'Menu', onClick: toggle }, '☰'), h('b', {}, item.label), h('a', { href: '#/clients', class: 'btn ghost', 'aria-label': 'Clients' }, '👤'));
 }
-function toggleTheme() { const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); const next = cur === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = next; try { localStorage.setItem('suds.theme', next); } catch {} }
-try { const t = localStorage.getItem('suds.theme'); if (t) document.documentElement.dataset.theme = t; } catch {}
+function toggleTheme() { const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); const next = cur === 'dark' ? 'light' : 'dark'; prefs.set('theme', next); applyTheme(); }
+try { const cached = JSON.parse(localStorage.getItem('suds.prefs') || '{}'); if (cached.theme) document.documentElement.dataset.theme = cached.theme; } catch {}
 
-export async function logout() { try { await post('/api/auth/logout', {}); } catch {} state.user = null; state.mfaPending = false; nav('login'); render(); }
+export async function logout() { await prefs.flush(); try { await post('/api/auth/logout', {}); } catch {} state.user = null; state.mfaPending = false; nav('login'); render(); }
 
 // ---------- session / idle ----------
 let lastActivity = Date.now(); let idleTimer;
@@ -272,7 +352,7 @@ export async function loadSession() {
   try {
     const me = await get('/api/auth/me', { quiet: true });
     state.user = me.user; state.org = me.org_name; state.mfaPending = me.mfaPending; state.idleMinutes = me.idle_minutes || 15;
-    await loadRefData();
+    await Promise.all([loadRefData(), prefs.load()]);
   } catch { state.user = null; }
 }
 export async function loadRefData() {

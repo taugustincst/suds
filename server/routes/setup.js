@@ -32,6 +32,7 @@ module.exports = (r) => {
       org_name: { type: 'string', required: true, maxLen: 200 }, county_name: { type: 'string', maxLen: 120 }, program_contact: { type: 'string', maxLen: 200 },
       admin_username: { type: 'string', required: true, maxLen: 60, pattern: /^[a-zA-Z0-9._@-]+$/ }, admin_display_name: { type: 'string', required: true, maxLen: 120 }, admin_password: { type: 'string', required: true, maxLen: 500 },
       network: { type: 'string', required: true, enum: ['local', 'lan'] }, port: { type: 'number', integer: true, min: 1, max: 65535 }, https: { type: 'boolean' }, extra_hosts: { type: 'string', maxLen: 300 },
+      // port omitted → 'auto' (standard port with fallback)
     });
     const errs = auth.passwordPolicy(v.admin_password);
     if (errs.length) throw badRequest('Password must contain ' + errs.join(', '), { fields: { admin_password: errs.join(', ') } });
@@ -49,25 +50,27 @@ module.exports = (r) => {
       db.setSetting('caseload_restriction', '1');
     });
     // 3. network + TLS
-    const port = v.port || (v.https ? 8443 : 8080);
+    const port = v.port || 'auto';
     const host = v.network === 'lan' ? '0.0.0.0' : '127.0.0.1';
     let tls = 'none';
     if (v.https && !process.env.TLS_CERT_PATH) {
-      const hosts = ['localhost', '127.0.0.1', require('node:os').hostname(), ...listener.lanAddresses().map(a => a.address), ...String(v.extra_hosts || '').split(/[\s,]+/).filter(Boolean)];
+      const hosts = ['localhost', '127.0.0.1', 'suds.local', require('node:os').hostname(), require('node:os').hostname() + '.local', ...listener.lanAddresses().map(a => a.address), ...String(v.extra_hosts || '').split(/[\s,]+/).filter(Boolean)];
       const c = selfsigned.generate({ commonName: v.org_name.slice(0, 60), org: v.org_name.slice(0, 60), hosts: [...new Set(hosts)] });
       const dir = path.join(config.dataDir, 'certs'); fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
       fs.writeFileSync(path.join(dir, 'suds.crt'), c.cert, { mode: 0o600 }); fs.writeFileSync(path.join(dir, 'suds.key'), c.key, { mode: 0o600 });
       tls = 'selfsigned';
     } else if (process.env.TLS_CERT_PATH) tls = 'custom';
-    config.saveServerJson({ setupComplete: true, host, port, tls, completedAt: new Date().toISOString() });
+    
     audit.log({ user: { username: v.admin_username }, action: 'setup.complete', ip: ctx.ip, details: { network: v.network, port, tls } });
+    // (network switch below persists the final port)
     // 4. switch listener
     let desc;
     try {
       desc = await listener.relisten({ host, port, certPath: tls === 'selfsigned' ? path.join(config.dataDir, 'certs', 'suds.crt') : (config.tls.cert || ''), keyPath: tls === 'selfsigned' ? path.join(config.dataDir, 'certs', 'suds.key') : (config.tls.key || '') });
+      config.saveServerJson({ setupComplete: true, host, port: desc.port, tls, completedAt: new Date().toISOString() });
     } catch (e) {
-      config.saveServerJson({ setupComplete: true, host: '127.0.0.1', port: config.port, tls: 'none' });
-      throw new HttpError(500, `Could not listen on port ${port}: ${e.message}. Setup saved with local-only access; change the port in Administration → Network.`);
+      config.saveServerJson({ setupComplete: true, host: '127.0.0.1', port: config.port, tls: 'none', completedAt: new Date().toISOString() });
+      throw new HttpError(500, `Could not start on the network: ${e.message}. Setup saved with local-only access; change this later in Settings → Network & devices.`);
     }
     return { ok: true, listener: desc, keys_file: config.keySource === 'env' ? null : config.keysJsonPath };
   });

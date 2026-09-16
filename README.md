@@ -14,7 +14,7 @@ A HIPAA-oriented, zero-dependency web application for county **substance use dis
 
 Full walkthrough with screenshots-free steps: [docs/INSTALL.md](docs/INSTALL.md). Everything the wizard sets can later be changed under **Administration → Network & devices / Settings / System & backups**.
 
-**Mobile:** SUDS is a responsive progressive web app. On a phone, open the address (or scan the QR code in Administration → Network), then *Share → Add to Home Screen* (iPhone) or *⋮ → Install app* (Android). It runs full-screen with the same sign-in, MFA and 15-minute auto sign-out.
+**Phones and other computers:** nothing to configure. SUDS announces itself on the office network as **https://suds.local** (built-in mDNS responder) and uses the standard HTTPS port when available. Staff open that address on any device, add it to the home screen, and their workspace — clients, reminders, note drafts saved while typing, preferences — is the same everywhere because every device talks to the same server.
 
 ## Quick start (development)
 

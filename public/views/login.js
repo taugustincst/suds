@@ -15,8 +15,10 @@ route('login', async () => {
   f.querySelectorAll('.form-grid').forEach(g => g.style.gridTemplateColumns = '1fr');
   return h('div', { class: 'login-wrap' }, h('div', { class: 'card login' },
     h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('b', {}, 'SUDS'), h('small', {}, 'SUD Navigator Services Tracker'))),
-    h('div', { class: 'banner small' }, 'This system contains protected health information (PHI) covered by HIPAA and 42 CFR Part 2. Access is limited to authorized personnel and all activity is logged.'),
-    f));
+    f,
+    h('p', { class: 'small muted center mt' }, 'Forgot your password or locked out? Ask your supervisor or the SUDS administrator to reset it.'),
+    h('p', { class: 'small muted center' }, 'Tip: on a phone, add SUDS to your home screen (Share → Add to Home Screen) to open it like an app.'),
+    h('div', { class: 'small muted center mt' }, 'Contains protected health information (HIPAA, 42 CFR Part 2). Authorized staff only; all activity is logged.')));
 });
 
 route('mfa', async () => {

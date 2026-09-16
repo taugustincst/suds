@@ -12,12 +12,30 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
     { name: 'format', label: 'Format', type: 'select', options: C.NOTE_FORMATS, value: 'narrative', noBlank: true }, { name: 'occurred_at', label: 'Date of service', type: 'datetime', required: true, value: values?.occurred_at || new Date().toISOString() },
     { name: 'title', label: 'Title', span: true }, { name: 'content', label: 'Narrative', type: 'textarea', span: true, rows: 10, required: true, value: prefill?.content },
     { name: 'part2_protected', label: 'Contains 42 CFR Part 2 protected SUD information', type: 'checkbox', value: values ? values.part2_protected : true },
-  ], { values: values || {}, submitText: isNew ? 'Save draft' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => {
-    const structured = readStructured();
-    if (structured) { d.structured = structured; if (!d.content || d.content === autoText) d.content = Object.entries(structured).map(([k, v]) => `${k}: ${v}`).join('\n\n'); }
-    if (isNew) await post('/api/notes', d); else await put(`/api/notes/${values.id}`, d);
-    toast('Note saved as draft — remember to sign it', 'ok'); m.close(); onDone && onDone();
+  ], { values: values || {}, submitText: 'Save draft', onCancel: () => m.close(), onSubmit: async (d) => {
+    await save(d, true);
+    toast('Saved as a draft. Sign it when it is complete.', 'ok'); m.close(); onDone && onDone();
   } });
+  // ---- autosave: after a pause in typing the draft is saved to the server, so it can be finished on any device
+  let noteId = values?.id || null; let saving = false; let dirty = false; let asTimer;
+  const status = h('span', { class: 'autosave' }, isNew ? 'Not saved yet' : 'Saved');
+  async function save(d, explicit = false) {
+    const data = d || f.read();
+    const structured = readStructured();
+    if (structured) { data.structured = structured; if (!data.content || data.content === autoText) data.content = Object.entries(structured).map(([k, v]) => `${k}: ${v}`).join('\n\n'); }
+    if (!data.client_id || !data.content) { if (explicit) throw new Error('Choose a client and write something first'); return; }
+    if (saving) { dirty = true; return; }
+    saving = true; status.textContent = 'Saving…';
+    try {
+      if (!noteId) { const r = await post('/api/notes', data, { quiet: !explicit }); noteId = r.id; }
+      else await put(`/api/notes/${noteId}`, data, { quiet: !explicit });
+      status.textContent = `Saved ${new Date().toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })} · continue on any device`;
+    } catch (e) { status.textContent = explicit ? '' : 'Could not save yet'; if (explicit) throw e; }
+    finally { saving = false; if (dirty) { dirty = false; save(); } }
+  }
+  const scheduleSave = () => { clearTimeout(asTimer); status.textContent = 'Unsaved changes'; asTimer = setTimeout(() => save(), 2500); };
+  f.addEventListener('input', scheduleSave); f.addEventListener('change', scheduleSave);
+  f.querySelector('.btn-row').prepend(status);
   fmtSel = f.inputs.format; contentArea = f.inputs.content;
   structuredBox = h('div', { class: 'span' });
   f.querySelector('[data-field="content"]').before(structuredBox);
@@ -33,6 +51,7 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
   function readStructured() { const out = {}; let any = false; structuredBox.querySelectorAll('textarea[data-sec]').forEach(t => { out[t.dataset.sec] = t.value; if (t.value.trim()) any = true; }); return any ? out : null; }
   fmtSel.addEventListener('change', renderStructured); renderStructured();
   const m = modal(isNew ? 'New note' : 'Edit draft note', f, { wide: true });
+  const origClose = m.close; m.close = () => { clearTimeout(asTimer); if (noteId && onDone) onDone(); origClose(); };
 }
 
 export async function openNote(id, { onChange } = {}) {
@@ -60,6 +79,7 @@ export async function openNote(id, { onChange } = {}) {
       h('button', { class: 'btn ghost', onClick: () => window.print() }, 'Print')));
   const m = modal(n.title || `${n.format} note`, body, { wide: true });
 }
+
 function signNote(n, done) {
   const f = form([{ name: 'password', label: 'Re-enter your password to sign', type: 'password', required: true }], { submitText: 'Sign note', onCancel: () => m.close(), onSubmit: async (d) => { await post(`/api/notes/${n.id}/sign`, d); toast('Note signed and locked', 'ok'); m.close(); done(); } });
   const m = modal('Electronic signature', h('div', {}, h('p', { class: 'small muted' }, 'By signing you attest that this documentation is accurate and complete. Signed notes cannot be edited or deleted; corrections are made by addendum.'), f));
@@ -73,7 +93,7 @@ export function noteTable(rows, { showClient = true, onChange } = {}) {
     { label: 'Date of service', render: n => h('span', { class: 'nowrap' }, fmt.dt(n.occurred_at)) }, showClient ? { label: 'Client', render: n => h('a', { href: `#/client/${n.client_id}`, onClick: e => e.stopPropagation() }, n.client_code) } : null,
     { label: 'Type', render: n => badge(n.kind === 'clinical' ? 'Clinical' : 'Admin', n.kind === 'clinical' ? 'purple' : 'info') }, { label: 'Format', key: 'format' }, { label: 'Title', render: n => n.title || h('span', { class: 'muted' }, '(untitled)') },
     { label: 'Status', render: n => [badge(fmt.label(n.status), statusKind(n.status)), n.addenda ? [' ', badge(`${n.addenda} addend.`)] : null] }, { label: 'Source', render: n => n.source === 'manual' ? '' : badge(fmt.label(n.source), 'warn') }, { label: 'Author', key: 'author' },
-  ].filter(Boolean), rows, { onRow: n => openNote(n.id, { onChange }), empty: 'No notes.' });
+  ].filter(Boolean), rows, { onRow: n => openNote(n.id, { onChange }), empty: 'No notes yet. Notes save as drafts automatically while you type, and you sign them when they are complete.' });
 }
 route('notes', async (r) => {
   const status = r.query.get('status') || '', kind = r.query.get('kind') || '', mine = r.query.get('mine') === '1';

@@ -77,25 +77,25 @@ module.exports = (r) => {
   // Network / HTTPS configuration (written to data/server.json; applied immediately)
   r.get('/api/admin/network', auth.requireAuth, auth.requirePerm('settings:manage'), () => ({ listener: listener.describe(), file: config.fileCfg, env_overrides: { host: !!process.env.HOST, port: !!process.env.PORT, tls: !!process.env.TLS_CERT_PATH }, cert_expires: certExpiry() }));
   r.put('/api/admin/network', auth.requireAuth, auth.requirePerm('settings:manage'), async (ctx) => {
-    const v = validate(ctx.body, { network: { type: 'string', required: true, enum: ['local', 'lan'] }, port: { type: 'number', integer: true, min: 1, max: 65535, required: true }, https: { type: 'boolean' }, regenerate_cert: { type: 'boolean' }, extra_hosts: { type: 'string', maxLen: 300 }, trust_proxy: { type: 'boolean' } });
+    const v = validate(ctx.body, { network: { type: 'string', required: true, enum: ['local', 'lan'] }, port: { type: 'number', integer: true, min: 1, max: 65535 }, https: { type: 'boolean' }, regenerate_cert: { type: 'boolean' }, extra_hosts: { type: 'string', maxLen: 300 }, trust_proxy: { type: 'boolean' } });
     if (process.env.HOST || process.env.PORT || process.env.TLS_CERT_PATH) throw badRequest('Network settings are controlled by environment variables on this server');
     const host = v.network === 'lan' ? '0.0.0.0' : '127.0.0.1';
     const dir = path.join(config.dataDir, 'certs'); const crt = path.join(dir, 'suds.crt'), key = path.join(dir, 'suds.key');
     let tls = 'none';
     if (v.https) {
       if (v.regenerate_cert || !fs.existsSync(crt)) {
-        const hosts = ['localhost', '127.0.0.1', require('node:os').hostname(), ...listener.lanAddresses().map(a => a.address), ...String(v.extra_hosts || '').split(/[\s,]+/).filter(Boolean)];
+        const hosts = ['localhost', '127.0.0.1', 'suds.local', require('node:os').hostname(), require('node:os').hostname() + '.local', ...listener.lanAddresses().map(a => a.address), ...String(v.extra_hosts || '').split(/[\s,]+/).filter(Boolean)];
         const c = require('../selfsigned').generate({ commonName: db.getSetting('org_name', 'SUDS').slice(0, 60), org: db.getSetting('org_name', 'SUDS').slice(0, 60), hosts: [...new Set(hosts)] });
         fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); fs.writeFileSync(crt, c.cert, { mode: 0o600 }); fs.writeFileSync(key, c.key, { mode: 0o600 });
       }
       tls = 'selfsigned';
     }
     let desc;
-    try { desc = await listener.relisten({ host, port: v.port, certPath: tls === 'selfsigned' ? crt : '', keyPath: tls === 'selfsigned' ? key : '' }); }
-    catch (e) { throw badRequest(`Could not listen on port ${v.port}: ${e.message}`); }
-    config.saveServerJson({ host, port: v.port, tls, trustProxy: !!v.trust_proxy });
+    try { desc = await listener.relisten({ host, port: v.port || 'auto', certPath: tls === 'selfsigned' ? crt : '', keyPath: tls === 'selfsigned' ? key : '' }); }
+    catch (e) { throw badRequest(`Could not start on port ${v.port || 'auto'}: ${e.message}`); }
+    config.saveServerJson({ host, port: desc.port, tls, trustProxy: !!v.trust_proxy });
     config.trustProxy = !!process.env.TRUST_PROXY || !!v.trust_proxy;
-    audit.log({ user: ctx.user, action: 'network.update', ip: ctx.ip, details: { host, port: v.port, tls } });
+    audit.log({ user: ctx.user, action: 'network.update', ip: ctx.ip, details: { host, port: desc.port, tls } });
     return { ok: true, listener: desc };
   });
   function certExpiry() { try { const c = fs.readFileSync(path.join(config.dataDir, 'certs', 'suds.crt')); return new (require('node:crypto').X509Certificate)(c).validTo; } catch { return null; } }

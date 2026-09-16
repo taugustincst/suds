@@ -1,5 +1,15 @@
 # SUDS user guide (navigators, clinicians, supervisors)
 
+## The three things to know
+1. **Home** shows what needs attention today and where you left off — on any device.
+2. **+ Log** (blue button; bottom-right on a phone) records a visit, call, note, reminder or time.
+3. The **search box** at the top finds a client by last name, phone or code. Open a client to see their whole story.
+
+Every page has a **?** that explains it in plain language. Records are never truly deleted, so you cannot break anything.
+
+## Phone and computer stay in sync
+Use SUDS wherever you are: on the office computer, or on your phone at **https://suds.local** (office Wi-Fi; add it to your home screen once). Your clients, notes, reminders and even half-written note drafts are the same everywhere — there is nothing to set up or sync.
+
 ## Signing in
 Use your individual username. After 5 wrong passwords the account locks for 15 minutes. You are signed out automatically after 15 minutes without activity — a banner warns you one minute before. Supervisors and administrators must enroll an authenticator app (Profile → Multi-factor authentication → scan the QR code).
 

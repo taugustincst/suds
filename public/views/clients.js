@@ -2,23 +2,23 @@ import { h, route, get, post, state, form, modal, toast, nav, table, badge, stat
 
 export function clientFields(C) {
   return [
-    { type: 'section', label: 'Identity' },
+    { type: 'section', label: 'Who they are', collapsible: true, open: true, hint: 'only first and last name are required' },
     { name: 'first_name', label: 'First name', required: true }, { name: 'last_name', label: 'Last name', required: true }, { name: 'preferred_name', label: 'Preferred name' },
     { name: 'dob', label: 'Date of birth', type: 'date' }, { name: 'gender', label: 'Gender', type: 'select', options: ['female', 'male', 'non_binary', 'transgender_female', 'transgender_male', 'other', 'declined'] }, { name: 'pronouns', label: 'Pronouns' },
     { name: 'race_ethnicity', label: 'Race / ethnicity' }, { name: 'preferred_language', label: 'Preferred language', value: 'English' }, { name: 'veteran', label: 'Veteran', type: 'checkbox' },
-    { type: 'section', label: 'Contact' },
+    { type: 'section', label: 'How to reach them', collapsible: true, open: true },
     { name: 'phone', label: 'Phone' }, { name: 'alt_phone', label: 'Alternate phone' }, { name: 'email', label: 'Email' },
     { name: 'address', label: 'Address', span: true }, { name: 'city', label: 'City' }, { name: 'zip', label: 'ZIP' },
     { name: 'ok_to_text', label: 'OK to text', type: 'checkbox' }, { name: 'ok_to_voicemail', label: 'OK to leave voicemail', type: 'checkbox' }, { name: 'contact_preferences', label: 'Contact preferences / safe contact notes', span: true },
     { name: 'emergency_contact', label: 'Emergency contact (name, relation, phone)', span: true },
-    { type: 'section', label: 'Program' },
+    { type: 'section', label: 'Program status', collapsible: true, open: true },
     { name: 'status', label: 'Status', type: 'select', options: ['waitlist', 'active', 'inactive', 'closed', 'deceased'], value: 'active', required: true, noBlank: true }, { name: 'intake_date', label: 'Intake date', type: 'date', value: fmt.today() },
     { name: 'referral_source', label: 'Referral source', type: 'select', options: ['self', 'family', 'emergency_dept', 'hospital', 'ems', 'law_enforcement', 'jail', 'court_probation', 'treatment_provider', 'primary_care', 'shelter', 'outreach', 'hotline', 'school', 'other'] },
     { name: 'housing_status', label: 'Housing status', type: 'select', options: ['stable', 'doubled_up', 'shelter', 'unsheltered', 'transitional', 'sober_living', 'incarcerated', 'treatment_facility', 'unknown'] },
     { name: 'insurance', label: 'Insurance', type: 'select', options: ['medicaid', 'medicare', 'private', 'uninsured', 'va', 'pending', 'unknown'] }, { name: 'medicaid_id', label: 'Medicaid ID' },
     { name: 'risk_level', label: 'Risk level', type: 'select', options: ['low', 'moderate', 'high', 'critical'], value: 'moderate', noBlank: true, required: true },
     { name: 'discharge_date', label: 'Discharge date', type: 'date' }, { name: 'discharge_reason', label: 'Discharge reason' },
-    { type: 'section', label: 'Substance use & clinical' },
+    { type: 'section', label: 'Substance use & health details', collapsible: true, hint: 'fill in what you know; you can come back later' },
     { name: 'primary_substance', label: 'Primary substance', type: 'select', options: C.SUBSTANCES }, { name: 'secondary_substances', label: 'Secondary substances' }, { name: 'route_of_use', label: 'Route of use', type: 'select', options: ['oral', 'smoked', 'snorted', 'injected', 'multiple', 'unknown'] },
     { name: 'asam_level', label: 'ASAM level of care', type: 'select', options: C.ASAM }, { name: 'mat_status', label: 'MAT status', type: 'select', options: ['none', 'interested', 'referred', 'active', 'discontinued', 'unknown'] }, { name: 'mat_medication', label: 'MAT medication', type: 'select', options: ['buprenorphine', 'buprenorphine_xr', 'methadone', 'naltrexone_xr', 'naltrexone_oral', 'other'] },
     { name: 'overdose_history', label: 'History of overdose', type: 'checkbox' }, { name: 'last_overdose_date', label: 'Last overdose date', type: 'date' },
@@ -47,7 +47,7 @@ route('clients', async (r) => {
   const statusSel = h('select', { onChange: () => nav(`clients?status=${statusSel.value}&q=${encodeURIComponent(q)}&assigned_to=${assigned}`) }, ['active', 'waitlist', 'inactive', 'closed', 'deceased', 'all'].map(s => h('option', { value: s, selected: s === status }, fmt.label(s))));
   const assignSel = !state.user.caseload_restricted ? h('select', { onChange: () => nav(`clients?status=${status}&q=${encodeURIComponent(q)}&assigned_to=${assignSel.value}`) }, h('option', { value: '' }, 'Any worker'), h('option', { value: state.user.id, selected: assigned === state.user.id }, 'Me'), state.users.filter(u => u.id !== state.user.id && ['navigator', 'clinician', 'supervisor'].includes(u.role)).map(u => h('option', { value: u.id, selected: u.id === assigned }, u.display_name))) : null;
   return h('div', {},
-    pageHead('Clients', can('clients:write') ? h('button', { class: 'btn primary', onClick: () => openClientForm(null) }, '+ New client') : null),
+    pageHead('My clients', can('clients:write') ? h('button', { class: 'btn primary', onClick: () => openClientForm(null) }, '+ New client') : null),
     state.user.caseload_restricted ? h('div', { class: 'banner small' }, 'You are viewing your assigned caseload only. Ask a supervisor to assign additional clients.') : null,
     h('div', { class: 'filters' }, h('div', { class: 'field grow' }, h('label', {}, 'Search'), search), h('div', { class: 'field' }, h('label', {}, 'Status'), statusSel), assignSel ? h('div', { class: 'field' }, h('label', {}, 'Assigned to'), assignSel) : null, h('button', { class: 'btn', onClick: () => nav(`clients?status=${status}&q=${encodeURIComponent(search.value.trim())}&assigned_to=${assigned}`) }, 'Search'), q ? h('button', { class: 'btn ghost', onClick: () => nav(`clients?status=${status}`) }, 'Clear') : null),
     h('div', { class: 'muted small mb' }, `${data.total} client${data.total === 1 ? '' : 's'}`),
@@ -60,5 +60,5 @@ route('clients', async (r) => {
       { label: 'Assigned', key: 'assigned_workers' },
       { label: 'Intake', render: c => fmt.date(c.intake_date) },
       { label: 'Last contact', render: c => h('span', { style: !c.last_contact || Date.now() - Date.parse(c.last_contact) > 30 * 86400000 ? { color: 'var(--warn)' } : {} }, fmt.ago(c.last_contact)) },
-    ], rows, { onRow: deid ? null : (c) => nav(`client/${c.id}`), empty: q ? 'No clients match. Searches match exact last name, phone, DOB or code (names are encrypted).' : 'No clients yet.' }));
+    ], rows, { onRow: deid ? null : (c) => nav(`client/${c.id}`), empty: q ? 'No one matches. Try the exact last name, the full phone number, date of birth (YYYY-MM-DD) or the client code — names are stored encrypted, so partial names do not match.' : (status === 'active' ? 'No active clients yet. Click + New client to add your first.' : 'No clients with this status.') }));
 });

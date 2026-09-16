@@ -61,16 +61,17 @@ route('admin', async (r) => {
     },
     async network() {
       const n = await get('/api/admin/network');
-      const L = n.listener; const primary = L.urls.find(u => !/localhost/.test(u)) || L.urls[0];
+      const L = n.listener; const primary = L.friendly || L.urls.find(u => !/localhost/.test(u)) || L.urls[0];
       const locked = n.env_overrides.host || n.env_overrides.port || n.env_overrides.tls;
       const f = form([
         { name: 'network', label: 'Who can reach SUDS', type: 'select', noBlank: true, required: true, value: L.host === '0.0.0.0' ? 'lan' : 'local', options: [{ value: 'lan', label: 'Phones, tablets and other computers on the office network' }, { value: 'local', label: 'Only this computer' }], span: true },
-        { name: 'https', label: 'Encrypt connections with HTTPS (self-signed certificate)', type: 'checkbox', value: L.tls }, { name: 'port', label: 'Port', type: 'number', required: true, value: L.port, min: 1, max: 65535, step: 1 },
+        { name: 'https', label: 'Encrypt connections with HTTPS (self-signed certificate)', type: 'checkbox', value: L.tls }, { name: 'port', label: 'Port (blank = standard port, no number in the address)', type: 'number', value: [443, 80].includes(L.port) ? '' : L.port, min: 1, max: 65535, step: 1 },
         { name: 'regenerate_cert', label: 'Create a new certificate (after the address changed)', type: 'checkbox' }, { name: 'extra_hosts', label: 'Extra names for the certificate', placeholder: 'suds.county.local' },
         { name: 'trust_proxy', label: 'Behind a reverse proxy (trust X-Forwarded-For)', type: 'checkbox', value: !!n.file.trustProxy },
       ], { submitText: 'Apply network settings', onSubmit: async (d) => { if (d.network === 'lan' && !d.https) throw new Error('HTTPS is required when other devices can connect'); const r = await put('/api/admin/network', d); toast('Applied. If the address changed, open the new address now.', 'ok'); const u = r.listener.urls.find(x => !/localhost/.test(x)) || r.listener.urls[0]; if (!location.href.startsWith(u.split('//')[0]) || Number(location.port || (location.protocol === 'https:' ? 443 : 80)) !== r.listener.port) setTimeout(() => { location.href = u + '#/admin?tab=network'; }, 1500); else refresh(); } });
+      f.querySelectorAll('.form-grid').forEach(g => g.style.gridTemplateColumns = '1fr');
       return h('div', { class: 'grid cols-2' },
-        h('div', { class: 'card' }, h('h3', {}, 'Connect a phone or tablet'), h('p', { class: 'small muted' }, 'On the office Wi-Fi, scan this code or type the address. Then use Share → Add to Home Screen (iPhone) or ⋮ → Install app (Android).'),
+        h('div', { class: 'card' }, h('h3', {}, 'Connect a phone, tablet or another computer'), h('p', {}, 'On the office Wi-Fi, open ', h('b', {}, primary), L.mdns ? ' — no setup needed on the device.' : '.', ' Or scan this code. Then add it to the home screen: ', h('b', {}, 'iPhone'), ' Share → Add to Home Screen; ', h('b', {}, 'Android'), ' ⋮ → Install app. Everything staff do on the phone is instantly on the computer and vice versa.'),
           h('div', { class: 'center' }, qrSvg(primary, { size: 200 }), h('div', { class: 'mono' }, primary)),
           h('ul', { class: 'small mt' }, L.urls.map(u => h('li', {}, u))),
           L.tls ? h('div', { class: 'mt small' }, h('p', {}, `The certificate is self-signed${n.cert_expires ? ` (valid until ${fmt.date(n.cert_expires)})` : ''}. Browsers show a one-time warning; choose Advanced → Proceed, or install the certificate on the device to remove the warning.`), h('a', { class: 'btn sm', href: '/api/admin/certificate', download: '' }, 'Download certificate')) : h('div', { class: 'banner danger mt' }, 'HTTPS is off. Enable it before allowing other devices to connect.')),
@@ -85,5 +86,5 @@ route('admin', async (r) => {
     },
   };
   body.append(await (T[tab] || T.users)());
-  return h('div', {}, pageHead('Administration'), h('div', { class: 'tabs' }, [['users', 'Users & roles'], ['settings', 'Settings'], ['network', 'Network & devices'], ['audit', 'Audit log'], ['apikeys', 'API keys (intake)'], ['system', 'System & backups']].map(([k, l]) => h('button', { class: k === tab ? 'active' : '', onClick: () => nav(`admin?tab=${k}`) }, l))), body);
+  return h('div', {}, pageHead('Settings'), h('div', { class: 'tabs' }, [['users', 'Users & roles'], ['settings', 'Settings'], ['network', 'Network & devices'], ['audit', 'Audit log'], ['apikeys', 'API keys (intake)'], ['system', 'System & backups']].map(([k, l]) => h('button', { class: k === tab ? 'active' : '', onClick: () => nav(`admin?tab=${k}`) }, l))), body);
 });

@@ -276,3 +276,19 @@ test('security policy settings are validated and applied', async () => {
   assert.equal((await nav.get('/api/admin/network')).status, 403);
   assert.equal((await admin.get('/api/admin/network')).status, 200);
 });
+
+test('workspace preferences and continue endpoint follow the user', async () => {
+  assert.equal((await nav.put('/api/me/prefs', { theme: 'dark', tour_done: true, 'bad key!': 1 })).status, 400);
+  assert.equal((await nav.put('/api/me/prefs', { theme: 'dark', tour_done: true })).status, 200);
+  const second = H.client(); await second.login('nav1', 'StaffPassw0rd!x');
+  const c = require('../server/crypto'); const secret = c.decrypt(H.db.one(`SELECT mfa_secret_enc FROM users WHERE username='nav1'`).mfa_secret_enc);
+  await second.post('/api/auth/mfa/verify', { code: c.totp(secret) });
+  const p = await second.get('/api/me/prefs');
+  assert.equal(p.data.prefs.theme, 'dark'); assert.equal(p.data.prefs.tour_done, true);
+  const cont = await second.get('/api/me/continue');
+  assert.equal(cont.status, 200);
+  assert.ok(cont.data.recent.some(x => x.id === clientId));
+  assert.ok(cont.data.other_device, 'other session should be visible');
+  assert.equal((await nav.put('/api/me/prefs', { theme: null })).status, 200);
+  assert.equal((await nav.get('/api/me/prefs')).data.prefs.theme, undefined);
+});
