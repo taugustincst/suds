@@ -417,3 +417,16 @@ test('sync push maps unknown user references to the syncing user instead of fail
   assert.equal(H.db.one(`SELECT created_by FROM clients WHERE id=?`, id).created_by, me);
   assert.equal(H.db.one(`SELECT assigned_to FROM tasks WHERE client_id=?`, id).assigned_to, me);
 });
+
+test('sync normalises device clock skew so a fast clock cannot win conflicts', async () => {
+  const bare = H.client(); const l = await bare.post('/api/auth/login', { username: 'nav2', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' }); const B = { Authorization: 'Bearer ' + l.data.token, Cookie: '' };
+  const id = require('node:crypto').randomUUID(); const now = Date.now();
+  await bare.post('/api/sync/push', { device_now: new Date(now).toISOString(), tables: { clients: [{ id, client_code: 'M26-0500', first_name_enc: 'Clock', last_name_enc: 'Test', status: 'active', created_at: new Date(now).toISOString(), updated_at: new Date(now).toISOString() }] } }, B);
+  // office edits the client now
+  const s = H.client(); await s.login('sup1', 'StaffPassw0rd!x'); await s.put(`/api/clients/${id}`, { goals: 'office' });
+  // a device whose clock is 1 hour fast sends an edit it made *before* the office edit (device time = +1h, real time = earlier)
+  const fast = 3600_000; const deviceEditReal = now - 10_000; // 10 s before the office edit
+  const r = await bare.post('/api/sync/push', { device_now: new Date(Date.now() + fast).toISOString(), tables: { clients: [{ id, client_code: 'M26-0500', first_name_enc: 'Clock', last_name_enc: 'Test', status: 'active', goals: 'phone-stale', created_at: new Date(now + fast).toISOString(), updated_at: new Date(deviceEditReal + fast).toISOString() }] } }, B);
+  assert.ok(Math.abs(r.data.clock_offset_ms + fast) < 5000, 'offset measured');
+  assert.equal(H.db.one(`SELECT goals FROM clients WHERE id=?`, id).goals, 'office', 'stale device edit does not win despite a fast clock');
+});

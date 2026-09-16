@@ -2,6 +2,24 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## 1.3.0 — 2026-09-16
+
+### Sample data
+- **Load sample data** (Settings → Settings on the office SUDS; the Sync screen on a phone-only copy) adds 12 fictional clients with visits, calls, time, notes in several formats, referrals, reminders, consents, disclosures, resources, two funding sources and spending, so a new program can explore every screen. It is only offered while there are no clients yet, every record is tagged (`DEMO-` client codes) and **Remove sample data** deletes all of it in one click. A phone removes its sample data automatically before its first sync so it never reaches the office.
+- The empty dashboard points new users at it. `npm run seed` uses the same generator (plus demo staff accounts) for development.
+
+### Sync
+- Device clock differences no longer decide conflicts: the office normalises timestamps using each device's reported time, and phones track exactly which rows were sent so nothing is re-sent or lost.
+- Local database saves are flushed when the app goes to the background.
+
+### Fixes
+- Pages a role cannot use (for example Settings for a navigator) now show a clear message instead of failing requests.
+- Collapsed sections in the new-client form are opened by the browser tests; the tour no longer opens on top of another screen.
+
+### Build & test
+- Browser regression suite (`scripts/ui/run-all.sh`, seven Playwright scripts covering desktop, the navigator workflow, UX features, phone-only mode, two-way sync, spreadsheets and sample data) runs in CI on every push.
+- iOS simulator build workflow (`mobile-ios.yml`) compiles the SwiftUI wrapper on every release.
+
 ## 1.2.1 — 2026-09-16
 
 ### Security review fixes

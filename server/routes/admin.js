@@ -123,6 +123,22 @@ module.exports = (r) => {
     ctx.res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Disposition': 'attachment; filename="suds-keys-KEEP-SECRET.json"' }); ctx.res.end(fs.readFileSync(config.keysJsonPath));
   });
 
+  // Fictional sample data (safe in production: only when the database has no real clients yet, removable in one click)
+  const demo = require('../demo');
+  r.get('/api/admin/demo', auth.requireAuth, auth.requirePerm('settings:manage'), () => demo.status());
+  r.post('/api/admin/demo', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
+    const st = demo.status();
+    if (st.loaded) throw badRequest('Sample data is already loaded');
+    if (st.clients_total > 0) throw badRequest('Sample data can only be added while there are no clients yet, so it never mixes with real records');
+    const out = demo.seed(demo.staffFor(ctx.user));
+    audit.log({ user: ctx.user, action: 'demo.load.request', ip: ctx.ip, details: { total: out.total } });
+    return out;
+  });
+  r.delete('/api/admin/demo', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
+    const out = demo.remove({ actor: ctx.user.id });
+    audit.log({ user: ctx.user, action: 'demo.remove.request', ip: ctx.ip, details: out });
+    return out;
+  });
   r.get('/api/admin/stats', auth.requireAuth, auth.requirePerm('settings:manage'), () => ({
     users: db.one(`SELECT COUNT(*) n FROM users WHERE is_active=1`).n,
     clients: db.one(`SELECT COUNT(*) n FROM clients WHERE deleted_at IS NULL`).n,

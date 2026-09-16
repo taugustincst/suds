@@ -1,0 +1,22 @@
+name: iOS app
+# Compiles the iOS app on a macOS runner (simulator build, no signing) so Swift changes are verified.
+on:
+  push:
+    tags: ['v*']
+    paths: ['mobile/ios/**', '.github/workflows/mobile-ios.yml']
+  pull_request:
+    paths: ['mobile/ios/**']
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out
+        run: git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
+      - name: Build for simulator
+        working-directory: src/mobile/ios
+        run: |
+          xcodebuild -version
+          xcodebuild -project SUDS.xcodeproj -target SUDS -sdk iphonesimulator -configuration Debug -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" build | tail -40

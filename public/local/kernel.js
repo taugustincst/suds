@@ -5994,7 +5994,7 @@ function flush() {
 function markDirty() {
   dirty = true;
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => flush().catch((e) => console.error("[suds-local] save failed", e)), 400);
+  saveTimer = setTimeout(() => flush().catch((e) => console.error("[suds-local] save failed", e)), 1500);
 }
 var SQL, STORE, KEY, current, saveTimer, dirty, Statement, DatabaseSync, sqlite_default;
 var init_sqlite = __esm({
@@ -6929,6 +6929,345 @@ var require_sync_tables = __commonJS({
   }
 });
 
+// server/constants.js
+var require_constants = __commonJS({
+  "server/constants.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    module.exports = {
+      INTERVENTION_TYPES: ["outreach", "screening_sbirt", "assessment", "intake", "care_coordination", "warm_handoff", "referral", "case_management", "harm_reduction", "naloxone_distribution", "peer_support", "crisis_response", "post_overdose_follow_up", "transport", "housing_assistance", "benefits_enrollment", "employment_support", "family_support", "education", "court_or_probation", "hospital_or_ed_visit", "jail_in_reach", "recovery_check_in", "discharge_planning", "other"],
+      LOCATIONS: ["office", "field", "home", "phone", "telehealth", "hospital", "emergency_dept", "jail", "court", "shelter", "treatment_facility", "community", "other"],
+      MODALITIES: ["in_person", "phone", "video", "text", "email", "collateral"],
+      OUTCOMES: ["completed", "partial", "client_declined", "no_show", "unable_to_locate", "rescheduled", "crisis_resolved", "transported", "admitted", "other"],
+      STAGES: ["precontemplation", "contemplation", "preparation", "action", "maintenance", "relapse"],
+      CALL_CONTACT_TYPES: ["client", "family", "provider", "agency", "hospital", "law_enforcement", "hotline", "pharmacy", "insurance", "other"],
+      CALL_OUTCOMES: ["reached", "voicemail", "no_answer", "busy", "wrong_number", "disconnected", "callback_scheduled", "crisis_escalated"],
+      TIME_CATEGORIES: ["direct_service", "documentation", "travel", "care_coordination", "outreach", "meeting", "training", "supervision", "admin", "on_call"],
+      RESOURCE_CATEGORIES: ["detox_withdrawal_mgmt", "residential", "inpatient", "partial_hospitalization", "intensive_outpatient", "outpatient", "mat_otp", "mat_obot", "sober_living", "housing", "shelter", "mental_health", "primary_care", "harm_reduction", "syringe_services", "naloxone", "crisis_line", "transportation", "employment", "legal", "food", "benefits", "peer_support", "recovery_community", "family_support", "pregnancy_parenting", "veterans", "other"],
+      REFERRAL_STATUSES: ["pending", "contacted", "accepted", "waitlisted", "scheduled", "admitted", "declined_by_client", "declined_by_provider", "no_show", "completed", "closed"],
+      BUDGET_CATEGORIES: ["staffing", "client_assistance", "transportation", "naloxone_supplies", "harm_reduction_supplies", "housing_assistance", "treatment_fees", "medication", "phones_communication", "food_basic_needs", "ids_documents", "training", "outreach_materials", "supplies", "indirect", "other"],
+      FUNDING_TYPES: ["opioid_settlement", "sor_grant", "samhsa", "state_block_grant", "county_general", "medicaid", "foundation", "other"],
+      NOTE_FORMATS: ["narrative", "SOAP", "DAP", "BIRP", "GIRP", "intake", "progress", "discharge", "contact", "collateral", "crisis", "supervision"],
+      CONSENT_TYPES: ["part2_disclosure", "roi", "treatment", "telehealth", "contact_preferences", "research", "photo_media"],
+      SUBSTANCES: ["opioids_fentanyl", "opioids_heroin", "opioids_rx", "alcohol", "methamphetamine", "cocaine", "benzodiazepines", "cannabis", "synthetic_cannabinoids", "xylazine", "nicotine", "other", "unknown"],
+      ASAM: ["0.5", "1.0", "2.1", "2.5", "3.1", "3.3", "3.5", "3.7", "4.0", "OTP", "unknown"]
+    };
+  }
+});
+
+// server/demo.js
+var require_demo = __commonJS({
+  "server/demo.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var C = require_constants();
+    var { encrypt: encrypt3, blindIndex: blindIndex2, uuid: uuid2 } = require_crypto();
+    var audit3 = require_audit();
+    var DEMO_PREFIX = "DEMO-";
+    var TABLES = ["expenditures", "disclosures", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "assignments", "clients", "budget_lines", "funding_sources", "resources"];
+    var SYNCED = /* @__PURE__ */ new Set(["expenditures", "disclosures", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "assignments", "clients", "budget_lines", "funding_sources", "resources"]);
+    function rng(seed2) {
+      let a = seed2 >>> 0;
+      return () => {
+        a = a + 1831565813 >>> 0;
+        let t = a;
+        t = Math.imul(t ^ t >>> 15, t | 1);
+        t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+      };
+    }
+    function status() {
+      const ids = JSON.parse(db3.getSetting("demo_ids", "null") || "null");
+      const counts = {};
+      let total = 0;
+      if (ids) for (const [t, list] of Object.entries(ids)) {
+        counts[t] = list.length;
+        total += list.length;
+      }
+      return { loaded: !!ids, loaded_at: db3.getSetting("demo_loaded_at", null), counts, total, clients_total: db3.one(`SELECT COUNT(*) n FROM clients WHERE deleted_at IS NULL`).n };
+    }
+    var PEOPLE = [
+      ["Jamie", "Nguyen", "Jay", "they/them", "1988-04-12", "opioids_fentanyl", "xylazine", "injected", "critical", "active", "active", "buprenorphine", 1, "shelter", "medicaid", "2.1", "emergency_dept", 1, 1, 0, "contemplation", "Stay on bupe; get an ID; find a bed at Bridge Housing"],
+      ["Marcus", "Bell", null, "he/him", "1975-11-02", "alcohol", "", "oral", "moderate", "active", "none", null, 0, "stable", "uninsured", "1.0", "self", 0, 0, 0, "action", "Keep the job; attend IOP three nights a week"],
+      ["Tanya", "Ortiz", "T", "she/her", "1993-07-23", "methamphetamine", "opioids_fentanyl", "smoked", "critical", "active", "interested", null, 1, "unsheltered", "medicaid", "3.5", "outreach", 1, 1, 1, "preparation", "Detox bed then residential; reconnect with daughter"],
+      ["Robert", "Kowalski", "Bob", "he/him", "1969-01-30", "opioids_rx", "benzodiazepines", "oral", "moderate", "active", "referred", null, 1, "doubled_up", "medicare", "OTP", "primary_care", 0, 0, 1, "action", "Start methadone; manage chronic pain with the clinic"],
+      ["Aisha", "Freeman", null, "she/her", "1999-09-09", "opioids_fentanyl", "", "snorted", "high", "waitlist", "unknown", null, 0, "unknown", "pending", "unknown", "jail", 1, 0, 0, "precontemplation", "Meet after release; apply for Medicaid"],
+      ["Luis", "Herrera", null, "he/him", "1982-03-15", "cocaine", "alcohol", "snorted", "low", "closed", "none", null, 0, "stable", "private", "1.0", "court_probation", 1, 0, 0, "maintenance", "Completed program; monthly check-in call"],
+      ["Danielle", "Park", "Dani", "she/her", "1996-12-05", "opioids_heroin", "methamphetamine", "injected", "high", "active", "active", "methadone", 1, "transitional", "medicaid", "OTP", "hospital_or_ed", 0, 1, 1, "action", "Daily dosing; prenatal care; housing application"],
+      ["Samuel", "Okafor", "Sam", "he/him", "1961-06-18", "alcohol", "nicotine", "oral", "high", "active", "none", null, 0, "stable", "medicare", "2.5", "family", 0, 0, 1, "contemplation", "Reduce drinking; see cardiologist; grief support"],
+      ["Brianna", "Lopez", "Bree", "she/her", "2001-02-27", "benzodiazepines", "cannabis", "oral", "moderate", "active", "none", null, 0, "stable", "private", "1.0", "school", 0, 0, 1, "preparation", "Taper with prescriber; finish semester"],
+      ["Trevor", "Miller", null, "he/him", "1984-08-08", "opioids_fentanyl", "cocaine", "smoked", "critical", "active", "discontinued", "buprenorphine", 1, "unsheltered", "medicaid", "3.7", "outreach", 1, 0, 0, "relapse", "Restart bupe; naloxone on hand; shelter bed"],
+      ["Grace", "Whitfield", null, "she/her", "1958-10-21", "opioids_rx", "", "oral", "low", "inactive", "active", "naltrexone", 0, "stable", "medicare", "1.0", "primary_care", 0, 0, 0, "maintenance", "Monthly Vivitrol; stay connected to church group"],
+      ["Andre", "Jackson", "Dre", "he/him", "1990-05-14", "methamphetamine", "", "smoked", "high", "active", "none", null, 1, "jail", "pending", "2.1", "jail", 1, 0, 0, "contemplation", "Release planning; Medicaid; job program"]
+    ];
+    var RESOURCES = [
+      ["Riverside Recovery Center", "residential", "555-0200", "buprenorphine, naltrexone", 1, 1, "Mon\u2013Fri 8\u20135; intake line 24/7", "28-day residential; medically supervised. Adults 18+.", "English, Spanish"],
+      ["County Opioid Treatment Program", "mat_otp", "555-0201", "methadone, buprenorphine", 1, 1, "Dosing 5:30am\u201311am daily", "Methadone and buprenorphine; same-day intake Tue/Thu.", "English, Spanish"],
+      ["Hope Street Detox", "detox_withdrawal_mgmt", "555-0202", "", 1, 1, "24/7", "Social and medical detox; call for bed availability.", "English"],
+      ["Bridge Housing Collaborative", "sober_living", "555-0203", "", 1, 0, "Mon\u2013Fri 9\u20134", "Recovery housing; 30 days sober required.", "English"],
+      ["Downtown Shelter", "shelter", "555-0204", "", 0, 1, "Check-in 6pm", "Emergency shelter; low-barrier; pets allowed.", "English, Spanish"],
+      ["Community Harm Reduction Coalition", "syringe_services", "555-0205", "", 0, 1, "Tue/Thu 1\u20135; mobile van Sat", "Syringe services, naloxone, fentanyl test strips, wound care.", "English, Spanish"],
+      ["Valley Behavioral Health", "mental_health", "555-0206", "", 1, 0, "Mon\u2013Fri 8\u20136", "Outpatient mental health; co-occurring track.", "English"],
+      ["Second Chance Legal Aid", "legal", "555-0207", "", 0, 1, "Wed 10\u20132 walk-in", "Expungement, warrants, benefits appeals.", "English"],
+      ["Family Health Clinic (OBOT)", "mat_obot", "555-0208", "buprenorphine", 1, 1, "Mon\u2013Sat 8\u20138", "Office-based buprenorphine; telehealth follow-ups.", "English, Spanish, Vietnamese"],
+      ["Recovery Rides", "transportation", "555-0209", "", 0, 1, "Book 24h ahead", "Free rides to treatment and court.", "English"],
+      ["Northside IOP", "intensive_outpatient", "555-0210", "", 1, 0, "Evenings Mon/Wed/Thu", "Intensive outpatient; evening groups for working adults.", "English"],
+      ["County Crisis Line", "crisis_line", "988", "", 1, 1, "24/7", "Mobile crisis team dispatch.", "English, Spanish"],
+      ["Hands & Hearts Food Pantry", "food", "555-0212", "", 0, 1, "Sat 9\u201312", "Groceries and hot meals; no ID required.", "English"],
+      ["WorkFirst Employment Services", "employment", "555-0213", "", 0, 1, "Mon\u2013Fri 9\u20135", "Job readiness, r\xE9sum\xE9 help, fair-chance employers.", "English, Spanish"],
+      ["Recovery Caf\xE9", "recovery_community", "555-0214", "", 0, 1, "Daily 10\u20136", "Peer-led recovery community; meetings and meals.", "English"]
+    ];
+    function seed({ actor, workers, clinician = null, supervisor, seedValue = 42 }) {
+      if (status().loaded) throw new Error("Sample data is already loaded");
+      if (!workers || !workers.length) throw new Error("At least one worker is required");
+      const rand = rng(seedValue);
+      const pick = (arr) => arr[Math.floor(rand() * arr.length)];
+      const ids = {};
+      const track = (t, id) => {
+        (ids[t] = ids[t] || []).push(id);
+        return id;
+      };
+      const d = (off, hour = 10) => {
+        const x = new Date(Date.now() - off * 864e5);
+        x.setUTCHours(hour, Math.floor(rand() * 4) * 15, 0, 0);
+        return x.toISOString();
+      };
+      const day = (off) => d(off).slice(0, 10);
+      const nowIso = db3.now();
+      db3.transaction(() => {
+        const rids = RESOURCES.map(([name, cat, phone, mat, med, unins, hours, services, langs]) => {
+          const id = track("resources", uuid2());
+          db3.run(`INSERT INTO resources(id,name,category,phone,mat_offered,accepts_medicaid,accepts_uninsured,city,hours,services,languages,last_verified_at,notes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, name, cat, phone, mat || null, med, unins, "Springfield", hours, services, langs, day(Math.floor(rand() * 90)), "Sample resource (fictional)");
+          return id;
+        });
+        const y = (/* @__PURE__ */ new Date()).getFullYear();
+        const fund = track("funding_sources", uuid2());
+        db3.run(`INSERT INTO funding_sources(id,name,source_type,grant_number,fiscal_year_start,fiscal_year_end,total_amount,restrictions) VALUES(?,?,?,?,?,?,?,?)`, fund, `Opioid Settlement \u2013 Navigation FY${String(y + 1).slice(2)}`, "opioid_settlement", "OS-2026-014", `${y}-07-01`, `${y + 1}-06-30`, 18e4, "Abatement uses only; no indirect above 10%");
+        const lines = { client_assistance: 25e3, transportation: 8e3, naloxone_supplies: 6e3, housing_assistance: 3e4, staffing: 1e5, training: 3e3, ids_documents: 2e3, phones_communication: 3e3, outreach_materials: 3e3 };
+        const lineIds = {};
+        for (const [cat, amt] of Object.entries(lines)) {
+          lineIds[cat] = track("budget_lines", uuid2());
+          db3.run(`INSERT INTO budget_lines(id,funding_source_id,category,label,allocated_amount) VALUES(?,?,?,?,?)`, lineIds[cat], fund, cat, null, amt);
+        }
+        const fund2 = track("funding_sources", uuid2());
+        db3.run(`INSERT INTO funding_sources(id,name,source_type,grant_number,fiscal_year_start,fiscal_year_end,total_amount,restrictions) VALUES(?,?,?,?,?,?,?,?)`, fund2, "SOR IV \u2013 Peer Support", "sor_grant", "SOR-4-0087", `${y}-01-01`, `${y}-12-31`, 6e4, "Peer support and recovery housing only");
+        for (const [cat, amt] of [["staffing", 45e3], ["housing_assistance", 1e4], ["peer_support", 5e3]]) {
+          const id = track("budget_lines", uuid2());
+          db3.run(`INSERT INTO budget_lines(id,funding_source_id,category,label,allocated_amount) VALUES(?,?,?,?,?)`, id, fund2, C.BUDGET_CATEGORIES.includes(cat) ? cat : "other", cat === "peer_support" ? "Peer support stipends" : null, amt);
+        }
+        const cids = [];
+        PEOPLE.forEach((p, i) => {
+          const [fn, ln2, pref, pron, dob, sub, sub2, route, risk, cstatus, mat, matMed, od, housing, ins, asam, refSrc, justice, preg, mh, stage, goals] = p;
+          const worker = workers[i % workers.length];
+          const id = track("clients", uuid2());
+          cids.push({ id, worker, fn, ln: ln2, risk, cstatus, sub, stage, od, mat });
+          const phone = `555-01${String(i + 1).padStart(2, "0")}`;
+          const intake = 150 - i * 11;
+          db3.run(
+            `INSERT INTO clients(id,client_code,first_name_enc,last_name_enc,last_name_idx,full_name_idx,preferred_name_enc,dob_enc,dob_idx,phone_enc,phone_idx,email_enc,address_enc,city,zip,gender,pronouns,preferred_language,status,intake_date,discharge_date,discharge_reason,primary_substance,secondary_substances,route_of_use,risk_level,mat_status,mat_medication,overdose_history,last_overdose_date,naloxone_provided,naloxone_last_date,housing_status,insurance,asam_level,referral_source,justice_involved,pregnant_or_parenting,co_occurring_mh,goals,flags,ok_to_text,ok_to_voicemail,created_by,created_at) VALUES(${Array(45).fill("?").join(",")})`,
+            id,
+            `${DEMO_PREFIX}${String(i + 1).padStart(4, "0")}`,
+            encrypt3(fn),
+            encrypt3(ln2),
+            blindIndex2(ln2),
+            blindIndex2(ln2 + fn),
+            pref ? encrypt3(pref) : null,
+            encrypt3(dob),
+            blindIndex2(dob),
+            encrypt3(phone),
+            blindIndex2(phone.replace(/\D/g, "")),
+            i % 3 === 0 ? encrypt3(`${fn.toLowerCase()}.${ln2.toLowerCase()}@example.com`) : null,
+            encrypt3(`${100 + i * 7} Demo St, Apt ${i + 1}`),
+            "Springfield",
+            "00000",
+            pron.startsWith("he") ? "male" : pron.startsWith("she") ? "female" : "nonbinary",
+            pron,
+            i === 8 ? "Spanish" : "English",
+            cstatus,
+            day(intake),
+            cstatus === "closed" ? day(20) : null,
+            cstatus === "closed" ? "completed" : null,
+            sub,
+            sub2 || null,
+            route,
+            risk,
+            mat,
+            matMed,
+            od,
+            od ? day(intake + 5) : null,
+            od ? 1 : 0,
+            od ? day(Math.floor(rand() * 40)) : null,
+            housing,
+            ins,
+            asam,
+            refSrc,
+            justice,
+            preg,
+            mh,
+            goals,
+            i === 2 ? "safety_plan" : i === 9 ? "no_home_visits" : null,
+            i % 2,
+            i % 3 ? 1 : 0,
+            actor,
+            d(intake, 9)
+          );
+          db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, track("assignments", uuid2()), id, worker, "primary", day(intake), supervisor);
+          if (clinician && i % 2 === 0) db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, track("assignments", uuid2()), id, clinician, "clinician", day(intake - 3), supervisor);
+          if (workers.length > 1 && i % 4 === 1) db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, track("assignments", uuid2()), id, workers[(i + 1) % workers.length], "secondary", day(intake - 10), supervisor);
+        });
+        const SUMMARIES = {
+          outreach: "Met at the drop-in center. Talked about program services and what would help most this week.",
+          screening_sbirt: "Completed AUDIT/DAST screening; discussed results and options.",
+          assessment: "Completed ASAM-based level of care assessment.",
+          intake: "Completed intake paperwork, consents and releases.",
+          care_coordination: "Coordinated with treatment provider about intake date and paperwork.",
+          warm_handoff: "Accompanied client to the appointment and introduced them to staff.",
+          referral: "Made referral and set a follow-up date.",
+          case_management: "Reviewed goals and barriers; updated recovery plan.",
+          harm_reduction: "Discussed safer use; provided fentanyl test strips and wound care supplies.",
+          naloxone_distribution: "Provided naloxone kit and reviewed how to use it.",
+          peer_support: "Peer check-in; shared recovery meeting options.",
+          crisis_response: "Responded to crisis call; client is safe; safety plan updated.",
+          post_overdose_follow_up: "Follow-up after ED visit for overdose; offered MAT and naloxone.",
+          transport: "Drove client to appointment.",
+          housing_assistance: "Completed housing application and gathered documents.",
+          benefits_enrollment: "Submitted Medicaid application."
+        };
+        const NOTE_BODIES = [
+          ["contact", "Outreach contact", "Met client at drop-in. Client engaged and asked about MAT options. Gave naloxone and clinic hours. Will follow up Thursday."],
+          ["progress", "Weekly progress", "Client attended two groups this week and reports no use for 9 days. Reviewed triggers around weekends. Continue weekly contact."],
+          ["contact", "Phone check-in", "Reached client by phone. Doing okay; needs a ride to Tuesday intake. Booked Recovery Rides."],
+          ["collateral", "Collateral: family", "Spoke with client\u2019s mother (ROI on file). She reports client is staying with her and sleeping better. Shared crisis line number."]
+        ];
+        let counts = { interventions: 0, calls: 0, notes: 0 };
+        cids.forEach((c, i) => {
+          const n = c.cstatus === "closed" ? 6 : c.cstatus === "waitlist" ? 2 : 8 + Math.floor(rand() * 7);
+          const types = ["outreach", "case_management", "care_coordination", "harm_reduction", "naloxone_distribution", "referral", "warm_handoff", "transport", "peer_support", "housing_assistance", "benefits_enrollment", "screening_sbirt", "post_overdose_follow_up", "crisis_response"];
+          for (let k = 0; k < n; k++) {
+            const off = Math.floor(rand() * 140);
+            const type = k === 0 ? "intake" : k === 1 ? "assessment" : pick(types);
+            const dur = 15 + Math.floor(rand() * 8) * 10;
+            const loc = type === "transport" ? "community" : type === "outreach" ? pick(["field", "shelter", "community"]) : type === "crisis_response" ? pick(["emergency_dept", "home", "phone"]) : pick(["office", "field", "home", "treatment_facility"]);
+            const iid = track("interventions", uuid2());
+            db3.run(
+              `INSERT INTO interventions(id,client_id,user_id,type,occurred_at,duration_minutes,location,modality,outcome,stage_of_change,naloxone_kits,fentanyl_strips,funding_source_id,summary,follow_up_due,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+              iid,
+              c.id,
+              c.worker,
+              type,
+              d(off),
+              dur,
+              loc,
+              loc === "phone" ? "phone" : "in_person",
+              rand() < 0.8 ? "completed" : pick(["partial", "no_show", "rescheduled", "unable_to_locate"]),
+              c.stage,
+              type === "naloxone_distribution" ? 1 + Math.floor(rand() * 2) : 0,
+              type === "harm_reduction" ? 5 : 0,
+              fund,
+              SUMMARIES[type] || `${type.replace(/_/g, " ")} contact`,
+              rand() < 0.3 ? day(-Math.floor(rand() * 10)) : null,
+              d(off, 16)
+            );
+            db3.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,funding_source_id,intervention_id,description) VALUES(?,?,?,?,?,?,?,?,?)`, track("time_entries", uuid2()), c.worker, c.id, day(off), dur, type === "transport" ? "travel" : type === "care_coordination" ? "care_coordination" : type === "outreach" ? "outreach" : "direct_service", fund, iid, type.replace(/_/g, " "));
+            counts.interventions++;
+          }
+          const nc = c.cstatus === "waitlist" ? 1 : 3 + Math.floor(rand() * 4);
+          for (let k = 0; k < nc; k++) {
+            const ct = pick(["client", "client", "client", "family", "provider", "agency", "pharmacy"]);
+            const out2 = pick(C.CALL_OUTCOMES.slice(0, 4));
+            db3.run(`INSERT INTO calls(id,client_id,user_id,direction,started_at,duration_minutes,contact_type,contact_name_enc,purpose,outcome,crisis,follow_up_needed,follow_up_due,summary_enc) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, track("calls", uuid2()), c.id, c.worker, rand() < 0.5 ? "inbound" : "outbound", d(Math.floor(rand() * 90), 9 + Math.floor(rand() * 8)), out2 === "reached" ? 5 + Math.floor(rand() * 20) : 1, ct, ct === "family" ? encrypt3("Mother") : ct === "provider" ? encrypt3("OTP intake nurse") : null, pick(["Check-in", "Appointment reminder", "Referral follow-up", "Benefits question", "Housing update"]), out2, 0, out2 !== "reached" ? 1 : 0, out2 !== "reached" ? day(-1) : null, encrypt3(out2 === "reached" ? "Talked through next steps; client will call back if anything changes." : "Left message asking client to call back."));
+            counts.calls++;
+          }
+          const nr = c.cstatus === "waitlist" ? 1 : 2 + Math.floor(rand() * 2);
+          for (let k = 0; k < nr; k++) {
+            const rid = rids[(i * 3 + k * 5) % rids.length];
+            const st = k === 0 ? pick(["admitted", "scheduled", "accepted", "completed"]) : pick(C.REFERRAL_STATUSES);
+            const off = 10 + Math.floor(rand() * 100);
+            db3.run(`INSERT INTO referrals(id,client_id,resource_id,user_id,referred_at,status,urgency,appointment_at,admitted_at,closed_at,outcome,barrier,warm_handoff,follow_up_due,notes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, track("referrals", uuid2()), c.id, rid, c.worker, d(off), st, c.risk === "critical" ? "urgent" : "routine", ["scheduled", "admitted", "completed"].includes(st) ? d(off - 3) : null, ["admitted", "completed"].includes(st) ? d(off - 5) : null, ["completed", "closed", "declined_by_client", "declined_by_provider"].includes(st) ? d(off - 12) : null, st === "completed" ? "Completed program" : null, ["waitlisted", "declined_by_provider"].includes(st) ? pick(["no beds", "insurance", "transportation"]) : null, rand() < 0.5 ? 1 : 0, ["pending", "contacted", "waitlisted"].includes(st) ? day(-2) : null, null);
+          }
+          const TASKS = [["Call about detox bed", "urgent", -1], ["Bring ID paperwork to DMV", "high", 1], ["Confirm OTP intake time", "high", 0], ["Housing application follow-up", "normal", 4], ["Send ROI to Valley Behavioral", "normal", 2], ["Monthly check-in call", "low", 12], ["Naloxone refill", "normal", -3]];
+          const nt = c.cstatus === "closed" ? 1 : 2 + Math.floor(rand() * 2);
+          for (let k = 0; k < nt; k++) {
+            const [title, pri, dueOff] = TASKS[(i + k * 2) % TASKS.length];
+            const done = c.cstatus === "closed" || rand() < 0.3;
+            db3.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title,description,due_at,priority,status,is_milestone,completed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, track("tasks", uuid2()), c.id, c.worker, k === 0 ? supervisor : c.worker, title, null, d(-dueOff), pri, done ? "done" : "open", title.includes("intake") ? 1 : 0, done ? d(1) : null);
+          }
+          const nn = c.cstatus === "waitlist" ? 1 : 2 + Math.floor(rand() * 3);
+          for (let k = 0; k < nn; k++) {
+            const [fmtName, title, body] = NOTE_BODIES[(i + k) % NOTE_BODIES.length];
+            const off = 5 + Math.floor(rand() * 100);
+            const signed = k > 0 || rand() < 0.5;
+            db3.run(`INSERT INTO notes(id,client_id,author_id,kind,format,title,content_enc,occurred_at,status,signed_at,signed_by,source,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, track("notes", uuid2()), c.id, c.worker, "admin", fmtName, title, encrypt3(body + " (Sample data)"), d(off), signed ? "signed" : "draft", signed ? d(off, 17) : null, signed ? c.worker : null, "manual", d(off, 17), d(off, 17));
+            counts.notes++;
+          }
+          if (clinician && i % 2 === 0) {
+            const S = `Reports ${c.sub.replace(/_/g, " ")} use ${pick(["daily", "most days", "on weekends"])}; motivated by ${pick(["family", "health", "housing", "court"])}.`;
+            const O = "Alert and oriented; mild withdrawal symptoms; PHQ-9 = 12.";
+            const A = `${c.sub.startsWith("opioid") ? "Opioid" : "Substance"} use disorder, ${c.risk === "critical" ? "severe" : "moderate"}; stage of change: ${c.stage}.`;
+            const P2 = "Continue navigation contacts weekly; MAT referral; naloxone on hand; reassess in 30 days.";
+            db3.run(`INSERT INTO notes(id,client_id,author_id,kind,format,title,content_enc,structured_enc,occurred_at,status,signed_at,signed_by,source,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, track("notes", uuid2()), c.id, clinician, "clinical", i % 4 === 0 ? "SOAP" : "DAP", "Clinical assessment", encrypt3(i % 4 === 0 ? `S: ${S}
+O: ${O}
+A: ${A}
+P: ${P2} (Sample data)` : `D: ${S} ${O}
+A: ${A}
+P: ${P2} (Sample data)`), encrypt3(JSON.stringify(i % 4 === 0 ? { S, O, A, P: P2 } : { D: `${S} ${O}`, A, P: P2 })), d(30 + i), i % 4 === 0 ? "signed" : "draft", i % 4 === 0 ? d(30 + i, 18) : null, i % 4 === 0 ? clinician : null, "manual", d(30 + i, 18), d(30 + i, 18));
+            counts.notes++;
+          }
+          const consentId = track("consents", uuid2());
+          db3.run(`INSERT INTO consents(id,client_id,type,recipient,purpose,scope,signed_at,expires_at,created_by) VALUES(?,?,?,?,?,?,?,?,?)`, consentId, c.id, "part2_disclosure", "County Opioid Treatment Program", "Treatment coordination and referral", "Referral summary, diagnosis, MAT status", day(60 + i), day(i === 3 ? 5 : i === 5 ? -10 : -300 + i * 20), c.worker);
+          if (i % 3 === 0) db3.run(`INSERT INTO consents(id,client_id,type,recipient,purpose,scope,signed_at,expires_at,created_by) VALUES(?,?,?,?,?,?,?,?,?)`, track("consents", uuid2()), c.id, "roi", "Family member (mother)", "Care coordination with family", "Appointment dates and general progress", day(50 + i), day(-315), c.worker);
+          if (i % 2 === 0) db3.run(`INSERT INTO disclosures(id,client_id,consent_id,disclosed_to,purpose,info_disclosed,method,disclosed_at,disclosed_by,basis) VALUES(?,?,?,?,?,?,?,?,?,?)`, track("disclosures", uuid2()), c.id, consentId, "County Opioid Treatment Program", "Referral for MAT intake", "Referral summary and MAT status", "fax", d(40 + i), c.worker, "consent");
+          const EXP = [["transportation", "Metro Transit", "Bus pass (monthly)", 45], ["client_assistance", "Walgreens", "Hygiene kit and phone charger", 32.18], ["housing_assistance", "Motel 6", "Emergency motel, 3 nights", 267], ["ids_documents", "DMV", "State ID fee", 28], ["client_assistance", "Uber", "Ride to intake appointment", 18.75], ["phones_communication", "Metro PCS", "Prepaid phone (recovery contact)", 40], ["naloxone_supplies", "Harm Reduction Coalition", "Naloxone kits (5)", 150]];
+          const ne = c.cstatus === "waitlist" ? 0 : 1 + Math.floor(rand() * 3);
+          for (let k = 0; k < ne; k++) {
+            const [cat, vendor, desc, amt] = EXP[(i + k * 3) % EXP.length];
+            const st = k === 0 ? "approved" : pick(["pending", "approved", "reimbursed"]);
+            db3.run(`INSERT INTO expenditures(id,funding_source_id,budget_line_id,client_id,user_id,spent_at,amount,category,vendor,description,status,approved_by,approved_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, track("expenditures", uuid2()), fund, lineIds[cat] || lineIds.client_assistance, c.id, c.worker, day(5 + Math.floor(rand() * 80)), amt, cat, vendor, desc, st, st === "pending" ? null : supervisor, st === "pending" ? null : d(3));
+          }
+        });
+        for (const w of workers) for (let k = 0; k < 10; k++) {
+          const cat = pick(["documentation", "meeting", "travel", "training", "supervision", "admin", "outreach"]);
+          db3.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,funding_source_id,description) VALUES(?,?,?,?,?,?,?,?)`, track("time_entries", uuid2()), w, null, day(Math.floor(rand() * 60)), 30 + Math.floor(rand() * 6) * 15, cat, cat === "training" ? fund2 : fund, { documentation: "Charting and note sign-off", meeting: "Weekly team huddle", travel: "Drive between sites", training: "Naloxone train-the-trainer", supervision: "Supervision with program manager", admin: "Data entry for monthly report", outreach: "Encampment outreach walk" }[cat]);
+        }
+        for (const [cat, vendor, desc, amt] of [["naloxone_supplies", "Harm Reduction Coalition", "Naloxone kits (50)", 1500], ["outreach_materials", "PrintPro", "Outreach flyers and cards", 220], ["training", "State Peer Academy", "Peer certification course", 650]]) db3.run(`INSERT INTO expenditures(id,funding_source_id,budget_line_id,user_id,spent_at,amount,category,vendor,description,status,approved_by,approved_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, track("expenditures", uuid2()), fund, lineIds[cat], workers[0], day(20 + Math.floor(rand() * 60)), amt, cat, vendor, desc, "approved", supervisor, d(15));
+        db3.setSetting("demo_ids", JSON.stringify(ids));
+        db3.setSetting("demo_loaded_at", nowIso);
+        audit3.log({ user: actor ? { id: actor, username: "sample-data" } : { id: null, username: "seed" }, action: "demo.load", details: { clients: cids.length, ...counts } });
+      });
+      return status();
+    }
+    function remove({ actor, tombstones = true } = {}) {
+      const ids = JSON.parse(db3.getSetting("demo_ids", "null") || "null");
+      if (!ids) return { removed: 0 };
+      let removed = 0;
+      db3.transaction(() => {
+        for (const t of TABLES) {
+          for (const id of ids[t] || []) {
+            const r = db3.run(`DELETE FROM ${t} WHERE id=?`, id);
+            if (r && r.changes) removed += r.changes;
+            if (tombstones && SYNCED.has(t)) db3.tombstone(t, id);
+          }
+        }
+        db3.run(`DELETE FROM settings WHERE key IN ('demo_ids','demo_loaded_at')`);
+        audit3.log({ user: actor ? { id: actor, username: "sample-data" } : { id: null, username: "seed" }, action: "demo.remove", details: { removed } });
+      });
+      return { removed };
+    }
+    function staffFor(user) {
+      const active = db3.all(`SELECT id, role FROM users WHERE is_active=1 AND role IN ('admin','supervisor','clinician','navigator')`);
+      const byRole = (r) => active.filter((u) => u.role === r).map((u) => u.id);
+      let workers = [...byRole("navigator"), ...byRole("clinician").slice(0, 1)];
+      if (!workers.includes(user.id) && user.role !== "finance" && user.role !== "readonly") workers.unshift(user.id);
+      if (!workers.length) workers = [user.id];
+      const clinician = byRole("clinician")[0] || null;
+      const supervisor = byRole("supervisor")[0] || byRole("admin")[0] || user.id;
+      return { actor: user.id, workers: workers.slice(0, 4), clinician, supervisor };
+    }
+    module.exports = { seed, remove, status, staffFor, DEMO_PREFIX };
+  }
+});
+
 // server/validate.js
 var require_validate = __commonJS({
   "server/validate.js"(exports, module) {
@@ -7249,6 +7588,21 @@ var require_admin = __commonJS({
         audit3.log({ user: ctx.user, action: "keys.download", ip: ctx.ip });
         ctx.res.writeHead(200, { "Content-Type": "application/json", "Content-Disposition": 'attachment; filename="suds-keys-KEEP-SECRET.json"' });
         ctx.res.end(fs.readFileSync(config.keysJsonPath));
+      });
+      const demo = require_demo();
+      r.get("/api/admin/demo", auth3.requireAuth, auth3.requirePerm("settings:manage"), () => demo.status());
+      r.post("/api/admin/demo", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+        const st = demo.status();
+        if (st.loaded) throw badRequest("Sample data is already loaded");
+        if (st.clients_total > 0) throw badRequest("Sample data can only be added while there are no clients yet, so it never mixes with real records");
+        const out2 = demo.seed(demo.staffFor(ctx.user));
+        audit3.log({ user: ctx.user, action: "demo.load.request", ip: ctx.ip, details: { total: out2.total } });
+        return out2;
+      });
+      r.delete("/api/admin/demo", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+        const out2 = demo.remove({ actor: ctx.user.id });
+        audit3.log({ user: ctx.user, action: "demo.remove.request", ip: ctx.ip, details: out2 });
+        return out2;
       });
       r.get("/api/admin/stats", auth3.requireAuth, auth3.requirePerm("settings:manage"), () => ({
         users: db3.one(`SELECT COUNT(*) n FROM users WHERE is_active=1`).n,
@@ -7592,32 +7946,6 @@ var require_crud = __commonJS({
       return (ctx, row) => row[col] === ctx.user.id || auth3.hasPerm(ctx.user, "clients:all");
     }
     module.exports = { build, ownerOrManager, clientExists };
-  }
-});
-
-// server/constants.js
-var require_constants = __commonJS({
-  "server/constants.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    module.exports = {
-      INTERVENTION_TYPES: ["outreach", "screening_sbirt", "assessment", "intake", "care_coordination", "warm_handoff", "referral", "case_management", "harm_reduction", "naloxone_distribution", "peer_support", "crisis_response", "post_overdose_follow_up", "transport", "housing_assistance", "benefits_enrollment", "employment_support", "family_support", "education", "court_or_probation", "hospital_or_ed_visit", "jail_in_reach", "recovery_check_in", "discharge_planning", "other"],
-      LOCATIONS: ["office", "field", "home", "phone", "telehealth", "hospital", "emergency_dept", "jail", "court", "shelter", "treatment_facility", "community", "other"],
-      MODALITIES: ["in_person", "phone", "video", "text", "email", "collateral"],
-      OUTCOMES: ["completed", "partial", "client_declined", "no_show", "unable_to_locate", "rescheduled", "crisis_resolved", "transported", "admitted", "other"],
-      STAGES: ["precontemplation", "contemplation", "preparation", "action", "maintenance", "relapse"],
-      CALL_CONTACT_TYPES: ["client", "family", "provider", "agency", "hospital", "law_enforcement", "hotline", "pharmacy", "insurance", "other"],
-      CALL_OUTCOMES: ["reached", "voicemail", "no_answer", "busy", "wrong_number", "disconnected", "callback_scheduled", "crisis_escalated"],
-      TIME_CATEGORIES: ["direct_service", "documentation", "travel", "care_coordination", "outreach", "meeting", "training", "supervision", "admin", "on_call"],
-      RESOURCE_CATEGORIES: ["detox_withdrawal_mgmt", "residential", "inpatient", "partial_hospitalization", "intensive_outpatient", "outpatient", "mat_otp", "mat_obot", "sober_living", "housing", "shelter", "mental_health", "primary_care", "harm_reduction", "syringe_services", "naloxone", "crisis_line", "transportation", "employment", "legal", "food", "benefits", "peer_support", "recovery_community", "family_support", "pregnancy_parenting", "veterans", "other"],
-      REFERRAL_STATUSES: ["pending", "contacted", "accepted", "waitlisted", "scheduled", "admitted", "declined_by_client", "declined_by_provider", "no_show", "completed", "closed"],
-      BUDGET_CATEGORIES: ["staffing", "client_assistance", "transportation", "naloxone_supplies", "harm_reduction_supplies", "housing_assistance", "treatment_fees", "medication", "phones_communication", "food_basic_needs", "ids_documents", "training", "outreach_materials", "supplies", "indirect", "other"],
-      FUNDING_TYPES: ["opioid_settlement", "sor_grant", "samhsa", "state_block_grant", "county_general", "medicaid", "foundation", "other"],
-      NOTE_FORMATS: ["narrative", "SOAP", "DAP", "BIRP", "GIRP", "intake", "progress", "discharge", "contact", "collateral", "crisis", "supervision"],
-      CONSENT_TYPES: ["part2_disclosure", "roi", "treatment", "telehealth", "contact_preferences", "research", "photo_media"],
-      SUBSTANCES: ["opioids_fentanyl", "opioids_heroin", "opioids_rx", "alcohol", "methamphetamine", "cocaine", "benzodiazepines", "cannabis", "synthetic_cannabinoids", "xylazine", "nicotine", "other", "unknown"],
-      ASAM: ["0.5", "1.0", "2.1", "2.5", "3.1", "3.3", "3.5", "3.7", "4.0", "OTP", "unknown"]
-    };
   }
 });
 
@@ -10897,7 +11225,7 @@ var require_sync = __commonJS({
       return cf;
     }
     function pull(user, since) {
-      const out2 = { cursor: db3.now(), tables: {}, tombstones: db3.all(`SELECT table_name, id, deleted_at FROM tombstones WHERE deleted_at > ?`, since), settings: {} };
+      const out2 = { cursor: db3.now(), server_now: db3.now(), tables: {}, tombstones: db3.all(`SELECT table_name, id, deleted_at FROM tombstones WHERE deleted_at > ?`, since), settings: {} };
       for (const t of SYNC2.tables) {
         const sc = scopeSql(t, user, "x");
         const hasUpd = cols2(t.name).includes("updated_at");
@@ -10913,6 +11241,14 @@ var require_sync = __commonJS({
     function push(user, payload) {
       const applied = {};
       const rejected = [];
+      const deviceNow = payload.device_now ? Date.parse(payload.device_now) : NaN;
+      const offsetMs = Number.isFinite(deviceNow) ? Date.now() - deviceNow : 0;
+      const shift = (ts) => {
+        if (!ts || !offsetMs) return ts;
+        const t = Date.parse(ts);
+        return Number.isFinite(t) ? new Date(t + offsetMs).toISOString() : ts;
+      };
+      const TS_COLS = ["created_at", "updated_at", "signed_at", "approved_at", "completed_at", "deleted_at", "closed_at", "admitted_at", "revoked_at"];
       db3.transaction(() => {
         for (const t of SYNC2.tables) {
           const rows = (payload.tables || {})[t.name];
@@ -10922,6 +11258,7 @@ var require_sync = __commonJS({
           let n = 0;
           for (const raw of rows) {
             if (!raw || typeof raw.id !== "string") continue;
+            for (const c of TS_COLS) if (raw[c]) raw[c] = shift(raw[c]);
             if (t.scope === "client" && raw[t.clientCol] && !auth3.canAccessClient(user, raw[t.clientCol]) && t.name !== "clients") {
               rejected.push({ table: t.name, id: raw.id, reason: "not on caseload" });
               continue;
@@ -10969,6 +11306,7 @@ var require_sync = __commonJS({
               raw.signature_hash = existing.signature_hash;
             }
             if (db3.one(`SELECT 1 FROM tombstones WHERE table_name=? AND id=? AND deleted_at > ?`, t.name, raw.id, incomingAt)) continue;
+            for (const c of ["created_by", "author_id", "user_id", "assigned_to", "approved_by", "signed_by", "disclosed_by", "imported_by"]) if (existingCols.includes(c) && raw[c] && !db3.one(`SELECT 1 FROM users WHERE id=?`, raw[c])) raw[c] = user.id;
             const o = importRow2(t, raw, existingCols);
             if (t.name === "clients" && !existing) {
               if (db3.one(`SELECT 1 FROM clients WHERE client_code=?`, o.client_code)) o.client_code = o.client_code + "-D";
@@ -10984,6 +11322,7 @@ var require_sync = __commonJS({
         for (const ts of payload.tombstones || []) {
           const t = SYNC2.tables.find((x) => x.name === ts.table_name);
           if (!t || t.name === "users" || typeof ts.id !== "string") continue;
+          ts.deleted_at = shift(ts.deleted_at);
           const existing = db3.one(`SELECT * FROM ${t.name} WHERE id=?`, ts.id);
           if (!existing) continue;
           if (t.name === "clients" || t.name === "notes" || t.name === "consents" || t.name === "disclosures" || t.name === "note_addenda") continue;
@@ -11001,7 +11340,7 @@ var require_sync = __commonJS({
         }
         for (const a of (payload.audit || []).slice(0, 5e3)) if (a && a.action) audit3.log({ user, action: `device.${a.action}`, entity: a.entity, entityId: a.entity_id, clientId: a.client_id, ip: "device", success: a.success !== 0, details: { at: a.at, device: true, ...a.details ? safeJson(a.details) : {} } });
       });
-      return { applied, rejected };
+      return { applied, rejected, server_now: db3.now(), clock_offset_ms: offsetMs };
     }
     function safeJson(s) {
       try {
@@ -11493,6 +11832,10 @@ var import_http = __toESM(require_http());
 var import_crypto2 = __toESM(require_crypto());
 var import_sync_tables = __toESM(require_sync_tables());
 var NEVER = "1970-01-01T00:00:00.000Z";
+function ensureTables() {
+  import_db.default.get().exec(`CREATE TABLE IF NOT EXISTS sync_seen (table_name TEXT NOT NULL, id TEXT NOT NULL, updated_at TEXT, PRIMARY KEY (table_name, id))`);
+}
+var seen = (t, id, at) => import_db.default.run(`INSERT OR REPLACE INTO sync_seen(table_name,id,updated_at) VALUES(?,?,?)`, t, id, at || null);
 var cols = (t) => import_db.default.all(`PRAGMA table_info(${t})`).map((c) => c.name);
 function exportRow(t, r) {
   const o = { ...r };
@@ -11526,6 +11869,12 @@ function mergeUser(localId, serverId) {
 }
 function applyPull(payload) {
   const counts = {};
+  const offset = payload.server_now ? Date.parse(payload.server_now) - Date.now() : 0;
+  const toServer = (ts) => {
+    const t = Date.parse(ts || NEVER);
+    return Number.isFinite(t) ? new Date(t + offset).toISOString() : NEVER;
+  };
+  import_db.default.setSetting("sync_clock_offset_ms", String(offset));
   import_db.default.transaction(() => {
     for (const t of import_sync_tables.default.tables) {
       const rows = payload.tables?.[t.name] || [];
@@ -11542,11 +11891,12 @@ function applyPull(payload) {
           if (clash) import_db.default.run(`UPDATE clients SET client_code=?, updated_at=? WHERE id=?`, raw.client_code + "-D", import_db.default.now(), clash.id);
         }
         const incomingAt = raw.updated_at || raw.created_at || NEVER;
-        if (existing && t.name !== "users" && (existing.updated_at || existing.created_at || NEVER) > incomingAt) continue;
+        if (existing && t.name !== "users" && toServer(existing.updated_at || existing.created_at) > incomingAt) continue;
         const o = importRow(t, raw, existingCols);
         const keys = Object.keys(o).filter((k) => k !== "id");
         if (existing) import_db.default.run(`UPDATE ${t.name} SET ${keys.map((k) => `${k}=?`).join(", ")} WHERE id=?`, ...keys.map((k) => o[k]), raw.id);
         else import_db.default.run(`INSERT INTO ${t.name}(id,${keys.join(",")}) VALUES(?,${keys.map(() => "?").join(",")})`, raw.id, ...keys.map((k) => o[k]));
+        seen(t.name, raw.id, o.updated_at || o.created_at || null);
         n++;
       }
       counts[t.name] = n;
@@ -11554,7 +11904,8 @@ function applyPull(payload) {
     for (const ts of payload.tombstones || []) {
       const t = import_sync_tables.default.tables.find((x) => x.name === ts.table_name);
       if (!t) continue;
-      import_db.default.run(`DELETE FROM ${t.name} WHERE id=? AND COALESCE(updated_at, created_at) < ?`, ts.id, ts.deleted_at);
+      const localDeleted = new Date(Date.parse(ts.deleted_at) - offset).toISOString();
+      import_db.default.run(`DELETE FROM ${t.name} WHERE id=? AND COALESCE(updated_at, created_at) < ?`, ts.id, localDeleted);
       import_db.default.run(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, t.name, ts.id, ts.deleted_at);
     }
     for (const [k, v] of Object.entries(payload.settings || {})) if (v !== null && v !== void 0) import_db.default.setSetting(k, v);
@@ -11565,12 +11916,12 @@ function localChanges(since) {
   const tables = {};
   for (const t of import_sync_tables.default.tables) {
     if (t.name === "users") continue;
-    const rows = import_db.default.all(`SELECT * FROM ${t.name} WHERE COALESCE(updated_at, created_at) > ?`, since);
+    const rows = import_db.default.all(`SELECT x.* FROM ${t.name} x WHERE NOT EXISTS (SELECT 1 FROM sync_seen s WHERE s.table_name=? AND s.id=x.id AND s.updated_at IS COALESCE(x.updated_at, x.created_at))`, t.name);
     if (rows.length) tables[t.name] = rows.map((r) => exportRow(t, r));
   }
   const tombstones = import_db.default.all(`SELECT table_name, id, deleted_at FROM tombstones WHERE deleted_at > ?`, since);
   const auditRows = import_db.default.all(`SELECT at, action, entity, entity_id, client_id, success, details FROM audit_log WHERE at > ? AND action NOT LIKE 'sync.%' ORDER BY id LIMIT 5000`, since);
-  return { tables, tombstones, audit: auditRows };
+  return { tables, tombstones, audit: auditRows, device_now: import_db.default.now() };
 }
 async function call(server, path, opts = {}, token2) {
   const res = await fetch(server.replace(/\/$/, "") + path, { ...opts, credentials: "omit", headers: { "Content-Type": "application/json", "X-Sync-Client": "1", "X-Requested-With": "suds", ...token2 ? { Authorization: "Bearer " + token2 } : {}, ...opts.headers || {} } });
@@ -11596,6 +11947,11 @@ async function run({ server, username, password, code, onProgress = () => {
     await call(server, "/api/auth/mfa/verify", { method: "POST", body: JSON.stringify({ code }) }, token2);
   }
   try {
+    const demo = require_demo();
+    if (demo.status().loaded) {
+      onProgress("Removing sample data before the first sync\u2026");
+      demo.remove({ actor: null, tombstones: false });
+    }
     const since = import_db.default.getSetting("sync_cursor", NEVER);
     onProgress("Downloading changes from the office\u2026");
     const pulled = await call(server, `/api/sync/pull?since=${encodeURIComponent(since)}`, {}, token2);
@@ -11603,6 +11959,11 @@ async function run({ server, username, password, code, onProgress = () => {
     onProgress("Uploading this device's changes\u2026");
     const changes = localChanges(import_db.default.getSetting("sync_pushed", NEVER));
     const pushed = await call(server, "/api/sync/push", { method: "POST", body: JSON.stringify(changes) }, token2);
+    const rejectedIds = new Set((pushed.rejected || []).map((r) => r.table + ":" + r.id));
+    import_db.default.transaction(() => {
+      for (const [t, rows] of Object.entries(changes.tables)) for (const r of rows) if (!rejectedIds.has(t + ":" + r.id)) seen(t, r.id, r.updated_at || r.created_at || null);
+      import_db.default.run(`DELETE FROM tombstones WHERE deleted_at <= ?`, changes.device_now);
+    });
     import_db.default.setSetting("sync_cursor", pulled.cursor);
     import_db.default.setSetting("sync_pushed", import_db.default.now());
     import_db.default.setSetting("last_sync_at", import_db.default.now());
@@ -11618,6 +11979,7 @@ async function run({ server, username, password, code, onProgress = () => {
   }
 }
 function register(router2) {
+  ensureTables();
   router2.post("/api/local/sync", import_auth.default.requireAuth, async (ctx) => {
     const { server, username, password, code } = ctx.body || {};
     return run({ server, username: username || ctx.user.username, password, code });
@@ -11698,6 +12060,22 @@ async function start({ wasmUrl }) {
     import_db2.default.setSetting("local_mode", "1");
     import_audit2.default.log({ user: { username: v.username }, action: "local.setup" });
     return { ok: true };
+  });
+  const demo = require_demo();
+  router.get("/api/local/demo", (ctx) => {
+    if (!ctx.user) throw new import_http2.HttpError(401, "Sign in first");
+    return demo.status();
+  });
+  router.post("/api/local/demo", (ctx) => {
+    if (!ctx.user) throw new import_http2.HttpError(401, "Sign in first");
+    const st = demo.status();
+    if (st.loaded) throw new import_http2.HttpError(400, "Sample data is already loaded");
+    if (st.clients_total > 0) throw new import_http2.HttpError(400, "Sample data can only be added while this device has no clients yet");
+    return demo.seed({ actor: ctx.user.id, workers: [ctx.user.id], clinician: null, supervisor: ctx.user.id });
+  });
+  router.delete("/api/local/demo", (ctx) => {
+    if (!ctx.user) throw new import_http2.HttpError(401, "Sign in first");
+    return demo.remove({ actor: ctx.user.id });
   });
   window.SUDS_LOCAL = { handle, flush: () => sqlite_default.flush(), wipe: async () => {
     await sqlite_default.wipe();

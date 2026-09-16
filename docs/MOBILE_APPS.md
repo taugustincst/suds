@@ -14,6 +14,7 @@ The SUDS phone app is a **complete copy of SUDS that runs on the phone**. Nothin
 - **Sync**: enter the office address (found automatically on the office Wi-Fi, or scan the QR code from Settings → Network & devices, or type the address IT gave you), your office username and password. The app downloads what changed at the office since the last sync and uploads what changed on the phone. The newest change to any record wins; deletions are honoured on both sides; the device's audit trail is appended to the office audit log.
 - The first sync merges your local account into your office account (same username). From then on the office password is used on the phone as well.
 - Clients created on the phone get codes like `M26-0012` (office codes start with `C`), so codes never collide.
+- **Sample data**: a phone with no clients yet offers **Load sample data** on the home screen and the Sync screen (fictional clients, visits, notes, referrals, funding). It is removed automatically before the first sync, so it never reaches the office.
 
 ## What syncs
 Clients, care-team assignments, visits & services, calls, time entries, referrals, resources, reminders/tasks, funding sources, budget lines, expenditures, notes and addenda, consents and disclosures, program settings. Only records the office account may see (its caseload, unless a supervisor) are downloaded; uploads outside the caseload are rejected and reported.

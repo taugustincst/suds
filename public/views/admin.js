@@ -38,6 +38,30 @@ async function nativeAppsCard(primary) {
     h('h4', { class: 'mt' }, 'iPhone / iPad'), h('p', { class: 'small muted' }, 'Apple only allows installs through TestFlight or the App Store. The Xcode project is in mobile/ios; until it is published, iPhone users open ', h('b', {}, primary), ' in Safari → Share → Add to Home Screen.'));
 }
 
+// Fictional sample data: lets a new program (or a phone with nothing on it yet) explore every screen, then remove it in one click.
+export async function sampleDataCard(onChange) {
+  const path = state.local ? '/api/local/demo' : '/api/admin/demo';
+  let st; try { st = await get(path, { quiet: true }); } catch { return null; }
+  const busy = h('span', { class: 'small muted' });
+  const load = async () => {
+    busy.textContent = 'Adding sample data…';
+    try { const r = await post(path, {}); toast(`Added ${r.counts.clients} sample clients with visits, calls, notes, referrals, reminders and funding`, 'ok'); state.funds = null; await loadRefData(); onChange && onChange(); }
+    catch (e) { busy.textContent = ''; throw e; }
+  };
+  const remove = async () => {
+    if (!await confirmDialog('Remove sample data', 'This deletes every fictional sample record (clients, visits, notes, funding and resources added by "Load sample data"). Records you created yourself are kept.', { danger: true, okText: 'Remove sample data' })) return;
+    busy.textContent = 'Removing…';
+    const r = await del(path); toast(`Removed ${r.removed} sample records`, 'ok'); state.funds = null; await loadRefData(); onChange && onChange();
+  };
+  return h('div', { class: 'card', 'data-sample': st.loaded ? 'loaded' : 'empty' }, h('h3', {}, 'Sample data'),
+    st.loaded ? [h('p', { class: 'small' }, badge('Sample data loaded', 'info'), ' ', `${st.counts.clients} fictional clients and ${st.total} records added ${fmt.dt(st.loaded_at)}. Client codes start with DEMO-.`),
+      h('p', { class: 'small muted' }, state.local ? 'Sample data is removed automatically before this phone syncs with the office, so it never mixes with real records.' : 'Remove it before entering real clients.'),
+      h('div', { class: 'btn-row' }, h('button', { class: 'btn danger', onClick: remove }, 'Remove sample data'), busy)]
+    : st.clients_total > 0 ? h('p', { class: 'small muted' }, 'Sample data can only be added while there are no clients yet, so it never mixes with real records.')
+    : [h('p', { class: 'small muted' }, 'Add a set of fictional clients, visits, calls, notes, referrals, reminders, resources and funding so you can try every screen. Nothing here is real, and it can be removed in one click.'),
+      h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', onClick: load }, 'Load sample data'), busy)]);
+}
+
 route('admin', async (r) => {
   const tab = r.query.get('tab') || 'users';
   const refresh = () => nav(`admin?tab=${tab}&_=${Date.now()}`);
@@ -57,7 +81,7 @@ route('admin', async (r) => {
         { name: 'session_idle_minutes', label: 'Auto sign-out after inactivity (minutes, max 60)', type: 'number', min: 1, max: 60, step: 1, value: s.policy.idleMinutes }, { name: 'session_absolute_hours', label: 'Maximum session length (hours)', type: 'number', min: 1, max: 24, step: 1, value: s.policy.absoluteHours },
         { name: 'password_max_age_days', label: 'Password expires after (days)', type: 'number', min: 1, step: 1, value: s.policy.passwordMaxAgeDays },
         { name: 'mfa_required_roles', label: 'Roles that must use MFA (comma separated)', value: s.policy.mfaRequiredRoles.join(','), help: 'admin, supervisor, clinician, navigator, finance, readonly — recommended: all', span: true }], { values: s, submitText: 'Save settings', onSubmit: async (d) => { await put('/api/admin/settings', d); toast('Settings saved', 'ok'); } });
-      return h('div', { class: 'grid cols-2' }, h('div', { class: 'card' }, h('h3', {}, 'Program settings'), f),
+      return h('div', { class: 'grid cols-2' }, h('div', { class: 'card' }, h('h3', {}, 'Program settings'), f), await sampleDataCard(refresh),
         h('div', { class: 'card' }, h('h3', {}, 'Server security configuration'), h('p', { class: 'small muted' }, 'Set via environment variables (see .env.example and docs/DEPLOYMENT.md).'),
           kv([['Environment', s.env.env], ['HTTPS', s.env.tls ? badge(s.env.tls_mode === 'selfsigned' ? 'Self-signed certificate' : 'Enabled', 'ok') : badge('Off — enable under Network', 'danger')], ['Encryption keys', s.env.key_source === 'file' ? 'data/keys.json (back it up under System)' : s.env.key_source === 'devfile' ? 'Development key files in data/' : 'Environment variables'], ['Addresses', (s.env.listener?.urls || []).join(', ')], ['OneNote (Graph) sync', s.env.ms_graph_configured ? badge('Configured', 'ok') : badge('Not configured', 'warn')]])));
     },

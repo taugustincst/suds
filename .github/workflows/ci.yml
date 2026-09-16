@@ -13,3 +13,14 @@ jobs:
       - name: Syntax-check browser modules
         working-directory: src
         run: for f in public/*.js public/views/*.js; do node --input-type=module --check < "$f" || exit 1; done
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        run: git clone --depth 1 "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
+      - name: Install Playwright (test-only)
+        working-directory: src
+        run: npm ci --no-audit --no-fund && npm i --no-save --no-audit --no-fund playwright@1.56.1 && npx playwright install --with-deps chromium
+      - name: Browser regression suite
+        working-directory: src
+        run: npm run build:local && scripts/ui/run-all.sh
