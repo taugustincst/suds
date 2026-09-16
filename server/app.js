@@ -21,7 +21,7 @@ function rateLimit(key, max, windowMs) {
 
 function buildRouter() {
   const r = new Router();
-  for (const mod of ['setup', 'auth', 'me', 'app', 'sync', 'users', 'clients', 'assignments', 'interventions', 'calls', 'time', 'resources', 'referrals', 'tasks', 'budget', 'notes', 'consents', 'imports', 'reports', 'admin', 'intake']) {
+  for (const mod of ['setup', 'auth', 'me', 'app', 'sync', 'dataimport', 'users', 'clients', 'assignments', 'interventions', 'calls', 'time', 'resources', 'referrals', 'tasks', 'budget', 'notes', 'consents', 'imports', 'reports', 'admin', 'intake']) {
     require(`./routes/${mod}`)(r);
   }
   return r;

@@ -202,7 +202,7 @@ test('reports, exports, and audit chain', async () => {
   assert.equal(d.status, 200); assert.ok(d.data.interventions.total >= 1); assert.equal(d.data.interventions.naloxone_kits, 2);
   const m = await admin.get('/api/reports/monthly?months=3'); assert.equal(m.status, 200);
   const csv = await nav.get('/api/reports/export/interventions?from=2026-08-01&to=2026-09-30');
-  assert.equal(csv.status, 200); assert.match(csv.data, /occurred_at,client_code/);
+  assert.equal(csv.status, 200); assert.match(csv.data, /Occurred At,Client Code/);
   const cl = await nav.get('/api/reports/export/clients?identified=1');
   assert.ok(!cl.data.includes('Jane')); // navigator lacks export:read → de-identified
   const cl2 = await admin.get('/api/reports/export/clients?identified=1'); assert.ok(cl2.data.includes('Jane'));
@@ -343,4 +343,34 @@ test('sync: bearer login, scoped pull, push with last-write-wins and tombstones'
   // finance cannot sync
   const f = H.client(); const fl = await f.post('/api/auth/login', { username: 'fin1', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' });
   assert.equal((await bare.get('/api/sync/pull', { Authorization: 'Bearer ' + fl.data.token, Cookie: '' })).status, 403);
+});
+
+test('spreadsheet import: template, preview mapping/validation, commit; Excel export', async () => {
+  const S = require('../server/spreadsheet');
+  const tpl = await nav.get('/api/imports/data/template/clients');
+  assert.equal(tpl.status, 200); assert.ok(tpl.headers.get('content-type').includes('spreadsheetml'));
+  const csv = 'First Name,Surname,DOB,Phone Number,Program Status,Substance,Risk\r\nAmy,Importer,5/2/1988,555-0300,active,fentanyl,high\r\nBad,Row,notadate,,,unknownsub,\r\n';
+  const prev = await nav.req('POST', '/api/imports/data/preview?entity=clients', csv, { 'Content-Type': 'text/csv', 'X-Filename': 'clients.csv' });
+  assert.equal(prev.status, 200);
+  assert.equal(prev.data.mapping['Surname'], 'last_name'); assert.equal(prev.data.mapping['Program Status'], 'status'); assert.equal(prev.data.mapping['Risk'], 'risk_level');
+  assert.equal(prev.data.valid, 1); assert.equal(prev.data.invalid, 1);
+  assert.equal(prev.data.rows[0].record.dob, '1988-05-02'); assert.equal(prev.data.rows[0].record.primary_substance, 'opioids_fentanyl');
+  assert.ok(prev.data.rows[1].errors.some(e => /Date of birth/.test(e)));
+  const commit = await nav.post('/api/imports/data/commit', { entity: 'clients', records: prev.data.rows.filter(r => !r.errors.length).map(r => r.record) });
+  assert.equal(commit.status, 200); assert.equal(commit.data.created, 1);
+  const found = await nav.get('/api/clients?q=importer'); assert.equal(found.data.clients.length, 1); const impId = found.data.clients[0].id;
+  // interventions via xlsx with client reference by name; unknown client fails preview validation
+  const xlsx = S.writeWorkbook([{ name: 'Visits', columns: ['Client', 'Date of service', 'Service type', 'Minutes'], rows: [{ Client: 'Importer, Amy', 'Date of service': '2026-09-12 10:00', 'Service type': 'Outreach', Minutes: 20 }, { Client: 'Nobody, Here', 'Date of service': '2026-09-12', 'Service type': 'outreach', Minutes: 5 }] }]);
+  const p2 = await nav.req('POST', '/api/imports/data/preview?entity=interventions', xlsx, { 'Content-Type': 'application/octet-stream', 'X-Filename': 'visits.xlsx' });
+  assert.equal(p2.status, 200); assert.equal(p2.data.valid, 1); assert.equal(p2.data.rows[0].record.client_id, impId); assert.equal(p2.data.rows[0].record.type, 'outreach');
+  assert.ok(p2.data.rows[1].errors[0].includes('not found'));
+  const c2 = await nav.post('/api/imports/data/commit', { entity: 'interventions', records: p2.data.rows.map(r => r.record) });
+  assert.equal(c2.status, 400, 'all-or-nothing when a row is invalid');
+  const c3 = await nav.post('/api/imports/data/commit', { entity: 'interventions', records: p2.data.rows.map(r => r.record), partial: true });
+  assert.equal(c3.data.created, 1); assert.equal(c3.data.errors.length, 1);
+  // finance cannot import clients; navigator can export a workbook
+  assert.equal((await fin.req('POST', '/api/imports/data/preview?entity=clients', csv, { 'Content-Type': 'text/csv' })).status, 403);
+  const wb = await nav.get('/api/reports/export/workbook');
+  assert.equal(wb.status, 200);
+  const x = await nav.get('/api/reports/export/clients?format=xlsx'); assert.equal(x.status, 200); assert.ok(x.headers.get('content-disposition').includes('.xlsx'));
 });

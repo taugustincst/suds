@@ -296,7 +296,7 @@ export const NAV = [
   { name: 'calls', label: 'Calls', ico: '☎', perm: 'calls:read', help: 'Phone calls with clients, families and providers, including ones that went to voicemail.' },
   { name: 'notes', label: 'Notes', ico: '✎', perm: 'notes:admin:read', help: 'Written documentation. Drafts save automatically and can be finished on any device; sign when complete.' },
   { name: 'time', label: 'My time', ico: '◷', perm: 'time:read', help: 'Your hours by activity. Visits and calls add time automatically; log meetings, travel and paperwork here.' },
-  { name: 'imports', label: 'Import notes', ico: '⇩', perm: 'imports:write', help: 'Bring in notes from Pocket AI or OneNote, match them to a client, and save them as notes.' },
+  { name: 'imports', label: 'Import', ico: '⇩', perm: 'imports:write', help: 'Bring in spreadsheets (Excel / CSV) of clients, visits, calls, resources and more, or notes from Pocket AI and OneNote. Everything is checked before it is saved.' },
   { sec: 'Connect clients' },
   { name: 'referrals', label: 'Referrals', ico: '⇢', perm: 'referrals:read', help: 'Track each referral from "sent" to "admitted" so nothing falls through the cracks.' },
   { name: 'resources', label: 'Resource directory', ico: '☰', perm: 'resources:read', help: 'Treatment programs, MAT clinics, shelters, legal aid and other partners you refer to.' },
@@ -379,6 +379,7 @@ export async function loadRefData() {
 }
 
 // ---------- boot (called from main.js after all views are registered) ----------
+window.__suds = { downloadCsv: (...a) => downloadCsv(...a) };
 export async function boot() {
   state.local = isLocalMode();
   if (state.local) {

@@ -11,10 +11,6 @@ function range(ctx) {
   return { from, to, toEnd: to + 'T23:59:59.999Z' };
 }
 
-function csv(rows, columns) {
-  const esc = v => { if (v === null || v === undefined) return ''; const s = String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
-  return [columns.join(','), ...rows.map(r => columns.map(c => esc(r[c])).join(','))].join('\r\n');
-}
 
 module.exports = (r) => {
   r.get('/api/reports/dashboard', auth.requireAuth, auth.requirePerm('reports:read'), (ctx) => {
@@ -82,39 +78,27 @@ module.exports = (r) => {
     };
   });
 
-  // CSV exports (de-identified by default; identified requires export:read)
+  // Exports: CSV or Excel per table, or one Excel workbook with every table. De-identified unless identified=1 and export:read.
   r.get('/api/reports/export/:kind', auth.requireAuth, auth.requirePerm('reports:read'), (ctx) => {
     const { from, to, toEnd } = range(ctx);
     const identified = ctx.query.get('identified') === '1' && auth.hasPerm(ctx.user, 'export:read');
-    const cf = auth.caseloadFilter(ctx.user, 'c.id');
-    let rows, cols;
-    switch (ctx.params.kind) {
-      case 'interventions':
-        rows = db.all(`SELECT i.occurred_at, c.client_code, i.type, i.duration_minutes, i.location, i.modality, i.outcome, i.naloxone_kits, i.fentanyl_strips, u.display_name worker, f.name funding_source, i.cost, i.summary FROM interventions i JOIN clients c ON c.id=i.client_id JOIN users u ON u.id=i.user_id LEFT JOIN funding_sources f ON f.id=i.funding_source_id WHERE i.occurred_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY i.occurred_at`, from, toEnd, ...cf.params);
-        cols = ['occurred_at', 'client_code', 'type', 'duration_minutes', 'location', 'modality', 'outcome', 'naloxone_kits', 'fentanyl_strips', 'worker', 'funding_source', 'cost', 'summary']; break;
-      case 'calls':
-        rows = db.all(`SELECT ca.started_at, c.client_code, ca.direction, ca.contact_type, ca.duration_minutes, ca.outcome, ca.crisis, ca.purpose, u.display_name worker FROM calls ca LEFT JOIN clients c ON c.id=ca.client_id JOIN users u ON u.id=ca.user_id WHERE ca.started_at BETWEEN ? AND ? ORDER BY ca.started_at`, from, toEnd);
-        cols = ['started_at', 'client_code', 'direction', 'contact_type', 'duration_minutes', 'outcome', 'crisis', 'purpose', 'worker']; break;
-      case 'time':
-        rows = db.all(`SELECT t.work_date, u.display_name worker, c.client_code, t.category, t.minutes, t.billable, f.name funding_source, t.description FROM time_entries t JOIN users u ON u.id=t.user_id LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN funding_sources f ON f.id=t.funding_source_id WHERE t.work_date BETWEEN ? AND ? AND (t.user_id=? OR ?) ORDER BY t.work_date`, from, to, ctx.user.id, auth.hasPerm(ctx.user, 'time:all') ? 1 : 0);
-        cols = ['work_date', 'worker', 'client_code', 'category', 'minutes', 'billable', 'funding_source', 'description']; break;
-      case 'referrals':
-        rows = db.all(`SELECT r.referred_at, c.client_code, res.name resource, res.category, r.status, r.urgency, r.warm_handoff, r.appointment_at, r.admitted_at, r.closed_at, r.outcome, r.barrier, u.display_name worker FROM referrals r JOIN clients c ON c.id=r.client_id JOIN resources res ON res.id=r.resource_id JOIN users u ON u.id=r.user_id WHERE r.referred_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY r.referred_at`, from, toEnd, ...cf.params);
-        cols = ['referred_at', 'client_code', 'resource', 'category', 'status', 'urgency', 'warm_handoff', 'appointment_at', 'admitted_at', 'closed_at', 'outcome', 'barrier', 'worker']; break;
-      case 'expenditures':
-        auth.requirePerm('budget:read')(ctx);
-        rows = db.all(`SELECT e.spent_at, f.name fund, b.label line, e.category, e.amount, e.status, c.client_code, e.vendor, e.description, e.receipt_ref, u.display_name worker FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id LEFT JOIN budget_lines b ON b.id=e.budget_line_id LEFT JOIN clients c ON c.id=e.client_id JOIN users u ON u.id=e.user_id WHERE e.spent_at BETWEEN ? AND ? ORDER BY e.spent_at`, from, to);
-        cols = ['spent_at', 'fund', 'line', 'category', 'amount', 'status', 'client_code', 'vendor', 'description', 'receipt_ref', 'worker']; break;
-      case 'clients': {
-        const raw = db.all(`SELECT c.* FROM clients c WHERE c.deleted_at IS NULL AND ${cf.sql} ORDER BY c.client_code`, ...cf.params);
-        rows = raw.map(x => { const d = M.decryptRow(x, { deidentify: !identified }); return d; });
-        cols = ['client_code', ...(identified ? ['last_name', 'first_name', 'dob', 'phone'] : []), 'status', 'intake_date', 'discharge_date', 'primary_substance', 'asam_level', 'mat_status', 'risk_level', 'housing_status', 'insurance', 'overdose_history', 'naloxone_provided', 'referral_source', 'city', 'zip']; break;
-      }
-      default: throw require('../http').notFound('Unknown export');
+    const format = ctx.query.get('format') === 'xlsx' || ctx.params.kind === 'workbook' ? 'xlsx' : 'csv';
+    const D = require('../exports').datasets(ctx, { from, to, toEnd, identified });
+    const S = require('../spreadsheet');
+    const label = (k) => ({ key: k, label: k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) });
+    let body, filename, type;
+    if (ctx.params.kind === 'workbook') {
+      const sheets = Object.entries(D).map(([k, d]) => ({ name: d.label, columns: d.columns.map(label), rows: d.rows() }));
+      audit.log({ user: ctx.user, action: 'report.export', ip: ctx.ip, details: { kind: 'workbook', sheets: sheets.map(s => [s.name, s.rows.length]), identified, from, to } });
+      body = S.writeWorkbook(sheets); filename = `suds-export-${from}_${to}.xlsx`; type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    } else {
+      const d = D[ctx.params.kind === 'clients' ? 'clients' : ctx.params.kind]; if (!d) throw require('../http').notFound('Unknown export');
+      const rows = d.rows();
+      audit.log({ user: ctx.user, action: 'report.export', ip: ctx.ip, details: { kind: ctx.params.kind, rows: rows.length, identified, from, to, format } });
+      if (format === 'xlsx') { body = S.writeWorkbook([{ name: d.label, columns: d.columns.map(label), rows }]); filename = `suds-${ctx.params.kind}-${from}_${to}.xlsx`; type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'; }
+      else { body = S.toCsv(rows, d.columns.map(label)); filename = `suds-${ctx.params.kind}-${from}_${to}.csv`; type = 'text/csv; charset=utf-8'; }
     }
-    audit.log({ user: ctx.user, action: 'report.export', ip: ctx.ip, details: { kind: ctx.params.kind, rows: rows.length, identified, from, to } });
-    const body = csv(rows, cols);
-    ctx.res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="suds-${ctx.params.kind}-${from}_${to}.csv"` });
+    ctx.res.writeHead(200, { 'Content-Type': type, 'Content-Disposition': `attachment; filename="${filename}"` });
     ctx.res.end(body);
   });
 };

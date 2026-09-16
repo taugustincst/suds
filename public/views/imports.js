@@ -1,4 +1,5 @@
 import { h, route, get, post, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, clientPicker } from '../app.js';
+import { spreadsheetImportCard } from './dataimport.js';
 
 route('imports', async (r) => {
   if (r.id) return importDetail(r.id);
@@ -34,8 +35,11 @@ route('imports', async (r) => {
     const m = modal(`Pages in "${section.name}"`, h('div', {}, checks.length ? checks.map(({ p, cb }) => h('label', { class: 'check list-item' }, cb, p.title || '(untitled)', ' ', h('span', { class: 'muted small' }, `modified ${fmt.date(p.modified)}`))) : h('div', { class: 'muted' }, 'No pages'),
       h('div', { class: 'btn-row' }, h('button', { class: 'btn', onClick: () => m.close() }, 'Cancel'), h('button', { class: 'btn primary', onClick: async () => { const ids = checks.filter(c => c.cb.checked).map(c => c.p.id); if (!ids.length) return; try { const res = await post('/api/imports/onenote/fetch', { page_ids: ids }); m.close(); nav(`imports/${res.id}`); } catch (e) { toast(e.message, 'error'); } } }, 'Import selected'))));
   }
+  const sheetCard = await spreadsheetImportCard();
   return h('div', {},
-    pageHead('Import notes'),
+    pageHead('Import'),
+    sheetCard ? h('div', { class: 'mb' }, sheetCard) : null,
+    h('h2', {}, 'Import notes from Pocket AI / OneNote'),
     h('div', { class: 'banner small' }, h('b', {}, 'Workflow: '), 'upload or paste → review each staged note → match it to a client and choose Administrative or Clinical → commit. Committed notes are created as drafts you then sign. Staged text is encrypted at rest and purged when you discard it.'),
     h('div', { class: 'grid cols-2 mb' },
       h('div', { class: 'card' }, h('h3', {}, 'Upload export files'), h('div', { class: 'field' }, h('label', {}, 'Source'), srcSel), drop, h('div', { class: 'hidden' }, fileIn), h('details', { class: 'mt small' }, h('summary', {}, 'How to export'), h('ul', {}, h('li', {}, h('b', {}, 'Pocket AI: '), 'open the recording or note → Share / Export → choose JSON, Markdown or Text. Or set up the automatic intake (Administration → API keys) and share directly to the SUDS intake URL.'), h('li', {}, h('b', {}, 'OneNote (desktop): '), 'File → Export → Page or Section → "Single File Web Page (*.mht)" or "Word Document (*.docx)".'), h('li', {}, h('b', {}, 'OneNote (web/mobile): '), 'copy the page text and paste below, or use the Microsoft Graph sync at right.')))),

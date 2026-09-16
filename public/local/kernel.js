@@ -6078,7 +6078,7 @@ var require_config = __commonJS({
       return import_buffer.Buffer.from(hex, "hex");
     }
     var config = {
-      version: true ? "1.1.0" : "local",
+      version: true ? "1.2.0" : "local",
       env: "local",
       isProd: true,
       isTest: false,
@@ -8987,6 +8987,574 @@ var require_text = __commonJS({
   }
 });
 
+// server/spreadsheet.js
+var require_spreadsheet = __commonJS({
+  "server/spreadsheet.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var zlib = (init_zlib(), __toCommonJS(zlib_exports));
+    var { unzip, decodeEntities } = require_text();
+    function parseCsv(text) {
+      const s = String(text).replace(/^﻿/, "");
+      const rows = [];
+      let row = [];
+      let field = "";
+      let q = false;
+      for (let i = 0; i < s.length; i++) {
+        const c = s[i];
+        if (q) {
+          if (c === '"') {
+            if (s[i + 1] === '"') {
+              field += '"';
+              i++;
+            } else q = false;
+          } else field += c;
+        } else if (c === '"') q = true;
+        else if (c === ",") {
+          row.push(field);
+          field = "";
+        } else if (c === "\n" || c === "\r") {
+          if (c === "\r" && s[i + 1] === "\n") i++;
+          row.push(field);
+          rows.push(row);
+          row = [];
+          field = "";
+        } else field += c;
+      }
+      if (field !== "" || row.length) {
+        row.push(field);
+        rows.push(row);
+      }
+      return rows.filter((r) => r.some((v) => String(v).trim() !== ""));
+    }
+    function toCsv(rows, columns) {
+      const esc = (v) => {
+        if (v === null || v === void 0) return "";
+        const t = typeof v === "object" ? JSON.stringify(v) : String(v);
+        return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+      };
+      return "\uFEFF" + [columns.map((c) => esc(c.label || c.key || c)).join(","), ...rows.map((r) => columns.map((c) => esc(r[c.key || c])).join(","))].join("\r\n");
+    }
+    function crc32(buf) {
+      let c, crc = 4294967295;
+      for (let n = 0; n < buf.length; n++) {
+        c = (crc ^ buf[n]) & 255;
+        for (let k = 0; k < 8; k++) c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
+        crc = crc >>> 8 ^ c;
+      }
+      return (crc ^ 4294967295) >>> 0;
+    }
+    function zip(entries) {
+      const local = [], central = [];
+      let off = 0;
+      for (const [name, content] of entries) {
+        const data = import_buffer.Buffer.isBuffer(content) ? content : import_buffer.Buffer.from(content, "utf8");
+        const comp = zlib.deflateRawSync(data);
+        const n = import_buffer.Buffer.from(name);
+        const crc = crc32(data);
+        const lh = import_buffer.Buffer.alloc(30);
+        lh.writeUInt32LE(67324752, 0);
+        lh.writeUInt16LE(20, 4);
+        lh.writeUInt16LE(2048, 6);
+        lh.writeUInt16LE(8, 8);
+        lh.writeUInt32LE(crc, 14);
+        lh.writeUInt32LE(comp.length, 18);
+        lh.writeUInt32LE(data.length, 22);
+        lh.writeUInt16LE(n.length, 26);
+        local.push(lh, n, comp);
+        const ch = import_buffer.Buffer.alloc(46);
+        ch.writeUInt32LE(33639248, 0);
+        ch.writeUInt16LE(20, 4);
+        ch.writeUInt16LE(20, 6);
+        ch.writeUInt16LE(2048, 8);
+        ch.writeUInt16LE(8, 10);
+        ch.writeUInt32LE(crc, 16);
+        ch.writeUInt32LE(comp.length, 20);
+        ch.writeUInt32LE(data.length, 24);
+        ch.writeUInt16LE(n.length, 28);
+        ch.writeUInt32LE(off, 42);
+        central.push(ch, n);
+        off += 30 + n.length + comp.length;
+      }
+      const cd = import_buffer.Buffer.concat(central);
+      const eocd = import_buffer.Buffer.alloc(22);
+      eocd.writeUInt32LE(101010256, 0);
+      eocd.writeUInt16LE(entries.length, 8);
+      eocd.writeUInt16LE(entries.length, 10);
+      eocd.writeUInt32LE(cd.length, 12);
+      eocd.writeUInt32LE(off, 16);
+      return import_buffer.Buffer.concat([...local, cd, eocd]);
+    }
+    var xmlEsc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
+    function colRef(i) {
+      let s = "";
+      i++;
+      while (i > 0) {
+        const m = (i - 1) % 26;
+        s = String.fromCharCode(65 + m) + s;
+        i = Math.floor((i - 1) / 26);
+      }
+      return s;
+    }
+    function writeWorkbook(sheets) {
+      const files = [];
+      const sheetXml = (sh) => {
+        const cols2 = sh.columns.map((c) => typeof c === "string" ? { key: c, label: c } : c);
+        const cell = (r, i, v) => {
+          const ref = colRef(i) + r;
+          if (v === null || v === void 0 || v === "") return "";
+          if (typeof v === "number" && Number.isFinite(v)) return `<c r="${ref}"><v>${v}</v></c>`;
+          if (typeof v === "boolean") return `<c r="${ref}" t="b"><v>${v ? 1 : 0}</v></c>`;
+          return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${xmlEsc(typeof v === "object" ? JSON.stringify(v) : v)}</t></is></c>`;
+        };
+        const header = `<row r="1">${cols2.map((c, i) => `<c r="${colRef(i)}1" t="inlineStr" s="1"><is><t>${xmlEsc(c.label)}</t></is></c>`).join("")}</row>`;
+        const body = sh.rows.map((row, ri) => `<row r="${ri + 2}">${cols2.map((c, i) => cell(ri + 2, i, row[c.key])).join("")}</row>`).join("");
+        const widths = `<cols>${cols2.map((c, i) => `<col min="${i + 1}" max="${i + 1}" width="${Math.min(60, Math.max(10, c.width || String(c.label).length + 4))}" customWidth="1"/>`).join("")}</cols>`;
+        return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>${widths}<sheetData>${header}${body}</sheetData><autoFilter ref="A1:${colRef(cols2.length - 1)}${sh.rows.length + 1}"/></worksheet>`;
+      };
+      const safeName = (n, i) => String(n).replace(/[\\/*?:\[\]]/g, " ").slice(0, 31) || `Sheet${i + 1}`;
+      files.push(["[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`]);
+      files.push(["_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`]);
+      files.push(["xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((s, i) => `<sheet name="${xmlEsc(safeName(s.name, i))}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("")}</sheets></workbook>`]);
+      files.push(["xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("")}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`]);
+      files.push(["xl/styles.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" applyFont="1"/></cellXfs></styleSheet>`]);
+      sheets.forEach((s, i) => files.push([`xl/worksheets/sheet${i + 1}.xml`, sheetXml(s)]));
+      return zip(files);
+    }
+    function readWorkbook(buf) {
+      const files = unzip(buf);
+      const get = (n) => {
+        const f = files.get(n);
+        return f ? f.toString("utf8") : null;
+      };
+      const wb = get("xl/workbook.xml");
+      if (!wb) throw new Error("Not an Excel (.xlsx) file");
+      const rels = get("xl/_rels/workbook.xml.rels") || "";
+      const relMap = {};
+      for (const m of rels.matchAll(/<Relationship\b[^>]*>/g)) {
+        const id = /Id="([^"]+)"/.exec(m[0])?.[1];
+        const t = /Target="([^"]+)"/.exec(m[0])?.[1];
+        if (id && t) relMap[id] = t.replace(/^\/?xl\//, "").replace(/^\//, "");
+      }
+      const shared = [];
+      const ss = get("xl/sharedStrings.xml");
+      if (ss) for (const m of ss.matchAll(/<si>([\s\S]*?)<\/si>/g)) shared.push(decodeEntities([...m[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((x) => x[1]).join("")));
+      const sheets = [];
+      for (const m of wb.matchAll(/<sheet\b[^>]*>/g)) {
+        const name = decodeEntities(/name="([^"]*)"/.exec(m[0])?.[1] || "");
+        const rid = /r:id="([^"]+)"/.exec(m[0])?.[1];
+        const target = relMap[rid] || `worksheets/sheet${sheets.length + 1}.xml`;
+        const xml = get("xl/" + target) || get(target);
+        if (!xml) continue;
+        const rows = [];
+        for (const rm of xml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
+          const row = [];
+          for (const cm of rm[1].matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
+            const attrs = cm[1];
+            const inner = cm[2] || "";
+            const ref = /r="([A-Z]+)\d+"/.exec(attrs)?.[1];
+            const type = /t="([^"]+)"/.exec(attrs)?.[1];
+            const idx = ref ? colIndex(ref) : row.length;
+            let v = null;
+            const vm = /<v>([\s\S]*?)<\/v>/.exec(inner);
+            if (type === "s") v = shared[Number(vm?.[1])] ?? "";
+            else if (type === "inlineStr") v = decodeEntities([...inner.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((x) => x[1]).join(""));
+            else if (type === "b") v = vm?.[1] === "1";
+            else if (vm) {
+              const n = Number(vm[1]);
+              v = Number.isFinite(n) ? n : decodeEntities(vm[1]);
+            }
+            while (row.length < idx) row.push(null);
+            row[idx] = v;
+          }
+          if (row.some((x) => x !== null && x !== "")) rows.push(row);
+        }
+        sheets.push({ name, rows });
+      }
+      return sheets;
+    }
+    function colIndex(letters) {
+      let n = 0;
+      for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64);
+      return n - 1;
+    }
+    function excelDate(n) {
+      if (typeof n !== "number" || !Number.isFinite(n) || n < 1) return null;
+      const d = new Date(Math.round((n - 25569) * 864e5));
+      return isNaN(d) ? null : d.toISOString().slice(0, 10);
+    }
+    function parseFile(buf, filename = "") {
+      const isZip = buf[0] === 80 && buf[1] === 75;
+      const sheets = isZip ? readWorkbook(buf) : [{ name: filename.replace(/\.[^.]+$/, "") || "Sheet1", rows: parseCsv(buf.toString("utf8")) }];
+      return { sheets: sheets.map((s) => {
+        const [h, ...rest] = s.rows;
+        const headers = (h || []).map((x) => String(x ?? "").trim());
+        return { name: s.name, headers, rows: rest.map((r) => Object.fromEntries(headers.map((k, i) => [k, r[i] === void 0 ? null : r[i]]))) };
+      }) };
+    }
+    module.exports = { parseCsv, toCsv, writeWorkbook, readWorkbook, parseFile, excelDate, zip };
+  }
+});
+
+// server/dataimport.js
+var require_dataimport = __commonJS({
+  "server/dataimport.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var C = require_constants();
+    var { excelDate } = require_spreadsheet();
+    var { blindIndex: blindIndex2 } = require_crypto();
+    var yes = (v) => v === true || /^(1|y|yes|true|x)$/i.test(String(v ?? "").trim());
+    var dateOf = (v) => {
+      if (v === null || v === void 0 || v === "") return null;
+      if (typeof v === "number") return excelDate(v);
+      const s = String(v).trim();
+      const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+      if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+      const us = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/.exec(s);
+      if (us) return `${us[3].length === 2 ? "20" + us[3] : us[3]}-${us[1].padStart(2, "0")}-${us[2].padStart(2, "0")}`;
+      const d = new Date(s);
+      return isNaN(d) ? void 0 : d.toISOString().slice(0, 10);
+    };
+    var datetimeOf = (v) => {
+      if (v === null || v === void 0 || v === "") return null;
+      if (typeof v === "number") {
+        const d2 = excelDate(v);
+        return d2 ? (/* @__PURE__ */ new Date(d2 + "T12:00:00")).toISOString() : void 0;
+      }
+      const d = new Date(String(v).trim());
+      if (!isNaN(d)) return d.toISOString();
+      const day = dateOf(v);
+      return day ? (/* @__PURE__ */ new Date(day + "T12:00:00")).toISOString() : void 0;
+    };
+    var enumOf = (list) => (v) => {
+      if (v === null || v === void 0 || v === "") return null;
+      const k = String(v).trim().toLowerCase().replace(/[\s-]+/g, "_");
+      let hit = list.find((x) => x.toLowerCase() === k) || list.find((x) => x.toLowerCase().replace(/_/g, "") === k.replace(/_/g, ""));
+      if (hit === void 0) {
+        const c = list.filter((x) => x.includes(k) || k.includes(x));
+        if (c.length === 1) hit = c[0];
+      }
+      return hit === void 0 ? void 0 : hit;
+    };
+    var num = (v) => {
+      if (v === null || v === void 0 || v === "") return null;
+      const n = Number(String(v).replace(/[$,]/g, ""));
+      return Number.isFinite(n) ? n : void 0;
+    };
+    var str = (max2) => (v) => v === null || v === void 0 ? null : String(v).trim().slice(0, max2);
+    var F = (key, label, aliases, parse, extra = {}) => ({ key, label, aliases: [label, ...aliases].map((a) => a.toLowerCase()), parse, ...extra });
+    var clientRef = F("client_ref", "Client", ["client code", "client", "code", "client id", "name", "client name"], str(120), { required: true, help: 'Client code (C26-0012), or "Last, First", or "First Last"' });
+    var ENTITIES = {
+      clients: { label: "Clients", table: "clients", fields: [
+        F("first_name", "First name", ["first", "given name", "firstname"], str(100), { required: true }),
+        F("last_name", "Last name", ["last", "surname", "family name", "lastname"], str(100), { required: true }),
+        F("preferred_name", "Preferred name", ["nickname", "goes by"], str(100)),
+        F("dob", "Date of birth", ["dob", "birth date", "birthdate", "birthday"], dateOf),
+        F("phone", "Phone", ["phone number", "cell", "mobile", "telephone"], str(40)),
+        F("email", "Email", ["e-mail"], str(200)),
+        F("address", "Address", ["street", "address line"], str(300)),
+        F("city", "City", [], str(100)),
+        F("zip", "ZIP", ["zip code", "postal code"], str(12)),
+        F("gender", "Gender", ["sex"], str(40)),
+        F("preferred_language", "Language", ["preferred language"], str(60)),
+        F("status", "Status", ["program status"], enumOf(["waitlist", "active", "inactive", "closed", "deceased"])),
+        F("intake_date", "Intake date", ["intake", "enrolled", "enrollment date", "start date"], dateOf),
+        F("referral_source", "Referral source", ["referred by", "source"], str(120)),
+        F("primary_substance", "Primary substance", ["substance", "drug of choice", "doc"], enumOf(C.SUBSTANCES)),
+        F("asam_level", "ASAM level", ["asam", "level of care"], str(20)),
+        F("mat_status", "MAT status", ["mat", "moud"], enumOf(["none", "interested", "referred", "active", "discontinued", "unknown"])),
+        F("risk_level", "Risk level", ["risk"], enumOf(["low", "moderate", "high", "critical"])),
+        F("housing_status", "Housing", ["housing status", "living situation"], str(60)),
+        F("insurance", "Insurance", ["payer", "coverage"], str(100)),
+        F("overdose_history", "Overdose history", ["overdose", "od history", "prior overdose"], yes),
+        F("naloxone_provided", "Naloxone provided", ["naloxone", "narcan"], yes),
+        F("goals", "Goals", ["client goals"], str(2e3)),
+        F("flags", "Safety flags", ["flags", "alerts"], str(300))
+      ] },
+      resources: { label: "Resource directory", table: "resources", fields: [
+        F("name", "Name", ["program", "resource", "provider", "service name"], str(200), { required: true }),
+        F("category", "Category", ["type", "service type"], enumOf(C.RESOURCE_CATEGORIES), { required: true, help: C.RESOURCE_CATEGORIES.join(", ") }),
+        F("organization", "Organization", ["agency", "org"], str(200)),
+        F("phone", "Phone", ["telephone", "phone number"], str(40)),
+        F("fax", "Fax", [], str(40)),
+        F("email", "Email", [], str(200)),
+        F("website", "Website", ["url", "web"], str(300)),
+        F("address", "Address", ["street"], str(300)),
+        F("city", "City", [], str(100)),
+        F("zip", "ZIP", ["zip code"], str(12)),
+        F("hours", "Hours", [], str(200)),
+        F("eligibility", "Eligibility", ["criteria"], str(1e3)),
+        F("services", "Services", ["description"], str(1e3)),
+        F("languages", "Languages", [], str(200)),
+        F("accepts_medicaid", "Accepts Medicaid", ["medicaid"], yes),
+        F("accepts_uninsured", "Accepts uninsured", ["uninsured", "sliding scale"], yes),
+        F("mat_offered", "MAT offered", ["mat", "moud"], str(200)),
+        F("contact_person", "Contact person", ["contact"], str(200)),
+        F("notes", "Notes", [], str(2e3))
+      ] },
+      interventions: { label: "Visits & services", table: "interventions", fields: [
+        clientRef,
+        F("occurred_at", "Date", ["date of service", "service date", "when", "occurred"], datetimeOf, { required: true }),
+        F("type", "Type", ["service", "intervention", "service type", "intervention type"], enumOf(C.INTERVENTION_TYPES), { required: true, help: C.INTERVENTION_TYPES.join(", ") }),
+        F("duration_minutes", "Minutes", ["duration", "duration minutes", "time"], num),
+        F("location", "Location", ["where", "setting"], enumOf(C.LOCATIONS)),
+        F("modality", "Modality", ["mode"], enumOf(C.MODALITIES)),
+        F("outcome", "Outcome", ["result"], enumOf(C.OUTCOMES)),
+        F("naloxone_kits", "Naloxone kits", ["naloxone", "narcan kits"], num),
+        F("fentanyl_strips", "Fentanyl test strips", ["fts", "test strips"], num),
+        F("summary", "Summary", ["notes", "comment", "description"], str(2e3))
+      ] },
+      calls: { label: "Calls", table: "calls", fields: [
+        F("client_ref", "Client", ["client code", "client", "code", "client name", "name"], str(120), { help: "Optional for non-client calls" }),
+        F("started_at", "Date", ["when", "date/time", "call date", "time"], datetimeOf, { required: true }),
+        F("direction", "Direction", ["in/out", "inbound/outbound"], enumOf(["inbound", "outbound"]), { required: true }),
+        F("contact_type", "Who", ["contact type", "with", "caller"], enumOf(C.CALL_CONTACT_TYPES)),
+        F("contact_name", "Contact name", ["contact"], str(120)),
+        F("phone", "Phone", ["number"], str(40)),
+        F("duration_minutes", "Minutes", ["duration", "length"], num),
+        F("outcome", "Outcome", ["result"], enumOf(C.CALL_OUTCOMES)),
+        F("purpose", "Purpose", ["reason", "subject"], str(300)),
+        F("summary", "Summary", ["notes", "comment"], str(4e3)),
+        F("crisis", "Crisis", ["crisis call"], yes)
+      ] },
+      time_entries: { label: "Time", table: "time_entries", fields: [
+        F("work_date", "Date", ["work date", "day"], dateOf, { required: true }),
+        F("minutes", "Minutes", ["duration", "time", "mins"], num, { required: true }),
+        F("category", "Category", ["activity", "type"], enumOf(C.TIME_CATEGORIES)),
+        F("client_ref", "Client", ["client code", "client", "code", "client name"], str(120)),
+        F("billable", "Billable", [], yes),
+        F("description", "Description", ["notes", "comment"], str(500))
+      ] },
+      tasks: { label: "To-dos", table: "tasks", fields: [
+        F("title", "Title", ["task", "to-do", "todo", "reminder", "subject"], str(200), { required: true }),
+        F("client_ref", "Client", ["client code", "client", "code", "client name"], str(120)),
+        F("due_at", "Due", ["due date", "due", "deadline", "when"], datetimeOf),
+        F("priority", "Priority", [], enumOf(["low", "normal", "high", "urgent"])),
+        F("description", "Details", ["description", "notes"], str(2e3))
+      ] },
+      expenditures: { label: "Expenditures", table: "expenditures", perm: "budget:write", fields: [
+        F("spent_at", "Date", ["spent", "purchase date", "when"], dateOf, { required: true }),
+        F("amount", "Amount", ["cost", "total", "$"], num, { required: true }),
+        F("fund", "Funding source", ["fund", "grant", "funding"], str(200), { required: true, help: "Name of an existing funding source" }),
+        F("category", "Category", ["type", "budget line", "line"], enumOf(C.BUDGET_CATEGORIES), { required: true, help: C.BUDGET_CATEGORIES.join(", ") }),
+        F("client_ref", "Client", ["client code", "client", "code", "client name"], str(120)),
+        F("vendor", "Vendor", ["payee", "merchant", "store"], str(200)),
+        F("description", "Description", ["notes", "memo", "purpose"], str(1e3)),
+        F("receipt_ref", "Receipt #", ["receipt", "invoice", "invoice #"], str(200))
+      ] }
+    };
+    var norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    function suggestMapping(entity, headers) {
+      const def = ENTITIES[entity];
+      const used = /* @__PURE__ */ new Set();
+      const mapping = {};
+      for (const h of headers) {
+        const n = norm(h);
+        if (!n) continue;
+        const f = def.fields.find((f2) => !used.has(f2.key) && (f2.aliases.map(norm).includes(n) || norm(f2.key) === n)) || def.fields.find((f2) => !used.has(f2.key) && f2.aliases.some((a) => n.includes(norm(a)) || norm(a).includes(n)) && n.length > 2);
+        if (f) {
+          mapping[h] = f.key;
+          used.add(f.key);
+        }
+      }
+      return mapping;
+    }
+    function resolveClient(ref, ctx, auth3) {
+      const s = String(ref || "").trim();
+      if (!s) return null;
+      let rows;
+      if (/^[CM]\d{2}-\d+(-D)?$/i.test(s)) rows = db3.all(`SELECT id FROM clients WHERE client_code=? AND deleted_at IS NULL`, s.toUpperCase());
+      else {
+        const parts = s.split(/[,\s]+/).filter(Boolean);
+        if (parts.length < 2) rows = db3.all(`SELECT id FROM clients WHERE last_name_idx=? AND deleted_at IS NULL`, blindIndex2(parts[0]));
+        else rows = db3.all(`SELECT id FROM clients WHERE full_name_idx IN (?,?) AND deleted_at IS NULL`, blindIndex2(parts.join("")), blindIndex2([...parts].reverse().join("")));
+      }
+      rows = rows.filter((r) => auth3.canAccessClient(ctx.user, r.id));
+      if (rows.length === 1) return rows[0].id;
+      if (rows.length > 1) return "ambiguous";
+      return null;
+    }
+    function convertRow(entity, mapping, row) {
+      const def = ENTITIES[entity];
+      const record = {};
+      const errors = [];
+      for (const [header, key] of Object.entries(mapping)) {
+        const f = def.fields.find((x) => x.key === key);
+        if (!f) continue;
+        const raw = row[header];
+        const v = f.parse(raw);
+        if (v === void 0) errors.push(`${f.label}: "${raw}" is not a valid ${f.key.includes("date") || f.key.endsWith("_at") ? "date" : "value"}${f.help ? " (" + f.help.slice(0, 80) + ")" : ""}`);
+        else record[key] = v;
+      }
+      for (const f of def.fields) if (f.required && (record[f.key] === null || record[f.key] === void 0 || record[f.key] === "")) errors.push(`${f.label} is required`);
+      return { record, errors };
+    }
+    module.exports = { ENTITIES, suggestMapping, convertRow, resolveClient };
+  }
+});
+
+// server/routes/dataimport.js
+var require_dataimport2 = __commonJS({
+  "server/routes/dataimport.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var S = require_spreadsheet();
+    var DI = require_dataimport();
+    var { badRequest, notFound, forbidden } = require_http();
+    var { encrypt: encrypt3, blindIndex: blindIndex2, uuid: uuid2 } = require_crypto();
+    var M = require_clients_model();
+    var permFor = (entity) => ({ clients: "clients:write", resources: "resources:write", interventions: "interventions:write", calls: "calls:write", time_entries: "time:write", tasks: "tasks:write", expenditures: "budget:write" })[entity];
+    module.exports = (r) => {
+      r.get("/api/imports/data/entities", auth3.requireAuth, (ctx) => ({ entities: Object.entries(DI.ENTITIES).filter(([k]) => auth3.hasPerm(ctx.user, permFor(k))).map(([k, e]) => ({ key: k, label: e.label, fields: e.fields.map((f) => ({ key: f.key, label: f.label, required: !!f.required, help: f.help || null })) })) }));
+      r.get("/api/imports/data/template/:entity", auth3.requireAuth, (ctx) => {
+        const def = DI.ENTITIES[ctx.params.entity];
+        if (!def) throw notFound();
+        const example = { clients: { first_name: "Jane", last_name: "Doe", dob: "1990-05-01", phone: "555-0100", status: "active", intake_date: "2026-09-01", primary_substance: "opioids_fentanyl", risk_level: "high" }, resources: { name: "County Opioid Treatment Program", category: "mat_otp", phone: "555-0200", accepts_medicaid: "yes" }, interventions: { client_ref: "C26-0001", occurred_at: "2026-09-10 14:00", type: "outreach", duration_minutes: 30, location: "field" }, calls: { client_ref: "C26-0001", started_at: "2026-09-10 09:15", direction: "outbound", contact_type: "client", duration_minutes: 10, outcome: "reached" }, time_entries: { work_date: "2026-09-10", minutes: 45, category: "documentation" }, tasks: { title: "Bring ID documents", client_ref: "C26-0001", due_at: "2026-09-20", priority: "normal" }, expenditures: { spent_at: "2026-09-10", amount: 25, fund: "Opioid Settlement \u2013 Navigation FY26", category: "transportation", client_ref: "C26-0001", vendor: "Metro Transit" } }[ctx.params.entity] || {};
+        const fmt = ctx.query.get("format") === "csv" ? "csv" : "xlsx";
+        const columns = def.fields.map((f) => ({ key: f.key, label: f.label + (f.required ? " *" : ""), width: 18 }));
+        const rows = [Object.fromEntries(def.fields.map((f) => [f.key, example[f.key] ?? ""]))];
+        const body = fmt === "csv" ? S.toCsv(rows, columns) : S.writeWorkbook([{ name: def.label, columns, rows }, { name: "Instructions", columns: [{ key: "a", label: "How to use this template", width: 90 }], rows: [{ a: "Fill one row per record; delete the example row. Columns marked * are required." }, { a: "Dates: YYYY-MM-DD or M/D/YYYY. Yes/no columns: yes or no." }, ...def.fields.filter((f) => f.help).map((f) => ({ a: `${f.label}: ${f.help}` }))] }]);
+        ctx.res.writeHead(200, { "Content-Type": fmt === "csv" ? "text/csv; charset=utf-8" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Content-Disposition": `attachment; filename="suds-${ctx.params.entity}-template.${fmt}"` });
+        ctx.res.end(body);
+      });
+      r.post("/api/imports/data/preview", auth3.requireAuth, (ctx) => {
+        const entity = ctx.query.get("entity");
+        const def = DI.ENTITIES[entity];
+        if (!def) throw badRequest("Unknown entity");
+        if (!auth3.hasPerm(ctx.user, permFor(entity))) throw forbidden();
+        const buf = ctx.rawBody && ctx.rawBody.length ? ctx.rawBody : ctx.body && ctx.body.text ? import_buffer.Buffer.from(ctx.body.text, "utf8") : null;
+        if (!buf) throw badRequest("Upload a .xlsx or .csv file");
+        let parsed;
+        try {
+          parsed = S.parseFile(buf, ctx.headers["x-filename"] || "");
+        } catch (e) {
+          throw badRequest("Could not read the file: " + e.message);
+        }
+        const sheetIdx = Number(ctx.query.get("sheet") || 0);
+        const sheet = parsed.sheets[sheetIdx] || parsed.sheets[0];
+        if (!sheet) throw badRequest("The file has no sheets");
+        let mapping = null;
+        try {
+          mapping = ctx.query.get("mapping") ? JSON.parse(ctx.query.get("mapping")) : null;
+        } catch {
+          mapping = null;
+        }
+        if (!mapping) mapping = DI.suggestMapping(entity, sheet.headers.map((h) => h.replace(/\s*\*$/, "")));
+        const normalizedMapping = {};
+        for (const h of sheet.headers) {
+          const clean2 = h.replace(/\s*\*$/, "");
+          if (mapping[h]) normalizedMapping[h] = mapping[h];
+          else if (mapping[clean2]) normalizedMapping[h] = mapping[clean2];
+        }
+        const rows = sheet.rows.slice(0, 2e3).map((row, i) => {
+          const { record, errors } = DI.convertRow(entity, normalizedMapping, row);
+          if (record.client_ref !== void 0) {
+            const id = DI.resolveClient(record.client_ref, ctx, auth3);
+            if (record.client_ref && !id) errors.push(`Client "${record.client_ref}" not found (use the client code or "Last, First")`);
+            else if (id === "ambiguous") errors.push(`Client "${record.client_ref}" matches several clients; use the client code`);
+            else record.client_id = id || null;
+          }
+          if (entity === "expenditures" && record.fund) {
+            const f = db3.one(`SELECT id FROM funding_sources WHERE name=? COLLATE NOCASE AND is_active=1`, record.fund);
+            if (!f) errors.push(`Funding source "${record.fund}" not found`);
+            else record.funding_source_id = f.id;
+          }
+          if (entity === "clients" && record.first_name && record.last_name && !errors.length) {
+            const dup = db3.one(`SELECT client_code FROM clients WHERE full_name_idx=? AND deleted_at IS NULL`, blindIndex2(record.last_name + record.first_name));
+            if (dup) record._duplicate_of = dup.client_code;
+          }
+          return { n: i + 2, record, errors };
+        });
+        audit3.log({ user: ctx.user, action: "import.data.preview", ip: ctx.ip, details: { entity, rows: rows.length, sheet: sheet.name } });
+        return { entity, sheets: parsed.sheets.map((s) => ({ name: s.name, rows: s.rows.length })), sheet: sheetIdx, headers: sheet.headers, mapping: normalizedMapping, fields: def.fields.map((f) => ({ key: f.key, label: f.label, required: !!f.required })), rows, valid: rows.filter((x) => !x.errors.length).length, invalid: rows.filter((x) => x.errors.length).length, truncated: sheet.rows.length > 2e3 };
+      });
+      r.post("/api/imports/data/commit", auth3.requireAuth, (ctx) => {
+        const { entity, records, skip_duplicates } = ctx.body || {};
+        const def = DI.ENTITIES[entity];
+        if (!def) throw badRequest("Unknown entity");
+        if (!auth3.hasPerm(ctx.user, permFor(entity))) throw forbidden();
+        if (!Array.isArray(records) || !records.length) throw badRequest("No rows to import");
+        if (records.length > 2e3) throw badRequest("Import at most 2000 rows at a time");
+        let created = 0, skipped = 0;
+        const errors = [];
+        db3.transaction(() => {
+          records.forEach((rec, i) => {
+            try {
+              if (rec.client_ref !== void 0 && !rec.client_id) {
+                const id2 = DI.resolveClient(rec.client_ref, ctx, auth3);
+                if (rec.client_ref && (!id2 || id2 === "ambiguous")) throw new Error(`client "${rec.client_ref}" not found`);
+                rec.client_id = id2 || null;
+              }
+              if (rec.client_id) auth3.assertClientAccess(ctx, rec.client_id);
+              const id = uuid2();
+              const now = db3.now();
+              switch (entity) {
+                case "clients": {
+                  if (skip_duplicates && db3.one(`SELECT 1 FROM clients WHERE full_name_idx=? AND deleted_at IS NULL`, blindIndex2((rec.last_name || "") + (rec.first_name || "")))) {
+                    skipped++;
+                    return;
+                  }
+                  const enc = M.encryptFields(rec);
+                  enc.full_name_idx = blindIndex2((rec.last_name || "") + (rec.first_name || ""));
+                  const cols2 = { id, client_code: M.nextClientCode(), ...enc, created_by: ctx.user.id, intake_date: rec.intake_date || now.slice(0, 10) };
+                  for (const f of M.PLAIN_FIELDS) if (rec[f] !== void 0 && rec[f] !== null) cols2[f] = rec[f];
+                  const keys = Object.keys(cols2).filter((k) => cols2[k] !== void 0);
+                  db3.run(`INSERT INTO clients(${keys.join(",")}) VALUES(${keys.map(() => "?").join(",")})`, ...keys.map((k) => cols2[k]));
+                  if (auth3.caseloadRestricted(ctx.user) || ["navigator", "clinician"].includes(ctx.user.role)) db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, uuid2(), id, ctx.user.id, "primary", cols2.intake_date, ctx.user.id);
+                  break;
+                }
+                case "resources": {
+                  const keys = ["name", "category", "organization", "phone", "fax", "email", "website", "address", "city", "zip", "hours", "eligibility", "services", "languages", "accepts_medicaid", "accepts_uninsured", "mat_offered", "contact_person", "notes"].filter((k) => rec[k] !== void 0 && rec[k] !== null);
+                  if (!rec.name || !rec.category) throw new Error("name and category are required");
+                  db3.run(`INSERT INTO resources(id,${keys.join(",")}) VALUES(?,${keys.map(() => "?").join(",")})`, id, ...keys.map((k) => rec[k]));
+                  break;
+                }
+                case "interventions": {
+                  if (!rec.client_id || !rec.occurred_at || !rec.type) throw new Error("client, date and type are required");
+                  db3.run(`INSERT INTO interventions(id,client_id,user_id,type,occurred_at,duration_minutes,location,modality,outcome,naloxone_kits,fentanyl_strips,summary) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, id, rec.client_id, ctx.user.id, rec.type, rec.occurred_at, rec.duration_minutes || 0, rec.location || "office", rec.modality || "in_person", rec.outcome || null, rec.naloxone_kits || 0, rec.fentanyl_strips || 0, rec.summary || null);
+                  break;
+                }
+                case "calls": {
+                  if (!rec.started_at || !rec.direction) throw new Error("date and direction are required");
+                  db3.run(`INSERT INTO calls(id,client_id,user_id,direction,started_at,duration_minutes,contact_type,contact_name_enc,phone_enc,purpose,outcome,crisis,summary_enc) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, rec.client_id || null, ctx.user.id, rec.direction, rec.started_at, rec.duration_minutes || 0, rec.contact_type || "client", rec.contact_name ? encrypt3(rec.contact_name) : null, rec.phone ? encrypt3(rec.phone) : null, rec.purpose || null, rec.outcome || "reached", rec.crisis ? 1 : 0, rec.summary ? encrypt3(rec.summary) : null);
+                  break;
+                }
+                case "time_entries": {
+                  if (!rec.work_date || !rec.minutes) throw new Error("date and minutes are required");
+                  db3.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,billable,description) VALUES(?,?,?,?,?,?,?,?)`, id, ctx.user.id, rec.client_id || null, rec.work_date, Math.round(rec.minutes), rec.category || "direct_service", rec.billable ? 1 : 0, rec.description || null);
+                  break;
+                }
+                case "tasks": {
+                  if (!rec.title) throw new Error("title is required");
+                  db3.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title,description,due_at,priority) VALUES(?,?,?,?,?,?,?,?)`, id, rec.client_id || null, ctx.user.id, ctx.user.id, rec.title, rec.description || null, rec.due_at || null, rec.priority || "normal");
+                  break;
+                }
+                case "expenditures": {
+                  const f = rec.funding_source_id ? db3.one(`SELECT id FROM funding_sources WHERE id=?`, rec.funding_source_id) : db3.one(`SELECT id FROM funding_sources WHERE name=? COLLATE NOCASE AND is_active=1`, rec.fund);
+                  if (!f || !rec.spent_at || !rec.amount || !rec.category) throw new Error("date, amount, funding source and category are required");
+                  db3.run(`INSERT INTO expenditures(id,funding_source_id,client_id,user_id,spent_at,amount,category,vendor,description,receipt_ref) VALUES(?,?,?,?,?,?,?,?,?,?)`, id, f.id, rec.client_id || null, ctx.user.id, rec.spent_at, rec.amount, rec.category, rec.vendor || null, rec.description || null, rec.receipt_ref || null);
+                  break;
+                }
+              }
+              created++;
+            } catch (e) {
+              errors.push({ n: rec._n || i + 1, error: e.message });
+            }
+          });
+          if (errors.length && !ctx.body.partial) throw badRequest(`${errors.length} row(s) could not be imported; nothing was saved`, { rows: errors });
+        });
+        audit3.log({ user: ctx.user, action: "import.data.commit", ip: ctx.ip, details: { entity, created, skipped, errors: errors.length } });
+        return { created, skipped, errors };
+      });
+    };
+  }
+});
+
 // server/importers/pocketai.js
 var require_pocketai = __commonJS({
   "server/importers/pocketai.js"(exports, module) {
@@ -9874,6 +10442,76 @@ var require_referrals = __commonJS({
   }
 });
 
+// server/exports.js
+var require_exports = __commonJS({
+  "server/exports.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var M = require_clients_model();
+    var { decrypt: decrypt3 } = require_crypto();
+    function datasets(ctx, { from, to, toEnd, identified }) {
+      const cf = auth3.caseloadFilter(ctx.user, "c.id");
+      const all = auth3.hasPerm(ctx.user, "time:all") ? 1 : 0;
+      const idCols = identified ? ["last_name", "first_name", "dob", "phone", "email", "address"] : [];
+      const D = {
+        clients: {
+          label: "Clients",
+          columns: ["client_code", ...idCols, "status", "intake_date", "discharge_date", "discharge_reason", "referral_source", "primary_substance", "secondary_substances", "asam_level", "mat_status", "mat_medication", "risk_level", "housing_status", "insurance", "overdose_history", "naloxone_provided", "naloxone_last_date", "co_occurring_mh", "justice_involved", "pregnant_or_parenting", "city", "zip", "gender", "preferred_language", "goals", "flags"],
+          rows: () => db3.all(`SELECT c.* FROM clients c WHERE c.deleted_at IS NULL AND ${cf.sql} ORDER BY c.client_code`, ...cf.params).map((x) => M.decryptRow(x, { deidentify: !identified }))
+        },
+        interventions: {
+          label: "Visits & services",
+          columns: ["occurred_at", "client_code", "type", "duration_minutes", "location", "modality", "outcome", "stage_of_change", "naloxone_kits", "fentanyl_strips", "worker", "funding_source", "cost", "summary", "follow_up_due"],
+          rows: () => db3.all(`SELECT i.*, c.client_code, u.display_name worker, f.name funding_source FROM interventions i JOIN clients c ON c.id=i.client_id JOIN users u ON u.id=i.user_id LEFT JOIN funding_sources f ON f.id=i.funding_source_id WHERE i.occurred_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY i.occurred_at`, from, toEnd, ...cf.params)
+        },
+        calls: {
+          label: "Calls",
+          columns: ["started_at", "client_code", "direction", "contact_type", "contact_name", "duration_minutes", "outcome", "crisis", "purpose", "summary", "follow_up_needed", "follow_up_due", "worker"],
+          rows: () => db3.all(`SELECT ca.*, c.client_code, u.display_name worker FROM calls ca LEFT JOIN clients c ON c.id=ca.client_id JOIN users u ON u.id=ca.user_id WHERE ca.started_at BETWEEN ? AND ? AND (ca.client_id IS NULL OR ${cf.sql}) ORDER BY ca.started_at`, from, toEnd, ...cf.params).map((r) => ({ ...r, contact_name: identified && r.contact_name_enc ? decrypt3(r.contact_name_enc) : r.contact_name_enc ? "[redacted]" : "", summary: identified && r.summary_enc ? decrypt3(r.summary_enc) : r.summary_enc ? "[redacted]" : "" }))
+        },
+        time: {
+          label: "Time",
+          columns: ["work_date", "worker", "client_code", "category", "minutes", "billable", "funding_source", "description"],
+          rows: () => db3.all(`SELECT t.*, u.display_name worker, c.client_code, f.name funding_source FROM time_entries t JOIN users u ON u.id=t.user_id LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN funding_sources f ON f.id=t.funding_source_id WHERE t.work_date BETWEEN ? AND ? AND (t.user_id=? OR ?) ORDER BY t.work_date`, from, to, ctx.user.id, all)
+        },
+        referrals: {
+          label: "Referrals",
+          columns: ["referred_at", "client_code", "resource", "category", "status", "urgency", "warm_handoff", "appointment_at", "admitted_at", "closed_at", "outcome", "barrier", "worker", "notes"],
+          rows: () => db3.all(`SELECT r.*, c.client_code, res.name resource, res.category, u.display_name worker FROM referrals r JOIN clients c ON c.id=r.client_id JOIN resources res ON res.id=r.resource_id JOIN users u ON u.id=r.user_id WHERE r.referred_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY r.referred_at`, from, toEnd, ...cf.params)
+        },
+        tasks: {
+          label: "To-dos",
+          columns: ["title", "client_code", "assignee", "due_at", "priority", "status", "is_milestone", "completed_at", "description"],
+          rows: () => db3.all(`SELECT t.*, c.client_code, u.display_name assignee FROM tasks t LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN users u ON u.id=t.assigned_to WHERE (t.client_id IS NULL OR ${cf.sql}) ORDER BY t.due_at`, ...cf.params)
+        },
+        resources: {
+          label: "Resource directory",
+          columns: ["name", "category", "organization", "phone", "fax", "email", "website", "address", "city", "zip", "hours", "eligibility", "services", "languages", "accepts_medicaid", "accepts_uninsured", "mat_offered", "capacity_notes", "contact_person", "is_active", "last_verified_at", "notes"],
+          rows: () => db3.all(`SELECT * FROM resources ORDER BY category, name`)
+        },
+        consents: {
+          label: "Consents",
+          columns: ["client_code", "type", "recipient", "purpose", "scope", "signed_at", "expires_at", "revoked_at", "document_ref"],
+          rows: () => db3.all(`SELECT co.*, c.client_code FROM consents co JOIN clients c ON c.id=co.client_id WHERE ${cf.sql} ORDER BY co.signed_at`, ...cf.params)
+        }
+      };
+      if (auth3.hasPerm(ctx.user, "budget:read")) {
+        D.funds = { label: "Funding sources", columns: ["name", "source_type", "grant_number", "fiscal_year_start", "fiscal_year_end", "total_amount", "restrictions", "is_active"], rows: () => db3.all(`SELECT * FROM funding_sources ORDER BY fiscal_year_start DESC`) };
+        D.budget_lines = { label: "Budget lines", columns: ["fund", "category", "label", "allocated_amount", "notes"], rows: () => db3.all(`SELECT b.*, f.name fund FROM budget_lines b JOIN funding_sources f ON f.id=b.funding_source_id ORDER BY f.name, b.category`) };
+        D.expenditures = {
+          label: "Expenditures",
+          columns: ["spent_at", "fund", "line", "category", "amount", "status", "client_code", "vendor", "description", "receipt_ref", "worker", "approver"],
+          rows: () => db3.all(`SELECT e.*, f.name fund, b.label line, c.client_code, u.display_name worker, a.display_name approver FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id LEFT JOIN budget_lines b ON b.id=e.budget_line_id LEFT JOIN clients c ON c.id=e.client_id JOIN users u ON u.id=e.user_id LEFT JOIN users a ON a.id=e.approved_by WHERE e.spent_at BETWEEN ? AND ? ORDER BY e.spent_at`, from, to)
+        };
+      }
+      return D;
+    }
+    module.exports = { datasets };
+  }
+});
+
 // server/routes/reports.js
 var require_reports = __commonJS({
   "server/routes/reports.js"(exports, module) {
@@ -9888,14 +10526,6 @@ var require_reports = __commonJS({
       const to = ctx.query.get("to") || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
       const from = ctx.query.get("from") || new Date(Date.parse(to) - 89 * 864e5).toISOString().slice(0, 10);
       return { from, to, toEnd: to + "T23:59:59.999Z" };
-    }
-    function csv(rows, columns) {
-      const esc = (v) => {
-        if (v === null || v === void 0) return "";
-        const s = String(v);
-        return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-      };
-      return [columns.join(","), ...rows.map((r) => columns.map((c) => esc(r[c])).join(","))].join("\r\n");
     }
     module.exports = (r) => {
       r.get("/api/reports/dashboard", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
@@ -9994,45 +10624,33 @@ var require_reports = __commonJS({
       r.get("/api/reports/export/:kind", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
         const { from, to, toEnd } = range(ctx);
         const identified = ctx.query.get("identified") === "1" && auth3.hasPerm(ctx.user, "export:read");
-        const cf = auth3.caseloadFilter(ctx.user, "c.id");
-        let rows, cols2;
-        switch (ctx.params.kind) {
-          case "interventions":
-            rows = db3.all(`SELECT i.occurred_at, c.client_code, i.type, i.duration_minutes, i.location, i.modality, i.outcome, i.naloxone_kits, i.fentanyl_strips, u.display_name worker, f.name funding_source, i.cost, i.summary FROM interventions i JOIN clients c ON c.id=i.client_id JOIN users u ON u.id=i.user_id LEFT JOIN funding_sources f ON f.id=i.funding_source_id WHERE i.occurred_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY i.occurred_at`, from, toEnd, ...cf.params);
-            cols2 = ["occurred_at", "client_code", "type", "duration_minutes", "location", "modality", "outcome", "naloxone_kits", "fentanyl_strips", "worker", "funding_source", "cost", "summary"];
-            break;
-          case "calls":
-            rows = db3.all(`SELECT ca.started_at, c.client_code, ca.direction, ca.contact_type, ca.duration_minutes, ca.outcome, ca.crisis, ca.purpose, u.display_name worker FROM calls ca LEFT JOIN clients c ON c.id=ca.client_id JOIN users u ON u.id=ca.user_id WHERE ca.started_at BETWEEN ? AND ? ORDER BY ca.started_at`, from, toEnd);
-            cols2 = ["started_at", "client_code", "direction", "contact_type", "duration_minutes", "outcome", "crisis", "purpose", "worker"];
-            break;
-          case "time":
-            rows = db3.all(`SELECT t.work_date, u.display_name worker, c.client_code, t.category, t.minutes, t.billable, f.name funding_source, t.description FROM time_entries t JOIN users u ON u.id=t.user_id LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN funding_sources f ON f.id=t.funding_source_id WHERE t.work_date BETWEEN ? AND ? AND (t.user_id=? OR ?) ORDER BY t.work_date`, from, to, ctx.user.id, auth3.hasPerm(ctx.user, "time:all") ? 1 : 0);
-            cols2 = ["work_date", "worker", "client_code", "category", "minutes", "billable", "funding_source", "description"];
-            break;
-          case "referrals":
-            rows = db3.all(`SELECT r.referred_at, c.client_code, res.name resource, res.category, r.status, r.urgency, r.warm_handoff, r.appointment_at, r.admitted_at, r.closed_at, r.outcome, r.barrier, u.display_name worker FROM referrals r JOIN clients c ON c.id=r.client_id JOIN resources res ON res.id=r.resource_id JOIN users u ON u.id=r.user_id WHERE r.referred_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY r.referred_at`, from, toEnd, ...cf.params);
-            cols2 = ["referred_at", "client_code", "resource", "category", "status", "urgency", "warm_handoff", "appointment_at", "admitted_at", "closed_at", "outcome", "barrier", "worker"];
-            break;
-          case "expenditures":
-            auth3.requirePerm("budget:read")(ctx);
-            rows = db3.all(`SELECT e.spent_at, f.name fund, b.label line, e.category, e.amount, e.status, c.client_code, e.vendor, e.description, e.receipt_ref, u.display_name worker FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id LEFT JOIN budget_lines b ON b.id=e.budget_line_id LEFT JOIN clients c ON c.id=e.client_id JOIN users u ON u.id=e.user_id WHERE e.spent_at BETWEEN ? AND ? ORDER BY e.spent_at`, from, to);
-            cols2 = ["spent_at", "fund", "line", "category", "amount", "status", "client_code", "vendor", "description", "receipt_ref", "worker"];
-            break;
-          case "clients": {
-            const raw = db3.all(`SELECT c.* FROM clients c WHERE c.deleted_at IS NULL AND ${cf.sql} ORDER BY c.client_code`, ...cf.params);
-            rows = raw.map((x) => {
-              const d = M.decryptRow(x, { deidentify: !identified });
-              return d;
-            });
-            cols2 = ["client_code", ...identified ? ["last_name", "first_name", "dob", "phone"] : [], "status", "intake_date", "discharge_date", "primary_substance", "asam_level", "mat_status", "risk_level", "housing_status", "insurance", "overdose_history", "naloxone_provided", "referral_source", "city", "zip"];
-            break;
+        const format = ctx.query.get("format") === "xlsx" || ctx.params.kind === "workbook" ? "xlsx" : "csv";
+        const D = require_exports().datasets(ctx, { from, to, toEnd, identified });
+        const S = require_spreadsheet();
+        const label = (k) => ({ key: k, label: k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) });
+        let body, filename, type;
+        if (ctx.params.kind === "workbook") {
+          const sheets = Object.entries(D).map(([k, d]) => ({ name: d.label, columns: d.columns.map(label), rows: d.rows() }));
+          audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: "workbook", sheets: sheets.map((s) => [s.name, s.rows.length]), identified, from, to } });
+          body = S.writeWorkbook(sheets);
+          filename = `suds-export-${from}_${to}.xlsx`;
+          type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        } else {
+          const d = D[ctx.params.kind === "clients" ? "clients" : ctx.params.kind];
+          if (!d) throw require_http().notFound("Unknown export");
+          const rows = d.rows();
+          audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: ctx.params.kind, rows: rows.length, identified, from, to, format } });
+          if (format === "xlsx") {
+            body = S.writeWorkbook([{ name: d.label, columns: d.columns.map(label), rows }]);
+            filename = `suds-${ctx.params.kind}-${from}_${to}.xlsx`;
+            type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+          } else {
+            body = S.toCsv(rows, d.columns.map(label));
+            filename = `suds-${ctx.params.kind}-${from}_${to}.csv`;
+            type = "text/csv; charset=utf-8";
           }
-          default:
-            throw require_http().notFound("Unknown export");
         }
-        audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: ctx.params.kind, rows: rows.length, identified, from, to } });
-        const body = csv(rows, cols2);
-        ctx.res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="suds-${ctx.params.kind}-${from}_${to}.csv"` });
+        ctx.res.writeHead(200, { "Content-Type": type, "Content-Disposition": `attachment; filename="${filename}"` });
         ctx.res.end(body);
       });
     };
@@ -10578,6 +11196,7 @@ var init_ = __esm({
       "./routes/calls.js": () => require_calls(),
       "./routes/clients.js": () => require_clients(),
       "./routes/consents.js": () => require_consents(),
+      "./routes/dataimport.js": () => require_dataimport2(),
       "./routes/imports.js": () => require_imports(),
       "./routes/intake.js": () => require_intake(),
       "./routes/interventions.js": () => require_interventions(),
@@ -10624,7 +11243,7 @@ var require_app2 = __commonJS({
     }
     function buildRouter() {
       const r = new Router2();
-      for (const mod of ["setup", "auth", "me", "app", "sync", "users", "clients", "assignments", "interventions", "calls", "time", "resources", "referrals", "tasks", "budget", "notes", "consents", "imports", "reports", "admin", "intake"]) {
+      for (const mod of ["setup", "auth", "me", "app", "sync", "dataimport", "users", "clients", "assignments", "interventions", "calls", "time", "resources", "referrals", "tasks", "budget", "notes", "consents", "imports", "reports", "admin", "intake"]) {
         globRequire_routes(`./routes/${mod}`)(r);
       }
       return r;
@@ -10952,7 +11571,7 @@ function register(router2) {
 }
 
 // local/kernel.js
-var ROUTE_MODULES = ["auth", "me", "users", "clients", "assignments", "interventions", "calls", "time", "resources", "referrals", "tasks", "budget", "notes", "consents", "imports", "reports", "admin"];
+var ROUTE_MODULES = ["auth", "me", "users", "clients", "assignments", "interventions", "calls", "time", "resources", "referrals", "tasks", "budget", "notes", "consents", "imports", "dataimport", "reports", "admin"];
 var routeLoaders = {
   auth: () => Promise.resolve().then(() => __toESM(require_auth2())),
   me: () => Promise.resolve().then(() => __toESM(require_me())),
@@ -10969,6 +11588,7 @@ var routeLoaders = {
   notes: () => Promise.resolve().then(() => __toESM(require_notes())),
   consents: () => Promise.resolve().then(() => __toESM(require_consents())),
   imports: () => Promise.resolve().then(() => __toESM(require_imports())),
+  dataimport: () => Promise.resolve().then(() => __toESM(require_dataimport2())),
   reports: () => Promise.resolve().then(() => __toESM(require_reports())),
   admin: () => Promise.resolve().then(() => __toESM(require_admin()))
 };

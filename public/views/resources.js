@@ -20,7 +20,7 @@ route('resources', async (r) => {
   const catSel = h('select', { onChange: () => nav(`resources?q=${encodeURIComponent(q)}&category=${catSel.value}`) }, h('option', { value: '' }, 'All categories'), state.constants.RESOURCE_CATEGORIES.map(c => h('option', { value: c, selected: c === cat }, fmt.label(c))));
   const stale = x => !x.last_verified_at || Date.now() - Date.parse(x.last_verified_at) > 180 * 86400000;
   return h('div', {},
-    pageHead('Resource directory', can('resources:write') ? h('button', { class: 'btn primary', onClick: () => openResourceForm(null, refresh) }, '+ Add resource') : null),
+    pageHead('Resource directory', can('resources:write') ? h('button', { class: 'btn primary', onClick: () => openResourceForm(null, refresh) }, '+ Add resource') : null, h('button', { class: 'btn', onClick: () => window.__suds.downloadCsv('/api/reports/export/resources?format=xlsx') }, 'Export to Excel'), can('resources:write') ? h('a', { class: 'btn ghost', href: '#/imports' }, 'Import from Excel') : null),
     h('div', { class: 'filters' }, h('div', { class: 'field grow' }, h('label', {}, 'Search'), search), h('div', { class: 'field' }, h('label', {}, 'Category'), catSel), h('button', { class: 'btn', onClick: () => nav(`resources?q=${encodeURIComponent(search.value)}&category=${cat}`) }, 'Search'), h('button', { class: `btn sm ${inactive ? 'primary' : ''}`, onClick: () => nav(`resources?q=${encodeURIComponent(q)}&category=${cat}${inactive ? '' : '&inactive=1'}`) }, 'Show inactive')),
     h('div', { class: 'muted small mb' }, `${data.total} resources`),
     table([
