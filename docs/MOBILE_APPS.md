@@ -12,7 +12,7 @@ The native apps add: automatic server discovery (Bonjour / DNS-SD `_suds._tcp`, 
 ## Android — getting the APK
 Choose one:
 
-1. **GitHub Actions (automatic).** Once Actions is enabled for the repository, every version tag (and *Run workflow* on the "Android app" workflow) builds `SUDS-android.apk` and attaches it to the release / workflow artifacts.
+1. **GitHub Actions (automatic).** Every version tag (and *Run workflow* on the "Android app" workflow) builds `SUDS-android.apk` and attaches it to the GitHub Release. The 1.0.0 APK is at https://github.com/taugustincst/suds/releases/tag/v1.0.0.
 2. **Android Studio (one click).** Open the `mobile/android` folder → Build → *Build APK(s)*. Details in `mobile/android/README.md`.
 
 Then, in SUDS, go to **Settings → Network & devices → Native apps** and upload the APK. Staff open **https://suds.local/app** on their phone, tap *Download SUDS for Android*, open the file, and allow the install when Android asks. The app then finds the server by itself.
