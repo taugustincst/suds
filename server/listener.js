@@ -50,7 +50,7 @@ async function makeWithFallback(handler, opts) {
   for (const port of ports) { try { const s = await make(handler, { ...opts, port }); return { s, port }; } catch (e) { lastErr = e; if (e.code !== 'EACCES' && e.code !== 'EADDRINUSE') throw e; } }
   throw lastErr;
 }
-function updateMdns() { if (current && (current.host === '0.0.0.0' || current.host === '::')) mdns.start([SUDS_NAME, os.hostname()]); else mdns.stop(); }
+function updateMdns() { if (current && (current.host === '0.0.0.0' || current.host === '::')) mdns.start([SUDS_NAME, os.hostname()], { port: current.port, tls: !!current.certPath }); else mdns.stop(); }
 
 async function start(handler) {
   const opts = { host: config.host, port: config.port, certPath: config.tls.cert, keyPath: config.tls.key };

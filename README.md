@@ -25,6 +25,8 @@ Current release: see [CHANGELOG.md](CHANGELOG.md). Release process: [docs/RELEAS
 
 Full walkthrough with screenshots-free steps: [docs/INSTALL.md](docs/INSTALL.md). Everything the wizard sets can later be changed under **Administration → Network & devices / Settings / System & backups**.
 
+**Native phone apps:** `mobile/android` (APK served to staff from `https://suds.local/app`) and `mobile/ios` (TestFlight). See [docs/MOBILE_APPS.md](docs/MOBILE_APPS.md).
+
 **Phones and other computers:** nothing to configure. SUDS announces itself on the office network as **https://suds.local** (built-in mDNS responder) and uses the standard HTTPS port when available. Staff open that address on any device, add it to the home screen, and their workspace — clients, reminders, note drafts saved while typing, preferences — is the same everywhere because every device talks to the same server.
 
 ## Quick start (development)
