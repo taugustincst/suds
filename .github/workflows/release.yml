@@ -2,22 +2,42 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type 'release' to publish the version in package.json (creates the tag if missing)"
+        required: true
+        default: ''
 permissions:
   contents: write
 jobs:
   release:
     runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.inputs.confirm == 'release'
     steps:
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
       - uses: actions/setup-node@v4
         with: { node-version: '22' }
       - run: npm test
-      - name: Check tag matches package version
-        run: test "v$(node -p "require('./package.json').version")" = "${GITHUB_REF_NAME}"
+      - name: Resolve version
+        id: v
+        run: |
+          ver="v$(node -p "require('./package.json').version")"
+          if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF_NAME}" != "$ver" ]; then echo "Tag ${GITHUB_REF_NAME} does not match package.json $ver"; exit 1; fi
+          echo "tag=$ver" >> "$GITHUB_OUTPUT"
+      - name: Create tag if missing (manual run)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if git rev-parse -q --verify "refs/tags/${{ steps.v.outputs.tag }}" >/dev/null; then echo "tag exists"; else
+            git config user.name "github-actions[bot]"; git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "${{ steps.v.outputs.tag }}" -m "SUDS ${{ steps.v.outputs.tag }}"; git push origin "${{ steps.v.outputs.tag }}"; fi
       - name: Package
-        run: node scripts/package.js "suds-${GITHUB_REF_NAME}.zip"
+        run: node scripts/package.js "suds-${{ steps.v.outputs.tag }}.zip"
       - name: Publish GitHub Release
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
-          notes=$(awk -v v="${GITHUB_REF_NAME#v}" '/^## /{p = index($0, v) > 0} p' CHANGELOG.md)
-          gh release create "${GITHUB_REF_NAME}" "suds-${GITHUB_REF_NAME}.zip" --title "SUDS ${GITHUB_REF_NAME}" --notes "${notes:-See CHANGELOG.md}"
+          tag="${{ steps.v.outputs.tag }}"
+          notes=$(awk -v v="${tag#v}" '/^## /{p = index($0, v) > 0} p' CHANGELOG.md)
+          if gh release view "$tag" >/dev/null 2>&1; then gh release upload "$tag" "suds-$tag.zip" --clobber; else
+            gh release create "$tag" "suds-$tag.zip" --title "SUDS $tag" --notes "${notes:-See CHANGELOG.md}"; fi
