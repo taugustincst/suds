@@ -27,7 +27,7 @@ function client() {
   const headers = {};
   async function req(method, path, body, extra = {}) {
     const h = { 'Content-Type': 'application/json', 'X-Requested-With': 'suds', ...headers, ...extra };
-    if (cookie) h.Cookie = cookie;
+    if (cookie && extra.Cookie === undefined) h.Cookie = cookie; if (h.Cookie === '') delete h.Cookie;
     const res = await fetch(base + path, { method, headers: h, body: body === undefined ? undefined : (typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body)) });
     const sc = res.headers.get('set-cookie'); if (sc) cookie = sc.split(';')[0];
     const ct = res.headers.get('content-type') || '';

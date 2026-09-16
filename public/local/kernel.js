@@ -6070,7 +6070,17 @@ var require_config = __commonJS({
     init_globals_inject();
     var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
     function key(name) {
-      let hex = localStorage.getItem(name);
+      let hex = null;
+      try {
+        if (window.SudsNative && window.SudsNative.getSecret) hex = window.SudsNative.getSecret(name) || null;
+      } catch {
+      }
+      if (!hex && window.__sudsSecrets && window.__sudsSecrets[name]) hex = window.__sudsSecrets[name];
+      if (hex && /^[0-9a-f]{64}$/i.test(hex)) {
+        config.keySource = window.SudsNative ? "android-keystore" : "ios-keychain";
+        return import_buffer.Buffer.from(hex, "hex");
+      }
+      hex = localStorage.getItem(name);
       if (!hex) {
         hex = crypto3.randomBytes(32).toString("hex");
         localStorage.setItem(name, hex);
@@ -6078,7 +6088,7 @@ var require_config = __commonJS({
       return import_buffer.Buffer.from(hex, "hex");
     }
     var config = {
-      version: true ? "1.2.0" : "local",
+      version: true ? "1.2.1" : "local",
       env: "local",
       isProd: true,
       isTest: false,
@@ -6092,8 +6102,6 @@ var require_config = __commonJS({
       fileCfg: {},
       keySource: "device",
       setupComplete: true,
-      encryptionKey: key("suds.local.enc"),
-      indexKey: key("suds.local.idx"),
       tls: { cert: "", key: "", mode: "none" },
       session: { idleMinutes: 15, absoluteHours: 12 },
       mfaRequiredRoles: [],
@@ -6106,6 +6114,8 @@ var require_config = __commonJS({
       saveServerJson() {
       }
     };
+    config.encryptionKey = key("suds.local.enc");
+    config.indexKey = key("suds.local.idx");
     module.exports = config;
   }
 });
@@ -10865,7 +10875,7 @@ var require_sync = __commonJS({
     }
     function importRow2(t, r, existingCols) {
       const o = {};
-      for (const [k, v] of Object.entries(r)) if (existingCols.includes(k) && !k.endsWith("_idx")) o[k] = v;
+      for (const [k, v] of Object.entries(r)) if (existingCols.includes(k) && !k.endsWith("_idx") && v !== void 0) o[k] = v;
       for (const c of t.enc) if (o[c] !== void 0 && o[c] !== null) o[c] = encrypt3(o[c]);
       if (t.name === "clients") {
         const fn = r.first_name_enc || "", ln2 = r.last_name_enc || "";
@@ -10892,7 +10902,9 @@ var require_sync = __commonJS({
         const sc = scopeSql(t, user, "x");
         const hasUpd = cols2(t.name).includes("updated_at");
         let rows = db3.all(`SELECT x.* FROM ${t.name} x WHERE COALESCE(x.updated_at, x.created_at) > ? AND ${sc.sql}`, since, ...sc.params);
-        if (t.name === "users") rows = rows.map((r) => r.id === user.id ? r : { ...r, password_hash: "scrypt$0$0$0$AA==$AA==", mfa_secret_enc: null, mfa_enabled: 0 });
+        if (t.name === "users") rows = rows.map((r) => ({ ...r.id === user.id ? r : { ...r, password_hash: "scrypt$0$0$0$AA==$AA==" }, mfa_secret_enc: null, mfa_enabled: 0 }));
+        if (t.name === "notes" && !auth3.hasPerm(user, "notes:clinical:read")) rows = rows.filter((r) => r.kind !== "clinical");
+        if (t.name === "note_addenda" && !auth3.hasPerm(user, "notes:clinical:read")) rows = rows.filter((r) => db3.one(`SELECT kind FROM notes WHERE id=?`, r.note_id)?.kind !== "clinical");
         out2.tables[t.name] = rows.map((r) => exportRow2(t, r));
       }
       for (const k of SYNC2.settings_keys) out2.settings[k] = db3.getSetting(k, null);
@@ -10915,8 +10927,47 @@ var require_sync = __commonJS({
               continue;
             }
             const existing = db3.one(`SELECT * FROM ${t.name} WHERE id=?`, raw.id);
+            if (t.name === "clients" && existing && !auth3.canAccessClient(user, raw.id)) {
+              rejected.push({ table: t.name, id: raw.id, reason: "not on caseload" });
+              continue;
+            }
+            if (t.scope === "via-note") {
+              const n2 = db3.one(`SELECT client_id, kind FROM notes WHERE id=?`, raw.note_id);
+              if (!n2 || !auth3.canAccessClient(user, n2.client_id) || n2.kind === "clinical" && !auth3.hasPerm(user, "notes:clinical:write")) {
+                rejected.push({ table: t.name, id: raw.id, reason: "not permitted" });
+                continue;
+              }
+            }
+            if (t.name === "notes" && raw.kind === "clinical" && !auth3.hasPerm(user, "notes:clinical:write")) {
+              rejected.push({ table: t.name, id: raw.id, reason: "clinical notes not permitted for this role" });
+              continue;
+            }
             const incomingAt = raw.updated_at || raw.created_at || NEVER2;
             if (existing && (existing.updated_at || existing.created_at || NEVER2) >= incomingAt) continue;
+            const OWNER = { interventions: "user_id", calls: "user_id", time_entries: "user_id", referrals: "user_id", expenditures: "user_id", notes: "author_id" }[t.name];
+            if (OWNER && !auth3.hasPerm(user, "clients:all")) {
+              if (!existing) raw[OWNER] = user.id;
+              else raw[OWNER] = existing[OWNER];
+            }
+            if (t.name === "expenditures") {
+              if (!existing) {
+                raw.status = "pending";
+                raw.approved_by = null;
+                raw.approved_at = null;
+              } else if (!auth3.hasPerm(user, "budget:approve")) {
+                raw.status = existing.status;
+                raw.approved_by = existing.approved_by;
+                raw.approved_at = existing.approved_at;
+              }
+            }
+            if (t.name === "notes" && existing && existing.status !== "draft") {
+              raw.content_enc = void 0;
+              raw.structured_enc = void 0;
+              raw.status = existing.status;
+              raw.signed_by = existing.signed_by;
+              raw.signed_at = existing.signed_at;
+              raw.signature_hash = existing.signature_hash;
+            }
             if (db3.one(`SELECT 1 FROM tombstones WHERE table_name=? AND id=? AND deleted_at > ?`, t.name, raw.id, incomingAt)) continue;
             const o = importRow2(t, raw, existingCols);
             if (t.name === "clients" && !existing) {
@@ -10934,7 +10985,16 @@ var require_sync = __commonJS({
           const t = SYNC2.tables.find((x) => x.name === ts.table_name);
           if (!t || t.name === "users" || typeof ts.id !== "string") continue;
           const existing = db3.one(`SELECT * FROM ${t.name} WHERE id=?`, ts.id);
-          if (existing && (existing.updated_at || existing.created_at || NEVER2) < ts.deleted_at) {
+          if (!existing) continue;
+          if (t.name === "clients" || t.name === "notes" || t.name === "consents" || t.name === "disclosures" || t.name === "note_addenda") continue;
+          const clientId = t.clientCol ? existing[t.clientCol] : null;
+          if (clientId && !auth3.canAccessClient(user, clientId)) {
+            rejected.push({ table: t.name, id: ts.id, reason: "not on caseload" });
+            continue;
+          }
+          if (t.scope === "all" && !auth3.hasPerm(user, "clients:all")) continue;
+          if (t.name === "expenditures" && existing.status !== "pending") continue;
+          if ((existing.updated_at || existing.created_at || NEVER2) < ts.deleted_at) {
             db3.run(`DELETE FROM ${t.name} WHERE id=?`, ts.id);
             db3.tombstone(t.name, ts.id);
           }

@@ -27,6 +27,13 @@ SUDS is designed to help a covered entity meet the HIPAA Security Rule (45 CFR �
 * Reports and CSV exports use client codes, not names, unless an authorized user explicitly requests an identified export (audited).
 * Redisclosure notice: include the Part 2 prohibition-on-redisclosure statement in any information you release; SUDS records the disclosure but does not generate the letter.
 
+## Phone app (local mode) and sync
+
+* The phone app stores its own encrypted database on the device (AES-256-GCM, same scheme as the server). Keys are generated on the device and kept in the Android Keystore-backed encrypted preferences or the iOS Keychain (`WhenUnlockedThisDeviceOnly`), never in web storage on the apps. The app requires fingerprint / Face ID / PIN after two minutes in the background. Require device passcodes and remote wipe through MDM.
+* Sync transmits records over HTTPS to the office server, authenticated with the user's office credentials (and MFA where enabled); PHI is decrypted for transport and re-encrypted with the receiver's own key. Credentials are not stored on the device.
+* The server enforces minimum necessary on sync: only the user's caseload is downloaded; clinical notes only for clinical roles; MFA secrets and other users' credentials are never sent. Uploads are attributed to the syncing user, cannot change approvals or signed notes, cannot delete clients, notes, consents or disclosures, and are rejected outside the caseload. Every sync is audited on the server, including the device's own audit entries.
+* Sync in a plain browser (`/?local=1`) keeps keys in that browser's storage and is intended for testing only.
+
 ## Organizational responsibilities (not provided by software)
 
 1. **Risk analysis and management** (§164.308(a)(1)) — document this deployment in your risk register.

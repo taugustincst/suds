@@ -33,6 +33,11 @@ struct WebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let cfg = WKWebViewConfiguration(); cfg.websiteDataStore = .default(); cfg.allowsInlineMediaPlayback = true
         cfg.userContentController.add(context.coordinator, name: "suds")
+        let root = Bundle.main.url(forResource: "public", withExtension: nil)!
+        cfg.setURLSchemeHandler(AppSchemeHandler(root: root), forURLScheme: AppSchemeHandler.scheme)
+        // Encryption keys from the Keychain, available to the kernel before any module runs
+        let secrets = "window.__sudsSecrets = {\"suds.local.enc\": \"\(DeviceSecrets.hex("suds.local.enc"))\", \"suds.local.idx\": \"\(DeviceSecrets.hex("suds.local.idx"))\"};"
+        cfg.userContentController.addUserScript(WKUserScript(source: secrets, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         // window.SudsNative shim: same surface as the Android bridge, implemented with message handlers
         let bridge = """
         window.SudsNative = { discover: function(){ return window.__sudsDiscovered ? JSON.stringify(window.__sudsDiscovered) : null; },
@@ -45,10 +50,7 @@ struct WebView: UIViewRepresentable {
         w.customUserAgent = (w.value(forKey: "userAgent") as? String ?? "") + " SUDSApp/1.1"
         w.scrollView.refreshControl = UIRefreshControl(); w.scrollView.refreshControl?.addTarget(context.coordinator, action: #selector(Coordinator.refresh(_:)), for: .valueChanged)
         context.coordinator.web = w
-        if let dir = Bundle.main.url(forResource: "public", withExtension: nil) {
-            var c = URLComponents(url: dir.appendingPathComponent("index.html"), resolvingAgainstBaseURL: false)!; c.query = "local=1"
-            w.loadFileURL(c.url!, allowingReadAccessTo: dir)
-        }
+        w.load(URLRequest(url: URL(string: "suds://app/index.html?local=1")!))
         return w
     }
     func updateUIView(_ uiView: WKWebView, context: Context) {

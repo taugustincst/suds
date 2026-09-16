@@ -28,6 +28,6 @@ Open `mobile/android` in Android Studio → Build → Build APK(s). The bundled 
 Open `https://<your-suds>/?local=1`. The page runs the whole app locally in that browser profile (data stays there) and can sync with the same server — useful for testing.
 
 ## Security notes
-- Data at rest on the device is AES-256-GCM encrypted with keys held in the app's private storage; Android app sandboxing and device encryption protect the keys. Use MDM to require a device passcode and allow remote wipe.
+- Data at rest on the device is AES-256-GCM encrypted; keys are held in the Android Keystore-backed encrypted store or the iOS Keychain. Use MDM to require a device passcode and allow remote wipe.
 - Sync uses HTTPS to the office server (self-signed certificate trusted once by fingerprint). Credentials are never stored on the phone; a short-lived session is used for each sync.
 - "Erase data on this device" on the Sync screen removes the local database.
