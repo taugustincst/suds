@@ -59,6 +59,7 @@ function loadKey(envName, fileName) {
 }
 
 const config = {
+  version: require('../package.json').version,
   env,
   isProd: env === 'production',
   isTest: env === 'test',

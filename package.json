@@ -14,8 +14,10 @@
     "create-admin": "node --no-warnings=ExperimentalWarning scripts/create-admin.js",
     "backup": "node --no-warnings=ExperimentalWarning scripts/backup.js",
     "rotate-key": "node --no-warnings=ExperimentalWarning scripts/rotate-key.js",
+    "package": "node scripts/package.js",
     "gen-api-docs": "node --no-warnings=ExperimentalWarning scripts/gen-api-docs.js",
     "gen-key": "node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
   },
+  "repository": { "type": "git", "url": "https://github.com/taugustincst/suds.git" },
   "license": "MIT"
 }

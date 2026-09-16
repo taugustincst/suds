@@ -20,7 +20,7 @@ function userCount() { return db.one(`SELECT COUNT(*) n FROM users`).n; }
 function onlyBootstrapAdmin() { return db.one(`SELECT COUNT(*) n FROM users WHERE NOT (username='admin' AND must_change_password=1 AND last_login_at IS NULL)`).n === 0; }
 
 module.exports = (r) => {
-  r.get('/api/setup/status', () => ({ needed: setupNeeded() && onlyBootstrapAdmin(), listener: listener.describe(), hostname: require('node:os').hostname(), keySource: config.keySource, env: config.env }));
+  r.get('/api/setup/status', () => ({ needed: setupNeeded() && onlyBootstrapAdmin(), listener: listener.describe(), hostname: require('node:os').hostname(), keySource: config.keySource, env: config.env, version: config.version }));
 
   r.post('/api/setup/complete', async (ctx) => {
     if (!(setupNeeded() && onlyBootstrapAdmin())) throw new HttpError(403, 'Setup has already been completed');
