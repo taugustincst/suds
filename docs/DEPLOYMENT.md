@@ -1,5 +1,7 @@
 # Deployment guide
 
+> **No terminal?** See [INSTALL.md](INSTALL.md): double-click a launcher and finish setup in the browser. This document covers the environment-variable / service deployment that IT departments typically prefer. Both can be mixed: environment variables override anything the wizard wrote to `data/server.json` and `data/keys.json`.
+
 ## Requirements
 
 * Node.js 22.13 or newer (uses the built-in `node:sqlite` module). No other runtime dependencies.
@@ -13,8 +15,10 @@ Copy `.env.example` to `.env` and set:
 | Variable | Required | Notes |
 | --- | --- | --- |
 | `SUDS_ENV=production` | yes | Enforces keys and secure cookies |
-| `SUDS_ENCRYPTION_KEY` | yes | 64 hex chars. `npm run gen-key`. Encrypts all PHI fields. **Losing it makes PHI unrecoverable.** |
-| `SUDS_INDEX_KEY` | yes | 64 hex chars. Used for searchable blind indexes. |
+| `SUDS_ENCRYPTION_KEY` | yes* | 64 hex chars. `npm run gen-key`. Encrypts all PHI fields. **Losing it makes PHI unrecoverable.** |
+| `SUDS_INDEX_KEY` | yes* | 64 hex chars. Used for searchable blind indexes. |
+
+\* If not set, the first production start generates both keys into `data/keys.json` (mode 0600) so the browser wizard can run; the wizard and Administration → System offer a key backup download.
 | `SUDS_DB_PATH` / `SUDS_DATA_DIR` | no | Defaults to `./data/suds.db`. Put on the encrypted volume. |
 | `TLS_CERT_PATH`, `TLS_KEY_PATH` | recommended | If unset, run behind a TLS proxy. |
 | `TRUST_PROXY=1` | when proxied | Use the `X-Forwarded-For` header for audit IPs and rate limiting. Only set behind a proxy you control. |
@@ -63,6 +67,16 @@ docker compose up -d
 ### Windows Server
 
 Run under a service wrapper (NSSM or `sc.exe`) with the same environment variables, and terminate TLS with IIS (ARR reverse proxy to `127.0.0.1:8080`). Set `X-Forwarded-For` so audit logs record client IPs.
+
+### Files written by the setup wizard
+
+| File | Contents |
+| --- | --- |
+| `data/server.json` | host (`127.0.0.1` or `0.0.0.0`), port, `tls` (`none` / `selfsigned`), `trustProxy`, `setupComplete` |
+| `data/keys.json` | encryption and index keys (only when not supplied by the environment) |
+| `data/certs/suds.crt`, `suds.key` | self-signed ECDSA P-256 certificate covering localhost, the hostname and LAN IPs (825 days) |
+
+Network settings can be changed at runtime under Administration → Network & devices; the listener switches without a restart.
 
 ## 3. First login
 

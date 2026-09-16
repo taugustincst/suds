@@ -119,3 +119,29 @@ pre.note { white-space: pre-wrap; font-family: var(--font); background: var(--pa
 .qr { font-family: var(--mono); font-size: .8em; word-break: break-all; background: var(--panel-2); padding: .5rem; border-radius: 6px; }
 @media print { .sidebar, .topbar, .btn, .tabs { display: none !important; } .layout { display: block; } .card { box-shadow: none; } }
 .row > select, .row > input:not([type="checkbox"]) { width: auto; }
+
+/* Mobile navigation */
+.mobilebar { display: none; }
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; }
+  .mobilebar { display: flex; align-items: center; justify-content: space-between; gap: .5rem; position: sticky; top: 0; z-index: 30; background: var(--panel); border-bottom: 1px solid var(--border); padding: .4rem .6rem; padding-top: calc(.4rem + env(safe-area-inset-top)); }
+  .mobilebar .btn { font-size: 1.25rem; padding: .3rem .6rem; }
+  .sidebar { position: fixed; inset: 0 25% 0 0; height: 100vh; z-index: 40; transform: translateX(-100%); transition: transform .2s ease; box-shadow: 0 0 40px rgba(0,0,0,.4); flex-direction: column; flex-wrap: nowrap; }
+  .sidebar.open { transform: translateX(0); }
+  body.nav-open::after { content: ""; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 35; }
+  .nav { display: block; } .nav .sec { display: block; } .nav a { padding: .7rem .65rem; font-size: 1rem; }
+  .sidebar .foot { margin-top: auto; }
+  .main { padding: .75rem .75rem 4rem; }
+  .topbar { flex-direction: column; align-items: stretch; } .topbar h1 { font-size: 1.25rem; } .topbar .row { justify-content: flex-start; }
+  .modal-bg { padding: 0; align-items: stretch; } .modal, .modal.wide { max-width: none; border-radius: 0; min-height: 100vh; padding: 1rem; padding-bottom: calc(1rem + env(safe-area-inset-bottom)); }
+  .form-grid { grid-template-columns: 1fr; }
+  .btn { padding: .65rem 1rem; } input, select, textarea { font-size: 16px; padding: .6rem .7rem; } /* 16px prevents iOS zoom */
+  .filters .field { min-width: 45%; }
+  .tabs button { padding: .7rem .8rem; }
+  .table-wrap { max-height: none; }
+  .grid.cols-4 { grid-template-columns: repeat(2, 1fr); }
+  .stat .v { font-size: 1.3rem; }
+  .timeline { padding-left: 1rem; }
+  .toasts { left: .75rem; right: .75rem; bottom: calc(.75rem + env(safe-area-inset-bottom)); } .toast { max-width: none; }
+}
+@media (display-mode: standalone) { .mobilebar { padding-top: calc(.4rem + env(safe-area-inset-top)); } }

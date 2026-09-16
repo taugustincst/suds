@@ -218,13 +218,15 @@ export async function render() {
   const app = document.getElementById('app');
   clear(document.getElementById('modal-root'));
   const r = parseHash();
+  if (state.setupNeeded) { if (r.name !== 'setup') { nav('setup'); return; } clear(app).append(await routes.setup(r)); return; }
   if (!state.user) { clear(app).append(await routes.login(r)); return; }
   if (state.mfaPending && r.name !== 'mfa') { nav('mfa'); return; }
   if (r.name === 'mfa' || r.name === 'login') { clear(app).append(await routes[r.name === 'mfa' ? 'mfa' : 'dashboard'](r)); return; }
   if (state.user.must_change_password && r.name !== 'profile') { nav('profile?force=1'); return; }
   const loader = routes[r.name] || routes.dashboard;
   const main = h('div', { class: 'main' }, h('div', { class: 'boot' }, 'Loading…'));
-  const layout = h('div', { class: 'layout' }, sidebar(r), main);
+  const side = sidebar(r);
+  const layout = h('div', { class: 'layout' }, mobileBar(r, side), side, main);
   clear(app).append(layout);
   try { const view = await loader(r); clear(main).append(view); }
   catch (e) { clear(main).append(h('div', { class: 'banner danger' }, e.message)); }
@@ -236,6 +238,12 @@ function sidebar(r) {
     h('nav', { class: 'nav' }, NAV.map(n => n.sec ? h('div', { class: 'sec' }, n.sec) : (!n.perm || can(n.perm)) ? h('a', { href: '#/' + n.name, class: r.name === n.name ? 'active' : '' }, h('span', { class: 'ico' }, n.ico), n.label) : null)),
     h('div', { class: 'foot' }, h('div', {}, h('b', {}, state.user.display_name)), h('div', { class: 'muted' }, fmt.label(state.user.role)),
       h('div', { class: 'row', style: { marginTop: '.5rem' } }, h('a', { href: '#/profile' }, 'Profile'), h('a', { href: '#', onClick: (e) => { e.preventDefault(); logout(); } }, 'Sign out'), h('a', { href: '#', title: 'Toggle theme', onClick: (e) => { e.preventDefault(); toggleTheme(); } }, '☾'))));
+}
+function mobileBar(r, side) {
+  const item = NAV.find(n => n.name === r.name) || (r.name === 'client' ? { label: 'Client' } : { label: 'SUDS' });
+  const toggle = () => { side.classList.toggle('open'); document.body.classList.toggle('nav-open', side.classList.contains('open')); };
+  side.addEventListener('click', (e) => { if (e.target.closest('a')) { side.classList.remove('open'); document.body.classList.remove('nav-open'); } });
+  return h('div', { class: 'mobilebar' }, h('button', { class: 'btn ghost', 'aria-label': 'Menu', onClick: toggle }, '☰'), h('b', {}, item.label), h('a', { href: '#/clients', class: 'btn ghost', 'aria-label': 'Clients' }, '👤'));
 }
 function toggleTheme() { const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); const next = cur === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = next; try { localStorage.setItem('suds.theme', next); } catch {} }
 try { const t = localStorage.getItem('suds.theme'); if (t) document.documentElement.dataset.theme = t; } catch {}
@@ -259,6 +267,8 @@ function startIdleWatch() {
 }
 
 export async function loadSession() {
+  try { const st = await get('/api/setup/status', { quiet: true }); state.setupNeeded = !!st.needed; } catch { state.setupNeeded = false; }
+  if (state.setupNeeded) { state.user = null; return; }
   try {
     const me = await get('/api/auth/me', { quiet: true });
     state.user = me.user; state.org = me.org_name; state.mfaPending = me.mfaPending; state.idleMinutes = me.idle_minutes || 15;
@@ -273,6 +283,8 @@ export async function loadRefData() {
 
 // ---------- boot (called from main.js after all views are registered) ----------
 export async function boot() {
+  // Service worker (app shell cache). Registration is rejected on self-signed HTTPS; that is fine — the app still works and can be added to the home screen.
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') { try { navigator.serviceWorker.register('sw.js').catch(() => {}); } catch {} }
   await loadSession();
   startIdleWatch();
   window.addEventListener('hashchange', render);

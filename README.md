@@ -6,6 +6,16 @@ A HIPAA-oriented, zero-dependency web application for county **substance use dis
 * **Data protection:** AES-256-GCM field-level encryption of PHI, blind-index search, scrypt password hashing, TOTP MFA, role-based access with caseload scoping, 42 CFR Part 2 consent and disclosure accounting, and a hash-chained audit log.
 * **Documentation:** [Deployment](docs/DEPLOYMENT.md) · [API reference](docs/API.md) · [HIPAA & security controls](docs/HIPAA.md) · [Importing notes (Pocket AI / OneNote)](docs/IMPORTS.md) · [User guide](docs/USER_GUIDE.md)
 
+## Install without a terminal (recommended for county staff)
+
+1. Install Node.js LTS from https://nodejs.org (click *Next* through the installer).
+2. Unzip SUDS somewhere permanent and double-click `launchers/Start-SUDS.bat` (Windows), `launchers/Start-SUDS.command` (Mac) or `launchers/start-suds.sh` (Linux).
+3. Your browser opens the **setup wizard**: name the program, create your administrator account, and choose whether phones and tablets on the office network may connect. SUDS generates its encryption keys and an HTTPS certificate for you and shows a QR code for phones.
+
+Full walkthrough with screenshots-free steps: [docs/INSTALL.md](docs/INSTALL.md). Everything the wizard sets can later be changed under **Administration → Network & devices / Settings / System & backups**.
+
+**Mobile:** SUDS is a responsive progressive web app. On a phone, open the address (or scan the QR code in Administration → Network), then *Share → Add to Home Screen* (iPhone) or *⋮ → Install app* (Android). It runs full-screen with the same sign-in, MFA and 15-minute auto sign-out.
+
 ## Quick start (development)
 
 ```bash
@@ -18,16 +28,9 @@ Demo logins (password `Navigator2026!!`): `mrivera` / `dchen` (navigators), `kpa
 
 Without seeding, the first start creates an `admin` user and prints a temporary password.
 
-## Production in three steps
+## Production for IT teams
 
-```bash
-cp .env.example .env
-npm run gen-key   # paste into SUDS_ENCRYPTION_KEY
-npm run gen-key   # paste into SUDS_INDEX_KEY
-SUDS_ENV=production npm start   # behind TLS — see docs/DEPLOYMENT.md
-```
-
-Or with Docker: `docker compose up -d` (includes a Caddy TLS proxy).
+The launcher + wizard route above is production mode (`SUDS_ENV=production`) with keys in `data/keys.json` and a self-signed certificate. IT teams who prefer environment variables, a real certificate, a systemd service or Docker (`docker compose up -d`, includes a Caddy TLS proxy) should read [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Environment variables always override the wizard's settings.
 
 ## What it tracks
 

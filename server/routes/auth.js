@@ -33,7 +33,7 @@ module.exports = (r) => {
   r.get('/api/auth/me', (ctx) => {
     if (!ctx.user) throw unauthorized();
     const u = db.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
-    return { user: auth.publicUser(u), mfaPending: !!ctx.session.mfa_pending, org_name: db.getSetting('org_name', 'SUDS'), idle_minutes: require('../config').session.idleMinutes };
+    return { user: auth.publicUser(u), mfaPending: !!ctx.session.mfa_pending, org_name: db.getSetting('org_name', 'SUDS'), idle_minutes: auth.policy().idleMinutes, setup_needed: false };
   });
 
   r.post('/api/auth/password', (ctx) => {
@@ -74,7 +74,7 @@ module.exports = (r) => {
     const { password } = validate(ctx.body, { password: { type: 'string', required: true, maxLen: 500 } });
     const u = db.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
     if (!verifyPassword(password, u.password_hash)) throw unauthorized('Password is incorrect');
-    if (require('../config').mfaRequiredRoles.includes(u.role)) throw badRequest('MFA is required for your role');
+    if (auth.policy().mfaRequiredRoles.includes(u.role)) throw badRequest('MFA is required for your role');
     db.run(`UPDATE users SET mfa_enabled=0, mfa_secret_enc=NULL, updated_at=? WHERE id=?`, db.now(), u.id);
     audit.log({ user: u, action: 'auth.mfa.disabled', ip: ctx.ip });
     return { ok: true };

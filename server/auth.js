@@ -5,6 +5,18 @@ const audit = require('./audit');
 const { sha256, randomToken, verifyPassword, verifyTotp, decrypt } = require('./crypto');
 const { unauthorized, forbidden, HttpError } = require('./http');
 
+// Security policy: settings table (editable in Administration) overrides environment defaults.
+function policy() {
+  const num = (k, d) => { const v = Number(db.getSetting(k, '')); return Number.isFinite(v) && v > 0 ? v : d; };
+  const roles = db.getSetting('mfa_required_roles', null);
+  return {
+    idleMinutes: num('session_idle_minutes', config.session.idleMinutes),
+    absoluteHours: num('session_absolute_hours', config.session.absoluteHours),
+    passwordMaxAgeDays: num('password_max_age_days', config.password.maxAgeDays),
+    mfaRequiredRoles: roles === null ? config.mfaRequiredRoles : roles.split(',').map(x => x.trim()).filter(Boolean),
+  };
+}
+
 // ---- Role-based permissions (minimum necessary) ----
 // clinical notes are visible only to clinical roles and supervisors; admins are system administrators,
 // not treating staff, and must use break-glass (audited) to read clinical content.
@@ -71,7 +83,7 @@ const COOKIE = 'suds_session';
 function createSession(user, ctx, { mfaPending = false } = {}) {
   const token = randomToken(32);
   const now = new Date();
-  const expires = new Date(now.getTime() + config.session.absoluteHours * 3600 * 1000);
+  const expires = new Date(now.getTime() + policy().absoluteHours * 3600 * 1000);
   db.run(`INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent) VALUES(?,?,?,?,?,?,?,?)`,
     sha256(token), user.id, now.toISOString(), now.toISOString(), expires.toISOString(), mfaPending ? 1 : 0, ctx.ip, (ctx.headers['user-agent'] || '').slice(0, 200));
   return token;
@@ -79,7 +91,7 @@ function createSession(user, ctx, { mfaPending = false } = {}) {
 function cookieHeader(token, { clear = false } = {}) {
   const secure = config.tls.cert || config.isProd ? '; Secure' : '';
   if (clear) return `${COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`;
-  return `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${config.session.absoluteHours * 3600}${secure}`;
+  return `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${policy().absoluteHours * 3600}${secure}`;
 }
 function revokeSession(token) { if (token) db.run(`UPDATE sessions SET revoked_at=? WHERE id=?`, db.now(), sha256(token)); }
 function revokeAllForUser(userId) { db.run(`UPDATE sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL`, db.now(), userId); }
@@ -93,7 +105,7 @@ function resolveSession(ctx) {
   if (!s) return null;
   const now = Date.now();
   if (Date.parse(s.expires_at) < now) return null;
-  const idleMs = config.session.idleMinutes * 60 * 1000;
+  const idleMs = policy().idleMinutes * 60 * 1000;
   if (now - Date.parse(s.last_seen_at) > idleMs) {
     db.run(`UPDATE sessions SET revoked_at=? WHERE id=?`, db.now(), s.id);
     return null;
@@ -113,7 +125,7 @@ function requireAuth(ctx) {
   if (!ctx.path.startsWith('/api/auth/')) {
     if (ctx.user.must_change_password) throw new HttpError(403, 'Password change required', { passwordChangeRequired: true });
     const age = ctx.user.password_changed_at ? (Date.now() - Date.parse(ctx.user.password_changed_at)) / 86400000 : Infinity;
-    if (age > config.password.maxAgeDays) throw new HttpError(403, `Password is older than ${config.password.maxAgeDays} days and must be changed`, { passwordChangeRequired: true });
+    const maxAge = policy().passwordMaxAgeDays; if (age > maxAge) throw new HttpError(403, `Password is older than ${maxAge} days and must be changed`, { passwordChangeRequired: true });
   }
 }
 
@@ -137,7 +149,7 @@ function login({ username, password, ctx }) {
     fail(lock ? 'locked after failures' : 'bad password');
   }
   db.run(`UPDATE users SET failed_attempts=0, locked_until=NULL, last_login_at=? WHERE id=?`, db.now(), user.id);
-  const mfaRequiredForRole = config.mfaRequiredRoles.includes(user.role);
+  const mfaRequiredForRole = policy().mfaRequiredRoles.includes(user.role);
   const mfaPending = !!user.mfa_enabled;
   const token = createSession(user, ctx, { mfaPending });
   audit.log({ user, action: mfaPending ? 'auth.login.mfa_pending' : 'auth.login', ip: ctx.ip });
@@ -161,7 +173,7 @@ function publicUser(u) {
   const perms = PERMS[u.role] || [];
   return { id: u.id, username: u.username, display_name: u.display_name, email: u.email, title: u.title, role: u.role,
     mfa_enabled: !!u.mfa_enabled, must_change_password: !!u.must_change_password, permissions: perms,
-    mfa_required: config.mfaRequiredRoles.includes(u.role), caseload_restricted: caseloadRestricted(u) };
+    mfa_required: policy().mfaRequiredRoles.includes(u.role), caseload_restricted: caseloadRestricted(u) };
 }
 
 function passwordPolicy(pw) {
@@ -173,5 +185,5 @@ function passwordPolicy(pw) {
   return errors;
 }
 
-module.exports = { PERMS, hasPerm, requirePerm, requireAuth, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted,
+module.exports = { policy, PERMS, hasPerm, requirePerm, requireAuth, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted,
   createSession, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };
