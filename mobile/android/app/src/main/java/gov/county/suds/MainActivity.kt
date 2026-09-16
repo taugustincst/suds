@@ -1,11 +1,14 @@
 package gov.county.suds
 
-import android.app.DownloadManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.net.http.SslError
+import android.net.nsd.NsdManager
+import android.net.nsd.NsdServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Bundle
-import android.os.Environment
+import android.util.Base64
 import android.view.View
 import android.webkit.*
 import androidx.appcompat.app.AlertDialog
@@ -13,37 +16,54 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+import androidx.webkit.WebViewAssetLoader
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
+import java.io.File
 import java.security.cert.X509Certificate
 
 /**
- * Hosts the SUDS web app. The web app itself is served by the SUDS server (same code as on the computer), so
- * everything stays in sync automatically. This wrapper adds: server discovery, certificate trust by fingerprint,
- * device unlock (biometric / PIN) when the app is reopened, file downloads (CSV exports, backups), and back navigation.
+ * SUDS on the phone. The complete SUDS web app is bundled in the APK and runs entirely on the device
+ * (local kernel: SQLite in WebAssembly, encrypted at rest). No server is needed to install or use it.
+ * "Sync" in the app talks to the office SUDS server when the user chooses; this activity provides the
+ * native pieces: office-server discovery (DNS-SD), certificate trust by fingerprint, QR scanning,
+ * device unlock on return, and saving downloaded files.
  */
 class MainActivity : AppCompatActivity() {
     private lateinit var web: WebView
     private lateinit var prefs: Prefs
     private var lastPaused = 0L
+    private var discovered: String? = null
+    private var nsdListener: NsdManager.DiscoveryListener? = null
+    private var multicast: WifiManager.MulticastLock? = null
+
+    private val scanner = registerForActivityResult(ScanContract()) { result ->
+        val text = result.contents ?: return@registerForActivityResult
+        web.evaluateJavascript("window.dispatchEvent(new CustomEvent('suds-scan',{detail:${JSONObjectQuote(text)}}))", null)
+    }
+    private fun JSONObjectQuote(s: String) = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = Prefs(this)
-        val base = prefs.serverUrl
-        if (base == null) { startActivity(Intent(this, ConnectActivity::class.java)); finish(); return }
         setContentView(R.layout.activity_main)
         web = findViewById(R.id.web)
         val swipe = findViewById<SwipeRefreshLayout>(R.id.swipe)
         swipe.setOnRefreshListener { web.reload(); swipe.isRefreshing = false }
         with(web.settings) {
-            javaScriptEnabled = true; domStorageEnabled = true; allowFileAccess = false; allowContentAccess = false
+            javaScriptEnabled = true; domStorageEnabled = true; databaseEnabled = true; allowFileAccess = false; allowContentAccess = false
             cacheMode = WebSettings.LOAD_DEFAULT; mediaPlaybackRequiresUserGesture = true; setSupportZoom(false)
-            userAgentString = "$userAgentString SUDSApp/1.0"
+            userAgentString = "$userAgentString SUDSApp/1.1"
         }
         CookieManager.getInstance().setAcceptCookie(true)
+        val assets = WebViewAssetLoader.Builder().addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this)).build()
+        web.addJavascriptInterface(Bridge(), "SudsNative")
         web.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? = assets.shouldInterceptRequest(request.url)
             override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
-                // Only the self-signed SUDS certificate is ever accepted, and only after the user confirmed its fingerprint.
+                // Only the office server's self-signed certificate is ever accepted, after the user confirmed its fingerprint.
                 val cert = error.certificate.x509Certificate
                 if (cert == null) { handler.cancel(); return }
                 val fp = Tls.fingerprint(cert)
@@ -54,36 +74,63 @@ class MainActivity : AppCompatActivity() {
                     else -> { handler.cancel(); certChanged() }
                 }
             }
-            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                if (!request.isForMainFrame) return
-                AlertDialog.Builder(this@MainActivity).setTitle(R.string.app_name).setMessage(getString(R.string.unreachable, base, error.description))
-                    .setPositiveButton("Retry") { _, _ -> view.reload() }.setNegativeButton(R.string.forget_server) { _, _ -> prefs.forget(); recreate() }.setCancelable(false).show()
-            }
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val u = request.url
-                return if (u.toString().startsWith(base)) false else { startActivity(Intent(Intent.ACTION_VIEW, u)); true }
+                return if (u.host == "appassets.androidplatform.net") false else { startActivity(Intent(Intent.ACTION_VIEW, u)); true }
             }
         }
         web.webChromeClient = WebChromeClient()
-        web.setDownloadListener { url, ua, contentDisposition, mime, _ ->
-            val req = DownloadManager.Request(Uri.parse(url)).setMimeType(mime).setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            req.addRequestHeader("Cookie", CookieManager.getInstance().getCookie(url)); req.addRequestHeader("User-Agent", ua)
-            req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, URLUtil.guessFileName(url, contentDisposition, mime))
-            (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(req)
+        if (savedInstanceState == null) web.loadUrl("https://appassets.androidplatform.net/assets/index.html?local=1") else web.restoreState(savedInstanceState)
+        startDiscovery()
+    }
+
+    /** Exposed to the web app as window.SudsNative */
+    inner class Bridge {
+        @JavascriptInterface fun discover(): String? = discovered?.let { "\"$it\"" }
+        @JavascriptInterface fun scanQr() { runOnUiThread { scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setPrompt("Scan the office SUDS QR code").setBeepEnabled(false)) } }
+        @JavascriptInterface fun forgetCertificate() { prefs.certFingerprint = null }
+        @JavascriptInterface fun saveFile(name: String, base64: String, mime: String) {
+            val dir = File(cacheDir, "downloads").apply { mkdirs() }
+            val f = File(dir, name.replace(Regex("[^A-Za-z0-9._-]"), "_"))
+            f.writeBytes(Base64.decode(base64, Base64.DEFAULT))
+            val uri = FileProvider.getUriForFile(this@MainActivity, "$packageName.files", f)
+            runOnUiThread { startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType(mime).putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "Save or share $name")) }
         }
-        if (savedInstanceState == null) web.loadUrl("$base/") else web.restoreState(savedInstanceState)
+    }
+
+    private fun startDiscovery() {
+        try { val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager; multicast = wm.createMulticastLock("suds").apply { setReferenceCounted(false); acquire() } } catch (_: Exception) {}
+        val nsd = getSystemService(Context.NSD_SERVICE) as NsdManager
+        val l = object : NsdManager.DiscoveryListener {
+            override fun onStartDiscoveryFailed(t: String, e: Int) {} override fun onStopDiscoveryFailed(t: String, e: Int) {}
+            override fun onDiscoveryStarted(t: String) {} override fun onDiscoveryStopped(t: String) {} override fun onServiceLost(s: NsdServiceInfo) {}
+            override fun onServiceFound(s: NsdServiceInfo) {
+                if (!s.serviceType.contains("_suds._tcp")) return
+                @Suppress("DEPRECATION")
+                nsd.resolveService(s, object : NsdManager.ResolveListener {
+                    override fun onResolveFailed(i: NsdServiceInfo, e: Int) {}
+                    override fun onServiceResolved(i: NsdServiceInfo) {
+                        val tls = i.attributes["tls"]?.let { String(it) } != "0"; val host = i.host?.hostAddress ?: return; val port = i.port
+                        val std = (tls && port == 443) || (!tls && port == 80)
+                        discovered = (if (tls) "https://" else "http://") + host + (if (std) "" else ":$port")
+                    }
+                })
+            }
+        }
+        nsdListener = l
+        try { nsd.discoverServices("_suds._tcp", NsdManager.PROTOCOL_DNS_SD, l) } catch (_: Exception) {}
     }
 
     private fun askTrust(fp: String, cert: X509Certificate, cb: (Boolean) -> Unit) {
-        AlertDialog.Builder(this).setTitle(R.string.trust_title).setMessage(getString(R.string.trust_body, fp + "\n\n" + cert.subjectX500Principal.name))
-            .setPositiveButton(R.string.trust) { _, _ -> cb(true) }.setNegativeButton(R.string.cancel) { _, _ -> cb(false) }.setCancelable(false).show()
+        runOnUiThread { AlertDialog.Builder(this).setTitle(R.string.trust_title).setMessage(getString(R.string.trust_body, fp + "\n\n" + cert.subjectX500Principal.name))
+            .setPositiveButton(R.string.trust) { _, _ -> cb(true) }.setNegativeButton(R.string.cancel) { _, _ -> cb(false) }.setCancelable(false).show() }
     }
     private fun certChanged() {
-        AlertDialog.Builder(this).setMessage(R.string.cert_changed).setPositiveButton(R.string.forget_server) { _, _ -> prefs.forget(); recreate() }.setNegativeButton(R.string.cancel, null).show()
+        runOnUiThread { AlertDialog.Builder(this).setMessage(R.string.cert_changed).setPositiveButton(R.string.forget_server) { _, _ -> prefs.certFingerprint = null }.setNegativeButton(R.string.cancel, null).show() }
     }
 
-    // Require device unlock when returning after 2 minutes in the background (PHI on screen).
-    override fun onPause() { super.onPause(); lastPaused = System.currentTimeMillis(); if (::web.isInitialized) web.visibility = View.INVISIBLE }
+    // Require device unlock when returning after 2 minutes in the background (PHI on screen and on device).
+    override fun onPause() { super.onPause(); lastPaused = System.currentTimeMillis(); if (::web.isInitialized) { web.evaluateJavascript("window.SUDS_LOCAL&&window.SUDS_LOCAL.flush()", null); web.visibility = View.INVISIBLE } }
     override fun onResume() {
         super.onResume()
         if (!::web.isInitialized) return
@@ -101,4 +148,5 @@ class MainActivity : AppCompatActivity() {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() { if (::web.isInitialized && web.canGoBack()) web.goBack() else super.onBackPressed() }
     override fun onSaveInstanceState(outState: Bundle) { super.onSaveInstanceState(outState); if (::web.isInitialized) web.saveState(outState) }
+    override fun onDestroy() { nsdListener?.let { try { (getSystemService(Context.NSD_SERVICE) as NsdManager).stopServiceDiscovery(it) } catch (_: Exception) {} }; try { multicast?.release() } catch (_: Exception) {}; super.onDestroy() }
 }

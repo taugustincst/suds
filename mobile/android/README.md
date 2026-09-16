@@ -1,18 +1,17 @@
 # SUDS for Android
 
-Native Android app that hosts the SUDS web app served by your SUDS server, so it is always the same version as the computer and needs no configuration: it finds the server on the office Wi-Fi by itself (DNS-SD `_suds._tcp`, then `https://suds.local`, then QR scan or typed address).
+The complete SUDS app runs **on the phone**: the web app and its server logic are bundled into the APK (SQLite in WebAssembly, data encrypted at rest on the device). Nothing needs to be running on the office computer to install or use it. When the user taps **Sync** in the app, changes are exchanged with the office SUDS in both directions (newest change wins).
 
-Extra native features: one-time certificate trust by fingerprint, device unlock (fingerprint/PIN) when reopening the app, file downloads, back navigation, swipe to refresh.
+Native pieces added by this wrapper: office-server discovery (DNS-SD `_suds._tcp`), one-time certificate trust by fingerprint, QR scan of the office address, device unlock (fingerprint/PIN) when reopening the app, saving/sharing exported files.
 
-## Build (one click, no command line)
-1. Install Android Studio (https://developer.android.com/studio).
-2. File → Open → choose the `mobile/android` folder. Let it sync (it downloads what it needs).
-3. Build → Build Bundle(s) / APK(s) → **Build APK(s)**. Click *locate* when it finishes: `app/build/outputs/apk/release/app-release.apk` (or debug).
+## Build (Android Studio, no command line)
+1. Install Android Studio. File → Open → the `mobile/android` folder.
+2. Build → Build Bundle(s) / APK(s) → **Build APK(s)**. The bundled web app comes from the repository's `public/` folder, which already contains the prebuilt local kernel (`public/local/`).
 
-GitHub Actions also builds the APK on every release once Actions is enabled for the repository (`.github/workflows/mobile-android.yml`).
+GitHub Actions (`.github/workflows/mobile-android.yml`) builds and publishes the APK on every release (it rebuilds the kernel first with `npm run build:local`).
 
 ## Distribute
-In SUDS: Settings → Network & devices → **Native apps** → upload the APK. Staff then open **https://suds.local/app** on their phone and tap *Download SUDS for Android*. No Play Store account is needed (Android asks once to allow installs from this source). For managed county phones, IT can push the same APK with their MDM.
+Download the APK from the GitHub Release (or from Settings → Network & devices → Native apps on an office SUDS, which serves it at `https://suds.local/app`). Open the file on the phone and allow the install.
 
 ## Signing for production
-Create a keystore once (Android Studio: Build → Generate Signed Bundle / APK) and set `SUDS_KEYSTORE`, `SUDS_KEYSTORE_PASSWORD`, `SUDS_KEY_ALIAS`, `SUDS_KEY_PASSWORD` as environment variables (locally) or repository secrets (CI). Unsigned/debug-signed builds install fine for testing; updates must always be signed with the same key.
+Set `SUDS_KEYSTORE`, `SUDS_KEYSTORE_PASSWORD`, `SUDS_KEY_ALIAS`, `SUDS_KEY_PASSWORD` (or the `SUDS_KEYSTORE_BASE64` secret in CI). Updates must always be signed with the same key.

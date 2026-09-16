@@ -1,31 +1,33 @@
 # Native mobile apps
 
-SUDS runs on phones in two ways. Both show exactly the same app as the computer and stay in sync automatically because every device talks to the same SUDS server.
+The SUDS phone app is a **complete copy of SUDS that runs on the phone**. Nothing needs to be installed on, or running at, the office for a navigator to install the app and start working. When the navigator chooses **Sync**, the phone and the office SUDS exchange changes in both directions.
 
 | | Android | iPhone / iPad |
 | --- | --- | --- |
-| **No-install option** | open `https://suds.local` in Chrome → ⋮ → *Install app* | open `https://suds.local` in Safari → Share → *Add to Home Screen* |
-| **Native app** | `mobile/android` — APK downloaded from your own server at **https://suds.local/app** | `mobile/ios` — distributed with TestFlight (needs an Apple Developer account and a Mac) |
+| Get it | `SUDS-android.apk` from the GitHub Release (or `https://suds.local/app` on an office SUDS) | `mobile/ios` via TestFlight (Apple requires a Mac + developer account) |
+| Runs without a server | yes | yes |
+| Sync | in-app **Sync** screen (sidebar badge "On this device · Sync") | same |
 
-The native apps add: automatic server discovery (Bonjour / DNS-SD `_suds._tcp`, advertised by the server), one-time certificate trust by fingerprint so there is no browser warning, device unlock (fingerprint / Face ID / PIN) when reopening the app, file downloads, and an app icon in the launcher. No third-party services and no app-store accounts are involved for Android.
+## How it works
+- The APK bundles the web app (`public/`) plus a **local kernel** (`public/local/kernel.js`): the same server code that runs on the office computer, compiled for the browser with SQLite in WebAssembly and pure-JavaScript encryption. Data is stored encrypted in the app's private storage (keys generated on the device); the app asks for fingerprint / PIN when reopened.
+- First launch: create a local account (use your office username if you have one). Work normally: clients, visits, calls, notes, reminders — everything.
+- **Sync**: enter the office address (found automatically on the office Wi-Fi, or scan the QR code from Settings → Network & devices, or type the address IT gave you), your office username and password. The app downloads what changed at the office since the last sync and uploads what changed on the phone. The newest change to any record wins; deletions are honoured on both sides; the device's audit trail is appended to the office audit log.
+- The first sync merges your local account into your office account (same username). From then on the office password is used on the phone as well.
+- Clients created on the phone get codes like `M26-0012` (office codes start with `C`), so codes never collide.
 
-## Android — getting the APK
-Choose one:
+## What syncs
+Clients, care-team assignments, visits & services, calls, time entries, referrals, resources, reminders/tasks, funding sources, budget lines, expenditures, notes and addenda, consents and disclosures, program settings. Only records the office account may see (its caseload, unless a supervisor) are downloaded; uploads outside the caseload are rejected and reported.
 
-1. **GitHub Actions (automatic).** Every version tag (and *Run workflow* on the "Android app" workflow) builds `SUDS-android.apk` and attaches it to the GitHub Release. The 1.0.0 APK is at https://github.com/taugustincst/suds/releases/tag/v1.0.0.
-2. **Android Studio (one click).** Open the `mobile/android` folder → Build → *Build APK(s)*. Details in `mobile/android/README.md`.
-
-Then, in SUDS, go to **Settings → Network & devices → Native apps** and upload the APK. Staff open **https://suds.local/app** on their phone, tap *Download SUDS for Android*, open the file, and allow the install when Android asks. The app then finds the server by itself.
-
-Signing: for production, sign with a keystore you keep (see `mobile/android/README.md`); updates must use the same key.
+## Android — building
+Open `mobile/android` in Android Studio → Build → Build APK(s). The bundled web app is taken from the repository's `public/` folder, which already contains the prebuilt kernel. GitHub Actions rebuilds the kernel (`npm run build:local`) and publishes the APK on every release.
 
 ## iOS
-See `mobile/ios/README.md`. Apple does not allow installing apps outside the App Store / TestFlight / MDM, so the realistic paths are TestFlight ($99/yr developer program) or the Add-to-Home-Screen option, which is free and works today.
+`mobile/ios/README.md`. The app bundles the same `public/` folder and runs identically; distribution is through TestFlight.
 
-## How the apps find the server
-The SUDS server answers multicast DNS for `suds.local` and advertises the service `_suds._tcp` with its port and whether TLS is on. The apps:
-1. browse for `_suds._tcp` (NsdManager on Android, NWBrowser on iOS);
-2. if nothing answers within a few seconds, try `https://suds.local`;
-3. otherwise ask the user to scan the QR code (Android) or type the address shown under Settings → Network & devices.
+## Trying local mode in a browser
+Open `https://<your-suds>/?local=1`. The page runs the whole app locally in that browser profile (data stays there) and can sync with the same server — useful for testing.
 
-The chosen address and the certificate fingerprint are stored on the device; *Forget server* in the certificate-changed dialog resets them.
+## Security notes
+- Data at rest on the device is AES-256-GCM encrypted with keys held in the app's private storage; Android app sandboxing and device encryption protect the keys. Use MDM to require a device passcode and allow remote wipe.
+- Sync uses HTTPS to the office server (self-signed certificate trusted once by fingerprint). Credentials are never stored on the phone; a short-lived session is used for each sync.
+- "Erase data on this device" on the Sync screen removes the local database.

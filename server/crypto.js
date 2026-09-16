@@ -54,7 +54,7 @@ function verifyPassword(password, stored) {
   } catch { return false; }
 }
 
-function randomToken(bytes = 32) { return crypto.randomBytes(bytes).toString('base64url'); }
+function randomToken(bytes = 32) { return crypto.randomBytes(bytes).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
 function sha256(s) { return crypto.createHash('sha256').update(s).digest('hex'); }
 function uuid() { return crypto.randomUUID(); }
 

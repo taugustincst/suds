@@ -19,6 +19,9 @@ jobs:
     steps:
       - name: Check out
         run: git clone --depth 1 --branch "${GITHUB_REF_NAME}" "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src
+      - name: Build local kernel (web app bundled into the APK)
+        working-directory: src
+        run: npm ci --no-audit --no-fund && npm run build:local
       - name: Build APK
         working-directory: src/mobile/android
         env:

@@ -29,7 +29,7 @@ module.exports = (r) => {
     const c = db.one(`SELECT * FROM consents WHERE id=?`, ctx.params.id); if (!c) throw notFound();
     auth.assertClientAccess(ctx, c.client_id);
     const { reason } = validate(ctx.body, { reason: { type: 'string', maxLen: 300 } });
-    db.run(`UPDATE consents SET revoked_at=?, revoked_reason=? WHERE id=?`, db.now(), reason || null, c.id);
+    db.run(`UPDATE consents SET revoked_at=?, revoked_reason=?, updated_at=? WHERE id=?`, db.now(), reason || null, db.now(), c.id);
     audit.log({ user: ctx.user, action: 'consent.revoke', entity: 'consent', entityId: c.id, clientId: c.client_id, ip: ctx.ip });
     return { ok: true };
   });

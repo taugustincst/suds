@@ -18,4 +18,5 @@ import './views/reports.js';
 import './views/admin.js';
 import './views/profile.js';
 import './views/setup.js';
+import './views/local.js';
 boot();

@@ -1,5 +1,7 @@
 // SUDS frontend core: API client, hash router, DOM + form helpers, session/idle handling.
-export const state = { user: null, org: 'SUDS', constants: null, users: [], funds: [], idleMinutes: 15, prefs: {} };
+export const state = { user: null, org: 'SUDS', constants: null, users: [], funds: [], idleMinutes: 15, prefs: {}, local: false };
+// Local mode: the whole server runs inside this page (phone app / offline). Requests go to the in-page kernel.
+export function isLocalMode() { try { return new URLSearchParams(location.search).get('local') === '1' || location.protocol === 'file:' || location.hostname === 'appassets.androidplatform.net' || !!window.SUDS_LOCAL; } catch { return false; } }
 
 // ---------- workspace preferences (follow the user across devices) ----------
 let prefsTimer; const prefsDirty = {};
@@ -14,6 +16,16 @@ function applyTheme() { const t = state.prefs.theme; if (t) document.documentEle
 // ---------- API ----------
 export async function api(method, path, body, opts = {}) {
   const headers = { 'X-Requested-With': 'suds', ...(opts.headers || {}) };
+  if (state.local && window.SUDS_LOCAL) {
+    let payload = body; if (body instanceof Blob) payload = await body.arrayBuffer();
+    const r = await window.SUDS_LOCAL.handle(method, path, payload, headers);
+    touch();
+    const data = r.json !== undefined ? r.json : (r.body ? (String(r.headers['content-type'] || '').includes('json') ? JSON.parse(r.body.toString()) : r.body.toString()) : null);
+    if (r.status === 401 && state.user && !opts.quiet) { if (data && data.mfaRequired) location.hash = '#/mfa'; else { state.user = null; render(); } }
+    if (r.status === 403 && data && data.passwordChangeRequired) location.hash = '#/profile?force=1';
+    if (r.status >= 400) { const err = new Error((data && data.error) || `Request failed (${r.status})`); err.status = r.status; err.data = data; throw err; }
+    return data;
+  }
   let payload;
   if (body instanceof Blob || body instanceof ArrayBuffer || typeof body === 'string') { payload = body; if (!headers['Content-Type']) headers['Content-Type'] = 'application/octet-stream'; }
   else if (body !== undefined) { payload = JSON.stringify(body); headers['Content-Type'] = 'application/json'; }
@@ -258,7 +270,11 @@ export function maybeTour() {
   const m = modal('', h('div', {}, body, h('div', { class: 'btn-row', style: { justifyContent: 'space-between', alignItems: 'center' } }, h('button', { class: 'btn ghost', onClick: finish }, 'Skip'), dots, h('button', { class: 'btn primary', onClick: () => { if (i < steps.length - 1) { i++; draw(); } else finish(); } }, 'Next'))));
   m.el.querySelector('.card-head').remove(); draw();
 }
-export function downloadCsv(path) { const a = h('a', { href: path, download: '' }); document.body.append(a); a.click(); a.remove(); }
+export async function downloadCsv(path) {
+  if (state.local && window.SUDS_LOCAL) { const r = await window.SUDS_LOCAL.handle('GET', path, undefined, {}); if (r.status >= 400) { toast('Download failed', 'error'); return; } const name = (/filename="([^"]+)"/.exec(r.headers['content-disposition'] || '') || [])[1] || 'download'; if (window.SudsNative && window.SudsNative.saveFile) { let bin = ''; const bytes = new Uint8Array(r.body); for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]); window.SudsNative.saveFile(name, btoa(bin), r.headers['content-type'] || 'application/octet-stream'); return; }
+    const blob = new Blob([r.body], { type: r.headers['content-type'] || 'application/octet-stream' }); const u = URL.createObjectURL(blob); const a = h('a', { href: u, download: name }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 5000); return; }
+  const a = h('a', { href: path, download: '' }); document.body.append(a); a.click(); a.remove();
+}
 
 // ---------- routing ----------
 const routes = {};
@@ -295,6 +311,7 @@ export async function render() {
   const app = document.getElementById('app');
   clear(document.getElementById('modal-root'));
   const r = parseHash();
+  if (state.localSetupNeeded) { if (r.name !== 'localsetup') { nav('localsetup'); return; } clear(app).append(await routes.localsetup(r)); return; }
   if (state.setupNeeded) { if (r.name !== 'setup') { nav('setup'); return; } clear(app).append(await routes.setup(r)); return; }
   if (!state.user) { clear(app).append(await routes.login(r)); return; }
   if (state.mfaPending && r.name !== 'mfa') { nav('mfa'); return; }
@@ -316,7 +333,7 @@ function sidebar(r) {
   return h('aside', { class: 'sidebar' },
     h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('b', {}, 'SUDS'), h('small', {}, state.org))),
     h('nav', { class: 'nav' }, NAV.map(n => n.sec ? h('div', { class: 'sec' }, n.sec) : (!n.perm || can(n.perm)) ? h('a', { href: '#/' + n.name, class: r.name === n.name ? 'active' : '' }, h('span', { class: 'ico' }, n.ico), n.label) : null)),
-    h('div', { class: 'foot' }, h('div', {}, h('b', {}, state.user.display_name)), h('div', { class: 'muted' }, fmt.label(state.user.role)),
+    h('div', { class: 'foot' }, state.local ? h('a', { href: '#/sync', class: 'badge info', style: { display: 'block', textAlign: 'center', marginBottom: '.5rem' } }, '📱 On this device · Sync') : null, h('div', {}, h('b', {}, state.user.display_name)), h('div', { class: 'muted' }, fmt.label(state.user.role)),
       h('div', { class: 'row', style: { marginTop: '.5rem' } }, h('a', { href: '#/profile' }, 'Profile'), h('a', { href: '#', onClick: (e) => { e.preventDefault(); logout(); } }, 'Sign out'), h('a', { href: '#', title: 'Light / dark', onClick: (e) => { e.preventDefault(); toggleTheme(); } }, 'Light/dark'))));
 }
 function mobileBar(r, side) {
@@ -347,8 +364,8 @@ function startIdleWatch() {
 }
 
 export async function loadSession() {
-  try { const st = await get('/api/setup/status', { quiet: true }); state.setupNeeded = !!st.needed; } catch { state.setupNeeded = false; }
-  if (state.setupNeeded) { state.user = null; return; }
+  if (state.local) { try { const st = await get('/api/local/status', { quiet: true }); state.localSetupNeeded = st.users === 0; } catch { state.localSetupNeeded = false; } if (state.localSetupNeeded) { state.user = null; return; } }
+  else { try { const st = await get('/api/setup/status', { quiet: true }); state.setupNeeded = !!st.needed; } catch { state.setupNeeded = false; } if (state.setupNeeded) { state.user = null; return; } }
   try {
     const me = await get('/api/auth/me', { quiet: true });
     state.user = me.user; state.org = me.org_name; state.mfaPending = me.mfaPending; state.idleMinutes = me.idle_minutes || 15;
@@ -363,8 +380,13 @@ export async function loadRefData() {
 
 // ---------- boot (called from main.js after all views are registered) ----------
 export async function boot() {
-  // Service worker (app shell cache). Registration is rejected on self-signed HTTPS; that is fine — the app still works and can be added to the home screen.
-  if ('serviceWorker' in navigator && location.protocol !== 'file:') { try { navigator.serviceWorker.register('sw.js').catch(() => {}); } catch {} }
+  state.local = isLocalMode();
+  if (state.local) {
+    document.getElementById('app').innerHTML = '<div class="boot">Starting SUDS on this device…</div>';
+    try { const k = await import('./local/kernel.js'); await k.start({ wasmUrl: new URL('./local/sql-wasm.wasm', location.href).href }); }
+    catch (e) { document.getElementById('app').innerHTML = '<div class="boot">Could not start local SUDS: ' + (e && e.message) + '</div>'; console.error(e); return; }
+    window.addEventListener('pagehide', () => { window.SUDS_LOCAL && window.SUDS_LOCAL.flush(); });
+  } else if ('serviceWorker' in navigator && location.protocol !== 'file:') { try { navigator.serviceWorker.register('sw.js').catch(() => {}); } catch {} }
   await loadSession();
   startIdleWatch();
   window.addEventListener('hashchange', render);

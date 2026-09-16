@@ -13,7 +13,7 @@ module.exports = (r) => {
     const u = db.one(`SELECT id,is_active FROM users WHERE id=?`, v.user_id); if (!u || !u.is_active) throw badRequest('Unknown or inactive worker');
     const id = uuid();
     db.transaction(() => {
-      if ((v.role_on_case || 'primary') === 'primary') db.run(`UPDATE assignments SET end_date=date('now') WHERE client_id=? AND role_on_case='primary' AND end_date IS NULL`, c.id);
+      if ((v.role_on_case || 'primary') === 'primary') db.run(`UPDATE assignments SET end_date=date('now'), updated_at=? WHERE client_id=? AND role_on_case='primary' AND end_date IS NULL`, db.now(), c.id);
       db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,notes,created_by) VALUES(?,?,?,?,?,?,?)`, id, c.id, v.user_id, v.role_on_case || 'primary', v.start_date || new Date().toISOString().slice(0, 10), v.notes || null, ctx.user.id);
     });
     audit.log({ user: ctx.user, action: 'assignment.create', entity: 'assignment', entityId: id, clientId: c.id, ip: ctx.ip, details: { user_id: v.user_id, role: v.role_on_case } });
@@ -21,7 +21,7 @@ module.exports = (r) => {
   });
   r.post('/api/assignments/:id/end', auth.requireAuth, auth.requirePerm('assignments:manage'), (ctx) => {
     const a = db.one(`SELECT * FROM assignments WHERE id=?`, ctx.params.id); if (!a) throw notFound();
-    db.run(`UPDATE assignments SET end_date=date('now') WHERE id=?`, a.id);
+    db.run(`UPDATE assignments SET end_date=date('now'), updated_at=? WHERE id=?`, db.now(), a.id);
     audit.log({ user: ctx.user, action: 'assignment.end', entity: 'assignment', entityId: a.id, clientId: a.client_id, ip: ctx.ip });
     return { ok: true };
   });

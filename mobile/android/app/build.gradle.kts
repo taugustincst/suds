@@ -7,8 +7,8 @@ android {
         applicationId = "gov.county.suds"
         minSdk = 29 // Android 10+: SslCertificate.x509Certificate, NSD attributes
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.1.0"
     }
     signingConfigs {
         // Release signing: set SUDS_KEYSTORE, SUDS_KEYSTORE_PASSWORD, SUDS_KEY_ALIAS, SUDS_KEY_PASSWORD (CI secrets or local env).
@@ -24,6 +24,8 @@ android {
             signingConfig = if (System.getenv("SUDS_KEYSTORE") != null) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
         }
     }
+    // The web app (public/) is bundled into the APK so SUDS runs entirely on the device.
+    sourceSets { getByName("main") { assets.srcDirs("../../../public") } }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
 }

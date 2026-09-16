@@ -105,7 +105,7 @@ function sniffDate(text) {
 function sniffClientHints(text) {
   const s = String(text || '');
   const hints = { codes: [], names: [] };
-  for (const m of s.matchAll(/\b(C\d{2}-\d{4})\b/gi)) hints.codes.push(m[1].toUpperCase());
+  for (const m of s.matchAll(/\b([CM]\d{2}-\d{4})\b/gi)) hints.codes.push(m[1].toUpperCase());
   const kw = /\b(?:(?:client|participant|pt|patient|re|name|regarding)\s*[:\-]\s*|(?:with|for|regarding)\s+)/gi;
   const nameRe = /^([A-Z][a-zA-Z'\-]+(?:,\s*|\s+)[A-Z][a-zA-Z'\-]+)/;
   for (const m of s.matchAll(kw)) { const nm = nameRe.exec(s.slice(m.index + m[0].length)); if (nm) hints.names.push(nm[1].trim()); }

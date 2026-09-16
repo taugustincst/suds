@@ -36,7 +36,8 @@ function encryptFields(v) {
 
 function nextClientCode() {
   const year = new Date().getFullYear();
-  const prefix = `C${String(year).slice(2)}-`;
+  // Clients created on a device (local mode) get an M prefix so codes never collide with the office server's C codes.
+  const prefix = `${require('./config').local ? 'M' : 'C'}${String(year).slice(2)}-`;
   const last = db.one(`SELECT client_code FROM clients WHERE client_code LIKE ? ORDER BY client_code DESC LIMIT 1`, prefix + '%');
   const n = last ? Number(last.client_code.slice(prefix.length)) + 1 : 1;
   return prefix + String(n).padStart(4, '0');

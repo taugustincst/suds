@@ -10,8 +10,8 @@ A HIPAA-oriented, zero-dependency web application for county **substance use dis
 
 | | |
 | --- | --- |
-| **Download 1.0.0** | https://github.com/taugustincst/suds/releases/tag/v1.0.0 — `suds-v1.0.0.zip` (server + launchers) and `SUDS-android.apk` (phone app) |
-| **Git** | `git clone --branch v1.0.0 https://github.com/taugustincst/suds.git` (or clone `main` for the latest; upgrade later with `git pull`) |
+| **Download** | https://github.com/taugustincst/suds/releases/latest — `suds-v<version>.zip` (server + launchers) and `SUDS-android.apk` (phone app) |
+| **Git** | `git clone https://github.com/taugustincst/suds.git` (upgrade later with `git pull`) |
 | **All releases** | https://github.com/taugustincst/suds/releases |
 | **Docker** | `docker compose up -d` |
 
@@ -25,7 +25,7 @@ Current release: see [CHANGELOG.md](CHANGELOG.md). Release process: [docs/RELEAS
 
 Full walkthrough with screenshots-free steps: [docs/INSTALL.md](docs/INSTALL.md). Everything the wizard sets can later be changed under **Administration → Network & devices / Settings / System & backups**.
 
-**Native phone apps:** `mobile/android` (APK served to staff from `https://suds.local/app`) and `mobile/ios` (TestFlight). See [docs/MOBILE_APPS.md](docs/MOBILE_APPS.md).
+**Phone app (works offline, syncs on command):** the Android APK on the Releases page bundles a complete copy of SUDS. Install it, create a local account, work anywhere; tap **Sync** near the office to exchange changes both ways. The office computer does not need to be running at install time or while working. Details: [docs/MOBILE_APPS.md](docs/MOBILE_APPS.md).
 
 **Phones and other computers:** nothing to configure. SUDS announces itself on the office network as **https://suds.local** (built-in mDNS responder) and uses the standard HTTPS port when available. Staff open that address on any device, add it to the home screen, and their workspace — clients, reminders, note drafts saved while typing, preferences — is the same everywhere because every device talks to the same server.
 

@@ -2,6 +2,16 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## 1.1.0 — 2026-09-16
+
+### Phone app works on its own; sync on command
+- The complete SUDS app now runs inside the phone app (local kernel: the server logic bundled with SQLite-in-WebAssembly and pure-JS encryption). Install from the APK, create a local account, and start working — no office computer needed at install time or while working.
+- **Sync** screen: exchanges clients, visits, calls, time, notes, referrals, reminders, consents, funding and resources with the office SUDS in both directions when the user chooses. Newest change wins; deletions travel as tombstones; encrypted fields are re-encrypted with each side's own key; device audit entries are appended to the office audit log.
+- First sync merges the device account into the office account with the same username; offline-created clients get `M` codes so they never collide with office `C` codes.
+- Server: `/api/sync/pull` and `/api/sync/push` (caseload-scoped, role-checked), bearer-token login for sync clients, `updated_at` on all synced tables, tombstones table.
+- Android: web app bundled as assets and launched directly in local mode; native bridge for office-server discovery, QR scan and file saving. iOS project updated the same way.
+- Local mode can be tried in any browser at `/?local=1` on a SUDS server (data stays in that browser).
+
 ## 1.0.0 — 2026-09-16
 
 First production release.
