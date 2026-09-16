@@ -54,6 +54,11 @@ class MainActivity : AppCompatActivity() {
                     else -> { handler.cancel(); certChanged() }
                 }
             }
+            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+                if (!request.isForMainFrame) return
+                AlertDialog.Builder(this@MainActivity).setTitle(R.string.app_name).setMessage(getString(R.string.unreachable, base, error.description))
+                    .setPositiveButton("Retry") { _, _ -> view.reload() }.setNegativeButton(R.string.forget_server) { _, _ -> prefs.forget(); recreate() }.setCancelable(false).show()
+            }
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val u = request.url
                 return if (u.toString().startsWith(base)) false else { startActivity(Intent(Intent.ACTION_VIEW, u)); true }

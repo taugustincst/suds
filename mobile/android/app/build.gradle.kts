@@ -7,8 +7,8 @@ android {
         applicationId = "gov.county.suds"
         minSdk = 29 // Android 10+: SslCertificate.x509Certificate, NSD attributes
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1"
     }
     signingConfigs {
         // Release signing: set SUDS_KEYSTORE, SUDS_KEYSTORE_PASSWORD, SUDS_KEY_ALIAS, SUDS_KEY_PASSWORD (CI secrets or local env).
