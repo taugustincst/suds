@@ -30,7 +30,7 @@ module.exports = (r) => {
       clients: { active: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF}`).n, waitlist: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='waitlist' AND {CF}`).n,
         new_in_range: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND intake_date BETWEEN ? AND ? AND {CF}`, from, to).n,
         high_risk: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND risk_level IN ('high','critical') AND {CF}`).n,
-        no_contact_30d: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} AND NOT EXISTS (SELECT 1 FROM interventions i WHERE i.client_id=c.id AND i.occurred_at >= ?)`, new Date(Date.now() - 30 * 86400000).toISOString()).n,
+        no_contact_30d: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} AND NOT EXISTS (SELECT 1 FROM interventions i WHERE i.client_id=c.id AND i.occurred_at >= ?) AND NOT EXISTS (SELECT 1 FROM calls ca WHERE ca.client_id=c.id AND ca.outcome='reached' AND ca.started_at >= ?)`, new Date(Date.now() - 30 * 86400000).toISOString(), new Date(Date.now() - 30 * 86400000).toISOString()).n,
         by_status: scoped(`SELECT status, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND {CF} GROUP BY status`),
         by_substance: scoped(`SELECT COALESCE(primary_substance,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k ORDER BY n DESC`),
         mat: scoped(`SELECT COALESCE(mat_status,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k`),

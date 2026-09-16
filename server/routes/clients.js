@@ -54,7 +54,7 @@ module.exports = (r) => {
     if (assigned) { where.push(`c.id IN (SELECT client_id FROM assignments WHERE user_id=? AND (end_date IS NULL OR end_date >= date('now')))`); params.push(assigned); }
     const w = 'WHERE ' + where.join(' AND ');
     const rows = db.all(`SELECT c.*, (SELECT GROUP_CONCAT(u.display_name, ', ') FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=c.id AND (a.end_date IS NULL OR a.end_date >= date('now'))) AS assigned_workers,
-      (SELECT MAX(occurred_at) FROM interventions i WHERE i.client_id=c.id) AS last_contact
+      (SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome='reached')) AS last_contact
       FROM clients c ${w} ORDER BY c.updated_at DESC LIMIT ? OFFSET ?`, ...params, limit, offset);
     const total = db.one(`SELECT COUNT(*) n FROM clients c ${w}`, ...params).n;
     audit.log({ user: ctx.user, action: 'client.list', ip: ctx.ip, details: { q: q ? '[redacted]' : '', status, count: rows.length, deidentified: deidentify } });

@@ -4,7 +4,7 @@ A HIPAA-oriented, zero-dependency web application for county **substance use dis
 
 * **Runtime:** Node.js ≥ 22.13 only (built-in SQLite, crypto, HTTP). No npm packages to install or audit.
 * **Data protection:** AES-256-GCM field-level encryption of PHI, blind-index search, scrypt password hashing, TOTP MFA, role-based access with caseload scoping, 42 CFR Part 2 consent and disclosure accounting, and a hash-chained audit log.
-* **Documentation:** [Deployment](docs/DEPLOYMENT.md) · [HIPAA & security controls](docs/HIPAA.md) · [Importing notes (Pocket AI / OneNote)](docs/IMPORTS.md) · [User guide](docs/USER_GUIDE.md)
+* **Documentation:** [Deployment](docs/DEPLOYMENT.md) · [API reference](docs/API.md) · [HIPAA & security controls](docs/HIPAA.md) · [Importing notes (Pocket AI / OneNote)](docs/IMPORTS.md) · [User guide](docs/USER_GUIDE.md)
 
 ## Quick start (development)
 
