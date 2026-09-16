@@ -166,3 +166,5 @@ details.section { border: 1px solid var(--border); border-radius: 8px; padding: 
   .appbar { padding: .5rem .75rem 0; } .appbar .btn.quick { display: none; }
   .fab { display: block; position: fixed; right: 1rem; bottom: calc(1rem + env(safe-area-inset-bottom)); z-index: 45; } .fab .btn { box-shadow: 0 6px 20px rgba(0,0,0,.3); font-size: 1.1rem; padding: .8rem 1.3rem; }
 }
+.modal .card-head { flex-wrap: nowrap; align-items: flex-start; } .modal .card-head h2 { margin-bottom: 0; }
+.quick-list .btn { width: 100%; white-space: normal; text-align: left; }
