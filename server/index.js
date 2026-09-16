@@ -28,7 +28,7 @@ server.listen(config.port, config.host, () => {
 setInterval(() => {
   try {
     db.run(`DELETE FROM sessions WHERE expires_at < ? OR (revoked_at IS NOT NULL AND revoked_at < ?)`, db.now(), new Date(Date.now() - 86400000).toISOString());
-    db.run(`DELETE FROM audit_log WHERE at < ?`, new Date(Date.now() - config.auditRetentionDays * 86400000).toISOString());
+    require('./audit').purge(config.auditRetentionDays);
   } catch (e) { console.error('[suds] housekeeping', e); }
 }, 3600_000).unref();
 

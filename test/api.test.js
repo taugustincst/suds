@@ -249,3 +249,15 @@ test('non-managers cannot record work under another worker', async () => {
   const r2 = await s.post('/api/interventions', { client_id: clientId, type: 'outreach', occurred_at: '2026-09-10T10:00:00Z', user_id: otherId });
   assert.equal(H.db.one(`SELECT user_id FROM interventions WHERE id=?`, r2.data.id).user_id, otherId);
 });
+
+test('audit retention purge keeps the chain verifiable', async () => {
+  const audit = require('../server/audit');
+  // make the earliest rows look old, then purge
+  // re-date everything up to and including the row tampered in the earlier test; purge must remove them all
+  H.db.run(`UPDATE audit_log SET at='2015-01-01T00:00:00.000Z' WHERE id <= (SELECT MAX(id) FROM audit_log WHERE details='tampered')`);
+  const n = audit.purge(3650);
+  assert.ok(n >= 3);
+  const v = audit.verifyChain();
+  assert.equal(v.ok, true);
+  assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='audit.purge'`));
+});
