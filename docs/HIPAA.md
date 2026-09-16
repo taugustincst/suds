@@ -1,0 +1,55 @@
+# HIPAA, 42 CFR Part 2 and security controls
+
+SUDS is designed to help a covered entity meet the HIPAA Security Rule (45 CFR §164.308–.316) and the confidentiality requirements for SUD records under 42 CFR Part 2. Software alone does not make a program compliant: policies, training, risk analysis, BAAs and physical safeguards are the program's responsibility. This document maps the technical safeguards SUDS provides to the rule, and lists what remains for the organization.
+
+## Technical safeguards implemented
+
+| Requirement | Implementation |
+| --- | --- |
+| **Access control — unique user ID** (§164.312(a)(2)(i)) | Every user has an individual account; shared accounts are not supported. API keys are separate, write-only, and named. |
+| **Access control — emergency access** (§164.312(a)(2)(ii)) | Administrators may open a clinical note only by supplying a break-glass reason, which is written to the audit log (`note.view.breakglass`) for privacy-officer review. |
+| **Automatic logoff** (§164.312(a)(2)(iii)) | Server-side idle timeout (default 15 min) and absolute session limit (12 h); the browser warns one minute before sign-out. Sessions are revoked on password change. |
+| **Encryption at rest** (§164.312(a)(2)(iv)) | All direct identifiers and free-text PHI (names, DOB, phone, email, address, Medicaid ID, emergency contact, call summaries, note content, structured note sections, addenda, imported text, MFA secrets) are encrypted with AES-256-GCM using a key held outside the database. Search on encrypted fields uses keyed HMAC blind indexes so ciphertext is never scanned. The database should additionally sit on an encrypted volume. |
+| **Encryption in transit** (§164.312(e)) | Native TLS 1.2+ support or a TLS-terminating proxy; HSTS; `Secure`, `HttpOnly`, `SameSite=Strict` session cookies. |
+| **Audit controls** (§164.312(b)) | Every authentication event, PHI read (client view, note view, list, timeline, export), write, permission denial, configuration change and API-key use is recorded with user, IP, entity, client and details. Each entry carries a SHA-256 hash chained to the previous entry; Administration → Audit log verifies the chain and flags tampering. Retention defaults to 7 years. |
+| **Integrity** (§164.312(c)) | Signed notes are locked; a signature hash over the encrypted content is stored and can be re-verified. Corrections are addenda, never edits. Records are soft-deleted with a required reason. AES-GCM authentication tags detect ciphertext tampering. |
+| **Person or entity authentication** (§164.312(d)) | scrypt-hashed passwords (N=2^15), 12-character complexity policy, forced change of temporary passwords, lockout after 5 failures (15 min), login rate limiting, TOTP multi-factor authentication (RFC 6238) that is mandatory for configurable roles, timing-safe comparisons. |
+| **Minimum necessary** (§164.502(b)) | Role-based permissions; navigators and clinicians see only clients on their caseload; finance sees de-identified client codes only; clinical notes are visible only to clinical roles and supervisors; exports are de-identified unless the user holds the audited `export:read` permission. |
+| **Transmission of application security** | Content-Security-Policy (self only, no inline scripts), `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store` on every response, CSRF protection via a required custom header on state-changing requests, JSON body limits, request timeouts, no third-party scripts or CDNs, no outbound calls except the optional Microsoft Graph connector. |
+| **Supply chain** | Zero third-party runtime packages; only Node.js built-ins. |
+
+## 42 CFR Part 2
+
+* Notes default to `part2_protected`, and the UI labels them.
+* **Consents** capture recipient, purpose, scope, signature date, expiration, witness and document location. A Part 2 consent cannot be recorded without recipient and purpose.
+* Referrals can be linked to the consent they rely on; the referral list flags referrals without a release on file.
+* **Accounting of disclosures** (§2.13 / HIPAA §164.528): each disclosure records recipient, purpose, information disclosed, method, legal basis, and the consent relied upon. A disclosure on the basis of consent requires a valid, unexpired consent.
+* Reports and CSV exports use client codes, not names, unless an authorized user explicitly requests an identified export (audited).
+* Redisclosure notice: include the Part 2 prohibition-on-redisclosure statement in any information you release; SUDS records the disclosure but does not generate the letter.
+
+## Organizational responsibilities (not provided by software)
+
+1. **Risk analysis and management** (§164.308(a)(1)) — document this deployment in your risk register.
+2. **Workforce training and sanctions** — users must understand break-glass, minimum necessary and Part 2 rules.
+3. **Business Associate Agreements** — with any hosting provider, and with Pocket AI or Microsoft if PHI is recorded or stored in their services before import.
+4. **Device and media controls** — encrypted laptops/phones used with Pocket AI; secure disposal of backups.
+5. **Contingency plan** — run the encrypted backups (docs/DEPLOYMENT.md) and test restores.
+6. **Audit review** — review break-glass events, access denials and exports at least monthly.
+7. **Breach notification** — the audit log supports investigation but notification procedures are policy.
+8. **Physical safeguards** — server room / cloud region controls, workstation placement.
+
+## Data classification inside the database
+
+| Table | PHI at rest | Notes |
+| --- | --- | --- |
+| clients | encrypted identifiers; plaintext coded fields (status, substance, risk…) | client_code is the non-PHI identifier used in reports |
+| notes, note_addenda, import_items | encrypted content | |
+| calls | encrypted contact name, phone, summary | |
+| interventions, referrals, tasks, time_entries, expenditures | plaintext operational fields linked by client_id | short summaries/descriptions should not contain identifiers — the UI says so |
+| audit_log | user, action, entity ids; details never contain names or note text | search terms are redacted |
+| users | MFA secret encrypted; passwords hashed | |
+
+## Key management
+
+* `SUDS_ENCRYPTION_KEY` and `SUDS_INDEX_KEY` are 256-bit keys supplied by the environment. Rotate with `NEW_ENCRYPTION_KEY=<hex> npm run rotate-key` during a maintenance window (server stopped, backup taken). Never commit keys.
+* Backups are encrypted with a key derived from the encryption key; store keys and backups separately.

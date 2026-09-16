@@ -1,4 +1,5 @@
 import { h, route, get, post, state, form, modal, toast, table, badge, fmt, pageHead, loadSession, nav, render, kv, confirmDialog } from '../app.js';
+import { qrSvg } from '../qr.js';
 
 route('profile', async (r) => {
   const force = r.query.get('force') === '1'; const mfaPrompt = r.query.get('mfa') === '1';
@@ -14,7 +15,7 @@ route('profile', async (r) => {
   async function enroll() {
     const s = await post('/api/auth/mfa/setup', {});
     const f = form([{ name: 'code', label: 'Enter the 6-digit code from the app', required: true, pattern: '[0-9]{6}', autocomplete: 'one-time-code' }], { submitText: 'Activate MFA', onCancel: () => m.close(), onSubmit: async (d) => { await post('/api/auth/mfa/enable', d); toast('MFA enabled', 'ok'); m.close(); await loadSession(); nav('dashboard'); render(); } });
-    const m = modal('Enroll authenticator', h('div', {}, h('p', {}, '1. Open Microsoft Authenticator, Google Authenticator, or another TOTP app.'), h('p', {}, '2. Add an account manually using this secret key (or scan the QR code generated from the link below):'), h('div', { class: 'qr' }, s.secret.match(/.{1,4}/g).join(' ')), h('p', { class: 'small muted' }, h('a', { href: s.otpauth }, 'Open in authenticator app (on this device)')), h('p', {}, '3. Enter the code shown by the app:'), f));
+    const m = modal('Enroll authenticator', h('div', {}, h('p', {}, '1. Open Microsoft Authenticator, Google Authenticator, or another TOTP app.'), h('p', {}, '2. Scan this QR code, or add an account manually with the secret key:'), h('div', { class: 'center mb' }, qrSvg(s.otpauth, { size: 220 })), h('div', { class: 'qr' }, s.secret.match(/.{1,4}/g).join(' ')), h('p', { class: 'small muted' }, h('a', { href: s.otpauth }, 'Open in authenticator app (on this device)')), h('p', {}, '3. Enter the code shown by the app:'), f));
   }
   renderMfa();
   if (mfaPrompt && !u.mfa_enabled) setTimeout(enroll, 0);

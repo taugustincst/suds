@@ -1,1 +1,70 @@
-# suds
+# SUDS — SUD Navigator Services Tracker
+
+A HIPAA-oriented, zero-dependency web application for county **substance use disorder (SUD) navigation programs**. It tracks clients, interventions, calls, staff time, referrals and community resources, tasks and timelines, budget and expenditures, and clinical / administrative documentation — and imports field notes from **Pocket AI** and **Microsoft OneNote**.
+
+* **Runtime:** Node.js ≥ 22.13 only (built-in SQLite, crypto, HTTP). No npm packages to install or audit.
+* **Data protection:** AES-256-GCM field-level encryption of PHI, blind-index search, scrypt password hashing, TOTP MFA, role-based access with caseload scoping, 42 CFR Part 2 consent and disclosure accounting, and a hash-chained audit log.
+* **Documentation:** [Deployment](docs/DEPLOYMENT.md) · [HIPAA & security controls](docs/HIPAA.md) · [Importing notes (Pocket AI / OneNote)](docs/IMPORTS.md) · [User guide](docs/USER_GUIDE.md)
+
+## Quick start (development)
+
+```bash
+git clone <repo> suds && cd suds
+npm run seed          # creates a dev database with demo users and fictional clients
+npm start             # http://127.0.0.1:8080
+```
+
+Demo logins (password `Navigator2026!!`): `mrivera` / `dchen` (navigators), `kpatel` (clinician), `jwalker` (supervisor), `afinance` (finance), `admin`.
+
+Without seeding, the first start creates an `admin` user and prints a temporary password.
+
+## Production in three steps
+
+```bash
+cp .env.example .env
+npm run gen-key   # paste into SUDS_ENCRYPTION_KEY
+npm run gen-key   # paste into SUDS_INDEX_KEY
+SUDS_ENV=production npm start   # behind TLS — see docs/DEPLOYMENT.md
+```
+
+Or with Docker: `docker compose up -d` (includes a Caddy TLS proxy).
+
+## What it tracks
+
+| Area | Details |
+| --- | --- |
+| Clients | Encrypted demographics and contact info, substance use profile, ASAM level, MAT status, overdose / naloxone history, risk level, housing, insurance, safety flags, program status and intake/discharge |
+| Interventions | 25 SUD-navigation intervention types, duration, location/modality, outcome, stage of change, naloxone kits and fentanyl test strips, funding source, cost, follow-up task creation, automatic time entry |
+| Calls | Direction, contact type, duration, outcome, crisis flag, encrypted summary, follow-up scheduling |
+| Time | Per-worker time entries by category and funding source, billable flag, summaries by worker / category / day / fund |
+| Resources & referrals | Community resource directory (detox, residential, OTP/OBOT, housing, harm reduction, legal, …) with verification dates; referrals with status pipeline, urgency, warm handoff, consent linkage, barriers, days-to-admit |
+| Tasks & timelines | Tasks with priorities, due dates, milestones; unified per-client timeline of every event |
+| Budget | Funding sources (opioid settlement, SOR, SAMHSA, county…), budget lines, expenditures with approval workflow and separation of duties, burn-rate vs. period elapsed, staff-cost allocation |
+| Notes | Clinical vs. administrative notes with role-based visibility, SOAP / DAP / BIRP / GIRP structured formats, electronic signature with tamper-evident hash, addenda, break-glass access for administrators |
+| Consents | 42 CFR Part 2 disclosure consents, releases of information, expirations/revocations, and an accounting of disclosures |
+| Imports | Pocket AI JSON/Markdown/text exports, OneNote MHT/HTML/DOCX/text exports, Microsoft Graph OneNote sync, pasted text, and an API-key intake endpoint — all staged for review and client matching before becoming notes |
+| Reports | Dashboard, program summary, monthly trends, CSV exports (de-identified by default) |
+| Administration | Users and roles, MFA enforcement, settings, tamper-evident audit log viewer, API keys |
+
+## Roles
+
+| Role | Sees | Can |
+| --- | --- | --- |
+| navigator | Assigned caseload | Clients, interventions, calls, time, referrals, tasks, admin notes, consents, budget entry, imports |
+| clinician | Assigned caseload | Everything a navigator can plus **clinical notes** |
+| supervisor | All clients | Everything, plus assignments, approvals, audit log, identified exports |
+| finance | De-identified list | Funding, budget lines, expenditure approval, time summaries |
+| readonly | All clients (read) | Reports and summaries; no notes |
+| admin | System | Users, settings, API keys, audit; clinical notes only via audited break-glass |
+
+## Tests
+
+```bash
+npm test
+```
+
+Runs unit tests (crypto, TOTP, importers) and API integration tests (auth, lockout, MFA, RBAC, caseload scoping, encryption at rest, note signing, consents, budget, imports, intake, audit chain).
+
+## License
+
+MIT. This software supports but does not by itself provide HIPAA compliance; see [docs/HIPAA.md](docs/HIPAA.md) for the shared-responsibility model.

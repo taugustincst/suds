@@ -13,6 +13,7 @@
     "seed": "node --no-warnings=ExperimentalWarning scripts/seed.js",
     "create-admin": "node --no-warnings=ExperimentalWarning scripts/create-admin.js",
     "backup": "node --no-warnings=ExperimentalWarning scripts/backup.js",
+    "rotate-key": "node --no-warnings=ExperimentalWarning scripts/rotate-key.js",
     "gen-key": "node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
   },
   "license": "MIT"
