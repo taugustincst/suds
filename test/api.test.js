@@ -261,3 +261,18 @@ test('audit retention purge keeps the chain verifiable', async () => {
   assert.equal(v.ok, true);
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='audit.purge'`));
 });
+
+test('security policy settings are validated and applied', async () => {
+  assert.equal((await admin.put('/api/admin/settings', { session_idle_minutes: 120 })).status, 400);
+  assert.equal((await admin.put('/api/admin/settings', { session_idle_minutes: 'abc' })).status, 400);
+  assert.equal((await admin.put('/api/admin/settings', { session_idle_minutes: 20, mfa_required_roles: 'admin, navigator, bogus' })).status, 200);
+  const s = await admin.get('/api/admin/settings');
+  assert.equal(s.data.policy.idleMinutes, 20);
+  assert.deepEqual(s.data.policy.mfaRequiredRoles, ['admin', 'navigator']);
+  assert.equal((await nav.get('/api/auth/me')).data.user.mfa_required, true);
+  await admin.put('/api/admin/settings', { session_idle_minutes: '', mfa_required_roles: 'admin,supervisor' });
+  assert.equal((await admin.get('/api/setup/status')).data.needed, false);
+  assert.equal((await admin.post('/api/setup/complete', {})).status, 403);
+  assert.equal((await nav.get('/api/admin/network')).status, 403);
+  assert.equal((await admin.get('/api/admin/network')).status, 200);
+});

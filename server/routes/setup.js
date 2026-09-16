@@ -13,7 +13,9 @@ const { validate } = require('../validate');
 const { hashPassword, uuid } = require('../crypto');
 const selfsigned = require('../selfsigned');
 
-function setupNeeded() { return !config.setupComplete && !config.isTest; }
+// The wizard is only needed for self-managed installs. Deployments configured by environment variables
+// (keys from env, or SUDS_SKIP_SETUP=1) use the bootstrap admin printed at first start instead.
+function setupNeeded() { return !config.setupComplete && !config.isTest && config.keySource !== 'env' && !process.env.SUDS_SKIP_SETUP; }
 function userCount() { return db.one(`SELECT COUNT(*) n FROM users`).n; }
 function onlyBootstrapAdmin() { return db.one(`SELECT COUNT(*) n FROM users WHERE NOT (username='admin' AND must_change_password=1 AND last_login_at IS NULL)`).n === 0; }
 

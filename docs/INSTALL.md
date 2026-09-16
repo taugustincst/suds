@@ -41,12 +41,12 @@ Sign in with the administrator account, enroll multi-factor authentication when 
 
 ## Using SUDS on a phone or tablet
 1. On the phone, connect to the office Wi-Fi.
-2. Scan the QR code from Administration → Network, or type the address shown there (for example `https://192.168.1.20:8443`).
-3. The first time, the browser warns that the certificate is not trusted (it is self-signed by your SUDS). Tap **Advanced → Proceed** (Android/Chrome) or **Show Details → visit this website** (iPhone/Safari). To remove the warning permanently, download the certificate from Administration → Network and install it on the device (IT can push it with MDM).
+2. Scan the QR code from Administration → Network & devices, or type the address shown there (for example `https://192.168.1.20:8443`).
+3. The first time, the browser warns that the certificate is not trusted (it is self-signed by your SUDS). Tap **Advanced → Proceed** (Android/Chrome) or **Show Details → visit this website** (iPhone/Safari). To remove the warning permanently, download the certificate from Administration → Network & devices and install it on the device (IT can push it with MDM).
 4. Add SUDS to the home screen: **Share → Add to Home Screen** (iPhone) or **⋮ → Install app** (Android). It then opens full-screen like an app, with the same 15-minute auto sign-out.
 
 ## Backups
-Administration → **System → Download encrypted backup** weekly (or use IT's scheduled backup of the whole `data` folder). Keep backups and the key file in different places.
+Administration → **System & backups → Download encrypted backup** weekly (or use IT's scheduled backup of the whole `data` folder). Keep backups and the key file in different places.
 
 ## Stopping, restarting, updating
 * **Stop:** close the black window.

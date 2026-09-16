@@ -13,18 +13,17 @@ if %errorlevel% neq 0 (
   pause
   exit /b 1
 )
-for /f "tokens=1 delims=v." %%a in ('node -v') do set NODEMAJOR=%%a
-node -e "process.exit(Number(process.versions.node.split('.')[0])>=22?0:1)" || (
+node -e "process.exit(Number(process.versions.node.split('.')[0])>=22?0:1)"
+if %errorlevel% neq 0 (
   echo  SUDS needs Node.js 22 or newer. Please update Node.js from https://nodejs.org and try again.
   pause
   exit /b 1
 )
 set SUDS_ENV=production
-echo  Starting SUDS... keep this window open while using the app. Close it to stop SUDS.
-if not exist "data\server.json" (
-  start "" http://localhost:8080/
-) else (
-  node -e "const c=require('./data/server.json');require('child_process').exec('start \"\" '+(c.tls&&c.tls!=='none'?'https':'http')+'://localhost:'+(c.port||8080)+'/')"
-)
+node scripts\print-url.js > "%TEMP%\suds-url.txt"
+set /p SUDS_URL=<"%TEMP%\suds-url.txt"
+echo  Starting SUDS at %SUDS_URL%
+echo  Keep this window open while using the app. Close it to stop SUDS.
+start "" "%SUDS_URL%"
 node --no-warnings=ExperimentalWarning server\index.js
 pause

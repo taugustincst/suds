@@ -50,6 +50,7 @@ function loadKey(envName, fileName) {
     return key;
   }
   const f = path.join(dataDir, fileName);
+  keySourceHolder.value = 'devfile';
   if (fs.existsSync(f)) return Buffer.from(fs.readFileSync(f, 'utf8').trim(), 'hex');
   const key = crypto.randomBytes(32);
   fs.writeFileSync(f, key.toString('hex'), { mode: 0o600 });
