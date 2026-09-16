@@ -6,6 +6,16 @@ A HIPAA-oriented, zero-dependency web application for county **substance use dis
 * **Data protection:** AES-256-GCM field-level encryption of PHI, blind-index search, scrypt password hashing, TOTP MFA, role-based access with caseload scoping, 42 CFR Part 2 consent and disclosure accounting, and a hash-chained audit log.
 * **Documentation:** [Deployment](docs/DEPLOYMENT.md) · [API reference](docs/API.md) · [HIPAA & security controls](docs/HIPAA.md) · [Importing notes (Pocket AI / OneNote)](docs/IMPORTS.md) · [User guide](docs/USER_GUIDE.md)
 
+## Get SUDS
+
+| | |
+| --- | --- |
+| **Download (zip)** | https://github.com/taugustincst/suds/releases/latest — unzip and double-click a launcher |
+| **Git** | `git clone https://github.com/taugustincst/suds.git` (upgrade later with `git pull`) |
+| **Docker** | `docker compose up -d` |
+
+Current release: see [CHANGELOG.md](CHANGELOG.md). Release process: [docs/RELEASE.md](docs/RELEASE.md).
+
 ## Install without a terminal (recommended for county staff)
 
 1. Install Node.js LTS from https://nodejs.org (click *Next* through the installer).

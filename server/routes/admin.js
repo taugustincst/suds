@@ -130,6 +130,7 @@ module.exports = (r) => {
     audit_rows: db.one(`SELECT COUNT(*) n FROM audit_log`).n,
     active_sessions: db.one(`SELECT COUNT(*) n FROM sessions WHERE revoked_at IS NULL AND expires_at > ?`, db.now()).n,
     db_path: config.dbPath,
+    version: config.version,
     key_source: config.keySource,
     listener: listener.describe(),
   }));
