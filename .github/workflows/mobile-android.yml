@@ -1,34 +1,46 @@
 name: Android app
+# Uses no marketplace actions: the hosted Ubuntu image already provides git, JDK 17, the Android SDK, Gradle and gh.
 on:
   push:
     tags: ['v*']
-    paths-ignore: ['docs/**']
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Also attach the APK to the GitHub Release for the version in package.json (creates the release/tag if missing)"
+        type: boolean
+        default: true
 permissions:
   contents: write
 jobs:
   apk:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: '17' }
-      - uses: android-actions/setup-android@v3
-      - uses: gradle/actions/setup-gradle@v3
+      - name: Check out
+        run: git clone --depth 1 --branch "${GITHUB_REF_NAME}" "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src
       - name: Build APK
-        working-directory: mobile/android
+        working-directory: src/mobile/android
         env:
-          SUDS_KEYSTORE: ${{ secrets.SUDS_KEYSTORE_PATH }}
+          SUDS_KEYSTORE_BASE64: ${{ secrets.SUDS_KEYSTORE_BASE64 }}
           SUDS_KEYSTORE_PASSWORD: ${{ secrets.SUDS_KEYSTORE_PASSWORD }}
           SUDS_KEY_ALIAS: ${{ secrets.SUDS_KEY_ALIAS }}
           SUDS_KEY_PASSWORD: ${{ secrets.SUDS_KEY_PASSWORD }}
         run: |
-          if [ -n "${{ secrets.SUDS_KEYSTORE_BASE64 }}" ]; then echo "${{ secrets.SUDS_KEYSTORE_BASE64 }}" | base64 -d > /tmp/suds.jks; export SUDS_KEYSTORE=/tmp/suds.jks; fi
-          gradle --no-daemon assembleRelease
-          cp app/build/outputs/apk/release/app-release*.apk ../../SUDS-android.apk
-      - uses: actions/upload-artifact@v4
-        with: { name: SUDS-android-apk, path: SUDS-android.apk }
-      - name: Attach to release
-        if: startsWith(github.ref, 'refs/tags/v')
-        env: { GH_TOKEN: "${{ github.token }}" }
-        run: gh release upload "${GITHUB_REF_NAME}" SUDS-android.apk --clobber || echo "release not created yet; APK is available as a workflow artifact"
+          export JAVA_HOME="${JAVA_HOME_17_X64:-$JAVA_HOME}"
+          if [ -n "$SUDS_KEYSTORE_BASE64" ]; then echo "$SUDS_KEYSTORE_BASE64" | base64 -d > /tmp/suds.jks; export SUDS_KEYSTORE=/tmp/suds.jks; fi
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          gradle --no-daemon --console=plain assembleRelease
+          cp app/build/outputs/apk/release/app-release*.apk "$GITHUB_WORKSPACE/SUDS-android.apk"
+          ls -la "$GITHUB_WORKSPACE/SUDS-android.apk"
+      - name: Publish to GitHub Release
+        if: github.event_name == 'push' || inputs.publish
+        run: |
+          cd src
+          tag="${GITHUB_REF_NAME}"; case "$tag" in v*) ;; *) tag="v$(node -p "require('./package.json').version")";; esac
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            notes=$(awk -v v="${tag#v}" '/^## /{p = index($0, v) > 0} p' CHANGELOG.md)
+            gh release create "$tag" --target "$(git rev-parse HEAD)" --title "SUDS $tag" --notes "${notes:-See CHANGELOG.md}"
+          fi
+          gh release upload "$tag" "$GITHUB_WORKSPACE/SUDS-android.apk" --clobber
+          echo "APK attached to release $tag: https://github.com/${GITHUB_REPOSITORY}/releases/tag/$tag"

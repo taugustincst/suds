@@ -1,13 +1,15 @@
 name: CI
+# Uses no marketplace actions so it runs under a restrictive Actions policy.
 on: [push, pull_request]
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '22' }
-      - run: npm test
-      - run: node scripts/package.js /tmp/suds.zip
+      - name: Check out
+        run: git clone --depth 1 "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
+      - name: Test
+        working-directory: src
+        run: node --version && npm test && node scripts/package.js /tmp/suds.zip
       - name: Syntax-check browser modules
+        working-directory: src
         run: for f in public/*.js public/views/*.js; do node --input-type=module --check < "$f" || exit 1; done
