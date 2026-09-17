@@ -55,7 +55,7 @@ The launcher + wizard route above is production mode (`SUDS_ENV=production`) wit
 | Interventions | 25 SUD-navigation intervention types, duration, location/modality, outcome, stage of change, naloxone kits and fentanyl test strips, funding source, cost, follow-up task creation, automatic time entry |
 | Calls | Direction, contact type, duration, outcome, crisis flag, encrypted summary, follow-up scheduling |
 | Time | Per-worker time entries by category and funding source, billable flag, summaries by worker / category / day / fund |
-| Resources & referrals | Community resource directory (detox, residential, OTP/OBOT, housing, harm reduction, legal, …) with verification dates; referrals with status pipeline, urgency, warm handoff, consent linkage, barriers, days-to-admit |
+| Resources & referrals | Community resource directory (detox, residential, OTP/OBOT, housing, harm reduction, legal, …) with treatment center profiles: services-offered tags, plain-language summary, levels of care, how to refer, cost and a picture gallery; verification dates; referrals with status pipeline, urgency, warm handoff, consent linkage, barriers, days-to-admit |
 | Tasks & timelines | Tasks with priorities, due dates, milestones; unified per-client timeline of every event |
 | Budget | Funding sources (opioid settlement, SOR, SAMHSA, county…), budget lines, expenditures with approval workflow and separation of duties, burn-rate vs. period elapsed, staff-cost allocation |
 | Notes | Clinical vs. administrative notes with role-based visibility, SOAP / DAP / BIRP / GIRP structured formats, electronic signature with tamper-evident hash, addenda, break-glass access for administrators |

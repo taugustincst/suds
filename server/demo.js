@@ -8,8 +8,8 @@ const { encrypt, blindIndex, uuid } = require('./crypto');
 const audit = require('./audit');
 
 const DEMO_PREFIX = 'DEMO-';
-const TABLES = ['expenditures', 'disclosures', 'consents', 'note_addenda', 'notes', 'tasks', 'referrals', 'time_entries', 'calls', 'interventions', 'assignments', 'clients', 'budget_lines', 'funding_sources', 'resources'];
-const SYNCED = new Set(['expenditures', 'disclosures', 'consents', 'note_addenda', 'notes', 'tasks', 'referrals', 'time_entries', 'calls', 'interventions', 'assignments', 'clients', 'budget_lines', 'funding_sources', 'resources']);
+const TABLES = ['expenditures', 'disclosures', 'consents', 'note_addenda', 'notes', 'tasks', 'referrals', 'time_entries', 'calls', 'interventions', 'assignments', 'clients', 'budget_lines', 'funding_sources', 'resource_photos', 'resources'];
+const SYNCED = new Set(['expenditures', 'disclosures', 'consents', 'note_addenda', 'notes', 'tasks', 'referrals', 'time_entries', 'calls', 'interventions', 'assignments', 'clients', 'budget_lines', 'funding_sources', 'resource_photos', 'resources']);
 
 function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
@@ -35,21 +35,41 @@ const PEOPLE = [
   ['Andre', 'Jackson', 'Dre', 'he/him', '1990-05-14', 'methamphetamine', '', 'smoked', 'high', 'active', 'none', null, 1, 'jail', 'pending', '2.1', 'jail', 1, 0, 0, 'contemplation', 'Release planning; Medicaid; job program'],
 ];
 const RESOURCES = [
-  ['Riverside Recovery Center', 'residential', '555-0200', 'buprenorphine, naltrexone', 1, 1, 'Mon–Fri 8–5; intake line 24/7', '28-day residential; medically supervised. Adults 18+.', 'English, Spanish'],
-  ['County Opioid Treatment Program', 'mat_otp', '555-0201', 'methadone, buprenorphine', 1, 1, 'Dosing 5:30am–11am daily', 'Methadone and buprenorphine; same-day intake Tue/Thu.', 'English, Spanish'],
-  ['Hope Street Detox', 'detox_withdrawal_mgmt', '555-0202', '', 1, 1, '24/7', 'Social and medical detox; call for bed availability.', 'English'],
-  ['Bridge Housing Collaborative', 'sober_living', '555-0203', '', 1, 0, 'Mon–Fri 9–4', 'Recovery housing; 30 days sober required.', 'English'],
-  ['Downtown Shelter', 'shelter', '555-0204', '', 0, 1, 'Check-in 6pm', 'Emergency shelter; low-barrier; pets allowed.', 'English, Spanish'],
-  ['Community Harm Reduction Coalition', 'syringe_services', '555-0205', '', 0, 1, 'Tue/Thu 1–5; mobile van Sat', 'Syringe services, naloxone, fentanyl test strips, wound care.', 'English, Spanish'],
-  ['Valley Behavioral Health', 'mental_health', '555-0206', '', 1, 0, 'Mon–Fri 8–6', 'Outpatient mental health; co-occurring track.', 'English'],
-  ['Second Chance Legal Aid', 'legal', '555-0207', '', 0, 1, 'Wed 10–2 walk-in', 'Expungement, warrants, benefits appeals.', 'English'],
-  ['Family Health Clinic (OBOT)', 'mat_obot', '555-0208', 'buprenorphine', 1, 1, 'Mon–Sat 8–8', 'Office-based buprenorphine; telehealth follow-ups.', 'English, Spanish, Vietnamese'],
-  ['Recovery Rides', 'transportation', '555-0209', '', 0, 1, 'Book 24h ahead', 'Free rides to treatment and court.', 'English'],
-  ['Northside IOP', 'intensive_outpatient', '555-0210', '', 1, 0, 'Evenings Mon/Wed/Thu', 'Intensive outpatient; evening groups for working adults.', 'English'],
-  ['County Crisis Line', 'crisis_line', '988', '', 1, 1, '24/7', 'Mobile crisis team dispatch.', 'English, Spanish'],
-  ['Hands & Hearts Food Pantry', 'food', '555-0212', '', 0, 1, 'Sat 9–12', 'Groceries and hot meals; no ID required.', 'English'],
-  ['WorkFirst Employment Services', 'employment', '555-0213', '', 0, 1, 'Mon–Fri 9–5', 'Job readiness, résumé help, fair-chance employers.', 'English, Spanish'],
-  ['Recovery Café', 'recovery_community', '555-0214', '', 0, 1, 'Daily 10–6', 'Peer-led recovery community; meetings and meals.', 'English'],
+  // name, category, phone, mat, medicaid, uninsured, hours, services, languages, summary, service_tags, levels_of_care, populations, intake_process, cost_notes, photos
+  ['Riverside Recovery Center', 'residential', '555-0200', 'buprenorphine, naltrexone', 1, 1, 'Mon–Fri 8–5; intake line 24/7', '28-day residential; medically supervised. Adults 18+.', 'English, Spanish',
+    'A 42-bed residential program on the river with medical staff on site around the clock. Clients start with a medical assessment and, if needed, medically supervised withdrawal, then move into a structured 28-day program of group and individual counseling, MAT (buprenorphine or naltrexone), family sessions and discharge planning. Most clients step down to Northside IOP or Bridge Housing.',
+    'residential,detox,mat_buprenorphine,mat_naltrexone,individual_counseling,group_counseling,family_program,co_occurring,aftercare,spanish_speaking', '3.5, 3.7', 'adults,women,men,justice_involved', 'Call the intake line any time; a nurse screens by phone in about 20 minutes. Bring ID and insurance card if you have them; neither is required to be admitted. Beds are usually available within 1–3 days.', 'Medicaid and most commercial plans; county-funded beds for uninsured residents.', 3],
+  ['County Opioid Treatment Program', 'mat_otp', '555-0201', 'methadone, buprenorphine', 1, 1, 'Dosing 5:30am–11am daily', 'Methadone and buprenorphine; same-day intake Tue/Thu.', 'English, Spanish',
+    'The county\'s licensed opioid treatment program. Daily observed methadone or buprenorphine dosing with take-home doses earned over time, plus counseling, peer support and on-site naloxone. Same-day intake on Tuesdays and Thursdays for anyone who arrives before 9am.',
+    'mat_methadone,mat_buprenorphine,medication_management,individual_counseling,group_counseling,peer_support,naloxone,same_day_intake,walk_in,spanish_speaking', 'OTP', 'adults,pregnant_parenting,justice_involved', 'Walk in Tue/Thu before 9am with a photo ID if possible. A navigator warm handoff speeds things up: call the intake nurse the day before.', 'Medicaid covers dosing in full; sliding scale for uninsured (about $15/week).', 2],
+  ['Hope Street Detox', 'detox_withdrawal_mgmt', '555-0202', '', 1, 1, '24/7', 'Social and medical detox; call for bed availability.', 'English',
+    'Short-stay (3–7 day) withdrawal management with nursing 24/7 and a physician on call. Comfort medications for opioid, alcohol and benzodiazepine withdrawal. Staff connect every client to a next step before discharge.',
+    'detox,medical_care,naloxone,crisis_24_7,aftercare', '3.2, 3.7', 'adults', 'Call for bed availability; if a bed is open the client can come the same day. Ambulance or navigator transport is fine.', 'No cost to county residents.', 2],
+  ['Bridge Housing Collaborative', 'sober_living', '555-0203', '', 1, 0, 'Mon–Fri 9–4', 'Recovery housing; 30 days sober required.', 'English',
+    'Shared recovery homes (2–3 people per room) with house managers, weekly house meetings and required recovery-meeting attendance. Residents may stay up to 12 months while they work, study or attend treatment.',
+    'sober_living,housing,peer_support,employment,aftercare', '', 'adults,men,women', 'Application plus a short interview; 30 days of sobriety and a referral from a treatment provider or navigator are required.', 'Rent $450/month; first month can be covered by the housing assistance line.', 2],
+  ['Downtown Shelter', 'shelter', '555-0204', '', 0, 1, 'Check-in 6pm', 'Emergency shelter; low-barrier; pets allowed.', 'English, Spanish',
+    'Low-barrier overnight shelter with 120 beds, showers, lockers and a hot dinner. Sobriety is not required. Case managers on site help with IDs, benefits and housing applications.', 'housing,case_management,walk_in,harm_reduction,naloxone', '', 'adults,unhoused,veterans', 'Walk in at 6pm; no referral needed.', 'Free.', 1],
+  ['Community Harm Reduction Coalition', 'syringe_services', '555-0205', '', 0, 1, 'Tue/Thu 1–5; mobile van Sat', 'Syringe services, naloxone, fentanyl test strips, wound care.', 'English, Spanish',
+    'Peer-run harm reduction center and mobile van. Free naloxone, fentanyl and xylazine test strips, safer-use supplies, wound care by a nurse, HIV/HCV testing and a warm, no-judgment place to sit down.', 'harm_reduction,naloxone,syringe_services,medical_care,peer_support,walk_in,spanish_speaking', '', 'adults,unhoused,lgbtq', 'No referral or ID needed. The van schedule is posted on their website weekly.', 'Free.', 2],
+  ['Valley Behavioral Health', 'mental_health', '555-0206', '', 1, 0, 'Mon–Fri 8–6', 'Outpatient mental health; co-occurring track.', 'English',
+    'Community mental health center with psychiatry, therapy and a co-occurring disorders track for people managing both substance use and mental health conditions. Telehealth available.', 'mental_health,co_occurring,medication_management,individual_counseling,group_counseling,telehealth,trauma_informed', '1.0', 'adults,adolescents,families', 'Phone intake, then an assessment within two weeks. Navigators can request an expedited slot for clients leaving detox or jail.', 'Medicaid and commercial insurance; county contract covers uninsured residents.', 1],
+  ['Second Chance Legal Aid', 'legal', '555-0207', '', 0, 1, 'Wed 10–2 walk-in', 'Expungement, warrants, benefits appeals.', 'English',
+    'Free civil legal help for people in recovery: expungement, clearing warrants, driver\'s license reinstatement, benefits appeals and landlord issues.', 'legal_help,walk_in', '', 'adults,justice_involved', 'Walk in Wednesdays or call for an appointment.', 'Free.', 1],
+  ['Family Health Clinic (OBOT)', 'mat_obot', '555-0208', 'buprenorphine', 1, 1, 'Mon–Sat 8–8', 'Office-based buprenorphine; telehealth follow-ups.', 'English, Spanish, Vietnamese',
+    'Primary care clinic that prescribes buprenorphine as part of regular medical care, so clients can get their MAT, blood pressure and prenatal care in one place. Telehealth follow-ups after the first visit.', 'mat_buprenorphine,medical_care,telehealth,medication_management,spanish_speaking', '1.0', 'adults,pregnant_parenting,families', 'Call for a same-week new-patient visit; bring a medication list. A navigator can attend the first visit.', 'Medicaid, Medicare and commercial plans; sliding scale for uninsured.', 2],
+  ['Recovery Rides', 'transportation', '555-0209', '', 0, 1, 'Book 24h ahead', 'Free rides to treatment and court.', 'English',
+    'Volunteer drivers give free rides to treatment appointments, court dates, dosing and recovery meetings within the county.', 'transportation', '', 'adults', 'Book by phone or online at least 24 hours ahead; same-day rides when a driver is free.', 'Free.', 1],
+  ['Northside IOP', 'intensive_outpatient', '555-0210', '', 1, 0, 'Evenings Mon/Wed/Thu', 'Intensive outpatient; evening groups for working adults.', 'English',
+    'Nine hours a week of evening group therapy plus a weekly individual session, designed for people who work or care for children during the day. Eight to twelve weeks, followed by an aftercare group.', 'intensive_outpatient,group_counseling,individual_counseling,aftercare,family_program', '2.1', 'adults,men,women', 'Phone screening, then an assessment within a week. Referrals from residential programs are prioritised.', 'Medicaid and commercial insurance.', 2],
+  ['County Crisis Line', 'crisis_line', '988', '', 1, 1, '24/7', 'Mobile crisis team dispatch.', 'English, Spanish',
+    'Call or text 988 any time. Counselors can dispatch the mobile crisis team, which comes to the person instead of sending police, and can arrange a same-day crisis bed.', 'crisis_24_7,mental_health,co_occurring,spanish_speaking', '', 'adults,adolescents', 'Call or text 988.', 'Free.', 0],
+  ['Hands & Hearts Food Pantry', 'food', '555-0212', '', 0, 1, 'Sat 9–12', 'Groceries and hot meals; no ID required.', 'English',
+    'Weekly groceries, hot meals on Saturdays and hygiene supplies. No ID or paperwork.', 'walk_in', '', 'adults,families,unhoused', 'Walk in Saturday mornings.', 'Free.', 1],
+  ['WorkFirst Employment Services', 'employment', '555-0213', '', 0, 1, 'Mon–Fri 9–5', 'Job readiness, résumé help, fair-chance employers.', 'English, Spanish',
+    'Job-readiness classes, résumé and interview help and a network of fair-chance employers who hire people with records. Paid work-experience placements for people in recovery.', 'employment,peer_support,spanish_speaking', '', 'adults,justice_involved', 'Orientation every Monday at 9am; no referral needed.', 'Free.', 1],
+  ['Recovery Café', 'recovery_community', '555-0214', '', 0, 1, 'Daily 10–6', 'Peer-led recovery community; meetings and meals.', 'English',
+    'A membership-based recovery community: meals, meetings, art and music groups, and peer recovery coaches. Members commit to 24 hours of sobriety before each visit and to a weekly recovery circle.', 'peer_support,walk_in,aftercare,employment', '', 'adults,lgbtq,unhoused', 'Drop in for a tour any day; membership starts after a short orientation.', 'Free; members volunteer a few hours a month.', 2],
 ];
 
 /** staff: { workers: [ids], clinician?: id, supervisor: id, actor: id } */
@@ -65,9 +85,16 @@ function seed({ actor, workers, clinician = null, supervisor, seedValue = 42 }) 
 
   db.transaction(() => {
     // Resources
-    const rids = RESOURCES.map(([name, cat, phone, mat, med, unins, hours, services, langs]) => {
+    const png = require('./png');
+    const rids = RESOURCES.map(([name, cat, phone, mat, med, unins, hours, services, langs, summary, tags, loc, pops, intake, cost, nPhotos], ri) => {
       const id = track('resources', uuid());
-      db.run(`INSERT INTO resources(id,name,category,phone,mat_offered,accepts_medicaid,accepts_uninsured,city,hours,services,languages,last_verified_at,notes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, name, cat, phone, mat || null, med, unins, 'Springfield', hours, services, langs, day(Math.floor(rand() * 90)), 'Sample resource (fictional)');
+      db.run(`INSERT INTO resources(id,name,category,phone,mat_offered,accepts_medicaid,accepts_uninsured,address,city,zip,hours,services,languages,summary,service_tags,levels_of_care,populations,intake_process,cost_notes,website,last_verified_at,notes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, name, cat, phone, mat || null, med, unins, `${200 + ri * 40} Sample Ave`, 'Springfield', '00000', hours, services, langs, summary, tags, loc || null, pops || null, intake, cost, `https://example.org/${name.toLowerCase().replace(/[^a-z]+/g, '-')}`, day(Math.floor(rand() * 90)), 'Sample resource (fictional)');
+      // placeholder pictures (drawn, not real photographs)
+      const captions = ['Main entrance', 'Group room', 'Reception and waiting area'];
+      for (let k = 0; k < (nPhotos || 0); k++) {
+        const full = png.placeholder(640, 400, ri * 7 + k + 1, ri + k); const thumb = png.placeholder(240, 150, ri * 7 + k + 1, ri + k);
+        db.run(`INSERT INTO resource_photos(id,resource_id,caption,content_type,bytes,width,height,data_b64,thumb_b64,sort_order,uploaded_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, track('resource_photos', uuid()), id, captions[k] + ' (sample picture)', 'image/png', full.length, 640, 400, full.toString('base64'), thumb.toString('base64'), k, actor);
+      }
       return id;
     });
     // Funding

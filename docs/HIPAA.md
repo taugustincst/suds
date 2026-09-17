@@ -61,3 +61,6 @@ SUDS is designed to help a covered entity meet the HIPAA Security Rule (45 CFR Â
 
 * `SUDS_ENCRYPTION_KEY` and `SUDS_INDEX_KEY` are 256-bit keys supplied by the environment, or generated into `data/keys.json` (mode 0600) on first run for installations without an IT-managed secret store. In that case the administrator must download the key backup (Administration â†’ System) and store it separately from database backups. Rotate with `NEW_ENCRYPTION_KEY=<hex> npm run rotate-key` during a maintenance window (server stopped, backup taken). Never commit keys.
 * Backups are encrypted with a key derived from the encryption key; store keys and backups separately.
+
+## Resource pictures
+Pictures on treatment center profiles are meant to show buildings, entrances and rooms. They are not PHI and are stored unencrypted alongside the resource record so they can be shown quickly and synced to phones. Staff are reminded in the app never to upload pictures of clients; if one is uploaded by mistake, remove it from the profile (audit-logged) and note the incident per your policy.
