@@ -151,10 +151,10 @@ var require_ieee754 = __commonJS({
       var nBits = -7;
       var i = isLE3 ? nBytes - 1 : 0;
       var d = isLE3 ? -1 : 1;
-      var s = buffer[offset + i];
+      var s2 = buffer[offset + i];
       i += d;
-      e = s & (1 << -nBits) - 1;
-      s >>= -nBits;
+      e = s2 & (1 << -nBits) - 1;
+      s2 >>= -nBits;
       nBits += eLen;
       for (; nBits > 0; e = e * 256 + buffer[offset + i], i += d, nBits -= 8) {
       }
@@ -166,12 +166,12 @@ var require_ieee754 = __commonJS({
       if (e === 0) {
         e = 1 - eBias;
       } else if (e === eMax) {
-        return m ? NaN : (s ? -1 : 1) * Infinity;
+        return m ? NaN : (s2 ? -1 : 1) * Infinity;
       } else {
         m = m + Math.pow(2, mLen);
         e = e - eBias;
       }
-      return (s ? -1 : 1) * m * Math.pow(2, e - mLen);
+      return (s2 ? -1 : 1) * m * Math.pow(2, e - mLen);
     };
     exports.write = function(buffer, value, offset, isLE3, mLen, nBytes) {
       var e, m, c;
@@ -181,7 +181,7 @@ var require_ieee754 = __commonJS({
       var rt = mLen === 23 ? Math.pow(2, -24) - Math.pow(2, -77) : 0;
       var i = isLE3 ? 0 : nBytes - 1;
       var d = isLE3 ? 1 : -1;
-      var s = value < 0 || value === 0 && 1 / value < 0 ? 1 : 0;
+      var s2 = value < 0 || value === 0 && 1 / value < 0 ? 1 : 0;
       value = Math.abs(value);
       if (isNaN(value) || value === Infinity) {
         m = isNaN(value) ? 1 : 0;
@@ -218,7 +218,7 @@ var require_ieee754 = __commonJS({
       eLen += mLen;
       for (; eLen > 0; buffer[offset + i] = e & 255, i += d, e /= 256, eLen -= 8) {
       }
-      buffer[offset + i - d] |= s * 128;
+      buffer[offset + i - d] |= s2 * 128;
     };
   }
 });
@@ -2513,8 +2513,8 @@ var init_aes = __esm({
     rotr32_8 = (n) => n << 24 | n >>> 8;
     rotl32_8 = (n) => n << 8 | n >>> 24;
     byteSwap = (word) => word << 24 & 4278190080 | word << 8 & 16711680 | word >>> 8 & 65280 | word >>> 24 & 255;
-    tableEncoding = /* @__PURE__ */ genTtable(sbox, (s) => mul(s, 3) << 24 | s << 16 | s << 8 | mul(s, 2));
-    tableDecoding = /* @__PURE__ */ genTtable(invSbox, (s) => mul(s, 11) << 24 | mul(s, 13) << 16 | mul(s, 9) << 8 | mul(s, 14));
+    tableEncoding = /* @__PURE__ */ genTtable(sbox, (s2) => mul(s2, 3) << 24 | s2 << 16 | s2 << 8 | mul(s2, 2));
+    tableDecoding = /* @__PURE__ */ genTtable(invSbox, (s2) => mul(s2, 11) << 24 | mul(s2, 13) << 16 | mul(s2, 9) << 8 | mul(s2, 14));
     xPowers = /* @__PURE__ */ (() => {
       const p = new Uint8Array(16);
       for (let i = 0, x = 1; i < 16; i++, x = mul22(x))
@@ -3765,7 +3765,7 @@ function createHmac(alg, key) {
   } };
 }
 function concat(parts) {
-  const n = parts.reduce((s, p) => s + p.length, 0);
+  const n = parts.reduce((s2, p) => s2 + p.length, 0);
   const r = new Uint8Array(n);
   let o = 0;
   for (const p of parts) {
@@ -6193,6 +6193,12 @@ CREATE TABLE IF NOT EXISTS clients (
   last_name_enc TEXT NOT NULL,
   last_name_idx TEXT,
   full_name_idx TEXT,
+  -- Coarse blind indexes that make search tolerant of typos and partial names without storing any name in
+  -- the clear: the first three letters of the surname, and its Soundex code, each HMAC'd with the index
+  -- key. They are lower entropy than the exact indexes, but anyone holding the index key can already test
+  -- a specific name against those, and both live in the same database as the ciphertext.
+  name_prefix_idx TEXT,
+  name_phonetic_idx TEXT,
   preferred_name_enc TEXT,
   dob_enc TEXT,
   dob_idx TEXT,
@@ -6238,6 +6244,9 @@ CREATE TABLE IF NOT EXISTS clients (
   ok_to_text INTEGER DEFAULT 0,
   ok_to_voicemail INTEGER DEFAULT 0,
   created_by TEXT REFERENCES users(id),
+  -- Set when this record was merged into another as a duplicate; the row is kept so old references and the
+  -- audit trail still resolve, but it no longer appears anywhere staff work.
+  merged_into TEXT REFERENCES clients(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   deleted_at TEXT
@@ -6678,6 +6687,8 @@ CREATE TABLE IF NOT EXISTS user_prefs (
 -- Sync reads every table by updated_at; without these indexes each pull is a full scan of every table.
 CREATE INDEX IF NOT EXISTS idx_clients_updated ON clients(updated_at);
 CREATE INDEX IF NOT EXISTS idx_clients_full_name_idx ON clients(full_name_idx);
+CREATE INDEX IF NOT EXISTS idx_clients_name_prefix ON clients(name_prefix_idx);
+CREATE INDEX IF NOT EXISTS idx_clients_name_phonetic ON clients(name_phonetic_idx);
 CREATE INDEX IF NOT EXISTS idx_resources_updated ON resources(updated_at);
 CREATE INDEX IF NOT EXISTS idx_resource_photos_updated ON resource_photos(updated_at);
 CREATE INDEX IF NOT EXISTS idx_funding_sources_updated ON funding_sources(updated_at);
@@ -6801,8 +6812,8 @@ var require_crypto = __commonJS({
     function randomToken(bytes3 = 32) {
       return crypto3.randomBytes(bytes3).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     }
-    function sha2562(s) {
-      return crypto3.createHash("sha256").update(s).digest("hex");
+    function sha2562(s2) {
+      return crypto3.createHash("sha256").update(s2).digest("hex");
     }
     function uuid2() {
       return crypto3.randomUUID();
@@ -6879,6 +6890,118 @@ var require_crypto = __commonJS({
       base32Encode,
       base32Decode
     };
+  }
+});
+
+// server/clients-model.js
+var require_clients_model = __commonJS({
+  "server/clients-model.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var { encrypt: encrypt3, decrypt: decrypt3, blindIndex: blindIndex2, uuid: uuid2 } = require_crypto();
+    var ENC_FIELDS = ["first_name", "last_name", "preferred_name", "dob", "phone", "alt_phone", "email", "address", "medicaid_id", "emergency_contact", "goals", "flags"];
+    var PLAIN_FIELDS = [
+      "city",
+      "zip",
+      "gender",
+      "pronouns",
+      "race_ethnicity",
+      "preferred_language",
+      "veteran",
+      "housing_status",
+      "insurance",
+      "status",
+      "intake_date",
+      "discharge_date",
+      "discharge_reason",
+      "referral_source",
+      "primary_substance",
+      "secondary_substances",
+      "route_of_use",
+      "asam_level",
+      "mat_status",
+      "mat_medication",
+      "overdose_history",
+      "last_overdose_date",
+      "naloxone_provided",
+      "naloxone_last_date",
+      "risk_level",
+      "justice_involved",
+      "pregnant_or_parenting",
+      "co_occurring_mh",
+      "race_codes",
+      "contact_preferences",
+      "ok_to_text",
+      "ok_to_voicemail"
+    ];
+    function decryptRow(row, { deidentify = false } = {}) {
+      if (!row) return null;
+      const out2 = {};
+      for (const [k, v] of Object.entries(row)) {
+        if (k.endsWith("_enc")) {
+          const plain = k.slice(0, -4);
+          if (deidentify) continue;
+          out2[plain] = v ? decrypt3(v) : null;
+        } else if (k.endsWith("_idx")) continue;
+        else out2[k] = v;
+      }
+      if (deidentify) {
+        out2.display_name = row.client_code;
+      } else out2.display_name = `${out2.last_name || ""}, ${out2.first_name || ""}`.trim().replace(/^,\s*|,\s*$/g, "");
+      return out2;
+    }
+    function encryptFields(v) {
+      const cols2 = {};
+      for (const f of ENC_FIELDS) if (v[f] !== void 0) cols2[`${f}_enc`] = v[f] === null ? null : encrypt3(v[f]);
+      if (v.last_name !== void 0) cols2.last_name_idx = blindIndex2(v.last_name);
+      if (v.first_name !== void 0 || v.last_name !== void 0) cols2.full_name_idx = void 0;
+      if (v.last_name !== void 0) {
+        cols2.name_prefix_idx = namePrefixIndex(v.last_name);
+        cols2.name_phonetic_idx = namePhoneticIndex(v.last_name);
+      }
+      if (v.dob !== void 0) cols2.dob_idx = blindIndex2(v.dob);
+      if (v.phone !== void 0) cols2.phone_idx = blindIndex2(String(v.phone || "").replace(/\D/g, ""));
+      return cols2;
+    }
+    function soundex(name) {
+      const s2 = String(name || "").toUpperCase().replace(/[^A-Z]/g, "");
+      if (!s2) return "";
+      const code = (c) => ({ B: 1, F: 1, P: 1, V: 1, C: 2, G: 2, J: 2, K: 2, Q: 2, S: 2, X: 2, Z: 2, D: 3, T: 3, L: 4, M: 5, N: 5, R: 6 })[c] || 0;
+      let out2 = s2[0];
+      let prev = code(s2[0]);
+      for (const ch of s2.slice(1)) {
+        const c = code(ch);
+        if (c && c !== prev) out2 += c;
+        if (ch !== "H" && ch !== "W") prev = c;
+        if (out2.length === 4) break;
+      }
+      return (out2 + "000").slice(0, 4);
+    }
+    var normaliseName = (n) => String(n || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z]/g, "");
+    function namePrefixIndex(lastName) {
+      const n = normaliseName(lastName);
+      return n.length >= 2 ? blindIndex2("pfx:" + n.slice(0, 3)) : null;
+    }
+    function namePhoneticIndex(lastName) {
+      const c = soundex(normaliseName(lastName));
+      return c ? blindIndex2("snd:" + c) : null;
+    }
+    function nextClientCode() {
+      const year = (/* @__PURE__ */ new Date()).getFullYear();
+      const prefix = `${require_config().local ? "M" : "C"}${String(year).slice(2)}-`;
+      const last = db3.one(`SELECT client_code FROM clients WHERE client_code LIKE ? ORDER BY client_code DESC LIMIT 1`, prefix + "%");
+      const n = last ? Number(last.client_code.slice(prefix.length)) + 1 : 1;
+      return prefix + String(n).padStart(4, "0");
+    }
+    function summary(row, opts) {
+      const d = decryptRow(row, opts);
+      const keep = ["id", "client_code", "display_name", "first_name", "last_name", "preferred_name", "dob", "phone", "status", "risk_level", "primary_substance", "mat_status", "intake_date", "city", "flags", "ok_to_text", "ok_to_voicemail", "updated_at"];
+      const o = {};
+      for (const k of keep) if (d[k] !== void 0) o[k] = d[k];
+      return o;
+    }
+    module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, summary, uuid: uuid2, soundex, namePrefixIndex, namePhoneticIndex, normaliseName };
   }
 });
 
@@ -7035,6 +7158,27 @@ var require_db = __commonJS({
             ins.run(uuid2(), c.id, c.intake_date || String(c.created_at).slice(0, 10), c.created_by, c.referral_source, closed ? c.discharge_date || c.created_at : null, closed ? c.discharge_reason : null, closed ? "closed" : "open");
           }
         }
+      },
+      // 6: coarse blind indexes so search tolerates typos and partial surnames, and duplicate detection has
+      //    something to match on, without putting any name in the clear.
+      (d) => {
+        const schemaText = safeSchema();
+        addColumn(d, "clients", "merged_into", "TEXT REFERENCES clients(id)");
+        addColumn(d, "clients", "name_prefix_idx", "TEXT");
+        addColumn(d, "clients", "name_phonetic_idx", "TEXT");
+        const { decrypt: decrypt3 } = require_crypto();
+        const M = require_clients_model();
+        const upd = d.prepare(`UPDATE clients SET name_prefix_idx=?, name_phonetic_idx=? WHERE id=?`);
+        for (const c of d.prepare(`SELECT id, last_name_enc FROM clients`).all()) {
+          let last = "";
+          try {
+            last = c.last_name_enc ? decrypt3(c.last_name_enc) : "";
+          } catch {
+            continue;
+          }
+          upd.run(M.namePrefixIndex(last), M.namePhoneticIndex(last), c.id);
+        }
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_clients_name_/.test(line.trim())) d.exec(line.trim());
       }
     ];
     function initialise(d, schemaText) {
@@ -7142,7 +7286,7 @@ var require_db = __commonJS({
     function tombstone(table, id) {
       run2(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now());
     }
-    module.exports = { open, openWith, get, close, now, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone };
+    module.exports = { open, openWith, get, close, LATEST_SCHEMA_VERSION: migrations.length, now, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone };
   }
 });
 
@@ -7342,17 +7486,40 @@ var require_audit = __commonJS({
         hash2
       );
     }
+    var VERIFY_BATCH = 5e3;
     function verifyChain() {
-      const rows = db3.all(`SELECT * FROM audit_log ORDER BY id ASC`);
-      if (!rows.length) return { ok: true, checked: 0 };
-      let prevHash = rows[0].prev_hash;
-      const anchoredAt = rows[0].id;
-      for (const r of rows) {
-        const payload = [r.at, r.user_id || "", r.username || "", r.action, r.entity || "", r.entity_id || "", r.client_id || "", r.ip || "", r.success ? 1 : 0, r.details || "", r.prev_hash].join("|");
-        if (r.prev_hash !== prevHash || sha2562(payload) !== r.hash) return { ok: false, checked: rows.length, firstBadId: r.id, anchoredAt };
-        prevHash = r.hash;
+      let prevHash = null;
+      let anchoredAt = null;
+      let checked = 0;
+      let afterId = 0;
+      for (; ; ) {
+        const rows = db3.all(`SELECT * FROM audit_log WHERE id > ? ORDER BY id ASC LIMIT ?`, afterId, VERIFY_BATCH);
+        if (!rows.length) break;
+        if (prevHash === null) {
+          prevHash = rows[0].prev_hash;
+          anchoredAt = rows[0].id;
+        }
+        for (const r of rows) {
+          const payload = [r.at, r.user_id || "", r.username || "", r.action, r.entity || "", r.entity_id || "", r.client_id || "", r.ip || "", r.success ? 1 : 0, r.details || "", r.prev_hash].join("|");
+          checked++;
+          if (r.prev_hash !== prevHash || sha2562(payload) !== r.hash) return { ok: false, checked, firstBadId: r.id, anchoredAt };
+          prevHash = r.hash;
+        }
+        afterId = rows[rows.length - 1].id;
+        if (rows.length < VERIFY_BATCH) break;
       }
-      return { ok: true, checked: rows.length, anchoredAt };
+      if (!checked) return { ok: true, checked: 0 };
+      return { ok: true, checked, anchoredAt };
+    }
+    function purgeTombstones(days) {
+      const cutoff = new Date(Date.now() - days * 864e5).toISOString();
+      const n = db3.run(`DELETE FROM tombstones WHERE deleted_at < ?`, cutoff).changes;
+      if (n) {
+        const prior = db3.getSetting("tombstone_purged_before", null);
+        if (!prior || prior < cutoff) db3.setSetting("tombstone_purged_before", cutoff);
+        log({ user: { username: "system" }, action: "tombstones.purge", details: { purged: n, before: cutoff } });
+      }
+      return n;
     }
     function purge(days) {
       const cutoff = new Date(Date.now() - days * 864e5).toISOString();
@@ -7362,7 +7529,7 @@ var require_audit = __commonJS({
       log({ user: { username: "system" }, action: "audit.purge", details: { purged: n, before: cutoff, last_purged_id: last.id, last_purged_hash: last.hash } });
       return n;
     }
-    module.exports = { log, verifyChain, purge };
+    module.exports = { log, verifyChain, purge, purgeTombstones };
   }
 });
 
@@ -7400,7 +7567,10 @@ var require_auth = __commonJS({
         "clients:all",
         "interventions:*",
         "calls:*",
-        "time:*",
+        "time:read",
+        "time:write",
+        "time:all",
+        "time:approve",
         "resources:*",
         "referrals:*",
         "tasks:*",
@@ -7429,8 +7599,10 @@ var require_auth = __commonJS({
         "clients:all",
         "interventions:*",
         "calls:*",
-        "time:*",
+        "time:read",
+        "time:write",
         "time:all",
+        "time:approve",
         "resources:*",
         "referrals:*",
         "tasks:*",
@@ -7461,7 +7633,8 @@ var require_auth = __commonJS({
         "clients:write",
         "interventions:*",
         "calls:*",
-        "time:*",
+        "time:read",
+        "time:write",
         "resources:read",
         "referrals:*",
         "tasks:*",
@@ -7483,7 +7656,8 @@ var require_auth = __commonJS({
         "clients:write",
         "interventions:*",
         "calls:*",
-        "time:*",
+        "time:read",
+        "time:write",
         "resources:*",
         "referrals:*",
         "tasks:*",
@@ -7576,26 +7750,29 @@ var require_auth = __commonJS({
       const authz = ctx.headers["authorization"];
       if (!token2 && authz && authz.startsWith("Bearer ")) token2 = authz.slice(7).trim();
       if (!token2) return null;
-      const s = db3.one(`SELECT * FROM sessions WHERE id=? AND revoked_at IS NULL`, sha2562(token2));
-      if (!s) return null;
+      const s2 = db3.one(`SELECT * FROM sessions WHERE id=? AND revoked_at IS NULL`, sha2562(token2));
+      if (!s2) return null;
       const now = Date.now();
-      if (Date.parse(s.expires_at) < now) return null;
+      if (Date.parse(s2.expires_at) < now) return null;
       const idleMs = policy().idleMinutes * 60 * 1e3;
-      if (now - Date.parse(s.last_seen_at) > idleMs) {
-        db3.run(`UPDATE sessions SET revoked_at=? WHERE id=?`, db3.now(), s.id);
+      if (now - Date.parse(s2.last_seen_at) > idleMs) {
+        db3.run(`UPDATE sessions SET revoked_at=? WHERE id=?`, db3.now(), s2.id);
         return null;
       }
-      const user = db3.one(`SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,must_change_password,password_changed_at,hourly_cost FROM users WHERE id=?`, s.user_id);
+      const user = db3.one(`SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,must_change_password,password_changed_at,hourly_cost FROM users WHERE id=?`, s2.user_id);
       if (!user || !user.is_active) return null;
-      if (now - Date.parse(s.last_seen_at) > 6e4) db3.run(`UPDATE sessions SET last_seen_at=? WHERE id=?`, new Date(now).toISOString(), s.id);
+      if (now - Date.parse(s2.last_seen_at) > 6e4) db3.run(`UPDATE sessions SET last_seen_at=? WHERE id=?`, new Date(now).toISOString(), s2.id);
       ctx.sessionToken = token2;
-      ctx.session = s;
+      ctx.session = s2;
       return user;
     }
     function requireAuth(ctx) {
       if (!ctx.user) throw unauthorized();
       if (ctx.session?.mfa_pending) throw new HttpError3(401, "MFA verification required", { mfaRequired: true });
       if (!ctx.path.startsWith("/api/auth/")) {
+        if (policy().mfaRequiredRoles.includes(ctx.user.role) && !ctx.user.mfa_enabled) {
+          throw new HttpError3(403, "Two-step verification must be set up for your role before you can continue", { mfaSetupRequired: true });
+        }
         if (ctx.user.must_change_password) throw new HttpError3(403, "Password change required", { passwordChangeRequired: true });
         const age = ctx.user.password_changed_at ? (Date.now() - Date.parse(ctx.user.password_changed_at)) / 864e5 : Infinity;
         const maxAge = policy().passwordMaxAgeDays;
@@ -7705,7 +7882,9 @@ var require_sync_tables = __commonJS({
         { name: "budget_lines", enc: [], scope: "all", writePerm: "budget:write", parent: ["funding_sources", "funding_source_id"] },
         { name: "clients", enc: ["first_name_enc", "last_name_enc", "preferred_name_enc", "dob_enc", "phone_enc", "alt_phone_enc", "email_enc", "address_enc", "medicaid_id_enc", "emergency_contact_enc", "goals_enc", "flags_enc"], scope: "client", clientCol: "id", idx: true, writePerm: "clients:write" },
         { name: "assignments", enc: [], scope: "client", clientCol: "client_id", writePerm: "assignments:manage", parent: ["clients", "client_id"] },
-        { name: "interventions", enc: [], scope: "client-or-null", clientCol: "client_id", writePerm: "interventions:write", parent: ["clients", "client_id"] },
+        { name: "episodes", enc: ["presenting_problem_enc", "discharge_summary_enc"], scope: "client", clientCol: "client_id", writePerm: "episodes:write", parent: ["clients", "client_id"] },
+        { name: "interventions", enc: ["summary_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "interventions:write", parent: ["clients", "client_id"] },
+        { name: "overdose_events", enc: ["notes_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "overdose:write", parent: ["clients", "client_id"] },
         { name: "calls", enc: ["contact_name_enc", "phone_enc", "summary_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "calls:write", parent: ["clients", "client_id"] },
         { name: "time_entries", enc: [], scope: "client-or-null", clientCol: "client_id", writePerm: "time:write", parent: ["clients", "client_id"] },
         { name: "referrals", enc: [], scope: "client", clientCol: "client_id", writePerm: "referrals:write", parent: ["clients", "client_id"] },
@@ -7734,6 +7913,10 @@ var require_sync_tables = __commonJS({
         ["tasks", "created_by"],
         ["expenditures", "user_id"],
         ["expenditures", "approved_by"],
+        ["episodes", "opened_by"],
+        ["episodes", "closed_by"],
+        ["overdose_events", "reported_by"],
+        ["consents", "revoked_by"],
         ["notes", "author_id"],
         ["notes", "signed_by"],
         ["notes", "cosigned_by"],
@@ -7749,7 +7932,8 @@ var require_sync_tables = __commonJS({
         ["audit_log", "user_id"],
         ["sessions", "user_id"],
         ["user_prefs", "user_id"],
-        ["api_keys", "created_by"]
+        ["api_keys", "created_by"],
+        ["users", "supervisor_id"]
       ]
     };
     module.exports.user_ref_cols = [...new Set(module.exports.user_refs.map(([, c]) => c))];
@@ -7761,7 +7945,25 @@ var require_constants = __commonJS({
   "server/constants.js"(exports, module) {
     "use strict";
     init_globals_inject();
+    var RACE_CODES = [
+      { code: "american_indian_alaska_native", label: "American Indian or Alaska Native" },
+      { code: "asian", label: "Asian" },
+      { code: "black_african_american", label: "Black or African American" },
+      { code: "native_hawaiian_pacific_islander", label: "Native Hawaiian or Other Pacific Islander" },
+      { code: "white", label: "White" },
+      { code: "other", label: "Other" },
+      { code: "declined", label: "Declined to answer" },
+      { code: "unknown", label: "Unknown" }
+    ];
+    var ETHNICITY_CODES = [
+      { code: "hispanic_latino", label: "Hispanic or Latino" },
+      { code: "not_hispanic_latino", label: "Not Hispanic or Latino" },
+      { code: "declined", label: "Declined to answer" },
+      { code: "unknown", label: "Unknown" }
+    ];
     module.exports = {
+      RACE_CODES,
+      ETHNICITY_CODES,
       INTERVENTION_TYPES: ["outreach", "screening_sbirt", "assessment", "intake", "care_coordination", "warm_handoff", "referral", "case_management", "harm_reduction", "naloxone_distribution", "peer_support", "crisis_response", "post_overdose_follow_up", "transport", "housing_assistance", "benefits_enrollment", "employment_support", "family_support", "education", "court_or_probation", "hospital_or_ed_visit", "jail_in_reach", "recovery_check_in", "discharge_planning", "other"],
       LOCATIONS: ["office", "field", "home", "phone", "telehealth", "hospital", "emergency_dept", "jail", "court", "shelter", "treatment_facility", "community", "other"],
       MODALITIES: ["in_person", "phone", "video", "text", "email", "collateral"],
@@ -7912,10 +8114,10 @@ var init_browser = __esm({
       rev[i] = ((x & 65280) >> 8 | (x & 255) << 8) >> 1;
     }
     hMap = function(cd, mb, r) {
-      var s = cd.length;
+      var s2 = cd.length;
       var i = 0;
       var l = new u16(mb);
-      for (; i < s; ++i) {
+      for (; i < s2; ++i) {
         if (cd[i])
           ++l[cd[i] - 1];
       }
@@ -7927,7 +8129,7 @@ var init_browser = __esm({
       if (r) {
         co = new u16(1 << mb);
         var rvb = 15 - mb;
-        for (i = 0; i < s; ++i) {
+        for (i = 0; i < s2; ++i) {
           if (cd[i]) {
             var sv = i << 4 | cd[i];
             var r_1 = mb - cd[i];
@@ -7938,8 +8140,8 @@ var init_browser = __esm({
           }
         }
       } else {
-        co = new u16(s);
-        for (i = 0; i < s; ++i) {
+        co = new u16(s2);
+        for (i = 0; i < s2; ++i) {
           if (cd[i]) {
             co[i] = rev[le[cd[i] - 1]++] >> 15 - cd[i];
           }
@@ -7982,12 +8184,12 @@ var init_browser = __esm({
     shft = function(p) {
       return (p + 7) / 8 | 0;
     };
-    slc = function(v, s, e) {
-      if (s == null || s < 0)
-        s = 0;
+    slc = function(v, s2, e) {
+      if (s2 == null || s2 < 0)
+        s2 = 0;
       if (e == null || e > v.length)
         e = v.length;
-      return new u82(v.subarray(s, e));
+      return new u82(v.subarray(s2, e));
     };
     ec = [
       "unexpected EOF",
@@ -8040,7 +8242,7 @@ var init_browser = __esm({
           var type = bits(dat, pos + 1, 3);
           pos += 3;
           if (!type) {
-            var s = shft(pos) + 4, l = dat[s - 4] | dat[s - 3] << 8, t = s + l;
+            var s2 = shft(pos) + 4, l = dat[s2 - 4] | dat[s2 - 3] << 8, t = s2 + l;
             if (t > sl) {
               if (noSt)
                 err(0);
@@ -8048,7 +8250,7 @@ var init_browser = __esm({
             }
             if (resize)
               cbuf(bt + l);
-            buf.set(dat.subarray(s, t), bt);
+            buf.set(dat.subarray(s2, t), bt);
             st.b = bt += l, st.p = pos = t * 8, st.f = final;
             continue;
           } else if (type == 1)
@@ -8068,16 +8270,16 @@ var init_browser = __esm({
             for (var i = 0; i < tl; ) {
               var r = clm[bits(dat, pos, clbmsk)];
               pos += r & 15;
-              var s = r >> 4;
-              if (s < 16) {
-                ldt[i++] = s;
+              var s2 = r >> 4;
+              if (s2 < 16) {
+                ldt[i++] = s2;
               } else {
                 var c = 0, n = 0;
-                if (s == 16)
+                if (s2 == 16)
                   n = 3 + bits(dat, pos, 3), pos += 2, c = ldt[i - 1];
-                else if (s == 17)
+                else if (s2 == 17)
                   n = 3 + bits(dat, pos, 7), pos += 3;
-                else if (s == 18)
+                else if (s2 == 18)
                   n = 11 + bits(dat, pos, 127), pos += 7;
                 while (n--)
                   ldt[i++] = c;
@@ -8175,11 +8377,11 @@ var init_browser = __esm({
         if (d[i])
           t.push({ s: i, f: d[i] });
       }
-      var s = t.length;
+      var s2 = t.length;
       var t2 = t.slice();
-      if (!s)
+      if (!s2)
         return { t: et, l: 0 };
-      if (s == 1) {
+      if (s2 == 1) {
         var v = new u82(t[0].s + 1);
         v[t[0].s] = 1;
         return { t: v, l: 1 };
@@ -8190,13 +8392,13 @@ var init_browser = __esm({
       t.push({ s: -1, f: 25001 });
       var l = t[0], r = t[1], i0 = 0, i1 = 1, i2 = 2;
       t[0] = { s: -1, f: l.f + r.f, l, r };
-      while (i1 != s - 1) {
+      while (i1 != s2 - 1) {
         l = t[t[i0].f < t[i2].f ? i0++ : i2++];
         r = t[i0 != i1 && t[i0].f < t[i2].f ? i0++ : i2++];
         t[i1++] = { s: -1, f: l.f + r.f, l, r };
       }
       var maxSym = t2[0].s;
-      for (var i = 1; i < s; ++i) {
+      for (var i = 1; i < s2; ++i) {
         if (t2[i].s > maxSym)
           maxSym = t2[i].s;
       }
@@ -8208,7 +8410,7 @@ var init_browser = __esm({
         t2.sort(function(a, b) {
           return tr[b.s] - tr[a.s] || a.f - b.f;
         });
-        for (; i < s; ++i) {
+        for (; i < s2; ++i) {
           var i2_1 = t2[i].s;
           if (tr[i2_1] > mb) {
             dt += cst - (1 << mbt - tr[i2_1]);
@@ -8239,16 +8441,16 @@ var init_browser = __esm({
       return n.s == -1 ? Math.max(ln(n.l, l, d + 1), ln(n.r, l, d + 1)) : l[n.s] = d;
     };
     lc = function(c) {
-      var s = c.length;
-      while (s && !c[--s])
+      var s2 = c.length;
+      while (s2 && !c[--s2])
         ;
-      var cl = new u16(++s);
+      var cl = new u16(++s2);
       var cli = 0, cln = c[0], cls = 1;
       var w = function(v) {
         cl[cli++] = v;
       };
-      for (var i = 1; i <= s; ++i) {
-        if (c[i] == cln && i != s)
+      for (var i = 1; i <= s2; ++i) {
+        if (c[i] == cln && i != s2)
           ++cls;
         else {
           if (!cln && cls > 2) {
@@ -8271,7 +8473,7 @@ var init_browser = __esm({
           cln = c[i];
         }
       }
-      return { c: cl.subarray(0, cli), n: s };
+      return { c: cl.subarray(0, cli), n: s2 };
     };
     clen = function(cf, cl) {
       var l = 0;
@@ -8280,15 +8482,15 @@ var init_browser = __esm({
       return l;
     };
     wfblk = function(out2, pos, dat) {
-      var s = dat.length;
+      var s2 = dat.length;
       var o = shft(pos + 2);
-      out2[o] = s & 255;
-      out2[o + 1] = s >> 8;
+      out2[o] = s2 & 255;
+      out2[o + 1] = s2 >> 8;
       out2[o + 2] = out2[o] ^ 255;
       out2[o + 3] = out2[o + 1] ^ 255;
-      for (var i = 0; i < s; ++i)
+      for (var i = 0; i < s2; ++i)
         out2[o + i + 4] = dat[i];
-      return (o + 4 + s) * 8;
+      return (o + 4 + s2) * 8;
     };
     wblk = function(dat, out2, final, syms, lf, df, eb, li, bs, bl, p) {
       wbits(out2, p++, final);
@@ -8357,8 +8559,8 @@ var init_browser = __esm({
     deo = /* @__PURE__ */ new i32([65540, 131080, 131088, 131104, 262176, 1048704, 1048832, 2114560, 2117632]);
     et = /* @__PURE__ */ new u82(0);
     dflt = function(dat, lvl, plvl, pre, post, st) {
-      var s = st.z || dat.length;
-      var o = new u82(pre + s + 5 * (1 + Math.ceil(s / 7e3)) + post);
+      var s2 = st.z || dat.length;
+      var o = new u82(pre + s2 + 5 * (1 + Math.ceil(s2 / 7e3)) + post);
       var w = o.subarray(pre, o.length - post);
       var lst = st.l;
       var pos = (st.r || 0) & 7;
@@ -8376,13 +8578,13 @@ var init_browser = __esm({
         var syms = new i32(25e3);
         var lf = new u16(288), df = new u16(32);
         var lc_1 = 0, eb = 0, i = st.i || 0, li = 0, wi = st.w || 0, bs = 0;
-        for (; i + 2 < s; ++i) {
+        for (; i + 2 < s2; ++i) {
           var hv = hsh(i);
           var imod = i & 32767, pimod = head[hv];
           prev[imod] = pimod;
           head[hv] = imod;
           if (wi <= i) {
-            var rem = s - i;
+            var rem = s2 - i;
             if ((lc_1 > 7e3 || li > 24576) && (rem > 423 || !lst)) {
               pos = wblk(dat, w, 0, syms, lf, df, eb, li, bs, i - bs, pos);
               li = lc_1 = eb = 0, bs = i;
@@ -8434,7 +8636,7 @@ var init_browser = __esm({
             }
           }
         }
-        for (i = Math.max(i, wi); i < s; ++i) {
+        for (i = Math.max(i, wi); i < s2; ++i) {
           syms[li++] = dat[i];
           ++lf[dat[i]];
         }
@@ -8445,15 +8647,15 @@ var init_browser = __esm({
           st.h = head, st.p = prev, st.i = i, st.w = wi;
         }
       } else {
-        for (var i = st.w || 0; i < s + lst; i += 65535) {
+        for (var i = st.w || 0; i < s2 + lst; i += 65535) {
           var e = i + 65535;
-          if (e >= s) {
+          if (e >= s2) {
             w[pos / 8 | 0] = lst;
-            e = s;
+            e = s2;
           }
           pos = wfblk(w, pos + 1, dat.subarray(i, e));
         }
-        st.i = s;
+        st.i = s2;
       }
       return slc(o, 0, pre + shft(pos) + post);
     };
@@ -8600,10 +8802,10 @@ var require_png = __commonJS({
       const P2 = [[[58, 123, 213], [232, 240, 250], [72, 96, 120]], [[38, 140, 120], [226, 244, 236], [70, 110, 95]], [[196, 120, 60], [252, 238, 224], [120, 88, 64]], [[120, 84, 190], [240, 234, 250], [88, 72, 120]], [[40, 100, 160], [225, 235, 245], [90, 104, 120]]][palette % 5];
       const [sky, light, wall] = P2;
       const px = import_buffer.Buffer.alloc(w * h * 3);
-      let s = seed >>> 0;
+      let s2 = seed >>> 0;
       const rnd = () => {
-        s = s * 1664525 + 1013904223 >>> 0;
-        return s / 4294967296;
+        s2 = s2 * 1664525 + 1013904223 >>> 0;
+        return s2 / 4294967296;
       };
       const horizon = Math.round(h * 0.68);
       for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
@@ -8783,8 +8985,8 @@ var require_pdf = __commonJS({
     var W = 612;
     var H = 792;
     var M = 54;
-    function esc(s) {
-      return String(s).replace(/[^\x20-\x7E\xA0-\xFF]/g, "?").replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+    function esc(s2) {
+      return String(s2).replace(/[^\x20-\x7E\xA0-\xFF]/g, "?").replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
     }
     function wrap(text, maxChars) {
       const out2 = [];
@@ -8851,8 +9053,8 @@ var require_pdf = __commonJS({
       }
       render() {
         const objs = [];
-        const add = (s) => {
-          objs.push(s);
+        const add = (s2) => {
+          objs.push(s2);
           return objs.length;
         };
         const font1 = add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
@@ -9692,6 +9894,16 @@ var require_validate = __commonJS({
               errors[k] = "must be an array";
               continue;
             }
+            if (s.maxLen && v.length > s.maxLen) {
+              errors[k] = `must have at most ${s.maxLen} items`;
+              continue;
+            }
+            if (s.of === "string") {
+              if (!v.every((x) => typeof x === "string" && x.length <= 200)) {
+                errors[k] = "must be a list of identifiers";
+                continue;
+              }
+            }
             break;
           default:
             break;
@@ -9771,6 +9983,112 @@ var init_empty = __esm({
   }
 });
 
+// server/backup.js
+var require_backup = __commonJS({
+  "server/backup.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var path = (init_path(), __toCommonJS(path_exports));
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    var { DatabaseSync: DatabaseSync2 } = (init_sqlite(), __toCommonJS(sqlite_exports));
+    var config = require_config();
+    var db3 = require_db();
+    function backupKey(encryptionKey = config.encryptionKey) {
+      return crypto3.createHash("sha256").update(import_buffer.Buffer.concat([encryptionKey, import_buffer.Buffer.from("suds-backup")])).digest();
+    }
+    function create({ encryptionKey } = {}) {
+      const tmp = path.join(config.dataDir, `.backup-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
+      let plain;
+      try {
+        fs.writeFileSync(tmp, "", { mode: 384 });
+        fs.unlinkSync(tmp);
+        db3.get().exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
+        try {
+          fs.chmodSync(tmp, 384);
+        } catch {
+        }
+        plain = fs.readFileSync(tmp);
+      } finally {
+        try {
+          fs.unlinkSync(tmp);
+        } catch {
+        }
+      }
+      const iv = crypto3.randomBytes(12);
+      const c = crypto3.createCipheriv("aes-256-gcm", backupKey(encryptionKey), iv);
+      const body = import_buffer.Buffer.concat([c.update(plain), c.final()]);
+      return import_buffer.Buffer.concat([iv, c.getAuthTag(), body]);
+    }
+    function decrypt3(buf, { encryptionKey } = {}) {
+      if (!import_buffer.Buffer.isBuffer(buf) || buf.length < 29) throw new Error("That does not look like a SUDS backup file");
+      const iv = buf.subarray(0, 12), tag = buf.subarray(12, 28), data = buf.subarray(28);
+      const d = crypto3.createDecipheriv("aes-256-gcm", backupKey(encryptionKey), iv);
+      d.setAuthTag(tag);
+      try {
+        return import_buffer.Buffer.concat([d.update(data), d.final()]);
+      } catch {
+        throw new Error("The backup could not be read. It is either damaged, or it was made with a different encryption key.");
+      }
+    }
+    function inspect(plainBytes) {
+      const tmp = path.join(config.dataDir, `.inspect-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
+      fs.writeFileSync(tmp, plainBytes, { mode: 384 });
+      try {
+        const d = new DatabaseSync2(tmp, { readOnly: true });
+        try {
+          const integrity = d.prepare("PRAGMA integrity_check").get();
+          if ((integrity.integrity_check || "").toLowerCase() !== "ok") throw new Error("The backup file is damaged.");
+          const has = (t) => !!d.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(t);
+          if (!has("settings") || !has("clients")) throw new Error("That file is not a SUDS backup.");
+          const count = (t) => has(t) ? d.prepare(`SELECT COUNT(*) n FROM ${t}`).get().n : 0;
+          return {
+            schema_version: Number(d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get()?.value || 0),
+            org_name: d.prepare(`SELECT value FROM settings WHERE key='org_name'`).get()?.value || null,
+            counts: { clients: count("clients"), notes: count("notes"), interventions: count("interventions"), users: count("users"), audit_log: count("audit_log") },
+            bytes: plainBytes.length
+          };
+        } finally {
+          d.close();
+        }
+      } finally {
+        try {
+          fs.unlinkSync(tmp);
+        } catch {
+        }
+      }
+    }
+    function restore(plainBytes) {
+      const info = inspect(plainBytes);
+      const dbPath = config.dbPath;
+      if (dbPath === ":memory:") throw new Error("This server is running on an in-memory database; there is nothing to restore into.");
+      const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+      const aside = `${dbPath}.before-restore-${stamp2}`;
+      db3.close();
+      try {
+        if (fs.existsSync(dbPath)) fs.copyFileSync(dbPath, aside);
+        fs.writeFileSync(dbPath, plainBytes, { mode: 384 });
+        for (const suffix of ["-wal", "-shm"]) {
+          try {
+            fs.unlinkSync(dbPath + suffix);
+          } catch {
+          }
+        }
+      } catch (e) {
+        try {
+          if (fs.existsSync(aside)) fs.copyFileSync(aside, dbPath);
+        } catch {
+        }
+        db3.open();
+        throw e;
+      }
+      db3.open();
+      return { ...info, previous_database_kept_at: aside };
+    }
+    module.exports = { create, decrypt: decrypt3, inspect, restore, backupKey };
+  }
+});
+
 // server/routes/admin.js
 var require_admin = __commonJS({
   "server/routes/admin.js"(exports, module) {
@@ -9780,7 +10098,7 @@ var require_admin = __commonJS({
     var auth3 = require_auth();
     var audit3 = require_audit();
     var config = require_config();
-    var { badRequest, notFound } = require_http();
+    var { badRequest, notFound, forbidden } = require_http();
     var { validate, paging } = require_validate();
     var { uuid: uuid2, randomToken, sha256: sha2562 } = require_crypto();
     var SETTING_KEYS = ["org_name", "caseload_restriction", "county_name", "program_contact", "default_funding_source_id", "note_lock_days", "session_idle_minutes", "session_absolute_hours", "password_max_age_days", "mfa_required_roles"];
@@ -9900,20 +10218,37 @@ var require_admin = __commonJS({
         ctx.res.writeHead(200, { "Content-Type": "application/x-x509-ca-cert", "Content-Disposition": 'attachment; filename="suds-certificate.crt"' });
         ctx.res.end(fs.readFileSync(crt));
       });
+      const backup = require_backup();
       r.get("/api/admin/backup", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
-        const crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
-        const backupKey = crypto3.createHash("sha256").update(import_buffer.Buffer.concat([config.encryptionKey, import_buffer.Buffer.from("suds-backup")])).digest();
-        const tmp = path.join(config.dataDir, `.backup-${Date.now()}.db`);
-        db3.get().exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
-        const plain = fs.readFileSync(tmp);
-        fs.unlinkSync(tmp);
-        const iv = crypto3.randomBytes(12);
-        const c = crypto3.createCipheriv("aes-256-gcm", backupKey, iv);
-        const enc = import_buffer.Buffer.concat([iv, import_buffer.Buffer.alloc(16), c.update(plain), c.final()]);
-        c.getAuthTag().copy(enc, 12);
+        const enc = backup.create();
         audit3.log({ user: ctx.user, action: "backup.download", ip: ctx.ip, details: { bytes: enc.length } });
         ctx.res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Disposition": `attachment; filename="suds-backup-${(/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-")}.db.enc"` });
         ctx.res.end(enc);
+      });
+      function backupFromUpload(ctx) {
+        const b64 = ctx.body && ctx.body.file_b64 || "";
+        if (!b64 || typeof b64 !== "string") throw badRequest("Choose the backup file to upload");
+        const raw = import_buffer.Buffer.from(b64.replace(/^data:[^,]*,/, ""), "base64");
+        return backup.decrypt(raw);
+      }
+      r.post("/api/admin/restore/preview", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+        const info = backup.inspect(backupFromUpload(ctx));
+        audit3.log({ user: ctx.user, action: "backup.preview", ip: ctx.ip, details: { schema_version: info.schema_version, clients: info.counts.clients } });
+        return { ...info, current: { clients: db3.one(`SELECT COUNT(*) n FROM clients WHERE deleted_at IS NULL`).n, schema_version: Number(db3.getSetting("schema_version", "0")) } };
+      });
+      r.post("/api/admin/restore", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+        const { password, confirm } = require_validate().validate(ctx.body, { password: { type: "string", required: true, maxLen: 500 }, confirm: { type: "string", required: true, maxLen: 40 }, file_b64: { type: "string", maxLen: 400 * 1024 * 1024 } }, { partial: true });
+        if (confirm !== "REPLACE") throw badRequest("Type REPLACE to confirm that the current data will be replaced");
+        const me = db3.one(`SELECT password_hash FROM users WHERE id=?`, ctx.user.id);
+        if (!require_crypto().verifyPassword(password, me.password_hash)) {
+          audit3.log({ user: ctx.user, action: "backup.restore.failed", ip: ctx.ip, success: false });
+          throw forbidden("Password verification failed");
+        }
+        const plain = backupFromUpload(ctx);
+        audit3.log({ user: ctx.user, action: "backup.restore.start", ip: ctx.ip, details: { bytes: plain.length } });
+        const out2 = backup.restore(plain);
+        audit3.log({ user: ctx.user, action: "backup.restore", ip: ctx.ip, details: { clients: out2.counts.clients, schema_version: out2.schema_version, kept: path.basename(out2.previous_database_kept_at) } });
+        return { ok: true, ...out2, note: "Everyone will need to sign in again. Devices should sync after this." };
       });
       r.get("/api/admin/keys-backup", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
         if (config.keySource !== "file") throw badRequest("Keys are provided by the environment on this server");
@@ -9985,6 +10320,30 @@ var require_app = __commonJS({
       }
     }
     module.exports = (r) => {
+      r.get("/api/health", (ctx) => {
+        const out2 = { ok: true, version: config.version, uptime_seconds: Math.round(proc.uptime()) };
+        try {
+          out2.schema_version = Number(db3.getSetting("schema_version", "0"));
+          out2.database = db3.one("SELECT 1 AS ok").ok === 1 ? "ok" : "unexpected";
+        } catch (e) {
+          out2.ok = false;
+          out2.database = "error";
+          out2.error = String(e.message || e).slice(0, 200);
+        }
+        try {
+          const st = fs.statSync(config.dbPath);
+          out2.database_bytes = st.size;
+          const fsinfo = fs.statfsSync(config.dataDir);
+          out2.disk_free_bytes = fsinfo.bavail * fsinfo.bsize;
+          if (out2.disk_free_bytes < 100 * 1024 * 1024) {
+            out2.ok = false;
+            out2.warning = "Less than 100 MB of disk space remains.";
+          }
+        } catch {
+        }
+        ctx.status = out2.ok ? 200 : 503;
+        return out2;
+      });
       r.get("/api/app/info", () => ({ name: db3.getSetting("org_name", "SUDS"), version: config.version, listener: listener.describe(), android: apkInfo(), certificate: certFingerprint(), service: "_suds._tcp" }));
       r.get("/api/app/android.apk", (ctx) => {
         if (!apkInfo().available) throw notFound("The Android app has not been uploaded yet");
@@ -10020,91 +10379,6 @@ var require_app = __commonJS({
         return { ok: true };
       });
     };
-  }
-});
-
-// server/clients-model.js
-var require_clients_model = __commonJS({
-  "server/clients-model.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var { encrypt: encrypt3, decrypt: decrypt3, blindIndex: blindIndex2, uuid: uuid2 } = require_crypto();
-    var ENC_FIELDS = ["first_name", "last_name", "preferred_name", "dob", "phone", "alt_phone", "email", "address", "medicaid_id", "emergency_contact", "goals", "flags"];
-    var PLAIN_FIELDS = [
-      "city",
-      "zip",
-      "gender",
-      "pronouns",
-      "race_ethnicity",
-      "preferred_language",
-      "veteran",
-      "housing_status",
-      "insurance",
-      "status",
-      "intake_date",
-      "discharge_date",
-      "discharge_reason",
-      "referral_source",
-      "primary_substance",
-      "secondary_substances",
-      "route_of_use",
-      "asam_level",
-      "mat_status",
-      "mat_medication",
-      "overdose_history",
-      "last_overdose_date",
-      "naloxone_provided",
-      "naloxone_last_date",
-      "risk_level",
-      "justice_involved",
-      "pregnant_or_parenting",
-      "co_occurring_mh",
-      "race_codes",
-      "contact_preferences",
-      "ok_to_text",
-      "ok_to_voicemail"
-    ];
-    function decryptRow(row, { deidentify = false } = {}) {
-      if (!row) return null;
-      const out2 = {};
-      for (const [k, v] of Object.entries(row)) {
-        if (k.endsWith("_enc")) {
-          const plain = k.slice(0, -4);
-          if (deidentify) continue;
-          out2[plain] = v ? decrypt3(v) : null;
-        } else if (k.endsWith("_idx")) continue;
-        else out2[k] = v;
-      }
-      if (deidentify) {
-        out2.display_name = row.client_code;
-      } else out2.display_name = `${out2.last_name || ""}, ${out2.first_name || ""}`.trim().replace(/^,\s*|,\s*$/g, "");
-      return out2;
-    }
-    function encryptFields(v) {
-      const cols2 = {};
-      for (const f of ENC_FIELDS) if (v[f] !== void 0) cols2[`${f}_enc`] = v[f] === null ? null : encrypt3(v[f]);
-      if (v.last_name !== void 0) cols2.last_name_idx = blindIndex2(v.last_name);
-      if (v.first_name !== void 0 || v.last_name !== void 0) cols2.full_name_idx = void 0;
-      if (v.dob !== void 0) cols2.dob_idx = blindIndex2(v.dob);
-      if (v.phone !== void 0) cols2.phone_idx = blindIndex2(String(v.phone || "").replace(/\D/g, ""));
-      return cols2;
-    }
-    function nextClientCode() {
-      const year = (/* @__PURE__ */ new Date()).getFullYear();
-      const prefix = `${require_config().local ? "M" : "C"}${String(year).slice(2)}-`;
-      const last = db3.one(`SELECT client_code FROM clients WHERE client_code LIKE ? ORDER BY client_code DESC LIMIT 1`, prefix + "%");
-      const n = last ? Number(last.client_code.slice(prefix.length)) + 1 : 1;
-      return prefix + String(n).padStart(4, "0");
-    }
-    function summary(row, opts) {
-      const d = decryptRow(row, opts);
-      const keep = ["id", "client_code", "display_name", "first_name", "last_name", "preferred_name", "dob", "phone", "status", "risk_level", "primary_substance", "mat_status", "intake_date", "city", "flags", "ok_to_text", "ok_to_voicemail", "updated_at"];
-      const o = {};
-      for (const k of keep) if (d[k] !== void 0) o[k] = d[k];
-      return o;
-    }
-    module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, summary, uuid: uuid2 };
   }
 });
 
@@ -10152,6 +10426,102 @@ var require_assignments = __commonJS({
         const full = db3.all(`SELECT * FROM clients WHERE id IN (${rows.map(() => "?").join(",") || "''"})`, ...rows.map((x) => x.id));
         const byId = Object.fromEntries(full.map((x) => [x.id, M.summary(x)]));
         return { caseload: rows.map((x) => ({ ...x, ...byId[x.id] })) };
+      });
+    };
+  }
+});
+
+// server/routes/auth.js
+var require_auth2 = __commonJS({
+  "server/routes/auth.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var { rateLimit } = require_app2();
+    var { HttpError: HttpError3, badRequest, unauthorized } = require_http();
+    var { validate } = require_validate();
+    var { hashPassword, verifyPassword, generateTotpSecret, verifyTotp, otpauthUrl, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
+    module.exports = (r) => {
+      r.post("/api/auth/login", async (ctx) => {
+        if (!rateLimit(`login:${ctx.ip}`, require_config().isTest ? 1e5 : 20, 15 * 6e4)) throw new HttpError3(429, "Too many login attempts. Try again later.");
+        const { username, password } = validate(ctx.body, { username: { type: "string", required: true, maxLen: 100 }, password: { type: "string", required: true, maxLen: 500 } });
+        const result = auth3.login({ username, password, ctx });
+        ctx.res.setHeader("Set-Cookie", auth3.cookieHeader(result.token));
+        const out2 = { user: result.user, mfaPending: result.mfaPending, mfaSetupRequired: result.mfaSetupRequired };
+        if (ctx.headers["x-sync-client"]) out2.token = result.token;
+        return out2;
+      });
+      r.post("/api/auth/mfa/verify", (ctx) => {
+        if (!ctx.user) throw unauthorized();
+        if (!rateLimit(`mfa:${ctx.user.id}`, 10, 10 * 6e4)) throw new HttpError3(429, "Too many attempts");
+        const { code } = validate(ctx.body, { code: { type: "string", required: true, maxLen: 10 } });
+        return { user: auth3.verifyMfa(ctx, code) };
+      });
+      r.post("/api/auth/logout", (ctx) => {
+        if (ctx.user) audit3.log({ user: ctx.user, action: "auth.logout", ip: ctx.ip });
+        auth3.revokeSession(ctx.sessionToken);
+        ctx.res.setHeader("Set-Cookie", auth3.cookieHeader("", { clear: true }));
+        return { ok: true };
+      });
+      r.get("/api/auth/me", (ctx) => {
+        if (!ctx.user) throw unauthorized();
+        const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
+        return { user: auth3.publicUser(u), mfaPending: !!ctx.session.mfa_pending, org_name: db3.getSetting("org_name", "SUDS"), idle_minutes: auth3.policy().idleMinutes, setup_needed: false };
+      });
+      r.post("/api/auth/password", (ctx) => {
+        auth3.requireAuth(ctx);
+        const { current_password, new_password } = validate(ctx.body, { current_password: { type: "string", required: true, maxLen: 500 }, new_password: { type: "string", required: true, maxLen: 500 } });
+        const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
+        if (!verifyPassword(current_password, u.password_hash)) {
+          audit3.log({ user: u, action: "auth.password.change.failed", ip: ctx.ip, success: false });
+          throw unauthorized("Current password is incorrect");
+        }
+        const errs = auth3.passwordPolicy(new_password);
+        if (errs.length) throw badRequest("Password must contain " + errs.join(", "));
+        if (verifyPassword(new_password, u.password_hash)) throw badRequest("New password must differ from the current password");
+        db3.run(`UPDATE users SET password_hash=?, must_change_password=0, password_changed_at=?, updated_at=? WHERE id=?`, hashPassword(new_password), db3.now(), db3.now(), u.id);
+        db3.run(`UPDATE sessions SET revoked_at=? WHERE user_id=? AND id<>? AND revoked_at IS NULL`, db3.now(), u.id, ctx.session.id);
+        audit3.log({ user: u, action: "auth.password.changed", ip: ctx.ip });
+        return { ok: true };
+      });
+      r.post("/api/auth/mfa/setup", (ctx) => {
+        if (!ctx.user) throw unauthorized();
+        const secret = generateTotpSecret();
+        db3.run(`UPDATE users SET mfa_secret_enc=?, updated_at=? WHERE id=? AND mfa_enabled=0`, encrypt3(secret), db3.now(), ctx.user.id);
+        return { secret, otpauth: otpauthUrl(secret, ctx.user.username, db3.getSetting("org_name", "SUDS")) };
+      });
+      r.post("/api/auth/mfa/enable", (ctx) => {
+        if (!ctx.user) throw unauthorized();
+        const { code } = validate(ctx.body, { code: { type: "string", required: true, maxLen: 10 } });
+        const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
+        if (!u.mfa_secret_enc) throw badRequest("Run MFA setup first");
+        if (!verifyTotp(decrypt3(u.mfa_secret_enc), code)) throw badRequest("Invalid code");
+        db3.run(`UPDATE users SET mfa_enabled=1, updated_at=? WHERE id=?`, db3.now(), u.id);
+        db3.run(`UPDATE sessions SET mfa_pending=0 WHERE id=?`, ctx.session.id);
+        audit3.log({ user: u, action: "auth.mfa.enabled", ip: ctx.ip });
+        return { ok: true };
+      });
+      r.post("/api/auth/mfa/disable", (ctx) => {
+        auth3.requireAuth(ctx);
+        const { password } = validate(ctx.body, { password: { type: "string", required: true, maxLen: 500 } });
+        const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
+        if (!verifyPassword(password, u.password_hash)) throw unauthorized("Password is incorrect");
+        if (auth3.policy().mfaRequiredRoles.includes(u.role)) throw badRequest("MFA is required for your role");
+        db3.run(`UPDATE users SET mfa_enabled=0, mfa_secret_enc=NULL, updated_at=? WHERE id=?`, db3.now(), u.id);
+        audit3.log({ user: u, action: "auth.mfa.disabled", ip: ctx.ip });
+        return { ok: true };
+      });
+      r.get("/api/auth/sessions", (ctx) => {
+        auth3.requireAuth(ctx);
+        return { sessions: db3.all(`SELECT id, created_at, last_seen_at, ip, user_agent, id=? AS current FROM sessions WHERE user_id=? AND revoked_at IS NULL AND expires_at > ? ORDER BY last_seen_at DESC`, ctx.session.id, ctx.user.id, db3.now()) };
+      });
+      r.post("/api/auth/sessions/revoke-others", (ctx) => {
+        auth3.requireAuth(ctx);
+        db3.run(`UPDATE sessions SET revoked_at=? WHERE user_id=? AND id<>? AND revoked_at IS NULL`, db3.now(), ctx.user.id, ctx.session.id);
+        audit3.log({ user: ctx.user, action: "auth.sessions.revoked_others", ip: ctx.ip });
+        return { ok: true };
       });
     };
   }
@@ -10254,7 +10624,7 @@ var require_crud = __commonJS({
         if (!row) throw notFound();
         if (row.client_id) auth3.assertClientAccess(ctx, row.client_id);
         if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden("You cannot edit this record");
-        const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
+        const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s2]) => [k, { ...s2, required: false }])), { partial: true });
         if (v.client_id && v.client_id !== row.client_id) checkClient(ctx, v.client_id);
         if (opts.restrictOwner && v[ownerCol] !== void 0 && !auth3.hasPerm(ctx.user, "clients:all")) delete v[ownerCol];
         if (opts.beforeUpdate) opts.beforeUpdate(ctx, v, row);
@@ -10313,7 +10683,7 @@ var require_budget = __commonJS({
       const staffMinutes = db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE funding_source_id=?`, f.id).n;
       const staffCost = db3.one(`SELECT COALESCE(SUM(t.minutes/60.0*COALESCE(u.hourly_cost,0)),0) n FROM time_entries t JOIN users u ON u.id=t.user_id WHERE t.funding_source_id=?`, f.id).n;
       const lines = db3.all(`SELECT b.*, (SELECT COALESCE(SUM(amount),0) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status IN ('approved','reimbursed')) AS spent, (SELECT COALESCE(SUM(amount),0) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status='pending') AS pending FROM budget_lines b WHERE b.funding_source_id=? ORDER BY category`, f.id);
-      const allocated = lines.reduce((s, l) => s + l.allocated_amount, 0);
+      const allocated = lines.reduce((s2, l) => s2 + l.allocated_amount, 0);
       const totalDays = Math.max(1, (Date.parse(f.fiscal_year_end) - Date.parse(f.fiscal_year_start)) / 864e5);
       const elapsed = Math.min(totalDays, Math.max(0, (Date.now() - Date.parse(f.fiscal_year_start)) / 864e5));
       return {
@@ -10347,7 +10717,7 @@ var require_budget = __commonJS({
       r.put("/api/budget/funds/:id", auth3.requireAuth, auth3.requirePerm("budget:write"), (ctx) => {
         const f = db3.one(`SELECT id FROM funding_sources WHERE id=?`, ctx.params.id);
         if (!f) throw notFound();
-        const v = validate(ctx.body, Object.fromEntries(Object.entries(fundShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
+        const v = validate(ctx.body, Object.fromEntries(Object.entries(fundShape).map(([k, s2]) => [k, { ...s2, required: false }])), { partial: true });
         const keys = Object.keys(v);
         if (!keys.length) return { ok: true };
         db3.run(`UPDATE funding_sources SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), db3.now(), f.id);
@@ -10367,7 +10737,7 @@ var require_budget = __commonJS({
       r.put("/api/budget/lines/:id", auth3.requireAuth, auth3.requirePerm("budget:write"), (ctx) => {
         const l = db3.one(`SELECT id FROM budget_lines WHERE id=?`, ctx.params.id);
         if (!l) throw notFound();
-        const v = validate(ctx.body, Object.fromEntries(Object.entries(lineShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
+        const v = validate(ctx.body, Object.fromEntries(Object.entries(lineShape).map(([k, s2]) => [k, { ...s2, required: false }])), { partial: true });
         const keys = Object.keys(v);
         if (keys.length) db3.run(`UPDATE budget_lines SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), db3.now(), l.id);
         audit3.log({ user: ctx.user, action: "budget_line.update", entity: "budget_line", entityId: l.id, ip: ctx.ip });
@@ -10408,10 +10778,10 @@ var require_budget = __commonJS({
             where.push("expenditures.funding_source_id=?");
             params.push(f);
           }
-          const s = ctx.query.get("status");
-          if (s && s !== "all") {
+          const s2 = ctx.query.get("status");
+          if (s2 && s2 !== "all") {
             where.push("expenditures.status=?");
-            params.push(s);
+            params.push(s2);
           }
         },
         beforeInsert: (ctx, v) => {
@@ -10437,7 +10807,7 @@ var require_budget = __commonJS({
       r.get("/api/budget/summary", auth3.requireAuth, auth3.requirePerm("budget:read"), () => {
         const funds = db3.all(`SELECT * FROM funding_sources WHERE is_active=1`).map(fundSummary);
         return {
-          totals: { budget: funds.reduce((s, f) => s + f.total_amount, 0), spent: funds.reduce((s, f) => s + f.spent, 0), pending: funds.reduce((s, f) => s + f.pending, 0), remaining: funds.reduce((s, f) => s + f.remaining, 0) },
+          totals: { budget: funds.reduce((s2, f) => s2 + f.total_amount, 0), spent: funds.reduce((s2, f) => s2 + f.spent, 0), pending: funds.reduce((s2, f) => s2 + f.pending, 0), remaining: funds.reduce((s2, f) => s2 + f.remaining, 0) },
           by_category: db3.all(`SELECT category, SUM(amount) amount, COUNT(*) n FROM expenditures WHERE status IN ('approved','reimbursed') GROUP BY category ORDER BY amount DESC`),
           by_month: db3.all(`SELECT substr(spent_at,1,7) month, SUM(amount) amount FROM expenditures WHERE status<>'rejected' GROUP BY month ORDER BY month`),
           per_client: db3.one(`SELECT COUNT(DISTINCT client_id) clients, COALESCE(SUM(amount),0) amount FROM expenditures WHERE client_id IS NOT NULL AND status IN ('approved','reimbursed')`),
@@ -10581,6 +10951,7 @@ var require_clients = __commonJS({
       co_occurring_mh: { type: "boolean" },
       goals: { type: "string", maxLen: 2e3 },
       flags: { type: "string", maxLen: 300 },
+      race_codes: { type: "string", maxLen: 200 },
       contact_preferences: { type: "string", maxLen: 300 },
       ok_to_text: { type: "boolean" },
       ok_to_voicemail: { type: "boolean" }
@@ -10595,7 +10966,7 @@ var require_clients = __commonJS({
       r.get("/api/clients", auth3.requireAuth, auth3.requirePerm("clients:read", "clients:list-deidentified"), (ctx) => {
         const deidentify = !auth3.hasPerm(ctx.user, "clients:read");
         const { limit: limit2, offset } = paging(ctx.query);
-        const where = ["c.deleted_at IS NULL"];
+        const where = ["c.deleted_at IS NULL", "c.merged_into IS NULL"];
         const params = [];
         const cf = auth3.caseloadFilter(ctx.user);
         where.push(cf.sql);
@@ -10619,8 +10990,23 @@ var require_clients = __commonJS({
           } else {
             const parts = q.split(/[,\s]+/).filter(Boolean);
             const idxs = parts.map((p) => blindIndex2(p));
-            where.push(`(c.last_name_idx IN (${idxs.map(() => "?").join(",")}) OR c.full_name_idx IN (?,?))`);
+            const clauses = [`c.last_name_idx IN (${idxs.map(() => "?").join(",")})`, "c.full_name_idx IN (?,?)"];
             params.push(...idxs, blindIndex2(parts.join("")), blindIndex2([...parts].reverse().join("")));
+            if (ctx.query.get("exact") !== "1") {
+              for (const part of parts) {
+                const pfx = M.namePrefixIndex(part);
+                if (pfx) {
+                  clauses.push("c.name_prefix_idx=?");
+                  params.push(pfx);
+                }
+                const snd = M.namePhoneticIndex(part);
+                if (snd) {
+                  clauses.push("c.name_phonetic_idx=?");
+                  params.push(snd);
+                }
+              }
+            }
+            where.push(`(${clauses.join(" OR ")})`);
           }
         }
         const assigned = ctx.query.get("assigned_to");
@@ -10636,8 +11022,39 @@ var require_clients = __commonJS({
         audit3.log({ user: ctx.user, action: "client.list", ip: ctx.ip, details: { q: q ? "[redacted]" : "", status, count: rows.length, deidentified: deidentify } });
         return { clients: rows.map((x) => ({ ...M.summary(x, { deidentify }), assigned_workers: x.assigned_workers, last_contact: x.last_contact })), total, limit: limit2, offset };
       });
+      function possibleDuplicates(v, excludeId = null) {
+        const clauses = [];
+        const params = [];
+        const add = (sql, ...p) => {
+          clauses.push(sql);
+          params.push(...p);
+        };
+        if (v.dob && v.last_name) add("(c.dob_idx=? AND c.last_name_idx=?)", blindIndex2(v.dob), blindIndex2(v.last_name));
+        if (v.phone) add("c.phone_idx=?", blindIndex2(String(v.phone).replace(/\D/g, "")));
+        if (v.first_name && v.last_name) add("c.full_name_idx=?", blindIndex2((v.last_name || "") + (v.first_name || "")));
+        if (!clauses.length) return [];
+        const rows = db3.all(`SELECT c.* FROM clients c WHERE c.deleted_at IS NULL AND (${clauses.join(" OR ")}) ${excludeId ? "AND c.id<>?" : ""} LIMIT 10`, ...params, ...excludeId ? [excludeId] : []);
+        return rows.map((x) => {
+          const d = M.decryptRow(x);
+          const reasons = [];
+          if (v.dob && v.last_name && x.dob_idx === blindIndex2(v.dob) && x.last_name_idx === blindIndex2(v.last_name)) reasons.push("same surname and date of birth");
+          if (v.phone && x.phone_idx === blindIndex2(String(v.phone).replace(/\D/g, ""))) reasons.push("same phone number");
+          if (v.first_name && v.last_name && x.full_name_idx === blindIndex2((v.last_name || "") + (v.first_name || ""))) reasons.push("same full name");
+          return { id: x.id, client_code: x.client_code, display_name: d.display_name, dob: d.dob, status: x.status, intake_date: x.intake_date, reasons };
+        });
+      }
+      r.post("/api/clients/check-duplicates", auth3.requireAuth, auth3.requirePerm("clients:write"), (ctx) => {
+        const v = validate(ctx.body, { first_name: { type: "string", maxLen: 100 }, last_name: { type: "string", maxLen: 100 }, dob: { type: "date" }, phone: { type: "string", maxLen: 40 }, exclude_id: { type: "string" } });
+        const matches = possibleDuplicates(v, v.exclude_id || null).filter((m) => auth3.canAccessClient(ctx.user, m.id) || auth3.hasPerm(ctx.user, "clients:all"));
+        return { matches };
+      });
       r.post("/api/clients", auth3.requireAuth, auth3.requirePerm("clients:write"), (ctx) => {
-        const v = validate(ctx.body, shape);
+        const v = validate(ctx.body, { ...shape, confirm_duplicate: { type: "boolean" } });
+        if (!v.confirm_duplicate) {
+          const matches = possibleDuplicates(v);
+          if (matches.length) throw badRequest("A client with these details may already exist", { duplicates: matches, confirm_field: "confirm_duplicate" });
+        }
+        delete v.confirm_duplicate;
         const id = uuid2();
         const enc = M.encryptFields(v);
         enc.full_name_idx = blindIndex2((v.last_name || "") + (v.first_name || ""));
@@ -10654,6 +11071,55 @@ var require_clients = __commonJS({
         audit3.log({ user: ctx.user, action: "client.create", entity: "client", entityId: id, clientId: id, ip: ctx.ip });
         ctx.status = 201;
         return { id, client_code: cols2.client_code };
+      });
+      r.post("/api/clients/:id/merge", auth3.requireAuth, auth3.requirePerm("clients:merge"), (ctx) => {
+        const keep = loadClient(ctx, ctx.params.id);
+        const v = validate(ctx.body, { source_id: { type: "string", required: true }, reason: { type: "string", maxLen: 300 } });
+        if (v.source_id === keep.id) throw badRequest("Choose a different record to merge in");
+        const source = db3.one(`SELECT * FROM clients WHERE id=?`, v.source_id);
+        if (!source) throw notFound("The record to merge was not found");
+        if (source.merged_into) throw badRequest("That record has already been merged into another client");
+        if (source.deleted_at) throw badRequest("That record has been deleted");
+        auth3.assertClientAccess(ctx, source.id);
+        const links = [];
+        for (const t of db3.all(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`)) {
+          if (t.name === "clients") continue;
+          for (const fk of db3.all(`PRAGMA foreign_key_list(${t.name})`)) if (fk.table === "clients") links.push([t.name, fk.from]);
+        }
+        const moved = {};
+        db3.transaction(() => {
+          for (const [table, col] of links) {
+            const cols2 = db3.all(`PRAGMA table_info(${table})`).map((c) => c.name);
+            const touch = cols2.includes("updated_at") ? ", updated_at=?" : "";
+            const params = touch ? [keep.id, db3.now(), source.id] : [keep.id, source.id];
+            const n = db3.run(`UPDATE ${table} SET ${col}=?${touch} WHERE ${col}=?`, ...params).changes;
+            if (n) moved[`${table}.${col}`] = (moved[`${table}.${col}`] || 0) + n;
+          }
+          const fills = {};
+          for (const col of ["dob_enc", "phone_enc", "alt_phone_enc", "email_enc", "address_enc", "medicaid_id_enc", "emergency_contact_enc", "preferred_name_enc", "goals_enc", "flags_enc"]) {
+            if (!keep[col] && source[col]) fills[col] = source[col];
+          }
+          for (const col of M.PLAIN_FIELDS) if ((keep[col] === null || keep[col] === "" || keep[col] === void 0) && source[col]) fills[col] = source[col];
+          if (source.intake_date && (!keep.intake_date || source.intake_date < keep.intake_date)) fills.intake_date = source.intake_date;
+          const keys = Object.keys(fills);
+          if (keys.length) db3.run(`UPDATE clients SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => fills[k]), db3.now(), keep.id);
+          const after = db3.one(`SELECT * FROM clients WHERE id=?`, keep.id);
+          const plain = M.decryptRow(after);
+          db3.run(
+            `UPDATE clients SET dob_idx=?, phone_idx=?, name_prefix_idx=?, name_phonetic_idx=?, updated_at=? WHERE id=?`,
+            plain.dob ? blindIndex2(plain.dob) : null,
+            plain.phone ? blindIndex2(String(plain.phone).replace(/\D/g, "")) : null,
+            M.namePrefixIndex(plain.last_name || ""),
+            M.namePhoneticIndex(plain.last_name || ""),
+            db3.now(),
+            keep.id
+          );
+          db3.run(`UPDATE clients SET merged_into=?, status='closed', deleted_at=?, updated_at=? WHERE id=?`, keep.id, db3.now(), db3.now(), source.id);
+          moved._filled_fields = keys.length;
+        });
+        audit3.log({ user: ctx.user, action: "client.merge", entity: "client", entityId: keep.id, clientId: keep.id, ip: ctx.ip, details: { merged: source.id, merged_code: source.client_code, moved, reason: v.reason || void 0 } });
+        audit3.log({ user: ctx.user, action: "client.merged_away", entity: "client", entityId: source.id, clientId: source.id, ip: ctx.ip, details: { into: keep.id } });
+        return { ok: true, kept: keep.id, merged: source.id, moved };
       });
       r.get("/api/clients/:id", auth3.requireAuth, auth3.requirePerm("clients:read"), (ctx) => {
         const row = loadClient(ctx, ctx.params.id);
@@ -10899,9 +11365,9 @@ var require_text = __commonJS({
     "use strict";
     init_globals_inject();
     var zlib = (init_zlib(), __toCommonJS(zlib_exports));
-    function decodeEntities(s) {
+    function decodeEntities(s2) {
       const map = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", ndash: "\u2013", mdash: "\u2014", hellip: "\u2026", rsquo: "\u2019", lsquo: "\u2018", rdquo: "\u201D", ldquo: "\u201C" };
-      return s.replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z]+);/g, (m, e) => {
+      return s2.replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z]+);/g, (m, e) => {
         if (e[0] === "#") {
           const code = e[1].toLowerCase() === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
           return Number.isFinite(code) ? String.fromCodePoint(code) : m;
@@ -10910,20 +11376,20 @@ var require_text = __commonJS({
       });
     }
     function htmlToText(html) {
-      let s = String(html);
-      s = s.replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, "");
-      s = s.replace(/<!--[\s\S]*?-->/g, "");
-      s = s.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li|h[1-6]|tr|blockquote|pre)>/gi, "\n").replace(/<li[^>]*>/gi, "\u2022 ").replace(/<\/td>/gi, "	");
-      s = s.replace(/<[^>]+>/g, "");
-      s = decodeEntities(s);
-      return s.replace(/\r/g, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+      let s2 = String(html);
+      s2 = s2.replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, "");
+      s2 = s2.replace(/<!--[\s\S]*?-->/g, "");
+      s2 = s2.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li|h[1-6]|tr|blockquote|pre)>/gi, "\n").replace(/<li[^>]*>/gi, "\u2022 ").replace(/<\/td>/gi, "	");
+      s2 = s2.replace(/<[^>]+>/g, "");
+      s2 = decodeEntities(s2);
+      return s2.replace(/\r/g, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
     }
     function extractTitle(html) {
       const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html) || /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html);
       return m ? htmlToText(m[1]).trim() : "";
     }
-    function quotedPrintableDecode(s) {
-      return import_buffer.Buffer.from(String(s).replace(/=\r?\n/g, "").replace(/=([0-9A-F]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16))), "binary").toString("utf8");
+    function quotedPrintableDecode(s2) {
+      return import_buffer.Buffer.from(String(s2).replace(/=\r?\n/g, "").replace(/=([0-9A-F]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16))), "binary").toString("utf8");
     }
     function parseMime(raw) {
       const text = import_buffer.Buffer.isBuffer(raw) ? raw.toString("latin1") : String(raw);
@@ -10978,24 +11444,24 @@ var require_text = __commonJS({
       const files = unzip(buf);
       const xml = files.get("word/document.xml");
       if (!xml) throw new Error("Not a DOCX file (word/document.xml missing)");
-      let s = xml.toString("utf8");
-      s = s.replace(/<w:tab\/>/g, "	").replace(/<w:br\/>|<w:cr\/>/g, "\n").replace(/<\/w:p>/g, "\n").replace(/<[^>]+>/g, "");
-      return decodeEntities(s).replace(/\n{3,}/g, "\n\n").trim();
+      let s2 = xml.toString("utf8");
+      s2 = s2.replace(/<w:tab\/>/g, "	").replace(/<w:br\/>|<w:cr\/>/g, "\n").replace(/<\/w:p>/g, "\n").replace(/<[^>]+>/g, "");
+      return decodeEntities(s2).replace(/\n{3,}/g, "\n\n").trim();
     }
     function sniffDate(text) {
-      const s = String(text || "");
-      let m = /(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?))?/.exec(s);
+      const s2 = String(text || "");
+      let m = /(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?))?/.exec(s2);
       if (m) {
         const d = /* @__PURE__ */ new Date(m[1] + (m[2] ? "T" + m[2] : "T12:00:00"));
         if (!isNaN(d)) return d.toISOString();
       }
-      m = /\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b(?:,?\s+(\d{1,2}:\d{2}\s*(?:AM|PM)?))?/i.exec(s);
+      m = /\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b(?:,?\s+(\d{1,2}:\d{2}\s*(?:AM|PM)?))?/i.exec(s2);
       if (m) {
         const y = m[3].length === 2 ? "20" + m[3] : m[3];
         const d = /* @__PURE__ */ new Date(`${y}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}T12:00:00`);
         if (!isNaN(d)) return d.toISOString();
       }
-      m = /\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+(\d{1,2}),?\s+(\d{4})/i.exec(s);
+      m = /\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+(\d{1,2}),?\s+(\d{4})/i.exec(s2);
       if (m) {
         const d = /* @__PURE__ */ new Date(`${m[1].slice(0, 3)} ${m[2]}, ${m[3]} 12:00:00`);
         if (!isNaN(d)) return d.toISOString();
@@ -11003,13 +11469,13 @@ var require_text = __commonJS({
       return null;
     }
     function sniffClientHints(text) {
-      const s = String(text || "");
+      const s2 = String(text || "");
       const hints = { codes: [], names: [] };
-      for (const m of s.matchAll(/\b([CM]\d{2}-\d{4})\b/gi)) hints.codes.push(m[1].toUpperCase());
+      for (const m of s2.matchAll(/\b([CM]\d{2}-\d{4})\b/gi)) hints.codes.push(m[1].toUpperCase());
       const kw = /\b(?:(?:client|participant|pt|patient|re|name|regarding)\s*[:\-]\s*|(?:with|for|regarding)\s+)/gi;
       const nameRe = /^([A-Z][a-zA-Z'\-]+(?:,\s*|\s+)[A-Z][a-zA-Z'\-]+)/;
-      for (const m of s.matchAll(kw)) {
-        const nm = nameRe.exec(s.slice(m.index + m[0].length));
+      for (const m of s2.matchAll(kw)) {
+        const nm = nameRe.exec(s2.slice(m.index + m[0].length));
         if (nm) hints.names.push(nm[1].trim());
       }
       hints.codes = [...new Set(hints.codes)];
@@ -11028,16 +11494,16 @@ var require_spreadsheet = __commonJS({
     var zlib = (init_zlib(), __toCommonJS(zlib_exports));
     var { unzip, decodeEntities } = require_text();
     function parseCsv(text) {
-      const s = String(text).replace(/^﻿/, "");
+      const s2 = String(text).replace(/^﻿/, "");
       const rows = [];
       let row = [];
       let field = "";
       let q = false;
-      for (let i = 0; i < s.length; i++) {
-        const c = s[i];
+      for (let i = 0; i < s2.length; i++) {
+        const c = s2[i];
         if (q) {
           if (c === '"') {
-            if (s[i + 1] === '"') {
+            if (s2[i + 1] === '"') {
               field += '"';
               i++;
             } else q = false;
@@ -11047,7 +11513,7 @@ var require_spreadsheet = __commonJS({
           row.push(field);
           field = "";
         } else if (c === "\n" || c === "\r") {
-          if (c === "\r" && s[i + 1] === "\n") i++;
+          if (c === "\r" && s2[i + 1] === "\n") i++;
           row.push(field);
           rows.push(row);
           row = [];
@@ -11118,16 +11584,16 @@ var require_spreadsheet = __commonJS({
       eocd.writeUInt32LE(off, 16);
       return import_buffer.Buffer.concat([...local, cd, eocd]);
     }
-    var xmlEsc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
+    var xmlEsc = (s2) => String(s2).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
     function colRef(i) {
-      let s = "";
+      let s2 = "";
       i++;
       while (i > 0) {
         const m = (i - 1) % 26;
-        s = String.fromCharCode(65 + m) + s;
+        s2 = String.fromCharCode(65 + m) + s2;
         i = Math.floor((i - 1) / 26);
       }
-      return s;
+      return s2;
     }
     function writeWorkbook(sheets) {
       const files = [];
@@ -11148,10 +11614,10 @@ var require_spreadsheet = __commonJS({
       const safeName = (n, i) => String(n).replace(/[\\/*?:\[\]]/g, " ").slice(0, 31) || `Sheet${i + 1}`;
       files.push(["[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`]);
       files.push(["_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`]);
-      files.push(["xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((s, i) => `<sheet name="${xmlEsc(safeName(s.name, i))}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("")}</sheets></workbook>`]);
+      files.push(["xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((s2, i) => `<sheet name="${xmlEsc(safeName(s2.name, i))}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("")}</sheets></workbook>`]);
       files.push(["xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("")}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`]);
       files.push(["xl/styles.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" applyFont="1"/></cellXfs></styleSheet>`]);
-      sheets.forEach((s, i) => files.push([`xl/worksheets/sheet${i + 1}.xml`, sheetXml(s)]));
+      sheets.forEach((s2, i) => files.push([`xl/worksheets/sheet${i + 1}.xml`, sheetXml(s2)]));
       return zip(files);
     }
     function readWorkbook(buf) {
@@ -11219,10 +11685,10 @@ var require_spreadsheet = __commonJS({
     function parseFile(buf, filename = "") {
       const isZip = buf[0] === 80 && buf[1] === 75;
       const sheets = isZip ? readWorkbook(buf) : [{ name: filename.replace(/\.[^.]+$/, "") || "Sheet1", rows: parseCsv(buf.toString("utf8")) }];
-      return { sheets: sheets.map((s) => {
-        const [h, ...rest] = s.rows;
+      return { sheets: sheets.map((s2) => {
+        const [h, ...rest] = s2.rows;
         const headers = (h || []).map((x) => String(x ?? "").trim());
-        return { name: s.name, headers, rows: rest.map((r) => Object.fromEntries(headers.map((k, i) => [k, r[i] === void 0 ? null : r[i]]))) };
+        return { name: s2.name, headers, rows: rest.map((r) => Object.fromEntries(headers.map((k, i) => [k, r[i] === void 0 ? null : r[i]]))) };
       }) };
     }
     module.exports = { parseCsv, toCsv, writeWorkbook, readWorkbook, parseFile, excelDate, zip };
@@ -11242,12 +11708,12 @@ var require_dataimport = __commonJS({
     var dateOf = (v) => {
       if (v === null || v === void 0 || v === "") return null;
       if (typeof v === "number") return excelDate(v);
-      const s = String(v).trim();
-      const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+      const s2 = String(v).trim();
+      const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(s2);
       if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
-      const us = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/.exec(s);
+      const us = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/.exec(s2);
       if (us) return `${us[3].length === 2 ? "20" + us[3] : us[3]}-${us[1].padStart(2, "0")}-${us[2].padStart(2, "0")}`;
-      const d = new Date(s);
+      const d = new Date(s2);
       return isNaN(d) ? void 0 : d.toISOString().slice(0, 10);
     };
     var datetimeOf = (v) => {
@@ -11384,7 +11850,7 @@ var require_dataimport = __commonJS({
         F("receipt_ref", "Receipt #", ["receipt", "invoice", "invoice #"], str(200))
       ] }
     };
-    var norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    var norm = (s2) => String(s2 || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     function suggestMapping(entity, headers) {
       const def = ENTITIES[entity];
       const used = /* @__PURE__ */ new Set();
@@ -11401,12 +11867,12 @@ var require_dataimport = __commonJS({
       return mapping;
     }
     function resolveClient(ref, ctx, auth3) {
-      const s = String(ref || "").trim();
-      if (!s) return null;
+      const s2 = String(ref || "").trim();
+      if (!s2) return null;
       let rows;
-      if (/^[CM]\d{2}-\d+(-D)?$/i.test(s)) rows = db3.all(`SELECT id FROM clients WHERE client_code=? AND deleted_at IS NULL`, s.toUpperCase());
+      if (/^[CM]\d{2}-\d+(-D)?$/i.test(s2)) rows = db3.all(`SELECT id FROM clients WHERE client_code=? AND deleted_at IS NULL`, s2.toUpperCase());
       else {
-        const parts = s.split(/[,\s]+/).filter(Boolean);
+        const parts = s2.split(/[,\s]+/).filter(Boolean);
         if (parts.length < 2) rows = db3.all(`SELECT id FROM clients WHERE last_name_idx=? AND deleted_at IS NULL`, blindIndex2(parts[0]));
         else rows = db3.all(`SELECT id FROM clients WHERE full_name_idx IN (?,?) AND deleted_at IS NULL`, blindIndex2(parts.join("")), blindIndex2([...parts].reverse().join("")));
       }
@@ -11510,7 +11976,7 @@ var require_dataimport2 = __commonJS({
           return { n: i + 2, record, errors };
         });
         audit3.log({ user: ctx.user, action: "import.data.preview", ip: ctx.ip, details: { entity, rows: rows.length, sheet: sheet.name } });
-        return { entity, sheets: parsed.sheets.map((s) => ({ name: s.name, rows: s.rows.length })), sheet: sheetIdx, headers: sheet.headers, mapping: normalizedMapping, fields: def.fields.map((f) => ({ key: f.key, label: f.label, required: !!f.required })), rows, valid: rows.filter((x) => !x.errors.length).length, invalid: rows.filter((x) => x.errors.length).length, truncated: sheet.rows.length > 2e3 };
+        return { entity, sheets: parsed.sheets.map((s2) => ({ name: s2.name, rows: s2.rows.length })), sheet: sheetIdx, headers: sheet.headers, mapping: normalizedMapping, fields: def.fields.map((f) => ({ key: f.key, label: f.label, required: !!f.required })), rows, valid: rows.filter((x) => !x.errors.length).length, invalid: rows.filter((x) => x.errors.length).length, truncated: sheet.rows.length > 2e3 };
       });
       r.post("/api/imports/data/commit", auth3.requireAuth, (ctx) => {
         const { entity, records, skip_duplicates } = ctx.body || {};
@@ -11594,6 +12060,203 @@ var require_dataimport2 = __commonJS({
   }
 });
 
+// server/routes/episodes.js
+var require_episodes = __commonJS({
+  "server/routes/episodes.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var C = require_constants();
+    var { badRequest, notFound, forbidden } = require_http();
+    var { validate, paging } = require_validate();
+    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
+    var DISCHARGE_REASONS = ["completed", "transferred", "incarcerated", "moved", "lost_contact", "declined", "deceased", "administrative", "other"];
+    function present(e) {
+      const o = { ...e };
+      o.presenting_problem = e.presenting_problem_enc ? decrypt3(e.presenting_problem_enc) : null;
+      o.discharge_summary = e.discharge_summary_enc ? decrypt3(e.discharge_summary_enc) : null;
+      delete o.presenting_problem_enc;
+      delete o.discharge_summary_enc;
+      return o;
+    }
+    module.exports = (r) => {
+      r.get("/api/clients/:id/episodes", auth3.requireAuth, auth3.requirePerm("episodes:read", "episodes:write"), (ctx) => {
+        auth3.assertClientAccess(ctx, ctx.params.id);
+        const rows = db3.all(`SELECT e.*, o.display_name AS opened_by_name, cb.display_name AS closed_by_name, f.name AS funding_source
+      FROM episodes e LEFT JOIN users o ON o.id=e.opened_by LEFT JOIN users cb ON cb.id=e.closed_by LEFT JOIN funding_sources f ON f.id=e.funding_source_id
+      WHERE e.client_id=? ORDER BY e.opened_at DESC`, ctx.params.id);
+        audit3.log({ user: ctx.user, action: "episode.list", entity: "client", entityId: ctx.params.id, clientId: ctx.params.id, ip: ctx.ip, details: { count: rows.length } });
+        return { episodes: rows.map(present) };
+      });
+      r.post("/api/clients/:id/episodes", auth3.requireAuth, auth3.requirePerm("episodes:write"), (ctx) => {
+        if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id)) throw notFound("Client not found");
+        auth3.assertClientAccess(ctx, ctx.params.id);
+        const v = validate(ctx.body, {
+          opened_at: { type: "date" },
+          funding_source_id: { type: "string" },
+          referral_source: { type: "string", maxLen: 120 },
+          presenting_problem: { type: "string", maxLen: 4e3 }
+        });
+        if (db3.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, ctx.params.id)) throw badRequest("This client already has an open episode. Close it before opening another.");
+        const id = uuid2();
+        db3.transaction(() => {
+          db3.run(
+            `INSERT INTO episodes(id,client_id,funding_source_id,opened_at,opened_by,referral_source,presenting_problem_enc) VALUES(?,?,?,?,?,?,?)`,
+            id,
+            ctx.params.id,
+            v.funding_source_id || null,
+            v.opened_at || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+            ctx.user.id,
+            v.referral_source || null,
+            v.presenting_problem ? encrypt3(v.presenting_problem) : null
+          );
+          db3.run(`UPDATE clients SET status=CASE WHEN status IN ('closed','inactive') THEN 'active' ELSE status END, discharge_date=NULL, discharge_reason=NULL, updated_at=? WHERE id=?`, db3.now(), ctx.params.id);
+        });
+        audit3.log({ user: ctx.user, action: "episode.open", entity: "episode", entityId: id, clientId: ctx.params.id, ip: ctx.ip });
+        ctx.status = 201;
+        return { id };
+      });
+      r.post("/api/episodes/:id/close", auth3.requireAuth, auth3.requirePerm("episodes:write"), (ctx) => {
+        const e = db3.one(`SELECT * FROM episodes WHERE id=?`, ctx.params.id);
+        if (!e) throw notFound("Episode not found");
+        auth3.assertClientAccess(ctx, e.client_id);
+        if (e.status === "closed") throw badRequest("This episode is already closed");
+        const v = validate(ctx.body, {
+          discharge_reason: { type: "string", required: true, enum: DISCHARGE_REASONS },
+          discharge_disposition: { type: "string", maxLen: 200 },
+          discharge_summary: { type: "string", maxLen: 8e3 },
+          closed_at: { type: "date" },
+          keep_client_active: { type: "boolean" }
+        });
+        const when = v.closed_at || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        const openNotes = db3.one(`SELECT COUNT(*) n FROM notes WHERE client_id=? AND status='draft' AND deleted_at IS NULL`, e.client_id).n;
+        let endedAssignments = 0;
+        let cancelledTasks = 0;
+        let openReferrals = 0;
+        db3.transaction(() => {
+          db3.run(
+            `UPDATE episodes SET status='closed', closed_at=?, closed_by=?, discharge_reason=?, discharge_disposition=?, discharge_summary_enc=?, updated_at=? WHERE id=?`,
+            when,
+            ctx.user.id,
+            v.discharge_reason,
+            v.discharge_disposition || null,
+            v.discharge_summary ? encrypt3(v.discharge_summary) : null,
+            db3.now(),
+            e.id
+          );
+          if (!v.keep_client_active) {
+            const status = v.discharge_reason === "deceased" ? "deceased" : "closed";
+            db3.run(`UPDATE clients SET status=?, discharge_date=?, discharge_reason=?, updated_at=? WHERE id=?`, status, when, v.discharge_reason, db3.now(), e.client_id);
+            endedAssignments = db3.run(`UPDATE assignments SET end_date=?, updated_at=? WHERE client_id=? AND (end_date IS NULL OR end_date > ?)`, when, db3.now(), e.client_id, when).changes;
+            cancelledTasks = db3.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE client_id=? AND status IN ('open','in_progress')`, db3.now(), e.client_id).changes;
+          }
+          openReferrals = db3.one(`SELECT COUNT(*) n FROM referrals WHERE client_id=? AND status IN ('pending','contacted','accepted','waitlisted','scheduled')`, e.client_id).n;
+        });
+        audit3.log({ user: ctx.user, action: "episode.close", entity: "episode", entityId: e.id, clientId: e.client_id, ip: ctx.ip, details: { reason: v.discharge_reason, ended_assignments: endedAssignments, cancelled_tasks: cancelledTasks } });
+        return {
+          ok: true,
+          ended_assignments: endedAssignments,
+          cancelled_tasks: cancelledTasks,
+          warnings: [
+            openNotes ? `${openNotes} note(s) are still unsigned for this client.` : null,
+            openReferrals ? `${openReferrals} referral(s) are still open; record their outcome.` : null
+          ].filter(Boolean)
+        };
+      });
+      r.get("/api/episodes", auth3.requireAuth, auth3.requirePerm("episodes:read", "episodes:write"), (ctx) => {
+        const { limit: limit2, offset } = paging(ctx.query, { limit: 100, max: 500 });
+        const cf = auth3.caseloadFilter(ctx.user, "e.client_id");
+        const where = [cf.sql];
+        const params = [...cf.params];
+        const status = ctx.query.get("status");
+        if (status && status !== "all") {
+          where.push("e.status=?");
+          params.push(status);
+        }
+        if (ctx.query.get("from")) {
+          where.push("e.opened_at >= ?");
+          params.push(ctx.query.get("from"));
+        }
+        if (ctx.query.get("to")) {
+          where.push("e.opened_at <= ?");
+          params.push(ctx.query.get("to"));
+        }
+        const w = "WHERE " + where.join(" AND ");
+        const rows = db3.all(`SELECT e.id, e.client_id, e.opened_at, e.closed_at, e.status, e.discharge_reason, e.discharge_disposition, c.client_code, c.status AS client_status, f.name AS funding_source
+      FROM episodes e JOIN clients c ON c.id=e.client_id LEFT JOIN funding_sources f ON f.id=e.funding_source_id ${w} ORDER BY e.opened_at DESC LIMIT ? OFFSET ?`, ...params, limit2, offset);
+        audit3.log({ user: ctx.user, action: "episode.list", ip: ctx.ip, details: { count: rows.length } });
+        return { rows, total: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id ${w}`, ...params).n, limit: limit2, offset };
+      });
+      r.get("/api/waitlist", auth3.requireAuth, auth3.requirePerm("clients:read"), (ctx) => {
+        const cf = auth3.caseloadFilter(ctx.user, "c.id");
+        const rows = db3.all(`SELECT c.id, c.client_code, c.intake_date, c.risk_level, c.primary_substance, c.asam_level, c.referral_source,
+        CAST(julianday('now') - julianday(COALESCE(c.intake_date, date(c.created_at))) AS INTEGER) AS days_waiting,
+        (SELECT MAX(occurred_at) FROM interventions i WHERE i.client_id=c.id) AS last_contact
+      FROM clients c WHERE c.deleted_at IS NULL AND c.status='waitlist' AND ${cf.sql}
+      ORDER BY c.risk_level='critical' DESC, c.risk_level='high' DESC, days_waiting DESC LIMIT 500`, ...cf.params);
+        const M = require_clients_model();
+        const full = rows.map((x) => ({ ...x, ...M.summary(db3.one(`SELECT * FROM clients WHERE id=?`, x.id), { deidentify: !auth3.hasPerm(ctx.user, "clients:read") }) }));
+        audit3.log({ user: ctx.user, action: "waitlist.view", ip: ctx.ip, details: { count: rows.length } });
+        return { rows: full, total: rows.length };
+      });
+      r.post("/api/caseload/transfer", auth3.requireAuth, auth3.requirePerm("assignments:manage"), (ctx) => {
+        const v = validate(ctx.body, {
+          from_user_id: { type: "string", required: true },
+          to_user_id: { type: "string", required: true },
+          role_on_case: { type: "string", enum: ["primary", "secondary", "clinician", "peer", "supervisor"] },
+          effective_date: { type: "date" },
+          client_ids: { type: "array", maxLen: 1e3, of: "string" },
+          reassign_open_tasks: { type: "boolean" },
+          reason: { type: "string", maxLen: 300 }
+        });
+        if (v.from_user_id === v.to_user_id) throw badRequest("Choose a different worker to transfer to");
+        const from = db3.one(`SELECT id, display_name FROM users WHERE id=?`, v.from_user_id);
+        const to = db3.one(`SELECT id, display_name, is_active FROM users WHERE id=?`, v.to_user_id);
+        if (!from || !to) throw notFound("Worker not found");
+        if (!to.is_active) throw badRequest("That worker's account is not active");
+        const when = v.effective_date || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        const lastDay = new Date(Date.parse(when) - 864e5).toISOString().slice(0, 10);
+        const scope = v.client_ids && v.client_ids.length ? { sql: `AND a.client_id IN (${v.client_ids.map(() => "?").join(",")})`, params: v.client_ids } : { sql: "", params: [] };
+        const open = db3.all(`SELECT a.* FROM assignments a JOIN clients c ON c.id=a.client_id
+      WHERE a.user_id=? AND (a.end_date IS NULL OR a.end_date >= ?) AND c.deleted_at IS NULL ${scope.sql}`, from.id, when, ...scope.params);
+        let moved = 0;
+        let tasks = 0;
+        const skipped = [];
+        db3.transaction(() => {
+          for (const a of open) {
+            if (db3.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND (end_date IS NULL OR end_date >= ?)`, a.client_id, to.id, when)) {
+              db3.run(`UPDATE assignments SET end_date=?, updated_at=? WHERE id=?`, lastDay, db3.now(), a.id);
+              skipped.push({ client_id: a.client_id, reason: "already assigned to the receiving worker" });
+              continue;
+            }
+            db3.run(`UPDATE assignments SET end_date=?, updated_at=? WHERE id=?`, lastDay, db3.now(), a.id);
+            db3.run(
+              `INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,notes,created_by) VALUES(?,?,?,?,?,?,?)`,
+              uuid2(),
+              a.client_id,
+              to.id,
+              v.role_on_case || a.role_on_case,
+              when,
+              v.reason ? `Transferred from ${from.display_name}: ${v.reason}` : `Transferred from ${from.display_name}`,
+              ctx.user.id
+            );
+            moved++;
+          }
+          if (v.reassign_open_tasks !== 0 && moved) {
+            const ids = open.map((a) => a.client_id);
+            if (ids.length) tasks = db3.run(`UPDATE tasks SET assigned_to=?, updated_at=? WHERE assigned_to=? AND status IN ('open','in_progress') AND client_id IN (${ids.map(() => "?").join(",")})`, to.id, db3.now(), from.id, ...ids).changes;
+          }
+        });
+        audit3.log({ user: ctx.user, action: "caseload.transfer", entity: "user", entityId: from.id, ip: ctx.ip, details: { to: to.id, clients: moved, tasks, skipped: skipped.length, effective_date: when } });
+        return { ok: true, transferred: moved, tasks_reassigned: tasks, skipped, from: from.display_name, to: to.display_name };
+      });
+      r.get("/api/meta/discharge-reasons", auth3.requireAuth, () => ({ discharge_reasons: DISCHARGE_REASONS }));
+    };
+  }
+});
+
 // server/routes/forms.js
 var require_forms = __commonJS({
   "server/routes/forms.js"(exports, module) {
@@ -11660,10 +12323,10 @@ var require_forms = __commonJS({
       return out2;
     }
     function detectPdfFields(buf) {
-      const s = buf.toString("latin1");
+      const s2 = buf.toString("latin1");
       const out2 = [];
       const seen2 = /* @__PURE__ */ new Set();
-      for (const chunk of s.split("endobj")) {
+      for (const chunk of s2.split("endobj")) {
         if (out2.length >= MAX_FIELDS) break;
         const t = /\/T\s*\(([^)]{1,80})\)/.exec(chunk);
         const ft = /\/FT\s*\/(Tx|Btn|Ch)/.exec(chunk);
@@ -11745,9 +12408,9 @@ var require_forms = __commonJS({
       return out2;
     }
     var missingRequired = (fields, values) => fields.filter((f) => f.required && (values[f.key] === void 0 || values[f.key] === null || values[f.key] === "")).map((f) => f.label);
-    var parseJson = (s, d) => {
+    var parseJson = (s2, d) => {
       try {
-        return JSON.parse(s);
+        return JSON.parse(s2);
       } catch {
         return d;
       }
@@ -11760,6 +12423,21 @@ var require_forms = __commonJS({
       return f;
     }
     var formOut = (f, { values = true } = {}) => ({ ...f, fields: parseJson(f.fields_json, []), fields_json: void 0, values: values ? parseJson(decrypt3(f.values_enc), {}) : void 0, values_enc: void 0 });
+    var SERVABLE_TYPES = /* @__PURE__ */ new Set([
+      "application/pdf",
+      "image/png",
+      "image/jpeg",
+      "image/gif",
+      "image/webp",
+      "text/plain",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.ms-excel",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    ]);
+    function safeContentType(t) {
+      return SERVABLE_TYPES.has(String(t || "").toLowerCase().split(";")[0].trim()) ? String(t).split(";")[0].trim() : "application/octet-stream";
+    }
     module.exports = (r) => {
       r.get("/api/forms/templates", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write", "forms:manage"), (ctx) => {
         const all = ctx.query.get("active") === "0" && auth3.hasPerm(ctx.user, "forms:manage");
@@ -11819,7 +12497,7 @@ var require_forms = __commonJS({
       r.get("/api/forms/templates/:id/file", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write", "forms:manage"), (ctx) => {
         const t = db3.one(`SELECT * FROM form_templates WHERE id=?`, ctx.params.id);
         if (!t || !t.file_b64) throw notFound("No file for this form");
-        ctx.res.writeHead(200, { "Content-Type": t.content_type, "Content-Disposition": `${ctx.query.get("inline") === "1" ? "inline" : "attachment"}; filename="${(t.filename || "form").replace(/["\r\n]/g, "")}"` });
+        ctx.res.writeHead(200, { "Content-Type": safeContentType(t.content_type), "Content-Disposition": `${ctx.query.get("inline") === "1" ? "inline" : "attachment"}; filename="${(t.filename || "form").replace(/["\r\n]/g, "")}"` });
         ctx.res.end(import_buffer.Buffer.from(t.file_b64, "base64"));
         return null;
       });
@@ -11926,7 +12604,7 @@ var require_forms = __commonJS({
         const x = db3.one(`SELECT * FROM client_form_files WHERE id=? AND client_form_id=?`, ctx.params.fid, f.id);
         if (!x) throw notFound();
         audit3.log({ user: ctx.user, action: "client_form.file.view", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { file_id: x.id } });
-        ctx.res.writeHead(200, { "Content-Type": x.content_type, "Content-Disposition": `${ctx.query.get("download") === "1" ? "attachment" : "inline"}; filename="${x.filename}"` });
+        ctx.res.writeHead(200, { "Content-Type": safeContentType(x.content_type), "Content-Disposition": `${ctx.query.get("download") === "1" ? "attachment" : "inline"}; filename="${String(x.filename).replace(/["\r\n]/g, "")}"`, "X-Content-Type-Options": "nosniff" });
         ctx.res.end(import_buffer.Buffer.from(decrypt3(x.data_enc), "base64"));
         return null;
       });
@@ -12006,8 +12684,8 @@ ${content}`);
     }
     function splitText(text) {
       const t = String(text).replace(/\r\n/g, "\n").trim();
-      let chunks = t.split(/\n\s*(?:-{3,}|\*{3,}|_{3,}|={3,})\s*\n/).map((s) => s.trim()).filter(Boolean);
-      if (chunks.length === 1 && /^#\s/m.test(t)) chunks = t.split(/\n(?=#\s)/).map((s) => s.trim()).filter(Boolean);
+      let chunks = t.split(/\n\s*(?:-{3,}|\*{3,}|_{3,}|={3,})\s*\n/).map((s2) => s2.trim()).filter(Boolean);
+      if (chunks.length === 1 && /^#\s/m.test(t)) chunks = t.split(/\n(?=#\s)/).map((s2) => s2.trim()).filter(Boolean);
       return chunks;
     }
     function parse(input, { filename = "" } = {}) {
@@ -12113,7 +12791,7 @@ ${content}`) } };
     async function listNotebooks({ token: token2, user } = {}) {
       token2 = token2 || await graphToken();
       const nb = await graphGet(`${graphBase(user)}/notebooks?$expand=sections($select=id,displayName)`, token2);
-      return (nb.value || []).map((n) => ({ id: n.id, name: n.displayName, lastModified: n.lastModifiedDateTime, sections: (n.sections || []).map((s) => ({ id: s.id, name: s.displayName })) }));
+      return (nb.value || []).map((n) => ({ id: n.id, name: n.displayName, lastModified: n.lastModifiedDateTime, sections: (n.sections || []).map((s2) => ({ id: s2.id, name: s2.displayName })) }));
     }
     async function listPages(sectionId, { token: token2, user, since } = {}) {
       token2 = token2 || await graphToken();
@@ -12426,17 +13104,28 @@ var require_interventions = __commonJS({
     var crud = require_crud();
     var C = require_constants();
     var { uuid: uuid2 } = require_crypto();
+    function encodeSummary(v) {
+      if (v.summary !== void 0) {
+        v.summary_enc = v.summary ? require_crypto().encrypt(v.summary) : null;
+        delete v.summary;
+      }
+    }
+    function decodeSummary(row) {
+      return { ...row, summary: row.summary_enc ? require_crypto().decrypt(row.summary_enc) : null, summary_enc: void 0 };
+    }
     module.exports = (r) => {
       crud.build(r, {
         table: "interventions",
         entity: "intervention",
         perm: "interventions",
+        clientRequired: false,
         dateCol: "occurred_at",
         restrictOwner: true,
-        joins: "JOIN users u ON u.id=interventions.user_id JOIN clients c ON c.id=interventions.client_id LEFT JOIN funding_sources f ON f.id=interventions.funding_source_id",
+        joins: "JOIN users u ON u.id=interventions.user_id LEFT JOIN clients c ON c.id=interventions.client_id LEFT JOIN funding_sources f ON f.id=interventions.funding_source_id",
         select: "interventions.*, u.display_name AS worker, c.client_code, f.name AS funding_source",
         shape: {
-          client_id: { type: "string", required: true },
+          // Optional: community naloxone distribution and street outreach are services with no identified client.
+          client_id: { type: "string" },
           user_id: { type: "string" },
           type: { type: "string", required: true, enum: C.INTERVENTION_TYPES },
           occurred_at: { type: "datetime", required: true },
@@ -12461,15 +13150,18 @@ var require_interventions = __commonJS({
             params.push(t);
           }
         },
+        afterLoad: (ctx, row) => decodeSummary(row),
         beforeInsert: (ctx, v) => {
           v._log_time = v.log_time;
           delete v.log_time;
           v._time_category = v.time_category;
           delete v.time_category;
+          encodeSummary(v);
         },
         beforeUpdate: (ctx, v) => {
           delete v.log_time;
           delete v.time_category;
+          encodeSummary(v);
         },
         afterInsert: (ctx, row) => {
           if (row._log_time && row.duration_minutes > 0) {
@@ -12486,8 +13178,8 @@ var require_interventions = __commonJS({
               row.type.replace(/_/g, " ")
             );
           }
-          if (row.naloxone_kits > 0) db3.run(`UPDATE clients SET naloxone_provided=1, naloxone_last_date=?, updated_at=? WHERE id=?`, row.occurred_at.slice(0, 10), db3.now(), row.client_id);
-          if (row.follow_up_due) db3.run(
+          if (row.naloxone_kits > 0 && row.client_id) db3.run(`UPDATE clients SET naloxone_provided=1, naloxone_last_date=?, updated_at=? WHERE id=?`, row.occurred_at.slice(0, 10), db3.now(), row.client_id);
+          if (row.follow_up_due && row.client_id) db3.run(
             `INSERT INTO tasks(id,client_id,assigned_to,created_by,title,due_at,priority) VALUES(?,?,?,?,?,?,?)`,
             uuid2(),
             row.client_id,
@@ -12809,6 +13501,85 @@ var require_notes = __commonJS({
   }
 });
 
+// server/routes/overdose.js
+var require_overdose = __commonJS({
+  "server/routes/overdose.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var crud = require_crud();
+    var { decrypt: decrypt3, encrypt: encrypt3 } = require_crypto();
+    var KINDS = ["overdose", "reversal", "fatal"];
+    var ADMINISTERED_BY = ["bystander", "first_responder", "staff", "self", "family", "unknown"];
+    module.exports = (r) => {
+      crud.build(r, {
+        table: "overdose_events",
+        entity: "overdose_event",
+        base: "/api/overdose-events",
+        perm: "overdose",
+        dateCol: "occurred_at",
+        ownerCol: "reported_by",
+        clientRequired: false,
+        creatorCol: "reported_by",
+        joins: "LEFT JOIN clients c ON c.id=overdose_events.client_id LEFT JOIN users u ON u.id=overdose_events.reported_by LEFT JOIN funding_sources f ON f.id=overdose_events.funding_source_id",
+        select: "overdose_events.*, c.client_code, u.display_name AS reporter, f.name AS funding_source",
+        shape: {
+          // client_id stays optional: a bystander reversal reported by an outreach worker has no client.
+          client_id: { type: "string" },
+          occurred_at: { type: "datetime", required: true },
+          kind: { type: "string", enum: KINDS },
+          substances: { type: "string", maxLen: 200 },
+          naloxone_used: { type: "boolean" },
+          naloxone_doses: { type: "number", integer: true, min: 0, max: 20 },
+          administered_by: { type: "string", enum: ADMINISTERED_BY },
+          ems_called: { type: "boolean" },
+          hospitalized: { type: "boolean" },
+          survived: { type: "boolean" },
+          location_type: { type: "string", maxLen: 60 },
+          city: { type: "string", maxLen: 100 },
+          funding_source_id: { type: "string" },
+          notes: { type: "string", maxLen: 4e3 }
+        },
+        filters: (ctx, where, params) => {
+          const kind = ctx.query.get("kind");
+          if (kind && kind !== "all") {
+            where.push("overdose_events.kind=?");
+            params.push(kind);
+          }
+          if (ctx.query.get("community") === "1") where.push("overdose_events.client_id IS NULL");
+          if (ctx.query.get("naloxone") === "1") where.push("overdose_events.naloxone_used=1");
+        },
+        beforeInsert: (ctx, v) => {
+          if (v.notes !== void 0) {
+            v.notes_enc = v.notes ? encrypt3(v.notes) : null;
+            delete v.notes;
+          }
+          if (v.kind === "fatal") v.survived = 0;
+          if (v.naloxone_doses > 0) v.naloxone_used = 1;
+        },
+        beforeUpdate: (ctx, v) => {
+          if (v.notes !== void 0) {
+            v.notes_enc = v.notes ? encrypt3(v.notes) : null;
+            delete v.notes;
+          }
+          if (v.kind === "fatal") v.survived = 0;
+        },
+        afterLoad: (ctx, row) => ({ ...row, notes: row.notes_enc ? decrypt3(row.notes_enc) : null, notes_enc: void 0 }),
+        afterInsert: (ctx, row) => {
+          if (!row.client_id) return;
+          const day = String(row.occurred_at).slice(0, 10);
+          db3.run(`UPDATE clients SET overdose_history=1, last_overdose_date=CASE WHEN last_overdose_date IS NULL OR last_overdose_date < ? THEN ? ELSE last_overdose_date END, updated_at=? WHERE id=?`, day, day, db3.now(), row.client_id);
+          if (row.kind === "fatal") db3.run(`UPDATE clients SET status='deceased', updated_at=? WHERE id=?`, db3.now(), row.client_id);
+        },
+        canEdit: crud.ownerOrManager("reported_by")
+      });
+      r.get("/api/meta/overdose-options", auth3.requireAuth, () => ({ kinds: KINDS, administered_by: ADMINISTERED_BY }));
+    };
+  }
+});
+
 // server/routes/referrals.js
 var require_referrals = __commonJS({
   "server/routes/referrals.js"(exports, module) {
@@ -12866,10 +13637,10 @@ var require_referrals = __commonJS({
           _disclosure_what: { type: "string", maxLen: 1e3 }
         },
         filters: (ctx, where, params) => {
-          const s = ctx.query.get("status");
-          if (s && s !== "all") {
+          const s2 = ctx.query.get("status");
+          if (s2 && s2 !== "all") {
             where.push("referrals.status=?");
-            params.push(s);
+            params.push(s2);
           }
           if (ctx.query.get("open") === "1") where.push(`referrals.status IN ('pending','contacted','accepted','waitlisted','scheduled')`);
           if (ctx.query.get("consent_revoked") === "1") where.push("referrals.consent_revoked=1");
@@ -16179,7 +16950,7 @@ var require_region = __commonJS({
     var { uuid: uuid2 } = require_crypto();
     var REGIONS = { "sacramento-metro": require_sacramento_metro() };
     var MAX_PICTURE_BYTES = 2 * 1024 * 1024;
-    var norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    var norm = (s2) => String(s2 || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     var tagList = (list2, allowed) => (Array.isArray(list2) ? list2 : String(list2 || "").split(",")).map((x) => String(x).trim().toLowerCase().replace(/[\s-]+/g, "_")).filter((x) => allowed.includes(x)).filter((x, i, a) => a.indexOf(x) === i).join(",");
     var stateKey = (id) => `region_loaded:${id}`;
     var readState = (id) => {
@@ -16621,6 +17392,7 @@ var require_reports = __commonJS({
           budget: auth3.hasPerm(ctx.user, "budget:read") ? db3.one(`SELECT (SELECT COALESCE(SUM(total_amount),0) FROM funding_sources WHERE is_active=1) total, (SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status IN ('approved','reimbursed')) spent, (SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status='pending') pending`) : null,
           consents_expiring: db3.all(`SELECT co.id, co.client_id, co.type, co.recipient_enc, co.expires_at, c.client_code FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY co.expires_at LIMIT 20`, today, new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10), ...cf.params).map((x) => ({ ...x, recipient: x.recipient_enc ? require_crypto().decrypt(x.recipient_enc) : null, recipient_enc: void 0 }))
         };
+        audit3.log({ user: ctx.user, action: "report.dashboard", ip: ctx.ip, details: { from, to } });
         return out2;
       });
       r.get("/api/reports/monthly", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
@@ -16628,18 +17400,94 @@ var require_reports = __commonJS({
         const start2 = /* @__PURE__ */ new Date();
         start2.setUTCDate(1);
         start2.setUTCMonth(start2.getUTCMonth() - months + 1);
-        const s = start2.toISOString().slice(0, 10);
+        const s2 = start2.toISOString().slice(0, 10);
         return {
-          intakes: db3.all(`SELECT substr(intake_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND intake_date >= ? GROUP BY month ORDER BY month`, s),
-          discharges: db3.all(`SELECT substr(discharge_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND discharge_date >= ? GROUP BY month ORDER BY month`, s),
-          interventions: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
-          calls: db3.all(`SELECT substr(started_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes FROM calls WHERE started_at >= ? GROUP BY month ORDER BY month`, s),
-          referrals: db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals WHERE referred_at >= ? GROUP BY month ORDER BY month`, s),
-          naloxone: db3.all(`SELECT substr(occurred_at,1,7) month, SUM(naloxone_kits) kits, SUM(fentanyl_strips) strips FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
-          mat_linkage: db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n FROM referrals r JOIN resources res ON res.id=r.resource_id WHERE res.category IN ('mat_otp','mat_obot') AND r.status IN ('admitted','completed') AND referred_at >= ? GROUP BY month ORDER BY month`, s),
-          spend: auth3.hasPerm(ctx.user, "budget:read") ? db3.all(`SELECT substr(spent_at,1,7) month, SUM(amount) amount FROM expenditures WHERE status IN ('approved','reimbursed') AND spent_at >= ? GROUP BY month ORDER BY month`, s) : [],
-          time: db3.all(`SELECT substr(work_date,1,7) month, SUM(minutes) minutes FROM time_entries WHERE work_date >= ? GROUP BY month ORDER BY month`, s)
+          intakes: db3.all(`SELECT substr(intake_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND intake_date >= ? GROUP BY month ORDER BY month`, s2),
+          discharges: db3.all(`SELECT substr(discharge_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND discharge_date >= ? GROUP BY month ORDER BY month`, s2),
+          interventions: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s2),
+          calls: db3.all(`SELECT substr(started_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes FROM calls WHERE started_at >= ? GROUP BY month ORDER BY month`, s2),
+          referrals: db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals WHERE referred_at >= ? GROUP BY month ORDER BY month`, s2),
+          naloxone: db3.all(`SELECT substr(occurred_at,1,7) month, SUM(naloxone_kits) kits, SUM(fentanyl_strips) strips FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s2),
+          overdose_events: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN naloxone_used=1 AND survived=1 THEN 1 ELSE 0 END) reversals, SUM(CASE WHEN kind='fatal' OR survived=0 THEN 1 ELSE 0 END) fatal FROM overdose_events WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s2),
+          episodes: db3.all(`SELECT substr(opened_at,1,7) month, COUNT(*) admissions, (SELECT COUNT(*) FROM episodes x WHERE substr(x.closed_at,1,7)=substr(e.opened_at,1,7)) discharges FROM episodes e WHERE opened_at >= ? GROUP BY month ORDER BY month`, s2),
+          unduplicated_clients: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? AND client_id IS NOT NULL GROUP BY month ORDER BY month`, s2),
+          mat_linkage: db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n FROM referrals r JOIN resources res ON res.id=r.resource_id WHERE res.category IN ('mat_otp','mat_obot') AND r.status IN ('admitted','completed') AND referred_at >= ? GROUP BY month ORDER BY month`, s2),
+          spend: auth3.hasPerm(ctx.user, "budget:read") ? db3.all(`SELECT substr(spent_at,1,7) month, SUM(amount) amount FROM expenditures WHERE status IN ('approved','reimbursed') AND spent_at >= ? GROUP BY month ORDER BY month`, s2) : [],
+          time: db3.all(`SELECT substr(work_date,1,7) month, SUM(minutes) minutes FROM time_entries WHERE work_date >= ? GROUP BY month ORDER BY month`, s2)
         };
+      });
+      r.get("/api/reports/funder", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
+        const { from, to, toEnd } = range(ctx);
+        const cf = auth3.caseloadFilter(ctx.user, "c.id");
+        const fund = ctx.query.get("funding_source_id") || null;
+        const fundJoin = fund ? "AND i.funding_source_id=?" : "";
+        const fundP = fund ? [fund] : [];
+        const served = db3.one(`SELECT COUNT(DISTINCT x.client_id) n FROM (
+        SELECT i.client_id FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.occurred_at BETWEEN ? AND ? AND ${cf.sql} ${fundJoin}
+        UNION SELECT ca.client_id FROM calls ca JOIN clients c ON c.id=ca.client_id WHERE ca.started_at BETWEEN ? AND ? AND ca.client_id IS NOT NULL AND ${cf.sql}
+      ) x`, from, toEnd, ...cf.params, ...fundP, from, toEnd, ...cf.params).n;
+        const demographics = (col, label) => db3.all(`SELECT COALESCE(NULLIF(c.${col},''),'unknown') k, COUNT(DISTINCT c.id) n
+      FROM clients c WHERE c.deleted_at IS NULL AND ${cf.sql} AND EXISTS (SELECT 1 FROM interventions i WHERE i.client_id=c.id AND i.occurred_at BETWEEN ? AND ?)
+      GROUP BY k ORDER BY n DESC`, ...cf.params, from, toEnd).map((x) => ({ ...x, dimension: label }));
+        const raceRows = db3.all(`SELECT c.race_codes FROM clients c WHERE c.deleted_at IS NULL AND ${cf.sql}
+      AND EXISTS (SELECT 1 FROM interventions i WHERE i.client_id=c.id AND i.occurred_at BETWEEN ? AND ?)`, ...cf.params, from, toEnd);
+        const byRace = {};
+        for (const row of raceRows) {
+          const codes = String(row.race_codes || "").split(",").map((x) => x.trim()).filter(Boolean);
+          for (const code of codes.length ? codes : ["unknown"]) byRace[code] = (byRace[code] || 0) + 1;
+        }
+        const episodes = {
+          admissions: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.opened_at BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
+          discharges: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
+          open_at_end: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.opened_at <= ? AND (e.closed_at IS NULL OR e.closed_at > ?) AND ${cf.sql}`, to, to, ...cf.params).n,
+          by_discharge_reason: db3.all(`SELECT COALESCE(e.discharge_reason,'unknown') k, COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql} GROUP BY k ORDER BY n DESC`, from, to, ...cf.params),
+          median_length_of_stay_days: (() => {
+            const d = db3.all(`SELECT (julianday(e.closed_at)-julianday(e.opened_at)) d FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY d`, from, to, ...cf.params).map((x) => x.d);
+            return d.length ? Math.round(d[Math.floor(d.length / 2)]) : null;
+          })()
+        };
+        const overdose = {
+          events: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE o.occurred_at BETWEEN ? AND ?`, from, toEnd).n,
+          reversals: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE o.occurred_at BETWEEN ? AND ? AND o.naloxone_used=1 AND o.survived=1`, from, toEnd).n,
+          fatal: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE o.occurred_at BETWEEN ? AND ? AND (o.kind='fatal' OR o.survived=0)`, from, toEnd).n,
+          community_reported: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE o.occurred_at BETWEEN ? AND ? AND o.client_id IS NULL`, from, toEnd).n,
+          naloxone_doses: db3.one(`SELECT COALESCE(SUM(o.naloxone_doses),0) n FROM overdose_events o WHERE o.occurred_at BETWEEN ? AND ?`, from, toEnd).n,
+          by_month: db3.all(`SELECT substr(o.occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN o.naloxone_used=1 AND o.survived=1 THEN 1 ELSE 0 END) reversals FROM overdose_events o WHERE o.occurred_at BETWEEN ? AND ? GROUP BY month ORDER BY month`, from, toEnd),
+          by_administered_by: db3.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE o.occurred_at BETWEEN ? AND ? AND o.naloxone_used=1 GROUP BY k ORDER BY n DESC`, from, toEnd)
+        };
+        const distribution = db3.one(`SELECT COALESCE(SUM(i.naloxone_kits),0) kits, COALESCE(SUM(i.fentanyl_strips),0) strips,
+      COALESCE(SUM(CASE WHEN i.client_id IS NULL THEN i.naloxone_kits ELSE 0 END),0) community_kits
+      FROM interventions i WHERE i.occurred_at BETWEEN ? AND ? ${fundJoin}`, from, toEnd, ...fundP);
+        const out2 = {
+          from,
+          to,
+          funding_source_id: fund,
+          unduplicated: {
+            served,
+            new_admissions: db3.one(`SELECT COUNT(DISTINCT c.id) n FROM clients c WHERE c.deleted_at IS NULL AND c.intake_date BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
+            with_a_referral: db3.one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE r.referred_at BETWEEN ? AND ? AND ${cf.sql}`, from, toEnd, ...cf.params).n,
+            admitted_after_referral: db3.one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE r.admitted_at BETWEEN ? AND ? AND ${cf.sql}`, from, toEnd, ...cf.params).n,
+            on_mat: db3.one(`SELECT COUNT(DISTINCT c.id) n FROM clients c WHERE c.deleted_at IS NULL AND c.mat_status='active' AND ${cf.sql}`, ...cf.params).n
+          },
+          demographics: {
+            by_gender: demographics("gender", "gender"),
+            by_language: demographics("preferred_language", "language"),
+            by_housing: demographics("housing_status", "housing"),
+            by_insurance: demographics("insurance", "insurance"),
+            by_race_code: Object.entries(byRace).map(([k, n]) => ({ k, n })).sort((a, b) => b.n - a.n),
+            by_ethnicity: demographics("race_ethnicity", "ethnicity")
+          },
+          episodes,
+          overdose,
+          naloxone_distribution: distribution,
+          by_funding_source: db3.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end,
+          (SELECT COUNT(DISTINCT i.client_id) FROM interventions i WHERE i.funding_source_id=f.id AND i.occurred_at BETWEEN ? AND ?) AS clients_served,
+          (SELECT COUNT(*) FROM interventions i WHERE i.funding_source_id=f.id AND i.occurred_at BETWEEN ? AND ?) AS services,
+          (SELECT COALESCE(SUM(t.minutes),0) FROM time_entries t WHERE t.funding_source_id=f.id AND t.work_date BETWEEN ? AND ? AND t.status='approved') AS approved_minutes
+        FROM funding_sources f WHERE f.is_active=1 ORDER BY f.name`, from, toEnd, from, toEnd, from, to)
+        };
+        audit3.log({ user: ctx.user, action: "report.funder", ip: ctx.ip, details: { from, to, funding_source_id: fund || void 0, served } });
+        return out2;
       });
       r.get("/api/reports/export/:kind", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
         const { from, to, toEnd } = range(ctx);
@@ -16651,7 +17499,7 @@ var require_reports = __commonJS({
         let body, filename, type;
         if (ctx.params.kind === "workbook") {
           const sheets = Object.entries(D).map(([k, d]) => ({ name: d.label, columns: d.columns.map(label), rows: d.rows() }));
-          audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: "workbook", sheets: sheets.map((s) => [s.name, s.rows.length]), identified, from, to } });
+          audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: "workbook", sheets: sheets.map((s2) => [s2.name, s2.rows.length]), identified, from, to } });
           body = S.writeWorkbook(sheets);
           filename = `suds-export-${from}_${to}.xlsx`;
           type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -16927,6 +17775,119 @@ var require_setup = __commonJS({
           throw new HttpError3(500, `Could not start on the network: ${e.message}. Setup saved with local-only access; change this later in Settings \u2192 Network & devices.`);
         }
         return { ok: true, listener: desc, keys_file: config.keySource === "env" ? null : config.keysJsonPath };
+      });
+    };
+  }
+});
+
+// server/routes/supervision.js
+var require_supervision = __commonJS({
+  "server/routes/supervision.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var { badRequest, notFound, forbidden } = require_http();
+    var { validate } = require_validate();
+    var { decrypt: decrypt3 } = require_crypto();
+    function supervisedIds(user) {
+      if (auth3.hasPerm(user, "clients:all")) return null;
+      return db3.all(`SELECT id FROM users WHERE supervisor_id=?`, user.id).map((u) => u.id);
+    }
+    function staffFilter(user, col) {
+      const ids = supervisedIds(user);
+      if (ids === null) return { sql: "1=1", params: [] };
+      if (!ids.length) return { sql: "1=0", params: [] };
+      return { sql: `${col} IN (${ids.map(() => "?").join(",")})`, params: ids };
+    }
+    module.exports = (r) => {
+      r.get("/api/supervision/queue", auth3.requireAuth, auth3.requirePerm("notes:cosign", "time:approve", "assignments:manage"), (ctx) => {
+        const sf = staffFilter(ctx.user, "n.author_id");
+        const tf = staffFilter(ctx.user, "t.user_id");
+        const lockDays = Number(db3.getSetting("note_lock_days", "3"));
+        const staleBefore = new Date(Date.now() - lockDays * 864e5).toISOString();
+        const out2 = {};
+        if (auth3.hasPerm(ctx.user, "notes:cosign")) {
+          out2.awaiting_cosignature = db3.all(`SELECT n.id, n.client_id, n.kind, n.occurred_at, n.signed_at, n.title_enc, u.display_name AS author, c.client_code
+        FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id
+        WHERE n.deleted_at IS NULL AND n.cosign_required=1 AND n.status<>'draft' AND n.cosigned_at IS NULL AND n.author_id<>? AND ${sf.sql}
+        ORDER BY n.signed_at LIMIT 100`, ctx.user.id, ...sf.params).map((x) => ({ ...x, title: x.title_enc ? decrypt3(x.title_enc) : null, title_enc: void 0 }));
+          out2.unsigned_notes = db3.all(`SELECT n.id, n.client_id, n.kind, n.occurred_at, n.created_at, u.display_name AS author, c.client_code,
+          (n.created_at < ?) AS overdue
+        FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id
+        WHERE n.deleted_at IS NULL AND n.status='draft' AND ${sf.sql}
+        ORDER BY n.created_at LIMIT 100`, staleBefore, ...sf.params);
+        }
+        if (auth3.hasPerm(ctx.user, "time:approve")) {
+          out2.time_awaiting_approval = db3.all(`SELECT t.id, t.user_id, t.work_date, t.minutes, t.category, t.billable, t.submitted_at, u.display_name AS worker, c.client_code, f.name AS funding_source
+        FROM time_entries t JOIN users u ON u.id=t.user_id LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN funding_sources f ON f.id=t.funding_source_id
+        WHERE t.status='submitted' AND t.user_id<>? AND ${tf.sql} ORDER BY t.work_date LIMIT 200`, ctx.user.id, ...tf.params);
+          out2.time_totals = db3.one(`SELECT COUNT(*) entries, COALESCE(SUM(minutes),0) minutes FROM time_entries t WHERE t.status='submitted' AND t.user_id<>? AND ${tf.sql}`, ctx.user.id, ...tf.params);
+        }
+        if (auth3.hasPerm(ctx.user, "referrals:read")) {
+          const cf = auth3.caseloadFilter(ctx.user, "r.client_id");
+          out2.referrals_awaiting_outcome = db3.all(`SELECT r.id, r.client_id, r.referred_at, r.status, res.name AS resource, c.client_code
+        FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id
+        WHERE r.outcome_recorded_at IS NULL AND r.status NOT IN ('pending','closed') AND ${cf.sql} ORDER BY r.referred_at LIMIT 100`, ...cf.params);
+          out2.referrals_consent_revoked = db3.all(`SELECT r.id, r.client_id, res.name AS resource, c.client_code FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id WHERE r.consent_revoked=1 AND r.status NOT IN ('closed','declined_by_client','declined_by_provider') AND ${cf.sql} LIMIT 100`, ...cf.params);
+        }
+        audit3.log({ user: ctx.user, action: "supervision.queue", ip: ctx.ip, details: { cosign: out2.awaiting_cosignature?.length || 0, time: out2.time_awaiting_approval?.length || 0 } });
+        return out2;
+      });
+      function loadEntry(ctx, id) {
+        const t = db3.one(`SELECT * FROM time_entries WHERE id=?`, id);
+        if (!t) throw notFound("Time entry not found");
+        return t;
+      }
+      r.post("/api/time/:id/submit", auth3.requireAuth, auth3.requirePerm("time:write"), (ctx) => {
+        const t = loadEntry(ctx, ctx.params.id);
+        if (t.user_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "time:all")) throw forbidden("Only the worker can submit their own time");
+        if (t.status !== "draft" && t.status !== "rejected") throw badRequest("This time entry has already been submitted");
+        db3.run(`UPDATE time_entries SET status='submitted', submitted_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), t.id);
+        audit3.log({ user: ctx.user, action: "time.submit", entity: "time_entry", entityId: t.id, clientId: t.client_id, ip: ctx.ip, details: { minutes: t.minutes } });
+        return { ok: true };
+      });
+      r.post("/api/time/submit-period", auth3.requireAuth, auth3.requirePerm("time:write"), (ctx) => {
+        const v = validate(ctx.body, { from: { type: "date", required: true }, to: { type: "date", required: true } });
+        const res = db3.run(`UPDATE time_entries SET status='submitted', submitted_at=?, updated_at=? WHERE user_id=? AND work_date BETWEEN ? AND ? AND status IN ('draft','rejected')`, db3.now(), db3.now(), ctx.user.id, v.from, v.to);
+        audit3.log({ user: ctx.user, action: "time.submit.period", ip: ctx.ip, details: { from: v.from, to: v.to, entries: res.changes } });
+        return { ok: true, submitted: res.changes };
+      });
+      r.post("/api/time/:id/approve", auth3.requireAuth, auth3.requirePerm("time:approve"), (ctx) => {
+        const t = loadEntry(ctx, ctx.params.id);
+        const v = validate(ctx.body, { decision: { type: "string", required: true, enum: ["approved", "rejected"] }, note: { type: "string", maxLen: 500 } });
+        if (t.user_id === ctx.user.id) throw forbidden("You cannot approve your own time");
+        if (t.status !== "submitted") throw badRequest("Only submitted time can be approved or returned");
+        db3.run(`UPDATE time_entries SET status=?, approved_by=?, approved_at=?, approval_note=?, updated_at=? WHERE id=?`, v.decision, ctx.user.id, db3.now(), v.note || null, db3.now(), t.id);
+        audit3.log({ user: ctx.user, action: `time.${v.decision}`, entity: "time_entry", entityId: t.id, clientId: t.client_id, ip: ctx.ip, details: { worker: t.user_id, minutes: t.minutes } });
+        return { ok: true };
+      });
+      r.post("/api/time/approve-batch", auth3.requireAuth, auth3.requirePerm("time:approve"), (ctx) => {
+        const v = validate(ctx.body, { ids: { type: "array", required: true, maxLen: 500 }, decision: { type: "string", required: true, enum: ["approved", "rejected"] }, note: { type: "string", maxLen: 500 } });
+        let n = 0;
+        const skipped = [];
+        db3.transaction(() => {
+          for (const id of v.ids) {
+            const t = db3.one(`SELECT * FROM time_entries WHERE id=?`, id);
+            if (!t) {
+              skipped.push({ id, reason: "not found" });
+              continue;
+            }
+            if (t.user_id === ctx.user.id) {
+              skipped.push({ id, reason: "your own time" });
+              continue;
+            }
+            if (t.status !== "submitted") {
+              skipped.push({ id, reason: "not awaiting approval" });
+              continue;
+            }
+            db3.run(`UPDATE time_entries SET status=?, approved_by=?, approved_at=?, approval_note=?, updated_at=? WHERE id=?`, v.decision, ctx.user.id, db3.now(), v.note || null, db3.now(), t.id);
+            n++;
+          }
+        });
+        audit3.log({ user: ctx.user, action: `time.${v.decision}.batch`, ip: ctx.ip, details: { count: n, skipped: skipped.length } });
+        return { ok: true, [v.decision]: n, skipped };
       });
     };
   }
@@ -17296,11 +18257,11 @@ var require_tasks = __commonJS({
           completed_at: { type: "datetime" }
         },
         filters: (ctx, where, params) => {
-          const s = ctx.query.get("status");
-          if (s === "open") where.push(`tasks.status IN ('open','in_progress')`);
-          else if (s && s !== "all") {
+          const s2 = ctx.query.get("status");
+          if (s2 === "open") where.push(`tasks.status IN ('open','in_progress')`);
+          else if (s2 && s2 !== "all") {
             where.push("tasks.status=?");
-            params.push(s);
+            params.push(s2);
           }
           if (ctx.query.get("overdue") === "1") {
             where.push(`tasks.status IN ('open','in_progress') AND (CASE WHEN length(tasks.due_at)=10 THEN tasks.due_at < date('now','localtime') ELSE tasks.due_at < ? END)`);
@@ -17490,17 +18451,20 @@ var init_ = __esm({
       "./routes/clients.js": () => require_clients(),
       "./routes/consents.js": () => require_consents(),
       "./routes/dataimport.js": () => require_dataimport2(),
+      "./routes/episodes.js": () => require_episodes(),
       "./routes/forms.js": () => require_forms(),
       "./routes/imports.js": () => require_imports(),
       "./routes/intake.js": () => require_intake(),
       "./routes/interventions.js": () => require_interventions(),
       "./routes/me.js": () => require_me(),
       "./routes/notes.js": () => require_notes(),
+      "./routes/overdose.js": () => require_overdose(),
       "./routes/referrals.js": () => require_referrals(),
       "./routes/regions.js": () => require_regions(),
       "./routes/reports.js": () => require_reports(),
       "./routes/resources.js": () => require_resources(),
       "./routes/setup.js": () => require_setup(),
+      "./routes/supervision.js": () => require_supervision(),
       "./routes/sync.js": () => require_sync(),
       "./routes/tasks.js": () => require_tasks(),
       "./routes/time.js": () => require_time(),
@@ -17536,11 +18500,39 @@ var require_app2 = __commonJS({
       }
       return b.count <= max2;
     }
+    var ROUTE_MODULES = [
+      "setup",
+      "auth",
+      "me",
+      "app",
+      "sync",
+      "dataimport",
+      "users",
+      "clients",
+      "assignments",
+      "episodes",
+      "interventions",
+      "overdose",
+      "calls",
+      "time",
+      "supervision",
+      "resources",
+      "referrals",
+      "tasks",
+      "budget",
+      "notes",
+      "consents",
+      "forms",
+      "imports",
+      "reports",
+      "admin",
+      "regions",
+      "intake"
+    ];
+    var LOCAL_ROUTE_MODULES2 = ROUTE_MODULES.filter((m) => !["setup", "app", "sync", "intake"].includes(m));
     function buildRouter() {
       const r = new Router2();
-      for (const mod of ["setup", "auth", "me", "app", "sync", "dataimport", "users", "clients", "assignments", "interventions", "calls", "time", "resources", "referrals", "tasks", "budget", "notes", "consents", "forms", "imports", "reports", "admin", "regions", "intake"]) {
-        globRequire_routes(`./routes/${mod}`)(r);
-      }
+      for (const mod of ROUTE_MODULES) globRequire_routes(`./routes/${mod}`)(r);
       return r;
     }
     function createHandler() {
@@ -17599,115 +18591,21 @@ var require_app2 = __commonJS({
           if (!res.headersSent) sendJson(res, result === void 0 ? 204 : ctx.status || 200, result === void 0 ? null : result);
         } catch (err2) {
           if (err2 instanceof HttpError3) {
-            sendJson(res, err2.status, { error: err2.message, ...err2.extra || {} });
+            if (!res.headersSent) sendJson(res, err2.status, { error: err2.message, ...err2.extra || {} });
+            else res.destroy();
           } else {
             console.error(`[suds] ${req.method} ${url.pathname}:`, err2);
             try {
               audit3.log({ user: ctx.user, action: "server.error", ip: ctx.ip, success: false, details: { path: url.pathname, message: String(err2.message).slice(0, 300) } });
             } catch {
             }
-            sendJson(res, 500, { error: "Internal server error" });
+            if (!res.headersSent) sendJson(res, 500, { error: "Internal server error" });
+            else res.destroy();
           }
         }
       };
     }
-    module.exports = { createHandler, rateLimit };
-  }
-});
-
-// server/routes/auth.js
-var require_auth2 = __commonJS({
-  "server/routes/auth.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth();
-    var audit3 = require_audit();
-    var { rateLimit } = require_app2();
-    var { HttpError: HttpError3, badRequest, unauthorized } = require_http();
-    var { validate } = require_validate();
-    var { hashPassword, verifyPassword, generateTotpSecret, verifyTotp, otpauthUrl, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
-    module.exports = (r) => {
-      r.post("/api/auth/login", async (ctx) => {
-        if (!rateLimit(`login:${ctx.ip}`, require_config().isTest ? 1e5 : 20, 15 * 6e4)) throw new HttpError3(429, "Too many login attempts. Try again later.");
-        const { username, password } = validate(ctx.body, { username: { type: "string", required: true, maxLen: 100 }, password: { type: "string", required: true, maxLen: 500 } });
-        const result = auth3.login({ username, password, ctx });
-        ctx.res.setHeader("Set-Cookie", auth3.cookieHeader(result.token));
-        const out2 = { user: result.user, mfaPending: result.mfaPending, mfaSetupRequired: result.mfaSetupRequired };
-        if (ctx.headers["x-sync-client"]) out2.token = result.token;
-        return out2;
-      });
-      r.post("/api/auth/mfa/verify", (ctx) => {
-        if (!ctx.user) throw unauthorized();
-        if (!rateLimit(`mfa:${ctx.user.id}`, 10, 10 * 6e4)) throw new HttpError3(429, "Too many attempts");
-        const { code } = validate(ctx.body, { code: { type: "string", required: true, maxLen: 10 } });
-        return { user: auth3.verifyMfa(ctx, code) };
-      });
-      r.post("/api/auth/logout", (ctx) => {
-        if (ctx.user) audit3.log({ user: ctx.user, action: "auth.logout", ip: ctx.ip });
-        auth3.revokeSession(ctx.sessionToken);
-        ctx.res.setHeader("Set-Cookie", auth3.cookieHeader("", { clear: true }));
-        return { ok: true };
-      });
-      r.get("/api/auth/me", (ctx) => {
-        if (!ctx.user) throw unauthorized();
-        const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
-        return { user: auth3.publicUser(u), mfaPending: !!ctx.session.mfa_pending, org_name: db3.getSetting("org_name", "SUDS"), idle_minutes: auth3.policy().idleMinutes, setup_needed: false };
-      });
-      r.post("/api/auth/password", (ctx) => {
-        if (!ctx.user) throw unauthorized();
-        const { current_password, new_password } = validate(ctx.body, { current_password: { type: "string", required: true, maxLen: 500 }, new_password: { type: "string", required: true, maxLen: 500 } });
-        const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
-        if (!verifyPassword(current_password, u.password_hash)) {
-          audit3.log({ user: u, action: "auth.password.change.failed", ip: ctx.ip, success: false });
-          throw unauthorized("Current password is incorrect");
-        }
-        const errs = auth3.passwordPolicy(new_password);
-        if (errs.length) throw badRequest("Password must contain " + errs.join(", "));
-        if (verifyPassword(new_password, u.password_hash)) throw badRequest("New password must differ from the current password");
-        db3.run(`UPDATE users SET password_hash=?, must_change_password=0, password_changed_at=?, updated_at=? WHERE id=?`, hashPassword(new_password), db3.now(), db3.now(), u.id);
-        db3.run(`UPDATE sessions SET revoked_at=? WHERE user_id=? AND id<>? AND revoked_at IS NULL`, db3.now(), u.id, ctx.session.id);
-        audit3.log({ user: u, action: "auth.password.changed", ip: ctx.ip });
-        return { ok: true };
-      });
-      r.post("/api/auth/mfa/setup", (ctx) => {
-        if (!ctx.user) throw unauthorized();
-        const secret = generateTotpSecret();
-        db3.run(`UPDATE users SET mfa_secret_enc=?, updated_at=? WHERE id=? AND mfa_enabled=0`, encrypt3(secret), db3.now(), ctx.user.id);
-        return { secret, otpauth: otpauthUrl(secret, ctx.user.username, db3.getSetting("org_name", "SUDS")) };
-      });
-      r.post("/api/auth/mfa/enable", (ctx) => {
-        if (!ctx.user) throw unauthorized();
-        const { code } = validate(ctx.body, { code: { type: "string", required: true, maxLen: 10 } });
-        const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
-        if (!u.mfa_secret_enc) throw badRequest("Run MFA setup first");
-        if (!verifyTotp(decrypt3(u.mfa_secret_enc), code)) throw badRequest("Invalid code");
-        db3.run(`UPDATE users SET mfa_enabled=1, updated_at=? WHERE id=?`, db3.now(), u.id);
-        db3.run(`UPDATE sessions SET mfa_pending=0 WHERE id=?`, ctx.session.id);
-        audit3.log({ user: u, action: "auth.mfa.enabled", ip: ctx.ip });
-        return { ok: true };
-      });
-      r.post("/api/auth/mfa/disable", (ctx) => {
-        auth3.requireAuth(ctx);
-        const { password } = validate(ctx.body, { password: { type: "string", required: true, maxLen: 500 } });
-        const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
-        if (!verifyPassword(password, u.password_hash)) throw unauthorized("Password is incorrect");
-        if (auth3.policy().mfaRequiredRoles.includes(u.role)) throw badRequest("MFA is required for your role");
-        db3.run(`UPDATE users SET mfa_enabled=0, mfa_secret_enc=NULL, updated_at=? WHERE id=?`, db3.now(), u.id);
-        audit3.log({ user: u, action: "auth.mfa.disabled", ip: ctx.ip });
-        return { ok: true };
-      });
-      r.get("/api/auth/sessions", (ctx) => {
-        auth3.requireAuth(ctx);
-        return { sessions: db3.all(`SELECT id, created_at, last_seen_at, ip, user_agent, id=? AS current FROM sessions WHERE user_id=? AND revoked_at IS NULL AND expires_at > ? ORDER BY last_seen_at DESC`, ctx.session.id, ctx.user.id, db3.now()) };
-      });
-      r.post("/api/auth/sessions/revoke-others", (ctx) => {
-        auth3.requireAuth(ctx);
-        db3.run(`UPDATE sessions SET revoked_at=? WHERE user_id=? AND id<>? AND revoked_at IS NULL`, db3.now(), ctx.user.id, ctx.session.id);
-        audit3.log({ user: ctx.user, action: "auth.sessions.revoked_others", ip: ctx.ip });
-        return { ok: true };
-      });
-    };
+    module.exports = { createHandler, rateLimit, ROUTE_MODULES, LOCAL_ROUTE_MODULES: LOCAL_ROUTE_MODULES2 };
   }
 });
 
@@ -18021,16 +18919,19 @@ function register(router2) {
 }
 
 // local/kernel.js
-var ROUTE_MODULES = ["auth", "me", "users", "clients", "assignments", "interventions", "calls", "time", "resources", "referrals", "tasks", "budget", "notes", "consents", "forms", "imports", "dataimport", "reports", "admin", "regions"];
+var import_app = __toESM(require_app2());
 var routeLoaders = {
   auth: () => Promise.resolve().then(() => __toESM(require_auth2())),
   me: () => Promise.resolve().then(() => __toESM(require_me())),
   users: () => Promise.resolve().then(() => __toESM(require_users())),
   clients: () => Promise.resolve().then(() => __toESM(require_clients())),
   assignments: () => Promise.resolve().then(() => __toESM(require_assignments())),
+  episodes: () => Promise.resolve().then(() => __toESM(require_episodes())),
   interventions: () => Promise.resolve().then(() => __toESM(require_interventions())),
+  overdose: () => Promise.resolve().then(() => __toESM(require_overdose())),
   calls: () => Promise.resolve().then(() => __toESM(require_calls())),
   time: () => Promise.resolve().then(() => __toESM(require_time())),
+  supervision: () => Promise.resolve().then(() => __toESM(require_supervision())),
   resources: () => Promise.resolve().then(() => __toESM(require_resources())),
   referrals: () => Promise.resolve().then(() => __toESM(require_referrals())),
   tasks: () => Promise.resolve().then(() => __toESM(require_tasks())),
@@ -18071,7 +18972,9 @@ async function start({ wasmUrl }) {
   const bytes3 = await sqlite_default.loadBytes();
   import_db2.default.openWith(bytes3 ? new Uint8Array(bytes3) : null);
   router = new import_http2.Router();
-  for (const name of ROUTE_MODULES) {
+  const missing = import_app.LOCAL_ROUTE_MODULES.filter((n) => !routeLoaders[n]);
+  if (missing.length) throw new Error(`local kernel has no loader for route module(s): ${missing.join(", ")} \u2014 add them to routeLoaders in local/kernel.js`);
+  for (const name of import_app.LOCAL_ROUTE_MODULES) {
     const mod = (await routeLoaders[name]()).default;
     mod(router);
   }
@@ -18145,7 +19048,7 @@ async function handle(method, path, body, headers = {}) {
   } catch (err2) {
     if (err2 instanceof import_http2.HttpError) return { status: err2.status, headers: { "content-type": "application/json" }, json: { error: err2.message, ...err2.extra || {} } };
     console.error("[suds-local]", method, path, err2);
-    return { status: 500, headers: { "content-type": "application/json" }, json: { error: "Local error: " + err2.message } };
+    return { status: 500, headers: { "content-type": "application/json" }, json: { error: "Something went wrong on this device. Try again, and sync if it keeps happening." } };
   }
 }
 export {

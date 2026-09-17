@@ -144,6 +144,23 @@ const migrations = [
       }
     }
   },
+  // 6: coarse blind indexes so search tolerates typos and partial surnames, and duplicate detection has
+  //    something to match on, without putting any name in the clear.
+  (d) => {
+    const schemaText = safeSchema();
+    addColumn(d, 'clients', 'merged_into', 'TEXT REFERENCES clients(id)');
+    addColumn(d, 'clients', 'name_prefix_idx', 'TEXT');
+    addColumn(d, 'clients', 'name_phonetic_idx', 'TEXT');
+    const { decrypt } = require('./crypto');
+    const M = require('./clients-model');
+    const upd = d.prepare(`UPDATE clients SET name_prefix_idx=?, name_phonetic_idx=? WHERE id=?`);
+    for (const c of d.prepare(`SELECT id, last_name_enc FROM clients`).all()) {
+      let last = '';
+      try { last = c.last_name_enc ? decrypt(c.last_name_enc) : ''; } catch { continue; } // a row we cannot read keeps null indexes
+      upd.run(M.namePrefixIndex(last), M.namePhoneticIndex(last), c.id);
+    }
+    for (const line of schemaText.split('\n')) if (/^CREATE INDEX IF NOT EXISTS idx_clients_name_/.test(line.trim())) d.exec(line.trim());
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's
@@ -225,4 +242,4 @@ function setSetting(key, value) {
 }
 
 function tombstone(table, id) { run(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now()); }
-module.exports = { open, openWith, get, close, now, all, one, run, transaction, savepoint, getSetting, setSetting, tombstone };
+module.exports = { open, openWith, get, close, LATEST_SCHEMA_VERSION: migrations.length, now, all, one, run, transaction, savepoint, getSetting, setSetting, tombstone };

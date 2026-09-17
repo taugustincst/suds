@@ -22,17 +22,17 @@ function policy() {
 // not treating staff, and must use break-glass (audited) to read clinical content.
 const PERMS = {
   admin:      ['users:manage','settings:manage','audit:read','apikeys:manage','clients:read','clients:write','clients:all',
-               'interventions:*','calls:*','time:*','resources:*','referrals:*','tasks:*','budget:read','budget:write','budget:approve',
+               'interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*','budget:read','budget:write','budget:approve',
                'notes:admin:read','notes:admin:write','notes:clinical:breakglass','consents:*','imports:*','reports:read','assignments:manage','export:read','export:identified','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge'],
-  supervisor: ['clients:read','clients:write','clients:all','interventions:*','calls:*','time:*','time:all','resources:*','referrals:*','tasks:*',
+  supervisor: ['clients:read','clients:write','clients:all','interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*',
                'budget:read','budget:write','budget:approve','notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write',
                'consents:*','imports:*','reports:read','assignments:manage','audit:read','export:read','export:identified','users:read','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge'],
-  clinician:  ['clients:read','clients:write','interventions:*','calls:*','time:*','resources:read','referrals:*','tasks:*',
+  clinician:  ['clients:read','clients:write','interventions:*','calls:*','time:read','time:write','resources:read','referrals:*','tasks:*',
                'notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write','consents:*','imports:*','reports:read','users:read','forms:read','forms:write',
                'episodes:*','overdose:*'],
-  navigator:  ['clients:read','clients:write','interventions:*','calls:*','time:*','resources:*','referrals:*','tasks:*',
+  navigator:  ['clients:read','clients:write','interventions:*','calls:*','time:read','time:write','resources:*','referrals:*','tasks:*',
                'budget:read','budget:write','notes:admin:read','notes:admin:write','consents:*','imports:*','reports:read','users:read','forms:read','forms:write',
                'episodes:*','overdose:*'],
   // finance sees money, not people: export:read without export:identified means every export it can run

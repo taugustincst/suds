@@ -7,10 +7,13 @@ import auth from '../server/auth.js';
 import audit from '../server/audit.js';
 import * as sync from './sync.js';
 
-const ROUTE_MODULES = ['auth', 'me', 'users', 'clients', 'assignments', 'interventions', 'calls', 'time', 'resources', 'referrals', 'tasks', 'budget', 'notes', 'consents', 'forms', 'imports', 'dataimport', 'reports', 'admin', 'regions'];
+// The list itself comes from the server so the two cannot drift; only the loaders live here, because
+// esbuild needs static import specifiers to bundle them.
+import { LOCAL_ROUTE_MODULES } from '../server/app.js';
 const routeLoaders = {
   auth: () => import('../server/routes/auth.js'), me: () => import('../server/routes/me.js'), users: () => import('../server/routes/users.js'), clients: () => import('../server/routes/clients.js'),
-  assignments: () => import('../server/routes/assignments.js'), interventions: () => import('../server/routes/interventions.js'), calls: () => import('../server/routes/calls.js'), time: () => import('../server/routes/time.js'),
+  assignments: () => import('../server/routes/assignments.js'), episodes: () => import('../server/routes/episodes.js'), interventions: () => import('../server/routes/interventions.js'),
+  overdose: () => import('../server/routes/overdose.js'), calls: () => import('../server/routes/calls.js'), time: () => import('../server/routes/time.js'), supervision: () => import('../server/routes/supervision.js'),
   resources: () => import('../server/routes/resources.js'), referrals: () => import('../server/routes/referrals.js'), tasks: () => import('../server/routes/tasks.js'), budget: () => import('../server/routes/budget.js'),
   notes: () => import('../server/routes/notes.js'), consents: () => import('../server/routes/consents.js'), forms: () => import('../server/routes/forms.js'), regions: () => import('../server/routes/regions.js'), imports: () => import('../server/routes/imports.js'), dataimport: () => import('../server/routes/dataimport.js'), reports: () => import('../server/routes/reports.js'), admin: () => import('../server/routes/admin.js'),
 };
@@ -29,7 +32,9 @@ export async function start({ wasmUrl }) {
   const bytes = await sqlite.loadBytes();
   db.openWith(bytes ? new Uint8Array(bytes) : null);
   router = new Router();
-  for (const name of ROUTE_MODULES) { const mod = (await routeLoaders[name]()).default; mod(router); }
+  const missing = LOCAL_ROUTE_MODULES.filter(n => !routeLoaders[n]);
+  if (missing.length) throw new Error(`local kernel has no loader for route module(s): ${missing.join(', ')} — add them to routeLoaders in local/kernel.js`);
+  for (const name of LOCAL_ROUTE_MODULES) { const mod = (await routeLoaders[name]()).default; mod(router); }
   sync.register(router);
   router.get('/api/local/status', () => ({ local: true, users: db.one(`SELECT COUNT(*) n FROM users`).n, last_sync: db.getSetting('last_sync_at', null), sync_server: db.getSetting('sync_server', null) }));
   router.post('/api/local/setup', (ctx) => {
@@ -81,7 +86,9 @@ async function handle(method, path, body, headers = {}) {
     return { status: result === undefined ? 204 : (ctx.status || 200), headers: { 'content-type': 'application/json' }, json: result === undefined ? null : result };
   } catch (err) {
     if (err instanceof HttpError) return { status: err.status, headers: { 'content-type': 'application/json' }, json: { error: err.message, ...(err.extra || {}) } };
+    // Same as the office server: log the detail, tell the caller nothing. The message can carry SQL, file
+    // paths, or fragments of the record being written.
     console.error('[suds-local]', method, path, err);
-    return { status: 500, headers: { 'content-type': 'application/json' }, json: { error: 'Local error: ' + err.message } };
+    return { status: 500, headers: { 'content-type': 'application/json' }, json: { error: 'Something went wrong on this device. Try again, and sync if it keeps happening.' } };
   }
 }

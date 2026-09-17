@@ -43,7 +43,7 @@ const db = () => require('../server/db');
 const colsOf = (t) => db().all(`PRAGMA table_info(${t})`);
 
 test('a 1.6.1 database upgrades to the current schema version', () => {
-  assert.equal(db().getSetting('schema_version'), '5');
+  assert.equal(db().getSetting('schema_version'), String(require('../server/db').LATEST_SCHEMA_VERSION));
 });
 
 test('migration leaves no orphaned rows', () => {
@@ -111,7 +111,7 @@ test('migrations are idempotent — a second open changes nothing', () => {
   const before = db().one(`SELECT COUNT(*) n FROM episodes`).n;
   require('../server/db').close();
   require('../server/db').open(dbPath);
-  assert.equal(db().getSetting('schema_version'), '5');
+  assert.equal(db().getSetting('schema_version'), String(require('../server/db').LATEST_SCHEMA_VERSION));
   assert.equal(db().one(`SELECT COUNT(*) n FROM episodes`).n, before, 'no duplicate episodes');
   assert.deepEqual(db().all('PRAGMA foreign_key_check'), []);
 });
@@ -121,7 +121,7 @@ test('a database from a newer build is refused rather than silently downgraded',
   require('../server/db').close();
   assert.throws(() => require('../server/db').open(dbPath), /newer version of SUDS/);
   const d = new DatabaseSync(dbPath);
-  d.prepare(`UPDATE settings SET value='5' WHERE key='schema_version'`).run();
+  d.prepare(`UPDATE settings SET value=? WHERE key='schema_version'`).run(String(require('../server/db').LATEST_SCHEMA_VERSION));
   d.close();
   require('../server/db').open(dbPath);
 });

@@ -1,5 +1,26 @@
 'use strict';
+// Race and ethnicity as reportable codes (OMB 1997 / CalOMS categories). The free-text race_ethnicity
+// field stays for what a client says about themselves; race_codes is what a funder report can count.
+// A person may select more than one, which is why this is a list and the column is comma separated.
+const RACE_CODES = [
+  { code: 'american_indian_alaska_native', label: 'American Indian or Alaska Native' },
+  { code: 'asian', label: 'Asian' },
+  { code: 'black_african_american', label: 'Black or African American' },
+  { code: 'native_hawaiian_pacific_islander', label: 'Native Hawaiian or Other Pacific Islander' },
+  { code: 'white', label: 'White' },
+  { code: 'other', label: 'Other' },
+  { code: 'declined', label: 'Declined to answer' },
+  { code: 'unknown', label: 'Unknown' },
+];
+const ETHNICITY_CODES = [
+  { code: 'hispanic_latino', label: 'Hispanic or Latino' },
+  { code: 'not_hispanic_latino', label: 'Not Hispanic or Latino' },
+  { code: 'declined', label: 'Declined to answer' },
+  { code: 'unknown', label: 'Unknown' },
+];
+
 module.exports = {
+  RACE_CODES, ETHNICITY_CODES,
   INTERVENTION_TYPES: ['outreach', 'screening_sbirt', 'assessment', 'intake', 'care_coordination', 'warm_handoff', 'referral', 'case_management', 'harm_reduction', 'naloxone_distribution', 'peer_support', 'crisis_response', 'post_overdose_follow_up', 'transport', 'housing_assistance', 'benefits_enrollment', 'employment_support', 'family_support', 'education', 'court_or_probation', 'hospital_or_ed_visit', 'jail_in_reach', 'recovery_check_in', 'discharge_planning', 'other'],
   LOCATIONS: ['office', 'field', 'home', 'phone', 'telehealth', 'hospital', 'emergency_dept', 'jail', 'court', 'shelter', 'treatment_facility', 'community', 'other'],
   MODALITIES: ['in_person', 'phone', 'video', 'text', 'email', 'collateral'],

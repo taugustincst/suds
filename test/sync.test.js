@@ -171,3 +171,41 @@ test('a pull skips a row the server cannot decrypt instead of sending null', asy
   assert.ok(pull.skipped.some(s => s.id === id), 'and the device is told it was skipped');
   H.db.run(`DELETE FROM notes WHERE id=?`, id);
 });
+
+test('the sync table description matches the actual schema', () => {
+  // Three separate defects came from this description drifting from the database: an _enc column that was
+  // never listed (so PHI crossed the wire encrypted with the wrong key), a user-reference column that was
+  // never remapped, and a parent table named in the wrong order.
+  const SYNC = require('../server/sync-tables');
+  const problems = [];
+  const colsOf = (t) => H.db.all(`PRAGMA table_info(${t})`).map(c => c.name);
+  const tableExists = (t) => !!H.db.one(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`, t);
+  const seen = new Set();
+
+  for (const t of SYNC.tables) {
+    if (!tableExists(t.name)) { problems.push(`${t.name} is synchronised but does not exist`); continue; }
+    const cols = colsOf(t.name);
+    for (const c of t.enc) if (!cols.includes(c)) problems.push(`${t.name}.${c} is listed as encrypted but is not a column`);
+    for (const c of cols) if (c.endsWith('_enc') && !t.enc.includes(c)) problems.push(`${t.name}.${c} is encrypted PHI but is not declared in sync-tables`);
+    for (const c of t.blob || []) if (!cols.includes(c)) problems.push(`${t.name}.${c} is listed as a blob but is not a column`);
+    if (t.clientCol && !cols.includes(t.clientCol)) problems.push(`${t.name}.${t.clientCol} is the caseload column but is not a column`);
+    if (t.name !== 'users' && !cols.includes('updated_at')) problems.push(`${t.name} has no updated_at, so changes to it can never sync`);
+    if (t.parent) {
+      if (!seen.has(t.parent[0])) problems.push(`${t.name} is listed before its parent ${t.parent[0]}; rows would fail their foreign key`);
+      if (!cols.includes(t.parent[1])) problems.push(`${t.name}.${t.parent[1]} is the parent link but is not a column`);
+    }
+    seen.add(t.name);
+  }
+  for (const [table, col] of SYNC.user_refs) {
+    if (!tableExists(table)) { problems.push(`user_refs names missing table ${table}`); continue; }
+    if (!colsOf(table).includes(col)) problems.push(`user_refs names missing column ${table}.${col}`);
+  }
+  // Every column in the database that points at users(id) must be remappable.
+  for (const t of H.db.all(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`)) {
+    for (const fk of H.db.all(`PRAGMA foreign_key_list(${t.name})`)) {
+      if (fk.table !== 'users') continue;
+      if (!SYNC.user_refs.some(([tt, cc]) => tt === t.name && cc === fk.from)) problems.push(`${t.name}.${fk.from} references users(id) but is not in user_refs`);
+    }
+  }
+  assert.deepEqual(problems, []);
+});

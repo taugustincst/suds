@@ -66,6 +66,12 @@ CREATE TABLE IF NOT EXISTS clients (
   last_name_enc TEXT NOT NULL,
   last_name_idx TEXT,
   full_name_idx TEXT,
+  -- Coarse blind indexes that make search tolerant of typos and partial names without storing any name in
+  -- the clear: the first three letters of the surname, and its Soundex code, each HMAC'd with the index
+  -- key. They are lower entropy than the exact indexes, but anyone holding the index key can already test
+  -- a specific name against those, and both live in the same database as the ciphertext.
+  name_prefix_idx TEXT,
+  name_phonetic_idx TEXT,
   preferred_name_enc TEXT,
   dob_enc TEXT,
   dob_idx TEXT,
@@ -111,6 +117,9 @@ CREATE TABLE IF NOT EXISTS clients (
   ok_to_text INTEGER DEFAULT 0,
   ok_to_voicemail INTEGER DEFAULT 0,
   created_by TEXT REFERENCES users(id),
+  -- Set when this record was merged into another as a duplicate; the row is kept so old references and the
+  -- audit trail still resolve, but it no longer appears anywhere staff work.
+  merged_into TEXT REFERENCES clients(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   deleted_at TEXT
@@ -551,6 +560,8 @@ CREATE TABLE IF NOT EXISTS user_prefs (
 -- Sync reads every table by updated_at; without these indexes each pull is a full scan of every table.
 CREATE INDEX IF NOT EXISTS idx_clients_updated ON clients(updated_at);
 CREATE INDEX IF NOT EXISTS idx_clients_full_name_idx ON clients(full_name_idx);
+CREATE INDEX IF NOT EXISTS idx_clients_name_prefix ON clients(name_prefix_idx);
+CREATE INDEX IF NOT EXISTS idx_clients_name_phonetic ON clients(name_phonetic_idx);
 CREATE INDEX IF NOT EXISTS idx_resources_updated ON resources(updated_at);
 CREATE INDEX IF NOT EXISTS idx_resource_photos_updated ON resource_photos(updated_at);
 CREATE INDEX IF NOT EXISTS idx_funding_sources_updated ON funding_sources(updated_at);
