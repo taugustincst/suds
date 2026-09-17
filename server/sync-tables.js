@@ -22,5 +22,8 @@ module.exports = {
     { name: 'note_addenda', enc: ['content_enc'], scope: 'via-note' },
     { name: 'consents', enc: [], scope: 'client', clientCol: 'client_id' },
     { name: 'disclosures', enc: [], scope: 'client', clientCol: 'client_id' },
+    { name: 'form_templates', enc: [], scope: 'all' },
+    { name: 'client_forms', enc: ['values_enc'], scope: 'client', clientCol: 'client_id' },
+    { name: 'client_form_files', enc: ['data_enc'], scope: 'client', clientCol: 'client_id' },
   ],
 };

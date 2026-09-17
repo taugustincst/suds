@@ -399,6 +399,55 @@ CREATE TABLE IF NOT EXISTS disclosures (
 );
 CREATE INDEX IF NOT EXISTS idx_disclosures_client ON disclosures(client_id);
 
+-- County form library: templates (blank forms + fillable field definitions) and forms filled out for a client
+CREATE TABLE IF NOT EXISTS form_templates (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  category TEXT NOT NULL DEFAULT 'other',
+  version TEXT,
+  filename TEXT,                       -- original county form file (PDF/Word/image), optional
+  content_type TEXT,
+  bytes INTEGER NOT NULL DEFAULT 0,
+  file_b64 TEXT,
+  fields_json TEXT NOT NULL DEFAULT '[]', -- [{key,label,type,required,options,autofill,help}]
+  instructions TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  uploaded_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TABLE IF NOT EXISTS client_forms (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  template_id TEXT REFERENCES form_templates(id) ON DELETE SET NULL,
+  template_name TEXT NOT NULL,         -- snapshot so the record survives template changes
+  fields_json TEXT NOT NULL DEFAULT '[]', -- snapshot of the field definitions used
+  values_enc TEXT NOT NULL,            -- encrypted JSON {key: value} (PHI)
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','completed','void')),
+  completed_at TEXT,
+  completed_by TEXT REFERENCES users(id),
+  created_by TEXT NOT NULL REFERENCES users(id),
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  deleted_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_client_forms_client ON client_forms(client_id);
+CREATE TABLE IF NOT EXISTS client_form_files (
+  id TEXT PRIMARY KEY,
+  client_form_id TEXT NOT NULL REFERENCES client_forms(id) ON DELETE CASCADE,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  filename TEXT NOT NULL,
+  content_type TEXT NOT NULL,
+  bytes INTEGER NOT NULL DEFAULT 0,
+  data_enc TEXT NOT NULL,              -- encrypted base64 of the signed / scanned copy (PHI)
+  uploaded_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_client_form_files ON client_form_files(client_form_id);
+
 CREATE TABLE IF NOT EXISTS imports (
   id TEXT PRIMARY KEY,
   source TEXT NOT NULL,                -- pocket_ai, onenote_file, onenote_graph, generic, api

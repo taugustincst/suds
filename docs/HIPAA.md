@@ -64,3 +64,6 @@ SUDS is designed to help a covered entity meet the HIPAA Security Rule (45 CFR Â
 
 ## Resource pictures
 Pictures on treatment center profiles are meant to show buildings, entrances and rooms. They are not PHI and are stored unencrypted alongside the resource record so they can be shown quickly and synced to phones. Staff are reminded in the app never to upload pictures of clients; if one is uploaded by mistake, remove it from the profile (audit-logged) and note the incident per your policy.
+
+## County forms
+Filled-out forms and attached signed copies are PHI: their values and files are stored encrypted (AES-256-GCM) with the client record, every view, print and attachment is audit-logged, and access follows the same caseload rules as notes. Blank templates in the form library are not PHI and are shared with every device. Printed PDFs carry a Part 2 / HIPAA handling notice; treat paper copies per your program's policy.

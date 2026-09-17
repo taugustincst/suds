@@ -91,6 +91,7 @@ module.exports = (r) => {
       interventions: db.one(`SELECT COUNT(*) n FROM interventions WHERE client_id=?`, row.id).n,
       calls: db.one(`SELECT COUNT(*) n FROM calls WHERE client_id=?`, row.id).n,
       notes: db.one(`SELECT COUNT(*) n FROM notes WHERE client_id=? AND deleted_at IS NULL`, row.id).n,
+      forms: db.one(`SELECT COUNT(*) n FROM client_forms WHERE client_id=? AND deleted_at IS NULL`, row.id).n,
       referrals: db.one(`SELECT COUNT(*) n FROM referrals WHERE client_id=?`, row.id).n,
       open_tasks: db.one(`SELECT COUNT(*) n FROM tasks WHERE client_id=? AND status IN ('open','in_progress')`, row.id).n,
       minutes: db.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE client_id=?`, row.id).n,

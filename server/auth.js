@@ -23,16 +23,16 @@ function policy() {
 const PERMS = {
   admin:      ['users:manage','settings:manage','audit:read','apikeys:manage','clients:read','clients:write','clients:all',
                'interventions:*','calls:*','time:*','resources:*','referrals:*','tasks:*','budget:read','budget:write','budget:approve',
-               'notes:admin:read','notes:admin:write','notes:clinical:breakglass','consents:*','imports:*','reports:read','assignments:manage','export:read'],
+               'notes:admin:read','notes:admin:write','notes:clinical:breakglass','consents:*','imports:*','reports:read','assignments:manage','export:read','forms:*'],
   supervisor: ['clients:read','clients:write','clients:all','interventions:*','calls:*','time:*','time:all','resources:*','referrals:*','tasks:*',
                'budget:read','budget:write','budget:approve','notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write',
-               'consents:*','imports:*','reports:read','assignments:manage','audit:read','export:read','users:read'],
+               'consents:*','imports:*','reports:read','assignments:manage','audit:read','export:read','users:read','forms:*'],
   clinician:  ['clients:read','clients:write','interventions:*','calls:*','time:*','resources:read','referrals:*','tasks:*',
-               'notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write','consents:*','imports:*','reports:read','users:read'],
+               'notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write','consents:*','imports:*','reports:read','users:read','forms:read','forms:write'],
   navigator:  ['clients:read','clients:write','interventions:*','calls:*','time:*','resources:*','referrals:*','tasks:*',
-               'budget:read','budget:write','notes:admin:read','notes:admin:write','consents:*','imports:*','reports:read','users:read'],
+               'budget:read','budget:write','notes:admin:read','notes:admin:write','consents:*','imports:*','reports:read','users:read','forms:read','forms:write'],
   finance:    ['clients:list-deidentified','budget:read','budget:write','budget:approve','time:read','time:all','reports:read','export:read','users:read'],
-  readonly:   ['clients:read','clients:all','interventions:read','calls:read','referrals:read','tasks:read','resources:read','reports:read','users:read'],
+  readonly:   ['clients:read','clients:all','interventions:read','calls:read','referrals:read','tasks:read','resources:read','reports:read','users:read','forms:read'],
 };
 
 function hasPerm(user, perm) {

@@ -200,13 +200,17 @@ export function table(columns, rows, { onRow, empty = 'No records', wrap = true 
     h('tbody', {}, rows.map(r => h('tr', { class: onRow ? 'click' : '', onClick: onRow ? () => onRow(r) : null }, columns.map(c => h('td', { class: c.num ? 'num' : '' }, c.render ? c.render(r) : (r[c.key] ?? '—')))))));
   return wrap ? h('div', { class: 'table-wrap' }, t) : t;
 }
-export function bars(items, { max, valueKey = 'n', labelKey = 'k', format = fmt.num } = {}) {
+export function bars(items, { max, valueKey = 'n', labelKey = 'k', format = fmt.num, link = null } = {}) {
   const m = max || Math.max(1, ...items.map(i => Number(i[valueKey] || 0)));
   if (!items.length) return h('div', { class: 'muted small' }, 'No data');
-  return h('div', {}, items.map(i => h('div', { class: 'bar' }, h('div', { class: 'lbl', title: fmt.label(i[labelKey]) }, fmt.label(i[labelKey])), h('div', { class: 'trk' }, h('div', { class: 'fil', style: { width: `${(Number(i[valueKey] || 0) / m) * 100}%` } })), h('div', { class: 'n' }, format(i[valueKey])))));
+  return h('div', {}, items.map(i => { const href = link ? link(i) : null; const row = [h('div', { class: 'lbl', title: fmt.label(i[labelKey]) }, fmt.label(i[labelKey])), h('div', { class: 'trk' }, h('div', { class: 'fil', style: { width: `${(Number(i[valueKey] || 0) / m) * 100}%` } })), h('div', { class: 'n' }, format(i[valueKey]))];
+    return href ? h('a', { class: 'bar link', href: href.startsWith('#') ? href : '#/' + href, title: 'Show these' }, row) : h('div', { class: 'bar' }, row); }));
 }
 export function sparkline(values) { const m = Math.max(1, ...values); return h('div', { class: 'spark' }, values.map(v => h('div', { style: { height: `${(v / m) * 100}%` }, title: String(v) }))); }
-export function stat(label, value, kind = '') { return h('div', { class: `card stat ${kind}` }, h('div', { class: 'v' }, value), h('div', { class: 'l' }, label)); }
+export function stat(label, value, kind = '', href = null) {
+  const body = [h('div', { class: 'v' }, value), h('div', { class: 'l' }, label)];
+  return href ? h('a', { class: `card stat link ${kind}`, href: href.startsWith('#') ? href : '#/' + href, title: 'Open' }, body) : h('div', { class: `card stat ${kind}` }, body);
+}
 export function kv(pairs) { return h('dl', { class: 'kv' }, pairs.filter(p => p).map(([k, v]) => [h('dt', {}, k), h('dd', {}, v ?? '—')])); }
 export function pageHead(title, ...actions) {
   const r = parseHash(); const item = NAV.find(n => n.name === r.name);
@@ -294,6 +298,7 @@ export const NAV = [
   { sec: 'Record work' },
   { name: 'interventions', label: 'Visits & services', ico: '✚', perm: 'interventions:read', help: 'Every face-to-face or phone service you provide: outreach, screenings, warm handoffs, naloxone, transport and more.' },
   { name: 'calls', label: 'Calls', ico: '☎', perm: 'calls:read', help: 'Phone calls with clients, families and providers, including ones that went to voicemail.' },
+  { name: 'forms', label: 'Forms', ico: '🧾', perm: 'forms:read', help: 'County forms (releases, intake sheets, assistance requests). Fill one out from a client record: it is pre-filled from the chart, printable, and holds the signed copy.' },
   { name: 'notes', label: 'Notes', ico: '✎', perm: 'notes:admin:read', help: 'Written documentation. Drafts save automatically and can be finished on any device; sign when complete.' },
   { name: 'time', label: 'My time', ico: '◷', perm: 'time:read', help: 'Your hours by activity. Visits and calls add time automatically; log meetings, travel and paperwork here.' },
   { name: 'imports', label: 'Import', ico: '⇩', perm: 'imports:write', help: 'Bring in spreadsheets (Excel / CSV) of clients, visits, calls, resources and more, or notes from Pocket AI and OneNote. Everything is checked before it is saved.' },
