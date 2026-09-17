@@ -244,3 +244,20 @@ test('paging never drops rows that share a timestamp', async () => {
   const missed = ids.filter(id => !seen.has(id));
   assert.deepEqual(missed, [], 'every row sharing the timestamp was delivered');
 });
+
+test('an overwrite from a device is recorded, by column name only', async () => {
+  // Last write wins at row granularity, so a device edit can revert a field changed at the office. That
+  // still happens — it is the rule — but it used to happen with no record that anything was replaced.
+  const id = randomUUID();
+  await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, title: 'Original', priority: 'normal', created_at: iso(Date.now() - 20000), updated_at: iso(Date.now() - 20000) }] } });
+  await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, title: 'Replaced by the phone', priority: 'urgent', created_at: iso(Date.now() - 20000), updated_at: iso(Date.now()) }] } });
+
+  const row = H.db.one(`SELECT * FROM audit_log WHERE action='sync.overwrite' AND entity_id=? ORDER BY id DESC LIMIT 1`, id);
+  assert.ok(row, 'the overwrite is recorded');
+  const details = JSON.parse(row.details);
+  assert.ok(details.columns.includes('title'), 'and names the column it replaced');
+  assert.ok(details.columns.includes('priority'));
+  assert.ok(!String(row.details).includes('Replaced by the phone'), 'but never the value — this is the audit log');
+  assert.ok(!String(row.details).includes('Original'));
+  assert.equal(H.db.one(`SELECT title FROM tasks WHERE id=?`, id).title, 'Replaced by the phone', 'the newer write still wins');
+});

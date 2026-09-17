@@ -186,3 +186,17 @@ test('every place that carries a version number agrees with package.json', () =>
   assert.ok(plist.includes(`<key>CFBundleShortVersionString</key><string>${version}</string>`), 'iOS CFBundleShortVersionString');
   assert.ok(plist.includes(`<key>CFBundleVersion</key><string>${versionCode}</string>`), 'iOS CFBundleVersion');
 });
+
+test('the database is snapshotted before the migration runs', () => {
+  const snapDir = path.join(dir, 'pre-migration');
+  const files = fs.readdirSync(snapDir);
+  assert.equal(files.length, 1, 'one snapshot for the one upgrade');
+  assert.match(files[0], /^suds\.db\.v4\./, 'named for the version it was taken at');
+  // It is a real database, still holding the pre-migration shape.
+  const snap = new DatabaseSync(path.join(snapDir, files[0]), { readOnly: true });
+  try {
+    assert.equal(snap.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get().value, '4');
+    const cols = snap.prepare('PRAGMA table_info(clients)').all().map(c => c.name);
+    assert.ok(cols.includes('goals'), 'the snapshot predates the goals -> goals_enc move');
+  } finally { snap.close(); }
+});

@@ -11,7 +11,7 @@ function open(dbPath = config.dbPath) {
   if (dbPath !== ':memory:') fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   db = new DatabaseSync(dbPath);
   db.exec('PRAGMA busy_timeout = 5000');
-  initialise(db, fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'));
+  initialise(db, fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'), dbPath);
   if (dbPath !== ':memory:') { try { fs.chmodSync(dbPath, 0o600); } catch {} }
   return db;
 }
@@ -168,27 +168,58 @@ const migrations = [
     const schemaText = safeSchema();
     for (const t of ['resource_photos', 'client_form_files']) rebuildTable(d, schemaText, t);
   },
+  // 8: assignments record the instant they were ended. Ending one used to leave the worker with the client
+  //    for the rest of the day, because access was decided by date alone — not what a supervisor taking
+  //    somebody off a case expects to happen.
+  (d) => { addColumn(d, 'assignments', 'ended_at', 'TEXT'); },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's
 // tables would try to index columns that do not exist yet. test/migrations.test.js asserts the two
 // routes end at byte-identical schemas.
-function initialise(d, schemaText) {
+function initialise(d, schemaText, dbPath) {
   const fresh = !d.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings'`).get();
   if (fresh) {
     d.exec(schemaText);
     d.prepare(`INSERT INTO settings(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(String(migrations.length));
     return;
   }
-  migrate(d);
+  migrate(d, dbPath);
 }
 
-function migrate(d) {
+// A migration is the one operation a county cannot retry: if it goes wrong the old database is already
+// rewritten. Take a consistent copy first (VACUUM INTO, so it is a real snapshot rather than a file copy
+// racing a writer) and keep the last few. Only for file-backed databases — :memory: has nothing to save.
+const SNAPSHOTS_KEPT = 5;
+function snapshotBeforeMigration(d, dbPath, fromVersion) {
+  if (!dbPath || dbPath === ':memory:') return '';
+  const dir = path.join(path.dirname(dbPath), 'pre-migration');
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const file = path.join(dir, `${path.basename(dbPath)}.v${fromVersion}.${stamp}.db`);
+  fs.mkdirSync(dir, { recursive: true });
+  // VACUUM INTO refuses to overwrite, so a leftover with this exact name would fail the upgrade.
+  try { fs.unlinkSync(file); } catch {}
+  d.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
+  try { fs.chmodSync(file, 0o600); } catch {}
+  try {
+    const old = fs.readdirSync(dir).filter(f => f.startsWith(path.basename(dbPath) + '.v')).sort();
+    for (const f of old.slice(0, Math.max(0, old.length - SNAPSHOTS_KEPT))) fs.unlinkSync(path.join(dir, f));
+  } catch {}
+  return file;
+}
+
+function migrate(d, dbPath) {
   const row = d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get();
   let v = row ? Number(row.value) : 0;
   // A database written by a newer build has columns and tables this code does not know about. Refuse rather than
   // corrupt it: the county must upgrade SUDS (or restore the backup that matches this version).
   if (v > migrations.length) throw new Error(`This database was created by a newer version of SUDS (schema ${v}; this build understands ${migrations.length}). Upgrade SUDS before opening it.`);
+  if (v < migrations.length) {
+    let snapshot = '';
+    try { snapshot = snapshotBeforeMigration(d, dbPath, v); }
+    catch (e) { throw new Error(`Could not snapshot the database before upgrading it from schema ${v} to ${migrations.length}: ${e.message}. Free up disk space or back up ${dbPath} by hand, then start SUDS again.`); }
+    if (snapshot) console.log(`[suds] upgrading schema ${v} -> ${migrations.length}; snapshot saved to ${snapshot}`);
+  }
   for (let i = v; i < migrations.length; i++) {
     // DDL is transactional in SQLite: apply the migration and stamp the version together, so a crash midway
     // can never leave a half-applied schema wearing the old version number.

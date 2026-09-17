@@ -135,6 +135,9 @@ CREATE TABLE IF NOT EXISTS assignments (
   role_on_case TEXT NOT NULL DEFAULT 'primary' CHECK (role_on_case IN ('primary','secondary','clinician','peer','supervisor')),
   start_date TEXT NOT NULL,
   end_date TEXT,
+  -- Set only when somebody ends the assignment there and then (a supervisor taking a worker off a case).
+  -- Access stops at this instant; a plain end_date runs out at the end of that day instead.
+  ended_at TEXT,
   notes TEXT,
   created_by TEXT REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),

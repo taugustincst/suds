@@ -143,17 +143,22 @@ async function get(url, { timeoutMs, maxBytes, hops = 4 }) {
 }
 
 /** Downloads a provider picture from the provider's own website and makes it the resource's main picture. */
-async function fetchPicture(target, { actor, timeoutMs = 12000 } = {}) {
+async function fetchPicture(target, { actor, timeoutMs = 12000, deadline = 0 } = {}) {
   let url = target.url;
+  // A target can need two fetches (the website, then the picture). When the caller is working through a
+  // batch it passes a deadline for the whole batch, and each fetch gets whatever is left of it.
+  const budget = () => (deadline ? Math.min(timeoutMs, deadline - Date.now()) : timeoutMs);
   try {
+    if (budget() <= 0) return { key: target.key, ok: false, error: 'ran out of time — try this one again' };
     if (!url) {
       if (!/^https:\/\//i.test(target.website || '')) return { key: target.key, ok: false, error: 'no website on file' };
-      const html = await get(target.website, { timeoutMs, maxBytes: 2 * 1024 * 1024 });
+      const html = await get(target.website, { timeoutMs: budget(), maxBytes: 2 * 1024 * 1024 });
       url = pickImageUrl(html.toString('utf8'), target.website);
       if (!url) return { key: target.key, ok: false, error: 'their website does not advertise a picture' };
     }
     if (!/^https:\/\//i.test(url)) return { key: target.key, ok: false, error: 'not an https address' };
-    const buf = await get(url, { timeoutMs, maxBytes: MAX_PICTURE_BYTES });
+    if (budget() <= 0) return { key: target.key, ok: false, error: 'ran out of time — try this one again' };
+    const buf = await get(url, { timeoutMs: budget(), maxBytes: MAX_PICTURE_BYTES });
     const type = sniff(buf); if (!type) return { key: target.key, ok: false, error: 'not a JPEG, PNG or WebP picture' };
     db.transaction(() => {
       // Reordering is a change devices need to see, so it bumps updated_at like any other edit.

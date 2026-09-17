@@ -23,39 +23,8 @@ const PULL_LIMIT = 2000;
 
 function cols(table) { return db.all(`PRAGMA table_info(${table})`).map(c => c.name); }
 
-/**
- * Decrypt a row for transport. Returns null if a column that must not be null could not be decrypted —
- * emitting null for a NOT NULL column would fail the receiver's insert and take the whole batch with it.
- * The usual cause is a device whose encryption key was cleared while its database survived.
- */
-function exportRow(t, r) {
-  const o = { ...r };
-  for (const c of t.enc) {
-    if (!o[c]) continue;
-    try { o[c] = decrypt(o[c]); }
-    catch { return null; }
-  }
-  for (const k of Object.keys(o)) if (k.endsWith('_idx')) delete o[k];
-  // Large binary columns do not belong in a sync payload; they are fetched by id when the device needs them.
-  for (const c of t.blob || []) delete o[c];
-  if (t.name === 'users') { delete o.failed_attempts; delete o.locked_until; }
-  return o;
-}
-
-function importRow(t, r, existingCols) {
-  const o = {};
-  for (const [k, v] of Object.entries(r)) if (existingCols.includes(k) && !k.endsWith('_idx') && v !== undefined) o[k] = v;
-  for (const c of t.enc) if (o[c] !== undefined && o[c] !== null) o[c] = encrypt(o[c]);
-  if (t.name === 'clients') {
-    // Only recompute an index when the plaintext it is derived from was actually sent. Recomputing from a
-    // missing field would quietly replace a working blind index with the hash of an empty string.
-    if (r.last_name_enc !== undefined) o.last_name_idx = blindIndex(r.last_name_enc || '');
-    if (r.last_name_enc !== undefined || r.first_name_enc !== undefined) o.full_name_idx = blindIndex((r.last_name_enc || '') + (r.first_name_enc || ''));
-    if (r.dob_enc !== undefined) o.dob_idx = blindIndex(r.dob_enc || '');
-    if (r.phone_enc !== undefined) o.phone_idx = blindIndex(String(r.phone_enc || '').replace(/\D/g, ''));
-  }
-  return o;
-}
+// Row marshalling lives in sync-tables.js so the server and the device cannot drift apart.
+const { exportRow, importRow } = SYNC;
 
 function scopeSql(t, user, alias) {
   const cf = auth.caseloadFilter(user, `${alias}.${t.clientCol}`);
@@ -182,7 +151,17 @@ function push(user, payload) {
           const o = importRow(t, raw, existingCols);
           if (t.name === 'clients') o.client_code = freeClientCode(o.client_code, raw.id);
           const keys = Object.keys(o).filter(k => k !== 'id');
-          if (existing) db.run(`UPDATE ${t.name} SET ${keys.map(k => `${k}=?`).join(', ')} WHERE id=?`, ...keys.map(k => o[k]), raw.id);
+          if (existing) {
+            // Last write wins at row granularity, so a device's edit can quietly revert a field someone
+            // changed at the office. It still wins — that is the rule — but it no longer does so silently:
+            // the columns it replaced are recorded, by name only, never their values.
+            const overwritten = keys.filter(k => !['updated_at', 'created_at'].includes(k) && String(existing[k] ?? '') !== String(o[k] ?? ''));
+            if (overwritten.length) {
+              audit.log({ user, action: 'sync.overwrite', entity: t.name, entityId: raw.id, clientId: t.clientCol ? raw[t.clientCol] : null, ip: 'device',
+                details: { columns: overwritten, server_had: existing.updated_at, device_sent: incomingAt } });
+            }
+            db.run(`UPDATE ${t.name} SET ${keys.map(k => `${k}=?`).join(', ')} WHERE id=?`, ...keys.map(k => o[k]), raw.id);
+          }
           else db.run(`INSERT INTO ${t.name}(id,${keys.join(',')}) VALUES(?,${keys.map(() => '?').join(',')})`, raw.id, ...keys.map(k => o[k]));
           // A row that comes back after being deleted must not leave its tombstone behind, or the two
           // tables disagree and other devices are told to delete a row that is alive here.

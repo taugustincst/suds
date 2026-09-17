@@ -22,7 +22,12 @@ async function run(label, url, login) {
   // Count photos, not <img> elements: the gallery shows one hero plus a thumbnail strip that only appears
   // once there is more than one picture, so the element count jumps by two when going from one to two.
   const rid = page.url().split('/resource/')[1];
-  const photoCount = () => page.evaluate((id) => fetch(`/api/resources/${id}/photos`).then(r => r.json()).then(d => (d.photos || []).length), rid);
+  const photoCount = () => page.evaluate((id) => {
+    const path = `/api/resources/${id}/photos`;
+    // In local mode there is no server behind that path; the page's own kernel answers it.
+    const get = window.SUDS_LOCAL ? window.SUDS_LOCAL.handle('GET', path, undefined, {}).then(r => r.json) : fetch(path).then(r => r.json());
+    return get.then(d => ((d && d.photos) || []).length);
+  }, rid);
   const before = await photoCount(); console.log(label, 'pictures:', before);
   // upload a picture
   const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.click('button:has-text("+ Add pictures")')]);

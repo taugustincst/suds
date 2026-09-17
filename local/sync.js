@@ -27,31 +27,8 @@ const seenAt = (t, id) => db.one(`SELECT updated_at FROM sync_seen WHERE table_n
 const cols = (t) => db.all(`PRAGMA table_info(${t})`).map(c => c.name);
 const stamp = (row) => row.updated_at || row.created_at || null;
 
-function exportRow(t, r) {
-  const o = { ...r };
-  for (const c of t.enc) {
-    if (!o[c]) continue;
-    try { o[c] = decrypt(o[c]); }
-    catch { return null; } // undecryptable here would arrive as null and break a NOT NULL column there
-  }
-  for (const k of Object.keys(o)) if (k.endsWith('_idx')) delete o[k];
-  for (const c of t.blob || []) delete o[c];
-  if (t.name === 'users') { delete o.failed_attempts; delete o.locked_until; }
-  return o;
-}
-
-function importRow(t, r, existingCols) {
-  const o = {};
-  for (const [k, v] of Object.entries(r)) if (existingCols.includes(k) && !k.endsWith('_idx') && v !== undefined) o[k] = v;
-  for (const c of t.enc) if (o[c] !== undefined && o[c] !== null) o[c] = encrypt(o[c]);
-  if (t.name === 'clients') {
-    if (r.last_name_enc !== undefined) o.last_name_idx = blindIndex(r.last_name_enc || '');
-    if (r.last_name_enc !== undefined || r.first_name_enc !== undefined) o.full_name_idx = blindIndex((r.last_name_enc || '') + (r.first_name_enc || ''));
-    if (r.dob_enc !== undefined) o.dob_idx = blindIndex(r.dob_enc || '');
-    if (r.phone_enc !== undefined) o.phone_idx = blindIndex(String(r.phone_enc || '').replace(/\D/g, ''));
-  }
-  return o;
-}
+// Row marshalling lives in server/sync-tables.js: the two copies this replaces had already drifted.
+const { exportRow, importRow } = SYNC;
 
 // Every column that points at users(id), shared with the server so the two lists cannot drift apart.
 function mergeUser(localId, serverId) {

@@ -153,7 +153,7 @@ route('resource', async (r) => {
         idx > 0 ? h('button', { class: 'btn sm', onClick: async () => { await put(`/api/resources/${x.id}/photos/${photos[idx].id}`, { sort_order: 0 }); toast('Set as main picture', 'ok'); m.close(); refresh(); } }, 'Make main picture') : null,
         h('button', { class: 'btn sm danger', onClick: async () => { if (!await confirmDialog('Remove picture', 'Remove this picture from the profile?', { danger: true, okText: 'Remove' })) return; await del(`/api/resources/${x.id}/photos/${photos[idx].id}`); photos.splice(idx, 1); toast('Picture removed', 'ok'); m.close(); renderGallery(); } }, 'Remove')) : null)), { wide: true });
     show();
-    const key = (e) => { if (!document.body.contains(img)) { document.removeEventListener('keydown', key); return; } if (e.key === 'ArrowLeft') prev(); if (e.key === 'ArrowRight') next(); }; document.addEventListener('keydown', key);
+    const key = (e) => { if (!document.body.contains(lightboxImg)) { document.removeEventListener('keydown', key); return; } if (e.key === 'ArrowLeft') prev(); if (e.key === 'ArrowRight') next(); }; document.addEventListener('keydown', key);
   };
   renderGallery();
   const status = h('div', { class: 'small muted mt' });

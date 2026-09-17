@@ -32,6 +32,9 @@ function housekeeping() {
     require('./audit').purge(config.auditRetentionDays);
     require('./audit').purgeTombstones(config.tombstoneRetentionDays);
     require('./log').purge();
+    // Verify the audit chain once a day. Tamper-evidence that nobody checks is not evidence of anything.
+    const lastVerify = db.getSetting('audit_verified_at', null);
+    if (!lastVerify || Date.now() - Date.parse(lastVerify) > 86400000) require('./audit').scheduledVerify();
   } catch (e) { console.error('[suds] housekeeping', e && e.message || e); }
 }
 setInterval(housekeeping, 3600_000).unref();

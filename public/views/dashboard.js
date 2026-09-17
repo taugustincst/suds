@@ -23,13 +23,18 @@ route('dashboard', async () => {
   let setupCard = null;
   if (can('settings:manage') && !state.local) {
     try {
-      const [forms, users, funds, resources] = await Promise.all([
+      const [forms, users, funds, resources, sys] = await Promise.all([
         get('/api/forms/starters', { quiet: true }).catch(() => null),
         get('/api/users', { quiet: true }).catch(() => ({ users: [] })),
         get('/api/budget/funds', { quiet: true }).catch(() => ({ funds: [] })),
         get('/api/resources?limit=1', { quiet: true }).catch(() => ({ total: 0 })),
+        get('/api/admin/stats', { quiet: true }).catch(() => ({})),
       ]);
       const steps = [];
+      // Without the keys, every backup is unreadable — so this is the step that matters most, and it goes first.
+      if (sys.key_source === 'file' && !sys.keys_backup_at) {
+        steps.push(['Save a copy of your encryption keys', 'Backups of the database can only be opened with these keys. Download the file and put it somewhere separate from this computer, such as the county password manager.', 'Download key backup', '/api/admin/keys-backup']);
+      }
       if ((users.users || []).filter(u => u.is_active !== 0).length < 2) {
         steps.push(['Add your staff', 'Everyone needs their own sign-in — shared accounts are not supported, and the audit trail depends on knowing who did what.', 'Add staff', () => nav('admin?tab=users')]);
       }
@@ -47,7 +52,11 @@ route('dashboard', async () => {
           h('div', { class: 'card-head' }, h('h2', {}, 'Finish setting up'), badge(`${steps.length} left`, 'warn')),
           h('div', {}, steps.map(([title, why, label, action]) => h('div', { class: 'list-item row', style: { justifyContent: 'space-between', alignItems: 'center', gap: '1rem' } },
             h('div', {}, h('b', {}, title), h('div', { class: 'small muted' }, why)),
-            h('button', { class: 'btn sm primary', onClick: action }, label)))));
+            typeof action === 'string'
+              // A download, not a page: an anchor, so the browser saves the file. Re-render afterwards so the
+              // step disappears once the server has recorded it.
+              ? h('a', { class: 'btn sm primary', href: action, download: '', onClick: () => setTimeout(() => nav('dashboard?_=' + Date.now()), 1500) }, label)
+              : h('button', { class: 'btn sm primary', onClick: action }, label)))));
       }
     } catch { /* a missing permission or an offline copy simply means no card */ }
   }

@@ -151,6 +151,8 @@ module.exports = (r) => {
   r.get('/api/admin/keys-backup', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
     if (config.keySource !== 'file') throw badRequest('Keys are provided by the environment on this server');
     audit.log({ user: ctx.user, action: 'keys.download', ip: ctx.ip });
+    // Remembered so the dashboard can stop asking — and so an admin can see when it was last done.
+    db.setSetting('keys_backup_at', db.now());
     ctx.res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Disposition': 'attachment; filename="suds-keys-KEEP-SECRET.json"' }); ctx.res.end(fs.readFileSync(config.keysJsonPath));
   });
 
@@ -179,6 +181,7 @@ module.exports = (r) => {
     db_path: config.dbPath,
     version: config.version,
     key_source: config.keySource,
+    keys_backup_at: db.getSetting('keys_backup_at') || '',
     listener: listener.describe(),
   }));
 };

@@ -6,6 +6,9 @@ const audit = require('../audit');
 const region = require('../region');
 const { badRequest, notFound } = require('../http');
 
+// Well inside any proxy or browser patience for one request; the leftovers are one more click away.
+const BATCH_BUDGET_MS = 45000;
+
 module.exports = (r) => {
   r.get('/api/regions', auth.requireAuth, auth.requirePerm('resources:read', 'resources:write'), () => ({ regions: region.list() }));
 
@@ -36,7 +39,13 @@ module.exports = (r) => {
     if (!keys || !keys.length) throw badRequest('keys is required');
     const targets = region.pictureTargets(ctx.params.id).filter(t => keys.includes(t.key));
     const results = [];
-    for (const t of targets) results.push({ name: t.name, ...(await region.fetchPicture(t, { actor: ctx.user.id })) });
+    // Each target can need two slow fetches from somebody else's web server, so a batch of ten could
+    // otherwise outlive the request. Give the whole batch one budget and report the rest as retryable
+    // rather than leaving the browser waiting on a connection that has already been dropped.
+    const deadline = Date.now() + BATCH_BUDGET_MS;
+    for (const t of targets) {
+      results.push({ name: t.name, ...(await region.fetchPicture(t, { actor: ctx.user.id, deadline })) });
+    }
     audit.log({ user: ctx.user, action: 'region.pictures.request', ip: ctx.ip, details: { region: ctx.params.id, tried: results.length, ok: results.filter(x => x.ok).length } });
     return { results };
   });

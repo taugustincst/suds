@@ -141,7 +141,7 @@ module.exports = (r) => {
       ? { sql: `AND a.client_id IN (${v.client_ids.map(() => '?').join(',')})`, params: v.client_ids }
       : { sql: '', params: [] };
     const open = db.all(`SELECT a.* FROM assignments a JOIN clients c ON c.id=a.client_id
-      WHERE a.user_id=? AND (a.end_date IS NULL OR a.end_date >= ?) AND c.deleted_at IS NULL ${scope.sql}`, from.id, when, ...scope.params);
+      WHERE a.user_id=? AND (a.end_date IS NULL OR a.end_date >= ?) AND a.ended_at IS NULL AND c.deleted_at IS NULL ${scope.sql}`, from.id, when, ...scope.params);
 
     let moved = 0; let tasks = 0; const skipped = [];
     db.transaction(() => {

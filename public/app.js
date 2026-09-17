@@ -443,11 +443,13 @@ export function globalSearch() {
   const list = h('div', { class: 'card tight hidden search-results' });
   const wrap = h('div', { class: 'gsearch' }, input, list);
   let t;
-  input.addEventListener('input', () => { clearTimeout(t); t = setTimeout(run, 250); });
+  input.addEventListener('input', () => { clearTimeout(t); t = setTimeout(run, 400); });
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { nav(`clients?status=all&q=${encodeURIComponent(input.value.trim())}`); list.classList.add('hidden'); } if (e.key === 'Escape') list.classList.add('hidden'); });
   document.addEventListener('click', (e) => { if (!wrap.contains(e.target)) list.classList.add('hidden'); });
   async function run() {
-    const q = input.value.trim(); if (!q) { list.classList.add('hidden'); return; }
+    // Every search is a PHI read that is audited, so do not issue one for a single letter.
+    const q = input.value.trim();
+    if (q.length < 2) { list.classList.add('hidden'); return; }
     try { const r = await get(`/api/clients?limit=8&status=all&q=${encodeURIComponent(q)}`, { quiet: true }); clear(list);
       if (!r.clients.length) list.append(h('div', { class: 'muted small' }, 'No match. Search uses the exact last name, full phone number, date of birth or client code.'));
       for (const c of r.clients) list.append(h('a', { class: 'list-item', href: `#/client/${c.id}`, style: { display: 'block' }, onClick: () => list.classList.add('hidden') }, h('b', {}, c.display_name), ' ', h('span', { class: 'muted small' }, c.client_code, ' · ', fmt.label(c.status))));

@@ -21,7 +21,8 @@ module.exports = (r) => {
   });
   r.post('/api/assignments/:id/end', auth.requireAuth, auth.requirePerm('assignments:manage'), (ctx) => {
     const a = db.one(`SELECT * FROM assignments WHERE id=?`, ctx.params.id); if (!a) throw notFound();
-    db.run(`UPDATE assignments SET end_date=date('now'), updated_at=? WHERE id=?`, db.now(), a.id);
+    // ended_at, not just end_date: the worker loses the client now rather than at the end of the day.
+    db.run(`UPDATE assignments SET end_date=date('now'), ended_at=?, updated_at=? WHERE id=?`, db.now(), db.now(), a.id);
     audit.log({ user: ctx.user, action: 'assignment.end', entity: 'assignment', entityId: a.id, clientId: a.client_id, ip: ctx.ip });
     return { ok: true };
   });
@@ -31,7 +32,7 @@ module.exports = (r) => {
     const rows = db.all(`SELECT a.role_on_case, c.id, c.client_code, c.status, c.risk_level, c.updated_at,
         (SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome='reached')) AS last_contact,
         (SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.status IN ('open','in_progress') AND t.due_at < ?) AS overdue_tasks
-      FROM assignments a JOIN clients c ON c.id=a.client_id WHERE a.user_id=? AND (a.end_date IS NULL OR a.end_date >= date('now')) AND c.deleted_at IS NULL ORDER BY c.risk_level='critical' DESC, c.risk_level='high' DESC, last_contact ASC`, db.now(), uid);
+      FROM assignments a JOIN clients c ON c.id=a.client_id WHERE a.user_id=? AND ${auth.activeAssignment('a.')} AND c.deleted_at IS NULL ORDER BY c.risk_level='critical' DESC, c.risk_level='high' DESC, last_contact ASC`, db.now(), uid);
     const M = require('../clients-model');
     const full = db.all(`SELECT * FROM clients WHERE id IN (${rows.map(() => '?').join(',') || "''"})`, ...rows.map(x => x.id));
     const byId = Object.fromEntries(full.map(x => [x.id, M.summary(x)]));

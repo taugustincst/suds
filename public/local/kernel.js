@@ -6311,6 +6311,9 @@ CREATE TABLE IF NOT EXISTS assignments (
   role_on_case TEXT NOT NULL DEFAULT 'primary' CHECK (role_on_case IN ('primary','secondary','clinician','peer','supervisor')),
   start_date TEXT NOT NULL,
   end_date TEXT,
+  -- Set only when somebody ends the assignment there and then (a supervisor taking a worker off a case).
+  -- Access stops at this instant; a plain end_date runs out at the end of that day instead.
+  ended_at TEXT,
   notes TEXT,
   created_by TEXT REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -7113,7 +7116,7 @@ var require_db = __commonJS({
       if (dbPath !== ":memory:") fs.mkdirSync(path.dirname(dbPath), { recursive: true });
       db3 = new DatabaseSync2(dbPath);
       db3.exec("PRAGMA busy_timeout = 5000");
-      initialise(db3, fs.readFileSync(path.join("/", "schema.sql"), "utf8"));
+      initialise(db3, fs.readFileSync(path.join("/", "schema.sql"), "utf8"), dbPath);
       if (dbPath !== ":memory:") {
         try {
           fs.chmodSync(dbPath, 384);
@@ -7279,21 +7282,59 @@ var require_db = __commonJS({
       (d) => {
         const schemaText = safeSchema();
         for (const t of ["resource_photos", "client_form_files"]) rebuildTable(d, schemaText, t);
+      },
+      // 8: assignments record the instant they were ended. Ending one used to leave the worker with the client
+      //    for the rest of the day, because access was decided by date alone — not what a supervisor taking
+      //    somebody off a case expects to happen.
+      (d) => {
+        addColumn(d, "assignments", "ended_at", "TEXT");
       }
     ];
-    function initialise(d, schemaText) {
+    function initialise(d, schemaText, dbPath) {
       const fresh = !d.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings'`).get();
       if (fresh) {
         d.exec(schemaText);
         d.prepare(`INSERT INTO settings(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(String(migrations.length));
         return;
       }
-      migrate(d);
+      migrate(d, dbPath);
     }
-    function migrate(d) {
+    var SNAPSHOTS_KEPT = 5;
+    function snapshotBeforeMigration(d, dbPath, fromVersion) {
+      if (!dbPath || dbPath === ":memory:") return "";
+      const dir = path.join(path.dirname(dbPath), "pre-migration");
+      const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+      const file = path.join(dir, `${path.basename(dbPath)}.v${fromVersion}.${stamp2}.db`);
+      fs.mkdirSync(dir, { recursive: true });
+      try {
+        fs.unlinkSync(file);
+      } catch {
+      }
+      d.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
+      try {
+        fs.chmodSync(file, 384);
+      } catch {
+      }
+      try {
+        const old = fs.readdirSync(dir).filter((f) => f.startsWith(path.basename(dbPath) + ".v")).sort();
+        for (const f of old.slice(0, Math.max(0, old.length - SNAPSHOTS_KEPT))) fs.unlinkSync(path.join(dir, f));
+      } catch {
+      }
+      return file;
+    }
+    function migrate(d, dbPath) {
       const row = d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get();
       let v = row ? Number(row.value) : 0;
       if (v > migrations.length) throw new Error(`This database was created by a newer version of SUDS (schema ${v}; this build understands ${migrations.length}). Upgrade SUDS before opening it.`);
+      if (v < migrations.length) {
+        let snapshot = "";
+        try {
+          snapshot = snapshotBeforeMigration(d, dbPath, v);
+        } catch (e) {
+          throw new Error(`Could not snapshot the database before upgrading it from schema ${v} to ${migrations.length}: ${e.message}. Free up disk space or back up ${dbPath} by hand, then start SUDS again.`);
+        }
+        if (snapshot) console.log(`[suds] upgrading schema ${v} -> ${migrations.length}; snapshot saved to ${snapshot}`);
+      }
       for (let i = v; i < migrations.length; i++) {
         d.exec("PRAGMA foreign_keys = OFF");
         d.exec("BEGIN");
@@ -7562,14 +7603,25 @@ var require_audit = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
+    var config = require_config();
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
     var { sha256: sha2562 } = require_crypto();
+    var KEYED_PREFIX = "v2:";
+    function chainHash(payload) {
+      return KEYED_PREFIX + crypto3.createHmac("sha256", config.indexKey).update(payload).digest("hex");
+    }
+    function matches(stored, payload) {
+      if (typeof stored !== "string") return false;
+      const expected = stored.startsWith(KEYED_PREFIX) ? chainHash(payload) : sha2562(payload);
+      return stored.length === expected.length && crypto3.timingSafeEqual(import_buffer.Buffer.from(stored), import_buffer.Buffer.from(expected));
+    }
     function log({ user, action, entity, entityId, clientId, ip, success = true, details }) {
       const prev = db3.one(`SELECT hash FROM audit_log ORDER BY id DESC LIMIT 1`);
       const prevHash = prev ? prev.hash : "GENESIS";
       const at = db3.now();
       const detailsStr = details === void 0 ? null : JSON.stringify(details);
       const payload = [at, user?.id || "", user?.username || "", action, entity || "", entityId || "", clientId || "", ip || "", success ? 1 : 0, detailsStr || "", prevHash].join("|");
-      const hash2 = sha2562(payload);
+      const hash2 = chainHash(payload);
       db3.run(
         `INSERT INTO audit_log(at,user_id,username,action,entity,entity_id,client_id,ip,success,details,prev_hash,hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
         at,
@@ -7602,7 +7654,7 @@ var require_audit = __commonJS({
         for (const r of rows) {
           const payload = [r.at, r.user_id || "", r.username || "", r.action, r.entity || "", r.entity_id || "", r.client_id || "", r.ip || "", r.success ? 1 : 0, r.details || "", r.prev_hash].join("|");
           checked++;
-          if (r.prev_hash !== prevHash || sha2562(payload) !== r.hash) return { ok: false, checked, firstBadId: r.id, anchoredAt };
+          if (r.prev_hash !== prevHash || !matches(r.hash, payload)) return { ok: false, checked, firstBadId: r.id, anchoredAt };
           prevHash = r.hash;
         }
         afterId = rows[rows.length - 1].id;
@@ -7629,7 +7681,18 @@ var require_audit = __commonJS({
       log({ user: { username: "system" }, action: "audit.purge", details: { purged: n, before: cutoff, last_purged_id: last.id, last_purged_hash: last.hash } });
       return n;
     }
-    module.exports = { log, verifyChain, purge, purgeTombstones };
+    function scheduledVerify() {
+      const r = verifyChain();
+      if (r.ok) {
+        db3.setSetting("audit_verified_at", db3.now());
+        return r;
+      }
+      console.error(`[suds] AUDIT CHAIN BROKEN at entry ${r.firstBadId} \u2014 investigate immediately`);
+      log({ user: { username: "system" }, action: "audit.verify.failed", success: false, details: { first_bad_id: r.firstBadId, checked: r.checked } });
+      db3.setSetting("audit_verify_failed_at", db3.now());
+      return r;
+    }
+    module.exports = { log, verifyChain, scheduledVerify, purge, purgeTombstones };
   }
 });
 
@@ -7804,9 +7867,11 @@ var require_auth = __commonJS({
       if (hasPerm(user, "clients:all") || hasPerm(user, "clients:list-deidentified")) return false;
       return db3.getSetting("caseload_restriction", "1") === "1";
     }
+    var ACTIVE_ASSIGNMENT = `(end_date IS NULL OR end_date >= date('now')) AND (ended_at IS NULL OR ended_at > strftime('%Y-%m-%dT%H:%M:%fZ','now'))`;
+    var activeAssignment = (prefix = "") => ACTIVE_ASSIGNMENT.replace(/\b(end_date|ended_at)\b/g, `${prefix}$1`);
     function canAccessClient(user, clientId) {
       if (!caseloadRestricted(user)) return true;
-      const r = db3.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND (end_date IS NULL OR end_date >= date('now'))`, clientId, user.id);
+      const r = db3.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND ${activeAssignment()}`, clientId, user.id);
       return !!r;
     }
     function assertClientAccess(ctx, clientId) {
@@ -7817,7 +7882,7 @@ var require_auth = __commonJS({
     }
     function caseloadFilter(user, col = "c.id") {
       if (!caseloadRestricted(user)) return { sql: "1=1", params: [] };
-      return { sql: `${col} IN (SELECT client_id FROM assignments WHERE user_id=? AND (end_date IS NULL OR end_date >= date('now')))`, params: [user.id] };
+      return { sql: `${col} IN (SELECT client_id FROM assignments WHERE user_id=? AND ${activeAssignment()})`, params: [user.id] };
     }
     var COOKIE = "suds_session";
     function createSession(user, ctx, { mfaPending = false } = {}) {
@@ -7958,6 +8023,7 @@ var require_auth = __commonJS({
       policy,
       PERMS,
       hasPerm,
+      activeAssignment,
       requirePerm,
       requireAuth,
       mfaDeadline,
@@ -8006,6 +8072,8 @@ var require_sync_tables = __commonJS({
         { name: "note_addenda", enc: ["content_enc"], scope: "via-note", writePerm: "notes:admin:write", parent: ["notes", "note_id"] },
         { name: "consents", enc: ["recipient_enc", "purpose_enc", "scope_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
         { name: "disclosures", enc: ["recipient_enc", "purpose_enc", "what_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
+        { name: "imports", enc: [], scope: "all", writePerm: "imports:write" },
+        { name: "import_items", enc: ["content_enc", "title_enc"], scope: "all", writePerm: "imports:write", parent: ["imports", "import_id"] },
         { name: "form_templates", enc: [], scope: "all", writePerm: "forms:manage", blob: ["file_b64"] },
         { name: "client_forms", enc: ["values_enc"], scope: "client", clientCol: "client_id", writePerm: "forms:write", parent: ["clients", "client_id"] },
         { name: "client_form_files", enc: ["data_enc"], scope: "client", clientCol: "client_id", writePerm: "forms:write", parent: ["client_forms", "client_form_id"], blob: ["data_enc"] }
@@ -8049,6 +8117,44 @@ var require_sync_tables = __commonJS({
       ]
     };
     module.exports.user_ref_cols = [...new Set(module.exports.user_refs.map(([, c]) => c))];
+    var crypto3 = require_crypto();
+    function exportRow2(t, r) {
+      const o = { ...r };
+      for (const c of t.enc) {
+        if (!o[c]) continue;
+        try {
+          o[c] = crypto3.decrypt(o[c]);
+        } catch {
+          return null;
+        }
+      }
+      for (const k of Object.keys(o)) if (k.endsWith("_idx")) delete o[k];
+      for (const c of t.blob || []) delete o[c];
+      if (t.name === "users") {
+        delete o.failed_attempts;
+        delete o.locked_until;
+      }
+      return o;
+    }
+    function importRow2(t, r, existingCols) {
+      const o = {};
+      for (const [k, v] of Object.entries(r)) if (existingCols.includes(k) && !k.endsWith("_idx") && v !== void 0) o[k] = v;
+      for (const c of t.enc) if (o[c] !== void 0 && o[c] !== null) o[c] = crypto3.encrypt(o[c]);
+      if (t.name === "clients") {
+        const M = require_clients_model();
+        if (r.last_name_enc !== void 0) {
+          o.last_name_idx = crypto3.blindIndex(r.last_name_enc || "");
+          o.name_prefix_idx = M.namePrefixIndex(r.last_name_enc || "");
+          o.name_phonetic_idx = M.namePhoneticIndex(r.last_name_enc || "");
+        }
+        if (r.last_name_enc !== void 0 || r.first_name_enc !== void 0) o.full_name_idx = crypto3.blindIndex((r.last_name_enc || "") + (r.first_name_enc || ""));
+        if (r.dob_enc !== void 0) o.dob_idx = crypto3.blindIndex(r.dob_enc || "");
+        if (r.phone_enc !== void 0) o.phone_idx = crypto3.blindIndex(String(r.phone_enc || "").replace(/\D/g, ""));
+      }
+      return o;
+    }
+    module.exports.exportRow = exportRow2;
+    module.exports.importRow = importRow2;
   }
 });
 
@@ -10371,6 +10477,7 @@ var require_admin = __commonJS({
       r.get("/api/admin/keys-backup", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
         if (config.keySource !== "file") throw badRequest("Keys are provided by the environment on this server");
         audit3.log({ user: ctx.user, action: "keys.download", ip: ctx.ip });
+        db3.setSetting("keys_backup_at", db3.now());
         ctx.res.writeHead(200, { "Content-Type": "application/json", "Content-Disposition": 'attachment; filename="suds-keys-KEEP-SECRET.json"' });
         ctx.res.end(fs.readFileSync(config.keysJsonPath));
       });
@@ -10398,6 +10505,7 @@ var require_admin = __commonJS({
         db_path: config.dbPath,
         version: config.version,
         key_source: config.keySource,
+        keys_backup_at: db3.getSetting("keys_backup_at") || "",
         listener: listener.describe()
       }));
     };
@@ -10530,7 +10638,7 @@ var require_assignments = __commonJS({
       r.post("/api/assignments/:id/end", auth3.requireAuth, auth3.requirePerm("assignments:manage"), (ctx) => {
         const a = db3.one(`SELECT * FROM assignments WHERE id=?`, ctx.params.id);
         if (!a) throw notFound();
-        db3.run(`UPDATE assignments SET end_date=date('now'), updated_at=? WHERE id=?`, db3.now(), a.id);
+        db3.run(`UPDATE assignments SET end_date=date('now'), ended_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), a.id);
         audit3.log({ user: ctx.user, action: "assignment.end", entity: "assignment", entityId: a.id, clientId: a.client_id, ip: ctx.ip });
         return { ok: true };
       });
@@ -10539,7 +10647,7 @@ var require_assignments = __commonJS({
         const rows = db3.all(`SELECT a.role_on_case, c.id, c.client_code, c.status, c.risk_level, c.updated_at,
         (SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome='reached')) AS last_contact,
         (SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.status IN ('open','in_progress') AND t.due_at < ?) AS overdue_tasks
-      FROM assignments a JOIN clients c ON c.id=a.client_id WHERE a.user_id=? AND (a.end_date IS NULL OR a.end_date >= date('now')) AND c.deleted_at IS NULL ORDER BY c.risk_level='critical' DESC, c.risk_level='high' DESC, last_contact ASC`, db3.now(), uid);
+      FROM assignments a JOIN clients c ON c.id=a.client_id WHERE a.user_id=? AND ${auth3.activeAssignment("a.")} AND c.deleted_at IS NULL ORDER BY c.risk_level='critical' DESC, c.risk_level='high' DESC, last_contact ASC`, db3.now(), uid);
         const M = require_clients_model();
         const full = db3.all(`SELECT * FROM clients WHERE id IN (${rows.map(() => "?").join(",") || "''"})`, ...rows.map((x) => x.id));
         const byId = Object.fromEntries(full.map((x) => [x.id, M.summary(x)]));
@@ -11133,11 +11241,11 @@ var require_clients = __commonJS({
         }
         const assigned = ctx.query.get("assigned_to");
         if (assigned) {
-          where.push(`c.id IN (SELECT client_id FROM assignments WHERE user_id=? AND (end_date IS NULL OR end_date >= date('now')))`);
+          where.push(`c.id IN (SELECT client_id FROM assignments WHERE user_id=? AND ${auth3.activeAssignment()})`);
           params.push(assigned);
         }
         const w = "WHERE " + where.join(" AND ");
-        const rows = db3.all(`SELECT c.*, (SELECT GROUP_CONCAT(u.display_name, ', ') FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=c.id AND (a.end_date IS NULL OR a.end_date >= date('now'))) AS assigned_workers,
+        const rows = db3.all(`SELECT c.*, (SELECT GROUP_CONCAT(u.display_name, ', ') FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=c.id AND ${auth3.activeAssignment("a.")}) AS assigned_workers,
       (SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome='reached')) AS last_contact
       FROM clients c ${w} ORDER BY c.updated_at DESC LIMIT ? OFFSET ?`, ...params, limit2, offset);
         const total = db3.one(`SELECT COUNT(*) n FROM clients c ${w}`, ...params).n;
@@ -12402,7 +12510,7 @@ var require_episodes = __commonJS({
         const lastDay = new Date(Date.parse(when) - 864e5).toISOString().slice(0, 10);
         const scope = v.client_ids && v.client_ids.length ? { sql: `AND a.client_id IN (${v.client_ids.map(() => "?").join(",")})`, params: v.client_ids } : { sql: "", params: [] };
         const open = db3.all(`SELECT a.* FROM assignments a JOIN clients c ON c.id=a.client_id
-      WHERE a.user_id=? AND (a.end_date IS NULL OR a.end_date >= ?) AND c.deleted_at IS NULL ${scope.sql}`, from.id, when, ...scope.params);
+      WHERE a.user_id=? AND (a.end_date IS NULL OR a.end_date >= ?) AND a.ended_at IS NULL AND c.deleted_at IS NULL ${scope.sql}`, from.id, when, ...scope.params);
         let moved = 0;
         let tasks = 0;
         const skipped = [];
@@ -17527,17 +17635,20 @@ var require_region = __commonJS({
       if (buf.length > maxBytes) throw Object.assign(new Error("file is too large"), { soft: true });
       return buf;
     }
-    async function fetchPicture(target, { actor, timeoutMs = 12e3 } = {}) {
+    async function fetchPicture(target, { actor, timeoutMs = 12e3, deadline = 0 } = {}) {
       let url = target.url;
+      const budget = () => deadline ? Math.min(timeoutMs, deadline - Date.now()) : timeoutMs;
       try {
+        if (budget() <= 0) return { key: target.key, ok: false, error: "ran out of time \u2014 try this one again" };
         if (!url) {
           if (!/^https:\/\//i.test(target.website || "")) return { key: target.key, ok: false, error: "no website on file" };
-          const html = await get(target.website, { timeoutMs, maxBytes: 2 * 1024 * 1024 });
+          const html = await get(target.website, { timeoutMs: budget(), maxBytes: 2 * 1024 * 1024 });
           url = pickImageUrl(html.toString("utf8"), target.website);
           if (!url) return { key: target.key, ok: false, error: "their website does not advertise a picture" };
         }
         if (!/^https:\/\//i.test(url)) return { key: target.key, ok: false, error: "not an https address" };
-        const buf = await get(url, { timeoutMs, maxBytes: MAX_PICTURE_BYTES });
+        if (budget() <= 0) return { key: target.key, ok: false, error: "ran out of time \u2014 try this one again" };
+        const buf = await get(url, { timeoutMs: budget(), maxBytes: MAX_PICTURE_BYTES });
         const type = sniff(buf);
         if (!type) return { key: target.key, ok: false, error: "not a JPEG, PNG or WebP picture" };
         db3.transaction(() => {
@@ -17600,6 +17711,7 @@ var require_regions = __commonJS({
     var audit3 = require_audit();
     var region = require_region();
     var { badRequest, notFound } = require_http();
+    var BATCH_BUDGET_MS = 45e3;
     module.exports = (r) => {
       r.get("/api/regions", auth3.requireAuth, auth3.requirePerm("resources:read", "resources:write"), () => ({ regions: region.list() }));
       r.post("/api/regions/:id/load", auth3.requireAuth, auth3.requirePerm("resources:write"), (ctx) => {
@@ -17625,7 +17737,10 @@ var require_regions = __commonJS({
         if (!keys || !keys.length) throw badRequest("keys is required");
         const targets = region.pictureTargets(ctx.params.id).filter((t) => keys.includes(t.key));
         const results = [];
-        for (const t of targets) results.push({ name: t.name, ...await region.fetchPicture(t, { actor: ctx.user.id }) });
+        const deadline = Date.now() + BATCH_BUDGET_MS;
+        for (const t of targets) {
+          results.push({ name: t.name, ...await region.fetchPicture(t, { actor: ctx.user.id, deadline }) });
+        }
         audit3.log({ user: ctx.user, action: "region.pictures.request", ip: ctx.ip, details: { region: ctx.params.id, tried: results.length, ok: results.filter((x) => x.ok).length } });
         return { results };
       });
@@ -18357,36 +18472,7 @@ var require_sync = __commonJS({
     function cols2(table) {
       return db3.all(`PRAGMA table_info(${table})`).map((c) => c.name);
     }
-    function exportRow2(t, r) {
-      const o = { ...r };
-      for (const c of t.enc) {
-        if (!o[c]) continue;
-        try {
-          o[c] = decrypt3(o[c]);
-        } catch {
-          return null;
-        }
-      }
-      for (const k of Object.keys(o)) if (k.endsWith("_idx")) delete o[k];
-      for (const c of t.blob || []) delete o[c];
-      if (t.name === "users") {
-        delete o.failed_attempts;
-        delete o.locked_until;
-      }
-      return o;
-    }
-    function importRow2(t, r, existingCols) {
-      const o = {};
-      for (const [k, v] of Object.entries(r)) if (existingCols.includes(k) && !k.endsWith("_idx") && v !== void 0) o[k] = v;
-      for (const c of t.enc) if (o[c] !== void 0 && o[c] !== null) o[c] = encrypt3(o[c]);
-      if (t.name === "clients") {
-        if (r.last_name_enc !== void 0) o.last_name_idx = blindIndex2(r.last_name_enc || "");
-        if (r.last_name_enc !== void 0 || r.first_name_enc !== void 0) o.full_name_idx = blindIndex2((r.last_name_enc || "") + (r.first_name_enc || ""));
-        if (r.dob_enc !== void 0) o.dob_idx = blindIndex2(r.dob_enc || "");
-        if (r.phone_enc !== void 0) o.phone_idx = blindIndex2(String(r.phone_enc || "").replace(/\D/g, ""));
-      }
-      return o;
-    }
+    var { exportRow: exportRow2, importRow: importRow2 } = SYNC2;
     function scopeSql(t, user, alias) {
       const cf = auth3.caseloadFilter(user, `${alias}.${t.clientCol}`);
       if (t.scope === "all" || t.scope === "users") return { sql: "1=1", params: [] };
@@ -18552,8 +18638,21 @@ var require_sync = __commonJS({
               const o = importRow2(t, raw, existingCols);
               if (t.name === "clients") o.client_code = freeClientCode(o.client_code, raw.id);
               const keys = Object.keys(o).filter((k) => k !== "id");
-              if (existing) db3.run(`UPDATE ${t.name} SET ${keys.map((k) => `${k}=?`).join(", ")} WHERE id=?`, ...keys.map((k) => o[k]), raw.id);
-              else db3.run(`INSERT INTO ${t.name}(id,${keys.join(",")}) VALUES(?,${keys.map(() => "?").join(",")})`, raw.id, ...keys.map((k) => o[k]));
+              if (existing) {
+                const overwritten = keys.filter((k) => !["updated_at", "created_at"].includes(k) && String(existing[k] ?? "") !== String(o[k] ?? ""));
+                if (overwritten.length) {
+                  audit3.log({
+                    user,
+                    action: "sync.overwrite",
+                    entity: t.name,
+                    entityId: raw.id,
+                    clientId: t.clientCol ? raw[t.clientCol] : null,
+                    ip: "device",
+                    details: { columns: overwritten, server_had: existing.updated_at, device_sent: incomingAt }
+                  });
+                }
+                db3.run(`UPDATE ${t.name} SET ${keys.map((k) => `${k}=?`).join(", ")} WHERE id=?`, ...keys.map((k) => o[k]), raw.id);
+              } else db3.run(`INSERT INTO ${t.name}(id,${keys.join(",")}) VALUES(?,${keys.map(() => "?").join(",")})`, raw.id, ...keys.map((k) => o[k]));
               db3.run(`DELETE FROM tombstones WHERE table_name=? AND id=?`, t.name, raw.id);
               if (t.name === "clients" && !existing && auth3.caseloadRestricted(user)) db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, require_crypto().uuid(), raw.id, user.id, "primary", (raw.intake_date || db3.now()).slice(0, 10), user.id);
               return true;
@@ -19093,36 +19192,7 @@ var seen = (t, id, at) => import_db.default.run(`INSERT OR REPLACE INTO sync_see
 var seenAt = (t, id) => import_db.default.one(`SELECT updated_at FROM sync_seen WHERE table_name=? AND id=?`, t, id)?.updated_at ?? void 0;
 var cols = (t) => import_db.default.all(`PRAGMA table_info(${t})`).map((c) => c.name);
 var stamp = (row) => row.updated_at || row.created_at || null;
-function exportRow(t, r) {
-  const o = { ...r };
-  for (const c of t.enc) {
-    if (!o[c]) continue;
-    try {
-      o[c] = (0, import_crypto2.decrypt)(o[c]);
-    } catch {
-      return null;
-    }
-  }
-  for (const k of Object.keys(o)) if (k.endsWith("_idx")) delete o[k];
-  for (const c of t.blob || []) delete o[c];
-  if (t.name === "users") {
-    delete o.failed_attempts;
-    delete o.locked_until;
-  }
-  return o;
-}
-function importRow(t, r, existingCols) {
-  const o = {};
-  for (const [k, v] of Object.entries(r)) if (existingCols.includes(k) && !k.endsWith("_idx") && v !== void 0) o[k] = v;
-  for (const c of t.enc) if (o[c] !== void 0 && o[c] !== null) o[c] = (0, import_crypto2.encrypt)(o[c]);
-  if (t.name === "clients") {
-    if (r.last_name_enc !== void 0) o.last_name_idx = (0, import_crypto2.blindIndex)(r.last_name_enc || "");
-    if (r.last_name_enc !== void 0 || r.first_name_enc !== void 0) o.full_name_idx = (0, import_crypto2.blindIndex)((r.last_name_enc || "") + (r.first_name_enc || ""));
-    if (r.dob_enc !== void 0) o.dob_idx = (0, import_crypto2.blindIndex)(r.dob_enc || "");
-    if (r.phone_enc !== void 0) o.phone_idx = (0, import_crypto2.blindIndex)(String(r.phone_enc || "").replace(/\D/g, ""));
-  }
-  return o;
-}
+var { exportRow, importRow } = import_sync_tables.default;
 function mergeUser(localId, serverId) {
   for (const [t, c] of import_sync_tables.default.user_refs) {
     if (!import_db.default.one(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`, t)) continue;

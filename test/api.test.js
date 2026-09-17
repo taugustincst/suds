@@ -509,3 +509,55 @@ test('a half-authenticated session cannot change the account password', async ()
   assert.equal(r.status, 401, 'the password change is refused until the second factor is given');
   assert.equal(r.data.mfaRequired, true);
 });
+
+test('ending an assignment takes the client off that worker\'s caseload and out of their reach', async () => {
+  const sup = H.client(); await sup.login('sup1', 'StaffPassw0rd!x');
+  const worker = H.makeUser('navend', 'navigator');
+  const w = H.client(); await w.login(worker.username, worker.password);
+  // Their own client, so they can see it to begin with.
+  const id = (await w.post('/api/clients', { first_name: 'Ends', last_name: 'Here' })).data.id;
+  assert.equal((await w.get(`/api/clients/${id}`)).status, 200);
+  assert.ok((await w.get('/api/caseload')).data.caseload.some(c => c.id === id), 'it is on their caseload');
+
+  const a = H.db.one(`SELECT id FROM assignments WHERE client_id=? AND user_id=? AND end_date IS NULL`, id, worker.id);
+  assert.equal((await w.post(`/api/assignments/${a.id}/end`, {})).status, 403, 'a navigator cannot end their own assignment');
+  assert.equal((await sup.post(`/api/assignments/${a.id}/end`, {})).status, 200);
+
+  assert.equal((await w.get(`/api/clients/${id}`)).status, 403, 'the record is out of reach at once — no new sign-in needed');
+  assert.ok(!(await w.get('/api/caseload')).data.caseload.some(c => c.id === id), 'and off their caseload');
+  assert.ok(!(await w.get('/api/clients')).data.clients.some(c => c.id === id), 'and out of the client list');
+  // Writing to it is refused too, not just reading.
+  assert.equal((await w.post('/api/interventions', { client_id: id, type: 'outreach', occurred_at: '2026-09-03T10:00:00Z' })).status, 403);
+  // The supervisor still sees it: ending an assignment removes one worker's access, it does not hide the client.
+  assert.equal((await sup.get(`/api/clients/${id}`)).status, 200);
+});
+
+test('revoking sessions ends them immediately, on this device and on the others', async () => {
+  const u = H.makeUser('revoker', 'navigator');
+  const phone = H.client(); await phone.login(u.username, u.password);
+  const desk = H.client(); await desk.login(u.username, u.password);
+  assert.equal((await phone.get('/api/clients')).status, 200);
+  assert.equal((await desk.get('/api/clients')).status, 200);
+  assert.equal((await desk.get('/api/auth/sessions')).data.sessions.length, 2, 'both are listed');
+
+  // "Sign out everywhere else" from the desktop.
+  assert.equal((await desk.post('/api/auth/sessions/revoke-others', {})).status, 200);
+  assert.equal((await phone.get('/api/clients')).status, 401, 'the phone is signed out on its next request');
+  assert.equal((await desk.get('/api/clients')).status, 200, 'the device that asked stays signed in');
+  assert.equal((await desk.get('/api/auth/sessions')).data.sessions.length, 1);
+  assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='auth.sessions.revoked_others' AND user_id=?`, u.id));
+
+  // Signing out revokes this session too — the cookie is not reusable afterwards.
+  const token = H.db.one(`SELECT id FROM sessions WHERE user_id=? AND revoked_at IS NULL`, u.id).id;
+  assert.equal((await desk.post('/api/auth/logout', {})).status, 200);
+  assert.equal((await desk.get('/api/clients')).status, 401);
+  assert.ok(H.db.one(`SELECT revoked_at FROM sessions WHERE id=?`, token).revoked_at, 'the row records when it ended');
+});
+
+test('deactivating an account ends its sessions', async () => {
+  const u = H.makeUser('goner', 'navigator');
+  const c = H.client(); await c.login(u.username, u.password);
+  assert.equal((await c.get('/api/clients')).status, 200);
+  assert.equal((await admin.put(`/api/users/${u.id}`, { is_active: false })).status, 200);
+  assert.equal((await c.get('/api/clients')).status, 401, 'the session stops working the moment the account is disabled');
+});

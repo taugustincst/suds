@@ -73,9 +73,14 @@ function caseloadRestricted(user) {
   if (hasPerm(user, 'clients:all') || hasPerm(user, 'clients:list-deidentified')) return false;
   return db.getSetting('caseload_restriction', '1') === '1';
 }
+// An assignment is over when its last day has passed, or the moment somebody ended it outright.
+// The date alone is not enough: a supervisor taking a worker off a case means now, not at midnight.
+const ACTIVE_ASSIGNMENT = `(end_date IS NULL OR end_date >= date('now')) AND (ended_at IS NULL OR ended_at > strftime('%Y-%m-%dT%H:%M:%fZ','now'))`;
+const activeAssignment = (prefix = '') => ACTIVE_ASSIGNMENT.replace(/\b(end_date|ended_at)\b/g, `${prefix}$1`);
+
 function canAccessClient(user, clientId) {
   if (!caseloadRestricted(user)) return true;
-  const r = db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND (end_date IS NULL OR end_date >= date('now'))`, clientId, user.id);
+  const r = db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND ${activeAssignment()}`, clientId, user.id);
   return !!r;
 }
 function assertClientAccess(ctx, clientId) {
@@ -87,7 +92,7 @@ function assertClientAccess(ctx, clientId) {
 // SQL fragment restricting a client column to the user's caseload
 function caseloadFilter(user, col = 'c.id') {
   if (!caseloadRestricted(user)) return { sql: '1=1', params: [] };
-  return { sql: `${col} IN (SELECT client_id FROM assignments WHERE user_id=? AND (end_date IS NULL OR end_date >= date('now')))`, params: [user.id] };
+  return { sql: `${col} IN (SELECT client_id FROM assignments WHERE user_id=? AND ${activeAssignment()})`, params: [user.id] };
 }
 
 // ---- Sessions ----
@@ -220,5 +225,5 @@ function passwordPolicy(pw) {
   return errors;
 }
 
-module.exports = { policy, PERMS, hasPerm, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted,
+module.exports = { policy, PERMS, hasPerm, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted,
   createSession, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };
