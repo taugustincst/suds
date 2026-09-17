@@ -40,8 +40,8 @@ route('client', async (r) => {
     async timeline() {
       const { events } = await get(`/api/clients/${id}/timeline`);
       if (!events.length) return h('div', { class: 'empty' }, 'No activity yet.');
-      return h('div', { class: 'card' }, h('ul', { class: 'timeline' }, events.map(e => h('li', { class: e.kind }, h('div', { class: 't' }, e.at ? fmt.dt(e.at.length === 10 ? e.at + 'T12:00:00' : e.at) : '', e.worker ? ` · ${e.worker}` : ''),
-        h('div', { class: 'h' }, e.kind === 'note' ? h('a', { href: '#', onClick: async (ev) => { ev.preventDefault(); (await import('./notes.js')).openNote(e.id, { onChange: refresh }); } }, fmt.label(e.title)) : fmt.label(e.title), ' ', e.meta?.status ? badge(fmt.label(e.meta.status), statusKind(e.meta.status)) : null, e.meta?.outcome ? badge(fmt.label(e.meta.outcome), statusKind(e.meta.outcome)) : null, e.meta?.duration ? h('span', { class: 'muted small' }, ` ${fmt.mins(e.meta.duration)}`) : null, e.meta?.crisis ? badge('Crisis', 'danger') : null),
+      return h('div', { class: 'card' }, h('ul', { class: 'timeline' }, events.map(e => h('li', { class: e.kind }, h('div', { class: 't' }, e.at ? fmt.dt(e.at) : '', e.worker ? ` · ${e.worker}` : ''),
+        h('div', { class: 'h' }, e.kind === 'note' ? h('a', { href: '#', onClick: async (ev) => { ev.preventDefault(); (await import('./notes.js')).openNote(e.id, { onChange: refresh }); } }, e.title) : (e.kind === 'intervention' ? fmt.label(e.title) : e.title), ' ', e.meta?.status ? badge(fmt.label(e.meta.status), statusKind(e.meta.status)) : null, e.meta?.outcome ? badge(fmt.label(e.meta.outcome), statusKind(e.meta.outcome)) : null, e.meta?.duration ? h('span', { class: 'muted small' }, ` ${fmt.mins(e.meta.duration)}`) : null, e.meta?.crisis ? badge('Crisis', 'danger') : null),
         e.detail ? h('div', { class: 'd' }, String(e.detail).slice(0, 300)) : null))));
     },
     async interventions() { const d = await get(`/api/interventions?client_id=${id}&limit=500`); return interventionTable(d.rows, { showClient: false, onChange: refresh }); },

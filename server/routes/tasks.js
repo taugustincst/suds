@@ -16,8 +16,8 @@ module.exports = (r) => {
     },
     filters: (ctx, where, params) => {
       const s = ctx.query.get('status');
-      if (s === 'open') where.push(`tasks.status IN ('open','in_progress')`); else if (s) { where.push('tasks.status=?'); params.push(s); }
-      if (ctx.query.get('overdue') === '1') { where.push(`tasks.status IN ('open','in_progress') AND tasks.due_at < ?`); params.push(db.now()); }
+      if (s === 'open') where.push(`tasks.status IN ('open','in_progress')`); else if (s && s !== 'all') { where.push('tasks.status=?'); params.push(s); }
+      if (ctx.query.get('overdue') === '1') { where.push(`tasks.status IN ('open','in_progress') AND (CASE WHEN length(tasks.due_at)=10 THEN tasks.due_at < date('now','localtime') ELSE tasks.due_at < ? END)`); params.push(db.now()); }
       if (ctx.query.get('milestones') === '1') where.push('tasks.is_milestone=1');
     },
     beforeInsert: (ctx, v) => { if (!v.assigned_to) v.assigned_to = ctx.user.id; if (v.status === 'done' && !v.completed_at) v.completed_at = db.now(); },

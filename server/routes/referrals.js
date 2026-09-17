@@ -16,7 +16,7 @@ module.exports = (r) => {
       follow_up_due: { type: 'date' }, notes: { type: 'string', maxLen: 2000 },
     },
     filters: (ctx, where, params) => {
-      const s = ctx.query.get('status'); if (s) { where.push('referrals.status=?'); params.push(s); }
+      const s = ctx.query.get('status'); if (s && s !== 'all') { where.push('referrals.status=?'); params.push(s); }
       if (ctx.query.get('open') === '1') where.push(`referrals.status IN ('pending','contacted','accepted','waitlisted','scheduled')`);
       const res = ctx.query.get('resource_id'); if (res) { where.push('referrals.resource_id=?'); params.push(res); }
     },

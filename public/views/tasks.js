@@ -14,7 +14,7 @@ export function openTaskForm(values, { clientId, clientDisplay, onDone } = {}) {
   const m = modal(isNew ? 'New task' : 'Edit task', f);
 }
 export function taskTable(rows, { showClient = true, onChange } = {}) {
-  const overdue = t => t.due_at && ['open', 'in_progress'].includes(t.status) && Date.parse(t.due_at) < Date.now();
+  const overdue = t => t.due_at && ['open', 'in_progress'].includes(t.status) && fmt.isPast(t.due_at);
   return table([
     { label: '', render: t => can('tasks:write') ? h('input', { type: 'checkbox', checked: t.status === 'done', title: 'Mark done', onChange: async (e) => { await put(`/api/tasks/${t.id}`, { status: e.target.checked ? 'done' : 'open' }); onChange && onChange(); } }) : null },
     { label: 'Task', render: t => h('div', {}, h('span', { style: t.status === 'done' ? { textDecoration: 'line-through', color: 'var(--muted)' } : {} }, t.is_milestone ? '★ ' : '', t.title), t.description ? h('div', { class: 'small muted' }, t.description.slice(0, 120)) : null) },
@@ -30,7 +30,7 @@ route('tasks', async (r) => {
   const data = await get(`/api/tasks?${qs}`);
   const refresh = () => nav(`tasks?status=${status}&mine=${mine ? 1 : 0}${overdue ? '&overdue=1' : ''}&_=${Date.now()}`);
   if (r.query.get('id')) { const t = data.rows.find(x => x.id === r.query.get('id')); if (t) setTimeout(() => openTaskForm(t, { onDone: refresh }), 0); }
-  const sel = h('select', { onChange: () => nav(`tasks?status=${sel.value}&mine=${mine ? 1 : 0}`) }, [['open', 'Open'], ['done', 'Done'], ['cancelled', 'Cancelled'], ['all', 'All']].map(([v, l]) => h('option', { value: v === 'all' ? '' : v, selected: (v === 'all' ? '' : v) === status }, l)));
+  const sel = h('select', { onChange: () => nav(`tasks?status=${sel.value}&mine=${mine ? 1 : 0}`) }, [['open', 'Open'], ['done', 'Done'], ['cancelled', 'Cancelled'], ['all', 'All']].map(([v, l]) => h('option', { value: v, selected: v === status }, l)));
   return h('div', {},
     pageHead('To-do list', can('tasks:write') ? h('button', { class: 'btn primary', onClick: () => openTaskForm(null, { onDone: refresh }) }, '+ Add a reminder') : null),
     h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'Status'), sel), h('button', { class: `btn sm ${mine ? 'primary' : ''}`, onClick: () => nav(`tasks?status=${status}&mine=${mine ? 0 : 1}`) }, 'Assigned to me'), h('button', { class: `btn sm ${overdue ? 'primary' : ''}`, onClick: () => nav(`tasks?status=open&mine=${mine ? 1 : 0}${overdue ? '' : '&overdue=1'}`) }, 'Overdue')),
