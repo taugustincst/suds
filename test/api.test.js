@@ -287,12 +287,15 @@ test('audit retention purge keeps the chain verifiable', async () => {
 test('security policy settings are validated and applied', async () => {
   assert.equal((await admin.put('/api/admin/settings', { session_idle_minutes: 120 })).status, 400);
   assert.equal((await admin.put('/api/admin/settings', { session_idle_minutes: 'abc' })).status, 400);
-  assert.equal((await admin.put('/api/admin/settings', { session_idle_minutes: 20, mfa_required_roles: 'admin, navigator, bogus' })).status, 200);
+  // 'bogus' is dropped; 'clinician' is a real role but not one of the acting clients here, because the
+  // requirement is now enforced and would lock this test's own admin out mid-way.
+  assert.equal((await admin.put('/api/admin/settings', { session_idle_minutes: 20, mfa_required_roles: 'clinician, bogus' })).status, 200);
   const s = await admin.get('/api/admin/settings');
   assert.equal(s.data.policy.idleMinutes, 20);
-  assert.deepEqual(s.data.policy.mfaRequiredRoles, ['admin', 'navigator']);
-  assert.equal((await nav.get('/api/auth/me')).data.user.mfa_required, true);
-  await admin.put('/api/admin/settings', { session_idle_minutes: '', mfa_required_roles: 'admin,supervisor' });
+  assert.deepEqual(s.data.policy.mfaRequiredRoles, ['clinician']);
+  assert.equal((await clin.get('/api/auth/me')).data.user.mfa_required, true);
+  assert.equal((await nav.get('/api/auth/me')).data.user.mfa_required, false);
+  await admin.put('/api/admin/settings', { session_idle_minutes: '', mfa_required_roles: '' });
   assert.equal((await admin.get('/api/setup/status')).data.needed, false);
   assert.equal((await admin.post('/api/setup/complete', {})).status, 403);
   assert.equal((await nav.get('/api/admin/network')).status, 403);
@@ -451,4 +454,46 @@ test('sync normalises device clock skew so a fast clock cannot win conflicts', a
   const r = await bare.post('/api/sync/push', { device_now: new Date(Date.now() + fast).toISOString(), tables: { clients: [{ id, client_code: 'M26-0500', first_name_enc: 'Clock', last_name_enc: 'Test', status: 'active', goals_enc: 'phone-stale', created_at: new Date(now + fast).toISOString(), updated_at: new Date(deviceEditReal + fast).toISOString() }] } }, B);
   assert.ok(Math.abs(r.data.clock_offset_ms + fast) < 5000, 'offset measured');
   assert.equal(require('../server/crypto').decrypt(H.db.one(`SELECT goals_enc FROM clients WHERE id=?`, id).goals_enc), 'office', 'stale device edit does not win despite a fast clock');
+});
+
+test('a role that must use two-step verification cannot work until it is set up', async () => {
+  // This was advisory: the login response said mfaSetupRequired and nothing enforced it.
+  const u = H.makeUser('mfauser', 'supervisor');
+  H.db.setSetting('mfa_required_roles', 'supervisor');
+  try {
+    const c = H.client();
+    const login = await c.post('/api/auth/login', { username: u.username, password: u.password });
+    assert.equal(login.status, 200);
+    assert.equal(login.data.mfaSetupRequired, true, 'the user is told to enrol');
+
+    const blocked = await c.get('/api/clients');
+    assert.equal(blocked.status, 403, 'and is actually stopped until they do');
+    assert.equal(blocked.data.mfaSetupRequired, true);
+
+    // Enrolment itself stays reachable, or the user could never comply.
+    const setup = await c.post('/api/auth/mfa/setup', {});
+    assert.equal(setup.status, 200);
+    assert.ok(setup.data.secret);
+    // A wrong code must not enable it.
+    assert.equal((await c.post('/api/auth/mfa/enable', { code: '000000' })).status, 400);
+    const code = require('../server/crypto').totp(setup.data.secret);
+    assert.equal((await c.post('/api/auth/mfa/enable', { code })).status, 200);
+    assert.equal((await c.get('/api/clients')).status, 200, 'once enrolled, work proceeds');
+  } finally { H.db.setSetting('mfa_required_roles', ''); }
+});
+
+test('a half-authenticated session cannot change the account password', async () => {
+  // The password route checked only that a user was attached, which let a session still owing its second
+  // factor change the password on the account.
+  const u = H.makeUser('mfapw', 'navigator');
+  const c = H.client();
+  await c.login(u.username, u.password);
+  const setup = await c.post('/api/auth/mfa/setup', {});
+  await c.post('/api/auth/mfa/enable', { code: require('../server/crypto').totp(setup.data.secret) });
+  const again = H.client();
+  const login = await again.post('/api/auth/login', { username: u.username, password: u.password });
+  assert.equal(login.data.mfaPending, true);
+  const r = await again.post('/api/auth/password', { current_password: u.password, new_password: 'Brand-New-Passw0rd!' });
+  assert.equal(r.status, 401, 'the password change is refused until the second factor is given');
+  assert.equal(r.data.mfaRequired, true);
 });

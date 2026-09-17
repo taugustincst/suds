@@ -7,9 +7,25 @@ jobs:
     steps:
       - name: Check out
         run: git clone --depth 1 "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
+      - name: Install
+        working-directory: src
+        run: node --version && npm ci --no-audit --no-fund
       - name: Test
         working-directory: src
-        run: node --version && npm ci --no-audit --no-fund && npm test && npm run build:local && node scripts/package.js /tmp/suds.zip
+        run: npm test
+      # The release zip is built with `git archive`, so it ships the *committed* kernel, not the one built
+      # during the release. A stale commit therefore reaches phones silently. Fail the build instead.
+      - name: Local kernel and generated schema match their sources
+        working-directory: src
+        run: |
+          npm run build:local
+          git diff --exit-code -- public/local server/schema-text.js public/sw.js || {
+            echo "::error::public/local/kernel.js or server/schema-text.js is out of date. Run 'npm run build:local' and commit the result."
+            exit 1
+          }
+      - name: Package
+        working-directory: src
+        run: node scripts/package.js /tmp/suds.zip
       - name: Syntax-check browser modules
         working-directory: src
         run: for f in public/*.js public/views/*.js; do node --input-type=module --check < "$f" || exit 1; done

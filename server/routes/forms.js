@@ -98,6 +98,14 @@ function loadForm(ctx, id) {
 }
 const formOut = (f, { values = true } = {}) => ({ ...f, fields: parseJson(f.fields_json, []), fields_json: undefined, values: values ? parseJson(decrypt(f.values_enc), {}) : undefined, values_enc: undefined });
 
+// An uploaded file's declared type is attacker-chosen. Echoing it back on download would let someone
+// store text/html on this origin and have the browser run it as a same-origin page, so only the types the
+// form library actually deals in are served; anything else is downloaded as opaque bytes.
+const SERVABLE_TYPES = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'text/plain',
+  'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']);
+function safeContentType(t) { return SERVABLE_TYPES.has(String(t || '').toLowerCase().split(';')[0].trim()) ? String(t).split(';')[0].trim() : 'application/octet-stream'; }
+
 module.exports = (r) => {
   // ---------- template library ----------
   r.get('/api/forms/templates', auth.requireAuth, auth.requirePerm('forms:read', 'forms:write', 'forms:manage'), (ctx) => {
@@ -141,7 +149,7 @@ module.exports = (r) => {
   });
   r.get('/api/forms/templates/:id/file', auth.requireAuth, auth.requirePerm('forms:read', 'forms:write', 'forms:manage'), (ctx) => {
     const t = db.one(`SELECT * FROM form_templates WHERE id=?`, ctx.params.id); if (!t || !t.file_b64) throw notFound('No file for this form');
-    ctx.res.writeHead(200, { 'Content-Type': t.content_type, 'Content-Disposition': `${ctx.query.get('inline') === '1' ? 'inline' : 'attachment'}; filename="${(t.filename || 'form').replace(/["\r\n]/g, '')}"` });
+    ctx.res.writeHead(200, { 'Content-Type': safeContentType(t.content_type), 'Content-Disposition': `${ctx.query.get('inline') === '1' ? 'inline' : 'attachment'}; filename="${(t.filename || 'form').replace(/["\r\n]/g, '')}"` });
     ctx.res.end(Buffer.from(t.file_b64, 'base64')); return null;
   });
   // A blank, printable version drawn from the field definitions (for forms uploaded without a file, or to hand-fill)
@@ -223,7 +231,7 @@ module.exports = (r) => {
   r.get('/api/forms/:id/files/:fid', auth.requireAuth, auth.requirePerm('forms:read', 'forms:write'), (ctx) => {
     const f = loadForm(ctx, ctx.params.id); const x = db.one(`SELECT * FROM client_form_files WHERE id=? AND client_form_id=?`, ctx.params.fid, f.id); if (!x) throw notFound();
     audit.log({ user: ctx.user, action: 'client_form.file.view', entity: 'client_form', entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { file_id: x.id } });
-    ctx.res.writeHead(200, { 'Content-Type': x.content_type, 'Content-Disposition': `${ctx.query.get('download') === '1' ? 'attachment' : 'inline'}; filename="${x.filename}"` }); ctx.res.end(Buffer.from(decrypt(x.data_enc), 'base64')); return null;
+    ctx.res.writeHead(200, { 'Content-Type': safeContentType(x.content_type), 'Content-Disposition': `${ctx.query.get('download') === '1' ? 'attachment' : 'inline'}; filename="${String(x.filename).replace(/["\r\n]/g, '')}"`, 'X-Content-Type-Options': 'nosniff' }); ctx.res.end(Buffer.from(decrypt(x.data_enc), 'base64')); return null;
   });
   r.delete('/api/forms/:id/files/:fid', auth.requireAuth, auth.requirePerm('forms:write'), (ctx) => {
     const f = loadForm(ctx, ctx.params.id); const x = db.one(`SELECT id FROM client_form_files WHERE id=? AND client_form_id=?`, ctx.params.fid, f.id); if (!x) throw notFound();

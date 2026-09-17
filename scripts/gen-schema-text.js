@@ -11,3 +11,13 @@ const dest = path.join(__dirname, '..', 'server', 'schema-text.js');
 const existing = fs.existsSync(dest) ? fs.readFileSync(dest, 'utf8') : '';
 if (existing !== out) { fs.writeFileSync(dest, out); console.log('[suds] regenerated server/schema-text.js'); }
 else console.log('[suds] server/schema-text.js already current');
+
+// The service worker's cache name must change with every release or phones keep serving the old shell
+// against a new API. It was a hand-edited literal; stamp it from package.json instead.
+const swPath = path.join(__dirname, '..', 'public', 'sw.js');
+if (fs.existsSync(swPath)) {
+  const version = require('../package.json').version;
+  const before = fs.readFileSync(swPath, 'utf8');
+  const after = before.replace(/(const VERSION = ')[^']*(')/, `$1suds-shell-${version}$2`);
+  if (after !== before) { fs.writeFileSync(swPath, after); console.log(`[suds] stamped public/sw.js with version ${version}`); }
+}

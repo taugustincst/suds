@@ -40,7 +40,9 @@ module.exports = (r) => {
   });
 
   r.post('/api/auth/password', (ctx) => {
-    if (!ctx.user) throw unauthorized();
+    // requireAuth, not a bare user check: a session that has not cleared its second factor has only
+    // half-proven who it belongs to, and must not be able to change the account's password.
+    auth.requireAuth(ctx);
     const { current_password, new_password } = validate(ctx.body, { current_password: { type: 'string', required: true, maxLen: 500 }, new_password: { type: 'string', required: true, maxLen: 500 } });
     const u = db.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
     if (!verifyPassword(current_password, u.password_hash)) { audit.log({ user: u, action: 'auth.password.change.failed', ip: ctx.ip, success: false }); throw unauthorized('Current password is incorrect'); }

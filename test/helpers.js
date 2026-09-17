@@ -2,6 +2,9 @@
 process.env.SUDS_ENV = 'test';
 process.env.SUDS_DB_PATH = ':memory:';
 process.env.SUDS_ADMIN_PASSWORD = 'AdminPassw0rd!x';
+// Mandatory two-factor is enforced for real (see the dedicated test); the rest of the suite opts out so
+// every other assertion is not about enrolment.
+process.env.MFA_REQUIRED_ROLES = '';
 const http = require('node:http');
 const db = require('../server/db');
 const { createHandler } = require('../server/app');

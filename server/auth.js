@@ -132,6 +132,11 @@ function requireAuth(ctx) {
   if (!ctx.user) throw unauthorized();
   if (ctx.session?.mfa_pending) throw new HttpError(401, 'MFA verification required', { mfaRequired: true });
   if (!ctx.path.startsWith('/api/auth/')) {
+    // Roles the county marks as requiring two-factor cannot reach anything until it is set up. This used to
+    // be advisory — the login response said so and nothing stopped the user from ignoring it.
+    if (policy().mfaRequiredRoles.includes(ctx.user.role) && !ctx.user.mfa_enabled) {
+      throw new HttpError(403, 'Two-step verification must be set up for your role before you can continue', { mfaSetupRequired: true });
+    }
     if (ctx.user.must_change_password) throw new HttpError(403, 'Password change required', { passwordChangeRequired: true });
     const age = ctx.user.password_changed_at ? (Date.now() - Date.parse(ctx.user.password_changed_at)) / 86400000 : Infinity;
     const maxAge = policy().passwordMaxAgeDays; if (age > maxAge) throw new HttpError(403, `Password is older than ${maxAge} days and must be changed`, { passwordChangeRequired: true });
