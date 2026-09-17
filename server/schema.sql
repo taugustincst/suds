@@ -205,6 +205,9 @@ CREATE TABLE IF NOT EXISTS calls (
   client_id TEXT REFERENCES clients(id) ON DELETE SET NULL,
   user_id TEXT NOT NULL REFERENCES users(id),
   direction TEXT NOT NULL CHECK (direction IN ('inbound','outbound')),
+  -- A phone call or a text message. Both are contacts with the same shape; only the wording,
+  -- the outcomes and whether minutes are worth recording differ.
+  method TEXT NOT NULL DEFAULT 'phone' CHECK (method IN ('phone','text')),
   started_at TEXT NOT NULL,
   duration_minutes INTEGER NOT NULL DEFAULT 0,
   contact_type TEXT NOT NULL DEFAULT 'client',

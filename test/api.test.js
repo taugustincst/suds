@@ -88,6 +88,40 @@ test('calls encrypt summary and phone', async () => {
   const g = await nav.get(`/api/calls/${r.data.id}`);
   assert.equal(g.data.row.summary, 'Confirmed appointment'); assert.equal(g.data.row.summary_enc, undefined);
 });
+test('a text message is logged as a contact in its own right', async () => {
+  const sent = await nav.post('/api/calls', { client_id: clientId, method: 'text', direction: 'outbound', started_at: '2026-09-02T11:00:00Z', duration_minutes: 1, phone: '555-0100', purpose: 'Appointment reminder', summary: 'Reminded about tomorrow at 9.' });
+  assert.equal(sent.status, 201);
+  const raw = H.db.one(`SELECT * FROM calls WHERE id=?`, sent.data.id);
+  assert.equal(raw.method, 'text');
+  assert.equal(raw.outcome, 'sent', 'a text with no outcome was simply sent — not "reached", which is a call word');
+  assert.ok(raw.summary_enc.startsWith('v1:'), 'what was said is encrypted like any other PHI');
+  assert.ok(!/Reminded about tomorrow/.test(JSON.stringify(H.db.all(`SELECT details FROM audit_log ORDER BY id DESC LIMIT 5`))), 'and never lands in the audit trail');
+
+  // The two outcome lists do not overlap, and neither one may be borrowed for the other.
+  assert.equal((await nav.post('/api/calls', { client_id: clientId, method: 'text', direction: 'outbound', started_at: '2026-09-02T11:05:00Z', outcome: 'voicemail' })).status, 400);
+  assert.equal((await nav.post('/api/calls', { client_id: clientId, direction: 'outbound', started_at: '2026-09-02T11:06:00Z', outcome: 'no_reply' })).status, 400);
+  assert.equal((await nav.put(`/api/calls/${sent.data.id}`, { outcome: 'busy' })).status, 400, 'editing cannot smuggle in a call outcome either');
+  assert.equal((await nav.put(`/api/calls/${sent.data.id}`, { outcome: 'replied' })).status, 200);
+
+  // Filtering separates the two, and a default post is still a phone call.
+  const call = await nav.post('/api/calls', { client_id: clientId, direction: 'outbound', started_at: '2026-09-02T11:10:00Z', outcome: 'voicemail' });
+  assert.equal(H.db.one(`SELECT method FROM calls WHERE id=?`, call.data.id).method, 'phone');
+  const texts = (await nav.get('/api/calls?method=text&limit=100')).data.rows;
+  assert.ok(texts.length >= 1 && texts.every(x => x.method === 'text'), 'the text filter returns only texts');
+  assert.ok((await nav.get('/api/calls?method=phone&limit=100')).data.rows.every(x => x.method === 'phone'));
+
+  // A reply counts as having reached the client, so the "no contact in 30 days" list does not accuse
+  // a worker of neglecting someone they are texting.
+  const fresh = (await nav.post('/api/clients', { first_name: 'Texty', last_name: 'Client' })).data.id;
+  await nav.post('/api/calls', { client_id: fresh, method: 'text', direction: 'inbound', started_at: new Date().toISOString(), outcome: 'replied', summary: 'On my way.' });
+  const row = (await nav.get('/api/clients?limit=100&status=all')).data.clients.find(c => c.id === fresh);
+  assert.ok(row.last_contact, 'the reply shows as the last contact');
+  // and a text that got no reply does not
+  const quiet = (await nav.post('/api/clients', { first_name: 'Quiet', last_name: 'Client' })).data.id;
+  await nav.post('/api/calls', { client_id: quiet, method: 'text', direction: 'outbound', started_at: new Date().toISOString(), outcome: 'no_reply' });
+  assert.ok(!(await nav.get('/api/clients?limit=100&status=all')).data.clients.find(c => c.id === quiet).last_contact, 'an unanswered text is not contact');
+});
+
 test('resources and referrals', async () => {
   const res = await nav.post('/api/resources', { name: 'County OTP', category: 'mat_otp', phone: '555-0199', accepts_medicaid: true });
   assert.equal(res.status, 201);

@@ -156,6 +156,17 @@ function seed({ actor, workers, clinician = null, supervisor, seedValue = 42 }) 
         db.run(`INSERT INTO calls(id,client_id,user_id,direction,started_at,duration_minutes,contact_type,contact_name_enc,purpose,outcome,crisis,follow_up_needed,follow_up_due,summary_enc) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, track('calls', uuid()), c.id, c.worker, rand() < 0.5 ? 'inbound' : 'outbound', d(Math.floor(rand() * 90), 9 + Math.floor(rand() * 8)), out === 'reached' ? 5 + Math.floor(rand() * 20) : 1, ct, ct === 'family' ? encrypt('Mother') : ct === 'provider' ? encrypt('OTP intake nurse') : null, pick(['Check-in', 'Appointment reminder', 'Referral follow-up', 'Benefits question', 'Housing update']), out, 0, out !== 'reached' ? 1 : 0, out !== 'reached' ? day(-1) : null, encrypt(out === 'reached' ? 'Talked through next steps; client will call back if anything changes.' : 'Left message asking client to call back.'));
         counts.calls++;
       }
+      // Text messages: the quickest contact a navigator makes, and the one most often left unlogged.
+      const ntx = 1 + Math.floor(rand() * 3);
+      for (let k = 0; k < ntx; k++) {
+        const outbound = rand() < 0.7;
+        const out = outbound ? pick(['replied', 'sent', 'no_reply']) : 'replied';
+        db.run(`INSERT INTO calls(id,client_id,user_id,method,direction,started_at,duration_minutes,contact_type,purpose,outcome,crisis,follow_up_needed,follow_up_due,summary_enc) VALUES(?,?,?,'text',?,?,?,?,?,?,?,?,?,?)`,
+          track('calls', uuid()), c.id, c.worker, outbound ? 'outbound' : 'inbound', d(Math.floor(rand() * 60), 8 + Math.floor(rand() * 10)), 1, 'client',
+          pick(['Appointment reminder', 'Checking in', 'Confirming a ride', 'Sent the clinic address']), out, 0, out === 'no_reply' ? 1 : 0, out === 'no_reply' ? day(-1) : null,
+          encrypt(outbound ? 'Reminded about tomorrow and offered a ride.' : 'Client said they are running late but will be there.'));
+        counts.calls++;
+      }
       // Referrals
       const nr = c.cstatus === 'waitlist' ? 1 : 2 + Math.floor(rand() * 2);
       for (let k = 0; k < nr; k++) {

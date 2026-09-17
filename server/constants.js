@@ -28,6 +28,10 @@ module.exports = {
   STAGES: ['precontemplation', 'contemplation', 'preparation', 'action', 'maintenance', 'relapse'],
   CALL_CONTACT_TYPES: ['client', 'family', 'provider', 'agency', 'hospital', 'law_enforcement', 'hotline', 'pharmacy', 'insurance', 'other'],
   CALL_OUTCOMES: ['reached', 'voicemail', 'no_answer', 'busy', 'wrong_number', 'disconnected', 'callback_scheduled', 'crisis_escalated'],
+  // A contact logged under calls is either a phone call or a text message; a text has its own outcomes,
+  // because "voicemail" and "busy" mean nothing to a text and "no reply" means nothing to a call.
+  CONTACT_METHODS: ['phone', 'text'],
+  TEXT_OUTCOMES: ['replied', 'sent', 'no_reply', 'undeliverable', 'wrong_number', 'opted_out'],
   TIME_CATEGORIES: ['direct_service', 'documentation', 'travel', 'care_coordination', 'outreach', 'meeting', 'training', 'supervision', 'admin', 'on_call'],
   RESOURCE_CATEGORIES: ['detox_withdrawal_mgmt', 'residential', 'inpatient', 'partial_hospitalization', 'intensive_outpatient', 'outpatient', 'mat_otp', 'mat_obot', 'sober_living', 'housing', 'shelter', 'mental_health', 'primary_care', 'harm_reduction', 'syringe_services', 'naloxone', 'crisis_line', 'transportation', 'employment', 'legal', 'food', 'benefits', 'peer_support', 'recovery_community', 'family_support', 'pregnancy_parenting', 'veterans', 'other'],
   REFERRAL_STATUSES: ['pending', 'contacted', 'accepted', 'waitlisted', 'scheduled', 'admitted', 'declined_by_client', 'declined_by_provider', 'no_show', 'completed', 'closed'],

@@ -172,6 +172,9 @@ const migrations = [
   //    for the rest of the day, because access was decided by date alone — not what a supervisor taking
   //    somebody off a case expects to happen.
   (d) => { addColumn(d, 'assignments', 'ended_at', 'TEXT'); },
+  // 9: a logged contact says whether it was a phone call or a text message. Everything already recorded
+  //    was a call, which is what the default says.
+  (d) => { addColumn(d, 'calls', 'method', `TEXT NOT NULL DEFAULT 'phone' CHECK (method IN ('phone','text'))`); },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

@@ -30,7 +30,7 @@ module.exports = (r) => {
   r.get('/api/caseload', auth.requireAuth, auth.requirePerm('clients:read'), (ctx) => {
     const uid = ctx.query.get('user_id') && auth.hasPerm(ctx.user, 'clients:all') ? ctx.query.get('user_id') : ctx.user.id;
     const rows = db.all(`SELECT a.role_on_case, c.id, c.client_code, c.status, c.risk_level, c.updated_at,
-        (SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome='reached')) AS last_contact,
+        (SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome IN ('reached','replied'))) AS last_contact,
         (SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.status IN ('open','in_progress') AND t.due_at < ?) AS overdue_tasks
       FROM assignments a JOIN clients c ON c.id=a.client_id WHERE a.user_id=? AND ${auth.activeAssignment('a.')} AND c.deleted_at IS NULL ORDER BY c.risk_level='critical' DESC, c.risk_level='high' DESC, last_contact ASC`, db.now(), uid);
     const M = require('../clients-model');

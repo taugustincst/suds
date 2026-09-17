@@ -3,10 +3,19 @@ import { h, route, get, post, put, del, state, form, modal, toast, table, badge,
 export async function openReferralForm(values, { clientId, clientDisplay, resourceId, onDone } = {}) {
   const C = state.constants; const isNew = !values;
   const res = (await get('/api/resources?limit=1000')).rows;
+  // A phone that has not synced yet has an empty directory, and a provider nobody has entered is not a
+  // reason to abandon the referral: the picker can add one without leaving this form.
+  const canAdd = can('resources:write');
+  const resourceLabel = (x) => `${x.name}${x.city ? ` — ${x.city}` : ''} (${fmt.label(x.category)})`;
+  const ADD = '__add_resource__';
   const consents = clientId || values?.client_id ? (await get(`/api/clients/${clientId || values.client_id}/consents`)).consents.filter(c => !c.revoked_at) : [];
   const f = form([
     { name: 'client_id', label: 'Client', type: 'client', required: true, value: clientId || values?.client_id, display: clientDisplay },
-    { name: 'resource_id', label: 'Resource / provider', type: 'select', required: true, value: resourceId || values?.resource_id, options: res.map(x => ({ value: x.id, label: `${x.name} (${fmt.label(x.category)})` })) },
+    { name: 'resource_id', label: 'Resource / provider', type: 'select', required: true, value: resourceId || values?.resource_id,
+      options: [...res.map(x => ({ value: x.id, label: resourceLabel(x) })), ...(canAdd ? [{ value: ADD, label: '＋ Add a provider that is not on this list…' }] : [])],
+      help: res.length ? null
+        : canAdd ? 'Your directory is empty — on a phone it fills up when you sync with the office. Choose "Add a provider" to enter this one now; it will sync back.'
+        : 'Your directory is empty. Sync with the office to download it, or ask someone who can edit the directory to add this provider.' },
     { name: 'referred_at', label: 'Referral date', type: 'datetime', required: true, value: values?.referred_at || new Date().toISOString() },
     { name: 'status', label: 'Status', type: 'select', options: C.REFERRAL_STATUSES, value: 'pending', noBlank: true, required: true }, { name: 'urgency', label: 'Urgency', type: 'select', options: ['routine', 'urgent', 'emergent'], value: 'routine', noBlank: true },
     { name: 'warm_handoff', label: 'Warm handoff', type: 'checkbox' }, { name: 'appointment_at', label: 'Appointment', type: 'datetime' }, { name: 'admitted_at', label: 'Admitted / started', type: 'datetime' },
@@ -28,6 +37,24 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
     }
     toast('Referral saved', 'ok'); m.close(); onDone && onDone();
   } });
+  // "Add a provider" is an option in the list rather than a button, because on a phone the list is where
+  // someone looks when the provider they want is not there.
+  const sel = f.inputs.resource_id;
+  let last = sel.value;
+  sel.addEventListener('change', async () => {
+    if (sel.value !== ADD) { last = sel.value; return; }
+    sel.value = last;
+    const { openResourceForm } = await import('./resources.js');
+    openResourceForm(null, async (id) => {
+      try {
+        const added = (await get(`/api/resources/${id}`)).row;
+        sel.insertBefore(h('option', { value: id }, resourceLabel(added)), sel.querySelector(`option[value="${ADD}"]`));
+      } catch { sel.insertBefore(h('option', { value: id }, 'New provider'), sel.querySelector(`option[value="${ADD}"]`)); }
+      sel.value = id; last = id;
+      sel.dispatchEvent(new Event('input', { bubbles: true }));
+      toast('Provider added — carry on with the referral', 'ok');
+    });
+  });
   const m = modal(isNew ? 'New referral' : 'Edit referral', f, { wide: true });
 }
 /** Close the loop: what happened, and were they admitted? This is what makes referrals reportable. */

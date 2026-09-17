@@ -6381,6 +6381,9 @@ CREATE TABLE IF NOT EXISTS calls (
   client_id TEXT REFERENCES clients(id) ON DELETE SET NULL,
   user_id TEXT NOT NULL REFERENCES users(id),
   direction TEXT NOT NULL CHECK (direction IN ('inbound','outbound')),
+  -- A phone call or a text message. Both are contacts with the same shape; only the wording,
+  -- the outcomes and whether minutes are worth recording differ.
+  method TEXT NOT NULL DEFAULT 'phone' CHECK (method IN ('phone','text')),
   started_at TEXT NOT NULL,
   duration_minutes INTEGER NOT NULL DEFAULT 0,
   contact_type TEXT NOT NULL DEFAULT 'client',
@@ -7288,6 +7291,11 @@ var require_db = __commonJS({
       //    somebody off a case expects to happen.
       (d) => {
         addColumn(d, "assignments", "ended_at", "TEXT");
+      },
+      // 9: a logged contact says whether it was a phone call or a text message. Everything already recorded
+      //    was a call, which is what the default says.
+      (d) => {
+        addColumn(d, "calls", "method", `TEXT NOT NULL DEFAULT 'phone' CHECK (method IN ('phone','text'))`);
       }
     ];
     function initialise(d, schemaText, dbPath) {
@@ -8189,6 +8197,10 @@ var require_constants = __commonJS({
       STAGES: ["precontemplation", "contemplation", "preparation", "action", "maintenance", "relapse"],
       CALL_CONTACT_TYPES: ["client", "family", "provider", "agency", "hospital", "law_enforcement", "hotline", "pharmacy", "insurance", "other"],
       CALL_OUTCOMES: ["reached", "voicemail", "no_answer", "busy", "wrong_number", "disconnected", "callback_scheduled", "crisis_escalated"],
+      // A contact logged under calls is either a phone call or a text message; a text has its own outcomes,
+      // because "voicemail" and "busy" mean nothing to a text and "no reply" means nothing to a call.
+      CONTACT_METHODS: ["phone", "text"],
+      TEXT_OUTCOMES: ["replied", "sent", "no_reply", "undeliverable", "wrong_number", "opted_out"],
       TIME_CATEGORIES: ["direct_service", "documentation", "travel", "care_coordination", "outreach", "meeting", "training", "supervision", "admin", "on_call"],
       RESOURCE_CATEGORIES: ["detox_withdrawal_mgmt", "residential", "inpatient", "partial_hospitalization", "intensive_outpatient", "outpatient", "mat_otp", "mat_obot", "sober_living", "housing", "shelter", "mental_health", "primary_care", "harm_reduction", "syringe_services", "naloxone", "crisis_line", "transportation", "employment", "legal", "food", "benefits", "peer_support", "recovery_community", "family_support", "pregnancy_parenting", "veterans", "other"],
       REFERRAL_STATUSES: ["pending", "contacted", "accepted", "waitlisted", "scheduled", "admitted", "declined_by_client", "declined_by_provider", "no_show", "completed", "closed"],
@@ -9846,6 +9858,28 @@ var require_demo = __commonJS({
             db3.run(`INSERT INTO calls(id,client_id,user_id,direction,started_at,duration_minutes,contact_type,contact_name_enc,purpose,outcome,crisis,follow_up_needed,follow_up_due,summary_enc) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, track("calls", uuid2()), c.id, c.worker, rand() < 0.5 ? "inbound" : "outbound", d(Math.floor(rand() * 90), 9 + Math.floor(rand() * 8)), out2 === "reached" ? 5 + Math.floor(rand() * 20) : 1, ct, ct === "family" ? encrypt3("Mother") : ct === "provider" ? encrypt3("OTP intake nurse") : null, pick(["Check-in", "Appointment reminder", "Referral follow-up", "Benefits question", "Housing update"]), out2, 0, out2 !== "reached" ? 1 : 0, out2 !== "reached" ? day(-1) : null, encrypt3(out2 === "reached" ? "Talked through next steps; client will call back if anything changes." : "Left message asking client to call back."));
             counts.calls++;
           }
+          const ntx = 1 + Math.floor(rand() * 3);
+          for (let k = 0; k < ntx; k++) {
+            const outbound = rand() < 0.7;
+            const out2 = outbound ? pick(["replied", "sent", "no_reply"]) : "replied";
+            db3.run(
+              `INSERT INTO calls(id,client_id,user_id,method,direction,started_at,duration_minutes,contact_type,purpose,outcome,crisis,follow_up_needed,follow_up_due,summary_enc) VALUES(?,?,?,'text',?,?,?,?,?,?,?,?,?,?)`,
+              track("calls", uuid2()),
+              c.id,
+              c.worker,
+              outbound ? "outbound" : "inbound",
+              d(Math.floor(rand() * 60), 8 + Math.floor(rand() * 10)),
+              1,
+              "client",
+              pick(["Appointment reminder", "Checking in", "Confirming a ride", "Sent the clinic address"]),
+              out2,
+              0,
+              out2 === "no_reply" ? 1 : 0,
+              out2 === "no_reply" ? day(-1) : null,
+              encrypt3(outbound ? "Reminded about tomorrow and offered a ride." : "Client said they are running late but will be there.")
+            );
+            counts.calls++;
+          }
           const nr = c.cstatus === "waitlist" ? 1 : 2 + Math.floor(rand() * 2);
           for (let k = 0; k < nr; k++) {
             const rid = rids[(i * 3 + k * 5) % rids.length];
@@ -10645,7 +10679,7 @@ var require_assignments = __commonJS({
       r.get("/api/caseload", auth3.requireAuth, auth3.requirePerm("clients:read"), (ctx) => {
         const uid = ctx.query.get("user_id") && auth3.hasPerm(ctx.user, "clients:all") ? ctx.query.get("user_id") : ctx.user.id;
         const rows = db3.all(`SELECT a.role_on_case, c.id, c.client_code, c.status, c.risk_level, c.updated_at,
-        (SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome='reached')) AS last_contact,
+        (SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome IN ('reached','replied'))) AS last_contact,
         (SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.status IN ('open','in_progress') AND t.due_at < ?) AS overdue_tasks
       FROM assignments a JOIN clients c ON c.id=a.client_id WHERE a.user_id=? AND ${auth3.activeAssignment("a.")} AND c.deleted_at IS NULL ORDER BY c.risk_level='critical' DESC, c.risk_level='high' DESC, last_contact ASC`, db3.now(), uid);
         const M = require_clients_model();
@@ -11057,6 +11091,7 @@ var require_calls = __commonJS({
     var crud = require_crud();
     var C = require_constants();
     var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
+    var { badRequest } = require_http();
     module.exports = (r) => {
       crud.build(r, {
         table: "calls",
@@ -11071,13 +11106,14 @@ var require_calls = __commonJS({
           client_id: { type: "string" },
           user_id: { type: "string" },
           direction: { type: "string", required: true, enum: ["inbound", "outbound"] },
+          method: { type: "string", enum: C.CONTACT_METHODS },
           started_at: { type: "datetime", required: true },
           duration_minutes: { type: "number", integer: true, min: 0, max: 1440 },
           contact_type: { type: "string", enum: C.CALL_CONTACT_TYPES },
           contact_name: { type: "string", maxLen: 120 },
           phone: { type: "string", maxLen: 40 },
           purpose: { type: "string", maxLen: 300 },
-          outcome: { type: "string", enum: C.CALL_OUTCOMES },
+          outcome: { type: "string", enum: [...C.CALL_OUTCOMES, ...C.TEXT_OUTCOMES] },
           crisis: { type: "boolean" },
           follow_up_needed: { type: "boolean" },
           follow_up_due: { type: "date" },
@@ -11085,12 +11121,26 @@ var require_calls = __commonJS({
           log_time: { type: "boolean" }
         },
         filters: (ctx, where, params) => {
+          const method = ctx.query.get("method");
+          if (C.CONTACT_METHODS.includes(method)) {
+            where.push("calls.method=?");
+            params.push(method);
+          }
           if (ctx.query.get("crisis") === "1") where.push("calls.crisis=1");
           if (ctx.query.get("follow_up") === "1") where.push("calls.follow_up_needed=1");
         },
-        beforeInsert: (ctx, v) => encAll(v),
-        beforeUpdate: (ctx, v) => encAll(v),
+        beforeInsert: (ctx, v) => {
+          const method = v.method || "phone";
+          if (method === "text" && !v.outcome) v.outcome = "sent";
+          checkOutcome(v, method);
+          encAll(v);
+        },
+        beforeUpdate: (ctx, v, row) => {
+          checkOutcome(v, v.method || row.method || "phone");
+          encAll(v);
+        },
         afterInsert: (ctx, row) => {
+          const what = row.method === "text" ? "text message" : "call";
           if (row._log_time && row.duration_minutes > 0) db3.run(
             `INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,call_id,description) VALUES(?,?,?,?,?,?,?,?)`,
             uuid2(),
@@ -11100,7 +11150,7 @@ var require_calls = __commonJS({
             row.duration_minutes,
             "direct_service",
             row.id,
-            `${row.direction} call`
+            `${row.direction} ${what}`
           );
           if (row.follow_up_needed && row.follow_up_due) db3.run(
             `INSERT INTO tasks(id,client_id,assigned_to,created_by,title,due_at,priority) VALUES(?,?,?,?,?,?,?)`,
@@ -11108,7 +11158,7 @@ var require_calls = __commonJS({
             row.client_id || null,
             row.user_id,
             ctx.user.id,
-            `Call back: ${row.purpose || row.contact_type}`,
+            `${row.method === "text" ? "Text back" : "Call back"}: ${row.purpose || row.contact_type}`,
             row.follow_up_due,
             row.crisis ? "urgent" : "normal"
           );
@@ -11116,6 +11166,11 @@ var require_calls = __commonJS({
         afterLoad: (ctx, x) => ({ ...x, contact_name: x.contact_name_enc ? decrypt3(x.contact_name_enc) : null, phone: x.phone_enc ? decrypt3(x.phone_enc) : null, summary: x.summary_enc ? decrypt3(x.summary_enc) : null, contact_name_enc: void 0, phone_enc: void 0, summary_enc: void 0 }),
         canEdit: crud.ownerOrManager()
       });
+      function checkOutcome(v, method) {
+        if (v.outcome === void 0 || v.outcome === null) return;
+        const allowed = method === "text" ? C.TEXT_OUTCOMES : C.CALL_OUTCOMES;
+        if (!allowed.includes(v.outcome)) throw badRequest(`"${v.outcome}" is not an outcome for a ${method === "text" ? "text message" : "phone call"}. Choose one of: ${allowed.join(", ")}`);
+      }
       function encAll(v) {
         for (const f of ["contact_name", "phone", "summary"]) if (v[f] !== void 0) {
           v[`${f}_enc`] = v[f] === null ? null : encrypt3(v[f]);
@@ -11246,7 +11301,7 @@ var require_clients = __commonJS({
         }
         const w = "WHERE " + where.join(" AND ");
         const rows = db3.all(`SELECT c.*, (SELECT GROUP_CONCAT(u.display_name, ', ') FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=c.id AND ${auth3.activeAssignment("a.")}) AS assigned_workers,
-      (SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome='reached')) AS last_contact
+      (SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome IN ('reached','replied'))) AS last_contact
       FROM clients c ${w} ORDER BY c.updated_at DESC LIMIT ? OFFSET ?`, ...params, limit2, offset);
         const total = db3.one(`SELECT COUNT(*) n FROM clients c ${w}`, ...params).n;
         audit3.log({ user: ctx.user, action: "client.list", ip: ctx.ip, details: { q: q ? "[redacted]" : "", status, count: rows.length, deidentified: deidentify } });
@@ -11406,7 +11461,7 @@ var require_clients = __commonJS({
         for (const x of db3.all(`SELECT i.*, u.display_name AS worker FROM interventions i JOIN users u ON u.id=i.user_id WHERE client_id=? ${cut("i.occurred_at")} ORDER BY i.occurred_at DESC LIMIT ?`, id, ...cutP, per))
           events.push({ kind: "intervention", id: x.id, at: x.occurred_at, title: x.type.replace(/_/g, " "), detail: x.summary_enc ? decrypt3(x.summary_enc) : null, worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, location: x.location } });
         for (const x of db3.all(`SELECT c.*, u.display_name AS worker FROM calls c JOIN users u ON u.id=c.user_id WHERE client_id=? ${cut("c.started_at")} ORDER BY c.started_at DESC LIMIT ?`, id, ...cutP, per))
-          events.push({ kind: "call", id: x.id, at: x.started_at, title: `${x.direction} call (${x.contact_type})`, detail: x.summary_enc ? decrypt3(x.summary_enc) : x.purpose, worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, crisis: !!x.crisis } });
+          events.push({ kind: "call", id: x.id, at: x.started_at, title: `${x.direction} ${x.method === "text" ? "text message" : "call"} (${x.contact_type})`, detail: x.summary_enc ? decrypt3(x.summary_enc) : x.purpose, worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, crisis: !!x.crisis } });
         for (const x of db3.all(`SELECT n.id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.source,u.display_name AS worker FROM notes n JOIN users u ON u.id=n.author_id WHERE client_id=? AND deleted_at IS NULL ${cut("n.occurred_at")} ORDER BY n.occurred_at DESC LIMIT ?`, id, ...cutP, per))
           if (x.kind === "admin" || canClinical) events.push({ kind: "note", id: x.id, at: x.occurred_at, title: `${x.kind} note: ${x.title_enc ? decrypt3(x.title_enc) : x.format}`, detail: null, worker: x.worker, meta: { status: x.status, note_kind: x.kind, source: x.source } });
         for (const x of db3.all(`SELECT r.*, res.name AS resource_name, u.display_name AS worker FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN users u ON u.id=r.user_id WHERE client_id=? ${cut("r.referred_at")} ORDER BY r.referred_at DESC LIMIT ?`, id, ...cutP, per))
@@ -17881,7 +17936,7 @@ var require_reports = __commonJS({
             waitlist: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='waitlist' AND {CF}`).n,
             new_in_range: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND intake_date BETWEEN ? AND ? AND {CF}`, from, to).n,
             high_risk: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND risk_level IN ('high','critical') AND {CF}`).n,
-            no_contact_30d: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} AND NOT EXISTS (SELECT 1 FROM interventions i WHERE i.client_id=c.id AND i.occurred_at >= ?) AND NOT EXISTS (SELECT 1 FROM calls ca WHERE ca.client_id=c.id AND ca.outcome='reached' AND ca.started_at >= ?)`, new Date(Date.now() - 30 * 864e5).toISOString(), new Date(Date.now() - 30 * 864e5).toISOString()).n,
+            no_contact_30d: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} AND NOT EXISTS (SELECT 1 FROM interventions i WHERE i.client_id=c.id AND i.occurred_at >= ?) AND NOT EXISTS (SELECT 1 FROM calls ca WHERE ca.client_id=c.id AND ca.outcome IN ('reached','replied') AND ca.started_at >= ?)`, new Date(Date.now() - 30 * 864e5).toISOString(), new Date(Date.now() - 30 * 864e5).toISOString()).n,
             by_status: scoped(`SELECT status, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND {CF} GROUP BY status`),
             by_substance: scoped(`SELECT COALESCE(primary_substance,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k ORDER BY n DESC`),
             mat: scoped(`SELECT COALESCE(mat_status,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k`)
@@ -17900,7 +17955,9 @@ var require_reports = __commonJS({
             minutes: db3.one(`SELECT COALESCE(SUM(duration_minutes),0) n FROM calls WHERE started_at BETWEEN ? AND ?`, from, toEnd).n,
             crisis: db3.one(`SELECT COUNT(*) n FROM calls WHERE crisis=1 AND started_at BETWEEN ? AND ?`, from, toEnd).n,
             by_outcome: db3.all(`SELECT outcome k, COUNT(*) n FROM calls WHERE started_at BETWEEN ? AND ? GROUP BY outcome ORDER BY n DESC`, from, toEnd),
-            by_direction: db3.all(`SELECT direction k, COUNT(*) n FROM calls WHERE started_at BETWEEN ? AND ? GROUP BY direction`, from, toEnd)
+            by_direction: db3.all(`SELECT direction k, COUNT(*) n FROM calls WHERE started_at BETWEEN ? AND ? GROUP BY direction`, from, toEnd),
+            // Texts are logged alongside calls, so say how the total splits rather than reporting them as calls.
+            texts: db3.one(`SELECT COUNT(*) n FROM calls WHERE method='text' AND started_at BETWEEN ? AND ?`, from, toEnd).n
           },
           referrals: {
             total: db3.one(`SELECT COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE r.referred_at BETWEEN ? AND ? AND ${cf.sql}`, from, toEnd, ...cf.params).n,
