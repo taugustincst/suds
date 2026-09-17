@@ -1,4 +1,4 @@
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, confirmDialog, nav, kv, prefs, emptyState } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, confirmDialog, nav, kv, prefs, emptyState, clear, downloadCsv } from '../app.js';
 
 const tagOpts = (list) => list.map(t => ({ value: t, label: fmt.label(t) }));
 // Comma-separated tag fields are edited as a checkbox grid
@@ -43,6 +43,55 @@ const tagBadges = (csv, kind = '') => String(csv || '').split(',').filter(Boolea
 const stale = x => !x.last_verified_at || Date.now() - Date.parse(x.last_verified_at) > 180 * 86400000;
 const siteHref = w => w ? (w.startsWith('http') ? w : 'https://' + w) : null;
 
+// Starter directory for a whole region: load real programs in one click instead of typing the directory.
+async function regionCard(refresh) {
+  if (!can('resources:write')) return null;
+  let data; try { data = await get('/api/regions', { quiet: true }); } catch { return null; }
+  const box = h('div', {});
+  const draw = (regions) => {
+    clear(box);
+    for (const rg of regions) {
+      const busy = h('div', { class: 'small muted' });
+      const load = async () => {
+        busy.textContent = `Adding ${rg.provider_count} programs…`;
+        const out = await post(`/api/regions/${rg.id}/load`, {});
+        toast(`${out.added} programs added, ${out.enriched} filled in`, 'ok');
+        busy.textContent = ''; refresh();
+      };
+      const downloadPictures = async () => {
+        const { pending } = await get(`/api/regions/${rg.id}/pictures`);
+        if (!pending.length) { toast('Every program already has a picture from its own website', 'ok'); return; }
+        let done = 0, ok = 0; const failures = [];
+        for (let i = 0; i < pending.length; i += 5) {
+          const batch = pending.slice(i, i + 5);
+          busy.textContent = `Downloading pictures from provider websites… ${done} of ${pending.length}`;
+          try { const res = await post(`/api/regions/${rg.id}/pictures`, { keys: batch.map(p => p.key) });
+            for (const x of res.results) { if (x.ok) ok++; else failures.push(`${x.name}: ${x.error}`); }
+          } catch (e) { failures.push(e.message); }
+          done += batch.length;
+        }
+        busy.textContent = ok ? `${ok} picture${ok === 1 ? '' : 's'} downloaded.${failures.length ? ` ${failures.length} could not be fetched (the generated card stays).` : ''}` : `No pictures could be downloaded. ${failures[0] || ''} Programs keep their generated cards.`;
+        if (ok) { toast(`${ok} provider pictures downloaded`, 'ok'); refresh(); }
+      };
+      const remove = async () => {
+        if (!await confirmDialog('Remove starter directory', `Remove the ${rg.name} programs that nobody has used or verified? Programs with referrals, or ones you marked verified, are kept and simply hidden from the pickers.`, { danger: true, okText: 'Remove' })) return;
+        const out = await del(`/api/regions/${rg.id}`); toast(`${out.removed} removed, ${out.kept} kept`, 'ok'); refresh();
+      };
+      box.append(h('div', { class: 'card region-card', 'data-region': rg.id },
+        h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, rg.name, ' starter directory'), h('div', { class: 'small muted' }, rg.counties.join(' · '))),
+          rg.loaded ? badge(`${rg.present} loaded`, 'ok') : badge(`${rg.provider_count} programs`, 'info')),
+        h('p', { class: 'small' }, rg.description),
+        rg.loaded ? [
+          rg.unverified ? h('div', { class: 'banner warn small' }, h('b', {}, `${rg.unverified} of these still need checking. `), 'Open each program, call to confirm the address, phone number and intake, then press "Verified today".') : h('div', { class: 'banner small' }, 'Every imported program has been verified by your staff.'),
+          h('div', { class: 'btn-row' }, h('button', { class: 'btn', onClick: load }, 'Check for updates'), h('button', { class: 'btn', onClick: downloadPictures }, 'Download provider pictures'), h('button', { class: 'btn danger ghost sm', onClick: remove }, 'Remove'), busy)]
+        : [h('p', { class: 'small muted' }, rg.sources_note),
+          h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', onClick: load }, `Add ${rg.provider_count} programs`), busy)]));
+    }
+  };
+  draw(data.regions);
+  return box;
+}
+
 route('resources', async (r) => {
   const q = r.query.get('q') || '', cat = r.query.get('category') || '', inactive = r.query.get('inactive') === '1', tag = r.query.get('tag') || '';
   const view = r.query.get('view') || prefs.get('resources_view') || 'cards';
@@ -75,6 +124,7 @@ route('resources', async (r) => {
     h('div', { class: 'filters' }, h('div', { class: 'field grow' }, h('label', {}, 'Search'), search), h('div', { class: 'field' }, h('label', {}, 'Category'), catSel), h('div', { class: 'field' }, h('label', {}, 'Service'), tagSel),
       h('button', { class: 'btn', onClick: () => nav(link({ q: search.value })) }, 'Search'), h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: inactive, onChange: e => nav(link({ inactive: e.target.checked })) }), 'Show inactive'),
       h('div', { class: 'seg' }, h('button', { class: view === 'cards' ? 'active' : '', onClick: () => setView('cards'), title: 'Cards' }, '▦'), h('button', { class: view === 'list' ? 'active' : '', onClick: () => setView('list'), title: 'List' }, '☰'))),
+    await regionCard(refresh),
     h('div', { class: 'muted small mb' }, `${rows.length} of ${data.total} resources`),
     view === 'list' ? list() : cards());
 });
