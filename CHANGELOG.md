@@ -59,6 +59,21 @@ data model had no process around.
   recorded as a service with no client attached.
 - Race and ethnicity are recorded as codes a funder can count, alongside the free-text field.
 
+### Contacts, referrals and the phone
+
+- **Text messages are logged like calls.** + Log offers **Text message**, and a client's page has a
+  **+ Text** button. A text has its own outcomes — replied, sent, no reply, undeliverable, wrong number,
+  opted out — so "voicemail" and "busy" no longer stand in for them, and the two sets cannot be mixed up.
+  A reply counts as having reached the client (an unanswered text does not), so texting somebody no longer
+  leaves them on the *no contact in 30 days* list. What was said is encrypted like any other PHI, and the
+  form says plainly that texting a client about treatment is itself a disclosure if someone else can read
+  their phone.
+- **A referral is no longer blocked by an empty directory.** On a phone that has not synced yet, the
+  provider list was empty, offered only "—", and had nothing to type into. It now offers adding a provider
+  without leaving the referral, and says why the list is empty.
+- **The floating "+ Log" button no longer covers the last control on a phone screen**, and a long value can
+  no longer push a page wider than the phone — which put buttons out of reach entirely.
+
 ### Working with client records
 
 - **Entering the same person twice is caught.** A matching surname and date of birth, phone number or full
@@ -77,6 +92,19 @@ data model had no process around.
 
 ### Under the hood
 
+- **The audit chain is keyed.** It is an HMAC over the previous entry rather than a plain hash, so somebody
+  who can write to the database cannot recompute a chain that covers their changes. Entries written by
+  earlier versions still verify, and the whole chain is checked daily.
+- **The database is snapshotted before a migration runs** (`data/pre-migration/`, last five kept). A
+  migration is the one operation a county cannot retry, and if the snapshot cannot be written the upgrade
+  stops rather than proceeding unprotected.
+- **Ending an assignment now takes effect at once.** Access was decided by date alone, so a worker a
+  supervisor had just taken off a case kept the client until midnight.
+- **Local mode in a plain browser says what it is.** Without a Keystore or Keychain it keeps its encryption
+  keys in that browser profile beside the data, so the Sync screen and the documentation now say so: it is
+  for trying SUDS out, not for real client information.
+- Downloading pictures for a whole region is bounded by one time budget, so a slow provider website cannot
+  outlive the request.
 - Signing in no longer blocks every other request while the password is hashed.
 - Pictures are served as cacheable images instead of base64 inside list responses, sync is paged and
   chunked, attachments travel separately, and the tables sync reads are indexed — a first sync used to be a
