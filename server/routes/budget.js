@@ -78,7 +78,7 @@ module.exports = (r) => {
     },
     filters: (ctx, where, params) => {
       const f = ctx.query.get('fund'); if (f) { where.push('expenditures.funding_source_id=?'); params.push(f); }
-      const s = ctx.query.get('status'); if (s) { where.push('expenditures.status=?'); params.push(s); }
+      const s = ctx.query.get('status'); if (s && s !== 'all') { where.push('expenditures.status=?'); params.push(s); }
     },
     beforeInsert: (ctx, v) => {
       const f = db.one(`SELECT * FROM funding_sources WHERE id=? AND is_active=1`, v.funding_source_id); if (!f) throw badRequest('Unknown or inactive funding source');

@@ -6088,7 +6088,7 @@ var require_config = __commonJS({
       return import_buffer.Buffer.from(hex, "hex");
     }
     var config = {
-      version: true ? "1.5.0" : "local",
+      version: true ? "1.6.0" : "local",
       env: "local",
       isProd: true,
       isTest: false,
@@ -8876,7 +8876,7 @@ var require_validate = __commonJS({
               errors[k] = "must be an ISO datetime";
               continue;
             }
-            v = new Date(v).toISOString();
+            v = /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : new Date(v).toISOString();
             break;
           case "object":
             if (typeof v !== "object") {
@@ -9605,7 +9605,7 @@ var require_budget = __commonJS({
             params.push(f);
           }
           const s = ctx.query.get("status");
-          if (s) {
+          if (s && s !== "all") {
             where.push("expenditures.status=?");
             params.push(s);
           }
@@ -11681,8 +11681,7 @@ var require_me = __commonJS({
           d.client_name = c ? M.summary(c).display_name : d.client_code;
         }
         const staged = db3.one(`SELECT COUNT(*) n FROM import_items x JOIN imports i ON i.id=x.import_id WHERE x.status='staged' AND (i.imported_by=? OR i.imported_by IS NULL)`, uid).n;
-        const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-        const dueToday = db3.all(`SELECT t.id, t.title, t.due_at, t.priority, t.client_id, c.client_code FROM tasks t LEFT JOIN clients c ON c.id=t.client_id WHERE t.assigned_to=? AND t.status IN ('open','in_progress') AND substr(t.due_at,1,10) <= ? ORDER BY t.due_at LIMIT 10`, uid, today);
+        const dueToday = db3.all(`SELECT t.id, t.title, t.due_at, t.priority, t.client_id, c.client_code FROM tasks t LEFT JOIN clients c ON c.id=t.client_id WHERE t.assigned_to=? AND t.status IN ('open','in_progress') AND substr(t.due_at,1,10) <= date('now','localtime') ORDER BY t.due_at LIMIT 10`, uid);
         for (const t of dueToday) {
           if (t.client_id) {
             const c = db3.one(`SELECT * FROM clients WHERE id=?`, t.client_id);
@@ -11925,7 +11924,7 @@ var require_referrals = __commonJS({
         },
         filters: (ctx, where, params) => {
           const s = ctx.query.get("status");
-          if (s) {
+          if (s && s !== "all") {
             where.push("referrals.status=?");
             params.push(s);
           }
@@ -15583,7 +15582,7 @@ var require_reports = __commonJS({
           },
           tasks: {
             open: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (assigned_to=? OR ?)`, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n,
-            overdue: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND due_at < ? AND (assigned_to=? OR ?)`, db3.now(), ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n,
+            overdue: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (CASE WHEN length(due_at)=10 THEN due_at < date('now','localtime') ELSE due_at < ? END) AND (assigned_to=? OR ?)`, db3.now(), ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n,
             due_today: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND substr(due_at,1,10)=? AND (assigned_to=? OR ?)`, today, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n
           },
           time: auth3.hasPerm(ctx.user, "time:read") || auth3.hasPerm(ctx.user, "time:write") ? {
@@ -16143,12 +16142,12 @@ var require_tasks = __commonJS({
         filters: (ctx, where, params) => {
           const s = ctx.query.get("status");
           if (s === "open") where.push(`tasks.status IN ('open','in_progress')`);
-          else if (s) {
+          else if (s && s !== "all") {
             where.push("tasks.status=?");
             params.push(s);
           }
           if (ctx.query.get("overdue") === "1") {
-            where.push(`tasks.status IN ('open','in_progress') AND tasks.due_at < ?`);
+            where.push(`tasks.status IN ('open','in_progress') AND (CASE WHEN length(tasks.due_at)=10 THEN tasks.due_at < date('now','localtime') ELSE tasks.due_at < ? END)`);
             params.push(db3.now());
           }
           if (ctx.query.get("milestones") === "1") where.push("tasks.is_milestone=1");

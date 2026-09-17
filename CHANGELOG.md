@@ -2,6 +2,15 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## 1.6.1 — 2026-09-17
+
+### One record, one date, everywhere
+- A reminder due on a calendar day (for example a follow-up from a call) showed as that day at noon on the client timeline but as the evening before on the To-do list and Home. Every screen now reads dates through one rule: a bare day is a day in your time zone, a timestamp is an instant, and something is "overdue" only after the day has ended. The server applies the same rule to overdue counts and to what Home lists as due today, and no longer turns a chosen day into midnight UTC when saving.
+- The timeline shows task and note titles exactly as typed instead of re-capitalising them.
+- Choosing **All** in the To-do list status filter returned nothing; it now lists everything (the same fix covers the expenditure and referral filters).
+- On phones, list tables (to-do, referrals, calls, visits, time, spending) become stacked cards with a label on each value instead of seven columns squeezed into the screen width.
+- The offline app shell now includes the Forms, Import and Sync screens.
+
 ## 1.6.0 — 2026-09-17
 
 ### Sacramento region starter directory

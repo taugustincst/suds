@@ -85,14 +85,19 @@ export function confirmDialog(title, message, { danger = false, okText = 'Confir
 
 // ---------- formatting ----------
 export const fmt = {
-  date: (s) => s ? new Date(s.length === 10 ? s + 'T12:00:00' : s).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—',
-  dt: (s) => s ? new Date(s).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—',
-  time: (s) => s ? new Date(s).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '',
+  // A value like 2026-09-26 is a calendar day, not an instant: parse it as local midnight so it never drifts to the day before.
+  isDateOnly: (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s),
+  parse: (s) => { if (!s) return null; if (fmt.isDateOnly(s)) { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); } const d = new Date(s); return isNaN(d) ? null : d; },
+  date: (s) => { const d = fmt.parse(s); return d ? d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'; },
+  dt: (s) => { const d = fmt.parse(s); if (!d) return '—'; return fmt.isDateOnly(s) ? d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); },
+  time: (s) => { const d = fmt.parse(s); return d && !fmt.isDateOnly(s) ? d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : ''; },
+  // Past due? A calendar-day deadline is only late once that whole local day has ended.
+  isPast: (s) => { const d = fmt.parse(s); if (!d) return false; if (fmt.isDateOnly(s)) d.setHours(23, 59, 59, 999); return d.getTime() < Date.now(); },
   money: (n) => (n === null || n === undefined) ? '—' : Number(n).toLocaleString(undefined, { style: 'currency', currency: 'USD' }),
   num: (n) => Number(n || 0).toLocaleString(),
   mins: (m) => { m = Number(m || 0); const hh = Math.floor(m / 60), mm = m % 60; return hh ? `${hh}h ${mm}m` : `${mm}m`; },
   label: (s) => s ? String(s).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).replace(/\bSbirt\b/, 'SBIRT').replace(/\bMat\b/g, 'MAT').replace(/\bOtp\b/, 'OTP').replace(/\bObot\b/, 'OBOT').replace(/\bEd\b/, 'ED').replace(/\bMh\b/, 'MH').replace(/\bRx\b/, 'Rx').replace(/\bIds\b/, 'IDs') : '—',
-  ago: (s) => { if (!s) return 'never'; const d = (Date.now() - Date.parse(s)) / 86400000; if (d < 1) return 'today'; if (d < 2) return 'yesterday'; return `${Math.floor(d)}d ago`; },
+  ago: (s) => { const p = fmt.parse(s); if (!p) return 'never'; const d = (Date.now() - p.getTime()) / 86400000; if (d < 1) return 'today'; if (d < 2) return 'yesterday'; return `${Math.floor(d)}d ago`; },
   isoLocal: (d = new Date()) => { const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; },
   today: () => { const d = new Date(); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; },
 };
@@ -197,7 +202,7 @@ export function clientPicker(name, value, f = {}) {
 export function table(columns, rows, { onRow, empty = 'No records', wrap = true } = {}) {
   if (!rows.length) return h('div', { class: 'empty' }, empty);
   const t = h('table', {}, h('thead', {}, h('tr', {}, columns.map(c => h('th', { class: c.num ? 'num' : '' }, c.label)))),
-    h('tbody', {}, rows.map(r => h('tr', { class: onRow ? 'click' : '', onClick: onRow ? () => onRow(r) : null }, columns.map(c => h('td', { class: c.num ? 'num' : '' }, c.render ? c.render(r) : (r[c.key] ?? '—')))))));
+    h('tbody', {}, rows.map(r => h('tr', { class: onRow ? 'click' : '', onClick: onRow ? () => onRow(r) : null }, columns.map(c => h('td', { class: c.num ? 'num' : '', 'data-label': c.label || '' }, c.render ? c.render(r) : (r[c.key] ?? '—')))))));
   return wrap ? h('div', { class: 'table-wrap' }, t) : t;
 }
 export function bars(items, { max, valueKey = 'n', labelKey = 'k', format = fmt.num, link = null } = {}) {

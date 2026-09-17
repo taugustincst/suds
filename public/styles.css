@@ -209,3 +209,17 @@ a.bar.link:hover .lbl { color: var(--primary); text-decoration: underline; } a.b
 .ff input.sig { font-family: 'Segoe Script', 'Brush Script MT', cursive; font-size: 1.15rem; } .ff input:disabled, .ff textarea:disabled, .ff select:disabled { background: var(--panel-2); color: var(--text); opacity: .9; }
 .ff-modal { max-width: 900px; } .btn.ok { background: var(--ok); color: #fff; border-color: var(--ok); }
 @media (max-width: 640px) { .dfield { flex-wrap: wrap; } .dfield .row.small { flex-wrap: wrap; } }
+
+/* phones: tables become stacked cards, one row per record, each cell labelled */
+@media (max-width: 640px) {
+  .table-wrap { border: 0; }
+  table.cards, .table-wrap table { display: block; }
+  .table-wrap thead { display: none; }
+  .table-wrap tbody { display: block; }
+  .table-wrap tr { display: block; border: 1px solid var(--border); border-radius: 10px; margin-bottom: .6rem; padding: .35rem .6rem; background: var(--panel); }
+  .table-wrap tr.click { cursor: pointer; }
+  .table-wrap td { display: flex; gap: .6rem; align-items: baseline; border: 0; padding: .28rem 0; text-align: left; }
+  .table-wrap td.num { text-align: left; }
+  .table-wrap td[data-label]:not([data-label=""])::before { content: attr(data-label); flex: 0 0 34%; color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .02em; padding-top: .1rem; }
+  .table-wrap td:empty { display: none; }
+}

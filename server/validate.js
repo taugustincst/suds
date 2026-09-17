@@ -33,7 +33,8 @@ function validate(body, shape, { partial = false } = {}) {
         break;
       case 'datetime':
         if (typeof v !== 'string' || isNaN(Date.parse(v))) { errors[k] = 'must be an ISO datetime'; continue; }
-        v = new Date(v).toISOString(); break;
+        // a bare calendar day (2026-09-26) stays a calendar day; turning it into midnight UTC shifts it to the evening before in US time zones
+        v = /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : new Date(v).toISOString(); break;
       case 'object':
         if (typeof v !== 'object') { errors[k] = 'must be an object'; continue; }
         break;
