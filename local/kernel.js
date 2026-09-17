@@ -7,12 +7,12 @@ import auth from '../server/auth.js';
 import audit from '../server/audit.js';
 import * as sync from './sync.js';
 
-const ROUTE_MODULES = ['auth', 'me', 'users', 'clients', 'assignments', 'interventions', 'calls', 'time', 'resources', 'referrals', 'tasks', 'budget', 'notes', 'consents', 'forms', 'imports', 'dataimport', 'reports', 'admin'];
+const ROUTE_MODULES = ['auth', 'me', 'users', 'clients', 'assignments', 'interventions', 'calls', 'time', 'resources', 'referrals', 'tasks', 'budget', 'notes', 'consents', 'forms', 'imports', 'dataimport', 'reports', 'admin', 'regions'];
 const routeLoaders = {
   auth: () => import('../server/routes/auth.js'), me: () => import('../server/routes/me.js'), users: () => import('../server/routes/users.js'), clients: () => import('../server/routes/clients.js'),
   assignments: () => import('../server/routes/assignments.js'), interventions: () => import('../server/routes/interventions.js'), calls: () => import('../server/routes/calls.js'), time: () => import('../server/routes/time.js'),
   resources: () => import('../server/routes/resources.js'), referrals: () => import('../server/routes/referrals.js'), tasks: () => import('../server/routes/tasks.js'), budget: () => import('../server/routes/budget.js'),
-  notes: () => import('../server/routes/notes.js'), consents: () => import('../server/routes/consents.js'), forms: () => import('../server/routes/forms.js'), imports: () => import('../server/routes/imports.js'), dataimport: () => import('../server/routes/dataimport.js'), reports: () => import('../server/routes/reports.js'), admin: () => import('../server/routes/admin.js'),
+  notes: () => import('../server/routes/notes.js'), consents: () => import('../server/routes/consents.js'), forms: () => import('../server/routes/forms.js'), regions: () => import('../server/routes/regions.js'), imports: () => import('../server/routes/imports.js'), dataimport: () => import('../server/routes/dataimport.js'), reports: () => import('../server/routes/reports.js'), admin: () => import('../server/routes/admin.js'),
 };
 
 let router; let token = localStorage.getItem('suds.local.session') || '';

@@ -36,4 +36,69 @@ function placeholder(w, h, seed = 1, palette = 0) {
   for (let y = ty - 6; y < ty + 8; y++) for (let x = tx - 2; x < tx + 2; x++) { const i = (y * w + x) * 3; px[i] = 90; px[i + 1] = 65; px[i + 2] = 40; }
   return encode(w, h, px);
 }
-module.exports = { encode, placeholder };
+
+// --- tiny 5x7 bitmap font (A-Z 0-9 and a few marks) so generated cards can carry a name ---
+const FONT = {
+  A: '01110,10001,10001,11111,10001,10001,10001', B: '11110,10001,10001,11110,10001,10001,11110', C: '01110,10001,10000,10000,10000,10001,01110',
+  D: '11110,10001,10001,10001,10001,10001,11110', E: '11111,10000,10000,11110,10000,10000,11111', F: '11111,10000,10000,11110,10000,10000,10000',
+  G: '01110,10001,10000,10111,10001,10001,01111', H: '10001,10001,10001,11111,10001,10001,10001', I: '11111,00100,00100,00100,00100,00100,11111',
+  J: '00111,00010,00010,00010,00010,10010,01100', K: '10001,10010,10100,11000,10100,10010,10001', L: '10000,10000,10000,10000,10000,10000,11111',
+  M: '10001,11011,10101,10101,10001,10001,10001', N: '10001,11001,10101,10011,10001,10001,10001', O: '01110,10001,10001,10001,10001,10001,01110',
+  P: '11110,10001,10001,11110,10000,10000,10000', Q: '01110,10001,10001,10001,10101,10010,01101', R: '11110,10001,10001,11110,10100,10010,10001',
+  S: '01111,10000,10000,01110,00001,00001,11110', T: '11111,00100,00100,00100,00100,00100,00100', U: '10001,10001,10001,10001,10001,10001,01110',
+  V: '10001,10001,10001,10001,10001,01010,00100', W: '10001,10001,10001,10101,10101,11011,10001', X: '10001,10001,01010,00100,01010,10001,10001',
+  Y: '10001,10001,01010,00100,00100,00100,00100', Z: '11111,00001,00010,00100,01000,10000,11111',
+  0: '01110,10001,10011,10101,11001,10001,01110', 1: '00100,01100,00100,00100,00100,00100,01110', 2: '01110,10001,00001,00010,00100,01000,11111',
+  3: '11111,00010,00100,00010,00001,10001,01110', 4: '00010,00110,01010,10010,11111,00010,00010', 5: '11111,10000,11110,00001,00001,10001,01110',
+  6: '00110,01000,10000,11110,10001,10001,01110', 7: '11111,00001,00010,00100,01000,01000,01000', 8: '01110,10001,10001,01110,10001,10001,01110',
+  9: '01110,10001,10001,01111,00001,00010,01100', '&': '01100,10010,10100,01000,10101,10010,01101', '-': '00000,00000,00000,11111,00000,00000,00000',
+  '.': '00000,00000,00000,00000,00000,01100,01100', "'": '00100,00100,00000,00000,00000,00000,00000', ' ': '00000,00000,00000,00000,00000,00000,00000',
+};
+const textWidth = (str, scale) => Math.max(0, str.length * 6 - 1) * scale;
+/** Draw str into an RGB buffer at (x, y). Unknown characters render as a space. */
+function drawText(px, w, h, str, x, y, scale, color) {
+  let cx = x;
+  for (const ch of String(str).toUpperCase()) {
+    const rows = (FONT[ch] || FONT[' ']).split(',');
+    for (let ry = 0; ry < 7; ry++) for (let rx = 0; rx < 5; rx++) {
+      if (rows[ry][rx] !== '1') continue;
+      for (let sy = 0; sy < scale; sy++) for (let sx = 0; sx < scale; sx++) {
+        const px_ = cx + rx * scale + sx, py = y + ry * scale + sy;
+        if (px_ < 0 || py < 0 || px_ >= w || py >= h) continue;
+        const i = (py * w + px_) * 3; px[i] = color[0]; px[i + 1] = color[1]; px[i + 2] = color[2];
+      }
+    }
+    cx += 6 * scale;
+  }
+}
+const CARD_PALETTES = {
+  detox_withdrawal_mgmt: [[176, 58, 46], [120, 40, 32]], residential: [[38, 100, 160], [24, 64, 104]], inpatient: [[38, 100, 160], [24, 64, 104]],
+  partial_hospitalization: [[46, 110, 150], [28, 70, 98]], intensive_outpatient: [[46, 125, 140], [28, 82, 92]], outpatient: [[52, 132, 128], [32, 86, 84]],
+  mat_otp: [[92, 62, 168], [58, 38, 112]], mat_obot: [[110, 72, 176], [70, 44, 116]], sober_living: [[52, 132, 92], [32, 86, 60]],
+  housing: [[46, 120, 86], [28, 78, 56]], shelter: [[62, 110, 72], [38, 72, 48]], mental_health: [[70, 96, 176], [44, 62, 116]],
+  primary_care: [[36, 128, 142], [22, 84, 94]], harm_reduction: [[198, 118, 44], [130, 76, 28]], syringe_services: [[198, 118, 44], [130, 76, 28]],
+  naloxone: [[206, 96, 48], [136, 62, 30]], crisis_line: [[186, 54, 74], [124, 34, 48]], transportation: [[92, 106, 130], [58, 68, 86]],
+  employment: [[120, 104, 48], [78, 68, 30]], legal: [[86, 92, 116], [54, 58, 76]], food: [[140, 110, 52], [92, 72, 34]],
+  benefits: [[88, 100, 140], [56, 64, 92]], peer_support: [[150, 78, 132], [98, 50, 86]], recovery_community: [[132, 84, 150], [86, 54, 98]],
+  family_support: [[160, 92, 110], [104, 58, 72]], pregnancy_parenting: [[168, 96, 128], [110, 62, 84]], veterans: [[70, 88, 118], [44, 56, 78]],
+  other: [[74, 88, 104], [46, 56, 68]],
+};
+/** A calm, category-tinted cover card carrying the program's initials. Drawn locally: no network, no third-party image.
+ *  Deliberately spare — the program name and category already appear as text on the card and profile beneath it. */
+function initialsCard(name, category = 'other', w = 480, h = 270) {
+  const [c1, c2] = CARD_PALETTES[category] || CARD_PALETTES.other;
+  const px = Buffer.alloc(w * h * 3);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const t = (y / h) * 0.7 + (x / w) * 0.3; const i = (y * w + x) * 3;
+    px[i] = c1[0] + (c2[0] - c1[0]) * t; px[i + 1] = c1[1] + (c2[1] - c1[1]) * t; px[i + 2] = c1[2] + (c2[2] - c1[2]) * t;
+  }
+  const words = String(name || '?').split(/[^A-Za-z0-9]+/).filter(w2 => w2 && !['of', 'the', 'and', 'for', 'at', 'a'].includes(w2.toLowerCase()));
+  const initials = words.slice(0, 3).map(w2 => w2[0]).join('').toUpperCase() || '?';
+  const scale = Math.max(6, Math.round(h / (initials.length > 2 ? 26 : 20)));
+  drawText(px, w, h, initials, Math.round((w - textWidth(initials, scale)) / 2), Math.round((h - 7 * scale) / 2) - Math.round(h * 0.04), scale, [255, 255, 255]);
+  const cat = String(category).replace(/_/g, ' ').toUpperCase();
+  const cs = Math.max(1, Math.round(h / 135));
+  drawText(px, w, h, cat, Math.round((w - textWidth(cat, cs)) / 2), h - Math.round(h * 0.13), cs, [226, 234, 242]);
+  return encode(w, h, px);
+}
+module.exports = { encode, placeholder, initialsCard, drawText };

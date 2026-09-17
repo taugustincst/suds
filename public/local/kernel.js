@@ -6088,7 +6088,7 @@ var require_config = __commonJS({
       return import_buffer.Buffer.from(hex, "hex");
     }
     var config = {
-      version: true ? "1.4.0" : "local",
+      version: true ? "1.5.0" : "local",
       env: "local",
       isProd: true,
       isTest: false,
@@ -7857,7 +7857,118 @@ var require_png = __commonJS({
       }
       return encode(w, h, px);
     }
-    module.exports = { encode, placeholder };
+    var FONT = {
+      A: "01110,10001,10001,11111,10001,10001,10001",
+      B: "11110,10001,10001,11110,10001,10001,11110",
+      C: "01110,10001,10000,10000,10000,10001,01110",
+      D: "11110,10001,10001,10001,10001,10001,11110",
+      E: "11111,10000,10000,11110,10000,10000,11111",
+      F: "11111,10000,10000,11110,10000,10000,10000",
+      G: "01110,10001,10000,10111,10001,10001,01111",
+      H: "10001,10001,10001,11111,10001,10001,10001",
+      I: "11111,00100,00100,00100,00100,00100,11111",
+      J: "00111,00010,00010,00010,00010,10010,01100",
+      K: "10001,10010,10100,11000,10100,10010,10001",
+      L: "10000,10000,10000,10000,10000,10000,11111",
+      M: "10001,11011,10101,10101,10001,10001,10001",
+      N: "10001,11001,10101,10011,10001,10001,10001",
+      O: "01110,10001,10001,10001,10001,10001,01110",
+      P: "11110,10001,10001,11110,10000,10000,10000",
+      Q: "01110,10001,10001,10001,10101,10010,01101",
+      R: "11110,10001,10001,11110,10100,10010,10001",
+      S: "01111,10000,10000,01110,00001,00001,11110",
+      T: "11111,00100,00100,00100,00100,00100,00100",
+      U: "10001,10001,10001,10001,10001,10001,01110",
+      V: "10001,10001,10001,10001,10001,01010,00100",
+      W: "10001,10001,10001,10101,10101,11011,10001",
+      X: "10001,10001,01010,00100,01010,10001,10001",
+      Y: "10001,10001,01010,00100,00100,00100,00100",
+      Z: "11111,00001,00010,00100,01000,10000,11111",
+      0: "01110,10001,10011,10101,11001,10001,01110",
+      1: "00100,01100,00100,00100,00100,00100,01110",
+      2: "01110,10001,00001,00010,00100,01000,11111",
+      3: "11111,00010,00100,00010,00001,10001,01110",
+      4: "00010,00110,01010,10010,11111,00010,00010",
+      5: "11111,10000,11110,00001,00001,10001,01110",
+      6: "00110,01000,10000,11110,10001,10001,01110",
+      7: "11111,00001,00010,00100,01000,01000,01000",
+      8: "01110,10001,10001,01110,10001,10001,01110",
+      9: "01110,10001,10001,01111,00001,00010,01100",
+      "&": "01100,10010,10100,01000,10101,10010,01101",
+      "-": "00000,00000,00000,11111,00000,00000,00000",
+      ".": "00000,00000,00000,00000,00000,01100,01100",
+      "'": "00100,00100,00000,00000,00000,00000,00000",
+      " ": "00000,00000,00000,00000,00000,00000,00000"
+    };
+    var textWidth = (str, scale) => Math.max(0, str.length * 6 - 1) * scale;
+    function drawText(px, w, h, str, x, y, scale, color) {
+      let cx = x;
+      for (const ch of String(str).toUpperCase()) {
+        const rows = (FONT[ch] || FONT[" "]).split(",");
+        for (let ry = 0; ry < 7; ry++) for (let rx = 0; rx < 5; rx++) {
+          if (rows[ry][rx] !== "1") continue;
+          for (let sy = 0; sy < scale; sy++) for (let sx = 0; sx < scale; sx++) {
+            const px_ = cx + rx * scale + sx, py = y + ry * scale + sy;
+            if (px_ < 0 || py < 0 || px_ >= w || py >= h) continue;
+            const i = (py * w + px_) * 3;
+            px[i] = color[0];
+            px[i + 1] = color[1];
+            px[i + 2] = color[2];
+          }
+        }
+        cx += 6 * scale;
+      }
+    }
+    var CARD_PALETTES = {
+      detox_withdrawal_mgmt: [[176, 58, 46], [120, 40, 32]],
+      residential: [[38, 100, 160], [24, 64, 104]],
+      inpatient: [[38, 100, 160], [24, 64, 104]],
+      partial_hospitalization: [[46, 110, 150], [28, 70, 98]],
+      intensive_outpatient: [[46, 125, 140], [28, 82, 92]],
+      outpatient: [[52, 132, 128], [32, 86, 84]],
+      mat_otp: [[92, 62, 168], [58, 38, 112]],
+      mat_obot: [[110, 72, 176], [70, 44, 116]],
+      sober_living: [[52, 132, 92], [32, 86, 60]],
+      housing: [[46, 120, 86], [28, 78, 56]],
+      shelter: [[62, 110, 72], [38, 72, 48]],
+      mental_health: [[70, 96, 176], [44, 62, 116]],
+      primary_care: [[36, 128, 142], [22, 84, 94]],
+      harm_reduction: [[198, 118, 44], [130, 76, 28]],
+      syringe_services: [[198, 118, 44], [130, 76, 28]],
+      naloxone: [[206, 96, 48], [136, 62, 30]],
+      crisis_line: [[186, 54, 74], [124, 34, 48]],
+      transportation: [[92, 106, 130], [58, 68, 86]],
+      employment: [[120, 104, 48], [78, 68, 30]],
+      legal: [[86, 92, 116], [54, 58, 76]],
+      food: [[140, 110, 52], [92, 72, 34]],
+      benefits: [[88, 100, 140], [56, 64, 92]],
+      peer_support: [[150, 78, 132], [98, 50, 86]],
+      recovery_community: [[132, 84, 150], [86, 54, 98]],
+      family_support: [[160, 92, 110], [104, 58, 72]],
+      pregnancy_parenting: [[168, 96, 128], [110, 62, 84]],
+      veterans: [[70, 88, 118], [44, 56, 78]],
+      other: [[74, 88, 104], [46, 56, 68]]
+    };
+    function initialsCard(name, category = "other", w = 480, h = 270) {
+      const [c1, c2] = CARD_PALETTES[category] || CARD_PALETTES.other;
+      const px = import_buffer.Buffer.alloc(w * h * 3);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const t = y / h * 0.7 + x / w * 0.3;
+        const i = (y * w + x) * 3;
+        px[i] = c1[0] + (c2[0] - c1[0]) * t;
+        px[i + 1] = c1[1] + (c2[1] - c1[1]) * t;
+        px[i + 2] = c1[2] + (c2[2] - c1[2]) * t;
+      }
+      const words = String(name || "?").split(/[^A-Za-z0-9]+/).filter((w2) => w2 && !["of", "the", "and", "for", "at", "a"].includes(w2.toLowerCase()));
+      const initials = words.slice(0, 3).map((w2) => w2[0]).join("").toUpperCase() || "?";
+      const scale = Math.max(6, Math.round(h / (initials.length > 2 ? 26 : 20)));
+      drawText(px, w, h, initials, Math.round((w - textWidth(initials, scale)) / 2), Math.round((h - 7 * scale) / 2) - Math.round(h * 0.04), scale, [255, 255, 255]);
+      const cat = String(category).replace(/_/g, " ").toUpperCase();
+      const cs = Math.max(1, Math.round(h / 135));
+      drawText(px, w, h, cat, Math.round((w - textWidth(cat, cs)) / 2), h - Math.round(h * 0.13), cs, [226, 234, 242]);
+      return encode(w, h, px);
+    }
+    module.exports = { encode, placeholder, initialsCard, drawText };
   }
 });
 
@@ -11850,6 +11961,3479 @@ var require_referrals = __commonJS({
   }
 });
 
+// server/regions/sacramento-metro.js
+var require_sacramento_metro = __commonJS({
+  "server/regions/sacramento-metro.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    module.exports = {
+      id: "sacramento-metro",
+      name: "Sacramento region",
+      description: "Treatment, housing, harm reduction, crisis, benefits and transport programs across the extended Sacramento metro: Sacramento, Yolo, Placer, El Dorado, Sutter, Yuba, Nevada and Colusa counties.",
+      counties: ["Colusa", "El Dorado", "Nevada", "Placer", "Sacramento", "Sutter", "Yolo", "Yuba"],
+      sources_note: "Compiled from public web sources and loaded unverified: every program arrives with no verification date so your staff confirm the address, phone and intake before using it with a client.",
+      providers: [
+        {
+          "key": "granite-gv-detox",
+          "name": "Granite Wellness Centers \u2014 Grass Valley Withdrawal Management",
+          "organization": "Granite Wellness Centers",
+          "category": "detox_withdrawal_mgmt",
+          "county": "Nevada",
+          "address": "180 Sierra College Dr",
+          "city": "Grass Valley",
+          "zip": "95945",
+          "phone": "530-273-9541",
+          "website": "https://www.granitewellness.org/grass-valley/",
+          "hours": null,
+          "summary": "Granite Wellness is the main substance use treatment nonprofit for Nevada County, operating since 1974 and formerly known as Community Recovery Resources, so clients and other agencies may still use the old name. Their Grass Valley campus sits on about three acres in the foothills and runs clinically supervised withdrawal management, so someone can detox safely before moving into residential or outpatient care without leaving the county. On admission a client gets a medical screening, physical exam and an evaluation that sets the tapering plan, supportive care and any medications. Listings describe withdrawal support for opiates, sedatives and methamphetamine, with medical staff, licensed therapists, certified counselors and social workers on the team. This is usually the first call for a Nevada County client who needs medically supported detox and then a warm handoff into the next level of care on the same campus.",
+          "services": "Medically supervised withdrawal management for opiates, sedatives and methamphetamine; medical screening and physical exam; tapering and supportive medication; direct transition into residential or outpatient treatment",
+          "service_tags": [
+            "detox",
+            "medication_management",
+            "individual_counseling",
+            "group_counseling",
+            "case_management",
+            "co_occurring",
+            "medical_care",
+            "aftercare"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults"
+          ],
+          "intake_process": "Call the Grass Valley campus or the admissions line. Listings also reference an online pre-admission screening form with a callback within 24 hours.",
+          "cost_notes": "Listings state Medi-Cal accepted as full payment if qualified, sliding scale for low-income and uninsured clients, and most major insurance accepted. Confirm before quoting to a client.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": true,
+          "mat_offered": "Buprenorphine and naltrexone through the organization when clinically appropriate",
+          "image_url": null,
+          "caveat": "Formerly Community Recovery Resources (CoRR); older referral lists use that name. No evidence of Nevada City or Colfax sites \u2014 listed locations are Grass Valley, Truckee, Roseville, Auburn and Lincoln.",
+          "source": "granitewellness.org Grass Valley, services and inpatient pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "granite-hope-house",
+          "name": "Hope House Women's and Children's Residential Treatment",
+          "organization": "Granite Wellness Centers",
+          "category": "residential",
+          "county": "Nevada",
+          "address": "180 Sierra College Dr",
+          "city": "Grass Valley",
+          "zip": "95945",
+          "phone": "530-273-9541",
+          "website": "https://www.granitewellness.org/inpatient/",
+          "hours": null,
+          "summary": "Hope House is Granite Wellness's women's residential program on the Grass Valley campus, and its defining feature is that mothers can bring their children with them, with listings consistently describing room for children up to age twelve. That removes the single biggest reason women in this county turn down residential treatment, which is having nowhere safe for their kids. Listings describe roughly twenty beds for clients plus space for children, pairing the mother's treatment and recovery work with a nurturing childcare environment that addresses trauma and healthy development. Granite also runs perinatal programming for pregnant and single parenting women. This is the first option to raise with any pregnant or parenting client who needs residential care.",
+          "services": "Women's residential treatment with on-site care for children aged 0 to 12; perinatal and parenting programming; individual, group and family therapy",
+          "service_tags": [
+            "residential",
+            "individual_counseling",
+            "group_counseling",
+            "family_program",
+            "case_management",
+            "trauma_informed",
+            "co_occurring",
+            "childcare",
+            "aftercare"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "women",
+            "pregnant_parenting",
+            "families"
+          ],
+          "intake_process": "Call the Grass Valley campus or the Granite admissions line. Nevada County Behavioral Health also runs a walk-in assessment clinic that refers residents into residential treatment.",
+          "cost_notes": "Medi-Cal accepted as full payment if qualified; sliding scale for low-income and uninsured. Confirm before quoting.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": true,
+          "mat_offered": "MAT available through Granite's medical services when clinically appropriate",
+          "image_url": null,
+          "caveat": "Bed counts and the children-to-age-12 rule come from directory listings; confirm current capacity and age limits.",
+          "source": "granitewellness.org inpatient and Grass Valley pages; recovery.com listing",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "granite-serenity-house",
+          "name": "Serenity House Men's Residential Treatment",
+          "organization": "Granite Wellness Centers",
+          "category": "residential",
+          "county": "Nevada",
+          "address": "180 Sierra College Dr",
+          "city": "Grass Valley",
+          "zip": "95945",
+          "phone": "530-273-9541",
+          "website": "https://www.granitewellness.org/inpatient/",
+          "hours": null,
+          "summary": "Serenity House is the men's side of Granite Wellness's gender-specific residential treatment on the Grass Valley campus, described in listings as having about twenty beds. Clients live on site and work through structured treatment with licensed therapists and certified counselors, with detox available on the same campus if a man needs to withdraw safely first. Because it sits alongside the outpatient and transitional housing programs, a client can step down through levels of care without changing agencies or leaving the county. This is the main in-county residential bed option for adult men.",
+          "services": "Men's residential treatment; individual and group counseling; family support groups; step-down to outpatient and transitional housing on the same campus",
+          "service_tags": [
+            "residential",
+            "individual_counseling",
+            "group_counseling",
+            "family_program",
+            "case_management",
+            "co_occurring",
+            "aftercare"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "men"
+          ],
+          "intake_process": "Call the Grass Valley campus or the Granite admissions line. Nevada County Behavioral Health's walk-in assessment clinic also refers residents into residential treatment.",
+          "cost_notes": "Medi-Cal accepted as full payment if qualified; sliding scale for low-income and uninsured. Confirm before quoting.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": true,
+          "mat_offered": "MAT available through Granite's medical services when clinically appropriate",
+          "image_url": null,
+          "caveat": "Not to be confused with Serenity House, the shelter run by Vista Rise Collective in South Lake Tahoe.",
+          "source": "granitewellness.org inpatient and Grass Valley pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "granite-gv-outpatient",
+          "name": "Granite Wellness Centers \u2014 Grass Valley Outpatient, MAT and Transitional Housing",
+          "organization": "Granite Wellness Centers",
+          "category": "mat_obot",
+          "county": "Nevada",
+          "address": "180 Sierra College Dr",
+          "city": "Grass Valley",
+          "zip": "95945",
+          "phone": "530-273-9541",
+          "website": "https://www.granitewellness.org/medical-services/",
+          "hours": null,
+          "summary": "This is Granite's non-residential track in Grass Valley, for clients whose needs are moderate enough to keep working, parenting or studying while in treatment. They provide medication-assisted treatment with buprenorphine and naltrexone when clinically appropriate, paired with individual, group and family therapy rather than medication alone. The same campus runs court-ordered and DUI classes, drug testing, family support groups, a women and children's program, and transitional or recovery-residence housing, so a client leaving residential care can keep the same treatment team.",
+          "services": "Outpatient treatment; MAT with buprenorphine and naltrexone; individual, group and family therapy; DUI and court-ordered classes; drug testing; family support groups; women and children's program; transitional housing and recovery residences",
+          "service_tags": [
+            "outpatient",
+            "intensive_outpatient",
+            "mat_buprenorphine",
+            "mat_naltrexone",
+            "medication_management",
+            "individual_counseling",
+            "group_counseling",
+            "family_program",
+            "case_management",
+            "co_occurring",
+            "housing",
+            "sober_living",
+            "aftercare",
+            "telehealth"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "women",
+            "pregnant_parenting",
+            "families",
+            "justice_involved"
+          ],
+          "intake_process": "Call the campus or the Granite admissions line; an online pre-admission screening form with a 24-hour callback is referenced in listings.",
+          "cost_notes": "Medi-Cal accepted as full payment if qualified; sliding scale for low-income and uninsured; most major insurance accepted. Confirm before quoting.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": true,
+          "mat_offered": "buprenorphine, naltrexone",
+          "image_url": null,
+          "caveat": "No evidence of on-site methadone dispensing anywhere in Granite's system, and no opioid treatment program was identified in Nevada or El Dorado county at all. A client who needs methadone will likely have to travel \u2014 confirm current options.",
+          "source": "granitewellness.org medical services, services and admissions pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "granite-adolescent",
+          "name": "Granite Wellness Centers \u2014 Adolescent Program",
+          "organization": "Granite Wellness Centers",
+          "category": "outpatient",
+          "county": "Nevada",
+          "address": "180 Sierra College Dr",
+          "city": "Grass Valley",
+          "zip": "95945",
+          "phone": "530-273-9541",
+          "website": "https://www.granitewellness.org/adolescent-treatment/",
+          "hours": null,
+          "summary": "Granite runs a dedicated outpatient track for teenagers rather than mixing them into adult groups, which matters because adolescent substance use usually sits on top of family conflict and trauma rather than standing alone. The program works on complex family dynamics, the effects of trauma, self-awareness and the practical skills a young person needs to stay substance-free. It is framed as prevention and early intervention as much as treatment, educating at-risk youth about the consequences of alcohol and other drug use. This is the in-county referral for a Nevada County teenager who needs substance-use-specific outpatient help.",
+          "services": "Adolescent outpatient treatment and education; family-focused counseling; trauma-informed work; skills building for at-risk youth",
+          "service_tags": [
+            "outpatient",
+            "individual_counseling",
+            "group_counseling",
+            "family_program",
+            "trauma_informed",
+            "co_occurring",
+            "mental_health"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adolescents",
+            "families"
+          ],
+          "intake_process": "Call the Grass Valley campus or the Granite admissions line. Confirm current age ranges and which sites run the adolescent groups.",
+          "cost_notes": "Medi-Cal accepted as full payment if qualified; sliding scale for low-income and uninsured. Confirm before quoting.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": null,
+          "source": "granitewellness.org adolescent treatment and services pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "granite-truckee",
+          "name": "Granite Wellness Centers \u2014 Truckee",
+          "organization": "Granite Wellness Centers",
+          "category": "outpatient",
+          "county": "Nevada",
+          "address": "10015 Palisades Dr",
+          "city": "Truckee",
+          "zip": "96161",
+          "phone": "530-587-8194",
+          "website": "https://www.granitewellness.org/locations/",
+          "hours": null,
+          "summary": "This is Granite's eastern Nevada County site, which matters because Truckee is separated from Grass Valley by a long mountain drive and clients on that side of the county often cannot reach the western slope in winter. The Truckee office provides outpatient substance use treatment for adults and young adults, using cognitive behavioral therapy, motivational interviewing and relapse prevention, with telehealth available. Tahoe Forest Health System lists it as a local behavioral health provider, which suggests a working referral relationship with the Truckee hospital. Residential and detox are not based here, so a Truckee client needing that level of care travels to the Grass Valley campus.",
+          "services": "Outpatient counseling; cognitive behavioral therapy, motivational interviewing and relapse prevention; telehealth",
+          "service_tags": [
+            "outpatient",
+            "individual_counseling",
+            "group_counseling",
+            "case_management",
+            "co_occurring",
+            "telehealth"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "adolescents"
+          ],
+          "intake_process": "Call the Truckee office or the Granite admissions line.",
+          "cost_notes": "Listings report Medi-Cal, private insurance and self-pay accepted. Confirm before quoting.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": null,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": null,
+          "source": "granitewellness.org locations and contact pages; tfhd.com provider listing",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "nevada-county-bh",
+          "name": "Nevada County Behavioral Health",
+          "organization": "County of Nevada",
+          "category": "crisis_line",
+          "county": "Nevada",
+          "address": "500 Crown Point Circle, Suite 120",
+          "city": "Grass Valley",
+          "zip": "95945",
+          "phone": "530-265-1437",
+          "website": "https://www.nevadacountyca.gov/430/Behavioral-Health",
+          "hours": "Consultation and referral Mon\u2013Fri 8\u20135; walk-in assessment clinic Mon\u2013Fri 8:30\u201311:30; crisis line 24/7",
+          "summary": "This is the county's front door for both mental health and substance use services and where a navigator sends a Medi-Cal client who needs an assessment and authorization for treatment. The walk-in assessment clinic runs weekday mornings and is specifically the route for county residents seeking residential treatment, so a client can be seen without a scheduled appointment. There is a 24-hour crisis line and a toll-free 24-hour access line, and a mobile crisis team of two trained behavioral health professionals responds countywide to both mental health and substance use crises. Free naloxone and fentanyl test strips are available in person at this office or by calling the access line.",
+          "services": "Walk-in assessment clinic; Medi-Cal treatment authorization and care coordination; 24/7 crisis line and toll-free access line; 24/7 mobile crisis team; free naloxone and fentanyl test strips",
+          "service_tags": [
+            "crisis_24_7",
+            "walk_in",
+            "same_day_intake",
+            "case_management",
+            "mental_health",
+            "naloxone",
+            "harm_reduction",
+            "co_occurring"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "adolescents",
+            "families"
+          ],
+          "intake_process": "Walk in weekday mornings 8:30\u201311:30 for a drug and alcohol assessment, or call and ask for the Access Worker. Crisis: 530-265-5811 or 888-801-1437, 24 hours.",
+          "cost_notes": "For Medi-Cal beneficiaries and people who may be eligible. Naloxone and fentanyl test strips are free and anonymous.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": null,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": null,
+          "source": "nevadacountyca.gov behavioral health, substance use and naloxone pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "hospitality-house-gv",
+          "name": "Hospitality House \u2014 Utah's Place",
+          "organization": "Hospitality House",
+          "category": "shelter",
+          "county": "Nevada",
+          "address": "1262 Sutton Way",
+          "city": "Grass Valley",
+          "zip": "95945",
+          "phone": "530-271-7144",
+          "website": "https://hhshelter.org/",
+          "hours": "Shelter check-in 4:00pm to 5:30pm",
+          "summary": "Utah's Place is Nevada County's main emergency shelter and the practical answer for a client who is unhoused while trying to get into or stay in treatment. Listings describe capacity for up to sixty-nine homeless individuals and families, with showers, laundry, meals and case management on site. The case management is what makes it more than a bed: staff work with guests on the documents, benefits and housing steps needed to move on. The critical operational detail is the check-in window \u2014 guests must arrive between 4:00 and 5:30pm to be admitted, so a client referred late in the day needs to be moving well before then.",
+          "services": "Emergency shelter beds for individuals and families; meals; showers and laundry; case management and housing navigation",
+          "service_tags": [
+            "housing",
+            "case_management",
+            "walk_in"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "families",
+            "unhoused"
+          ],
+          "intake_process": "Check in at the shelter between 4:00 and 5:30pm. Call ahead to confirm bed availability.",
+          "cost_notes": "No cost to guests.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": null,
+          "source": "hhshelter.org home, contact and Utah's Place pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "common-goals",
+          "name": "Common Goals Inc",
+          "organization": null,
+          "category": "outpatient",
+          "county": "Nevada",
+          "address": "256 Buena Vista St, Suite 100",
+          "city": "Grass Valley",
+          "zip": "95945",
+          "phone": "530-274-2000",
+          "website": "https://commongoalsinc.org/contact-us",
+          "hours": "Mon\u2013Fri 8:30\u20135:00; testing 9:30\u20134:30; closed Fri 1:30\u20133:30",
+          "summary": "Common Goals is a Grass Valley provider that combines outpatient substance use counseling with its own clean and sober recovery residences for men and women, a useful pairing when a client needs both treatment and somewhere stable to live. They see both teenagers and adults. They also run anger management and domestic violence intervention programs, so they are often the referral for a client with court-ordered requirements alongside substance use treatment. On-site drug testing is available during set hours.",
+          "services": "Substance use counseling for teens and adults; clean and sober recovery residences for men and women; anger management; domestic violence intervention; drug testing",
+          "service_tags": [
+            "outpatient",
+            "individual_counseling",
+            "group_counseling",
+            "sober_living",
+            "housing",
+            "legal_help",
+            "case_management"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "adolescents",
+            "men",
+            "women",
+            "justice_involved"
+          ],
+          "intake_process": "Call the office during business hours. Confirm whether the recovery residences have openings separately from counseling intake.",
+          "cost_notes": "Confirm at intake.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": null,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "Some materials appear under the name Common Purpose \u2014 confirm the current operating name when you call.",
+          "source": "commongoalsinc.org contact page; Nevada County substance use services page",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "insight-respite",
+          "name": "Insight Respite Center",
+          "organization": "Turning Point Community Programs",
+          "category": "peer_support",
+          "county": "Nevada",
+          "address": "16573 Auburn Rd",
+          "city": "Grass Valley",
+          "zip": "95949",
+          "phone": "530-265-1437",
+          "website": "https://www.tpcp.org/program/insight-respite/",
+          "hours": null,
+          "summary": "Insight Respite is a small peer-operated four-bedroom home in rural Nevada County, staffed by people with their own lived experience of mental health recovery rather than clinical staff. It offers a short, voluntary, home-like alternative for someone in distress who does not need hospitalization but should not be alone, which makes it a valuable middle option between a crisis line and a psychiatric bed. Because the setting is peer-run it tends to suit clients who have had difficult experiences with clinical services. Referrals do not come directly from the client. Capacity is very limited, so check availability early.",
+          "services": "Peer-operated short-term residential respite for mental health crisis; peer support in a four-bedroom home",
+          "service_tags": [
+            "peer_support",
+            "mental_health",
+            "trauma_informed",
+            "co_occurring"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults"
+          ],
+          "intake_process": "Referral only: call Nevada County Behavioral Health at 530-265-1437 and ask to speak with the intake person of the day.",
+          "cost_notes": "Confirm at referral.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": null,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "The listed phone is the county referral line, not the respite house itself.",
+          "source": "tpcp.org insight respite and Nevada County pages; 211ca.org listing",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "chapa-de-grass-valley",
+          "name": "Chapa-De Indian Health \u2014 Grass Valley",
+          "organization": "Chapa-De Indian Health Program",
+          "category": "primary_care",
+          "county": "Nevada",
+          "address": "1350 E Main St",
+          "city": "Grass Valley",
+          "zip": "95945",
+          "phone": "530-477-8545",
+          "website": "https://chapa-de.org/contact-us/",
+          "hours": "Mon\u2013Fri 8:00\u20135:00; closed weekends",
+          "summary": "Chapa-De is a tribal health organization and federally qualified health centre providing medical, dental and behavioral health care under one roof in Grass Valley, with an on-site pharmacy. Verified American Indian and Alaska Native patients from federally recognized tribes receive no-cost or low-cost services and medications, and the clinic also serves other community members. Directory listings indicate medication-assisted treatment is available, which makes it a realistic option for a client who wants MAT in a primary care setting rather than a specialty program. They also run prenatal care, a diabetes program and wellness classes. After hours an answering service has a registered nurse return calls, usually within about ten minutes.",
+          "services": "Primary medical care; dental; behavioral health; on-site pharmacy; prenatal care; diabetes program; wellness classes; medication-assisted treatment per listings",
+          "service_tags": [
+            "medical_care",
+            "mental_health",
+            "medication_management",
+            "individual_counseling",
+            "case_management",
+            "co_occurring"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "adolescents",
+            "families",
+            "native_american",
+            "pregnant_parenting"
+          ],
+          "intake_process": "Call to register as a patient. American Indian and Alaska Native patients should ask about tribal verification for no-cost or low-cost care.",
+          "cost_notes": "No-cost or low-cost services and medications for verified American Indians and Alaska Natives from federally recognized tribes; sliding scale applies more broadly. Confirm current policy.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": true,
+          "mat_offered": "Listed in third-party directories; confirm which medications are prescribed on site",
+          "image_url": null,
+          "caveat": null,
+          "source": "chapa-de.org contact page; HCAI and Kaiser facility listings",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "sierra-family-health",
+          "name": "Sierra Family Health Center",
+          "organization": "Sierra Family Medical Clinic",
+          "category": "primary_care",
+          "county": "Nevada",
+          "address": "15301 Tyler Foote Rd",
+          "city": "Nevada City",
+          "zip": "95959",
+          "phone": "530-292-3478",
+          "website": null,
+          "hours": "Mon\u2013Fri 8:30\u20135:00",
+          "summary": "Sierra Family is a federally qualified health centre serving the rural San Juan Ridge area north of Nevada City, where the nearest alternative clinic is a long drive away. They combine family medicine with behavioral health and social services in the same building, plus dental, women's health and obstetrics. Listings indicate they provide substance abuse treatment along with sexually transmitted infection testing, family planning, tuberculosis testing, hepatitis vaccines and case management. As a federally qualified health centre they serve patients regardless of ability to pay, which makes them a good fit for uninsured clients on the Ridge.",
+          "services": "Family medicine; behavioral health and social services; dental; obstetrics and women's health; substance abuse treatment and case management per listings; testing and vaccines",
+          "service_tags": [
+            "medical_care",
+            "mental_health",
+            "individual_counseling",
+            "case_management",
+            "outpatient"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "adolescents",
+            "families",
+            "pregnant_parenting"
+          ],
+          "intake_process": "Call to become a patient. Ask specifically about behavioral health and substance use appointments.",
+          "cost_notes": "Sliding scale based on income; serves patients regardless of insurance status. Confirm current policy.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "Official website not confirmed. The scope of their substance use and MAT services is not specific in listings \u2014 confirm before referring.",
+          "source": "HCAI and NPI registry listings; carelistings.com FQHC entry",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "western-sierra-gv",
+          "name": "Western Sierra Medical Clinic \u2014 Grass Valley",
+          "organization": "Western Sierra Medical Clinic",
+          "category": "primary_care",
+          "county": "Nevada",
+          "address": null,
+          "city": "Grass Valley",
+          "zip": "95945",
+          "phone": "530-274-9762",
+          "website": "https://wsmcmed.org/grass-valley/",
+          "hours": null,
+          "summary": "Western Sierra is a federally qualified health centre network with sites across Nevada County and beyond, including Grass Valley, Nevada City, Penn Valley, Downieville, Auburn, Oregon House and Kings Beach, which is useful coverage for clients scattered across a rural county. Their listed services explicitly include addiction management alongside primary care, behavioral health, dental, pharmacy, lab and a teen clinic, so a client can get medication and general medical care in one system. They also run urgent care, which helps a client without a regular doctor. As a federally qualified health centre they serve patients regardless of ability to pay.",
+          "services": "Primary care; addiction management; behavioral health; case management; dental; pharmacy; lab; urgent care; teen clinic; women's health; pediatrics; nutrition",
+          "service_tags": [
+            "medical_care",
+            "mental_health",
+            "medication_management",
+            "case_management",
+            "outpatient",
+            "walk_in"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "adolescents",
+            "families"
+          ],
+          "intake_process": "Call to register as a patient and ask specifically for addiction management or behavioral health.",
+          "cost_notes": "Sliding scale; serves patients regardless of insurance status. Confirm current policy.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": true,
+          "mat_offered": "Addiction management listed; confirm which medications are prescribed",
+          "image_url": null,
+          "caveat": "Two different Grass Valley addresses appear in directories (844 Old Tunnel Road and 140 Litton Drive) and they may run more than one local site, so the address is left blank. Confirm which site the client should attend.",
+          "source": "wsmcmed.org Grass Valley and contact pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "yuba-harm-reduction",
+          "name": "Yuba Harm Reduction Collective",
+          "organization": null,
+          "category": "harm_reduction",
+          "county": "Nevada",
+          "address": null,
+          "city": "Grass Valley",
+          "zip": null,
+          "phone": "530-362-8163",
+          "website": "https://yubaharmreduction.com/",
+          "hours": "Delivery Mon\u2013Fri 10am\u20136pm; fixed outreach route Monday and Friday",
+          "summary": "This is the low-barrier, judgment-free option for people who are still using drugs and are not ready for or interested in treatment. They run a fixed outreach route and will also deliver supplies anywhere in the greater Nevada County area if a client calls or texts. They distribute naloxone with training, fentanyl test strips, and practical survival and hygiene supplies such as first aid, wipes, toothbrushes, razors, sunblock and hand sanitiser. Their stated approach is person-centred and built on reducing stigma and preserving dignity and self-determination, so they are a good bridge for a client who distrusts formal services. Delivery is free and confidential, with no requirement to commit to treatment.",
+          "services": "Naloxone distribution and training; fentanyl test strips; harm reduction education and advocacy; hygiene and survival supplies; free confidential delivery or pick-up across Nevada County; mobile outreach route",
+          "service_tags": [
+            "harm_reduction",
+            "naloxone",
+            "peer_support",
+            "case_management"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "unhoused"
+          ],
+          "intake_process": "Call or text 530-362-8163 to arrange delivery or pick-up, or meet the outreach route. No appointment, referral or ID needed.",
+          "cost_notes": "Free.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "Despite the name this serves Nevada County, not Yuba County.",
+          "source": "yubaharmreduction.com home and outreach pages; NASEN directory",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "nevada-county-naloxone",
+          "name": "Nevada County Public Health \u2014 Naloxone Distribution",
+          "organization": "County of Nevada",
+          "category": "naloxone",
+          "county": "Nevada",
+          "address": "500 Crown Point Circle",
+          "city": "Grass Valley",
+          "zip": "95945",
+          "phone": "530-388-6364",
+          "website": "https://www.nevadacountyca.gov/2861/Naloxone",
+          "hours": null,
+          "summary": "Nevada County Public Health gives out naloxone and fentanyl test strips free and anonymously, with no need to be in treatment or give a name. A client can text or call to arrange delivery or pick-up, or collect supplies in person at the Crown Point Circle office. The county also runs healthy supply vending machines at five locations, two in Grass Valley plus Penn Valley, North San Juan and Truckee, which lets someone get naloxone outside office hours without speaking to anyone. This is the simplest overdose-prevention step to take with any client who uses opioids or stimulants, and with their family members.",
+          "services": "Free anonymous naloxone and fentanyl test strips by delivery, pick-up or vending machine; overdose prevention information",
+          "service_tags": [
+            "naloxone",
+            "harm_reduction"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "adolescents",
+            "families",
+            "unhoused"
+          ],
+          "intake_process": "Text or call for delivery or pick-up, collect in person, or use one of the five county vending machines. No ID or appointment needed.",
+          "cost_notes": "Free and anonymous.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "Confirm current vending machine locations, as these move.",
+          "source": "nevadacountyca.gov naloxone page; knowoverdosenc.com local resources",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "interfaith-food-ministry",
+          "name": "Interfaith Food Ministry of Nevada County",
+          "organization": null,
+          "category": "food",
+          "county": "Nevada",
+          "address": "440 Henderson St",
+          "city": "Grass Valley",
+          "zip": "95945",
+          "phone": "530-273-8132",
+          "website": "https://www.interfaithfoodministry.org/",
+          "hours": "Mon, Wed, Fri and Sat 10am\u20131pm",
+          "summary": "Interfaith Food Ministry is the main food pantry in western Nevada County and a straightforward referral for any client whose budget is stretched by treatment, rent or losing work. They provide supplemental groceries to low-income individuals and families, including baby formula and baby food when in stock, which makes them particularly relevant for parenting clients. Households can come once every other week. The Saturday opening helps clients who are working or in day treatment during the week. No treatment involvement is required to use the pantry.",
+          "services": "Supplemental groceries for low-income individuals and families; baby formula and baby food when available",
+          "service_tags": [
+            "walk_in",
+            "case_management"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "families",
+            "pregnant_parenting",
+            "unhoused",
+            "older_adults"
+          ],
+          "intake_process": "Walk in during distribution hours. Households may receive groceries once every other week.",
+          "cost_notes": "Free.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": null,
+          "source": "interfaithfoodministry.org home and community services pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "tahoe-forest-bh",
+          "name": "Tahoe Forest Health System Behavioral Health",
+          "organization": "Tahoe Forest Health System",
+          "category": "mental_health",
+          "county": "Nevada",
+          "address": "10956 Donner Pass Rd, 2nd Floor",
+          "city": "Truckee",
+          "zip": "96161",
+          "phone": "530-582-6205",
+          "website": "https://www.tfhd.com/services/behavioral-health/",
+          "hours": null,
+          "summary": "Tahoe Forest is the hospital system for the Truckee and North Tahoe area, and its behavioral health clinic sits in the medical office building across from the hospital. For clients on the eastern side of Nevada County it is the closest option for outpatient mental health care, which matters for co-occurring conditions that need treating alongside substance use. The health system publishes a mental health provider directory and lists Granite Wellness Truckee among local providers, so there is an established referral path between medical care and substance use treatment in Truckee.",
+          "services": "Outpatient behavioral and mental health care; psychiatry; local provider directory and referral to community substance use providers",
+          "service_tags": [
+            "mental_health",
+            "medication_management",
+            "individual_counseling",
+            "medical_care",
+            "co_occurring"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "adolescents",
+            "families"
+          ],
+          "intake_process": "Call for appointment scheduling; this is a separate line from general hospital inquiries.",
+          "cost_notes": "Confirm at scheduling.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": null,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "Confirm what substance-use-specific services, if any, they provide directly rather than by referral.",
+          "source": "tfhd.com behavioral health, location and provider directory pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "eldorado-suds",
+          "name": "El Dorado County Behavioral Health \u2014 Substance Use Disorder Services",
+          "organization": "El Dorado County Health and Human Services Agency",
+          "category": "crisis_line",
+          "county": "El Dorado",
+          "address": "929 Spring St",
+          "city": "Placerville",
+          "zip": "95667",
+          "phone": "530-621-6290",
+          "website": "https://www.eldoradocounty.ca.gov/Health-Well-Being/Behavioral-Health/Substance-Use-Disorder-Services-SUDS",
+          "hours": "Mon\u2013Fri 8\u20135 excluding holidays; access line 24/7",
+          "summary": "This is El Dorado County's entry point for publicly funded substance use treatment, the equivalent of Nevada County Behavioral Health on the other side of the county line. There is a 24/7 substance use treatment access line, and during business hours a client can call the main number and press 5. Services are for county Medi-Cal beneficiaries and low-income uninsured community members, so a client without insurance is not automatically turned away. Language support is available with Spanish-speaking staff, other languages through an interpretation service, and American Sign Language capability. They publish a county provider directory worth checking for currently contracted treatment providers. Note the county spans both the western slope and South Lake Tahoe.",
+          "services": "Screening, referral and treatment authorization; 24/7 substance use treatment access line; care coordination; county provider directory; mental health services",
+          "service_tags": [
+            "crisis_24_7",
+            "case_management",
+            "mental_health",
+            "co_occurring",
+            "spanish_speaking"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "adolescents",
+            "families",
+            "spanish_speakers",
+            "deaf_hard_of_hearing"
+          ],
+          "intake_process": "Call the 24/7 access line at 800-929-1955, or 530-621-6290 and press 5 during business hours. South Lake Tahoe office: 1900 Lake Tahoe Blvd.",
+          "cost_notes": "For county Medi-Cal beneficiaries and low-income uninsured community members.",
+          "languages": "English; Spanish-speaking staff; other languages via interpretation; ASL capability",
+          "accepts_medicaid": true,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": null,
+          "source": "eldoradocounty.ca.gov behavioral health and SUD access pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "marshall-cares",
+          "name": "Marshall CARES",
+          "organization": "Marshall Medical Center",
+          "category": "outpatient",
+          "county": "El Dorado",
+          "address": "1045 Marshall Way",
+          "city": "Placerville",
+          "zip": "95667",
+          "phone": "530-621-7965",
+          "website": "https://www.marshallmedical.org/our-services/cares/",
+          "hours": null,
+          "summary": "Marshall CARES is the hospital-affiliated outpatient addiction program on El Dorado County's western slope, which gives it a medical footing that standalone counseling programs do not have. It treats dependency on alcohol, tobacco, stimulants, opioids, benzodiazepines and other sedative hypnotics, so it covers substances some programs will not take on. Being part of Marshall Health means a client's addiction care sits alongside their primary and specialty medical care in the same system. A strong fit for a Placerville-area client who wants outpatient treatment with medical oversight rather than a residential placement.",
+          "services": "Outpatient addiction treatment for alcohol, tobacco, stimulant, opioid, benzodiazepine and sedative-hypnotic dependency; addiction medicine within the Marshall Health system",
+          "service_tags": [
+            "outpatient",
+            "individual_counseling",
+            "group_counseling",
+            "medical_care",
+            "medication_management",
+            "co_occurring"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults"
+          ],
+          "intake_process": "Call the program. Marshall clinics may have reduced hours around major holidays, so call to confirm.",
+          "cost_notes": "Confirm at intake.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": null,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "Confirm directly whether they prescribe buprenorphine or naltrexone \u2014 public listings do not say.",
+          "source": "marshallmedical.org CARES service and location pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "new-morning-yfs",
+          "name": "New Morning Youth & Family Services",
+          "organization": null,
+          "category": "outpatient",
+          "county": "El Dorado",
+          "address": "6765 Green Valley Rd",
+          "city": "Placerville",
+          "zip": "95667",
+          "phone": "530-622-5551",
+          "website": "https://www.newmorningyfs.org/contact-new-morning/",
+          "hours": "Office Mon\u2013Fri 9\u20135; shelter 24/7",
+          "summary": "New Morning is one of the largest providers of children's counseling on El Dorado County's western slope and combines that with a 24-hour emergency youth shelter for homeless, abandoned and runaway young people. That pairing is unusual and valuable: a teenager in crisis can get a safe bed the same night and start counseling with the same organization. Their programs include alcohol and drug treatment for adolescents, counseling and support for pregnant and parenting teens, and counseling for high-risk youth. The shelter has its own line, which is the number to use outside office hours.",
+          "services": "24-hour emergency youth shelter; adolescent alcohol and drug treatment; counseling for high-risk youth; support for pregnant and parenting teens; family counseling",
+          "service_tags": [
+            "outpatient",
+            "individual_counseling",
+            "group_counseling",
+            "family_program",
+            "housing",
+            "crisis_24_7",
+            "mental_health",
+            "trauma_informed",
+            "case_management"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adolescents",
+            "families",
+            "pregnant_parenting",
+            "unhoused"
+          ],
+          "intake_process": "Call 530-622-5551 for counseling during office hours; call the shelter at 530-626-4190 at any hour for emergency youth shelter.",
+          "cost_notes": "Confirm at intake.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": null,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "Directories also list an office at 670 Placerville Drive \u2014 confirm which site a client should attend.",
+          "source": "newmorningyfs.org contact page; findhelp.org listing",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "tahoe-youth-family",
+          "name": "Tahoe Youth & Family Services",
+          "organization": null,
+          "category": "outpatient",
+          "county": "El Dorado",
+          "address": "1021 Fremont Ave",
+          "city": "South Lake Tahoe",
+          "zip": "96150",
+          "phone": "530-541-2445",
+          "website": "https://www.tahoeyouth.org/",
+          "hours": "Mon\u2013Fri 9\u20135, closed 12\u20131 for lunch and on legal holidays",
+          "summary": "Tahoe Youth and Family Services has served South Lake Tahoe since 1971 and is the main adolescent substance use provider on the Tahoe side of El Dorado County, where distance from Placerville makes western-slope referrals impractical. Their substance use work includes individual sessions, assessments, court-ordered drug and alcohol evaluations and teen groups, so they can meet both clinical and probation-related needs. The adolescent outpatient program also treats co-occurring disorders and includes family-centred counseling plus life skills and recovery support groups. The court-ordered evaluation capability is worth knowing about for justice-involved young people.",
+          "services": "Adolescent outpatient alcohol and drug treatment; individual counseling; assessments; court-ordered drug and alcohol evaluations; teen groups; co-occurring treatment; family counseling; life skills and recovery support groups",
+          "service_tags": [
+            "outpatient",
+            "individual_counseling",
+            "group_counseling",
+            "family_program",
+            "co_occurring",
+            "mental_health",
+            "case_management",
+            "trauma_informed"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adolescents",
+            "families",
+            "justice_involved"
+          ],
+          "intake_process": "Call during office hours to arrange an assessment.",
+          "cost_notes": "Confirm at intake.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": null,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "Directories also reference a Placerville-area presence \u2014 confirm which locations are currently staffed.",
+          "source": "tahoeyouth.org home and get involved pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "barton-mat",
+          "name": "Barton Community Health Center \u2014 Medication for Addiction Treatment",
+          "organization": "Barton Health",
+          "category": "mat_obot",
+          "county": "El Dorado",
+          "address": null,
+          "city": "South Lake Tahoe",
+          "zip": "96150",
+          "phone": "530-543-5623",
+          "website": "https://www.bartonhealth.org/health-services/addiction-recovery/",
+          "hours": null,
+          "summary": "Barton Health is the hospital system for South Lake Tahoe, and its community health centre runs a medication for addiction treatment program that combines medication with referrals to addiction counseling and peer support coaching, so a client gets more than a prescription. The most useful feature for a navigator is the substance use navigator role: dedicated numbers connect a client directly to someone who helps them find the right treatment, a low-friction first contact for someone who is ambivalent. First appointments are scheduled through the community health centre. Barton also operates a psychiatry and mental health clinic for co-occurring needs.",
+          "services": "Medication for addiction treatment; substance use navigators; referral to addiction counseling; peer support coaching; psychiatry and mental health",
+          "service_tags": [
+            "mat_buprenorphine",
+            "medication_management",
+            "outpatient",
+            "peer_support",
+            "individual_counseling",
+            "medical_care",
+            "mental_health",
+            "co_occurring",
+            "case_management"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults"
+          ],
+          "intake_process": "Call a substance use navigator at 530-307-1066 or 530-307-4913, or call the community health centre at 530-543-5623 to schedule a first appointment.",
+          "cost_notes": "Confirm at scheduling.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": null,
+          "mat_offered": "Medication for addiction treatment program; specific medications unconfirmed",
+          "image_url": null,
+          "caveat": "The community health centre street address could not be confirmed \u2014 verify it before sending a client.",
+          "source": "bartonhealth.org addiction recovery and location pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "edchc-placerville",
+          "name": "El Dorado Community Health Centers \u2014 Placerville",
+          "organization": "El Dorado Community Health Centers",
+          "category": "primary_care",
+          "county": "El Dorado",
+          "address": "4212 Missouri Flat Rd",
+          "city": "Placerville",
+          "zip": "95667",
+          "phone": "530-621-7700",
+          "website": "https://edcchc.org/locations-and-hours/",
+          "hours": "Mon\u2013Fri 8:00\u201312:00 and 1:00\u20135:30; Sat 9:00\u20131:00",
+          "summary": "This is the federally qualified health centre network on El Dorado County's western slope, with sites in Placerville and Cameron Park. They provide medical, dental, behavioral health and specialty care to patients of all ages and incomes regardless of insurance status or ability to pay, which makes them reliable for uninsured clients. Behavioral health sits inside the same clinic as primary care, so a client can address physical and mental health in one place, and there is an on-site pharmacy and lab. The Saturday morning opening in Placerville is genuinely useful for working clients.",
+          "services": "Primary care; behavioral health; dental; women's health; podiatry; eye care; pharmacy; lab; chiropractic",
+          "service_tags": [
+            "medical_care",
+            "mental_health",
+            "individual_counseling",
+            "case_management",
+            "outpatient"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "adolescents",
+            "families"
+          ],
+          "intake_process": "Call to register as a patient and ask for behavioral health. Cameron Park sites: 3100 and 3104 Ponte Morino Dr.",
+          "cost_notes": "Serves patients of all incomes regardless of insurance status or inability to pay.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "Confirm directly whether they prescribe medication for addiction treatment \u2014 the public service list does not say.",
+          "source": "edcchc.org locations and hours page; HCAI facility listing",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "progress-house",
+          "name": "Progress House, Inc.",
+          "organization": null,
+          "category": "residential",
+          "county": "El Dorado",
+          "address": null,
+          "city": "Placerville",
+          "zip": "95667",
+          "phone": null,
+          "website": "https://progresshouseinc.org/mens-residential-facility-2",
+          "hours": null,
+          "summary": "Progress House is a long-standing El Dorado County provider offering a continuum that listings describe as detoxification, residential treatment, outpatient treatment and transitional living, so a client can move through levels of care without changing agencies. Their Coloma men's residential facility is a ranch-style home on about an acre with roughly twenty beds for men eighteen and older, running over thirty hours a week of structured programming. Clinical approaches listed include cognitive behavioral therapy, contingency management, motivational interviewing, the Matrix Model and anger management. This is one of the few residential bed options for men inside El Dorado County.",
+          "services": "Men's residential treatment (about 20 beds, 30+ structured hours a week); detoxification; outpatient counseling; transitional living",
+          "service_tags": [
+            "residential",
+            "detox",
+            "outpatient",
+            "individual_counseling",
+            "group_counseling",
+            "sober_living",
+            "housing",
+            "case_management",
+            "aftercare"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "men"
+          ],
+          "intake_process": "Contact details could not be confirmed \u2014 directories list more than one phone number. Verify the current number through El Dorado County's own provider directory before referring.",
+          "cost_notes": "Confirm at intake.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": null,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "Phone and street address both unconfirmed and left blank; conflicting numbers circulate. Verify through the county provider directory first.",
+          "source": "progresshouseinc.org men's residential page; findhelp.org listing",
+          "confidence": "search-single"
+        },
+        {
+          "key": "vista-rise",
+          "name": "Vista Rise Collective (formerly Live Violence Free)",
+          "organization": null,
+          "category": "housing",
+          "county": "El Dorado",
+          "address": "2941 Lake Tahoe Blvd",
+          "city": "South Lake Tahoe",
+          "zip": "96150",
+          "phone": "530-544-2118",
+          "website": "https://vistarise.org/",
+          "hours": "Mon\u2013Fri 8\u20135; 24-hour crisis line",
+          "summary": "This is the domestic violence and sexual assault agency for South Lake Tahoe, recently renamed from Live Violence Free, so clients and older referral lists will still know it by the old name. They run a 24-hour crisis line staffed by trained professionals, with advocacy available in English, Spanish and Tagalog. Their Serenity House shelter provides confidential housing, food and daily essentials for up to 180 days, along with peer counseling, licensed therapy, transport, advocacy and legal assistance. This matters for substance use work because substance use and domestic violence frequently travel together, and a client cannot stabilise in recovery while still in an unsafe home.",
+          "services": "24-hour crisis line; confidential emergency shelter up to 180 days; peer counseling; licensed therapy; legal assistance and advocacy; transport; food and living essentials",
+          "service_tags": [
+            "housing",
+            "crisis_24_7",
+            "peer_support",
+            "individual_counseling",
+            "mental_health",
+            "trauma_informed",
+            "legal_help",
+            "transportation",
+            "case_management",
+            "spanish_speaking"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "women",
+            "families",
+            "lgbtq",
+            "spanish_speakers",
+            "unhoused"
+          ],
+          "intake_process": "Call the 24-hour crisis line at 530-544-4444, or the office during business hours.",
+          "cost_notes": "No cost to survivors.",
+          "languages": "English, Spanish, Tagalog",
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "Their Serenity House shelter is unrelated to Granite Wellness's Serenity House men's residential program in Grass Valley.",
+          "source": "vistarise.org home, contact and crisis support pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "only-kindness",
+          "name": "Only Kindness, Inc.",
+          "organization": null,
+          "category": "housing",
+          "county": "El Dorado",
+          "address": "1864 Broadway",
+          "city": "Placerville",
+          "zip": "95667",
+          "phone": "530-344-1822",
+          "website": "https://www.onlykindness.net/contact",
+          "hours": "Mon\u2013Fri 9:00\u20135:00; closed weekends",
+          "summary": "Only Kindness runs an emergency day centre in Placerville for people who are homeless or at risk of homelessness, providing somewhere safe to spend the day and connect with help. Alongside the day centre they offer rapid rehousing services, which is the practical route out for a client who needs help securing and paying for housing rather than just a bed for the night. They also run a veterans outreach project, making them a useful referral for unhoused veterans on the western slope. This is a good daytime anchor point for a client who is unhoused and not yet engaged in treatment.",
+          "services": "Emergency day centre for people who are homeless or at risk; rapid rehousing; veterans outreach",
+          "service_tags": [
+            "housing",
+            "case_management",
+            "walk_in",
+            "peer_support"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "unhoused",
+            "veterans"
+          ],
+          "intake_process": "Walk in to the day centre during weekday business hours or call.",
+          "cost_notes": "Free.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "A program called The Nest could not be confirmed under this organization \u2014 ask about current program names when you call.",
+          "source": "onlykindness.net contact page; findhelp.org listings",
+          "confidence": "search-single"
+        },
+        {
+          "key": "bhs-sac-access",
+          "name": "Behavioral Health Services Screening and Coordination (BHS-SAC) Access Line",
+          "organization": "Sacramento County Behavioral Health Services",
+          "category": "crisis_line",
+          "county": "Sacramento",
+          "address": null,
+          "city": "Sacramento",
+          "zip": null,
+          "phone": "916-875-1055",
+          "website": "https://dhs.saccounty.gov/content/dhs/us/en/behavioral-health/behavioral-health-services/entry-point/bhs-sac.html",
+          "hours": "24 hours a day, 7 days a week",
+          "summary": "This is the single front door into Sacramento County's publicly funded mental health and substance use treatment system. The county combined what used to be several separate numbers, the mental health access team and the substance use system of care, into one call centre, so a navigator only has to remember one number. Staff screen the client, determine eligibility, and authorize placement into county-funded services. This matters practically because several county-contracted detox and residential beds cannot be entered directly: the client has to be cleared through this line first. Call it before sending anyone to a county-funded residential or withdrawal management bed.",
+          "services": "Telephone screening, eligibility determination, level-of-care assessment and authorization, referral into county-funded SUD and mental health treatment",
+          "service_tags": [
+            "case_management",
+            "mental_health",
+            "co_occurring",
+            "crisis_24_7",
+            "same_day_intake"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "adolescents",
+            "families",
+            "justice_involved",
+            "unhoused"
+          ],
+          "intake_process": "Call 916-875-1055 directly, any time, no appointment. Use this call to get county authorization before referring to county-funded detox or residential beds.",
+          "cost_notes": "No cost to call. Gateway to Medi-Cal and county-funded treatment.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": null,
+          "source": "dhs.saccounty.gov behavioral health entry point; DHCS county access line list",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "wellspace-detox",
+          "name": "WellSpace Health Residential and Withdrawal Management",
+          "organization": "WellSpace Health",
+          "category": "detox_withdrawal_mgmt",
+          "county": "Sacramento",
+          "address": "1550 Juliesse Ave",
+          "city": "Sacramento",
+          "zip": null,
+          "phone": null,
+          "website": "https://www.wellspacehealth.org/services-and-programs/",
+          "hours": null,
+          "summary": "WellSpace runs medically supervised withdrawal management alongside short-term and long-term residential treatment on a single Sacramento campus, so a client does not have to move between programs when stepping down from detox into residential care. They handle alcohol, opioid, methamphetamine and cocaine withdrawal. Beyond the clinical piece they wrap in peer support, housing help, employment counseling and case management, plus overdose education and naloxone at discharge, which is the part that matters most for a client leaving detox. The program is Joint Commission accredited and nonprofit, not private-pay. Admission generally runs through Sacramento County rather than by calling the site.",
+          "services": "Medically supervised withdrawal management, short- and long-term residential treatment, MAT, counseling, peer support, aftercare planning, overdose education and naloxone",
+          "service_tags": [
+            "detox",
+            "residential",
+            "medication_management",
+            "individual_counseling",
+            "group_counseling",
+            "peer_support",
+            "case_management",
+            "co_occurring",
+            "naloxone",
+            "housing",
+            "employment",
+            "aftercare"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults"
+          ],
+          "intake_process": "Clients are normally cleared through Sacramento County for detox and residential placement \u2014 start with the county access line at 916-875-1055 rather than calling the site.",
+          "cost_notes": "Reported to accept Medi-Cal, Medicare, self-pay and government funding; verify at referral.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "No direct program phone could be confirmed, and rehab directories list several conflicting numbers for WellSpace. Use the number on the organization's own contact page.",
+          "source": "wellspacehealth.org services and programs page",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "wellspace-fqhc",
+          "name": "WellSpace Health community health centres",
+          "organization": "WellSpace Health",
+          "category": "primary_care",
+          "county": "Sacramento",
+          "address": null,
+          "city": "Sacramento",
+          "zip": null,
+          "phone": "916-737-5555",
+          "website": "https://www.wellspacehealth.org/",
+          "hours": null,
+          "summary": "WellSpace Health is the region's large federally qualified health centre, operating community health centres across more than thirty Sacramento-area neighbourhoods. For a client in recovery this is often the most practical place to establish primary care, dental and behavioral health in one system, because a federally qualified health centre must serve people regardless of ability to pay. They offer medical, dental, mental health and substance use services and explicitly welcome Medi-Cal, Medicare and uninsured patients. Because they also run detox, residential and the county crisis line, a client can often stay inside one organization across levels of care. The central appointment line is the fastest route in.",
+          "services": "Primary medical care, dental, adult and child mental health, substance use treatment, immediate care clinics",
+          "service_tags": [
+            "medical_care",
+            "mental_health",
+            "medication_management",
+            "individual_counseling",
+            "co_occurring",
+            "telehealth",
+            "walk_in"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "adolescents",
+            "families",
+            "unhoused"
+          ],
+          "intake_process": "Call the central appointment line, or use an immediate care clinic for walk-in needs. New patients accepted regardless of insurance status.",
+          "cost_notes": "Federally qualified health centre: Medi-Cal, Medicare and sliding scale for uninsured patients.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": null,
+          "source": "wellspacehealth.org home, contact and centres pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "988-sacramento",
+          "name": "988 Suicide and Crisis Lifeline \u2014 Sacramento",
+          "organization": "WellSpace Health",
+          "category": "crisis_line",
+          "county": "Sacramento",
+          "address": null,
+          "city": "Sacramento",
+          "zip": null,
+          "phone": "988",
+          "website": "https://www.wellspacehealth.org/services-and-programs/988-sacramento/",
+          "hours": "24 hours a day, 7 days a week",
+          "summary": "WellSpace Health operates the 988 Suicide and Crisis Lifeline centre for Sacramento County and more than thirty other Northern and Central California counties. Support is confidential and available by talk, text or chat around the clock, and it covers substance use crises and general distress, not only suicidal thoughts. The volume is substantial, roughly 62,000 calls and 32,000 chats and texts in 2024, so this is an established staffed service rather than a token line. For clients who will not call a clinic, handing them 988 plus the local direct number is a low-barrier first step.",
+          "services": "24/7 suicide prevention and behavioral health crisis counseling by phone, text and chat; local crisis line; 24-hour maternal support line",
+          "service_tags": [
+            "crisis_24_7",
+            "mental_health",
+            "peer_support",
+            "co_occurring"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "adolescents",
+            "pregnant_parenting",
+            "veterans",
+            "lgbtq"
+          ],
+          "intake_process": "Call or text 988 any time, or 916-368-3111 for the Sacramento line. Chat via 988lifeline.org. No referral, no eligibility check. Maternal support line 916-681-2907.",
+          "cost_notes": "Free.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": null,
+          "source": "wellspacehealth.org 988 Sacramento and crisis system pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "core-medical",
+          "name": "C.O.R.E. Medical Clinic",
+          "organization": "C.O.R.E. Medical Clinic, Inc.",
+          "category": "mat_otp",
+          "county": "Sacramento",
+          "address": null,
+          "city": "Sacramento",
+          "zip": null,
+          "phone": "916-442-4985",
+          "website": "https://www.coremedicalclinic.com/",
+          "hours": null,
+          "summary": "CORE is a licensed opioid treatment program offering the full range of medications rather than just one, which gives a navigator real flexibility. They run methadone maintenance, a buprenorphine program, a long-term detox track, Sublocade (monthly injectable buprenorphine) and Vivitrol (naltrexone). Medication is wrapped with medical care, counseling, drug testing, naloxone access and long-term recovery planning. They list a broad set of accepted insurers including Medi-Cal, Medicare, Kaiser, Anthem, Blue Shield and Optum, so clients with commercial coverage are not turned away. Useful when a client has not done well on one medication and needs a different option without changing providers.",
+          "services": "Methadone maintenance, buprenorphine, Sublocade, Vivitrol, long-term detox, counseling, drug testing, naloxone access, recovery planning",
+          "service_tags": [
+            "mat_methadone",
+            "mat_buprenorphine",
+            "mat_naltrexone",
+            "medication_management",
+            "detox",
+            "individual_counseling",
+            "outpatient",
+            "naloxone"
+          ],
+          "levels_of_care": "OTP",
+          "populations": [
+            "adults"
+          ],
+          "intake_process": "Call the clinic to arrange an intake assessment. Confirm the current address and dosing hours on that call.",
+          "cost_notes": "Accepts Medi-Cal, Medicare and numerous commercial plans including Anthem, Blue Shield, Kaiser, Optum, Humana, Magellan and Western Health Advantage.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": null,
+          "mat_offered": "methadone, buprenorphine, Sublocade, naltrexone (Vivitrol)",
+          "image_url": null,
+          "caveat": "Street address could not be substantiated \u2014 confirm the clinic location before sending a client.",
+          "source": "coremedicalclinic.com programs and services pages",
+          "confidence": "search-single"
+        },
+        {
+          "key": "sacramento-ctc",
+          "name": "Sacramento Comprehensive Treatment Center",
+          "organization": "Comprehensive Treatment Centers",
+          "category": "mat_otp",
+          "county": "Sacramento",
+          "address": "7225 E Southgate Dr, Suite D",
+          "city": "Sacramento",
+          "zip": "95823",
+          "phone": "877-526-9106",
+          "website": "https://www.ctcprograms.com/location/sacramento-comprehensive-treatment-center/",
+          "hours": null,
+          "summary": "This is an outpatient opioid treatment program in south Sacramento offering methadone, buprenorphine, Suboxone and naltrexone, paired with counseling. Because it is outpatient and medication-focused, it suits a client who needs to stay in work, school or housing while stabilizing on medication. Having several medication options at one site helps when a client has a preference or a prior bad experience with methadone specifically. Note this is a for-profit national chain rather than a county-contracted nonprofit, so confirm Medi-Cal acceptance for the specific client before referring.",
+          "services": "Methadone maintenance, buprenorphine and Suboxone, naltrexone, individual and group counseling",
+          "service_tags": [
+            "mat_methadone",
+            "mat_buprenorphine",
+            "mat_naltrexone",
+            "medication_management",
+            "outpatient",
+            "individual_counseling",
+            "group_counseling"
+          ],
+          "levels_of_care": "OTP",
+          "populations": [
+            "adults"
+          ],
+          "intake_process": "Call to schedule an intake and first dosing appointment. Confirm the dosing window, since opioid treatment program dosing is typically early morning.",
+          "cost_notes": "Confirm Medi-Cal acceptance for the individual client.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": null,
+          "mat_offered": "methadone, buprenorphine, Suboxone, naltrexone",
+          "image_url": null,
+          "caveat": "The published number is a national toll-free line \u2014 ask to be connected to the Sacramento clinic directly.",
+          "source": "ctcprograms.com Sacramento location page",
+          "confidence": "search-single"
+        },
+        {
+          "key": "medmark-sacramento",
+          "name": "MedMark Treatment Centers \u2014 Sacramento",
+          "organization": "MedMark Treatment Centers",
+          "category": "mat_otp",
+          "county": "Sacramento",
+          "address": null,
+          "city": "Sacramento",
+          "zip": null,
+          "phone": "916-330-3747",
+          "website": "https://medmark.com/locations/california/sacramento",
+          "hours": null,
+          "summary": "MedMark runs an opioid treatment program in Sacramento providing medication-assisted treatment for opioid use disorder on an outpatient basis. It is one of several opioid treatment program options in the county, which matters because capacity and dosing hours vary and a client may need whichever clinic can start them soonest. As with other national chains, verify Medi-Cal acceptance for the individual client at intake. Treat this as a second option to check on availability rather than a first-line referral until the address is confirmed.",
+          "services": "Outpatient medication-assisted treatment for opioid use disorder with counseling",
+          "service_tags": [
+            "mat_methadone",
+            "mat_buprenorphine",
+            "medication_management",
+            "outpatient",
+            "individual_counseling"
+          ],
+          "levels_of_care": "OTP",
+          "populations": [
+            "adults"
+          ],
+          "intake_process": "Call the Sacramento clinic to arrange intake; confirm the street address and dosing hours on that call.",
+          "cost_notes": "Confirm Medi-Cal acceptance for the individual client.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": null,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "Phone number substantiated but street address was not \u2014 confirm the location before sending a client.",
+          "source": "medmark.com California locations pages",
+          "confidence": "search-single"
+        },
+        {
+          "key": "bridges-inc",
+          "name": "Bridges Professional Treatment Services",
+          "organization": "Bridges, Inc.",
+          "category": "outpatient",
+          "county": "Sacramento",
+          "address": "3600 Power Inn Rd, Suite C",
+          "city": "Sacramento",
+          "zip": "95826",
+          "phone": "916-453-2704",
+          "website": "https://www.bridgesinc.net/",
+          "hours": null,
+          "summary": "Bridges offers both regular and intensive outpatient treatment for men and women, and states that Medi-Cal and Sacramento County funding are available to those who qualify, so this is a realistic option for uninsured or Medi-Cal clients rather than private-pay only. They also operate sober living recovery residences, which means a client can combine outpatient treatment with structured housing through one organization, and they provide aftercare on completion. Sessions can be attended on site or by secure telehealth, which helps clients with transport barriers. They also run DUI and anger management programming.",
+          "services": "Outpatient and intensive outpatient treatment, sober living recovery residences, aftercare, anger management, DUI program, telehealth sessions",
+          "service_tags": [
+            "outpatient",
+            "intensive_outpatient",
+            "individual_counseling",
+            "group_counseling",
+            "sober_living",
+            "housing",
+            "aftercare",
+            "telehealth",
+            "case_management"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "men",
+            "women",
+            "justice_involved"
+          ],
+          "intake_process": "Call the office or use the intake email to schedule an assessment; the sober living residences have a separate application. Ask about county funding eligibility at intake.",
+          "cost_notes": "Medi-Cal and Sacramento County funding available to those who qualify.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": null,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "Conflicting phone numbers circulate in directories \u2014 use the number on the organization's own contact page.",
+          "source": "bridgesinc.net home, contact and program pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "sacramento-recovery-house",
+          "name": "Sacramento Recovery House \u2014 Men's Program",
+          "organization": "Sacramento Recovery House, Inc.",
+          "category": "residential",
+          "county": "Sacramento",
+          "address": "1914 22nd St",
+          "city": "Sacramento",
+          "zip": "95816",
+          "phone": "916-455-6258",
+          "website": "https://www.sacrecovery.org/",
+          "hours": null,
+          "summary": "This is a small seventeen-bed social-model residential program for men in midtown Sacramento, running structured live-in stays of thirty, sixty or ninety days. Social model means the emphasis is on peer community, structure and daily living skills rather than a medical setting, which fits clients already past acute withdrawal who need time in a stable sober environment. The small bed count is worth noting: availability is limited, so call early rather than assuming a bed exists. It is a long-standing local nonprofit rather than a chain. Good fit for a man who needs structure and accountability but not medical detox.",
+          "services": "Social-model residential treatment for men, 30/60/90-day structured programs, peer recovery community, life skills",
+          "service_tags": [
+            "residential",
+            "group_counseling",
+            "peer_support",
+            "aftercare",
+            "case_management"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "men"
+          ],
+          "intake_process": "Call the men's program directly to check bed availability and arrange screening. Route through the county access line if county funding is needed.",
+          "cost_notes": "Confirm at intake.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": null,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": null,
+          "source": "sacrecovery.org home and contact pages; findhelp.org listing",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "new-dawn-orangevale",
+          "name": "New Dawn Treatment Centers \u2014 Orangevale",
+          "organization": "New Dawn Treatment Centers",
+          "category": "residential",
+          "county": "Sacramento",
+          "address": "6039 Roloff Way",
+          "city": "Orangevale",
+          "zip": "95662",
+          "phone": null,
+          "website": "https://www.newdawntreatmentcenters.com/",
+          "hours": null,
+          "summary": "New Dawn provides medical detox, residential rehabilitation and outpatient programming in the Sacramento area, with residential care based in Orangevale and outpatient services in Sacramento. They advertise lifetime aftercare for program graduates, a meaningful difference for clients who relapse and need a door back in without starting a new intake elsewhere. They have operated in the region for over thirty years and also address co-occurring mental health needs. Confirm payment, since this appears to be primarily an insurance and private-pay provider.",
+          "services": "Medical detox, residential rehabilitation, outpatient and intensive outpatient, mental health services, lifetime aftercare for graduates",
+          "service_tags": [
+            "detox",
+            "residential",
+            "outpatient",
+            "intensive_outpatient",
+            "mental_health",
+            "co_occurring",
+            "individual_counseling",
+            "group_counseling",
+            "aftercare"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults"
+          ],
+          "intake_process": "Call the intake line to arrange assessment and verify benefits.",
+          "cost_notes": "Appears to be insurance and private-pay; confirm before referring a Medi-Cal client.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": null,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "Listings disagree on the Orangevale site (6039 Roloff Way vs 8780 Sherry Drive) and give different intake numbers. Confirm which site is currently operating.",
+          "source": "newdawntreatmentcenters.com home and locations pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "voa-sacramento",
+          "name": "Volunteers of America Northern California \u2014 Sacramento",
+          "organization": "Volunteers of America Northern California & Northern Nevada",
+          "category": "shelter",
+          "county": "Sacramento",
+          "address": "3434 Marconi Ave",
+          "city": "Sacramento",
+          "zip": "95821",
+          "phone": "916-265-3400",
+          "website": "https://www.voa-ncnn.org/",
+          "hours": null,
+          "summary": "Volunteers of America is one of the largest social service providers in the region, running more than forty programs spanning emergency shelter, transitional housing, employment services and substance use treatment. For navigation the standout is the Center for Women and Children, a social-model detoxification facility where women withdrawing from alcohol or drugs can stay up to thirty days. During that stay a case manager works on treatment eligibility, access to medication-assisted treatment and connection to other resources, so it functions as both a safe withdrawal setting and a launch point into ongoing care. Because they also hold shelter and housing programs, it is a strong single referral for a woman who is both unhoused and in withdrawal.",
+          "services": "Social-model detox for women up to 30 days, emergency shelter, transitional housing, treatment and recovery services, employment services, case management",
+          "service_tags": [
+            "detox",
+            "housing",
+            "case_management",
+            "employment",
+            "medication_management",
+            "peer_support"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "women",
+            "families",
+            "unhoused",
+            "pregnant_parenting"
+          ],
+          "intake_process": "Call the main Sacramento office to be routed to the right program; for the women's detox ask specifically for the Center for Women and Children and confirm current intake requirements.",
+          "cost_notes": "Confirm at intake.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": null,
+          "source": "voa-ncnn.org home, contact and services pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "saint-johns",
+          "name": "Saint John's Program for Real Change",
+          "organization": null,
+          "category": "housing",
+          "county": "Sacramento",
+          "address": null,
+          "city": "Sacramento",
+          "zip": null,
+          "phone": "916-453-1482",
+          "website": "https://saintjohnsprogram.org/",
+          "hours": null,
+          "summary": "Saint John's is a residential program specifically for women and their children working to break out of homelessness and poverty, and it explicitly serves women dealing with addiction, trauma and past incarceration alongside housing instability. Because children stay with their mothers, it removes the common barrier where a mother declines treatment or shelter rather than be separated from her children. The model is comprehensive and longer term, combining housing with services aimed at employment and self-sufficiency, including their own social-enterprise businesses that provide work experience. A strong fit for a mother in early recovery who needs stability and a path to income, not just a bed.",
+          "services": "Residential program for mothers and children, addiction and trauma recovery support, employment training through social enterprises, case management toward self-sufficiency",
+          "service_tags": [
+            "housing",
+            "residential",
+            "trauma_informed",
+            "case_management",
+            "employment",
+            "family_program",
+            "childcare",
+            "mental_health",
+            "peer_support"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "women",
+            "pregnant_parenting",
+            "families",
+            "unhoused",
+            "justice_involved"
+          ],
+          "intake_process": "Call the program or use the Get Help page to begin screening; confirm the campus location and whether beds are available for the client's family size.",
+          "cost_notes": "Confirm at intake.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "The address found in listings looks like an administrative mailing suite rather than the campus, so it was left blank. Confirm the program site when you call.",
+          "source": "saintjohnsprogram.org home, contact and get help pages",
+          "confidence": "search-single"
+        },
+        {
+          "key": "mhucc-sacramento",
+          "name": "Sacramento Mental Health Urgent Care Clinic",
+          "organization": "Turning Point Community Programs",
+          "category": "mental_health",
+          "county": "Sacramento",
+          "address": "6950 65th St",
+          "city": "Sacramento",
+          "zip": "95823",
+          "phone": "916-393-1222",
+          "website": "https://www.tpcp.org/program/urgent-care/",
+          "hours": "Mon\u2013Fri 8am\u2013midnight, last walk-in 10pm; weekends and holidays 8am\u20138pm, last walk-in 6pm",
+          "summary": "This is a voluntary walk-in urgent care clinic for Sacramento County residents of any age who are in a mental health or co-occurring substance use crisis, and it serves people regardless of ability to pay. It exists specifically as an alternative to the emergency department, so it is the right destination for a client in crisis who does not need an ambulance or a psychiatric hold. No referral and no appointment are required, so a navigator can simply take or direct a client there within the walk-in window. Because it explicitly covers co-occurring substance use, it suits clients whose crisis is entangled with drug or alcohol use. Mind the last-walk-in cutoffs, which are earlier than the closing times.",
+          "services": "Walk-in mental health and co-occurring crisis assessment and stabilization, referral and linkage, alternative to the emergency department",
+          "service_tags": [
+            "mental_health",
+            "co_occurring",
+            "walk_in",
+            "same_day_intake",
+            "crisis_24_7",
+            "case_management",
+            "peer_support"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "adolescents",
+            "older_adults",
+            "unhoused",
+            "justice_involved"
+          ],
+          "intake_process": "Walk in during open hours, no referral or appointment. Voluntary only; not for involuntary holds.",
+          "cost_notes": "Serves Sacramento County residents regardless of ability to pay.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": null,
+          "source": "tpcp.org urgent care and Sacramento County pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "harm-reduction-services",
+          "name": "Harm Reduction Services",
+          "organization": null,
+          "category": "syringe_services",
+          "county": "Sacramento",
+          "address": "2800 Stockton Blvd",
+          "city": "Sacramento",
+          "zip": "95817",
+          "phone": "916-456-4849",
+          "website": "https://hrssac.org/",
+          "hours": "Mon\u2013Fri noon to 6:00pm",
+          "summary": "Harm Reduction Services runs Sacramento's syringe services program, providing sterile syringes and injection equipment, safe disposal, naloxone distribution, and HIV and hepatitis C testing. They also provide medical case management and referrals into treatment and other community services, so this is not only supply distribution but a genuine entry point for clients not yet ready for treatment. All services are free and confidential, which makes it the lowest-barrier option on this list for someone actively using. They also operate Safe Points, a mobile syringe services unit that travels around the county on weekdays, reaching clients who cannot get to the fixed site. Note their hours start at noon.",
+          "services": "Syringe exchange and safer use supplies, syringe disposal, naloxone distribution, HIV and hepatitis C testing, medical case management, mobile outreach, treatment referrals",
+          "service_tags": [
+            "harm_reduction",
+            "syringe_services",
+            "naloxone",
+            "medical_care",
+            "case_management",
+            "peer_support",
+            "walk_in"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "unhoused",
+            "lgbtq",
+            "justice_involved"
+          ],
+          "intake_process": "Walk in during open hours, or meet the Safe Points mobile unit \u2014 call 916-247-2335 for the mobile schedule. No appointment, ID or insurance needed.",
+          "cost_notes": "Free and confidential.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "The old domain harmreductionservices.org is now a parked page \u2014 use hrssac.org.",
+          "source": "hrssac.org home, contact and services pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "sane-sacramento",
+          "name": "Safer Alternatives thru Networking & Education (SANE)",
+          "organization": null,
+          "category": "harm_reduction",
+          "county": "Sacramento",
+          "address": "2211 Del Paso Blvd",
+          "city": "Sacramento",
+          "zip": "95815",
+          "phone": null,
+          "website": "https://www.staysafer.org/",
+          "hours": null,
+          "summary": "SANE is a second Sacramento harm reduction organization, operating a syringe access program in the Del Paso Boulevard area of north Sacramento. They provide new syringes, disposal of used ones, and naloxone kits with training on how to use them, free and non-judgmental. They also fulfil mail-based naloxone orders across California in partnership with NEXT Distro, which is genuinely useful for a client who will not or cannot walk into a physical site. Having two harm reduction providers in different parts of the county matters for access, since a client in north Sacramento may not travel to Stockton Boulevard.",
+          "services": "Syringe access and disposal, naloxone kits and overdose response training, mail-order naloxone, harm reduction education",
+          "service_tags": [
+            "harm_reduction",
+            "syringe_services",
+            "naloxone",
+            "peer_support",
+            "walk_in"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "unhoused"
+          ],
+          "intake_process": "Walk in at the Del Paso Blvd site, or order naloxone for mail delivery through their website.",
+          "cost_notes": "Free.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "No phone number could be confirmed, and hours are unknown \u2014 check the website before sending a client.",
+          "source": "staysafer.org home, services and order naloxone pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "snahc",
+          "name": "Sacramento Native American Health Center",
+          "organization": null,
+          "category": "primary_care",
+          "county": "Sacramento",
+          "address": "2020 J St",
+          "city": "Sacramento",
+          "zip": "95811",
+          "phone": "916-341-0575",
+          "website": "https://snahc.org/",
+          "hours": "Mon\u2013Fri 8:30\u20135:30; closed weekends",
+          "summary": "This is a downtown community health centre providing medical, dental, optometry and behavioral health care to adults and children. For substance use navigation the relevant piece is that they combine mental health and substance use counseling with traditional healing practices, which makes them a culturally appropriate referral for Native American clients who may disengage from mainstream treatment settings. Despite the name they operate as a community clinic and are not limited to Native patients. They also offer acupuncture, chiropractic care and gender-affirming care including hormone therapy. A sliding scale application is available for clients without coverage.",
+          "services": "Primary medical care, dental, optometry, mental health and substance use counseling with traditional healing, acupuncture, chiropractic, transgender care and hormone therapy",
+          "service_tags": [
+            "medical_care",
+            "mental_health",
+            "individual_counseling",
+            "group_counseling",
+            "co_occurring",
+            "trauma_informed",
+            "medication_management"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "adolescents",
+            "families",
+            "native_american",
+            "lgbtq"
+          ],
+          "intake_process": "Call to make an appointment. Clients without insurance should ask for the sliding scale application.",
+          "cost_notes": "Sliding scale application available for patients without coverage.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": null,
+          "source": "snahc.org home, hours and appointment pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "loaves-and-fishes",
+          "name": "Loaves & Fishes",
+          "organization": null,
+          "category": "food",
+          "county": "Sacramento",
+          "address": "1351 North C St",
+          "city": "Sacramento",
+          "zip": "95811",
+          "phone": "916-446-0874",
+          "website": "https://www.sacloaves.org/",
+          "hours": null,
+          "summary": "Loaves & Fishes is Sacramento's main daytime survival services campus for people who are unhoused, serving men, women, children and pets across roughly sixteen distinct programs. Beyond hot meals they provide hygiene facilities, survival supplies, mental health counseling, education for children and long-term overnight shelter for women. For a navigator this is the practical place to send a client who needs to eat, shower and get warm today while longer-term treatment or housing is arranged. Because so many services sit on one campus it is a single destination rather than a chain of referrals. Programme hours vary, so call before sending someone for a particular service.",
+          "services": "Daily meals, hygiene and shower facilities, survival supplies, mental health counseling, children's education, women's overnight shelter, services for guests' pets",
+          "service_tags": [
+            "housing",
+            "mental_health",
+            "case_management",
+            "peer_support",
+            "walk_in"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "women",
+            "men",
+            "families",
+            "unhoused"
+          ],
+          "intake_process": "Walk in during daytime service hours; no appointment. Call ahead to confirm hours for a specific program such as the women's shelter.",
+          "cost_notes": "Free.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": null,
+          "source": "sacloaves.org home, programs and about pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "sacramento-food-bank",
+          "name": "Sacramento Food Bank & Family Services",
+          "organization": null,
+          "category": "food",
+          "county": "Sacramento",
+          "address": "3333 Third Ave",
+          "city": "Sacramento",
+          "zip": "95817",
+          "phone": "916-456-1980",
+          "website": "https://www.sacramentofoodbank.org/",
+          "hours": null,
+          "summary": "This is the county-wide food bank, partnering with 112 agencies to distribute free food at more than two hundred sites across Sacramento County, so rather than sending every client downtown a navigator can use their Food Finder tool to locate a distribution near where the client actually lives. They also provide CalFresh application assistance, which is often more valuable long term than a single food box because it establishes ongoing benefits. They run two campuses: family services in Oak Park and food bank services in north Sacramento. Useful for clients in early recovery whose income is unstable.",
+          "services": "Free food distribution at more than 200 sites countywide, CalFresh application assistance, family support services",
+          "service_tags": [
+            "case_management",
+            "walk_in"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "families",
+            "unhoused",
+            "older_adults",
+            "spanish_speakers"
+          ],
+          "intake_process": "Use the Food Finder tool on their website to find the nearest distribution site, or call for CalFresh application help. North Sacramento campus: 1951 Bell Ave, 916-925-3240.",
+          "cost_notes": "Free.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": null,
+          "source": "sacramentofoodbank.org home, contact, find food and CalFresh pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "lsnc-sacramento",
+          "name": "Legal Services of Northern California \u2014 Sacramento",
+          "organization": "Legal Services of Northern California",
+          "category": "legal",
+          "county": "Sacramento",
+          "address": "515 12th St",
+          "city": "Sacramento",
+          "zip": "95814",
+          "phone": "916-551-2150",
+          "website": "https://lsnc.net/office/sacramento",
+          "hours": "General intake Mon, Tue, Thu and Fri 8:30\u201312 and 1\u20135, or until full",
+          "summary": "This is the region's free civil legal aid provider, and its Sacramento office handles the civil problems that routinely derail recovery: eviction and housing, public benefits denials and terminations, and related matters. Legal problems are a common reason clients drop out of treatment, so getting a client to legal aid early can protect the housing or benefits their recovery depends on. Intake runs on set days and closes when full, so advise clients to call early in the morning rather than mid-afternoon. For clients who cannot call during business hours there is an evening intake line where a message gets a callback within one to two business days. They also run a senior legal hotline.",
+          "services": "Free civil legal help including housing and eviction defence, public benefits and related civil matters; senior legal hotline; self-help resources",
+          "service_tags": [
+            "legal_help",
+            "case_management"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "families",
+            "unhoused",
+            "older_adults",
+            "veterans",
+            "justice_involved"
+          ],
+          "intake_process": "Call during intake hours; intake closes when capacity is reached, so call at opening. Evening intake line 866-815-5990.",
+          "cost_notes": "Free; income eligibility applies.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": null,
+          "source": "lsnc.net Sacramento office and contact pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "211-sacramento",
+          "name": "211 Sacramento",
+          "organization": "Community Link",
+          "category": "benefits",
+          "county": "Sacramento",
+          "address": null,
+          "city": "Sacramento",
+          "zip": null,
+          "phone": "916-498-1000",
+          "website": "https://www.211sacramento.org/211/",
+          "hours": "24 hours a day, 7 days a week",
+          "summary": "211 is the countywide information and referral line, staffed around the clock by specialists working from a database of more than 1,600 nonprofit and public agency programs. For a navigator it is the best fallback when a specific program is full, closed or no longer operating, because they track current availability in a way a static list cannot. They also do CalFresh application assistance directly over the phone, saving the client a trip. Language access is genuinely strong: bilingual specialists in Spanish, Thai, Lao and Mien, with interpretation in more than 200 languages, and hearing-impaired clients can dial 711 and ask for 211.",
+          "services": "24/7 information and referral to health and human services, CalFresh application assistance by phone, multilingual support",
+          "service_tags": [
+            "case_management",
+            "crisis_24_7",
+            "spanish_speaking"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "families",
+            "unhoused",
+            "older_adults",
+            "spanish_speakers",
+            "deaf_hard_of_hearing"
+          ],
+          "intake_process": "Dial 211, or 916-498-1000, or 844-546-1464 toll free, any time. Hearing impaired clients dial 711 and ask for 211.",
+          "cost_notes": "Free.",
+          "languages": "Spanish, Thai, Lao and Mien on staff; interpretation in 200+ languages",
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": null,
+          "source": "211sacramento.org get help, contact and fact sheet pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "sacramento-covered",
+          "name": "Sacramento Covered",
+          "organization": null,
+          "category": "transportation",
+          "county": "Sacramento",
+          "address": null,
+          "city": "Sacramento",
+          "zip": null,
+          "phone": null,
+          "website": "https://sacramentocovered.org/",
+          "hours": null,
+          "summary": "Sacramento Covered deploys community health workers who solve the practical barriers that keep clients from making it to care, most notably transport to health and housing appointments, one of the most common reasons a treatment referral fails. They also do health system navigation, CalFresh applications, emergency food connections, post-hospital and emergency department care coordination, and direct help securing temporary and permanent housing. They conduct tailored outreach to people experiencing homelessness rather than waiting for clients to come to them. Pair them with a clinical referral when a client has coverage but cannot physically get to appointments.",
+          "services": "Community health worker navigation, transport to health and housing appointments, CalFresh enrollment, emergency food connection, hospital and emergency department discharge coordination, housing placement assistance, homeless outreach",
+          "service_tags": [
+            "transportation",
+            "case_management",
+            "housing",
+            "medical_care",
+            "peer_support"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "families",
+            "unhoused",
+            "spanish_speakers"
+          ],
+          "intake_process": "Contact through their website; commonly engaged as a partner organization alongside a clinical referral or at hospital discharge.",
+          "cost_notes": "Confirm.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": null,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "No phone number could be confirmed \u2014 check the current referral pathway on their website.",
+          "source": "sacramentocovered.org partners and Medi-Cal pages",
+          "confidence": "search-single"
+        },
+        {
+          "key": "walters-house",
+          "name": "Walter's House Residential Treatment",
+          "organization": "Fourth & Hope",
+          "category": "residential",
+          "county": "Yolo",
+          "address": null,
+          "city": "Woodland",
+          "zip": "95695",
+          "phone": null,
+          "website": "https://fourthandhope.org/programs/",
+          "hours": "Residential, 24/7; structured day of chores, breakfast and three groups",
+          "summary": "Walter's House is the residential substance use treatment program run by Fourth & Hope, a Yolo County nonprofit working in Woodland for more than 40 years. It serves both men and women, and a typical stay runs about 90 days, longer if a client needs it. Days are highly structured around group therapy, with weekly one-to-one counselor meetings and individual counseling available daily. About 250 people a year go through the program, most from Woodland and elsewhere in Yolo County, with some referred in from the VA. It is Medi-Cal certified and CARF accredited, so it is usually realistic for a client with no money and Medi-Cal coverage.",
+          "services": "Residential SUD treatment, assessment, treatment planning, individual and group counseling, education, family therapy, crisis intervention, aftercare planning",
+          "service_tags": [
+            "residential",
+            "individual_counseling",
+            "group_counseling",
+            "family_program",
+            "case_management",
+            "aftercare",
+            "faith_based"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "men",
+            "women",
+            "veterans",
+            "unhoused"
+          ],
+          "intake_process": "Admission through Fourth & Hope; many clients arrive via Yolo County referrals or the VA.",
+          "cost_notes": "Medi-Cal certified; self-pay terms unconfirmed.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": null,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "Address deliberately left blank: sources conflict between 285 and 207 4th Street, Woodland, and a newer listing gives 1905 E Beamer St. No program-specific phone found. Confirm the door and the number before sending a client.",
+          "source": "fourthandhope.org programs page; recovery.com listing",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "fourth-and-hope-shelter",
+          "name": "Fourth & Hope Emergency Shelter",
+          "organization": "Fourth & Hope",
+          "category": "shelter",
+          "county": "Yolo",
+          "address": "1901 E Beamer St",
+          "city": "Woodland",
+          "zip": null,
+          "phone": "530-661-1218",
+          "website": "https://fourthandhope.org/",
+          "hours": "Open 365 days a year; access 24/7 by phone",
+          "summary": "This is the main emergency shelter in Yolo County, a dormitory-style facility with room for about 100 adults, open every day of the year. Beyond a bed it provides three meals a day, showers, restrooms, laundry and a mailing address, which matters for clients trying to hold on to benefits or a job. Staff do case management and help people apply for benefits and search for work and housing. Residents can be referred into substance use treatment when a slot is available, which makes this a practical front door for an unhoused client not yet ready for residential care. Fourth & Hope is faith-based but the shelter is open to anyone.",
+          "services": "Emergency shelter beds, three meals daily, showers and laundry, mail service, case management, benefits enrollment, job and housing search help, referral to SUD treatment",
+          "service_tags": [
+            "housing",
+            "case_management",
+            "walk_in",
+            "faith_based"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "unhoused"
+          ],
+          "intake_process": "Access 24/7 by phone; listings also give 530-662-1133 and 916-371-1907.",
+          "cost_notes": "No cost information found; shelters of this type are normally free.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "530-662-1133 is also published as Empower Yolo's crisis line, so one of the two listings is likely wrong. Confirm which number reaches shelter intake.",
+          "source": "fourthandhope.org; City of Woodland homeless shelter services page",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "hansen-family-health",
+          "name": "Hansen Family Health Center",
+          "organization": "CommuniCare+OLE",
+          "category": "mat_obot",
+          "county": "Yolo",
+          "address": "215 W Beamer St",
+          "city": "Woodland",
+          "zip": "95695",
+          "phone": "530-405-2800",
+          "website": "https://communicareole.org/location/hansen-family-health-center/",
+          "hours": null,
+          "summary": "Hansen Family Health Center is CommuniCare+OLE's main Woodland clinic and one of the most useful referrals in Yolo County for a client who wants medication for opioid or alcohol use disorder without entering a methadone program. It is a federally qualified health center, so one visit can cover primary care, behavioral health and substance use treatment, for adults and adolescents. Prescribers offer buprenorphine, naltrexone and Vivitrol to manage withdrawal and cravings, alongside counseling. As an FQHC it treats people regardless of ability to pay or immigration status. For a client who is working, housed and does not need residential care, this is often the lowest-friction place to start.",
+          "services": "Primary care, behavioral health, office-based medication for addiction treatment (buprenorphine, naltrexone/Vivitrol), counseling, health education",
+          "service_tags": [
+            "outpatient",
+            "mat_buprenorphine",
+            "mat_naltrexone",
+            "medication_management",
+            "individual_counseling",
+            "mental_health",
+            "co_occurring",
+            "medical_care"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "adolescents",
+            "spanish_speakers"
+          ],
+          "intake_process": "Call the clinic to become a patient. A direct behavioral health number, 530-405-2815, appeared in one source only.",
+          "cost_notes": "Sliding scale; care regardless of ability to pay or immigration status.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": true,
+          "mat_offered": "buprenorphine, naltrexone/Vivitrol",
+          "image_url": null,
+          "caveat": "Clinic hours not found. Confirm SUD intake steps and whether a separate behavioral health line is used.",
+          "source": "communicareole.org location and substance use pages; Partnership HealthPlan Yolo SUD directory",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "salud-clinic",
+          "name": "Salud Clinic",
+          "organization": "CommuniCare+OLE",
+          "category": "primary_care",
+          "county": "Yolo",
+          "address": "500 Jefferson Blvd",
+          "city": "West Sacramento",
+          "zip": "95605",
+          "phone": "916-403-2900",
+          "website": "https://communicareole.org/location/salud-clinic/",
+          "hours": "Mon\u2013Fri 8:00\u20135:30, extended Tue and Thu to 9:00pm; closed weekends",
+          "summary": "Salud Clinic is CommuniCare+OLE's West Sacramento health centre and the main safety-net medical home on that side of Yolo County. It provides primary care, dental, perinatal and paediatric care, a teen clinic, LGBTQIA-affirming services, behavioral health and substance use treatment under one roof. It runs on a sliding scale and serves anyone regardless of ability to pay or immigration status, which makes it a good referral for uninsured or undocumented clients. Tuesday and Thursday evening hours help clients who cannot miss work. For a West Sacramento client who needs both a doctor and help with substance use, this is usually the best single starting point.",
+          "services": "Primary care, dental, perinatal and paediatric care, teen clinic, LGBTQIA services, behavioral health, substance use treatment, preventive medicine, health education",
+          "service_tags": [
+            "outpatient",
+            "medical_care",
+            "mental_health",
+            "co_occurring",
+            "individual_counseling",
+            "medication_management",
+            "spanish_speaking"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "adolescents",
+            "families",
+            "pregnant_parenting",
+            "lgbtq",
+            "spanish_speakers"
+          ],
+          "intake_process": "Call the clinic to register as a patient. A behavioral health number, 916-403-2970, appeared in one source only.",
+          "cost_notes": "Sliding scale; care regardless of ability to pay or immigration status.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "One listing gives '500 B Jefferson Boulevard, Suite 180' \u2014 confirm the suite number.",
+          "source": "communicareole.org location page; Partnership HealthPlan Yolo SUD directory",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "yolo-sud-services",
+          "name": "Yolo County Substance Use Disorder Services",
+          "organization": "Yolo County Health & Human Services Agency",
+          "category": "outpatient",
+          "county": "Yolo",
+          "address": "625 Court St",
+          "city": "Woodland",
+          "zip": "95695",
+          "phone": "530-666-8150",
+          "website": "https://www.yolocounty.gov/government/general-government-departments/health-human-services/substance-abuse/substance-use-disorder-services",
+          "hours": "Walk-in Mon\u2013Fri 9:00\u20134:00 at the Woodland office",
+          "summary": "This is the county office that controls the Drug Medi-Cal continuum in Yolo County, so it is the gatekeeper for most publicly funded treatment placements. Yolo operates under the Drug Medi-Cal Organized Delivery System waiver, meaning the county can authorize residential treatment, outpatient, intensive outpatient, some outpatient withdrawal management and medication assisted treatment, and coordinate that with mental health and physical care. The Woodland office takes walk-ins on weekdays from 9 to 4, unusually accessible for a county SUD program. A client who is ready today can walk in and be assessed rather than waiting for a callback. For anyone on Medi-Cal or uninsured, start here.",
+          "services": "SUD assessment and placement, residential referral, outpatient and intensive outpatient, some outpatient withdrawal management, medication assisted treatment, prevention and education",
+          "service_tags": [
+            "outpatient",
+            "intensive_outpatient",
+            "detox",
+            "medication_management",
+            "case_management",
+            "co_occurring",
+            "walk_in",
+            "same_day_intake"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "adolescents",
+            "justice_involved"
+          ],
+          "intake_process": "Walk in to the Woodland office Mon\u2013Fri 9\u20134, or call the 24/7 Yolo County Access Line at 888-965-6647.",
+          "cost_notes": "Drug Medi-Cal funded; serves Medi-Cal beneficiaries and uninsured residents.",
+          "languages": "English, Spanish and Russian on the county's general line",
+          "accepts_medicaid": true,
+          "accepts_uninsured": true,
+          "mat_offered": "MAT within the county continuum; confirm which medications",
+          "image_url": null,
+          "caveat": null,
+          "source": "yolocounty.gov SUD services page; Partnership HealthPlan Yolo SUD directory",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "yolo-access-line",
+          "name": "Yolo County Mental Health Crisis and Access Line",
+          "organization": "Yolo County Health & Human Services Agency",
+          "category": "crisis_line",
+          "county": "Yolo",
+          "address": null,
+          "city": "Woodland",
+          "zip": null,
+          "phone": "888-965-6647",
+          "website": "https://www.yolocounty.gov/government/general-government-departments/health-human-services/mental-health/mental-health-services",
+          "hours": "24 hours a day, 7 days a week",
+          "summary": "This is the single number to give a Yolo County client who is in crisis or needs to get into county mental health or substance use treatment. It runs around the clock for residents of all ages, giving immediate help on the call and then a referral into services. A TDD line is available for deaf and hard of hearing callers. Yolo also runs a general agency line at 833-744-4472 that is staffed in English, Spanish and Russian and routes to the same access line. If a client is unsure whether their problem is mental health or substance use, this line sorts that out rather than making them guess.",
+          "services": "24/7 crisis intervention by phone, screening, referral into county mental health and SUD services",
+          "service_tags": [
+            "crisis_24_7",
+            "mental_health",
+            "case_management",
+            "spanish_speaking"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "adolescents",
+            "older_adults",
+            "deaf_hard_of_hearing",
+            "spanish_speakers"
+          ],
+          "intake_process": "Call any time. TDD 800-735-2929. General agency line 833-744-4472.",
+          "cost_notes": "Free.",
+          "languages": "English, Spanish, Russian",
+          "accepts_medicaid": true,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": null,
+          "source": "yolocounty.gov mental health services page; findahelpline.com listing",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "empower-yolo",
+          "name": "Empower Yolo",
+          "organization": null,
+          "category": "crisis_line",
+          "county": "Yolo",
+          "address": "175 Walnut St",
+          "city": "Woodland",
+          "zip": "95695",
+          "phone": "530-661-6336",
+          "website": "https://empoweryolo.org/",
+          "hours": "Woodland office Mon\u2013Wed 8:30\u20134:30, Thu 10\u20134:30, Fri 8\u20134; crisis line 24/7",
+          "summary": "Empower Yolo is the county's domestic violence, sexual assault and human trafficking agency, and it matters for substance use work because so many clients, especially women, are also fleeing violence. Trained advocates staff a 24-hour crisis line and can provide emergency shelter, safety planning, counseling, peer support, legal advocacy and accompaniment to court or medical appointments. There is a Davis resource centre at 441 D Street as well as the Woodland main office. Services are confidential and free. If a client cannot safely enter treatment because of a partner, this is the agency to loop in first.",
+          "services": "24-hour crisis line, emergency shelter, counseling, peer support, legal advocacy, safety planning, accompaniment, case management, resource centres",
+          "service_tags": [
+            "crisis_24_7",
+            "housing",
+            "mental_health",
+            "trauma_informed",
+            "peer_support",
+            "legal_help",
+            "case_management",
+            "individual_counseling"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "women",
+            "families",
+            "adolescents",
+            "lgbtq",
+            "spanish_speakers"
+          ],
+          "intake_process": "Call the 24-hour crisis line 530-662-1133, or visit the Woodland or Davis resource centre during office hours. Davis: 530-757-1261.",
+          "cost_notes": "Free and confidential.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "The crisis line number 530-662-1133 is also published as Fourth & Hope's shelter access line; confirm which agency it reaches.",
+          "source": "empoweryolo.org contact and crisis support pages; Partnership HealthPlan Yolo crisis directory",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "davis-community-meals",
+          "name": "Davis Community Meals and Housing",
+          "organization": null,
+          "category": "housing",
+          "county": "Yolo",
+          "address": "1111 H St",
+          "city": "Davis",
+          "zip": "95616",
+          "phone": "530-756-4008",
+          "website": "https://daviscommunitymeals.org/",
+          "hours": "Resource centre and day shelter Mon\u2013Fri 8:00\u20134:00",
+          "summary": "Davis Community Meals and Housing is the main homeless services agency in Davis, running a day shelter and resource centre at Paul's Place along with housing programs and free meals. The day centre gives clients showers, hygiene supplies, clothing, laundry, a phone, a computer room, a mailing address and help arranging transport \u2014 the practical obstacles that derail someone trying to get into treatment. They also run a flex-bed shelter, transitional housing for families and permanent supportive housing. For a Davis client who is unhoused and needs a stable base while waiting on a treatment bed, send them here.",
+          "services": "Day shelter and resource centre, showers, laundry, clothing, mail and phone access, transport arrangement, free meals, flex-bed shelter, transitional and permanent supportive housing",
+          "service_tags": [
+            "housing",
+            "case_management",
+            "transportation",
+            "walk_in"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "families",
+            "unhoused"
+          ],
+          "intake_process": "Walk in to the resource centre on weekdays. Flex-bed shelter listed separately at 530-753-9204.",
+          "cost_notes": "Free; serves low-income and homeless individuals and families.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "A main office address of 202 F St, Davis also appears; 1111 H St is the client-facing resource centre.",
+          "source": "daviscommunitymeals.org resource centre and contact pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "lsnc-woodland",
+          "name": "Legal Services of Northern California \u2014 Woodland",
+          "organization": "Legal Services of Northern California",
+          "category": "legal",
+          "county": "Yolo",
+          "address": "619 North St",
+          "city": "Woodland",
+          "zip": "95695",
+          "phone": "530-662-1065",
+          "website": "https://lsnc.net/office/woodland",
+          "hours": "Office Mon\u2013Fri 8:30\u201312 and 1\u20135; new-client intake Mon\u2013Thu 8:30\u201312 and 1\u20133, no new intakes Friday",
+          "summary": "This is the free civil legal aid office for low-income Yolo County residents, and it handles exactly the problems that knock clients out of recovery: eviction and housing, denial or termination of public benefits, health coverage, unemployment insurance, Social Security and veterans' benefits, consumer debt and small claims. They also do elder abuse restraining orders, powers of attorney and advance directives. New clients apply during weekday intake hours, and there is an evening intake line for people who cannot call during the day, with a callback in one to two business days. They do not take new intakes on Fridays.",
+          "services": "Free civil legal help with housing and eviction, public benefits, health coverage, consumer and small claims, small estates, elder abuse restraining orders, unemployment insurance, Social Security, veterans' benefits, powers of attorney, advance directives",
+          "service_tags": [
+            "legal_help",
+            "case_management"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "older_adults",
+            "veterans",
+            "unhoused",
+            "families"
+          ],
+          "intake_process": "Call or visit during intake hours Mon\u2013Thu. Evening intake voicemail 866-815-5990, callback in 1\u20132 business days.",
+          "cost_notes": "Free to low-income clients meeting eligibility guidelines.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": null,
+          "source": "lsnc.net Woodland office page; lawhelpca.org listing",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "yolo-food-bank",
+          "name": "Yolo Food Bank",
+          "organization": null,
+          "category": "food",
+          "county": "Yolo",
+          "address": "233 Harter Ave",
+          "city": "Woodland",
+          "zip": "95776",
+          "phone": "530-668-0690",
+          "website": "https://yolofoodbank.org/find-food/",
+          "hours": "Office Mon\u2013Fri 8:30\u20135:00; distributions vary by site",
+          "summary": "Yolo Food Bank is the county-wide food distribution network, running free public distributions across Woodland, Davis and West Sacramento. Two Woodland sites appear in their listings: a walk-up distribution on Main Street on the 2nd and 4th Wednesdays from 1 to 3, and a drive-through on E Gibson Road every Friday from 8:30 while supplies last. No application or income verification is described for public distributions, so a client can simply show up. Food insecurity is a common relapse pressure and this is the lowest-barrier resource in the county for it. Check the Find Food page for the current schedule, since sites and times change.",
+          "services": "Free food distributions across Yolo County, including walk-up and drive-through sites in Woodland",
+          "service_tags": [
+            "walk_in"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "families",
+            "older_adults",
+            "unhoused"
+          ],
+          "intake_process": "Attend a scheduled distribution; no referral needed.",
+          "cost_notes": "Free.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "Distribution days and times change seasonally \u2014 treat any schedule as time-sensitive.",
+          "source": "yolofoodbank.org find food and contact pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "placer-sud-services",
+          "name": "Placer County Substance Use Services / Adult System of Care",
+          "organization": "Placer County Health and Human Services",
+          "category": "outpatient",
+          "county": "Placer",
+          "address": "101 Cirby Hills Dr",
+          "city": "Roseville",
+          "zip": "95678",
+          "phone": "888-886-5401",
+          "website": "https://www.placer.ca.gov/2198/Substance-Use-Services",
+          "hours": "Access line 24/7; offices Mon\u2013Thu 8:00\u20135:30",
+          "summary": "This is Placer County's entry point for publicly funded substance use treatment and the number to call first for any Placer client. The access line runs around the clock and handles screening, assessment and placement into the county's treatment network. The Adult System of Care also runs an Auburn office and the Cirby Wellness Center, a free peer- and staff-facilitated drop-in program. Beyond treatment placement the system offers housing support, in-home services, care for pregnant women and case management. For a Placer client on Medi-Cal or without insurance, everything starts with this call.",
+          "services": "24/7 access and screening line, SUD assessment and placement, outpatient treatment, case management, housing program, wellness centres, in-home support, services for pregnant women",
+          "service_tags": [
+            "outpatient",
+            "crisis_24_7",
+            "case_management",
+            "peer_support",
+            "mental_health",
+            "co_occurring",
+            "housing"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "pregnant_parenting",
+            "justice_involved",
+            "unhoused"
+          ],
+          "intake_process": "Call the 24/7 access line for screening and referral. 916-787-8860 also appears in listings. Auburn office: 11512 B Ave, 530-889-7240.",
+          "cost_notes": "County-funded; serves Medi-Cal beneficiaries and Placer County residents.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": null,
+          "source": "placer.ca.gov substance use services and adult system of care pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "granite-auburn",
+          "name": "Granite Wellness Centers \u2014 Auburn",
+          "organization": "Granite Wellness Centers",
+          "category": "residential",
+          "county": "Placer",
+          "address": "12183 Locksley Ln, Suite 101-104",
+          "city": "Auburn",
+          "zip": "95602",
+          "phone": "530-885-1961",
+          "website": "https://www.granitewellness.org/auburn/",
+          "hours": "Weekdays 8:00am\u20139:00pm; Saturday 9:00am\u20136:00pm",
+          "summary": "Granite Wellness Centers is the largest nonprofit substance use provider in the Auburn area and offers a full continuum rather than a single level of care, so a client can move from detox into residential, then into outpatient and a recovery residence without changing agencies. They treat adults with alcohol, opioid, stimulant, benzodiazepine and prescription drug problems, and provide dual diagnosis treatment for people who also have a mental health condition. They also run court-ordered classes, useful for justice-involved clients. The Auburn office keeps long hours including Saturdays. They state they accept private pay and all insurance plans including Medi-Cal, with the exception of Kaiser.",
+          "services": "Detoxification, residential treatment, outpatient and intensive outpatient, dual diagnosis treatment, court-ordered classes, recovery residences",
+          "service_tags": [
+            "detox",
+            "residential",
+            "outpatient",
+            "intensive_outpatient",
+            "co_occurring",
+            "mental_health",
+            "group_counseling",
+            "individual_counseling",
+            "sober_living",
+            "aftercare"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "justice_involved"
+          ],
+          "intake_process": "Call the Auburn office. A second Auburn number, 530-885-1917, appears in one directory.",
+          "cost_notes": "Private pay and all insurance plans including Medi-Cal, except Kaiser.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": null,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "Detox and residential beds may physically be at the Grass Valley campus rather than Locksley Lane \u2014 confirm where a client actually reports. Formerly Community Recovery Resources (CoRR); older county lists may use that name.",
+          "source": "granitewellness.org Auburn, locations and services pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "granite-roseville",
+          "name": "Granite Wellness Centers \u2014 Roseville",
+          "organization": "Granite Wellness Centers",
+          "category": "intensive_outpatient",
+          "county": "Placer",
+          "address": "730 Sunrise Ave, Building 200",
+          "city": "Roseville",
+          "zip": "95661",
+          "phone": "916-782-3737",
+          "website": "https://www.granitewellness.org/locations/",
+          "hours": "Mon\u2013Thu 12:00pm\u20138:30pm, Fri 10:00am\u20135:00pm, Saturday virtual counseling",
+          "summary": "This is Granite Wellness's south Placer outpatient site, and its hours are the reason to know about it: afternoons and evenings Monday through Thursday, plus virtual counseling on Saturdays. That makes it one of the few options in the county for a client who is working days and cannot attend a nine-to-five program. It provides outpatient and intensive outpatient treatment for adults, including people with co-occurring mental health conditions, and connects into the same organization's detox, residential and recovery residence programs in Auburn and Grass Valley if a client needs a higher level of care. Same insurance terms as the rest of the organization: private pay and all plans including Medi-Cal, except Kaiser.",
+          "services": "Outpatient and intensive outpatient treatment, group and individual counseling, dual diagnosis treatment, telehealth counseling, court-ordered classes",
+          "service_tags": [
+            "outpatient",
+            "intensive_outpatient",
+            "group_counseling",
+            "individual_counseling",
+            "co_occurring",
+            "mental_health",
+            "telehealth",
+            "aftercare"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "justice_involved"
+          ],
+          "intake_process": "Call the Roseville office during operating hours.",
+          "cost_notes": "Private pay and all insurance plans including Medi-Cal, except Kaiser.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": null,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "One directory gives the Roseville address as 406 Sunrise Ave rather than 730 Sunrise Ave \u2014 confirm before sending a client.",
+          "source": "granitewellness.org locations and hours pages",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "aegis-roseville",
+          "name": "Aegis Treatment Centers \u2014 Roseville",
+          "organization": "Pinnacle Treatment Centers",
+          "category": "mat_otp",
+          "county": "Placer",
+          "address": "1133 Coloma Way, Suites B and C",
+          "city": "Roseville",
+          "zip": "95661",
+          "phone": "916-774-6647",
+          "website": "https://pinnacletreatment.com/location/california/roseville/aegis-treatment-centers-roseville/",
+          "hours": null,
+          "summary": "Aegis Roseville is the licensed opioid treatment program serving Placer County, which means it is where a client goes for daily methadone. It is SAMHSA-certified as an opioid treatment program, DEA registered and CARF accredited, and it also offers buprenorphine and naltrexone, so a client can be matched to the medication that fits rather than only methadone. Services are outpatient, including outpatient withdrawal management, and are aimed at people using heroin, fentanyl or prescription opioids. Aegis is now part of Pinnacle Treatment Centers.",
+          "services": "Opioid treatment program with methadone dosing, buprenorphine and naltrexone, outpatient counseling, outpatient withdrawal management",
+          "service_tags": [
+            "outpatient",
+            "mat_methadone",
+            "mat_buprenorphine",
+            "mat_naltrexone",
+            "medication_management",
+            "detox",
+            "individual_counseling",
+            "group_counseling"
+          ],
+          "levels_of_care": "OTP",
+          "populations": [
+            "adults"
+          ],
+          "intake_process": "Call the clinic for an admission assessment; opioid treatment program admission requires a medical evaluation. A 24/7 line, 888-779-5650, also appears in listings.",
+          "cost_notes": "Unconfirmed. California opioid treatment programs generally bill Drug Medi-Cal, but confirm directly.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": null,
+          "mat_offered": "methadone, buprenorphine, naltrexone",
+          "image_url": null,
+          "caveat": "Dosing hours are unknown and are the detail most likely to waste a client's trip \u2014 confirm them before referring.",
+          "source": "pinnacletreatment.com location page; SAMHSA-certified OTP directories",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "gathering-inn",
+          "name": "The Gathering Inn",
+          "organization": null,
+          "category": "shelter",
+          "county": "Placer",
+          "address": "201 Berkeley Ave",
+          "city": "Roseville",
+          "zip": "95678",
+          "phone": "916-791-9355",
+          "website": "https://www.thegatheringinn.com/",
+          "hours": "Intake from 1:00pm; check-in 4:00pm; transport to host churches departs 6:00pm",
+          "summary": "The Gathering Inn is the emergency shelter program for south Placer County, and it works differently from a fixed-site shelter: clients check in at the Roseville facility in the afternoon and are driven in the evening to partner churches that host them overnight, rotating among sites. Alongside a bed and meals it provides case management, referrals, mental health services, substance dependency services, daily life skills and clothing. Because the schedule is fixed, timing matters: intake starts at 1pm and the buses leave at 6pm, so a client who arrives late misses the night. Referrals normally come through the Placer County homeless resource helpline.",
+          "services": "Rotating emergency shelter with church partners, evening transport, meals, case management, referrals, mental health services, substance dependency services, life skills, clothing",
+          "service_tags": [
+            "housing",
+            "case_management",
+            "mental_health",
+            "transportation",
+            "walk_in"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "families",
+            "unhoused"
+          ],
+          "intake_process": "Referral via the Placer County homeless resource helpline 833-375-2237; on-site intake begins 1pm daily.",
+          "cost_notes": "Free.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "A late-2025 news item described an expanded Roseville Road campus in Sacramento, so the rotating church model and sites may have changed. Confirm the current setup.",
+          "source": "thegatheringinn.com; findhelp.org and shelterlistings.org entries",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "chapa-de-auburn",
+          "name": "Chapa-De Indian Health \u2014 Auburn",
+          "organization": "Chapa-De Indian Health Program",
+          "category": "primary_care",
+          "county": "Placer",
+          "address": "11670 Atwood Rd",
+          "city": "Auburn",
+          "zip": "95603",
+          "phone": "530-887-2800",
+          "website": "https://chapa-de.org/contact-us/",
+          "hours": "Mon\u2013Fri 8:00\u20135:00; closed weekends",
+          "summary": "Chapa-De is a tribal health program and federally qualified health centre in Auburn, serving American Indian and Alaska Native patients and, for many services, the wider community. It is a full medical home with general medicine, dental, optometry, pharmacy, behavioral health and substance use counseling, and it offers medication assisted treatment, so a Native client can get medication for opioid or alcohol use disorder in a culturally grounded setting rather than a general clinic. Having a pharmacy on site removes a common barrier for clients without transport. There is a second site in Grass Valley. For Native clients in Placer County this is usually the first referral.",
+          "services": "Primary and general medicine, dental, optometry, pharmacy, behavioral health, substance abuse counseling, medication assisted treatment, family services, outreach",
+          "service_tags": [
+            "outpatient",
+            "medical_care",
+            "mental_health",
+            "medication_management",
+            "individual_counseling",
+            "co_occurring",
+            "case_management"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "native_american",
+            "adults",
+            "adolescents",
+            "families",
+            "older_adults"
+          ],
+          "intake_process": "Call the clinic to establish care. Grass Valley site: 1350 E Main St, 530-477-8545.",
+          "cost_notes": "Tribal federally qualified health centre; confirm eligibility and cost terms.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": null,
+          "mat_offered": "MAT offered; confirm which medications",
+          "image_url": null,
+          "caveat": "Eligibility rules for tribal health services were not confirmed \u2014 check who qualifies for which services.",
+          "source": "chapa-de.org contact page; Indian Health Service and CRIHB listings",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "sierra-native-alliance",
+          "name": "Sierra Native Alliance",
+          "organization": null,
+          "category": "peer_support",
+          "county": "Placer",
+          "address": "610 Auburn Ravine Rd, Suite G",
+          "city": "Auburn",
+          "zip": "95603",
+          "phone": "530-888-8767",
+          "website": null,
+          "hours": null,
+          "summary": "Sierra Native Alliance is a Native-led organization serving American Indian and Alaska Native families across the Placer County area, and its Native Family Wellness programs combine outpatient recovery services with the wraparound support that keeps people in them. They provide outpatient and intensive outpatient substance use treatment for adults, plus parent education, counseling, home visitation and case management. Distinctively they offer recovery coaching and peer mentoring, housing assistance, and follow-up after discharge, so a client is not dropped the day their program ends. For a Native client who wants culturally specific care and a peer to walk alongside them, this is the referral.",
+          "services": "Outpatient and intensive outpatient treatment, recovery coaching and peer mentoring, parent education, counseling, home visitation, case management, housing services, discharge planning and follow-up",
+          "service_tags": [
+            "outpatient",
+            "intensive_outpatient",
+            "peer_support",
+            "case_management",
+            "family_program",
+            "housing",
+            "aftercare",
+            "trauma_informed",
+            "individual_counseling",
+            "group_counseling"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "native_american",
+            "adults",
+            "families",
+            "pregnant_parenting"
+          ],
+          "intake_process": "Call to schedule an appointment.",
+          "cost_notes": "Unconfirmed.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": null,
+          "mat_offered": null,
+          "image_url": null,
+          "caveat": "Lower confidence than the clinics: the organization's own website did not appear in results, so the address and phone rest on 211, iCarol and treatment directories. Listings place them in Auburn only, despite Rocklin and Roseville sometimes being named.",
+          "source": "211 Connecting Point and iCarol listings; recovery.com",
+          "confidence": "search-multi"
+        },
+        {
+          "key": "sybh-crisis",
+          "name": "Sutter-Yuba Behavioral Health \u2014 24-Hour Crisis Line & Psychiatric Emergency Services",
+          "organization": "Sutter-Yuba Behavioral Health",
+          "category": "crisis_line",
+          "county": "Sutter",
+          "address": "1965 Live Oak Blvd",
+          "city": "Yuba City",
+          "zip": "95991",
+          "phone": "530-673-8255",
+          "website": "https://www.sutter.gov/government/county-departments/health-and-human-services/sutter-yuba-behavioral-health",
+          "hours": "Crisis line 24/7; walk-in crisis clinic reported daily 7am\u201311pm; offices Mon\u2013Fri 8\u20135",
+          "summary": "Sutter-Yuba Behavioral Health is the joint county behavioral health department for both Sutter and Yuba counties, and it is the front door for anyone in a mental health or substance use crisis here. The crisis line answers around the clock, and people can walk into Psychiatric Emergency Services without an appointment for an urgent evaluation. Staff de-escalate by phone, assess whether hospitalization is needed, and connect people into county outpatient treatment. Because it serves both counties and charges on ability to pay, it is the safest default when a client has no insurance and no other plan.",
+          "services": "24/7 crisis line, walk-in psychiatric emergency evaluation, crisis intervention, hospitalization assessment, referral into county mental health and SUD programs",
+          "service_tags": [
+            "crisis_24_7",
+            "walk_in",
+            "mental_health",
+            "co_occurring",
+            "case_management"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "adolescents",
+            "families"
+          ],
+          "intake_process": "Call the crisis line any time or walk into Psychiatric Emergency Services; no appointment needed. Toll-free 888-923-3800.",
+          "cost_notes": "Fees based on ability to pay; reported to accept Medi-Cal, Medicare and most insurance.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "source": "sutter.gov county behavioral health pages; freed.org resource listing",
+          "confidence": "search"
+        },
+        {
+          "key": "sybh-options-for-change",
+          "name": "Options for Change \u2014 Adult Substance Use Disorder Services",
+          "organization": "Sutter-Yuba Behavioral Health",
+          "category": "outpatient",
+          "county": "Sutter",
+          "address": "1965 Live Oak Blvd",
+          "city": "Yuba City",
+          "zip": "95991",
+          "phone": "530-822-7263",
+          "website": "https://www.sutter.gov/government/county-departments/health-and-human-services/adult-services-branch/adult-substance-use-disorder-services-suds/how-to-access-services",
+          "hours": "Mon\u2013Thu 8\u20135 for information; screenings reported Tue 9\u20134 and Wed 12:30\u20134",
+          "summary": "Options for Change is the county's own adult outpatient drug and alcohol program and the gateway to publicly funded SUD treatment in Sutter and Yuba counties. Clients get a screening and assessment, then either outpatient counseling here or a referral out to medication treatment or a residential bed. Screenings can be done walk-in, by phone or by video, which helps clients without reliable transportation. For a navigator this is usually the first call for an uninsured or Medi-Cal client who needs more than outpatient care, because this office authorizes county-funded residential placements.",
+          "services": "Screening and assessment, adult outpatient counseling, referral to MAT, authorization and referral for residential treatment, telehealth",
+          "service_tags": [
+            "outpatient",
+            "individual_counseling",
+            "group_counseling",
+            "case_management",
+            "co_occurring",
+            "telehealth",
+            "walk_in",
+            "mental_health"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults"
+          ],
+          "intake_process": "Call 530-822-7263 for information Mon\u2013Thu 8\u20135; walk-in, phone or telehealth screening reported Tue and Wed. Main department line 530-822-7200.",
+          "cost_notes": "County program; fees on ability to pay, Medi-Cal accepted.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": true,
+          "mat_offered": "Refers to MAT rather than dosing on site",
+          "image_url": null,
+          "source": "sutter.gov adult SUD services pages; county opioid resources page",
+          "confidence": "search"
+        },
+        {
+          "key": "sybh-wellness-recovery",
+          "name": "Wellness and Recovery Center",
+          "organization": "Sutter-Yuba Behavioral Health",
+          "category": "peer_support",
+          "county": "Sutter",
+          "address": "1965 Live Oak Blvd",
+          "city": "Yuba City",
+          "zip": "95991",
+          "phone": "530-822-7200",
+          "website": "https://www.sutter.gov/government/county-departments/health-and-human-services/adult-services-branch/adult-mental-health-services/wellness-and-recovery",
+          "hours": null,
+          "summary": "This is the county's peer-run center, staffed by certified peer specialists who have their own lived experience of mental health and substance use recovery. The day is built around groups: skill building, education, cognitive strengthening and simple social connection, rather than clinical therapy. There is also a Work Wellness track for members moving toward employment. It suits a client who is stabilized but isolated and needs somewhere to go and people who understand. Note that joining requires a referral from an existing Sutter-Yuba Behavioral Health provider.",
+          "services": "Peer-led recovery groups, individual peer support, skill building and wellness education, Work Wellness employment exploration",
+          "service_tags": [
+            "peer_support",
+            "group_counseling",
+            "mental_health",
+            "co_occurring",
+            "employment",
+            "aftercare"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults"
+          ],
+          "intake_process": "Referral from the client's current Sutter-Yuba Behavioral Health provider.",
+          "cost_notes": null,
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": null,
+          "mat_offered": null,
+          "image_url": null,
+          "source": "sutter.gov wellness and recovery page; Network of Care listing",
+          "confidence": "search"
+        },
+        {
+          "key": "aegis-marysville",
+          "name": "Aegis Treatment Centers \u2014 Marysville",
+          "organization": "Pinnacle Treatment Centers",
+          "category": "mat_otp",
+          "county": "Yuba",
+          "address": "201 D St, Ste G",
+          "city": "Marysville",
+          "zip": "95901",
+          "phone": "530-742-7747",
+          "website": "https://pinnacletreatment.com/location/california/marysville/aegis-treatment-centers-marysville/",
+          "hours": "Reported Mon\u2013Fri 5:00am\u20131:00pm, Sat 7:00am\u201312:00pm, closed Sunday",
+          "summary": "Aegis Marysville is the licensed opioid treatment program for the Yuba-Sutter area, which means it is the local clinic that can dose methadone daily as well as prescribe buprenorphine. Clients come in during the early-morning dosing window and also receive counseling alongside the medication. It is the right referral for someone with opioid use disorder who needs medication started quickly and is not ready or able to leave home for residential care. The early closing time matters for planning: a client who works mornings needs a conversation about dosing windows and eventual take-home doses.",
+          "services": "Methadone and buprenorphine dosing, individual and group counseling for opioid use disorder",
+          "service_tags": [
+            "mat_methadone",
+            "mat_buprenorphine",
+            "outpatient",
+            "individual_counseling",
+            "group_counseling",
+            "medication_management"
+          ],
+          "levels_of_care": "OTP",
+          "populations": [
+            "adults"
+          ],
+          "intake_process": "Call the clinic; confirm current dosing and intake hours before sending a client.",
+          "cost_notes": "Confirm Medi-Cal and self-pay rates with the clinic.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": null,
+          "mat_offered": "methadone, buprenorphine",
+          "image_url": null,
+          "source": "pinnacletreatment.com location page; California opioid response program listing",
+          "confidence": "search"
+        },
+        {
+          "key": "pathways-marysville",
+          "name": "Pathways Recovery & Wellness",
+          "organization": "Midvalley Recovery Facilities Inc.",
+          "category": "residential",
+          "county": "Yuba",
+          "address": "2 9th St",
+          "city": "Marysville",
+          "zip": "95901",
+          "phone": "530-674-4530",
+          "website": "https://www.yspathways.net/",
+          "hours": null,
+          "summary": "Pathways has been the main nonprofit treatment provider in Yuba-Sutter since the 1970s and covers most of the levels of care a client steps through. Reporting describes residential treatment of roughly 30 to 90 days with withdrawal management and medications for addiction treatment, plus day treatment, intensive outpatient, standard outpatient counseling and DUI classes. The campus also has a small number of transitional housing rooms for people who finish residential with nowhere stable to go. Because it takes Medi-Cal, private insurance and a sliding scale, it is the workhorse referral for a client who needs a bed rather than an appointment.",
+          "services": "Residential treatment with withdrawal management, MAT, day treatment, intensive outpatient, outpatient counseling, case management, family counseling, DUI program, transitional housing",
+          "service_tags": [
+            "residential",
+            "detox",
+            "intensive_outpatient",
+            "outpatient",
+            "individual_counseling",
+            "group_counseling",
+            "family_program",
+            "case_management",
+            "medication_management",
+            "housing",
+            "aftercare",
+            "co_occurring"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "adolescents"
+          ],
+          "intake_process": "Call the main number. County-funded residential placements are normally authorized through Sutter-Yuba Behavioral Health's Options for Change. Sources differ on whether clients report to the 9th Street campus in Marysville or the office on Teegarden Ave in Yuba City, so confirm which door to use.",
+          "cost_notes": "Reported to accept Medi-Cal and most private insurance, with a sliding scale for uninsured clients.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": true,
+          "mat_offered": "Medications for addiction treatment offered; confirm which",
+          "image_url": null,
+          "source": "yspathways.net; startyourrecovery.org facility listing; recovery.com listing",
+          "confidence": "search"
+        },
+        {
+          "key": "ona-treatment",
+          "name": "Ona Treatment Center",
+          "organization": null,
+          "category": "detox_withdrawal_mgmt",
+          "county": "Yuba",
+          "address": "6041 Bald Mountain Rd",
+          "city": "Browns Valley",
+          "zip": "95918",
+          "phone": "530-869-6163",
+          "website": "https://onatreatmentcenter.com/",
+          "hours": null,
+          "summary": "Ona is a residential detox and treatment ranch on a large rural property outside Marysville, and one of the few places in the immediate area that can medically supervise withdrawal and then keep someone for a full stay. Reporting describes a roughly 28-day dual-diagnosis program for adults whose substance use sits alongside a mental health condition. The setting is quiet and removed, which suits a client who needs distance from the environment they use in. It is Joint Commission accredited, but Medi-Cal acceptance could not be confirmed, so check payment before referring.",
+          "services": "Medically supervised detox, residential treatment (reported about 28 days), co-occurring mental health treatment",
+          "service_tags": [
+            "detox",
+            "residential",
+            "co_occurring",
+            "mental_health",
+            "individual_counseling",
+            "group_counseling"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults"
+          ],
+          "intake_process": "Call the center. Confirm payment options first \u2014 Medi-Cal acceptance is unconfirmed.",
+          "cost_notes": "Unconfirmed; ask about Medi-Cal and sliding scale.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": null,
+          "mat_offered": null,
+          "image_url": null,
+          "source": "onatreatmentcenter.com; startyourrecovery.org; Appeal-Democrat coverage",
+          "confidence": "search"
+        },
+        {
+          "key": "peach-tree-linda",
+          "name": "Peach Tree Health \u2014 Linda",
+          "organization": "Peach Tree Health",
+          "category": "primary_care",
+          "county": "Yuba",
+          "address": "5730 Packard Ave, Suite 500",
+          "city": "Marysville",
+          "zip": "95901",
+          "phone": "530-749-3242",
+          "website": "https://pickpeach.org/location/peach-tree-linda/",
+          "hours": null,
+          "summary": "Peach Tree is the community health center network for this area, and the Linda site is its main Yuba County clinic, next door to the county Health and Human Services building and on a bus line. Beyond family medicine, pediatrics and women's health, the site lists behavioral health, psychiatry, substance use services and medication-assisted treatment, so a client can get a buprenorphine prescription and a primary care doctor in the same building. There is a pharmacy on site, which removes another trip. A sliding fee scale applies, so uninsured clients can still be seen.",
+          "services": "Family medicine, immediate care, pediatrics, women's health and prenatal care, behavioral health and psychiatry, substance use services and MAT, pharmacy, HIV and PrEP, outreach and case management",
+          "service_tags": [
+            "medical_care",
+            "mat_buprenorphine",
+            "mental_health",
+            "individual_counseling",
+            "group_counseling",
+            "medication_management",
+            "case_management",
+            "outpatient",
+            "family_program",
+            "co_occurring"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "adolescents",
+            "families",
+            "pregnant_parenting"
+          ],
+          "intake_process": "Call the clinic to schedule; immediate care is available at this site.",
+          "cost_notes": "Sliding fee discount scale for eligible patients; Medi-Cal, Medicare, private insurance and self-pay reported.",
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": true,
+          "mat_offered": "Medication-assisted treatment listed; confirm which medications",
+          "image_url": null,
+          "source": "pickpeach.org location and locations pages",
+          "confidence": "search"
+        },
+        {
+          "key": "harmony-health",
+          "name": "Harmony Health Medical Clinic and Family Resource Center",
+          "organization": null,
+          "category": "primary_care",
+          "county": "Sutter",
+          "address": "920 Chestnut St",
+          "city": "Yuba City",
+          "zip": "95991",
+          "phone": "530-763-4252",
+          "website": "https://www.myharmonyhealth.org/",
+          "hours": "Reported Mon\u2013Fri 8\u20135",
+          "summary": "Harmony Health is a community clinic and family resource center with sites in Yuba City and Marysville, offering primary care for all ages alongside social service navigation under one roof. It is described as the only Comprehensive Perinatal Services Program in Yuba County, which makes it an important option for pregnant and parenting clients who need prenatal care and support at the same time. The family resource centre side means a client can also get help with basic needs and referrals, not only a medical visit. Good when someone needs a medical home plus practical help and would be overwhelmed by two separate agencies.",
+          "services": "Primary care for all ages, acute illness care, prenatal care and Comprehensive Perinatal Services Program, family resource centre supports and referrals",
+          "service_tags": [
+            "medical_care",
+            "case_management",
+            "family_program",
+            "trauma_informed"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "adolescents",
+            "families",
+            "pregnant_parenting"
+          ],
+          "intake_process": "Call to schedule. Other sites reported at 399 Del Norte Ave, Yuba City and 1908 N Beale Rd Ste E, Marysville (530-743-6888).",
+          "cost_notes": null,
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": null,
+          "mat_offered": null,
+          "image_url": null,
+          "source": "myharmonyhealth.org; National Health Corps host site listing; Network of Care",
+          "confidence": "search"
+        },
+        {
+          "key": "twin-cities-rescue",
+          "name": "Twin Cities Rescue Mission",
+          "organization": null,
+          "category": "shelter",
+          "county": "Yuba",
+          "address": "940 14th St",
+          "city": "Marysville",
+          "zip": "95901",
+          "phone": "530-743-8777",
+          "website": "https://www.tcrmission.com/",
+          "hours": "Shelter check-in reported 5:00pm daily; breakfast reported 8am and dinner after the 6:30pm service; showers and clothing reported 4:00pm Tue/Thu/Sat/Sun",
+          "summary": "Twin Cities is the Christ-centred rescue mission in downtown Marysville and the main emergency bed for single adult men in the area. Overnight shelter is for men 18 and over with an ID, with check-in in the late afternoon. Meals, showers and clothing are open more broadly to people living outside, including women, even if they are not staying the night. It is a practical same-day option for a client who needs to eat and get clean tonight, with the caveat that it is faith-based and an evening chapel service is part of the dinner routine.",
+          "services": "Emergency overnight shelter for adult men, daily breakfast and dinner, showers, clothing closet",
+          "service_tags": [
+            "housing",
+            "faith_based",
+            "walk_in",
+            "same_day_intake"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "men",
+            "unhoused"
+          ],
+          "intake_process": "Walk in and check in at 5:00pm with an ID card for a shelter bed.",
+          "cost_notes": "Free.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "source": "tcrmission.com; freed.org listing; shelterlistings.org",
+          "confidence": "search"
+        },
+        {
+          "key": "hands-of-hope",
+          "name": "Hands of Hope Day Center",
+          "organization": "Hands of Hope Resources for Homeless Families",
+          "category": "housing",
+          "county": "Sutter",
+          "address": "909 Spiva Ave",
+          "city": "Yuba City",
+          "zip": "95991",
+          "phone": "530-755-3491",
+          "website": "https://www.ychandsofhope.org/",
+          "hours": "Reported Mon\u2013Fri from 9:00am to mid-afternoon; sources differ between 3:30pm and 4:30pm close",
+          "summary": "Hands of Hope runs a daytime service centre for people experiencing homelessness in Yuba-Sutter, with a particular focus on homeless children, youth and their parents. During open hours people can use bathrooms, showers and laundry, pick clothing, and sit down with a case manager or client advocate. A second Marysville presence has been reported in partnership with Habitat for Humanity. For a navigator this is where an unhoused client can get clean and get help with documents and housing paperwork in one stop during the day, complementing the evening-only shelters.",
+          "services": "Day service centre: showers, laundry, restrooms, clothes closet, case management and client advocacy for homeless families and youth",
+          "service_tags": [
+            "housing",
+            "case_management",
+            "peer_support",
+            "walk_in"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "adolescents",
+            "families",
+            "unhoused"
+          ],
+          "intake_process": "Walk in during day centre hours; call first to confirm closing time.",
+          "cost_notes": "Free.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "source": "ychandsofhope.org; freed.org listing; Sutter County homeless resources page",
+          "confidence": "search"
+        },
+        {
+          "key": "casa-de-esperanza",
+          "name": "Casa de Esperanza \u2014 Domestic Violence & Sexual Assault Crisis Line",
+          "organization": null,
+          "category": "crisis_line",
+          "county": "Sutter",
+          "address": null,
+          "city": "Yuba City",
+          "zip": null,
+          "phone": "530-674-2040",
+          "website": "https://casaysc.org/",
+          "hours": "Crisis line 24/7",
+          "summary": "Casa de Esperanza has been the domestic violence and sexual assault agency for Yuba, Sutter and Colusa counties since 1977, and runs a confidential emergency shelter whose address is deliberately not published. The 24-hour line takes phone, text and online chat, so a client who cannot safely make a call still has a way in. Advocates do lethality assessment and safety planning, arrange emergency transport and shelter, and help with restraining orders and attorney referrals, plus food, clothing and emergency phones. Everything is free, which makes it an unconditional referral for any client disclosing abuse, including those still using.",
+          "services": "24/7 crisis line by phone, text and chat; confidential emergency shelter; lethality assessment; safety planning; emergency transportation; restraining order and legal help; case management; food and clothing",
+          "service_tags": [
+            "crisis_24_7",
+            "housing",
+            "case_management",
+            "legal_help",
+            "transportation",
+            "trauma_informed",
+            "individual_counseling"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "women",
+            "men",
+            "families",
+            "adolescents"
+          ],
+          "intake_process": "Call, text or chat the 24-hour line. The shelter location is confidential and given only through an advocate. Business line reported 530-674-5400.",
+          "cost_notes": "All services free to victims.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "source": "casaysc.org; domesticshelters.org; raliance.org",
+          "confidence": "search"
+        },
+        {
+          "key": "yuba-sutter-food-bank",
+          "name": "Yuba-Sutter Food Bank",
+          "organization": null,
+          "category": "food",
+          "county": "Sutter",
+          "address": null,
+          "city": "Yuba City",
+          "zip": null,
+          "phone": "530-673-3834",
+          "website": "https://www.feedingys.org/",
+          "hours": "Varies by pantry site; a rotating monthly distribution schedule is published",
+          "summary": "The Yuba-Sutter Food Bank does not usually hand out food from a single storefront. It supplies and coordinates a network of pantries and mobile distributions across both counties, each on its own day and time. A client is best served by calling the food bank or pulling the current schedule and being pointed to the distribution closest to them and soonest. Distributions are typically short morning or early-evening windows, so timing matters. This is the quickest no-paperwork food option while a CalFresh application is pending.",
+          "services": "Network of food pantries and scheduled food distributions across Yuba and Sutter counties",
+          "service_tags": [
+            "walk_in"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "families",
+            "older_adults",
+            "unhoused"
+          ],
+          "intake_process": "Attend a scheduled distribution; call or check the published schedule for the nearest site and time.",
+          "cost_notes": "Free.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "source": "feedingys.org; 211 Connecting Point listing",
+          "confidence": "search"
+        },
+        {
+          "key": "yuba-hhsd",
+          "name": "Yuba County Health and Human Services",
+          "organization": "County of Yuba",
+          "category": "benefits",
+          "county": "Yuba",
+          "address": "5730 Packard Ave, Suite 100",
+          "city": "Marysville",
+          "zip": "95901",
+          "phone": "530-749-6311",
+          "website": "https://www.yuba.gov/departments/health_and_human_services/index.php",
+          "hours": "Mon\u2013Fri 8\u20135",
+          "summary": "This is the Yuba County social services office where residents apply for and keep the benefits that make treatment possible: Medi-Cal, CalFresh, CalWORKs and Covered California. It sits in the same complex as the Peach Tree Linda clinic, so a client can often handle benefits and a medical visit in one trip. Applications can also be started online through BenefitsCal or by phone if getting to the office is hard. Getting Medi-Cal active here is usually the first step before a residential or MAT referral goes smoothly.",
+          "services": "Medi-Cal, CalFresh, CalWORKs, Covered California enrollment, County Medical Services Program",
+          "service_tags": [
+            "case_management"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "families",
+            "older_adults",
+            "unhoused"
+          ],
+          "intake_process": "Apply in person during business hours, by phone, or online at BenefitsCal. Benefits line reported 877-652-0739.",
+          "cost_notes": "Free; eligibility-based programs.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "source": "yuba.gov health and human services pages",
+          "confidence": "search"
+        },
+        {
+          "key": "sutter-eesb",
+          "name": "Sutter County Employment and Eligibility Services",
+          "organization": "Sutter County Health and Human Services",
+          "category": "benefits",
+          "county": "Sutter",
+          "address": "190 Garden Highway",
+          "city": "Yuba City",
+          "zip": "95991",
+          "phone": "877-652-0735",
+          "website": "https://www.sutter.gov/government/county-departments/health-and-human-services/employment-and-eligibility-services-branch",
+          "hours": "Mon\u2013Fri 8\u20135",
+          "summary": "This is the Sutter County counterpart to Yuba County Health and Human Services, and the office a Yuba City, Live Oak or Sutter resident uses to get on Medi-Cal and CalFresh or to open a CalWORKs case. The branch also runs employment services attached to CalWORKs, so clients working toward a job have a case worker for that too. Applications can be made in person or online. Confirming which county a client actually lives in avoids sending them to the wrong office and losing a week.",
+          "services": "CalFresh, Medi-Cal, CalWORKs and employment services, eligibility determination",
+          "service_tags": [
+            "case_management",
+            "employment"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "families",
+            "older_adults",
+            "unhoused"
+          ],
+          "intake_process": "Apply in person at the Garden Highway office, by phone, or online at BenefitsCal. A second number, 877-822-7212, also appears in listings.",
+          "cost_notes": "Free; eligibility-based programs.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "source": "sutter.gov employment and eligibility services pages",
+          "confidence": "search"
+        },
+        {
+          "key": "yuba-sutter-transit",
+          "name": "Yuba-Sutter Transit",
+          "organization": "Yuba-Sutter Transit Authority",
+          "category": "transportation",
+          "county": "Yuba",
+          "address": "2100 B St",
+          "city": "Marysville",
+          "zip": "95901",
+          "phone": "530-742-2877",
+          "website": "https://www.yubasuttertransit.com/",
+          "hours": "Fixed route reported weekdays about 6:30am\u20138:00pm and Saturdays 8:30am\u20135:30pm; Dial-A-Ride weekdays 6:30am\u20139:30pm; no Sunday or holiday service",
+          "summary": "Yuba-Sutter Transit runs the local buses connecting Marysville, Yuba City, Linda, Olivehurst and the outlying towns, plus commuter service toward Sacramento. Several key sites, including the Linda clinic and the county offices, sit on the fixed routes. For clients 65 or older or with a qualifying disability, Dial-A-Ride gives curb-to-curb trips for a couple of dollars each way, booked by phone. The hard constraint to plan around is that there is no service on Sundays or holidays, which affects weekend groups and dosing trips.",
+          "services": "Local fixed-route buses across Yuba and Sutter counties, Sacramento commuter service, Dial-A-Ride paratransit",
+          "service_tags": [
+            "transportation"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "older_adults",
+            "unhoused"
+          ],
+          "intake_process": "Ride fixed routes with cash fare; Dial-A-Ride is booked by phone and needs eligibility (65+ or qualifying disability).",
+          "cost_notes": "Dial-A-Ride reported at $2.00 one way, $1.50 after 6pm.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "source": "yubasuttertransit.com routes, contact and Dial-A-Ride pages",
+          "confidence": "search"
+        },
+        {
+          "key": "colusa-bh",
+          "name": "Colusa County Behavioral Health",
+          "organization": "County of Colusa",
+          "category": "mental_health",
+          "county": "Colusa",
+          "address": "162 East Carson St, Suite A",
+          "city": "Colusa",
+          "zip": "95932",
+          "phone": "530-458-0520",
+          "website": "https://www.countyofcolusaca.gov/325/Behavioral-Health",
+          "hours": "Mon\u2013Fri 8\u20135; crisis line 24/7",
+          "summary": "Colusa County Behavioral Health is the single public behavioral health agency for Colusa and Williams, covering both mental health and substance use in one department. It is state-certified to run outpatient alcohol and drug services and lists individual and group counseling, perinatal services, medication-assisted treatment, prevention and referral to residential treatment. Psychiatric evaluation, medication support and crisis intervention come from the same team, which suits clients with co-occurring conditions. The toll-free crisis line runs around the clock for residents outside office hours.",
+          "services": "Outpatient SUD counseling, perinatal SUD services, medication-assisted treatment, residential referral, prevention, psychiatric evaluation and medication support, peer support, 24-hour crisis intervention",
+          "service_tags": [
+            "outpatient",
+            "individual_counseling",
+            "group_counseling",
+            "mental_health",
+            "co_occurring",
+            "medication_management",
+            "peer_support",
+            "crisis_24_7",
+            "case_management"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "adolescents",
+            "pregnant_parenting"
+          ],
+          "intake_process": "Call the main number during business hours. Crisis line 888-793-6580, 24 hours.",
+          "cost_notes": null,
+          "languages": null,
+          "accepts_medicaid": true,
+          "accepts_uninsured": null,
+          "mat_offered": "Medication-assisted treatment listed; confirm which medications",
+          "image_url": null,
+          "source": "countyofcolusaca.gov behavioral health and substance use pages",
+          "confidence": "search"
+        },
+        {
+          "key": "ys-harm-reduction",
+          "name": "Yuba-Sutter Harm Reduction & Community Outreach",
+          "organization": null,
+          "category": "harm_reduction",
+          "county": "Yuba",
+          "address": null,
+          "city": "Marysville",
+          "zip": null,
+          "phone": null,
+          "website": "https://www.yubasutterhrco.org/",
+          "hours": null,
+          "summary": "This is the only locally based harm reduction organization found for Yuba-Sutter. Reporting describes state authorization for three sites distributing harm reduction supplies including syringes and sharps containers, with two mobile sites offering finger-stick hepatitis C and HIV testing. However the same reporting notes that Sutter County later passed an ordinance banning needle exchange, with Yuba City and Marysville considering the same, so current operating status is genuinely unclear. Treat this as a lead to phone before referring a client. In the meantime source naloxone through Sutter-Yuba Behavioral Health's overdose prevention program or a pharmacy.",
+          "services": "Reported harm reduction supply distribution, syringe access, sharps disposal, hepatitis C and HIV testing \u2014 current status unconfirmed",
+          "service_tags": [
+            "harm_reduction",
+            "syringe_services",
+            "naloxone"
+          ],
+          "levels_of_care": null,
+          "populations": [
+            "adults",
+            "unhoused"
+          ],
+          "intake_process": "Status unconfirmed \u2014 call or check the website before referring a client.",
+          "cost_notes": "Free where operating.",
+          "languages": null,
+          "accepts_medicaid": null,
+          "accepts_uninsured": true,
+          "mat_offered": null,
+          "image_url": null,
+          "source": "yubasutterhrco.org; Appeal-Democrat coverage; Sutter County opioid resources page",
+          "confidence": "search"
+        }
+      ]
+    };
+  }
+});
+
+// server/region.js
+var require_region = __commonJS({
+  "server/region.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var C = require_constants();
+    var audit3 = require_audit();
+    var png = require_png();
+    var { uuid: uuid2 } = require_crypto();
+    var REGIONS = { "sacramento-metro": require_sacramento_metro() };
+    var MAX_PICTURE_BYTES = 2 * 1024 * 1024;
+    var norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    var tagList = (list2, allowed) => (Array.isArray(list2) ? list2 : String(list2 || "").split(",")).map((x) => String(x).trim().toLowerCase().replace(/[\s-]+/g, "_")).filter((x) => allowed.includes(x)).filter((x, i, a) => a.indexOf(x) === i).join(",");
+    var stateKey = (id) => `region_loaded:${id}`;
+    var readState = (id) => {
+      try {
+        return JSON.parse(db3.getSetting(stateKey(id), "null")) || null;
+      } catch {
+        return null;
+      }
+    };
+    function provenance(region) {
+      return `Imported from the ${region.name} starter directory on {DATE} using public web sources. Nobody has confirmed it with the provider yet. Call to confirm the address, phone number, hours and intake, then press "Verified today". Check phone numbers against the provider's own contact page: commercial rehab directories often substitute their own call-centre numbers.`;
+    }
+    function list() {
+      return Object.values(REGIONS).map((r) => {
+        const st = readState(r.id);
+        const ids = st ? Object.values(st.ids) : [];
+        const present = ids.length ? db3.one(`SELECT COUNT(*) n FROM resources WHERE id IN (${ids.map(() => "?").join(",")})`, ...ids).n : 0;
+        return {
+          id: r.id,
+          name: r.name,
+          description: r.description,
+          counties: r.counties,
+          provider_count: r.providers.length,
+          sources_note: r.sources_note,
+          loaded: !!st,
+          loaded_at: st ? st.at : null,
+          present,
+          unverified: ids.length ? db3.one(`SELECT COUNT(*) n FROM resources WHERE last_verified_at IS NULL AND id IN (${ids.map(() => "?").join(",")})`, ...ids).n : 0
+        };
+      });
+    }
+    function load({ regionId, actor, withPictures = true }) {
+      const region = REGIONS[regionId];
+      if (!region) throw new Error("Unknown region");
+      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const note = provenance(region).replace("{DATE}", today);
+      const prev = readState(regionId);
+      const ids = prev ? { ...prev.ids } : {};
+      let added = 0, enriched = 0, unchanged = 0, pictures = 0;
+      db3.transaction(() => {
+        for (const p of region.providers) {
+          const row = {
+            name: p.name,
+            category: C.RESOURCE_CATEGORIES.includes(p.category) ? p.category : "other",
+            organization: p.organization || null,
+            phone: p.phone || null,
+            email: p.email || null,
+            website: p.website || null,
+            address: p.address || null,
+            city: p.city || null,
+            zip: p.zip || null,
+            hours: p.hours || null,
+            eligibility: p.eligibility || null,
+            services: p.services || null,
+            languages: p.languages || null,
+            accepts_medicaid: p.accepts_medicaid ? 1 : 0,
+            accepts_uninsured: p.accepts_uninsured ? 1 : 0,
+            mat_offered: p.mat_offered || null,
+            capacity_notes: p.capacity_notes || null,
+            contact_person: p.contact_person || null,
+            summary: p.summary || null,
+            service_tags: tagList(p.service_tags, C.SERVICE_TAGS),
+            populations: tagList(p.populations, C.POPULATIONS),
+            levels_of_care: p.levels_of_care || null,
+            intake_process: p.intake_process || null,
+            cost_notes: p.cost_notes || null
+          };
+          let id = ids[p.key] && db3.one(`SELECT id FROM resources WHERE id=?`, ids[p.key]) ? ids[p.key] : null;
+          if (!id) {
+            const hit = db3.all(`SELECT id, name, city FROM resources`).find((r) => norm(r.name) === norm(p.name) && norm(r.city) === norm(p.city));
+            if (hit) id = hit.id;
+          }
+          if (!id) {
+            id = uuid2();
+            const keys = Object.keys(row);
+            db3.run(`INSERT INTO resources(id,${keys.join(",")},notes) VALUES(?,${keys.map(() => "?").join(",")},?)`, id, ...keys.map((k) => row[k]), [note, p.caveat ? `Check before referring: ${p.caveat}` : null].filter(Boolean).join("\n\n"));
+            added++;
+          } else {
+            const cur = db3.one(`SELECT * FROM resources WHERE id=?`, id);
+            const sets = [];
+            const params = [];
+            for (const [k, v] of Object.entries(row)) {
+              if (v === null || v === "" || k === "accepts_medicaid" || k === "accepts_uninsured") continue;
+              if (cur[k] === null || cur[k] === "" || cur[k] === void 0) {
+                sets.push(`${k}=?`);
+                params.push(v);
+              }
+            }
+            if (!String(cur.notes || "").includes("starter directory")) {
+              sets.push("notes=?");
+              params.push([cur.notes, note, p.caveat ? `Check before referring: ${p.caveat}` : null].filter(Boolean).join("\n\n"));
+            }
+            if (sets.length) {
+              db3.run(`UPDATE resources SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, db3.now(), id);
+              enriched++;
+            } else unchanged++;
+          }
+          ids[p.key] = id;
+          if (withPictures && !db3.one(`SELECT COUNT(*) n FROM resource_photos WHERE resource_id=?`, id).n) {
+            const full = png.initialsCard(p.name, row.category, 960, 540);
+            const thumb = png.initialsCard(p.name, row.category, 320, 180);
+            db3.run(
+              `INSERT INTO resource_photos(id,resource_id,caption,content_type,bytes,width,height,data_b64,thumb_b64,sort_order,uploaded_by) VALUES(?,?,?,?,?,?,?,?,?,0,?)`,
+              uuid2(),
+              id,
+              `${p.name} (placeholder \u2014 replace with a photo of the site)`,
+              "image/png",
+              full.length,
+              960,
+              540,
+              full.toString("base64"),
+              thumb.toString("base64"),
+              actor || null
+            );
+            pictures++;
+          }
+        }
+        db3.setSetting(stateKey(regionId), JSON.stringify({ at: db3.now(), ids }));
+        audit3.log({ user: actor ? { id: actor, username: "region-import" } : { id: null, username: "region-import" }, action: "region.load", details: { region: regionId, added, enriched, unchanged, pictures } });
+      });
+      return { added, enriched, unchanged, pictures, total: region.providers.length };
+    }
+    function pictureTargets(regionId) {
+      const region = REGIONS[regionId];
+      if (!region) throw new Error("Unknown region");
+      const st = readState(regionId);
+      if (!st) return [];
+      return region.providers.filter((p) => (p.image_url || p.website) && st.ids[p.key]).map((p) => ({ key: p.key, id: st.ids[p.key], name: p.name, url: p.image_url || null, website: p.website })).filter((t) => db3.one(`SELECT id FROM resources WHERE id=?`, t.id));
+    }
+    var sniff = (buf) => buf.length > 3 && buf[0] === 255 && buf[1] === 216 && buf[2] === 255 ? "image/jpeg" : buf.length > 8 && buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71 ? "image/png" : buf.length > 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP" ? "image/webp" : null;
+    function pickImageUrl(html, baseUrl) {
+      const head = String(html).slice(0, 512 * 1024);
+      const meta = (prop) => {
+        const m = new RegExp(`<meta[^>]+(?:property|name)=["']${prop}["'][^>]*>`, "i").exec(head);
+        if (!m) return null;
+        const c = /content=["']([^"']+)["']/i.exec(m[0]);
+        return c ? c[1] : null;
+      };
+      const link = (rel) => {
+        const m = new RegExp(`<link[^>]+rel=["'][^"']*${rel}[^"']*["'][^>]*>`, "i").exec(head);
+        if (!m) return null;
+        const c = /href=["']([^"']+)["']/i.exec(m[0]);
+        return c ? c[1] : null;
+      };
+      const candidate = meta("og:image") || meta("og:image:secure_url") || meta("twitter:image") || link("apple-touch-icon") || link("icon");
+      if (!candidate) return null;
+      try {
+        const u = new URL(candidate, baseUrl);
+        return u.protocol === "https:" ? u.href : null;
+      } catch {
+        return null;
+      }
+    }
+    async function get(url, { timeoutMs, maxBytes }) {
+      const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), redirect: "follow", headers: { "User-Agent": "SUDS resource directory", Accept: "*/*" } });
+      if (!res.ok) throw Object.assign(new Error(`site returned ${res.status}`), { soft: true });
+      if (Number(res.headers.get("content-length") || 0) > maxBytes) throw Object.assign(new Error("file is too large"), { soft: true });
+      const buf = import_buffer.Buffer.from(await res.arrayBuffer());
+      if (buf.length > maxBytes) throw Object.assign(new Error("file is too large"), { soft: true });
+      return buf;
+    }
+    async function fetchPicture(target, { actor, timeoutMs = 12e3 } = {}) {
+      let url = target.url;
+      try {
+        if (!url) {
+          if (!/^https:\/\//i.test(target.website || "")) return { key: target.key, ok: false, error: "no website on file" };
+          const html = await get(target.website, { timeoutMs, maxBytes: 2 * 1024 * 1024 });
+          url = pickImageUrl(html.toString("utf8"), target.website);
+          if (!url) return { key: target.key, ok: false, error: "their website does not advertise a picture" };
+        }
+        if (!/^https:\/\//i.test(url)) return { key: target.key, ok: false, error: "not an https address" };
+        const buf = await get(url, { timeoutMs, maxBytes: MAX_PICTURE_BYTES });
+        const type = sniff(buf);
+        if (!type) return { key: target.key, ok: false, error: "not a JPEG, PNG or WebP picture" };
+        db3.transaction(() => {
+          db3.run(`UPDATE resource_photos SET sort_order = sort_order + 1 WHERE resource_id=?`, target.id);
+          db3.run(
+            `INSERT INTO resource_photos(id,resource_id,caption,content_type,bytes,data_b64,sort_order,uploaded_by) VALUES(?,?,?,?,?,?,0,?)`,
+            uuid2(),
+            target.id,
+            `From ${new URL(url).hostname}`,
+            type,
+            buf.length,
+            buf.toString("base64"),
+            actor || null
+          );
+          db3.run(`UPDATE resources SET updated_at=? WHERE id=?`, db3.now(), target.id);
+        });
+        audit3.log({ user: { id: actor, username: "region-import" }, action: "region.picture", entity: "resource", entityId: target.id, details: { url, bytes: buf.length, type } });
+        return { key: target.key, ok: true, bytes: buf.length, type, url };
+      } catch (e) {
+        return { key: target.key, ok: false, error: e.soft ? e.message : e.name === "TimeoutError" ? "timed out" : e.message || "could not connect" };
+      }
+    }
+    function remove({ regionId, actor }) {
+      const st = readState(regionId);
+      if (!st) return { removed: 0, kept: 0 };
+      let removed = 0, kept = 0;
+      db3.transaction(() => {
+        for (const id of Object.values(st.ids)) {
+          const r = db3.one(`SELECT id, last_verified_at FROM resources WHERE id=?`, id);
+          if (!r) continue;
+          const used = db3.one(`SELECT COUNT(*) n FROM referrals WHERE resource_id=?`, id).n;
+          if (used || r.last_verified_at) {
+            db3.run(`UPDATE resources SET is_active=0, updated_at=? WHERE id=?`, db3.now(), id);
+            kept++;
+            continue;
+          }
+          db3.run(`DELETE FROM resource_photos WHERE resource_id=?`, id);
+          db3.run(`DELETE FROM resources WHERE id=?`, id);
+          db3.tombstone("resources", id);
+          removed++;
+        }
+        db3.run(`DELETE FROM settings WHERE key=?`, stateKey(regionId));
+        audit3.log({ user: { id: actor, username: "region-import" }, action: "region.remove", details: { region: regionId, removed, kept } });
+      });
+      return { removed, kept };
+    }
+    module.exports = { REGIONS, list, load, remove, pictureTargets, fetchPicture, pickImageUrl };
+  }
+});
+
+// server/routes/regions.js
+var require_regions = __commonJS({
+  "server/routes/regions.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var region = require_region();
+    var { badRequest, notFound } = require_http();
+    module.exports = (r) => {
+      r.get("/api/regions", auth3.requireAuth, auth3.requirePerm("resources:read", "resources:write"), () => ({ regions: region.list() }));
+      r.post("/api/regions/:id/load", auth3.requireAuth, auth3.requirePerm("resources:write"), (ctx) => {
+        if (!region.REGIONS[ctx.params.id]) throw notFound("Unknown region");
+        const out2 = region.load({ regionId: ctx.params.id, actor: ctx.user.id });
+        audit3.log({ user: ctx.user, action: "region.load.request", ip: ctx.ip, details: { region: ctx.params.id, ...out2 } });
+        return out2;
+      });
+      r.delete("/api/regions/:id", auth3.requireAuth, auth3.requirePerm("resources:write"), (ctx) => {
+        if (!region.REGIONS[ctx.params.id]) throw notFound("Unknown region");
+        const out2 = region.remove({ regionId: ctx.params.id, actor: ctx.user.id });
+        audit3.log({ user: ctx.user, action: "region.remove.request", ip: ctx.ip, details: { region: ctx.params.id, ...out2 } });
+        return out2;
+      });
+      r.get("/api/regions/:id/pictures", auth3.requireAuth, auth3.requirePerm("resources:write"), (ctx) => {
+        if (!region.REGIONS[ctx.params.id]) throw notFound("Unknown region");
+        const pending = region.pictureTargets(ctx.params.id).filter((t) => !db3.one(`SELECT COUNT(*) n FROM resource_photos WHERE resource_id=? AND caption NOT LIKE '%(placeholder%'`, t.id).n);
+        return { pending: pending.map((t) => ({ key: t.key, name: t.name, url: t.url })), total: region.pictureTargets(ctx.params.id).length };
+      });
+      r.post("/api/regions/:id/pictures", auth3.requireAuth, auth3.requirePerm("resources:write"), async (ctx) => {
+        if (!region.REGIONS[ctx.params.id]) throw notFound("Unknown region");
+        const keys = Array.isArray(ctx.body.keys) ? ctx.body.keys.slice(0, 10) : null;
+        if (!keys || !keys.length) throw badRequest("keys is required");
+        const targets = region.pictureTargets(ctx.params.id).filter((t) => keys.includes(t.key));
+        const results = [];
+        for (const t of targets) results.push({ name: t.name, ...await region.fetchPicture(t, { actor: ctx.user.id }) });
+        audit3.log({ user: ctx.user, action: "region.pictures.request", ip: ctx.ip, details: { region: ctx.params.id, tried: results.length, ok: results.filter((x) => x.ok).length } });
+        return { results };
+      });
+    };
+  }
+});
+
 // server/exports.js
 var require_exports = __commonJS({
   "server/exports.js"(exports, module) {
@@ -12758,6 +16342,7 @@ var init_ = __esm({
       "./routes/me.js": () => require_me(),
       "./routes/notes.js": () => require_notes(),
       "./routes/referrals.js": () => require_referrals(),
+      "./routes/regions.js": () => require_regions(),
       "./routes/reports.js": () => require_reports(),
       "./routes/resources.js": () => require_resources(),
       "./routes/setup.js": () => require_setup(),
@@ -12798,7 +16383,7 @@ var require_app2 = __commonJS({
     }
     function buildRouter() {
       const r = new Router2();
-      for (const mod of ["setup", "auth", "me", "app", "sync", "dataimport", "users", "clients", "assignments", "interventions", "calls", "time", "resources", "referrals", "tasks", "budget", "notes", "consents", "forms", "imports", "reports", "admin", "intake"]) {
+      for (const mod of ["setup", "auth", "me", "app", "sync", "dataimport", "users", "clients", "assignments", "interventions", "calls", "time", "resources", "referrals", "tasks", "budget", "notes", "consents", "forms", "imports", "reports", "admin", "regions", "intake"]) {
         globRequire_routes(`./routes/${mod}`)(r);
       }
       return r;
@@ -13149,7 +16734,7 @@ function register(router2) {
 }
 
 // local/kernel.js
-var ROUTE_MODULES = ["auth", "me", "users", "clients", "assignments", "interventions", "calls", "time", "resources", "referrals", "tasks", "budget", "notes", "consents", "forms", "imports", "dataimport", "reports", "admin"];
+var ROUTE_MODULES = ["auth", "me", "users", "clients", "assignments", "interventions", "calls", "time", "resources", "referrals", "tasks", "budget", "notes", "consents", "forms", "imports", "dataimport", "reports", "admin", "regions"];
 var routeLoaders = {
   auth: () => Promise.resolve().then(() => __toESM(require_auth2())),
   me: () => Promise.resolve().then(() => __toESM(require_me())),
@@ -13166,6 +16751,7 @@ var routeLoaders = {
   notes: () => Promise.resolve().then(() => __toESM(require_notes())),
   consents: () => Promise.resolve().then(() => __toESM(require_consents())),
   forms: () => Promise.resolve().then(() => __toESM(require_forms())),
+  regions: () => Promise.resolve().then(() => __toESM(require_regions())),
   imports: () => Promise.resolve().then(() => __toESM(require_imports())),
   dataimport: () => Promise.resolve().then(() => __toESM(require_dataimport2())),
   reports: () => Promise.resolve().then(() => __toESM(require_reports())),

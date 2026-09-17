@@ -39,6 +39,8 @@ Encryption keys are generated for you and stored in `data/keys.json`. **Immediat
 ## Step 5 — Sign in and add staff
 Sign in with the administrator account, enroll multi-factor authentication when prompted, then go to **Administration → Users** to add navigators, clinicians and supervisors. Give each person their temporary password in person or by phone.
 
+**Filling the resource directory.** Under **Resource directory** you can add the Sacramento region starter directory: 81 real programs across eight counties, with summaries, service tags and contact details. They arrive marked "needs verification" because they were compiled from public web sources rather than confirmed with the providers, so call each one, correct anything wrong and press "Verified today". "Download provider pictures" fetches each program's picture from its own website if this computer has internet access.
+
 **Want to look around first?** On the home screen (or under **Settings → Settings → Sample data**) choose **Load sample data**. SUDS adds fictional clients, visits, notes, referrals, reminders and funding so every screen has something on it. It is only offered while you have no clients yet, and **Remove sample data** clears all of it in one click before you enter real people.
 
 ## Using SUDS on a phone, tablet or another computer

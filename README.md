@@ -55,6 +55,7 @@ The launcher + wizard route above is production mode (`SUDS_ENV=production`) wit
 | Interventions | 25 SUD-navigation intervention types, duration, location/modality, outcome, stage of change, naloxone kits and fentanyl test strips, funding source, cost, follow-up task creation, automatic time entry |
 | Calls | Direction, contact type, duration, outcome, crisis flag, encrypted summary, follow-up scheduling |
 | Time | Per-worker time entries by category and funding source, billable flag, summaries by worker / category / day / fund |
+| Starter directories | One-click load of a whole region's programs (81 across the eight Sacramento-area counties), flagged unverified until your staff confirm each one |
 | County forms | Form library of the program's own forms (PDF/Word/picture) with fillable fields, pre-filled from the client record, saved encrypted to the client, printable as PDF, with the signed copy attached |
 | Resources & referrals | Community resource directory (detox, residential, OTP/OBOT, housing, harm reduction, legal, …) with treatment center profiles: services-offered tags, plain-language summary, levels of care, how to refer, cost and a picture gallery; verification dates; referrals with status pipeline, urgency, warm handoff, consent linkage, barriers, days-to-admit |
 | Tasks & timelines | Tasks with priorities, due dates, milestones; unified per-client timeline of every event |
