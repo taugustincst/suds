@@ -209,3 +209,14 @@ test('the sync table description matches the actual schema', () => {
   }
   assert.deepEqual(problems, []);
 });
+
+test('a time entry with no client cannot be read by another worker', async () => {
+  // Caseload scoping protects records that carry a client. A staff time entry with no client carried
+  // nothing, so knowing its id was enough to read it.
+  const mine = await nav.post('/api/time', { work_date: '2026-09-02', minutes: 45, category: 'supervision' });
+  assert.equal(mine.status, 201);
+  assert.equal((await nav.get(`/api/time/${mine.data.id}`)).status, 200, 'the worker can read their own');
+  assert.equal((await nav2.get(`/api/time/${mine.data.id}`)).status, 403, 'another worker cannot');
+  assert.equal((await admin.get(`/api/time/${mine.data.id}`)).status, 200, 'a manager can');
+  assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='authz.denied' AND entity_id=?`, mine.data.id), 'and the refusal is audited');
+});

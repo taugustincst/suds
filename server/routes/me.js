@@ -44,6 +44,7 @@ module.exports = (r) => {
     const dueToday = db.all(`SELECT t.id, t.title, t.due_at, t.priority, t.client_id, c.client_code FROM tasks t LEFT JOIN clients c ON c.id=t.client_id WHERE t.assigned_to=? AND t.status IN ('open','in_progress') AND substr(t.due_at,1,10) <= date('now','localtime') ORDER BY t.due_at LIMIT 10`, uid);
     for (const t of dueToday) { if (t.client_id) { const c = db.one(`SELECT * FROM clients WHERE id=?`, t.client_id); t.client_name = c ? M.summary(c).display_name : t.client_code; } }
     const lastSeenElsewhere = db.one(`SELECT last_seen_at, user_agent FROM sessions WHERE user_id=? AND revoked_at IS NULL AND id<>? ORDER BY last_seen_at DESC LIMIT 1`, uid, ctx.session.id);
+    require('../audit').log({ user: ctx.user, action: 'me.continue', ip: ctx.ip, details: { recent: recent.length, drafts: drafts.length, due_today: dueToday.length } });
     return { recent, drafts, staged_imports: staged, due_today: dueToday, other_device: lastSeenElsewhere ? { last_seen_at: lastSeenElsewhere.last_seen_at, mobile: /Mobi|Android|iPhone|iPad/i.test(lastSeenElsewhere.user_agent || '') } : null };
   });
 };

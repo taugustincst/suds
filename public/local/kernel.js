@@ -10316,6 +10316,9 @@ var require_admin = __commonJS({
         }
         config.saveServerJson({ host, port: desc.port, tls, trustProxy: !!v.trust_proxy });
         config.trustProxy = !!proc.env.TRUST_PROXY || !!v.trust_proxy;
+        config.tls.cert = tls === "selfsigned" ? crt : "";
+        config.tls.key = tls === "selfsigned" ? key : "";
+        config.tls.mode = tls;
         audit3.log({ user: ctx.user, action: "network.update", ip: ctx.ip, details: { host, port: desc.port, tls } });
         return { ok: true, listener: desc };
       });
@@ -10713,6 +10716,10 @@ var require_crud = __commonJS({
         const row = db3.one(`SELECT ${select} FROM ${table} ${joins} WHERE ${table}.id=?`, ctx.params.id);
         if (!row) throw notFound();
         if (row.client_id) auth3.assertClientAccess(ctx, row.client_id);
+        else if (opts.ownerOnly && row[ownerCol] !== ctx.user.id && !auth3.hasPerm(ctx.user, opts.ownerOnly)) {
+          audit3.log({ user: ctx.user, action: "authz.denied", entity, entityId: row.id, ip: ctx.ip, success: false, details: { reason: "not the owner" } });
+          throw forbidden("That record belongs to another worker");
+        }
         audit3.log({ user: ctx.user, action: `${entity}.view`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip });
         return { row: decorate(ctx, [row])[0] };
       });
@@ -11071,7 +11078,7 @@ var require_clients = __commonJS({
       ok_to_text: { type: "boolean" },
       ok_to_voicemail: { type: "boolean" }
     };
-    function loadClient(ctx, id, { write = false } = {}) {
+    function loadClient(ctx, id) {
       const row = db3.one(`SELECT * FROM clients WHERE id=? AND deleted_at IS NULL`, id);
       if (!row) throw notFound("Client not found");
       auth3.assertClientAccess(ctx, id);
@@ -13580,6 +13587,7 @@ var require_me = __commonJS({
           }
         }
         const lastSeenElsewhere = db3.one(`SELECT last_seen_at, user_agent FROM sessions WHERE user_id=? AND revoked_at IS NULL AND id<>? ORDER BY last_seen_at DESC LIMIT 1`, uid, ctx.session.id);
+        require_audit().log({ user: ctx.user, action: "me.continue", ip: ctx.ip, details: { recent: recent.length, drafts: drafts.length, due_today: dueToday.length } });
         return { recent, drafts, staged_imports: staged, due_today: dueToday, other_device: lastSeenElsewhere ? { last_seen_at: lastSeenElsewhere.last_seen_at, mobile: /Mobi|Android|iPhone|iPad/i.test(lastSeenElsewhere.user_agent || "") } : null };
       });
     };
@@ -18677,6 +18685,8 @@ var require_time = __commonJS({
         perm: "time",
         dateCol: "work_date",
         clientRequired: false,
+        // Time is personal: an entry with no client can only be read by the worker who logged it, or a manager.
+        ownerOnly: "time:all",
         joins: "JOIN users u ON u.id=time_entries.user_id LEFT JOIN clients c ON c.id=time_entries.client_id LEFT JOIN funding_sources f ON f.id=time_entries.funding_source_id",
         select: "time_entries.*, u.display_name AS worker, c.client_code, f.name AS funding_source",
         shape: {

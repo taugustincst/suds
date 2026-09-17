@@ -7,6 +7,8 @@ const C = require('../constants');
 module.exports = (r) => {
   crud.build(r, {
     table: 'time_entries', entity: 'time_entrie', base: '/api/time', perm: 'time', dateCol: 'work_date', clientRequired: false,
+    // Time is personal: an entry with no client can only be read by the worker who logged it, or a manager.
+    ownerOnly: 'time:all',
     joins: 'JOIN users u ON u.id=time_entries.user_id LEFT JOIN clients c ON c.id=time_entries.client_id LEFT JOIN funding_sources f ON f.id=time_entries.funding_source_id',
     select: 'time_entries.*, u.display_name AS worker, c.client_code, f.name AS funding_source',
     shape: {

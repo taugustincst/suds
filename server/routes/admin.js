@@ -95,6 +95,11 @@ module.exports = (r) => {
     catch (e) { throw badRequest(`Could not start on port ${v.port || 'auto'}: ${e.message}`); }
     config.saveServerJson({ host, port: desc.port, tls, trustProxy: !!v.trust_proxy });
     config.trustProxy = !!process.env.TRUST_PROXY || !!v.trust_proxy;
+    // config.tls was frozen at module load, so after switching to HTTPS the server kept reporting
+    // tls: false and never sent HSTS until it was restarted. Keep it in step with what is actually bound.
+    config.tls.cert = tls === 'selfsigned' ? crt : '';
+    config.tls.key = tls === 'selfsigned' ? key : '';
+    config.tls.mode = tls;
     audit.log({ user: ctx.user, action: 'network.update', ip: ctx.ip, details: { host, port: desc.port, tls } });
     return { ok: true, listener: desc };
   });

@@ -45,6 +45,12 @@ function build(r, opts) {
     const row = db.one(`SELECT ${select} FROM ${table} ${joins} WHERE ${table}.id=?`, ctx.params.id);
     if (!row) throw notFound();
     if (row.client_id) auth.assertClientAccess(ctx, row.client_id);
+    // A record with no client (a staff time entry, a program to-do) is not covered by caseload scoping, so
+    // the list view's owner filter has to be applied here too — otherwise it can be read by id alone.
+    else if (opts.ownerOnly && row[ownerCol] !== ctx.user.id && !auth.hasPerm(ctx.user, opts.ownerOnly)) {
+      audit.log({ user: ctx.user, action: 'authz.denied', entity, entityId: row.id, ip: ctx.ip, success: false, details: { reason: 'not the owner' } });
+      throw forbidden('That record belongs to another worker');
+    }
     audit.log({ user: ctx.user, action: `${entity}.view`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip });
     return { row: decorate(ctx, [row])[0] };
   });

@@ -8,7 +8,15 @@ let prefsTimer; const prefsDirty = {};
 export const prefs = {
   get: (k, d) => (state.prefs[k] === undefined ? d : state.prefs[k]),
   set(k, v) { state.prefs[k] = v; prefsDirty[k] = v; try { localStorage.setItem('suds.prefs', JSON.stringify(state.prefs)); } catch {} clearTimeout(prefsTimer); prefsTimer = setTimeout(prefs.flush, 800); },
-  async flush() { const body = { ...prefsDirty }; for (const k of Object.keys(prefsDirty)) delete prefsDirty[k]; if (!Object.keys(body).length || !state.user) return; try { await put('/api/me/prefs', body, { quiet: true }); } catch {} },
+  async flush() {
+    const body = { ...prefsDirty };
+    if (!Object.keys(body).length || !state.user) return;
+    for (const k of Object.keys(body)) delete prefsDirty[k];
+    // On failure the change stays pending rather than being dropped, so the next save retries it — this
+    // used to lose a filter or a theme choice with no sign anything had happened.
+    try { await put('/api/me/prefs', body, { quiet: true }); }
+    catch { Object.assign(prefsDirty, body); }
+  },
   async load() { try { state.prefs = (await get('/api/me/prefs', { quiet: true })).prefs || {}; try { localStorage.setItem('suds.prefs', JSON.stringify(state.prefs)); } catch {} } catch { try { state.prefs = JSON.parse(localStorage.getItem('suds.prefs') || '{}'); } catch { state.prefs = {}; } } applyTheme(); },
 };
 function applyTheme() { const t = state.prefs.theme; if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme; }

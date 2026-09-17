@@ -22,7 +22,7 @@ const shape = {
   goals: { type: 'string', maxLen: 2000 }, flags: { type: 'string', maxLen: 300 }, race_codes: { type: 'string', maxLen: 200 }, contact_preferences: { type: 'string', maxLen: 300 }, ok_to_text: { type: 'boolean' }, ok_to_voicemail: { type: 'boolean' },
 };
 
-function loadClient(ctx, id, { write = false } = {}) {
+function loadClient(ctx, id) {
   const row = db.one(`SELECT * FROM clients WHERE id=? AND deleted_at IS NULL`, id);
   if (!row) throw notFound('Client not found');
   auth.assertClientAccess(ctx, id);
