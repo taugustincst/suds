@@ -18,6 +18,40 @@ route('dashboard', async () => {
   if (!c.active && !c.waitlist && !caseload.caseload.length && (state.local || can('settings:manage'))) {
     try { const st = await get(state.local ? '/api/local/demo' : '/api/admin/demo', { quiet: true }); if (!st.loaded && st.clients_total === 0) sample = h('div', { class: 'banner mb', 'data-sample-banner': '1' }, h('b', {}, 'New here? '), 'Load fictional sample data to see how SUDS looks with clients, visits, notes and reports. ', h('a', { href: state.local ? '#/sync' : '#/admin?tab=settings', class: 'btn sm primary', style: { marginLeft: '.5rem' } }, 'Load sample data'), ' ', h('span', { class: 'small muted' }, 'It can be removed in one click.')); } catch { /* no permission or offline */ }
   }
+  // A brand-new programme: the wizard only creates one account, so this is where the rest of setting up
+  // actually happens. Each step is one click, and the card disappears as they are done.
+  let setupCard = null;
+  if (can('settings:manage') && !state.local) {
+    try {
+      const [forms, users, funds, resources] = await Promise.all([
+        get('/api/forms/starters', { quiet: true }).catch(() => null),
+        get('/api/users', { quiet: true }).catch(() => ({ users: [] })),
+        get('/api/budget/funds', { quiet: true }).catch(() => ({ funds: [] })),
+        get('/api/resources?limit=1', { quiet: true }).catch(() => ({ total: 0 })),
+      ]);
+      const steps = [];
+      if ((users.users || []).filter(u => u.is_active !== 0).length < 2) {
+        steps.push(['Add your staff', 'Everyone needs their own sign-in — shared accounts are not supported, and the audit trail depends on knowing who did what.', 'Add staff', () => nav('admin?tab=users')]);
+      }
+      if (forms && forms.starters.some(x => !x.installed)) {
+        steps.push(['Put a consent form in the library', 'Including a 42 CFR Part 2 release, which you need before any record can be shared with another agency.', 'Add starter forms', async () => { (await import('./forms.js')).openStarters(() => nav('dashboard?_=' + Date.now())); }]);
+      }
+      if (!resources.total) {
+        steps.push(['Fill the resource directory', 'Load a regional starter directory of treatment programmes, or enter your own referral partners.', 'Open the directory', () => nav('resources')]);
+      }
+      if (!(funds.funds || []).length) {
+        steps.push(['Add your funding sources', 'Grants and budgets, so services and staff time can be charged to the right one and reported per fund.', 'Add funding', () => nav('budget')]);
+      }
+      if (steps.length) {
+        setupCard = h('section', { class: 'card mb' },
+          h('div', { class: 'card-head' }, h('h2', {}, 'Finish setting up'), badge(`${steps.length} left`, 'warn')),
+          h('div', {}, steps.map(([title, why, label, action]) => h('div', { class: 'list-item row', style: { justifyContent: 'space-between', alignItems: 'center', gap: '1rem' } },
+            h('div', {}, h('b', {}, title), h('div', { class: 'small muted' }, why)),
+            h('button', { class: 'btn sm primary', onClick: action }, label)))));
+      }
+    } catch { /* a missing permission or an offline copy simply means no card */ }
+  }
+
   const done = async (t, box) => {
     if (box) box.disabled = true;
     try { await put(`/api/tasks/${t.id}`, { status: 'done' }); toast('Done ✓', 'ok'); nav('dashboard?_=' + Date.now()); }
@@ -26,6 +60,7 @@ route('dashboard', async () => {
   return h('div', {},
     pageHead(`${greet}, ${first}`),
     sample,
+    setupCard,
     cont.other_device ? h('div', { class: 'muted small mb' }, `Also signed in on ${cont.other_device.mobile ? 'your phone' : 'another computer'} (${fmt.ago(cont.other_device.last_seen_at) === 'today' ? 'active today' : fmt.ago(cont.other_device.last_seen_at)}). Everything stays in sync.`) : null,
     alerts.length ? h('div', { class: 'row mb' }, alerts.map(([k, t, href]) => h('a', { href, class: `badge ${k}`, style: { fontSize: '.9rem', padding: '.4rem .8rem' } }, t))) : null,
     h('div', { class: 'grid cols-2 mb' },

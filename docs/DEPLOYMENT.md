@@ -96,13 +96,34 @@ node scripts/backup.js --restore /secure/backups/suds-<stamp>.db.enc /opt/suds/d
 
 Schedule nightly with cron / Task Scheduler and copy off-host. Backups are encrypted with a key derived from `SUDS_ENCRYPTION_KEY`, so a backup without the key is useless to an attacker — and to you. Test restores quarterly.
 
+An administrator can also restore without a shell, from Administration → **System & backups → Restore from a backup**: it reports what the file contains before changing anything, requires the administrator's password, and keeps the replaced database as `suds.db.before-restore-<stamp>` so a mistaken restore is recoverable. The file format is identical either way — both paths use `server/backup.js`.
+
+### Rotating the encryption key
+
+```bash
+systemctl stop suds
+npm run backup -- /secure/backups                       # take one first; this is not reversible
+NEW_ENCRYPTION_KEY=$(npm run -s gen-key) npm run rotate-key
+# set SUDS_ENCRYPTION_KEY to the new value, then:
+systemctl start suds
+```
+
+The columns to re-encrypt are discovered from the database, not from a list in the script, so every encrypted field — including completed county forms and their attachments — is covered.
+
+## 4a. Monitoring and logs
+
+`GET /api/health` needs no authentication and returns `{ ok, version, schema_version, database, database_bytes, disk_free_bytes, uptime_seconds }`. It answers 503 when the database cannot be read or free disk drops below 100 MB, so it works directly as a liveness and readiness probe (the Docker image uses it).
+
+Console output is also written to `data/logs/suds-<date>.log` (mode 0600), rolled at 8 MB and kept 30 days. Log lines never contain PHI: route errors record the path and the error message only. Audit retention (`AUDIT_RETENTION_DAYS`, default 2555) and tombstone retention (`TOMBSTONE_RETENTION_DAYS`, default 180) are enforced on the same hourly pass; a device offline longer than the tombstone horizon is told to resync from scratch rather than silently keeping deleted records.
+
 ## 5. Upgrades
 
 ```bash
-git pull && npm test && systemctl restart suds
+npm run backup -- /secure/backups     # first, always
+git pull && npm ci && npm test && systemctl restart suds
 ```
 
-Schema migrations run automatically at startup (`server/db.js`); take a backup first.
+Schema migrations run automatically at startup (`server/db.js`), each inside a transaction with its version stamp and with `PRAGMA foreign_key_check` before it commits, so a crash midway cannot leave a half-applied schema. SUDS refuses to open a database written by a *newer* build rather than running against a schema it does not understand — so a rollback means restoring the backup that matches the version you are rolling back to.
 
 ## 6. Hardening checklist
 
@@ -110,7 +131,7 @@ Schema migrations run automatically at startup (`server/db.js`); take a backup f
 - [ ] Data directory permissions `0700`, database `0600`, owned by the service user.
 - [ ] Host firewall allows only 443 from the county network / VPN.
 - [ ] OS disk encryption enabled; screen lock policies on workstations.
-- [ ] MFA required for all roles.
+- [ ] MFA required for all roles (`MFA_REQUIRED_ROLES`); grace period (`MFA_GRACE_DAYS`, default 14) set to what your policy allows.
 - [ ] Keys in a secrets manager; key custodian documented.
 - [ ] Backups scheduled, encrypted, off-host, restore tested.
 - [ ] Audit log reviewed monthly (Administration → Audit log → Break-glass events, Access denials, Exports).

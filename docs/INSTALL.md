@@ -56,10 +56,24 @@ Android staff can install a real app instead of the browser shortcut: see `docs/
 ## Backups
 Administration → **System & backups → Download encrypted backup** weekly (or use IT's scheduled backup of the whole `data` folder). Keep backups and the key file in different places.
 
+A backup can only be opened with this installation's encryption keys, so a stolen backup file is not a breach — and a backup without the keys cannot be restored at all. That is why step 4 of the wizard asks you to save the key backup somewhere separate.
+
+## Putting a backup back
+If the computer is replaced, the database is damaged, or something was deleted that should not have been:
+
+1. Install SUDS on the machine and restore the **same `data/keys.json`** you saved at setup, or set the same encryption keys. A backup made with different keys cannot be read.
+2. Sign in as an administrator and go to Administration → **System & backups → Restore from a backup**.
+3. Choose the backup file and press **Check this backup**. SUDS tells you what is inside it — how many clients, when it was taken, which version — and changes nothing yet.
+4. If it is the right file, press **Replace everything with this backup**, type `REPLACE`, and enter your password.
+
+Everything recorded after that backup was taken will be gone, so check the summary first. The database being replaced is kept on the server as `suds.db.before-restore-…`, so a restore of the wrong file can be undone by whoever looks after the machine. Everyone is signed out afterwards, and phones should sync once.
+
+A backup from an older version of SUDS is brought up to date automatically when it is restored.
+
 ## Stopping, restarting, updating
 * **Stop:** close the black window.
 * **Restart:** double-click the launcher again.
-* **Update:** replace the SUDS folder with the new version but keep your `data` folder. Then start as usual.
+* **Update:** take a backup first (above), then replace the SUDS folder with the new version but keep your `data` folder. Then start as usual — the database is brought up to date the first time the new version starts. SUDS will not open a `data` folder written by a *newer* version than the one you are running, so if you ever need to go back, restore the backup that matches.
 * **Start automatically at login:** Windows — create a shortcut to `Start-SUDS.bat` in `shell:startup`; Mac — System Settings → General → Login Items → add `Start-SUDS.command`.
 
 ## Getting help from IT

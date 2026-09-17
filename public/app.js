@@ -135,11 +135,12 @@ export function modal(title, content, { wide = false } = {}) {
     h('div', { class: 'card-head' }, h('h2', { id: titleId }, title), h('button', { class: 'btn ghost sm', onClick: close, 'aria-label': 'Close' }, '✕')), content);
   const bg = h('div', { class: 'modal-bg', onClick: (e) => { if (e.target === bg) close(); } }, box);
   // Remember where focus was, so closing the dialog returns the keyboard to what opened it.
-  const opener = document.activeElement;
+  // activeElement can be null, and document.contains() throws on anything that is not a Node.
+  const opener = document.activeElement instanceof Element ? document.activeElement : null;
   function close() {
     bg.remove();
     document.removeEventListener('keydown', onKey);
-    if (opener && document.contains(opener) && typeof opener.focus === 'function') opener.focus();
+    if (opener && document.contains(opener) && typeof opener.focus === 'function') { try { opener.focus(); } catch { /* the element may have been replaced by a re-render */ } }
   }
   function onKey(e) {
     if (e.key === 'Escape') { close(); return; }

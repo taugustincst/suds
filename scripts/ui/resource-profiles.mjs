@@ -19,18 +19,23 @@ async function run(label, url, login) {
   await page.click('.res-card:has(img.res-cover)'); await page.waitForTimeout(1200); await page.screenshot({ path: `/tmp/suds-shots/resource-profile-${label}.png`, fullPage: true });
   console.log(label, 'profile:', page.url().split('#')[1], '|', (await page.textContent('h1')).trim(), '| lead:', ((await page.textContent('.res-lead').catch(() => '')) || '').slice(0, 50));
   if (!await page.$('.res-lead')) errors.push(label + ': no summary on profile');
-  const before = await page.$$('.gallery img'); console.log(label, 'gallery images:', before.length);
+  // Count photos, not <img> elements: the gallery shows one hero plus a thumbnail strip that only appears
+  // once there is more than one picture, so the element count jumps by two when going from one to two.
+  const rid = page.url().split('/resource/')[1];
+  const photoCount = () => page.evaluate((id) => fetch(`/api/resources/${id}`).then(r => r.json()).then(d => d.row.photos.length), rid);
+  const before = await photoCount(); console.log(label, 'pictures:', before);
   // upload a picture
   const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.click('button:has-text("+ Add pictures")')]);
   await chooser.setFiles('/tmp/suds-shots/tiny.png'); await page.waitForTimeout(2000);
-  const after = await page.$$('.gallery img'); console.log(label, 'gallery images after upload:', after.length);
-  if (after.length !== before.length + 1) errors.push(`${label}: upload did not add a picture (${before.length} -> ${after.length})`);
+  const after = await photoCount(); console.log(label, 'pictures after upload:', after);
+  if (after !== before + 1) errors.push(`${label}: upload did not add a picture (${before} -> ${after})`);
+  if (!(await page.$('.gallery img'))) errors.push(`${label}: the gallery shows no picture after uploading one`);
   // open lightbox on the last thumbnail (or hero), caption, remove
   const thumbs = await page.$$('.thumb-btn'); if (thumbs.length) await thumbs[thumbs.length - 1].click(); else await page.click('.gallery .hero img');
   await page.waitForSelector('.lightbox'); page.once('dialog', d => d.accept('Front door')); await page.click('.lightbox button:has-text("Caption")'); await page.waitForTimeout(500);
   console.log(label, 'caption shown:', (await page.textContent('.lightbox .muted')).trim());
   await page.click('.lightbox button:has-text("Remove")'); await page.waitForTimeout(300); await page.click('.modal-bg:last-child button.danger'); await page.waitForTimeout(800);
-  const final = await page.$$('.gallery img'); console.log(label, 'gallery images after remove:', final.length); if (final.length !== before.length) errors.push(`${label}: remove failed (${final.length} vs ${before.length})`);
+  const final = await photoCount(); console.log(label, 'pictures after remove:', final); if (final !== before) errors.push(`${label}: remove failed (${final} vs ${before})`);
   // edit form shows tag grid
   await page.click('button:has-text("Edit")'); await page.waitForSelector('.modal .tag-grid'); const ticked = await page.$$eval('.modal .tag-grid input:checked', e => e.length); console.log(label, 'ticked service tags in form:', ticked); await page.keyboard.press('Escape');
   // list view + tag filter
