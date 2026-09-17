@@ -75,7 +75,8 @@ function caseloadRestricted(user) {
 }
 // An assignment is over when its last day has passed, or the moment somebody ended it outright.
 // The date alone is not enough: a supervisor taking a worker off a case means now, not at midnight.
-const ACTIVE_ASSIGNMENT = `(end_date IS NULL OR end_date >= date('now')) AND (ended_at IS NULL OR ended_at > strftime('%Y-%m-%dT%H:%M:%fZ','now'))`;
+// Parenthesised as a whole: callers drop it into WHERE clauses that may already contain an OR.
+const ACTIVE_ASSIGNMENT = `((end_date IS NULL OR end_date >= date('now')) AND (ended_at IS NULL OR ended_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')))`;
 const activeAssignment = (prefix = '') => ACTIVE_ASSIGNMENT.replace(/\b(end_date|ended_at)\b/g, `${prefix}$1`);
 
 function canAccessClient(user, clientId) {

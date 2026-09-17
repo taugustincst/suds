@@ -7867,7 +7867,7 @@ var require_auth = __commonJS({
       if (hasPerm(user, "clients:all") || hasPerm(user, "clients:list-deidentified")) return false;
       return db3.getSetting("caseload_restriction", "1") === "1";
     }
-    var ACTIVE_ASSIGNMENT = `(end_date IS NULL OR end_date >= date('now')) AND (ended_at IS NULL OR ended_at > strftime('%Y-%m-%dT%H:%M:%fZ','now'))`;
+    var ACTIVE_ASSIGNMENT = `((end_date IS NULL OR end_date >= date('now')) AND (ended_at IS NULL OR ended_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')))`;
     var activeAssignment = (prefix = "") => ACTIVE_ASSIGNMENT.replace(/\b(end_date|ended_at)\b/g, `${prefix}$1`);
     function canAccessClient(user, clientId) {
       if (!caseloadRestricted(user)) return true;
