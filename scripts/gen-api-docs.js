@@ -4,7 +4,9 @@ process.env.SUDS_ENV = process.env.SUDS_ENV || 'test'; process.env.SUDS_DB_PATH 
 const fs = require('node:fs');
 const { Router } = require('../server/http');
 const r = new Router();
-for (const mod of ['auth', 'users', 'clients', 'assignments', 'interventions', 'calls', 'time', 'resources', 'referrals', 'tasks', 'budget', 'notes', 'consents', 'imports', 'reports', 'admin', 'intake']) require(`../server/routes/${mod}`)(r);
+// The module list lives in server/app.js; a copy here is how docs come to describe a version of the API
+// that no longer exists.
+for (const mod of require('../server/app').ROUTE_MODULES) require(`../server/routes/${mod}`)(r);
 const rows = r.routes.map(x => {
   let i = 0;
   const path = x.re.source.replace(/^\^/, '').replace(/\\\/\?\$$/, "").replace(/\(\[\^\/\]\+\)/g, () => ':' + x.keys[i++]).replace(/\\\//g, '/');

@@ -22,7 +22,7 @@ async function run(label, url, login) {
   // Count photos, not <img> elements: the gallery shows one hero plus a thumbnail strip that only appears
   // once there is more than one picture, so the element count jumps by two when going from one to two.
   const rid = page.url().split('/resource/')[1];
-  const photoCount = () => page.evaluate((id) => fetch(`/api/resources/${id}`).then(r => r.json()).then(d => d.row.photos.length), rid);
+  const photoCount = () => page.evaluate((id) => fetch(`/api/resources/${id}/photos`).then(r => r.json()).then(d => (d.photos || []).length), rid);
   const before = await photoCount(); console.log(label, 'pictures:', before);
   // upload a picture
   const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.click('button:has-text("+ Add pictures")')]);
