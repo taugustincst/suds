@@ -11671,6 +11671,54 @@ var require_spreadsheet = __commonJS({
       }
       return (crc ^ 4294967295) >>> 0;
     }
+    function zipEntry(name, content, comp, off, local, central) {
+      const data = import_buffer.Buffer.isBuffer(content) ? content : import_buffer.Buffer.from(content, "utf8");
+      const n = import_buffer.Buffer.from(name);
+      const crc = crc32(data);
+      const lh = import_buffer.Buffer.alloc(30);
+      lh.writeUInt32LE(67324752, 0);
+      lh.writeUInt16LE(20, 4);
+      lh.writeUInt16LE(2048, 6);
+      lh.writeUInt16LE(8, 8);
+      lh.writeUInt32LE(crc, 14);
+      lh.writeUInt32LE(comp.length, 18);
+      lh.writeUInt32LE(data.length, 22);
+      lh.writeUInt16LE(n.length, 26);
+      local.push(lh, n, comp);
+      const ch = import_buffer.Buffer.alloc(46);
+      ch.writeUInt32LE(33639248, 0);
+      ch.writeUInt16LE(20, 4);
+      ch.writeUInt16LE(20, 6);
+      ch.writeUInt16LE(2048, 8);
+      ch.writeUInt16LE(8, 10);
+      ch.writeUInt32LE(crc, 16);
+      ch.writeUInt32LE(comp.length, 20);
+      ch.writeUInt32LE(data.length, 24);
+      ch.writeUInt16LE(n.length, 28);
+      ch.writeUInt32LE(off, 42);
+      central.push(ch, n);
+      return off + 30 + n.length + comp.length;
+    }
+    function zipEnd(entries, local, central, off) {
+      const cd = import_buffer.Buffer.concat(central);
+      const eocd = import_buffer.Buffer.alloc(22);
+      eocd.writeUInt32LE(101010256, 0);
+      eocd.writeUInt16LE(entries.length, 8);
+      eocd.writeUInt16LE(entries.length, 10);
+      eocd.writeUInt32LE(cd.length, 12);
+      eocd.writeUInt32LE(off, 16);
+      return import_buffer.Buffer.concat([...local, cd, eocd]);
+    }
+    async function zipAsync(entries) {
+      const local = [], central = [];
+      let off = 0;
+      const deflate = (buf) => new Promise((resolve2, reject) => zlib.deflateRaw(buf, (err2, out2) => err2 ? reject(err2) : resolve2(out2)));
+      for (const [name, content] of entries) {
+        const data = import_buffer.Buffer.isBuffer(content) ? content : import_buffer.Buffer.from(content, "utf8");
+        off = zipEntry(name, data, await deflate(data), off, local, central);
+      }
+      return zipEnd(entries, local, central, off);
+    }
     function zip(entries) {
       const local = [], central = [];
       let off = 0;
@@ -11703,14 +11751,7 @@ var require_spreadsheet = __commonJS({
         central.push(ch, n);
         off += 30 + n.length + comp.length;
       }
-      const cd = import_buffer.Buffer.concat(central);
-      const eocd = import_buffer.Buffer.alloc(22);
-      eocd.writeUInt32LE(101010256, 0);
-      eocd.writeUInt16LE(entries.length, 8);
-      eocd.writeUInt16LE(entries.length, 10);
-      eocd.writeUInt32LE(cd.length, 12);
-      eocd.writeUInt32LE(off, 16);
-      return import_buffer.Buffer.concat([...local, cd, eocd]);
+      return zipEnd(entries, local, central, off);
     }
     var xmlEsc = (s2) => String(s2).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
     function colRef(i) {
@@ -11723,30 +11764,43 @@ var require_spreadsheet = __commonJS({
       }
       return s2;
     }
-    function writeWorkbook(sheets) {
-      const files = [];
-      const sheetXml = (sh) => {
-        const cols2 = sh.columns.map((c) => typeof c === "string" ? { key: c, label: c } : c);
-        const cell = (r, i, v) => {
-          const ref = colRef(i) + r;
-          if (v === null || v === void 0 || v === "") return "";
-          if (typeof v === "number" && Number.isFinite(v)) return `<c r="${ref}"><v>${v}</v></c>`;
-          if (typeof v === "boolean") return `<c r="${ref}" t="b"><v>${v ? 1 : 0}</v></c>`;
-          return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${xmlEsc(typeof v === "object" ? JSON.stringify(v) : v)}</t></is></c>`;
-        };
-        const header = `<row r="1">${cols2.map((c, i) => `<c r="${colRef(i)}1" t="inlineStr" s="1"><is><t>${xmlEsc(c.label)}</t></is></c>`).join("")}</row>`;
-        const body = sh.rows.map((row, ri) => `<row r="${ri + 2}">${cols2.map((c, i) => cell(ri + 2, i, row[c.key])).join("")}</row>`).join("");
-        const widths = `<cols>${cols2.map((c, i) => `<col min="${i + 1}" max="${i + 1}" width="${Math.min(60, Math.max(10, c.width || String(c.label).length + 4))}" customWidth="1"/>`).join("")}</cols>`;
-        return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>${widths}<sheetData>${header}${body}</sheetData><autoFilter ref="A1:${colRef(cols2.length - 1)}${sh.rows.length + 1}"/></worksheet>`;
+    function writeSheetXml(sh) {
+      const cols2 = sh.columns.map((c) => typeof c === "string" ? { key: c, label: c } : c);
+      const cell = (r, i, v) => {
+        const ref = colRef(i) + r;
+        if (v === null || v === void 0 || v === "") return "";
+        if (typeof v === "number" && Number.isFinite(v)) return `<c r="${ref}"><v>${v}</v></c>`;
+        if (typeof v === "boolean") return `<c r="${ref}" t="b"><v>${v ? 1 : 0}</v></c>`;
+        return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${xmlEsc(typeof v === "object" ? JSON.stringify(v) : v)}</t></is></c>`;
       };
+      const header = `<row r="1">${cols2.map((c, i) => `<c r="${colRef(i)}1" t="inlineStr" s="1"><is><t>${xmlEsc(c.label)}</t></is></c>`).join("")}</row>`;
+      const body = sh.rows.map((row, ri) => `<row r="${ri + 2}">${cols2.map((c, i) => cell(ri + 2, i, row[c.key])).join("")}</row>`).join("");
+      const widths = `<cols>${cols2.map((c, i) => `<col min="${i + 1}" max="${i + 1}" width="${Math.min(60, Math.max(10, c.width || String(c.label).length + 4))}" customWidth="1"/>`).join("")}</cols>`;
+      return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>${widths}<sheetData>${header}${body}</sheetData><autoFilter ref="A1:${colRef(cols2.length - 1)}${sh.rows.length + 1}"/></worksheet>`;
+    }
+    function writeWorkbookParts(sheets) {
+      const files = [];
       const safeName = (n, i) => String(n).replace(/[\\/*?:\[\]]/g, " ").slice(0, 31) || `Sheet${i + 1}`;
       files.push(["[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`]);
       files.push(["_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`]);
       files.push(["xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((s2, i) => `<sheet name="${xmlEsc(safeName(s2.name, i))}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("")}</sheets></workbook>`]);
       files.push(["xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("")}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`]);
       files.push(["xl/styles.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" applyFont="1"/></cellXfs></styleSheet>`]);
-      sheets.forEach((s2, i) => files.push([`xl/worksheets/sheet${i + 1}.xml`, sheetXml(s2)]));
-      return zip(files);
+      sheets.forEach((s2, i) => files.push([`xl/worksheets/sheet${i + 1}.xml`, writeSheetXml(s2)]));
+      return new Map(files);
+    }
+    function writeWorkbook(sheets) {
+      return zip([...writeWorkbookParts(sheets).entries()]);
+    }
+    async function writeWorkbookAsync(sheets) {
+      const breathe = () => new Promise((resolve2) => setImmediate(resolve2));
+      const parts = writeWorkbookParts(sheets.map((s2) => ({ name: s2.name, columns: s2.columns, rows: [] })));
+      for (let i = 0; i < sheets.length; i++) {
+        parts.set(`xl/worksheets/sheet${i + 1}.xml`, writeSheetXml(sheets[i]));
+        await breathe();
+      }
+      const out2 = await zipAsync([...parts.entries()]);
+      return out2;
     }
     function readWorkbook(buf) {
       const files = unzip(buf);
@@ -11819,7 +11873,7 @@ var require_spreadsheet = __commonJS({
         return { name: s2.name, headers, rows: rest.map((r) => Object.fromEntries(headers.map((k, i) => [k, r[i] === void 0 ? null : r[i]]))) };
       }) };
     }
-    module.exports = { parseCsv, toCsv, writeWorkbook, readWorkbook, parseFile, excelDate, zip };
+    module.exports = { parseCsv, toCsv, writeWorkbook, writeWorkbookAsync, readWorkbook, parseFile, excelDate, zip };
   }
 });
 
@@ -17640,6 +17694,11 @@ var require_exports = __commonJS({
           columns: ["client_code", "type", "recipient", "purpose", "scope", "signed_at", "expires_at", "revoked_at", "document_ref"],
           rows: () => db3.all(`SELECT co.*, c.client_code FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.signed_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY co.signed_at LIMIT ?`, from, to, ...cf.params, MAX_ROWS).map((r) => ({ ...r, recipient: phi(r.recipient_enc), purpose: phi(r.purpose_enc), scope: phi(r.scope_enc) }))
         },
+        disclosures: {
+          label: "Accounting of disclosures",
+          columns: ["client_code", "disclosed_at", "recipient", "purpose", "what", "method", "basis", "source", "disclosed_by"],
+          rows: () => db3.all(`SELECT d.*, c.client_code, u.display_name disclosed_by FROM disclosures d JOIN clients c ON c.id=d.client_id JOIN users u ON u.id=d.disclosed_by WHERE d.disclosed_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY d.disclosed_at LIMIT ?`, from, toEnd, ...cf.params, MAX_ROWS).map((r) => ({ ...r, recipient: phi(r.recipient_enc), purpose: phi(r.purpose_enc), what: phi(r.what_enc) }))
+        },
         episodes: {
           label: "Episodes of care",
           columns: ["client_code", "opened_at", "closed_at", "status", "referral_source", "discharge_reason", "discharge_disposition", "funding_source"],
@@ -17852,7 +17911,7 @@ var require_reports = __commonJS({
         audit3.log({ user: ctx.user, action: "report.funder", ip: ctx.ip, details: { from, to, funding_source_id: fund || void 0, served } });
         return out2;
       });
-      r.get("/api/reports/export/:kind", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
+      r.get("/api/reports/export/:kind", auth3.requireAuth, auth3.requirePerm("reports:read"), async (ctx) => {
         const { from, to, toEnd } = range(ctx);
         const identified = ctx.query.get("identified") === "1" && auth3.hasPerm(ctx.user, "export:identified");
         const format = ctx.query.get("format") === "xlsx" || ctx.params.kind === "workbook" ? "xlsx" : "csv";
@@ -17861,9 +17920,13 @@ var require_reports = __commonJS({
         const label = (k) => ({ key: k, label: k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) });
         let body, filename, type;
         if (ctx.params.kind === "workbook") {
-          const sheets = Object.entries(D).map(([k, d]) => ({ name: d.label, columns: d.columns.map(label), rows: d.rows() }));
+          const sheets = [];
+          for (const [, d] of Object.entries(D)) {
+            sheets.push({ name: d.label, columns: d.columns.map(label), rows: d.rows() });
+            await new Promise((resolve2) => setImmediate(resolve2));
+          }
           audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: "workbook", sheets: sheets.map((s2) => [s2.name, s2.rows.length]), identified, from, to } });
-          body = S.writeWorkbook(sheets);
+          body = await S.writeWorkbookAsync(sheets);
           filename = `suds-export-${from}_${to}.xlsx`;
           type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
         } else {

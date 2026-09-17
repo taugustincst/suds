@@ -169,7 +169,7 @@ module.exports = (r) => {
   });
 
   // Exports: CSV or Excel per table, or one Excel workbook with every table. De-identified unless identified=1 and export:read.
-  r.get('/api/reports/export/:kind', auth.requireAuth, auth.requirePerm('reports:read'), (ctx) => {
+  r.get('/api/reports/export/:kind', auth.requireAuth, auth.requirePerm('reports:read'), async (ctx) => {
     const { from, to, toEnd } = range(ctx);
     const identified = ctx.query.get('identified') === '1' && auth.hasPerm(ctx.user, 'export:identified');
     const format = ctx.query.get('format') === 'xlsx' || ctx.params.kind === 'workbook' ? 'xlsx' : 'csv';
@@ -178,9 +178,15 @@ module.exports = (r) => {
     const label = (k) => ({ key: k, label: k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) });
     let body, filename, type;
     if (ctx.params.kind === 'workbook') {
-      const sheets = Object.entries(D).map(([k, d]) => ({ name: d.label, columns: d.columns.map(label), rows: d.rows() }));
+      // Every dataset, decrypted, in one file. Yield between sheets so a full-year export does not hold
+      // the event loop for several seconds and stall everyone else's requests.
+      const sheets = [];
+      for (const [, d] of Object.entries(D)) {
+        sheets.push({ name: d.label, columns: d.columns.map(label), rows: d.rows() });
+        await new Promise((resolve) => setImmediate(resolve));
+      }
       audit.log({ user: ctx.user, action: 'report.export', ip: ctx.ip, details: { kind: 'workbook', sheets: sheets.map(s => [s.name, s.rows.length]), identified, from, to } });
-      body = S.writeWorkbook(sheets); filename = `suds-export-${from}_${to}.xlsx`; type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      body = await S.writeWorkbookAsync(sheets); filename = `suds-export-${from}_${to}.xlsx`; type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
     } else {
       const d = D[ctx.params.kind === 'clients' ? 'clients' : ctx.params.kind]; if (!d) throw require('../http').notFound('Unknown export');
       const rows = d.rows();
