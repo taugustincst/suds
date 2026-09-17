@@ -18,7 +18,11 @@ route('dashboard', async () => {
   if (!c.active && !c.waitlist && !caseload.caseload.length && (state.local || can('settings:manage'))) {
     try { const st = await get(state.local ? '/api/local/demo' : '/api/admin/demo', { quiet: true }); if (!st.loaded && st.clients_total === 0) sample = h('div', { class: 'banner mb', 'data-sample-banner': '1' }, h('b', {}, 'New here? '), 'Load fictional sample data to see how SUDS looks with clients, visits, notes and reports. ', h('a', { href: state.local ? '#/sync' : '#/admin?tab=settings', class: 'btn sm primary', style: { marginLeft: '.5rem' } }, 'Load sample data'), ' ', h('span', { class: 'small muted' }, 'It can be removed in one click.')); } catch { /* no permission or offline */ }
   }
-  const done = async (t) => { await put(`/api/tasks/${t.id}`, { status: 'done' }); toast('Done ✓', 'ok'); nav('dashboard?_=' + Date.now()); };
+  const done = async (t, box) => {
+    if (box) box.disabled = true;
+    try { await put(`/api/tasks/${t.id}`, { status: 'done' }); toast('Done ✓', 'ok'); nav('dashboard?_=' + Date.now()); }
+    catch (err) { if (box) { box.checked = false; box.disabled = false; } toast(err.message || 'Could not mark that done. Check your connection and try again.', 'error'); }
+  };
   return h('div', {},
     pageHead(`${greet}, ${first}`),
     sample,
@@ -26,7 +30,7 @@ route('dashboard', async () => {
     alerts.length ? h('div', { class: 'row mb' }, alerts.map(([k, t, href]) => h('a', { href, class: `badge ${k}`, style: { fontSize: '.9rem', padding: '.4rem .8rem' } }, t))) : null,
     h('div', { class: 'grid cols-2 mb' },
       h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Today'), h('a', { href: '#/tasks' }, 'All to-dos')),
-        cont.due_today.length ? cont.due_today.map(t => h('div', { class: 'today-item' }, h('label', { class: 'check', style: { marginTop: 0 } }, h('input', { type: 'checkbox', onChange: () => done(t) }), h('span', {}, t.title, t.client_name ? h('span', { class: 'muted small' }, ` · ${t.client_name}`) : null)), h('span', { class: 'small', style: fmt.isPast(t.due_at) && !fmt.isDateOnly(t.due_at) || (fmt.isDateOnly(t.due_at) && fmt.parse(t.due_at) < new Date(new Date().setHours(0, 0, 0, 0))) ? { color: 'var(--danger)' } : {} }, fmt.dt(t.due_at)))) : emptyState('Nothing due today', 'Reminders you set for today will appear here.', can('tasks:write') ? h('button', { class: 'btn sm', onClick: async () => (await import('./tasks.js')).openTaskForm(null, { onDone: () => nav('dashboard?_=' + Date.now()) }) }, '+ Add a reminder') : null)),
+        cont.due_today.length ? cont.due_today.map(t => h('div', { class: 'today-item' }, h('label', { class: 'check', style: { marginTop: 0 } }, h('input', { type: 'checkbox', 'aria-label': `Mark "${t.title}" done`, onChange: (e) => done(t, e.target) }), h('span', {}, t.title, t.client_name ? h('span', { class: 'muted small' }, ` · ${t.client_name}`) : null)), h('span', { class: 'small', style: fmt.isPast(t.due_at) && !fmt.isDateOnly(t.due_at) || (fmt.isDateOnly(t.due_at) && fmt.parse(t.due_at) < new Date(new Date().setHours(0, 0, 0, 0))) ? { color: 'var(--danger)' } : {} }, fmt.dt(t.due_at)))) : emptyState('Nothing due today', 'Reminders you set for today will appear here.', can('tasks:write') ? h('button', { class: 'btn sm', onClick: async () => (await import('./tasks.js')).openTaskForm(null, { onDone: () => nav('dashboard?_=' + Date.now()) }) }, '+ Add a reminder') : null)),
       h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Continue where you left off'), h('span', { class: 'muted small' }, 'from any device')),
         cont.drafts.length ? h('div', { class: 'mb' }, h('h4', {}, 'Unfinished notes'), cont.drafts.slice(0, 4).map(n => h('div', { class: 'today-item' }, h('a', { href: '#', onClick: async (e) => { e.preventDefault(); (await import('./notes.js')).openNote(n.id, { onChange: () => nav('dashboard?_=' + Date.now()) }); } }, n.title || `${n.format} note`, h('span', { class: 'muted small' }, ` · ${n.client_name}`)), h('span', { class: 'muted small' }, fmt.ago(n.updated_at))))) : null,
         cont.recent.length ? h('div', {}, h('h4', {}, 'Recent clients'), h('div', { class: 'row' }, cont.recent.slice(0, 8).map(x => h('a', { class: 'chip', href: `#/client/${x.id}` }, x.display_name)))) : null,

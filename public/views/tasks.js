@@ -16,7 +16,23 @@ export function openTaskForm(values, { clientId, clientDisplay, onDone } = {}) {
 export function taskTable(rows, { showClient = true, onChange } = {}) {
   const overdue = t => t.due_at && ['open', 'in_progress'].includes(t.status) && fmt.isPast(t.due_at);
   return table([
-    { label: '', render: t => can('tasks:write') ? h('input', { type: 'checkbox', checked: t.status === 'done', title: 'Mark done', onChange: async (e) => { await put(`/api/tasks/${t.id}`, { status: e.target.checked ? 'done' : 'open' }); onChange && onChange(); } }) : null },
+    { label: '', render: t => can('tasks:write') ? h('input', {
+      type: 'checkbox', checked: t.status === 'done', title: 'Mark done',
+      'aria-label': `Mark "${t.title}" ${t.status === 'done' ? 'not done' : 'done'}`,
+      onChange: async (e) => {
+        const wanted = e.target.checked;
+        e.target.disabled = true;
+        try {
+          await put(`/api/tasks/${t.id}`, { status: wanted ? 'done' : 'open' });
+          toast(wanted ? 'Marked done' : 'Reopened', 'ok');
+          onChange && onChange();
+        } catch (err) {
+          // Silently reverting used to leave the worker believing a to-do was ticked off when it was not.
+          e.target.checked = !wanted;
+          toast(err.message || 'Could not update this to-do. Check your connection and try again.', 'error');
+        } finally { e.target.disabled = false; }
+      },
+    }) : null },
     { label: 'Task', render: t => h('div', {}, h('span', { style: t.status === 'done' ? { textDecoration: 'line-through', color: 'var(--muted)' } : {} }, t.is_milestone ? '★ ' : '', t.title), t.description ? h('div', { class: 'small muted' }, t.description.slice(0, 120)) : null) },
     showClient ? { label: 'Client', render: t => t.client_id ? h('a', { href: `#/client/${t.client_id}` }, t.client_code) : '—' } : null,
     { label: 'Due', render: t => h('span', { style: overdue(t) ? { color: 'var(--danger)', fontWeight: 600 } : {} }, t.due_at ? fmt.dt(t.due_at) : '—') },

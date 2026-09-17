@@ -2,7 +2,7 @@
 const db = require('./db');
 const config = require('./config');
 const audit = require('./audit');
-const { sha256, randomToken, verifyPassword, verifyTotp, decrypt } = require('./crypto');
+const { sha256, randomToken, verifyPassword, verifyPasswordAsync, verifyTotp, decrypt } = require('./crypto');
 const { unauthorized, forbidden, HttpError } = require('./http');
 
 // Security policy: settings table (editable in Administration) overrides environment defaults.
@@ -144,19 +144,22 @@ function requireAuth(ctx) {
 }
 
 // ---- Login ----
-function login({ username, password, ctx }) {
+// Async because scrypt costs ~90ms: doing it synchronously stalls every other request in the process, and a
+// few staff signing in at once is enough to be noticed.
+async function login({ username, password, ctx }) {
   const user = db.one(`SELECT * FROM users WHERE username=?`, String(username || '').trim());
   const fail = (reason) => {
     audit.log({ user: user ? { id: user.id, username: user.username } : { username }, action: 'auth.login.failed', ip: ctx.ip, success: false, details: { reason } });
     throw unauthorized('Invalid username or password');
   };
-  if (!user) { verifyPassword(password || '', 'scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AA=='); fail('unknown user'); }
+  // An unknown username still pays the hashing cost, so response time does not reveal who has an account.
+  if (!user) { await verifyPasswordAsync(password || '', 'scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AA=='); fail('unknown user'); }
   if (!user.is_active) fail('inactive');
   if (user.locked_until && Date.parse(user.locked_until) > Date.now()) {
     audit.log({ user, action: 'auth.login.locked', ip: ctx.ip, success: false });
     throw new HttpError(423, 'Account locked. Try again later or contact an administrator.');
   }
-  if (!verifyPassword(password || '', user.password_hash)) {
+  if (!(await verifyPasswordAsync(password || '', user.password_hash))) {
     const attempts = user.failed_attempts + 1;
     const lock = attempts >= config.lockout.maxAttempts ? new Date(Date.now() + config.lockout.minutes * 60000).toISOString() : null;
     db.run(`UPDATE users SET failed_attempts=?, locked_until=? WHERE id=?`, lock ? 0 : attempts, lock, user.id);

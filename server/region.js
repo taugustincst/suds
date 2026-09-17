@@ -34,7 +34,10 @@ function load({ regionId, actor, withPictures = true }) {
   const note = provenance(region).replace('{DATE}', today);
   const prev = readState(regionId); const ids = prev ? { ...prev.ids } : {};
   let added = 0, enriched = 0, unchanged = 0, pictures = 0;
+  // name+city -> id, for adopting a provider the county has already entered by hand.
+  const existingByName = new Map();
   db.transaction(() => {
+    for (const r of db.all(`SELECT id, name, city FROM resources`)) existingByName.set(`${norm(r.name)}|${norm(r.city)}`, r.id);
     for (const p of region.providers) {
       const row = {
         name: p.name, category: C.RESOURCE_CATEGORIES.includes(p.category) ? p.category : 'other', organization: p.organization || null,
@@ -47,8 +50,10 @@ function load({ regionId, actor, withPictures = true }) {
       };
       let id = ids[p.key] && db.one(`SELECT id FROM resources WHERE id=?`, ids[p.key]) ? ids[p.key] : null;
       if (!id) { // adopt a resource someone already created with the same name in the same city
-        const hit = db.all(`SELECT id, name, city FROM resources`).find(r => norm(r.name) === norm(p.name) && norm(r.city) === norm(p.city));
-        if (hit) id = hit.id;
+        // Built once outside the loop: this used to be a full table scan per provider, so loading the
+        // 81-provider starter directory scanned the resources table 81 times.
+        const hit = existingByName.get(`${norm(p.name)}|${norm(p.city)}`);
+        if (hit) id = hit;
       }
       if (!id) {
         id = uuid(); const keys = Object.keys(row);
@@ -82,8 +87,9 @@ function load({ regionId, actor, withPictures = true }) {
 function pictureTargets(regionId) {
   const region = REGIONS[regionId]; if (!region) throw new Error('Unknown region');
   const st = readState(regionId); if (!st) return [];
-  return region.providers.filter(p => (p.image_url || p.website) && st.ids[p.key]).map(p => ({ key: p.key, id: st.ids[p.key], name: p.name, url: p.image_url || null, website: p.website }))
-    .filter(t => db.one(`SELECT id FROM resources WHERE id=?`, t.id));
+  return region.providers.filter(p => (p.image_url || p.website) && st.ids[p.key]).map(p => ({ key: p.key, id: st.ids[p.key], name: p.name, category: p.category, url: p.image_url || null, website: p.website }))
+    .map(t => { const r = db.one(`SELECT id, category FROM resources WHERE id=?`, t.id); return r ? { ...t, category: t.category || r.category } : null; })
+    .filter(Boolean);
 }
 const sniff = (buf) => buf.length > 3 && buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF ? 'image/jpeg'
   : buf.length > 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47 ? 'image/png'
@@ -98,8 +104,37 @@ function pickImageUrl(html, baseUrl) {
   if (!candidate) return null;
   try { const u = new URL(candidate, baseUrl); return u.protocol === 'https:' ? u.href : null; } catch { return null; }
 }
-async function get(url, { timeoutMs, maxBytes }) {
-  const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), redirect: 'follow', headers: { 'User-Agent': 'SUDS resource directory', Accept: '*/*' } });
+// A provider's website is an address the county typed in, and any hop it redirects to is not. Redirects
+// are followed by hand so every URL in the chain is checked: https only, and never an address that
+// resolves to this machine or the county's own network.
+const PRIVATE_HOST = /^(localhost|.*\.local|.*\.internal|.*\.localhost)$/i;
+function assertPublicHttps(u) {
+  const url = new URL(u);
+  if (url.protocol !== 'https:') throw Object.assign(new Error('not an https address'), { soft: true });
+  const host = url.hostname.replace(/^\[|\]$/g, '');
+  if (PRIVATE_HOST.test(host)) throw Object.assign(new Error('that address is not on the public internet'), { soft: true });
+  // Literal IP addresses: block loopback, link-local, and the private ranges.
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+    const [a, b] = host.split('.').map(Number);
+    if (a === 127 || a === 0 || a === 10 || a === 169 && b === 254 || a === 172 && b >= 16 && b <= 31 || a === 192 && b === 168 || a >= 224) {
+      throw Object.assign(new Error('that address is not on the public internet'), { soft: true });
+    }
+  }
+  if (host.includes(':') || /^::/.test(host)) throw Object.assign(new Error('that address is not on the public internet'), { soft: true });
+  return url.href;
+}
+
+async function get(url, { timeoutMs, maxBytes, hops = 4 }) {
+  let target = assertPublicHttps(url);
+  let res;
+  for (let i = 0; i <= hops; i++) {
+    res = await fetch(target, { signal: AbortSignal.timeout(timeoutMs), redirect: 'manual', headers: { 'User-Agent': 'SUDS resource directory', Accept: '*/*' } });
+    if (res.status < 300 || res.status >= 400) break;
+    const location = res.headers.get('location');
+    if (!location) break;
+    if (i === hops) throw Object.assign(new Error('too many redirects'), { soft: true });
+    target = assertPublicHttps(new URL(location, target).href);
+  }
   if (!res.ok) throw Object.assign(new Error(`site returned ${res.status}`), { soft: true });
   if (Number(res.headers.get('content-length') || 0) > maxBytes) throw Object.assign(new Error('file is too large'), { soft: true });
   const buf = Buffer.from(await res.arrayBuffer());
@@ -121,9 +156,14 @@ async function fetchPicture(target, { actor, timeoutMs = 12000 } = {}) {
     const buf = await get(url, { timeoutMs, maxBytes: MAX_PICTURE_BYTES });
     const type = sniff(buf); if (!type) return { key: target.key, ok: false, error: 'not a JPEG, PNG or WebP picture' };
     db.transaction(() => {
-      db.run(`UPDATE resource_photos SET sort_order = sort_order + 1 WHERE resource_id=?`, target.id);
-      db.run(`INSERT INTO resource_photos(id,resource_id,caption,content_type,bytes,data_b64,sort_order,uploaded_by) VALUES(?,?,?,?,?,?,0,?)`,
-        uuid(), target.id, `From ${new URL(url).hostname}`, type, buf.length, buf.toString('base64'), actor || null);
+      // Reordering is a change devices need to see, so it bumps updated_at like any other edit.
+      db.run(`UPDATE resource_photos SET sort_order = sort_order + 1, updated_at=? WHERE resource_id=?`, db.now(), target.id);
+      // The downloaded picture has no thumbnail (we cannot resize a JPEG here), so it carries the
+      // generated card as its thumbnail. Without this the resource card lost the picture it already had:
+      // the cover is the lowest-sorted photo's thumb_b64, and this row's would have been null.
+      const placeholder = png.initialsCard(target.name || 'Provider', target.category || 'other', 320, 180).toString('base64');
+      db.run(`INSERT INTO resource_photos(id,resource_id,caption,content_type,bytes,data_b64,thumb_b64,sort_order,uploaded_by) VALUES(?,?,?,?,?,?,?,0,?)`,
+        uuid(), target.id, `From ${new URL(url).hostname}`, type, buf.length, buf.toString('base64'), placeholder, actor || null);
       db.run(`UPDATE resources SET updated_at=? WHERE id=?`, db.now(), target.id);
     });
     audit.log({ user: { id: actor, username: 'region-import' }, action: 'region.picture', entity: 'resource', entityId: target.id, details: { url, bytes: buf.length, type } });

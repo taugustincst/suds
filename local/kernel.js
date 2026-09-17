@@ -27,10 +27,38 @@ class FakeRes {
   end(body) { if (body !== undefined && body !== null) this.chunks.push(Buffer.isBuffer(body) ? body : Buffer.from(String(body))); this.headersSent = true; }
 }
 
-export async function start({ wasmUrl }) {
+export async function start({ wasmUrl, onSaveError } = {}) {
   await sqlite.init(wasmUrl);
+
+  // Only one page may write this device's database. Two tabs would each keep their own copy in memory and
+  // persist by overwriting the whole thing, so the last one to save would silently erase the other's work.
+  const locked = await sqlite.acquireLock();
+  if (!locked) {
+    const e = new Error('SUDS is already open in another window on this device. Use that window, or close it and reload this one.');
+    e.code = 'SUDS_ALREADY_OPEN';
+    throw e;
+  }
+  if (onSaveError) sqlite.setSaveErrorHandler(onSaveError);
+
   const bytes = await sqlite.loadBytes();
   db.openWith(bytes ? new Uint8Array(bytes) : null);
+
+  // The encryption key and the database live in different browser stores, and browsers clear them
+  // independently. If the key store was cleared, a fresh key would be generated and every record on the
+  // device would become permanently unreadable — silently, until the next sync failed. Compare a
+  // fingerprint of the key against the one recorded when this database was created, and stop if it moved.
+  const config = require('../server/config.js');
+  const { sha256 } = require('../server/crypto.js');
+  const fingerprint = sha256('suds-key-check:' + config.encryptionKey.toString('hex')).slice(0, 32);
+  const stored = db.getSetting('encryption_key_fingerprint', null);
+  const hasData = db.one(`SELECT COUNT(*) n FROM users`).n > 0;
+  if (!stored) { if (hasData) db.setSetting('encryption_key_fingerprint', fingerprint); else db.setSetting('encryption_key_fingerprint', fingerprint); }
+  else if (stored !== fingerprint) {
+    const e = new Error('This device\'s security key has been cleared, so the records stored here can no longer be read. Set the app up again and sync from the office server to restore them.');
+    e.code = 'SUDS_KEY_LOST';
+    throw e;
+  }
+
   router = new Router();
   const missing = LOCAL_ROUTE_MODULES.filter(n => !routeLoaders[n]);
   if (missing.length) throw new Error(`local kernel has no loader for route module(s): ${missing.join(', ')} — add them to routeLoaders in local/kernel.js`);
@@ -40,10 +68,12 @@ export async function start({ wasmUrl }) {
   router.post('/api/local/setup', (ctx) => {
     if (db.one(`SELECT COUNT(*) n FROM users`).n > 0) throw new HttpError(403, 'Already set up');
     const { validate } = require('../server/validate.js');
-    const v = validate(ctx.body, { display_name: { type: 'string', required: true, maxLen: 120 }, username: { type: 'string', required: true, maxLen: 60, pattern: /^[a-zA-Z0-9._@-]+$/ }, password: { type: 'string', required: true, maxLen: 500 }, org_name: { type: 'string', maxLen: 200 } });
+    // The role is asked for, not assumed. Hard-coding 'navigator' meant a clinician who set the app up on
+    // their phone silently lost access to clinical notes — their own work.
+    const v = validate(ctx.body, { display_name: { type: 'string', required: true, maxLen: 120 }, username: { type: 'string', required: true, maxLen: 60, pattern: /^[a-zA-Z0-9._@-]+$/ }, password: { type: 'string', required: true, maxLen: 500 }, org_name: { type: 'string', maxLen: 200 }, role: { type: 'string', enum: ['navigator', 'clinician', 'supervisor', 'admin'] } });
     const errs = auth.passwordPolicy(v.password); if (errs.length) throw new HttpError(400, 'Password must contain ' + errs.join(', '));
     const { hashPassword, uuid } = require('../server/crypto.js');
-    db.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,0,?)`, uuid(), v.username, hashPassword(v.password), v.display_name, 'navigator', db.now());
+    db.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,0,?)`, uuid(), v.username, hashPassword(v.password), v.display_name, v.role || 'navigator', db.now());
     db.setSetting('org_name', v.org_name || 'SUDS on this device'); db.setSetting('caseload_restriction', '0'); db.setSetting('local_mode', '1');
     audit.log({ user: { username: v.username }, action: 'local.setup' });
     return { ok: true };

@@ -17,11 +17,11 @@ function kindPerm(kind, rw) { return `notes:${kind}:${rw}`; }
 
 // Re-entering the password is the electronic-signature act itself, so it is checked the same way for a
 // signature and a countersignature.
-function verifyIdentity(ctx) {
+async function verifyIdentity(ctx) {
   const { password } = validate(ctx.body, { password: { type: 'string', required: true, maxLen: 500 } }, { partial: true });
   if (!password) throw badRequest('Your password is required to sign');
   const u = db.one(`SELECT password_hash FROM users WHERE id=?`, ctx.user.id);
-  if (!require('../crypto').verifyPassword(password, u.password_hash)) {
+  if (!(await require('../crypto').verifyPasswordAsync(password, u.password_hash))) {
     audit.log({ user: ctx.user, action: 'note.sign.failed', ip: ctx.ip, success: false });
     throw forbidden('Password verification failed');
   }
@@ -123,14 +123,14 @@ module.exports = (r) => {
   });
 
   // Electronic signature: locks the note and records a content hash
-  r.post('/api/notes/:id/sign', auth.requireAuth, (ctx) => {
+  r.post('/api/notes/:id/sign', auth.requireAuth, async (ctx) => {
     const n = load(ctx, ctx.params.id);
     if (!auth.hasPerm(ctx.user, kindPerm(n.kind, 'write'))) throw forbidden();
     if (n.status !== 'draft') throw badRequest('Note is already signed');
     // Only the person who wrote the note may sign it. A supervisor approving a trainee's work countersigns
     // (POST /cosign) — signing on their behalf would erase who actually provided the service.
     if (n.author_id !== ctx.user.id) throw forbidden('Only the author can sign a note. Supervisors countersign instead.');
-    verifyIdentity(ctx);
+    await verifyIdentity(ctx);
     const hash = sha256(`${n.id}|${ctx.user.id}|${n.content_enc}|${n.structured_enc || ''}`);
     db.run(`UPDATE notes SET status='signed', signed_at=?, signed_by=?, signature_hash=?, updated_at=? WHERE id=?`, db.now(), ctx.user.id, hash, db.now(), n.id);
     audit.log({ user: ctx.user, action: 'note.sign', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { hash, cosign_required: !!n.cosign_required } });
@@ -138,14 +138,14 @@ module.exports = (r) => {
   });
 
   // Countersignature: a supervisor approves a note someone else wrote. Both names stay on the record.
-  r.post('/api/notes/:id/cosign', auth.requireAuth, auth.requirePerm('notes:cosign'), (ctx) => {
+  r.post('/api/notes/:id/cosign', auth.requireAuth, auth.requirePerm('notes:cosign'), async (ctx) => {
     const n = load(ctx, ctx.params.id);
     if (!auth.hasPerm(ctx.user, kindPerm(n.kind, 'read')) && !auth.hasPerm(ctx.user, kindPerm(n.kind, 'write'))) throw forbidden(`You cannot read ${n.kind} notes`);
     if (n.status === 'draft') throw badRequest('The author has not signed this note yet');
     if (n.author_id === ctx.user.id) throw badRequest('A note cannot be countersigned by its own author');
     if (n.cosigned_at) throw badRequest('This note has already been countersigned');
     const { note } = validate(ctx.body, { password: { type: 'string', required: true, maxLen: 500 }, note: { type: 'string', maxLen: 1000 } });
-    verifyIdentity(ctx);
+    await verifyIdentity(ctx);
     const hash = sha256(`${n.id}|${ctx.user.id}|cosign|${n.content_enc}|${n.structured_enc || ''}`);
     db.run(`UPDATE notes SET cosigned_by=?, cosigned_at=?, cosignature_hash=?, cosign_note=?, updated_at=? WHERE id=?`, ctx.user.id, db.now(), hash, note || null, db.now(), n.id);
     audit.log({ user: ctx.user, action: 'note.cosign', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { author_id: n.author_id, hash } });

@@ -7,6 +7,16 @@ route('localsetup', async () => {
     { name: 'org_name', label: 'Program name (optional)', placeholder: 'e.g. Clark County SUD Navigation', span: true },
     { name: 'display_name', label: 'Your name', required: true }, { name: 'username', label: 'Username', required: true, pattern: '[a-zA-Z0-9._@\\-]+', help: 'Use the same username as on the office SUDS if you have one.' },
     { name: 'password', label: 'Password', type: 'password', required: true, autocomplete: 'new-password', help: '12+ characters with upper and lower case, a number and a symbol. Protects the data on this device.' }, { name: 'confirm', label: 'Confirm password', type: 'password', required: true, autocomplete: 'new-password' },
+    // Asked for rather than assumed: a clinician set up as a navigator loses access to clinical notes,
+    // including notes they wrote themselves, and only finds out when they try to open one.
+    { name: 'role', label: 'Your role', type: 'select', noBlank: true, value: 'navigator', span: true,
+      options: [
+        { value: 'navigator', label: 'Navigator / peer support — outreach, referrals, case management' },
+        { value: 'clinician', label: 'Clinician — everything a navigator does, plus clinical notes' },
+        { value: 'supervisor', label: 'Supervisor — clinical notes, countersigning, approving time' },
+        { value: 'admin', label: 'Administrator — settings and user accounts' },
+      ],
+      help: 'Use the same role you have on the office SUDS. This decides what you can open on this device.' },
   ], { submitText: 'Start using SUDS', onSubmit: async (d) => {
     if (d.password !== d.confirm) throw new Error('Passwords do not match'); delete d.confirm;
     await post('/api/local/setup', d);

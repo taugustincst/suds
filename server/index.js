@@ -5,6 +5,10 @@ const { createHandler } = require('./app');
 const { ensureBootstrap } = require('./bootstrap');
 const listener = require('./listener');
 
+// Start logging before anything else, so a failure during startup is recorded rather than lost with the
+// window it was printed in.
+if (config.dbPath !== ':memory:') require('./log').start(config.dataDir);
+
 db.open();
 ensureBootstrap();
 const handler = createHandler();
@@ -27,6 +31,7 @@ function housekeeping() {
     db.run(`DELETE FROM sessions WHERE expires_at < ? OR (revoked_at IS NOT NULL AND revoked_at < ?)`, db.now(), new Date(Date.now() - 86400000).toISOString());
     require('./audit').purge(config.auditRetentionDays);
     require('./audit').purgeTombstones(config.tombstoneRetentionDays);
+    require('./log').purge();
   } catch (e) { console.error('[suds] housekeeping', e && e.message || e); }
 }
 setInterval(housekeeping, 3600_000).unref();

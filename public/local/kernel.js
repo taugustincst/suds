@@ -5936,11 +5936,14 @@ var require_sql_wasm = __commonJS({
 var sqlite_exports = {};
 __export(sqlite_exports, {
   DatabaseSync: () => DatabaseSync,
+  acquireLock: () => acquireLock,
   default: () => sqlite_default,
   flush: () => flush,
+  hasLock: () => hasLock,
   init: () => init,
   loadBytes: () => loadBytes,
   saveBytes: () => saveBytes,
+  setSaveErrorHandler: () => setSaveErrorHandler,
   wipe: () => wipe
 });
 async function init(wasmUrl) {
@@ -5948,6 +5951,30 @@ async function init(wasmUrl) {
   const initSqlJs = (await Promise.resolve().then(() => __toESM(require_sql_wasm()))).default;
   SQL = await initSqlJs({ locateFile: () => wasmUrl });
   return SQL;
+}
+async function acquireLock() {
+  if (!navigator.locks || !navigator.locks.request) {
+    haveLock = true;
+    return true;
+  }
+  return new Promise((resolve2) => {
+    navigator.locks.request("suds-local-db", { mode: "exclusive", ifAvailable: true }, (lock) => {
+      if (!lock) {
+        resolve2(false);
+        return;
+      }
+      haveLock = true;
+      resolve2(true);
+      return new Promise(() => {
+      });
+    }).catch(() => {
+      haveLock = true;
+      resolve2(true);
+    });
+  });
+}
+function hasLock() {
+  return haveLock;
 }
 function idb() {
   return new Promise((res, rej) => {
@@ -5986,26 +6013,47 @@ async function wipe() {
     t.oncomplete = res;
   });
 }
+function setSaveErrorHandler(fn) {
+  onSaveError = fn;
+}
 function flush() {
   if (!current || !dirty) return Promise.resolve();
-  dirty = false;
-  return saveBytes(current.export());
+  if (saving) return saving.then(() => flush());
+  const bytes3 = current.export();
+  saving = saveBytes(bytes3).then(() => {
+    dirty = false;
+  }).catch((e) => {
+    onSaveError(e);
+    throw e;
+  }).finally(() => {
+    saving = null;
+  });
+  return saving;
 }
 function markDirty() {
   dirty = true;
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => flush().catch((e) => console.error("[suds-local] save failed", e)), 1500);
+  saveTimer = setTimeout(() => flush().catch(() => {
+  }), 1500);
 }
-var SQL, STORE, KEY, current, saveTimer, dirty, Statement, DatabaseSync, sqlite_default;
+function persistSoon() {
+  clearTimeout(saveTimer);
+  flush().catch(() => {
+  });
+}
+var SQL, STORE, KEY, haveLock, current, saveTimer, dirty, saving, onSaveError, Statement, DatabaseSync, sqlite_default;
 var init_sqlite = __esm({
   "local/shims/sqlite.js"() {
     init_globals_inject();
     SQL = null;
     STORE = "suds-local";
     KEY = "db";
+    haveLock = false;
     current = null;
     saveTimer = null;
     dirty = false;
+    saving = null;
+    onSaveError = (e) => console.error("[suds-local] save failed", e);
     Statement = class {
       constructor(db3, sql) {
         this.db = db3;
@@ -6052,15 +6100,16 @@ var init_sqlite = __esm({
       exec(sql) {
         this.db.exec(sql);
         markDirty();
+        if (/^\s*(COMMIT|RELEASE)\b/i.test(sql)) persistSoon();
       }
       close() {
-        flush();
+        return flush();
       }
       export() {
         return this.db.export();
       }
     };
-    sqlite_default = { DatabaseSync, init, loadBytes, saveBytes, wipe, flush };
+    sqlite_default = { DatabaseSync, init, loadBytes, saveBytes, wipe, flush, acquireLock, hasLock, setSaveErrorHandler };
   }
 });
 
@@ -6792,10 +6841,46 @@ var require_crypto = __commonJS({
       return crypto3.createHmac("sha256", key).update(norm).digest("hex");
     }
     var SCRYPT = { N: 32768, r: 8, p: 1, keylen: 64, maxmem: 64 * 1024 * 1024 };
+    var scryptAsync = (password, salt, keylen, opts) => new Promise((resolve2, reject) => {
+      if (typeof crypto3.scrypt !== "function") {
+        try {
+          resolve2(crypto3.scryptSync(password, salt, keylen, opts));
+        } catch (e) {
+          reject(e);
+        }
+        return;
+      }
+      crypto3.scrypt(password, salt, keylen, opts, (err2, key) => err2 ? reject(err2) : resolve2(key));
+    });
     function hashPassword(password) {
       const salt = crypto3.randomBytes(16);
       const hash2 = crypto3.scryptSync(password, salt, SCRYPT.keylen, SCRYPT);
       return `scrypt$${SCRYPT.N}$${SCRYPT.r}$${SCRYPT.p}$${salt.toString("base64")}$${hash2.toString("base64")}`;
+    }
+    function parseHash(stored) {
+      const [alg, N, r, p, saltB64, hashB64] = String(stored).split("$");
+      if (alg !== "scrypt") return null;
+      try {
+        const expected = import_buffer.Buffer.from(hashB64, "base64");
+        return { salt: import_buffer.Buffer.from(saltB64, "base64"), expected, opts: { N: Number(N), r: Number(r), p: Number(p), maxmem: SCRYPT.maxmem }, keylen: expected.length };
+      } catch {
+        return null;
+      }
+    }
+    async function hashPasswordAsync(password) {
+      const salt = crypto3.randomBytes(16);
+      const hash2 = await scryptAsync(password, salt, SCRYPT.keylen, SCRYPT);
+      return `scrypt$${SCRYPT.N}$${SCRYPT.r}$${SCRYPT.p}$${salt.toString("base64")}$${import_buffer.Buffer.from(hash2).toString("base64")}`;
+    }
+    async function verifyPasswordAsync(password, stored) {
+      const p = parseHash(stored);
+      if (!p) return false;
+      try {
+        const actual = import_buffer.Buffer.from(await scryptAsync(String(password), p.salt, p.keylen, p.opts));
+        return actual.length === p.expected.length && crypto3.timingSafeEqual(actual, p.expected);
+      } catch {
+        return false;
+      }
     }
     function verifyPassword(password, stored) {
       try {
@@ -6880,6 +6965,8 @@ var require_crypto = __commonJS({
       blindIndex: blindIndex2,
       hashPassword,
       verifyPassword,
+      hashPasswordAsync,
+      verifyPasswordAsync,
       randomToken,
       sha256: sha2562,
       uuid: uuid2,
@@ -7541,7 +7628,7 @@ var require_auth = __commonJS({
     var db3 = require_db();
     var config = require_config();
     var audit3 = require_audit();
-    var { sha256: sha2562, randomToken, verifyPassword, verifyTotp, decrypt: decrypt3 } = require_crypto();
+    var { sha256: sha2562, randomToken, verifyPassword, verifyPasswordAsync, verifyTotp, decrypt: decrypt3 } = require_crypto();
     var { unauthorized, forbidden, HttpError: HttpError3 } = require_http();
     function policy() {
       const num = (k, d) => {
@@ -7779,14 +7866,14 @@ var require_auth = __commonJS({
         if (age > maxAge) throw new HttpError3(403, `Password is older than ${maxAge} days and must be changed`, { passwordChangeRequired: true });
       }
     }
-    function login({ username, password, ctx }) {
+    async function login({ username, password, ctx }) {
       const user = db3.one(`SELECT * FROM users WHERE username=?`, String(username || "").trim());
       const fail = (reason) => {
         audit3.log({ user: user ? { id: user.id, username: user.username } : { username }, action: "auth.login.failed", ip: ctx.ip, success: false, details: { reason } });
         throw unauthorized("Invalid username or password");
       };
       if (!user) {
-        verifyPassword(password || "", "scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AA==");
+        await verifyPasswordAsync(password || "", "scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AA==");
         fail("unknown user");
       }
       if (!user.is_active) fail("inactive");
@@ -7794,7 +7881,7 @@ var require_auth = __commonJS({
         audit3.log({ user, action: "auth.login.locked", ip: ctx.ip, success: false });
         throw new HttpError3(423, "Account locked. Try again later or contact an administrator.");
       }
-      if (!verifyPassword(password || "", user.password_hash)) {
+      if (!await verifyPasswordAsync(password || "", user.password_hash)) {
         const attempts = user.failed_attempts + 1;
         const lock = attempts >= config.lockout.maxAttempts ? new Date(Date.now() + config.lockout.minutes * 6e4).toISOString() : null;
         db3.run(`UPDATE users SET failed_attempts=?, locked_until=? WHERE id=?`, lock ? 0 : attempts, lock, user.id);
@@ -10236,11 +10323,11 @@ var require_admin = __commonJS({
         audit3.log({ user: ctx.user, action: "backup.preview", ip: ctx.ip, details: { schema_version: info.schema_version, clients: info.counts.clients } });
         return { ...info, current: { clients: db3.one(`SELECT COUNT(*) n FROM clients WHERE deleted_at IS NULL`).n, schema_version: Number(db3.getSetting("schema_version", "0")) } };
       });
-      r.post("/api/admin/restore", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+      r.post("/api/admin/restore", auth3.requireAuth, auth3.requirePerm("settings:manage"), async (ctx) => {
         const { password, confirm } = require_validate().validate(ctx.body, { password: { type: "string", required: true, maxLen: 500 }, confirm: { type: "string", required: true, maxLen: 40 }, file_b64: { type: "string", maxLen: 400 * 1024 * 1024 } }, { partial: true });
         if (confirm !== "REPLACE") throw badRequest("Type REPLACE to confirm that the current data will be replaced");
         const me = db3.one(`SELECT password_hash FROM users WHERE id=?`, ctx.user.id);
-        if (!require_crypto().verifyPassword(password, me.password_hash)) {
+        if (!await require_crypto().verifyPasswordAsync(password, me.password_hash)) {
           audit3.log({ user: ctx.user, action: "backup.restore.failed", ip: ctx.ip, success: false });
           throw forbidden("Password verification failed");
         }
@@ -10442,12 +10529,12 @@ var require_auth2 = __commonJS({
     var { rateLimit } = require_app2();
     var { HttpError: HttpError3, badRequest, unauthorized } = require_http();
     var { validate } = require_validate();
-    var { hashPassword, verifyPassword, generateTotpSecret, verifyTotp, otpauthUrl, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
+    var { hashPasswordAsync, verifyPasswordAsync, generateTotpSecret, verifyTotp, otpauthUrl, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
     module.exports = (r) => {
       r.post("/api/auth/login", async (ctx) => {
         if (!rateLimit(`login:${ctx.ip}`, require_config().isTest ? 1e5 : 20, 15 * 6e4)) throw new HttpError3(429, "Too many login attempts. Try again later.");
         const { username, password } = validate(ctx.body, { username: { type: "string", required: true, maxLen: 100 }, password: { type: "string", required: true, maxLen: 500 } });
-        const result = auth3.login({ username, password, ctx });
+        const result = await auth3.login({ username, password, ctx });
         ctx.res.setHeader("Set-Cookie", auth3.cookieHeader(result.token));
         const out2 = { user: result.user, mfaPending: result.mfaPending, mfaSetupRequired: result.mfaSetupRequired };
         if (ctx.headers["x-sync-client"]) out2.token = result.token;
@@ -10470,18 +10557,18 @@ var require_auth2 = __commonJS({
         const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
         return { user: auth3.publicUser(u), mfaPending: !!ctx.session.mfa_pending, org_name: db3.getSetting("org_name", "SUDS"), idle_minutes: auth3.policy().idleMinutes, setup_needed: false };
       });
-      r.post("/api/auth/password", (ctx) => {
+      r.post("/api/auth/password", async (ctx) => {
         auth3.requireAuth(ctx);
         const { current_password, new_password } = validate(ctx.body, { current_password: { type: "string", required: true, maxLen: 500 }, new_password: { type: "string", required: true, maxLen: 500 } });
         const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
-        if (!verifyPassword(current_password, u.password_hash)) {
+        if (!await verifyPasswordAsync(current_password, u.password_hash)) {
           audit3.log({ user: u, action: "auth.password.change.failed", ip: ctx.ip, success: false });
           throw unauthorized("Current password is incorrect");
         }
         const errs = auth3.passwordPolicy(new_password);
         if (errs.length) throw badRequest("Password must contain " + errs.join(", "));
-        if (verifyPassword(new_password, u.password_hash)) throw badRequest("New password must differ from the current password");
-        db3.run(`UPDATE users SET password_hash=?, must_change_password=0, password_changed_at=?, updated_at=? WHERE id=?`, hashPassword(new_password), db3.now(), db3.now(), u.id);
+        if (await verifyPasswordAsync(new_password, u.password_hash)) throw badRequest("New password must differ from the current password");
+        db3.run(`UPDATE users SET password_hash=?, must_change_password=0, password_changed_at=?, updated_at=? WHERE id=?`, await hashPasswordAsync(new_password), db3.now(), db3.now(), u.id);
         db3.run(`UPDATE sessions SET revoked_at=? WHERE user_id=? AND id<>? AND revoked_at IS NULL`, db3.now(), u.id, ctx.session.id);
         audit3.log({ user: u, action: "auth.password.changed", ip: ctx.ip });
         return { ok: true };
@@ -10503,11 +10590,11 @@ var require_auth2 = __commonJS({
         audit3.log({ user: u, action: "auth.mfa.enabled", ip: ctx.ip });
         return { ok: true };
       });
-      r.post("/api/auth/mfa/disable", (ctx) => {
+      r.post("/api/auth/mfa/disable", async (ctx) => {
         auth3.requireAuth(ctx);
         const { password } = validate(ctx.body, { password: { type: "string", required: true, maxLen: 500 } });
         const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
-        if (!verifyPassword(password, u.password_hash)) throw unauthorized("Password is incorrect");
+        if (!await verifyPasswordAsync(password, u.password_hash)) throw unauthorized("Password is incorrect");
         if (auth3.policy().mfaRequiredRoles.includes(u.role)) throw badRequest("MFA is required for your role");
         db3.run(`UPDATE users SET mfa_enabled=0, mfa_secret_enc=NULL, updated_at=? WHERE id=?`, db3.now(), u.id);
         audit3.log({ user: u, action: "auth.mfa.disabled", ip: ctx.ip });
@@ -11167,27 +11254,33 @@ var require_clients = __commonJS({
         const row = loadClient(ctx, ctx.params.id);
         const id = row.id;
         const canClinical = auth3.hasPerm(ctx.user, "notes:clinical:read");
+        const { limit: limit2, offset } = paging(ctx.query, { limit: 100, max: 500 });
+        const per = limit2 + offset + 1;
+        const before = ctx.query.get("before") || null;
+        const cut = (col) => before ? `AND ${col} < ?` : "";
+        const cutP = before ? [before] : [];
         const events = [];
-        for (const x of db3.all(`SELECT i.*, u.display_name AS worker FROM interventions i JOIN users u ON u.id=i.user_id WHERE client_id=?`, id))
+        for (const x of db3.all(`SELECT i.*, u.display_name AS worker FROM interventions i JOIN users u ON u.id=i.user_id WHERE client_id=? ${cut("i.occurred_at")} ORDER BY i.occurred_at DESC LIMIT ?`, id, ...cutP, per))
           events.push({ kind: "intervention", id: x.id, at: x.occurred_at, title: x.type.replace(/_/g, " "), detail: x.summary_enc ? decrypt3(x.summary_enc) : null, worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, location: x.location } });
-        for (const x of db3.all(`SELECT c.*, u.display_name AS worker FROM calls c JOIN users u ON u.id=c.user_id WHERE client_id=?`, id))
+        for (const x of db3.all(`SELECT c.*, u.display_name AS worker FROM calls c JOIN users u ON u.id=c.user_id WHERE client_id=? ${cut("c.started_at")} ORDER BY c.started_at DESC LIMIT ?`, id, ...cutP, per))
           events.push({ kind: "call", id: x.id, at: x.started_at, title: `${x.direction} call (${x.contact_type})`, detail: x.summary_enc ? decrypt3(x.summary_enc) : x.purpose, worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, crisis: !!x.crisis } });
-        for (const x of db3.all(`SELECT n.id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.source,u.display_name AS worker FROM notes n JOIN users u ON u.id=n.author_id WHERE client_id=? AND deleted_at IS NULL`, id))
+        for (const x of db3.all(`SELECT n.id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.source,u.display_name AS worker FROM notes n JOIN users u ON u.id=n.author_id WHERE client_id=? AND deleted_at IS NULL ${cut("n.occurred_at")} ORDER BY n.occurred_at DESC LIMIT ?`, id, ...cutP, per))
           if (x.kind === "admin" || canClinical) events.push({ kind: "note", id: x.id, at: x.occurred_at, title: `${x.kind} note: ${x.title_enc ? decrypt3(x.title_enc) : x.format}`, detail: null, worker: x.worker, meta: { status: x.status, note_kind: x.kind, source: x.source } });
-        for (const x of db3.all(`SELECT r.*, res.name AS resource_name, u.display_name AS worker FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN users u ON u.id=r.user_id WHERE client_id=?`, id))
+        for (const x of db3.all(`SELECT r.*, res.name AS resource_name, u.display_name AS worker FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN users u ON u.id=r.user_id WHERE client_id=? ${cut("r.referred_at")} ORDER BY r.referred_at DESC LIMIT ?`, id, ...cutP, per))
           events.push({ kind: "referral", id: x.id, at: x.referred_at, title: `Referral: ${x.resource_name}`, detail: x.notes, worker: x.worker, meta: { status: x.status, outcome: x.outcome } });
-        for (const x of db3.all(`SELECT t.*, u.display_name AS worker FROM tasks t LEFT JOIN users u ON u.id=t.assigned_to WHERE client_id=?`, id))
+        for (const x of db3.all(`SELECT t.*, u.display_name AS worker FROM tasks t LEFT JOIN users u ON u.id=t.assigned_to WHERE client_id=? ORDER BY COALESCE(t.completed_at, t.due_at, t.created_at) DESC LIMIT ?`, id, per))
           events.push({ kind: x.is_milestone ? "milestone" : "task", id: x.id, at: x.completed_at || x.due_at || x.created_at, title: x.title, detail: x.description, worker: x.worker, meta: { status: x.status, priority: x.priority, due_at: x.due_at } });
-        for (const x of db3.all(`SELECT * FROM consents WHERE client_id=?`, id))
+        for (const x of db3.all(`SELECT * FROM consents WHERE client_id=? ORDER BY signed_at DESC LIMIT ?`, id, per))
           events.push({ kind: "consent", id: x.id, at: x.signed_at, title: `Consent: ${x.type.replace(/_/g, " ")}${x.recipient_enc ? " \u2192 " + decrypt3(x.recipient_enc) : ""}`, detail: x.purpose_enc ? decrypt3(x.purpose_enc) : null, meta: { expires_at: x.expires_at, revoked_at: x.revoked_at } });
         if (auth3.hasPerm(ctx.user, "budget:read"))
-          for (const x of db3.all(`SELECT e.*, f.name AS fund FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE client_id=?`, id))
+          for (const x of db3.all(`SELECT e.*, f.name AS fund FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE client_id=? ORDER BY e.spent_at DESC LIMIT ?`, id, per))
             events.push({ kind: "expense", id: x.id, at: x.spent_at, title: `$${x.amount.toFixed(2)} ${x.category.replace(/_/g, " ")}`, detail: x.description, meta: { fund: x.fund, status: x.status } });
         events.push({ kind: "milestone", id: "intake", at: row.intake_date, title: "Program intake", meta: {} });
         if (row.discharge_date) events.push({ kind: "milestone", id: "discharge", at: row.discharge_date, title: `Discharge: ${row.discharge_reason || ""}`, meta: {} });
         events.sort((a, b) => (b.at || "").localeCompare(a.at || ""));
-        audit3.log({ user: ctx.user, action: "client.timeline", entity: "client", entityId: id, clientId: id, ip: ctx.ip });
-        return { events };
+        const page = events.slice(offset, offset + limit2);
+        audit3.log({ user: ctx.user, action: "client.timeline", entity: "client", entityId: id, clientId: id, ip: ctx.ip, details: { events: page.length } });
+        return { events: page, limit: limit2, offset, more: events.length > offset + limit2 };
       });
     };
   }
@@ -13291,11 +13384,11 @@ var require_notes = __commonJS({
     function kindPerm(kind, rw) {
       return `notes:${kind}:${rw}`;
     }
-    function verifyIdentity(ctx) {
+    async function verifyIdentity(ctx) {
       const { password } = validate(ctx.body, { password: { type: "string", required: true, maxLen: 500 } }, { partial: true });
       if (!password) throw badRequest("Your password is required to sign");
       const u = db3.one(`SELECT password_hash FROM users WHERE id=?`, ctx.user.id);
-      if (!require_crypto().verifyPassword(password, u.password_hash)) {
+      if (!await require_crypto().verifyPasswordAsync(password, u.password_hash)) {
         audit3.log({ user: ctx.user, action: "note.sign.failed", ip: ctx.ip, success: false });
         throw forbidden("Password verification failed");
       }
@@ -13440,25 +13533,25 @@ var require_notes = __commonJS({
         audit3.log({ user: ctx.user, action: "note.update", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { fields: Object.keys(v) } });
         return { ok: true };
       });
-      r.post("/api/notes/:id/sign", auth3.requireAuth, (ctx) => {
+      r.post("/api/notes/:id/sign", auth3.requireAuth, async (ctx) => {
         const n = load(ctx, ctx.params.id);
         if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
         if (n.status !== "draft") throw badRequest("Note is already signed");
         if (n.author_id !== ctx.user.id) throw forbidden("Only the author can sign a note. Supervisors countersign instead.");
-        verifyIdentity(ctx);
+        await verifyIdentity(ctx);
         const hash2 = sha2562(`${n.id}|${ctx.user.id}|${n.content_enc}|${n.structured_enc || ""}`);
         db3.run(`UPDATE notes SET status='signed', signed_at=?, signed_by=?, signature_hash=?, updated_at=? WHERE id=?`, db3.now(), ctx.user.id, hash2, db3.now(), n.id);
         audit3.log({ user: ctx.user, action: "note.sign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { hash: hash2, cosign_required: !!n.cosign_required } });
         return { ok: true, signature_hash: hash2, awaiting_cosign: !!n.cosign_required };
       });
-      r.post("/api/notes/:id/cosign", auth3.requireAuth, auth3.requirePerm("notes:cosign"), (ctx) => {
+      r.post("/api/notes/:id/cosign", auth3.requireAuth, auth3.requirePerm("notes:cosign"), async (ctx) => {
         const n = load(ctx, ctx.params.id);
         if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "read")) && !auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden(`You cannot read ${n.kind} notes`);
         if (n.status === "draft") throw badRequest("The author has not signed this note yet");
         if (n.author_id === ctx.user.id) throw badRequest("A note cannot be countersigned by its own author");
         if (n.cosigned_at) throw badRequest("This note has already been countersigned");
         const { note } = validate(ctx.body, { password: { type: "string", required: true, maxLen: 500 }, note: { type: "string", maxLen: 1e3 } });
-        verifyIdentity(ctx);
+        await verifyIdentity(ctx);
         const hash2 = sha2562(`${n.id}|${ctx.user.id}|cosign|${n.content_enc}|${n.structured_enc || ""}`);
         db3.run(`UPDATE notes SET cosigned_by=?, cosigned_at=?, cosignature_hash=?, cosign_note=?, updated_at=? WHERE id=?`, ctx.user.id, db3.now(), hash2, note || null, db3.now(), n.id);
         audit3.log({ user: ctx.user, action: "note.cosign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { author_id: n.author_id, hash: hash2 } });
@@ -16990,7 +17083,9 @@ var require_region = __commonJS({
       const prev = readState(regionId);
       const ids = prev ? { ...prev.ids } : {};
       let added = 0, enriched = 0, unchanged = 0, pictures = 0;
+      const existingByName = /* @__PURE__ */ new Map();
       db3.transaction(() => {
+        for (const r of db3.all(`SELECT id, name, city FROM resources`)) existingByName.set(`${norm(r.name)}|${norm(r.city)}`, r.id);
         for (const p of region.providers) {
           const row = {
             name: p.name,
@@ -17020,8 +17115,8 @@ var require_region = __commonJS({
           };
           let id = ids[p.key] && db3.one(`SELECT id FROM resources WHERE id=?`, ids[p.key]) ? ids[p.key] : null;
           if (!id) {
-            const hit = db3.all(`SELECT id, name, city FROM resources`).find((r) => norm(r.name) === norm(p.name) && norm(r.city) === norm(p.city));
-            if (hit) id = hit.id;
+            const hit = existingByName.get(`${norm(p.name)}|${norm(p.city)}`);
+            if (hit) id = hit;
           }
           if (!id) {
             id = uuid2();
@@ -17078,7 +17173,10 @@ var require_region = __commonJS({
       if (!region) throw new Error("Unknown region");
       const st = readState(regionId);
       if (!st) return [];
-      return region.providers.filter((p) => (p.image_url || p.website) && st.ids[p.key]).map((p) => ({ key: p.key, id: st.ids[p.key], name: p.name, url: p.image_url || null, website: p.website })).filter((t) => db3.one(`SELECT id FROM resources WHERE id=?`, t.id));
+      return region.providers.filter((p) => (p.image_url || p.website) && st.ids[p.key]).map((p) => ({ key: p.key, id: st.ids[p.key], name: p.name, category: p.category, url: p.image_url || null, website: p.website })).map((t) => {
+        const r = db3.one(`SELECT id, category FROM resources WHERE id=?`, t.id);
+        return r ? { ...t, category: t.category || r.category } : null;
+      }).filter(Boolean);
     }
     var sniff = (buf) => buf.length > 3 && buf[0] === 255 && buf[1] === 216 && buf[2] === 255 ? "image/jpeg" : buf.length > 8 && buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71 ? "image/png" : buf.length > 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP" ? "image/webp" : null;
     function pickImageUrl(html, baseUrl) {
@@ -17104,8 +17202,32 @@ var require_region = __commonJS({
         return null;
       }
     }
-    async function get(url, { timeoutMs, maxBytes }) {
-      const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), redirect: "follow", headers: { "User-Agent": "SUDS resource directory", Accept: "*/*" } });
+    var PRIVATE_HOST = /^(localhost|.*\.local|.*\.internal|.*\.localhost)$/i;
+    function assertPublicHttps(u) {
+      const url = new URL(u);
+      if (url.protocol !== "https:") throw Object.assign(new Error("not an https address"), { soft: true });
+      const host = url.hostname.replace(/^\[|\]$/g, "");
+      if (PRIVATE_HOST.test(host)) throw Object.assign(new Error("that address is not on the public internet"), { soft: true });
+      if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+        const [a, b] = host.split(".").map(Number);
+        if (a === 127 || a === 0 || a === 10 || a === 169 && b === 254 || a === 172 && b >= 16 && b <= 31 || a === 192 && b === 168 || a >= 224) {
+          throw Object.assign(new Error("that address is not on the public internet"), { soft: true });
+        }
+      }
+      if (host.includes(":") || /^::/.test(host)) throw Object.assign(new Error("that address is not on the public internet"), { soft: true });
+      return url.href;
+    }
+    async function get(url, { timeoutMs, maxBytes, hops = 4 }) {
+      let target = assertPublicHttps(url);
+      let res;
+      for (let i = 0; i <= hops; i++) {
+        res = await fetch(target, { signal: AbortSignal.timeout(timeoutMs), redirect: "manual", headers: { "User-Agent": "SUDS resource directory", Accept: "*/*" } });
+        if (res.status < 300 || res.status >= 400) break;
+        const location = res.headers.get("location");
+        if (!location) break;
+        if (i === hops) throw Object.assign(new Error("too many redirects"), { soft: true });
+        target = assertPublicHttps(new URL(location, target).href);
+      }
       if (!res.ok) throw Object.assign(new Error(`site returned ${res.status}`), { soft: true });
       if (Number(res.headers.get("content-length") || 0) > maxBytes) throw Object.assign(new Error("file is too large"), { soft: true });
       const buf = import_buffer.Buffer.from(await res.arrayBuffer());
@@ -17126,15 +17248,17 @@ var require_region = __commonJS({
         const type = sniff(buf);
         if (!type) return { key: target.key, ok: false, error: "not a JPEG, PNG or WebP picture" };
         db3.transaction(() => {
-          db3.run(`UPDATE resource_photos SET sort_order = sort_order + 1 WHERE resource_id=?`, target.id);
+          db3.run(`UPDATE resource_photos SET sort_order = sort_order + 1, updated_at=? WHERE resource_id=?`, db3.now(), target.id);
+          const placeholder = png.initialsCard(target.name || "Provider", target.category || "other", 320, 180).toString("base64");
           db3.run(
-            `INSERT INTO resource_photos(id,resource_id,caption,content_type,bytes,data_b64,sort_order,uploaded_by) VALUES(?,?,?,?,?,?,0,?)`,
+            `INSERT INTO resource_photos(id,resource_id,caption,content_type,bytes,data_b64,thumb_b64,sort_order,uploaded_by) VALUES(?,?,?,?,?,?,?,0,?)`,
             uuid2(),
             target.id,
             `From ${new URL(url).hostname}`,
             type,
             buf.length,
             buf.toString("base64"),
+            placeholder,
             actor || null
           );
           db3.run(`UPDATE resources SET updated_at=? WHERE id=?`, db3.now(), target.id);
@@ -17592,7 +17716,7 @@ var require_resources = __commonJS({
     var b64Type = (b) => !b ? null : b.startsWith("iVBOR") ? "image/png" : b.startsWith("UklGR") ? "image/webp" : "image/jpeg";
     var tagList = (v, allowed) => v == null ? v : String(v).split(",").map((x) => x.trim().toLowerCase().replace(/[\s-]+/g, "_")).filter((x) => allowed.includes(x)).filter((x, i, a) => a.indexOf(x) === i).join(",");
     function photoRows(resourceId, withData = false) {
-      return db3.all(`SELECT id, resource_id, caption, content_type, bytes, width, height, sort_order, uploaded_by, created_at, thumb_b64${withData ? ", data_b64" : ""} FROM resource_photos WHERE resource_id=? ORDER BY sort_order, created_at`, resourceId).map((p) => ({ ...p, thumb_url: p.thumb_b64 ? `data:${b64Type(p.thumb_b64)};base64,${p.thumb_b64}` : null, data_url: withData ? `data:${p.content_type};base64,${p.data_b64}` : void 0, thumb_b64: void 0, data_b64: void 0 }));
+      return db3.all(`SELECT id, resource_id, caption, content_type, bytes, width, height, sort_order, uploaded_by, created_at, thumb_b64 IS NOT NULL AS has_thumb FROM resource_photos WHERE resource_id=? ORDER BY sort_order, created_at`, resourceId).map((p) => ({ ...p, has_thumb: !!p.has_thumb, thumb_url: p.has_thumb ? `/api/resources/${p.resource_id}/photos/${p.id}/thumb` : null, data_url: `/api/resources/${p.resource_id}/photos/${p.id}/image` }));
     }
     module.exports = (r) => {
       r.get("/api/resources", auth3.requireAuth, auth3.requirePerm("resources:read", "resources:write"), (ctx) => {
@@ -17611,7 +17735,7 @@ var require_resources = __commonJS({
         }
         if (ctx.query.get("active") !== "0") where.push("is_active=1");
         const w = where.length ? "WHERE " + where.join(" AND ") : "";
-        const rows = db3.all(`SELECT r.*, (SELECT COUNT(*) FROM referrals x WHERE x.resource_id=r.id) AS referral_count, (SELECT COUNT(*) FROM resource_photos p WHERE p.resource_id=r.id) AS photo_count, (SELECT p.thumb_b64 FROM resource_photos p WHERE p.resource_id=r.id ORDER BY p.sort_order, p.created_at LIMIT 1) AS cover_b64 FROM resources r ${w} ORDER BY category, name LIMIT ? OFFSET ?`, ...params, limit2, offset).map((r2) => ({ ...r2, cover_url: r2.cover_b64 ? `data:${b64Type(r2.cover_b64)};base64,${r2.cover_b64}` : null, cover_b64: void 0 }));
+        const rows = db3.all(`SELECT r.*, (SELECT COUNT(*) FROM referrals x WHERE x.resource_id=r.id) AS referral_count, (SELECT COUNT(*) FROM resource_photos p WHERE p.resource_id=r.id) AS photo_count, (SELECT p.id FROM resource_photos p WHERE p.resource_id=r.id AND p.thumb_b64 IS NOT NULL ORDER BY p.sort_order, p.created_at LIMIT 1) AS cover_photo_id FROM resources r ${w} ORDER BY category, name LIMIT ? OFFSET ?`, ...params, limit2, offset).map((r2) => ({ ...r2, cover_url: r2.cover_photo_id ? `/api/resources/${r2.id}/photos/${r2.cover_photo_id}/thumb` : null }));
         return { rows, total: db3.one(`SELECT COUNT(*) n FROM resources r ${w}`, ...params).n };
       });
       r.get("/api/resources/:id", auth3.requireAuth, auth3.requirePerm("resources:read", "resources:write"), (ctx) => {
@@ -17626,6 +17750,28 @@ var require_resources = __commonJS({
         if (!db3.one(`SELECT id FROM resources WHERE id=?`, ctx.params.id)) throw notFound();
         return { photos: photoRows(ctx.params.id, ctx.query.get("full") === "1") };
       });
+      function sendPhoto(ctx, column) {
+        const p = db3.one(`SELECT * FROM resource_photos WHERE id=? AND resource_id=?`, ctx.params.pid, ctx.params.id);
+        if (!p || !p[column]) throw notFound("Picture not found");
+        const body = import_buffer.Buffer.from(p[column], "base64");
+        const etag = `"${require_crypto().sha256(p.id + (p.updated_at || p.created_at) + column).slice(0, 32)}"`;
+        if (ctx.headers["if-none-match"] === etag) {
+          ctx.res.writeHead(304, { ETag: etag });
+          ctx.res.end();
+          return null;
+        }
+        ctx.res.writeHead(200, {
+          "Content-Type": column === "thumb_b64" ? b64Type(p.thumb_b64) : p.content_type,
+          "Content-Length": body.length,
+          ETag: etag,
+          "Cache-Control": "private, max-age=86400",
+          "X-Content-Type-Options": "nosniff"
+        });
+        ctx.res.end(body);
+        return null;
+      }
+      r.get("/api/resources/:id/photos/:pid/thumb", auth3.requireAuth, auth3.requirePerm("resources:read", "resources:write"), (ctx) => sendPhoto(ctx, "thumb_b64"));
+      r.get("/api/resources/:id/photos/:pid/image", auth3.requireAuth, auth3.requirePerm("resources:read", "resources:write"), (ctx) => sendPhoto(ctx, "data_b64"));
       r.post("/api/resources/:id/photos", auth3.requireAuth, auth3.requirePerm("resources:write"), (ctx) => {
         const res = db3.one(`SELECT id FROM resources WHERE id=?`, ctx.params.id);
         if (!res) throw notFound();
@@ -18609,6 +18755,137 @@ var require_app2 = __commonJS({
   }
 });
 
+// local/shims/package.js
+var package_exports = {};
+__export(package_exports, {
+  default: () => package_default,
+  version: () => version
+});
+var version, package_default;
+var init_package = __esm({
+  "local/shims/package.js"() {
+    init_globals_inject();
+    version = true ? "1.6.1" : "local";
+    package_default = { version };
+  }
+});
+
+// server/config.js
+var require_config2 = __commonJS({
+  "server/config.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var path = (init_path(), __toCommonJS(path_exports));
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    function loadDotEnv(file) {
+      if (!fs.existsSync(file)) return;
+      for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
+        const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+        if (!m || line.trim().startsWith("#")) continue;
+        let v = m[2];
+        if (v.startsWith('"') && v.endsWith('"') || v.startsWith("'") && v.endsWith("'")) v = v.slice(1, -1);
+        if (proc.env[m[1]] === void 0) proc.env[m[1]] = v;
+      }
+    }
+    loadDotEnv(path.join(proc.cwd(), ".env"));
+    var env = proc.env.SUDS_ENV || "development";
+    var dataDir = path.resolve(proc.env.SUDS_DATA_DIR || path.join(proc.cwd(), "data"));
+    fs.mkdirSync(dataDir, { recursive: true });
+    var serverJsonPath = path.join(dataDir, "server.json");
+    var fileCfg = {};
+    try {
+      if (fs.existsSync(serverJsonPath)) fileCfg = JSON.parse(fs.readFileSync(serverJsonPath, "utf8"));
+    } catch (e) {
+      console.warn("[suds] could not read server.json:", e.message);
+    }
+    var keysJsonPath = path.join(dataDir, "keys.json");
+    var fileKeys = {};
+    try {
+      if (fs.existsSync(keysJsonPath)) fileKeys = JSON.parse(fs.readFileSync(keysJsonPath, "utf8"));
+    } catch (e) {
+      console.warn("[suds] could not read keys.json:", e.message);
+    }
+    var keySourceHolder = { value: "env" };
+    function loadKey(envName, fileName) {
+      let hex = proc.env[envName];
+      if (hex && /^[0-9a-fA-F]{64}$/.test(hex)) return import_buffer.Buffer.from(hex, "hex");
+      if (hex) throw new Error(`${envName} must be 64 hex characters (32 bytes). Generate with: npm run gen-key`);
+      const fk = fileKeys[envName];
+      if (fk && /^[0-9a-fA-F]{64}$/.test(fk)) {
+        keySourceHolder.value = "file";
+        return import_buffer.Buffer.from(fk, "hex");
+      }
+      if (env === "production") {
+        const key2 = crypto3.randomBytes(32);
+        fileKeys[envName] = key2.toString("hex");
+        fileKeys.created_at = fileKeys.created_at || (/* @__PURE__ */ new Date()).toISOString();
+        fs.writeFileSync(keysJsonPath, JSON.stringify(fileKeys, null, 2), { mode: 384 });
+        keySourceHolder.value = "file";
+        console.warn(`[suds] ${envName} not set; generated ${keysJsonPath}. Back this file up separately from the database.`);
+        return key2;
+      }
+      const f = path.join(dataDir, fileName);
+      keySourceHolder.value = "devfile";
+      if (fs.existsSync(f)) return import_buffer.Buffer.from(fs.readFileSync(f, "utf8").trim(), "hex");
+      const key = crypto3.randomBytes(32);
+      fs.writeFileSync(f, key.toString("hex"), { mode: 384 });
+      console.warn(`[suds] ${envName} not set; generated a development key at ${f}`);
+      return key;
+    }
+    var config = {
+      version: (init_package(), __toCommonJS(package_exports)).version,
+      env,
+      isProd: env === "production",
+      isTest: env === "test",
+      port: Number(proc.env.PORT || fileCfg.port || 8080),
+      host: proc.env.HOST || fileCfg.host || "127.0.0.1",
+      dataDir,
+      serverJsonPath,
+      keysJsonPath,
+      fileCfg,
+      setupComplete: !!fileCfg.setupComplete,
+      dbPath: proc.env.SUDS_DB_PATH === ":memory:" ? ":memory:" : proc.env.SUDS_DB_PATH ? path.resolve(proc.env.SUDS_DB_PATH) : path.join(dataDir, "suds.db"),
+      encryptionKey: env === "test" ? crypto3.createHash("sha256").update("test-enc-key").digest() : loadKey("SUDS_ENCRYPTION_KEY", ".dev-encryption-key"),
+      indexKey: env === "test" ? crypto3.createHash("sha256").update("test-index-key").digest() : loadKey("SUDS_INDEX_KEY", ".dev-index-key"),
+      tls: {
+        cert: proc.env.TLS_CERT_PATH || (fileCfg.tls === "selfsigned" && fs.existsSync(path.join(dataDir, "certs", "suds.crt")) ? path.join(dataDir, "certs", "suds.crt") : ""),
+        key: proc.env.TLS_KEY_PATH || (fileCfg.tls === "selfsigned" && fs.existsSync(path.join(dataDir, "certs", "suds.key")) ? path.join(dataDir, "certs", "suds.key") : ""),
+        mode: proc.env.TLS_CERT_PATH ? "custom" : fileCfg.tls || "none"
+      },
+      session: {
+        idleMinutes: Number(proc.env.SESSION_IDLE_MINUTES || 15),
+        absoluteHours: Number(proc.env.SESSION_ABSOLUTE_HOURS || 12)
+      },
+      mfaRequiredRoles: (proc.env.MFA_REQUIRED_ROLES ?? "admin,supervisor").split(",").map((s2) => s2.trim()).filter(Boolean),
+      password: { minLength: 12, maxAgeDays: 90 },
+      lockout: { maxAttempts: 5, minutes: 15 },
+      msGraph: {
+        tenantId: proc.env.MS_TENANT_ID || "",
+        clientId: proc.env.MS_CLIENT_ID || "",
+        clientSecret: proc.env.MS_CLIENT_SECRET || "",
+        user: proc.env.MS_ONENOTE_USER || ""
+      },
+      trustProxy: proc.env.TRUST_PROXY === "1" || proc.env.TRUST_PROXY === "true" || !!fileCfg.trustProxy,
+      // PHI access entries are kept for the full HIPAA seven years. Routine list/search traffic is the bulk of
+      // the volume and has a much shorter useful life, so it ages out sooner; the chain stays verifiable either
+      // way because a purge records the hash it continues from.
+      auditRetentionDays: Number(proc.env.AUDIT_RETENTION_DAYS || 2555),
+      // How long deletions are remembered for devices that have been away. A device offline longer than this
+      // is sent for a full resync rather than being left holding rows the office deleted.
+      tombstoneRetentionDays: Number(proc.env.TOMBSTONE_RETENTION_DAYS || 180),
+      maxBodyBytes: 60 * 1024 * 1024
+    };
+    config.keySource = keySourceHolder.value;
+    config.saveServerJson = (patch) => {
+      Object.assign(fileCfg, patch);
+      fs.writeFileSync(serverJsonPath, JSON.stringify(fileCfg, null, 2), { mode: 384 });
+      config.setupComplete = !!fileCfg.setupComplete;
+    };
+    module.exports = config;
+  }
+});
+
 // local/kernel.js
 init_globals_inject();
 init_sqlite();
@@ -18967,10 +19244,30 @@ var FakeRes = class {
     this.headersSent = true;
   }
 };
-async function start({ wasmUrl }) {
+async function start({ wasmUrl, onSaveError: onSaveError2 } = {}) {
   await sqlite_default.init(wasmUrl);
+  const locked = await sqlite_default.acquireLock();
+  if (!locked) {
+    const e = new Error("SUDS is already open in another window on this device. Use that window, or close it and reload this one.");
+    e.code = "SUDS_ALREADY_OPEN";
+    throw e;
+  }
+  if (onSaveError2) sqlite_default.setSaveErrorHandler(onSaveError2);
   const bytes3 = await sqlite_default.loadBytes();
   import_db2.default.openWith(bytes3 ? new Uint8Array(bytes3) : null);
+  const config = require_config2();
+  const { sha256: sha2562 } = require_crypto();
+  const fingerprint = sha2562("suds-key-check:" + config.encryptionKey.toString("hex")).slice(0, 32);
+  const stored = import_db2.default.getSetting("encryption_key_fingerprint", null);
+  const hasData = import_db2.default.one(`SELECT COUNT(*) n FROM users`).n > 0;
+  if (!stored) {
+    if (hasData) import_db2.default.setSetting("encryption_key_fingerprint", fingerprint);
+    else import_db2.default.setSetting("encryption_key_fingerprint", fingerprint);
+  } else if (stored !== fingerprint) {
+    const e = new Error("This device's security key has been cleared, so the records stored here can no longer be read. Set the app up again and sync from the office server to restore them.");
+    e.code = "SUDS_KEY_LOST";
+    throw e;
+  }
   router = new import_http2.Router();
   const missing = import_app.LOCAL_ROUTE_MODULES.filter((n) => !routeLoaders[n]);
   if (missing.length) throw new Error(`local kernel has no loader for route module(s): ${missing.join(", ")} \u2014 add them to routeLoaders in local/kernel.js`);
@@ -18983,11 +19280,11 @@ async function start({ wasmUrl }) {
   router.post("/api/local/setup", (ctx) => {
     if (import_db2.default.one(`SELECT COUNT(*) n FROM users`).n > 0) throw new import_http2.HttpError(403, "Already set up");
     const { validate } = require_validate();
-    const v = validate(ctx.body, { display_name: { type: "string", required: true, maxLen: 120 }, username: { type: "string", required: true, maxLen: 60, pattern: /^[a-zA-Z0-9._@-]+$/ }, password: { type: "string", required: true, maxLen: 500 }, org_name: { type: "string", maxLen: 200 } });
+    const v = validate(ctx.body, { display_name: { type: "string", required: true, maxLen: 120 }, username: { type: "string", required: true, maxLen: 60, pattern: /^[a-zA-Z0-9._@-]+$/ }, password: { type: "string", required: true, maxLen: 500 }, org_name: { type: "string", maxLen: 200 }, role: { type: "string", enum: ["navigator", "clinician", "supervisor", "admin"] } });
     const errs = import_auth2.default.passwordPolicy(v.password);
     if (errs.length) throw new import_http2.HttpError(400, "Password must contain " + errs.join(", "));
     const { hashPassword, uuid: uuid2 } = require_crypto();
-    import_db2.default.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,0,?)`, uuid2(), v.username, hashPassword(v.password), v.display_name, "navigator", import_db2.default.now());
+    import_db2.default.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,0,?)`, uuid2(), v.username, hashPassword(v.password), v.display_name, v.role || "navigator", import_db2.default.now());
     import_db2.default.setSetting("org_name", v.org_name || "SUDS on this device");
     import_db2.default.setSetting("caseload_restriction", "0");
     import_db2.default.setSetting("local_mode", "1");

@@ -1,4 +1,4 @@
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, confirmDialog, nav, kv, prefs, emptyState, clear, downloadCsv } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, confirmDialog, nav, kv, prefs, emptyState, clear, downloadCsv, img, setImage } from '../app.js';
 
 const tagOpts = (list) => list.map(t => ({ value: t, label: fmt.label(t) }));
 // Comma-separated tag fields are edited as a checkbox grid
@@ -103,7 +103,7 @@ route('resources', async (r) => {
   const catSel = h('select', { onChange: () => nav(link({ category: catSel.value })) }, h('option', { value: '' }, 'All categories'), state.constants.RESOURCE_CATEGORIES.map(c => h('option', { value: c, selected: c === cat }, fmt.label(c))));
   const tagSel = h('select', { onChange: () => nav(link({ tag: tagSel.value })) }, h('option', { value: '' }, 'Any service'), state.constants.SERVICE_TAGS.map(c => h('option', { value: c, selected: c === tag }, fmt.label(c))));
   const setView = (v) => { prefs.set('resources_view', v); nav(link({ view: v })); };
-  const thumb = (x, cls = 'thumb') => x.cover_url ? h('img', { class: cls, src: x.cover_url, alt: '' }) : h('div', { class: `${cls} placeholder`, 'aria-hidden': 'true' }, (x.name || '?').slice(0, 1).toUpperCase());
+  const thumb = (x, cls = 'thumb') => x.cover_url ? img(x.cover_url, { class: cls, alt: '', loading: 'lazy' }) : h('div', { class: `${cls} placeholder`, 'aria-hidden': 'true' }, (x.name || '?').slice(0, 1).toUpperCase());
   const cards = () => rows.length ? h('div', { class: 'grid cols-3 res-cards' }, rows.map(x => h('a', { class: 'card res-card', href: `#/resource/${x.id}` },
     thumb(x, 'res-cover'),
     h('div', { class: 'res-body' }, h('div', { class: 'row', style: { justifyContent: 'space-between' } }, h('b', {}, x.name), badge(fmt.label(x.category), 'info')), x.organization ? h('div', { class: 'small muted' }, x.organization) : null,
@@ -139,14 +139,14 @@ route('resource', async (r) => {
     gallery.replaceChildren();
     if (!photos.length) { gallery.append(h('div', { class: 'gallery-empty' }, h('div', { class: 'big' }, '📷'), h('div', { class: 'muted small' }, can('resources:write') ? 'No pictures yet. Add photos of the building, entrance and rooms so staff and clients know what to expect.' : 'No pictures yet.'))); return; }
     const hero = photos[0];
-    gallery.append(h('figure', { class: 'hero' }, h('img', { src: hero.data_url, alt: hero.caption || x.name, onClick: () => lightbox(0) }), hero.caption ? h('figcaption', {}, hero.caption) : null));
-    if (photos.length > 1) gallery.append(h('div', { class: 'thumbs' }, photos.map((p, i) => h('button', { class: 'thumb-btn', type: 'button', title: p.caption || '', onClick: () => lightbox(i) }, h('img', { src: p.thumb_url || p.data_url, alt: p.caption || '' })))));
+    gallery.append(h('figure', { class: 'hero' }, img(hero.data_url, { alt: hero.caption || x.name, onClick: () => lightbox(0) }), hero.caption ? h('figcaption', {}, hero.caption) : null));
+    if (photos.length > 1) gallery.append(h('div', { class: 'thumbs' }, photos.map((p, i) => h('button', { class: 'thumb-btn', type: 'button', title: p.caption || '', onClick: () => lightbox(i) }, img(p.thumb_url || p.data_url, { alt: p.caption || '', loading: 'lazy' })))));
   };
   const lightbox = (i) => {
-    let idx = i; const img = h('img', { alt: '' }); const cap = h('div', { class: 'small muted mt' }); const count = h('span', { class: 'small muted' });
-    const show = () => { const p = photos[idx]; img.src = p.data_url; cap.textContent = p.caption || ''; count.textContent = `${idx + 1} / ${photos.length}`; };
+    let idx = i; const lightboxImg = h('img', { alt: '' }); const cap = h('div', { class: 'small muted mt' }); const count = h('span', { class: 'small muted' });
+    const show = () => { const p = photos[idx]; setImage(lightboxImg, p.data_url); cap.textContent = p.caption || ''; count.textContent = `${idx + 1} / ${photos.length}`; };
     const prev = () => { idx = (idx - 1 + photos.length) % photos.length; show(); }; const next = () => { idx = (idx + 1) % photos.length; show(); };
-    const m = modal(x.name, h('div', { class: 'lightbox' }, img, cap, h('div', { class: 'row mt', style: { justifyContent: 'space-between' } },
+    const m = modal(x.name, h('div', { class: 'lightbox' }, lightboxImg, cap, h('div', { class: 'row mt', style: { justifyContent: 'space-between' } },
       h('div', { class: 'row' }, photos.length > 1 ? [h('button', { class: 'btn sm', onClick: prev }, '‹ Prev'), h('button', { class: 'btn sm', onClick: next }, 'Next ›')] : null, count),
       can('resources:write') ? h('div', { class: 'row' },
         h('button', { class: 'btn sm', onClick: async () => { const c = prompt('Caption for this picture', photos[idx].caption || ''); if (c === null) return; await put(`/api/resources/${x.id}/photos/${photos[idx].id}`, { caption: c }); photos[idx].caption = c; show(); renderGallery(); } }, 'Caption'),

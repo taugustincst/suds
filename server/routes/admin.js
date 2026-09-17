@@ -131,11 +131,11 @@ module.exports = (r) => {
 
   // Step 2: actually replace the database. The administrator re-enters their password, because this
   // discards everything recorded since the backup was taken.
-  r.post('/api/admin/restore', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
+  r.post('/api/admin/restore', auth.requireAuth, auth.requirePerm('settings:manage'), async (ctx) => {
     const { password, confirm } = require('../validate').validate(ctx.body, { password: { type: 'string', required: true, maxLen: 500 }, confirm: { type: 'string', required: true, maxLen: 40 }, file_b64: { type: 'string', maxLen: 400 * 1024 * 1024 } }, { partial: true });
     if (confirm !== 'REPLACE') throw badRequest('Type REPLACE to confirm that the current data will be replaced');
     const me = db.one(`SELECT password_hash FROM users WHERE id=?`, ctx.user.id);
-    if (!require('../crypto').verifyPassword(password, me.password_hash)) { audit.log({ user: ctx.user, action: 'backup.restore.failed', ip: ctx.ip, success: false }); throw forbidden('Password verification failed'); }
+    if (!(await require('../crypto').verifyPasswordAsync(password, me.password_hash))) { audit.log({ user: ctx.user, action: 'backup.restore.failed', ip: ctx.ip, success: false }); throw forbidden('Password verification failed'); }
     const plain = backupFromUpload(ctx);
     // Logged before the swap, because afterwards this audit log is the restored file's, not ours.
     audit.log({ user: ctx.user, action: 'backup.restore.start', ip: ctx.ip, details: { bytes: plain.length } });
