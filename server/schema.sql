@@ -237,6 +237,12 @@ CREATE TABLE IF NOT EXISTS resources (
   mat_offered TEXT,
   capacity_notes TEXT,
   contact_person TEXT,
+  summary TEXT,                         -- plain-language overview shown on the profile
+  service_tags TEXT,                    -- comma separated SERVICE_TAGS
+  levels_of_care TEXT,                  -- comma separated ASAM levels
+  populations TEXT,                     -- who they serve (comma separated POPULATIONS)
+  intake_process TEXT,
+  cost_notes TEXT,
   is_active INTEGER NOT NULL DEFAULT 1,
   last_verified_at TEXT,
   notes TEXT,
@@ -244,6 +250,22 @@ CREATE TABLE IF NOT EXISTS resources (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_resources_cat ON resources(category);
+
+CREATE TABLE IF NOT EXISTS resource_photos (
+  id TEXT PRIMARY KEY,
+  resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
+  caption TEXT,
+  content_type TEXT NOT NULL,
+  bytes INTEGER NOT NULL DEFAULT 0,
+  width INTEGER, height INTEGER,
+  data_b64 TEXT NOT NULL,               -- downscaled picture (JPEG/PNG/WebP), base64
+  thumb_b64 TEXT,                       -- small JPEG thumbnail for lists, base64
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  uploaded_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_resource_photos ON resource_photos(resource_id, sort_order);
 
 CREATE TABLE IF NOT EXISTS referrals (
   id TEXT PRIMARY KEY,

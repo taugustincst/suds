@@ -6088,7 +6088,7 @@ var require_config = __commonJS({
       return import_buffer.Buffer.from(hex, "hex");
     }
     var config = {
-      version: true ? "1.2.1" : "local",
+      version: true ? "1.3.0" : "local",
       env: "local",
       isProd: true,
       isTest: false,
@@ -6183,6 +6183,12 @@ var require_db = __commonJS({
         }
         d.exec(`CREATE TABLE IF NOT EXISTS tombstones (table_name TEXT NOT NULL, id TEXT NOT NULL, deleted_at TEXT NOT NULL, PRIMARY KEY (table_name, id))`);
         d.exec(`CREATE INDEX IF NOT EXISTS idx_tombstones_at ON tombstones(deleted_at)`);
+      },
+      // 3: treatment center profiles — summary/service tags on resources, photo gallery table
+      (d) => {
+        for (const [c, t] of [["summary", "TEXT"], ["service_tags", "TEXT"], ["levels_of_care", "TEXT"], ["populations", "TEXT"], ["intake_process", "TEXT"], ["cost_notes", "TEXT"]]) addColumn(d, "resources", c, t);
+        d.exec(`CREATE TABLE IF NOT EXISTS resource_photos (id TEXT PRIMARY KEY, resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE, caption TEXT, content_type TEXT NOT NULL, bytes INTEGER NOT NULL DEFAULT 0, width INTEGER, height INTEGER, data_b64 TEXT NOT NULL, thumb_b64 TEXT, sort_order INTEGER NOT NULL DEFAULT 0, uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_resource_photos ON resource_photos(resource_id, sort_order)`);
       }
     ];
     function migrate(d) {
@@ -6377,7 +6383,7 @@ var require_http = __commonJS({
       res.setHeader("Referrer-Policy", "no-referrer");
       res.setHeader("Cache-Control", "no-store");
       res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-      res.setHeader("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+      res.setHeader("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
       if (config.tls.cert) res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
     }
     function sendJson(res, status, obj) {
@@ -6910,6 +6916,7 @@ var require_sync_tables = __commonJS({
       tables: [
         { name: "users", enc: ["mfa_secret_enc"], scope: "users", cols: null },
         { name: "resources", enc: [], scope: "all" },
+        { name: "resource_photos", enc: [], scope: "all" },
         { name: "funding_sources", enc: [], scope: "all" },
         { name: "budget_lines", enc: [], scope: "all" },
         { name: "clients", enc: ["first_name_enc", "last_name_enc", "preferred_name_enc", "dob_enc", "phone_enc", "alt_phone_enc", "email_enc", "address_enc", "medicaid_id_enc", "emergency_contact_enc"], scope: "client", clientCol: "id", idx: true },
@@ -6950,8 +6957,887 @@ var require_constants = __commonJS({
       NOTE_FORMATS: ["narrative", "SOAP", "DAP", "BIRP", "GIRP", "intake", "progress", "discharge", "contact", "collateral", "crisis", "supervision"],
       CONSENT_TYPES: ["part2_disclosure", "roi", "treatment", "telehealth", "contact_preferences", "research", "photo_media"],
       SUBSTANCES: ["opioids_fentanyl", "opioids_heroin", "opioids_rx", "alcohol", "methamphetamine", "cocaine", "benzodiazepines", "cannabis", "synthetic_cannabinoids", "xylazine", "nicotine", "other", "unknown"],
+      SERVICE_TAGS: ["detox", "residential", "inpatient", "partial_hospitalization", "intensive_outpatient", "outpatient", "mat_buprenorphine", "mat_methadone", "mat_naltrexone", "medication_management", "individual_counseling", "group_counseling", "family_program", "peer_support", "case_management", "mental_health", "trauma_informed", "co_occurring", "medical_care", "harm_reduction", "naloxone", "syringe_services", "housing", "sober_living", "employment", "legal_help", "transportation", "childcare", "telehealth", "walk_in", "same_day_intake", "crisis_24_7", "aftercare", "faith_based", "spanish_speaking"],
+      POPULATIONS: ["adults", "adolescents", "women", "men", "pregnant_parenting", "families", "veterans", "lgbtq", "justice_involved", "unhoused", "older_adults", "native_american", "spanish_speakers", "deaf_hard_of_hearing"],
       ASAM: ["0.5", "1.0", "2.1", "2.5", "3.1", "3.3", "3.5", "3.7", "4.0", "OTP", "unknown"]
     };
+  }
+});
+
+// node_modules/fflate/esm/browser.js
+function deflateSync(data, opts) {
+  return dopt(data, opts || {}, 0, 0);
+}
+function inflateSync(data, opts) {
+  return inflt(data, { i: 2 }, opts && opts.out, opts && opts.dictionary);
+}
+function zlibSync(data, opts) {
+  if (!opts)
+    opts = {};
+  var a = adler();
+  a.p(data);
+  var d = dopt(data, opts, opts.dictionary ? 6 : 2, 4);
+  return zlh(d, opts), wbytes(d, d.length - 4, a.d()), d;
+}
+function unzlibSync(data, opts) {
+  return inflt(data.subarray(zls(data, opts && opts.dictionary), -4), { i: 2 }, opts && opts.out, opts && opts.dictionary);
+}
+var u82, u16, i32, fleb, fdeb, clim, freb, _a, fl, revfl, _b, fd, revfd, rev, x, i, hMap, flt, i, i, i, i, fdt, i, flm, flrm, fdm, fdrm, max, bits, bits16, shft, slc, ec, err, inflt, wbits, wbits16, hTree, ln, lc, clen, wfblk, wblk, deo, et, dflt, adler, dopt, wbytes, zlh, zls, td, tds;
+var init_browser = __esm({
+  "node_modules/fflate/esm/browser.js"() {
+    init_globals_inject();
+    u82 = Uint8Array;
+    u16 = Uint16Array;
+    i32 = Int32Array;
+    fleb = new u82([
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      1,
+      1,
+      2,
+      2,
+      2,
+      2,
+      3,
+      3,
+      3,
+      3,
+      4,
+      4,
+      4,
+      4,
+      5,
+      5,
+      5,
+      5,
+      0,
+      /* unused */
+      0,
+      0,
+      /* impossible */
+      0
+    ]);
+    fdeb = new u82([
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      2,
+      2,
+      3,
+      3,
+      4,
+      4,
+      5,
+      5,
+      6,
+      6,
+      7,
+      7,
+      8,
+      8,
+      9,
+      9,
+      10,
+      10,
+      11,
+      11,
+      12,
+      12,
+      13,
+      13,
+      /* unused */
+      0,
+      0
+    ]);
+    clim = new u82([16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]);
+    freb = function(eb, start2) {
+      var b = new u16(31);
+      for (var i = 0; i < 31; ++i) {
+        b[i] = start2 += 1 << eb[i - 1];
+      }
+      var r = new i32(b[30]);
+      for (var i = 1; i < 30; ++i) {
+        for (var j = b[i]; j < b[i + 1]; ++j) {
+          r[j] = j - b[i] << 5 | i;
+        }
+      }
+      return { b, r };
+    };
+    _a = freb(fleb, 2);
+    fl = _a.b;
+    revfl = _a.r;
+    fl[28] = 258, revfl[258] = 28;
+    _b = freb(fdeb, 0);
+    fd = _b.b;
+    revfd = _b.r;
+    rev = new u16(32768);
+    for (i = 0; i < 32768; ++i) {
+      x = (i & 43690) >> 1 | (i & 21845) << 1;
+      x = (x & 52428) >> 2 | (x & 13107) << 2;
+      x = (x & 61680) >> 4 | (x & 3855) << 4;
+      rev[i] = ((x & 65280) >> 8 | (x & 255) << 8) >> 1;
+    }
+    hMap = function(cd, mb, r) {
+      var s = cd.length;
+      var i = 0;
+      var l = new u16(mb);
+      for (; i < s; ++i) {
+        if (cd[i])
+          ++l[cd[i] - 1];
+      }
+      var le = new u16(mb);
+      for (i = 1; i < mb; ++i) {
+        le[i] = le[i - 1] + l[i - 1] << 1;
+      }
+      var co;
+      if (r) {
+        co = new u16(1 << mb);
+        var rvb = 15 - mb;
+        for (i = 0; i < s; ++i) {
+          if (cd[i]) {
+            var sv = i << 4 | cd[i];
+            var r_1 = mb - cd[i];
+            var v = le[cd[i] - 1]++ << r_1;
+            for (var m = v | (1 << r_1) - 1; v <= m; ++v) {
+              co[rev[v] >> rvb] = sv;
+            }
+          }
+        }
+      } else {
+        co = new u16(s);
+        for (i = 0; i < s; ++i) {
+          if (cd[i]) {
+            co[i] = rev[le[cd[i] - 1]++] >> 15 - cd[i];
+          }
+        }
+      }
+      return co;
+    };
+    flt = new u82(288);
+    for (i = 0; i < 144; ++i)
+      flt[i] = 8;
+    for (i = 144; i < 256; ++i)
+      flt[i] = 9;
+    for (i = 256; i < 280; ++i)
+      flt[i] = 7;
+    for (i = 280; i < 288; ++i)
+      flt[i] = 8;
+    fdt = new u82(32);
+    for (i = 0; i < 32; ++i)
+      fdt[i] = 5;
+    flm = /* @__PURE__ */ hMap(flt, 9, 0);
+    flrm = /* @__PURE__ */ hMap(flt, 9, 1);
+    fdm = /* @__PURE__ */ hMap(fdt, 5, 0);
+    fdrm = /* @__PURE__ */ hMap(fdt, 5, 1);
+    max = function(a) {
+      var m = a[0];
+      for (var i = 1; i < a.length; ++i) {
+        if (a[i] > m)
+          m = a[i];
+      }
+      return m;
+    };
+    bits = function(d, p, m) {
+      var o = p / 8 | 0;
+      return (d[o] | d[o + 1] << 8) >> (p & 7) & m;
+    };
+    bits16 = function(d, p) {
+      var o = p / 8 | 0;
+      return (d[o] | d[o + 1] << 8 | d[o + 2] << 16) >> (p & 7);
+    };
+    shft = function(p) {
+      return (p + 7) / 8 | 0;
+    };
+    slc = function(v, s, e) {
+      if (s == null || s < 0)
+        s = 0;
+      if (e == null || e > v.length)
+        e = v.length;
+      return new u82(v.subarray(s, e));
+    };
+    ec = [
+      "unexpected EOF",
+      "invalid block type",
+      "invalid length/literal",
+      "invalid distance",
+      "stream finished",
+      "no stream handler",
+      ,
+      "no callback",
+      "invalid UTF-8 data",
+      "extra field too long",
+      "date not in range 1980-2099",
+      "filename too long",
+      "stream finishing",
+      "invalid zip data"
+      // determined by unknown compression method
+    ];
+    err = function(ind, msg, nt) {
+      var e = new Error(msg || ec[ind]);
+      e.code = ind;
+      if (Error.captureStackTrace)
+        Error.captureStackTrace(e, err);
+      if (!nt)
+        throw e;
+      return e;
+    };
+    inflt = function(dat, st, buf, dict) {
+      var sl = dat.length, dl = dict ? dict.length : 0;
+      if (!sl || st.f && !st.l)
+        return buf || new u82(0);
+      var noBuf = !buf;
+      var resize = noBuf || st.i != 2;
+      var noSt = st.i;
+      if (noBuf)
+        buf = new u82(sl * 3);
+      var cbuf = function(l2) {
+        var bl = buf.length;
+        if (l2 > bl) {
+          var nbuf = new u82(Math.max(bl * 2, l2));
+          nbuf.set(buf);
+          buf = nbuf;
+        }
+      };
+      var final = st.f || 0, pos = st.p || 0, bt = st.b || 0, lm = st.l, dm = st.d, lbt = st.m, dbt = st.n;
+      var tbts = sl * 8;
+      do {
+        if (!lm) {
+          final = bits(dat, pos, 1);
+          var type = bits(dat, pos + 1, 3);
+          pos += 3;
+          if (!type) {
+            var s = shft(pos) + 4, l = dat[s - 4] | dat[s - 3] << 8, t = s + l;
+            if (t > sl) {
+              if (noSt)
+                err(0);
+              break;
+            }
+            if (resize)
+              cbuf(bt + l);
+            buf.set(dat.subarray(s, t), bt);
+            st.b = bt += l, st.p = pos = t * 8, st.f = final;
+            continue;
+          } else if (type == 1)
+            lm = flrm, dm = fdrm, lbt = 9, dbt = 5;
+          else if (type == 2) {
+            var hLit = bits(dat, pos, 31) + 257, hcLen = bits(dat, pos + 10, 15) + 4;
+            var tl = hLit + bits(dat, pos + 5, 31) + 1;
+            pos += 14;
+            var ldt = new u82(tl);
+            var clt = new u82(19);
+            for (var i = 0; i < hcLen; ++i) {
+              clt[clim[i]] = bits(dat, pos + i * 3, 7);
+            }
+            pos += hcLen * 3;
+            var clb = max(clt), clbmsk = (1 << clb) - 1;
+            var clm = hMap(clt, clb, 1);
+            for (var i = 0; i < tl; ) {
+              var r = clm[bits(dat, pos, clbmsk)];
+              pos += r & 15;
+              var s = r >> 4;
+              if (s < 16) {
+                ldt[i++] = s;
+              } else {
+                var c = 0, n = 0;
+                if (s == 16)
+                  n = 3 + bits(dat, pos, 3), pos += 2, c = ldt[i - 1];
+                else if (s == 17)
+                  n = 3 + bits(dat, pos, 7), pos += 3;
+                else if (s == 18)
+                  n = 11 + bits(dat, pos, 127), pos += 7;
+                while (n--)
+                  ldt[i++] = c;
+              }
+            }
+            var lt = ldt.subarray(0, hLit), dt = ldt.subarray(hLit);
+            lbt = max(lt);
+            dbt = max(dt);
+            lm = hMap(lt, lbt, 1);
+            dm = hMap(dt, dbt, 1);
+          } else
+            err(1);
+          if (pos > tbts) {
+            if (noSt)
+              err(0);
+            break;
+          }
+        }
+        if (resize)
+          cbuf(bt + 131072);
+        var lms = (1 << lbt) - 1, dms = (1 << dbt) - 1;
+        var lpos = pos;
+        for (; ; lpos = pos) {
+          var c = lm[bits16(dat, pos) & lms], sym = c >> 4;
+          pos += c & 15;
+          if (pos > tbts) {
+            if (noSt)
+              err(0);
+            break;
+          }
+          if (!c)
+            err(2);
+          if (sym < 256)
+            buf[bt++] = sym;
+          else if (sym == 256) {
+            lpos = pos, lm = null;
+            break;
+          } else {
+            var add = sym - 254;
+            if (sym > 264) {
+              var i = sym - 257, b = fleb[i];
+              add = bits(dat, pos, (1 << b) - 1) + fl[i];
+              pos += b;
+            }
+            var d = dm[bits16(dat, pos) & dms], dsym = d >> 4;
+            if (!d)
+              err(3);
+            pos += d & 15;
+            var dt = fd[dsym];
+            if (dsym > 3) {
+              var b = fdeb[dsym];
+              dt += bits16(dat, pos) & (1 << b) - 1, pos += b;
+            }
+            if (pos > tbts) {
+              if (noSt)
+                err(0);
+              break;
+            }
+            if (resize)
+              cbuf(bt + 131072);
+            var end = bt + add;
+            if (bt < dt) {
+              var shift = dl - dt, dend = Math.min(dt, end);
+              if (shift + bt < 0)
+                err(3);
+              for (; bt < dend; ++bt)
+                buf[bt] = dict[shift + bt];
+            }
+            for (; bt < end; ++bt)
+              buf[bt] = buf[bt - dt];
+          }
+        }
+        st.l = lm, st.p = lpos, st.b = bt, st.f = final;
+        if (lm)
+          final = 1, st.m = lbt, st.d = dm, st.n = dbt;
+      } while (!final);
+      return bt != buf.length && noBuf ? slc(buf, 0, bt) : buf.subarray(0, bt);
+    };
+    wbits = function(d, p, v) {
+      v <<= p & 7;
+      var o = p / 8 | 0;
+      d[o] |= v;
+      d[o + 1] |= v >> 8;
+    };
+    wbits16 = function(d, p, v) {
+      v <<= p & 7;
+      var o = p / 8 | 0;
+      d[o] |= v;
+      d[o + 1] |= v >> 8;
+      d[o + 2] |= v >> 16;
+    };
+    hTree = function(d, mb) {
+      var t = [];
+      for (var i = 0; i < d.length; ++i) {
+        if (d[i])
+          t.push({ s: i, f: d[i] });
+      }
+      var s = t.length;
+      var t2 = t.slice();
+      if (!s)
+        return { t: et, l: 0 };
+      if (s == 1) {
+        var v = new u82(t[0].s + 1);
+        v[t[0].s] = 1;
+        return { t: v, l: 1 };
+      }
+      t.sort(function(a, b) {
+        return a.f - b.f;
+      });
+      t.push({ s: -1, f: 25001 });
+      var l = t[0], r = t[1], i0 = 0, i1 = 1, i2 = 2;
+      t[0] = { s: -1, f: l.f + r.f, l, r };
+      while (i1 != s - 1) {
+        l = t[t[i0].f < t[i2].f ? i0++ : i2++];
+        r = t[i0 != i1 && t[i0].f < t[i2].f ? i0++ : i2++];
+        t[i1++] = { s: -1, f: l.f + r.f, l, r };
+      }
+      var maxSym = t2[0].s;
+      for (var i = 1; i < s; ++i) {
+        if (t2[i].s > maxSym)
+          maxSym = t2[i].s;
+      }
+      var tr = new u16(maxSym + 1);
+      var mbt = ln(t[i1 - 1], tr, 0);
+      if (mbt > mb) {
+        var i = 0, dt = 0;
+        var lft = mbt - mb, cst = 1 << lft;
+        t2.sort(function(a, b) {
+          return tr[b.s] - tr[a.s] || a.f - b.f;
+        });
+        for (; i < s; ++i) {
+          var i2_1 = t2[i].s;
+          if (tr[i2_1] > mb) {
+            dt += cst - (1 << mbt - tr[i2_1]);
+            tr[i2_1] = mb;
+          } else
+            break;
+        }
+        dt >>= lft;
+        while (dt > 0) {
+          var i2_2 = t2[i].s;
+          if (tr[i2_2] < mb)
+            dt -= 1 << mb - tr[i2_2]++ - 1;
+          else
+            ++i;
+        }
+        for (; i >= 0 && dt; --i) {
+          var i2_3 = t2[i].s;
+          if (tr[i2_3] == mb) {
+            --tr[i2_3];
+            ++dt;
+          }
+        }
+        mbt = mb;
+      }
+      return { t: new u82(tr), l: mbt };
+    };
+    ln = function(n, l, d) {
+      return n.s == -1 ? Math.max(ln(n.l, l, d + 1), ln(n.r, l, d + 1)) : l[n.s] = d;
+    };
+    lc = function(c) {
+      var s = c.length;
+      while (s && !c[--s])
+        ;
+      var cl = new u16(++s);
+      var cli = 0, cln = c[0], cls = 1;
+      var w = function(v) {
+        cl[cli++] = v;
+      };
+      for (var i = 1; i <= s; ++i) {
+        if (c[i] == cln && i != s)
+          ++cls;
+        else {
+          if (!cln && cls > 2) {
+            for (; cls > 138; cls -= 138)
+              w(32754);
+            if (cls > 2) {
+              w(cls > 10 ? cls - 11 << 5 | 28690 : cls - 3 << 5 | 12305);
+              cls = 0;
+            }
+          } else if (cls > 3) {
+            w(cln), --cls;
+            for (; cls > 6; cls -= 6)
+              w(8304);
+            if (cls > 2)
+              w(cls - 3 << 5 | 8208), cls = 0;
+          }
+          while (cls--)
+            w(cln);
+          cls = 1;
+          cln = c[i];
+        }
+      }
+      return { c: cl.subarray(0, cli), n: s };
+    };
+    clen = function(cf, cl) {
+      var l = 0;
+      for (var i = 0; i < cl.length; ++i)
+        l += cf[i] * cl[i];
+      return l;
+    };
+    wfblk = function(out2, pos, dat) {
+      var s = dat.length;
+      var o = shft(pos + 2);
+      out2[o] = s & 255;
+      out2[o + 1] = s >> 8;
+      out2[o + 2] = out2[o] ^ 255;
+      out2[o + 3] = out2[o + 1] ^ 255;
+      for (var i = 0; i < s; ++i)
+        out2[o + i + 4] = dat[i];
+      return (o + 4 + s) * 8;
+    };
+    wblk = function(dat, out2, final, syms, lf, df, eb, li, bs, bl, p) {
+      wbits(out2, p++, final);
+      ++lf[256];
+      var _a2 = hTree(lf, 15), dlt = _a2.t, mlb = _a2.l;
+      var _b2 = hTree(df, 15), ddt = _b2.t, mdb = _b2.l;
+      var _c = lc(dlt), lclt = _c.c, nlc = _c.n;
+      var _d = lc(ddt), lcdt = _d.c, ndc = _d.n;
+      var lcfreq = new u16(19);
+      for (var i = 0; i < lclt.length; ++i)
+        ++lcfreq[lclt[i] & 31];
+      for (var i = 0; i < lcdt.length; ++i)
+        ++lcfreq[lcdt[i] & 31];
+      var _e = hTree(lcfreq, 7), lct = _e.t, mlcb = _e.l;
+      var nlcc = 19;
+      for (; nlcc > 4 && !lct[clim[nlcc - 1]]; --nlcc)
+        ;
+      var flen = bl + 5 << 3;
+      var ftlen = clen(lf, flt) + clen(df, fdt) + eb;
+      var dtlen = clen(lf, dlt) + clen(df, ddt) + eb + 14 + 3 * nlcc + clen(lcfreq, lct) + 2 * lcfreq[16] + 3 * lcfreq[17] + 7 * lcfreq[18];
+      if (bs >= 0 && flen <= ftlen && flen <= dtlen)
+        return wfblk(out2, p, dat.subarray(bs, bs + bl));
+      var lm, ll, dm, dl;
+      wbits(out2, p, 1 + (dtlen < ftlen)), p += 2;
+      if (dtlen < ftlen) {
+        lm = hMap(dlt, mlb, 0), ll = dlt, dm = hMap(ddt, mdb, 0), dl = ddt;
+        var llm = hMap(lct, mlcb, 0);
+        wbits(out2, p, nlc - 257);
+        wbits(out2, p + 5, ndc - 1);
+        wbits(out2, p + 10, nlcc - 4);
+        p += 14;
+        for (var i = 0; i < nlcc; ++i)
+          wbits(out2, p + 3 * i, lct[clim[i]]);
+        p += 3 * nlcc;
+        var lcts = [lclt, lcdt];
+        for (var it = 0; it < 2; ++it) {
+          var clct = lcts[it];
+          for (var i = 0; i < clct.length; ++i) {
+            var len = clct[i] & 31;
+            wbits(out2, p, llm[len]), p += lct[len];
+            if (len > 15)
+              wbits(out2, p, clct[i] >> 5 & 127), p += clct[i] >> 12;
+          }
+        }
+      } else {
+        lm = flm, ll = flt, dm = fdm, dl = fdt;
+      }
+      for (var i = 0; i < li; ++i) {
+        var sym = syms[i];
+        if (sym > 255) {
+          var len = sym >> 18 & 31;
+          wbits16(out2, p, lm[len + 257]), p += ll[len + 257];
+          if (len > 7)
+            wbits(out2, p, sym >> 23 & 31), p += fleb[len];
+          var dst = sym & 31;
+          wbits16(out2, p, dm[dst]), p += dl[dst];
+          if (dst > 3)
+            wbits16(out2, p, sym >> 5 & 8191), p += fdeb[dst];
+        } else {
+          wbits16(out2, p, lm[sym]), p += ll[sym];
+        }
+      }
+      wbits16(out2, p, lm[256]);
+      return p + ll[256];
+    };
+    deo = /* @__PURE__ */ new i32([65540, 131080, 131088, 131104, 262176, 1048704, 1048832, 2114560, 2117632]);
+    et = /* @__PURE__ */ new u82(0);
+    dflt = function(dat, lvl, plvl, pre, post, st) {
+      var s = st.z || dat.length;
+      var o = new u82(pre + s + 5 * (1 + Math.ceil(s / 7e3)) + post);
+      var w = o.subarray(pre, o.length - post);
+      var lst = st.l;
+      var pos = (st.r || 0) & 7;
+      if (lvl) {
+        if (pos)
+          w[0] = st.r >> 3;
+        var opt = deo[lvl - 1];
+        var n = opt >> 13, c = opt & 8191;
+        var msk_1 = (1 << plvl) - 1;
+        var prev = st.p || new u16(32768), head = st.h || new u16(msk_1 + 1);
+        var bs1_1 = Math.ceil(plvl / 3), bs2_1 = 2 * bs1_1;
+        var hsh = function(i2) {
+          return (dat[i2] ^ dat[i2 + 1] << bs1_1 ^ dat[i2 + 2] << bs2_1) & msk_1;
+        };
+        var syms = new i32(25e3);
+        var lf = new u16(288), df = new u16(32);
+        var lc_1 = 0, eb = 0, i = st.i || 0, li = 0, wi = st.w || 0, bs = 0;
+        for (; i + 2 < s; ++i) {
+          var hv = hsh(i);
+          var imod = i & 32767, pimod = head[hv];
+          prev[imod] = pimod;
+          head[hv] = imod;
+          if (wi <= i) {
+            var rem = s - i;
+            if ((lc_1 > 7e3 || li > 24576) && (rem > 423 || !lst)) {
+              pos = wblk(dat, w, 0, syms, lf, df, eb, li, bs, i - bs, pos);
+              li = lc_1 = eb = 0, bs = i;
+              for (var j = 0; j < 286; ++j)
+                lf[j] = 0;
+              for (var j = 0; j < 30; ++j)
+                df[j] = 0;
+            }
+            var l = 2, d = 0, ch_1 = c, dif = imod - pimod & 32767;
+            if (rem > 2 && hv == hsh(i - dif)) {
+              var maxn = Math.min(n, rem) - 1;
+              var maxd = Math.min(32767, i);
+              var ml = Math.min(258, rem);
+              while (dif <= maxd && --ch_1 && imod != pimod) {
+                if (dat[i + l] == dat[i + l - dif]) {
+                  var nl = 0;
+                  for (; nl < ml && dat[i + nl] == dat[i + nl - dif]; ++nl)
+                    ;
+                  if (nl > l) {
+                    l = nl, d = dif;
+                    if (nl > maxn)
+                      break;
+                    var mmd = Math.min(dif, nl - 2);
+                    var md = 0;
+                    for (var j = 0; j < mmd; ++j) {
+                      var ti = i - dif + j & 32767;
+                      var pti = prev[ti];
+                      var cd = ti - pti & 32767;
+                      if (cd > md)
+                        md = cd, pimod = ti;
+                    }
+                  }
+                }
+                imod = pimod, pimod = prev[imod];
+                dif += imod - pimod & 32767;
+              }
+            }
+            if (d) {
+              syms[li++] = 268435456 | revfl[l] << 18 | revfd[d];
+              var lin = revfl[l] & 31, din = revfd[d] & 31;
+              eb += fleb[lin] + fdeb[din];
+              ++lf[257 + lin];
+              ++df[din];
+              wi = i + l;
+              ++lc_1;
+            } else {
+              syms[li++] = dat[i];
+              ++lf[dat[i]];
+            }
+          }
+        }
+        for (i = Math.max(i, wi); i < s; ++i) {
+          syms[li++] = dat[i];
+          ++lf[dat[i]];
+        }
+        pos = wblk(dat, w, lst, syms, lf, df, eb, li, bs, i - bs, pos);
+        if (!lst) {
+          st.r = pos & 7 | w[pos / 8 | 0] << 3;
+          pos -= 7;
+          st.h = head, st.p = prev, st.i = i, st.w = wi;
+        }
+      } else {
+        for (var i = st.w || 0; i < s + lst; i += 65535) {
+          var e = i + 65535;
+          if (e >= s) {
+            w[pos / 8 | 0] = lst;
+            e = s;
+          }
+          pos = wfblk(w, pos + 1, dat.subarray(i, e));
+        }
+        st.i = s;
+      }
+      return slc(o, 0, pre + shft(pos) + post);
+    };
+    adler = function() {
+      var a = 1, b = 0;
+      return {
+        p: function(d) {
+          var n = a, m = b;
+          var l = d.length | 0;
+          for (var i = 0; i != l; ) {
+            var e = Math.min(i + 2655, l);
+            for (; i < e; ++i)
+              m += n += d[i];
+            n = (n & 65535) + 15 * (n >> 16), m = (m & 65535) + 15 * (m >> 16);
+          }
+          a = n, b = m;
+        },
+        d: function() {
+          a %= 65521, b %= 65521;
+          return (a & 255) << 24 | (a & 65280) << 8 | (b & 255) << 8 | b >> 8;
+        }
+      };
+    };
+    dopt = function(dat, opt, pre, post, st) {
+      if (!st) {
+        st = { l: 1 };
+        if (opt.dictionary) {
+          var dict = opt.dictionary.subarray(-32768);
+          var newDat = new u82(dict.length + dat.length);
+          newDat.set(dict);
+          newDat.set(dat, dict.length);
+          dat = newDat;
+          st.w = dict.length;
+        }
+      }
+      return dflt(dat, opt.level == null ? 6 : opt.level, opt.mem == null ? st.l ? Math.ceil(Math.max(8, Math.min(13, Math.log(dat.length))) * 1.5) : 20 : 12 + opt.mem, pre, post, st);
+    };
+    wbytes = function(d, b, v) {
+      for (; v; ++b)
+        d[b] = v, v >>>= 8;
+    };
+    zlh = function(c, o) {
+      var lv = o.level, fl2 = lv == 0 ? 0 : lv < 6 ? 1 : lv == 9 ? 3 : 2;
+      c[0] = 120, c[1] = fl2 << 6 | (o.dictionary && 32);
+      c[1] |= 31 - (c[0] << 8 | c[1]) % 31;
+      if (o.dictionary) {
+        var h = adler();
+        h.p(o.dictionary);
+        wbytes(c, 2, h.d());
+      }
+    };
+    zls = function(d, dict) {
+      if ((d[0] & 15) != 8 || d[0] >> 4 > 7 || (d[0] << 8 | d[1]) % 31)
+        err(6, "invalid zlib data");
+      if ((d[1] >> 5 & 1) == +!dict)
+        err(6, "invalid zlib data: " + (d[1] & 32 ? "need" : "unexpected") + " dictionary");
+      return (d[1] >> 3 & 4) + 2;
+    };
+    td = typeof TextDecoder != "undefined" && /* @__PURE__ */ new TextDecoder();
+    tds = 0;
+    try {
+      td.decode(et, { stream: true });
+      tds = 1;
+    } catch (e) {
+    }
+  }
+});
+
+// local/shims/zlib.js
+var zlib_exports = {};
+__export(zlib_exports, {
+  default: () => zlib_default,
+  deflateRawSync: () => deflateRawSync,
+  deflateSync: () => deflateSync2,
+  inflateRawSync: () => inflateRawSync,
+  inflateSync: () => inflateSync2
+});
+function inflateRawSync(buf) {
+  return import_buffer.Buffer.from(inflateSync(new Uint8Array(buf)));
+}
+function deflateRawSync(buf) {
+  return import_buffer.Buffer.from(deflateSync(new Uint8Array(buf)));
+}
+function deflateSync2(buf) {
+  return import_buffer.Buffer.from(zlibSync(new Uint8Array(buf)));
+}
+function inflateSync2(buf) {
+  return import_buffer.Buffer.from(unzlibSync(new Uint8Array(buf)));
+}
+var zlib_default;
+var init_zlib = __esm({
+  "local/shims/zlib.js"() {
+    init_globals_inject();
+    init_browser();
+    zlib_default = { inflateRawSync, deflateRawSync, deflateSync: deflateSync2, inflateSync: inflateSync2 };
+  }
+});
+
+// server/png.js
+var require_png = __commonJS({
+  "server/png.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var zlib = (init_zlib(), __toCommonJS(zlib_exports));
+    var CRC = (() => {
+      const t = new Int32Array(256);
+      for (let n = 0; n < 256; n++) {
+        let c = n;
+        for (let k = 0; k < 8; k++) c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
+        t[n] = c;
+      }
+      return t;
+    })();
+    function crc32(buf) {
+      let c = -1;
+      for (let i = 0; i < buf.length; i++) c = CRC[(c ^ buf[i]) & 255] ^ c >>> 8;
+      return (c ^ -1) >>> 0;
+    }
+    function chunk(type, data) {
+      const len = import_buffer.Buffer.alloc(4);
+      len.writeUInt32BE(data.length);
+      const td2 = import_buffer.Buffer.concat([import_buffer.Buffer.from(type, "ascii"), data]);
+      const crc = import_buffer.Buffer.alloc(4);
+      crc.writeUInt32BE(crc32(td2));
+      return import_buffer.Buffer.concat([len, td2, crc]);
+    }
+    function encode(w, h, rgb) {
+      const raw = import_buffer.Buffer.alloc((w * 3 + 1) * h);
+      for (let y = 0; y < h; y++) {
+        raw[y * (w * 3 + 1)] = 0;
+        rgb.copy ? rgb.copy(raw, y * (w * 3 + 1) + 1, y * w * 3, (y + 1) * w * 3) : raw.set(rgb.subarray(y * w * 3, (y + 1) * w * 3), y * (w * 3 + 1) + 1);
+      }
+      const ihdr = import_buffer.Buffer.alloc(13);
+      ihdr.writeUInt32BE(w, 0);
+      ihdr.writeUInt32BE(h, 4);
+      ihdr[8] = 8;
+      ihdr[9] = 2;
+      ihdr[10] = 0;
+      ihdr[11] = 0;
+      ihdr[12] = 0;
+      return import_buffer.Buffer.concat([import_buffer.Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", ihdr), chunk("IDAT", zlib.deflateSync(raw)), chunk("IEND", import_buffer.Buffer.alloc(0))]);
+    }
+    function placeholder(w, h, seed = 1, palette = 0) {
+      const P2 = [[[58, 123, 213], [232, 240, 250], [72, 96, 120]], [[38, 140, 120], [226, 244, 236], [70, 110, 95]], [[196, 120, 60], [252, 238, 224], [120, 88, 64]], [[120, 84, 190], [240, 234, 250], [88, 72, 120]], [[40, 100, 160], [225, 235, 245], [90, 104, 120]]][palette % 5];
+      const [sky, light, wall] = P2;
+      const px = import_buffer.Buffer.alloc(w * h * 3);
+      let s = seed >>> 0;
+      const rnd = () => {
+        s = s * 1664525 + 1013904223 >>> 0;
+        return s / 4294967296;
+      };
+      const horizon = Math.round(h * 0.68);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 3;
+        let c;
+        if (y < horizon) {
+          const t = y / horizon;
+          c = [sky[0] + (light[0] - sky[0]) * t, sky[1] + (light[1] - sky[1]) * t, sky[2] + (light[2] - sky[2]) * t];
+        } else {
+          const t = (y - horizon) / (h - horizon);
+          c = [110 + 40 * t, 150 + 30 * t, 90 + 30 * t];
+        }
+        px[i] = c[0];
+        px[i + 1] = c[1];
+        px[i + 2] = c[2];
+      }
+      const n = 2 + Math.floor(rnd() * 3);
+      let x0 = Math.round(w * 0.08);
+      for (let b = 0; b < n && x0 < w * 0.9; b++) {
+        const bw = Math.round(w * (0.15 + rnd() * 0.22)), bh = Math.round(h * (0.25 + rnd() * 0.35));
+        const top = horizon - bh;
+        for (let y = top; y < horizon + Math.round(h * 0.03); y++) for (let x = x0; x < Math.min(w, x0 + bw); x++) {
+          const i = (y * w + x) * 3;
+          px[i] = wall[0];
+          px[i + 1] = wall[1];
+          px[i + 2] = wall[2];
+        }
+        for (let wy = top + 10; wy < horizon - 12; wy += 18) for (let wx = x0 + 8; wx < x0 + bw - 12; wx += 16) {
+          const lit = rnd() > 0.35;
+          for (let y = wy; y < wy + 9; y++) for (let x = wx; x < wx + 8; x++) {
+            if (x >= w) continue;
+            const i = (y * w + x) * 3;
+            px[i] = lit ? 250 : 200;
+            px[i + 1] = lit ? 236 : 215;
+            px[i + 2] = lit ? 160 : 230;
+          }
+        }
+        x0 += bw + Math.round(w * 0.03);
+      }
+      const tx = Math.round(w * 0.88), ty = horizon;
+      for (let y = ty - 28; y < ty; y++) for (let x = tx - 14; x < tx + 14; x++) {
+        if ((x - tx) ** 2 + (y - (ty - 20)) ** 2 < 14 * 14) {
+          const i = (y * w + x) * 3;
+          px[i] = 60;
+          px[i + 1] = 130;
+          px[i + 2] = 70;
+        }
+      }
+      for (let y = ty - 6; y < ty + 8; y++) for (let x = tx - 2; x < tx + 2; x++) {
+        const i = (y * w + x) * 3;
+        px[i] = 90;
+        px[i + 1] = 65;
+        px[i + 2] = 40;
+      }
+      return encode(w, h, px);
+    }
+    module.exports = { encode, placeholder };
   }
 });
 
@@ -6965,8 +7851,8 @@ var require_demo = __commonJS({
     var { encrypt: encrypt3, blindIndex: blindIndex2, uuid: uuid2 } = require_crypto();
     var audit3 = require_audit();
     var DEMO_PREFIX = "DEMO-";
-    var TABLES = ["expenditures", "disclosures", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "assignments", "clients", "budget_lines", "funding_sources", "resources"];
-    var SYNCED = /* @__PURE__ */ new Set(["expenditures", "disclosures", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "assignments", "clients", "budget_lines", "funding_sources", "resources"]);
+    var TABLES = ["expenditures", "disclosures", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "assignments", "clients", "budget_lines", "funding_sources", "resource_photos", "resources"];
+    var SYNCED = /* @__PURE__ */ new Set(["expenditures", "disclosures", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "assignments", "clients", "budget_lines", "funding_sources", "resource_photos", "resources"]);
     function rng(seed2) {
       let a = seed2 >>> 0;
       return () => {
@@ -7002,21 +7888,277 @@ var require_demo = __commonJS({
       ["Andre", "Jackson", "Dre", "he/him", "1990-05-14", "methamphetamine", "", "smoked", "high", "active", "none", null, 1, "jail", "pending", "2.1", "jail", 1, 0, 0, "contemplation", "Release planning; Medicaid; job program"]
     ];
     var RESOURCES = [
-      ["Riverside Recovery Center", "residential", "555-0200", "buprenorphine, naltrexone", 1, 1, "Mon\u2013Fri 8\u20135; intake line 24/7", "28-day residential; medically supervised. Adults 18+.", "English, Spanish"],
-      ["County Opioid Treatment Program", "mat_otp", "555-0201", "methadone, buprenorphine", 1, 1, "Dosing 5:30am\u201311am daily", "Methadone and buprenorphine; same-day intake Tue/Thu.", "English, Spanish"],
-      ["Hope Street Detox", "detox_withdrawal_mgmt", "555-0202", "", 1, 1, "24/7", "Social and medical detox; call for bed availability.", "English"],
-      ["Bridge Housing Collaborative", "sober_living", "555-0203", "", 1, 0, "Mon\u2013Fri 9\u20134", "Recovery housing; 30 days sober required.", "English"],
-      ["Downtown Shelter", "shelter", "555-0204", "", 0, 1, "Check-in 6pm", "Emergency shelter; low-barrier; pets allowed.", "English, Spanish"],
-      ["Community Harm Reduction Coalition", "syringe_services", "555-0205", "", 0, 1, "Tue/Thu 1\u20135; mobile van Sat", "Syringe services, naloxone, fentanyl test strips, wound care.", "English, Spanish"],
-      ["Valley Behavioral Health", "mental_health", "555-0206", "", 1, 0, "Mon\u2013Fri 8\u20136", "Outpatient mental health; co-occurring track.", "English"],
-      ["Second Chance Legal Aid", "legal", "555-0207", "", 0, 1, "Wed 10\u20132 walk-in", "Expungement, warrants, benefits appeals.", "English"],
-      ["Family Health Clinic (OBOT)", "mat_obot", "555-0208", "buprenorphine", 1, 1, "Mon\u2013Sat 8\u20138", "Office-based buprenorphine; telehealth follow-ups.", "English, Spanish, Vietnamese"],
-      ["Recovery Rides", "transportation", "555-0209", "", 0, 1, "Book 24h ahead", "Free rides to treatment and court.", "English"],
-      ["Northside IOP", "intensive_outpatient", "555-0210", "", 1, 0, "Evenings Mon/Wed/Thu", "Intensive outpatient; evening groups for working adults.", "English"],
-      ["County Crisis Line", "crisis_line", "988", "", 1, 1, "24/7", "Mobile crisis team dispatch.", "English, Spanish"],
-      ["Hands & Hearts Food Pantry", "food", "555-0212", "", 0, 1, "Sat 9\u201312", "Groceries and hot meals; no ID required.", "English"],
-      ["WorkFirst Employment Services", "employment", "555-0213", "", 0, 1, "Mon\u2013Fri 9\u20135", "Job readiness, r\xE9sum\xE9 help, fair-chance employers.", "English, Spanish"],
-      ["Recovery Caf\xE9", "recovery_community", "555-0214", "", 0, 1, "Daily 10\u20136", "Peer-led recovery community; meetings and meals.", "English"]
+      // name, category, phone, mat, medicaid, uninsured, hours, services, languages, summary, service_tags, levels_of_care, populations, intake_process, cost_notes, photos
+      [
+        "Riverside Recovery Center",
+        "residential",
+        "555-0200",
+        "buprenorphine, naltrexone",
+        1,
+        1,
+        "Mon\u2013Fri 8\u20135; intake line 24/7",
+        "28-day residential; medically supervised. Adults 18+.",
+        "English, Spanish",
+        "A 42-bed residential program on the river with medical staff on site around the clock. Clients start with a medical assessment and, if needed, medically supervised withdrawal, then move into a structured 28-day program of group and individual counseling, MAT (buprenorphine or naltrexone), family sessions and discharge planning. Most clients step down to Northside IOP or Bridge Housing.",
+        "residential,detox,mat_buprenorphine,mat_naltrexone,individual_counseling,group_counseling,family_program,co_occurring,aftercare,spanish_speaking",
+        "3.5, 3.7",
+        "adults,women,men,justice_involved",
+        "Call the intake line any time; a nurse screens by phone in about 20 minutes. Bring ID and insurance card if you have them; neither is required to be admitted. Beds are usually available within 1\u20133 days.",
+        "Medicaid and most commercial plans; county-funded beds for uninsured residents.",
+        3
+      ],
+      [
+        "County Opioid Treatment Program",
+        "mat_otp",
+        "555-0201",
+        "methadone, buprenorphine",
+        1,
+        1,
+        "Dosing 5:30am\u201311am daily",
+        "Methadone and buprenorphine; same-day intake Tue/Thu.",
+        "English, Spanish",
+        "The county's licensed opioid treatment program. Daily observed methadone or buprenorphine dosing with take-home doses earned over time, plus counseling, peer support and on-site naloxone. Same-day intake on Tuesdays and Thursdays for anyone who arrives before 9am.",
+        "mat_methadone,mat_buprenorphine,medication_management,individual_counseling,group_counseling,peer_support,naloxone,same_day_intake,walk_in,spanish_speaking",
+        "OTP",
+        "adults,pregnant_parenting,justice_involved",
+        "Walk in Tue/Thu before 9am with a photo ID if possible. A navigator warm handoff speeds things up: call the intake nurse the day before.",
+        "Medicaid covers dosing in full; sliding scale for uninsured (about $15/week).",
+        2
+      ],
+      [
+        "Hope Street Detox",
+        "detox_withdrawal_mgmt",
+        "555-0202",
+        "",
+        1,
+        1,
+        "24/7",
+        "Social and medical detox; call for bed availability.",
+        "English",
+        "Short-stay (3\u20137 day) withdrawal management with nursing 24/7 and a physician on call. Comfort medications for opioid, alcohol and benzodiazepine withdrawal. Staff connect every client to a next step before discharge.",
+        "detox,medical_care,naloxone,crisis_24_7,aftercare",
+        "3.2, 3.7",
+        "adults",
+        "Call for bed availability; if a bed is open the client can come the same day. Ambulance or navigator transport is fine.",
+        "No cost to county residents.",
+        2
+      ],
+      [
+        "Bridge Housing Collaborative",
+        "sober_living",
+        "555-0203",
+        "",
+        1,
+        0,
+        "Mon\u2013Fri 9\u20134",
+        "Recovery housing; 30 days sober required.",
+        "English",
+        "Shared recovery homes (2\u20133 people per room) with house managers, weekly house meetings and required recovery-meeting attendance. Residents may stay up to 12 months while they work, study or attend treatment.",
+        "sober_living,housing,peer_support,employment,aftercare",
+        "",
+        "adults,men,women",
+        "Application plus a short interview; 30 days of sobriety and a referral from a treatment provider or navigator are required.",
+        "Rent $450/month; first month can be covered by the housing assistance line.",
+        2
+      ],
+      [
+        "Downtown Shelter",
+        "shelter",
+        "555-0204",
+        "",
+        0,
+        1,
+        "Check-in 6pm",
+        "Emergency shelter; low-barrier; pets allowed.",
+        "English, Spanish",
+        "Low-barrier overnight shelter with 120 beds, showers, lockers and a hot dinner. Sobriety is not required. Case managers on site help with IDs, benefits and housing applications.",
+        "housing,case_management,walk_in,harm_reduction,naloxone",
+        "",
+        "adults,unhoused,veterans",
+        "Walk in at 6pm; no referral needed.",
+        "Free.",
+        1
+      ],
+      [
+        "Community Harm Reduction Coalition",
+        "syringe_services",
+        "555-0205",
+        "",
+        0,
+        1,
+        "Tue/Thu 1\u20135; mobile van Sat",
+        "Syringe services, naloxone, fentanyl test strips, wound care.",
+        "English, Spanish",
+        "Peer-run harm reduction center and mobile van. Free naloxone, fentanyl and xylazine test strips, safer-use supplies, wound care by a nurse, HIV/HCV testing and a warm, no-judgment place to sit down.",
+        "harm_reduction,naloxone,syringe_services,medical_care,peer_support,walk_in,spanish_speaking",
+        "",
+        "adults,unhoused,lgbtq",
+        "No referral or ID needed. The van schedule is posted on their website weekly.",
+        "Free.",
+        2
+      ],
+      [
+        "Valley Behavioral Health",
+        "mental_health",
+        "555-0206",
+        "",
+        1,
+        0,
+        "Mon\u2013Fri 8\u20136",
+        "Outpatient mental health; co-occurring track.",
+        "English",
+        "Community mental health center with psychiatry, therapy and a co-occurring disorders track for people managing both substance use and mental health conditions. Telehealth available.",
+        "mental_health,co_occurring,medication_management,individual_counseling,group_counseling,telehealth,trauma_informed",
+        "1.0",
+        "adults,adolescents,families",
+        "Phone intake, then an assessment within two weeks. Navigators can request an expedited slot for clients leaving detox or jail.",
+        "Medicaid and commercial insurance; county contract covers uninsured residents.",
+        1
+      ],
+      [
+        "Second Chance Legal Aid",
+        "legal",
+        "555-0207",
+        "",
+        0,
+        1,
+        "Wed 10\u20132 walk-in",
+        "Expungement, warrants, benefits appeals.",
+        "English",
+        "Free civil legal help for people in recovery: expungement, clearing warrants, driver's license reinstatement, benefits appeals and landlord issues.",
+        "legal_help,walk_in",
+        "",
+        "adults,justice_involved",
+        "Walk in Wednesdays or call for an appointment.",
+        "Free.",
+        1
+      ],
+      [
+        "Family Health Clinic (OBOT)",
+        "mat_obot",
+        "555-0208",
+        "buprenorphine",
+        1,
+        1,
+        "Mon\u2013Sat 8\u20138",
+        "Office-based buprenorphine; telehealth follow-ups.",
+        "English, Spanish, Vietnamese",
+        "Primary care clinic that prescribes buprenorphine as part of regular medical care, so clients can get their MAT, blood pressure and prenatal care in one place. Telehealth follow-ups after the first visit.",
+        "mat_buprenorphine,medical_care,telehealth,medication_management,spanish_speaking",
+        "1.0",
+        "adults,pregnant_parenting,families",
+        "Call for a same-week new-patient visit; bring a medication list. A navigator can attend the first visit.",
+        "Medicaid, Medicare and commercial plans; sliding scale for uninsured.",
+        2
+      ],
+      [
+        "Recovery Rides",
+        "transportation",
+        "555-0209",
+        "",
+        0,
+        1,
+        "Book 24h ahead",
+        "Free rides to treatment and court.",
+        "English",
+        "Volunteer drivers give free rides to treatment appointments, court dates, dosing and recovery meetings within the county.",
+        "transportation",
+        "",
+        "adults",
+        "Book by phone or online at least 24 hours ahead; same-day rides when a driver is free.",
+        "Free.",
+        1
+      ],
+      [
+        "Northside IOP",
+        "intensive_outpatient",
+        "555-0210",
+        "",
+        1,
+        0,
+        "Evenings Mon/Wed/Thu",
+        "Intensive outpatient; evening groups for working adults.",
+        "English",
+        "Nine hours a week of evening group therapy plus a weekly individual session, designed for people who work or care for children during the day. Eight to twelve weeks, followed by an aftercare group.",
+        "intensive_outpatient,group_counseling,individual_counseling,aftercare,family_program",
+        "2.1",
+        "adults,men,women",
+        "Phone screening, then an assessment within a week. Referrals from residential programs are prioritised.",
+        "Medicaid and commercial insurance.",
+        2
+      ],
+      [
+        "County Crisis Line",
+        "crisis_line",
+        "988",
+        "",
+        1,
+        1,
+        "24/7",
+        "Mobile crisis team dispatch.",
+        "English, Spanish",
+        "Call or text 988 any time. Counselors can dispatch the mobile crisis team, which comes to the person instead of sending police, and can arrange a same-day crisis bed.",
+        "crisis_24_7,mental_health,co_occurring,spanish_speaking",
+        "",
+        "adults,adolescents",
+        "Call or text 988.",
+        "Free.",
+        0
+      ],
+      [
+        "Hands & Hearts Food Pantry",
+        "food",
+        "555-0212",
+        "",
+        0,
+        1,
+        "Sat 9\u201312",
+        "Groceries and hot meals; no ID required.",
+        "English",
+        "Weekly groceries, hot meals on Saturdays and hygiene supplies. No ID or paperwork.",
+        "walk_in",
+        "",
+        "adults,families,unhoused",
+        "Walk in Saturday mornings.",
+        "Free.",
+        1
+      ],
+      [
+        "WorkFirst Employment Services",
+        "employment",
+        "555-0213",
+        "",
+        0,
+        1,
+        "Mon\u2013Fri 9\u20135",
+        "Job readiness, r\xE9sum\xE9 help, fair-chance employers.",
+        "English, Spanish",
+        "Job-readiness classes, r\xE9sum\xE9 and interview help and a network of fair-chance employers who hire people with records. Paid work-experience placements for people in recovery.",
+        "employment,peer_support,spanish_speaking",
+        "",
+        "adults,justice_involved",
+        "Orientation every Monday at 9am; no referral needed.",
+        "Free.",
+        1
+      ],
+      [
+        "Recovery Caf\xE9",
+        "recovery_community",
+        "555-0214",
+        "",
+        0,
+        1,
+        "Daily 10\u20136",
+        "Peer-led recovery community; meetings and meals.",
+        "English",
+        "A membership-based recovery community: meals, meetings, art and music groups, and peer recovery coaches. Members commit to 24 hours of sobriety before each visit and to a weekly recovery circle.",
+        "peer_support,walk_in,aftercare,employment",
+        "",
+        "adults,lgbtq,unhoused",
+        "Drop in for a tour any day; membership starts after a short orientation.",
+        "Free; members volunteer a few hours a month.",
+        2
+      ]
     ];
     function seed({ actor, workers, clinician = null, supervisor, seedValue = 42 }) {
       if (status().loaded) throw new Error("Sample data is already loaded");
@@ -7036,9 +8178,16 @@ var require_demo = __commonJS({
       const day = (off) => d(off).slice(0, 10);
       const nowIso = db3.now();
       db3.transaction(() => {
-        const rids = RESOURCES.map(([name, cat, phone, mat, med, unins, hours, services, langs]) => {
+        const png = require_png();
+        const rids = RESOURCES.map(([name, cat, phone, mat, med, unins, hours, services, langs, summary, tags, loc, pops, intake, cost, nPhotos], ri) => {
           const id = track("resources", uuid2());
-          db3.run(`INSERT INTO resources(id,name,category,phone,mat_offered,accepts_medicaid,accepts_uninsured,city,hours,services,languages,last_verified_at,notes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, name, cat, phone, mat || null, med, unins, "Springfield", hours, services, langs, day(Math.floor(rand() * 90)), "Sample resource (fictional)");
+          db3.run(`INSERT INTO resources(id,name,category,phone,mat_offered,accepts_medicaid,accepts_uninsured,address,city,zip,hours,services,languages,summary,service_tags,levels_of_care,populations,intake_process,cost_notes,website,last_verified_at,notes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, name, cat, phone, mat || null, med, unins, `${200 + ri * 40} Sample Ave`, "Springfield", "00000", hours, services, langs, summary, tags, loc || null, pops || null, intake, cost, `https://example.org/${name.toLowerCase().replace(/[^a-z]+/g, "-")}`, day(Math.floor(rand() * 90)), "Sample resource (fictional)");
+          const captions = ["Main entrance", "Group room", "Reception and waiting area"];
+          for (let k = 0; k < (nPhotos || 0); k++) {
+            const full = png.placeholder(640, 400, ri * 7 + k + 1, ri + k);
+            const thumb = png.placeholder(240, 150, ri * 7 + k + 1, ri + k);
+            db3.run(`INSERT INTO resource_photos(id,resource_id,caption,content_type,bytes,width,height,data_b64,thumb_b64,sort_order,uploaded_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, track("resource_photos", uuid2()), id, captions[k] + " (sample picture)", "image/png", full.length, 640, 400, full.toString("base64"), thumb.toString("base64"), k, actor);
+          }
           return id;
         });
         const y = (/* @__PURE__ */ new Date()).getFullYear();
@@ -8493,711 +9642,6 @@ var require_consents = __commonJS({
   }
 });
 
-// node_modules/fflate/esm/browser.js
-function deflateSync(data, opts) {
-  return dopt(data, opts || {}, 0, 0);
-}
-function inflateSync(data, opts) {
-  return inflt(data, { i: 2 }, opts && opts.out, opts && opts.dictionary);
-}
-var u82, u16, i32, fleb, fdeb, clim, freb, _a, fl, revfl, _b, fd, revfd, rev, x, i, hMap, flt, i, i, i, i, fdt, i, flm, flrm, fdm, fdrm, max, bits, bits16, shft, slc, ec, err, inflt, wbits, wbits16, hTree, ln, lc, clen, wfblk, wblk, deo, et, dflt, dopt, td, tds;
-var init_browser = __esm({
-  "node_modules/fflate/esm/browser.js"() {
-    init_globals_inject();
-    u82 = Uint8Array;
-    u16 = Uint16Array;
-    i32 = Int32Array;
-    fleb = new u82([
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      1,
-      1,
-      1,
-      1,
-      2,
-      2,
-      2,
-      2,
-      3,
-      3,
-      3,
-      3,
-      4,
-      4,
-      4,
-      4,
-      5,
-      5,
-      5,
-      5,
-      0,
-      /* unused */
-      0,
-      0,
-      /* impossible */
-      0
-    ]);
-    fdeb = new u82([
-      0,
-      0,
-      0,
-      0,
-      1,
-      1,
-      2,
-      2,
-      3,
-      3,
-      4,
-      4,
-      5,
-      5,
-      6,
-      6,
-      7,
-      7,
-      8,
-      8,
-      9,
-      9,
-      10,
-      10,
-      11,
-      11,
-      12,
-      12,
-      13,
-      13,
-      /* unused */
-      0,
-      0
-    ]);
-    clim = new u82([16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]);
-    freb = function(eb, start2) {
-      var b = new u16(31);
-      for (var i = 0; i < 31; ++i) {
-        b[i] = start2 += 1 << eb[i - 1];
-      }
-      var r = new i32(b[30]);
-      for (var i = 1; i < 30; ++i) {
-        for (var j = b[i]; j < b[i + 1]; ++j) {
-          r[j] = j - b[i] << 5 | i;
-        }
-      }
-      return { b, r };
-    };
-    _a = freb(fleb, 2);
-    fl = _a.b;
-    revfl = _a.r;
-    fl[28] = 258, revfl[258] = 28;
-    _b = freb(fdeb, 0);
-    fd = _b.b;
-    revfd = _b.r;
-    rev = new u16(32768);
-    for (i = 0; i < 32768; ++i) {
-      x = (i & 43690) >> 1 | (i & 21845) << 1;
-      x = (x & 52428) >> 2 | (x & 13107) << 2;
-      x = (x & 61680) >> 4 | (x & 3855) << 4;
-      rev[i] = ((x & 65280) >> 8 | (x & 255) << 8) >> 1;
-    }
-    hMap = function(cd, mb, r) {
-      var s = cd.length;
-      var i = 0;
-      var l = new u16(mb);
-      for (; i < s; ++i) {
-        if (cd[i])
-          ++l[cd[i] - 1];
-      }
-      var le = new u16(mb);
-      for (i = 1; i < mb; ++i) {
-        le[i] = le[i - 1] + l[i - 1] << 1;
-      }
-      var co;
-      if (r) {
-        co = new u16(1 << mb);
-        var rvb = 15 - mb;
-        for (i = 0; i < s; ++i) {
-          if (cd[i]) {
-            var sv = i << 4 | cd[i];
-            var r_1 = mb - cd[i];
-            var v = le[cd[i] - 1]++ << r_1;
-            for (var m = v | (1 << r_1) - 1; v <= m; ++v) {
-              co[rev[v] >> rvb] = sv;
-            }
-          }
-        }
-      } else {
-        co = new u16(s);
-        for (i = 0; i < s; ++i) {
-          if (cd[i]) {
-            co[i] = rev[le[cd[i] - 1]++] >> 15 - cd[i];
-          }
-        }
-      }
-      return co;
-    };
-    flt = new u82(288);
-    for (i = 0; i < 144; ++i)
-      flt[i] = 8;
-    for (i = 144; i < 256; ++i)
-      flt[i] = 9;
-    for (i = 256; i < 280; ++i)
-      flt[i] = 7;
-    for (i = 280; i < 288; ++i)
-      flt[i] = 8;
-    fdt = new u82(32);
-    for (i = 0; i < 32; ++i)
-      fdt[i] = 5;
-    flm = /* @__PURE__ */ hMap(flt, 9, 0);
-    flrm = /* @__PURE__ */ hMap(flt, 9, 1);
-    fdm = /* @__PURE__ */ hMap(fdt, 5, 0);
-    fdrm = /* @__PURE__ */ hMap(fdt, 5, 1);
-    max = function(a) {
-      var m = a[0];
-      for (var i = 1; i < a.length; ++i) {
-        if (a[i] > m)
-          m = a[i];
-      }
-      return m;
-    };
-    bits = function(d, p, m) {
-      var o = p / 8 | 0;
-      return (d[o] | d[o + 1] << 8) >> (p & 7) & m;
-    };
-    bits16 = function(d, p) {
-      var o = p / 8 | 0;
-      return (d[o] | d[o + 1] << 8 | d[o + 2] << 16) >> (p & 7);
-    };
-    shft = function(p) {
-      return (p + 7) / 8 | 0;
-    };
-    slc = function(v, s, e) {
-      if (s == null || s < 0)
-        s = 0;
-      if (e == null || e > v.length)
-        e = v.length;
-      return new u82(v.subarray(s, e));
-    };
-    ec = [
-      "unexpected EOF",
-      "invalid block type",
-      "invalid length/literal",
-      "invalid distance",
-      "stream finished",
-      "no stream handler",
-      ,
-      "no callback",
-      "invalid UTF-8 data",
-      "extra field too long",
-      "date not in range 1980-2099",
-      "filename too long",
-      "stream finishing",
-      "invalid zip data"
-      // determined by unknown compression method
-    ];
-    err = function(ind, msg, nt) {
-      var e = new Error(msg || ec[ind]);
-      e.code = ind;
-      if (Error.captureStackTrace)
-        Error.captureStackTrace(e, err);
-      if (!nt)
-        throw e;
-      return e;
-    };
-    inflt = function(dat, st, buf, dict) {
-      var sl = dat.length, dl = dict ? dict.length : 0;
-      if (!sl || st.f && !st.l)
-        return buf || new u82(0);
-      var noBuf = !buf;
-      var resize = noBuf || st.i != 2;
-      var noSt = st.i;
-      if (noBuf)
-        buf = new u82(sl * 3);
-      var cbuf = function(l2) {
-        var bl = buf.length;
-        if (l2 > bl) {
-          var nbuf = new u82(Math.max(bl * 2, l2));
-          nbuf.set(buf);
-          buf = nbuf;
-        }
-      };
-      var final = st.f || 0, pos = st.p || 0, bt = st.b || 0, lm = st.l, dm = st.d, lbt = st.m, dbt = st.n;
-      var tbts = sl * 8;
-      do {
-        if (!lm) {
-          final = bits(dat, pos, 1);
-          var type = bits(dat, pos + 1, 3);
-          pos += 3;
-          if (!type) {
-            var s = shft(pos) + 4, l = dat[s - 4] | dat[s - 3] << 8, t = s + l;
-            if (t > sl) {
-              if (noSt)
-                err(0);
-              break;
-            }
-            if (resize)
-              cbuf(bt + l);
-            buf.set(dat.subarray(s, t), bt);
-            st.b = bt += l, st.p = pos = t * 8, st.f = final;
-            continue;
-          } else if (type == 1)
-            lm = flrm, dm = fdrm, lbt = 9, dbt = 5;
-          else if (type == 2) {
-            var hLit = bits(dat, pos, 31) + 257, hcLen = bits(dat, pos + 10, 15) + 4;
-            var tl = hLit + bits(dat, pos + 5, 31) + 1;
-            pos += 14;
-            var ldt = new u82(tl);
-            var clt = new u82(19);
-            for (var i = 0; i < hcLen; ++i) {
-              clt[clim[i]] = bits(dat, pos + i * 3, 7);
-            }
-            pos += hcLen * 3;
-            var clb = max(clt), clbmsk = (1 << clb) - 1;
-            var clm = hMap(clt, clb, 1);
-            for (var i = 0; i < tl; ) {
-              var r = clm[bits(dat, pos, clbmsk)];
-              pos += r & 15;
-              var s = r >> 4;
-              if (s < 16) {
-                ldt[i++] = s;
-              } else {
-                var c = 0, n = 0;
-                if (s == 16)
-                  n = 3 + bits(dat, pos, 3), pos += 2, c = ldt[i - 1];
-                else if (s == 17)
-                  n = 3 + bits(dat, pos, 7), pos += 3;
-                else if (s == 18)
-                  n = 11 + bits(dat, pos, 127), pos += 7;
-                while (n--)
-                  ldt[i++] = c;
-              }
-            }
-            var lt = ldt.subarray(0, hLit), dt = ldt.subarray(hLit);
-            lbt = max(lt);
-            dbt = max(dt);
-            lm = hMap(lt, lbt, 1);
-            dm = hMap(dt, dbt, 1);
-          } else
-            err(1);
-          if (pos > tbts) {
-            if (noSt)
-              err(0);
-            break;
-          }
-        }
-        if (resize)
-          cbuf(bt + 131072);
-        var lms = (1 << lbt) - 1, dms = (1 << dbt) - 1;
-        var lpos = pos;
-        for (; ; lpos = pos) {
-          var c = lm[bits16(dat, pos) & lms], sym = c >> 4;
-          pos += c & 15;
-          if (pos > tbts) {
-            if (noSt)
-              err(0);
-            break;
-          }
-          if (!c)
-            err(2);
-          if (sym < 256)
-            buf[bt++] = sym;
-          else if (sym == 256) {
-            lpos = pos, lm = null;
-            break;
-          } else {
-            var add = sym - 254;
-            if (sym > 264) {
-              var i = sym - 257, b = fleb[i];
-              add = bits(dat, pos, (1 << b) - 1) + fl[i];
-              pos += b;
-            }
-            var d = dm[bits16(dat, pos) & dms], dsym = d >> 4;
-            if (!d)
-              err(3);
-            pos += d & 15;
-            var dt = fd[dsym];
-            if (dsym > 3) {
-              var b = fdeb[dsym];
-              dt += bits16(dat, pos) & (1 << b) - 1, pos += b;
-            }
-            if (pos > tbts) {
-              if (noSt)
-                err(0);
-              break;
-            }
-            if (resize)
-              cbuf(bt + 131072);
-            var end = bt + add;
-            if (bt < dt) {
-              var shift = dl - dt, dend = Math.min(dt, end);
-              if (shift + bt < 0)
-                err(3);
-              for (; bt < dend; ++bt)
-                buf[bt] = dict[shift + bt];
-            }
-            for (; bt < end; ++bt)
-              buf[bt] = buf[bt - dt];
-          }
-        }
-        st.l = lm, st.p = lpos, st.b = bt, st.f = final;
-        if (lm)
-          final = 1, st.m = lbt, st.d = dm, st.n = dbt;
-      } while (!final);
-      return bt != buf.length && noBuf ? slc(buf, 0, bt) : buf.subarray(0, bt);
-    };
-    wbits = function(d, p, v) {
-      v <<= p & 7;
-      var o = p / 8 | 0;
-      d[o] |= v;
-      d[o + 1] |= v >> 8;
-    };
-    wbits16 = function(d, p, v) {
-      v <<= p & 7;
-      var o = p / 8 | 0;
-      d[o] |= v;
-      d[o + 1] |= v >> 8;
-      d[o + 2] |= v >> 16;
-    };
-    hTree = function(d, mb) {
-      var t = [];
-      for (var i = 0; i < d.length; ++i) {
-        if (d[i])
-          t.push({ s: i, f: d[i] });
-      }
-      var s = t.length;
-      var t2 = t.slice();
-      if (!s)
-        return { t: et, l: 0 };
-      if (s == 1) {
-        var v = new u82(t[0].s + 1);
-        v[t[0].s] = 1;
-        return { t: v, l: 1 };
-      }
-      t.sort(function(a, b) {
-        return a.f - b.f;
-      });
-      t.push({ s: -1, f: 25001 });
-      var l = t[0], r = t[1], i0 = 0, i1 = 1, i2 = 2;
-      t[0] = { s: -1, f: l.f + r.f, l, r };
-      while (i1 != s - 1) {
-        l = t[t[i0].f < t[i2].f ? i0++ : i2++];
-        r = t[i0 != i1 && t[i0].f < t[i2].f ? i0++ : i2++];
-        t[i1++] = { s: -1, f: l.f + r.f, l, r };
-      }
-      var maxSym = t2[0].s;
-      for (var i = 1; i < s; ++i) {
-        if (t2[i].s > maxSym)
-          maxSym = t2[i].s;
-      }
-      var tr = new u16(maxSym + 1);
-      var mbt = ln(t[i1 - 1], tr, 0);
-      if (mbt > mb) {
-        var i = 0, dt = 0;
-        var lft = mbt - mb, cst = 1 << lft;
-        t2.sort(function(a, b) {
-          return tr[b.s] - tr[a.s] || a.f - b.f;
-        });
-        for (; i < s; ++i) {
-          var i2_1 = t2[i].s;
-          if (tr[i2_1] > mb) {
-            dt += cst - (1 << mbt - tr[i2_1]);
-            tr[i2_1] = mb;
-          } else
-            break;
-        }
-        dt >>= lft;
-        while (dt > 0) {
-          var i2_2 = t2[i].s;
-          if (tr[i2_2] < mb)
-            dt -= 1 << mb - tr[i2_2]++ - 1;
-          else
-            ++i;
-        }
-        for (; i >= 0 && dt; --i) {
-          var i2_3 = t2[i].s;
-          if (tr[i2_3] == mb) {
-            --tr[i2_3];
-            ++dt;
-          }
-        }
-        mbt = mb;
-      }
-      return { t: new u82(tr), l: mbt };
-    };
-    ln = function(n, l, d) {
-      return n.s == -1 ? Math.max(ln(n.l, l, d + 1), ln(n.r, l, d + 1)) : l[n.s] = d;
-    };
-    lc = function(c) {
-      var s = c.length;
-      while (s && !c[--s])
-        ;
-      var cl = new u16(++s);
-      var cli = 0, cln = c[0], cls = 1;
-      var w = function(v) {
-        cl[cli++] = v;
-      };
-      for (var i = 1; i <= s; ++i) {
-        if (c[i] == cln && i != s)
-          ++cls;
-        else {
-          if (!cln && cls > 2) {
-            for (; cls > 138; cls -= 138)
-              w(32754);
-            if (cls > 2) {
-              w(cls > 10 ? cls - 11 << 5 | 28690 : cls - 3 << 5 | 12305);
-              cls = 0;
-            }
-          } else if (cls > 3) {
-            w(cln), --cls;
-            for (; cls > 6; cls -= 6)
-              w(8304);
-            if (cls > 2)
-              w(cls - 3 << 5 | 8208), cls = 0;
-          }
-          while (cls--)
-            w(cln);
-          cls = 1;
-          cln = c[i];
-        }
-      }
-      return { c: cl.subarray(0, cli), n: s };
-    };
-    clen = function(cf, cl) {
-      var l = 0;
-      for (var i = 0; i < cl.length; ++i)
-        l += cf[i] * cl[i];
-      return l;
-    };
-    wfblk = function(out2, pos, dat) {
-      var s = dat.length;
-      var o = shft(pos + 2);
-      out2[o] = s & 255;
-      out2[o + 1] = s >> 8;
-      out2[o + 2] = out2[o] ^ 255;
-      out2[o + 3] = out2[o + 1] ^ 255;
-      for (var i = 0; i < s; ++i)
-        out2[o + i + 4] = dat[i];
-      return (o + 4 + s) * 8;
-    };
-    wblk = function(dat, out2, final, syms, lf, df, eb, li, bs, bl, p) {
-      wbits(out2, p++, final);
-      ++lf[256];
-      var _a2 = hTree(lf, 15), dlt = _a2.t, mlb = _a2.l;
-      var _b2 = hTree(df, 15), ddt = _b2.t, mdb = _b2.l;
-      var _c = lc(dlt), lclt = _c.c, nlc = _c.n;
-      var _d = lc(ddt), lcdt = _d.c, ndc = _d.n;
-      var lcfreq = new u16(19);
-      for (var i = 0; i < lclt.length; ++i)
-        ++lcfreq[lclt[i] & 31];
-      for (var i = 0; i < lcdt.length; ++i)
-        ++lcfreq[lcdt[i] & 31];
-      var _e = hTree(lcfreq, 7), lct = _e.t, mlcb = _e.l;
-      var nlcc = 19;
-      for (; nlcc > 4 && !lct[clim[nlcc - 1]]; --nlcc)
-        ;
-      var flen = bl + 5 << 3;
-      var ftlen = clen(lf, flt) + clen(df, fdt) + eb;
-      var dtlen = clen(lf, dlt) + clen(df, ddt) + eb + 14 + 3 * nlcc + clen(lcfreq, lct) + 2 * lcfreq[16] + 3 * lcfreq[17] + 7 * lcfreq[18];
-      if (bs >= 0 && flen <= ftlen && flen <= dtlen)
-        return wfblk(out2, p, dat.subarray(bs, bs + bl));
-      var lm, ll, dm, dl;
-      wbits(out2, p, 1 + (dtlen < ftlen)), p += 2;
-      if (dtlen < ftlen) {
-        lm = hMap(dlt, mlb, 0), ll = dlt, dm = hMap(ddt, mdb, 0), dl = ddt;
-        var llm = hMap(lct, mlcb, 0);
-        wbits(out2, p, nlc - 257);
-        wbits(out2, p + 5, ndc - 1);
-        wbits(out2, p + 10, nlcc - 4);
-        p += 14;
-        for (var i = 0; i < nlcc; ++i)
-          wbits(out2, p + 3 * i, lct[clim[i]]);
-        p += 3 * nlcc;
-        var lcts = [lclt, lcdt];
-        for (var it = 0; it < 2; ++it) {
-          var clct = lcts[it];
-          for (var i = 0; i < clct.length; ++i) {
-            var len = clct[i] & 31;
-            wbits(out2, p, llm[len]), p += lct[len];
-            if (len > 15)
-              wbits(out2, p, clct[i] >> 5 & 127), p += clct[i] >> 12;
-          }
-        }
-      } else {
-        lm = flm, ll = flt, dm = fdm, dl = fdt;
-      }
-      for (var i = 0; i < li; ++i) {
-        var sym = syms[i];
-        if (sym > 255) {
-          var len = sym >> 18 & 31;
-          wbits16(out2, p, lm[len + 257]), p += ll[len + 257];
-          if (len > 7)
-            wbits(out2, p, sym >> 23 & 31), p += fleb[len];
-          var dst = sym & 31;
-          wbits16(out2, p, dm[dst]), p += dl[dst];
-          if (dst > 3)
-            wbits16(out2, p, sym >> 5 & 8191), p += fdeb[dst];
-        } else {
-          wbits16(out2, p, lm[sym]), p += ll[sym];
-        }
-      }
-      wbits16(out2, p, lm[256]);
-      return p + ll[256];
-    };
-    deo = /* @__PURE__ */ new i32([65540, 131080, 131088, 131104, 262176, 1048704, 1048832, 2114560, 2117632]);
-    et = /* @__PURE__ */ new u82(0);
-    dflt = function(dat, lvl, plvl, pre, post, st) {
-      var s = st.z || dat.length;
-      var o = new u82(pre + s + 5 * (1 + Math.ceil(s / 7e3)) + post);
-      var w = o.subarray(pre, o.length - post);
-      var lst = st.l;
-      var pos = (st.r || 0) & 7;
-      if (lvl) {
-        if (pos)
-          w[0] = st.r >> 3;
-        var opt = deo[lvl - 1];
-        var n = opt >> 13, c = opt & 8191;
-        var msk_1 = (1 << plvl) - 1;
-        var prev = st.p || new u16(32768), head = st.h || new u16(msk_1 + 1);
-        var bs1_1 = Math.ceil(plvl / 3), bs2_1 = 2 * bs1_1;
-        var hsh = function(i2) {
-          return (dat[i2] ^ dat[i2 + 1] << bs1_1 ^ dat[i2 + 2] << bs2_1) & msk_1;
-        };
-        var syms = new i32(25e3);
-        var lf = new u16(288), df = new u16(32);
-        var lc_1 = 0, eb = 0, i = st.i || 0, li = 0, wi = st.w || 0, bs = 0;
-        for (; i + 2 < s; ++i) {
-          var hv = hsh(i);
-          var imod = i & 32767, pimod = head[hv];
-          prev[imod] = pimod;
-          head[hv] = imod;
-          if (wi <= i) {
-            var rem = s - i;
-            if ((lc_1 > 7e3 || li > 24576) && (rem > 423 || !lst)) {
-              pos = wblk(dat, w, 0, syms, lf, df, eb, li, bs, i - bs, pos);
-              li = lc_1 = eb = 0, bs = i;
-              for (var j = 0; j < 286; ++j)
-                lf[j] = 0;
-              for (var j = 0; j < 30; ++j)
-                df[j] = 0;
-            }
-            var l = 2, d = 0, ch_1 = c, dif = imod - pimod & 32767;
-            if (rem > 2 && hv == hsh(i - dif)) {
-              var maxn = Math.min(n, rem) - 1;
-              var maxd = Math.min(32767, i);
-              var ml = Math.min(258, rem);
-              while (dif <= maxd && --ch_1 && imod != pimod) {
-                if (dat[i + l] == dat[i + l - dif]) {
-                  var nl = 0;
-                  for (; nl < ml && dat[i + nl] == dat[i + nl - dif]; ++nl)
-                    ;
-                  if (nl > l) {
-                    l = nl, d = dif;
-                    if (nl > maxn)
-                      break;
-                    var mmd = Math.min(dif, nl - 2);
-                    var md = 0;
-                    for (var j = 0; j < mmd; ++j) {
-                      var ti = i - dif + j & 32767;
-                      var pti = prev[ti];
-                      var cd = ti - pti & 32767;
-                      if (cd > md)
-                        md = cd, pimod = ti;
-                    }
-                  }
-                }
-                imod = pimod, pimod = prev[imod];
-                dif += imod - pimod & 32767;
-              }
-            }
-            if (d) {
-              syms[li++] = 268435456 | revfl[l] << 18 | revfd[d];
-              var lin = revfl[l] & 31, din = revfd[d] & 31;
-              eb += fleb[lin] + fdeb[din];
-              ++lf[257 + lin];
-              ++df[din];
-              wi = i + l;
-              ++lc_1;
-            } else {
-              syms[li++] = dat[i];
-              ++lf[dat[i]];
-            }
-          }
-        }
-        for (i = Math.max(i, wi); i < s; ++i) {
-          syms[li++] = dat[i];
-          ++lf[dat[i]];
-        }
-        pos = wblk(dat, w, lst, syms, lf, df, eb, li, bs, i - bs, pos);
-        if (!lst) {
-          st.r = pos & 7 | w[pos / 8 | 0] << 3;
-          pos -= 7;
-          st.h = head, st.p = prev, st.i = i, st.w = wi;
-        }
-      } else {
-        for (var i = st.w || 0; i < s + lst; i += 65535) {
-          var e = i + 65535;
-          if (e >= s) {
-            w[pos / 8 | 0] = lst;
-            e = s;
-          }
-          pos = wfblk(w, pos + 1, dat.subarray(i, e));
-        }
-        st.i = s;
-      }
-      return slc(o, 0, pre + shft(pos) + post);
-    };
-    dopt = function(dat, opt, pre, post, st) {
-      if (!st) {
-        st = { l: 1 };
-        if (opt.dictionary) {
-          var dict = opt.dictionary.subarray(-32768);
-          var newDat = new u82(dict.length + dat.length);
-          newDat.set(dict);
-          newDat.set(dat, dict.length);
-          dat = newDat;
-          st.w = dict.length;
-        }
-      }
-      return dflt(dat, opt.level == null ? 6 : opt.level, opt.mem == null ? st.l ? Math.ceil(Math.max(8, Math.min(13, Math.log(dat.length))) * 1.5) : 20 : 12 + opt.mem, pre, post, st);
-    };
-    td = typeof TextDecoder != "undefined" && /* @__PURE__ */ new TextDecoder();
-    tds = 0;
-    try {
-      td.decode(et, { stream: true });
-      tds = 1;
-    } catch (e) {
-    }
-  }
-});
-
-// local/shims/zlib.js
-var zlib_exports = {};
-__export(zlib_exports, {
-  default: () => zlib_default,
-  deflateRawSync: () => deflateRawSync,
-  inflateRawSync: () => inflateRawSync
-});
-function inflateRawSync(buf) {
-  return import_buffer.Buffer.from(inflateSync(new Uint8Array(buf)));
-}
-function deflateRawSync(buf) {
-  return import_buffer.Buffer.from(deflateSync(new Uint8Array(buf)));
-}
-var zlib_default;
-var init_zlib = __esm({
-  "local/shims/zlib.js"() {
-    init_globals_inject();
-    init_browser();
-    zlib_default = { inflateRawSync, deflateRawSync };
-  }
-});
-
 // server/importers/text.js
 var require_text = __commonJS({
   "server/importers/text.js"(exports, module) {
@@ -9630,6 +10074,12 @@ var require_dataimport = __commonJS({
         F("accepts_uninsured", "Accepts uninsured", ["uninsured", "sliding scale"], yes),
         F("mat_offered", "MAT offered", ["mat", "moud"], str(200)),
         F("contact_person", "Contact person", ["contact"], str(200)),
+        F("summary", "Summary", ["overview", "about", "profile"], str(3e3)),
+        F("service_tags", "Service tags", ["tags", "services offered"], str(1e3), { help: "comma separated: " + C.SERVICE_TAGS.join(", ") }),
+        F("levels_of_care", "Levels of care", ["asam levels"], str(200)),
+        F("populations", "Populations served", ["serves", "population"], str(500)),
+        F("intake_process", "Intake process", ["how to refer", "admission process"], str(2e3)),
+        F("cost_notes", "Cost / payment", ["cost", "payment", "fees"], str(1e3)),
         F("notes", "Notes", [], str(2e3))
       ] },
       interventions: { label: "Visits & services", table: "interventions", fields: [
@@ -10826,7 +11276,7 @@ var require_exports = __commonJS({
         },
         resources: {
           label: "Resource directory",
-          columns: ["name", "category", "organization", "phone", "fax", "email", "website", "address", "city", "zip", "hours", "eligibility", "services", "languages", "accepts_medicaid", "accepts_uninsured", "mat_offered", "capacity_notes", "contact_person", "is_active", "last_verified_at", "notes"],
+          columns: ["name", "category", "organization", "phone", "fax", "email", "website", "address", "city", "zip", "hours", "eligibility", "services", "languages", "accepts_medicaid", "accepts_uninsured", "mat_offered", "capacity_notes", "contact_person", "summary", "service_tags", "levels_of_care", "populations", "intake_process", "cost_notes", "is_active", "last_verified_at", "notes"],
           rows: () => db3.all(`SELECT * FROM resources ORDER BY category, name`)
         },
         consents: {
@@ -11029,8 +11479,41 @@ var require_resources = __commonJS({
       contact_person: { type: "string", maxLen: 200 },
       is_active: { type: "boolean" },
       last_verified_at: { type: "date" },
-      notes: { type: "string", maxLen: 2e3 }
+      notes: { type: "string", maxLen: 2e3 },
+      summary: { type: "string", maxLen: 3e3 },
+      service_tags: { type: "string", maxLen: 1e3 },
+      levels_of_care: { type: "string", maxLen: 200 },
+      populations: { type: "string", maxLen: 500 },
+      intake_process: { type: "string", maxLen: 2e3 },
+      cost_notes: { type: "string", maxLen: 1e3 }
     };
+    var MAX_PHOTOS = 12;
+    var MAX_PHOTO_BYTES = 2 * 1024 * 1024;
+    var MAX_THUMB_BYTES = 96 * 1024;
+    var { badRequest } = require_http();
+    function sniff(buf) {
+      if (buf.length > 3 && buf[0] === 255 && buf[1] === 216 && buf[2] === 255) return "image/jpeg";
+      if (buf.length > 8 && buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71) return "image/png";
+      if (buf.length > 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return "image/webp";
+      return null;
+    }
+    function fromDataUrl(v, maxBytes, label) {
+      if (typeof v !== "string") throw badRequest(`${label} is required`);
+      const m = /^data:(image\/[a-z+]+);base64,([A-Za-z0-9+/=\s]+)$/.exec(v);
+      const b64 = m ? m[2].replace(/\s+/g, "") : v.replace(/\s+/g, "");
+      if (!/^[A-Za-z0-9+/=]+$/.test(b64)) throw badRequest(`${label} must be a base64 picture`);
+      const buf = import_buffer.Buffer.from(b64, "base64");
+      if (!buf.length) throw badRequest(`${label} is empty`);
+      if (buf.length > maxBytes) throw badRequest(`${label} is too large (max ${Math.round(maxBytes / 1024)} KB); the app normally shrinks pictures before sending them`);
+      const type = sniff(buf);
+      if (!type) throw badRequest(`${label} must be a JPEG, PNG or WebP picture`);
+      return { b64, buf, type };
+    }
+    var b64Type = (b) => !b ? null : b.startsWith("iVBOR") ? "image/png" : b.startsWith("UklGR") ? "image/webp" : "image/jpeg";
+    var tagList = (v, allowed) => v == null ? v : String(v).split(",").map((x) => x.trim().toLowerCase().replace(/[\s-]+/g, "_")).filter((x) => allowed.includes(x)).filter((x, i, a) => a.indexOf(x) === i).join(",");
+    function photoRows(resourceId, withData = false) {
+      return db3.all(`SELECT id, resource_id, caption, content_type, bytes, width, height, sort_order, uploaded_by, created_at, thumb_b64${withData ? ", data_b64" : ""} FROM resource_photos WHERE resource_id=? ORDER BY sort_order, created_at`, resourceId).map((p) => ({ ...p, thumb_url: p.thumb_b64 ? `data:${b64Type(p.thumb_b64)};base64,${p.thumb_b64}` : null, data_url: withData ? `data:${p.content_type};base64,${p.data_b64}` : void 0, thumb_b64: void 0, data_b64: void 0 }));
+    }
     module.exports = (r) => {
       r.get("/api/resources", auth3.requireAuth, auth3.requirePerm("resources:read", "resources:write"), (ctx) => {
         const { limit: limit2, offset } = paging(ctx.query, { limit: 200, max: 1e3 });
@@ -11048,18 +11531,63 @@ var require_resources = __commonJS({
         }
         if (ctx.query.get("active") !== "0") where.push("is_active=1");
         const w = where.length ? "WHERE " + where.join(" AND ") : "";
-        const rows = db3.all(`SELECT r.*, (SELECT COUNT(*) FROM referrals x WHERE x.resource_id=r.id) AS referral_count FROM resources r ${w} ORDER BY category, name LIMIT ? OFFSET ?`, ...params, limit2, offset);
+        const rows = db3.all(`SELECT r.*, (SELECT COUNT(*) FROM referrals x WHERE x.resource_id=r.id) AS referral_count, (SELECT COUNT(*) FROM resource_photos p WHERE p.resource_id=r.id) AS photo_count, (SELECT p.thumb_b64 FROM resource_photos p WHERE p.resource_id=r.id ORDER BY p.sort_order, p.created_at LIMIT 1) AS cover_b64 FROM resources r ${w} ORDER BY category, name LIMIT ? OFFSET ?`, ...params, limit2, offset).map((r2) => ({ ...r2, cover_url: r2.cover_b64 ? `data:${b64Type(r2.cover_b64)};base64,${r2.cover_b64}` : null, cover_b64: void 0 }));
         return { rows, total: db3.one(`SELECT COUNT(*) n FROM resources r ${w}`, ...params).n };
       });
       r.get("/api/resources/:id", auth3.requireAuth, auth3.requirePerm("resources:read", "resources:write"), (ctx) => {
         const row = db3.one(`SELECT * FROM resources WHERE id=?`, ctx.params.id);
         if (!row) throw notFound();
         row.referral_stats = db3.all(`SELECT status, COUNT(*) n FROM referrals WHERE resource_id=? GROUP BY status`, row.id);
+        row.photos = photoRows(row.id, true);
+        row.recent_referrals = auth3.hasPerm(ctx.user, "clients:read") ? db3.all(`SELECT r.id, r.referred_at, r.status, r.client_id, c.client_code FROM referrals r JOIN clients c ON c.id=r.client_id WHERE r.resource_id=? AND c.deleted_at IS NULL AND ${auth3.caseloadFilter(ctx.user, "c.id").sql} ORDER BY r.referred_at DESC LIMIT 10`, row.id, ...auth3.caseloadFilter(ctx.user, "c.id").params) : [];
         return { row };
+      });
+      r.get("/api/resources/:id/photos", auth3.requireAuth, auth3.requirePerm("resources:read", "resources:write"), (ctx) => {
+        if (!db3.one(`SELECT id FROM resources WHERE id=?`, ctx.params.id)) throw notFound();
+        return { photos: photoRows(ctx.params.id, ctx.query.get("full") === "1") };
+      });
+      r.post("/api/resources/:id/photos", auth3.requireAuth, auth3.requirePerm("resources:write"), (ctx) => {
+        const res = db3.one(`SELECT id FROM resources WHERE id=?`, ctx.params.id);
+        if (!res) throw notFound();
+        if (db3.one(`SELECT COUNT(*) n FROM resource_photos WHERE resource_id=?`, res.id).n >= MAX_PHOTOS) throw badRequest(`A resource can have at most ${MAX_PHOTOS} pictures; remove one first`);
+        const v = validate(ctx.body, { caption: { type: "string", maxLen: 200 }, width: { type: "number", min: 1, max: 2e4, integer: true }, height: { type: "number", min: 1, max: 2e4, integer: true } });
+        const pic = fromDataUrl(ctx.body.data_url ?? ctx.body.data, MAX_PHOTO_BYTES, "Picture");
+        const thumb = ctx.body.thumb_url || ctx.body.thumb ? fromDataUrl(ctx.body.thumb_url ?? ctx.body.thumb, MAX_THUMB_BYTES, "Thumbnail") : null;
+        const id = uuid2();
+        const order = db3.one(`SELECT COALESCE(MAX(sort_order), -1) m FROM resource_photos WHERE resource_id=?`, res.id).m + 1;
+        db3.run(`INSERT INTO resource_photos(id,resource_id,caption,content_type,bytes,width,height,data_b64,thumb_b64,sort_order,uploaded_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, id, res.id, v.caption || null, pic.type, pic.buf.length, v.width || null, v.height || null, pic.b64, thumb ? thumb.b64 : null, order, ctx.user.id);
+        db3.run(`UPDATE resources SET updated_at=? WHERE id=?`, db3.now(), res.id);
+        audit3.log({ user: ctx.user, action: "resource.photo.add", entity: "resource", entityId: res.id, ip: ctx.ip, details: { photo_id: id, bytes: pic.buf.length, type: pic.type } });
+        ctx.status = 201;
+        return { id, photo: photoRows(res.id).find((p) => p.id === id) };
+      });
+      r.put("/api/resources/:id/photos/:pid", auth3.requireAuth, auth3.requirePerm("resources:write"), (ctx) => {
+        const p = db3.one(`SELECT id, resource_id FROM resource_photos WHERE id=? AND resource_id=?`, ctx.params.pid, ctx.params.id);
+        if (!p) throw notFound();
+        const v = validate(ctx.body, { caption: { type: "string", maxLen: 200 }, sort_order: { type: "number", min: 0, max: 1e3, integer: true } }, { partial: true });
+        if (v.sort_order !== void 0 && v.sort_order !== null) {
+          const others = db3.all(`SELECT id FROM resource_photos WHERE resource_id=? AND id<>? ORDER BY sort_order, created_at`, p.resource_id, p.id).map((x) => x.id);
+          others.splice(Math.min(v.sort_order, others.length), 0, p.id);
+          others.forEach((id, i) => db3.run(`UPDATE resource_photos SET sort_order=?, updated_at=? WHERE id=?`, i, db3.now(), id));
+        }
+        if (v.caption !== void 0) db3.run(`UPDATE resource_photos SET caption=?, updated_at=? WHERE id=?`, v.caption, db3.now(), p.id);
+        audit3.log({ user: ctx.user, action: "resource.photo.update", entity: "resource", entityId: p.resource_id, ip: ctx.ip, details: { photo_id: p.id, fields: Object.keys(v) } });
+        return { ok: true };
+      });
+      r.delete("/api/resources/:id/photos/:pid", auth3.requireAuth, auth3.requirePerm("resources:write"), (ctx) => {
+        const p = db3.one(`SELECT id, resource_id FROM resource_photos WHERE id=? AND resource_id=?`, ctx.params.pid, ctx.params.id);
+        if (!p) throw notFound();
+        db3.run(`DELETE FROM resource_photos WHERE id=?`, p.id);
+        db3.tombstone("resource_photos", p.id);
+        db3.run(`UPDATE resources SET updated_at=? WHERE id=?`, db3.now(), p.resource_id);
+        audit3.log({ user: ctx.user, action: "resource.photo.remove", entity: "resource", entityId: p.resource_id, ip: ctx.ip, details: { photo_id: p.id } });
+        return { ok: true };
       });
       r.post("/api/resources", auth3.requireAuth, auth3.requirePerm("resources:write"), (ctx) => {
         const v = validate(ctx.body, shape);
         const id = uuid2();
+        if ("service_tags" in v) v.service_tags = tagList(v.service_tags, C.SERVICE_TAGS);
+        if ("populations" in v) v.populations = tagList(v.populations, C.POPULATIONS);
         const keys = Object.keys(v);
         db3.run(`INSERT INTO resources(id,${keys.join(",")}) VALUES(?,${keys.map(() => "?").join(",")})`, id, ...keys.map((k) => v[k]));
         audit3.log({ user: ctx.user, action: "resource.create", entity: "resource", entityId: id, ip: ctx.ip });
@@ -11070,6 +11598,8 @@ var require_resources = __commonJS({
         const row = db3.one(`SELECT id FROM resources WHERE id=?`, ctx.params.id);
         if (!row) throw notFound();
         const v = validate(ctx.body, { ...shape, name: { ...shape.name, required: false }, category: { ...shape.category, required: false } }, { partial: true });
+        if ("service_tags" in v) v.service_tags = tagList(v.service_tags, C.SERVICE_TAGS);
+        if ("populations" in v) v.populations = tagList(v.populations, C.POPULATIONS);
         const keys = Object.keys(v);
         if (!keys.length) return { ok: true };
         db3.run(`UPDATE resources SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), db3.now(), row.id);

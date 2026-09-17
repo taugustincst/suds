@@ -1,12 +1,12 @@
 import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav } from '../app.js';
 
-export async function openReferralForm(values, { clientId, clientDisplay, onDone } = {}) {
+export async function openReferralForm(values, { clientId, clientDisplay, resourceId, onDone } = {}) {
   const C = state.constants; const isNew = !values;
   const res = (await get('/api/resources?limit=1000')).rows;
   const consents = clientId || values?.client_id ? (await get(`/api/clients/${clientId || values.client_id}/consents`)).consents.filter(c => !c.revoked_at) : [];
   const f = form([
     { name: 'client_id', label: 'Client', type: 'client', required: true, value: clientId || values?.client_id, display: clientDisplay },
-    { name: 'resource_id', label: 'Resource / provider', type: 'select', required: true, options: res.map(x => ({ value: x.id, label: `${x.name} (${fmt.label(x.category)})` })) },
+    { name: 'resource_id', label: 'Resource / provider', type: 'select', required: true, value: resourceId || values?.resource_id, options: res.map(x => ({ value: x.id, label: `${x.name} (${fmt.label(x.category)})` })) },
     { name: 'referred_at', label: 'Referral date', type: 'datetime', required: true, value: values?.referred_at || new Date().toISOString() },
     { name: 'status', label: 'Status', type: 'select', options: C.REFERRAL_STATUSES, value: 'pending', noBlank: true, required: true }, { name: 'urgency', label: 'Urgency', type: 'select', options: ['routine', 'urgent', 'emergent'], value: 'routine', noBlank: true },
     { name: 'warm_handoff', label: 'Warm handoff', type: 'checkbox' }, { name: 'appointment_at', label: 'Appointment', type: 'datetime' }, { name: 'admitted_at', label: 'Admitted / started', type: 'datetime' },

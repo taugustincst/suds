@@ -7,6 +7,7 @@ module.exports = {
   tables: [
     { name: 'users', enc: ['mfa_secret_enc'], scope: 'users', cols: null },
     { name: 'resources', enc: [], scope: 'all' },
+    { name: 'resource_photos', enc: [], scope: 'all' },
     { name: 'funding_sources', enc: [], scope: 'all' },
     { name: 'budget_lines', enc: [], scope: 'all' },
     { name: 'clients', enc: ['first_name_enc', 'last_name_enc', 'preferred_name_enc', 'dob_enc', 'phone_enc', 'alt_phone_enc', 'email_enc', 'address_enc', 'medicaid_id_enc', 'emergency_contact_enc'], scope: 'client', clientCol: 'id', idx: true },

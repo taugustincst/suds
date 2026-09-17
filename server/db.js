@@ -37,6 +37,12 @@ const migrations = [
     d.exec(`CREATE TABLE IF NOT EXISTS tombstones (table_name TEXT NOT NULL, id TEXT NOT NULL, deleted_at TEXT NOT NULL, PRIMARY KEY (table_name, id))`);
     d.exec(`CREATE INDEX IF NOT EXISTS idx_tombstones_at ON tombstones(deleted_at)`);
   },
+  // 3: treatment center profiles — summary/service tags on resources, photo gallery table
+  (d) => {
+    for (const [c, t] of [['summary', 'TEXT'], ['service_tags', 'TEXT'], ['levels_of_care', 'TEXT'], ['populations', 'TEXT'], ['intake_process', 'TEXT'], ['cost_notes', 'TEXT']]) addColumn(d, 'resources', c, t);
+    d.exec(`CREATE TABLE IF NOT EXISTS resource_photos (id TEXT PRIMARY KEY, resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE, caption TEXT, content_type TEXT NOT NULL, bytes INTEGER NOT NULL DEFAULT 0, width INTEGER, height INTEGER, data_b64 TEXT NOT NULL, thumb_b64 TEXT, sort_order INTEGER NOT NULL DEFAULT 0, uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
+    d.exec(`CREATE INDEX IF NOT EXISTS idx_resource_photos ON resource_photos(resource_id, sort_order)`);
+  },
 ];
 function migrate(d) {
   const row = d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get();

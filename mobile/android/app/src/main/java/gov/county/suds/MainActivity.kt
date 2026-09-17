@@ -46,6 +46,19 @@ class MainActivity : AppCompatActivity() {
         val text = result.contents ?: return@registerForActivityResult
         web.evaluateJavascript("window.dispatchEvent(new CustomEvent('suds-scan',{detail:${JSONObjectQuote(text)}}))", null)
     }
+    private var fileCallback: ValueCallback<Array<Uri>>? = null
+    private val filePicker = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { result ->
+        val cb = fileCallback ?: return@registerForActivityResult
+        fileCallback = null
+        val data = result.data
+        val uris: Array<Uri>? = when {
+            result.resultCode != RESULT_OK || data == null -> null
+            data.clipData != null -> Array(data.clipData!!.itemCount) { data.clipData!!.getItemAt(it).uri }
+            data.data != null -> arrayOf(data.data!!)
+            else -> null
+        }
+        cb.onReceiveValue(uris)
+    }
     private fun JSONObjectQuote(s: String) = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -82,7 +95,13 @@ class MainActivity : AppCompatActivity() {
                 return if (u.host == "appassets.androidplatform.net") false else { startActivity(Intent(Intent.ACTION_VIEW, u)); true }
             }
         }
-        web.webChromeClient = WebChromeClient()
+        web.webChromeClient = object : WebChromeClient() {
+            // <input type="file"> (resource pictures): open the system picker; nothing else in the app uploads files
+            override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
+                fileCallback?.onReceiveValue(null); fileCallback = callback
+                return try { filePicker.launch(params.createIntent().apply { putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true) }); true } catch (e: Exception) { fileCallback = null; false }
+            }
+        }
         if (savedInstanceState == null) web.loadUrl("https://appassets.androidplatform.net/assets/index.html?local=1") else web.restoreState(savedInstanceState)
         startDiscovery()
     }
