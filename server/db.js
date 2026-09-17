@@ -43,6 +43,14 @@ const migrations = [
     d.exec(`CREATE TABLE IF NOT EXISTS resource_photos (id TEXT PRIMARY KEY, resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE, caption TEXT, content_type TEXT NOT NULL, bytes INTEGER NOT NULL DEFAULT 0, width INTEGER, height INTEGER, data_b64 TEXT NOT NULL, thumb_b64 TEXT, sort_order INTEGER NOT NULL DEFAULT 0, uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
     d.exec(`CREATE INDEX IF NOT EXISTS idx_resource_photos ON resource_photos(resource_id, sort_order)`);
   },
+  // 4: county form library
+  (d) => {
+    d.exec(`CREATE TABLE IF NOT EXISTS form_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, category TEXT NOT NULL DEFAULT 'other', version TEXT, filename TEXT, content_type TEXT, bytes INTEGER NOT NULL DEFAULT 0, file_b64 TEXT, fields_json TEXT NOT NULL DEFAULT '[]', instructions TEXT, is_active INTEGER NOT NULL DEFAULT 1, uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
+    d.exec(`CREATE TABLE IF NOT EXISTS client_forms (id TEXT PRIMARY KEY, client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE, template_id TEXT REFERENCES form_templates(id) ON DELETE SET NULL, template_name TEXT NOT NULL, fields_json TEXT NOT NULL DEFAULT '[]', values_enc TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','completed','void')), completed_at TEXT, completed_by TEXT REFERENCES users(id), created_by TEXT NOT NULL REFERENCES users(id), notes TEXT, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), deleted_at TEXT)`);
+    d.exec(`CREATE INDEX IF NOT EXISTS idx_client_forms_client ON client_forms(client_id)`);
+    d.exec(`CREATE TABLE IF NOT EXISTS client_form_files (id TEXT PRIMARY KEY, client_form_id TEXT NOT NULL REFERENCES client_forms(id) ON DELETE CASCADE, client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE, filename TEXT NOT NULL, content_type TEXT NOT NULL, bytes INTEGER NOT NULL DEFAULT 0, data_enc TEXT NOT NULL, uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
+    d.exec(`CREATE INDEX IF NOT EXISTS idx_client_form_files ON client_form_files(client_form_id)`);
+  },
 ];
 function migrate(d) {
   const row = d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get();

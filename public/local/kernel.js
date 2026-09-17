@@ -6088,7 +6088,7 @@ var require_config = __commonJS({
       return import_buffer.Buffer.from(hex, "hex");
     }
     var config = {
-      version: true ? "1.3.0" : "local",
+      version: true ? "1.4.0" : "local",
       env: "local",
       isProd: true,
       isTest: false,
@@ -6189,6 +6189,14 @@ var require_db = __commonJS({
         for (const [c, t] of [["summary", "TEXT"], ["service_tags", "TEXT"], ["levels_of_care", "TEXT"], ["populations", "TEXT"], ["intake_process", "TEXT"], ["cost_notes", "TEXT"]]) addColumn(d, "resources", c, t);
         d.exec(`CREATE TABLE IF NOT EXISTS resource_photos (id TEXT PRIMARY KEY, resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE, caption TEXT, content_type TEXT NOT NULL, bytes INTEGER NOT NULL DEFAULT 0, width INTEGER, height INTEGER, data_b64 TEXT NOT NULL, thumb_b64 TEXT, sort_order INTEGER NOT NULL DEFAULT 0, uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
         d.exec(`CREATE INDEX IF NOT EXISTS idx_resource_photos ON resource_photos(resource_id, sort_order)`);
+      },
+      // 4: county form library
+      (d) => {
+        d.exec(`CREATE TABLE IF NOT EXISTS form_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, category TEXT NOT NULL DEFAULT 'other', version TEXT, filename TEXT, content_type TEXT, bytes INTEGER NOT NULL DEFAULT 0, file_b64 TEXT, fields_json TEXT NOT NULL DEFAULT '[]', instructions TEXT, is_active INTEGER NOT NULL DEFAULT 1, uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
+        d.exec(`CREATE TABLE IF NOT EXISTS client_forms (id TEXT PRIMARY KEY, client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE, template_id TEXT REFERENCES form_templates(id) ON DELETE SET NULL, template_name TEXT NOT NULL, fields_json TEXT NOT NULL DEFAULT '[]', values_enc TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','completed','void')), completed_at TEXT, completed_by TEXT REFERENCES users(id), created_by TEXT NOT NULL REFERENCES users(id), notes TEXT, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), deleted_at TEXT)`);
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_client_forms_client ON client_forms(client_id)`);
+        d.exec(`CREATE TABLE IF NOT EXISTS client_form_files (id TEXT PRIMARY KEY, client_form_id TEXT NOT NULL REFERENCES client_forms(id) ON DELETE CASCADE, client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE, filename TEXT NOT NULL, content_type TEXT NOT NULL, bytes INTEGER NOT NULL DEFAULT 0, data_enc TEXT NOT NULL, uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_client_form_files ON client_form_files(client_form_id)`);
       }
     ];
     function migrate(d) {
@@ -6654,7 +6662,8 @@ var require_auth = __commonJS({
         "imports:*",
         "reports:read",
         "assignments:manage",
-        "export:read"
+        "export:read",
+        "forms:*"
       ],
       supervisor: [
         "clients:read",
@@ -6680,7 +6689,8 @@ var require_auth = __commonJS({
         "assignments:manage",
         "audit:read",
         "export:read",
-        "users:read"
+        "users:read",
+        "forms:*"
       ],
       clinician: [
         "clients:read",
@@ -6698,7 +6708,9 @@ var require_auth = __commonJS({
         "consents:*",
         "imports:*",
         "reports:read",
-        "users:read"
+        "users:read",
+        "forms:read",
+        "forms:write"
       ],
       navigator: [
         "clients:read",
@@ -6716,10 +6728,12 @@ var require_auth = __commonJS({
         "consents:*",
         "imports:*",
         "reports:read",
-        "users:read"
+        "users:read",
+        "forms:read",
+        "forms:write"
       ],
       finance: ["clients:list-deidentified", "budget:read", "budget:write", "budget:approve", "time:read", "time:all", "reports:read", "export:read", "users:read"],
-      readonly: ["clients:read", "clients:all", "interventions:read", "calls:read", "referrals:read", "tasks:read", "resources:read", "reports:read", "users:read"]
+      readonly: ["clients:read", "clients:all", "interventions:read", "calls:read", "referrals:read", "tasks:read", "resources:read", "reports:read", "users:read", "forms:read"]
     };
     function hasPerm(user, perm) {
       if (!user) return false;
@@ -6930,7 +6944,10 @@ var require_sync_tables = __commonJS({
         { name: "notes", enc: ["content_enc", "structured_enc"], scope: "client", clientCol: "client_id" },
         { name: "note_addenda", enc: ["content_enc"], scope: "via-note" },
         { name: "consents", enc: [], scope: "client", clientCol: "client_id" },
-        { name: "disclosures", enc: [], scope: "client", clientCol: "client_id" }
+        { name: "disclosures", enc: [], scope: "client", clientCol: "client_id" },
+        { name: "form_templates", enc: [], scope: "all" },
+        { name: "client_forms", enc: ["values_enc"], scope: "client", clientCol: "client_id" },
+        { name: "client_form_files", enc: ["data_enc"], scope: "client", clientCol: "client_id" }
       ]
     };
   }
@@ -6959,6 +6976,9 @@ var require_constants = __commonJS({
       SUBSTANCES: ["opioids_fentanyl", "opioids_heroin", "opioids_rx", "alcohol", "methamphetamine", "cocaine", "benzodiazepines", "cannabis", "synthetic_cannabinoids", "xylazine", "nicotine", "other", "unknown"],
       SERVICE_TAGS: ["detox", "residential", "inpatient", "partial_hospitalization", "intensive_outpatient", "outpatient", "mat_buprenorphine", "mat_methadone", "mat_naltrexone", "medication_management", "individual_counseling", "group_counseling", "family_program", "peer_support", "case_management", "mental_health", "trauma_informed", "co_occurring", "medical_care", "harm_reduction", "naloxone", "syringe_services", "housing", "sober_living", "employment", "legal_help", "transportation", "childcare", "telehealth", "walk_in", "same_day_intake", "crisis_24_7", "aftercare", "faith_based", "spanish_speaking"],
       POPULATIONS: ["adults", "adolescents", "women", "men", "pregnant_parenting", "families", "veterans", "lgbtq", "justice_involved", "unhoused", "older_adults", "native_american", "spanish_speakers", "deaf_hard_of_hearing"],
+      FORM_CATEGORIES: ["consent_release", "intake_screening", "assessment", "treatment_plan", "referral", "assistance_request", "transportation", "housing", "benefits", "discharge", "incident", "grievance", "other"],
+      FORM_FIELD_TYPES: ["text", "textarea", "date", "number", "checkbox", "select", "signature", "section", "note"],
+      FORM_AUTOFILL: ["client.full_name", "client.first_name", "client.last_name", "client.preferred_name", "client.dob", "client.phone", "client.email", "client.address", "client.city", "client.zip", "client.client_code", "client.gender", "client.pronouns", "client.insurance", "client.medicaid_id", "client.emergency_contact", "client.primary_substance", "client.mat_status", "client.intake_date", "worker.name", "worker.title", "org.name", "org.county", "today"],
       ASAM: ["0.5", "1.0", "2.1", "2.5", "3.1", "3.3", "3.5", "3.7", "4.0", "OTP", "unknown"]
     };
   }
@@ -7841,6 +7861,167 @@ var require_png = __commonJS({
   }
 });
 
+// server/pdf.js
+var require_pdf = __commonJS({
+  "server/pdf.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var W = 612;
+    var H = 792;
+    var M = 54;
+    function esc(s) {
+      return String(s).replace(/[^\x20-\x7E\xA0-\xFF]/g, "?").replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+    }
+    function wrap(text, maxChars) {
+      const out2 = [];
+      for (const para of String(text ?? "").split(/\r?\n/)) {
+        let line = "";
+        for (const w of para.split(/\s+/)) {
+          if (!w) continue;
+          if ((line + " " + w).trim().length > maxChars) {
+            if (line) out2.push(line);
+            line = w.length > maxChars ? w.slice(0, maxChars) : w;
+          } else line = (line + " " + w).trim();
+        }
+        out2.push(line);
+      }
+      return out2;
+    }
+    var Doc = class {
+      constructor() {
+        this.pages = [];
+        this.newPage();
+      }
+      newPage() {
+        this.ops = [];
+        this.pages.push(this.ops);
+        this.y = H - M;
+      }
+      ensure(h) {
+        if (this.y - h < M) this.newPage();
+      }
+      text(str, { size = 10, bold = false, x = M, indent = 0, color = "0 0 0" } = {}) {
+        const maxChars = Math.floor((W - 2 * M - indent) / (size * 0.5));
+        for (const line of wrap(str, maxChars)) {
+          this.ensure(size * 1.4);
+          this.ops.push(`BT /${bold ? "F2" : "F1"} ${size} Tf ${color} rg ${x + indent} ${this.y - size} Td (${esc(line)}) Tj ET`);
+          this.y -= size * 1.4;
+        }
+      }
+      gap(n = 6) {
+        this.y -= n;
+      }
+      rule(color = "0.75 0.75 0.75") {
+        this.ensure(8);
+        this.ops.push(`${color} RG 0.5 w ${M} ${this.y - 2} m ${W - M} ${this.y - 2} l S`);
+        this.y -= 8;
+      }
+      box(checked, label, size = 10) {
+        this.ensure(size * 1.5);
+        const y = this.y - size;
+        this.ops.push(`0 0 0 RG 0.8 w ${M} ${y - 1} ${size} ${size} re S`);
+        if (checked) this.ops.push(`BT /F2 ${size} Tf 0 0 0 rg ${M + 2} ${y + 1} Td (X) Tj ET`);
+        this.ops.push(`BT /F1 ${size} Tf 0 0 0 rg ${M + size + 6} ${y} Td (${esc(label)}) Tj ET`);
+        this.y -= size * 1.5;
+      }
+      field(label, value, { lines = 1 } = {}) {
+        this.text(label, { size: 8.5, color: "0.35 0.35 0.35" });
+        if (value === null || value === void 0 || value === "") {
+          for (let i = 0; i < lines; i++) {
+            this.ensure(16);
+            this.ops.push(`0.6 0.6 0.6 RG 0.5 w ${M} ${this.y - 12} m ${W - M} ${this.y - 12} l S`);
+            this.y -= 16;
+          }
+        } else this.text(value, { size: 10.5, indent: 4 });
+        this.gap(4);
+      }
+      render() {
+        const objs = [];
+        const add = (s) => {
+          objs.push(s);
+          return objs.length;
+        };
+        const font1 = add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
+        const font2 = add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>");
+        const pagesId = objs.length + 1 + this.pages.length * 2;
+        const pageIds = [];
+        for (const ops of this.pages) {
+          const content = ops.join("\n");
+          const cId = add(`<< /Length ${import_buffer.Buffer.byteLength(content, "latin1")} >>
+stream
+${content}
+endstream`);
+          pageIds.push(add(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${W} ${H}] /Contents ${cId} 0 R /Resources << /Font << /F1 ${font1} 0 R /F2 ${font2} 0 R >> >> >>`));
+        }
+        const pages = add(`<< /Type /Pages /Kids [${pageIds.map((i) => i + " 0 R").join(" ")}] /Count ${pageIds.length} >>`);
+        const catalog = add(`<< /Type /Catalog /Pages ${pages} 0 R >>`);
+        let out2 = "%PDF-1.4\n%\xE2\xE3\xCF\xD3\n";
+        const offsets = [];
+        objs.forEach((o, i) => {
+          offsets.push(import_buffer.Buffer.byteLength(out2, "latin1"));
+          out2 += `${i + 1} 0 obj
+${o}
+endobj
+`;
+        });
+        const xref = import_buffer.Buffer.byteLength(out2, "latin1");
+        out2 += `xref
+0 ${objs.length + 1}
+0000000000 65535 f 
+` + offsets.map((o) => String(o).padStart(10, "0") + " 00000 n \n").join("") + `trailer
+<< /Size ${objs.length + 1} /Root ${catalog} 0 R >>
+startxref
+${xref}
+%%EOF
+`;
+        return import_buffer.Buffer.from(out2, "latin1");
+      }
+    };
+    function renderForm({ title, subtitle, org, meta = [], fields = [], values = {}, footer }) {
+      const d = new Doc();
+      if (org) d.text(org, { size: 9, color: "0.35 0.35 0.35" });
+      d.text(title, { size: 16, bold: true });
+      if (subtitle) d.text(subtitle, { size: 10, color: "0.3 0.3 0.3" });
+      if (meta.length) {
+        d.gap(2);
+        d.text(meta.filter(Boolean).join("   \xB7   "), { size: 9, color: "0.35 0.35 0.35" });
+      }
+      d.rule();
+      d.gap(4);
+      for (const f of fields) {
+        if (f.type === "section") {
+          d.gap(6);
+          d.text(f.label, { size: 12, bold: true });
+          d.rule("0.85 0.85 0.85");
+          continue;
+        }
+        if (f.type === "note") {
+          d.text(f.label, { size: 9, color: "0.3 0.3 0.3" });
+          d.gap(4);
+          continue;
+        }
+        const v = values[f.key];
+        if (f.type === "checkbox") {
+          d.box(v === true || v === 1 || v === "1" || v === "true", f.label);
+          continue;
+        }
+        if (f.type === "signature") {
+          d.field(f.label + (v ? " (signed electronically)" : " (signature)"), v ? `/s/ ${v}` : "", { lines: 2 });
+          continue;
+        }
+        d.field(f.label + (f.required ? " *" : ""), Array.isArray(v) ? v.join(", ") : v, { lines: f.type === "textarea" ? 3 : 1 });
+      }
+      if (footer) {
+        d.gap(10);
+        d.rule();
+        d.text(footer, { size: 8, color: "0.4 0.4 0.4" });
+      }
+      return d.render();
+    }
+    module.exports = { Doc, renderForm };
+  }
+});
+
 // server/demo.js
 var require_demo = __commonJS({
   "server/demo.js"(exports, module) {
@@ -7851,8 +8032,8 @@ var require_demo = __commonJS({
     var { encrypt: encrypt3, blindIndex: blindIndex2, uuid: uuid2 } = require_crypto();
     var audit3 = require_audit();
     var DEMO_PREFIX = "DEMO-";
-    var TABLES = ["expenditures", "disclosures", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "assignments", "clients", "budget_lines", "funding_sources", "resource_photos", "resources"];
-    var SYNCED = /* @__PURE__ */ new Set(["expenditures", "disclosures", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "assignments", "clients", "budget_lines", "funding_sources", "resource_photos", "resources"]);
+    var TABLES = ["client_form_files", "client_forms", "form_templates", "expenditures", "disclosures", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "assignments", "clients", "budget_lines", "funding_sources", "resource_photos", "resources"];
+    var SYNCED = /* @__PURE__ */ new Set(["client_form_files", "client_forms", "form_templates", "expenditures", "disclosures", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "assignments", "clients", "budget_lines", "funding_sources", "resource_photos", "resources"]);
     function rng(seed2) {
       let a = seed2 >>> 0;
       return () => {
@@ -8373,6 +8554,94 @@ P: ${P2} (Sample data)`), encrypt3(JSON.stringify(i % 4 === 0 ? { S, O, A, P: P2
             const [cat, vendor, desc, amt] = EXP[(i + k * 3) % EXP.length];
             const st = k === 0 ? "approved" : pick(["pending", "approved", "reimbursed"]);
             db3.run(`INSERT INTO expenditures(id,funding_source_id,budget_line_id,client_id,user_id,spent_at,amount,category,vendor,description,status,approved_by,approved_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, track("expenditures", uuid2()), fund, lineIds[cat] || lineIds.client_assistance, c.id, c.worker, day(5 + Math.floor(rand() * 80)), amt, cat, vendor, desc, st, st === "pending" ? null : supervisor, st === "pending" ? null : d(3));
+          }
+        });
+        const pdf = require_pdf();
+        const TEMPLATES = [
+          [
+            "Consent for Release of Information (42 CFR Part 2)",
+            "consent_release",
+            "Authorizes the program to share SUD treatment information with a named provider or agency.",
+            "Review each line with the client. Part 2 consents must name who receives the information, what is shared and why, and when the consent expires.",
+            [
+              { key: "client_name", label: "Client name", type: "text", required: true, autofill: "client.full_name" },
+              { key: "dob", label: "Date of birth", type: "date", autofill: "client.dob" },
+              { key: "client_code", label: "Client ID", type: "text", autofill: "client.client_code" },
+              { key: "sec_release", label: "Release", type: "section" },
+              { key: "recipient", label: "Information may be released to (name / agency)", type: "text", required: true },
+              { key: "purpose", label: "Purpose of the disclosure", type: "textarea", required: true },
+              { key: "info", label: "Information to be released", type: "select", options: ["Referral summary", "Diagnosis and MAT status", "Attendance and progress", "Full record"], required: true },
+              { key: "expires", label: "This consent expires on", type: "date", required: true },
+              { key: "redisclosure", label: "I understand that my records are protected under 42 CFR Part 2 and cannot be re-disclosed without my written consent.", type: "checkbox" },
+              { key: "revoke", label: "I understand I may revoke this consent at any time except to the extent action has been taken in reliance on it.", type: "checkbox" },
+              { key: "sec_sign", label: "Signatures", type: "section" },
+              { key: "client_sig", label: "Client signature", type: "signature", required: true },
+              { key: "date", label: "Date", type: "date", autofill: "today", required: true },
+              { key: "witness", label: "Witness / navigator", type: "text", autofill: "worker.name" }
+            ]
+          ],
+          [
+            "Navigation Intake & Screening Sheet",
+            "intake_screening",
+            "First-contact intake for the county SUD navigation program.",
+            "Complete at the first meeting. Leave blank anything the client does not want to answer.",
+            [
+              { key: "sec_id", label: "Identification", type: "section" },
+              { key: "client_name", label: "Client name", type: "text", required: true, autofill: "client.full_name" },
+              { key: "preferred_name", label: "Preferred name", type: "text", autofill: "client.preferred_name" },
+              { key: "dob", label: "Date of birth", type: "date", autofill: "client.dob" },
+              { key: "phone", label: "Best phone number", type: "text", autofill: "client.phone" },
+              { key: "address", label: "Where are you staying?", type: "text", autofill: "client.address" },
+              { key: "insurance", label: "Insurance", type: "text", autofill: "client.insurance" },
+              { key: "sec_use", label: "Substance use", type: "section" },
+              { key: "substance", label: "Primary substance", type: "text", autofill: "client.primary_substance" },
+              { key: "last_use", label: "Last use", type: "date" },
+              { key: "od_year", label: "Overdose in the past 12 months", type: "checkbox" },
+              { key: "naloxone", label: "Has naloxone", type: "checkbox" },
+              { key: "mat_interest", label: "Interested in medication (MAT)?", type: "select", options: ["Yes", "No", "Not sure", "Already on MAT"] },
+              { key: "sec_needs", label: "Immediate needs", type: "section" },
+              { key: "needs", label: "What would help most this week?", type: "textarea" },
+              { key: "safety", label: "Safety concerns (self, others, domestic violence)", type: "textarea" },
+              { key: "navigator", label: "Navigator", type: "text", autofill: "worker.name" },
+              { key: "date", label: "Date", type: "date", autofill: "today" }
+            ]
+          ],
+          [
+            "Client Assistance Request (Transportation / Basic Needs)",
+            "assistance_request",
+            "Request to spend client-assistance funds (bus passes, IDs, phones, emergency motel).",
+            "Attach the receipt to the expenditure after purchase. Requests over $250 need supervisor approval before spending.",
+            [
+              { key: "client_name", label: "Client name", type: "text", required: true, autofill: "client.full_name" },
+              { key: "client_code", label: "Client ID", type: "text", autofill: "client.client_code" },
+              { key: "date", label: "Date", type: "date", autofill: "today" },
+              { key: "item", label: "Item / service requested", type: "select", options: ["Bus pass", "Ride to appointment", "State ID fee", "Birth certificate", "Prepaid phone", "Emergency motel", "Hygiene / clothing", "Other"], required: true },
+              { key: "amount", label: "Estimated cost ($)", type: "number", required: true },
+              { key: "vendor", label: "Vendor", type: "text" },
+              { key: "justification", label: "How this supports the recovery plan", type: "textarea", required: true },
+              { key: "urgent", label: "Urgent (needed within 24 hours)", type: "checkbox" },
+              { key: "navigator", label: "Requested by", type: "text", autofill: "worker.name", required: true },
+              { key: "supervisor", label: "Supervisor approval (name)", type: "signature" }
+            ]
+          ]
+        ];
+        const tids = TEMPLATES.map(([name, cat, desc, instr, flds], ti) => {
+          const id = track("form_templates", uuid2());
+          const file = pdf.renderForm({ title: name, subtitle: desc, org: "Sample County Behavioral Health", meta: ["Form SC-" + (100 + ti), "Rev. 2026-01"], fields: flds, values: {}, footer: "Sample county form (fictional) generated for demonstration" });
+          db3.run(`INSERT INTO form_templates(id,name,description,category,version,filename,content_type,bytes,file_b64,fields_json,instructions,uploaded_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, id, name, desc, cat, "2026-01", `SC-${100 + ti}.pdf`, "application/pdf", file.length, file.toString("base64"), JSON.stringify(flds), instr, actor);
+          return id;
+        });
+        cids.slice(0, 6).forEach((c, i) => {
+          const ti = i % 3;
+          const [name, , , , flds] = TEMPLATES[ti];
+          const done = i < 4;
+          const base = { client_name: `${c.fn} ${c.ln}`, dob: PEOPLE[i][4], client_code: `${DEMO_PREFIX}${String(i + 1).padStart(4, "0")}`, date: day(10 + i), navigator: "Sample Navigator", witness: "Sample Navigator" };
+          const extra = ti === 0 ? { recipient: "County Opioid Treatment Program", purpose: "Coordinate MAT intake and share referral summary", info: "Referral summary", expires: day(-300), redisclosure: true, revoke: true, client_sig: done ? `${c.fn} ${c.ln}` : "" } : ti === 1 ? { preferred_name: PEOPLE[i][2] || "", phone: `555-01${String(i + 1).padStart(2, "0")}`, address: `${100 + i * 7} Demo St`, insurance: PEOPLE[i][14], substance: c.sub.replace(/_/g, " "), last_use: day(3), od_year: !!c.od, naloxone: !!c.od, mat_interest: c.mat === "active" ? "Already on MAT" : "Yes", needs: "Shelter bed this week; help getting a state ID; bus pass for OTP.", safety: "None reported." } : { item: "Bus pass", amount: "45", vendor: "Metro Transit", justification: "Daily dosing at the OTP requires two bus rides; client has no income yet.", urgent: i === 2, supervisor: done ? "Sample Supervisor" : "" };
+          const fid = track("client_forms", uuid2());
+          db3.run(`INSERT INTO client_forms(id,client_id,template_id,template_name,fields_json,values_enc,status,completed_at,completed_by,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, fid, c.id, tids[ti], name + " (v2026-01)", JSON.stringify(flds), encrypt3(JSON.stringify({ ...base, ...extra })), done ? "completed" : "draft", done ? d(9 + i, 15) : null, done ? c.worker : null, c.worker, d(10 + i, 14), d(9 + i, 15));
+          if (i === 0) {
+            const scan = png.placeholder(600, 780, 99, 4);
+            db3.run(`INSERT INTO client_form_files(id,client_form_id,client_id,filename,content_type,bytes,data_enc,uploaded_by) VALUES(?,?,?,?,?,?,?,?)`, track("client_form_files", uuid2()), fid, c.id, "signed-consent-scan.png", "image/png", scan.length, encrypt3(scan.toString("base64")), c.worker);
           }
         });
         for (const w of workers) for (let k = 0; k < 10; k++) {
@@ -9480,6 +9749,7 @@ var require_clients = __commonJS({
           interventions: db3.one(`SELECT COUNT(*) n FROM interventions WHERE client_id=?`, row.id).n,
           calls: db3.one(`SELECT COUNT(*) n FROM calls WHERE client_id=?`, row.id).n,
           notes: db3.one(`SELECT COUNT(*) n FROM notes WHERE client_id=? AND deleted_at IS NULL`, row.id).n,
+          forms: db3.one(`SELECT COUNT(*) n FROM client_forms WHERE client_id=? AND deleted_at IS NULL`, row.id).n,
           referrals: db3.one(`SELECT COUNT(*) n FROM referrals WHERE client_id=?`, row.id).n,
           open_tasks: db3.one(`SELECT COUNT(*) n FROM tasks WHERE client_id=? AND status IN ('open','in_progress')`, row.id).n,
           minutes: db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE client_id=?`, row.id).n,
@@ -10338,6 +10608,356 @@ var require_dataimport2 = __commonJS({
         });
         audit3.log({ user: ctx.user, action: "import.data.commit", ip: ctx.ip, details: { entity, created, skipped, errors: errors.length } });
         return { created, skipped, errors };
+      });
+    };
+  }
+});
+
+// server/routes/forms.js
+var require_forms = __commonJS({
+  "server/routes/forms.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var C = require_constants();
+    var { badRequest, notFound } = require_http();
+    var { validate, paging } = require_validate();
+    var { uuid: uuid2, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
+    var M = require_clients_model();
+    var pdf = require_pdf();
+    var MAX_TEMPLATE_BYTES = 12 * 1024 * 1024;
+    var MAX_ATTACH_BYTES = 10 * 1024 * 1024;
+    var MAX_FIELDS = 150;
+    var FILE_TYPES = { "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx", "application/msword": "doc", "text/plain": "txt" };
+    function sniff(buf) {
+      if (buf.length > 4 && buf.toString("ascii", 0, 4) === "%PDF") return "application/pdf";
+      if (buf.length > 3 && buf[0] === 255 && buf[1] === 216 && buf[2] === 255) return "image/jpeg";
+      if (buf.length > 8 && buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71) return "image/png";
+      if (buf.length > 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return "image/webp";
+      if (buf.length > 4 && buf[0] === 80 && buf[1] === 75 && buf[2] === 3 && buf[3] === 4) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+      if (buf.length > 8 && buf[0] === 208 && buf[1] === 207 && buf[2] === 17 && buf[3] === 224) return "application/msword";
+      return null;
+    }
+    function fromDataUrl(v, maxBytes, label) {
+      if (typeof v !== "string" || !v) return null;
+      const m = /^data:([\w.+/-]+);base64,([A-Za-z0-9+/=\s]+)$/.exec(v);
+      const b64 = (m ? m[2] : v).replace(/\s+/g, "");
+      if (!/^[A-Za-z0-9+/=]+$/.test(b64)) throw badRequest(`${label} must be base64`);
+      const buf = import_buffer.Buffer.from(b64, "base64");
+      if (!buf.length) throw badRequest(`${label} is empty`);
+      if (buf.length > maxBytes) throw badRequest(`${label} is too large (max ${Math.round(maxBytes / 1024 / 1024)} MB)`);
+      const type = sniff(buf) || (m && m[1] === "text/plain" ? "text/plain" : null);
+      if (!type || !FILE_TYPES[type]) throw badRequest(`${label} must be a PDF, Word document, picture or text file`);
+      return { b64, buf, type };
+    }
+    function cleanFields(list) {
+      if (!Array.isArray(list)) throw badRequest("fields must be a list");
+      if (list.length > MAX_FIELDS) throw badRequest(`At most ${MAX_FIELDS} fields`);
+      const keys = /* @__PURE__ */ new Set();
+      const out2 = [];
+      list.forEach((f, i) => {
+        if (!f || typeof f !== "object") throw badRequest(`field ${i + 1} is invalid`);
+        const type = C.FORM_FIELD_TYPES.includes(f.type) ? f.type : "text";
+        const label = String(f.label || "").trim().slice(0, 200);
+        if (!label) throw badRequest(`field ${i + 1} needs a label`);
+        let key = String(f.key || label).trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60) || `field_${i + 1}`;
+        if (type !== "section" && type !== "note") {
+          let k = key, n = 2;
+          while (keys.has(k)) k = `${key}_${n++}`;
+          key = k;
+          keys.add(key);
+        }
+        const o = { key, label, type };
+        if (f.required && !["section", "note", "checkbox"].includes(type)) o.required = true;
+        if (type === "select") o.options = String(Array.isArray(f.options) ? f.options.join(",") : f.options || "").split(/[,\n]/).map((x) => x.trim()).filter(Boolean).slice(0, 50);
+        if (f.autofill && C.FORM_AUTOFILL.includes(f.autofill)) o.autofill = f.autofill;
+        if (f.help) o.help = String(f.help).slice(0, 300);
+        out2.push(o);
+      });
+      return out2;
+    }
+    function detectPdfFields(buf) {
+      const s = buf.toString("latin1");
+      const out2 = [];
+      const seen2 = /* @__PURE__ */ new Set();
+      for (const chunk of s.split("endobj")) {
+        if (out2.length >= MAX_FIELDS) break;
+        const t = /\/T\s*\(([^)]{1,80})\)/.exec(chunk);
+        const ft = /\/FT\s*\/(Tx|Btn|Ch)/.exec(chunk);
+        if (!t || !ft) continue;
+        const name = t[1].replace(/\\(.)/g, "$1").trim();
+        if (!name || seen2.has(name)) continue;
+        seen2.add(name);
+        const type = ft[1] === "Btn" ? "checkbox" : ft[1] === "Ch" ? "select" : /\/Ff\s+(4096|\d*[4-9]\d{3,})/.test(chunk) ? "textarea" : "text";
+        out2.push({ key: name, label: name.replace(/[_.]+/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/\b\w/g, (c) => c.toUpperCase()), type });
+      }
+      return out2;
+    }
+    var guessAutofill = (label) => {
+      const l = label.toLowerCase();
+      if (/\b(full|client|participant|patient)?\s*name\b/.test(l) && !/worker|staff|navigator|witness|contact|parent|guardian/.test(l)) return "client.full_name";
+      if (/first name/.test(l)) return "client.first_name";
+      if (/last name/.test(l)) return "client.last_name";
+      if (/\b(dob|birth)/.test(l)) return "client.dob";
+      if (/phone|telephone/.test(l)) return "client.phone";
+      if (/e-?mail/.test(l)) return "client.email";
+      if (/address|street/.test(l)) return "client.address";
+      if (/\bcity\b/.test(l)) return "client.city";
+      if (/\bzip/.test(l)) return "client.zip";
+      if (/medicaid/.test(l)) return "client.medicaid_id";
+      if (/insurance/.test(l)) return "client.insurance";
+      if (/client (id|code|number)|case (id|number)/.test(l)) return "client.client_code";
+      if (/\b(today|date)\b/.test(l) && !/birth|dob/.test(l)) return "today";
+      if (/navigator|worker|staff|case manager|counselor/.test(l)) return "worker.name";
+      return void 0;
+    };
+    function autofillValues(fields, clientRow, user) {
+      const c = M.decryptRow(clientRow);
+      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const src = {
+        "client.full_name": [c.first_name, c.last_name].filter(Boolean).join(" "),
+        "client.first_name": c.first_name,
+        "client.last_name": c.last_name,
+        "client.preferred_name": c.preferred_name,
+        "client.dob": c.dob,
+        "client.phone": c.phone,
+        "client.email": c.email,
+        "client.address": [c.address, [c.city, c.zip].filter(Boolean).join(" ")].filter(Boolean).join(", "),
+        "client.city": c.city,
+        "client.zip": c.zip,
+        "client.client_code": c.client_code,
+        "client.gender": c.gender,
+        "client.pronouns": c.pronouns,
+        "client.insurance": c.insurance,
+        "client.medicaid_id": c.medicaid_id,
+        "client.emergency_contact": c.emergency_contact,
+        "client.primary_substance": c.primary_substance ? c.primary_substance.replace(/_/g, " ") : null,
+        "client.mat_status": c.mat_status,
+        "client.intake_date": c.intake_date,
+        "worker.name": user.display_name,
+        "worker.title": user.title || "",
+        "org.name": db3.getSetting("org_name", "SUDS"),
+        "org.county": db3.getSetting("county_name", ""),
+        today
+      };
+      const values = {};
+      for (const f of fields) {
+        if (f.autofill && src[f.autofill] != null && src[f.autofill] !== "") values[f.key] = src[f.autofill];
+        else if (f.type === "date" && f.autofill === "today") values[f.key] = today;
+      }
+      return values;
+    }
+    function cleanValues(fields, values) {
+      if (!values || typeof values !== "object" || Array.isArray(values)) throw badRequest("values must be an object");
+      const out2 = {};
+      for (const f of fields) {
+        if (f.type === "section" || f.type === "note") continue;
+        let v = values[f.key];
+        if (v === void 0) continue;
+        if (f.type === "checkbox") v = v === true || v === 1 || v === "1" || v === "true";
+        else if (v === null) v = null;
+        else v = String(v).slice(0, f.type === "textarea" ? 5e3 : 500);
+        out2[f.key] = v;
+      }
+      return out2;
+    }
+    var missingRequired = (fields, values) => fields.filter((f) => f.required && (values[f.key] === void 0 || values[f.key] === null || values[f.key] === "")).map((f) => f.label);
+    var parseJson = (s, d) => {
+      try {
+        return JSON.parse(s);
+      } catch {
+        return d;
+      }
+    };
+    var tpl = (row, withFile = false) => row && { ...row, fields: parseJson(row.fields_json, []), fields_json: void 0, file_url: withFile && row.file_b64 ? `data:${row.content_type};base64,${row.file_b64}` : void 0, has_file: !!row.file_b64, file_b64: void 0 };
+    function loadForm(ctx, id) {
+      const f = db3.one(`SELECT * FROM client_forms WHERE id=? AND deleted_at IS NULL`, id);
+      if (!f) throw notFound();
+      auth3.assertClientAccess(ctx, f.client_id);
+      return f;
+    }
+    var formOut = (f, { values = true } = {}) => ({ ...f, fields: parseJson(f.fields_json, []), fields_json: void 0, values: values ? parseJson(decrypt3(f.values_enc), {}) : void 0, values_enc: void 0 });
+    module.exports = (r) => {
+      r.get("/api/forms/templates", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write", "forms:manage"), (ctx) => {
+        const all = ctx.query.get("active") === "0" && auth3.hasPerm(ctx.user, "forms:manage");
+        const rows = db3.all(`SELECT t.id, t.name, t.description, t.category, t.version, t.filename, t.content_type, t.bytes, t.fields_json, t.instructions, t.is_active, t.updated_at, t.created_at, (t.file_b64 IS NOT NULL) has_file, (SELECT COUNT(*) FROM client_forms f WHERE f.template_id=t.id AND f.deleted_at IS NULL) use_count FROM form_templates t ${all ? "" : "WHERE t.is_active=1"} ORDER BY t.category, t.name`);
+        return { templates: rows.map((t) => ({ ...t, fields: parseJson(t.fields_json, []), fields_json: void 0, field_count: parseJson(t.fields_json, []).filter((f) => !["section", "note"].includes(f.type)).length })), categories: C.FORM_CATEGORIES, field_types: C.FORM_FIELD_TYPES, autofill: C.FORM_AUTOFILL };
+      });
+      r.get("/api/forms/templates/:id", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write", "forms:manage"), (ctx) => {
+        const t = db3.one(`SELECT * FROM form_templates WHERE id=?`, ctx.params.id);
+        if (!t) throw notFound();
+        return { template: tpl(t, ctx.query.get("file") === "1") };
+      });
+      r.post("/api/forms/templates", auth3.requireAuth, auth3.requirePerm("forms:manage"), (ctx) => {
+        const v = validate(ctx.body, { name: { type: "string", required: true, maxLen: 200 }, description: { type: "string", maxLen: 1e3 }, category: { type: "string", enum: C.FORM_CATEGORIES }, version: { type: "string", maxLen: 40 }, filename: { type: "string", maxLen: 200 }, instructions: { type: "string", maxLen: 3e3 } });
+        const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_TEMPLATE_BYTES, "Form file");
+        let fields = Array.isArray(ctx.body.fields) && ctx.body.fields.length ? cleanFields(ctx.body.fields) : [];
+        let detected = 0;
+        if (!fields.length && file && file.type === "application/pdf") {
+          fields = cleanFields(detectPdfFields(file.buf).map((f) => ({ ...f, autofill: guessAutofill(f.label) })));
+          detected = fields.length;
+        }
+        const id = uuid2();
+        db3.run(`INSERT INTO form_templates(id,name,description,category,version,filename,content_type,bytes,file_b64,fields_json,instructions,uploaded_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, id, v.name, v.description || null, v.category || "other", v.version || null, file ? v.filename || `${v.name}.${FILE_TYPES[file.type]}` : null, file ? file.type : null, file ? file.buf.length : 0, file ? file.b64 : null, JSON.stringify(fields), v.instructions || null, ctx.user.id);
+        audit3.log({ user: ctx.user, action: "form_template.create", entity: "form_template", entityId: id, ip: ctx.ip, details: { name: v.name, fields: fields.length, detected, bytes: file ? file.buf.length : 0 } });
+        ctx.status = 201;
+        return { id, fields, detected };
+      });
+      r.put("/api/forms/templates/:id", auth3.requireAuth, auth3.requirePerm("forms:manage"), (ctx) => {
+        const t = db3.one(`SELECT id FROM form_templates WHERE id=?`, ctx.params.id);
+        if (!t) throw notFound();
+        const v = validate(ctx.body, { name: { type: "string", maxLen: 200 }, description: { type: "string", maxLen: 1e3 }, category: { type: "string", enum: C.FORM_CATEGORIES }, version: { type: "string", maxLen: 40 }, filename: { type: "string", maxLen: 200 }, instructions: { type: "string", maxLen: 3e3 }, is_active: { type: "boolean" } }, { partial: true });
+        const sets = Object.keys(v).map((k) => `${k}=?`);
+        const params = Object.keys(v).map((k) => v[k]);
+        if (ctx.body.fields !== void 0) {
+          sets.push("fields_json=?");
+          params.push(JSON.stringify(cleanFields(ctx.body.fields)));
+        }
+        if (ctx.body.file_url || ctx.body.file) {
+          const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_TEMPLATE_BYTES, "Form file");
+          sets.push("file_b64=?", "content_type=?", "bytes=?", "filename=?");
+          params.push(file.b64, file.type, file.buf.length, v.filename || ctx.body.filename || `form.${FILE_TYPES[file.type]}`);
+        }
+        if (ctx.body.remove_file) {
+          sets.push("file_b64=NULL", "content_type=NULL", "bytes=0", "filename=NULL");
+        }
+        if (!sets.length) return { ok: true };
+        db3.run(`UPDATE form_templates SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, db3.now(), t.id);
+        audit3.log({ user: ctx.user, action: "form_template.update", entity: "form_template", entityId: t.id, ip: ctx.ip, details: { fields: Object.keys(v).concat(ctx.body.fields !== void 0 ? ["fields"] : [], ctx.body.file_url || ctx.body.file ? ["file"] : []) } });
+        return { ok: true };
+      });
+      r.delete("/api/forms/templates/:id", auth3.requireAuth, auth3.requirePerm("forms:manage"), (ctx) => {
+        const t = db3.one(`SELECT id FROM form_templates WHERE id=?`, ctx.params.id);
+        if (!t) throw notFound();
+        db3.run(`UPDATE form_templates SET is_active=0, updated_at=? WHERE id=?`, db3.now(), t.id);
+        audit3.log({ user: ctx.user, action: "form_template.retire", entity: "form_template", entityId: t.id, ip: ctx.ip });
+        return { ok: true };
+      });
+      r.get("/api/forms/templates/:id/file", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write", "forms:manage"), (ctx) => {
+        const t = db3.one(`SELECT * FROM form_templates WHERE id=?`, ctx.params.id);
+        if (!t || !t.file_b64) throw notFound("No file for this form");
+        ctx.res.writeHead(200, { "Content-Type": t.content_type, "Content-Disposition": `${ctx.query.get("inline") === "1" ? "inline" : "attachment"}; filename="${(t.filename || "form").replace(/["\r\n]/g, "")}"` });
+        ctx.res.end(import_buffer.Buffer.from(t.file_b64, "base64"));
+        return null;
+      });
+      r.get("/api/forms/templates/:id/blank.pdf", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write", "forms:manage"), (ctx) => {
+        const t = db3.one(`SELECT * FROM form_templates WHERE id=?`, ctx.params.id);
+        if (!t) throw notFound();
+        const body = pdf.renderForm({ title: t.name, subtitle: t.description, org: db3.getSetting("org_name", "SUDS"), meta: [t.version ? `Version ${t.version}` : null], fields: parseJson(t.fields_json, []), values: {}, footer: "Blank form printed from SUDS" });
+        ctx.res.writeHead(200, { "Content-Type": "application/pdf", "Content-Disposition": `inline; filename="${t.name.replace(/[^\w.-]+/g, "_")}-blank.pdf"` });
+        ctx.res.end(body);
+        return null;
+      });
+      r.get("/api/clients/:id/forms", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write"), (ctx) => {
+        auth3.assertClientAccess(ctx, ctx.params.id);
+        const rows = db3.all(`SELECT f.id, f.template_id, f.template_name, f.status, f.completed_at, f.created_at, f.updated_at, f.notes, cu.display_name completed_by_name, cr.display_name created_by_name, (SELECT COUNT(*) FROM client_form_files x WHERE x.client_form_id=f.id) attachments FROM client_forms f LEFT JOIN users cu ON cu.id=f.completed_by JOIN users cr ON cr.id=f.created_by WHERE f.client_id=? AND f.deleted_at IS NULL ORDER BY f.updated_at DESC`, ctx.params.id);
+        return { forms: rows };
+      });
+      r.post("/api/clients/:id/forms", auth3.requireAuth, auth3.requirePerm("forms:write"), (ctx) => {
+        const client = db3.one(`SELECT * FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id);
+        if (!client) throw notFound();
+        auth3.assertClientAccess(ctx, client.id);
+        const { template_id } = validate(ctx.body, { template_id: { type: "string", required: true } });
+        const t = db3.one(`SELECT * FROM form_templates WHERE id=? AND is_active=1`, template_id);
+        if (!t) throw notFound("Form not found");
+        const fields = parseJson(t.fields_json, []);
+        const values = { ...autofillValues(fields, client, ctx.user), ...ctx.body.values ? cleanValues(fields, ctx.body.values) : {} };
+        const id = uuid2();
+        db3.run(`INSERT INTO client_forms(id,client_id,template_id,template_name,fields_json,values_enc,status,created_by) VALUES(?,?,?,?,?,?,'draft',?)`, id, client.id, t.id, t.name + (t.version ? ` (v${t.version})` : ""), JSON.stringify(fields), encrypt3(JSON.stringify(values)), ctx.user.id);
+        audit3.log({ user: ctx.user, action: "client_form.create", entity: "client_form", entityId: id, clientId: client.id, ip: ctx.ip, details: { template: t.name } });
+        ctx.status = 201;
+        return { id, fields, values };
+      });
+      r.get("/api/forms/:id", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write"), (ctx) => {
+        const f = loadForm(ctx, ctx.params.id);
+        audit3.log({ user: ctx.user, action: "client_form.view", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip });
+        const files = db3.all(`SELECT id, filename, content_type, bytes, created_at, uploaded_by FROM client_form_files WHERE client_form_id=? ORDER BY created_at`, f.id);
+        const t = f.template_id ? db3.one(`SELECT id, name, instructions, (file_b64 IS NOT NULL) has_file, content_type FROM form_templates WHERE id=?`, f.template_id) : null;
+        return { form: { ...formOut(f), files, template: t } };
+      });
+      r.put("/api/forms/:id", auth3.requireAuth, auth3.requirePerm("forms:write"), (ctx) => {
+        const f = loadForm(ctx, ctx.params.id);
+        if (f.status === "completed" && !auth3.hasPerm(ctx.user, "forms:manage")) throw badRequest("This form is completed. Ask a supervisor to reopen it.");
+        const fields = parseJson(f.fields_json, []);
+        const v = validate(ctx.body, { status: { type: "string", enum: ["draft", "completed", "void"] }, notes: { type: "string", maxLen: 2e3 } }, { partial: true });
+        let values = parseJson(decrypt3(f.values_enc), {});
+        if (ctx.body.values !== void 0) values = { ...values, ...cleanValues(fields, ctx.body.values) };
+        const sets = ["values_enc=?", "updated_at=?"];
+        const params = [encrypt3(JSON.stringify(values)), db3.now()];
+        if (v.notes !== void 0) {
+          sets.push("notes=?");
+          params.push(v.notes);
+        }
+        if (v.status) {
+          if (v.status === "completed") {
+            const miss = missingRequired(fields, values);
+            if (miss.length) {
+              db3.run(`UPDATE client_forms SET values_enc=?, updated_at=? WHERE id=?`, params[0], params[1], f.id);
+              throw badRequest(`Please fill in: ${miss.join(", ")}`);
+            }
+            sets.push("status=?", "completed_at=?", "completed_by=?");
+            params.push("completed", db3.now(), ctx.user.id);
+          } else {
+            sets.push("status=?", "completed_at=NULL", "completed_by=NULL");
+            params.push(v.status);
+          }
+        }
+        db3.run(`UPDATE client_forms SET ${sets.join(", ")} WHERE id=?`, ...params, f.id);
+        audit3.log({ user: ctx.user, action: v.status === "completed" ? "client_form.complete" : "client_form.update", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { status: v.status, fields_changed: ctx.body.values ? Object.keys(ctx.body.values).length : 0 } });
+        return { ok: true, missing: missingRequired(fields, values) };
+      });
+      r.delete("/api/forms/:id", auth3.requireAuth, auth3.requirePerm("forms:write"), (ctx) => {
+        const f = loadForm(ctx, ctx.params.id);
+        if (f.status === "completed" && !auth3.hasPerm(ctx.user, "forms:manage")) throw badRequest("Completed forms can only be removed by a supervisor");
+        db3.run(`UPDATE client_forms SET deleted_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), f.id);
+        audit3.log({ user: ctx.user, action: "client_form.delete", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip });
+        return { ok: true };
+      });
+      r.get("/api/forms/:id/pdf", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write"), (ctx) => {
+        const f = loadForm(ctx, ctx.params.id);
+        const client = M.decryptRow(db3.one(`SELECT * FROM clients WHERE id=?`, f.client_id));
+        const values = parseJson(decrypt3(f.values_enc), {});
+        const by = f.completed_by ? db3.one(`SELECT display_name FROM users WHERE id=?`, f.completed_by) : null;
+        audit3.log({ user: ctx.user, action: "client_form.print", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip });
+        const body = pdf.renderForm({ title: f.template_name, org: db3.getSetting("org_name", "SUDS"), meta: [`Client: ${client.first_name} ${client.last_name} (${client.client_code})`, f.status === "completed" ? `Completed ${f.completed_at.slice(0, 10)}${by ? " by " + by.display_name : ""}` : "DRAFT"], fields: parseJson(f.fields_json, []), values, footer: `Printed from SUDS ${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}. Contains protected health information; handle per 42 CFR Part 2 and HIPAA.` });
+        ctx.res.writeHead(200, { "Content-Type": "application/pdf", "Content-Disposition": `${ctx.query.get("download") === "1" ? "attachment" : "inline"}; filename="${client.client_code}-${f.template_name.replace(/[^\w.-]+/g, "_")}.pdf"` });
+        ctx.res.end(body);
+        return null;
+      });
+      r.post("/api/forms/:id/files", auth3.requireAuth, auth3.requirePerm("forms:write"), (ctx) => {
+        const f = loadForm(ctx, ctx.params.id);
+        if (db3.one(`SELECT COUNT(*) n FROM client_form_files WHERE client_form_id=?`, f.id).n >= 10) throw badRequest("At most 10 attachments per form");
+        const v = validate(ctx.body, { filename: { type: "string", maxLen: 200 } });
+        const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_ATTACH_BYTES, "Attachment");
+        if (!file) throw badRequest("Attachment is required");
+        const id = uuid2();
+        const name = (v.filename || `signed.${FILE_TYPES[file.type]}`).replace(/[\r\n"]/g, "");
+        db3.run(`INSERT INTO client_form_files(id,client_form_id,client_id,filename,content_type,bytes,data_enc,uploaded_by) VALUES(?,?,?,?,?,?,?,?)`, id, f.id, f.client_id, name, file.type, file.buf.length, encrypt3(file.b64), ctx.user.id);
+        db3.run(`UPDATE client_forms SET updated_at=? WHERE id=?`, db3.now(), f.id);
+        audit3.log({ user: ctx.user, action: "client_form.attach", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { file_id: id, bytes: file.buf.length, type: file.type } });
+        ctx.status = 201;
+        return { id, filename: name, content_type: file.type, bytes: file.buf.length };
+      });
+      r.get("/api/forms/:id/files/:fid", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write"), (ctx) => {
+        const f = loadForm(ctx, ctx.params.id);
+        const x = db3.one(`SELECT * FROM client_form_files WHERE id=? AND client_form_id=?`, ctx.params.fid, f.id);
+        if (!x) throw notFound();
+        audit3.log({ user: ctx.user, action: "client_form.file.view", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { file_id: x.id } });
+        ctx.res.writeHead(200, { "Content-Type": x.content_type, "Content-Disposition": `${ctx.query.get("download") === "1" ? "attachment" : "inline"}; filename="${x.filename}"` });
+        ctx.res.end(import_buffer.Buffer.from(decrypt3(x.data_enc), "base64"));
+        return null;
+      });
+      r.delete("/api/forms/:id/files/:fid", auth3.requireAuth, auth3.requirePerm("forms:write"), (ctx) => {
+        const f = loadForm(ctx, ctx.params.id);
+        const x = db3.one(`SELECT id FROM client_form_files WHERE id=? AND client_form_id=?`, ctx.params.fid, f.id);
+        if (!x) throw notFound();
+        db3.run(`DELETE FROM client_form_files WHERE id=?`, x.id);
+        db3.tombstone("client_form_files", x.id);
+        db3.run(`UPDATE client_forms SET updated_at=? WHERE id=?`, db3.now(), f.id);
+        audit3.log({ user: ctx.user, action: "client_form.file.remove", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { file_id: x.id } });
+        return { ok: true };
       });
     };
   }
@@ -11274,6 +11894,11 @@ var require_exports = __commonJS({
           columns: ["title", "client_code", "assignee", "due_at", "priority", "status", "is_milestone", "completed_at", "description"],
           rows: () => db3.all(`SELECT t.*, c.client_code, u.display_name assignee FROM tasks t LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN users u ON u.id=t.assigned_to WHERE (t.client_id IS NULL OR ${cf.sql}) ORDER BY t.due_at`, ...cf.params)
         },
+        forms: {
+          label: "Client forms",
+          columns: ["created_at", "client_code", "template_name", "status", "completed_at", "completed_by", "created_by", "attachments"],
+          rows: () => db3.all(`SELECT f.created_at, c.client_code, f.template_name, f.status, f.completed_at, cu.display_name completed_by, cr.display_name created_by, (SELECT COUNT(*) FROM client_form_files x WHERE x.client_form_id=f.id) attachments FROM client_forms f JOIN clients c ON c.id=f.client_id LEFT JOIN users cu ON cu.id=f.completed_by JOIN users cr ON cr.id=f.created_by WHERE f.deleted_at IS NULL AND f.created_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY f.created_at DESC`, from, toEnd, ...cf.params)
+        },
         resources: {
           label: "Resource directory",
           columns: ["name", "category", "organization", "phone", "fax", "email", "website", "address", "city", "zip", "hours", "eligibility", "services", "languages", "accepts_medicaid", "accepts_uninsured", "mat_offered", "capacity_notes", "contact_person", "summary", "service_tags", "levels_of_care", "populations", "intake_process", "cost_notes", "is_active", "last_verified_at", "notes"],
@@ -12126,6 +12751,7 @@ var init_ = __esm({
       "./routes/clients.js": () => require_clients(),
       "./routes/consents.js": () => require_consents(),
       "./routes/dataimport.js": () => require_dataimport2(),
+      "./routes/forms.js": () => require_forms(),
       "./routes/imports.js": () => require_imports(),
       "./routes/intake.js": () => require_intake(),
       "./routes/interventions.js": () => require_interventions(),
@@ -12172,7 +12798,7 @@ var require_app2 = __commonJS({
     }
     function buildRouter() {
       const r = new Router2();
-      for (const mod of ["setup", "auth", "me", "app", "sync", "dataimport", "users", "clients", "assignments", "interventions", "calls", "time", "resources", "referrals", "tasks", "budget", "notes", "consents", "imports", "reports", "admin", "intake"]) {
+      for (const mod of ["setup", "auth", "me", "app", "sync", "dataimport", "users", "clients", "assignments", "interventions", "calls", "time", "resources", "referrals", "tasks", "budget", "notes", "consents", "forms", "imports", "reports", "admin", "intake"]) {
         globRequire_routes(`./routes/${mod}`)(r);
       }
       return r;
@@ -12523,7 +13149,7 @@ function register(router2) {
 }
 
 // local/kernel.js
-var ROUTE_MODULES = ["auth", "me", "users", "clients", "assignments", "interventions", "calls", "time", "resources", "referrals", "tasks", "budget", "notes", "consents", "imports", "dataimport", "reports", "admin"];
+var ROUTE_MODULES = ["auth", "me", "users", "clients", "assignments", "interventions", "calls", "time", "resources", "referrals", "tasks", "budget", "notes", "consents", "forms", "imports", "dataimport", "reports", "admin"];
 var routeLoaders = {
   auth: () => Promise.resolve().then(() => __toESM(require_auth2())),
   me: () => Promise.resolve().then(() => __toESM(require_me())),
@@ -12539,6 +13165,7 @@ var routeLoaders = {
   budget: () => Promise.resolve().then(() => __toESM(require_budget())),
   notes: () => Promise.resolve().then(() => __toESM(require_notes())),
   consents: () => Promise.resolve().then(() => __toESM(require_consents())),
+  forms: () => Promise.resolve().then(() => __toESM(require_forms())),
   imports: () => Promise.resolve().then(() => __toESM(require_imports())),
   dataimport: () => Promise.resolve().then(() => __toESM(require_dataimport2())),
   reports: () => Promise.resolve().then(() => __toESM(require_reports())),

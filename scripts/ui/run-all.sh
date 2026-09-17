@@ -10,7 +10,7 @@ SERVER=$!; trap 'kill $SERVER 2>/dev/null' EXIT
 for i in $(seq 1 40); do curl -sf "http://127.0.0.1:$PORT/api/meta/constants" >/dev/null && break; sleep 0.5; done
 export SUDS_URL="http://127.0.0.1:$PORT"
 fail=0
-for s in desktop navigator-flow ux-features local-mode sync-two-way spreadsheets sample-data resource-profiles; do
+for s in desktop navigator-flow ux-features local-mode sync-two-way spreadsheets sample-data resource-profiles forms; do
   echo "=== $s"
   if node scripts/ui/$s.mjs > /tmp/suds-ui-$s.log 2>&1; then grep -v '^\[2m' /tmp/suds-ui-$s.log | tail -6; else echo "FAILED"; grep -v '^\[2m' /tmp/suds-ui-$s.log | tail -25; fail=1; fi
 done
