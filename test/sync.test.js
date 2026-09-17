@@ -220,3 +220,27 @@ test('a time entry with no client cannot be read by another worker', async () =>
   assert.equal((await admin.get(`/api/time/${mine.data.id}`)).status, 200, 'a manager can');
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='authz.denied' AND entity_id=?`, mine.data.id), 'and the refusal is audited');
 });
+
+test('paging never drops rows that share a timestamp', async () => {
+  // updated_at is not unique — a bulk import stamps many rows with the same instant. Cutting a page in the
+  // middle of one timestamp would lose every row after the cut, because the next pull asks for > cursor.
+  const stamp = '2030-01-01T00:00:00.000Z';
+  const ids = [];
+  for (let i = 0; i < 25; i++) {
+    const id = randomUUID();
+    H.db.run(`INSERT INTO tasks(id,client_id,created_by,title,created_at,updated_at) VALUES(?,?,?,?,?,?)`, id, clientId, navId, `Bulk ${i}`, stamp, stamp);
+    ids.push(id);
+  }
+  // A page far smaller than the number of rows sharing that instant.
+  const seen = new Set();
+  let since = '2029-12-31T00:00:00.000Z';
+  for (let page = 0; page < 20; page++) {
+    const r = (await navBearer.client.get(`/api/sync/pull?since=${encodeURIComponent(since)}&limit=5`, navBearer.headers)).data;
+    for (const row of r.tables.tasks || []) seen.add(row.id);
+    if (r.complete) break;
+    assert.ok(r.cursor > since, 'the cursor always moves forward, so paging terminates');
+    since = r.cursor;
+  }
+  const missed = ids.filter(id => !seen.has(id));
+  assert.deepEqual(missed, [], 'every row sharing the timestamp was delivered');
+});

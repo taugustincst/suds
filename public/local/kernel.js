@@ -18404,11 +18404,19 @@ var require_sync = __commonJS({
       for (const t of SYNC2.tables) {
         const sc = scopeSql(t, user, "x");
         const rows = db3.all(`SELECT x.* FROM ${t.name} x WHERE x.updated_at > ? AND ${sc.sql} ORDER BY x.updated_at LIMIT ?`, since, ...sc.params, limit2 + 1);
-        if (rows.length > limit2) {
-          rows.length = limit2;
-          capped.push(rows[rows.length - 1].updated_at);
+        if (rows.length <= limit2) {
+          raw[t.name] = rows;
+          continue;
         }
-        raw[t.name] = rows;
+        const boundary = rows[limit2].updated_at;
+        const safe = rows.filter((r) => r.updated_at < boundary);
+        if (safe.length) {
+          raw[t.name] = safe;
+          capped.push(safe[safe.length - 1].updated_at);
+          continue;
+        }
+        raw[t.name] = db3.all(`SELECT x.* FROM ${t.name} x WHERE x.updated_at = ? AND ${sc.sql} ORDER BY x.updated_at`, boundary, ...sc.params);
+        capped.push(boundary);
       }
       const cursor = capped.length ? capped.reduce((a, b) => a < b ? a : b) : serverNow;
       const complete = capped.length === 0;

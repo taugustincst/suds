@@ -66,19 +66,34 @@ function scopeSql(t, user, alias) {
 }
 
 // Pull everything changed since `since` that the user may see, in bounded pages.
+//
+// Paging is by updated_at, which is not unique: a bulk import can stamp thousands of rows with the same
+// instant. Cutting a page in the middle of one timestamp would lose every row after the cut, because the
+// next request asks for `> cursor`. So a page always ends on a timestamp boundary — and when a single
+// timestamp is itself bigger than a page, that timestamp is sent whole rather than split.
 function pull(user, since, { limit = PULL_LIMIT } = {}) {
   const serverNow = db.now();
   const raw = {}; const capped = [];
+
   for (const t of SYNC.tables) {
     const sc = scopeSql(t, user, 'x');
     // updated_at is NOT NULL on every synced table (migration 5) and indexed, so this is a range scan
     // rather than the full table scan a COALESCE would force.
     const rows = db.all(`SELECT x.* FROM ${t.name} x WHERE x.updated_at > ? AND ${sc.sql} ORDER BY x.updated_at LIMIT ?`, since, ...sc.params, limit + 1);
-    if (rows.length > limit) { rows.length = limit; capped.push(rows[rows.length - 1].updated_at); }
-    raw[t.name] = rows;
+    if (rows.length <= limit) { raw[t.name] = rows; continue; }
+
+    // More to come. The first row that did not fit marks the boundary; everything strictly before it is
+    // safe to send, because no row of an earlier timestamp can be left behind.
+    const boundary = rows[limit].updated_at;
+    const safe = rows.filter(r => r.updated_at < boundary);
+    if (safe.length) { raw[t.name] = safe; capped.push(safe[safe.length - 1].updated_at); continue; }
+
+    // The whole page is one timestamp, so it cannot be split without losing rows. Send all of it.
+    raw[t.name] = db.all(`SELECT x.* FROM ${t.name} x WHERE x.updated_at = ? AND ${sc.sql} ORDER BY x.updated_at`, boundary, ...sc.params);
+    capped.push(boundary);
   }
-  // If any table filled its page, stop every table at the same instant so the cursor stays a single point
-  // in time; the device pulls again from there.
+
+  // Every table stops at the same instant, so the cursor stays a single point in time.
   const cursor = capped.length ? capped.reduce((a, b) => (a < b ? a : b)) : serverNow;
   const complete = capped.length === 0;
 
