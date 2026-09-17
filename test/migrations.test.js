@@ -168,3 +168,21 @@ test('the generated browser schema matches schema.sql', () => {
   const sql = fs.readFileSync(path.join(__dirname, '..', 'server', 'schema.sql'), 'utf8');
   assert.equal(require('../server/schema-text.js'), sql, 'run `node scripts/gen-schema-text.js`');
 });
+
+test('every place that carries a version number agrees with package.json', () => {
+  // The version lived in four hand-maintained files, so a release could ship with three of them bumped.
+  // scripts/gen-schema-text.js stamps them all from package.json; this fails if one has drifted.
+  const root = path.join(__dirname, '..');
+  const version = require('../package.json').version;
+  const [maj, min, pat] = version.split('.').map(Number);
+  const versionCode = maj * 10000 + min * 100 + pat;
+  const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8');
+
+  assert.match(read('public/sw.js'), new RegExp(`const VERSION = 'suds-shell-${version.replace(/\./g, '\\.')}'`), 'public/sw.js — run `npm run gen:schema`');
+  const gradle = read('mobile/android/app/build.gradle.kts');
+  assert.match(gradle, new RegExp(`versionName = "${version.replace(/\./g, '\\.')}"`), 'Android versionName');
+  assert.match(gradle, new RegExp(`versionCode = ${versionCode}\\b`), 'Android versionCode — it must increase or the update will not install');
+  const plist = read('mobile/ios/SUDS/Info.plist');
+  assert.ok(plist.includes(`<key>CFBundleShortVersionString</key><string>${version}</string>`), 'iOS CFBundleShortVersionString');
+  assert.ok(plist.includes(`<key>CFBundleVersion</key><string>${versionCode}</string>`), 'iOS CFBundleVersion');
+});

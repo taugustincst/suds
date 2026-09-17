@@ -108,6 +108,15 @@ function safeContentType(t) { return SERVABLE_TYPES.has(String(t || '').toLowerC
 
 module.exports = (r) => {
   // ---------- template library ----------
+  // Starter templates, so a new installation is not left with an empty form library and no consent form.
+  r.get('/api/forms/starters', auth.requireAuth, auth.requirePerm('forms:manage'), () => ({ starters: require('../form-starters').list() }));
+  r.post('/api/forms/starters', auth.requireAuth, auth.requirePerm('forms:manage'), (ctx) => {
+    const keys = Array.isArray(ctx.body && ctx.body.keys) ? ctx.body.keys.filter(k => typeof k === 'string') : null;
+    const out = require('../form-starters').install({ keys: keys && keys.length ? keys : null, actor: ctx.user.id });
+    audit.log({ user: ctx.user, action: 'forms.starters.request', ip: ctx.ip, details: { added: out.added.length } });
+    return out;
+  });
+
   r.get('/api/forms/templates', auth.requireAuth, auth.requirePerm('forms:read', 'forms:write', 'forms:manage'), (ctx) => {
     const all = ctx.query.get('active') === '0' && auth.hasPerm(ctx.user, 'forms:manage');
     const rows = db.all(`SELECT t.id, t.name, t.description, t.category, t.version, t.filename, t.content_type, t.bytes, t.fields_json, t.instructions, t.is_active, t.updated_at, t.created_at, (t.file_b64 IS NOT NULL) has_file, (SELECT COUNT(*) FROM client_forms f WHERE f.template_id=t.id AND f.deleted_at IS NULL) use_count FROM form_templates t ${all ? '' : 'WHERE t.is_active=1'} ORDER BY t.category, t.name`);

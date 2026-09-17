@@ -10,7 +10,9 @@ import('node:fs').then(m => m.mkdirSync('/tmp/suds-shots', { recursive: true }))
 const browser = await chromium.launch(); const ctx = await browser.newContext(); const page = await ctx.newPage();
 const errors = [];
 page.on('pageerror', e => errors.push('PAGEERROR ' + e.message));
-page.on('console', m => { if (m.type() === 'error') errors.push('CONSOLE ' + m.text().slice(0, 300)); });
+page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push('CONSOLE ' + m.text().slice(0, 300)); });
+// "Failed to load resource: 403" tells you nothing on its own; record which request it was.
+page.on('response', (r) => { if (r.status() === 403 || r.status() >= 500) errors.push(`HTTP ${r.status()} ${r.request().method()} ${r.url().replace(base, '')}`); });
 
 const api = (m, p, b) => page.evaluate(([m, p, b]) => window.SUDS_LOCAL.handle(m, p, b, {}).then(r => r.json), [m, p, b]);
 const sync = () => api('POST', '/api/local/sync', { server: base, username: 'mrivera', password: 'Navigator2026!!' });

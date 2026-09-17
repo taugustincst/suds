@@ -144,6 +144,9 @@ async function call(server, path, opts = {}, token) {
   return data;
 }
 
+/** Has this attachment already been exchanged with the office, in either direction? */
+const blobKey = (table, id, col) => `sync_blob:${table}:${id}:${col}`;
+
 /** Attachments the device is missing, fetched one at a time after the rows themselves have landed. */
 async function fetchBlobs(server, token, onProgress) {
   let fetched = 0;
@@ -157,6 +160,9 @@ async function fetchBlobs(server, token, onProgress) {
           if (got.value === null || got.value === undefined) continue;
           const stored = t.enc.includes(col) ? encrypt(got.value) : got.value;
           db.run(`UPDATE ${t.name} SET ${col}=? WHERE id=?`, stored, r.id);
+          // It came from the office, so the office has it: never try to upload it back. Without this the
+          // device re-offered every form template it had just downloaded, and was refused each time.
+          db.setSetting(blobKey(t.name, r.id, col), '1');
           fetched++;
           if (fetched % 5 === 0) onProgress(`Downloading attachments (${fetched})…`);
         } catch { /* a missing attachment is not a reason to fail the sync; the next one will retry */ }
@@ -173,8 +179,10 @@ async function uploadBlobs(server, token, onProgress) {
     for (const col of t.blob || []) {
       const rows = db.all(`SELECT id, ${col} AS v FROM ${t.name} WHERE ${col} IS NOT NULL LIMIT ?`, BLOBS_PER_SYNC);
       for (const r of rows) {
-        const key = `sync_blob:${t.name}:${r.id}:${col}`;
+        const key = blobKey(t.name, r.id, col);
         if (db.getSetting(key, null)) continue;
+        // A row the office already knows about arrived from there; its attachment is not ours to push.
+        if (db.one(`SELECT 1 FROM sync_seen WHERE table_name=? AND id=?`, t.name, r.id)) { db.setSetting(key, '1'); continue; }
         let value = r.v;
         if (t.enc.includes(col)) { try { value = decrypt(value); } catch { continue; } }
         try {

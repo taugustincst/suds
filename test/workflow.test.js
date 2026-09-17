@@ -235,3 +235,50 @@ test('a client-less intervention records community naloxone distribution', async
   const rep = await admin.get('/api/reports/funder?from=2026-09-01&to=2026-09-30');
   assert.ok(rep.data.naloxone_distribution.community_kits >= 40, 'and it is counted separately in the funder report');
 });
+
+test('a new installation can put a Part 2 consent form in the library', async () => {
+  // Shipping with an empty form library meant a county had no consent form at all — and no substance use
+  // record can lawfully be shared without one.
+  const before = await admin.get('/api/forms/starters');
+  assert.equal(before.status, 200);
+  assert.ok(before.data.starters.some(s => s.key === 'part2_consent'), 'a 42 CFR Part 2 consent is offered');
+  assert.ok(before.data.starters.every(s => !s.installed), 'nothing is installed until asked for');
+  assert.equal((await nav.get('/api/forms/starters')).status, 403, 'only someone who manages forms can install them');
+
+  const r = await admin.post('/api/forms/starters', { keys: ['part2_consent', 'naloxone_log'] });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.added.length, 2);
+
+  const templates = (await admin.get('/api/forms/templates')).data.templates;
+  const consent = templates.find(t => t.name.includes('42 CFR Part 2'));
+  assert.ok(consent, 'the consent form is in the library');
+  const full = (await admin.get(`/api/forms/templates/${consent.id}`)).data.template;
+  const keys = full.fields.map(f => f.key);
+  // The elements 42 CFR 2.31 actually requires.
+  for (const required of ['recipient', 'purpose', 'info', 'expires', 'client_sig']) assert.ok(keys.includes(required), `the consent asks for ${required}`);
+  assert.match(full.instructions, /redisclosure|Part 2/i, 'the redisclosure notice travels with it');
+
+  // Installing twice does not duplicate anything.
+  const again = await admin.post('/api/forms/starters', {});
+  assert.ok(!again.data.added.some(a => a.key === 'part2_consent'), 'an already-installed form is not added twice');
+  assert.equal((await admin.get('/api/forms/templates')).data.templates.filter(t => t.name.includes('42 CFR Part 2')).length, 1);
+
+  // And it prints, which is what a client actually signs.
+  const pdf = await admin.get(`/api/forms/templates/${consent.id}/blank.pdf`);
+  assert.equal(pdf.status, 200);
+});
+
+test('the health endpoint reports on the database, not just the listener', async () => {
+  // The Docker healthcheck used /api/meta/constants, which returns a static object: it proved the process
+  // was up and nothing else.
+  const c = H.client();
+  const r = await c.get('/api/health');
+  assert.equal(r.status, 200, 'it is reachable without signing in, for a monitor');
+  assert.equal(r.data.ok, true);
+  assert.equal(r.data.database, 'ok');
+  assert.ok(r.data.schema_version >= 7);
+  assert.ok(typeof r.data.uptime_seconds === 'number');
+  // It must not leak anything about the installation.
+  const body = JSON.stringify(r.data);
+  assert.ok(!/password|key|secret|client/i.test(body.replace(/schema_version|database/gi, '')), 'it says nothing sensitive');
+});

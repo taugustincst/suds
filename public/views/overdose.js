@@ -33,6 +33,7 @@ export function openOverdoseForm(row, { clientId = null, onDone } = {}) {
   ], {
     values: row || { client_id: clientId || '', occurred_at: new Date().toISOString(), kind: 'reversal', survived: 1, naloxone_used: 1, naloxone_doses: 1 },
     submitText: row ? 'Save' : 'Record event',
+    draftKey: row ? `overdose:${row.id}` : 'overdose:new',
     onSubmit: async (d) => {
       if (!d.client_id) delete d.client_id;
       if (row) await put(`/api/overdose-events/${row.id}`, d); else await post('/api/overdose-events', d);

@@ -72,7 +72,10 @@ await page.click('text=+ Log a visit or service'); await page.waitForSelector('.
 const picker = await page.$('.modal [role=combobox]');
 ok(picker, 'the client picker is a combobox');
 if (picker) {
-  await picker.fill('ngu'); await page.waitForTimeout(900);
+  // Type the first three letters of a client this user actually has, rather than a name that may not be
+  // on their caseload — the point is that a partial surname finds them.
+  const surname = await page.evaluate(() => fetch('/api/clients?limit=1').then(r => r.json()).then(d => (d.clients[0]?.display_name || '').split(',')[0].trim()));
+  await picker.fill(surname.slice(0, 3).toLowerCase()); await page.waitForTimeout(900);
   ok(await page.$eval('.modal [role=combobox]', el => el.getAttribute('aria-expanded') === 'true'), 'typing opens the list of matches');
   await page.keyboard.press('ArrowDown'); await page.waitForTimeout(150);
   ok(await page.$('.modal .list-item.active'), 'arrow keys move through the matches');

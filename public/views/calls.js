@@ -12,7 +12,7 @@ export function openCallForm(values, { clientId, clientDisplay, onDone } = {}) {
     { name: 'crisis', label: 'Crisis call', type: 'checkbox' }, { name: 'follow_up_needed', label: 'Follow-up needed', type: 'checkbox' }, { name: 'follow_up_due', label: 'Remind me to call back on', type: 'date' },
     { name: 'summary', label: 'Summary (encrypted)', type: 'textarea', span: true },
     isNew ? { name: 'log_time', label: 'Also log as time entry', type: 'checkbox', value: true } : null,
-  ].filter(Boolean), { values: values || {}, submitText: isNew ? 'Log call' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => {
+  ].filter(Boolean), { values: values || {}, submitText: isNew ? 'Log call' : 'Save', draftKey: values ? `call:${values.id}` : 'call:new', onCancel: () => m.close(), onSubmit: async (d) => {
     if (isNew) await post('/api/calls', d); else await put(`/api/calls/${values.id}`, d);
     toast(isNew ? 'Call logged' : 'Saved', 'ok'); m.close(); onDone && onDone();
   } });

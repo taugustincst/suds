@@ -194,7 +194,14 @@ export const can = (perm) => { const u = state.user; if (!u) return false; const
 
 // ---------- forms ----------
 // fields: [{name,label,type:'text|number|date|datetime|select|textarea|checkbox|client|user|resource|fund', options, required, value, span, help, min, max, step}]
-export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCancel, cancelText = 'Cancel', extra } = {}) {
+// Unsaved form contents, kept in memory only. Deliberately not localStorage: a half-typed intake form is
+// PHI, and this app's whole design keeps PHI out of browser storage. Memory survives a closed dialog, a
+// route change and an idle sign-out within the same tab, which is what was actually being lost.
+const drafts = new Map();
+export function discardDraft(key) { drafts.delete(key); }
+export function hasDraft(key) { return drafts.has(key); }
+
+export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCancel, cancelText = 'Cancel', extra, draftKey } = {}) {
   const inputs = {};
   const grid = h('div', { class: 'form-grid' });
   let target = grid;
@@ -236,6 +243,9 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
       f.help ? h('div', { class: 'help', id: helpId }, f.help) : null, errEl);
     target.append(wrap);
   }
+  // A draft kept from an earlier attempt at this same form wins over the defaults.
+  const restored = draftKey && drafts.get(draftKey);
+  if (restored) for (const [k, v] of Object.entries(restored)) { const i = inputs[k]; if (!i) continue; if (i.type === 'checkbox') i.checked = !!v; else i.value = v ?? ''; }
   const errBox = h('div', { class: 'banner danger hidden', role: 'alert', tabindex: '-1' });
   const submitBtn = h('button', { class: 'btn primary', type: 'submit' }, submitText);
   const el = h('form', { onSubmit: async (e) => {
@@ -244,7 +254,7 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     errBox.classList.add('hidden');
     el.querySelectorAll('.field').forEach(x => { x.classList.remove('error'); x.querySelector('.err').textContent = ''; const c = x.querySelector('input,select,textarea'); if (c) c.removeAttribute('aria-invalid'); });
     submitBtn.disabled = true;
-    try { await onSubmit(data, el); }
+    try { await onSubmit(data, el); if (draftKey) drafts.delete(draftKey); }
     catch (err) {
       const fieldsErr = err.data && err.data.fields;
       let firstBad = null;
@@ -264,7 +274,18 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
       (firstBad || errBox).focus({ preventScroll: false });
       (firstBad || errBox).scrollIntoView({ block: 'center', behavior: 'smooth' });
     } finally { submitBtn.disabled = false; }
-  } }, errBox, grid, extra || null, h('div', { class: 'btn-row' }, onCancel ? h('button', { class: 'btn', type: 'button', onClick: onCancel }, cancelText) : null, submitBtn));
+  } }, restored ? h('div', { class: 'banner', role: 'status' },
+    h('span', {}, 'Restored what you had already typed.'),
+    h('button', { class: 'btn ghost sm', type: 'button', onClick: (e) => { drafts.delete(draftKey); e.target.closest('.banner').remove(); for (const f of fields) { const i = inputs[f.name]; if (!i) continue; if (i.type === 'checkbox') i.checked = false; else i.value = ''; } } }, 'Start over')) : null,
+    errBox, grid, extra || null, h('div', { class: 'btn-row' }, onCancel ? h('button', { class: 'btn', type: 'button', onClick: onCancel }, cancelText) : null, submitBtn));
+
+  // Keep what has been typed so a dialog closed by accident, a route change, or an idle sign-out does not
+  // throw it away.
+  if (draftKey) {
+    let saveTimer;
+    el.addEventListener('input', () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => { const d = read(); if (Object.values(d).some(v => v !== '' && v !== null && v !== undefined && v !== 0)) drafts.set(draftKey, d); }, 400); });
+    el.addEventListener('change', () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => drafts.set(draftKey, read()), 400); });
+  }
   function read() {
     const data = {};
     for (const f of fields) {
@@ -538,7 +559,12 @@ function startIdleWatch() {
     let w = document.getElementById('idle-warn');
     if (idleMs > limit - 60000 && !w) { w = h('div', { id: 'idle-warn', class: 'idle-warn' }, 'You will be signed out in 1 minute due to inactivity. Move the mouse or press a key to stay signed in.'); document.body.append(w); }
     if (idleMs <= limit - 60000 && w) w.remove();
-    if (idleMs > limit) { if (w) w.remove(); logout(); toast('Signed out due to inactivity', 'error'); }
+    if (idleMs > limit) {
+      if (w) w.remove();
+      logout();
+      // Anything half-typed is kept in memory, so say so rather than letting it look like lost work.
+      toast(drafts.size ? 'Signed out due to inactivity. What you had typed is kept — reopen the form after signing in.' : 'Signed out due to inactivity', 'error');
+    }
   }, 5000);
 }
 

@@ -19,7 +19,7 @@ jobs:
         working-directory: src
         run: |
           npm run build:local
-          git diff --exit-code -- public/local server/schema-text.js public/sw.js || {
+          git diff --exit-code -- public/local server/schema-text.js public/sw.js mobile/android/app/build.gradle.kts mobile/ios/SUDS/Info.plist || {
             echo "::error::public/local/kernel.js or server/schema-text.js is out of date. Run 'npm run build:local' and commit the result."
             exit 1
           }

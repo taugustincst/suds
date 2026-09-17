@@ -18,7 +18,7 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
     { name: '_disclosure_what', label: 'What is being shared', placeholder: 'Referral information (name, contact details and presenting need)', span: true },
     { name: 'follow_up_due', label: 'Follow-up due', type: 'date', help: 'A follow-up to-do is created either way; leave this empty and one is set for you based on urgency.' }, { name: 'barrier', label: 'Barrier (if any)', type: 'select', options: ['none', 'transportation', 'insurance', 'waitlist', 'no_beds', 'client_declined', 'childcare', 'documentation', 'legal', 'phone_access', 'other'] },
     { name: 'outcome', label: 'Outcome', span: true }, { name: 'notes', label: 'Notes', type: 'textarea', span: true },
-  ], { values: values || {}, submitText: isNew ? 'Create referral' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => {
+  ], { values: values || {}, submitText: isNew ? 'Create referral' : 'Save', draftKey: isNew ? 'referral:new' : `referral:${values.id}`, onCancel: () => m.close(), onSubmit: async (d) => {
     try {
       if (isNew) await post('/api/referrals', d); else await put(`/api/referrals/${values.id}`, d);
     } catch (e) {

@@ -6137,7 +6137,7 @@ var require_config = __commonJS({
       return import_buffer.Buffer.from(hex, "hex");
     }
     var config = {
-      version: true ? "1.6.1" : "local",
+      version: true ? "1.7.0" : "local",
       env: "local",
       isProd: true,
       isTest: false,
@@ -9258,6 +9258,7 @@ var require_demo = __commonJS({
     var db3 = require_db();
     var C = require_constants();
     var { encrypt: encrypt3, blindIndex: blindIndex2, uuid: uuid2 } = require_crypto();
+    var M = require_clients_model();
     var audit3 = require_audit();
     var DEMO_PREFIX = "DEMO-";
     var TABLES = ["client_form_files", "client_forms", "form_templates", "expenditures", "disclosures", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "assignments", "clients", "budget_lines", "funding_sources", "resource_photos", "resources"];
@@ -9623,13 +9624,15 @@ var require_demo = __commonJS({
           const phone = `555-01${String(i + 1).padStart(2, "0")}`;
           const intake = 150 - i * 11;
           db3.run(
-            `INSERT INTO clients(id,client_code,first_name_enc,last_name_enc,last_name_idx,full_name_idx,preferred_name_enc,dob_enc,dob_idx,phone_enc,phone_idx,email_enc,address_enc,city,zip,gender,pronouns,preferred_language,status,intake_date,discharge_date,discharge_reason,primary_substance,secondary_substances,route_of_use,risk_level,mat_status,mat_medication,overdose_history,last_overdose_date,naloxone_provided,naloxone_last_date,housing_status,insurance,asam_level,referral_source,justice_involved,pregnant_or_parenting,co_occurring_mh,goals_enc,flags_enc,ok_to_text,ok_to_voicemail,created_by,created_at) VALUES(${Array(45).fill("?").join(",")})`,
+            `INSERT INTO clients(id,client_code,first_name_enc,last_name_enc,last_name_idx,full_name_idx,name_prefix_idx,name_phonetic_idx,preferred_name_enc,dob_enc,dob_idx,phone_enc,phone_idx,email_enc,address_enc,city,zip,gender,pronouns,preferred_language,status,intake_date,discharge_date,discharge_reason,primary_substance,secondary_substances,route_of_use,risk_level,mat_status,mat_medication,overdose_history,last_overdose_date,naloxone_provided,naloxone_last_date,housing_status,insurance,asam_level,referral_source,justice_involved,pregnant_or_parenting,co_occurring_mh,goals_enc,flags_enc,ok_to_text,ok_to_voicemail,created_by,created_at) VALUES(${Array(47).fill("?").join(",")})`,
             id,
             `${DEMO_PREFIX}${String(i + 1).padStart(4, "0")}`,
             encrypt3(fn),
             encrypt3(ln2),
             blindIndex2(ln2),
             blindIndex2(ln2 + fn),
+            M.namePrefixIndex(ln2),
+            M.namePhoneticIndex(ln2),
             pref ? encrypt3(pref) : null,
             encrypt3(dob),
             blindIndex2(dob),
@@ -12375,6 +12378,194 @@ var require_episodes = __commonJS({
   }
 });
 
+// server/form-starters.js
+var require_form_starters = __commonJS({
+  "server/form-starters.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var { uuid: uuid2 } = require_crypto();
+    var text = (key, label, opts = {}) => ({ key, label, type: "text", ...opts });
+    var area = (key, label, opts = {}) => ({ key, label, type: "textarea", ...opts });
+    var date = (key, label, opts = {}) => ({ key, label, type: "date", ...opts });
+    var check = (key, label, opts = {}) => ({ key, label, type: "checkbox", ...opts });
+    var section = (key, label) => ({ key, label, type: "section" });
+    var TEMPLATES = [
+      {
+        key: "part2_consent",
+        name: "Consent to release information (42 CFR Part 2)",
+        category: "consent",
+        description: "Written consent before any substance use disorder record is shared. Required elements per 42 CFR \xA72.31.",
+        instructions: "Complete with the client, read the redisclosure notice aloud, and record the signed copy against the client. Have your county counsel review the wording before first use.",
+        fields: [
+          section("sec_client", "Client"),
+          text("client_name", "Client name", { required: true }),
+          date("client_dob", "Date of birth"),
+          section("sec_release", "What may be released, to whom, and why"),
+          text("recipient", "Information may be released to (name and agency)", { required: true }),
+          area("purpose", "Purpose of the disclosure", { required: true, help: 'Be specific \u2014 "for treatment coordination" is enough; "for any purpose" is not.' }),
+          {
+            key: "info",
+            label: "Information to be released",
+            type: "select",
+            required: true,
+            options: ["Referral summary only", "Diagnosis and medication-assisted treatment status", "Attendance and progress", "Assessment and treatment plan", "Full record"]
+          },
+          area("info_other", "If other, describe exactly what will be released"),
+          section("sec_limits", "Limits"),
+          date("expires", "This consent expires on", { required: true, help: "Part 2 requires an expiry date, event or condition." }),
+          area("expires_event", "Or, the event or condition that ends it"),
+          check("redisclosure", "The redisclosure notice below was explained to the client", { required: true }),
+          section("sec_rights", "Client rights"),
+          check("may_revoke", "The client was told they may revoke this consent at any time, in writing or verbally, except where information has already been released in reliance on it"),
+          check("no_condition", "The client was told that treatment, payment and eligibility do not depend on signing this"),
+          section("sec_sign", "Signatures"),
+          text("client_sig", "Client signature", { required: true }),
+          date("client_sig_date", "Date", { required: true }),
+          text("rep_sig", "Personal representative (if applicable)"),
+          text("rep_relationship", "Relationship and authority"),
+          text("witness_sig", "Witness / staff signature"),
+          date("witness_date", "Date")
+        ],
+        footer: "NOTICE: This information has been disclosed to you from records protected by federal confidentiality rules (42 CFR Part 2). The federal rules prohibit you from making any further disclosure of information in this record that identifies a patient as having or having had a substance use disorder either directly, by reference to publicly available information, or through verification of such identification or status, unless authorised in writing by the patient or as otherwise permitted by 42 CFR Part 2. A general authorisation for the release of medical or other information is NOT sufficient for this purpose. The federal rules restrict any use of the information to investigate or prosecute with regard to a crime any patient with a substance use disorder, except as provided at \xA7\xA7 2.12(c)(5) and 2.65."
+      },
+      {
+        key: "consent_revocation",
+        name: "Revocation of consent",
+        category: "consent",
+        description: "Records that a client has withdrawn a release of information, and when.",
+        instructions: "Complete as soon as the client tells you, then revoke the consent in SUDS so any open referrals relying on it are flagged.",
+        fields: [
+          text("client_name", "Client name", { required: true }),
+          text("consent_description", "Consent being revoked (recipient and date signed)", { required: true }),
+          date("effective", "Revoked with effect from", { required: true }),
+          area("reason", "Reason (optional \u2014 the client does not have to give one)"),
+          check("told_already_shared", "The client was told that information already shared in reliance on the consent cannot be recalled"),
+          text("client_sig", "Client signature"),
+          date("client_sig_date", "Date"),
+          text("staff_sig", "Staff signature", { required: true }),
+          date("staff_date", "Date", { required: true })
+        ]
+      },
+      {
+        key: "intake_face_sheet",
+        name: "Intake face sheet",
+        category: "intake",
+        description: "The first page of a client file: who they are, how to reach them, and what brought them in.",
+        instructions: "Most of this is pre-filled from the client record. Print it for a paper file, or fill it in on a phone during an outreach contact and enter it afterwards.",
+        fields: [
+          section("sec_who", "Client"),
+          text("client_name", "Name", { required: true }),
+          text("preferred_name", "Preferred name"),
+          date("client_dob", "Date of birth"),
+          text("pronouns", "Pronouns"),
+          text("phone", "Phone"),
+          check("ok_to_text", "OK to text"),
+          check("ok_to_voicemail", "OK to leave a voicemail"),
+          text("address", "Address"),
+          text("emergency_contact", "Emergency contact"),
+          section("sec_need", "Presenting need"),
+          area("presenting", "What brought them in today", { required: true }),
+          text("primary_substance", "Primary substance"),
+          text("housing_status", "Housing situation"),
+          text("insurance", "Insurance"),
+          check("overdose_history", "History of overdose"),
+          check("naloxone_given", "Naloxone provided today"),
+          section("sec_next", "Next steps"),
+          area("plan", "Immediate plan"),
+          date("follow_up", "Follow-up date"),
+          text("worker", "Navigator")
+        ]
+      },
+      {
+        key: "assistance_request",
+        name: "Client assistance request",
+        category: "assistance",
+        description: "Request for flexible funds \u2014 bus passes, identification documents, work clothes, a deposit.",
+        instructions: "Complete with the client, attach receipts to the completed form, and record the spending against the funding source in Funding & spending.",
+        fields: [
+          text("client_name", "Client name", { required: true }),
+          text("client_code", "Client code"),
+          { key: "category", label: "What is needed", type: "select", required: true, options: ["Transport (bus pass, fuel, fare)", "Identification documents", "Housing deposit or rent", "Clothing", "Phone or phone credit", "Medication or medical", "Food", "Other"] },
+          area("justification", "How this supports their recovery plan", { required: true }),
+          text("amount", "Amount requested", { required: true }),
+          text("vendor", "Vendor or provider"),
+          check("alternatives", "Other sources were checked first (Medicaid, CalFresh, housing programmes)"),
+          text("requested_by", "Requested by", { required: true }),
+          date("requested_on", "Date", { required: true }),
+          section("sec_approval", "Approval"),
+          text("approved_by", "Approved by"),
+          date("approved_on", "Date"),
+          area("approval_notes", "Notes")
+        ]
+      },
+      {
+        key: "naloxone_log",
+        name: "Naloxone distribution log",
+        category: "harm_reduction",
+        description: "A single distribution event, including community distribution with no identified client.",
+        instructions: "Use this for outreach and community events. Enter the totals in SUDS as a visit or service afterwards so they reach the funder report.",
+        fields: [
+          date("event_date", "Date", { required: true }),
+          text("location", "Location"),
+          text("event_name", "Event or outreach activity"),
+          text("kits", "Naloxone kits distributed", { required: true }),
+          text("strips", "Fentanyl test strips distributed"),
+          text("people", "People who received training"),
+          check("training_given", "Overdose recognition and response training was given"),
+          check("anonymous", "Recipients were anonymous (community distribution)"),
+          area("notes", "Notes"),
+          text("staff", "Staff", { required: true })
+        ]
+      }
+    ];
+    function installedKeys() {
+      try {
+        return JSON.parse(db3.getSetting("form_starters_installed", "[]"));
+      } catch {
+        return [];
+      }
+    }
+    function list() {
+      const installed = new Set(installedKeys());
+      return TEMPLATES.map((t) => ({ key: t.key, name: t.name, category: t.category, description: t.description, fields: t.fields.length, installed: installed.has(t.key) }));
+    }
+    function install({ keys = null, actor = null } = {}) {
+      const wanted = TEMPLATES.filter((t) => !keys || keys.includes(t.key));
+      const already = new Set(installedKeys());
+      const added = [];
+      db3.transaction(() => {
+        for (const t of wanted) {
+          if (already.has(t.key)) continue;
+          if (db3.one(`SELECT 1 FROM form_templates WHERE name=?`, t.name)) {
+            already.add(t.key);
+            continue;
+          }
+          const id = uuid2();
+          db3.run(
+            `INSERT INTO form_templates(id,name,description,category,version,fields_json,instructions,is_active,uploaded_by) VALUES(?,?,?,?,?,?,?,1,?)`,
+            id,
+            t.name,
+            t.description,
+            t.category,
+            "starter",
+            JSON.stringify(t.fields),
+            [t.instructions, t.footer].filter(Boolean).join("\n\n"),
+            actor
+          );
+          added.push({ key: t.key, id, name: t.name });
+          already.add(t.key);
+        }
+        db3.setSetting("form_starters_installed", JSON.stringify([...already]));
+      });
+      if (added.length) audit3.log({ user: actor ? { id: actor, username: "form-starters" } : { username: "form-starters" }, action: "forms.starters.install", details: { added: added.map((a) => a.key) } });
+      return { added, total: TEMPLATES.length };
+    }
+    module.exports = { TEMPLATES, list, install };
+  }
+});
+
 // server/routes/forms.js
 var require_forms = __commonJS({
   "server/routes/forms.js"(exports, module) {
@@ -12557,6 +12748,13 @@ var require_forms = __commonJS({
       return SERVABLE_TYPES.has(String(t || "").toLowerCase().split(";")[0].trim()) ? String(t).split(";")[0].trim() : "application/octet-stream";
     }
     module.exports = (r) => {
+      r.get("/api/forms/starters", auth3.requireAuth, auth3.requirePerm("forms:manage"), () => ({ starters: require_form_starters().list() }));
+      r.post("/api/forms/starters", auth3.requireAuth, auth3.requirePerm("forms:manage"), (ctx) => {
+        const keys = Array.isArray(ctx.body && ctx.body.keys) ? ctx.body.keys.filter((k) => typeof k === "string") : null;
+        const out2 = require_form_starters().install({ keys: keys && keys.length ? keys : null, actor: ctx.user.id });
+        audit3.log({ user: ctx.user, action: "forms.starters.request", ip: ctx.ip, details: { added: out2.added.length } });
+        return out2;
+      });
       r.get("/api/forms/templates", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write", "forms:manage"), (ctx) => {
         const all = ctx.query.get("active") === "0" && auth3.hasPerm(ctx.user, "forms:manage");
         const rows = db3.all(`SELECT t.id, t.name, t.description, t.category, t.version, t.filename, t.content_type, t.bytes, t.fields_json, t.instructions, t.is_active, t.updated_at, t.created_at, (t.file_b64 IS NOT NULL) has_file, (SELECT COUNT(*) FROM client_forms f WHERE f.template_id=t.id AND f.deleted_at IS NULL) use_count FROM form_templates t ${all ? "" : "WHERE t.is_active=1"} ORDER BY t.category, t.name`);
@@ -18948,6 +19146,7 @@ async function call(server, path, opts = {}, token2) {
   }
   return data;
 }
+var blobKey = (table, id, col) => `sync_blob:${table}:${id}:${col}`;
 async function fetchBlobs(server, token2, onProgress) {
   let fetched = 0;
   for (const t of import_sync_tables.default.tables) {
@@ -18960,6 +19159,7 @@ async function fetchBlobs(server, token2, onProgress) {
           if (got.value === null || got.value === void 0) continue;
           const stored = t.enc.includes(col) ? (0, import_crypto2.encrypt)(got.value) : got.value;
           import_db.default.run(`UPDATE ${t.name} SET ${col}=? WHERE id=?`, stored, r.id);
+          import_db.default.setSetting(blobKey(t.name, r.id, col), "1");
           fetched++;
           if (fetched % 5 === 0) onProgress(`Downloading attachments (${fetched})\u2026`);
         } catch {
@@ -18975,8 +19175,12 @@ async function uploadBlobs(server, token2, onProgress) {
     for (const col of t.blob || []) {
       const rows = import_db.default.all(`SELECT id, ${col} AS v FROM ${t.name} WHERE ${col} IS NOT NULL LIMIT ?`, BLOBS_PER_SYNC);
       for (const r of rows) {
-        const key = `sync_blob:${t.name}:${r.id}:${col}`;
+        const key = blobKey(t.name, r.id, col);
         if (import_db.default.getSetting(key, null)) continue;
+        if (import_db.default.one(`SELECT 1 FROM sync_seen WHERE table_name=? AND id=?`, t.name, r.id)) {
+          import_db.default.setSetting(key, "1");
+          continue;
+        }
         let value = r.v;
         if (t.enc.includes(col)) {
           try {

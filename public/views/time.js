@@ -9,7 +9,7 @@ export function openTimeForm(values, { clientId, clientDisplay, onDone } = {}) {
     can('budget:read') ? { name: 'funding_source_id', label: 'Charge to fund', type: 'fund' } : null, { name: 'billable', label: 'Billable', type: 'checkbox' },
     { name: 'description', label: 'Description', span: true },
     can('time:all') ? { name: 'user_id', label: 'Worker', type: 'user', value: values?.user_id || state.user.id } : null,
-  ].filter(Boolean), { values: values || {}, submitText: isNew ? 'Log time' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => {
+  ].filter(Boolean), { values: values || {}, submitText: isNew ? 'Log time' : 'Save', draftKey: isNew ? 'time:new' : `time:${values.id}`, onCancel: () => m.close(), onSubmit: async (d) => {
     if (isNew) await post('/api/time', d); else await put(`/api/time/${values.id}`, d);
     toast('Time saved', 'ok'); m.close(); onDone && onDone();
   } });
