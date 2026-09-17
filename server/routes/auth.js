@@ -14,7 +14,7 @@ module.exports = (r) => {
     const result = await auth.login({ username, password, ctx });
     ctx.res.setHeader('Set-Cookie', auth.cookieHeader(result.token));
     // Sync clients (phone app) authenticate with a bearer token instead of the cookie
-    const out = { user: result.user, mfaPending: result.mfaPending, mfaSetupRequired: result.mfaSetupRequired };
+    const out = { user: result.user, mfaPending: result.mfaPending, mfaSetupRequired: result.mfaSetupRequired, mfaSetupDeadline: result.mfaSetupDeadline };
     if (ctx.headers['x-sync-client']) out.token = result.token;
     return out;
   });

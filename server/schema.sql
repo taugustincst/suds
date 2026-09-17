@@ -288,7 +288,9 @@ CREATE TABLE IF NOT EXISTS resource_photos (
   content_type TEXT NOT NULL,
   bytes INTEGER NOT NULL DEFAULT 0,
   width INTEGER, height INTEGER,
-  data_b64 TEXT NOT NULL,               -- downscaled picture (JPEG/PNG/WebP), base64
+  -- Nullable: an attachment row reaches a device before its bytes do. Attachments are fetched by id once
+  -- the rows have landed, because inlining every photo made a sync payload the phone could not parse.
+  data_b64 TEXT,                       -- downscaled picture (JPEG/PNG/WebP), base64
   thumb_b64 TEXT,                       -- small JPEG thumbnail for lists, base64
   sort_order INTEGER NOT NULL DEFAULT 0,
   uploaded_by TEXT REFERENCES users(id),
@@ -493,7 +495,7 @@ CREATE TABLE IF NOT EXISTS client_form_files (
   filename TEXT NOT NULL,
   content_type TEXT NOT NULL,
   bytes INTEGER NOT NULL DEFAULT 0,
-  data_enc TEXT NOT NULL,              -- encrypted base64 of the signed / scanned copy (PHI)
+  data_enc TEXT,                       -- encrypted base64 of the signed / scanned copy (PHI); nullable, see resource_photos.data_b64
   uploaded_by TEXT REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))

@@ -82,6 +82,9 @@ const config = {
     absoluteHours: Number(process.env.SESSION_ABSOLUTE_HOURS || 12),
   },
   mfaRequiredRoles: (process.env.MFA_REQUIRED_ROLES ?? 'admin,supervisor').split(',').map(s => s.trim()).filter(Boolean),
+  // Days a new account in one of those roles has to enrol before it is locked out of everything but the
+  // enrolment screens. Set to 0 to require it immediately.
+  mfaGraceDays: Number(process.env.MFA_GRACE_DAYS ?? 14),
   password: { minLength: 12, maxAgeDays: 90 },
   lockout: { maxAttempts: 5, minutes: 15 },
   msGraph: {

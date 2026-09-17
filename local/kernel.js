@@ -47,9 +47,10 @@ export async function start({ wasmUrl, onSaveError } = {}) {
   // independently. If the key store was cleared, a fresh key would be generated and every record on the
   // device would become permanently unreadable — silently, until the next sync failed. Compare a
   // fingerprint of the key against the one recorded when this database was created, and stop if it moved.
-  const config = require('../server/config.js');
-  const { sha256 } = require('../server/crypto.js');
-  const fingerprint = sha256('suds-key-check:' + config.encryptionKey.toString('hex')).slice(0, 32);
+  // Via server/crypto.js, so the bundler's config alias applies — importing server/config.js from here
+  // would pull in the real Node configuration instead of the device shim.
+  const { keyFingerprint } = require('../server/crypto.js');
+  const fingerprint = keyFingerprint();
   const stored = db.getSetting('encryption_key_fingerprint', null);
   const hasData = db.one(`SELECT COUNT(*) n FROM users`).n > 0;
   if (!stored) { if (hasData) db.setSetting('encryption_key_fingerprint', fingerprint); else db.setSetting('encryption_key_fingerprint', fingerprint); }

@@ -7,7 +7,7 @@ const { badRequest, notFound, forbidden } = require('../http');
 const { validate, paging } = require('../validate');
 const { uuid, randomToken, sha256 } = require('../crypto');
 
-const SETTING_KEYS = ['org_name', 'caseload_restriction', 'county_name', 'program_contact', 'default_funding_source_id', 'note_lock_days', 'session_idle_minutes', 'session_absolute_hours', 'password_max_age_days', 'mfa_required_roles'];
+const SETTING_KEYS = ['org_name', 'caseload_restriction', 'county_name', 'program_contact', 'default_funding_source_id', 'note_lock_days', 'session_idle_minutes', 'session_absolute_hours', 'password_max_age_days', 'mfa_required_roles', 'mfa_grace_days'];
 const listener = require('../listener');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -25,7 +25,7 @@ module.exports = (r) => {
     const changed = [];
     for (const k of SETTING_KEYS) if (ctx.body[k] !== undefined) {
       let v = String(ctx.body[k]).slice(0, 500);
-      if (['session_idle_minutes', 'session_absolute_hours', 'password_max_age_days'].includes(k) && v !== '' && !(Number(v) > 0)) throw badRequest(`${k} must be a positive number`);
+      if (['session_idle_minutes', 'session_absolute_hours', 'password_max_age_days', 'mfa_grace_days'].includes(k) && v !== '' && !(Number(v) > 0)) throw badRequest(`${k} must be a positive number`);
       if (k === 'mfa_required_roles') v = v.split(',').map(x => x.trim()).filter(x => ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'].includes(x)).join(',');
       if (k === 'session_idle_minutes' && v !== '' && Number(v) > 60) throw badRequest('Idle timeout may not exceed 60 minutes (HIPAA automatic logoff)');
       db.setSetting(k, v); changed.push(k);

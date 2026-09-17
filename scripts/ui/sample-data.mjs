@@ -15,7 +15,7 @@ console.log('sync card state:', await page.getAttribute('[data-sample]', 'data-s
 await page.click('button:has-text("Load sample data")'); await page.waitForSelector('[data-sample=loaded]', { timeout: 20000 }); await page.waitForTimeout(500);
 console.log('after load:', (await page.textContent('[data-sample]')).replace(/\s+/g, ' ').slice(0, 120));
 await page.goto(base + '/?local=1#/clients'); await page.waitForTimeout(1500); const rows = await page.$$eval('tbody tr', r => r.length); console.log('client rows (active by default):', rows); if (rows !== 9) errors.push('expected 9 active sample clients, saw ' + rows);
-await page.click('tbody tr.click'); await page.waitForTimeout(1200); console.log('client page:', page.url().split('#')[1], (await page.textContent('h1')).trim());
+await page.waitForSelector('tbody tr.click', { timeout: 15000 }); await page.click('tbody tr.click'); await page.waitForTimeout(1200); console.log('client page:', page.url().split('#')[1], (await page.textContent('h1')).trim());
 const cid = page.url().split('/client/')[1].split('/')[0];
 for (const t of ['timeline', 'notes', 'referrals', 'budget']) { await page.goto(`${base}/?local=1#/client/${cid}/${t}`); await page.waitForTimeout(800); if (await page.$('.main .boot')) errors.push('still loading ' + t); }
 await page.goto(base + '/?local=1#/'); await page.waitForTimeout(1500); console.log('dashboard banner gone:', !(await page.$('[data-sample-banner]')));

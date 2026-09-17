@@ -161,6 +161,13 @@ const migrations = [
     }
     for (const line of schemaText.split('\n')) if (/^CREATE INDEX IF NOT EXISTS idx_clients_name_/.test(line.trim())) d.exec(line.trim());
   },
+  // 7: attachment bytes become nullable. Rows now reach a device before their bytes do — a sync payload
+  //    carrying every photo and scan inline was tens of megabytes the phone could not parse — so an
+  //    attachment row has to be insertable while its content is still on its way.
+  (d) => {
+    const schemaText = safeSchema();
+    for (const t of ['resource_photos', 'client_form_files']) rebuildTable(d, schemaText, t);
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

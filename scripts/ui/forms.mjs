@@ -22,7 +22,7 @@ async function run(label, root, login) {
   const tpl = await page.$$('.tpl-card'); console.log(label, 'library forms:', tpl.length); if (tpl.length < 3) errors.push(label + ': sample forms missing from library');
   await page.click('.tpl-card'); await page.waitForSelector('.modal'); console.log(label, 'template modal:', (await page.textContent('.modal h2')).trim()); await page.keyboard.press('Escape'); await page.waitForTimeout(200);
   // --- fill from the client record ---
-  await page.goto(root + '#/clients'); await page.waitForTimeout(900); await page.click('tbody tr.click'); await page.waitForTimeout(900);
+  await page.goto(root + '#/clients'); await page.waitForTimeout(900); await page.waitForSelector('tbody tr.click', { timeout: 15000 }); await page.click('tbody tr.click'); await page.waitForTimeout(900);
   const cid = page.url().split('/client/')[1].split('/')[0];
   await page.goto(root + `#/client/${cid}/forms`); await page.waitForTimeout(900); const before = await page.$$eval('tbody tr', r => r.length); console.log(label, 'existing forms for client:', before);
   await page.click('button:has-text("+ Fill out a form")'); await page.waitForSelector('.modal .quick-item'); await page.click('.modal .quick-item:has-text("Consent for Release")'); await page.waitForSelector('.ff-modal', { timeout: 10000 });
@@ -31,7 +31,7 @@ async function run(label, root, login) {
   await page.click('.ff-modal button:has-text("Mark completed")'); await page.waitForTimeout(300); await page.click('.modal-bg:last-child button.primary'); await page.waitForTimeout(1200);
   const rows = await page.$$eval('tbody tr', r => r.map(x => x.textContent)); console.log(label, 'forms now:', rows.length, '| first row:', (rows[0] || '').replace(/\s+/g, ' ').slice(0, 80)); if (rows.length !== before + 1 || !/Completed/.test(rows[0])) errors.push(label + ': completed form not listed');
   // reopen, attach a signed copy, print
-  await page.click('tbody tr.click'); await page.waitForSelector('.ff-modal');
+  await page.waitForSelector('tbody tr.click', { timeout: 15000 }); await page.click('tbody tr.click'); await page.waitForSelector('.ff-modal');
   const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.click('.ff-modal button:has-text("Attach photo or PDF")')]); await chooser.setFiles('/tmp/suds-shots/sig.png'); await page.waitForTimeout(1500);
   console.log(label, 'attachment listed:', !!(await page.$('.ff-modal a:has-text("sig.png")'))); if (!await page.$('.ff-modal a:has-text("sig.png")')) errors.push(label + ': attachment not listed');
   if (label === 'office') { await page.evaluate(() => { window.__opened = null; window.open = (u) => { window.__opened = u; return null; }; }); await page.click('.ff-modal button:has-text("Print / PDF")'); const u = await page.evaluate(() => window.__opened); const r = await ctx.request.get(base + u); const body = await r.body(); console.log(label, 'pdf url:', u, body.slice(0, 4).toString()); if (!body.slice(0, 4).toString().startsWith('%PDF')) errors.push(label + ': PDF not served'); }

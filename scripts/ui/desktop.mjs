@@ -18,7 +18,7 @@ const views = ['clients', 'tasks', 'interventions', 'calls', 'time', 'referrals'
 for (const v of views) { await page.goto(`${base}/#/${v}`); await page.waitForTimeout(700); const boot = await page.$('.main .boot'); if (boot) errors.push('STILL LOADING: ' + v); if (await page.$('.modal-bg')) { errors.push('MODAL OPEN AFTER: ' + v); await page.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove())); } await shot(v.replace(/[?=]/g, '_')); console.log('visited', v, 'errors so far', errors.length); }
 // client detail tabs
 await page.goto(base + '/#/clients'); await page.waitForTimeout(600);
-await page.click('tbody tr.click');
+await page.waitForSelector('tbody tr.click', { timeout: 15000 }); await page.click('tbody tr.click');
 await page.waitForTimeout(700);
 const cid = page.url().split('/client/')[1];
 for (const t of ['overview', 'timeline', 'interventions', 'calls', 'notes', 'referrals', 'tasks', 'consents', 'time', 'budget', 'team']) { await page.goto(`${base}/#/client/${cid}/${t}`); await page.waitForTimeout(600); await shot('client_' + t); }
@@ -28,7 +28,7 @@ await page.click('text=+ Intervention'); await page.waitForTimeout(300); await s
 await page.click('text=+ Note'); await page.waitForTimeout(300); await page.selectOption('select[name=format]', 'SOAP'); await page.waitForTimeout(200); await shot('modal_note'); await page.keyboard.press('Escape');
 await page.click('text=Edit'); await page.waitForTimeout(300); await shot('modal_client_edit'); await page.keyboard.press('Escape');
 // open a note
-await page.goto(`${base}/#/client/${cid}/notes`); await page.waitForTimeout(600); await page.click('tbody tr.click'); await page.waitForTimeout(500); await shot('note_view'); await page.keyboard.press('Escape');
+await page.goto(`${base}/#/client/${cid}/notes`); await page.waitForTimeout(600); await page.waitForSelector('tbody tr.click', { timeout: 15000 }); await page.click('tbody tr.click'); await page.waitForTimeout(500); await shot('note_view'); await page.keyboard.press('Escape');
 // imports: paste
 await page.goto(base + '/#/imports'); await page.waitForTimeout(500);
 await page.fill('textarea', '# Field visit with Nguyen, Jamie\nDate: 2026-09-10\nMet at shelter, provided naloxone.\n\n---\n\n# Call re: C26-0002\nLeft voicemail.');

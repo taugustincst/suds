@@ -138,5 +138,11 @@ function otpauthUrl(secret, account, issuer = 'SUDS') {
   return `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(account)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
 }
 
-module.exports = { encrypt, decrypt, blindIndex, hashPassword, verifyPassword, hashPasswordAsync, verifyPasswordAsync, randomToken, sha256, uuid,
+/**
+ * A short, non-reversible fingerprint of the PHI key in use. Stored alongside the data so a device can tell
+ * that its key has been replaced (browser storage cleared) before it writes anything under the new one.
+ */
+function keyFingerprint() { return sha256('suds-key-check:' + config.encryptionKey.toString('hex')).slice(0, 32); }
+
+module.exports = { encrypt, decrypt, blindIndex, keyFingerprint, hashPassword, verifyPassword, hashPasswordAsync, verifyPasswordAsync, randomToken, sha256, uuid,
   generateTotpSecret, totp, verifyTotp, otpauthUrl, base32Encode, base32Decode };

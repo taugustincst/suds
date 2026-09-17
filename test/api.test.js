@@ -239,7 +239,8 @@ test('MFA enrollment and verification flow', async () => {
   const c = require('../server/crypto');
   const setup = await nav.post('/api/auth/mfa/setup', {});
   assert.equal(setup.status, 200);
-  assert.equal((await nav.post('/api/auth/mfa/enable', { code: '000000' })).status === 400 || true, true);
+  // This was 'assert.equal(x === 400 || true, true)' — it asserted nothing at all.
+  assert.equal((await nav.post('/api/auth/mfa/enable', { code: '000000' })).status, 400, 'a wrong code must not enable two-step verification');
   const en = await nav.post('/api/auth/mfa/enable', { code: c.totp(setup.data.secret) });
   assert.equal(en.status, 200);
   const fresh = H.client();
@@ -460,6 +461,9 @@ test('a role that must use two-step verification cannot work until it is set up'
   // This was advisory: the login response said mfaSetupRequired and nothing enforced it.
   const u = H.makeUser('mfauser', 'supervisor');
   H.db.setSetting('mfa_required_roles', 'supervisor');
+  // Enforcement is real but not instant: a new account has a grace period to enrol, or the very first
+  // administrator the setup wizard creates would be locked out before they could. Age this one past it.
+  H.db.run(`UPDATE users SET created_at=? WHERE id=?`, '2020-01-01T00:00:00.000Z', u.id);
   try {
     const c = H.client();
     const login = await c.post('/api/auth/login', { username: u.username, password: u.password });
@@ -479,6 +483,14 @@ test('a role that must use two-step verification cannot work until it is set up'
     const code = require('../server/crypto').totp(setup.data.secret);
     assert.equal((await c.post('/api/auth/mfa/enable', { code })).status, 200);
     assert.equal((await c.get('/api/clients')).status, 200, 'once enrolled, work proceeds');
+
+    // A brand-new account in the same role is warned, not blocked.
+    const fresh = H.makeUser('mfafresh', 'supervisor');
+    const f = H.client();
+    const freshLogin = await f.post('/api/auth/login', { username: fresh.username, password: fresh.password });
+    assert.equal(freshLogin.data.mfaSetupRequired, true, 'they are told to enrol');
+    assert.ok(freshLogin.data.mfaSetupDeadline > new Date().toISOString(), 'and given a date by which to do it');
+    assert.equal((await f.get('/api/clients')).status, 200, 'but can still work in the meantime');
   } finally { H.db.setSetting('mfa_required_roles', ''); }
 });
 

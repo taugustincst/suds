@@ -7,7 +7,13 @@ const { uuid } = require('../crypto');
 // The visit summary is clinical narrative about a named person, so it is stored encrypted like any other
 // PHI field and decrypted on the way out.
 function encodeSummary(v) { if (v.summary !== undefined) { v.summary_enc = v.summary ? require('../crypto').encrypt(v.summary) : null; delete v.summary; } }
-function decodeSummary(row) { return { ...row, summary: row.summary_enc ? require('../crypto').decrypt(row.summary_enc) : null, summary_enc: undefined }; }
+function decodeSummary(row) {
+  let summary = null;
+  // A value that cannot be decrypted (a row written before this column was encrypted, or one whose key has
+  // been rotated away) must not take the whole list down with it.
+  if (row.summary_enc) { try { summary = require('../crypto').decrypt(row.summary_enc); } catch { summary = '[could not be read]'; } }
+  return { ...row, summary, summary_enc: undefined };
+}
 
 module.exports = (r) => {
   crud.build(r, {

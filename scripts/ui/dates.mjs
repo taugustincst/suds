@@ -7,7 +7,7 @@ page.on('pageerror', e => errors.push('PAGEERROR ' + e.message)); page.on('conso
 await page.goto(base + '/#/login'); await page.fill('input[name=username]', 'mrivera'); await page.fill('input[name=password]', 'Navigator2026!!'); await page.click('button[type=submit]'); await page.waitForSelector('.layout'); loggedIn = true;
 await page.evaluate(() => fetch('/api/me/prefs', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'suds' }, body: JSON.stringify({ tour_done: true }) })); await page.waitForTimeout(1200); await page.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove()));
 // pick a client, add a reminder due on a calendar day
-await page.goto(base + '/#/clients'); await page.waitForTimeout(800); await page.click('tbody tr.click'); await page.waitForTimeout(800);
+await page.goto(base + '/#/clients'); await page.waitForTimeout(800); await page.waitForSelector('tbody tr.click', { timeout: 15000 }); await page.click('tbody tr.click'); await page.waitForTimeout(800);
 const cid = page.url().split('/client/')[1].split('/')[0];
 const d = new Date(); d.setDate(d.getDate() + 3); const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const expected = d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });

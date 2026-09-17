@@ -14,6 +14,9 @@ function policy() {
     absoluteHours: num('session_absolute_hours', config.session.absoluteHours),
     passwordMaxAgeDays: num('password_max_age_days', config.password.maxAgeDays),
     mfaRequiredRoles: roles === null ? config.mfaRequiredRoles : roles.split(',').map(x => x.trim()).filter(Boolean),
+    // How long a new account in a role that requires two-step verification has to set it up. Without this
+    // the very first administrator would be locked out the moment the setup wizard created them.
+    mfaGraceDays: num('mfa_grace_days', config.mfaGraceDays),
   };
 }
 
@@ -119,7 +122,7 @@ function resolveSession(ctx) {
     db.run(`UPDATE sessions SET revoked_at=? WHERE id=?`, db.now(), s.id);
     return null;
   }
-  const user = db.one(`SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,must_change_password,password_changed_at,hourly_cost FROM users WHERE id=?`, s.user_id);
+  const user = db.one(`SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,must_change_password,password_changed_at,hourly_cost,created_at,requires_cosign,supervisor_id FROM users WHERE id=?`, s.user_id);
   if (!user || !user.is_active) return null;
   // throttle last_seen writes to once/minute
   if (now - Date.parse(s.last_seen_at) > 60_000) db.run(`UPDATE sessions SET last_seen_at=? WHERE id=?`, new Date(now).toISOString(), s.id);
@@ -132,15 +135,29 @@ function requireAuth(ctx) {
   if (!ctx.user) throw unauthorized();
   if (ctx.session?.mfa_pending) throw new HttpError(401, 'MFA verification required', { mfaRequired: true });
   if (!ctx.path.startsWith('/api/auth/')) {
-    // Roles the county marks as requiring two-factor cannot reach anything until it is set up. This used to
-    // be advisory — the login response said so and nothing stopped the user from ignoring it.
-    if (policy().mfaRequiredRoles.includes(ctx.user.role) && !ctx.user.mfa_enabled) {
-      throw new HttpError(403, 'Two-step verification must be set up for your role before you can continue', { mfaSetupRequired: true });
+    // Roles the county marks as requiring two-step verification cannot reach anything once their grace
+    // period has run out. This used to be advisory — the login response said so and nothing stopped the
+    // user from ignoring it — but enforcing it from the first second would lock out the administrator the
+    // setup wizard just created, before they had any chance to enrol.
+    const due = mfaDeadline(ctx.user);
+    if (due && Date.now() > Date.parse(due)) {
+      throw new HttpError(403, 'Two-step verification must be set up for your role before you can continue', { mfaSetupRequired: true, mfaSetupDeadline: due });
     }
     if (ctx.user.must_change_password) throw new HttpError(403, 'Password change required', { passwordChangeRequired: true });
     const age = ctx.user.password_changed_at ? (Date.now() - Date.parse(ctx.user.password_changed_at)) / 86400000 : Infinity;
     const maxAge = policy().passwordMaxAgeDays; if (age > maxAge) throw new HttpError(403, `Password is older than ${maxAge} days and must be changed`, { passwordChangeRequired: true });
   }
+}
+
+/**
+ * When this user must have two-step verification in place, or null if it is not required of them (or is
+ * already set up). Measured from the account's creation.
+ */
+function mfaDeadline(user) {
+  if (!user || user.mfa_enabled) return null;
+  if (!policy().mfaRequiredRoles.includes(user.role)) return null;
+  const created = Date.parse(user.created_at || 0) || Date.now();
+  return new Date(created + policy().mfaGraceDays * 86400000).toISOString();
 }
 
 // ---- Login ----
@@ -170,7 +187,8 @@ async function login({ username, password, ctx }) {
   const mfaPending = !!user.mfa_enabled;
   const token = createSession(user, ctx, { mfaPending });
   audit.log({ user, action: mfaPending ? 'auth.login.mfa_pending' : 'auth.login', ip: ctx.ip });
-  return { token, user: publicUser(user), mfaPending, mfaSetupRequired: mfaRequiredForRole && !user.mfa_enabled };
+  const deadline = mfaDeadline(user);
+  return { token, user: publicUser(user), mfaPending, mfaSetupRequired: mfaRequiredForRole && !user.mfa_enabled, mfaSetupDeadline: deadline };
 }
 
 function verifyMfa(ctx, code) {
@@ -202,5 +220,5 @@ function passwordPolicy(pw) {
   return errors;
 }
 
-module.exports = { policy, PERMS, hasPerm, requirePerm, requireAuth, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted,
+module.exports = { policy, PERMS, hasPerm, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted,
   createSession, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };

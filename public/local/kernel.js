@@ -6464,7 +6464,9 @@ CREATE TABLE IF NOT EXISTS resource_photos (
   content_type TEXT NOT NULL,
   bytes INTEGER NOT NULL DEFAULT 0,
   width INTEGER, height INTEGER,
-  data_b64 TEXT NOT NULL,               -- downscaled picture (JPEG/PNG/WebP), base64
+  -- Nullable: an attachment row reaches a device before its bytes do. Attachments are fetched by id once
+  -- the rows have landed, because inlining every photo made a sync payload the phone could not parse.
+  data_b64 TEXT,                       -- downscaled picture (JPEG/PNG/WebP), base64
   thumb_b64 TEXT,                       -- small JPEG thumbnail for lists, base64
   sort_order INTEGER NOT NULL DEFAULT 0,
   uploaded_by TEXT REFERENCES users(id),
@@ -6669,7 +6671,7 @@ CREATE TABLE IF NOT EXISTS client_form_files (
   filename TEXT NOT NULL,
   content_type TEXT NOT NULL,
   bytes INTEGER NOT NULL DEFAULT 0,
-  data_enc TEXT NOT NULL,              -- encrypted base64 of the signed / scanned copy (PHI)
+  data_enc TEXT,                       -- encrypted base64 of the signed / scanned copy (PHI); nullable, see resource_photos.data_b64
   uploaded_by TEXT REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -6959,10 +6961,14 @@ var require_crypto = __commonJS({
     function otpauthUrl(secret, account, issuer = "SUDS") {
       return `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(account)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
     }
+    function keyFingerprint() {
+      return sha2562("suds-key-check:" + config.encryptionKey.toString("hex")).slice(0, 32);
+    }
     module.exports = {
       encrypt: encrypt3,
       decrypt: decrypt3,
       blindIndex: blindIndex2,
+      keyFingerprint,
       hashPassword,
       verifyPassword,
       hashPasswordAsync,
@@ -7266,6 +7272,13 @@ var require_db = __commonJS({
           upd.run(M.namePrefixIndex(last), M.namePhoneticIndex(last), c.id);
         }
         for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_clients_name_/.test(line.trim())) d.exec(line.trim());
+      },
+      // 7: attachment bytes become nullable. Rows now reach a device before their bytes do — a sync payload
+      //    carrying every photo and scan inline was tens of megabytes the phone could not parse — so an
+      //    attachment row has to be insertable while its content is still on its way.
+      (d) => {
+        const schemaText = safeSchema();
+        for (const t of ["resource_photos", "client_form_files"]) rebuildTable(d, schemaText, t);
       }
     ];
     function initialise(d, schemaText) {
@@ -7640,7 +7653,10 @@ var require_auth = __commonJS({
         idleMinutes: num("session_idle_minutes", config.session.idleMinutes),
         absoluteHours: num("session_absolute_hours", config.session.absoluteHours),
         passwordMaxAgeDays: num("password_max_age_days", config.password.maxAgeDays),
-        mfaRequiredRoles: roles === null ? config.mfaRequiredRoles : roles.split(",").map((x) => x.trim()).filter(Boolean)
+        mfaRequiredRoles: roles === null ? config.mfaRequiredRoles : roles.split(",").map((x) => x.trim()).filter(Boolean),
+        // How long a new account in a role that requires two-step verification has to set it up. Without this
+        // the very first administrator would be locked out the moment the setup wizard created them.
+        mfaGraceDays: num("mfa_grace_days", config.mfaGraceDays)
       };
     }
     var PERMS = {
@@ -7846,7 +7862,7 @@ var require_auth = __commonJS({
         db3.run(`UPDATE sessions SET revoked_at=? WHERE id=?`, db3.now(), s2.id);
         return null;
       }
-      const user = db3.one(`SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,must_change_password,password_changed_at,hourly_cost FROM users WHERE id=?`, s2.user_id);
+      const user = db3.one(`SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,must_change_password,password_changed_at,hourly_cost,created_at,requires_cosign,supervisor_id FROM users WHERE id=?`, s2.user_id);
       if (!user || !user.is_active) return null;
       if (now - Date.parse(s2.last_seen_at) > 6e4) db3.run(`UPDATE sessions SET last_seen_at=? WHERE id=?`, new Date(now).toISOString(), s2.id);
       ctx.sessionToken = token2;
@@ -7857,14 +7873,21 @@ var require_auth = __commonJS({
       if (!ctx.user) throw unauthorized();
       if (ctx.session?.mfa_pending) throw new HttpError3(401, "MFA verification required", { mfaRequired: true });
       if (!ctx.path.startsWith("/api/auth/")) {
-        if (policy().mfaRequiredRoles.includes(ctx.user.role) && !ctx.user.mfa_enabled) {
-          throw new HttpError3(403, "Two-step verification must be set up for your role before you can continue", { mfaSetupRequired: true });
+        const due = mfaDeadline(ctx.user);
+        if (due && Date.now() > Date.parse(due)) {
+          throw new HttpError3(403, "Two-step verification must be set up for your role before you can continue", { mfaSetupRequired: true, mfaSetupDeadline: due });
         }
         if (ctx.user.must_change_password) throw new HttpError3(403, "Password change required", { passwordChangeRequired: true });
         const age = ctx.user.password_changed_at ? (Date.now() - Date.parse(ctx.user.password_changed_at)) / 864e5 : Infinity;
         const maxAge = policy().passwordMaxAgeDays;
         if (age > maxAge) throw new HttpError3(403, `Password is older than ${maxAge} days and must be changed`, { passwordChangeRequired: true });
       }
+    }
+    function mfaDeadline(user) {
+      if (!user || user.mfa_enabled) return null;
+      if (!policy().mfaRequiredRoles.includes(user.role)) return null;
+      const created = Date.parse(user.created_at || 0) || Date.now();
+      return new Date(created + policy().mfaGraceDays * 864e5).toISOString();
     }
     async function login({ username, password, ctx }) {
       const user = db3.one(`SELECT * FROM users WHERE username=?`, String(username || "").trim());
@@ -7892,7 +7915,8 @@ var require_auth = __commonJS({
       const mfaPending = !!user.mfa_enabled;
       const token2 = createSession(user, ctx, { mfaPending });
       audit3.log({ user, action: mfaPending ? "auth.login.mfa_pending" : "auth.login", ip: ctx.ip });
-      return { token: token2, user: publicUser(user), mfaPending, mfaSetupRequired: mfaRequiredForRole && !user.mfa_enabled };
+      const deadline = mfaDeadline(user);
+      return { token: token2, user: publicUser(user), mfaPending, mfaSetupRequired: mfaRequiredForRole && !user.mfa_enabled, mfaSetupDeadline: deadline };
     }
     function verifyMfa(ctx, code) {
       if (!ctx.session) throw unauthorized();
@@ -7936,6 +7960,7 @@ var require_auth = __commonJS({
       hasPerm,
       requirePerm,
       requireAuth,
+      mfaDeadline,
       canAccessClient,
       assertClientAccess,
       caseloadFilter,
@@ -9698,7 +9723,7 @@ var require_demo = __commonJS({
               type === "naloxone_distribution" ? 1 + Math.floor(rand() * 2) : 0,
               type === "harm_reduction" ? 5 : 0,
               fund,
-              SUMMARIES[type] || `${type.replace(/_/g, " ")} contact`,
+              encrypt3(SUMMARIES[type] || `${type.replace(/_/g, " ")} contact`),
               rand() < 0.3 ? day(-Math.floor(rand() * 10)) : null,
               d(off, 16)
             );
@@ -10188,7 +10213,7 @@ var require_admin = __commonJS({
     var { badRequest, notFound, forbidden } = require_http();
     var { validate, paging } = require_validate();
     var { uuid: uuid2, randomToken, sha256: sha2562 } = require_crypto();
-    var SETTING_KEYS = ["org_name", "caseload_restriction", "county_name", "program_contact", "default_funding_source_id", "note_lock_days", "session_idle_minutes", "session_absolute_hours", "password_max_age_days", "mfa_required_roles"];
+    var SETTING_KEYS = ["org_name", "caseload_restriction", "county_name", "program_contact", "default_funding_source_id", "note_lock_days", "session_idle_minutes", "session_absolute_hours", "password_max_age_days", "mfa_required_roles", "mfa_grace_days"];
     var listener = (init_listener(), __toCommonJS(listener_exports));
     var fs = (init_fs(), __toCommonJS(fs_exports));
     var path = (init_path(), __toCommonJS(path_exports));
@@ -10205,7 +10230,7 @@ var require_admin = __commonJS({
         const changed = [];
         for (const k of SETTING_KEYS) if (ctx.body[k] !== void 0) {
           let v = String(ctx.body[k]).slice(0, 500);
-          if (["session_idle_minutes", "session_absolute_hours", "password_max_age_days"].includes(k) && v !== "" && !(Number(v) > 0)) throw badRequest(`${k} must be a positive number`);
+          if (["session_idle_minutes", "session_absolute_hours", "password_max_age_days", "mfa_grace_days"].includes(k) && v !== "" && !(Number(v) > 0)) throw badRequest(`${k} must be a positive number`);
           if (k === "mfa_required_roles") v = v.split(",").map((x) => x.trim()).filter((x) => ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"].includes(x)).join(",");
           if (k === "session_idle_minutes" && v !== "" && Number(v) > 60) throw badRequest("Idle timeout may not exceed 60 minutes (HIPAA automatic logoff)");
           db3.setSetting(k, v);
@@ -10536,7 +10561,7 @@ var require_auth2 = __commonJS({
         const { username, password } = validate(ctx.body, { username: { type: "string", required: true, maxLen: 100 }, password: { type: "string", required: true, maxLen: 500 } });
         const result = await auth3.login({ username, password, ctx });
         ctx.res.setHeader("Set-Cookie", auth3.cookieHeader(result.token));
-        const out2 = { user: result.user, mfaPending: result.mfaPending, mfaSetupRequired: result.mfaSetupRequired };
+        const out2 = { user: result.user, mfaPending: result.mfaPending, mfaSetupRequired: result.mfaSetupRequired, mfaSetupDeadline: result.mfaSetupDeadline };
         if (ctx.headers["x-sync-client"]) out2.token = result.token;
         return out2;
       });
@@ -13204,7 +13229,15 @@ var require_interventions = __commonJS({
       }
     }
     function decodeSummary(row) {
-      return { ...row, summary: row.summary_enc ? require_crypto().decrypt(row.summary_enc) : null, summary_enc: void 0 };
+      let summary = null;
+      if (row.summary_enc) {
+        try {
+          summary = require_crypto().decrypt(row.summary_enc);
+        } catch {
+          summary = "[could not be read]";
+        }
+      }
+      return { ...row, summary, summary_enc: void 0 };
     }
     module.exports = (r) => {
       crud.build(r, {
@@ -18755,137 +18788,6 @@ var require_app2 = __commonJS({
   }
 });
 
-// local/shims/package.js
-var package_exports = {};
-__export(package_exports, {
-  default: () => package_default,
-  version: () => version
-});
-var version, package_default;
-var init_package = __esm({
-  "local/shims/package.js"() {
-    init_globals_inject();
-    version = true ? "1.6.1" : "local";
-    package_default = { version };
-  }
-});
-
-// server/config.js
-var require_config2 = __commonJS({
-  "server/config.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var fs = (init_fs(), __toCommonJS(fs_exports));
-    var path = (init_path(), __toCommonJS(path_exports));
-    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
-    function loadDotEnv(file) {
-      if (!fs.existsSync(file)) return;
-      for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
-        const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
-        if (!m || line.trim().startsWith("#")) continue;
-        let v = m[2];
-        if (v.startsWith('"') && v.endsWith('"') || v.startsWith("'") && v.endsWith("'")) v = v.slice(1, -1);
-        if (proc.env[m[1]] === void 0) proc.env[m[1]] = v;
-      }
-    }
-    loadDotEnv(path.join(proc.cwd(), ".env"));
-    var env = proc.env.SUDS_ENV || "development";
-    var dataDir = path.resolve(proc.env.SUDS_DATA_DIR || path.join(proc.cwd(), "data"));
-    fs.mkdirSync(dataDir, { recursive: true });
-    var serverJsonPath = path.join(dataDir, "server.json");
-    var fileCfg = {};
-    try {
-      if (fs.existsSync(serverJsonPath)) fileCfg = JSON.parse(fs.readFileSync(serverJsonPath, "utf8"));
-    } catch (e) {
-      console.warn("[suds] could not read server.json:", e.message);
-    }
-    var keysJsonPath = path.join(dataDir, "keys.json");
-    var fileKeys = {};
-    try {
-      if (fs.existsSync(keysJsonPath)) fileKeys = JSON.parse(fs.readFileSync(keysJsonPath, "utf8"));
-    } catch (e) {
-      console.warn("[suds] could not read keys.json:", e.message);
-    }
-    var keySourceHolder = { value: "env" };
-    function loadKey(envName, fileName) {
-      let hex = proc.env[envName];
-      if (hex && /^[0-9a-fA-F]{64}$/.test(hex)) return import_buffer.Buffer.from(hex, "hex");
-      if (hex) throw new Error(`${envName} must be 64 hex characters (32 bytes). Generate with: npm run gen-key`);
-      const fk = fileKeys[envName];
-      if (fk && /^[0-9a-fA-F]{64}$/.test(fk)) {
-        keySourceHolder.value = "file";
-        return import_buffer.Buffer.from(fk, "hex");
-      }
-      if (env === "production") {
-        const key2 = crypto3.randomBytes(32);
-        fileKeys[envName] = key2.toString("hex");
-        fileKeys.created_at = fileKeys.created_at || (/* @__PURE__ */ new Date()).toISOString();
-        fs.writeFileSync(keysJsonPath, JSON.stringify(fileKeys, null, 2), { mode: 384 });
-        keySourceHolder.value = "file";
-        console.warn(`[suds] ${envName} not set; generated ${keysJsonPath}. Back this file up separately from the database.`);
-        return key2;
-      }
-      const f = path.join(dataDir, fileName);
-      keySourceHolder.value = "devfile";
-      if (fs.existsSync(f)) return import_buffer.Buffer.from(fs.readFileSync(f, "utf8").trim(), "hex");
-      const key = crypto3.randomBytes(32);
-      fs.writeFileSync(f, key.toString("hex"), { mode: 384 });
-      console.warn(`[suds] ${envName} not set; generated a development key at ${f}`);
-      return key;
-    }
-    var config = {
-      version: (init_package(), __toCommonJS(package_exports)).version,
-      env,
-      isProd: env === "production",
-      isTest: env === "test",
-      port: Number(proc.env.PORT || fileCfg.port || 8080),
-      host: proc.env.HOST || fileCfg.host || "127.0.0.1",
-      dataDir,
-      serverJsonPath,
-      keysJsonPath,
-      fileCfg,
-      setupComplete: !!fileCfg.setupComplete,
-      dbPath: proc.env.SUDS_DB_PATH === ":memory:" ? ":memory:" : proc.env.SUDS_DB_PATH ? path.resolve(proc.env.SUDS_DB_PATH) : path.join(dataDir, "suds.db"),
-      encryptionKey: env === "test" ? crypto3.createHash("sha256").update("test-enc-key").digest() : loadKey("SUDS_ENCRYPTION_KEY", ".dev-encryption-key"),
-      indexKey: env === "test" ? crypto3.createHash("sha256").update("test-index-key").digest() : loadKey("SUDS_INDEX_KEY", ".dev-index-key"),
-      tls: {
-        cert: proc.env.TLS_CERT_PATH || (fileCfg.tls === "selfsigned" && fs.existsSync(path.join(dataDir, "certs", "suds.crt")) ? path.join(dataDir, "certs", "suds.crt") : ""),
-        key: proc.env.TLS_KEY_PATH || (fileCfg.tls === "selfsigned" && fs.existsSync(path.join(dataDir, "certs", "suds.key")) ? path.join(dataDir, "certs", "suds.key") : ""),
-        mode: proc.env.TLS_CERT_PATH ? "custom" : fileCfg.tls || "none"
-      },
-      session: {
-        idleMinutes: Number(proc.env.SESSION_IDLE_MINUTES || 15),
-        absoluteHours: Number(proc.env.SESSION_ABSOLUTE_HOURS || 12)
-      },
-      mfaRequiredRoles: (proc.env.MFA_REQUIRED_ROLES ?? "admin,supervisor").split(",").map((s2) => s2.trim()).filter(Boolean),
-      password: { minLength: 12, maxAgeDays: 90 },
-      lockout: { maxAttempts: 5, minutes: 15 },
-      msGraph: {
-        tenantId: proc.env.MS_TENANT_ID || "",
-        clientId: proc.env.MS_CLIENT_ID || "",
-        clientSecret: proc.env.MS_CLIENT_SECRET || "",
-        user: proc.env.MS_ONENOTE_USER || ""
-      },
-      trustProxy: proc.env.TRUST_PROXY === "1" || proc.env.TRUST_PROXY === "true" || !!fileCfg.trustProxy,
-      // PHI access entries are kept for the full HIPAA seven years. Routine list/search traffic is the bulk of
-      // the volume and has a much shorter useful life, so it ages out sooner; the chain stays verifiable either
-      // way because a purge records the hash it continues from.
-      auditRetentionDays: Number(proc.env.AUDIT_RETENTION_DAYS || 2555),
-      // How long deletions are remembered for devices that have been away. A device offline longer than this
-      // is sent for a full resync rather than being left holding rows the office deleted.
-      tombstoneRetentionDays: Number(proc.env.TOMBSTONE_RETENTION_DAYS || 180),
-      maxBodyBytes: 60 * 1024 * 1024
-    };
-    config.keySource = keySourceHolder.value;
-    config.saveServerJson = (patch) => {
-      Object.assign(fileCfg, patch);
-      fs.writeFileSync(serverJsonPath, JSON.stringify(fileCfg, null, 2), { mode: 384 });
-      config.setupComplete = !!fileCfg.setupComplete;
-    };
-    module.exports = config;
-  }
-});
-
 // local/kernel.js
 init_globals_inject();
 init_sqlite();
@@ -19255,9 +19157,8 @@ async function start({ wasmUrl, onSaveError: onSaveError2 } = {}) {
   if (onSaveError2) sqlite_default.setSaveErrorHandler(onSaveError2);
   const bytes3 = await sqlite_default.loadBytes();
   import_db2.default.openWith(bytes3 ? new Uint8Array(bytes3) : null);
-  const config = require_config2();
-  const { sha256: sha2562 } = require_crypto();
-  const fingerprint = sha2562("suds-key-check:" + config.encryptionKey.toString("hex")).slice(0, 32);
+  const { keyFingerprint } = require_crypto();
+  const fingerprint = keyFingerprint();
   const stored = import_db2.default.getSetting("encryption_key_fingerprint", null);
   const hasData = import_db2.default.one(`SELECT COUNT(*) n FROM users`).n > 0;
   if (!stored) {
