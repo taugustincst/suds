@@ -23,15 +23,21 @@ function policy() {
 const PERMS = {
   admin:      ['users:manage','settings:manage','audit:read','apikeys:manage','clients:read','clients:write','clients:all',
                'interventions:*','calls:*','time:*','resources:*','referrals:*','tasks:*','budget:read','budget:write','budget:approve',
-               'notes:admin:read','notes:admin:write','notes:clinical:breakglass','consents:*','imports:*','reports:read','assignments:manage','export:read','forms:*'],
+               'notes:admin:read','notes:admin:write','notes:clinical:breakglass','consents:*','imports:*','reports:read','assignments:manage','export:read','export:identified','forms:*',
+               'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge'],
   supervisor: ['clients:read','clients:write','clients:all','interventions:*','calls:*','time:*','time:all','resources:*','referrals:*','tasks:*',
                'budget:read','budget:write','budget:approve','notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write',
-               'consents:*','imports:*','reports:read','assignments:manage','audit:read','export:read','users:read','forms:*'],
+               'consents:*','imports:*','reports:read','assignments:manage','audit:read','export:read','export:identified','users:read','forms:*',
+               'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge'],
   clinician:  ['clients:read','clients:write','interventions:*','calls:*','time:*','resources:read','referrals:*','tasks:*',
-               'notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write','consents:*','imports:*','reports:read','users:read','forms:read','forms:write'],
+               'notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write','consents:*','imports:*','reports:read','users:read','forms:read','forms:write',
+               'episodes:*','overdose:*'],
   navigator:  ['clients:read','clients:write','interventions:*','calls:*','time:*','resources:*','referrals:*','tasks:*',
-               'budget:read','budget:write','notes:admin:read','notes:admin:write','consents:*','imports:*','reports:read','users:read','forms:read','forms:write'],
-  finance:    ['clients:list-deidentified','budget:read','budget:write','budget:approve','time:read','time:all','reports:read','export:read','users:read'],
+               'budget:read','budget:write','notes:admin:read','notes:admin:write','consents:*','imports:*','reports:read','users:read','forms:read','forms:write',
+               'episodes:*','overdose:*'],
+  // finance sees money, not people: export:read without export:identified means every export it can run
+  // comes out keyed by client_code. Do not add 'export:identified' here — docs/HIPAA.md promises otherwise.
+  finance:    ['clients:list-deidentified','budget:read','budget:write','budget:approve','time:read','time:all','time:approve','reports:read','export:read','users:read'],
   readonly:   ['clients:read','clients:all','interventions:read','calls:read','referrals:read','tasks:read','resources:read','reports:read','users:read','forms:read'],
 };
 
@@ -56,7 +62,10 @@ function requirePerm(...perms) {
   };
 }
 
-// Caseload scoping: roles without clients:all only see clients assigned to them (setting can disable)
+// Caseload scoping: roles without clients:all only see clients assigned to them (setting can disable).
+// A de-identified role (finance) is not caseload-scoped because it never sees who the client is — which is
+// only true as long as it cannot run an identified export. That is enforced by 'export:identified', a
+// separate permission finance does not hold; see datasets() in exports.js.
 function caseloadRestricted(user) {
   if (hasPerm(user, 'clients:all') || hasPerm(user, 'clients:list-deidentified')) return false;
   return db.getSetting('caseload_restriction', '1') === '1';

@@ -3,7 +3,7 @@ const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const H = require('./helpers');
 
-let admin, nav, nav2, clin, fin, clientId, clientId2, noteId;
+let admin, nav, nav2, clin, fin, clientId, clientId2, noteId, referralConsentId;
 before(async () => {
   await H.start();
   H.makeUser('nav1', 'navigator'); H.makeUser('nav2', 'navigator'); H.makeUser('clin1', 'clinician'); H.makeUser('fin1', 'finance'); H.makeUser('sup1', 'supervisor');
@@ -91,8 +91,21 @@ test('calls encrypt summary and phone', async () => {
 test('resources and referrals', async () => {
   const res = await nav.post('/api/resources', { name: 'County OTP', category: 'mat_otp', phone: '555-0199', accepts_medicaid: true });
   assert.equal(res.status, 201);
-  const ref = await nav.post('/api/referrals', { client_id: clientId, resource_id: res.data.id, referred_at: '2026-09-03T09:00:00Z', urgency: 'urgent', warm_handoff: true });
+  // A warm handoff names the client to the receiving agency, so it is refused until a consent covers it.
+  const noConsent = await nav.post('/api/referrals', { client_id: clientId, resource_id: res.data.id, referred_at: '2026-09-03T09:00:00Z', urgency: 'urgent', warm_handoff: true });
+  assert.equal(noConsent.status, 400, 'a warm handoff without consent must be refused');
+  assert.match(noConsent.data.error, /consent/i);
+  const consent = await nav.post(`/api/clients/${clientId}/consents`, { type: 'part2_disclosure', recipient: 'County OTP', purpose: 'MAT referral', signed_at: '2026-09-01' });
+  assert.equal(consent.status, 201); referralConsentId = consent.data.id;
+  const ref = await nav.post('/api/referrals', { client_id: clientId, resource_id: res.data.id, referred_at: '2026-09-03T09:00:00Z', urgency: 'urgent', warm_handoff: true, consent_id: referralConsentId });
   assert.equal(ref.status, 201);
+  // Sharing the information wrote the disclosure record that HIPAA §164.528 requires.
+  const disc = H.db.one(`SELECT * FROM disclosures WHERE source='referral' AND source_ref=?`, ref.data.id);
+  assert.ok(disc, 'a referral that shares information records a disclosure');
+  assert.equal(disc.consent_id, referralConsentId);
+  assert.match(disc.recipient_enc, /^v1:/, 'the recipient is stored encrypted');
+  // Closing the loop: a follow-up task exists even though the worker set no follow-up date.
+  assert.ok(H.db.one(`SELECT 1 FROM tasks WHERE client_id=? AND title LIKE 'Follow up on referral%'`, clientId));
   const up = await nav.put(`/api/referrals/${ref.data.id}`, { status: 'admitted' });
   assert.equal(up.status, 200);
   assert.ok(H.db.one(`SELECT admitted_at FROM referrals WHERE id=?`, ref.data.id).admitted_at);
@@ -137,7 +150,16 @@ test('consents and disclosure accounting (42 CFR Part 2)', async () => {
   assert.equal((await nav.post(`/api/clients/${clientId}/disclosures`, { disclosed_to: 'County OTP', purpose: 'coordination', info_disclosed: 'referral summary', disclosed_at: '2026-09-03T10:00:00Z' })).status, 400);
   assert.equal((await nav.post(`/api/clients/${clientId}/disclosures`, { consent_id: c.data.id, disclosed_to: 'County OTP', purpose: 'coordination', info_disclosed: 'referral summary', disclosed_at: '2026-09-03T10:00:00Z' })).status, 201);
   const g = await nav.get(`/api/clients/${clientId}/consents`);
-  assert.equal(g.data.consents.length, 1); assert.equal(g.data.disclosures.length, 1);
+  // The earlier referral test also recorded a consent and a disclosure for this client.
+  assert.ok(g.data.consents.some(x => x.purpose === 'Treatment coordination'), 'consent text round-trips through encryption');
+  assert.ok(g.data.disclosures.some(x => x.what === 'referral summary'), 'disclosure text round-trips through encryption');
+  assert.ok(g.data.consents.every(x => x.recipient_enc === undefined), 'ciphertext never reaches the client');
+  // Revoking flags the referrals that relied on the consent instead of leaving them silently unsupported.
+  const rev = await nav.post(`/api/consents/${referralConsentId}/revoke`, { reason: 'client withdrew' });
+  assert.equal(rev.status, 200);
+  assert.equal(rev.data.dependent_referrals, 1, 'the open referral under that consent is flagged');
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM referrals WHERE consent_revoked=1`).n, 1);
+  assert.equal((await nav.post(`/api/consents/${referralConsentId}/revoke`, {})).status, 400, 'revoking twice is refused');
 });
 
 test('budget: funds, lines, expenditures, separation of duties', async () => {
@@ -204,7 +226,7 @@ test('reports, exports, and audit chain', async () => {
   const csv = await nav.get('/api/reports/export/interventions?from=2026-08-01&to=2026-09-30');
   assert.equal(csv.status, 200); assert.match(csv.data, /Occurred At,Client Code/);
   const cl = await nav.get('/api/reports/export/clients?identified=1');
-  assert.ok(!cl.data.includes('Jane')); // navigator lacks export:read → de-identified
+  assert.ok(!cl.data.includes('Jane')); // navigator lacks export:identified → de-identified
   const cl2 = await admin.get('/api/reports/export/clients?identified=1'); assert.ok(cl2.data.includes('Jane'));
   const a = await admin.get('/api/admin/audit?action=note.'); assert.ok(a.data.total > 0);
   assert.equal((await nav.get('/api/admin/audit')).status, 403);
@@ -426,7 +448,7 @@ test('sync normalises device clock skew so a fast clock cannot win conflicts', a
   const s = H.client(); await s.login('sup1', 'StaffPassw0rd!x'); await s.put(`/api/clients/${id}`, { goals: 'office' });
   // a device whose clock is 1 hour fast sends an edit it made *before* the office edit (device time = +1h, real time = earlier)
   const fast = 3600_000; const deviceEditReal = now - 10_000; // 10 s before the office edit
-  const r = await bare.post('/api/sync/push', { device_now: new Date(Date.now() + fast).toISOString(), tables: { clients: [{ id, client_code: 'M26-0500', first_name_enc: 'Clock', last_name_enc: 'Test', status: 'active', goals: 'phone-stale', created_at: new Date(now + fast).toISOString(), updated_at: new Date(deviceEditReal + fast).toISOString() }] } }, B);
+  const r = await bare.post('/api/sync/push', { device_now: new Date(Date.now() + fast).toISOString(), tables: { clients: [{ id, client_code: 'M26-0500', first_name_enc: 'Clock', last_name_enc: 'Test', status: 'active', goals_enc: 'phone-stale', created_at: new Date(now + fast).toISOString(), updated_at: new Date(deviceEditReal + fast).toISOString() }] } }, B);
   assert.ok(Math.abs(r.data.clock_offset_ms + fast) < 5000, 'offset measured');
-  assert.equal(H.db.one(`SELECT goals FROM clients WHERE id=?`, id).goals, 'office', 'stale device edit does not win despite a fast clock');
+  assert.equal(require('../server/crypto').decrypt(H.db.one(`SELECT goals_enc FROM clients WHERE id=?`, id).goals_enc), 'office', 'stale device edit does not win despite a fast clock');
 });

@@ -38,7 +38,7 @@ module.exports = (r) => {
       const c = db.one(`SELECT * FROM clients WHERE id=? AND deleted_at IS NULL`, x.client_id);
       if (c && auth.canAccessClient(ctx.user, c.id)) recent.push({ ...M.summary(c), last_at: x.at });
     }
-    const drafts = db.all(`SELECT n.id, n.client_id, n.kind, n.format, n.title, n.updated_at, c.client_code FROM notes n JOIN clients c ON c.id=n.client_id WHERE n.author_id=? AND n.status='draft' AND n.deleted_at IS NULL ORDER BY n.updated_at DESC LIMIT 8`, uid);
+    const drafts = db.all(`SELECT n.id, n.client_id, n.kind, n.format, n.title_enc, n.updated_at, c.client_code FROM notes n JOIN clients c ON c.id=n.client_id WHERE n.author_id=? AND n.status='draft' AND n.deleted_at IS NULL ORDER BY n.updated_at DESC LIMIT 8`, uid).map(n => ({ ...n, title: n.title_enc ? require('../crypto').decrypt(n.title_enc) : null, title_enc: undefined }));
     for (const d of drafts) { const c = db.one(`SELECT * FROM clients WHERE id=?`, d.client_id); d.client_name = c ? M.summary(c).display_name : d.client_code; }
     const staged = db.one(`SELECT COUNT(*) n FROM import_items x JOIN imports i ON i.id=x.import_id WHERE x.status='staged' AND (i.imported_by=? OR i.imported_by IS NULL)`, uid).n;
     const dueToday = db.all(`SELECT t.id, t.title, t.due_at, t.priority, t.client_id, c.client_code FROM tasks t LEFT JOIN clients c ON c.id=t.client_id WHERE t.assigned_to=? AND t.status IN ('open','in_progress') AND substr(t.due_at,1,10) <= date('now','localtime') ORDER BY t.due_at LIMIT 10`, uid);

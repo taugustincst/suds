@@ -10,8 +10,8 @@ function open(dbPath = config.dbPath) {
   if (db) return db;
   if (dbPath !== ':memory:') fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   db = new DatabaseSync(dbPath);
-  db.exec(fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'));
-  migrate(db);
+  db.exec('PRAGMA busy_timeout = 5000');
+  initialise(db, fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'));
   if (dbPath !== ':memory:') { try { fs.chmodSync(dbPath, 0o600); } catch {} }
   return db;
 }
@@ -20,14 +20,58 @@ function open(dbPath = config.dbPath) {
 function openWith(bytes) {
   if (db) return db;
   db = new DatabaseSync(':memory:', bytes || undefined);
-  db.exec(fs.readFileSync ? safeSchema() : '');
-  migrate(db);
+  try { db.exec('PRAGMA busy_timeout = 5000'); } catch {}
+  initialise(db, safeSchema());
   return db;
 }
-function safeSchema() { try { return require('./schema-text.js'); } catch { return require('node:fs').readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'); } }
+// schema.sql is the source of truth. schema-text.js is a generated copy of it, used only in the browser
+// kernel where there is no filesystem; scripts/build-local.js regenerates it and CI fails if it drifts.
+function safeSchema() {
+  try { return fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'); }
+  catch { return require('./schema-text.js'); }
+}
 
 // Lightweight forward-only migrations keyed by settings.schema_version.
 const addColumn = (d, table, col, def) => { const cols = d.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name); if (!cols.includes(col)) d.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`); };
+const tableCols = (d, table) => d.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+const tableExists = (d, table) => !!d.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(table);
+
+// Move a plaintext column's contents into an encrypted column and drop the plaintext one.
+// No-op on a database where schema.sql already created the encrypted form (a fresh install).
+function encryptColumn(d, table, oldCol, newCol) {
+  if (!tableExists(d, table)) return;
+  const cols = tableCols(d, table);
+  if (!cols.includes(oldCol)) return;
+  const { encrypt } = require('./crypto');
+  addColumn(d, table, newCol, 'TEXT');
+  const rows = d.prepare(`SELECT id, ${oldCol} AS v FROM ${table} WHERE ${oldCol} IS NOT NULL AND ${oldCol} <> ''`).all();
+  const upd = d.prepare(`UPDATE ${table} SET ${newCol}=? WHERE id=?`);
+  for (const r of rows) upd.run(encrypt(String(r.v)), r.id);
+  d.exec(`ALTER TABLE ${table} DROP COLUMN ${oldCol}`);
+}
+
+// Rebuild a table from its current definition in schema.sql, copying every column both versions share.
+// This is the only way SQLite lets you add NOT NULL to an existing column or relax one to nullable.
+// Callers run it with foreign keys disabled (see migrate) — the documented ALTER TABLE recipe.
+function rebuildTable(d, schemaText, table, coalesce = {}) {
+  if (!tableExists(d, table)) return;
+  const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\(([\\s\\S]*?)\\n\\);`));
+  if (!m) throw new Error(`rebuildTable: no definition for ${table} in schema`);
+  const tmp = `__new_${table}`;
+  d.exec(`DROP TABLE IF EXISTS ${tmp}`);
+  d.exec(`CREATE TABLE ${tmp} (${m[1]}\n)`);
+  const oldCols = tableCols(d, table), newCols = tableCols(d, tmp);
+  const shared = newCols.filter(c => oldCols.includes(c));
+  const select = shared.map(c => coalesce[c] ? `COALESCE(${c}, ${coalesce[c]})` : c).join(', ');
+  d.exec(`INSERT INTO ${tmp}(${shared.join(', ')}) SELECT ${select} FROM ${table}`);
+  d.exec(`DROP TABLE ${table}`);
+  d.exec(`ALTER TABLE ${tmp} RENAME TO ${table}`);
+  // Recreate this table's indexes from the schema (DROP TABLE took the originals with it).
+  for (const line of schemaText.split('\n')) {
+    const im = line.match(new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${table}\\(`));
+    if (im) d.exec(line.trim());
+  }
+}
 const migrations = [
   // 1: initial schema (created by schema.sql)
   () => {},
@@ -51,13 +95,91 @@ const migrations = [
     d.exec(`CREATE TABLE IF NOT EXISTS client_form_files (id TEXT PRIMARY KEY, client_form_id TEXT NOT NULL REFERENCES client_forms(id) ON DELETE CASCADE, client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE, filename TEXT NOT NULL, content_type TEXT NOT NULL, bytes INTEGER NOT NULL DEFAULT 0, data_enc TEXT NOT NULL, uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
     d.exec(`CREATE INDEX IF NOT EXISTS idx_client_form_files ON client_form_files(client_form_id)`);
   },
+  // 5: PHI that was still in plaintext moves into _enc columns; co-signature, time approval, episodes,
+  //    overdose events, coded race, client-less interventions, and the updated_at indexes sync needs.
+  (d) => {
+    const schemaText = safeSchema();
+    for (const [t, from, to] of [
+      ['clients', 'goals', 'goals_enc'], ['clients', 'flags', 'flags_enc'],
+      ['notes', 'title', 'title_enc'], ['interventions', 'summary', 'summary_enc'],
+      ['import_items', 'title', 'title_enc'],
+      ['consents', 'recipient', 'recipient_enc'], ['consents', 'purpose', 'purpose_enc'], ['consents', 'scope', 'scope_enc'],
+      ['disclosures', 'disclosed_to', 'recipient_enc'], ['disclosures', 'purpose', 'purpose_enc'], ['disclosures', 'info_disclosed', 'what_enc'],
+    ]) encryptColumn(d, t, from, to);
+
+    addColumn(d, 'clients', 'race_codes', 'TEXT');
+    addColumn(d, 'users', 'requires_cosign', 'INTEGER NOT NULL DEFAULT 0');
+    addColumn(d, 'users', 'supervisor_id', 'TEXT REFERENCES users(id)');
+    for (const [c, def] of [['cosign_required', 'INTEGER NOT NULL DEFAULT 0'], ['cosigned_by', 'TEXT REFERENCES users(id)'], ['cosigned_at', 'TEXT'], ['cosignature_hash', 'TEXT'], ['cosign_note', 'TEXT']]) addColumn(d, 'notes', c, def);
+    for (const [c, def] of [['status', "TEXT NOT NULL DEFAULT 'draft'"], ['submitted_at', 'TEXT'], ['approved_by', 'TEXT REFERENCES users(id)'], ['approved_at', 'TEXT'], ['approval_note', 'TEXT']]) addColumn(d, 'time_entries', c, def);
+    addColumn(d, 'consents', 'revoked_by', 'TEXT REFERENCES users(id)');
+    for (const [c, def] of [['consent_revoked', 'INTEGER NOT NULL DEFAULT 0'], ['outcome_recorded_at', 'TEXT'], ['episode_id', 'TEXT REFERENCES episodes(id)']]) addColumn(d, 'referrals', c, def);
+    for (const [c, def] of [['source', 'TEXT'], ['source_ref', 'TEXT']]) addColumn(d, 'disclosures', c, def);
+
+    // Tables whose updated_at was added as a nullable column in migration 2 (sync cannot index a COALESCE),
+    // plus interventions, whose client_id has to become nullable for community naloxone distribution.
+    for (const t of ['assignments', 'budget_lines', 'note_addenda', 'imports', 'import_items', 'consents', 'disclosures'])
+      rebuildTable(d, schemaText, t, { updated_at: 'created_at' });
+    rebuildTable(d, schemaText, 'interventions', { updated_at: 'created_at' });
+
+    // episodes / overdose_events are new tables; schema.sql created them on a fresh database, and
+    // exec'ing the same statements here creates them on an upgraded one.
+    for (const t of ['episodes', 'overdose_events']) {
+      const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
+      if (m) d.exec(m[0]);
+    }
+    for (const line of schemaText.split('\n')) if (/^CREATE( UNIQUE)? INDEX IF NOT EXISTS /.test(line.trim())) { try { d.exec(line.trim()); } catch {} }
+
+    // Every existing client keeps being served until someone closes them out: open an episode so that
+    // admissions and discharges are countable from the day this migration runs.
+    if (tableExists(d, 'episodes')) {
+      const { uuid } = require('./crypto');
+      const open = d.prepare(`SELECT id, intake_date, created_at, created_by, referral_source, status, discharge_date, discharge_reason FROM clients WHERE deleted_at IS NULL`).all();
+      const ins = d.prepare(`INSERT INTO episodes(id,client_id,opened_at,opened_by,referral_source,closed_at,discharge_reason,status) VALUES(?,?,?,?,?,?,?,?)`);
+      const has = d.prepare(`SELECT 1 FROM episodes WHERE client_id=?`);
+      for (const c of open) {
+        if (has.get(c.id)) continue;
+        const closed = c.status === 'closed' || c.status === 'deceased';
+        ins.run(uuid(), c.id, c.intake_date || String(c.created_at).slice(0, 10), c.created_by, c.referral_source, closed ? (c.discharge_date || c.created_at) : null, closed ? c.discharge_reason : null, closed ? 'closed' : 'open');
+      }
+    }
+  },
 ];
+// A new database is created from schema.sql, which is always current, and stamped at the latest version.
+// An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's
+// tables would try to index columns that do not exist yet. test/migrations.test.js asserts the two
+// routes end at byte-identical schemas.
+function initialise(d, schemaText) {
+  const fresh = !d.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings'`).get();
+  if (fresh) {
+    d.exec(schemaText);
+    d.prepare(`INSERT INTO settings(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(String(migrations.length));
+    return;
+  }
+  migrate(d);
+}
+
 function migrate(d) {
   const row = d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get();
   let v = row ? Number(row.value) : 0;
+  // A database written by a newer build has columns and tables this code does not know about. Refuse rather than
+  // corrupt it: the county must upgrade SUDS (or restore the backup that matches this version).
+  if (v > migrations.length) throw new Error(`This database was created by a newer version of SUDS (schema ${v}; this build understands ${migrations.length}). Upgrade SUDS before opening it.`);
   for (let i = v; i < migrations.length; i++) {
-    migrations[i](d);
-    d.prepare(`INSERT INTO settings(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`).run(String(i + 1));
+    // DDL is transactional in SQLite: apply the migration and stamp the version together, so a crash midway
+    // can never leave a half-applied schema wearing the old version number.
+    // The ALTER TABLE recipe for rebuilding a table requires foreign keys to be off, and the pragma is a
+    // no-op inside a transaction, so it goes here. foreign_key_check below proves nothing was orphaned.
+    d.exec('PRAGMA foreign_keys = OFF');
+    d.exec('BEGIN');
+    try {
+      migrations[i](d);
+      const bad = d.prepare('PRAGMA foreign_key_check').all();
+      if (bad.length) throw new Error(`migration ${i + 1} left ${bad.length} orphaned row(s), first in table ${bad[0].table}`);
+      d.prepare(`INSERT INTO settings(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`).run(String(i + 1));
+      d.exec('COMMIT');
+    } catch (e) { try { d.exec('ROLLBACK'); } catch {} throw e; }
+    finally { d.exec('PRAGMA foreign_keys = ON'); }
   }
 }
 
@@ -69,11 +191,33 @@ function now() { return new Date().toISOString(); }
 function all(sql, ...params) { return get().prepare(sql).all(...params); }
 function one(sql, ...params) { return get().prepare(sql).get(...params); }
 function run(sql, ...params) { return get().prepare(sql).run(...params); }
+// Transactions nest: the outermost is a real BEGIN/COMMIT, inner ones become savepoints, so a helper that
+// opens its own transaction inside a route that already has one cannot silently roll the outer one back.
+let txDepth = 0;
 function transaction(fn) {
   const d = get();
-  d.exec('BEGIN');
-  try { const r = fn(); d.exec('COMMIT'); return r; }
-  catch (e) { try { d.exec('ROLLBACK'); } catch {} throw e; }
+  const depth = txDepth++;
+  const sp = `sp_tx_${depth}`;
+  d.exec(depth === 0 ? 'BEGIN' : `SAVEPOINT ${sp}`);
+  try {
+    const r = fn();
+    d.exec(depth === 0 ? 'COMMIT' : `RELEASE ${sp}`);
+    txDepth--;
+    return r;
+  } catch (e) {
+    txDepth--;
+    try { d.exec(depth === 0 ? 'ROLLBACK' : `ROLLBACK TO ${sp}; RELEASE ${sp}`); }
+    catch (rollbackError) { if (depth === 0) txDepth = 0; console.error('[suds] rollback failed:', rollbackError.message); }
+    throw e;
+  }
+}
+/** Run fn inside a savepoint. Returns what fn returned, or calls onError and returns undefined if it threw. */
+function savepoint(fn, onError) {
+  const d = get();
+  const sp = `sp_${txDepth}_${savepoint.n = (savepoint.n || 0) + 1}`;
+  d.exec(`SAVEPOINT ${sp}`);
+  try { const r = fn(); d.exec(`RELEASE ${sp}`); return r; }
+  catch (e) { try { d.exec(`ROLLBACK TO ${sp}`); d.exec(`RELEASE ${sp}`); } catch {} if (onError) onError(e); else throw e; }
 }
 function getSetting(key, def = null) { const r = one(`SELECT value FROM settings WHERE key=?`, key); return r ? r.value : def; }
 function setSetting(key, value) {
@@ -81,4 +225,4 @@ function setSetting(key, value) {
 }
 
 function tombstone(table, id) { run(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now()); }
-module.exports = { open, openWith, get, close, now, all, one, run, transaction, getSetting, setSetting, tombstone };
+module.exports = { open, openWith, get, close, now, all, one, run, transaction, savepoint, getSetting, setSetting, tombstone };

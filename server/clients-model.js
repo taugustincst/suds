@@ -2,11 +2,12 @@
 const db = require('./db');
 const { encrypt, decrypt, blindIndex, uuid } = require('./crypto');
 
-const ENC_FIELDS = ['first_name', 'last_name', 'preferred_name', 'dob', 'phone', 'alt_phone', 'email', 'address', 'medicaid_id', 'emergency_contact'];
+// goals and flags are clinical narrative about a named person: encrypted like every other PHI field.
+const ENC_FIELDS = ['first_name', 'last_name', 'preferred_name', 'dob', 'phone', 'alt_phone', 'email', 'address', 'medicaid_id', 'emergency_contact', 'goals', 'flags'];
 const PLAIN_FIELDS = ['city', 'zip', 'gender', 'pronouns', 'race_ethnicity', 'preferred_language', 'veteran', 'housing_status', 'insurance', 'status', 'intake_date',
   'discharge_date', 'discharge_reason', 'referral_source', 'primary_substance', 'secondary_substances', 'route_of_use', 'asam_level', 'mat_status', 'mat_medication',
   'overdose_history', 'last_overdose_date', 'naloxone_provided', 'naloxone_last_date', 'risk_level', 'justice_involved', 'pregnant_or_parenting', 'co_occurring_mh',
-  'goals', 'flags', 'contact_preferences', 'ok_to_text', 'ok_to_voicemail'];
+  'race_codes', 'contact_preferences', 'ok_to_text', 'ok_to_voicemail'];
 
 function decryptRow(row, { deidentify = false } = {}) {
   if (!row) return null;
