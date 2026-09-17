@@ -4,6 +4,9 @@ const path = require('node:path');
 const fs = require('node:fs');
 const esbuild = require('esbuild');
 const root = path.join(__dirname, '..');
+// The browser has no filesystem, so it reads the schema from a generated JS copy. Regenerate it here so a
+// schema change can never ship to phones as a stale duplicate.
+require('./gen-schema-text.js');
 const out = path.join(root, 'public', 'local');
 fs.mkdirSync(out, { recursive: true });
 const shim = (n) => path.join(root, 'local', 'shims', n);

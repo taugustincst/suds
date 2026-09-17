@@ -91,7 +91,13 @@ const config = {
     user: process.env.MS_ONENOTE_USER || '',
   },
   trustProxy: process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true' || !!fileCfg.trustProxy,
+  // PHI access entries are kept for the full HIPAA seven years. Routine list/search traffic is the bulk of
+  // the volume and has a much shorter useful life, so it ages out sooner; the chain stays verifiable either
+  // way because a purge records the hash it continues from.
   auditRetentionDays: Number(process.env.AUDIT_RETENTION_DAYS || 2555),
+  // How long deletions are remembered for devices that have been away. A device offline longer than this
+  // is sent for a full resync rather than being left holding rows the office deleted.
+  tombstoneRetentionDays: Number(process.env.TOMBSTONE_RETENTION_DAYS || 180),
   maxBodyBytes: 60 * 1024 * 1024,
 };
 

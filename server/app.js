@@ -69,12 +69,17 @@ function createHandler() {
       for (const h of m.handlers) { result = await h(ctx); }
       if (!res.headersSent) sendJson(res, result === undefined ? 204 : (ctx.status || 200), result === undefined ? null : result);
     } catch (err) {
+      // Routes that stream (exports, PDFs, backups, certificates) may already have written a header. A
+      // second write here would throw inside the catch and take the process down, so it is guarded: the
+      // request is simply cut off and the error is still logged.
       if (err instanceof HttpError) {
-        sendJson(res, err.status, { error: err.message, ...(err.extra || {}) });
+        if (!res.headersSent) sendJson(res, err.status, { error: err.message, ...(err.extra || {}) });
+        else res.destroy();
       } else {
         console.error(`[suds] ${req.method} ${url.pathname}:`, err);
         try { audit.log({ user: ctx.user, action: 'server.error', ip: ctx.ip, success: false, details: { path: url.pathname, message: String(err.message).slice(0, 300) } }); } catch {}
-        sendJson(res, 500, { error: 'Internal server error' });
+        if (!res.headersSent) sendJson(res, 500, { error: 'Internal server error' });
+        else res.destroy();
       }
     }
   };
