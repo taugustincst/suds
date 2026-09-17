@@ -111,7 +111,9 @@ fieldset { border: 1px solid var(--border); border-radius: 8px; padding: .6rem .
 .bar .trk { flex: 1; background: var(--panel-2); border-radius: 4px; height: 12px; overflow: hidden; } .bar .fil { height: 100%; background: var(--primary); border-radius: 4px; } .bar .n { width: 3.5rem; text-align: right; font-variant-numeric: tabular-nums; }
 .progress { height: 10px; background: var(--panel-2); border-radius: 5px; overflow: hidden; } .progress > div { height: 100%; background: var(--accent); } .progress > div.warn { background: var(--warn); } .progress > div.danger { background: var(--danger); }
 .spark { display: flex; align-items: flex-end; gap: 2px; height: 48px; } .spark div { flex: 1; background: var(--primary); border-radius: 2px 2px 0 0; min-height: 2px; opacity: .85; }
-.kv { display: grid; grid-template-columns: max-content 1fr; gap: .25rem .9rem; font-size: .92em; } .kv dt { color: var(--muted); } .kv dd { margin: 0; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: .25rem .9rem; font-size: .92em; } .kv dt { color: var(--muted); } .kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+/* A badge is nowrap by default; inside a max-content grid on a phone that pushes the whole page sideways. */
+.kv .badge { white-space: normal; }
 pre.note { white-space: pre-wrap; font-family: var(--font); background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: .8rem; max-height: 50vh; overflow: auto; }
 .dropzone { border: 2px dashed var(--border); border-radius: 10px; padding: 1.5rem; text-align: center; color: var(--muted); cursor: pointer; } .dropzone.over { border-color: var(--primary); background: var(--primary-soft); }
 .list-item { padding: .6rem 0; border-bottom: 1px solid var(--border); } .list-item:last-child { border-bottom: 0; }
@@ -131,7 +133,10 @@ pre.note { white-space: pre-wrap; font-family: var(--font); background: var(--pa
   body.nav-open::after { content: ""; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 35; }
   .nav { display: block; } .nav .sec { display: block; } .nav a { padding: .7rem .65rem; font-size: 1rem; }
   .sidebar .foot { margin-top: auto; }
-  .main { padding: .75rem .75rem 4rem; }
+  /* Room at the end of the page for the floating action button, which is fixed over the bottom-right
+     corner: without it the last control on a screen (a Load/Remove button, the last row of a list)
+     sits underneath the FAB and cannot be tapped. */
+  .main { padding: .75rem .75rem calc(7rem + env(safe-area-inset-bottom)); }
   .topbar { flex-direction: column; align-items: stretch; } .topbar h1 { font-size: 1.25rem; } .topbar .row { justify-content: flex-start; }
   .modal-bg { padding: 0; align-items: stretch; } .modal, .modal.wide { max-width: none; border-radius: 0; min-height: 100vh; padding: 1rem; padding-bottom: calc(1rem + env(safe-area-inset-bottom)); }
   .form-grid { grid-template-columns: 1fr; }
