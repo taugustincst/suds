@@ -55,5 +55,35 @@ ok(await page.$('input[name=username]'), 'the local kernel booted and offered fi
   await page.click('.modal button.danger'); await page.waitForSelector('input[name=display_name]', { timeout: 10000 });
   ok(!!(await page.$('input[name=display_name]')), 'typing ERASE wipes the device and returns to first-run setup', page.url());
 }
+// A device whose kernel fails to start — a bad migration, a corrupted database — never reaches the login
+// screen at all, so the reset option has to work from the boot-failure screen itself, with no signed-in
+// session and no window.SUDS_LOCAL to lean on.
+{
+  const failCtx = await browser.newContext({ viewport: { width: 1200, height: 900 } });
+  const failPage = await failCtx.newPage();
+  // Poison the on-device database with bytes SQLite cannot open, so the kernel fails inside db.openWith()
+  // the same way a corrupted database or a broken migration would — landing in boot()'s catch-all, the
+  // same path every startup failure takes other than SUDS_ALREADY_OPEN.
+  await failPage.goto(base + '/');
+  await failPage.evaluate(() => new Promise((resolve, reject) => {
+    const req = indexedDB.open('suds-local', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('kv');
+    req.onsuccess = () => {
+      const t = req.result.transaction('kv', 'readwrite');
+      t.objectStore('kv').put(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]), 'db');
+      t.oncomplete = resolve;
+      t.onerror = () => reject(t.error);
+    };
+    req.onerror = () => reject(req.error);
+  }));
+  await failPage.goto(base + '/?local=1#/'); await failPage.waitForTimeout(2500);
+  ok(await failPage.$('.boot.error'), 'a kernel that fails to start shows the boot-error screen, not a blank page');
+  ok(await failPage.$('text=Reset this device'), 'the boot-error screen offers a self-service reset without needing a session');
+  await failPage.click('text=Reset this device'); await failPage.waitForSelector('.modal');
+  await failPage.fill('#reset-device-confirm', 'ERASE');
+  await failPage.click('.modal button.danger'); await failPage.waitForSelector('input[name=display_name]', { timeout: 10000 });
+  ok(!!(await failPage.$('input[name=display_name]')), 'resetting from the boot-error screen wipes the corrupted database and boots into first-run setup', (await failPage.textContent('#app')).slice(0, 120));
+  await failCtx.close();
+}
 finish(errors.slice(0, 8));
 await browser.close();
