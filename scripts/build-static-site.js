@@ -1,0 +1,48 @@
+'use strict';
+// Builds a fully standalone copy of the web app: public/ with the in-browser kernel already compiled
+// in, plus one small extra script that switches the app straight into local mode. Point any static file
+// host at the output (GitHub Pages, Netlify, S3, a USB drive with a laptop running `npx serve`, or the
+// county's own web server) and it needs nothing else — no Node process, no database, no account on file
+// anywhere. Every county worker's data stays in their own browser, exactly like the phone apps do.
+//
+// public/ itself is untouched: it is also served by the office Node server and bundled into the Android
+// and iOS apps, both of which must keep deciding for themselves whether to run in local mode. Only the
+// staged copy this script writes carries the always-local flag.
+//
+// Usage: node scripts/build-static-site.js [out-dir]   (default: _site)
+const fs = require('node:fs');
+const path = require('node:path');
+
+const root = path.join(__dirname, '..');
+const outDir = path.resolve(root, process.argv[2] || '_site');
+
+// The kernel this ships has to be current, or the static site would carry a stale build of server logic.
+require('./build-local.js');
+
+function copyDir(src, dest) {
+  fs.mkdirSync(dest, { recursive: true });
+  let files = 0;
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const s = path.join(src, entry.name), d = path.join(dest, entry.name);
+    if (entry.isDirectory()) files += copyDir(s, d);
+    else { fs.copyFileSync(s, d); files++; }
+  }
+  return files;
+}
+
+fs.rmSync(outDir, { recursive: true, force: true });
+const count = copyDir(path.join(root, 'public'), outDir);
+
+// One flag, set before main.js is even requested, so the very first render already knows: nothing here
+// talks to a server. window.SUDS_LOCAL (set later, once local mode is already running) cannot be used for
+// this — see the comment on isLocalMode() in app.js.
+fs.writeFileSync(path.join(outDir, 'local-boot.js'), "window.SUDS_FORCE_LOCAL = true;\n");
+const indexPath = path.join(outDir, 'index.html');
+const before = fs.readFileSync(indexPath, 'utf8');
+const marker = '<script type="module" src="main.js"></script>';
+if (!before.includes(marker)) throw new Error(`build-static-site: expected to find ${JSON.stringify(marker)} in index.html`);
+// A plain external script, not inline: this build is meant to be servable behind the same CSP the office
+// server sends, which forbids inline scripts, even though a static host will not enforce it itself.
+fs.writeFileSync(indexPath, before.replace(marker, `<script src="local-boot.js"></script>\n  ${marker}`));
+
+console.log(`[suds] static site written to ${path.relative(root, outDir)}/ (${count} files, always-local)`);

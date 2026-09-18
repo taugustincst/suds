@@ -4,7 +4,7 @@ A HIPAA-oriented, zero-dependency web application for county **substance use dis
 
 * **Runtime:** Node.js ≥ 22.13 only (built-in SQLite, crypto, HTTP). No npm packages to install or audit on the office server. (The phone apps' in-browser kernel is a separate, committed bundle that does vendor a few pinned libraries in place of Node's built-ins — see [docs/MOBILE_APPS.md](docs/MOBILE_APPS.md#what-the-phone-copy-is-built-from).)
 * **Data protection:** AES-256-GCM field-level encryption of PHI, blind-index search, scrypt password hashing, TOTP MFA, role-based access with caseload scoping, 42 CFR Part 2 consent and disclosure accounting, and a hash-chained audit log.
-* **Documentation:** [Deployment](docs/DEPLOYMENT.md) · [API reference](docs/API.md) · [HIPAA & security controls](docs/HIPAA.md) · [Importing notes (Pocket AI / OneNote)](docs/IMPORTS.md) · [User guide](docs/USER_GUIDE.md)
+* **Documentation:** [Deployment](docs/DEPLOYMENT.md) · [Browser-only web app](docs/WEB_APP.md) · [API reference](docs/API.md) · [HIPAA & security controls](docs/HIPAA.md) · [Importing notes (Pocket AI / OneNote)](docs/IMPORTS.md) · [User guide](docs/USER_GUIDE.md)
 
 ## Get SUDS
 
@@ -28,6 +28,8 @@ Full walkthrough with screenshots-free steps: [docs/INSTALL.md](docs/INSTALL.md)
 **Phone app (works offline, syncs on command):** the Android APK on the Releases page bundles a complete copy of SUDS. Install it, create a local account, work anywhere; tap **Sync** near the office to exchange changes both ways. The office computer does not need to be running at install time or while working. Details: [docs/MOBILE_APPS.md](docs/MOBILE_APPS.md).
 
 **Phones and other computers:** nothing to configure. SUDS announces itself on the office network as **https://suds.local** (built-in mDNS responder) and uses the standard HTTPS port when available. Staff open that address on any device, add it to the home screen, and their workspace — clients, reminders, note drafts saved while typing, preferences — is the same everywhere because every device talks to the same server.
+
+**Just a browser, nothing to install:** a fully standalone build runs entirely in the browser — no office server, no Node process, no database anywhere else. Open it on any phone or computer, add it to the home screen, and it works, including offline; sync with a real office SUDS later if the county has one. Details: [docs/WEB_APP.md](docs/WEB_APP.md).
 
 ## Quick start (development)
 
