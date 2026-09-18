@@ -11,6 +11,9 @@ on:
         default: ''
 permissions:
   contents: write
+  # gh workflow run (dispatching the Android build below) needs actions: write; contents: write alone
+  # gets a 403 "Resource not accessible by integration" from the Actions API.
+  actions: write
 jobs:
   release:
     runs-on: ubuntu-latest
