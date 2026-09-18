@@ -11,7 +11,12 @@ page.on('pageerror', e => errors.push('PAGEERROR: ' + e.message));
 page.on('console', m => { if (m.type() === 'error' && !/40[13]/.test(m.text())) errors.push('CONSOLE: ' + m.text()); });
 page.on('response', r => { if (r.status() >= 400 && r.request().method() !== 'GET' && !r.url().includes('/auth/')) errors.push(`HTTP ${r.status()} ${r.request().method()} ${r.url()}`); });
 const shot = (n) => page.screenshot({ path: `/tmp/suds-shots/${n}.png` });
-const toastText = async () => { await page.waitForTimeout(300); return (await page.$$eval('.toast', els => els.map(e => e.textContent))).join(' | '); };
+// Wait for the confirmation rather than sampling for it: on a slower machine the save is still in flight
+// 300ms after the click, and an empty read looks exactly like a failure.
+const toastText = async () => {
+  await page.waitForSelector('.toast', { timeout: 8000 }).catch(() => {});
+  return (await page.$$eval('.toast', els => els.map(e => e.textContent))).join(' | ');
+};
 await page.goto(base + '/#/login');
 await page.fill('input[name=username]', 'mrivera'); await page.fill('input[name=password]', 'Navigator2026!!'); await page.click('button[type=submit]');
 await page.waitForSelector('.layout'); await dismissTour(page);
