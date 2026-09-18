@@ -19,7 +19,7 @@ await page.fill('input[name=username]', 'jwalker'); await page.fill('input[name=
 await page.click('button[type=submit]');
 await page.waitForSelector('.layout', { timeout: 8000 }); loggedIn = true; await dismissTour(page);
 await shot('dashboard');
-const views = ['clients', 'tasks', 'interventions', 'calls', 'time', 'referrals', 'resources', 'notes', 'imports', 'budget', 'reports', 'admin', 'profile', 'admin?tab=audit', 'admin?tab=settings', 'admin?tab=apikeys', 'admin?tab=system', 'budget?tab=expenditures', 'budget?tab=analysis'];
+const views = ['clients', 'waitlist', 'tasks', 'supervision', 'interventions', 'calls', 'calls?method=text', 'forms', 'time', 'overdose', 'referrals', 'resources', 'notes', 'imports', 'budget', 'reports', 'funder', 'admin', 'profile', 'admin?tab=audit', 'admin?tab=settings', 'admin?tab=apikeys', 'admin?tab=system', 'budget?tab=expenditures', 'budget?tab=analysis'];
 for (const v of views) {
   await page.goto(`${base}/#/${v}`); await page.waitForTimeout(700);
   ok(await loaded(), `${v} finishes loading`);

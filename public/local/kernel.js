@@ -6137,7 +6137,7 @@ var require_config = __commonJS({
       return import_buffer.Buffer.from(hex, "hex");
     }
     var config = {
-      version: true ? "1.7.0" : "local",
+      version: true ? "1.7.1" : "local",
       env: "local",
       isProd: true,
       isTest: false,
@@ -7120,9 +7120,9 @@ var require_db = __commonJS({
       db3 = new DatabaseSync2(dbPath);
       db3.exec("PRAGMA busy_timeout = 5000");
       initialise(db3, fs.readFileSync(path.join("/", "schema.sql"), "utf8"), dbPath);
-      if (dbPath !== ":memory:") {
+      if (dbPath !== ":memory:") for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
         try {
-          fs.chmodSync(dbPath, 384);
+          fs.chmodSync(f, 384);
         } catch {
         }
       }

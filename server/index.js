@@ -5,6 +5,11 @@ const { createHandler } = require('./app');
 const { ensureBootstrap } = require('./bootstrap');
 const listener = require('./listener');
 
+// Everything this process creates holds PHI or the keys to it — the database, its WAL and shared-memory
+// files, logs, snapshots. Make private the default rather than chasing each file with chmod: SQLite
+// creates -wal and -shm itself, and they were coming out world-readable.
+if (config.isProd && typeof process.umask === 'function') process.umask(0o077);
+
 // Start logging before anything else, so a failure during startup is recorded rather than lost with the
 // window it was printed in.
 if (config.dbPath !== ':memory:') require('./log').start(config.dataDir);

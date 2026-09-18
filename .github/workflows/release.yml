@@ -47,3 +47,12 @@ jobs:
           if gh release view "$ver" >/dev/null 2>&1; then gh release upload "$ver" "suds-$ver.zip" --clobber; else
             gh release create "$ver" "suds-$ver.zip" --target "$(git rev-parse HEAD)" --title "SUDS $ver" --notes "${notes:-See CHANGELOG.md}"; fi
           echo "Published https://github.com/${GITHUB_REPOSITORY}/releases/tag/$ver"
+      # A tag created here with GITHUB_TOKEN raises no push event, so the Android workflow's tag trigger
+      # never fires for a release started from the Actions tab. Start it explicitly; workflow_dispatch is
+      # the one kind of event GITHUB_TOKEN is allowed to raise.
+      - name: Build and attach the Android app
+        working-directory: src
+        run: |
+          ver="v$(node -p "require('./package.json').version")"
+          gh workflow run mobile-android.yml --ref "$ver" -f publish=true
+          echo "Android build started for $ver; it attaches SUDS-android.apk to the release when the signing secrets are set."
