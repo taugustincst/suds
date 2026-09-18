@@ -1,5 +1,5 @@
 import { chromium } from 'playwright';
-import { makeChecks } from './assert.mjs';
+import { makeChecks, until } from './assert.mjs';
 const { ok, eq, fail, finish } = makeChecks('local-mode');
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 import('node:fs').then(m => m.mkdirSync('/tmp/suds-shots', { recursive: true }));
@@ -23,7 +23,7 @@ ok(await page.$('input[name=username]'), 'the local kernel booted and offered fi
   await page.fill('.modal input[name=first_name]', 'Local'); await page.fill('.modal input[name=last_name]', 'Phoneclient'); await page.click('.modal button[type=submit]'); await page.waitForTimeout(1000);
   ok(/^\/client\//.test(page.url().split('#')[1] || ''), 'a client created on the device opens its own page', page.url().split('#')[1]);
   await page.click('text=+ Intervention'); await page.waitForSelector('.modal select[name=type]'); await page.selectOption('.modal select[name=type]', 'outreach'); await page.click('.modal button[type=submit]'); await page.waitForTimeout(800);
-  const toasts = await page.$$eval('.toast', e => e.map(x => x.textContent));
+  const toasts = await until(async () => { const t = await page.$$eval('.toast', e => e.map(x => x.textContent)); return t.length ? t : null; }) || [];
   ok(toasts.length > 0 && !toasts.some(t => /error|failed|could not/i.test(t)), 'recording a visit on the device confirms it saved', toasts);
   // persistence across reload
   await page.waitForTimeout(800); await page.reload(); await page.waitForTimeout(2500);
@@ -35,10 +35,11 @@ ok(await page.$('input[name=username]'), 'the local kernel booted and offered fi
   await page.goto(base + '/?local=1#/sync'); await page.waitForTimeout(1200);
   await page.fill('input[name=server]', base); await page.fill('input[name=username]', 'mrivera'); await page.fill('input[name=password]', 'Navigator2026!!');
   await page.click('button[type=submit]'); await page.waitForTimeout(6000);
-  const log = (await page.textContent('.card:nth-of-type(2) .small.muted.mt')) || '';
+  // The sync log stays empty until the round trip finishes; an empty read is not a pass or a failure.
+  const log = await until(async () => (await page.textContent('.card:nth-of-type(2) .small.muted.mt')) || '', { timeout: 20000 }) || '';
   ok(!/fail|error|could not/i.test(log), 'the sync reported no failure', log.slice(0, 200));
   await page.goto(base + '/?local=1#/clients'); await page.waitForTimeout(1500);
-  const rowsAfter = await page.$$eval('tbody tr', r => r.length);
+  const rowsAfter = await until(async () => { const n = await page.$$eval('tbody tr', r => r.length); return n > rowsBefore ? n : 0; }) || await page.$$eval('tbody tr', r => r.length);
   ok(rowsAfter > rowsBefore, 'syncing brought the office caseload onto the device', { before: rowsBefore, after: rowsAfter });
   await page.screenshot({ path: '/tmp/suds-shots/local_clients.png' });
 }

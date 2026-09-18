@@ -1,5 +1,5 @@
 import { chromium, devices } from 'playwright';
-import { makeChecks } from './assert.mjs';
+import { makeChecks, until } from './assert.mjs';
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 import('node:fs').then(m => m.mkdirSync('/tmp/suds-shots', { recursive: true }));
 const { ok, eq, finish } = makeChecks('ux-features');
@@ -24,7 +24,11 @@ await page.click('.appbar .btn.quick'); await page.waitForTimeout(300); await pa
 const cid = page.url().split('/client/')[1].split('/')[0];
 await page.evaluate((id) => { const hid = document.querySelector('.modal input[name=client_id]'); hid.value = id; }, cid);
 await page.fill('.modal textarea[name=content]', 'Autosave test from desktop.'); await page.waitForTimeout(3200);
-const st = await page.textContent('.modal .autosave');
+// "Saving…" is the state on the way to "Saved": wait for it to land rather than reading mid-flight.
+const st = await until(async () => {
+  const t = await page.textContent('.modal .autosave');
+  return /saved|draft/i.test(t || '') ? t : '';
+}) || await page.textContent('.modal .autosave');
 ok(/saved|draft/i.test(st || ''), 'a note in progress autosaves', st);
 await page.keyboard.press('Escape'); await page.waitForTimeout(300);
 const drafts = await page.evaluate(() => fetch('/api/me/continue').then(r => r.json()));
