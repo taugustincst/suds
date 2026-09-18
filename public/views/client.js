@@ -1,4 +1,4 @@
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, kv, stat } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, kv, stat, clientPicker } from '../app.js';
 import { openClientForm } from './clients.js';
 import { openInterventionForm, interventionTable } from './interventions.js';
 import { openCallForm, callTable } from './calls.js';
@@ -14,7 +14,7 @@ route('client', async (r) => {
   const disp = `${c.display_name} (${c.client_code})`;
   const refresh = () => nav(`client/${id}/${tab}?_=${Date.now()}`);
   const ctxOpts = { clientId: id, clientDisplay: disp, onDone: refresh };
-  const tabs = [['overview', 'Overview'], ['timeline', 'Timeline'], ['interventions', `Interventions (${c.counts.interventions})`], ['calls', `Calls (${c.counts.calls})`], ['notes', `Notes (${c.counts.notes})`], ['referrals', `Referrals (${c.counts.referrals})`], ['forms', `Forms (${c.counts.forms || 0})`], ['tasks', `Tasks (${c.counts.open_tasks})`], ['consents', 'Consents & ROI'], ['time', 'Time'], can('budget:read') ? ['budget', 'Assistance $'] : null, ['team', 'Care team']].filter(Boolean);
+  const tabs = [['overview', 'Overview'], ['timeline', 'Timeline'], ['interventions', `Interventions (${c.counts.interventions})`], ['calls', `Calls (${c.counts.calls})`], ['notes', `Notes (${c.counts.notes})`], ['referrals', `Referrals (${c.counts.referrals})`], ['forms', `Forms (${c.counts.forms || 0})`], ['tasks', `Tasks (${c.counts.open_tasks})`], ['episodes', 'Episodes'], ['consents', 'Consents & ROI'], ['time', 'Time'], can('budget:read') ? ['budget', 'Assistance $'] : null, ['team', 'Care team']].filter(Boolean);
   const body = h('div', {});
   const view = h('div', {},
     h('div', { class: 'topbar' }, h('div', {}, h('h1', {}, c.display_name, ' ', h('span', { class: 'muted', style: { fontWeight: 400, fontSize: '1rem' } }, c.client_code)),
@@ -22,6 +22,7 @@ route('client', async (r) => {
       h('div', { class: 'row' },
         can('interventions:write') ? h('button', { class: 'btn primary', onClick: () => openInterventionForm(null, ctxOpts) }, '+ Intervention') : null,
         can('calls:write') ? h('button', { class: 'btn', onClick: () => openCallForm(null, ctxOpts) }, '+ Call') : null,
+        can('calls:write') ? h('button', { class: 'btn', onClick: () => openCallForm(null, { ...ctxOpts, method: 'text' }) }, '+ Text') : null,
         (can('notes:admin:write') || can('notes:clinical:write')) ? h('button', { class: 'btn', onClick: () => openNoteForm(null, ctxOpts) }, '+ Note') : null,
         can('tasks:write') ? h('button', { class: 'btn', onClick: () => openTaskForm(null, ctxOpts) }, '+ Task') : null,
         can('clients:write') ? h('button', { class: 'btn', onClick: () => openClientForm(c, refresh) }, 'Edit') : null)),
@@ -52,21 +53,40 @@ route('client', async (r) => {
     async time() { const d = await get(`/api/time?client_id=${id}&limit=500`); return h('div', {}, h('div', { class: 'row mb' }, can('time:write') ? h('button', { class: 'btn primary', onClick: () => openTimeForm(null, ctxOpts) }, '+ Log time') : null), timeTable(d.rows, { showClient: false, onChange: refresh })); },
     async budget() { const d = await get(`/api/budget/expenditures?client_id=${id}&limit=500`); return h('div', {}, h('div', { class: 'row mb' }, can('budget:write') ? h('button', { class: 'btn primary', onClick: () => openExpenditureForm(null, ctxOpts) }, '+ Record client assistance') : null, h('span', { class: 'muted' }, `Total approved: ${fmt.money(c.counts.spent)}`)), expenditureTable(d.rows, { showClient: false, onChange: refresh })); },
     async forms() { return (await import('./forms.js')).clientFormsTab(id, { refresh }); },
+    async episodes() { return (await import('./episodes.js')).episodesPanel(id, { onChange: refresh }); },
     async consents() {
       const d = await get(`/api/clients/${id}/consents`); const C = state.constants;
       const addConsent = () => { const f = form([{ name: 'type', label: 'Consent type', type: 'select', options: C.CONSENT_TYPES, required: true }, { name: 'signed_at', label: 'Signed', type: 'date', required: true, value: fmt.today() }, { name: 'expires_at', label: 'Expires', type: 'date' }, { name: 'recipient', label: 'Recipient (who may receive info)', span: true }, { name: 'purpose', label: 'Purpose of disclosure', span: true }, { name: 'scope', label: 'Information covered', type: 'textarea', span: true, rows: 2 }, { name: 'witness', label: 'Witness' }, { name: 'document_ref', label: 'Document location / scan ref' }], { submitText: 'Record consent', onCancel: () => m.close(), onSubmit: async (v) => { await post(`/api/clients/${id}/consents`, v); toast('Consent recorded', 'ok'); m.close(); refresh(); } }); const m = modal('Record consent / release of information', h('div', {}, h('div', { class: 'banner small' }, '42 CFR Part 2: a written consent must name the recipient, purpose, and information to be disclosed, and include an expiration.'), f)); };
       const addDisclosure = () => { const f = form([{ name: 'basis', label: 'Legal basis', type: 'select', options: ['consent', 'medical_emergency', 'court_order', 'qsoa', 'audit_evaluation', 'research', 'crime_on_premises', 'child_abuse_report', 'other'], value: 'consent', noBlank: true, required: true }, { name: 'consent_id', label: 'Consent relied on', type: 'select', options: d.consents.filter(x => !x.revoked_at).map(x => ({ value: x.id, label: `${fmt.label(x.type)} → ${x.recipient || '—'} (${fmt.date(x.signed_at)})` })) }, { name: 'disclosed_at', label: 'Date disclosed', type: 'datetime', required: true, value: new Date().toISOString() }, { name: 'method', label: 'Method', type: 'select', options: ['verbal', 'phone', 'fax', 'secure_email', 'portal', 'paper', 'in_person'] }, { name: 'disclosed_to', label: 'Disclosed to', required: true, span: true }, { name: 'purpose', label: 'Purpose', required: true, span: true }, { name: 'info_disclosed', label: 'Information disclosed', type: 'textarea', required: true, span: true, rows: 2 }], { submitText: 'Record disclosure', onCancel: () => m.close(), onSubmit: async (v) => { await post(`/api/clients/${id}/disclosures`, v); toast('Disclosure recorded', 'ok'); m.close(); refresh(); } }); const m = modal('Record a disclosure', f); };
+      const revokedRefs = (d.consents || []).some(x => x.revoked_at);
       return h('div', { class: 'grid cols-2' },
+        revokedRefs ? h('div', { class: 'banner warn span', role: 'status', style: { gridColumn: '1 / -1' } },
+          'A consent on this client has been revoked. Any referral that relied on it is flagged — stop sharing information under it and close those referrals out.') : null,
         h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Consents & releases'), can('consents:write') ? h('button', { class: 'btn sm primary', onClick: addConsent }, '+ Consent') : null),
           table([{ label: 'Type', render: x => fmt.label(x.type) }, { label: 'Recipient', key: 'recipient' }, { label: 'Purpose', key: 'purpose' }, { label: 'Signed', render: x => fmt.date(x.signed_at) }, { label: 'Expires', render: x => x.expires_at ? h('span', { style: Date.parse(x.expires_at) < Date.now() ? { color: 'var(--danger)' } : {} }, fmt.date(x.expires_at)) : '—' }, { label: 'Status', render: x => x.revoked_at ? badge('Revoked', 'danger') : (x.expires_at && Date.parse(x.expires_at) < Date.now()) ? badge('Expired', 'warn') : badge('Active', 'ok') },
             { label: '', render: x => !x.revoked_at && can('consents:write') ? h('button', { class: 'btn sm ghost', onClick: async () => { const reason = await confirmDialog('Revoke consent', 'Record that the client revoked this consent?', { danger: true, okText: 'Revoke', requireReason: true }); if (reason) { await post(`/api/consents/${x.id}/revoke`, { reason }); refresh(); } } }, 'Revoke') : null }], d.consents, { empty: 'No consents on file. SUD records cannot be shared without written consent.' })),
         h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Accounting of disclosures'), can('consents:write') ? h('button', { class: 'btn sm primary', onClick: addDisclosure }, '+ Disclosure') : null),
-          table([{ label: 'Date', render: x => fmt.dt(x.disclosed_at) }, { label: 'To', key: 'disclosed_to' }, { label: 'Purpose', key: 'purpose' }, { label: 'What', key: 'info_disclosed' }, { label: 'Basis', render: x => fmt.label(x.basis) }, { label: 'By', key: 'disclosed_by_name' }], d.disclosures, { empty: 'No disclosures recorded.' })));
+          table([{ label: 'Date', render: x => fmt.dt(x.disclosed_at) }, { label: 'To', key: 'recipient' }, { label: 'Purpose', key: 'purpose' }, { label: 'What', key: 'what' }, { label: 'Basis', render: x => fmt.label(x.basis) }, { label: 'How it was recorded', render: x => fmt.label(x.source || 'manual') }, { label: 'By', key: 'disclosed_by_name' }], d.disclosures, { empty: 'No disclosures recorded. Every time identifiable information leaves this programme, it is recorded here.' })));
     },
     async team() {
       const assign = () => { const f = form([{ name: 'user_id', label: 'Worker', type: 'user', required: true }, { name: 'role_on_case', label: 'Role', type: 'select', options: ['primary', 'secondary', 'clinician', 'peer', 'supervisor'], value: 'primary', noBlank: true }, { name: 'start_date', label: 'Start', type: 'date', value: fmt.today() }, { name: 'notes', label: 'Notes', span: true }], { submitText: 'Assign', onCancel: () => m.close(), onSubmit: async (v) => { await post(`/api/clients/${id}/assignments`, v); toast('Assigned', 'ok'); m.close(); refresh(); } }); const m = modal('Assign worker', f); };
       return h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Care team assignments'), can('assignments:manage') ? h('button', { class: 'btn sm primary', onClick: assign }, '+ Assign worker') : null),
         table([{ label: 'Worker', key: 'display_name' }, { label: 'Staff role', render: a => fmt.label(a.user_role) }, { label: 'Role on case', render: a => fmt.label(a.role_on_case) }, { label: 'Start', render: a => fmt.date(a.start_date) }, { label: 'End', render: a => a.end_date ? fmt.date(a.end_date) : badge('Current', 'ok') }, { label: 'Notes', key: 'notes' }, { label: '', render: a => !a.end_date && can('assignments:manage') ? h('button', { class: 'btn sm ghost', onClick: async () => { if (await confirmDialog('End assignment', `Remove ${a.display_name} from this case?`, { okText: 'End' })) { await post(`/api/assignments/${a.id}/end`, {}); refresh(); } } }, 'End') : null }], c.assignments, { empty: 'No workers assigned.' }),
+        can('clients:merge') ? h('div', { class: 'card mt' },
+          h('h3', {}, 'Merge a duplicate into this record'),
+          h('p', { class: 'small muted' }, 'If the same person was entered twice, merge the other record into this one. Everything attached to it — visits, calls, notes, referrals, forms — moves here, and anything this record is missing is filled in from the duplicate. The other record is kept, marked as merged, so old links still work.'),
+          (() => {
+            const picker = clientPicker('merge_source', '', { placeholder: 'Find the duplicate record…' });
+            return h('div', {}, picker, h('div', { class: 'btn-row' }, h('button', { class: 'btn', onClick: async () => {
+              const sourceId = picker.value;
+              if (!sourceId) { toast('Choose the duplicate record first', 'error'); return; }
+              if (sourceId === id) { toast('That is this record', 'error'); return; }
+              const reason = await confirmDialog('Merge duplicate', 'Everything on the other record moves onto this one. This cannot be undone from the app. Continue?', { danger: true, okText: 'Merge', requireReason: true });
+              if (!reason) return;
+              try { const r = await post(`/api/clients/${id}/merge`, { source_id: sourceId, reason }); toast(`Merged. ${Object.values(r.moved).filter(n => typeof n === 'number').reduce((a, b) => a + b, 0)} record(s) moved.`, 'ok'); refresh(); }
+              catch (e) { toast(e.message, 'error'); }
+            } }, 'Merge into this record')));
+          })()) : null,
         can('clients:all') && can('clients:write') ? h('div', { class: 'btn-row' }, h('button', { class: 'btn danger', onClick: async () => { const reason = await confirmDialog('Delete client record', 'This soft-deletes the client and hides all records. Retention rules still apply. Continue?', { danger: true, okText: 'Delete', requireReason: true }); if (reason) { await del(`/api/clients/${id}`, { reason }); toast('Client deleted'); nav('clients'); } } }, 'Delete client record')) : null);
     },
   };

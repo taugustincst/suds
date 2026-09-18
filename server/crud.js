@@ -37,7 +37,7 @@ function build(r, opts) {
     const order = opts.order || `${table}.${dateCol} DESC`;
     const rows = db.all(`SELECT ${select} FROM ${table} ${joins} ${w} ORDER BY ${order} LIMIT ? OFFSET ?`, ...params, limit, offset);
     const total = db.one(`SELECT COUNT(*) n FROM ${table} ${joins} ${w}`, ...params).n;
-    audit.log({ user: ctx.user, action: `${entity}.list`, ip: ctx.ip, details: { count: rows.length, client_id: ctx.query.get('client_id') || undefined } });
+    audit.log({ user: ctx.user, action: `${entity}.list`, ip: ctx.ip, clientId: ctx.query.get('client_id') || null, details: { count: rows.length } });
     return { rows: decorate(ctx, rows), total, limit, offset };
   });
 
@@ -45,6 +45,12 @@ function build(r, opts) {
     const row = db.one(`SELECT ${select} FROM ${table} ${joins} WHERE ${table}.id=?`, ctx.params.id);
     if (!row) throw notFound();
     if (row.client_id) auth.assertClientAccess(ctx, row.client_id);
+    // A record with no client (a staff time entry, a program to-do) is not covered by caseload scoping, so
+    // the list view's owner filter has to be applied here too — otherwise it can be read by id alone.
+    else if (opts.ownerOnly && row[ownerCol] !== ctx.user.id && !auth.hasPerm(ctx.user, opts.ownerOnly)) {
+      audit.log({ user: ctx.user, action: 'authz.denied', entity, entityId: row.id, ip: ctx.ip, success: false, details: { reason: 'not the owner' } });
+      throw forbidden('That record belongs to another worker');
+    }
     audit.log({ user: ctx.user, action: `${entity}.view`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip });
     return { row: decorate(ctx, [row])[0] };
   });
@@ -59,8 +65,12 @@ function build(r, opts) {
     if (ownerCol && (cols[ownerCol] === undefined || (opts.restrictOwner && !auth.hasPerm(ctx.user, 'clients:all')))) cols[ownerCol] = ctx.user.id;
     if (opts.creatorCol) cols[opts.creatorCol] = ctx.user.id;
     const keys = Object.keys(cols).filter(k => cols[k] !== undefined && !k.startsWith('_'));
-    db.run(`INSERT INTO ${table}(${keys.join(',')}) VALUES(${keys.map(() => '?').join(',')})`, ...keys.map(k => cols[k]));
-    if (opts.afterInsert) opts.afterInsert(ctx, { id, ...cols });
+    // The insert and whatever it triggers (a time entry, a follow-up task, a client field update) are one
+    // unit: a failure in the follow-on work must not leave a half-recorded service behind.
+    db.transaction(() => {
+      db.run(`INSERT INTO ${table}(${keys.join(',')}) VALUES(${keys.map(() => '?').join(',')})`, ...keys.map(k => cols[k]));
+      if (opts.afterInsert) opts.afterInsert(ctx, { id, ...cols });
+    });
     audit.log({ user: ctx.user, action: `${entity}.create`, entity, entityId: id, clientId: v.client_id || null, ip: ctx.ip });
     ctx.status = 201; return { id };
   });

@@ -79,6 +79,17 @@ async function relisten(opts) {
   return d;
 }
 
-function stop(cb) { mdns.stop(); if (server) server.close(cb); else cb && cb(); }
+// Close cleanly, but do not hang: a browser tab holding a keep-alive connection would otherwise stop
+// server.close() from ever calling back, and Ctrl+C would look like a freeze.
+function stop(cb) {
+  mdns.stop();
+  if (!server) { cb && cb(); return; }
+  let done = false;
+  const finish = () => { if (done) return; done = true; clearTimeout(timer); cb && cb(); };
+  const timer = setTimeout(finish, 3000);
+  timer.unref?.();
+  server.close(finish);
+  try { server.closeAllConnections?.(); } catch {}
+}
 
 module.exports = { start, relisten, describe, stop, lanAddresses };

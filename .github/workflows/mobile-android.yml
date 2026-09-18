@@ -31,13 +31,32 @@ jobs:
           SUDS_KEY_PASSWORD: ${{ secrets.SUDS_KEY_PASSWORD }}
         run: |
           export JAVA_HOME="${JAVA_HOME_17_X64:-$JAVA_HOME}"
-          if [ -n "$SUDS_KEYSTORE_BASE64" ]; then echo "$SUDS_KEYSTORE_BASE64" | base64 -d > /tmp/suds.jks; export SUDS_KEYSTORE=/tmp/suds.jks; fi
+          # The runner's Gradle is whatever its image ships. Warn loudly if it is not the version the
+          # project pins, so a build that differs from a developer's is visible rather than mysterious.
+          pinned=$(sed -n 's/.*gradle-\([0-9.]*\)-bin.zip.*/\1/p' gradle/wrapper/gradle-wrapper.properties)
+          actual=$(gradle --version 2>/dev/null | sed -n 's/^Gradle *//p' | head -1)
+          echo "Gradle pinned=${pinned:-unknown} runner=${actual:-unknown}"
+          [ "${pinned%%.*}" = "${actual%%.*}" ] || echo "::warning::Runner Gradle ${actual} differs from the pinned ${pinned}"
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
-          gradle --no-daemon --console=plain assembleRelease
-          cp app/build/outputs/apk/release/app-release*.apk "$GITHUB_WORKSPACE/SUDS-android.apk"
-          ls -la "$GITHUB_WORKSPACE/SUDS-android.apk"
+          if [ -n "$SUDS_KEYSTORE_BASE64" ]; then
+            echo "$SUDS_KEYSTORE_BASE64" | base64 -d > /tmp/suds.jks
+            export SUDS_KEYSTORE=/tmp/suds.jks
+            gradle --no-daemon --console=plain assembleRelease
+            cp app/build/outputs/apk/release/app-release*.apk "$GITHUB_WORKSPACE/SUDS-android.apk"
+            echo "SUDS_APK_SIGNED=1" >> "$GITHUB_ENV"
+          else
+            # No signing key configured. A release APK signed with the runner's throwaway debug key gets a
+            # different signature every build, so Android refuses to install it over the previous version
+            # and staff would have to uninstall — losing the data on the device. Build a clearly-labelled
+            # debug APK instead, and do not publish it as a release.
+            echo "::warning::SUDS_KEYSTORE_BASE64 is not set; building an unsigned debug APK. It will not be published."
+            gradle --no-daemon --console=plain assembleDebug
+            cp app/build/outputs/apk/debug/app-debug*.apk "$GITHUB_WORKSPACE/SUDS-android-debug.apk"
+            echo "SUDS_APK_SIGNED=0" >> "$GITHUB_ENV"
+          fi
+          ls -la "$GITHUB_WORKSPACE"/SUDS-android*.apk
       - name: Publish to GitHub Release
-        if: github.event_name == 'push' || inputs.publish
+        if: (github.event_name == 'push' || inputs.publish) && env.SUDS_APK_SIGNED == '1'
         run: |
           cd src
           tag="${GITHUB_REF_NAME}"; case "$tag" in v*) ;; *) tag="v$(node -p "require('./package.json').version")";; esac

@@ -37,12 +37,47 @@ function blindIndex(value, key = config.indexKey) {
 }
 
 // Password hashing with scrypt (N=2^15, r=8, p=1) and per-user salt.
+// Deliberately expensive: about 90ms per call. That cost is paid on the event loop by the synchronous
+// variants, so anything in a request path uses the async ones below and lets other requests run meanwhile.
+// The sync versions remain for CLI scripts and first-run bootstrap, where nothing else is waiting.
 const SCRYPT = { N: 32768, r: 8, p: 1, keylen: 64, maxmem: 64 * 1024 * 1024 };
+const scryptAsync = (password, salt, keylen, opts) => new Promise((resolve, reject) => {
+  // The browser kernel's shim has no callback form; fall back to the synchronous one there.
+  if (typeof crypto.scrypt !== 'function') { try { resolve(crypto.scryptSync(password, salt, keylen, opts)); } catch (e) { reject(e); } return; }
+  crypto.scrypt(password, salt, keylen, opts, (err, key) => (err ? reject(err) : resolve(key)));
+});
 function hashPassword(password) {
   const salt = crypto.randomBytes(16);
   const hash = crypto.scryptSync(password, salt, SCRYPT.keylen, SCRYPT);
   return `scrypt$${SCRYPT.N}$${SCRYPT.r}$${SCRYPT.p}$${salt.toString('base64')}$${hash.toString('base64')}`;
 }
+/** Parse a stored hash into the parameters needed to recompute it. Returns null if it is not one of ours. */
+function parseHash(stored) {
+  const [alg, N, r, p, saltB64, hashB64] = String(stored).split('$');
+  if (alg !== 'scrypt') return null;
+  try {
+    const expected = Buffer.from(hashB64, 'base64');
+    return { salt: Buffer.from(saltB64, 'base64'), expected, opts: { N: Number(N), r: Number(r), p: Number(p), maxmem: SCRYPT.maxmem }, keylen: expected.length };
+  } catch { return null; }
+}
+
+/** Hash a password without blocking the event loop. Use this anywhere a request is waiting. */
+async function hashPasswordAsync(password) {
+  const salt = crypto.randomBytes(16);
+  const hash = await scryptAsync(password, salt, SCRYPT.keylen, SCRYPT);
+  return `scrypt$${SCRYPT.N}$${SCRYPT.r}$${SCRYPT.p}$${salt.toString('base64')}$${Buffer.from(hash).toString('base64')}`;
+}
+
+/** Verify a password without blocking the event loop. Constant-time comparison, same as the sync form. */
+async function verifyPasswordAsync(password, stored) {
+  const p = parseHash(stored);
+  if (!p) return false;
+  try {
+    const actual = Buffer.from(await scryptAsync(String(password), p.salt, p.keylen, p.opts));
+    return actual.length === p.expected.length && crypto.timingSafeEqual(actual, p.expected);
+  } catch { return false; }
+}
+
 function verifyPassword(password, stored) {
   try {
     const [alg, N, r, p, saltB64, hashB64] = String(stored).split('$');
@@ -103,5 +138,11 @@ function otpauthUrl(secret, account, issuer = 'SUDS') {
   return `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(account)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
 }
 
-module.exports = { encrypt, decrypt, blindIndex, hashPassword, verifyPassword, randomToken, sha256, uuid,
+/**
+ * A short, non-reversible fingerprint of the PHI key in use. Stored alongside the data so a device can tell
+ * that its key has been replaced (browser storage cleared) before it writes anything under the new one.
+ */
+function keyFingerprint() { return sha256('suds-key-check:' + config.encryptionKey.toString('hex')).slice(0, 32); }
+
+module.exports = { encrypt, decrypt, blindIndex, keyFingerprint, hashPassword, verifyPassword, hashPasswordAsync, verifyPasswordAsync, randomToken, sha256, uuid,
   generateTotpSecret, totp, verifyTotp, otpauthUrl, base32Encode, base32Decode };

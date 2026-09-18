@@ -1,4 +1,4 @@
-import { h, route, get, post, state, form, modal, toast, nav, table, badge, statusKind, fmt, can, pageHead } from '../app.js';
+import { h, route, get, post, state, form, modal, toast, nav, table, badge, statusKind, fmt, can, pageHead, clear } from '../app.js';
 
 export function clientFields(C) {
   return [
@@ -30,10 +30,59 @@ export function clientFields(C) {
 
 export function openClientForm(values, onDone) {
   const isNew = !values;
-  const f = form(clientFields(state.constants), { values: values || {}, submitText: isNew ? 'Create client' : 'Save changes', onCancel: () => m.close(), onSubmit: async (d) => {
-    if (isNew) { const r = await post('/api/clients', d); toast(`Client ${r.client_code} created`, 'ok'); m.close(); onDone ? onDone(r.id) : nav(`client/${r.id}`); }
-    else { await (await import('../app.js')).put(`/api/clients/${values.id}`, d); toast('Client updated', 'ok'); m.close(); onDone && onDone(values.id); }
+  // Shown when the server thinks this person may already be on the caseload. Entering the same person
+  // twice used to be caught on import but not on direct entry, which is how one client ends up as three
+  // records under three spellings.
+  const dupBox = h('div');
+  let confirmedDuplicate = false;
+
+  const showDuplicates = (matches) => {
+    clear(dupBox);
+    confirmedDuplicate = false;
+    dupBox.append(h('div', { class: 'banner warn', role: 'alert' },
+      h('div', {},
+        h('b', {}, matches.length === 1 ? 'This person may already be on file.' : 'These people may already be on file.'),
+        h('ul', { class: 'tight' }, matches.map(x => h('li', {},
+          h('a', { href: `#/client/${x.id}`, onClick: () => m.close() }, x.display_name || x.client_code),
+          ' ', h('span', { class: 'muted small' }, x.client_code, x.dob ? ` · born ${fmt.date(x.dob)}` : '', ` · ${fmt.label(x.status)}`),
+          h('div', { class: 'small muted' }, `Matched on ${x.reasons.join(' and ')}.`)))),
+        h('p', { class: 'small' }, 'Open the existing record if it is the same person. If it really is somebody different, confirm below.'),
+        h('label', { class: 'check' },
+          h('input', { type: 'checkbox', onChange: (e) => { confirmedDuplicate = e.target.checked; } }),
+          ' This is a different person — create a new record anyway'))));
+    dupBox.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  };
+
+  const f = form(clientFields(state.constants), { values: values || {}, submitText: isNew ? 'Create client' : 'Save changes', onCancel: () => m.close(), extra: dupBox, draftKey: isNew ? 'client:new' : `client:${values.id}`, onSubmit: async (d) => {
+    if (isNew) {
+      try {
+        const r = await post('/api/clients', { ...d, confirm_duplicate: confirmedDuplicate || undefined });
+        toast(`Client ${r.client_code} created`, 'ok'); m.close(); onDone ? onDone(r.id) : nav(`client/${r.id}`);
+      } catch (e) {
+        if (e.data && e.data.duplicates) { showDuplicates(e.data.duplicates); throw new Error('Check the possible match below before continuing.'); }
+        throw e;
+      }
+    } else { await (await import('../app.js')).put(`/api/clients/${values.id}`, d); toast('Client updated', 'ok'); m.close(); onDone && onDone(values.id); }
   } });
+
+  // Check while they are still typing, so the match appears before the form is finished.
+  if (isNew) {
+    let timer;
+    const check = async () => {
+      const read = (n) => f.querySelector(`[name="${n}"]`)?.value || '';
+      const body = { first_name: read('first_name'), last_name: read('last_name'), dob: read('dob'), phone: read('phone') };
+      if (!body.last_name || (!body.dob && !body.phone && !body.first_name)) return;
+      try {
+        const r = await post('/api/clients/check-duplicates', body, { quiet: true });
+        if (r.matches.length) showDuplicates(r.matches); else clear(dupBox);
+      } catch { /* a failed check must never block entering a client */ }
+    };
+    for (const n of ['last_name', 'dob', 'phone']) {
+      const el = f.querySelector(`[name="${n}"]`);
+      if (el) el.addEventListener('change', () => { clearTimeout(timer); timer = setTimeout(check, 250); });
+    }
+  }
+
   const m = modal(isNew ? 'New client' : `Edit ${values.display_name}`, f, { wide: true });
 }
 

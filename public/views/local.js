@@ -7,6 +7,16 @@ route('localsetup', async () => {
     { name: 'org_name', label: 'Program name (optional)', placeholder: 'e.g. Clark County SUD Navigation', span: true },
     { name: 'display_name', label: 'Your name', required: true }, { name: 'username', label: 'Username', required: true, pattern: '[a-zA-Z0-9._@\\-]+', help: 'Use the same username as on the office SUDS if you have one.' },
     { name: 'password', label: 'Password', type: 'password', required: true, autocomplete: 'new-password', help: '12+ characters with upper and lower case, a number and a symbol. Protects the data on this device.' }, { name: 'confirm', label: 'Confirm password', type: 'password', required: true, autocomplete: 'new-password' },
+    // Asked for rather than assumed: a clinician set up as a navigator loses access to clinical notes,
+    // including notes they wrote themselves, and only finds out when they try to open one.
+    { name: 'role', label: 'Your role', type: 'select', noBlank: true, value: 'navigator', span: true,
+      options: [
+        { value: 'navigator', label: 'Navigator / peer support — outreach, referrals, case management' },
+        { value: 'clinician', label: 'Clinician — everything a navigator does, plus clinical notes' },
+        { value: 'supervisor', label: 'Supervisor — clinical notes, countersigning, approving time' },
+        { value: 'admin', label: 'Administrator — settings and user accounts' },
+      ],
+      help: 'Use the same role you have on the office SUDS. This decides what you can open on this device.' },
   ], { submitText: 'Start using SUDS', onSubmit: async (d) => {
     if (d.password !== d.confirm) throw new Error('Passwords do not match'); delete d.confirm;
     await post('/api/local/setup', d);
@@ -42,9 +52,15 @@ route('sync', async () => {
   window.addEventListener('suds-scan', (e) => { const v = String(e.detail || ''); if (v.startsWith('http')) { f.inputs.server.value = v.replace(/\/app\/?$/, '').replace(/\/$/, ''); toast('Office address filled in from QR code', 'ok'); } }, { once: true });
   const scanBtn = window.SudsNative && window.SudsNative.scanQr ? h('button', { class: 'btn sm', type: 'button', onClick: () => window.SudsNative.scanQr() }, 'Scan office QR code') : null;
   if (scanBtn) f.querySelector('.btn-row').prepend(scanBtn);
+  // A plain browser has no Keystore or Keychain, so the local kernel keeps its encryption keys in this
+  // profile's localStorage, beside the data they protect. Say so where someone is about to put real
+  // client information into it, not only in the documentation.
+  const protectedKeys = !!(window.SudsNative || window.__sudsSecrets);
   return h('div', {}, pageHead('Sync with the office'),
+    protectedKeys ? null : h('div', { class: 'banner warn mb' }, h('b', {}, 'This is a browser copy, for trying SUDS out. '),
+      'Its encryption keys are stored in this browser profile alongside the data, so anyone who can use this browser profile can read what is in it. Keep real client information on the phone app or the office computer — here, use sample data.'),
     h('div', { class: 'grid cols-2' },
-      h('div', { class: 'card' }, h('h3', {}, 'Status'), kv([['This device', badge('Local copy', 'info')], ['Last sync', st.last_sync_at ? fmt.dt(st.last_sync_at) : 'never'], ['Changes waiting to send', String(st.pending)], ['Office server', st.server || 'not set yet']]),
+      h('div', { class: 'card' }, h('h3', {}, 'Status'), kv([['This device', badge('Local copy', 'info')], ['Data protection', protectedKeys ? (window.SudsNative ? 'Encrypted; keys in the Android Keystore' : 'Encrypted; keys in the iOS Keychain') : badge('Keys kept in this browser', 'warn')], ['Last sync', st.last_sync_at ? fmt.dt(st.last_sync_at) : 'never'], ['Changes waiting to send', String(st.pending)], ['Office server', st.server || 'not set yet']]),
         h('p', { class: 'small muted mt' }, 'Sync exchanges clients, visits, calls, notes, reminders, referrals and everything else in both directions. The newest change wins. The office computer does not need to be on at any other time.')),
       h('div', { class: 'card' }, h('h3', {}, 'Sync now'), h('p', { class: 'small muted' }, 'Connect this phone to the office Wi-Fi (or the address IT gave you), then sign in with your office account.'), f, log,
         h('div', { class: 'btn-row' }, h('button', { class: 'btn danger sm', onClick: async () => { if (await confirmDialog('Erase this device', 'Remove all SUDS data from this device? Anything not yet synced will be lost.', { danger: true, okText: 'Erase', requireReason: true })) { await window.SUDS_LOCAL.wipe(); location.reload(); } } }, 'Erase data on this device'))),

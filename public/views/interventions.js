@@ -16,7 +16,7 @@ export function openInterventionForm(values, { clientId, clientDisplay, onDone }
     isNew ? { name: 'log_time', label: 'Also log this as a time entry', type: 'checkbox', value: true } : null,
     isNew ? { name: 'time_category', label: 'Time category', type: 'select', options: C.TIME_CATEGORIES, value: 'direct_service' } : null,
     isNew && can('clients:all') ? { name: 'user_id', label: 'Worker (defaults to you)', type: 'user' } : null,
-  ].filter(Boolean), { values: values || {}, submitText: isNew ? 'Save' : 'Save changes', onCancel: () => m.close(), onSubmit: async (d) => {
+  ].filter(Boolean), { values: values || {}, submitText: isNew ? 'Save' : 'Save changes', draftKey: values ? `intervention:${values.id}` : 'intervention:new', onCancel: () => m.close(), onSubmit: async (d) => {
     if (isNew) await post('/api/interventions', d); else await put(`/api/interventions/${values.id}`, d);
     toast(isNew ? 'Intervention logged' : 'Saved', 'ok'); m.close(); onDone && onDone();
   } });

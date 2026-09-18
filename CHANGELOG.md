@@ -2,6 +2,121 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## 1.7.0 — 2026-09-17
+
+This release came out of a detailed review of the platform. It fixes things that could break a county's
+data, closes gaps between what the app recorded and what it actually enforced, and adds the workflows the
+data model had no process around.
+
+### Things that could have lost or leaked data
+
+- **Sync could wedge itself permanently.** One unusable row aborted an entire push, and the device retried
+  the same payload forever. Each row is now applied on its own: a bad one is rejected with a plain reason
+  and everything else still lands. Three reproduced ways this happened are now covered by tests — a county
+  form completed offline, the third device to create a client without a signal, and a record whose
+  encryption could not be read.
+- **Key rotation destroyed form PHI.** Re-keying the database skipped completed county forms and their
+  attachments, so following the documented procedure made them permanently unreadable. The columns to
+  re-encrypt are now read from the database itself, so a new one cannot be missed.
+- **Sync let a device do what its user could not.** A navigator could write resources, funding sources and
+  form templates through sync, and caseload limits were not applied at all to calls, to-dos, time entries
+  or spending. Both are enforced now.
+- **Finance could export identified client data.** The role kept its de-identified access but no longer
+  holds the permission that turns names on.
+- **A phone with two tabs open lost work.** Each kept its own copy of the database and saved by overwriting
+  the whole thing. One window now holds it and the others say so. A committed change is written out
+  immediately rather than on a timer, a failed save is reported instead of disappearing into the console,
+  and a device whose security key has been cleared says so instead of silently making everything on it
+  unreadable.
+- **Restoring a backup no longer needs a terminal.** Administration can check what a backup contains and
+  then restore it, keeping the replaced database aside. Backup, restore and key rotation had no tests at
+  all; they do now.
+
+### Consent, supervision and discharge
+
+- **Consent is enforced where information actually leaves.** A referral that names a client to an outside
+  agency is refused without a valid consent or another lawful basis, and writes the disclosure record that
+  HIPAA §164.528 requires. Revoking a consent flags the open referrals that relied on it.
+- **Countersignatures.** Only the author signs a note; a supervisor countersigns. Both names stay on the
+  record — signing on a trainee's behalf used to erase who actually provided the service.
+- **Supervision** (new menu item): notes waiting for a countersignature, drafts the team has not finished,
+  staff time to approve, and referrals with no outcome recorded.
+- **Staff time is submitted and approved**, in bulk or per entry, with the same rule expenditures have:
+  nobody approves their own.
+- **Episodes of care and discharge.** Closing an episode ends the assignments, closes the open to-dos that
+  would otherwise sit overdue forever, and records why and where the client went. Reopening service brings
+  a returning client back. There is a **waitlist** ordered by how long people have actually waited, and a
+  **caseload transfer** that moves every client and open to-do at once when a worker leaves.
+- **Referral outcomes.** Every referral gets a follow-up date whether or not one was set, and recording the
+  outcome closes the loop, so "how many warm handoffs resulted in an admission" is answerable.
+
+### Reporting
+
+- **Funder report** (new menu item): unduplicated counts — people, not services — by fiscal period and
+  funding source, with admissions, discharges, median length of stay, demographics and overdose figures.
+- **Overdose & reversals** (new menu item): an event log including community reversals with nobody
+  identified, which previously could not be recorded at all. Community naloxone distribution can be
+  recorded as a service with no client attached.
+- Race and ethnicity are recorded as codes a funder can count, alongside the free-text field.
+
+### Contacts, referrals and the phone
+
+- **Text messages are logged like calls.** + Log offers **Text message**, and a client's page has a
+  **+ Text** button. A text has its own outcomes — replied, sent, no reply, undeliverable, wrong number,
+  opted out — so "voicemail" and "busy" no longer stand in for them, and the two sets cannot be mixed up.
+  A reply counts as having reached the client (an unanswered text does not), so texting somebody no longer
+  leaves them on the *no contact in 30 days* list. What was said is encrypted like any other PHI, and the
+  form says plainly that texting a client about treatment is itself a disclosure if someone else can read
+  their phone.
+- **A referral is no longer blocked by an empty directory.** On a phone that has not synced yet, the
+  provider list was empty, offered only "—", and had nothing to type into. It now offers adding a provider
+  without leaving the referral, and says why the list is empty.
+- **The floating "+ Log" button no longer covers the last control on a phone screen**, and a long value can
+  no longer push a page wider than the phone — which put buttons out of reach entirely.
+
+### Working with client records
+
+- **Entering the same person twice is caught.** A matching surname and date of birth, phone number or full
+  name is flagged while you type — compared through blind indexes, so no name is ever in the clear.
+  Duplicates that do get in can be **merged**.
+- **Search tolerates typos and partial surnames**: "Ngu" and "Nguyan" both find Nguyen.
+- **Starter forms**, including a 42 CFR Part 2 consent with the elements the rule requires. A new
+  installation used to have no consent form at all.
+- Unsaved work in a form is kept if the dialog is closed or an idle sign-out happens.
+
+### Accessibility
+
+- Clickable rows and the client picker were mouse-only. Rows are keyboard-reachable, the picker is a real
+  combobox with arrow keys and Enter, dialogs keep Tab inside them and return focus where it came from, and
+  validation errors are announced and focused rather than shown only as a red outline.
+
+### Under the hood
+
+- **The audit chain is keyed.** It is an HMAC over the previous entry rather than a plain hash, so somebody
+  who can write to the database cannot recompute a chain that covers their changes. Entries written by
+  earlier versions still verify, and the whole chain is checked daily.
+- **The database is snapshotted before a migration runs** (`data/pre-migration/`, last five kept). A
+  migration is the one operation a county cannot retry, and if the snapshot cannot be written the upgrade
+  stops rather than proceeding unprotected.
+- **Ending an assignment now takes effect at once.** Access was decided by date alone, so a worker a
+  supervisor had just taken off a case kept the client until midnight.
+- **Local mode in a plain browser says what it is.** Without a Keystore or Keychain it keeps its encryption
+  keys in that browser profile beside the data, so the Sync screen and the documentation now say so: it is
+  for trying SUDS out, not for real client information.
+- Downloading pictures for a whole region is bounded by one time budget, so a slow provider website cannot
+  outlive the request.
+- Signing in no longer blocks every other request while the password is hashed.
+- Pictures are served as cacheable images instead of base64 inside list responses, sync is paged and
+  chunked, attachments travel separately, and the tables sync reads are indexed — a first sync used to be a
+  single 40MB response the phone could not parse.
+- Mandatory two-step verification is actually enforced, after a grace period so a new administrator is not
+  locked out before they can enrol.
+- There is a real health check, logs are written to dated files and rotated, and an unhandled error no
+  longer takes down an unsupervised county workstation.
+- Release builds fail if the committed phone kernel is stale, if tests fail (a shell precedence bug let a
+  release publish with failing tests), or if an Android release is about to be signed with a throwaway key
+  that would stop staff installing the update.
+
 ## 1.6.1 — 2026-09-17
 
 ### One record, one date, everywhere

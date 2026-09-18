@@ -26,6 +26,10 @@ CREATE TABLE IF NOT EXISTS users (
   password_changed_at TEXT,
   last_login_at TEXT,
   hourly_cost REAL,
+  -- Supervision: an unlicensed or trainee worker's notes need a supervisor's countersignature to stand as
+  -- a billable clinical record. author_id is never reassigned, so both names appear on the note.
+  requires_cosign INTEGER NOT NULL DEFAULT 0,
+  supervisor_id TEXT REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -62,6 +66,12 @@ CREATE TABLE IF NOT EXISTS clients (
   last_name_enc TEXT NOT NULL,
   last_name_idx TEXT,
   full_name_idx TEXT,
+  -- Coarse blind indexes that make search tolerant of typos and partial names without storing any name in
+  -- the clear: the first three letters of the surname, and its Soundex code, each HMAC'd with the index
+  -- key. They are lower entropy than the exact indexes, but anyone holding the index key can already test
+  -- a specific name against those, and both live in the same database as the ciphertext.
+  name_prefix_idx TEXT,
+  name_phonetic_idx TEXT,
   preferred_name_enc TEXT,
   dob_enc TEXT,
   dob_idx TEXT,
@@ -75,6 +85,7 @@ CREATE TABLE IF NOT EXISTS clients (
   gender TEXT,
   pronouns TEXT,
   race_ethnicity TEXT,
+  race_codes TEXT,                     -- comma separated CalOMS/OMB race codes (reportable; race_ethnicity stays for free text)
   preferred_language TEXT DEFAULT 'English',
   veteran INTEGER DEFAULT 0,
   housing_status TEXT,
@@ -100,12 +111,15 @@ CREATE TABLE IF NOT EXISTS clients (
   justice_involved INTEGER DEFAULT 0,
   pregnant_or_parenting INTEGER DEFAULT 0,
   co_occurring_mh INTEGER DEFAULT 0,
-  goals TEXT,
-  flags TEXT,                          -- comma separated safety flags
+  goals_enc TEXT,
+  flags_enc TEXT,                      -- comma separated safety flags, encrypted
   contact_preferences TEXT,
   ok_to_text INTEGER DEFAULT 0,
   ok_to_voicemail INTEGER DEFAULT 0,
   created_by TEXT REFERENCES users(id),
+  -- Set when this record was merged into another as a duplicate; the row is kept so old references and the
+  -- audit trail still resolve, but it no longer appears anywhere staff work.
+  merged_into TEXT REFERENCES clients(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   deleted_at TEXT
@@ -121,10 +135,15 @@ CREATE TABLE IF NOT EXISTS assignments (
   role_on_case TEXT NOT NULL DEFAULT 'primary' CHECK (role_on_case IN ('primary','secondary','clinician','peer','supervisor')),
   start_date TEXT NOT NULL,
   end_date TEXT,
+  -- Set only when somebody ends the assignment there and then (a supervisor taking a worker off a case).
+  -- Access stops at this instant; a plain end_date runs out at the end of that day instead.
+  ended_at TEXT,
   notes TEXT,
   created_by TEXT REFERENCES users(id),
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+CREATE INDEX IF NOT EXISTS idx_assignments_updated ON assignments(updated_at);
 CREATE INDEX IF NOT EXISTS idx_assign_client ON assignments(client_id);
 CREATE INDEX IF NOT EXISTS idx_assign_user ON assignments(user_id);
 
@@ -150,12 +169,15 @@ CREATE TABLE IF NOT EXISTS budget_lines (
   label TEXT,
   allocated_amount REAL NOT NULL DEFAULT 0,
   notes TEXT,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+CREATE INDEX IF NOT EXISTS idx_budget_lines_updated ON budget_lines(updated_at);
 
 CREATE TABLE IF NOT EXISTS interventions (
   id TEXT PRIMARY KEY,
-  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  -- nullable: community naloxone distribution and street outreach are real services with no identified client
+  client_id TEXT REFERENCES clients(id) ON DELETE CASCADE,
   user_id TEXT NOT NULL REFERENCES users(id),
   type TEXT NOT NULL,
   occurred_at TEXT NOT NULL,
@@ -168,19 +190,24 @@ CREATE TABLE IF NOT EXISTS interventions (
   fentanyl_strips INTEGER DEFAULT 0,
   funding_source_id TEXT REFERENCES funding_sources(id),
   cost REAL DEFAULT 0,
-  summary TEXT,
+  summary_enc TEXT,
   follow_up_due TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_interventions_client ON interventions(client_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_interventions_user ON interventions(user_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_interventions_occurred ON interventions(occurred_at);
+CREATE INDEX IF NOT EXISTS idx_interventions_updated ON interventions(updated_at);
 
 CREATE TABLE IF NOT EXISTS calls (
   id TEXT PRIMARY KEY,
   client_id TEXT REFERENCES clients(id) ON DELETE SET NULL,
   user_id TEXT NOT NULL REFERENCES users(id),
   direction TEXT NOT NULL CHECK (direction IN ('inbound','outbound')),
+  -- A phone call or a text message. Both are contacts with the same shape; only the wording,
+  -- the outcomes and whether minutes are worth recording differ.
+  method TEXT NOT NULL DEFAULT 'phone' CHECK (method IN ('phone','text')),
   started_at TEXT NOT NULL,
   duration_minutes INTEGER NOT NULL DEFAULT 0,
   contact_type TEXT NOT NULL DEFAULT 'client',
@@ -197,6 +224,8 @@ CREATE TABLE IF NOT EXISTS calls (
 );
 CREATE INDEX IF NOT EXISTS idx_calls_client ON calls(client_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_calls_user ON calls(user_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_calls_started ON calls(started_at);
+CREATE INDEX IF NOT EXISTS idx_calls_updated ON calls(updated_at);
 
 CREATE TABLE IF NOT EXISTS time_entries (
   id TEXT PRIMARY KEY,
@@ -210,10 +239,17 @@ CREATE TABLE IF NOT EXISTS time_entries (
   intervention_id TEXT REFERENCES interventions(id) ON DELETE SET NULL,
   call_id TEXT REFERENCES calls(id) ON DELETE SET NULL,
   description TEXT,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','submitted','approved','rejected')),
+  submitted_at TEXT,
+  approved_by TEXT REFERENCES users(id),
+  approved_at TEXT,
+  approval_note TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_time_user ON time_entries(user_id, work_date);
+CREATE INDEX IF NOT EXISTS idx_time_status ON time_entries(status, work_date);
+CREATE INDEX IF NOT EXISTS idx_time_updated ON time_entries(updated_at);
 CREATE INDEX IF NOT EXISTS idx_time_client ON time_entries(client_id);
 
 CREATE TABLE IF NOT EXISTS resources (
@@ -258,7 +294,9 @@ CREATE TABLE IF NOT EXISTS resource_photos (
   content_type TEXT NOT NULL,
   bytes INTEGER NOT NULL DEFAULT 0,
   width INTEGER, height INTEGER,
-  data_b64 TEXT NOT NULL,               -- downscaled picture (JPEG/PNG/WebP), base64
+  -- Nullable: an attachment row reaches a device before its bytes do. Attachments are fetched by id once
+  -- the rows have landed, because inlining every photo made a sync payload the phone could not parse.
+  data_b64 TEXT,                       -- downscaled picture (JPEG/PNG/WebP), base64
   thumb_b64 TEXT,                       -- small JPEG thumbnail for lists, base64
   sort_order INTEGER NOT NULL DEFAULT 0,
   uploaded_by TEXT REFERENCES users(id),
@@ -281,8 +319,12 @@ CREATE TABLE IF NOT EXISTS referrals (
   outcome TEXT,
   barrier TEXT,
   warm_handoff INTEGER DEFAULT 0,
-  consent_id TEXT,
+  consent_id TEXT REFERENCES consents(id) ON DELETE SET NULL,
+  -- set when the consent this referral relied on is revoked, so the worker is told to stop sharing
+  consent_revoked INTEGER NOT NULL DEFAULT 0,
   follow_up_due TEXT,
+  outcome_recorded_at TEXT,
+  episode_id TEXT REFERENCES episodes(id) ON DELETE SET NULL,
   notes TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -336,7 +378,7 @@ CREATE TABLE IF NOT EXISTS notes (
   author_id TEXT NOT NULL REFERENCES users(id),
   kind TEXT NOT NULL CHECK (kind IN ('clinical','admin')),
   format TEXT NOT NULL DEFAULT 'narrative',
-  title TEXT,
+  title_enc TEXT,
   content_enc TEXT NOT NULL,
   structured_enc TEXT,                 -- JSON of SOAP/DAP/BIRP sections, encrypted
   occurred_at TEXT NOT NULL,
@@ -344,6 +386,13 @@ CREATE TABLE IF NOT EXISTS notes (
   signed_at TEXT,
   signed_by TEXT REFERENCES users(id),
   signature_hash TEXT,                 -- sha256 over content at signing time (tamper evidence)
+  -- Co-signature: a supervisor countersigns a trainee's note. author_id is never reassigned, so the
+  -- record always shows who wrote it and who approved it as two separate people.
+  cosign_required INTEGER NOT NULL DEFAULT 0,
+  cosigned_by TEXT REFERENCES users(id),
+  cosigned_at TEXT,
+  cosignature_hash TEXT,
+  cosign_note TEXT,
   source TEXT NOT NULL DEFAULT 'manual',
   source_ref TEXT,
   import_item_id TEXT,
@@ -363,40 +412,51 @@ CREATE TABLE IF NOT EXISTS note_addenda (
   author_id TEXT NOT NULL REFERENCES users(id),
   content_enc TEXT NOT NULL,
   reason TEXT,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+CREATE INDEX IF NOT EXISTS idx_note_addenda_updated ON note_addenda(updated_at);
 
 CREATE TABLE IF NOT EXISTS consents (
   id TEXT PRIMARY KEY,
   client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
   type TEXT NOT NULL,                  -- part2_disclosure, roi, treatment, telehealth, contact, research
-  recipient TEXT,
-  purpose TEXT,
-  scope TEXT,
+  recipient_enc TEXT,
+  purpose_enc TEXT,
+  scope_enc TEXT,
   signed_at TEXT NOT NULL,
   expires_at TEXT,
   revoked_at TEXT,
   revoked_reason TEXT,
   document_ref TEXT,
   witness TEXT,
+  revoked_by TEXT REFERENCES users(id),
   created_by TEXT NOT NULL REFERENCES users(id),
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+CREATE INDEX IF NOT EXISTS idx_consents_client ON consents(client_id);
+CREATE INDEX IF NOT EXISTS idx_consents_updated ON consents(updated_at);
 CREATE INDEX IF NOT EXISTS idx_consents_client ON consents(client_id);
 
 CREATE TABLE IF NOT EXISTS disclosures (
   id TEXT PRIMARY KEY,
   client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
   consent_id TEXT REFERENCES consents(id) ON DELETE SET NULL,
-  disclosed_to TEXT NOT NULL,
-  purpose TEXT NOT NULL,
-  info_disclosed TEXT NOT NULL,
+  recipient_enc TEXT NOT NULL,
+  purpose_enc TEXT NOT NULL,
+  what_enc TEXT NOT NULL,
   method TEXT,
   disclosed_at TEXT NOT NULL,
   disclosed_by TEXT NOT NULL REFERENCES users(id),
   basis TEXT,                          -- consent, court_order, medical_emergency, qsoa, audit, research
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  source TEXT,                         -- referral, export, manual: what caused the disclosure to be recorded
+  source_ref TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+CREATE INDEX IF NOT EXISTS idx_disclosures_client ON disclosures(client_id);
+CREATE INDEX IF NOT EXISTS idx_disclosures_updated ON disclosures(updated_at);
 CREATE INDEX IF NOT EXISTS idx_disclosures_client ON disclosures(client_id);
 
 -- County form library: templates (blank forms + fillable field definitions) and forms filled out for a client
@@ -441,7 +501,7 @@ CREATE TABLE IF NOT EXISTS client_form_files (
   filename TEXT NOT NULL,
   content_type TEXT NOT NULL,
   bytes INTEGER NOT NULL DEFAULT 0,
-  data_enc TEXT NOT NULL,              -- encrypted base64 of the signed / scanned copy (PHI)
+  data_enc TEXT,                       -- encrypted base64 of the signed / scanned copy (PHI); nullable, see resource_photos.data_b64
   uploaded_by TEXT REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -456,22 +516,26 @@ CREATE TABLE IF NOT EXISTS imports (
   item_count INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'staged',
   metadata TEXT,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+CREATE INDEX IF NOT EXISTS idx_imports_updated ON imports(updated_at);
 
 CREATE TABLE IF NOT EXISTS import_items (
   id TEXT PRIMARY KEY,
   import_id TEXT NOT NULL REFERENCES imports(id) ON DELETE CASCADE,
   external_id TEXT,
-  title TEXT,
+  title_enc TEXT,
   content_enc TEXT NOT NULL,
   captured_at TEXT,
   metadata TEXT,
   suggested_client_id TEXT,
   status TEXT NOT NULL DEFAULT 'staged' CHECK (status IN ('staged','committed','discarded')),
   note_id TEXT,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+CREATE INDEX IF NOT EXISTS idx_import_items_updated ON import_items(updated_at);
 CREATE INDEX IF NOT EXISTS idx_import_items ON import_items(import_id, status);
 
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -500,3 +564,73 @@ CREATE TABLE IF NOT EXISTS user_prefs (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   PRIMARY KEY (user_id, key)
 );
+
+-- Sync reads every table by updated_at; without these indexes each pull is a full scan of every table.
+CREATE INDEX IF NOT EXISTS idx_clients_updated ON clients(updated_at);
+CREATE INDEX IF NOT EXISTS idx_clients_full_name_idx ON clients(full_name_idx);
+CREATE INDEX IF NOT EXISTS idx_clients_name_prefix ON clients(name_prefix_idx);
+CREATE INDEX IF NOT EXISTS idx_clients_name_phonetic ON clients(name_phonetic_idx);
+CREATE INDEX IF NOT EXISTS idx_resources_updated ON resources(updated_at);
+CREATE INDEX IF NOT EXISTS idx_resource_photos_updated ON resource_photos(updated_at);
+CREATE INDEX IF NOT EXISTS idx_funding_sources_updated ON funding_sources(updated_at);
+CREATE INDEX IF NOT EXISTS idx_referrals_updated ON referrals(updated_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_updated ON tasks(updated_at);
+CREATE INDEX IF NOT EXISTS idx_expenditures_updated ON expenditures(updated_at);
+CREATE INDEX IF NOT EXISTS idx_notes_updated ON notes(updated_at);
+CREATE INDEX IF NOT EXISTS idx_form_templates_updated ON form_templates(updated_at);
+CREATE INDEX IF NOT EXISTS idx_client_forms_updated ON client_forms(updated_at);
+CREATE INDEX IF NOT EXISTS idx_client_form_files_updated ON client_form_files(updated_at);
+CREATE INDEX IF NOT EXISTS idx_users_updated ON users(updated_at);
+
+-- Episodes of care. A client may be served more than once; funders count admissions and discharges per
+-- episode, not per person, and a closed episode is what makes a caseload shrink.
+CREATE TABLE IF NOT EXISTS episodes (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  funding_source_id TEXT REFERENCES funding_sources(id),
+  opened_at TEXT NOT NULL,
+  opened_by TEXT REFERENCES users(id),
+  referral_source TEXT,
+  presenting_problem_enc TEXT,
+  closed_at TEXT,
+  closed_by TEXT REFERENCES users(id),
+  discharge_reason TEXT,               -- completed, transferred, incarcerated, moved, lost_contact, declined, deceased, other
+  discharge_disposition TEXT,          -- where the client went (level of care, program)
+  discharge_summary_enc TEXT,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed')),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_episodes_client ON episodes(client_id, opened_at);
+CREATE INDEX IF NOT EXISTS idx_episodes_status ON episodes(status);
+CREATE INDEX IF NOT EXISTS idx_episodes_updated ON episodes(updated_at);
+
+-- Overdose and reversal events. Every SUD funder asks for these counts; they were previously only
+-- inferable from two boolean columns on the client record, which cannot answer "how many this quarter".
+CREATE TABLE IF NOT EXISTS overdose_events (
+  id TEXT PRIMARY KEY,
+  client_id TEXT REFERENCES clients(id) ON DELETE CASCADE,   -- null for a community/bystander report
+  occurred_at TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'overdose' CHECK (kind IN ('overdose','reversal','fatal')),
+  substances TEXT,
+  naloxone_used INTEGER NOT NULL DEFAULT 0,
+  naloxone_doses INTEGER NOT NULL DEFAULT 0,
+  administered_by TEXT,                -- bystander, first_responder, staff, self, unknown
+  ems_called INTEGER NOT NULL DEFAULT 0,
+  hospitalized INTEGER NOT NULL DEFAULT 0,
+  survived INTEGER NOT NULL DEFAULT 1,
+  location_type TEXT,
+  city TEXT,
+  funding_source_id TEXT REFERENCES funding_sources(id),
+  notes_enc TEXT,
+  reported_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_overdose_client ON overdose_events(client_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_overdose_occurred ON overdose_events(occurred_at);
+CREATE INDEX IF NOT EXISTS idx_overdose_updated ON overdose_events(updated_at);
+
+-- Hard deletes travel to devices as tombstones (created by migration 2 on databases predating 1.2).
+CREATE TABLE IF NOT EXISTS tombstones (table_name TEXT NOT NULL, id TEXT NOT NULL, deleted_at TEXT NOT NULL, PRIMARY KEY (table_name, id));
+CREATE INDEX IF NOT EXISTS idx_tombstones_at ON tombstones(deleted_at);

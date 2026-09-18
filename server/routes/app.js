@@ -20,6 +20,27 @@ function certFingerprint() {
 }
 
 module.exports = (r) => {
+  // Liveness and readiness. Unauthenticated and carrying no PHI or configuration detail, so a monitor, a
+  // Docker HEALTHCHECK or a county's IT can call it. /api/meta/constants only proved the listener was up;
+  // this proves the database answers and reports the numbers an operator needs before disk runs out.
+  r.get('/api/health', (ctx) => {
+    const out = { ok: true, version: config.version, uptime_seconds: Math.round(process.uptime()) };
+    try {
+      out.schema_version = Number(db.getSetting('schema_version', '0'));
+      out.database = db.one('SELECT 1 AS ok').ok === 1 ? 'ok' : 'unexpected';
+    } catch (e) { out.ok = false; out.database = 'error'; out.error = String(e.message || e).slice(0, 200); }
+    try {
+      const st = fs.statSync(config.dbPath);
+      out.database_bytes = st.size;
+      const fsinfo = fs.statfsSync(config.dataDir);
+      out.disk_free_bytes = fsinfo.bavail * fsinfo.bsize;
+      // Below this a write is likely to fail mid-transaction, which is worth saying before it happens.
+      if (out.disk_free_bytes < 100 * 1024 * 1024) { out.ok = false; out.warning = 'Less than 100 MB of disk space remains.'; }
+    } catch { /* :memory: or a platform without statfs — liveness still stands */ }
+    ctx.status = out.ok ? 200 : 503;
+    return out;
+  });
+
   // Public (no PHI): what a phone needs to connect and install
   r.get('/api/app/info', () => ({ name: db.getSetting('org_name', 'SUDS'), version: config.version, listener: listener.describe(), android: apkInfo(), certificate: certFingerprint(), service: '_suds._tcp' }));
   r.get('/api/app/android.apk', (ctx) => {

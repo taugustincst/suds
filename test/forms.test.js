@@ -61,7 +61,18 @@ test('form library: upload a PDF with fields, detect them, fill for a client wit
   assert.equal((await nav.get(`/api/clients/${clientId}`)).data.client.counts.forms, 1);
   const csv = String((await admin.get('/api/reports/export/forms?format=csv')).data); assert.ok(csv.includes('Template Name') && csv.includes('Release of Information'));
   const pull = (await admin.get('/api/sync/pull?since=1970-01-01T00:00:00.000Z', { 'X-Sync-Client': '1' })).data;
-  assert.equal(pull.tables.form_templates.length, 1); assert.equal(pull.tables.client_forms.length, 1); assert.ok(pull.tables.client_form_files[0].data_enc && !pull.tables.client_form_files[0].data_enc.startsWith('v1:'), 'decrypted for transport');
+  assert.equal(pull.tables.form_templates.length, 1); assert.equal(pull.tables.client_forms.length, 1);
+  assert.equal(pull.tables.client_forms[0].values_enc && pull.tables.client_forms[0].values_enc.startsWith('v1:'), false, 'form values are decrypted for transport');
+  // Attachments are far too large to ride in a sync payload; the row arrives without its bytes and the
+  // device fetches them by id when it needs them.
+  const fileRow = pull.tables.client_form_files[0];
+  assert.ok(fileRow, 'the attachment row still syncs');
+  assert.equal(fileRow.data_enc, undefined, 'attachment bytes are not inlined into the pull payload');
+  const blob = await admin.get(`/api/sync/blob/client_form_files/${fileRow.id}/data_enc`, { 'X-Sync-Client': '1' });
+  assert.equal(blob.status, 200);
+  assert.ok(blob.data.value && !String(blob.data.value).startsWith('v1:'), 'the attachment is decrypted for transport');
+  assert.equal((await nav2.get(`/api/sync/blob/client_form_files/${fileRow.id}/data_enc`)).status, 403, 'another navigator cannot fetch it');
+  assert.equal((await admin.get(`/api/sync/blob/clients/${clientId}/first_name_enc`)).status, 400, 'only attachment columns are fetchable this way');
   // retire template: hidden from staff, still usable history
   assert.equal((await admin.del(`/api/forms/templates/${tid}`)).status, 200);
   assert.equal((await nav.get('/api/forms/templates')).data.templates.length, 0); assert.equal((await admin.get('/api/forms/templates?active=0')).data.templates.length, 1);

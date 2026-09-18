@@ -19,11 +19,20 @@ function rateLimit(key, max, windowMs) {
   return b.count <= max;
 }
 
+// Every route module, in one place. The local kernel builds its router from LOCAL_ROUTE_MODULES below and
+// fails loudly if it is missing a loader for one, so adding a route file cannot silently leave the feature
+// out of the phone app.
+const ROUTE_MODULES = ['setup', 'auth', 'me', 'app', 'sync', 'dataimport', 'users', 'clients', 'assignments', 'episodes',
+  'interventions', 'overdose', 'calls', 'time', 'supervision', 'resources', 'referrals', 'tasks', 'budget', 'notes',
+  'consents', 'forms', 'imports', 'reports', 'admin', 'regions', 'intake'];
+
+// Not on a device: setup and app are office-server concerns (first-run wizard, APK hosting), sync is the
+// device's own runner, and intake is an inbound API for other systems to call.
+const LOCAL_ROUTE_MODULES = ROUTE_MODULES.filter(m => !['setup', 'app', 'sync', 'intake'].includes(m));
+
 function buildRouter() {
   const r = new Router();
-  for (const mod of ['setup', 'auth', 'me', 'app', 'sync', 'dataimport', 'users', 'clients', 'assignments', 'interventions', 'calls', 'time', 'resources', 'referrals', 'tasks', 'budget', 'notes', 'consents', 'forms', 'imports', 'reports', 'admin', 'regions', 'intake']) {
-    require(`./routes/${mod}`)(r);
-  }
+  for (const mod of ROUTE_MODULES) require(`./routes/${mod}`)(r);
   return r;
 }
 
@@ -69,15 +78,20 @@ function createHandler() {
       for (const h of m.handlers) { result = await h(ctx); }
       if (!res.headersSent) sendJson(res, result === undefined ? 204 : (ctx.status || 200), result === undefined ? null : result);
     } catch (err) {
+      // Routes that stream (exports, PDFs, backups, certificates) may already have written a header. A
+      // second write here would throw inside the catch and take the process down, so it is guarded: the
+      // request is simply cut off and the error is still logged.
       if (err instanceof HttpError) {
-        sendJson(res, err.status, { error: err.message, ...(err.extra || {}) });
+        if (!res.headersSent) sendJson(res, err.status, { error: err.message, ...(err.extra || {}) });
+        else res.destroy();
       } else {
         console.error(`[suds] ${req.method} ${url.pathname}:`, err);
         try { audit.log({ user: ctx.user, action: 'server.error', ip: ctx.ip, success: false, details: { path: url.pathname, message: String(err.message).slice(0, 300) } }); } catch {}
-        sendJson(res, 500, { error: 'Internal server error' });
+        if (!res.headersSent) sendJson(res, 500, { error: 'Internal server error' });
+        else res.destroy();
       }
     }
   };
 }
 
-module.exports = { createHandler, rateLimit };
+module.exports = { createHandler, rateLimit, ROUTE_MODULES, LOCAL_ROUTE_MODULES };

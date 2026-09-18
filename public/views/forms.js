@@ -23,11 +23,20 @@ route('forms', async (r) => {
         h('button', { class: 'btn sm', onClick: () => openFile(`/api/forms/templates/${t.id}/blank.pdf`) }, 'Blank PDF'), t.has_file ? h('button', { class: 'btn sm', onClick: () => downloadCsv(`/api/forms/templates/${t.id}/file`) }, 'Original file') : null,
         can('forms:manage') ? h('button', { class: 'btn sm ghost', onClick: () => openDesigner(t.id, refresh) }, 'Edit') : null)));
   return h('div', {},
-    pageHead('Form library', can('forms:manage') ? h('button', { class: 'btn primary', onClick: () => openDesigner(null, refresh) }, '+ Add a county form') : null),
+    pageHead('Form library',
+      can('forms:manage') ? h('button', { class: 'btn', onClick: () => openStarters(refresh) }, 'Add starter forms') : null,
+      can('forms:manage') ? h('button', { class: 'btn primary', onClick: () => openDesigner(null, refresh) }, '+ Add a county form') : null),
     h('p', { class: 'muted small' }, 'County forms your program uses. Open a form from a client record (Forms tab) or here: it is pre-filled from the chart, saved to the client, printable as a PDF, and a signed copy can be attached.'),
     h('div', { class: 'filters' }, h('div', { class: 'field grow' }, h('label', {}, 'Search'), search), h('div', { class: 'field' }, h('label', {}, 'Category'), catSel), h('button', { class: 'btn', onClick: () => nav(`forms?category=${cat}&q=${encodeURIComponent(search.value)}`) }, 'Search'),
       can('forms:manage') ? h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: inactive, onChange: e => nav(`forms?category=${cat}&q=${encodeURIComponent(q)}${e.target.checked ? '&inactive=1' : ''}`) }), 'Show retired') : null),
-    rows.length ? h('div', { class: 'grid cols-2' }, rows.map(card)) : emptyState('No forms in the library yet', can('forms:manage') ? 'Add the county forms your navigators fill out most: releases of information, intake sheets, assistance requests.' : 'Ask an administrator or supervisor to add the county forms you use.', can('forms:manage') ? h('button', { class: 'btn primary', onClick: () => openDesigner(null, refresh) }, '+ Add a county form') : null));
+    rows.length ? h('div', { class: 'grid cols-2' }, rows.map(card))
+      : emptyState('No forms in the library yet',
+        can('forms:manage')
+          ? 'Start with the built-in forms — including the 42 CFR Part 2 consent you need before any record can be shared — then add your own county forms.'
+          : 'Ask an administrator or supervisor to add the county forms you use.',
+        can('forms:manage') ? h('div', { class: 'btn-row' },
+          h('button', { class: 'btn primary', onClick: () => openStarters(refresh) }, 'Add starter forms'),
+          h('button', { class: 'btn', onClick: () => openDesigner(null, refresh) }, '+ Add a county form')) : null));
 });
 
 async function openTemplate(id, refresh) {
@@ -152,4 +161,32 @@ export async function openClientForm(id, { onChange } = {}) {
       can('forms:write') && (f.status === 'draft' || can('forms:manage')) ? h('button', { class: 'btn danger ghost', onClick: async () => { if (!await confirmDialog('Remove form', 'Remove this form from the client record?', { danger: true, okText: 'Remove' })) return; await del(`/api/forms/${id}`); toast('Form removed', 'ok'); m.close(); onChange && onChange(); } }, 'Remove') : null,
       h('button', { class: 'btn ghost', onClick: async () => { if (dirty) await save().catch(() => {}); m.close(); onChange && onChange(); } }, 'Close'))), { wide: true });
   m.el.classList.add('ff-modal');
+}
+
+
+/**
+ * Install the built-in starter forms. A county will edit the wording, but shipping with an empty library
+ * meant a new installation had no consent form at all — and no record can lawfully be shared without one.
+ */
+export async function openStarters(onDone) {
+  const { starters } = await get('/api/forms/starters');
+  const chosen = new Set(starters.filter(s => !s.installed).map(s => s.key));
+  const body = h('div', {},
+    h('p', { class: 'small muted' }, 'These are starting points, not legal advice: have your county counsel check the wording before first use. Installing one never overwrites a form you have already added.'),
+    h('div', {}, starters.map(s => h('label', { class: 'check list-item' },
+      h('input', { type: 'checkbox', checked: !s.installed, disabled: s.installed, onChange: (e) => { if (e.target.checked) chosen.add(s.key); else chosen.delete(s.key); } }),
+      h('span', {}, h('b', {}, s.name), ' ', badge(fmt.label(s.category), 'info'), s.installed ? [' ', badge('Already added', 'ok')] : null,
+        h('div', { class: 'small muted' }, s.description), h('div', { class: 'small muted' }, `${s.fields} fields`))))),
+    h('div', { class: 'btn-row' },
+      h('button', { class: 'btn', onClick: () => m.close() }, 'Cancel'),
+      h('button', { class: 'btn primary', onClick: async () => {
+        if (!chosen.size) { toast('Nothing selected', 'error'); return; }
+        try {
+          const r = await post('/api/forms/starters', { keys: [...chosen] });
+          toast(r.added.length ? `${r.added.length} form${r.added.length === 1 ? '' : 's'} added` : 'Those forms were already in the library', r.added.length ? 'ok' : '');
+          m.close(); onDone && onDone();
+        } catch (e) { toast(e.message, 'error'); }
+      } }, 'Add selected forms')));
+  const m = modal('Starter forms', body, { wide: true });
+  return m;
 }

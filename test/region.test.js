@@ -107,6 +107,20 @@ test('provider pictures are discovered from the provider website and downloaded'
   } finally { globalThis.fetch = realFetch; }
 });
 
+test('a picture batch stops at its deadline instead of outliving the request', async () => {
+  const t = region.pictureTargets('sacramento-metro')[0];
+  // A deadline already in the past: no fetch is attempted at all.
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls++; throw new Error('should not be called'); };
+  try {
+    const out = await region.fetchPicture({ ...t, url: 'https://good.example.org/a.png' }, { deadline: Date.now() - 1 });
+    assert.equal(out.ok, false);
+    assert.match(out.error, /ran out of time/);
+    assert.equal(calls, 0, 'the deadline is checked before the network, not after');
+  } finally { globalThis.fetch = realFetch; }
+});
+
 test('removing a starter directory keeps anything used or verified', async () => {
   const rows = (await nav.get('/api/resources?limit=1000')).data.rows;
   const verified = rows[0], referred = rows[1];

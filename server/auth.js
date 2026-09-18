@@ -2,7 +2,7 @@
 const db = require('./db');
 const config = require('./config');
 const audit = require('./audit');
-const { sha256, randomToken, verifyPassword, verifyTotp, decrypt } = require('./crypto');
+const { sha256, randomToken, verifyPassword, verifyPasswordAsync, verifyTotp, decrypt } = require('./crypto');
 const { unauthorized, forbidden, HttpError } = require('./http');
 
 // Security policy: settings table (editable in Administration) overrides environment defaults.
@@ -14,6 +14,9 @@ function policy() {
     absoluteHours: num('session_absolute_hours', config.session.absoluteHours),
     passwordMaxAgeDays: num('password_max_age_days', config.password.maxAgeDays),
     mfaRequiredRoles: roles === null ? config.mfaRequiredRoles : roles.split(',').map(x => x.trim()).filter(Boolean),
+    // How long a new account in a role that requires two-step verification has to set it up. Without this
+    // the very first administrator would be locked out the moment the setup wizard created them.
+    mfaGraceDays: num('mfa_grace_days', config.mfaGraceDays),
   };
 }
 
@@ -22,16 +25,22 @@ function policy() {
 // not treating staff, and must use break-glass (audited) to read clinical content.
 const PERMS = {
   admin:      ['users:manage','settings:manage','audit:read','apikeys:manage','clients:read','clients:write','clients:all',
-               'interventions:*','calls:*','time:*','resources:*','referrals:*','tasks:*','budget:read','budget:write','budget:approve',
-               'notes:admin:read','notes:admin:write','notes:clinical:breakglass','consents:*','imports:*','reports:read','assignments:manage','export:read','forms:*'],
-  supervisor: ['clients:read','clients:write','clients:all','interventions:*','calls:*','time:*','time:all','resources:*','referrals:*','tasks:*',
+               'interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*','budget:read','budget:write','budget:approve',
+               'notes:admin:read','notes:admin:write','notes:clinical:breakglass','consents:*','imports:*','reports:read','assignments:manage','export:read','export:identified','forms:*',
+               'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge'],
+  supervisor: ['clients:read','clients:write','clients:all','interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*',
                'budget:read','budget:write','budget:approve','notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write',
-               'consents:*','imports:*','reports:read','assignments:manage','audit:read','export:read','users:read','forms:*'],
-  clinician:  ['clients:read','clients:write','interventions:*','calls:*','time:*','resources:read','referrals:*','tasks:*',
-               'notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write','consents:*','imports:*','reports:read','users:read','forms:read','forms:write'],
-  navigator:  ['clients:read','clients:write','interventions:*','calls:*','time:*','resources:*','referrals:*','tasks:*',
-               'budget:read','budget:write','notes:admin:read','notes:admin:write','consents:*','imports:*','reports:read','users:read','forms:read','forms:write'],
-  finance:    ['clients:list-deidentified','budget:read','budget:write','budget:approve','time:read','time:all','reports:read','export:read','users:read'],
+               'consents:*','imports:*','reports:read','assignments:manage','audit:read','export:read','export:identified','users:read','forms:*',
+               'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge'],
+  clinician:  ['clients:read','clients:write','interventions:*','calls:*','time:read','time:write','resources:read','referrals:*','tasks:*',
+               'notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write','consents:*','imports:*','reports:read','users:read','forms:read','forms:write',
+               'episodes:*','overdose:*'],
+  navigator:  ['clients:read','clients:write','interventions:*','calls:*','time:read','time:write','resources:*','referrals:*','tasks:*',
+               'budget:read','budget:write','notes:admin:read','notes:admin:write','consents:*','imports:*','reports:read','users:read','forms:read','forms:write',
+               'episodes:*','overdose:*'],
+  // finance sees money, not people: export:read without export:identified means every export it can run
+  // comes out keyed by client_code. Do not add 'export:identified' here — docs/HIPAA.md promises otherwise.
+  finance:    ['clients:list-deidentified','budget:read','budget:write','budget:approve','time:read','time:all','time:approve','reports:read','export:read','users:read'],
   readonly:   ['clients:read','clients:all','interventions:read','calls:read','referrals:read','tasks:read','resources:read','reports:read','users:read','forms:read'],
 };
 
@@ -56,14 +65,23 @@ function requirePerm(...perms) {
   };
 }
 
-// Caseload scoping: roles without clients:all only see clients assigned to them (setting can disable)
+// Caseload scoping: roles without clients:all only see clients assigned to them (setting can disable).
+// A de-identified role (finance) is not caseload-scoped because it never sees who the client is — which is
+// only true as long as it cannot run an identified export. That is enforced by 'export:identified', a
+// separate permission finance does not hold; see datasets() in exports.js.
 function caseloadRestricted(user) {
   if (hasPerm(user, 'clients:all') || hasPerm(user, 'clients:list-deidentified')) return false;
   return db.getSetting('caseload_restriction', '1') === '1';
 }
+// An assignment is over when its last day has passed, or the moment somebody ended it outright.
+// The date alone is not enough: a supervisor taking a worker off a case means now, not at midnight.
+// Parenthesised as a whole: callers drop it into WHERE clauses that may already contain an OR.
+const ACTIVE_ASSIGNMENT = `((end_date IS NULL OR end_date >= date('now')) AND (ended_at IS NULL OR ended_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')))`;
+const activeAssignment = (prefix = '') => ACTIVE_ASSIGNMENT.replace(/\b(end_date|ended_at)\b/g, `${prefix}$1`);
+
 function canAccessClient(user, clientId) {
   if (!caseloadRestricted(user)) return true;
-  const r = db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND (end_date IS NULL OR end_date >= date('now'))`, clientId, user.id);
+  const r = db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND ${activeAssignment()}`, clientId, user.id);
   return !!r;
 }
 function assertClientAccess(ctx, clientId) {
@@ -75,7 +93,7 @@ function assertClientAccess(ctx, clientId) {
 // SQL fragment restricting a client column to the user's caseload
 function caseloadFilter(user, col = 'c.id') {
   if (!caseloadRestricted(user)) return { sql: '1=1', params: [] };
-  return { sql: `${col} IN (SELECT client_id FROM assignments WHERE user_id=? AND (end_date IS NULL OR end_date >= date('now')))`, params: [user.id] };
+  return { sql: `${col} IN (SELECT client_id FROM assignments WHERE user_id=? AND ${activeAssignment()})`, params: [user.id] };
 }
 
 // ---- Sessions ----
@@ -110,7 +128,7 @@ function resolveSession(ctx) {
     db.run(`UPDATE sessions SET revoked_at=? WHERE id=?`, db.now(), s.id);
     return null;
   }
-  const user = db.one(`SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,must_change_password,password_changed_at,hourly_cost FROM users WHERE id=?`, s.user_id);
+  const user = db.one(`SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,must_change_password,password_changed_at,hourly_cost,created_at,requires_cosign,supervisor_id FROM users WHERE id=?`, s.user_id);
   if (!user || !user.is_active) return null;
   // throttle last_seen writes to once/minute
   if (now - Date.parse(s.last_seen_at) > 60_000) db.run(`UPDATE sessions SET last_seen_at=? WHERE id=?`, new Date(now).toISOString(), s.id);
@@ -123,26 +141,48 @@ function requireAuth(ctx) {
   if (!ctx.user) throw unauthorized();
   if (ctx.session?.mfa_pending) throw new HttpError(401, 'MFA verification required', { mfaRequired: true });
   if (!ctx.path.startsWith('/api/auth/')) {
+    // Roles the county marks as requiring two-step verification cannot reach anything once their grace
+    // period has run out. This used to be advisory — the login response said so and nothing stopped the
+    // user from ignoring it — but enforcing it from the first second would lock out the administrator the
+    // setup wizard just created, before they had any chance to enrol.
+    const due = mfaDeadline(ctx.user);
+    if (due && Date.now() > Date.parse(due)) {
+      throw new HttpError(403, 'Two-step verification must be set up for your role before you can continue', { mfaSetupRequired: true, mfaSetupDeadline: due });
+    }
     if (ctx.user.must_change_password) throw new HttpError(403, 'Password change required', { passwordChangeRequired: true });
     const age = ctx.user.password_changed_at ? (Date.now() - Date.parse(ctx.user.password_changed_at)) / 86400000 : Infinity;
     const maxAge = policy().passwordMaxAgeDays; if (age > maxAge) throw new HttpError(403, `Password is older than ${maxAge} days and must be changed`, { passwordChangeRequired: true });
   }
 }
 
+/**
+ * When this user must have two-step verification in place, or null if it is not required of them (or is
+ * already set up). Measured from the account's creation.
+ */
+function mfaDeadline(user) {
+  if (!user || user.mfa_enabled) return null;
+  if (!policy().mfaRequiredRoles.includes(user.role)) return null;
+  const created = Date.parse(user.created_at || 0) || Date.now();
+  return new Date(created + policy().mfaGraceDays * 86400000).toISOString();
+}
+
 // ---- Login ----
-function login({ username, password, ctx }) {
+// Async because scrypt costs ~90ms: doing it synchronously stalls every other request in the process, and a
+// few staff signing in at once is enough to be noticed.
+async function login({ username, password, ctx }) {
   const user = db.one(`SELECT * FROM users WHERE username=?`, String(username || '').trim());
   const fail = (reason) => {
     audit.log({ user: user ? { id: user.id, username: user.username } : { username }, action: 'auth.login.failed', ip: ctx.ip, success: false, details: { reason } });
     throw unauthorized('Invalid username or password');
   };
-  if (!user) { verifyPassword(password || '', 'scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AA=='); fail('unknown user'); }
+  // An unknown username still pays the hashing cost, so response time does not reveal who has an account.
+  if (!user) { await verifyPasswordAsync(password || '', 'scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AA=='); fail('unknown user'); }
   if (!user.is_active) fail('inactive');
   if (user.locked_until && Date.parse(user.locked_until) > Date.now()) {
     audit.log({ user, action: 'auth.login.locked', ip: ctx.ip, success: false });
     throw new HttpError(423, 'Account locked. Try again later or contact an administrator.');
   }
-  if (!verifyPassword(password || '', user.password_hash)) {
+  if (!(await verifyPasswordAsync(password || '', user.password_hash))) {
     const attempts = user.failed_attempts + 1;
     const lock = attempts >= config.lockout.maxAttempts ? new Date(Date.now() + config.lockout.minutes * 60000).toISOString() : null;
     db.run(`UPDATE users SET failed_attempts=?, locked_until=? WHERE id=?`, lock ? 0 : attempts, lock, user.id);
@@ -153,7 +193,8 @@ function login({ username, password, ctx }) {
   const mfaPending = !!user.mfa_enabled;
   const token = createSession(user, ctx, { mfaPending });
   audit.log({ user, action: mfaPending ? 'auth.login.mfa_pending' : 'auth.login', ip: ctx.ip });
-  return { token, user: publicUser(user), mfaPending, mfaSetupRequired: mfaRequiredForRole && !user.mfa_enabled };
+  const deadline = mfaDeadline(user);
+  return { token, user: publicUser(user), mfaPending, mfaSetupRequired: mfaRequiredForRole && !user.mfa_enabled, mfaSetupDeadline: deadline };
 }
 
 function verifyMfa(ctx, code) {
@@ -185,5 +226,5 @@ function passwordPolicy(pw) {
   return errors;
 }
 
-module.exports = { policy, PERMS, hasPerm, requirePerm, requireAuth, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted,
+module.exports = { policy, PERMS, hasPerm, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted,
   createSession, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };

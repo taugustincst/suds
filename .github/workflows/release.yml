@@ -20,9 +20,23 @@ jobs:
     steps:
       - name: Check out
         run: git clone --branch "${GITHUB_REF_NAME}" "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src
-      - name: Test and rebuild local kernel
+      # These were one `&&`/`||` chain. Both operators bind at the same precedence and associate left, so a
+      # failing `npm test` fell through to the `echo` and the step exited 0 — releases were published with
+      # failing tests. They are separate steps now, and a stale kernel fails rather than warns.
+      - name: Install
         working-directory: src
-        run: npm ci --no-audit --no-fund && npm test && npm run build:local && git diff --quiet -- public/local || echo "::warning::public/local was rebuilt with changes; commit the rebuilt kernel" 
+        run: npm ci --no-audit --no-fund
+      - name: Test
+        working-directory: src
+        run: npm test
+      - name: Verify the committed local kernel matches its sources
+        working-directory: src
+        run: |
+          npm run build:local
+          git diff --exit-code -- public/local server/schema-text.js public/sw.js mobile/android/app/build.gradle.kts mobile/ios/SUDS/Info.plist || {
+            echo "::error::The committed kernel is stale; the release zip would ship it. Run 'npm run build:local' and commit."
+            exit 1
+          }
       - name: Package and publish
         working-directory: src
         run: |

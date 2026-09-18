@@ -36,8 +36,10 @@ function fromDataUrl(v, maxBytes, label) {
 const b64Type = (b) => !b ? null : b.startsWith('iVBOR') ? 'image/png' : b.startsWith('UklGR') ? 'image/webp' : 'image/jpeg';
 const tagList = (v, allowed) => v == null ? v : String(v).split(',').map(x => x.trim().toLowerCase().replace(/[\s-]+/g, '_')).filter(x => allowed.includes(x)).filter((x, i, a) => a.indexOf(x) === i).join(',');
 function photoRows(resourceId, withData = false) {
-  return db.all(`SELECT id, resource_id, caption, content_type, bytes, width, height, sort_order, uploaded_by, created_at, thumb_b64${withData ? ', data_b64' : ''} FROM resource_photos WHERE resource_id=? ORDER BY sort_order, created_at`, resourceId)
-    .map(p => ({ ...p, thumb_url: p.thumb_b64 ? `data:${b64Type(p.thumb_b64)};base64,${p.thumb_b64}` : null, data_url: withData ? `data:${p.content_type};base64,${p.data_b64}` : undefined, thumb_b64: undefined, data_b64: undefined }));
+  // Pictures are referenced by URL, never inlined. A directory of a few hundred providers with photos
+  // would otherwise make the list response tens of megabytes of base64 for a phone to parse.
+  return db.all(`SELECT id, resource_id, caption, content_type, bytes, width, height, sort_order, uploaded_by, created_at, thumb_b64 IS NOT NULL AS has_thumb FROM resource_photos WHERE resource_id=? ORDER BY sort_order, created_at`, resourceId)
+    .map(p => ({ ...p, has_thumb: !!p.has_thumb, thumb_url: p.has_thumb ? `/api/resources/${p.resource_id}/photos/${p.id}/thumb` : null, data_url: `/api/resources/${p.resource_id}/photos/${p.id}/image` }));
 }
 
 module.exports = (r) => {
@@ -48,8 +50,8 @@ module.exports = (r) => {
     const cat = ctx.query.get('category'); if (cat) { where.push('category=?'); params.push(cat); }
     if (ctx.query.get('active') !== '0') where.push('is_active=1');
     const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
-    const rows = db.all(`SELECT r.*, (SELECT COUNT(*) FROM referrals x WHERE x.resource_id=r.id) AS referral_count, (SELECT COUNT(*) FROM resource_photos p WHERE p.resource_id=r.id) AS photo_count, (SELECT p.thumb_b64 FROM resource_photos p WHERE p.resource_id=r.id ORDER BY p.sort_order, p.created_at LIMIT 1) AS cover_b64 FROM resources r ${w} ORDER BY category, name LIMIT ? OFFSET ?`, ...params, limit, offset)
-      .map(r => ({ ...r, cover_url: r.cover_b64 ? `data:${b64Type(r.cover_b64)};base64,${r.cover_b64}` : null, cover_b64: undefined }));
+    const rows = db.all(`SELECT r.*, (SELECT COUNT(*) FROM referrals x WHERE x.resource_id=r.id) AS referral_count, (SELECT COUNT(*) FROM resource_photos p WHERE p.resource_id=r.id) AS photo_count, (SELECT p.id FROM resource_photos p WHERE p.resource_id=r.id AND p.thumb_b64 IS NOT NULL ORDER BY p.sort_order, p.created_at LIMIT 1) AS cover_photo_id FROM resources r ${w} ORDER BY category, name LIMIT ? OFFSET ?`, ...params, limit, offset)
+      .map(r => ({ ...r, cover_url: r.cover_photo_id ? `/api/resources/${r.id}/photos/${r.cover_photo_id}/thumb` : null }));
     return { rows, total: db.one(`SELECT COUNT(*) n FROM resources r ${w}`, ...params).n };
   });
   r.get('/api/resources/:id', auth.requireAuth, auth.requirePerm('resources:read', 'resources:write'), (ctx) => {
@@ -64,6 +66,25 @@ module.exports = (r) => {
     if (!db.one(`SELECT id FROM resources WHERE id=?`, ctx.params.id)) throw notFound();
     return { photos: photoRows(ctx.params.id, ctx.query.get('full') === '1') };
   });
+  // Pictures are served as ordinary cacheable images rather than base64 inside a JSON list. They contain
+  // no PHI — they are photographs of treatment centres — but they still require a signed-in session.
+  function sendPhoto(ctx, column) {
+    const p = db.one(`SELECT * FROM resource_photos WHERE id=? AND resource_id=?`, ctx.params.pid, ctx.params.id);
+    if (!p || !p[column]) throw notFound('Picture not found');
+    const body = Buffer.from(p[column], 'base64');
+    const etag = `"${require('../crypto').sha256(p.id + (p.updated_at || p.created_at) + column).slice(0, 32)}"`;
+    if (ctx.headers['if-none-match'] === etag) { ctx.res.writeHead(304, { ETag: etag }); ctx.res.end(); return null; }
+    ctx.res.writeHead(200, {
+      'Content-Type': column === 'thumb_b64' ? b64Type(p.thumb_b64) : p.content_type,
+      'Content-Length': body.length, ETag: etag,
+      'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff',
+    });
+    ctx.res.end(body);
+    return null;
+  }
+  r.get('/api/resources/:id/photos/:pid/thumb', auth.requireAuth, auth.requirePerm('resources:read', 'resources:write'), (ctx) => sendPhoto(ctx, 'thumb_b64'));
+  r.get('/api/resources/:id/photos/:pid/image', auth.requireAuth, auth.requirePerm('resources:read', 'resources:write'), (ctx) => sendPhoto(ctx, 'data_b64'));
+
   r.post('/api/resources/:id/photos', auth.requireAuth, auth.requirePerm('resources:write'), (ctx) => {
     const res = db.one(`SELECT id FROM resources WHERE id=?`, ctx.params.id); if (!res) throw notFound();
     if (db.one(`SELECT COUNT(*) n FROM resource_photos WHERE resource_id=?`, res.id).n >= MAX_PHOTOS) throw badRequest(`A resource can have at most ${MAX_PHOTOS} pictures; remove one first`);

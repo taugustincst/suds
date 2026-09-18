@@ -8,10 +8,52 @@ let prefsTimer; const prefsDirty = {};
 export const prefs = {
   get: (k, d) => (state.prefs[k] === undefined ? d : state.prefs[k]),
   set(k, v) { state.prefs[k] = v; prefsDirty[k] = v; try { localStorage.setItem('suds.prefs', JSON.stringify(state.prefs)); } catch {} clearTimeout(prefsTimer); prefsTimer = setTimeout(prefs.flush, 800); },
-  async flush() { const body = { ...prefsDirty }; for (const k of Object.keys(prefsDirty)) delete prefsDirty[k]; if (!Object.keys(body).length || !state.user) return; try { await put('/api/me/prefs', body, { quiet: true }); } catch {} },
+  async flush() {
+    const body = { ...prefsDirty };
+    if (!Object.keys(body).length || !state.user) return;
+    for (const k of Object.keys(body)) delete prefsDirty[k];
+    // On failure the change stays pending rather than being dropped, so the next save retries it — this
+    // used to lose a filter or a theme choice with no sign anything had happened.
+    try { await put('/api/me/prefs', body, { quiet: true }); }
+    catch { Object.assign(prefsDirty, body); }
+  },
   async load() { try { state.prefs = (await get('/api/me/prefs', { quiet: true })).prefs || {}; try { localStorage.setItem('suds.prefs', JSON.stringify(state.prefs)); } catch {} } catch { try { state.prefs = JSON.parse(localStorage.getItem('suds.prefs') || '{}'); } catch { state.prefs = {}; } } applyTheme(); },
 };
 function applyTheme() { const t = state.prefs.theme; if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme; }
+
+// ---------- images ----------
+// Pictures are served as ordinary image URLs rather than base64 inside JSON, which keeps list responses
+// small. In local mode there is no HTTP server behind those URLs, so the bytes come from the in-page
+// kernel and become an object URL instead.
+const objectUrls = new Map();
+export function img(path, attrs = {}) {
+  const el = h('img', { ...attrs, src: state.local ? TRANSPARENT_PIXEL : path });
+  if (state.local && path) {
+    if (objectUrls.has(path)) el.src = objectUrls.get(path);
+    else {
+      window.SUDS_LOCAL.handle('GET', path, undefined, {}).then((r) => {
+        if (!r || r.status >= 400 || !r.body) return;
+        const url = URL.createObjectURL(new Blob([r.body], { type: r.headers['content-type'] || 'image/png' }));
+        objectUrls.set(path, url);
+        el.src = url;
+      }).catch(() => {});
+    }
+  }
+  return el;
+}
+const TRANSPARENT_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+/** Point an existing <img> at a server path, going through the local kernel when there is no server. */
+export function setImage(el, path) {
+  if (!el) return;
+  if (!state.local) { el.src = path; return; }
+  if (objectUrls.has(path)) { el.src = objectUrls.get(path); return; }
+  el.src = TRANSPARENT_PIXEL;
+  window.SUDS_LOCAL.handle('GET', path, undefined, {}).then((r) => {
+    if (!r || r.status >= 400 || !r.body) return;
+    const url = URL.createObjectURL(new Blob([r.body], { type: r.headers['content-type'] || 'image/png' }));
+    objectUrls.set(path, url); el.src = url;
+  }).catch(() => {});
+}
 
 // ---------- API ----------
 export async function api(method, path, body, opts = {}) {
@@ -60,19 +102,70 @@ export function clear(el) { while (el.firstChild) el.removeChild(el.firstChild);
 export function frag(...children) { const f = document.createDocumentFragment(); append(f, children); return f; }
 
 export function toast(msg, kind = '') {
-  const t = h('div', { class: `toast ${kind}` }, msg);
+  const t = h('div', { class: `toast ${kind}`, role: kind === 'error' ? 'alert' : 'status' }, msg);
   document.getElementById('toasts').append(t);
+  announce(msg);
   setTimeout(() => t.remove(), kind === 'error' ? 6000 : 3500);
 }
+
+// A single polite live region. Screen readers announce anything written here, which is how a toast, a
+// validation failure or a background save error reaches someone not looking at the screen.
+let liveRegion;
+export function announce(message) {
+  if (!liveRegion) {
+    liveRegion = h('div', { class: 'sr-only', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' });
+    document.body.append(liveRegion);
+  }
+  // Clearing first makes a repeated message announce again.
+  liveRegion.textContent = '';
+  setTimeout(() => { liveRegion.textContent = String(message || ''); }, 50);
+}
+
+/**
+ * A message that stays until it is dismissed, for conditions the user has to act on rather than
+ * acknowledge in passing — a device that has stopped saving, a consent that was revoked.
+ */
+export function banner(message, kind = 'warn', { id = message } = {}) {
+  const host = document.getElementById('banners') || (() => { const b = h('div', { id: 'banners' }); document.body.prepend(b); return b; })();
+  if (host.querySelector(`[data-banner="${CSS.escape(String(id))}"]`)) return;
+  const el = h('div', { class: `banner ${kind}`, 'data-banner': String(id), role: 'alert' },
+    h('span', {}, message),
+    h('button', { class: 'btn ghost sm', 'aria-label': 'Dismiss', onClick: () => el.remove() }, '✕'));
+  host.append(el);
+  announce(message);
+  return el;
+}
+const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
 export function modal(title, content, { wide = false } = {}) {
   const root = document.getElementById('modal-root');
-  const box = h('div', { class: `modal ${wide ? 'wide' : ''}`, role: 'dialog', 'aria-modal': 'true' }, h('div', { class: 'card-head' }, h('h2', {}, title), h('button', { class: 'btn ghost sm', onClick: close, 'aria-label': 'Close' }, '✕')), content);
+  const titleId = 'modal-title-' + Math.random().toString(36).slice(2, 9);
+  const box = h('div', { class: `modal ${wide ? 'wide' : ''}`, role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': titleId },
+    h('div', { class: 'card-head' }, h('h2', { id: titleId }, title), h('button', { class: 'btn ghost sm', onClick: close, 'aria-label': 'Close' }, '✕')), content);
   const bg = h('div', { class: 'modal-bg', onClick: (e) => { if (e.target === bg) close(); } }, box);
-  function close() { bg.remove(); document.removeEventListener('keydown', esc); }
-  function esc(e) { if (e.key === 'Escape') close(); }
-  document.addEventListener('keydown', esc);
+  // Remember where focus was, so closing the dialog returns the keyboard to what opened it.
+  // activeElement can be null, and document.contains() throws on anything that is not a Node.
+  const opener = document.activeElement instanceof Element ? document.activeElement : null;
+  function close() {
+    bg.remove();
+    document.removeEventListener('keydown', onKey);
+    if (opener && document.contains(opener) && typeof opener.focus === 'function') { try { opener.focus(); } catch { /* the element may have been replaced by a re-render */ } }
+  }
+  function onKey(e) {
+    if (e.key === 'Escape') { close(); return; }
+    // Keep Tab inside the dialog: a keyboard user must not tab out into the page behind it.
+    if (e.key !== 'Tab') return;
+    const items = [...box.querySelectorAll(FOCUSABLE)].filter(el => el.offsetParent !== null || el === document.activeElement);
+    if (!items.length) return;
+    const first = items[0], last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    else if (!box.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+  }
+  document.addEventListener('keydown', onKey);
   root.append(bg);
-  const first = box.querySelector('input,select,textarea,button.primary'); if (first) first.focus();
+  announce(title);
+  const first = box.querySelector('input,select,textarea,button.primary') || box.querySelector(FOCUSABLE);
+  if (first) first.focus();
   return { close, el: box };
 }
 export function confirmDialog(title, message, { danger = false, okText = 'Confirm', requireReason = false } = {}) {
@@ -94,6 +187,7 @@ export const fmt = {
   // Past due? A calendar-day deadline is only late once that whole local day has ended.
   isPast: (s) => { const d = fmt.parse(s); if (!d) return false; if (fmt.isDateOnly(s)) d.setHours(23, 59, 59, 999); return d.getTime() < Date.now(); },
   money: (n) => (n === null || n === undefined) ? '—' : Number(n).toLocaleString(undefined, { style: 'currency', currency: 'USD' }),
+  bytes: (n) => { n = Number(n || 0); const u = ['B', 'KB', 'MB', 'GB']; let i = 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return `${n < 10 && i ? n.toFixed(1) : Math.round(n)} ${u[i]}`; },
   num: (n) => Number(n || 0).toLocaleString(),
   mins: (m) => { m = Number(m || 0); const hh = Math.floor(m / 60), mm = m % 60; return hh ? `${hh}h ${mm}m` : `${mm}m`; },
   label: (s) => s ? String(s).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).replace(/\bSbirt\b/, 'SBIRT').replace(/\bMat\b/g, 'MAT').replace(/\bOtp\b/, 'OTP').replace(/\bObot\b/, 'OBOT').replace(/\bEd\b/, 'ED').replace(/\bMh\b/, 'MH').replace(/\bRx\b/, 'Rx').replace(/\bIds\b/, 'IDs') : '—',
@@ -102,14 +196,21 @@ export const fmt = {
   today: () => { const d = new Date(); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; },
 };
 export function badge(text, kind = '') { return h('span', { class: `badge ${kind}` }, text); }
-export const statusKind = (s) => ({ active: 'ok', admitted: 'ok', completed: 'ok', done: 'ok', signed: 'ok', approved: 'ok', reimbursed: 'ok', reached: 'ok',
+export const statusKind = (s) => ({ active: 'ok', admitted: 'ok', completed: 'ok', done: 'ok', signed: 'ok', approved: 'ok', reimbursed: 'ok', reached: 'ok', replied: 'ok',
   waitlist: 'warn', pending: 'warn', waitlisted: 'warn', scheduled: 'info', contacted: 'info', accepted: 'info', in_progress: 'info', open: 'info', draft: 'warn', amended: 'purple', staged: 'warn', committed: 'ok',
-  inactive: '', closed: '', cancelled: '', discarded: '', rejected: 'danger', deceased: 'danger', no_show: 'danger', declined_by_client: 'danger', declined_by_provider: 'danger', critical: 'danger', high: 'warn', urgent: 'danger', crisis_escalated: 'danger' }[s] || '');
+  inactive: '', closed: '', cancelled: '', discarded: '', rejected: 'danger', deceased: 'danger', no_show: 'danger', declined_by_client: 'danger', declined_by_provider: 'danger', critical: 'danger', high: 'warn', urgent: 'danger', crisis_escalated: 'danger', no_reply: 'warn', sent: 'info', undeliverable: 'danger', opted_out: 'danger' }[s] || '');
 export const can = (perm) => { const u = state.user; if (!u) return false; const p = u.permissions || []; if (p.includes(perm)) return true; const [ns] = perm.split(':'); if (p.includes(`${ns}:*`)) return true; if (perm.endsWith(':read') && p.includes(perm.replace(/:read$/, ':write'))) return true; return false; };
 
 // ---------- forms ----------
 // fields: [{name,label,type:'text|number|date|datetime|select|textarea|checkbox|client|user|resource|fund', options, required, value, span, help, min, max, step}]
-export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCancel, cancelText = 'Cancel', extra } = {}) {
+// Unsaved form contents, kept in memory only. Deliberately not localStorage: a half-typed intake form is
+// PHI, and this app's whole design keeps PHI out of browser storage. Memory survives a closed dialog, a
+// route change and an idle sign-out within the same tab, which is what was actually being lost.
+const drafts = new Map();
+export function discardDraft(key) { drafts.delete(key); }
+export function hasDraft(key) { return drafts.has(key); }
+
+export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCancel, cancelText = 'Cancel', extra, draftKey } = {}) {
   const inputs = {};
   const grid = h('div', { class: 'form-grid' });
   let target = grid;
@@ -135,25 +236,65 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
       default: input = h('input', { type: f.type || 'text', name: f.name, required: !!f.required, value: v ?? '', placeholder: f.placeholder || '', maxlength: f.maxLen, pattern: f.pattern, autocomplete: f.autocomplete || 'off' });
     }
     inputs[f.name] = input;
+    // Label, help text and any error are tied to the control by id, so a screen reader reads the field's
+    // name, its guidance and what went wrong — rather than just "edit text".
+    const fieldId = `f-${f.name}-${Math.random().toString(36).slice(2, 7)}`;
+    const helpId = f.help ? `${fieldId}-help` : null;
+    const errId = `${fieldId}-err`;
+    if (input && input.tagName) {
+      input.id = fieldId;
+      input.setAttribute('aria-describedby', [helpId, errId].filter(Boolean).join(' '));
+      if (f.required) input.setAttribute('aria-required', 'true');
+    }
+    const errEl = h('div', { class: 'err', id: errId, role: 'alert' });
     const wrap = h('div', { class: `field ${f.span ? 'span' : ''}`, 'data-field': f.name },
-      f.type === 'checkbox' ? h('label', { class: 'check' }, input, f.label) : [h('label', {}, f.label, f.required ? ' *' : ''), input],
-      f.help ? h('div', { class: 'help' }, f.help) : null, h('div', { class: 'err' }));
+      f.type === 'checkbox' ? h('label', { class: 'check', for: fieldId }, input, f.label) : [h('label', { for: fieldId }, f.label, f.required ? ' *' : ''), input],
+      f.help ? h('div', { class: 'help', id: helpId }, f.help) : null, errEl);
     target.append(wrap);
   }
-  const errBox = h('div', { class: 'banner danger hidden' });
+  // A draft kept from an earlier attempt at this same form wins over the defaults.
+  const restored = draftKey && drafts.get(draftKey);
+  if (restored) for (const [k, v] of Object.entries(restored)) { const i = inputs[k]; if (!i) continue; if (i.type === 'checkbox') i.checked = !!v; else i.value = v ?? ''; }
+  const errBox = h('div', { class: 'banner danger hidden', role: 'alert', tabindex: '-1' });
   const submitBtn = h('button', { class: 'btn primary', type: 'submit' }, submitText);
   const el = h('form', { onSubmit: async (e) => {
     e.preventDefault();
     const data = read();
-    errBox.classList.add('hidden'); el.querySelectorAll('.field').forEach(x => { x.classList.remove('error'); x.querySelector('.err').textContent = ''; });
+    errBox.classList.add('hidden');
+    el.querySelectorAll('.field').forEach(x => { x.classList.remove('error'); x.querySelector('.err').textContent = ''; const c = x.querySelector('input,select,textarea'); if (c) c.removeAttribute('aria-invalid'); });
     submitBtn.disabled = true;
-    try { await onSubmit(data, el); }
+    try { await onSubmit(data, el); if (draftKey) drafts.delete(draftKey); }
     catch (err) {
       const fieldsErr = err.data && err.data.fields;
-      if (fieldsErr) for (const [k, msg] of Object.entries(fieldsErr)) { const w = el.querySelector(`[data-field="${k}"]`); if (w) { w.classList.add('error'); w.querySelector('.err').textContent = msg; } }
-      errBox.textContent = err.message + (fieldsErr ? ': ' + Object.entries(fieldsErr).map(([k, m]) => `${k} ${m}`).join('; ') : ''); errBox.classList.remove('hidden');
+      let firstBad = null;
+      if (fieldsErr) for (const [k, msg] of Object.entries(fieldsErr)) {
+        const w = el.querySelector(`[data-field="${k}"]`);
+        if (!w) continue;
+        w.classList.add('error');
+        w.querySelector('.err').textContent = msg;
+        const control = w.querySelector('input,select,textarea');
+        if (control) { control.setAttribute('aria-invalid', 'true'); if (!firstBad) firstBad = control; }
+      }
+      const text = err.message + (fieldsErr ? ': ' + Object.entries(fieldsErr).map(([k, m]) => `${k} ${m}`).join('; ') : '');
+      errBox.textContent = text; errBox.classList.remove('hidden');
+      // Say it out loud and put the cursor on the first thing that needs fixing, rather than leaving a
+      // keyboard user to hunt for a red outline they cannot see.
+      announce(text);
+      (firstBad || errBox).focus({ preventScroll: false });
+      (firstBad || errBox).scrollIntoView({ block: 'center', behavior: 'smooth' });
     } finally { submitBtn.disabled = false; }
-  } }, errBox, grid, extra || null, h('div', { class: 'btn-row' }, onCancel ? h('button', { class: 'btn', type: 'button', onClick: onCancel }, cancelText) : null, submitBtn));
+  } }, restored ? h('div', { class: 'banner', role: 'status' },
+    h('span', {}, 'Restored what you had already typed.'),
+    h('button', { class: 'btn ghost sm', type: 'button', onClick: (e) => { drafts.delete(draftKey); e.target.closest('.banner').remove(); for (const f of fields) { const i = inputs[f.name]; if (!i) continue; if (i.type === 'checkbox') i.checked = false; else i.value = ''; } } }, 'Start over')) : null,
+    errBox, grid, extra || null, h('div', { class: 'btn-row' }, onCancel ? h('button', { class: 'btn', type: 'button', onClick: onCancel }, cancelText) : null, submitBtn));
+
+  // Keep what has been typed so a dialog closed by accident, a route change, or an idle sign-out does not
+  // throw it away.
+  if (draftKey) {
+    let saveTimer;
+    el.addEventListener('input', () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => { const d = read(); if (Object.values(d).some(v => v !== '' && v !== null && v !== undefined && v !== 0)) drafts.set(draftKey, d); }, 400); });
+    el.addEventListener('change', () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => drafts.set(draftKey, read()), 400); });
+  }
   function read() {
     const data = {};
     for (const f of fields) {
@@ -173,36 +314,89 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
 
 // Client picker: search-as-you-type against /api/clients?q=, stores id in hidden value
 export function clientPicker(name, value, f = {}) {
+  // A combobox, not a div that happens to respond to clicks: arrow keys move through the matches, Enter
+  // chooses, Escape closes, and the whole thing is announced.
+  const listId = `cp-${Math.random().toString(36).slice(2, 9)}`;
   const hidden = h('input', { type: 'hidden', name });
-  const text = h('input', { type: 'text', placeholder: 'Search last name, phone, DOB or code…', autocomplete: 'off', required: !!f.required });
-  const list = h('div', { class: 'card tight hidden', style: { position: 'absolute', zIndex: 20, maxHeight: '220px', overflow: 'auto', width: '100%' } });
+  const text = h('input', {
+    type: 'text', placeholder: 'Search name, phone, date of birth or code…', autocomplete: 'off', required: !!f.required,
+    role: 'combobox', 'aria-expanded': 'false', 'aria-controls': listId, 'aria-autocomplete': 'list',
+  });
+  const list = h('div', { class: 'card tight hidden', id: listId, role: 'listbox', style: { position: 'absolute', zIndex: 20, maxHeight: '220px', overflow: 'auto', width: '100%' } });
   const wrap = h('div', { style: { position: 'relative' } }, text, hidden, list);
-  wrap.value = value || '';
   Object.defineProperty(wrap, 'value', { get: () => hidden.value, set: (v) => { hidden.value = v || ''; } });
   hidden.value = value || '';
   if (value && f.display) text.value = f.display;
   else if (value) get(`/api/clients/${value}`, { quiet: true }).then(r => { text.value = `${r.client.display_name} (${r.client.client_code})`; }).catch(() => {});
-  let timer;
+
+  let timer; let options = []; let active = -1;
+  const openList = (open) => { list.classList.toggle('hidden', !open); text.setAttribute('aria-expanded', String(open)); if (!open) { active = -1; text.removeAttribute('aria-activedescendant'); } };
+  const highlight = (i) => {
+    options.forEach((o, n) => { o.el.classList.toggle('active', n === i); o.el.setAttribute('aria-selected', String(n === i)); });
+    active = i;
+    if (options[i]) { text.setAttribute('aria-activedescendant', options[i].el.id); options[i].el.scrollIntoView({ block: 'nearest' }); }
+  };
+  const choose = (c) => {
+    hidden.value = c.id; text.value = `${c.display_name} (${c.client_code})`;
+    openList(false); wrap.dispatchEvent(new Event('change'));
+    announce(`${c.display_name} selected`);
+  };
+
   text.addEventListener('input', () => { hidden.value = ''; clearTimeout(timer); timer = setTimeout(search, 250); });
   text.addEventListener('focus', () => { if (!hidden.value) search(); });
-  document.addEventListener('click', (e) => { if (!wrap.contains(e.target)) list.classList.add('hidden'); });
+  text.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (list.classList.contains('hidden')) { search(); return; }
+      e.preventDefault();
+      if (!options.length) return;
+      highlight(e.key === 'ArrowDown' ? (active + 1) % options.length : (active - 1 + options.length) % options.length);
+    } else if (e.key === 'Enter') {
+      if (active >= 0 && options[active]) { e.preventDefault(); choose(options[active].client); }
+    } else if (e.key === 'Escape') {
+      if (!list.classList.contains('hidden')) { e.preventDefault(); openList(false); }
+    }
+  });
+  document.addEventListener('click', (e) => { if (!wrap.contains(e.target)) openList(false); });
+
   async function search() {
     const q = text.value.trim();
     try {
       const r = await get(`/api/clients?limit=15&status=all${q ? '&q=' + encodeURIComponent(q) : ''}`);
-      clear(list);
-      if (!r.clients.length) list.append(h('div', { class: 'muted small' }, q ? 'No matches (exact last name, phone, DOB or code)' : 'Type to search'));
-      for (const c of r.clients) list.append(h('div', { class: 'list-item', style: { cursor: 'pointer' }, onClick: () => { hidden.value = c.id; text.value = `${c.display_name} (${c.client_code})`; list.classList.add('hidden'); wrap.dispatchEvent(new Event('change')); } }, c.display_name, ' ', h('span', { class: 'muted small' }, c.client_code, ' · ', fmt.label(c.status))));
-      list.classList.remove('hidden');
-    } catch {}
+      clear(list); options = []; active = -1;
+      if (!r.clients.length) {
+        list.append(h('div', { class: 'muted small' }, q ? 'No matches. Try a surname, phone number, date of birth or client code.' : 'Type to search'));
+        announce('No matching clients');
+      } else {
+        r.clients.forEach((c, i) => {
+          const el = h('div', {
+            class: 'list-item', id: `${listId}-o${i}`, role: 'option', 'aria-selected': 'false', tabindex: '-1',
+            style: { cursor: 'pointer' },
+            onClick: () => choose(c),
+            onMousemove: () => highlight(i),
+          }, c.display_name, ' ', h('span', { class: 'muted small' }, c.client_code, ' · ', fmt.label(c.status)));
+          options.push({ el, client: c });
+          list.append(el);
+        });
+        announce(`${r.clients.length} matching client${r.clients.length === 1 ? '' : 's'}`);
+      }
+      openList(true);
+    } catch { /* a failed lookup leaves the previous list alone */ }
   }
   return wrap;
 }
 
-export function table(columns, rows, { onRow, empty = 'No records', wrap = true } = {}) {
+export function table(columns, rows, { onRow, empty = 'No records', wrap = true, rowLabel } = {}) {
   if (!rows.length) return h('div', { class: 'empty' }, empty);
-  const t = h('table', {}, h('thead', {}, h('tr', {}, columns.map(c => h('th', { class: c.num ? 'num' : '' }, c.label)))),
-    h('tbody', {}, rows.map(r => h('tr', { class: onRow ? 'click' : '', onClick: onRow ? () => onRow(r) : null }, columns.map(c => h('td', { class: c.num ? 'num' : '', 'data-label': c.label || '' }, c.render ? c.render(r) : (r[c.key] ?? '—')))))));
+  // A clickable row must also be reachable and activatable from the keyboard, or the whole view is
+  // mouse-only. tabindex + Enter/Space + a role is the minimum that makes that true.
+  const rowAttrs = (r) => (onRow ? {
+    class: 'click', tabindex: '0', role: 'button',
+    'aria-label': rowLabel ? rowLabel(r) : undefined,
+    onClick: () => onRow(r),
+    onKeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onRow(r); } },
+  } : {});
+  const t = h('table', {}, h('thead', {}, h('tr', {}, columns.map(c => h('th', { class: c.num ? 'num' : '', scope: 'col' }, c.label)))),
+    h('tbody', {}, rows.map(r => h('tr', rowAttrs(r), columns.map(c => h('td', { class: c.num ? 'num' : '', 'data-label': c.label || '' }, c.render ? c.render(r) : (r[c.key] ?? '—')))))));
   return wrap ? h('div', { class: 'table-wrap' }, t) : t;
 }
 export function bars(items, { max, valueKey = 'n', labelKey = 'k', format = fmt.num, link = null } = {}) {
@@ -235,6 +429,7 @@ export function quickActions() {
   const items = [
     can('interventions:write') ? ['✚', 'Visit or service', async () => (await import('./views/interventions.js')).openInterventionForm(null, { onDone: render })] : null,
     can('calls:write') ? ['☎', 'Phone call', async () => (await import('./views/calls.js')).openCallForm(null, { onDone: render })] : null,
+    can('calls:write') ? ['💬', 'Text message', async () => (await import('./views/calls.js')).openCallForm(null, { method: 'text', onDone: render })] : null,
     (can('notes:admin:write') || can('notes:clinical:write')) ? ['✎', 'Note', async () => (await import('./views/notes.js')).openNoteForm(null, { onDone: render })] : null,
     can('tasks:write') ? ['☑', 'Reminder / to-do', async () => (await import('./views/tasks.js')).openTaskForm(null, { onDone: render })] : null,
     can('time:write') ? ['◷', 'Time (meeting, travel, paperwork…)', async () => (await import('./views/time.js')).openTimeForm(null, { onDone: render })] : null,
@@ -249,11 +444,13 @@ export function globalSearch() {
   const list = h('div', { class: 'card tight hidden search-results' });
   const wrap = h('div', { class: 'gsearch' }, input, list);
   let t;
-  input.addEventListener('input', () => { clearTimeout(t); t = setTimeout(run, 250); });
+  input.addEventListener('input', () => { clearTimeout(t); t = setTimeout(run, 400); });
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { nav(`clients?status=all&q=${encodeURIComponent(input.value.trim())}`); list.classList.add('hidden'); } if (e.key === 'Escape') list.classList.add('hidden'); });
   document.addEventListener('click', (e) => { if (!wrap.contains(e.target)) list.classList.add('hidden'); });
   async function run() {
-    const q = input.value.trim(); if (!q) { list.classList.add('hidden'); return; }
+    // Every search is a PHI read that is audited, so do not issue one for a single letter.
+    const q = input.value.trim();
+    if (q.length < 2) { list.classList.add('hidden'); return; }
     try { const r = await get(`/api/clients?limit=8&status=all&q=${encodeURIComponent(q)}`, { quiet: true }); clear(list);
       if (!r.clients.length) list.append(h('div', { class: 'muted small' }, 'No match. Search uses the exact last name, full phone number, date of birth or client code.'));
       for (const c of r.clients) list.append(h('a', { class: 'list-item', href: `#/client/${c.id}`, style: { display: 'block' }, onClick: () => list.classList.add('hidden') }, h('b', {}, c.display_name), ' ', h('span', { class: 'muted small' }, c.client_code, ' · ', fmt.label(c.status))));
@@ -299,20 +496,24 @@ export const NAV = [
   { sec: 'My day' },
   { name: 'dashboard', label: 'Home', ico: '⌂', help: 'What needs attention today, and where you left off on any device.' },
   { name: 'clients', label: 'My clients', ico: '👤', perm: 'clients:read', help: 'Everyone you serve. Open a client to see their whole story in one place.' },
+  { name: 'waitlist', label: 'Waitlist', ico: '⧗', perm: 'clients:read', help: 'People waiting for a place, longest and highest risk first.' },
   { name: 'tasks', label: 'To-do list', ico: '☑', perm: 'tasks:read', help: 'Follow-ups and reminders. Check a box when it is done.' },
+  { name: 'supervision', label: 'Supervision', ico: '✍', perm: 'notes:cosign', help: 'Notes waiting for your countersignature, drafts your team has not finished, staff time to approve, and referrals with no outcome recorded.' },
   { sec: 'Record work' },
   { name: 'interventions', label: 'Visits & services', ico: '✚', perm: 'interventions:read', help: 'Every face-to-face or phone service you provide: outreach, screenings, warm handoffs, naloxone, transport and more.' },
-  { name: 'calls', label: 'Calls', ico: '☎', perm: 'calls:read', help: 'Phone calls with clients, families and providers, including ones that went to voicemail.' },
+  { name: 'calls', label: 'Calls & texts', ico: '☎', perm: 'calls:read', help: 'Phone calls and text messages with clients, families and providers — including ones that went to voicemail or got no reply.' },
   { name: 'forms', label: 'Forms', ico: '🧾', perm: 'forms:read', help: 'County forms (releases, intake sheets, assistance requests). Fill one out from a client record: it is pre-filled from the chart, printable, and holds the signed copy.' },
   { name: 'notes', label: 'Notes', ico: '✎', perm: 'notes:admin:read', help: 'Written documentation. Drafts save automatically and can be finished on any device; sign when complete.' },
   { name: 'time', label: 'My time', ico: '◷', perm: 'time:read', help: 'Your hours by activity. Visits and calls add time automatically; log meetings, travel and paperwork here.' },
   { name: 'imports', label: 'Import', ico: '⇩', perm: 'imports:write', help: 'Bring in spreadsheets (Excel / CSV) of clients, visits, calls, resources and more, or notes from Pocket AI and OneNote. Everything is checked before it is saved.' },
+  { name: 'overdose', label: 'Overdose & reversals', ico: '⛑', perm: 'overdose:read', help: 'Overdoses and naloxone reversals, including ones involving people who are not clients. These are the counts funders ask for.' },
   { sec: 'Connect clients' },
   { name: 'referrals', label: 'Referrals', ico: '⇢', perm: 'referrals:read', help: 'Track each referral from "sent" to "admitted" so nothing falls through the cracks.' },
   { name: 'resources', label: 'Resource directory', ico: '☰', perm: 'resources:read', help: 'Treatment programs, MAT clinics, shelters, legal aid and other partners you refer to.' },
   { sec: 'Program' },
   { name: 'budget', label: 'Funding & spending', ico: '$', perm: 'budget:read', help: 'Grants and what has been spent, including client assistance such as bus passes and IDs.' },
   { name: 'reports', label: 'Reports', ico: '▤', perm: 'reports:read', help: 'Numbers for your funders and supervisors. Exports never include client names unless you ask.' },
+  { name: 'funder', label: 'Funder report', ico: '▦', perm: 'reports:read', help: 'Unduplicated counts — people, not services — by fiscal period and funding source, with admissions, discharges, demographics and overdose figures in the shape a grant report asks for.' },
   { name: 'admin', label: 'Settings', ico: '⚙', perm: 'users:manage', help: 'Staff accounts, security, connecting phones, and backups.' },
 ];
 
@@ -370,7 +571,12 @@ function startIdleWatch() {
     let w = document.getElementById('idle-warn');
     if (idleMs > limit - 60000 && !w) { w = h('div', { id: 'idle-warn', class: 'idle-warn' }, 'You will be signed out in 1 minute due to inactivity. Move the mouse or press a key to stay signed in.'); document.body.append(w); }
     if (idleMs <= limit - 60000 && w) w.remove();
-    if (idleMs > limit) { if (w) w.remove(); logout(); toast('Signed out due to inactivity', 'error'); }
+    if (idleMs > limit) {
+      if (w) w.remove();
+      logout();
+      // Anything half-typed is kept in memory, so say so rather than letting it look like lost work.
+      toast(drafts.size ? 'Signed out due to inactivity. What you had typed is kept — reopen the form after signing in.' : 'Signed out due to inactivity', 'error');
+    }
   }, 5000);
 }
 
@@ -395,8 +601,30 @@ export async function boot() {
   state.local = isLocalMode();
   if (state.local) {
     document.getElementById('app').innerHTML = '<div class="boot">Starting SUDS on this device…</div>';
-    try { const k = await import('./local/kernel.js'); await k.start({ wasmUrl: new URL('./local/sql-wasm.wasm', location.href).href }); }
-    catch (e) { document.getElementById('app').innerHTML = '<div class="boot">Could not start local SUDS: ' + (e && e.message) + '</div>'; console.error(e); return; }
+    try {
+      const k = await import('./local/kernel.js');
+      await k.start({
+        wasmUrl: new URL('./local/sql-wasm.wasm', location.href).href,
+        // A device that has stopped being able to save is not a console message; the person using it needs
+        // to know before they type anything else in.
+        onSaveError: (err) => {
+          const full = String(err && err.name) === 'QuotaExceededError';
+          banner(full
+            ? 'This device is out of storage space, so nothing is being saved. Sync with the office, then remove sample data or attachments to free space.'
+            : 'This device has stopped saving your work. Sync with the office as soon as you can.', 'error');
+        },
+      });
+    } catch (e) {
+      // Two specific failures need their own explanation rather than a raw message.
+      const msg = e && e.code === 'SUDS_ALREADY_OPEN'
+        ? 'SUDS is already open in another window on this device. Switch to that window, or close it and reload this page.'
+        : e && e.code === 'SUDS_KEY_LOST'
+          ? e.message
+          : 'Could not start SUDS on this device: ' + (e && e.message);
+      document.getElementById('app').innerHTML = '<div class="boot error">' + msg.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])) + '</div>';
+      console.error(e);
+      return;
+    }
     window.addEventListener('pagehide', () => { window.SUDS_LOCAL && window.SUDS_LOCAL.flush(); });
   } else if ('serviceWorker' in navigator && location.protocol !== 'file:') { try { navigator.serviceWorker.register('sw.js').catch(() => {}); } catch {} }
   await loadSession();

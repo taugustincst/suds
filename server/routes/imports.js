@@ -30,16 +30,19 @@ function stage(ctx, { source, filename, items, importedBy, metadata }) {
     db.run(`INSERT INTO imports(id,source,filename,imported_by,item_count,metadata) VALUES(?,?,?,?,?,?)`, id, source, filename || null, importedBy || null, items.length, metadata ? JSON.stringify(metadata) : null);
     for (const it of items) {
       const suggested = ctx ? suggestClient(ctx, it.metadata?.hints) : null;
-      db.run(`INSERT INTO import_items(id,import_id,external_id,title,content_enc,captured_at,metadata,suggested_client_id) VALUES(?,?,?,?,?,?,?,?)`,
-        uuid(), id, it.external_id || null, it.title || null, encrypt(it.content || ''), it.captured_at || null, JSON.stringify(it.metadata || {}), suggested);
+      db.run(`INSERT INTO import_items(id,import_id,external_id,title_enc,content_enc,captured_at,metadata,suggested_client_id) VALUES(?,?,?,?,?,?,?,?)`,
+        uuid(), id, it.external_id || null, it.title ? encrypt(it.title) : null, encrypt(it.content || ''), it.captured_at || null, JSON.stringify(it.metadata || {}), suggested);
     }
   });
   return id;
 }
 
+// A captured note's title is as much PHI as its body, so it is stored encrypted and decrypted here.
+function itemTitle(x) { return x.title_enc ? decrypt(x.title_enc) : null; }
+
 function itemView(x, { withContent = true } = {}) {
-  const o = { ...x, metadata: x.metadata ? JSON.parse(x.metadata) : {} };
-  delete o.content_enc;
+  const o = { ...x, metadata: x.metadata ? JSON.parse(x.metadata) : {}, title: itemTitle(x) };
+  delete o.content_enc; delete o.title_enc;
   if (withContent) o.content = decrypt(x.content_enc);
   if (o.metadata?.hints) { o.hints = o.metadata.hints; }
   return o;
@@ -107,10 +110,11 @@ module.exports = (r) => {
     db.transaction(() => {
       if (v.create_intervention) {
         interventionId = uuid();
-        db.run(`INSERT INTO interventions(id,client_id,user_id,type,occurred_at,duration_minutes,location,summary) VALUES(?,?,?,?,?,?,?,?)`, interventionId, v.client_id, ctx.user.id, v.intervention_type || 'case_management', occurred, v.duration_minutes || 0, 'other', (v.title || it.title || '').slice(0, 300));
+        db.run(`INSERT INTO interventions(id,client_id,user_id,type,occurred_at,duration_minutes,location,summary_enc) VALUES(?,?,?,?,?,?,?,?)`, interventionId, v.client_id, ctx.user.id, v.intervention_type || 'case_management', occurred, v.duration_minutes || 0, 'other', encrypt((v.title || itemTitle(it) || '').slice(0, 300)));
       }
-      db.run(`INSERT INTO notes(id,client_id,author_id,kind,format,title,content_enc,occurred_at,source,source_ref,import_item_id,intervention_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-        noteId, v.client_id, ctx.user.id, v.kind, v.format || 'narrative', v.title || it.title || null, encrypt(content), occurred, source, it.external_id || null, it.id, interventionId);
+      const noteTitle = v.title || itemTitle(it) || null;
+      db.run(`INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,occurred_at,source,source_ref,import_item_id,intervention_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+        noteId, v.client_id, ctx.user.id, v.kind, v.format || 'narrative', noteTitle ? encrypt(noteTitle) : null, encrypt(content), occurred, source, it.external_id || null, it.id, interventionId);
       db.run(`UPDATE import_items SET status='committed', note_id=? WHERE id=?`, noteId, it.id);
       const left = db.one(`SELECT COUNT(*) n FROM import_items WHERE import_id=? AND status='staged'`, it.import_id).n;
       if (left === 0) db.run(`UPDATE imports SET status='completed' WHERE id=?`, it.import_id);

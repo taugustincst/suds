@@ -3,7 +3,7 @@ const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const H = require('./helpers');
 
-let admin, nav, nav2, clin, fin, clientId, clientId2, noteId;
+let admin, nav, nav2, clin, fin, clientId, clientId2, noteId, referralConsentId;
 before(async () => {
   await H.start();
   H.makeUser('nav1', 'navigator'); H.makeUser('nav2', 'navigator'); H.makeUser('clin1', 'clinician'); H.makeUser('fin1', 'finance'); H.makeUser('sup1', 'supervisor');
@@ -88,11 +88,58 @@ test('calls encrypt summary and phone', async () => {
   const g = await nav.get(`/api/calls/${r.data.id}`);
   assert.equal(g.data.row.summary, 'Confirmed appointment'); assert.equal(g.data.row.summary_enc, undefined);
 });
+test('a text message is logged as a contact in its own right', async () => {
+  const sent = await nav.post('/api/calls', { client_id: clientId, method: 'text', direction: 'outbound', started_at: '2026-09-02T11:00:00Z', duration_minutes: 1, phone: '555-0100', purpose: 'Appointment reminder', summary: 'Reminded about tomorrow at 9.' });
+  assert.equal(sent.status, 201);
+  const raw = H.db.one(`SELECT * FROM calls WHERE id=?`, sent.data.id);
+  assert.equal(raw.method, 'text');
+  assert.equal(raw.outcome, 'sent', 'a text with no outcome was simply sent — not "reached", which is a call word');
+  assert.ok(raw.summary_enc.startsWith('v1:'), 'what was said is encrypted like any other PHI');
+  assert.ok(!/Reminded about tomorrow/.test(JSON.stringify(H.db.all(`SELECT details FROM audit_log ORDER BY id DESC LIMIT 5`))), 'and never lands in the audit trail');
+
+  // The two outcome lists do not overlap, and neither one may be borrowed for the other.
+  assert.equal((await nav.post('/api/calls', { client_id: clientId, method: 'text', direction: 'outbound', started_at: '2026-09-02T11:05:00Z', outcome: 'voicemail' })).status, 400);
+  assert.equal((await nav.post('/api/calls', { client_id: clientId, direction: 'outbound', started_at: '2026-09-02T11:06:00Z', outcome: 'no_reply' })).status, 400);
+  assert.equal((await nav.put(`/api/calls/${sent.data.id}`, { outcome: 'busy' })).status, 400, 'editing cannot smuggle in a call outcome either');
+  assert.equal((await nav.put(`/api/calls/${sent.data.id}`, { outcome: 'replied' })).status, 200);
+
+  // Filtering separates the two, and a default post is still a phone call.
+  const call = await nav.post('/api/calls', { client_id: clientId, direction: 'outbound', started_at: '2026-09-02T11:10:00Z', outcome: 'voicemail' });
+  assert.equal(H.db.one(`SELECT method FROM calls WHERE id=?`, call.data.id).method, 'phone');
+  const texts = (await nav.get('/api/calls?method=text&limit=100')).data.rows;
+  assert.ok(texts.length >= 1 && texts.every(x => x.method === 'text'), 'the text filter returns only texts');
+  assert.ok((await nav.get('/api/calls?method=phone&limit=100')).data.rows.every(x => x.method === 'phone'));
+
+  // A reply counts as having reached the client, so the "no contact in 30 days" list does not accuse
+  // a worker of neglecting someone they are texting.
+  const fresh = (await nav.post('/api/clients', { first_name: 'Texty', last_name: 'Client' })).data.id;
+  await nav.post('/api/calls', { client_id: fresh, method: 'text', direction: 'inbound', started_at: new Date().toISOString(), outcome: 'replied', summary: 'On my way.' });
+  const row = (await nav.get('/api/clients?limit=100&status=all')).data.clients.find(c => c.id === fresh);
+  assert.ok(row.last_contact, 'the reply shows as the last contact');
+  // and a text that got no reply does not
+  const quiet = (await nav.post('/api/clients', { first_name: 'Quiet', last_name: 'Client' })).data.id;
+  await nav.post('/api/calls', { client_id: quiet, method: 'text', direction: 'outbound', started_at: new Date().toISOString(), outcome: 'no_reply' });
+  assert.ok(!(await nav.get('/api/clients?limit=100&status=all')).data.clients.find(c => c.id === quiet).last_contact, 'an unanswered text is not contact');
+});
+
 test('resources and referrals', async () => {
   const res = await nav.post('/api/resources', { name: 'County OTP', category: 'mat_otp', phone: '555-0199', accepts_medicaid: true });
   assert.equal(res.status, 201);
-  const ref = await nav.post('/api/referrals', { client_id: clientId, resource_id: res.data.id, referred_at: '2026-09-03T09:00:00Z', urgency: 'urgent', warm_handoff: true });
+  // A warm handoff names the client to the receiving agency, so it is refused until a consent covers it.
+  const noConsent = await nav.post('/api/referrals', { client_id: clientId, resource_id: res.data.id, referred_at: '2026-09-03T09:00:00Z', urgency: 'urgent', warm_handoff: true });
+  assert.equal(noConsent.status, 400, 'a warm handoff without consent must be refused');
+  assert.match(noConsent.data.error, /consent/i);
+  const consent = await nav.post(`/api/clients/${clientId}/consents`, { type: 'part2_disclosure', recipient: 'County OTP', purpose: 'MAT referral', signed_at: '2026-09-01' });
+  assert.equal(consent.status, 201); referralConsentId = consent.data.id;
+  const ref = await nav.post('/api/referrals', { client_id: clientId, resource_id: res.data.id, referred_at: '2026-09-03T09:00:00Z', urgency: 'urgent', warm_handoff: true, consent_id: referralConsentId });
   assert.equal(ref.status, 201);
+  // Sharing the information wrote the disclosure record that HIPAA §164.528 requires.
+  const disc = H.db.one(`SELECT * FROM disclosures WHERE source='referral' AND source_ref=?`, ref.data.id);
+  assert.ok(disc, 'a referral that shares information records a disclosure');
+  assert.equal(disc.consent_id, referralConsentId);
+  assert.match(disc.recipient_enc, /^v1:/, 'the recipient is stored encrypted');
+  // Closing the loop: a follow-up task exists even though the worker set no follow-up date.
+  assert.ok(H.db.one(`SELECT 1 FROM tasks WHERE client_id=? AND title LIKE 'Follow up on referral%'`, clientId));
   const up = await nav.put(`/api/referrals/${ref.data.id}`, { status: 'admitted' });
   assert.equal(up.status, 200);
   assert.ok(H.db.one(`SELECT admitted_at FROM referrals WHERE id=?`, ref.data.id).admitted_at);
@@ -137,7 +184,16 @@ test('consents and disclosure accounting (42 CFR Part 2)', async () => {
   assert.equal((await nav.post(`/api/clients/${clientId}/disclosures`, { disclosed_to: 'County OTP', purpose: 'coordination', info_disclosed: 'referral summary', disclosed_at: '2026-09-03T10:00:00Z' })).status, 400);
   assert.equal((await nav.post(`/api/clients/${clientId}/disclosures`, { consent_id: c.data.id, disclosed_to: 'County OTP', purpose: 'coordination', info_disclosed: 'referral summary', disclosed_at: '2026-09-03T10:00:00Z' })).status, 201);
   const g = await nav.get(`/api/clients/${clientId}/consents`);
-  assert.equal(g.data.consents.length, 1); assert.equal(g.data.disclosures.length, 1);
+  // The earlier referral test also recorded a consent and a disclosure for this client.
+  assert.ok(g.data.consents.some(x => x.purpose === 'Treatment coordination'), 'consent text round-trips through encryption');
+  assert.ok(g.data.disclosures.some(x => x.what === 'referral summary'), 'disclosure text round-trips through encryption');
+  assert.ok(g.data.consents.every(x => x.recipient_enc === undefined), 'ciphertext never reaches the client');
+  // Revoking flags the referrals that relied on the consent instead of leaving them silently unsupported.
+  const rev = await nav.post(`/api/consents/${referralConsentId}/revoke`, { reason: 'client withdrew' });
+  assert.equal(rev.status, 200);
+  assert.equal(rev.data.dependent_referrals, 1, 'the open referral under that consent is flagged');
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM referrals WHERE consent_revoked=1`).n, 1);
+  assert.equal((await nav.post(`/api/consents/${referralConsentId}/revoke`, {})).status, 400, 'revoking twice is refused');
 });
 
 test('budget: funds, lines, expenditures, separation of duties', async () => {
@@ -204,7 +260,7 @@ test('reports, exports, and audit chain', async () => {
   const csv = await nav.get('/api/reports/export/interventions?from=2026-08-01&to=2026-09-30');
   assert.equal(csv.status, 200); assert.match(csv.data, /Occurred At,Client Code/);
   const cl = await nav.get('/api/reports/export/clients?identified=1');
-  assert.ok(!cl.data.includes('Jane')); // navigator lacks export:read → de-identified
+  assert.ok(!cl.data.includes('Jane')); // navigator lacks export:identified → de-identified
   const cl2 = await admin.get('/api/reports/export/clients?identified=1'); assert.ok(cl2.data.includes('Jane'));
   const a = await admin.get('/api/admin/audit?action=note.'); assert.ok(a.data.total > 0);
   assert.equal((await nav.get('/api/admin/audit')).status, 403);
@@ -217,7 +273,8 @@ test('MFA enrollment and verification flow', async () => {
   const c = require('../server/crypto');
   const setup = await nav.post('/api/auth/mfa/setup', {});
   assert.equal(setup.status, 200);
-  assert.equal((await nav.post('/api/auth/mfa/enable', { code: '000000' })).status === 400 || true, true);
+  // This was 'assert.equal(x === 400 || true, true)' — it asserted nothing at all.
+  assert.equal((await nav.post('/api/auth/mfa/enable', { code: '000000' })).status, 400, 'a wrong code must not enable two-step verification');
   const en = await nav.post('/api/auth/mfa/enable', { code: c.totp(setup.data.secret) });
   assert.equal(en.status, 200);
   const fresh = H.client();
@@ -265,12 +322,15 @@ test('audit retention purge keeps the chain verifiable', async () => {
 test('security policy settings are validated and applied', async () => {
   assert.equal((await admin.put('/api/admin/settings', { session_idle_minutes: 120 })).status, 400);
   assert.equal((await admin.put('/api/admin/settings', { session_idle_minutes: 'abc' })).status, 400);
-  assert.equal((await admin.put('/api/admin/settings', { session_idle_minutes: 20, mfa_required_roles: 'admin, navigator, bogus' })).status, 200);
+  // 'bogus' is dropped; 'clinician' is a real role but not one of the acting clients here, because the
+  // requirement is now enforced and would lock this test's own admin out mid-way.
+  assert.equal((await admin.put('/api/admin/settings', { session_idle_minutes: 20, mfa_required_roles: 'clinician, bogus' })).status, 200);
   const s = await admin.get('/api/admin/settings');
   assert.equal(s.data.policy.idleMinutes, 20);
-  assert.deepEqual(s.data.policy.mfaRequiredRoles, ['admin', 'navigator']);
-  assert.equal((await nav.get('/api/auth/me')).data.user.mfa_required, true);
-  await admin.put('/api/admin/settings', { session_idle_minutes: '', mfa_required_roles: 'admin,supervisor' });
+  assert.deepEqual(s.data.policy.mfaRequiredRoles, ['clinician']);
+  assert.equal((await clin.get('/api/auth/me')).data.user.mfa_required, true);
+  assert.equal((await nav.get('/api/auth/me')).data.user.mfa_required, false);
+  await admin.put('/api/admin/settings', { session_idle_minutes: '', mfa_required_roles: '' });
   assert.equal((await admin.get('/api/setup/status')).data.needed, false);
   assert.equal((await admin.post('/api/setup/complete', {})).status, 403);
   assert.equal((await nav.get('/api/admin/network')).status, 403);
@@ -426,7 +486,112 @@ test('sync normalises device clock skew so a fast clock cannot win conflicts', a
   const s = H.client(); await s.login('sup1', 'StaffPassw0rd!x'); await s.put(`/api/clients/${id}`, { goals: 'office' });
   // a device whose clock is 1 hour fast sends an edit it made *before* the office edit (device time = +1h, real time = earlier)
   const fast = 3600_000; const deviceEditReal = now - 10_000; // 10 s before the office edit
-  const r = await bare.post('/api/sync/push', { device_now: new Date(Date.now() + fast).toISOString(), tables: { clients: [{ id, client_code: 'M26-0500', first_name_enc: 'Clock', last_name_enc: 'Test', status: 'active', goals: 'phone-stale', created_at: new Date(now + fast).toISOString(), updated_at: new Date(deviceEditReal + fast).toISOString() }] } }, B);
+  const r = await bare.post('/api/sync/push', { device_now: new Date(Date.now() + fast).toISOString(), tables: { clients: [{ id, client_code: 'M26-0500', first_name_enc: 'Clock', last_name_enc: 'Test', status: 'active', goals_enc: 'phone-stale', created_at: new Date(now + fast).toISOString(), updated_at: new Date(deviceEditReal + fast).toISOString() }] } }, B);
   assert.ok(Math.abs(r.data.clock_offset_ms + fast) < 5000, 'offset measured');
-  assert.equal(H.db.one(`SELECT goals FROM clients WHERE id=?`, id).goals, 'office', 'stale device edit does not win despite a fast clock');
+  assert.equal(require('../server/crypto').decrypt(H.db.one(`SELECT goals_enc FROM clients WHERE id=?`, id).goals_enc), 'office', 'stale device edit does not win despite a fast clock');
+});
+
+test('a role that must use two-step verification cannot work until it is set up', async () => {
+  // This was advisory: the login response said mfaSetupRequired and nothing enforced it.
+  const u = H.makeUser('mfauser', 'supervisor');
+  H.db.setSetting('mfa_required_roles', 'supervisor');
+  // Enforcement is real but not instant: a new account has a grace period to enrol, or the very first
+  // administrator the setup wizard creates would be locked out before they could. Age this one past it.
+  H.db.run(`UPDATE users SET created_at=? WHERE id=?`, '2020-01-01T00:00:00.000Z', u.id);
+  try {
+    const c = H.client();
+    const login = await c.post('/api/auth/login', { username: u.username, password: u.password });
+    assert.equal(login.status, 200);
+    assert.equal(login.data.mfaSetupRequired, true, 'the user is told to enrol');
+
+    const blocked = await c.get('/api/clients');
+    assert.equal(blocked.status, 403, 'and is actually stopped until they do');
+    assert.equal(blocked.data.mfaSetupRequired, true);
+
+    // Enrolment itself stays reachable, or the user could never comply.
+    const setup = await c.post('/api/auth/mfa/setup', {});
+    assert.equal(setup.status, 200);
+    assert.ok(setup.data.secret);
+    // A wrong code must not enable it.
+    assert.equal((await c.post('/api/auth/mfa/enable', { code: '000000' })).status, 400);
+    const code = require('../server/crypto').totp(setup.data.secret);
+    assert.equal((await c.post('/api/auth/mfa/enable', { code })).status, 200);
+    assert.equal((await c.get('/api/clients')).status, 200, 'once enrolled, work proceeds');
+
+    // A brand-new account in the same role is warned, not blocked.
+    const fresh = H.makeUser('mfafresh', 'supervisor');
+    const f = H.client();
+    const freshLogin = await f.post('/api/auth/login', { username: fresh.username, password: fresh.password });
+    assert.equal(freshLogin.data.mfaSetupRequired, true, 'they are told to enrol');
+    assert.ok(freshLogin.data.mfaSetupDeadline > new Date().toISOString(), 'and given a date by which to do it');
+    assert.equal((await f.get('/api/clients')).status, 200, 'but can still work in the meantime');
+  } finally { H.db.setSetting('mfa_required_roles', ''); }
+});
+
+test('a half-authenticated session cannot change the account password', async () => {
+  // The password route checked only that a user was attached, which let a session still owing its second
+  // factor change the password on the account.
+  const u = H.makeUser('mfapw', 'navigator');
+  const c = H.client();
+  await c.login(u.username, u.password);
+  const setup = await c.post('/api/auth/mfa/setup', {});
+  await c.post('/api/auth/mfa/enable', { code: require('../server/crypto').totp(setup.data.secret) });
+  const again = H.client();
+  const login = await again.post('/api/auth/login', { username: u.username, password: u.password });
+  assert.equal(login.data.mfaPending, true);
+  const r = await again.post('/api/auth/password', { current_password: u.password, new_password: 'Brand-New-Passw0rd!' });
+  assert.equal(r.status, 401, 'the password change is refused until the second factor is given');
+  assert.equal(r.data.mfaRequired, true);
+});
+
+test('ending an assignment takes the client off that worker\'s caseload and out of their reach', async () => {
+  const sup = H.client(); await sup.login('sup1', 'StaffPassw0rd!x');
+  const worker = H.makeUser('navend', 'navigator');
+  const w = H.client(); await w.login(worker.username, worker.password);
+  // Their own client, so they can see it to begin with.
+  const id = (await w.post('/api/clients', { first_name: 'Ends', last_name: 'Here' })).data.id;
+  assert.equal((await w.get(`/api/clients/${id}`)).status, 200);
+  assert.ok((await w.get('/api/caseload')).data.caseload.some(c => c.id === id), 'it is on their caseload');
+
+  const a = H.db.one(`SELECT id FROM assignments WHERE client_id=? AND user_id=? AND end_date IS NULL`, id, worker.id);
+  assert.equal((await w.post(`/api/assignments/${a.id}/end`, {})).status, 403, 'a navigator cannot end their own assignment');
+  assert.equal((await sup.post(`/api/assignments/${a.id}/end`, {})).status, 200);
+
+  assert.equal((await w.get(`/api/clients/${id}`)).status, 403, 'the record is out of reach at once — no new sign-in needed');
+  assert.ok(!(await w.get('/api/caseload')).data.caseload.some(c => c.id === id), 'and off their caseload');
+  assert.ok(!(await w.get('/api/clients')).data.clients.some(c => c.id === id), 'and out of the client list');
+  // Writing to it is refused too, not just reading.
+  assert.equal((await w.post('/api/interventions', { client_id: id, type: 'outreach', occurred_at: '2026-09-03T10:00:00Z' })).status, 403);
+  // The supervisor still sees it: ending an assignment removes one worker's access, it does not hide the client.
+  assert.equal((await sup.get(`/api/clients/${id}`)).status, 200);
+});
+
+test('revoking sessions ends them immediately, on this device and on the others', async () => {
+  const u = H.makeUser('revoker', 'navigator');
+  const phone = H.client(); await phone.login(u.username, u.password);
+  const desk = H.client(); await desk.login(u.username, u.password);
+  assert.equal((await phone.get('/api/clients')).status, 200);
+  assert.equal((await desk.get('/api/clients')).status, 200);
+  assert.equal((await desk.get('/api/auth/sessions')).data.sessions.length, 2, 'both are listed');
+
+  // "Sign out everywhere else" from the desktop.
+  assert.equal((await desk.post('/api/auth/sessions/revoke-others', {})).status, 200);
+  assert.equal((await phone.get('/api/clients')).status, 401, 'the phone is signed out on its next request');
+  assert.equal((await desk.get('/api/clients')).status, 200, 'the device that asked stays signed in');
+  assert.equal((await desk.get('/api/auth/sessions')).data.sessions.length, 1);
+  assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='auth.sessions.revoked_others' AND user_id=?`, u.id));
+
+  // Signing out revokes this session too — the cookie is not reusable afterwards.
+  const token = H.db.one(`SELECT id FROM sessions WHERE user_id=? AND revoked_at IS NULL`, u.id).id;
+  assert.equal((await desk.post('/api/auth/logout', {})).status, 200);
+  assert.equal((await desk.get('/api/clients')).status, 401);
+  assert.ok(H.db.one(`SELECT revoked_at FROM sessions WHERE id=?`, token).revoked_at, 'the row records when it ended');
+});
+
+test('deactivating an account ends its sessions', async () => {
+  const u = H.makeUser('goner', 'navigator');
+  const c = H.client(); await c.login(u.username, u.password);
+  assert.equal((await c.get('/api/clients')).status, 200);
+  assert.equal((await admin.put(`/api/users/${u.id}`, { is_active: false })).status, 200);
+  assert.equal((await c.get('/api/clients')).status, 401, 'the session stops working the moment the account is disabled');
 });

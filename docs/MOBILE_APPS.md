@@ -9,7 +9,7 @@ The SUDS phone app is a **complete copy of SUDS that runs on the phone**. Nothin
 | Sync | in-app **Sync** screen (sidebar badge "On this device · Sync") | same |
 
 ## How it works
-- The APK bundles the web app (`public/`) plus a **local kernel** (`public/local/kernel.js`): the same server code that runs on the office computer, compiled for the browser with SQLite in WebAssembly and pure-JavaScript encryption. Data is stored encrypted in the app's private storage (keys generated on the device); the app asks for fingerprint / PIN when reopened.
+- The APK bundles the web app (`public/`) plus a **local kernel** (`public/local/kernel.js`): the same server code that runs on the office computer, compiled for the browser with SQLite in WebAssembly and pure-JavaScript encryption. Data is stored encrypted in the app's private storage (keys generated on the device and held in the Android Keystore-backed store or the iOS Keychain — see *Security notes*); the app asks for fingerprint / PIN when reopened.
 - First launch: create a local account (use your office username if you have one). Work normally: clients, visits, calls, notes, reminders — everything.
 - **Sync**: enter the office address (found automatically on the office Wi-Fi, or scan the QR code from Settings → Network & devices, or type the address IT gave you), your office username and password. The app downloads what changed at the office since the last sync and uploads what changed on the phone. The newest change to any record wins; deletions are honoured on both sides; the device's audit trail is appended to the office audit log.
 - The first sync merges your local account into your office account (same username). From then on the office password is used on the phone as well.
@@ -26,9 +26,28 @@ Open `mobile/android` in Android Studio → Build → Build APK(s). The bundled 
 `mobile/ios/README.md`. The app bundles the same `public/` folder and runs identically; distribution is through TestFlight.
 
 ## Trying local mode in a browser
-Open `https://<your-suds>/?local=1`. The page runs the whole app locally in that browser profile (data stays there) and can sync with the same server — useful for testing.
+Open `https://<your-suds>/?local=1`. The page runs the whole app locally in that browser profile (data stays there) and can sync with the same server.
+
+**For testing and demonstrations only — do not put real client information in it.** A plain browser has no Keystore or Keychain, so the local kernel generates its encryption keys on first run and keeps them in that profile's `localStorage`, next to the encrypted database in IndexedDB. Anyone who can reach the browser profile — another user of a shared computer, anything with access to the profile folder, a backup of it — has both the data and the key that opens it. The native Android and iOS apps are the supported way to hold client information on a device; use sample data (**Load sample data**) in browser local mode.
 
 ## Security notes
-- Data at rest on the device is AES-256-GCM encrypted; keys are held in the Android Keystore-backed encrypted store or the iOS Keychain. Use MDM to require a device passcode and allow remote wipe.
+- Data at rest on the device is AES-256-GCM encrypted. Where the keys live depends on how SUDS is running, and it matters:
+  - **Android app** — Android Keystore-backed encrypted store (`SudsNative.getSecret`).
+  - **iPhone / iPad app** — iOS Keychain, injected into the page at launch.
+  - **Plain browser (`/?local=1`)** — `localStorage` in that browser profile, which is *not* protected storage. Testing only; see above.
+
+  Use MDM to require a device passcode and allow remote wipe.
 - Sync uses HTTPS to the office server (self-signed certificate trusted once by fingerprint). Credentials are never stored on the phone; a short-lived session is used for each sync.
 - "Erase data on this device" on the Sync screen removes the local database.
+
+## What the phone copy is built from
+The office server runs on Node's built-ins alone. The browser kernel cannot: a browser has no `node:sqlite`, no `node:crypto` and no `node:zlib`. So `npm run build:local` compiles `server/` together with a small, pinned set of vendored libraries into `public/local/kernel.js`, and that bundle is what the apps ship:
+
+| Library | Stands in for | Used for |
+| --- | --- | --- |
+| `sql.js` (+ `sql-wasm.wasm`) | `node:sqlite` | the database, in WebAssembly, persisted to IndexedDB |
+| `@noble/ciphers`, `@noble/hashes` | `node:crypto` | AES-256-GCM, HMAC, SHA-256, scrypt |
+| `fflate` | `node:zlib` | ZIP for Excel import/export |
+| `buffer` (+ `base64-js`, `ieee754`) | `node:buffer` | `Buffer` in the browser |
+
+They are development dependencies of this repository (`package.json`), not of the office server: installing and running SUDS on the office computer still pulls nothing at runtime. But they *are* code that runs on a navigator's phone, so treat them as part of the review surface — they are pinned, vendored into a committed bundle, and CI fails if the committed kernel drifts from the source it was built from.

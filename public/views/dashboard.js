@@ -18,15 +18,63 @@ route('dashboard', async () => {
   if (!c.active && !c.waitlist && !caseload.caseload.length && (state.local || can('settings:manage'))) {
     try { const st = await get(state.local ? '/api/local/demo' : '/api/admin/demo', { quiet: true }); if (!st.loaded && st.clients_total === 0) sample = h('div', { class: 'banner mb', 'data-sample-banner': '1' }, h('b', {}, 'New here? '), 'Load fictional sample data to see how SUDS looks with clients, visits, notes and reports. ', h('a', { href: state.local ? '#/sync' : '#/admin?tab=settings', class: 'btn sm primary', style: { marginLeft: '.5rem' } }, 'Load sample data'), ' ', h('span', { class: 'small muted' }, 'It can be removed in one click.')); } catch { /* no permission or offline */ }
   }
-  const done = async (t) => { await put(`/api/tasks/${t.id}`, { status: 'done' }); toast('Done ✓', 'ok'); nav('dashboard?_=' + Date.now()); };
+  // A brand-new programme: the wizard only creates one account, so this is where the rest of setting up
+  // actually happens. Each step is one click, and the card disappears as they are done.
+  let setupCard = null;
+  if (can('settings:manage') && !state.local) {
+    try {
+      const [forms, users, funds, resources, sys] = await Promise.all([
+        get('/api/forms/starters', { quiet: true }).catch(() => null),
+        get('/api/users', { quiet: true }).catch(() => ({ users: [] })),
+        get('/api/budget/funds', { quiet: true }).catch(() => ({ funds: [] })),
+        get('/api/resources?limit=1', { quiet: true }).catch(() => ({ total: 0 })),
+        get('/api/admin/stats', { quiet: true }).catch(() => ({})),
+      ]);
+      const steps = [];
+      // Without the keys, every backup is unreadable — so this is the step that matters most, and it goes first.
+      if (sys.key_source === 'file' && !sys.keys_backup_at) {
+        steps.push(['Save a copy of your encryption keys', 'Backups of the database can only be opened with these keys. Download the file and put it somewhere separate from this computer, such as the county password manager.', 'Download key backup', '/api/admin/keys-backup']);
+      }
+      if ((users.users || []).filter(u => u.is_active !== 0).length < 2) {
+        steps.push(['Add your staff', 'Everyone needs their own sign-in — shared accounts are not supported, and the audit trail depends on knowing who did what.', 'Add staff', () => nav('admin?tab=users')]);
+      }
+      if (forms && forms.starters.some(x => !x.installed)) {
+        steps.push(['Put a consent form in the library', 'Including a 42 CFR Part 2 release, which you need before any record can be shared with another agency.', 'Add starter forms', async () => { (await import('./forms.js')).openStarters(() => nav('dashboard?_=' + Date.now())); }]);
+      }
+      if (!resources.total) {
+        steps.push(['Fill the resource directory', 'Load a regional starter directory of treatment programmes, or enter your own referral partners.', 'Open the directory', () => nav('resources')]);
+      }
+      if (!(funds.funds || []).length) {
+        steps.push(['Add your funding sources', 'Grants and budgets, so services and staff time can be charged to the right one and reported per fund.', 'Add funding', () => nav('budget')]);
+      }
+      if (steps.length) {
+        setupCard = h('section', { class: 'card mb' },
+          h('div', { class: 'card-head' }, h('h2', {}, 'Finish setting up'), badge(`${steps.length} left`, 'warn')),
+          h('div', {}, steps.map(([title, why, label, action]) => h('div', { class: 'list-item row', style: { justifyContent: 'space-between', alignItems: 'center', gap: '1rem' } },
+            h('div', {}, h('b', {}, title), h('div', { class: 'small muted' }, why)),
+            typeof action === 'string'
+              // A download, not a page: an anchor, so the browser saves the file. Re-render afterwards so the
+              // step disappears once the server has recorded it.
+              ? h('a', { class: 'btn sm primary', href: action, download: '', onClick: () => setTimeout(() => nav('dashboard?_=' + Date.now()), 1500) }, label)
+              : h('button', { class: 'btn sm primary', onClick: action }, label)))));
+      }
+    } catch { /* a missing permission or an offline copy simply means no card */ }
+  }
+
+  const done = async (t, box) => {
+    if (box) box.disabled = true;
+    try { await put(`/api/tasks/${t.id}`, { status: 'done' }); toast('Done ✓', 'ok'); nav('dashboard?_=' + Date.now()); }
+    catch (err) { if (box) { box.checked = false; box.disabled = false; } toast(err.message || 'Could not mark that done. Check your connection and try again.', 'error'); }
+  };
   return h('div', {},
     pageHead(`${greet}, ${first}`),
     sample,
+    setupCard,
     cont.other_device ? h('div', { class: 'muted small mb' }, `Also signed in on ${cont.other_device.mobile ? 'your phone' : 'another computer'} (${fmt.ago(cont.other_device.last_seen_at) === 'today' ? 'active today' : fmt.ago(cont.other_device.last_seen_at)}). Everything stays in sync.`) : null,
     alerts.length ? h('div', { class: 'row mb' }, alerts.map(([k, t, href]) => h('a', { href, class: `badge ${k}`, style: { fontSize: '.9rem', padding: '.4rem .8rem' } }, t))) : null,
     h('div', { class: 'grid cols-2 mb' },
       h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Today'), h('a', { href: '#/tasks' }, 'All to-dos')),
-        cont.due_today.length ? cont.due_today.map(t => h('div', { class: 'today-item' }, h('label', { class: 'check', style: { marginTop: 0 } }, h('input', { type: 'checkbox', onChange: () => done(t) }), h('span', {}, t.title, t.client_name ? h('span', { class: 'muted small' }, ` · ${t.client_name}`) : null)), h('span', { class: 'small', style: fmt.isPast(t.due_at) && !fmt.isDateOnly(t.due_at) || (fmt.isDateOnly(t.due_at) && fmt.parse(t.due_at) < new Date(new Date().setHours(0, 0, 0, 0))) ? { color: 'var(--danger)' } : {} }, fmt.dt(t.due_at)))) : emptyState('Nothing due today', 'Reminders you set for today will appear here.', can('tasks:write') ? h('button', { class: 'btn sm', onClick: async () => (await import('./tasks.js')).openTaskForm(null, { onDone: () => nav('dashboard?_=' + Date.now()) }) }, '+ Add a reminder') : null)),
+        cont.due_today.length ? cont.due_today.map(t => h('div', { class: 'today-item' }, h('label', { class: 'check', style: { marginTop: 0 } }, h('input', { type: 'checkbox', 'aria-label': `Mark "${t.title}" done`, onChange: (e) => done(t, e.target) }), h('span', {}, t.title, t.client_name ? h('span', { class: 'muted small' }, ` · ${t.client_name}`) : null)), h('span', { class: 'small', style: fmt.isPast(t.due_at) && !fmt.isDateOnly(t.due_at) || (fmt.isDateOnly(t.due_at) && fmt.parse(t.due_at) < new Date(new Date().setHours(0, 0, 0, 0))) ? { color: 'var(--danger)' } : {} }, fmt.dt(t.due_at)))) : emptyState('Nothing due today', 'Reminders you set for today will appear here.', can('tasks:write') ? h('button', { class: 'btn sm', onClick: async () => (await import('./tasks.js')).openTaskForm(null, { onDone: () => nav('dashboard?_=' + Date.now()) }) }, '+ Add a reminder') : null)),
       h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Continue where you left off'), h('span', { class: 'muted small' }, 'from any device')),
         cont.drafts.length ? h('div', { class: 'mb' }, h('h4', {}, 'Unfinished notes'), cont.drafts.slice(0, 4).map(n => h('div', { class: 'today-item' }, h('a', { href: '#', onClick: async (e) => { e.preventDefault(); (await import('./notes.js')).openNote(n.id, { onChange: () => nav('dashboard?_=' + Date.now()) }); } }, n.title || `${n.format} note`, h('span', { class: 'muted small' }, ` · ${n.client_name}`)), h('span', { class: 'muted small' }, fmt.ago(n.updated_at))))) : null,
         cont.recent.length ? h('div', {}, h('h4', {}, 'Recent clients'), h('div', { class: 'row' }, cont.recent.slice(0, 8).map(x => h('a', { class: 'chip', href: `#/client/${x.id}` }, x.display_name)))) : null,
