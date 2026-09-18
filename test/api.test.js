@@ -58,6 +58,17 @@ test('referral and engagement dates compute time-to-engagement', async () => {
   const g2 = await nav.get(`/api/clients/${r2.data.id}`);
   assert.equal(g2.data.client.days_to_engagement, null);
 });
+test('dashboard consents-expiring badge only counts active clients, matching the deep-linked list', async () => {
+  const soon = new Date(Date.now() + 5 * 86400000).toISOString().slice(0, 10);
+  const active = await nav.post('/api/clients', { first_name: 'Cara', last_name: 'Active', status: 'active' });
+  const closed = await nav.post('/api/clients', { first_name: 'Cara', last_name: 'Closed', status: 'closed' });
+  await nav.post(`/api/clients/${active.data.id}/consents`, { type: 'roi', signed_at: '2026-01-01', expires_at: soon });
+  await nav.post(`/api/clients/${closed.data.id}/consents`, { type: 'roi', signed_at: '2026-01-01', expires_at: soon });
+  const d = await nav.get('/api/reports/dashboard');
+  const ids = d.data.consents_expiring.map(c => c.client_id);
+  assert.ok(ids.includes(active.data.id), 'the active client with an expiring consent is counted');
+  assert.ok(!ids.includes(closed.data.id), 'a closed client is not — #/clients?consent_expiring=1 filters to active, so counting it would show 1 on the badge and 0 in the list');
+});
 test('blind-index search by last name, phone, dob, code', async () => {
   for (const q of ['obrien', "O'Brien", '555-010-0100', '1990-05-01', 'C26-0001', 'jane obrien', "O'Brien, Jane"]) {
     const r = await nav.get(`/api/clients?q=${encodeURIComponent(q.replace('C26', 'C' + String(new Date().getFullYear()).slice(2)))}`);

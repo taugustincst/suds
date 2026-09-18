@@ -199,29 +199,40 @@ function wipeLocalDatabase() {
     };
   }).then(() => { try { localStorage.removeItem('suds.local.session'); } catch {} });
 }
+/** The typed-confirmation dialog behind both offerDeviceReset() and eraseDeviceButton() below. The erase
+ *  button starts disabled and only enables once the typed text matches exactly — a reason field that is
+ *  merely non-empty (the pattern confirmDialog's requireReason uses elsewhere) is not a strong enough gate
+ *  for something this irreversible and reachable with a single click. */
+function openDeviceResetDialog(onDone) {
+  let confirmBox, eraseBtn;
+  const m = modal('Reset this device', h('div', {},
+    h('p', {}, 'This permanently erases everything SUDS has stored on this device — clients, visits, notes, everything — and signs out whatever account is set up here. There is no undo.'),
+    h('p', { class: 'banner warn small' }, 'Anything recorded on this device that has not been synced to the office SUDS server is lost for good. If there is any chance the office server has a copy and you can reach it later, consider waiting instead.'),
+    h('p', {}, 'Afterwards this device is treated as brand new: the first-run setup runs again and a new local account is created.'),
+    h('div', { class: 'field' }, h('label', { for: 'reset-device-confirm' }, 'Type ERASE to confirm *'),
+      confirmBox = h('input', { id: 'reset-device-confirm', autocomplete: 'off', onInput: () => { eraseBtn.disabled = confirmBox.value.trim() !== 'ERASE'; } })),
+    h('div', { class: 'btn-row' },
+      h('button', { class: 'btn', onClick: () => m.close() }, 'Cancel'),
+      eraseBtn = h('button', { class: 'btn danger', disabled: true, onClick: async () => {
+        if (confirmBox.value.trim() !== 'ERASE') { confirmBox.focus(); return; }
+        await wipeLocalDatabase();
+        m.close();
+        onDone ? onDone() : location.reload();
+      } }, 'Erase this device'))));
+}
 /** A "Reset this device" link + typed-confirmation dialog, usable wherever a local device might need
  *  self-service recovery: the normal login screen, and the boot-failure screen (see boot() below), which
  *  cannot rely on window.SUDS_LOCAL because reaching it is exactly what failed. */
 export function offerDeviceReset({ onDone } = {}) {
-  const openResetDialog = () => {
-    let confirmBox;
-    const m = modal('Reset this device', h('div', {},
-      h('p', {}, 'This permanently erases everything SUDS has stored on this device — clients, visits, notes, everything — and signs out whatever account is set up here. There is no undo.'),
-      h('p', { class: 'banner warn small' }, 'Anything recorded on this device that has not been synced to the office SUDS server is lost for good. If there is any chance the office server has a copy and you can reach it later, consider waiting instead.'),
-      h('p', {}, 'Afterwards this device is treated as brand new: the first-run setup runs again and a new local account is created.'),
-      h('div', { class: 'field' }, h('label', { for: 'reset-device-confirm' }, 'Type ERASE to confirm *'), confirmBox = h('input', { id: 'reset-device-confirm', autocomplete: 'off' })),
-      h('div', { class: 'btn-row' },
-        h('button', { class: 'btn', onClick: () => m.close() }, 'Cancel'),
-        h('button', { class: 'btn danger', onClick: async () => {
-          if (confirmBox.value.trim() !== 'ERASE') { confirmBox.focus(); return; }
-          await wipeLocalDatabase();
-          onDone ? onDone() : location.reload();
-        } }, 'Erase this device'))));
-  };
   return h('p', { class: 'small muted center mt' },
     'Locked out or forgot your password? ',
-    h('a', { href: '#', onClick: (e) => { e.preventDefault(); openResetDialog(); } }, 'Reset this device'),
+    h('a', { href: '#', onClick: (e) => { e.preventDefault(); openDeviceResetDialog(onDone); } }, 'Reset this device'),
     ' — this erases all SUDS data stored here and starts over.');
+}
+/** A plain "Erase data on this device" button for someone already signed in and choosing this on purpose
+ *  (the Sync page), rather than someone locked out — same dialog, without the "locked out?" framing. */
+export function eraseDeviceButton({ label = 'Erase data on this device', onDone } = {}) {
+  return h('button', { class: 'btn danger sm', onClick: () => openDeviceResetDialog(onDone) }, label);
 }
 
 // ---------- formatting ----------

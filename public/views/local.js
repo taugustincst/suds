@@ -1,4 +1,4 @@
-import { h, route, get, post, state, form, toast, nav, render, loadSession, badge, fmt, pageHead, modal, confirmDialog, kv } from '../app.js';
+import { h, route, get, post, state, form, toast, nav, render, loadSession, badge, fmt, pageHead, eraseDeviceButton, kv } from '../app.js';
 import { sampleDataCard } from './admin.js';
 
 // First run on a device: create the local account (no server needed)
@@ -39,15 +39,18 @@ route('sync', async () => {
   const f = form([
     { name: 'server', label: 'Office SUDS address', required: true, value: serverGuess, help: 'Usually https://suds.local on the office Wi-Fi. Shown under Settings → Network & devices on the office computer.', span: true },
     { name: 'username', label: 'Your office username', required: true, value: st.username || state.user.username },
-    // Deliberately a different field name/autocomplete token than the local sign-in password: it is a
-    // separate office-account credential, and a same-named field invites the browser to autofill the
-    // device password here, which looks like (and would be) the wrong one.
-    { name: 'password', label: 'Office password', type: 'password', required: true, autocomplete: 'off', help: 'Your office SUDS account password — not the password you use to unlock this device.' },
+    // A field literally named "password" next to a filled-in username is exactly the pattern browsers scan
+    // for when deciding what to autofill — autocomplete="off" is routinely ignored for that pattern, so it
+    // was quietly prefilled with the local sign-in credential (a different, unrelated password). A field
+    // name the browser has no saved credential for, plus autocomplete="new-password" (which browsers do
+    // still honor, unlike "off"), keeps this field empty until the person types into it themselves.
+    { name: 'office_password', label: 'Office password', type: 'password', required: true, autocomplete: 'new-password', help: 'Your office SUDS account password — not the password you use to unlock this device.' },
     { name: 'code', label: 'MFA code (if your office account uses it)', placeholder: '123456' },
   ], { submitText: 'Sync now', onSubmit: async (d) => {
     log.textContent = 'Connecting…';
     try {
-      const r = await post('/api/local/sync', d);
+      const { office_password, ...rest } = d;
+      const r = await post('/api/local/sync', { ...rest, password: office_password });
       const sum = (o) => Object.entries(o || {}).filter(([, n]) => n).map(([k, n]) => `${n} ${fmt.label(k).toLowerCase()}`).join(', ') || 'nothing new';
       log.textContent = `Done ${fmt.dt(r.at)}. Received: ${sum(r.pulled)}. Sent: ${sum(r.pushed)}.${r.rejected.length ? ` ${r.rejected.length} item(s) were not accepted by the office (not on your caseload).` : ''}`;
       toast('Sync complete', 'ok'); await loadSession();
@@ -67,6 +70,6 @@ route('sync', async () => {
       h('div', { class: 'card' }, h('h3', {}, 'Status'), kv([['This device', badge('Local copy', 'info')], ['Data protection', protectedKeys ? (window.SudsNative ? 'Encrypted; keys in the Android Keystore' : 'Encrypted; keys in the iOS Keychain') : badge('Keys kept in this browser', 'warn')], ['Last sync', st.last_sync_at ? fmt.dt(st.last_sync_at) : 'never'], ['Changes waiting to send', String(st.pending)], ['Office server', st.server || 'not set yet']]),
         h('p', { class: 'small muted mt' }, 'Sync exchanges clients, visits, calls, notes, reminders, referrals and everything else in both directions. The newest change wins. The office computer does not need to be on at any other time.')),
       h('div', { class: 'card' }, h('h3', {}, 'Sync now'), h('p', { class: 'small muted' }, 'Connect this phone to the office Wi-Fi (or the address IT gave you), then sign in with your office account.'), f, log,
-        h('div', { class: 'btn-row' }, h('button', { class: 'btn danger sm', onClick: async () => { if (await confirmDialog('Erase this device', 'Remove all SUDS data from this device? Anything not yet synced will be lost.', { danger: true, okText: 'Erase', requireReason: true })) { await window.SUDS_LOCAL.wipe(); location.reload(); } } }, 'Erase data on this device'))),
+        h('div', { class: 'btn-row' }, eraseDeviceButton())),
       await sampleDataCard(() => nav('sync?_=' + Date.now()))));
 });
