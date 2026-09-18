@@ -11,6 +11,9 @@ let loggedIn = false;
 page.on('console', m => { if (m.type() === 'error' && (loggedIn || !/401/.test(m.text()))) errors.push('CONSOLE: ' + m.text()); });
 page.on('response', r => { if (r.status() >= 500) errors.push(`HTTP ${r.status()} ${r.url()}`); });
 const shot = async (name) => page.screenshot({ path: `/tmp/suds-shots/${name}.png`, fullPage: false });
+// "Has it finished loading?" is a question about a few seconds, not about one instant: a slower machine
+// answers no at 600ms and yes at 900ms. Wait for the placeholder to go, then assert on what is left.
+const loaded = async () => { await page.waitForSelector('.main .boot', { state: 'detached', timeout: 10000 }).catch(() => {}); return !(await page.$('.main .boot')); };
 await page.goto(base + '/#/login');
 await page.fill('input[name=username]', 'jwalker'); await page.fill('input[name=password]', 'Navigator2026!!');
 await page.click('button[type=submit]');
@@ -19,7 +22,7 @@ await shot('dashboard');
 const views = ['clients', 'tasks', 'interventions', 'calls', 'time', 'referrals', 'resources', 'notes', 'imports', 'budget', 'reports', 'admin', 'profile', 'admin?tab=audit', 'admin?tab=settings', 'admin?tab=apikeys', 'admin?tab=system', 'budget?tab=expenditures', 'budget?tab=analysis'];
 for (const v of views) {
   await page.goto(`${base}/#/${v}`); await page.waitForTimeout(700);
-  ok(!(await page.$('.main .boot')), `${v} finishes loading`);
+  ok(await loaded(), `${v} finishes loading`);
   const stuckModal = await page.$('.modal-bg');
   ok(!stuckModal, `${v} leaves no dialog open behind it`);
   if (stuckModal) await page.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove()));
@@ -33,7 +36,7 @@ const cid = page.url().split('/client/')[1];
 ok(!!cid, 'a row in the client list opens that client');
 for (const t of ['overview', 'timeline', 'interventions', 'calls', 'notes', 'referrals', 'tasks', 'consents', 'time', 'budget', 'team']) {
   await page.goto(`${base}/#/client/${cid}/${t}`); await page.waitForTimeout(600);
-  ok(!(await page.$('.main .boot')), `the client's ${t} tab finishes loading`);
+  ok(await loaded(), `the client's ${t} tab finishes loading`);
   await shot('client_' + t);
 }
 // open modals
