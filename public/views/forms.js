@@ -14,9 +14,12 @@ route('forms', async (r) => {
   const refresh = () => nav(`forms?category=${cat}&q=${encodeURIComponent(q)}${inactive ? '&inactive=1' : ''}&_=${Date.now()}`);
   const search = h('input', { type: 'search', value: q, placeholder: 'Form name or description', onKeydown: e => { if (e.key === 'Enter') nav(`forms?category=${cat}&q=${encodeURIComponent(search.value)}`); } });
   const catSel = h('select', { onChange: () => nav(`forms?category=${catSel.value}&q=${encodeURIComponent(q)}`) }, h('option', { value: '' }, 'All categories'), data.categories.map(c => h('option', { value: c, selected: c === cat }, fmt.label(c))));
-  const card = (t) => h('div', { class: `card tpl-card ${t.is_active ? '' : 'inactive'}`, role: 'button', tabindex: 0, 'data-template': t.id, onClick: (e) => { if (e.target.closest('button, a')) return; openTemplate(t.id, refresh); }, onKeydown: (e) => { if (e.key === 'Enter') openTemplate(t.id, refresh); } },
+  // The card itself must not be role="button" (or otherwise interactive): it holds real <button> elements
+  // for the individual actions, and an interactive control cannot nest another one. Opening the template
+  // by name/description is its own button instead of a click-anywhere card.
+  const card = (t) => h('div', { class: `card tpl-card ${t.is_active ? '' : 'inactive'}`, 'data-template': t.id },
     h('div', { class: 'tpl-icon' }, t.has_file ? (t.content_type?.includes('pdf') ? '📄' : t.content_type?.startsWith('image/') ? '🖼' : '📝') : '🧾'),
-    h('div', { class: 'grow' }, h('div', { class: 'row', style: { justifyContent: 'space-between', alignItems: 'start' } }, h('b', {}, t.name), h('span', {}, badge(fmt.label(t.category), 'info'), t.is_active ? null : [' ', badge('Retired', 'warn')])),
+    h('div', { class: 'grow' }, h('div', { class: 'row', style: { justifyContent: 'space-between', alignItems: 'start' } }, h('button', { class: 'tpl-open-name', onClick: () => openTemplate(t.id, refresh) }, t.name), h('span', {}, badge(fmt.label(t.category), 'info'), t.is_active ? null : [' ', badge('Retired', 'warn')])),
       t.description ? h('p', { class: 'small tpl-desc' }, t.description) : null,
       h('div', { class: 'small muted' }, `${t.field_count} field${t.field_count === 1 ? '' : 's'}`, t.has_file ? ` · ${fileKind(t.content_type)} attached` : ' · no file (printable from fields)', t.version ? ` · v${t.version}` : '', t.use_count ? ` · used ${t.use_count}×` : ''),
       h('div', { class: 'btn-row tight' }, can('forms:write') ? h('button', { class: 'btn sm primary', onClick: () => useWithClient(t) }, 'Fill out for a client') : null,
@@ -134,7 +137,7 @@ export async function openClientForm(id, { onChange } = {}) {
   };
   const body = h('div', { class: 'form-grid ff' }, f.fields.map(field));
   const files = h('div', {});
-  const drawFiles = () => { clear(files); if (!f.files.length) files.append(h('span', { class: 'muted small' }, 'No signed copy attached yet.')); f.files.forEach(x => files.append(h('div', { class: 'today-item' }, h('span', {}, x.content_type.startsWith('image/') ? '🖼 ' : '📄 ', h('a', { href: '#', onClick: (e) => { e.preventDefault(); openFile(`/api/forms/${id}/files/${x.id}`); } }, x.filename), h('span', { class: 'muted small' }, ` · ${Math.round(x.bytes / 1024)} KB · ${fmt.date(x.created_at)}`)), can('forms:write') ? h('button', { class: 'btn sm ghost', onClick: async () => { if (!await confirmDialog('Remove attachment', `Remove ${x.filename}?`, { danger: true, okText: 'Remove' })) return; await del(`/api/forms/${id}/files/${x.id}`); f.files = f.files.filter(y => y.id !== x.id); drawFiles(); } }, '✕') : null))); };
+  const drawFiles = () => { clear(files); if (!f.files.length) files.append(h('span', { class: 'muted small' }, 'No signed copy attached yet.')); f.files.forEach(x => files.append(h('div', { class: 'today-item' }, h('span', {}, x.content_type.startsWith('image/') ? '🖼 ' : '📄 ', h('a', { href: '#', onClick: (e) => { e.preventDefault(); openFile(`/api/forms/${id}/files/${x.id}`); } }, x.filename), h('span', { class: 'muted small' }, ` · ${Math.round(x.bytes / 1024)} KB · ${fmt.date(x.created_at)}`)), can('forms:write') ? h('button', { class: 'btn sm ghost', 'aria-label': `Remove ${x.filename}`, onClick: async () => { if (!await confirmDialog('Remove attachment', `Remove ${x.filename}?`, { danger: true, okText: 'Remove' })) return; await del(`/api/forms/${id}/files/${x.id}`); f.files = f.files.filter(y => y.id !== x.id); drawFiles(); } }, '✕') : null))); };
   drawFiles();
   const fileInput = h('input', { type: 'file', accept: 'image/*,application/pdf', class: 'hidden', onChange: async () => {
     const file = fileInput.files[0]; fileInput.value = ''; if (!file) return;
