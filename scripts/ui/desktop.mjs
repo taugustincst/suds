@@ -55,7 +55,10 @@ await page.click('text=Edit'); await page.waitForTimeout(300); ok(await page.$('
 // referral date + engagement date compute "time until engaged", shown on the client and in the list
 await page.fill('.modal input[name=referral_date]', '2026-01-01');
 await page.fill('.modal input[name=engagement_date]', '2026-01-11');
-await page.click('.modal button[type=submit]'); await page.waitForTimeout(700);
+await page.click('.modal button[type=submit]');
+// Wait for the save to actually land (the modal closes only after its PUT resolves) before navigating —
+// page.goto() is a real reload and would abort an in-flight request, silently losing the update.
+await page.waitForSelector('.modal', { state: 'detached', timeout: 10000 });
 await page.goto(`${base}/#/client/${cid}/overview`); await page.waitForTimeout(600);
 ok((await page.content()).includes('10 days'), 'time until engaged is computed from the referral and engagement dates');
 await page.goto(`${base}/#/clients`); await page.waitForTimeout(700);
