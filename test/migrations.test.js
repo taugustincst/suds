@@ -200,3 +200,37 @@ test('the database is snapshotted before the migration runs', () => {
     assert.ok(cols.includes('goals'), 'the snapshot predates the goals -> goals_enc move');
   } finally { snap.close(); }
 });
+
+test('a pre-existing orphaned row (unrelated to this upgrade) does not brick every future boot', () => {
+  // A dangling foreign key from a bug elsewhere, an interrupted sync, or manual tinkering — not something
+  // this upgrade caused — used to fail foreign_key_check and abort the migration every single time, with a
+  // full device wipe as the only way back in. It must instead be tolerated and reported, not fatal.
+  const orphanDir = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-migrate-orphan-'));
+  const orphanPath = path.join(orphanDir, 'suds.db');
+  const { uuid } = require('../server/crypto');
+  const userId = uuid(), clientId = uuid(), assignmentId = uuid(), missingClientId = uuid();
+  const d = new DatabaseSync(orphanPath);
+  d.exec(fs.readFileSync(path.join(__dirname, 'fixtures', 'schema-v4.sql'), 'utf8'));
+  d.prepare(`INSERT INTO users(id,username,password_hash,display_name,role) VALUES(?,?,?,?,?)`).run(userId, 'orphantest', 'x', 'Orphan Test', 'navigator');
+  d.prepare(`INSERT INTO clients(id,client_code,first_name_enc,last_name_enc,intake_date,status,created_by) VALUES(?,?,?,?,?,?,?)`)
+    .run(clientId, 'M26-0099', 'x', 'x', '2026-01-01', 'active', userId);
+  // References a client id that was never inserted — a dangling foreign key, present before any migration
+  // runs. FK enforcement has to be off to even create it, same as real orphans arrive (a bug elsewhere, an
+  // interrupted sync, or manual tinkering never goes through app-level validation either).
+  d.exec('PRAGMA foreign_keys = OFF');
+  d.prepare(`INSERT INTO assignments(id,client_id,user_id,start_date,created_by) VALUES(?,?,?,?,?)`).run(assignmentId, missingClientId, userId, '2026-01-01', userId);
+  d.close();
+
+  require('../server/db').close();
+  try {
+    assert.doesNotThrow(() => require('../server/db').open(orphanPath), 'a pre-existing orphan must not abort the upgrade');
+    const upgraded = require('../server/db');
+    assert.equal(upgraded.getSetting('schema_version'), String(upgraded.LATEST_SCHEMA_VERSION), 'the database still reaches the latest schema');
+    const row = upgraded.one(`SELECT client_id FROM assignments WHERE id=?`, assignmentId);
+    assert.equal(row.client_id, missingClientId, 'the orphaned row is preserved, not silently dropped or nulled');
+  } finally {
+    require('../server/db').close();
+    require('../server/db').open(dbPath); // restore the shared fixture db for anything after this test
+    fs.rmSync(orphanDir, { recursive: true, force: true });
+  }
+});

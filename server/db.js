@@ -214,6 +214,14 @@ function snapshotBeforeMigration(d, dbPath, fromVersion) {
   return file;
 }
 
+// A stable identity for one foreign_key_check violation, so the same pre-existing orphan can be recognised
+// again after a migration step that rebuilds its table (SQLite's ALTER TABLE recipe for anything beyond
+// adding a column copies every row into a new table, which reassigns rowids) — without it, a renumbered but
+// otherwise unchanged orphan would look "new" on the next check.
+function fkViolationKeys(d) {
+  return new Set(d.prepare('PRAGMA foreign_key_check').all().map((r) => `${r.table}:${r.rowid}:${r.parent}:${r.fkid}`));
+}
+
 function migrate(d, dbPath) {
   const row = d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get();
   let v = row ? Number(row.value) : 0;
@@ -226,21 +234,35 @@ function migrate(d, dbPath) {
     catch (e) { throw new Error(`Could not snapshot the database before upgrading it from schema ${v} to ${migrations.length}: ${e.message}. Free up disk space or back up ${dbPath} by hand, then start SUDS again.`); }
     if (snapshot) console.log(`[suds] upgrading schema ${v} -> ${migrations.length}; snapshot saved to ${snapshot}`);
   }
+  let remaining = [];
   for (let i = v; i < migrations.length; i++) {
     // DDL is transactional in SQLite: apply the migration and stamp the version together, so a crash midway
     // can never leave a half-applied schema wearing the old version number.
     // The ALTER TABLE recipe for rebuilding a table requires foreign keys to be off, and the pragma is a
-    // no-op inside a transaction, so it goes here. foreign_key_check below proves nothing was orphaned.
+    // no-op inside a transaction, so it goes here. foreign_key_check below proves nothing new was orphaned.
     d.exec('PRAGMA foreign_keys = OFF');
     d.exec('BEGIN');
     try {
+      // A foreign key already pointing at a missing row — from a bug elsewhere, an interrupted sync, or
+      // manual tinkering, unrelated to this upgrade — must not brick every future boot forever, with a full
+      // device wipe as the only way back in. Only an orphan this specific step introduces is treated as
+      // fatal (a real bug in that migration); anything already there when the step started is tolerated and
+      // reported, never silently dropped.
+      const before = fkViolationKeys(d);
       migrations[i](d);
-      const bad = d.prepare('PRAGMA foreign_key_check').all();
-      if (bad.length) throw new Error(`migration ${i + 1} left ${bad.length} orphaned row(s), first in table ${bad[0].table}`);
+      const after = d.prepare('PRAGMA foreign_key_check').all();
+      const introduced = after.filter((r) => !before.has(`${r.table}:${r.rowid}:${r.parent}:${r.fkid}`));
+      if (introduced.length) throw new Error(`migration ${i + 1} introduced ${introduced.length} new orphaned row(s), first in table ${introduced[0].table}`);
+      remaining = after;
       d.prepare(`INSERT INTO settings(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`).run(String(i + 1));
       d.exec('COMMIT');
     } catch (e) { try { d.exec('ROLLBACK'); } catch {} throw e; }
     finally { d.exec('PRAGMA foreign_keys = ON'); }
+  }
+  if (remaining.length) {
+    const byTable = {};
+    for (const r of remaining) byTable[r.table] = (byTable[r.table] || 0) + 1;
+    console.warn(`[suds] this database has ${remaining.length} pre-existing orphaned reference(s), not introduced by this upgrade, by table: ${Object.entries(byTable).map(([t, n]) => `${t}=${n}`).join(', ')}. Records are otherwise intact; anything joined through the missing reference may just be absent from a report until it is repaired.`);
   }
 }
 

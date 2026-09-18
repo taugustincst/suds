@@ -7345,6 +7345,9 @@ var require_db = __commonJS({
       }
       return file;
     }
+    function fkViolationKeys(d) {
+      return new Set(d.prepare("PRAGMA foreign_key_check").all().map((r) => `${r.table}:${r.rowid}:${r.parent}:${r.fkid}`));
+    }
     function migrate(d, dbPath) {
       const row = d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get();
       let v = row ? Number(row.value) : 0;
@@ -7358,13 +7361,17 @@ var require_db = __commonJS({
         }
         if (snapshot) console.log(`[suds] upgrading schema ${v} -> ${migrations.length}; snapshot saved to ${snapshot}`);
       }
+      let remaining = [];
       for (let i = v; i < migrations.length; i++) {
         d.exec("PRAGMA foreign_keys = OFF");
         d.exec("BEGIN");
         try {
+          const before = fkViolationKeys(d);
           migrations[i](d);
-          const bad = d.prepare("PRAGMA foreign_key_check").all();
-          if (bad.length) throw new Error(`migration ${i + 1} left ${bad.length} orphaned row(s), first in table ${bad[0].table}`);
+          const after = d.prepare("PRAGMA foreign_key_check").all();
+          const introduced = after.filter((r) => !before.has(`${r.table}:${r.rowid}:${r.parent}:${r.fkid}`));
+          if (introduced.length) throw new Error(`migration ${i + 1} introduced ${introduced.length} new orphaned row(s), first in table ${introduced[0].table}`);
+          remaining = after;
           d.prepare(`INSERT INTO settings(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`).run(String(i + 1));
           d.exec("COMMIT");
         } catch (e) {
@@ -7376,6 +7383,11 @@ var require_db = __commonJS({
         } finally {
           d.exec("PRAGMA foreign_keys = ON");
         }
+      }
+      if (remaining.length) {
+        const byTable = {};
+        for (const r of remaining) byTable[r.table] = (byTable[r.table] || 0) + 1;
+        console.warn(`[suds] this database has ${remaining.length} pre-existing orphaned reference(s), not introduced by this upgrade, by table: ${Object.entries(byTable).map(([t, n]) => `${t}=${n}`).join(", ")}. Records are otherwise intact; anything joined through the missing reference may just be absent from a report until it is repaired.`);
       }
     }
     function get() {

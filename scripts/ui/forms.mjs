@@ -67,6 +67,18 @@ async function designer() {
   ok(/7 fields/.test(txt), 'designer: with the fields that were added', txt.replace(/\s+/g, ' ').slice(0, 120));
   ok(/Picture attached/.test(txt), 'designer: and the uploaded county original');
   await page.screenshot({ path: '/tmp/suds-shots/forms-library.png' });
+  // --- library-level upload / download shortcuts ---
+  ok(await page.$('button:has-text("Upload form")'), 'designer: the library offers an upload-form shortcut');
+  const [uploadChooser] = await Promise.all([page.waitForEvent('filechooser'), page.click('button:has-text("Upload form")')]);
+  await uploadChooser.setFiles('/tmp/suds-shots/sig.png'); await page.waitForSelector('.modal .designer');
+  eq(await page.inputValue('.modal input[name=name]'), 'sig', 'designer: uploading a file jumps straight into the designer with the name guessed from the filename');
+  ok(/sig\.png will be saved/.test(await page.textContent('.modal')), 'designer: and the file already attached, not waiting to be uploaded again');
+  await page.click('.modal button[type=submit]'); await page.waitForTimeout(1200);
+  await until(async () => (await page.$$eval('.tpl-card', x => x.length)) === n0 + 2);
+  eq(await page.$$eval('.tpl-card', x => x.length), n0 + 2, 'designer: the uploaded form joins the library without a trip through "+ Add a county form"');
+  ok(await page.$('button:has-text("Download forms")'), 'designer: the library offers a bulk download for everything currently in view');
+  const [bulkDl] = await Promise.all([page.waitForEvent('download'), page.click('button:has-text("Download forms")')]);
+  ok(!!bulkDl.suggestedFilename(), 'designer: clicking it starts downloading the library\'s forms', bulkDl.suggestedFilename());
   await ctx.close();
 }
 await run('office', base + '/', async (p) => { await p.goto(base + '/#/login'); await p.fill('input[name=username]', 'mrivera'); await p.fill('input[name=password]', 'Navigator2026!!'); await p.click('button[type=submit]'); await p.waitForSelector('.layout', { timeout: 8000 }); await p.evaluate(() => fetch('/api/me/prefs', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'suds' }, body: JSON.stringify({ tour_done: true }) })); await p.waitForTimeout(700); });
