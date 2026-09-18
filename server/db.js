@@ -175,6 +175,9 @@ const migrations = [
   // 9: a logged contact says whether it was a phone call or a text message. Everything already recorded
   //    was a call, which is what the default says.
   (d) => { addColumn(d, 'calls', 'method', `TEXT NOT NULL DEFAULT 'phone' CHECK (method IN ('phone','text'))`); },
+  // 10: referral and engagement dates on clients, so time-to-engagement (a common navigator KPI) can be
+  //     tracked per client instead of only inferred from intake_date.
+  (d) => { addColumn(d, 'clients', 'referral_date', 'TEXT'); addColumn(d, 'clients', 'engagement_date', 'TEXT'); },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

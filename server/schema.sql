@@ -97,6 +97,8 @@ CREATE TABLE IF NOT EXISTS clients (
   discharge_date TEXT,
   discharge_reason TEXT,
   referral_source TEXT,
+  referral_date TEXT,                  -- when this person was referred in, distinct from intake_date (when services actually started)
+  engagement_date TEXT,                -- when they first actually engaged with services; time-to-engagement = engagement_date - referral_date
   primary_substance TEXT,
   secondary_substances TEXT,
   route_of_use TEXT,

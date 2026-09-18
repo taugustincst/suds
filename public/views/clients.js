@@ -14,6 +14,8 @@ export function clientFields(C) {
     { type: 'section', label: 'Program status', collapsible: true, open: true },
     { name: 'status', label: 'Status', type: 'select', options: ['waitlist', 'active', 'inactive', 'closed', 'deceased'], value: 'active', required: true, noBlank: true }, { name: 'intake_date', label: 'Intake date', type: 'date', value: fmt.today() },
     { name: 'referral_source', label: 'Referral source', type: 'select', options: ['self', 'family', 'emergency_dept', 'hospital', 'ems', 'law_enforcement', 'jail', 'court_probation', 'treatment_provider', 'primary_care', 'shelter', 'outreach', 'hotline', 'school', 'other'] },
+    { name: 'referral_date', label: 'Referral date', type: 'date', help: 'When this person was referred in — not necessarily the same as intake.' },
+    { name: 'engagement_date', label: 'Engagement date', type: 'date', help: 'When they first actually engaged with services. Together with the referral date, this tracks time-to-engagement.' },
     { name: 'housing_status', label: 'Housing status', type: 'select', options: ['stable', 'doubled_up', 'shelter', 'unsheltered', 'transitional', 'sober_living', 'incarcerated', 'treatment_facility', 'unknown'] },
     { name: 'insurance', label: 'Insurance', type: 'select', options: ['medicaid', 'medicare', 'private', 'uninsured', 'va', 'pending', 'unknown'] }, { name: 'medicaid_id', label: 'Medicaid ID' },
     { name: 'risk_level', label: 'Risk level', type: 'select', options: ['low', 'moderate', 'high', 'critical'], value: 'moderate', noBlank: true, required: true },
@@ -121,6 +123,7 @@ route('clients', async (r) => {
       { label: 'MAT', render: c => fmt.label(c.mat_status) },
       { label: 'Assigned', key: 'assigned_workers' },
       { label: 'Intake', render: c => fmt.date(c.intake_date) },
+      { label: 'Time to engage', render: c => c.days_to_engagement === null ? '—' : h('span', { style: c.days_to_engagement < 0 ? { color: 'var(--danger)' } : {} }, `${c.days_to_engagement}d`) },
       { label: 'Last contact', render: c => h('span', { style: !c.last_contact || Date.now() - Date.parse(c.last_contact) > 30 * 86400000 ? { color: 'var(--warn)' } : {} }, fmt.ago(c.last_contact)) },
       expiring ? { label: 'Consent expires', render: c => fmt.date(expiring.get(c.id)) } : null,
     ].filter(Boolean), rows, { onRow: deid ? null : (c) => nav(`client/${c.id}`), empty: q ? 'No one matches. Try the exact last name, the full phone number, date of birth (YYYY-MM-DD) or the client code — names are stored encrypted, so partial names do not match.' : (status === 'active' ? 'No active clients yet. Click + New client to add your first.' : 'No clients with this status.') }));

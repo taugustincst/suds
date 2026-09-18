@@ -5,9 +5,16 @@ const { encrypt, decrypt, blindIndex, uuid } = require('./crypto');
 // goals and flags are clinical narrative about a named person: encrypted like every other PHI field.
 const ENC_FIELDS = ['first_name', 'last_name', 'preferred_name', 'dob', 'phone', 'alt_phone', 'email', 'address', 'medicaid_id', 'emergency_contact', 'goals', 'flags'];
 const PLAIN_FIELDS = ['city', 'zip', 'gender', 'pronouns', 'race_ethnicity', 'preferred_language', 'veteran', 'housing_status', 'insurance', 'status', 'intake_date',
-  'discharge_date', 'discharge_reason', 'referral_source', 'primary_substance', 'secondary_substances', 'route_of_use', 'asam_level', 'mat_status', 'mat_medication',
+  'discharge_date', 'discharge_reason', 'referral_source', 'referral_date', 'engagement_date', 'primary_substance', 'secondary_substances', 'route_of_use', 'asam_level', 'mat_status', 'mat_medication',
   'overdose_history', 'last_overdose_date', 'naloxone_provided', 'naloxone_last_date', 'risk_level', 'justice_involved', 'pregnant_or_parenting', 'co_occurring_mh',
   'race_codes', 'contact_preferences', 'ok_to_text', 'ok_to_voicemail'];
+
+/** Whole days between referral and engagement, or null while either date is missing. Left negative rather
+ *  than hidden if the dates are entered out of order — that is itself worth someone noticing. */
+function daysToEngagement(d) {
+  if (!d || !d.referral_date || !d.engagement_date) return null;
+  return Math.round((Date.parse(d.engagement_date) - Date.parse(d.referral_date)) / 86400000);
+}
 
 function decryptRow(row, { deidentify = false } = {}) {
   if (!row) return null;
@@ -69,9 +76,10 @@ function nextClientCode() {
 
 function summary(row, opts) {
   const d = decryptRow(row, opts);
-  const keep = ['id', 'client_code', 'display_name', 'first_name', 'last_name', 'preferred_name', 'dob', 'phone', 'status', 'risk_level', 'primary_substance', 'mat_status', 'intake_date', 'city', 'flags', 'ok_to_text', 'ok_to_voicemail', 'updated_at'];
+  const keep = ['id', 'client_code', 'display_name', 'first_name', 'last_name', 'preferred_name', 'dob', 'phone', 'status', 'risk_level', 'primary_substance', 'mat_status', 'intake_date', 'referral_date', 'engagement_date', 'city', 'flags', 'ok_to_text', 'ok_to_voicemail', 'updated_at'];
   const o = {}; for (const k of keep) if (d[k] !== undefined) o[k] = d[k];
+  o.days_to_engagement = daysToEngagement(d);
   return o;
 }
 
-module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, summary, uuid, soundex, namePrefixIndex, namePhoneticIndex, normaliseName };
+module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, summary, daysToEngagement, uuid, soundex, namePrefixIndex, namePhoneticIndex, normaliseName };

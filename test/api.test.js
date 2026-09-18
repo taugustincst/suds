@@ -45,6 +45,19 @@ test('navigator creates client (auto-assigned) with encrypted PHI', async () => 
   const g = await nav.get(`/api/clients/${clientId}`);
   assert.equal(g.status, 200); assert.equal(g.data.client.first_name, 'Jane'); assert.equal(g.data.client.assignments.length, 1);
 });
+test('referral and engagement dates compute time-to-engagement', async () => {
+  const r = await nav.post('/api/clients', { first_name: 'Ray', last_name: 'Engaged', referral_date: '2026-01-01', engagement_date: '2026-01-11' });
+  assert.equal(r.status, 201);
+  const g = await nav.get(`/api/clients/${r.data.id}`);
+  assert.equal(g.data.client.referral_date, '2026-01-01'); assert.equal(g.data.client.engagement_date, '2026-01-11');
+  assert.equal(g.data.client.days_to_engagement, 10);
+  const list = await nav.get('/api/clients?status=all&q=Engaged');
+  assert.equal(list.data.clients[0].days_to_engagement, 10);
+  // missing either date leaves it uncomputed rather than guessed
+  const r2 = await nav.post('/api/clients', { first_name: 'Ray', last_name: 'Unreferred', referral_date: '2026-01-01' });
+  const g2 = await nav.get(`/api/clients/${r2.data.id}`);
+  assert.equal(g2.data.client.days_to_engagement, null);
+});
 test('blind-index search by last name, phone, dob, code', async () => {
   for (const q of ['obrien', "O'Brien", '555-010-0100', '1990-05-01', 'C26-0001', 'jane obrien', "O'Brien, Jane"]) {
     const r = await nav.get(`/api/clients?q=${encodeURIComponent(q.replace('C26', 'C' + String(new Date().getFullYear()).slice(2)))}`);

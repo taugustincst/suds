@@ -15,7 +15,7 @@ const shape = {
   veteran: { type: 'boolean' }, housing_status: { type: 'string', maxLen: 60 }, insurance: { type: 'string', maxLen: 100 }, medicaid_id: { type: 'string', maxLen: 40 },
   emergency_contact: { type: 'string', maxLen: 300 },
   status: { type: 'string', enum: ['waitlist', 'active', 'inactive', 'closed', 'deceased'] }, intake_date: { type: 'date' }, discharge_date: { type: 'date' }, discharge_reason: { type: 'string', maxLen: 200 },
-  referral_source: { type: 'string', maxLen: 120 }, primary_substance: { type: 'string', maxLen: 60 }, secondary_substances: { type: 'string', maxLen: 200 }, route_of_use: { type: 'string', maxLen: 60 },
+  referral_source: { type: 'string', maxLen: 120 }, referral_date: { type: 'date' }, engagement_date: { type: 'date' }, primary_substance: { type: 'string', maxLen: 60 }, secondary_substances: { type: 'string', maxLen: 200 }, route_of_use: { type: 'string', maxLen: 60 },
   asam_level: { type: 'string', maxLen: 20 }, mat_status: { type: 'string', enum: ['none', 'interested', 'referred', 'active', 'discontinued', 'unknown'] }, mat_medication: { type: 'string', maxLen: 60 },
   overdose_history: { type: 'boolean' }, last_overdose_date: { type: 'date' }, naloxone_provided: { type: 'boolean' }, naloxone_last_date: { type: 'date' },
   risk_level: { type: 'string', enum: ['low', 'moderate', 'high', 'critical'] }, justice_involved: { type: 'boolean' }, pregnant_or_parenting: { type: 'boolean' }, co_occurring_mh: { type: 'boolean' },
@@ -188,6 +188,7 @@ module.exports = (r) => {
   r.get('/api/clients/:id', auth.requireAuth, auth.requirePerm('clients:read'), (ctx) => {
     const row = loadClient(ctx, ctx.params.id);
     const client = M.decryptRow(row);
+    client.days_to_engagement = M.daysToEngagement(client);
     client.assignments = db.all(`SELECT a.*, u.display_name, u.role AS user_role FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=? ORDER BY a.end_date IS NOT NULL, a.start_date DESC`, row.id);
     client.active_consents = db.all(`SELECT id,type,recipient_enc,purpose_enc,signed_at,expires_at FROM consents WHERE client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, row.id)
       .map(x => ({ id: x.id, type: x.type, recipient: x.recipient_enc ? decrypt(x.recipient_enc) : null, purpose: x.purpose_enc ? decrypt(x.purpose_enc) : null, signed_at: x.signed_at, expires_at: x.expires_at }));
@@ -260,6 +261,8 @@ module.exports = (r) => {
       for (const x of db.all(`SELECT e.*, f.name AS fund FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE client_id=? ORDER BY e.spent_at DESC LIMIT ?`, id, per))
         events.push({ kind: 'expense', id: x.id, at: x.spent_at, title: `$${x.amount.toFixed(2)} ${x.category.replace(/_/g, ' ')}`, detail: x.description, meta: { fund: x.fund, status: x.status } });
     events.push({ kind: 'milestone', id: 'intake', at: row.intake_date, title: 'Program intake', meta: {} });
+    if (row.referral_date) events.push({ kind: 'milestone', id: 'referral', at: row.referral_date, title: 'Referred in', meta: {} });
+    if (row.engagement_date) events.push({ kind: 'milestone', id: 'engagement', at: row.engagement_date, title: 'Engaged with services', meta: {} });
     if (row.discharge_date) events.push({ kind: 'milestone', id: 'discharge', at: row.discharge_date, title: `Discharge: ${row.discharge_reason || ''}`, meta: {} });
     events.sort((a, b) => (b.at || '').localeCompare(a.at || ''));
     const page = events.slice(offset, offset + limit);

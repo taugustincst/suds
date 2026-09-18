@@ -6273,6 +6273,8 @@ CREATE TABLE IF NOT EXISTS clients (
   discharge_date TEXT,
   discharge_reason TEXT,
   referral_source TEXT,
+  referral_date TEXT,                  -- when this person was referred in, distinct from intake_date (when services actually started)
+  engagement_date TEXT,                -- when they first actually engaged with services; time-to-engagement = engagement_date - referral_date
   primary_substance TEXT,
   secondary_substances TEXT,
   route_of_use TEXT,
@@ -7015,6 +7017,8 @@ var require_clients_model = __commonJS({
       "discharge_date",
       "discharge_reason",
       "referral_source",
+      "referral_date",
+      "engagement_date",
       "primary_substance",
       "secondary_substances",
       "route_of_use",
@@ -7034,6 +7038,10 @@ var require_clients_model = __commonJS({
       "ok_to_text",
       "ok_to_voicemail"
     ];
+    function daysToEngagement(d) {
+      if (!d || !d.referral_date || !d.engagement_date) return null;
+      return Math.round((Date.parse(d.engagement_date) - Date.parse(d.referral_date)) / 864e5);
+    }
     function decryptRow(row, { deidentify = false } = {}) {
       if (!row) return null;
       const out2 = {};
@@ -7095,12 +7103,13 @@ var require_clients_model = __commonJS({
     }
     function summary(row, opts) {
       const d = decryptRow(row, opts);
-      const keep = ["id", "client_code", "display_name", "first_name", "last_name", "preferred_name", "dob", "phone", "status", "risk_level", "primary_substance", "mat_status", "intake_date", "city", "flags", "ok_to_text", "ok_to_voicemail", "updated_at"];
+      const keep = ["id", "client_code", "display_name", "first_name", "last_name", "preferred_name", "dob", "phone", "status", "risk_level", "primary_substance", "mat_status", "intake_date", "referral_date", "engagement_date", "city", "flags", "ok_to_text", "ok_to_voicemail", "updated_at"];
       const o = {};
       for (const k of keep) if (d[k] !== void 0) o[k] = d[k];
+      o.days_to_engagement = daysToEngagement(d);
       return o;
     }
-    module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, summary, uuid: uuid2, soundex, namePrefixIndex, namePhoneticIndex, normaliseName };
+    module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, summary, daysToEngagement, uuid: uuid2, soundex, namePrefixIndex, namePhoneticIndex, normaliseName };
   }
 });
 
@@ -7296,6 +7305,12 @@ var require_db = __commonJS({
       //    was a call, which is what the default says.
       (d) => {
         addColumn(d, "calls", "method", `TEXT NOT NULL DEFAULT 'phone' CHECK (method IN ('phone','text'))`);
+      },
+      // 10: referral and engagement dates on clients, so time-to-engagement (a common navigator KPI) can be
+      //     tracked per client instead of only inferred from intake_date.
+      (d) => {
+        addColumn(d, "clients", "referral_date", "TEXT");
+        addColumn(d, "clients", "engagement_date", "TEXT");
       }
     ];
     function initialise(d, schemaText, dbPath) {
@@ -11220,6 +11235,8 @@ var require_clients = __commonJS({
       discharge_date: { type: "date" },
       discharge_reason: { type: "string", maxLen: 200 },
       referral_source: { type: "string", maxLen: 120 },
+      referral_date: { type: "date" },
+      engagement_date: { type: "date" },
       primary_substance: { type: "string", maxLen: 60 },
       secondary_substances: { type: "string", maxLen: 200 },
       route_of_use: { type: "string", maxLen: 60 },
@@ -11409,6 +11426,7 @@ var require_clients = __commonJS({
       r.get("/api/clients/:id", auth3.requireAuth, auth3.requirePerm("clients:read"), (ctx) => {
         const row = loadClient(ctx, ctx.params.id);
         const client = M.decryptRow(row);
+        client.days_to_engagement = M.daysToEngagement(client);
         client.assignments = db3.all(`SELECT a.*, u.display_name, u.role AS user_role FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=? ORDER BY a.end_date IS NOT NULL, a.start_date DESC`, row.id);
         client.active_consents = db3.all(`SELECT id,type,recipient_enc,purpose_enc,signed_at,expires_at FROM consents WHERE client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, row.id).map((x) => ({ id: x.id, type: x.type, recipient: x.recipient_enc ? decrypt3(x.recipient_enc) : null, purpose: x.purpose_enc ? decrypt3(x.purpose_enc) : null, signed_at: x.signed_at, expires_at: x.expires_at }));
         client.counts = {
@@ -11474,6 +11492,8 @@ var require_clients = __commonJS({
           for (const x of db3.all(`SELECT e.*, f.name AS fund FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE client_id=? ORDER BY e.spent_at DESC LIMIT ?`, id, per))
             events.push({ kind: "expense", id: x.id, at: x.spent_at, title: `$${x.amount.toFixed(2)} ${x.category.replace(/_/g, " ")}`, detail: x.description, meta: { fund: x.fund, status: x.status } });
         events.push({ kind: "milestone", id: "intake", at: row.intake_date, title: "Program intake", meta: {} });
+        if (row.referral_date) events.push({ kind: "milestone", id: "referral", at: row.referral_date, title: "Referred in", meta: {} });
+        if (row.engagement_date) events.push({ kind: "milestone", id: "engagement", at: row.engagement_date, title: "Engaged with services", meta: {} });
         if (row.discharge_date) events.push({ kind: "milestone", id: "discharge", at: row.discharge_date, title: `Discharge: ${row.discharge_reason || ""}`, meta: {} });
         events.sort((a, b) => (b.at || "").localeCompare(a.at || ""));
         const page = events.slice(offset, offset + limit2);
@@ -17821,8 +17841,8 @@ var require_exports = __commonJS({
       const D = {
         clients: {
           label: "Clients",
-          columns: ["client_code", ...idCols, "status", "intake_date", "discharge_date", "discharge_reason", "referral_source", "primary_substance", "secondary_substances", "asam_level", "mat_status", "mat_medication", "risk_level", "housing_status", "insurance", "overdose_history", "naloxone_provided", "naloxone_last_date", "co_occurring_mh", "justice_involved", "pregnant_or_parenting", "city", "zip", "gender", "preferred_language", "goals", "flags"],
-          rows: () => db3.all(`SELECT c.* FROM clients c WHERE c.deleted_at IS NULL AND ${cf.sql} ORDER BY c.client_code LIMIT ?`, ...cf.params, MAX_ROWS).map((x) => M.decryptRow(x, { deidentify: !identified }))
+          columns: ["client_code", ...idCols, "status", "intake_date", "discharge_date", "discharge_reason", "referral_source", "referral_date", "engagement_date", "days_to_engagement", "primary_substance", "secondary_substances", "asam_level", "mat_status", "mat_medication", "risk_level", "housing_status", "insurance", "overdose_history", "naloxone_provided", "naloxone_last_date", "co_occurring_mh", "justice_involved", "pregnant_or_parenting", "city", "zip", "gender", "preferred_language", "goals", "flags"],
+          rows: () => db3.all(`SELECT c.* FROM clients c WHERE c.deleted_at IS NULL AND ${cf.sql} ORDER BY c.client_code LIMIT ?`, ...cf.params, MAX_ROWS).map((x) => M.decryptRow(x, { deidentify: !identified })).map((x) => ({ ...x, days_to_engagement: M.daysToEngagement(x) }))
         },
         interventions: {
           label: "Visits & services",
