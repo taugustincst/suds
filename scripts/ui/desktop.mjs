@@ -62,7 +62,9 @@ await page.click('text=Stage pasted text'); await page.waitForTimeout(800); awai
 ok(await until(() => /#\/imports\/.+/.test(page.url())), 'pasted field notes are staged and opened for review', page.url());
 // episodes: no episode yet means one "Start an episode" button, not two adjacent ones
 const freshClientId = await page.evaluate(() => fetch('/api/clients', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'suds' }, credentials: 'same-origin', body: JSON.stringify({ first_name: 'Episode', last_name: 'Fresh', status: 'active', risk_level: 'moderate' }) }).then(r => r.json()).then(j => j.id));
-await page.goto(`${base}/#/client/${freshClientId}/episodes`); await page.waitForTimeout(600);
+ok(!!freshClientId, 'a fresh client for the episodes check was created', freshClientId);
+await page.goto(`${base}/#/client/${freshClientId}/episodes`);
+await page.waitForSelector('button:has-text("Start an episode")', { timeout: 10000 }).catch(() => {});
 eq(await page.$$eval('button', b => b.filter(x => x.textContent.includes('Start an episode')).length), 1, 'only one "Start an episode" button shows when none exist yet');
 // dashboard: the expiring-consents badge deep-links to a filtered client list, not the generic one
 const expClientId = await page.evaluate(() => fetch('/api/clients', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'suds' }, credentials: 'same-origin', body: JSON.stringify({ first_name: 'Expiring', last_name: 'Consent', status: 'active', risk_level: 'moderate' }) }).then(r => r.json()).then(j => j.id));
