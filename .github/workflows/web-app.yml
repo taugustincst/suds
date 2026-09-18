@@ -10,6 +10,10 @@ on:
   workflow_dispatch: {}
 permissions:
   contents: write
+  # The dedicated scope for standing Pages up and deploying to it; contents: write alone was not enough
+  # ("Resource not accessible by integration" from the Pages API).
+  pages: write
+  id-token: write
 jobs:
   deploy:
     runs-on: ubuntu-latest
