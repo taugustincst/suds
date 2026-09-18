@@ -1,7 +1,12 @@
 // SUDS frontend core: API client, hash router, DOM + form helpers, session/idle handling.
 export const state = { user: null, org: 'SUDS', constants: null, users: [], funds: [], idleMinutes: 15, prefs: {}, local: false };
 // Local mode: the whole server runs inside this page (phone app / offline). Requests go to the in-page kernel.
-export function isLocalMode() { try { return new URLSearchParams(location.search).get('local') === '1' || location.protocol === 'file:' || location.protocol === 'suds:' || location.hostname === 'appassets.androidplatform.net' || !!window.SUDS_LOCAL; } catch { return false; } }
+// window.SUDS_FORCE_LOCAL is set by a small external script tag, before this module loads, on builds
+// meant to run with no backend at all (e.g. a static hosting deploy of public/ — see
+// scripts/build-static-site.js). External, not inline, so it works under the CSP the office server sends.
+// It is distinct from window.SUDS_LOCAL, which the boot sequence itself sets only after local mode is
+// already chosen, so it cannot be used to make that choice.
+export function isLocalMode() { try { return new URLSearchParams(location.search).get('local') === '1' || location.protocol === 'file:' || location.protocol === 'suds:' || location.hostname === 'appassets.androidplatform.net' || window.SUDS_FORCE_LOCAL === true || !!window.SUDS_LOCAL; } catch { return false; } }
 
 // ---------- workspace preferences (follow the user across devices) ----------
 let prefsTimer; const prefsDirty = {};

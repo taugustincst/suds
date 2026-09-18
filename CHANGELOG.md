@@ -2,6 +2,15 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## 1.8.0 — 2026-09-18
+
+- **A fully standalone, browser-only web app.** No office server, no Node process, no database anywhere
+  but the visitor's own browser — the same "local mode" the phone apps run, packaged as a static site and
+  published to a public URL (GitHub Pages, or any static host). Open it on any phone or computer, add it
+  to the home screen, and it works, including offline; sync with a real office SUDS later if the county
+  has one. `docs/WEB_APP.md`; built by `scripts/build-static-site.js`; deployed by
+  `.github/workflows/web-app.yml`; covered end to end by `scripts/ui/static-site.mjs`.
+
 ## 1.7.1 — 2026-09-18
 
 Production-readiness fixes found by running the first-run wizard the way a county does, and by inspecting

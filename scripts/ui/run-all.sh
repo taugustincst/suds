@@ -5,7 +5,8 @@ set -u
 export SUDS_ENV=development SUDS_DATA_DIR=/tmp/suds-ui-data PORT=${PORT:-8090} SUDS_ADMIN_PASSWORD='AdminPassw0rd!x'
 # A server left over from an earlier run holds a port and the wizard then "cannot start" on it, which
 # looks like an app defect. Say what is actually wrong instead.
-for p in "$PORT" 8095 "${SETUP_PORT:-8496}"; do
+STATIC_PORT=${STATIC_PORT:-8878}
+for p in "$PORT" 8095 "${SETUP_PORT:-8496}" "$STATIC_PORT"; do
   if curl -sk -o /dev/null --max-time 2 "http://127.0.0.1:$p/" || curl -sk -o /dev/null --max-time 2 "https://127.0.0.1:$p/"; then
     echo "port $p is already in use (a server from an earlier run?). Stop it and start again." >&2; exit 2
   fi
@@ -24,8 +25,18 @@ SUDS_ENV=production SUDS_DATA_DIR=/tmp/suds-setup-data PORT=8095 SUDS_ADMIN_PASS
 SETUP_SERVER=$!; trap 'kill $SERVER $SETUP_SERVER 2>/dev/null; pkill -f "suds-setup-data" 2>/dev/null' EXIT
 for i in $(seq 1 40); do curl -sf "http://127.0.0.1:8095/api/setup/status" >/dev/null && break; sleep 0.5; done
 export SUDS_SETUP_URL="http://127.0.0.1:8095"
+# The standalone static build: no office server, no database, nothing but the files a plain web host
+# would serve. Built once here (build-local already ran above via package.json's build:local step, but
+# build-static-site re-runs it defensively) and served with the office server's own static-file logic,
+# so the check matches what a real static host returns.
+rm -rf /tmp/suds-static-site
+node scripts/build-static-site.js /tmp/suds-static-site >/dev/null
+node scripts/serve-static.js /tmp/suds-static-site "$STATIC_PORT" > /tmp/suds-static-server.log 2>&1 &
+STATIC_SERVER=$!; trap 'kill $SERVER $SETUP_SERVER $STATIC_SERVER 2>/dev/null; pkill -f "suds-setup-data" 2>/dev/null' EXIT
+for i in $(seq 1 40); do curl -sf "http://127.0.0.1:$STATIC_PORT/" >/dev/null && break; sleep 0.5; done
+export SUDS_STATIC_URL="http://127.0.0.1:$STATIC_PORT"
 fail=0
-for s in desktop navigator-flow ux-features local-mode sync-two-way spreadsheets sample-data resource-profiles forms region dates setup; do
+for s in desktop navigator-flow ux-features local-mode sync-two-way spreadsheets sample-data resource-profiles forms region dates setup static-site; do
   echo "=== $s"
   if node scripts/ui/$s.mjs > /tmp/suds-ui-$s.log 2>&1; then grep -v '^\[2m' /tmp/suds-ui-$s.log | tail -6; else echo "FAILED"; grep -v '^\[2m' /tmp/suds-ui-$s.log | tail -25; fail=1; fi
 done

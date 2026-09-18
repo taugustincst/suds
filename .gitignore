@@ -15,3 +15,6 @@ android-signing/
 *.jks
 *.keystore
 SUDS_KEYSTORE_BASE64.txt
+
+# Build output of scripts/build-static-site.js — generated, published to gh-pages by CI, never committed here.
+/_site/

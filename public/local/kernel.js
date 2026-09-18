@@ -6137,7 +6137,7 @@ var require_config = __commonJS({
       return import_buffer.Buffer.from(hex, "hex");
     }
     var config = {
-      version: true ? "1.7.1" : "local",
+      version: true ? "1.8.0" : "local",
       env: "local",
       isProd: true,
       isTest: false,

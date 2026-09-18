@@ -1,0 +1,56 @@
+name: Web app
+# Publishes the standalone, browser-only build (scripts/build-static-site.js) to GitHub Pages: a public
+# URL that needs no office server, no Node process and no database — everything runs in the visitor's own
+# browser, the same as the phone apps. Uses no marketplace actions: the site is pushed to a gh-pages
+# branch with plain git and Pages is enabled with `gh api`, both already on the hosted runner.
+on:
+  push:
+    branches: [main]
+    paths: ['public/**', 'server/**', 'local/**', 'scripts/build-static-site.js', 'scripts/build-local.js', '.github/workflows/web-app.yml']
+  workflow_dispatch: {}
+permissions:
+  contents: write
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out
+        run: git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
+      - name: Build the standalone site
+        working-directory: src
+        run: npm ci --no-audit --no-fund && node scripts/build-static-site.js _site
+      - name: Verify it actually boots with no backend
+        working-directory: src
+        run: |
+          npm i --no-save --no-audit --no-fund playwright@1.56.1 && npx playwright install --with-deps chromium
+          node scripts/serve-static.js _site 8877 & echo $! > /tmp/static.pid
+          for i in $(seq 1 40); do curl -sf http://127.0.0.1:8877/ >/dev/null && break; sleep 0.5; done
+          SUDS_STATIC_URL=http://127.0.0.1:8877 node scripts/ui/static-site.mjs
+          kill "$(cat /tmp/static.pid)" 2>/dev/null || true
+      - name: Publish to the gh-pages branch
+        working-directory: src
+        run: |
+          cd _site
+          git init -q
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -q -b gh-pages
+          touch .nojekyll  # Pages runs everything through Jekyll by default; this app needs none of that
+          git add -A
+          git commit -q -m "Deploy ${GITHUB_SHA}"
+          git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages:gh-pages
+      - name: Enable GitHub Pages, if it is not already
+        run: |
+          if gh api "repos/${GITHUB_REPOSITORY}/pages" >/dev/null 2>&1; then
+            echo "Pages already enabled."
+          else
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/pages" -f "source[branch]=gh-pages" -f "source[path]=/" 2>&1 && echo "Pages enabled." || {
+              echo "::warning::Could not enable Pages automatically (the token may lack the 'pages' permission). The site is pushed to gh-pages — enable it once by hand: Settings > Pages > Source: Deploy from a branch > gh-pages > / (root)."
+            }
+          fi
+      - name: Print the URL
+        run: |
+          IFS='/' read -r _ owner repo <<< "/${GITHUB_REPOSITORY}"
+          echo "https://${owner}.github.io/${repo}/"
