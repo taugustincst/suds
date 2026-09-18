@@ -13,13 +13,16 @@ page.on('response', r => { if (r.status() >= 500) errors.push(`HTTP ${r.status()
 const shot = async (name) => page.screenshot({ path: `/tmp/suds-shots/${name}.png`, fullPage: false });
 // "Has it finished loading?" is a question about a few seconds, not about one instant: a slower machine
 // answers no at 600ms and yes at 900ms. Wait for the placeholder to go, then assert on what is left.
+// Escape starts closing a dialog; on a slower machine its backdrop is still catching clicks when the next
+// step lands. Wait for it to be gone.
+const closeDialog = async () => { await page.keyboard.press('Escape'); await until(async () => !(await page.$('.modal-bg'))); };
 const loaded = async () => { await page.waitForSelector('.main .boot', { state: 'detached', timeout: 10000 }).catch(() => {}); return !(await page.$('.main .boot')); };
 await page.goto(base + '/#/login');
 await page.fill('input[name=username]', 'jwalker'); await page.fill('input[name=password]', 'Navigator2026!!');
 await page.click('button[type=submit]');
 await page.waitForSelector('.layout', { timeout: 8000 }); loggedIn = true; await dismissTour(page);
 await shot('dashboard');
-const views = ['clients', 'tasks', 'interventions', 'calls', 'time', 'referrals', 'resources', 'notes', 'imports', 'budget', 'reports', 'admin', 'profile', 'admin?tab=audit', 'admin?tab=settings', 'admin?tab=apikeys', 'admin?tab=system', 'budget?tab=expenditures', 'budget?tab=analysis'];
+const views = ['clients', 'waitlist', 'tasks', 'supervision', 'interventions', 'calls', 'calls?method=text', 'forms', 'time', 'overdose', 'referrals', 'resources', 'notes', 'imports', 'budget', 'reports', 'funder', 'admin', 'profile', 'admin?tab=audit', 'admin?tab=settings', 'admin?tab=apikeys', 'admin?tab=system', 'budget?tab=expenditures', 'budget?tab=analysis'];
 for (const v of views) {
   await page.goto(`${base}/#/${v}`); await page.waitForTimeout(700);
   ok(await loaded(), `${v} finishes loading`);
@@ -41,12 +44,12 @@ for (const t of ['overview', 'timeline', 'interventions', 'calls', 'notes', 'ref
 }
 // open modals
 await page.goto(`${base}/#/client/${cid}/overview`); await page.waitForTimeout(500);
-await page.click('text=+ Intervention'); await page.waitForTimeout(300); ok(await page.$('.modal'), 'the intervention form opens'); await shot('modal_intervention'); await page.keyboard.press('Escape');
-await page.click('text=+ Note'); await page.waitForTimeout(300); await page.selectOption('select[name=format]', 'SOAP'); await page.waitForTimeout(200); ok(await page.$('.modal textarea, .modal input'), 'the note form opens and takes a format'); await shot('modal_note'); await page.keyboard.press('Escape');
-await page.click('text=Edit'); await page.waitForTimeout(300); ok(await page.$('.modal'), 'the client edit form opens'); await shot('modal_client_edit'); await page.keyboard.press('Escape');
+await page.click('text=+ Intervention'); await page.waitForTimeout(300); ok(await page.$('.modal'), 'the intervention form opens'); await shot('modal_intervention'); await closeDialog();
+await page.click('text=+ Note'); await page.waitForTimeout(300); await page.selectOption('select[name=format]', 'SOAP'); await page.waitForTimeout(200); ok(await page.$('.modal textarea, .modal input'), 'the note form opens and takes a format'); await shot('modal_note'); await closeDialog();
+await page.click('text=Edit'); await page.waitForTimeout(300); ok(await page.$('.modal'), 'the client edit form opens'); await shot('modal_client_edit'); await closeDialog();
 // open a note
 await page.goto(`${base}/#/client/${cid}/notes`); await page.waitForTimeout(600); await page.waitForSelector('tbody tr.click', { timeout: 15000 }); await page.click('tbody tr.click'); await page.waitForTimeout(500);
-ok(await page.$('.modal'), 'a note opens from the list'); await shot('note_view'); await page.keyboard.press('Escape');
+ok(await page.$('.modal'), 'a note opens from the list'); await shot('note_view'); await closeDialog();
 // imports: paste
 await page.goto(base + '/#/imports'); await page.waitForTimeout(500);
 await page.fill('textarea', '# Field visit with Nguyen, Jamie\nDate: 2026-09-10\nMet at shelter, provided naloxone.\n\n---\n\n# Call re: C26-0002\nLeft voicemail.');

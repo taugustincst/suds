@@ -12,7 +12,7 @@ function open(dbPath = config.dbPath) {
   db = new DatabaseSync(dbPath);
   db.exec('PRAGMA busy_timeout = 5000');
   initialise(db, fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'), dbPath);
-  if (dbPath !== ':memory:') { try { fs.chmodSync(dbPath, 0o600); } catch {} }
+  if (dbPath !== ':memory:') for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) { try { fs.chmodSync(f, 0o600); } catch {} }
   return db;
 }
 

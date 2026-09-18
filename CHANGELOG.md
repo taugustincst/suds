@@ -2,6 +2,29 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## 1.7.1 — 2026-09-18
+
+Production-readiness fixes found by running the first-run wizard the way a county does, and by inspecting
+what 1.7.0 added.
+
+- **Username validation was silently off** on the setup wizard and the add-staff form. The HTML pattern
+  reached the browser with an unescaped `-`, which modern Chrome rejects, logs, and ignores — so any
+  string was accepted as a username. Fixed in both forms.
+- **The database's write-ahead log and shared-memory files were world-readable** on a production server:
+  SQLite creates them itself, and only the database file was being made private. In production the
+  process now creates every file private by default, and existing `-wal`/`-shm` files are fixed on open.
+- **Releasing from the Actions tab never built the Android app.** The tag the release workflow creates
+  raises no push event, so the Android workflow's tag trigger never fired and the APK was quietly
+  missing from every release started that way. The release workflow now starts the Android build itself.
+  (The APK is attached only when the signing secrets are set — see docs/MOBILE_APPS.md.)
+- **The first-run wizard is part of the browser suite** (`scripts/ui/setup.mjs`, run against an
+  unconfigured production server): wizard, HTTPS restart, first sign-in, key-backup prompt, first
+  backup, and that setup cannot be run twice. The desktop crawl also covers the screens 1.7.0 added
+  (Supervision, Waitlist, Overdose, Funder report, Forms, the Texts filter). The suite refuses to start
+  on a port a stale server is holding, instead of reporting an app defect that is not one.
+- `scripts/android-keystore.sh` creates the county's Android signing key once, with the checks and the
+  warnings that key deserves; keystores are ignored by git.
+
 ## 1.7.0 — 2026-09-17
 
 This release came out of a detailed review of the platform. It fixes things that could break a county's

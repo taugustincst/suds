@@ -10,7 +10,7 @@ route('setup', async () => {
     { name: 'org_name', label: 'Program name', required: true, placeholder: 'e.g. Clark County SUD Navigation Program', span: true },
     { name: 'county_name', label: 'County' }, { name: 'program_contact', label: 'Privacy officer / program contact' },
     { type: 'section', label: 'Administrator account (you)' },
-    { name: 'admin_display_name', label: 'Your name', required: true }, { name: 'admin_username', label: 'Username', required: true, pattern: '[a-zA-Z0-9._@\-]+', placeholder: 'e.g. jsmith' },
+    { name: 'admin_display_name', label: 'Your name', required: true }, { name: 'admin_username', label: 'Username', required: true, pattern: '[a-zA-Z0-9._@\\-]+', placeholder: 'e.g. jsmith' },
     { name: 'admin_password', label: 'Password', type: 'password', required: true, autocomplete: 'new-password', help: '12+ characters with upper and lower case, a number and a symbol.' }, { name: 'confirm', label: 'Confirm password', type: 'password', required: true, autocomplete: 'new-password' },
     { type: 'section', label: 'Who can reach SUDS' },
     { name: 'network', label: 'Access', type: 'select', noBlank: true, required: true, value: 'lan', options: [{ value: 'lan', label: 'Phones, tablets and other computers on the office network (recommended for mobile use)' }, { value: 'local', label: 'Only this computer' }], span: true },

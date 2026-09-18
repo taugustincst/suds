@@ -1,11 +1,13 @@
 # Releasing SUDS
 
 ## Production readiness checklist (per release)
-- [ ] `npm test` passes and the browser suite (`scripts/ui/run-all.sh`, eleven scripts) exits 0
+- [ ] `npm test` passes and the browser suite (`scripts/ui/run-all.sh`, twelve scripts including the first-run wizard) exits 0
 - [ ] `CHANGELOG.md` has a section for the version, `package.json` version matches
 - [ ] Docs updated (`README.md`, `docs/INSTALL.md`, `docs/DEPLOYMENT.md`, `docs/HIPAA.md`)
 - [ ] No secrets, databases or `data/` contents in the tree (`git status`, `.gitignore`)
 - [ ] Upgrade path: schema migrations in `server/db.js` run on start; take a backup before upgrading
+- [ ] Android: the four signing secrets are set, so the release gets a signed APK rather than a skipped
+      publish step (`scripts/android-keystore.sh`, see docs/MOBILE_APPS.md)
 
 ## Cutting a release
 ```bash
