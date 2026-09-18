@@ -42,6 +42,18 @@ ok(await page.$('input[name=username]'), 'the local kernel booted and offered fi
   const rowsAfter = await until(async () => { const n = await page.$$eval('tbody tr', r => r.length); return n > rowsBefore ? n : 0; }) || await page.$$eval('tbody tr', r => r.length);
   ok(rowsAfter > rowsBefore, 'syncing brought the office caseload onto the device', { before: rowsBefore, after: rowsAfter });
   await page.screenshot({ path: '/tmp/suds-shots/local_clients.png' });
+  // Locked out or forgot the password, with no office admin to ask: the login screen offers a self-service
+  // reset instead of a dead end.
+  await page.click('text=Sign out'); await page.waitForSelector('input[name=username]', { timeout: 8000 });
+  ok(!(await page.$('input[name=display_name]')), 'signing out lands back on the login screen, not first-run setup', page.url());
+  ok(await page.$('text=Reset this device'), 'a locked-out device offers a self-service reset instead of only "ask an admin"');
+  await page.click('text=Reset this device'); await page.waitForSelector('.modal');
+  await page.fill('#reset-device-confirm', 'nope');
+  await page.click('.modal button.danger'); await page.waitForTimeout(400);
+  ok(!!(await page.$('.modal')), 'a wrong confirmation phrase does not erase the device');
+  await page.fill('#reset-device-confirm', 'ERASE');
+  await page.click('.modal button.danger'); await page.waitForSelector('input[name=display_name]', { timeout: 10000 });
+  ok(!!(await page.$('input[name=display_name]')), 'typing ERASE wipes the device and returns to first-run setup', page.url());
 }
 finish(errors.slice(0, 8));
 await browser.close();
