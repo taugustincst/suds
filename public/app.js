@@ -181,6 +181,49 @@ export function confirmDialog(title, message, { danger = false, okText = 'Confir
   });
 }
 
+// A locked-out or forgotten-password local device has no admin to ask for a reset, and a device whose
+// kernel failed to start (a bad migration, a lost encryption key) never even reaches window.SUDS_LOCAL —
+// so this talks to the on-device IndexedDB store directly, the same one local/shims/sqlite.js persists to,
+// rather than going through the kernel. Duplicated rather than imported: public/ is unbundled and cannot
+// reach a module esbuild wrote for local/kernel.js's bundle. Keep the store/key names in sync with that file.
+function wipeLocalDatabase() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('suds-local', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('kv');
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      const t = req.result.transaction('kv', 'readwrite');
+      t.objectStore('kv').delete('db');
+      t.oncomplete = resolve;
+      t.onerror = () => reject(t.error);
+    };
+  }).then(() => { try { localStorage.removeItem('suds.local.session'); } catch {} });
+}
+/** A "Reset this device" link + typed-confirmation dialog, usable wherever a local device might need
+ *  self-service recovery: the normal login screen, and the boot-failure screen (see boot() below), which
+ *  cannot rely on window.SUDS_LOCAL because reaching it is exactly what failed. */
+export function offerDeviceReset({ onDone } = {}) {
+  const openResetDialog = () => {
+    let confirmBox;
+    const m = modal('Reset this device', h('div', {},
+      h('p', {}, 'This permanently erases everything SUDS has stored on this device — clients, visits, notes, everything — and signs out whatever account is set up here. There is no undo.'),
+      h('p', { class: 'banner warn small' }, 'Anything recorded on this device that has not been synced to the office SUDS server is lost for good. If there is any chance the office server has a copy and you can reach it later, consider waiting instead.'),
+      h('p', {}, 'Afterwards this device is treated as brand new: the first-run setup runs again and a new local account is created.'),
+      h('div', { class: 'field' }, h('label', { for: 'reset-device-confirm' }, 'Type ERASE to confirm *'), confirmBox = h('input', { id: 'reset-device-confirm', autocomplete: 'off' })),
+      h('div', { class: 'btn-row' },
+        h('button', { class: 'btn', onClick: () => m.close() }, 'Cancel'),
+        h('button', { class: 'btn danger', onClick: async () => {
+          if (confirmBox.value.trim() !== 'ERASE') { confirmBox.focus(); return; }
+          await wipeLocalDatabase();
+          onDone ? onDone() : location.reload();
+        } }, 'Erase this device'))));
+  };
+  return h('p', { class: 'small muted center mt' },
+    'Locked out or forgot your password? ',
+    h('a', { href: '#', onClick: (e) => { e.preventDefault(); openResetDialog(); } }, 'Reset this device'),
+    ' — this erases all SUDS data stored here and starts over.');
+}
+
 // ---------- formatting ----------
 export const fmt = {
   // A value like 2026-09-26 is a calendar day, not an instant: parse it as local midnight so it never drifts to the day before.
@@ -621,13 +664,18 @@ export async function boot() {
       });
     } catch (e) {
       // Two specific failures need their own explanation rather than a raw message.
-      const msg = e && e.code === 'SUDS_ALREADY_OPEN'
+      const alreadyOpen = e && e.code === 'SUDS_ALREADY_OPEN';
+      const msg = alreadyOpen
         ? 'SUDS is already open in another window on this device. Switch to that window, or close it and reload this page.'
         : e && e.code === 'SUDS_KEY_LOST'
           ? e.message
           : 'Could not start SUDS on this device: ' + (e && e.message);
-      document.getElementById('app').innerHTML = '<div class="boot error">' + msg.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])) + '</div>';
       console.error(e);
+      const app = document.getElementById('app');
+      clear(app);
+      // This is the one screen a locked-out or broken device can reach without a kernel — reset has to work
+      // here directly. Left out for SUDS_ALREADY_OPEN: that device and its data are fine, just open elsewhere.
+      app.append(h('div', { class: 'boot error' }, msg), alreadyOpen ? null : offerDeviceReset());
       return;
     }
     window.addEventListener('pagehide', () => { window.SUDS_LOCAL && window.SUDS_LOCAL.flush(); });
