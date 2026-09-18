@@ -51,7 +51,15 @@ ok(!/[^A-Za-z]Roi[^A-Za-z]/.test(await page.content()), 'no lingering "Roi" casi
 await page.goto(`${base}/#/client/${cid}/overview`); await page.waitForTimeout(500);
 await page.click('text=+ Intervention'); await page.waitForTimeout(300); ok(await page.$('.modal'), 'the intervention form opens'); await shot('modal_intervention'); await closeDialog();
 await page.click('text=+ Note'); await page.waitForTimeout(300); await page.selectOption('select[name=format]', 'SOAP'); await page.waitForTimeout(200); ok(await page.$('.modal textarea, .modal input'), 'the note form opens and takes a format'); await shot('modal_note'); await closeDialog();
-await page.click('text=Edit'); await page.waitForTimeout(300); ok(await page.$('.modal'), 'the client edit form opens'); await shot('modal_client_edit'); await closeDialog();
+await page.click('text=Edit'); await page.waitForTimeout(300); ok(await page.$('.modal'), 'the client edit form opens'); await shot('modal_client_edit');
+// referral date + engagement date compute "time until engaged", shown on the client and in the list
+await page.fill('.modal input[name=referral_date]', '2026-01-01');
+await page.fill('.modal input[name=engagement_date]', '2026-01-11');
+await page.click('.modal button[type=submit]'); await page.waitForTimeout(700);
+await page.goto(`${base}/#/client/${cid}/overview`); await page.waitForTimeout(600);
+ok((await page.content()).includes('10 days'), 'time until engaged is computed from the referral and engagement dates');
+await page.goto(`${base}/#/clients`); await page.waitForTimeout(700);
+ok((await page.content()).includes('10d'), 'the clients list shows the same time-to-engage figure');
 // open a note
 await page.goto(`${base}/#/client/${cid}/notes`); await page.waitForTimeout(600); await page.waitForSelector('tbody tr.click', { timeout: 15000 }); await page.click('tbody tr.click'); await page.waitForTimeout(500);
 ok(await page.$('.modal'), 'a note opens from the list'); await shot('note_view'); await closeDialog();
