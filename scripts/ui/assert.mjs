@@ -4,6 +4,22 @@
 // actually checked was printed with console.log and compared to nothing. sync-two-way.mjs printed
 // "office sees phone goal: false" and exited 0 — the two-way sync test went green with sync broken.
 // ok() makes an expectation a real pass or fail.
+/**
+ * Poll until `fn()` is truthy, then return it; give up at `timeout` and return the last value.
+ * Browser work is asynchronous: sampling for an outcome at a fixed moment passes on a fast machine
+ * and fails on a slow one, which is a broken test rather than a broken app.
+ */
+export async function until(fn, { timeout = 10000, every = 200 } = {}) {
+  const deadline = Date.now() + timeout;
+  let last;
+  for (;;) {
+    last = await fn();
+    if (last) return last;
+    if (Date.now() >= deadline) return last;
+    await new Promise(r => setTimeout(r, every));
+  }
+}
+
 export function makeChecks(name) {
   const failures = [];
   const results = [];

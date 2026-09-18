@@ -1,6 +1,6 @@
 // Form library + clickable cards: library cards, designer, fill from a client record with autofill, complete, PDF, attach a signed copy; office and phone-only mode.
 import { chromium } from 'playwright';
-import { makeChecks } from './assert.mjs';
+import { makeChecks, until } from './assert.mjs';
 import fs from 'node:fs';
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const browser = await chromium.launch(); const errors = [];
@@ -37,6 +37,7 @@ async function run(label, root, login) {
   ok(!!prefilled, `${label}: the form opens with the client's details already filled in`, prefilled);
   await page.fill('.ff-modal [data-field=recipient] input', 'County OTP'); await page.fill('.ff-modal [data-field=purpose] textarea', 'MAT intake coordination'); await page.selectOption('.ff-modal [data-field=info] select', 'Referral summary'); await page.fill('.ff-modal [data-field=expires] input', '2027-01-01'); await page.check('.ff-modal [data-field=redisclosure] input'); await page.fill('.ff-modal [data-field=client_sig] input', prefilled);
   await page.click('.ff-modal button:has-text("Mark completed")'); await page.waitForTimeout(300); await page.click('.modal-bg:last-child button.primary'); await page.waitForTimeout(1200);
+  await until(async () => (await page.$$eval('tbody tr', r => r.length)) === before + 1);
   const rows = await page.$$eval('tbody tr', r => r.map(x => x.textContent));
   eq(rows.length, before + 1, `${label}: the completed form is attached to the client record`);
   ok(/Completed/.test(rows[0] || ''), `${label}: and shows as completed`, (rows[0] || '').replace(/\s+/g, ' ').slice(0, 80));
@@ -60,6 +61,7 @@ async function designer() {
   await page.click('.modal button:has-text("+ Usual client header fields")'); await page.click('.modal button:has-text("+ Field")'); await page.fill('.modal .dfield:last-child input', 'Monthly income'); 
   const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.click('.modal button:has-text("Upload file")')]); await chooser.setFiles('/tmp/suds-shots/sig.png'); await page.waitForTimeout(800);
   await page.click('.modal button[type=submit]'); await page.waitForTimeout(1500);
+  await until(async () => (await page.$$eval('.tpl-card', x => x.length)) === n0 + 1);
   eq(await page.$$eval('.tpl-card', x => x.length), n0 + 1, 'designer: a county form built by hand joins the library');
   const txt = await page.textContent(`.tpl-card:has-text("Housing Assistance Application")`);
   ok(/7 fields/.test(txt), 'designer: with the fields that were added', txt.replace(/\s+/g, ' ').slice(0, 120));

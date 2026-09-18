@@ -1,5 +1,5 @@
 import { chromium } from 'playwright';
-import { makeChecks } from './assert.mjs';
+import { makeChecks, until } from './assert.mjs';
 async function dismissTour(p) { await p.evaluate(() => fetch('/api/me/prefs', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'suds' }, body: JSON.stringify({ tour_done: true }) })); await p.waitForTimeout(700); await p.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove())); }
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium/chrome' }).catch(() => chromium.launch());
@@ -51,6 +51,6 @@ ok(await page.$('.modal'), 'a note opens from the list'); await shot('note_view'
 await page.goto(base + '/#/imports'); await page.waitForTimeout(500);
 await page.fill('textarea', '# Field visit with Nguyen, Jamie\nDate: 2026-09-10\nMet at shelter, provided naloxone.\n\n---\n\n# Call re: C26-0002\nLeft voicemail.');
 await page.click('text=Stage pasted text'); await page.waitForTimeout(800); await shot('import_review');
-ok(/#\/imports\//.test(page.url()), 'pasted field notes are staged and opened for review', page.url());
+ok(await until(() => /#\/imports\/.+/.test(page.url())), 'pasted field notes are staged and opened for review', page.url());
 finish(errors);
 await browser.close();

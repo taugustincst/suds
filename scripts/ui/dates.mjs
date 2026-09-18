@@ -1,6 +1,6 @@
 // The same reminder must show the same day on the to-do list, the client timeline and Home.
 import { chromium } from 'playwright';
-import { makeChecks } from './assert.mjs';
+import { makeChecks, until } from './assert.mjs';
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const browser = await chromium.launch(); const errors = [];
 const { ok, finish } = makeChecks('dates');
@@ -18,7 +18,7 @@ const timeline = async () => { await page.goto(`${base}/#/client/${cid}/timeline
 const tl = await timeline();
 ok(tl.length > 0, 'the reminder appears on the client timeline');
 await page.goto(base + '/#/tasks'); await page.waitForTimeout(900);
-const row = (await page.$$eval('tbody tr', tr => tr.map(x => x.textContent.replace(/\s+/g, ' ')))).find(t => /Bring ID to DMV appt/.test(t)) || '';
+const row = await until(async () => (await page.$$eval('tbody tr', tr => tr.map(x => x.textContent.replace(/\s+/g, ' ')))).find(t => /Bring ID to DMV appt/.test(t))) || '';
 ok(row.length > 0, 'and on the to-do list');
 ok(tl.includes(expected), `the timeline shows the day it is due (${expected})`, tl.slice(0, 80));
 ok(row.includes(expected), `the to-do list shows the same day (${expected})`, row.slice(0, 90));
