@@ -47,10 +47,13 @@ jobs:
           if gh release view "$ver" >/dev/null 2>&1; then gh release upload "$ver" "suds-$ver.zip" --clobber; else
             gh release create "$ver" "suds-$ver.zip" --target "$(git rev-parse HEAD)" --title "SUDS $ver" --notes "${notes:-See CHANGELOG.md}"; fi
           echo "Published https://github.com/${GITHUB_REPOSITORY}/releases/tag/$ver"
-      # A tag created here with GITHUB_TOKEN raises no push event, so the Android workflow's tag trigger
-      # never fires for a release started from the Actions tab. Start it explicitly; workflow_dispatch is
-      # the one kind of event GITHUB_TOKEN is allowed to raise.
+      # A real `git push origin vX.Y.Z` already fires mobile-android.yml's own tag trigger, so nothing
+      # extra is needed there. But a release started from the Actions tab (workflow_dispatch) creates its
+      # tag through the API with GITHUB_TOKEN, which raises no push event — the Android workflow's tag
+      # trigger never fires, and the APK went missing from every release started that way. Dispatch it
+      # explicitly only on that path, so a real tag push never gets a duplicate build.
       - name: Build and attach the Android app
+        if: github.event_name == 'workflow_dispatch'
         working-directory: src
         run: |
           ver="v$(node -p "require('./package.json').version")"
