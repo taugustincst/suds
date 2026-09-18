@@ -12,7 +12,7 @@ route('dashboard', async () => {
   if (d.notes.unsigned) alerts.push([d.notes.unsigned_overdue ? 'danger' : 'warn', `${d.notes.unsigned} unsigned note${d.notes.unsigned > 1 ? 's' : ''}`, '#/notes?status=draft&mine=1']);
   if (cont.staged_imports) alerts.push(['info', `${cont.staged_imports} imported note${cont.staged_imports > 1 ? 's' : ''} to review`, '#/imports']);
   if (c.no_contact_30d) alerts.push(['warn', `${c.no_contact_30d} client${c.no_contact_30d > 1 ? 's' : ''} not contacted in 30 days`, '#/clients?stale=1']);
-  if (d.consents_expiring.length) alerts.push(['warn', `${d.consents_expiring.length} consent${d.consents_expiring.length > 1 ? 's' : ''} expiring soon`, '#/clients']);
+  if (d.consents_expiring.length) alerts.push(['warn', `${d.consents_expiring.length} consent${d.consents_expiring.length > 1 ? 's' : ''} expiring soon`, '#/clients?consent_expiring=1']);
   // Empty program: offer sample data (office admins, or anyone on a phone-only copy)
   let sample = null;
   if (!c.active && !c.waitlist && !caseload.caseload.length && (state.local || can('settings:manage'))) {
@@ -80,7 +80,7 @@ route('dashboard', async () => {
         cont.recent.length ? h('div', {}, h('h4', {}, 'Recent clients'), h('div', { class: 'row' }, cont.recent.slice(0, 8).map(x => h('a', { class: 'chip', href: `#/client/${x.id}` }, x.display_name)))) : null,
         !cont.drafts.length && !cont.recent.length ? emptyState('You are all caught up', 'Clients you open and notes you start will show here so you can pick them up on your phone or computer.') : null)),
     h('div', { class: 'grid cols-4 mb' },
-      stat('Active clients', fmt.num(c.active), '', 'clients?status=active'), stat('High-risk clients', fmt.num(c.high_risk), c.high_risk ? 'danger' : '', 'clients?status=active&risk=high'), stat('Visits & services (90 days)', fmt.num(i.total), '', 'interventions'), stat('Naloxone kits given', fmt.num(i.naloxone_kits), '', 'interventions?type=naloxone_distribution'),
+      stat('Active clients', fmt.num(c.active), '', 'clients?status=active', 'All active clients, any time — not limited to the last 90 days'), stat('High-risk clients', fmt.num(c.high_risk), c.high_risk ? 'danger' : '', 'clients?status=active&risk=high'), stat('Visits & services (90 days)', fmt.num(i.total), '', 'interventions', `${fmt.date(d.from)} – ${fmt.date(d.to)}; other numbers on this page are all-time`), stat('Naloxone kits given', fmt.num(i.naloxone_kits), '', 'interventions?type=naloxone_distribution'),
       stat('Calls', fmt.num(d.calls.total), '', 'calls'), stat('Open referrals', fmt.num(d.referrals.open), d.referrals.open ? 'warn' : '', 'referrals?status=open'), d.time ? stat('My hours logged', (d.time.minutes / 60).toFixed(1), '', 'time') : null, d.budget ? stat('Spent of budget', `${fmt.money(d.budget.spent)} / ${fmt.money(d.budget.total)}`, '', 'budget') : null),
     h('div', { class: 'grid cols-2' },
       h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Clients who need a check-in'), h('a', { href: '#/clients' }, 'All clients')),

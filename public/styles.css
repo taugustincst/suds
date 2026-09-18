@@ -205,8 +205,9 @@ a.bar.link:hover .lbl { color: var(--primary); text-decoration: underline; } a.b
 .today-item.link { cursor: pointer; } .today-item.link:hover { background: var(--panel-2); border-radius: 6px; }
 
 /* form library & filler */
-.tpl-card { display: flex; gap: .9rem; cursor: pointer; } .tpl-card:hover { border-color: var(--primary); } .tpl-card.inactive { opacity: .6; }
+.tpl-card { display: flex; gap: .9rem; } .tpl-card:hover { border-color: var(--primary); } .tpl-card.inactive { opacity: .6; }
 .tpl-icon { font-size: 1.8rem; line-height: 1; padding-top: .1rem; } .tpl-desc { margin: .25rem 0; color: var(--text); } .btn-row.tight { margin-top: .5rem; gap: .35rem; }
+.tpl-open-name { background: none; border: none; padding: 0; margin: 0; font: inherit; font-weight: 700; color: inherit; cursor: pointer; text-align: left; } .tpl-open-name:hover { color: var(--primary); text-decoration: underline; }
 .designer { display: flex; flex-direction: column; gap: .4rem; } .dfield { display: flex; gap: .6rem; align-items: flex-start; padding: .45rem .55rem; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); }
 .dfield.section { background: var(--info-soft); } .dfield.note { background: var(--panel); } .dfield .dgrip { width: 1.4rem; padding-top: .5rem; text-align: right; } .dfield select { max-width: 170px; } .dfield input { min-width: 0; }
 .dfield .row.small label { display: inline-flex; align-items: center; gap: .3rem; margin-right: .6rem; } .dfield .row.small select { max-width: 200px; }

@@ -38,7 +38,11 @@ route('sync', async () => {
   const log = h('div', { class: 'small muted mt' });
   const f = form([
     { name: 'server', label: 'Office SUDS address', required: true, value: serverGuess, help: 'Usually https://suds.local on the office Wi-Fi. Shown under Settings → Network & devices on the office computer.', span: true },
-    { name: 'username', label: 'Your office username', required: true, value: st.username || state.user.username }, { name: 'password', label: 'Office password', type: 'password', required: true },
+    { name: 'username', label: 'Your office username', required: true, value: st.username || state.user.username },
+    // Deliberately a different field name/autocomplete token than the local sign-in password: it is a
+    // separate office-account credential, and a same-named field invites the browser to autofill the
+    // device password here, which looks like (and would be) the wrong one.
+    { name: 'password', label: 'Office password', type: 'password', required: true, autocomplete: 'off', help: 'Your office SUDS account password — not the password you use to unlock this device.' },
     { name: 'code', label: 'MFA code (if your office account uses it)', placeholder: '123456' },
   ], { submitText: 'Sync now', onSubmit: async (d) => {
     log.textContent = 'Connecting…';

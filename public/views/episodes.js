@@ -56,8 +56,9 @@ export async function episodesPanel(clientId, { onChange } = {}) {
     can('episodes:write') && open ? h('button', { class: 'btn sm', onClick: () => closeEpisode(open) }, 'Discharge') : null));
 
   if (!rows.length) {
-    box.append(emptyState('No episodes yet', 'An episode is one period of service. Funders count admissions and discharges per episode, and closing one is what takes a client off the active caseload.',
-      can('episodes:write') ? h('button', { class: 'btn primary', onClick: openEpisode }, 'Start an episode') : null));
+    // The card-head button above already offers this when there is no open episode, so the empty state
+    // itself does not repeat it — two adjacent "Start an episode" buttons doing the same thing.
+    box.append(emptyState('No episodes yet', 'An episode is one period of service. Funders count admissions and discharges per episode, and closing one is what takes a client off the active caseload.'));
   } else {
     box.append(table([
       { label: 'Opened', render: e => fmt.date(e.opened_at) },

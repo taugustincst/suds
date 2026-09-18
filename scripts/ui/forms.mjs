@@ -25,7 +25,7 @@ async function run(label, root, login) {
   // --- library ---
   await page.goto(root + '#/forms'); await page.waitForTimeout(1200);
   ok((await page.$$('.tpl-card')).length >= 3, `${label}: the library holds the starter forms`);
-  await page.click('.tpl-card'); await page.waitForSelector('.modal');
+  await page.click('.tpl-open-name'); await page.waitForSelector('.modal');
   ok((await page.textContent('.modal h2')).trim().length > 0, `${label}: a form card opens the form`);
   await page.keyboard.press('Escape'); await page.waitForTimeout(200);
   // --- fill from the client record ---

@@ -95,7 +95,15 @@ route('clients', async (r) => {
   if (risk) rows = rows.filter(c => risk === 'high' ? ['high', 'critical'].includes(c.risk_level) : c.risk_level === risk);
   if (substance) rows = rows.filter(c => c.primary_substance === substance);
   if (mat) rows = rows.filter(c => (c.mat_status || 'none') === mat);
-  const activeFilters = [r.query.get('stale') === '1' ? 'no contact in 30 days' : null, risk ? `risk: ${risk === 'high' ? 'high or critical' : risk}` : null, substance ? `substance: ${fmt.label(substance)}` : null, mat ? `MAT: ${fmt.label(mat)}` : null].filter(Boolean);
+  // Same dashboard alert badge everything else links to a filtered view here, so this one does too,
+  // instead of dropping onto the unfiltered caseload.
+  let expiring = null;
+  if (r.query.get('consent_expiring') === '1') {
+    const rep = await get('/api/reports/dashboard');
+    expiring = new Map(rep.consents_expiring.map(x => [x.client_id, x.expires_at]));
+    rows = rows.filter(c => expiring.has(c.id));
+  }
+  const activeFilters = [r.query.get('stale') === '1' ? 'no contact in 30 days' : null, risk ? `risk: ${risk === 'high' ? 'high or critical' : risk}` : null, substance ? `substance: ${fmt.label(substance)}` : null, mat ? `MAT: ${fmt.label(mat)}` : null, expiring ? 'consent expiring soon' : null].filter(Boolean);
   const deid = !can('clients:read');
   const search = h('input', { type: 'search', value: q, placeholder: 'Exact last name, "Last, First", phone, DOB (YYYY-MM-DD) or client code', onKeydown: (e) => { if (e.key === 'Enter') nav(`clients?status=${status}&q=${encodeURIComponent(search.value.trim())}`); } });
   const statusSel = h('select', { onChange: () => nav(`clients?status=${statusSel.value}&q=${encodeURIComponent(q)}&assigned_to=${assigned}`) }, ['active', 'waitlist', 'inactive', 'closed', 'deceased', 'all'].map(s => h('option', { value: s, selected: s === status }, fmt.label(s))));
@@ -114,5 +122,6 @@ route('clients', async (r) => {
       { label: 'Assigned', key: 'assigned_workers' },
       { label: 'Intake', render: c => fmt.date(c.intake_date) },
       { label: 'Last contact', render: c => h('span', { style: !c.last_contact || Date.now() - Date.parse(c.last_contact) > 30 * 86400000 ? { color: 'var(--warn)' } : {} }, fmt.ago(c.last_contact)) },
-    ], rows, { onRow: deid ? null : (c) => nav(`client/${c.id}`), empty: q ? 'No one matches. Try the exact last name, the full phone number, date of birth (YYYY-MM-DD) or the client code — names are stored encrypted, so partial names do not match.' : (status === 'active' ? 'No active clients yet. Click + New client to add your first.' : 'No clients with this status.') }));
+      expiring ? { label: 'Consent expires', render: c => fmt.date(expiring.get(c.id)) } : null,
+    ].filter(Boolean), rows, { onRow: deid ? null : (c) => nav(`client/${c.id}`), empty: q ? 'No one matches. Try the exact last name, the full phone number, date of birth (YYYY-MM-DD) or the client code — names are stored encrypted, so partial names do not match.' : (status === 'active' ? 'No active clients yet. Click + New client to add your first.' : 'No clients with this status.') }));
 });
