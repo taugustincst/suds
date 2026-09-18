@@ -19,6 +19,39 @@ The SUDS phone app is a **complete copy of SUDS that runs on the phone**. Nothin
 ## What syncs
 Clients, care-team assignments, visits & services, calls, time entries, referrals, resources, reminders/tasks, funding sources, budget lines, expenditures, notes and addenda, consents and disclosures, program settings. Only records the office account may see (its caseload, unless a supervisor) are downloaded; uploads outside the caseload are rejected and reported.
 
+## Android — the signing key (do this once)
+
+Android identifies an app by the key its APK is signed with. An update signed with a different key does
+not install over the existing one: staff would have to uninstall SUDS first, losing anything on the device
+that has not synced. So the county needs **one** release key, created once and kept forever.
+
+```bash
+scripts/android-keystore.sh            # writes ./android-signing/suds-release.jks
+```
+
+Run it on a computer the county controls — not in CI, not in a throwaway environment. It generates an
+RSA-4096 key valid for 10,000 days, checks that the keystore opens with the password it just set, and
+prints the four values to add under **Settings → Secrets and variables → Actions → New repository
+secret**:
+
+| Secret | What it is |
+| --- | --- |
+| `SUDS_KEYSTORE_BASE64` | the keystore file, base64 on one line (the script writes it to a file for copying) |
+| `SUDS_KEYSTORE_PASSWORD` | the store password it generated |
+| `SUDS_KEY_ALIAS` | `suds` |
+| `SUDS_KEY_PASSWORD` | the key password (the same one by default) |
+
+Then **Actions → Android app → Run workflow**, and the signed `SUDS-android.apk` is attached to the
+release for the version in `package.json`.
+
+Afterwards: put the keystore and both passwords in the county password manager, keep a second copy off
+that computer, and delete the base64 file. Until these secrets exist the workflow deliberately builds an
+unsigned **debug** APK and does not publish it — a release signed with the runner's throwaway key would
+get a different signature every build, which is the failure this key exists to prevent.
+
+To build a signed APK locally instead, export `SUDS_KEYSTORE` (path), `SUDS_KEYSTORE_PASSWORD`,
+`SUDS_KEY_ALIAS` and `SUDS_KEY_PASSWORD`, then `cd mobile/android && ./gradlew assembleRelease`.
+
 ## Android — building
 Open `mobile/android` in Android Studio → Build → Build APK(s). The bundled web app is taken from the repository's `public/` folder, which already contains the prebuilt kernel. GitHub Actions rebuilds the kernel (`npm run build:local`) and publishes the APK on every release.
 

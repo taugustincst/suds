@@ -8,3 +8,10 @@ data/
 *.db-shm
 backups/
 certs/
+
+# Android release signing. The keystore IS the app's identity: committing it would let anyone publish an
+# update county phones would accept, and losing it means staff must uninstall to upgrade.
+android-signing/
+*.jks
+*.keystore
+SUDS_KEYSTORE_BASE64.txt
