@@ -22,13 +22,14 @@ function rateLimit(key, max, windowMs) {
 // Every route module, in one place. The local kernel builds its router from LOCAL_ROUTE_MODULES below and
 // fails loudly if it is missing a loader for one, so adding a route file cannot silently leave the feature
 // out of the phone app.
-const ROUTE_MODULES = ['setup', 'auth', 'me', 'app', 'sync', 'dataimport', 'users', 'clients', 'assignments', 'episodes',
+const ROUTE_MODULES = ['setup', 'auth', 'oidc', 'me', 'app', 'sync', 'dataimport', 'users', 'clients', 'assignments', 'episodes',
   'interventions', 'overdose', 'calls', 'time', 'supervision', 'resources', 'referrals', 'tasks', 'budget', 'notes',
   'consents', 'forms', 'imports', 'reports', 'admin', 'regions', 'intake'];
 
 // Not on a device: setup and app are office-server concerns (first-run wizard, APK hosting), sync is the
-// device's own runner, and intake is an inbound API for other systems to call.
-const LOCAL_ROUTE_MODULES = ROUTE_MODULES.filter(m => !['setup', 'app', 'sync', 'intake'].includes(m));
+// device's own runner, intake is an inbound API for other systems to call, and oidc needs a live identity
+// provider to redirect to — meaningless (and always disabled) on a device with no office server behind it.
+const LOCAL_ROUTE_MODULES = ROUTE_MODULES.filter(m => !['setup', 'app', 'sync', 'intake', 'oidc'].includes(m));
 
 function buildRouter() {
   const r = new Router();

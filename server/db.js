@@ -178,6 +178,9 @@ const migrations = [
   // 10: referral and engagement dates on clients, so time-to-engagement (a common navigator KPI) can be
   //     tracked per client instead of only inferred from intake_date.
   (d) => { addColumn(d, 'clients', 'referral_date', 'TEXT'); addColumn(d, 'clients', 'engagement_date', 'TEXT'); },
+  // 11: optional single sign-on. An administrator links an existing account to the county identity
+  //     provider's 'sub' claim; OIDC login only ever signs in to an already-linked account.
+  (d) => { addColumn(d, 'users', 'oidc_subject', 'TEXT'); d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_subject ON users(oidc_subject) WHERE oidc_subject IS NOT NULL`); },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

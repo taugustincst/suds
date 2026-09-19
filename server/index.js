@@ -40,6 +40,9 @@ function housekeeping() {
     // Verify the audit chain once a day. Tamper-evidence that nobody checks is not evidence of anything.
     const lastVerify = db.getSetting('audit_verified_at', null);
     if (!lastVerify || Date.now() - Date.parse(lastVerify) > 86400000) require('./audit').scheduledVerify();
+    // Scheduled backup, if an administrator has turned it on under Settings → System & backups. A failure
+    // here (disk full, unreachable offsite share) must not stop the rest of housekeeping.
+    require('./scheduled-backup').runIfDue();
   } catch (e) { console.error('[suds] housekeeping', e && e.message || e); }
 }
 setInterval(housekeeping, 3600_000).unref();

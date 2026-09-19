@@ -7,7 +7,8 @@ const { badRequest, notFound, forbidden } = require('../http');
 const { validate, paging } = require('../validate');
 const { uuid, randomToken, sha256 } = require('../crypto');
 
-const SETTING_KEYS = ['org_name', 'caseload_restriction', 'county_name', 'program_contact', 'default_funding_source_id', 'note_lock_days', 'session_idle_minutes', 'session_absolute_hours', 'password_max_age_days', 'mfa_required_roles', 'mfa_grace_days'];
+const SETTING_KEYS = ['org_name', 'caseload_restriction', 'county_name', 'program_contact', 'default_funding_source_id', 'note_lock_days', 'session_idle_minutes', 'session_absolute_hours', 'password_max_age_days', 'mfa_required_roles', 'mfa_grace_days',
+  'backup_schedule_hours', 'backup_retain_count', 'backup_offsite_dir'];
 const listener = require('../listener');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -18,14 +19,17 @@ module.exports = (r) => {
     for (const k of SETTING_KEYS) out[k] = db.getSetting(k, '');
     const pol = auth.policy();
     out.policy = pol;
-    out.env = { env: config.env, tls: !!config.tls.cert, tls_mode: config.tls.mode, key_source: config.keySource, idle_minutes: pol.idleMinutes, absolute_hours: pol.absoluteHours, mfa_required_roles: pol.mfaRequiredRoles, listener: listener.describe(), ms_graph_configured: !!(config.msGraph.tenantId && config.msGraph.clientId && config.msGraph.clientSecret && config.msGraph.user) };
+    out.env = { env: config.env, tls: !!config.tls.cert, tls_mode: config.tls.mode, key_source: config.keySource, idle_minutes: pol.idleMinutes, absolute_hours: pol.absoluteHours, mfa_required_roles: pol.mfaRequiredRoles, listener: listener.describe(), ms_graph_configured: !!(config.msGraph.tenantId && config.msGraph.clientId && config.msGraph.clientSecret && config.msGraph.user), oidc_configured: config.oidc.enabled, oidc_label: config.oidc.label };
     return out;
   });
   r.put('/api/admin/settings', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
     const changed = [];
     for (const k of SETTING_KEYS) if (ctx.body[k] !== undefined) {
-      let v = String(ctx.body[k]).slice(0, 500);
-      if (['session_idle_minutes', 'session_absolute_hours', 'password_max_age_days', 'mfa_grace_days'].includes(k) && v !== '' && !(Number(v) > 0)) throw badRequest(`${k} must be a positive number`);
+      // A blank number field reaches here as null (the frontend form reads an empty input as null, not
+      // ''), and String(null) is the four-character string "null" — which failed every numeric check
+      // below and, for a text setting, silently saved the literal word "null" as its value.
+      let v = ctx.body[k] === null ? '' : String(ctx.body[k]).slice(0, 500);
+      if (['session_idle_minutes', 'session_absolute_hours', 'password_max_age_days', 'mfa_grace_days', 'backup_schedule_hours', 'backup_retain_count'].includes(k) && v !== '' && !(Number(v) >= 0)) throw badRequest(`${k} must be a non-negative number`);
       if (k === 'mfa_required_roles') v = v.split(',').map(x => x.trim()).filter(x => ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'].includes(x)).join(',');
       if (k === 'session_idle_minutes' && v !== '' && Number(v) > 60) throw badRequest('Idle timeout may not exceed 60 minutes (HIPAA automatic logoff)');
       db.setSetting(k, v); changed.push(k);
@@ -118,6 +122,16 @@ module.exports = (r) => {
     ctx.res.end(enc);
   });
 
+  // Unattended backups (server/scheduled-backup.js), run from the hourly housekeeping timer once an
+  // administrator turns the schedule on under Settings → System & backups.
+  const scheduledBackup = require('../scheduled-backup');
+  r.post('/api/admin/backup/run-now', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
+    const { retain, offsiteDir } = scheduledBackup.settings();
+    const out = scheduledBackup.run({ retain, offsiteDir });
+    audit.log({ user: ctx.user, action: 'backup.run_now', ip: ctx.ip, details: { bytes: out.bytes, offsite: out.offsiteOk } });
+    return { ok: true, file: path.basename(out.file), bytes: out.bytes, offsite_ok: out.offsiteOk };
+  });
+
   // Restoring from a backup, without a terminal. INSTALL.md is written for an office manager; telling them
   // to run `node scripts/backup.js --restore` is not a recovery plan.
   function backupFromUpload(ctx) {
@@ -183,5 +197,7 @@ module.exports = (r) => {
     key_source: config.keySource,
     keys_backup_at: db.getSetting('keys_backup_at') || '',
     listener: listener.describe(),
+    last_scheduled_backup_at: db.getSetting('last_scheduled_backup_at') || '',
+    last_scheduled_backup_status: db.getSetting('last_scheduled_backup_status') || '',
   }));
 };

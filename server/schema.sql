@@ -30,9 +30,15 @@ CREATE TABLE IF NOT EXISTS users (
   -- a billable clinical record. author_id is never reassigned, so both names appear on the note.
   requires_cosign INTEGER NOT NULL DEFAULT 0,
   supervisor_id TEXT REFERENCES users(id),
+  -- Set by an administrator (Users → edit) to link this account to a single sign-on identity, never by the
+  -- login itself: OIDC signs a user in only once this is already set, it never creates or promotes an
+  -- account on its own. The 'sub' claim from the county's identity provider, matched against config.oidc's
+  -- single configured issuer — not itself an issuer/subject pair, since this server only ever trusts one IdP.
+  oidc_subject TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_subject ON users(oidc_subject) WHERE oidc_subject IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,               -- sha256 of the bearer token

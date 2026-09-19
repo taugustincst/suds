@@ -1,14 +1,22 @@
 import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, stat, kv, loadRefData, downloadCsv, clear } from '../app.js';
 import { qrSvg } from '../qr.js';
 
-function openUserForm(values, onDone) {
+let oidcStatusPromise;
+function oidcStatusCached() {
+  if (!oidcStatusPromise) oidcStatusPromise = get('/api/auth/oidc/status', { quiet: true }).catch(() => ({ enabled: false }));
+  return oidcStatusPromise;
+}
+
+async function openUserForm(values, onDone) {
   const isNew = !values;
+  const oidcStatus = !isNew && !state.local ? await oidcStatusCached() : { enabled: false };
   const f = form([
     { name: 'username', label: 'Username', required: true, pattern: '[a-zA-Z0-9._@\\-]+' }, { name: 'display_name', label: 'Display name', required: true }, { name: 'email', label: 'Email' }, { name: 'title', label: 'Job title' },
     { name: 'role', label: 'Role', type: 'select', required: true, options: [['navigator', 'Navigator — own caseload, admin notes, referrals, budget entry'], ['clinician', 'Clinician — clinical notes, own caseload'], ['supervisor', 'Supervisor — all clients, all notes, approvals, audit'], ['finance', 'Finance — budget & de-identified data only'], ['readonly', 'Read-only — reports and client summaries'], ['admin', 'Administrator — users, settings, audit (no clinical notes)']].map(([v, l]) => ({ value: v, label: l })) },
     { name: 'hourly_cost', label: 'Loaded hourly cost ($, for budget)', type: 'number', min: 0, step: 0.01 }, { name: 'is_active', label: 'Active', type: 'checkbox', value: values ? values.is_active : true },
     { name: 'password', label: isNew ? 'Temporary password (blank = generate)' : 'Reset password (blank = keep)', type: 'password', autocomplete: 'new-password', help: '12+ chars with upper, lower, number, symbol. User must change at next login.' },
     !isNew ? { name: 'unlock', label: 'Unlock account', type: 'checkbox' } : null, !isNew && values.mfa_enabled ? { name: 'reset_mfa', label: 'Reset MFA (user re-enrolls)', type: 'checkbox' } : null,
+    oidcStatus.enabled ? { name: 'oidc_subject', label: `Single sign-on identity (${oidcStatus.label})`, span: true, help: values && values.oidc_subject ? 'Linked. Clear this field to unlink — the user can still sign in with their SUDS password.' : 'Paste the "sub" claim from the identity provider to let this user sign in with SSO instead of a SUDS password. Leave blank if they should only use their SUDS password.' } : null,
   ].filter(Boolean), { values: values || {}, submitText: isNew ? 'Create user' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => {
     if (isNew) { const r = await post('/api/users', d); m.close(); if (r.temporary_password) modal('User created', h('div', {}, h('p', {}, 'Share this temporary password securely (not by email). The user must change it at first login.'), h('div', { class: 'qr' }, r.temporary_password))); }
     else { await put(`/api/users/${values.id}`, d); m.close(); toast('User updated', 'ok'); }
@@ -80,10 +88,16 @@ route('admin', async (r) => {
         { type: 'section', label: 'Security policy' },
         { name: 'session_idle_minutes', label: 'Auto sign-out after inactivity (minutes, max 60)', type: 'number', min: 1, max: 60, step: 1, value: s.policy.idleMinutes }, { name: 'session_absolute_hours', label: 'Maximum session length (hours)', type: 'number', min: 1, max: 24, step: 1, value: s.policy.absoluteHours },
         { name: 'password_max_age_days', label: 'Password expires after (days)', type: 'number', min: 1, step: 1, value: s.policy.passwordMaxAgeDays },
-        { name: 'mfa_required_roles', label: 'Roles that must use MFA (comma separated)', value: s.policy.mfaRequiredRoles.join(','), help: 'admin, supervisor, clinician, navigator, finance, readonly — recommended: all', span: true }], { values: s, submitText: 'Save settings', onSubmit: async (d) => { await put('/api/admin/settings', d); toast('Settings saved', 'ok'); } });
+        { name: 'mfa_required_roles', label: 'Roles that must use MFA (comma separated)', value: s.policy.mfaRequiredRoles.join(','), help: 'admin, supervisor, clinician, navigator, finance, readonly — recommended: all', span: true },
+        { type: 'section', label: 'Scheduled backups' },
+        { name: 'backup_schedule_hours', label: 'Back up automatically every (hours, 0 = off)', type: 'number', min: 0, step: 1, value: s.backup_schedule_hours || '0' },
+        { name: 'backup_retain_count', label: 'Keep this many recent backups on disk', type: 'number', min: 1, step: 1, value: s.backup_retain_count || '14' },
+        { name: 'backup_offsite_dir', label: 'Also copy each backup to (a mounted network share or drive path; blank = local only)', span: true, value: s.backup_offsite_dir || '' },
+      ], { values: s, submitText: 'Save settings', onSubmit: async (d) => { await put('/api/admin/settings', d); toast('Settings saved', 'ok'); } });
       return h('div', { class: 'grid cols-2' }, h('div', { class: 'card' }, h('h3', {}, 'Program settings'), f), await sampleDataCard(refresh),
         h('div', { class: 'card' }, h('h3', {}, 'Server security configuration'), h('p', { class: 'small muted' }, 'Set via environment variables (see .env.example and docs/DEPLOYMENT.md).'),
-          kv([['Environment', s.env.env], ['HTTPS', s.env.tls ? badge(s.env.tls_mode === 'selfsigned' ? 'Self-signed certificate' : 'Enabled', 'ok') : badge('Off — enable under Network', 'danger')], ['Encryption keys', s.env.key_source === 'file' ? 'data/keys.json (back it up under System)' : s.env.key_source === 'devfile' ? 'Development key files in data/' : 'Environment variables'], ['Addresses', (s.env.listener?.urls || []).join(', ')], ['OneNote (Graph) sync', s.env.ms_graph_configured ? badge('Configured', 'ok') : badge('Not configured', 'warn')]])));
+          kv([['Environment', s.env.env], ['HTTPS', s.env.tls ? badge(s.env.tls_mode === 'selfsigned' ? 'Self-signed certificate' : 'Enabled', 'ok') : badge('Off — enable under Network', 'danger')], ['Encryption keys', s.env.key_source === 'file' ? 'data/keys.json (back it up under System)' : s.env.key_source === 'devfile' ? 'Development key files in data/' : 'Environment variables'], ['Addresses', (s.env.listener?.urls || []).join(', ')], ['OneNote (Graph) sync', s.env.ms_graph_configured ? badge('Configured', 'ok') : badge('Not configured', 'warn')],
+            ['Single sign-on (OIDC)', s.env.oidc_configured ? badge(`Configured — "${s.env.oidc_label}"`, 'ok') : badge('Not configured — set OIDC_ISSUER etc. (see docs/DEPLOYMENT.md)', 'warn')]])));
     },
     async audit() {
       const q = new URLSearchParams(); for (const k of ['action', 'user_id', 'client_id', 'from', 'to', 'failures']) if (r.query.get(k)) q.set(k, r.query.get(k)); q.set('limit', '200');
@@ -125,9 +139,16 @@ route('admin', async (r) => {
     },
     async system() {
       const s = await get('/api/admin/stats');
+      const runNow = h('span', { class: 'small muted' });
+      const runBackupNow = async () => {
+        runNow.textContent = 'Running…';
+        try { const r = await post('/api/admin/backup/run-now', {}); runNow.textContent = r.offsite_ok === false ? 'Backup saved, but the offsite copy failed — check the path and try again.' : 'Backup saved.'; }
+        catch (e) { runNow.textContent = e.message; }
+      };
       return h('div', { class: 'grid cols-2' }, h('div', { class: 'grid cols-2' }, stat('Active users', s.users, '', 'admin?tab=users'), stat('Clients', s.clients, '', 'clients?status=all'), stat('Notes', s.notes, '', 'notes'), stat('Audit entries', s.audit_rows, '', 'admin?tab=audit'), stat('Active sessions', s.active_sessions)),
         h('div', { class: 'card' }, h('h3', {}, 'Backups'), h('p', { class: 'small muted' }, 'Download an encrypted copy of the database at least weekly and store it off this computer. Backups can only be opened with the encryption keys, so keep the key backup somewhere separate (e.g. the county password manager).'),
           h('div', { class: 'row' }, h('a', { class: 'btn primary', href: '/api/admin/backup', download: '' }, 'Download encrypted backup'), s.key_source === 'file' ? h('a', { class: 'btn danger', href: '/api/admin/keys-backup', download: '' }, 'Download key backup (keep secret)') : null),
+          h('p', { class: 'small mt' }, 'Scheduled backups: ', s.last_scheduled_backup_at ? [badge(s.last_scheduled_backup_status === 'ok' ? 'Configured' : 'Attention needed', s.last_scheduled_backup_status === 'ok' ? 'ok' : 'warn'), ` last ran ${fmt.dt(s.last_scheduled_backup_at)}${s.last_scheduled_backup_status && s.last_scheduled_backup_status !== 'ok' ? ` — ${s.last_scheduled_backup_status}` : ''}`] : badge('Off — turn on under Settings → Program settings'), ' ', h('button', { class: 'btn sm', onClick: runBackupNow }, 'Run a backup now'), ' ', runNow),
           restoreCard(),
           h('h3', { class: 'mt' }, 'About this server'), kv([['SUDS version', s.version], ['Database', h('code', {}, s.db_path)], ['Keys', s.key_source === 'file' ? 'data/keys.json (generated by setup)' : 'Environment variables'], ['Key backup last downloaded', s.key_source !== 'file' ? 'Not applicable — keys come from the environment' : s.keys_backup_at ? fmt.dt(s.keys_backup_at) : badge('Never — download it below', 'danger')], ['Addresses', (s.listener?.urls || []).join(', ')], ['Retention', 'Audit logs are kept 7 years by default. Client records are soft-deleted only.']])),
         transferCard());

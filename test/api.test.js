@@ -321,6 +321,23 @@ test('user management and self-protection', async () => {
   assert.equal((await fresh.get('/api/clients')).status, 403);
 });
 
+test('an administrator can link and unlink a single sign-on identity on an existing account', async () => {
+  assert.equal((await nav.put(`/api/users/${H.db.one(`SELECT id FROM users WHERE username='nav1'`).id}`, { oidc_subject: 'whatever' })).status, 403);
+  const target = H.db.one(`SELECT id FROM users WHERE username='nav1'`).id;
+  assert.equal((await admin.put(`/api/users/${target}`, { oidc_subject: 'idp-subject-123' })).status, 200);
+  assert.equal(H.db.one(`SELECT oidc_subject FROM users WHERE id=?`, target).oidc_subject, 'idp-subject-123');
+  // Already claimed by another account
+  const other = H.db.one(`SELECT id FROM users WHERE username='nav2'`).id;
+  const conflict = await admin.put(`/api/users/${other}`, { oidc_subject: 'idp-subject-123' });
+  assert.equal(conflict.status, 400);
+  assert.equal(H.db.one(`SELECT oidc_subject FROM users WHERE id=?`, other).oidc_subject, null);
+  // Unlink by clearing the field
+  assert.equal((await admin.put(`/api/users/${target}`, { oidc_subject: '' })).status, 200);
+  assert.equal(H.db.one(`SELECT oidc_subject FROM users WHERE id=?`, target).oidc_subject, null);
+  const list = await admin.get('/api/users');
+  assert.ok('oidc_subject' in list.data.users[0], 'the full user listing (admin/supervisor) includes the linkage');
+});
+
 test('non-managers cannot record work under another worker', async () => {
   const otherId = H.db.one(`SELECT id FROM users WHERE username='nav2'`).id;
   const r = await nav.post('/api/interventions', { client_id: clientId, type: 'outreach', occurred_at: '2026-09-10T10:00:00Z', user_id: otherId });
@@ -359,6 +376,37 @@ test('security policy settings are validated and applied', async () => {
   assert.equal((await admin.post('/api/setup/complete', {})).status, 403);
   assert.equal((await nav.get('/api/admin/network')).status, 403);
   assert.equal((await admin.get('/api/admin/network')).status, 200);
+});
+
+test('a blank optional setting clears it instead of saving the word "null"', async () => {
+  // The settings form reads an untouched number input as JS null, not ''. That used to reach the server as
+  // the four-character string "null" (String(null)), which failed numeric validation outright and, for a
+  // text setting, would have literally saved "null" as the value.
+  assert.equal((await admin.put('/api/admin/settings', { session_idle_minutes: null, county_name: null })).status, 200);
+  const s = await admin.get('/api/admin/settings');
+  assert.equal(s.data.session_idle_minutes, '');
+  assert.equal(s.data.county_name, '');
+  assert.equal(s.data.policy.idleMinutes, 15, 'a cleared setting falls back to the default, not to the word "null"');
+});
+
+test('scheduled backup settings are validated, and an admin can trigger one on demand', async () => {
+  const backupsDir = require('node:path').join(require('../server/config').dataDir, 'backups');
+  try {
+    assert.equal((await nav.post('/api/admin/backup/run-now', {})).status, 403);
+    assert.equal((await admin.put('/api/admin/settings', { backup_schedule_hours: -1 })).status, 400);
+    assert.equal((await admin.put('/api/admin/settings', { backup_schedule_hours: 24, backup_retain_count: 5 })).status, 200);
+    const s = await admin.get('/api/admin/settings');
+    assert.equal(s.data.backup_schedule_hours, '24');
+    assert.equal(s.data.backup_retain_count, '5');
+    const r = await admin.post('/api/admin/backup/run-now', {});
+    assert.equal(r.status, 200);
+    assert.ok(r.data.bytes > 1000);
+    const stats = await admin.get('/api/admin/stats');
+    assert.ok(stats.data.last_scheduled_backup_at);
+    assert.equal(stats.data.last_scheduled_backup_status, 'ok');
+    assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='backup.run_now'`));
+    await admin.put('/api/admin/settings', { backup_schedule_hours: '', backup_retain_count: '' });
+  } finally { require('node:fs').rmSync(backupsDir, { recursive: true, force: true }); }
 });
 
 test('workspace preferences and continue endpoint follow the user', async () => {

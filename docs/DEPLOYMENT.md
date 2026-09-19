@@ -27,11 +27,24 @@ Copy `.env.example` to `.env` and set:
 | `SESSION_ABSOLUTE_HOURS` | no | Default 12. |
 | `MFA_REQUIRED_ROLES` | no | Default `admin,supervisor`. Set to `admin,supervisor,clinician,navigator,finance` to require MFA for everyone (recommended). |
 | `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, `MS_ONENOTE_USER` | optional | For direct OneNote import via Microsoft Graph. See IMPORTS.md. |
+| `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI` | optional | Single sign-on against a county identity provider. See "Single sign-on" below. |
+| `OIDC_LABEL` | no | Button text on the login page. Default "Sign in with county SSO". |
 | `AUDIT_RETENTION_DAYS` | no | Default 2555 (7 years). |
 | `SUDS_ADMIN_USERNAME`, `SUDS_ADMIN_PASSWORD` | first run only | Initial admin. Otherwise a temporary password is printed once. |
 | `SUDS_SKIP_SETUP=1` | no | Never show the browser setup wizard (it is already skipped when keys come from the environment). |
 
 Store the keys in a secrets manager (Azure Key Vault, AWS Secrets Manager, HashiCorp Vault) or at minimum in a root-only file; back them up separately from the database.
+
+### Single sign-on (OIDC)
+
+Optional, and additive: SUDS's own username/password + MFA login keeps working either way, and OIDC never creates or promotes an account by itself. It only ever signs in to a SUDS account an administrator has already linked to the identity provider — the flow that satisfies a county AD/Entra ID/Okta/Keycloak requirement without SUDS holding its own copy of the county's directory.
+
+1. Register a confidential web application (Authorization Code + PKCE) with the identity provider. Redirect URI: `https://<your SUDS address>/api/auth/oidc/callback`.
+2. Set `OIDC_ISSUER` (the provider's issuer URL — SUDS reads `{issuer}/.well-known/openid-configuration`), `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI` (must exactly match what was registered), and optionally `OIDC_LABEL`.
+3. Restart SUDS. The login page now offers an SSO button above the password form.
+4. For each staff member who should use it: Administration → Users → edit their account → **Single sign-on identity**, and paste the `sub` claim the identity provider issues for them (most providers show this in the user's profile, or it can be read from a test token). Leave it blank for anyone who should keep using a SUDS password.
+
+The ID token is verified against the provider's published signing keys (RS256 only — symmetric and unsigned tokens are refused outright), and its issuer, audience, expiry and nonce are all checked before anyone is signed in. Once signed in, an OIDC session behaves exactly like a password one: the same idle/absolute timeouts, the same MFA requirement if the account's role requires it, and the same audit trail (`auth.oidc.login`, `auth.oidc.failed`). SSO is never offered in local/offline mode — a device with no route to the office server has no route to the identity provider either.
 
 ## 2. Run
 
@@ -94,9 +107,9 @@ npm run backup -- /secure/backups        # encrypted, consistent snapshot (VACUU
 node scripts/backup.js --restore /secure/backups/suds-<stamp>.db.enc /opt/suds/data/suds.db
 ```
 
-Schedule nightly with cron / Task Scheduler and copy off-host. Backups are encrypted with a key derived from `SUDS_ENCRYPTION_KEY`, so a backup without the key is useless to an attacker — and to you. Test restores quarterly.
+Schedule nightly with cron / Task Scheduler and copy off-host, or turn on the built-in schedule instead: Administration → **Settings → Scheduled backups**, set an interval in hours and (optionally) an offsite directory — a mounted network share or drive path SUDS can write to directly. It runs from the same hourly housekeeping timer as audit and tombstone retention (`server/index.js`), keeps the configured number of local copies (oldest pruned first), and records the result under Administration → **System & backups**, including whether the offsite copy succeeded. An unreachable offsite path never loses the local backup that already succeeded — it is reported as a status, not a failure of the backup itself. Test restores quarterly either way. Backups are encrypted with a key derived from `SUDS_ENCRYPTION_KEY`, so a backup without the key is useless to an attacker — and to you.
 
-An administrator can also restore without a shell, from Administration → **System & backups → Restore from a backup**: it reports what the file contains before changing anything, requires the administrator's password, and keeps the replaced database as `suds.db.before-restore-<stamp>` so a mistaken restore is recoverable. The file format is identical either way — both paths use `server/backup.js`.
+An administrator can also restore without a shell, from Administration → **System & backups → Restore from a backup**: it reports what the file contains before changing anything, requires the administrator's password, and keeps the replaced database as `suds.db.before-restore-<stamp>` so a mistaken restore is recoverable. The file format is identical either way — both the manual and scheduled paths use `server/backup.js`.
 
 ### Rotating the encryption key
 

@@ -1,20 +1,34 @@
-import { h, route, post, state, form, offerDeviceReset, nav, render, loadRefData, loadSession, toast } from '../app.js';
+import { h, route, get, post, state, form, offerDeviceReset, nav, render, loadRefData, loadSession, toast } from '../app.js';
 
-route('login', async () => {
+const OIDC_ERRORS = {
+  provider_denied: 'The identity provider declined the sign-in.',
+  exchange_failed: 'Could not complete single sign-on. Try again, or sign in with a username and password.',
+  not_linked: 'This identity is not linked to a SUDS account here. Ask an administrator to link it under Users, or sign in with a username and password.',
+  inactive: 'This account is not active. Contact a SUDS administrator.',
+};
+
+route('login', async (r) => {
   const f = form([
     { name: 'username', label: 'Username', required: true, autocomplete: 'username' },
     { name: 'password', label: 'Password', type: 'password', required: true },
   ], { submitText: 'Sign in', onSubmit: async (d) => {
-    const r = await post('/api/auth/login', d);
+    const r2 = await post('/api/auth/login', d);
     await loadSession();
-    if (r.mfaPending) { nav('mfa'); }
-    else if (r.mfaSetupRequired) { toast('Your role requires multi-factor authentication. Please enroll now.', 'error'); nav('profile?mfa=1'); }
+    if (r2.mfaPending) { nav('mfa'); }
+    else if (r2.mfaSetupRequired) { toast('Your role requires multi-factor authentication. Please enroll now.', 'error'); nav('profile?mfa=1'); }
     else nav('dashboard');
     render();
   } });
   f.querySelectorAll('.form-grid').forEach(g => g.style.gridTemplateColumns = '1fr');
+  // Local (offline, on-device) mode has no route to an identity provider, so single sign-on is never
+  // offered there — only the office server, where /api/auth/oidc/status can actually mean something.
+  const oidc = state.local ? { enabled: false } : await get('/api/auth/oidc/status', { quiet: true }).catch(() => ({ enabled: false }));
+  const oidcError = r.query.get('oidc_error');
   return h('div', { class: 'login-wrap' }, h('div', { class: 'card login' },
     h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('b', {}, 'SUDS'), h('small', {}, 'SUD Navigator Services Tracker'))),
+    oidcError ? h('div', { class: 'banner danger', role: 'alert' }, OIDC_ERRORS[oidcError] || 'Single sign-on failed.') : null,
+    oidc.enabled ? h('div', { class: 'btn-row mb' }, h('a', { class: 'btn primary', href: '/api/auth/oidc/start', style: { width: '100%', textAlign: 'center' } }, oidc.label)) : null,
+    oidc.enabled ? h('div', { class: 'small muted center mb' }, '— or —') : null,
     f,
     // A device with no office server behind it has no administrator to ask for a password reset — "ask
     // your supervisor" is not an answer there, so it gets a self-service reset instead.
