@@ -1,0 +1,138 @@
+'use strict';
+// OIDC Authorization Code + PKCE against a single configured identity provider. No JWT/OIDC library:
+// discovery, JWKS and ID token verification are all done with node:crypto and fetch, in keeping with the
+// project's zero-runtime-dependency rule (see CLAUDE.md).
+const crypto = require('node:crypto');
+const config = require('./config');
+
+const b64url = (buf) => Buffer.from(buf).toString('base64url');
+const fromB64url = (s) => Buffer.from(s, 'base64url');
+
+// Discovery and JWKS change essentially never; refetching them on every login would make every sign-in
+// depend on the identity provider being reachable at that exact instant. Cached for an hour.
+const CACHE_MS = 3600_000;
+let discoveryCache = null; // { at, doc }
+let jwksCache = null; // { at, keys }
+
+async function discover() {
+  if (discoveryCache && Date.now() - discoveryCache.at < CACHE_MS) return discoveryCache.doc;
+  const res = await fetch(`${config.oidc.issuer}/.well-known/openid-configuration`);
+  if (!res.ok) throw new Error(`Could not reach the identity provider's discovery document (HTTP ${res.status})`);
+  const doc = await res.json();
+  if (!doc.authorization_endpoint || !doc.token_endpoint) throw new Error('The identity provider\'s discovery document is missing required fields');
+  discoveryCache = { at: Date.now(), doc };
+  return doc;
+}
+
+async function jwks() {
+  if (jwksCache && Date.now() - jwksCache.at < CACHE_MS) return jwksCache.keys;
+  const doc = await discover();
+  const res = await fetch(doc.jwks_uri);
+  if (!res.ok) throw new Error(`Could not fetch the identity provider's signing keys (HTTP ${res.status})`);
+  const { keys } = await res.json();
+  jwksCache = { at: Date.now(), keys };
+  return keys;
+}
+
+/** PKCE S256 challenge for a freshly generated verifier. */
+function pkcePair() {
+  const verifier = b64url(crypto.randomBytes(32));
+  const challenge = b64url(crypto.createHash('sha256').update(verifier).digest());
+  return { verifier, challenge };
+}
+
+// The state/nonce/PKCE-verifier travelling between /start and /callback has nowhere server-side to live
+// (a bare Authorization Code flow has no session yet) — it rides in a short-lived, HMAC-signed cookie
+// instead, keyed off config.indexKey the same way the audit chain is, so it cannot be forged or replayed
+// past its own expiry.
+const COOKIE = 'suds_oidc';
+function signState(payload) {
+  const body = b64url(JSON.stringify(payload));
+  const sig = b64url(crypto.createHmac('sha256', config.indexKey).update(body).digest());
+  return `${body}.${sig}`;
+}
+function verifyState(token) {
+  if (!token || typeof token !== 'string' || !token.includes('.')) return null;
+  const [body, sig] = token.split('.');
+  const expected = b64url(crypto.createHmac('sha256', config.indexKey).update(body).digest());
+  if (sig.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+  let payload;
+  try { payload = JSON.parse(fromB64url(body).toString('utf8')); } catch { return null; }
+  if (!payload.exp || Date.now() > payload.exp) return null;
+  return payload;
+}
+function stateCookie(token, { clear = false } = {}) {
+  const secure = config.tls.cert || config.isProd ? '; Secure' : '';
+  // Lax, not Strict: this cookie has to survive the top-level GET redirect back from the identity
+  // provider, which is a cross-site navigation as far as the browser is concerned.
+  if (clear) return `${COOKIE}=; Path=/api/auth/oidc; HttpOnly; SameSite=Lax; Max-Age=0${secure}`;
+  return `${COOKIE}=${token}; Path=/api/auth/oidc; HttpOnly; SameSite=Lax; Max-Age=600${secure}`;
+}
+
+/** Build the authorize redirect URL and the signed cookie that goes with it. */
+async function startAuth() {
+  const doc = await discover();
+  const { verifier, challenge } = pkcePair();
+  const state = crypto.randomUUID();
+  const nonce = crypto.randomUUID();
+  const url = new URL(doc.authorization_endpoint);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('client_id', config.oidc.clientId);
+  url.searchParams.set('redirect_uri', config.oidc.redirectUri);
+  url.searchParams.set('scope', 'openid profile email');
+  url.searchParams.set('state', state);
+  url.searchParams.set('nonce', nonce);
+  url.searchParams.set('code_challenge', challenge);
+  url.searchParams.set('code_challenge_method', 'S256');
+  const cookie = stateCookie(signState({ state, nonce, verifier, exp: Date.now() + 600_000 }));
+  return { url: url.toString(), cookie };
+}
+
+/**
+ * Exchange the callback's code for tokens and return the verified claims of the ID token. Throws on any
+ * mismatch (state, nonce, issuer, audience, expiry, signature) — every one of those is a forged or replayed
+ * attempt, not a recoverable condition.
+ */
+async function completeAuth({ code, state, cookieToken }) {
+  const saved = verifyState(cookieToken);
+  if (!saved) throw new Error('The sign-in request expired or was tampered with. Try again.');
+  if (saved.state !== state) throw new Error('The sign-in request did not match. Try again.');
+  const doc = await discover();
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code', code, redirect_uri: config.oidc.redirectUri,
+    client_id: config.oidc.clientId, client_secret: config.oidc.clientSecret, code_verifier: saved.verifier,
+  });
+  const res = await fetch(doc.token_endpoint, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString() });
+  const tok = await res.json().catch(() => ({}));
+  if (!res.ok || !tok.id_token) throw new Error(tok.error_description || tok.error || 'The identity provider refused the sign-in');
+  const claims = await verifyIdToken(tok.id_token, doc);
+  if (claims.nonce !== saved.nonce) throw new Error('The identity provider\'s response did not match this sign-in attempt.');
+  return claims;
+}
+
+/** Verify an RS256-signed ID token against the provider's published keys, issuer and this client's ID. */
+async function verifyIdToken(idToken, doc) {
+  const parts = idToken.split('.');
+  if (parts.length !== 3) throw new Error('The identity provider returned a malformed token');
+  const [headerB64, payloadB64, sigB64] = parts;
+  const header = JSON.parse(fromB64url(headerB64).toString('utf8'));
+  // 'none' and symmetric (HS*) algorithms are refused outright: 'none' has no signature to check at all,
+  // and HS* is keyed with the client secret, which this server itself sent to the provider — accepting it
+  // would let anyone who can guess or leak that secret mint their own tokens.
+  if (header.alg !== 'RS256') throw new Error(`Unsupported token signing algorithm: ${header.alg}`);
+  const keys = await jwks();
+  const jwk = keys.find((k) => k.kid === header.kid && (k.use === undefined || k.use === 'sig'));
+  if (!jwk) throw new Error('The identity provider signed this token with a key SUDS does not recognise');
+  const publicKey = crypto.createPublicKey({ key: jwk, format: 'jwk' });
+  const ok = crypto.verify('RSA-SHA256', Buffer.from(`${headerB64}.${payloadB64}`), publicKey, fromB64url(sigB64));
+  if (!ok) throw new Error('The identity provider\'s token signature did not verify');
+  const claims = JSON.parse(fromB64url(payloadB64).toString('utf8'));
+  if (claims.iss !== doc.issuer) throw new Error('The token was issued by an unexpected issuer');
+  const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+  if (!aud.includes(config.oidc.clientId)) throw new Error('The token was not issued for this application');
+  if (!claims.exp || Date.now() >= claims.exp * 1000) throw new Error('The token has expired');
+  if (!claims.sub) throw new Error('The token has no subject');
+  return claims;
+}
+
+module.exports = { startAuth, completeAuth, stateCookie, COOKIE, _resetCacheForTests: () => { discoveryCache = null; jwksCache = null; } };

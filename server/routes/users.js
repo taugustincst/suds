@@ -16,6 +16,7 @@ const shape = {
   is_active: { type: 'boolean' },
   hourly_cost: { type: 'number', min: 0 },
   password: { type: 'string', maxLen: 500 },
+  oidc_subject: { type: 'string', maxLen: 300 },
 };
 
 module.exports = (r) => {
@@ -23,7 +24,7 @@ module.exports = (r) => {
   r.get('/api/users', auth.requireAuth, auth.requirePerm('users:read', 'users:manage'), (ctx) => {
     const full = auth.hasPerm(ctx.user, 'users:manage');
     const rows = db.all(full
-      ? `SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,last_login_at,locked_until,hourly_cost,created_at FROM users ORDER BY display_name`
+      ? `SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,last_login_at,locked_until,hourly_cost,created_at,oidc_subject FROM users ORDER BY display_name`
       : `SELECT id,display_name,title,role,is_active FROM users WHERE is_active=1 ORDER BY display_name`);
     return { users: rows };
   });
@@ -47,8 +48,9 @@ module.exports = (r) => {
     if (!u) throw notFound();
     const v = validate(ctx.body, { ...shape, username: { ...shape.username, required: false }, role: { ...shape.role, required: false }, display_name: { ...shape.display_name, required: false } }, { partial: true });
     if (u.id === ctx.user.id && (v.role && v.role !== 'admin' || v.is_active === 0)) throw badRequest('You cannot demote or deactivate your own account');
+    if (v.oidc_subject && db.one(`SELECT 1 FROM users WHERE oidc_subject=? AND id<>?`, v.oidc_subject, u.id)) throw badRequest('That single sign-on identity is already linked to a different account');
     const sets = []; const params = [];
-    for (const k of ['username', 'display_name', 'email', 'title', 'role', 'is_active', 'hourly_cost']) if (v[k] !== undefined) { sets.push(`${k}=?`); params.push(v[k]); }
+    for (const k of ['username', 'display_name', 'email', 'title', 'role', 'is_active', 'hourly_cost', 'oidc_subject']) if (v[k] !== undefined) { sets.push(`${k}=?`); params.push(v[k]); }
     if (v.password) {
       const errs = auth.passwordPolicy(v.password);
       if (errs.length) throw badRequest('Password must contain ' + errs.join(', '));

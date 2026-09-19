@@ -6206,9 +6206,15 @@ CREATE TABLE IF NOT EXISTS users (
   -- a billable clinical record. author_id is never reassigned, so both names appear on the note.
   requires_cosign INTEGER NOT NULL DEFAULT 0,
   supervisor_id TEXT REFERENCES users(id),
+  -- Set by an administrator (Users \u2192 edit) to link this account to a single sign-on identity, never by the
+  -- login itself: OIDC signs a user in only once this is already set, it never creates or promotes an
+  -- account on its own. The 'sub' claim from the county's identity provider, matched against config.oidc's
+  -- single configured issuer \u2014 not itself an issuer/subject pair, since this server only ever trusts one IdP.
+  oidc_subject TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_subject ON users(oidc_subject) WHERE oidc_subject IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,               -- sha256 of the bearer token
@@ -7311,6 +7317,12 @@ var require_db = __commonJS({
       (d) => {
         addColumn(d, "clients", "referral_date", "TEXT");
         addColumn(d, "clients", "engagement_date", "TEXT");
+      },
+      // 11: optional single sign-on. An administrator links an existing account to the county identity
+      //     provider's 'sub' claim; OIDC login only ever signs in to an already-linked account.
+      (d) => {
+        addColumn(d, "users", "oidc_subject", "TEXT");
+        d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_subject ON users(oidc_subject) WHERE oidc_subject IS NOT NULL`);
       }
     ];
     function initialise(d, schemaText, dbPath) {
@@ -10472,13 +10484,13 @@ var require_admin = __commonJS({
         for (const k of SETTING_KEYS) out2[k] = db3.getSetting(k, "");
         const pol = auth3.policy();
         out2.policy = pol;
-        out2.env = { env: config.env, tls: !!config.tls.cert, tls_mode: config.tls.mode, key_source: config.keySource, idle_minutes: pol.idleMinutes, absolute_hours: pol.absoluteHours, mfa_required_roles: pol.mfaRequiredRoles, listener: listener.describe(), ms_graph_configured: !!(config.msGraph.tenantId && config.msGraph.clientId && config.msGraph.clientSecret && config.msGraph.user) };
+        out2.env = { env: config.env, tls: !!config.tls.cert, tls_mode: config.tls.mode, key_source: config.keySource, idle_minutes: pol.idleMinutes, absolute_hours: pol.absoluteHours, mfa_required_roles: pol.mfaRequiredRoles, listener: listener.describe(), ms_graph_configured: !!(config.msGraph.tenantId && config.msGraph.clientId && config.msGraph.clientSecret && config.msGraph.user), oidc_configured: config.oidc.enabled, oidc_label: config.oidc.label };
         return out2;
       });
       r.put("/api/admin/settings", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
         const changed = [];
         for (const k of SETTING_KEYS) if (ctx.body[k] !== void 0) {
-          let v = String(ctx.body[k]).slice(0, 500);
+          let v = ctx.body[k] === null ? "" : String(ctx.body[k]).slice(0, 500);
           if (["session_idle_minutes", "session_absolute_hours", "password_max_age_days", "mfa_grace_days", "backup_schedule_hours", "backup_retain_count"].includes(k) && v !== "" && !(Number(v) >= 0)) throw badRequest(`${k} must be a non-negative number`);
           if (k === "mfa_required_roles") v = v.split(",").map((x) => x.trim()).filter((x) => ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"].includes(x)).join(",");
           if (k === "session_idle_minutes" && v !== "" && Number(v) > 60) throw badRequest("Idle timeout may not exceed 60 minutes (HIPAA automatic logoff)");
@@ -14165,6 +14177,192 @@ var require_notes = __commonJS({
           out2.cosignature_intact = sha2562(`${n.id}|${n.cosigned_by}|cosign|${n.content_enc}|${n.structured_enc || ""}`) === n.cosignature_hash;
         }
         return out2;
+      });
+    };
+  }
+});
+
+// server/oidc.js
+var require_oidc = __commonJS({
+  "server/oidc.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    var config = require_config();
+    var b64url = (buf) => import_buffer.Buffer.from(buf).toString("base64url");
+    var fromB64url = (s2) => import_buffer.Buffer.from(s2, "base64url");
+    var CACHE_MS = 36e5;
+    var discoveryCache = null;
+    var jwksCache = null;
+    async function discover() {
+      if (discoveryCache && Date.now() - discoveryCache.at < CACHE_MS) return discoveryCache.doc;
+      const res = await fetch(`${config.oidc.issuer}/.well-known/openid-configuration`);
+      if (!res.ok) throw new Error(`Could not reach the identity provider's discovery document (HTTP ${res.status})`);
+      const doc = await res.json();
+      if (!doc.authorization_endpoint || !doc.token_endpoint) throw new Error("The identity provider's discovery document is missing required fields");
+      discoveryCache = { at: Date.now(), doc };
+      return doc;
+    }
+    async function jwks() {
+      if (jwksCache && Date.now() - jwksCache.at < CACHE_MS) return jwksCache.keys;
+      const doc = await discover();
+      const res = await fetch(doc.jwks_uri);
+      if (!res.ok) throw new Error(`Could not fetch the identity provider's signing keys (HTTP ${res.status})`);
+      const { keys } = await res.json();
+      jwksCache = { at: Date.now(), keys };
+      return keys;
+    }
+    function pkcePair() {
+      const verifier = b64url(crypto3.randomBytes(32));
+      const challenge = b64url(crypto3.createHash("sha256").update(verifier).digest());
+      return { verifier, challenge };
+    }
+    var COOKIE = "suds_oidc";
+    function signState(payload) {
+      const body = b64url(JSON.stringify(payload));
+      const sig = b64url(crypto3.createHmac("sha256", config.indexKey).update(body).digest());
+      return `${body}.${sig}`;
+    }
+    function verifyState(token2) {
+      if (!token2 || typeof token2 !== "string" || !token2.includes(".")) return null;
+      const [body, sig] = token2.split(".");
+      const expected = b64url(crypto3.createHmac("sha256", config.indexKey).update(body).digest());
+      if (sig.length !== expected.length || !crypto3.timingSafeEqual(import_buffer.Buffer.from(sig), import_buffer.Buffer.from(expected))) return null;
+      let payload;
+      try {
+        payload = JSON.parse(fromB64url(body).toString("utf8"));
+      } catch {
+        return null;
+      }
+      if (!payload.exp || Date.now() > payload.exp) return null;
+      return payload;
+    }
+    function stateCookie(token2, { clear = false } = {}) {
+      const secure = config.tls.cert || config.isProd ? "; Secure" : "";
+      if (clear) return `${COOKIE}=; Path=/api/auth/oidc; HttpOnly; SameSite=Lax; Max-Age=0${secure}`;
+      return `${COOKIE}=${token2}; Path=/api/auth/oidc; HttpOnly; SameSite=Lax; Max-Age=600${secure}`;
+    }
+    async function startAuth() {
+      const doc = await discover();
+      const { verifier, challenge } = pkcePair();
+      const state = crypto3.randomUUID();
+      const nonce = crypto3.randomUUID();
+      const url = new URL(doc.authorization_endpoint);
+      url.searchParams.set("response_type", "code");
+      url.searchParams.set("client_id", config.oidc.clientId);
+      url.searchParams.set("redirect_uri", config.oidc.redirectUri);
+      url.searchParams.set("scope", "openid profile email");
+      url.searchParams.set("state", state);
+      url.searchParams.set("nonce", nonce);
+      url.searchParams.set("code_challenge", challenge);
+      url.searchParams.set("code_challenge_method", "S256");
+      const cookie = stateCookie(signState({ state, nonce, verifier, exp: Date.now() + 6e5 }));
+      return { url: url.toString(), cookie };
+    }
+    async function completeAuth({ code, state, cookieToken }) {
+      const saved = verifyState(cookieToken);
+      if (!saved) throw new Error("The sign-in request expired or was tampered with. Try again.");
+      if (saved.state !== state) throw new Error("The sign-in request did not match. Try again.");
+      const doc = await discover();
+      const body = new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: config.oidc.redirectUri,
+        client_id: config.oidc.clientId,
+        client_secret: config.oidc.clientSecret,
+        code_verifier: saved.verifier
+      });
+      const res = await fetch(doc.token_endpoint, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: body.toString() });
+      const tok = await res.json().catch(() => ({}));
+      if (!res.ok || !tok.id_token) throw new Error(tok.error_description || tok.error || "The identity provider refused the sign-in");
+      const claims = await verifyIdToken(tok.id_token, doc);
+      if (claims.nonce !== saved.nonce) throw new Error("The identity provider's response did not match this sign-in attempt.");
+      return claims;
+    }
+    async function verifyIdToken(idToken, doc) {
+      const parts = idToken.split(".");
+      if (parts.length !== 3) throw new Error("The identity provider returned a malformed token");
+      const [headerB64, payloadB64, sigB64] = parts;
+      const header = JSON.parse(fromB64url(headerB64).toString("utf8"));
+      if (header.alg !== "RS256") throw new Error(`Unsupported token signing algorithm: ${header.alg}`);
+      const keys = await jwks();
+      const jwk = keys.find((k) => k.kid === header.kid && (k.use === void 0 || k.use === "sig"));
+      if (!jwk) throw new Error("The identity provider signed this token with a key SUDS does not recognise");
+      const publicKey = crypto3.createPublicKey({ key: jwk, format: "jwk" });
+      const ok = crypto3.verify("RSA-SHA256", import_buffer.Buffer.from(`${headerB64}.${payloadB64}`), publicKey, fromB64url(sigB64));
+      if (!ok) throw new Error("The identity provider's token signature did not verify");
+      const claims = JSON.parse(fromB64url(payloadB64).toString("utf8"));
+      if (claims.iss !== doc.issuer) throw new Error("The token was issued by an unexpected issuer");
+      const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+      if (!aud.includes(config.oidc.clientId)) throw new Error("The token was not issued for this application");
+      if (!claims.exp || Date.now() >= claims.exp * 1e3) throw new Error("The token has expired");
+      if (!claims.sub) throw new Error("The token has no subject");
+      return claims;
+    }
+    module.exports = { startAuth, completeAuth, stateCookie, COOKIE, _resetCacheForTests: () => {
+      discoveryCache = null;
+      jwksCache = null;
+    } };
+  }
+});
+
+// server/routes/oidc.js
+var require_oidc2 = __commonJS({
+  "server/routes/oidc.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var config = require_config();
+    var oidc = require_oidc();
+    var { rateLimit } = require_app2();
+    var { HttpError: HttpError3, notFound } = require_http();
+    function redirect(res, location) {
+      res.writeHead(302, { Location: location });
+      res.end();
+    }
+    module.exports = (r) => {
+      r.get("/api/auth/oidc/status", () => ({ enabled: config.oidc.enabled, label: config.oidc.label }));
+      r.get("/api/auth/oidc/start", async (ctx) => {
+        if (!config.oidc.enabled) throw notFound();
+        if (!rateLimit(`login:${ctx.ip}`, config.isTest ? 1e5 : 20, 15 * 6e4)) throw new HttpError3(429, "Too many sign-in attempts. Try again later.");
+        let started;
+        try {
+          started = await oidc.startAuth();
+        } catch (e) {
+          console.error("[suds] oidc start failed:", e.message);
+          throw new HttpError3(502, "Could not reach the identity provider. Try again shortly, or sign in with a username and password.");
+        }
+        ctx.res.setHeader("Set-Cookie", started.cookie);
+        redirect(ctx.res, started.url);
+      });
+      r.get("/api/auth/oidc/callback", async (ctx) => {
+        if (!config.oidc.enabled) throw notFound();
+        const fail = (reason, detail) => {
+          audit3.log({ user: { username: reason === "not_linked" ? detail && detail.sub || "" : "" }, action: "auth.oidc.failed", ip: ctx.ip, success: false, details: { reason } });
+          ctx.res.setHeader("Set-Cookie", oidc.stateCookie("", { clear: true }));
+          redirect(ctx.res, `/#/login?oidc_error=${encodeURIComponent(reason)}`);
+        };
+        if (ctx.query.get("error")) return fail("provider_denied");
+        if (!rateLimit(`login:${ctx.ip}`, config.isTest ? 1e5 : 20, 15 * 6e4)) throw new HttpError3(429, "Too many sign-in attempts. Try again later.");
+        let claims;
+        try {
+          claims = await oidc.completeAuth({ code: ctx.query.get("code") || "", state: ctx.query.get("state") || "", cookieToken: ctx.cookies[oidc.COOKIE] });
+        } catch (e) {
+          console.error("[suds] oidc callback failed:", e.message);
+          return fail("exchange_failed");
+        }
+        const user = db3.one(`SELECT * FROM users WHERE oidc_subject=?`, claims.sub);
+        if (!user) return fail("not_linked", { sub: claims.sub });
+        if (!user.is_active) return fail("inactive");
+        db3.run(`UPDATE users SET last_login_at=? WHERE id=?`, db3.now(), user.id);
+        const mfaPending = !!user.mfa_enabled;
+        const token2 = auth3.createSession(user, ctx, { mfaPending });
+        audit3.log({ user, action: mfaPending ? "auth.oidc.login.mfa_pending" : "auth.oidc.login", ip: ctx.ip });
+        const cookies = [auth3.cookieHeader(token2), oidc.stateCookie("", { clear: true })];
+        ctx.res.setHeader("Set-Cookie", cookies);
+        redirect(ctx.res, mfaPending ? "/#/mfa" : "/#/dashboard");
       });
     };
   }
@@ -19106,12 +19304,13 @@ var require_users = __commonJS({
       role: { type: "string", required: true, enum: ROLES },
       is_active: { type: "boolean" },
       hourly_cost: { type: "number", min: 0 },
-      password: { type: "string", maxLen: 500 }
+      password: { type: "string", maxLen: 500 },
+      oidc_subject: { type: "string", maxLen: 300 }
     };
     module.exports = (r) => {
       r.get("/api/users", auth3.requireAuth, auth3.requirePerm("users:read", "users:manage"), (ctx) => {
         const full = auth3.hasPerm(ctx.user, "users:manage");
-        const rows = db3.all(full ? `SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,last_login_at,locked_until,hourly_cost,created_at FROM users ORDER BY display_name` : `SELECT id,display_name,title,role,is_active FROM users WHERE is_active=1 ORDER BY display_name`);
+        const rows = db3.all(full ? `SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,last_login_at,locked_until,hourly_cost,created_at,oidc_subject FROM users ORDER BY display_name` : `SELECT id,display_name,title,role,is_active FROM users WHERE is_active=1 ORDER BY display_name`);
         return { users: rows };
       });
       r.post("/api/users", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
@@ -19143,9 +19342,10 @@ var require_users = __commonJS({
         if (!u) throw notFound();
         const v = validate(ctx.body, { ...shape, username: { ...shape.username, required: false }, role: { ...shape.role, required: false }, display_name: { ...shape.display_name, required: false } }, { partial: true });
         if (u.id === ctx.user.id && (v.role && v.role !== "admin" || v.is_active === 0)) throw badRequest("You cannot demote or deactivate your own account");
+        if (v.oidc_subject && db3.one(`SELECT 1 FROM users WHERE oidc_subject=? AND id<>?`, v.oidc_subject, u.id)) throw badRequest("That single sign-on identity is already linked to a different account");
         const sets = [];
         const params = [];
-        for (const k of ["username", "display_name", "email", "title", "role", "is_active", "hourly_cost"]) if (v[k] !== void 0) {
+        for (const k of ["username", "display_name", "email", "title", "role", "is_active", "hourly_cost", "oidc_subject"]) if (v[k] !== void 0) {
           sets.push(`${k}=?`);
           params.push(v[k]);
         }
@@ -19195,6 +19395,7 @@ var init_ = __esm({
       "./routes/interventions.js": () => require_interventions(),
       "./routes/me.js": () => require_me(),
       "./routes/notes.js": () => require_notes(),
+      "./routes/oidc.js": () => require_oidc2(),
       "./routes/overdose.js": () => require_overdose(),
       "./routes/referrals.js": () => require_referrals(),
       "./routes/regions.js": () => require_regions(),
@@ -19240,6 +19441,7 @@ var require_app2 = __commonJS({
     var ROUTE_MODULES = [
       "setup",
       "auth",
+      "oidc",
       "me",
       "app",
       "sync",
@@ -19266,7 +19468,7 @@ var require_app2 = __commonJS({
       "regions",
       "intake"
     ];
-    var LOCAL_ROUTE_MODULES2 = ROUTE_MODULES.filter((m) => !["setup", "app", "sync", "intake"].includes(m));
+    var LOCAL_ROUTE_MODULES2 = ROUTE_MODULES.filter((m) => !["setup", "app", "sync", "intake", "oidc"].includes(m));
     function buildRouter() {
       const r = new Router2();
       for (const mod of ROUTE_MODULES) globRequire_routes(`./routes/${mod}`)(r);

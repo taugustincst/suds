@@ -321,6 +321,23 @@ test('user management and self-protection', async () => {
   assert.equal((await fresh.get('/api/clients')).status, 403);
 });
 
+test('an administrator can link and unlink a single sign-on identity on an existing account', async () => {
+  assert.equal((await nav.put(`/api/users/${H.db.one(`SELECT id FROM users WHERE username='nav1'`).id}`, { oidc_subject: 'whatever' })).status, 403);
+  const target = H.db.one(`SELECT id FROM users WHERE username='nav1'`).id;
+  assert.equal((await admin.put(`/api/users/${target}`, { oidc_subject: 'idp-subject-123' })).status, 200);
+  assert.equal(H.db.one(`SELECT oidc_subject FROM users WHERE id=?`, target).oidc_subject, 'idp-subject-123');
+  // Already claimed by another account
+  const other = H.db.one(`SELECT id FROM users WHERE username='nav2'`).id;
+  const conflict = await admin.put(`/api/users/${other}`, { oidc_subject: 'idp-subject-123' });
+  assert.equal(conflict.status, 400);
+  assert.equal(H.db.one(`SELECT oidc_subject FROM users WHERE id=?`, other).oidc_subject, null);
+  // Unlink by clearing the field
+  assert.equal((await admin.put(`/api/users/${target}`, { oidc_subject: '' })).status, 200);
+  assert.equal(H.db.one(`SELECT oidc_subject FROM users WHERE id=?`, target).oidc_subject, null);
+  const list = await admin.get('/api/users');
+  assert.ok('oidc_subject' in list.data.users[0], 'the full user listing (admin/supervisor) includes the linkage');
+});
+
 test('non-managers cannot record work under another worker', async () => {
   const otherId = H.db.one(`SELECT id FROM users WHERE username='nav2'`).id;
   const r = await nav.post('/api/interventions', { client_id: clientId, type: 'outreach', occurred_at: '2026-09-10T10:00:00Z', user_id: otherId });

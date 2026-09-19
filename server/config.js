@@ -93,6 +93,16 @@ const config = {
     clientSecret: process.env.MS_CLIENT_SECRET || '',
     user: process.env.MS_ONENOTE_USER || '',
   },
+  // Optional OIDC single sign-on against the county's identity provider (Entra ID, Okta, Keycloak, ...).
+  // One issuer per server — an account is linked to it by an administrator (see server/routes/users.js),
+  // never auto-created by a login, so OIDC can only ever sign in to an account that already exists here.
+  oidc: {
+    issuer: (process.env.OIDC_ISSUER || '').replace(/\/$/, ''),
+    clientId: process.env.OIDC_CLIENT_ID || '',
+    clientSecret: process.env.OIDC_CLIENT_SECRET || '',
+    redirectUri: process.env.OIDC_REDIRECT_URI || '',
+    label: process.env.OIDC_LABEL || 'Sign in with county SSO',
+  },
   trustProxy: process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true' || !!fileCfg.trustProxy,
   // PHI access entries are kept for the full HIPAA seven years. Routine list/search traffic is the bulk of
   // the volume and has a much shorter useful life, so it ages out sooner; the chain stays verifiable either
@@ -104,6 +114,7 @@ const config = {
   maxBodyBytes: 60 * 1024 * 1024,
 };
 
+config.oidc.enabled = !!(config.oidc.issuer && config.oidc.clientId && config.oidc.clientSecret && config.oidc.redirectUri);
 config.keySource = keySourceHolder.value;
 config.saveServerJson = (patch) => { Object.assign(fileCfg, patch); fs.writeFileSync(serverJsonPath, JSON.stringify(fileCfg, null, 2), { mode: 0o600 }); config.setupComplete = !!fileCfg.setupComplete; };
 module.exports = config;
