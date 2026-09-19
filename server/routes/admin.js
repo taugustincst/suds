@@ -197,6 +197,30 @@ module.exports = (r) => {
     return info;
   });
 
+  // Local-mode devices (server/devices.js): list, revoke, remote-wipe-on-next-sync, and un-revoke a
+  // recovered device. See server/schema.sql's devices table comment for what "wipe" can and cannot reach.
+  r.get('/api/admin/devices', auth.requireAuth, auth.requirePerm('users:manage'), () =>
+    ({ devices: db.all(`SELECT d.*, u.display_name, u.username FROM devices d JOIN users u ON u.id=d.user_id ORDER BY d.last_seen_at DESC`) }));
+  function findDevice(ctx) { const d = db.one(`SELECT * FROM devices WHERE id=?`, ctx.params.id); if (!d) throw notFound(); return d; }
+  r.post('/api/admin/devices/:id/revoke', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
+    const d = findDevice(ctx);
+    db.run(`UPDATE devices SET revoked_at=?, wipe_requested_at=NULL WHERE id=?`, db.now(), d.id);
+    audit.log({ user: ctx.user, action: 'device.revoke', entity: 'device', entityId: d.id, ip: ctx.ip, details: { device_user: d.user_id } });
+    return { ok: true };
+  });
+  r.post('/api/admin/devices/:id/wipe', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
+    const d = findDevice(ctx);
+    db.run(`UPDATE devices SET wipe_requested_at=? WHERE id=?`, db.now(), d.id);
+    audit.log({ user: ctx.user, action: 'device.wipe.requested', entity: 'device', entityId: d.id, ip: ctx.ip, details: { device_user: d.user_id } });
+    return { ok: true };
+  });
+  r.post('/api/admin/devices/:id/clear', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
+    const d = findDevice(ctx);
+    db.run(`UPDATE devices SET revoked_at=NULL, wipe_requested_at=NULL WHERE id=?`, d.id);
+    audit.log({ user: ctx.user, action: 'device.clear', entity: 'device', entityId: d.id, ip: ctx.ip, details: { device_user: d.user_id } });
+    return { ok: true };
+  });
+
   r.get('/api/admin/stats', auth.requireAuth, auth.requirePerm('settings:manage'), () => ({
     users: db.one(`SELECT COUNT(*) n FROM users WHERE is_active=1`).n,
     clients: db.one(`SELECT COUNT(*) n FROM clients WHERE deleted_at IS NULL`).n,

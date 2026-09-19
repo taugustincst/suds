@@ -181,6 +181,14 @@ const migrations = [
   // 11: optional single sign-on. An administrator links an existing account to the county identity
   //     provider's 'sub' claim; OIDC login only ever signs in to an already-linked account.
   (d) => { addColumn(d, 'users', 'oidc_subject', 'TEXT'); d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_subject ON users(oidc_subject) WHERE oidc_subject IS NOT NULL`); },
+  // 12: device tracking for local-mode phones/tablets, so a lost device can be revoked or wiped the next
+  //     time it tries to sync (server/devices.js).
+  (d) => {
+    d.exec(`CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, label TEXT,
+      first_seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), last_seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+      last_ip TEXT, sync_count INTEGER NOT NULL DEFAULT 0, wipe_requested_at TEXT, revoked_at TEXT)`);
+    d.exec(`CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id)`);
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

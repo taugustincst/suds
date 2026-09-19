@@ -54,7 +54,13 @@ route('sync', async () => {
       const sum = (o) => Object.entries(o || {}).filter(([, n]) => n).map(([k, n]) => `${n} ${fmt.label(k).toLowerCase()}`).join(', ') || 'nothing new';
       log.textContent = `Done ${fmt.dt(r.at)}. Received: ${sum(r.pulled)}. Sent: ${sum(r.pushed)}.${r.rejected.length ? ` ${r.rejected.length} item(s) were not accepted by the office (not on your caseload).` : ''}`;
       toast('Sync complete', 'ok'); await loadSession();
-    } catch (e) { log.textContent = 'Sync failed: ' + e.message; throw e; }
+    } catch (e) {
+      log.textContent = 'Sync failed: ' + e.message;
+      // The device has already erased its local database (local/sync.js, before this error even reached
+      // here) — show why, then start over exactly as a brand-new device would.
+      if (e.data && e.data.wiped) { toast('This device was remotely wiped by an administrator', 'error'); setTimeout(() => location.reload(), 2500); return; }
+      throw e;
+    }
   } });
   window.addEventListener('suds-scan', (e) => { const v = String(e.detail || ''); if (v.startsWith('http')) { f.inputs.server.value = v.replace(/\/app\/?$/, '').replace(/\/$/, ''); toast('Office address filled in from QR code', 'ok'); } }, { once: true });
   const scanBtn = window.SudsNative && window.SudsNative.scanQr ? h('button', { class: 'btn sm', type: 'button', onClick: () => window.SudsNative.scanQr() }, 'Scan office QR code') : null;

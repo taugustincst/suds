@@ -165,9 +165,27 @@ route('admin', async (r) => {
           h('div', { class: 'row mt' }, h('button', { class: 'btn sm', onClick: checkForUpdate }, 'Check for updates'), updateStatus)),
         transferCard());
     },
+    async devices() {
+      const { devices } = await get('/api/admin/devices');
+      const act = async (id, action) => { await post(`/api/admin/devices/${id}/${action}`, {}); refresh(); };
+      return h('div', {},
+        h('div', { class: 'banner small mb' }, 'One row per phone or tablet that has synced in local mode. "Revoke" blocks it from syncing again until cleared. "Wipe" additionally erases its local database, the next time it tries to sync — it cannot reach a device that is never opened again; that limitation is inherent to working offline, not a bug in this feature.'),
+        table([
+          { label: 'Device', render: d => h('div', {}, h('b', {}, d.label || 'Device'), h('div', { class: 'small mono muted' }, d.id.slice(0, 8))) },
+          { label: 'Belongs to', render: d => h('div', {}, d.display_name, h('div', { class: 'small muted' }, d.username)) },
+          { label: 'First seen', render: d => fmt.dt(d.first_seen_at) },
+          { label: 'Last synced', render: d => fmt.dt(d.last_seen_at) },
+          { label: 'Syncs', key: 'sync_count' },
+          { label: 'Status', render: d => d.revoked_at ? badge('Revoked', 'danger') : d.wipe_requested_at ? badge('Wipe pending', 'warn') : badge('Active', 'ok') },
+          { label: '', render: d => h('div', { class: 'row' },
+            !d.revoked_at && !d.wipe_requested_at ? h('button', { class: 'btn sm', onClick: () => act(d.id, 'revoke') }, 'Revoke') : null,
+            !d.wipe_requested_at && !d.revoked_at ? h('button', { class: 'btn sm danger', onClick: async () => { if (await confirmDialog('Wipe this device', `The next time "${d.label || 'this device'}" (${d.display_name}) tries to sync, it will be told to erase everything it has stored and will need to be set up again. This cannot reach a device that never syncs again.`, { danger: true, okText: 'Request wipe' })) act(d.id, 'wipe'); } }, 'Wipe') : null,
+            (d.revoked_at || d.wipe_requested_at) ? h('button', { class: 'btn sm', onClick: () => act(d.id, 'clear') }, 'Clear') : null) },
+        ], devices, { empty: 'No devices have synced yet.' }));
+    },
   };
   body.append(await (T[state.local && !['users', 'settings', 'audit'].includes(tab) ? 'users' : tab] || T.users)());
-  const tabs = state.local ? [['users', 'Users & roles'], ['settings', 'Settings'], ['audit', 'Audit log']] : [['users', 'Users & roles'], ['settings', 'Settings'], ['network', 'Network & devices'], ['audit', 'Audit log'], ['apikeys', 'API keys (intake)'], ['system', 'System & backups']];
+  const tabs = state.local ? [['users', 'Users & roles'], ['settings', 'Settings'], ['audit', 'Audit log']] : [['users', 'Users & roles'], ['settings', 'Settings'], ['network', 'Network & devices'], ['devices', 'Synced devices'], ['audit', 'Audit log'], ['apikeys', 'API keys (intake)'], ['system', 'System & backups']];
   return h('div', {}, pageHead('Settings'), state.local ? h('div', { class: 'banner small' }, 'This is the copy of SUDS on this device. Network, API keys and backups are managed on the office SUDS; use Sync to exchange data.') : null, h('div', { class: 'tabs' }, tabs.map(([k, l]) => h('button', { class: k === tab ? 'active' : '', onClick: () => nav(`admin?tab=${k}`) }, l))), body);
 });
 
