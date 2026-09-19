@@ -473,6 +473,23 @@ test('a syncing device is tracked, and an admin can revoke or remotely wipe it',
   await admin.post(`/api/admin/devices/${row.id}/clear`, {});
 });
 
+test('the metrics endpoint is off by default, then bearer-token gated once configured', async () => {
+  const config = require('../server/config');
+  const anon = H.client();
+  assert.equal((await anon.get('/api/metrics')).status, 404, 'no METRICS_TOKEN is set in this test run');
+
+  const prior = config.metricsToken;
+  config.metricsToken = 'test-metrics-token-123';
+  try {
+    assert.equal((await anon.get('/api/metrics')).status, 401, 'no token given');
+    assert.equal((await anon.get('/api/metrics', { Authorization: 'Bearer wrong-token' })).status, 401);
+    const r = await anon.get('/api/metrics', { Authorization: 'Bearer test-metrics-token-123' });
+    assert.equal(r.status, 200);
+    assert.match(r.data, /^suds_up 1$/m);
+    assert.match(r.data, /^suds_uptime_seconds \d+$/m);
+  } finally { config.metricsToken = prior; }
+});
+
 test('workspace preferences and continue endpoint follow the user', async () => {
   assert.equal((await nav.put('/api/me/prefs', { theme: 'dark', tour_done: true, 'bad key!': 1 })).status, 400);
   assert.equal((await nav.put('/api/me/prefs', { theme: 'dark', tour_done: true })).status, 200);

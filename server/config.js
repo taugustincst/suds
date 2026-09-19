@@ -108,6 +108,13 @@ const config = {
   // "Check for updates" (server/update.js). A GitHub releases API URL, e.g.
   // https://api.github.com/repos/<owner>/<repo>/releases/latest — or an internal mirror for an air-gapped county.
   updateFeedUrl: process.env.UPDATE_FEED_URL || '',
+  // Off by default: GET /api/metrics answers 404 unless this is set, and requires it as a bearer token
+  // when it is (no PHI in it, but row counts and session activity are not for just anyone who can reach the
+  // server). Lets a county's existing Prometheus/Grafana/etc. stack scrape SUDS without a new dependency.
+  metricsToken: process.env.METRICS_TOKEN || '',
+  // 'json' emits newline-delimited JSON to both stdout and the log file (server/log.js), for a log
+  // collector (Loki, CloudWatch, ELK); the default is the existing human-readable text.
+  logFormat: process.env.LOG_FORMAT === 'json' ? 'json' : 'text',
   // PHI access entries are kept for the full HIPAA seven years. Routine list/search traffic is the bulk of
   // the volume and has a much shorter useful life, so it ages out sooner; the chain stays verifiable either
   // way because a purge records the hash it continues from.

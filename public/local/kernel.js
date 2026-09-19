@@ -10812,6 +10812,49 @@ var require_admin = __commonJS({
   }
 });
 
+// server/metrics.js
+var require_metrics = __commonJS({
+  "server/metrics.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var db3 = require_db();
+    var config = require_config();
+    function render() {
+      const lines = [];
+      const metric = (name, help, type, value, labels = "") => {
+        lines.push(`# HELP ${name} ${help}`);
+        lines.push(`# TYPE ${name} ${type}`);
+        lines.push(`${name}${labels} ${value}`);
+      };
+      metric("suds_up", "Whether the SUDS server process is up.", "gauge", 1);
+      metric("suds_uptime_seconds", "Seconds since the process started.", "gauge", Math.round(proc.uptime()));
+      try {
+        metric("suds_build_info", "Build metadata. Always 1; the version and schema are in its labels.", "gauge", 1, `{version="${config.version}",schema_version="${db3.getSetting("schema_version", "0")}"}`);
+        metric("suds_users_active", "Active user accounts.", "gauge", db3.one(`SELECT COUNT(*) n FROM users WHERE is_active=1`).n);
+        metric("suds_clients_total", "Clients not soft-deleted.", "gauge", db3.one(`SELECT COUNT(*) n FROM clients WHERE deleted_at IS NULL`).n);
+        metric("suds_sessions_active", "Currently active (unexpired, unrevoked) sessions.", "gauge", db3.one(`SELECT COUNT(*) n FROM sessions WHERE revoked_at IS NULL AND expires_at > ?`, db3.now()).n);
+        metric("suds_audit_log_rows", "Rows currently in the audit log.", "gauge", db3.one(`SELECT COUNT(*) n FROM audit_log`).n);
+        metric("suds_devices_total", "Local-mode devices that have ever synced.", "gauge", db3.one(`SELECT COUNT(*) n FROM devices`).n);
+        metric("suds_database_up", "Whether the database answered a query just now.", "gauge", 1);
+      } catch {
+        metric("suds_database_up", "Whether the database answered a query just now.", "gauge", 0);
+      }
+      try {
+        metric("suds_database_bytes", "Size of the SQLite database file.", "gauge", fs.statSync(config.dbPath).size);
+      } catch {
+      }
+      try {
+        const fsinfo = fs.statfsSync(config.dataDir);
+        metric("suds_disk_free_bytes", "Free space on the volume holding the data directory.", "gauge", fsinfo.bavail * fsinfo.bsize);
+      } catch {
+      }
+      return lines.join("\n") + "\n";
+    }
+    module.exports = { render };
+  }
+});
+
 // server/routes/app.js
 var require_app = __commonJS({
   "server/routes/app.js"(exports, module) {
@@ -10825,7 +10868,7 @@ var require_app = __commonJS({
     var auth3 = require_auth();
     var audit3 = require_audit();
     var listener = (init_listener(), __toCommonJS(listener_exports));
-    var { badRequest, notFound, HttpError: HttpError3 } = require_http();
+    var { badRequest, notFound, unauthorized, HttpError: HttpError3 } = require_http();
     var dir = () => path.join(config.dataDir, "downloads");
     var apkPath = () => path.join(dir(), "suds.apk");
     function apkInfo() {
@@ -10869,6 +10912,16 @@ var require_app = __commonJS({
         }
         ctx.status = out2.ok ? 200 : 503;
         return out2;
+      });
+      r.get("/api/metrics", (ctx) => {
+        if (!config.metricsToken) throw notFound();
+        const header = ctx.headers["authorization"] || "";
+        const given = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+        const expected = import_buffer.Buffer.from(config.metricsToken), got = import_buffer.Buffer.from(given);
+        if (given.length !== config.metricsToken.length || !crypto3.timingSafeEqual(expected, got)) throw unauthorized("A valid bearer token is required");
+        const body = require_metrics().render();
+        ctx.res.writeHead(200, { "Content-Type": "text/plain; version=0.0.4; charset=utf-8", "Content-Length": import_buffer.Buffer.byteLength(body) });
+        ctx.res.end(body);
       });
       r.get("/api/app/info", () => ({ name: db3.getSetting("org_name", "SUDS"), version: config.version, listener: listener.describe(), android: apkInfo(), certificate: certFingerprint(), service: "_suds._tcp" }));
       r.get("/api/app/android.apk", (ctx) => {
