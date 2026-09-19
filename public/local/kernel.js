@@ -7345,6 +7345,9 @@ var require_db = __commonJS({
       }
       return file;
     }
+    function fkViolationKeys(d) {
+      return new Set(d.prepare("PRAGMA foreign_key_check").all().map((r) => `${r.table}:${r.rowid}:${r.parent}:${r.fkid}`));
+    }
     function migrate(d, dbPath) {
       const row = d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get();
       let v = row ? Number(row.value) : 0;
@@ -7358,13 +7361,17 @@ var require_db = __commonJS({
         }
         if (snapshot) console.log(`[suds] upgrading schema ${v} -> ${migrations.length}; snapshot saved to ${snapshot}`);
       }
+      let remaining = [];
       for (let i = v; i < migrations.length; i++) {
         d.exec("PRAGMA foreign_keys = OFF");
         d.exec("BEGIN");
         try {
+          const before = fkViolationKeys(d);
           migrations[i](d);
-          const bad = d.prepare("PRAGMA foreign_key_check").all();
-          if (bad.length) throw new Error(`migration ${i + 1} left ${bad.length} orphaned row(s), first in table ${bad[0].table}`);
+          const after = d.prepare("PRAGMA foreign_key_check").all();
+          const introduced = after.filter((r) => !before.has(`${r.table}:${r.rowid}:${r.parent}:${r.fkid}`));
+          if (introduced.length) throw new Error(`migration ${i + 1} introduced ${introduced.length} new orphaned row(s), first in table ${introduced[0].table}`);
+          remaining = after;
           d.prepare(`INSERT INTO settings(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`).run(String(i + 1));
           d.exec("COMMIT");
         } catch (e) {
@@ -7376,6 +7383,11 @@ var require_db = __commonJS({
         } finally {
           d.exec("PRAGMA foreign_keys = ON");
         }
+      }
+      if (remaining.length) {
+        const byTable = {};
+        for (const r of remaining) byTable[r.table] = (byTable[r.table] || 0) + 1;
+        console.warn(`[suds] this database has ${remaining.length} pre-existing orphaned reference(s), not introduced by this upgrade, by table: ${Object.entries(byTable).map(([t, n]) => `${t}=${n}`).join(", ")}. Records are otherwise intact; anything joined through the missing reference may just be absent from a report until it is repaired.`);
       }
     }
     function get() {
@@ -18004,7 +18016,10 @@ var require_reports = __commonJS({
             staged_imports: db3.one(`SELECT COUNT(*) n FROM import_items x JOIN imports i ON i.id=x.import_id WHERE x.status='staged' AND (i.imported_by=? OR i.imported_by IS NULL OR ?)`, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n
           },
           budget: auth3.hasPerm(ctx.user, "budget:read") ? db3.one(`SELECT (SELECT COALESCE(SUM(total_amount),0) FROM funding_sources WHERE is_active=1) total, (SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status IN ('approved','reimbursed')) spent, (SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status='pending') pending`) : null,
-          consents_expiring: db3.all(`SELECT co.id, co.client_id, co.type, co.recipient_enc, co.expires_at, c.client_code FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY co.expires_at LIMIT 20`, today, new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10), ...cf.params).map((x) => ({ ...x, recipient: x.recipient_enc ? require_crypto().decrypt(x.recipient_enc) : null, recipient_enc: void 0 }))
+          // Scoped to active clients so this count matches what #/clients?consent_expiring=1 shows by default —
+          // otherwise the badge counts a closed or inactive client's consent that the deep-linked list, filtered
+          // to active, never displays.
+          consents_expiring: db3.all(`SELECT co.id, co.client_id, co.type, co.recipient_enc, co.expires_at, c.client_code FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ? AND c.status='active' AND ${cf.sql} ORDER BY co.expires_at LIMIT 20`, today, new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10), ...cf.params).map((x) => ({ ...x, recipient: x.recipient_enc ? require_crypto().decrypt(x.recipient_enc) : null, recipient_enc: void 0 }))
         };
         audit3.log({ user: ctx.user, action: "report.dashboard", ip: ctx.ip, details: { from, to } });
         return out2;

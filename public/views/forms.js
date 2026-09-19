@@ -14,6 +14,28 @@ route('forms', async (r) => {
   const refresh = () => nav(`forms?category=${cat}&q=${encodeURIComponent(q)}${inactive ? '&inactive=1' : ''}&_=${Date.now()}`);
   const search = h('input', { type: 'search', value: q, placeholder: 'Form name or description', onKeydown: e => { if (e.key === 'Enter') nav(`forms?category=${cat}&q=${encodeURIComponent(search.value)}`); } });
   const catSel = h('select', { onChange: () => nav(`forms?category=${catSel.value}&q=${encodeURIComponent(q)}`) }, h('option', { value: '' }, 'All categories'), data.categories.map(c => h('option', { value: c, selected: c === cat }, fmt.label(c))));
+  // A one-click shortcut for the common case — someone already has the county's PDF/Word file in hand and
+  // wants it in the library — instead of the full "+ Add a county form" flow (name, category, fields...)
+  // being the only door in. It opens straight into the designer with the file already attached and the
+  // name guessed from the filename, so the rest is just confirming, not starting from a blank form.
+  const uploadInput = h('input', { type: 'file', accept: '.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,application/pdf,image/*', class: 'hidden', onChange: async () => {
+    const file = uploadInput.files[0]; uploadInput.value = ''; if (!file) return;
+    try {
+      const data = file.type.startsWith('image/') ? (await shrinkImage(file, 2000, 0.85)).dataUrl : await readFile(file);
+      openDesigner(null, refresh, { data, name: file.name });
+    } catch (e) { toast(e.message, 'error'); }
+  } });
+  // Bulk-downloads every form currently in view: the original file where one was uploaded, otherwise the
+  // blank PDF generated from its fields — the same two things "Blank PDF" / "Original file" already offer
+  // per card, just for the whole library (or the current search/category filter) in one click.
+  const downloadAll = async () => {
+    if (!rows.length) { toast('No forms to download', 'error'); return; }
+    toast(`Downloading ${rows.length} form${rows.length === 1 ? '' : 's'}…`, 'ok');
+    for (const t of rows) {
+      await downloadCsv(t.has_file ? `/api/forms/templates/${t.id}/file` : `/api/forms/templates/${t.id}/blank.pdf`);
+      await new Promise((res) => setTimeout(res, 300)); // browsers block a burst of simultaneous downloads
+    }
+  };
   // The card itself must not be role="button" (or otherwise interactive): it holds real <button> elements
   // for the individual actions, and an interactive control cannot nest another one. Opening the template
   // by name/description is its own button instead of a click-anywhere card.
@@ -28,6 +50,9 @@ route('forms', async (r) => {
   return h('div', {},
     pageHead('Form library',
       can('forms:manage') ? h('button', { class: 'btn', onClick: () => openStarters(refresh) }, 'Add starter forms') : null,
+      can('forms:manage') ? h('button', { class: 'btn', onClick: () => uploadInput.click() }, 'Upload form') : null,
+      can('forms:manage') ? uploadInput : null,
+      rows.length ? h('button', { class: 'btn', onClick: downloadAll }, 'Download forms') : null,
       can('forms:manage') ? h('button', { class: 'btn primary', onClick: () => openDesigner(null, refresh) }, '+ Add a county form') : null),
     h('p', { class: 'muted small' }, 'County forms your program uses. Open a form from a client record (Forms tab) or here: it is pre-filled from the chart, saved to the client, printable as a PDF, and a signed copy can be attached.'),
     h('div', { class: 'filters' }, h('div', { class: 'field grow' }, h('label', {}, 'Search'), search), h('div', { class: 'field' }, h('label', {}, 'Category'), catSel), h('button', { class: 'btn', onClick: () => nav(`forms?category=${cat}&q=${encodeURIComponent(search.value)}`) }, 'Search'),
@@ -59,9 +84,12 @@ function useWithClient(t) {
 }
 
 // ---------- Designer (upload a county form, describe its fields) ----------
-export async function openDesigner(id, onDone) {
+// initialFile — { data, name } — lets the library's "Upload form" shortcut jump straight in with the file
+// already attached, rather than someone having to attach it themselves after opening this from scratch.
+export async function openDesigner(id, onDone, initialFile) {
   const C = state.constants; const t = id ? (await get(`/api/forms/templates/${id}`)).template : { name: '', category: 'other', fields: [], is_active: 1 };
-  let fields = t.fields.map(f => ({ ...f })); let fileData = null, fileName = null, removeFile = false;
+  if (initialFile && !id) t.name = initialFile.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim();
+  let fields = t.fields.map(f => ({ ...f })); let fileData = initialFile?.data || null, fileName = initialFile?.name || null, removeFile = false;
   const list = h('div', { class: 'designer' });
   const rowFor = (f, i) => {
     const kind = h('select', { onChange: () => { f.type = kind.value; draw(); } }, FIELD_KINDS.map(([v, l]) => h('option', { value: v, selected: f.type === v }, l)));
@@ -76,7 +104,7 @@ export async function openDesigner(id, onDone) {
   };
   const draw = () => { clear(list); if (!fields.length) list.append(h('p', { class: 'muted small' }, 'No fields yet. Upload a fillable PDF to detect its fields automatically, or add them below.')); fields.forEach((f, i) => list.append(rowFor(f, i))); };
   draw();
-  const fileInfo = h('div', { class: 'small muted' }, t.has_file ? `${fileKind(t.content_type)} attached: ${t.filename || ''}` : 'No file attached (a blank PDF is generated from the fields).');
+  const fileInfo = h('div', { class: 'small muted' }, initialFile ? `${initialFile.name} will be saved with the form.` : t.has_file ? `${fileKind(t.content_type)} attached: ${t.filename || ''}` : 'No file attached (a blank PDF is generated from the fields).');
   const fileInput = h('input', { type: 'file', accept: '.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,application/pdf,image/*', class: 'hidden', onChange: async () => {
     const file = fileInput.files[0]; if (!file) return; fileName = file.name; fileInfo.textContent = `Reading ${file.name}…`;
     try { fileData = file.type.startsWith('image/') ? (await shrinkImage(file, 2000, 0.85)).dataUrl : await readFile(file); removeFile = false; fileInfo.textContent = `${file.name} (${Math.round(file.size / 1024)} KB) will be saved with the form.`; if (file.type === 'application/pdf' && !fields.length) fileInfo.textContent += ' Fields inside the PDF will be detected when you save.'; }
