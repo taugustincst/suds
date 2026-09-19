@@ -10371,6 +10371,70 @@ var require_backup = __commonJS({
   }
 });
 
+// server/scheduled-backup.js
+var require_scheduled_backup = __commonJS({
+  "server/scheduled-backup.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var path = (init_path(), __toCommonJS(path_exports));
+    var config = require_config();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var backup = require_backup();
+    var FILE_RE = /^suds-.*\.db\.enc$/;
+    function settings() {
+      const hours = Number(db3.getSetting("backup_schedule_hours", "0")) || 0;
+      const retain = Math.max(1, Number(db3.getSetting("backup_retain_count", "14")) || 14);
+      const offsiteDir = db3.getSetting("backup_offsite_dir", "") || "";
+      return { hours, retain, offsiteDir };
+    }
+    function runIfDue(now = Date.now()) {
+      const { hours, retain, offsiteDir } = settings();
+      if (!hours) return null;
+      const last = db3.getSetting("last_scheduled_backup_at", null);
+      if (last && now - Date.parse(last) < hours * 36e5) return null;
+      return run2({ retain, offsiteDir });
+    }
+    function run2({ retain = 14, offsiteDir = "" } = {}) {
+      const dir = path.join(config.dataDir, "backups");
+      fs.mkdirSync(dir, { recursive: true, mode: 448 });
+      const bytes3 = backup.create();
+      const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+      const file = path.join(dir, `suds-${stamp2}.db.enc`);
+      fs.writeFileSync(file, bytes3, { mode: 384 });
+      let offsiteOk = null;
+      if (offsiteDir) {
+        try {
+          fs.mkdirSync(offsiteDir, { recursive: true });
+          fs.copyFileSync(file, path.join(offsiteDir, path.basename(file)));
+          offsiteOk = true;
+        } catch (e) {
+          offsiteOk = false;
+          console.error("[suds] offsite backup copy failed:", e && e.message || e);
+        }
+      }
+      const kept = prune(dir, retain);
+      db3.setSetting("last_scheduled_backup_at", db3.now());
+      db3.setSetting("last_scheduled_backup_status", offsiteDir && offsiteOk === false ? "offsite copy failed \u2014 local backup kept" : "ok");
+      audit3.log({ user: { username: "system" }, action: "backup.scheduled", details: { bytes: bytes3.length, offsite: offsiteDir ? offsiteOk : null, kept } });
+      return { file, bytes: bytes3.length, offsiteOk };
+    }
+    function prune(dir, retain) {
+      const files = fs.readdirSync(dir).filter((f) => FILE_RE.test(f)).sort();
+      const excess = files.length - retain;
+      if (excess > 0) for (const f of files.slice(0, excess)) {
+        try {
+          fs.unlinkSync(path.join(dir, f));
+        } catch {
+        }
+      }
+      return Math.min(files.length, retain);
+    }
+    module.exports = { runIfDue, run: run2, settings };
+  }
+});
+
 // server/routes/admin.js
 var require_admin = __commonJS({
   "server/routes/admin.js"(exports, module) {
@@ -10383,7 +10447,22 @@ var require_admin = __commonJS({
     var { badRequest, notFound, forbidden } = require_http();
     var { validate, paging } = require_validate();
     var { uuid: uuid2, randomToken, sha256: sha2562 } = require_crypto();
-    var SETTING_KEYS = ["org_name", "caseload_restriction", "county_name", "program_contact", "default_funding_source_id", "note_lock_days", "session_idle_minutes", "session_absolute_hours", "password_max_age_days", "mfa_required_roles", "mfa_grace_days"];
+    var SETTING_KEYS = [
+      "org_name",
+      "caseload_restriction",
+      "county_name",
+      "program_contact",
+      "default_funding_source_id",
+      "note_lock_days",
+      "session_idle_minutes",
+      "session_absolute_hours",
+      "password_max_age_days",
+      "mfa_required_roles",
+      "mfa_grace_days",
+      "backup_schedule_hours",
+      "backup_retain_count",
+      "backup_offsite_dir"
+    ];
     var listener = (init_listener(), __toCommonJS(listener_exports));
     var fs = (init_fs(), __toCommonJS(fs_exports));
     var path = (init_path(), __toCommonJS(path_exports));
@@ -10400,7 +10479,7 @@ var require_admin = __commonJS({
         const changed = [];
         for (const k of SETTING_KEYS) if (ctx.body[k] !== void 0) {
           let v = String(ctx.body[k]).slice(0, 500);
-          if (["session_idle_minutes", "session_absolute_hours", "password_max_age_days", "mfa_grace_days"].includes(k) && v !== "" && !(Number(v) > 0)) throw badRequest(`${k} must be a positive number`);
+          if (["session_idle_minutes", "session_absolute_hours", "password_max_age_days", "mfa_grace_days", "backup_schedule_hours", "backup_retain_count"].includes(k) && v !== "" && !(Number(v) >= 0)) throw badRequest(`${k} must be a non-negative number`);
           if (k === "mfa_required_roles") v = v.split(",").map((x) => x.trim()).filter((x) => ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"].includes(x)).join(",");
           if (k === "session_idle_minutes" && v !== "" && Number(v) > 60) throw badRequest("Idle timeout may not exceed 60 minutes (HIPAA automatic logoff)");
           db3.setSetting(k, v);
@@ -10510,6 +10589,13 @@ var require_admin = __commonJS({
         ctx.res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Disposition": `attachment; filename="suds-backup-${(/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-")}.db.enc"` });
         ctx.res.end(enc);
       });
+      const scheduledBackup = require_scheduled_backup();
+      r.post("/api/admin/backup/run-now", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+        const { retain, offsiteDir } = scheduledBackup.settings();
+        const out2 = scheduledBackup.run({ retain, offsiteDir });
+        audit3.log({ user: ctx.user, action: "backup.run_now", ip: ctx.ip, details: { bytes: out2.bytes, offsite: out2.offsiteOk } });
+        return { ok: true, file: path.basename(out2.file), bytes: out2.bytes, offsite_ok: out2.offsiteOk };
+      });
       function backupFromUpload(ctx) {
         const b64 = ctx.body && ctx.body.file_b64 || "";
         if (!b64 || typeof b64 !== "string") throw badRequest("Choose the backup file to upload");
@@ -10567,7 +10653,9 @@ var require_admin = __commonJS({
         version: config.version,
         key_source: config.keySource,
         keys_backup_at: db3.getSetting("keys_backup_at") || "",
-        listener: listener.describe()
+        listener: listener.describe(),
+        last_scheduled_backup_at: db3.getSetting("last_scheduled_backup_at") || "",
+        last_scheduled_backup_status: db3.getSetting("last_scheduled_backup_status") || ""
       }));
     };
   }

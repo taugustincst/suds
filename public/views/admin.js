@@ -80,7 +80,12 @@ route('admin', async (r) => {
         { type: 'section', label: 'Security policy' },
         { name: 'session_idle_minutes', label: 'Auto sign-out after inactivity (minutes, max 60)', type: 'number', min: 1, max: 60, step: 1, value: s.policy.idleMinutes }, { name: 'session_absolute_hours', label: 'Maximum session length (hours)', type: 'number', min: 1, max: 24, step: 1, value: s.policy.absoluteHours },
         { name: 'password_max_age_days', label: 'Password expires after (days)', type: 'number', min: 1, step: 1, value: s.policy.passwordMaxAgeDays },
-        { name: 'mfa_required_roles', label: 'Roles that must use MFA (comma separated)', value: s.policy.mfaRequiredRoles.join(','), help: 'admin, supervisor, clinician, navigator, finance, readonly — recommended: all', span: true }], { values: s, submitText: 'Save settings', onSubmit: async (d) => { await put('/api/admin/settings', d); toast('Settings saved', 'ok'); } });
+        { name: 'mfa_required_roles', label: 'Roles that must use MFA (comma separated)', value: s.policy.mfaRequiredRoles.join(','), help: 'admin, supervisor, clinician, navigator, finance, readonly — recommended: all', span: true },
+        { type: 'section', label: 'Scheduled backups' },
+        { name: 'backup_schedule_hours', label: 'Back up automatically every (hours, 0 = off)', type: 'number', min: 0, step: 1, value: s.backup_schedule_hours || '0' },
+        { name: 'backup_retain_count', label: 'Keep this many recent backups on disk', type: 'number', min: 1, step: 1, value: s.backup_retain_count || '14' },
+        { name: 'backup_offsite_dir', label: 'Also copy each backup to (a mounted network share or drive path; blank = local only)', span: true, value: s.backup_offsite_dir || '' },
+      ], { values: s, submitText: 'Save settings', onSubmit: async (d) => { await put('/api/admin/settings', d); toast('Settings saved', 'ok'); } });
       return h('div', { class: 'grid cols-2' }, h('div', { class: 'card' }, h('h3', {}, 'Program settings'), f), await sampleDataCard(refresh),
         h('div', { class: 'card' }, h('h3', {}, 'Server security configuration'), h('p', { class: 'small muted' }, 'Set via environment variables (see .env.example and docs/DEPLOYMENT.md).'),
           kv([['Environment', s.env.env], ['HTTPS', s.env.tls ? badge(s.env.tls_mode === 'selfsigned' ? 'Self-signed certificate' : 'Enabled', 'ok') : badge('Off — enable under Network', 'danger')], ['Encryption keys', s.env.key_source === 'file' ? 'data/keys.json (back it up under System)' : s.env.key_source === 'devfile' ? 'Development key files in data/' : 'Environment variables'], ['Addresses', (s.env.listener?.urls || []).join(', ')], ['OneNote (Graph) sync', s.env.ms_graph_configured ? badge('Configured', 'ok') : badge('Not configured', 'warn')]])));
@@ -125,9 +130,16 @@ route('admin', async (r) => {
     },
     async system() {
       const s = await get('/api/admin/stats');
+      const runNow = h('span', { class: 'small muted' });
+      const runBackupNow = async () => {
+        runNow.textContent = 'Running…';
+        try { const r = await post('/api/admin/backup/run-now', {}); runNow.textContent = r.offsite_ok === false ? 'Backup saved, but the offsite copy failed — check the path and try again.' : 'Backup saved.'; }
+        catch (e) { runNow.textContent = e.message; }
+      };
       return h('div', { class: 'grid cols-2' }, h('div', { class: 'grid cols-2' }, stat('Active users', s.users, '', 'admin?tab=users'), stat('Clients', s.clients, '', 'clients?status=all'), stat('Notes', s.notes, '', 'notes'), stat('Audit entries', s.audit_rows, '', 'admin?tab=audit'), stat('Active sessions', s.active_sessions)),
         h('div', { class: 'card' }, h('h3', {}, 'Backups'), h('p', { class: 'small muted' }, 'Download an encrypted copy of the database at least weekly and store it off this computer. Backups can only be opened with the encryption keys, so keep the key backup somewhere separate (e.g. the county password manager).'),
           h('div', { class: 'row' }, h('a', { class: 'btn primary', href: '/api/admin/backup', download: '' }, 'Download encrypted backup'), s.key_source === 'file' ? h('a', { class: 'btn danger', href: '/api/admin/keys-backup', download: '' }, 'Download key backup (keep secret)') : null),
+          h('p', { class: 'small mt' }, 'Scheduled backups: ', s.last_scheduled_backup_at ? [badge(s.last_scheduled_backup_status === 'ok' ? 'Configured' : 'Attention needed', s.last_scheduled_backup_status === 'ok' ? 'ok' : 'warn'), ` last ran ${fmt.dt(s.last_scheduled_backup_at)}${s.last_scheduled_backup_status && s.last_scheduled_backup_status !== 'ok' ? ` — ${s.last_scheduled_backup_status}` : ''}`] : badge('Off — turn on under Settings → Program settings'), ' ', h('button', { class: 'btn sm', onClick: runBackupNow }, 'Run a backup now'), ' ', runNow),
           restoreCard(),
           h('h3', { class: 'mt' }, 'About this server'), kv([['SUDS version', s.version], ['Database', h('code', {}, s.db_path)], ['Keys', s.key_source === 'file' ? 'data/keys.json (generated by setup)' : 'Environment variables'], ['Key backup last downloaded', s.key_source !== 'file' ? 'Not applicable — keys come from the environment' : s.keys_backup_at ? fmt.dt(s.keys_backup_at) : badge('Never — download it below', 'danger')], ['Addresses', (s.listener?.urls || []).join(', ')], ['Retention', 'Audit logs are kept 7 years by default. Client records are soft-deleted only.']])),
         transferCard());
