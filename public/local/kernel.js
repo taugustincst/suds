@@ -6216,6 +6216,25 @@ CREATE TABLE IF NOT EXISTS users (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_subject ON users(oidc_subject) WHERE oidc_subject IS NOT NULL;
 
+-- One row per physical phone/tablet running local mode, identified by a UUID the device itself generates
+-- once and sends on every sync call (never by the short-lived sync session, which starts and ends within a
+-- single sync run). "Wipe" here means the closest thing an offline-first app can offer to a real MDM remote
+-- wipe: the *next time this specific device attempts to sync*, it is told to erase its local database and
+-- its access is revoked in the same moment (server/auth.js login()). A device that is never opened again
+-- cannot be reached this way \u2014 that limitation is inherent to working offline, not a bug.
+CREATE TABLE IF NOT EXISTS devices (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  label TEXT,
+  first_seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  last_seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  last_ip TEXT,
+  sync_count INTEGER NOT NULL DEFAULT 0,
+  wipe_requested_at TEXT,
+  revoked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id);
+
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,               -- sha256 of the bearer token
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -7323,6 +7342,14 @@ var require_db = __commonJS({
       (d) => {
         addColumn(d, "users", "oidc_subject", "TEXT");
         d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_subject ON users(oidc_subject) WHERE oidc_subject IS NOT NULL`);
+      },
+      // 12: device tracking for local-mode phones/tablets, so a lost device can be revoked or wiped the next
+      //     time it tries to sync (server/devices.js).
+      (d) => {
+        d.exec(`CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, label TEXT,
+      first_seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), last_seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+      last_ip TEXT, sync_count INTEGER NOT NULL DEFAULT 0, wipe_requested_at TEXT, revoked_at TEXT)`);
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id)`);
       }
     ];
     function initialise(d, schemaText, dbPath) {
@@ -7743,6 +7770,34 @@ var require_audit = __commonJS({
   }
 });
 
+// server/devices.js
+var require_devices = __commonJS({
+  "server/devices.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    function labelFrom(userAgent) {
+      const ua = userAgent || "";
+      if (/android/i.test(ua)) return "Android phone";
+      if (/ipad/i.test(ua)) return "iPad";
+      if (/iphone/i.test(ua)) return "iPhone";
+      return "Device";
+    }
+    function touch(user, deviceId2, ctx) {
+      const existing = db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
+      const label = labelFrom(ctx.headers["user-agent"]);
+      const now = db3.now();
+      if (existing) db3.run(`UPDATE devices SET user_id=?, last_seen_at=?, last_ip=?, sync_count=sync_count+1, label=COALESCE(label, ?) WHERE id=?`, user.id, now, ctx.ip, label, deviceId2);
+      else db3.run(`INSERT INTO devices(id,user_id,label,first_seen_at,last_seen_at,last_ip,sync_count) VALUES(?,?,?,?,?,?,1)`, deviceId2, user.id, label, now, now, ctx.ip);
+      return db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
+    }
+    function markWiped(deviceId2) {
+      db3.run(`UPDATE devices SET revoked_at=?, wipe_requested_at=NULL WHERE id=?`, db3.now(), deviceId2);
+    }
+    module.exports = { touch, markWiped, labelFrom };
+  }
+});
+
 // server/auth.js
 var require_auth = __commonJS({
   "server/auth.js"(exports, module) {
@@ -8023,6 +8078,19 @@ var require_auth = __commonJS({
         fail(lock ? "locked after failures" : "bad password");
       }
       db3.run(`UPDATE users SET failed_attempts=0, locked_until=NULL, last_login_at=? WHERE id=?`, db3.now(), user.id);
+      const deviceId2 = ctx.headers["x-device-id"];
+      if (ctx.headers["x-sync-client"] && deviceId2) {
+        const device = require_devices().touch(user, String(deviceId2).slice(0, 100), ctx);
+        if (device.revoked_at) {
+          audit3.log({ user, action: "auth.login.device_revoked", ip: ctx.ip, success: false });
+          throw new HttpError3(403, "This device has been revoked and can no longer sync. Contact your administrator.", { deviceRevoked: true });
+        }
+        if (device.wipe_requested_at) {
+          require_devices().markWiped(device.id);
+          audit3.log({ user, action: "auth.login.device_wiped", ip: ctx.ip, success: false });
+          throw new HttpError3(403, "An administrator has remotely wiped this device. It must be set up again before it can sync.", { deviceWipeRequired: true });
+        }
+      }
       const mfaRequiredForRole = policy().mfaRequiredRoles.includes(user.role);
       const mfaPending = !!user.mfa_enabled;
       const token2 = createSession(user, ctx, { mfaPending });
@@ -8160,7 +8228,8 @@ var require_sync_tables = __commonJS({
         ["sessions", "user_id"],
         ["user_prefs", "user_id"],
         ["api_keys", "created_by"],
-        ["users", "supervisor_id"]
+        ["users", "supervisor_id"],
+        ["devices", "user_id"]
       ]
     };
     module.exports.user_ref_cols = [...new Set(module.exports.user_refs.map(([, c]) => c))];
@@ -10447,6 +10516,41 @@ var require_scheduled_backup = __commonJS({
   }
 });
 
+// server/update.js
+var require_update = __commonJS({
+  "server/update.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var config = require_config();
+    function compareVersions(a, b) {
+      const pa = String(a).split(".").map((n) => parseInt(n, 10) || 0);
+      const pb = String(b).split(".").map((n) => parseInt(n, 10) || 0);
+      for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const d = (pa[i] || 0) - (pb[i] || 0);
+        if (d) return d > 0 ? 1 : -1;
+      }
+      return 0;
+    }
+    async function checkForUpdate({ feedUrl = config.updateFeedUrl, currentVersion = config.version, fetchImpl = fetch } = {}) {
+      if (!feedUrl) return { configured: false };
+      const res = await fetchImpl(feedUrl, { headers: { Accept: "application/vnd.github+json", "User-Agent": "suds-update-check" } });
+      if (!res.ok) throw new Error(`Could not check for updates (HTTP ${res.status})`);
+      const rel = await res.json();
+      const latest = String(rel.tag_name || "").replace(/^v/, "");
+      if (!latest) throw new Error("The update feed did not report a version");
+      return {
+        configured: true,
+        current: currentVersion,
+        latest,
+        available: compareVersions(latest, currentVersion) > 0,
+        url: rel.html_url || null,
+        published_at: rel.published_at || null
+      };
+    }
+    module.exports = { compareVersions, checkForUpdate };
+  }
+});
+
 // server/routes/admin.js
 var require_admin = __commonJS({
   "server/routes/admin.js"(exports, module) {
@@ -10655,6 +10759,41 @@ var require_admin = __commonJS({
         audit3.log({ user: ctx.user, action: "demo.remove.request", ip: ctx.ip, details: out2 });
         return out2;
       });
+      const update = require_update();
+      r.get("/api/admin/update/check", auth3.requireAuth, auth3.requirePerm("settings:manage"), async (ctx) => {
+        let info;
+        try {
+          info = await update.checkForUpdate();
+        } catch (e) {
+          throw badRequest(e.message);
+        }
+        if (info.configured) audit3.log({ user: ctx.user, action: "update.check", ip: ctx.ip, details: { current: info.current, latest: info.latest, available: info.available } });
+        return info;
+      });
+      r.get("/api/admin/devices", auth3.requireAuth, auth3.requirePerm("users:manage"), () => ({ devices: db3.all(`SELECT d.*, u.display_name, u.username FROM devices d JOIN users u ON u.id=d.user_id ORDER BY d.last_seen_at DESC`) }));
+      function findDevice(ctx) {
+        const d = db3.one(`SELECT * FROM devices WHERE id=?`, ctx.params.id);
+        if (!d) throw notFound();
+        return d;
+      }
+      r.post("/api/admin/devices/:id/revoke", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
+        const d = findDevice(ctx);
+        db3.run(`UPDATE devices SET revoked_at=?, wipe_requested_at=NULL WHERE id=?`, db3.now(), d.id);
+        audit3.log({ user: ctx.user, action: "device.revoke", entity: "device", entityId: d.id, ip: ctx.ip, details: { device_user: d.user_id } });
+        return { ok: true };
+      });
+      r.post("/api/admin/devices/:id/wipe", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
+        const d = findDevice(ctx);
+        db3.run(`UPDATE devices SET wipe_requested_at=? WHERE id=?`, db3.now(), d.id);
+        audit3.log({ user: ctx.user, action: "device.wipe.requested", entity: "device", entityId: d.id, ip: ctx.ip, details: { device_user: d.user_id } });
+        return { ok: true };
+      });
+      r.post("/api/admin/devices/:id/clear", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
+        const d = findDevice(ctx);
+        db3.run(`UPDATE devices SET revoked_at=NULL, wipe_requested_at=NULL WHERE id=?`, d.id);
+        audit3.log({ user: ctx.user, action: "device.clear", entity: "device", entityId: d.id, ip: ctx.ip, details: { device_user: d.user_id } });
+        return { ok: true };
+      });
       r.get("/api/admin/stats", auth3.requireAuth, auth3.requirePerm("settings:manage"), () => ({
         users: db3.one(`SELECT COUNT(*) n FROM users WHERE is_active=1`).n,
         clients: db3.one(`SELECT COUNT(*) n FROM clients WHERE deleted_at IS NULL`).n,
@@ -10673,6 +10812,49 @@ var require_admin = __commonJS({
   }
 });
 
+// server/metrics.js
+var require_metrics = __commonJS({
+  "server/metrics.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var db3 = require_db();
+    var config = require_config();
+    function render() {
+      const lines = [];
+      const metric = (name, help, type, value, labels = "") => {
+        lines.push(`# HELP ${name} ${help}`);
+        lines.push(`# TYPE ${name} ${type}`);
+        lines.push(`${name}${labels} ${value}`);
+      };
+      metric("suds_up", "Whether the SUDS server process is up.", "gauge", 1);
+      metric("suds_uptime_seconds", "Seconds since the process started.", "gauge", Math.round(proc.uptime()));
+      try {
+        metric("suds_build_info", "Build metadata. Always 1; the version and schema are in its labels.", "gauge", 1, `{version="${config.version}",schema_version="${db3.getSetting("schema_version", "0")}"}`);
+        metric("suds_users_active", "Active user accounts.", "gauge", db3.one(`SELECT COUNT(*) n FROM users WHERE is_active=1`).n);
+        metric("suds_clients_total", "Clients not soft-deleted.", "gauge", db3.one(`SELECT COUNT(*) n FROM clients WHERE deleted_at IS NULL`).n);
+        metric("suds_sessions_active", "Currently active (unexpired, unrevoked) sessions.", "gauge", db3.one(`SELECT COUNT(*) n FROM sessions WHERE revoked_at IS NULL AND expires_at > ?`, db3.now()).n);
+        metric("suds_audit_log_rows", "Rows currently in the audit log.", "gauge", db3.one(`SELECT COUNT(*) n FROM audit_log`).n);
+        metric("suds_devices_total", "Local-mode devices that have ever synced.", "gauge", db3.one(`SELECT COUNT(*) n FROM devices`).n);
+        metric("suds_database_up", "Whether the database answered a query just now.", "gauge", 1);
+      } catch {
+        metric("suds_database_up", "Whether the database answered a query just now.", "gauge", 0);
+      }
+      try {
+        metric("suds_database_bytes", "Size of the SQLite database file.", "gauge", fs.statSync(config.dbPath).size);
+      } catch {
+      }
+      try {
+        const fsinfo = fs.statfsSync(config.dataDir);
+        metric("suds_disk_free_bytes", "Free space on the volume holding the data directory.", "gauge", fsinfo.bavail * fsinfo.bsize);
+      } catch {
+      }
+      return lines.join("\n") + "\n";
+    }
+    module.exports = { render };
+  }
+});
+
 // server/routes/app.js
 var require_app = __commonJS({
   "server/routes/app.js"(exports, module) {
@@ -10686,7 +10868,7 @@ var require_app = __commonJS({
     var auth3 = require_auth();
     var audit3 = require_audit();
     var listener = (init_listener(), __toCommonJS(listener_exports));
-    var { badRequest, notFound, HttpError: HttpError3 } = require_http();
+    var { badRequest, notFound, unauthorized, HttpError: HttpError3 } = require_http();
     var dir = () => path.join(config.dataDir, "downloads");
     var apkPath = () => path.join(dir(), "suds.apk");
     function apkInfo() {
@@ -10730,6 +10912,16 @@ var require_app = __commonJS({
         }
         ctx.status = out2.ok ? 200 : 503;
         return out2;
+      });
+      r.get("/api/metrics", (ctx) => {
+        if (!config.metricsToken) throw notFound();
+        const header = ctx.headers["authorization"] || "";
+        const given = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+        const expected = import_buffer.Buffer.from(config.metricsToken), got = import_buffer.Buffer.from(given);
+        if (given.length !== config.metricsToken.length || !crypto3.timingSafeEqual(expected, got)) throw unauthorized("A valid bearer token is required");
+        const body = require_metrics().render();
+        ctx.res.writeHead(200, { "Content-Type": "text/plain; version=0.0.4; charset=utf-8", "Content-Length": import_buffer.Buffer.byteLength(body) });
+        ctx.res.end(body);
       });
       r.get("/api/app/info", () => ({ name: db3.getSetting("org_name", "SUDS"), version: config.version, listener: listener.describe(), android: apkInfo(), certificate: certFingerprint(), service: "_suds._tcp" }));
       r.get("/api/app/android.apk", (ctx) => {
@@ -19564,6 +19756,15 @@ var import_audit = __toESM(require_audit());
 var import_http = __toESM(require_http());
 var import_crypto2 = __toESM(require_crypto());
 var import_sync_tables = __toESM(require_sync_tables());
+init_sqlite();
+function deviceId() {
+  let id = import_db.default.getSetting("device_id", null);
+  if (!id) {
+    id = (0, import_crypto2.uuid)();
+    import_db.default.setSetting("device_id", id);
+  }
+  return id;
+}
 var NEVER = "1970-01-01T00:00:00.000Z";
 var PUSH_BYTES = 4 * 1024 * 1024;
 var BLOBS_PER_SYNC = 25;
@@ -19668,7 +19869,7 @@ function chunkRows(pending, maxBytes = PUSH_BYTES) {
   return chunks;
 }
 async function call(server, path, opts = {}, token2) {
-  const res = await fetch(server.replace(/\/$/, "") + path, { ...opts, credentials: "omit", headers: { "Content-Type": "application/json", "X-Sync-Client": "1", "X-Requested-With": "suds", ...token2 ? { Authorization: "Bearer " + token2 } : {}, ...opts.headers || {} } });
+  const res = await fetch(server.replace(/\/$/, "") + path, { ...opts, credentials: "omit", headers: { "Content-Type": "application/json", "X-Sync-Client": "1", "X-Device-Id": deviceId(), "X-Requested-With": "suds", ...token2 ? { Authorization: "Bearer " + token2 } : {}, ...opts.headers || {} } });
   const ct = res.headers.get("content-type") || "";
   const data = ct.includes("json") ? await res.json() : await res.text();
   if (!res.ok) {
@@ -19739,7 +19940,17 @@ async function run({ server, username, password, code, onProgress = () => {
 } }) {
   if (!server) throw new import_http.HttpError(400, "Office server address is required");
   onProgress("Signing in to the office server\u2026");
-  const login = await call(server, "/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+  let login;
+  try {
+    login = await call(server, "/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+  } catch (e) {
+    if (e.data && e.data.deviceWipeRequired) {
+      onProgress("This device has been remotely wiped by an administrator\u2026");
+      await wipe();
+      throw new import_http.HttpError(410, "This device was remotely wiped by an administrator. It has been erased and must be set up again.", { wiped: true });
+    }
+    throw e;
+  }
   const token2 = login.token;
   if (!token2) throw new import_http.HttpError(400, "The office server did not return a sync token (update the server to 1.1 or newer)");
   if (login.mfaPending) {

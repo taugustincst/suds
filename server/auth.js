@@ -189,6 +189,22 @@ async function login({ username, password, ctx }) {
     fail(lock ? 'locked after failures' : 'bad password');
   }
   db.run(`UPDATE users SET failed_attempts=0, locked_until=NULL, last_login_at=? WHERE id=?`, db.now(), user.id);
+  // A sync client (the phone app) identifies itself with a stable device id, separate from the short-lived
+  // session a sync run creates and destroys. A lost/stolen phone is handled here, before any session for it
+  // is created at all — see server/devices.js and Administration -> Users -> Devices.
+  const deviceId = ctx.headers['x-device-id'];
+  if (ctx.headers['x-sync-client'] && deviceId) {
+    const device = require('./devices').touch(user, String(deviceId).slice(0, 100), ctx);
+    if (device.revoked_at) {
+      audit.log({ user, action: 'auth.login.device_revoked', ip: ctx.ip, success: false });
+      throw new HttpError(403, 'This device has been revoked and can no longer sync. Contact your administrator.', { deviceRevoked: true });
+    }
+    if (device.wipe_requested_at) {
+      require('./devices').markWiped(device.id);
+      audit.log({ user, action: 'auth.login.device_wiped', ip: ctx.ip, success: false });
+      throw new HttpError(403, 'An administrator has remotely wiped this device. It must be set up again before it can sync.', { deviceWipeRequired: true });
+    }
+  }
   const mfaRequiredForRole = policy().mfaRequiredRoles.includes(user.role);
   const mfaPending = !!user.mfa_enabled;
   const token = createSession(user, ctx, { mfaPending });

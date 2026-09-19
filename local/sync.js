@@ -14,6 +14,18 @@ import audit from '../server/audit.js';
 import { HttpError } from '../server/http.js';
 import { encrypt, decrypt, blindIndex, uuid } from '../server/crypto.js';
 import SYNC from '../server/sync-tables.js';
+import { wipe as wipeLocalDb } from './shims/sqlite.js';
+
+// A stable identity for this physical device, generated once and kept in its own local settings — separate
+// from the sync session, which is created and destroyed within a single sync run (see the `finally` block
+// in run() below) and so cannot itself identify "this phone" from one sync to the next. Lets the office
+// server recognise a returning device (Administration -> Users -> Devices) well enough to revoke or
+// remotely wipe it if it is lost or stolen.
+function deviceId() {
+  let id = db.getSetting('device_id', null);
+  if (!id) { id = uuid(); db.setSetting('device_id', id); }
+  return id;
+}
 
 const NEVER = '1970-01-01T00:00:00.000Z';
 // Well under the server's body limit, leaving room for JSON overhead.
@@ -115,7 +127,7 @@ function chunkRows(pending, maxBytes = PUSH_BYTES) {
 }
 
 async function call(server, path, opts = {}, token) {
-  const res = await fetch(server.replace(/\/$/, '') + path, { ...opts, credentials: 'omit', headers: { 'Content-Type': 'application/json', 'X-Sync-Client': '1', 'X-Requested-With': 'suds', ...(token ? { Authorization: 'Bearer ' + token } : {}), ...(opts.headers || {}) } });
+  const res = await fetch(server.replace(/\/$/, '') + path, { ...opts, credentials: 'omit', headers: { 'Content-Type': 'application/json', 'X-Sync-Client': '1', 'X-Device-Id': deviceId(), 'X-Requested-With': 'suds', ...(token ? { Authorization: 'Bearer ' + token } : {}), ...(opts.headers || {}) } });
   const ct = res.headers.get('content-type') || ''; const data = ct.includes('json') ? await res.json() : await res.text();
   if (!res.ok) { const e = new Error((data && data.error) || `Server returned ${res.status}`); e.status = res.status; e.data = data; throw e; }
   return data;
@@ -177,7 +189,20 @@ async function uploadBlobs(server, token, onProgress) {
 export async function run({ server, username, password, code, onProgress = () => {} }) {
   if (!server) throw new HttpError(400, 'Office server address is required');
   onProgress('Signing in to the office server…');
-  const login = await call(server, '/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+  let login;
+  try {
+    login = await call(server, '/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+  } catch (e) {
+    // The office server has told this specific device (not the account) to erase itself, the moment it
+    // tried to sign in — before any session or data exchange happened. Nothing else in the payload can be
+    // trusted after this, so it wipes immediately rather than proceeding.
+    if (e.data && e.data.deviceWipeRequired) {
+      onProgress('This device has been remotely wiped by an administrator…');
+      await wipeLocalDb();
+      throw new HttpError(410, 'This device was remotely wiped by an administrator. It has been erased and must be set up again.', { wiped: true });
+    }
+    throw e;
+  }
   const token = login.token; if (!token) throw new HttpError(400, 'The office server did not return a sync token (update the server to 1.1 or newer)');
   if (login.mfaPending) { if (!code) throw new HttpError(401, 'MFA code required', { mfaRequired: true }); await call(server, '/api/auth/mfa/verify', { method: 'POST', body: JSON.stringify({ code }) }, token); }
   try {

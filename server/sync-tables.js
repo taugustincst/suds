@@ -46,7 +46,7 @@ module.exports = {
     ['consents', 'created_by'], ['disclosures', 'disclosed_by'], ['imports', 'imported_by'],
     ['client_forms', 'created_by'], ['client_forms', 'completed_by'], ['client_form_files', 'uploaded_by'],
     ['resource_photos', 'uploaded_by'], ['form_templates', 'uploaded_by'],
-    ['audit_log', 'user_id'], ['sessions', 'user_id'], ['user_prefs', 'user_id'], ['api_keys', 'created_by'], ['users', 'supervisor_id'],
+    ['audit_log', 'user_id'], ['sessions', 'user_id'], ['user_prefs', 'user_id'], ['api_keys', 'created_by'], ['users', 'supervisor_id'], ['devices', 'user_id'],
   ],
 };
 // Every column name above that points at users(id), for remapping a single pushed row.

@@ -69,9 +69,10 @@ Open `https://<your-suds>/?local=1`. The page runs the whole app locally in that
   - **iPhone / iPad app** — iOS Keychain, injected into the page at launch.
   - **Plain browser (`/?local=1`)** — `localStorage` in that browser profile, which is *not* protected storage. Testing only; see above.
 
-  Use MDM to require a device passcode and allow remote wipe.
+  Use MDM to require a device passcode and allow a full remote wipe of the device itself — SUDS has no visibility into or control over the OS below its own storage.
 - Sync uses HTTPS to the office server (self-signed certificate trusted once by fingerprint). Credentials are never stored on the phone; a short-lived session is used for each sync.
-- "Erase data on this device" on the Sync screen removes the local database.
+- "Erase data on this device" on the Sync screen removes the local database. An administrator can also trigger this remotely — see below.
+- **Lost or stolen device**: Administration → Users → Synced devices (office server) lists every phone/tablet that has ever synced, by the account it last synced as. **Revoke** blocks that device from syncing again until an administrator clears it — nothing on the device is touched, so a device found again a day later just needs clearing. **Wipe** additionally tells the device to erase its local SUDS database the next time it tries to sync, and revokes it in the same moment. Neither can reach a device that is never opened again with network access, or that never attempts to sync — that is a limit of working offline, not a bug: for a device that may never come back, MDM's OS-level remote wipe (above) is the real backstop, and this is what to do first while deciding on that.
 
 ## What the phone copy is built from
 The office server runs on Node's built-ins alone. The browser kernel cannot: a browser has no `node:sqlite`, no `node:crypto` and no `node:zlib`. So `npm run build:local` compiles `server/` together with a small, pinned set of vendored libraries into `public/local/kernel.js`, and that bundle is what the apps ship:

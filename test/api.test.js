@@ -409,6 +409,87 @@ test('scheduled backup settings are validated, and an admin can trigger one on d
   } finally { require('node:fs').rmSync(backupsDir, { recursive: true, force: true }); }
 });
 
+test('the update check is off by default, and reports what a configured feed says', async () => {
+  const config = require('../server/config');
+  assert.equal((await nav.get('/api/admin/update/check')).status, 403);
+  assert.equal((await admin.get('/api/admin/update/check')).data.configured, false, 'no UPDATE_FEED_URL is set in this test run');
+
+  const http = require('node:http');
+  const feed = http.createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ tag_name: 'v99.0.0', html_url: 'https://example.test/r' })); });
+  await new Promise((res) => feed.listen(0, '127.0.0.1', res));
+  const prior = config.updateFeedUrl;
+  config.updateFeedUrl = `http://127.0.0.1:${feed.address().port}`;
+  try {
+    const r = await admin.get('/api/admin/update/check');
+    assert.equal(r.status, 200);
+    assert.equal(r.data.configured, true);
+    assert.equal(r.data.available, true);
+    assert.equal(r.data.latest, '99.0.0');
+    assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='update.check'`));
+  } finally { config.updateFeedUrl = prior; await new Promise((res) => feed.close(res)); }
+});
+
+test('a syncing device is tracked, and an admin can revoke or remotely wipe it', async () => {
+  const sync = { 'X-Sync-Client': '1', 'X-Device-Id': 'device-test-1' };
+  const first = await H.client().post('/api/auth/login', { username: 'nav1', password: 'StaffPassw0rd!x' }, sync);
+  assert.equal(first.status, 200, 'a first-seen device syncs normally');
+
+  const list1 = await admin.get('/api/admin/devices');
+  assert.equal(list1.status, 200);
+  const row = list1.data.devices.find(d => d.id === 'device-test-1');
+  assert.ok(row, 'the device now appears in the admin list');
+  assert.equal(row.username, 'nav1');
+  assert.equal(row.sync_count, 1);
+
+  // Someone else's device management is not this admin's to touch through a stray permission gap
+  assert.equal((await nav.get('/api/admin/devices')).status, 403);
+  assert.equal((await nav.post(`/api/admin/devices/${row.id}/revoke`, {})).status, 403);
+
+  // Revoke: the device is blocked at login, before any session exists
+  assert.equal((await admin.post(`/api/admin/devices/${row.id}/revoke`, {})).status, 200);
+  const revokedLogin = await H.client().post('/api/auth/login', { username: 'nav1', password: 'StaffPassw0rd!x' }, sync);
+  assert.equal(revokedLogin.status, 403);
+  assert.equal(revokedLogin.data.deviceRevoked, true);
+  assert.ok(!revokedLogin.data.token);
+
+  // Clear: the device can sync again
+  assert.equal((await admin.post(`/api/admin/devices/${row.id}/clear`, {})).status, 200);
+  assert.equal((await H.client().post('/api/auth/login', { username: 'nav1', password: 'StaffPassw0rd!x' }, sync)).status, 200);
+
+  // Wipe: delivered exactly once, at the next login attempt, and the device ends up revoked afterward
+  assert.equal((await admin.post(`/api/admin/devices/${row.id}/wipe`, {})).status, 200);
+  const wipedLogin = await H.client().post('/api/auth/login', { username: 'nav1', password: 'StaffPassw0rd!x' }, sync);
+  assert.equal(wipedLogin.status, 403);
+  assert.equal(wipedLogin.data.deviceWipeRequired, true);
+  const afterWipe = H.db.one(`SELECT * FROM devices WHERE id=?`, row.id);
+  assert.ok(afterWipe.revoked_at, 'the device is revoked the instant the wipe is delivered, so it cannot loop into repeated wipes');
+  assert.equal(afterWipe.wipe_requested_at, null);
+  assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='auth.login.device_wiped'`));
+
+  // A browser login (no sync headers) is never subject to any of this
+  const office = H.client();
+  assert.equal((await office.login('nav1', 'StaffPassw0rd!x')).user.username, 'nav1');
+
+  await admin.post(`/api/admin/devices/${row.id}/clear`, {});
+});
+
+test('the metrics endpoint is off by default, then bearer-token gated once configured', async () => {
+  const config = require('../server/config');
+  const anon = H.client();
+  assert.equal((await anon.get('/api/metrics')).status, 404, 'no METRICS_TOKEN is set in this test run');
+
+  const prior = config.metricsToken;
+  config.metricsToken = 'test-metrics-token-123';
+  try {
+    assert.equal((await anon.get('/api/metrics')).status, 401, 'no token given');
+    assert.equal((await anon.get('/api/metrics', { Authorization: 'Bearer wrong-token' })).status, 401);
+    const r = await anon.get('/api/metrics', { Authorization: 'Bearer test-metrics-token-123' });
+    assert.equal(r.status, 200);
+    assert.match(r.data, /^suds_up 1$/m);
+    assert.match(r.data, /^suds_uptime_seconds \d+$/m);
+  } finally { config.metricsToken = prior; }
+});
+
 test('workspace preferences and continue endpoint follow the user', async () => {
   assert.equal((await nav.put('/api/me/prefs', { theme: 'dark', tour_done: true, 'bad key!': 1 })).status, 400);
   assert.equal((await nav.put('/api/me/prefs', { theme: 'dark', tour_done: true })).status, 200);

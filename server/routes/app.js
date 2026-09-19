@@ -8,7 +8,7 @@ const config = require('../config');
 const auth = require('../auth');
 const audit = require('../audit');
 const listener = require('../listener');
-const { badRequest, notFound, HttpError } = require('../http');
+const { badRequest, notFound, unauthorized, HttpError } = require('../http');
 
 const dir = () => path.join(config.dataDir, 'downloads');
 const apkPath = () => path.join(dir(), 'suds.apk');
@@ -39,6 +39,19 @@ module.exports = (r) => {
     } catch { /* :memory: or a platform without statfs — liveness still stands */ }
     ctx.status = out.ok ? 200 : 503;
     return out;
+  });
+
+  // Off unless METRICS_TOKEN is set (server/config.js) — see server/metrics.js for what it reports and why
+  // a bearer token, not the usual session cookie: a scraper has no way to sign in interactively.
+  r.get('/api/metrics', (ctx) => {
+    if (!config.metricsToken) throw notFound();
+    const header = ctx.headers['authorization'] || '';
+    const given = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+    const expected = Buffer.from(config.metricsToken), got = Buffer.from(given);
+    if (given.length !== config.metricsToken.length || !crypto.timingSafeEqual(expected, got)) throw unauthorized('A valid bearer token is required');
+    const body = require('../metrics').render();
+    ctx.res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8', 'Content-Length': Buffer.byteLength(body) });
+    ctx.res.end(body);
   });
 
   // Public (no PHI): what a phone needs to connect and install

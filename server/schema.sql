@@ -40,6 +40,25 @@ CREATE TABLE IF NOT EXISTS users (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_subject ON users(oidc_subject) WHERE oidc_subject IS NOT NULL;
 
+-- One row per physical phone/tablet running local mode, identified by a UUID the device itself generates
+-- once and sends on every sync call (never by the short-lived sync session, which starts and ends within a
+-- single sync run). "Wipe" here means the closest thing an offline-first app can offer to a real MDM remote
+-- wipe: the *next time this specific device attempts to sync*, it is told to erase its local database and
+-- its access is revoked in the same moment (server/auth.js login()). A device that is never opened again
+-- cannot be reached this way — that limitation is inherent to working offline, not a bug.
+CREATE TABLE IF NOT EXISTS devices (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  label TEXT,
+  first_seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  last_seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  last_ip TEXT,
+  sync_count INTEGER NOT NULL DEFAULT 0,
+  wipe_requested_at TEXT,
+  revoked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id);
+
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,               -- sha256 of the bearer token
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

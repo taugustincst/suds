@@ -8,7 +8,10 @@ const audit = require('./audit');
 const auth = require('./auth');
 const { Router, HttpError, parseCookies, readBody, securityHeaders, sendJson, serveStatic } = require('./http');
 
-// Simple in-memory rate limiter (per IP + bucket)
+// Simple in-memory rate limiter (per IP + bucket). Deliberately process-local, not shared across
+// instances: SUDS runs as exactly one process per database (server/instance-lock.js enforces this at
+// startup), so there is only ever one process's memory for it to live in. Do not "fix" this into a
+// distributed limiter without first making SUDS support more than one instance — it does not.
 const buckets = new Map();
 function rateLimit(key, max, windowMs) {
   const now = Date.now();

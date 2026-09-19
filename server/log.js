@@ -7,6 +7,7 @@
 // Log lines must never carry PHI. Route errors log the path and the message, never the body.
 const fs = require('node:fs');
 const path = require('node:path');
+const config = require('./config');
 
 const MAX_BYTES = 8 * 1024 * 1024;   // per file, before it is rolled aside
 const KEEP_DAYS = 30;
@@ -15,6 +16,13 @@ let stream = null; let currentDay = null; let dir = null;
 
 function fileFor(day) { return path.join(dir, `suds-${day}.log`); }
 const today = () => new Date().toISOString().slice(0, 10);
+
+/** One log line, in whichever format LOG_FORMAT selected — the same format for the console and the file. */
+function formatLine(level, args) {
+  const msg = args.map(a => (a instanceof Error ? (a.stack || a.message) : typeof a === 'string' ? a : safe(a))).join(' ');
+  if (config.logFormat === 'json') return JSON.stringify({ time: new Date().toISOString(), level, msg });
+  return `${new Date().toISOString()} ${level} ${msg}`;
+}
 
 function openFor(day) {
   try {
@@ -32,8 +40,7 @@ function write(level, args) {
   const day = today();
   if (day !== currentDay) { try { stream && stream.end(); } catch {} stream = openFor(day); currentDay = day; }
   if (!stream) return;
-  const line = args.map(a => (a instanceof Error ? (a.stack || a.message) : typeof a === 'string' ? a : safe(a))).join(' ');
-  try { stream.write(`${new Date().toISOString()} ${level} ${line}\n`); } catch {}
+  try { stream.write(formatLine(level, args) + '\n'); } catch {}
 }
 function safe(v) { try { return JSON.stringify(v); } catch { return String(v); } }
 
@@ -61,9 +68,11 @@ function start(dataDir) {
   if (!stream) return;
   for (const [level, method] of [['INFO', 'log'], ['WARN', 'warn'], ['ERROR', 'error']]) {
     const original = console[method].bind(console);
-    console[method] = (...args) => { original(...args); write(level, args); };
+    // In JSON mode the console itself becomes structured too, not just the file — a container's log
+    // collector reads stdout, not a file inside a volume it may not even see.
+    console[method] = (...args) => { if (config.logFormat === 'json') original(formatLine(level, args)); else original(...args); write(level, args); };
   }
-  console.log(`[suds] logging to ${fileFor(currentDay)}`);
+  console.log(`[suds] logging to ${fileFor(currentDay)}${config.logFormat === 'json' ? ' (JSON)' : ''}`);
 }
 
-module.exports = { start, purge, MAX_BYTES, KEEP_DAYS };
+module.exports = { start, purge, formatLine, MAX_BYTES, KEEP_DAYS };

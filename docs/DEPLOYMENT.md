@@ -8,6 +8,12 @@
 * A host with an **encrypted disk** for the data directory (BitLocker, LUKS, or a cloud disk with KMS-backed encryption).
 * TLS: either a certificate/key pair for the app itself, or a TLS-terminating reverse proxy (Caddy, nginx, IIS ARR, a cloud load balancer). Never expose plain HTTP beyond localhost.
 
+### Single instance only
+
+SUDS is one process, one SQLite database file: there is no clustering, no shared session store, and no distributed rate limiter — sessions, login lockout counters and the API rate limiter all live in that one process's memory. This is a deliberate scope, not a temporary gap: a second process against the same data directory does not add capacity, it risks corrupting the database, so it is refused outright (`server/instance-lock.js`, a pidfile at `data/.suds.lock`) rather than merely discouraged in a document nobody reads before scaling a container to more replicas. A process that exits cleanly releases the lock; a lock left behind by one that crashed is detected as stale (its pid is no longer running) and taken over automatically, so a crash never leaves a data directory permanently unable to start.
+
+This covers *one program's* worth of staff — dozens, not hundreds. If a deployment is outgrowing a single box, the answer is a bigger box (this is close to zero-overhead per request) or a separate SUDS install per county/program, never multiple instances load-balanced in front of one database.
+
 ## 1. Configuration
 
 Copy `.env.example` to `.env` and set:
@@ -29,6 +35,8 @@ Copy `.env.example` to `.env` and set:
 | `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, `MS_ONENOTE_USER` | optional | For direct OneNote import via Microsoft Graph. See IMPORTS.md. |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI` | optional | Single sign-on against a county identity provider. See "Single sign-on" below. |
 | `OIDC_LABEL` | no | Button text on the login page. Default "Sign in with county SSO". |
+| `UPDATE_FEED_URL` | optional | Lets Administration check for a newer release. See "Upgrades" below. |
+| `METRICS_TOKEN`, `LOG_FORMAT` | optional | Prometheus metrics and JSON logging for an existing monitoring stack. See "Monitoring and logs" below. |
 | `AUDIT_RETENTION_DAYS` | no | Default 2555 (7 years). |
 | `SUDS_ADMIN_USERNAME`, `SUDS_ADMIN_PASSWORD` | first run only | Initial admin. Otherwise a temporary password is printed once. |
 | `SUDS_SKIP_SETUP=1` | no | Never show the browser setup wizard (it is already skipped when keys come from the environment). |
@@ -127,14 +135,30 @@ The columns to re-encrypt are discovered from the database, not from a list in t
 
 `GET /api/health` needs no authentication and returns `{ ok, version, schema_version, database, database_bytes, disk_free_bytes, uptime_seconds }`. It answers 503 when the database cannot be read or free disk drops below 100 MB, so it works directly as a liveness and readiness probe (the Docker image uses it).
 
-Console output is also written to `data/logs/suds-<date>.log` (mode 0600), rolled at 8 MB and kept 30 days. Log lines never contain PHI: route errors record the path and the error message only. Audit retention (`AUDIT_RETENTION_DAYS`, default 2555) and tombstone retention (`TOMBSTONE_RETENTION_DAYS`, default 180) are enforced on the same hourly pass; a device offline longer than the tombstone horizon is told to resync from scratch rather than silently keeping deleted records.
+For a fuller picture in an existing monitoring stack, set `METRICS_TOKEN` and point Prometheus (or anything that scrapes Prometheus-format text) at `GET /api/metrics` with that value as its `bearer_token`. Off (404) until that variable is set; once set, every request needs `Authorization: Bearer <token>` or it is refused — a scraper has no way to sign in interactively, so this is its own credential, not the usual session. Reports uptime, active users/sessions, client and audit-log row counts, synced-device count, database file size and free disk — aggregate operational numbers, never PHI (`server/metrics.js`).
+
+Console output is also written to `data/logs/suds-<date>.log` (mode 0600), rolled at 8 MB and kept 30 days, in the same human-readable format as the console by default. Set `LOG_FORMAT=json` to switch both the console and that file to newline-delimited JSON (`{time, level, msg}` per line) for a log collector (Loki, CloudWatch, an ELK stack) that expects structured input rather than parsing free text. Log lines never contain PHI either way: route errors record the path and the error message only. Audit retention (`AUDIT_RETENTION_DAYS`, default 2555) and tombstone retention (`TOMBSTONE_RETENTION_DAYS`, default 180) are enforced on the same hourly pass; a device offline longer than the tombstone horizon is told to resync from scratch rather than silently keeping deleted records.
 
 ## 5. Upgrades
+
+For a git-checkout install, `scripts/update.js` does the sequence below as one command, refusing to run with uncommitted changes and stopping (without restarting the service) if the tests fail after pulling:
+
+```bash
+node scripts/update.js --check                                          # what would change; touches nothing
+node scripts/update.js --apply                                          # back up, pull, reinstall, rebuild, test
+node scripts/update.js --apply --restart-cmd "systemctl restart suds"   # and restart once it succeeds
+```
+
+Equivalently, by hand:
 
 ```bash
 npm run backup -- /secure/backups     # first, always
 git pull && npm ci && npm test && systemctl restart suds
 ```
+
+A packaged (non-git, zip) or Docker install has no code for `scripts/update.js` to pull — take a backup, then replace the application files (Docker: pull the new image tag) with the next release and restart; `data/` is never touched by either path.
+
+Administration → System & backups can also check whether a newer release exists (`GET /api/admin/update/check`) — off by default, since it means an outbound call to whatever `UPDATE_FEED_URL` is set to (typically `https://api.github.com/repos/<owner>/<repo>/releases/latest`, or an internal mirror for an air-gapped county). It only ever runs when an administrator clicks the button; nothing polls automatically, and it never applies anything itself — applying is always the explicit `scripts/update.js --apply` or manual step above.
 
 Schema migrations run automatically at startup (`server/db.js`), each inside a transaction with its version stamp and with `PRAGMA foreign_key_check` before it commits, so a crash midway cannot leave a half-applied schema. Before the first migration of a start-up runs, SUDS takes its own consistent snapshot of the database into `data/pre-migration/suds.db.v<version>.<timestamp>.db` (the last five are kept) and logs where it went; if the snapshot cannot be written — no disk space, no permission — the upgrade stops rather than proceeding unprotected. That snapshot is a convenience, not a substitute for the off-host backup above: it sits on the same disk. SUDS refuses to open a database written by a *newer* build rather than running against a schema it does not understand — so a rollback means restoring the backup that matches the version you are rolling back to.
 
