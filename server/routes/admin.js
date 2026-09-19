@@ -186,6 +186,17 @@ module.exports = (r) => {
     audit.log({ user: ctx.user, action: 'demo.remove.request', ip: ctx.ip, details: out });
     return out;
   });
+  // Update check only — applying an update is scripts/update.js, a separate CLI tool; a running server
+  // cannot safely overwrite the source files it is currently executing from.
+  const update = require('../update');
+  r.get('/api/admin/update/check', auth.requireAuth, auth.requirePerm('settings:manage'), async (ctx) => {
+    let info;
+    try { info = await update.checkForUpdate(); }
+    catch (e) { throw badRequest(e.message); }
+    if (info.configured) audit.log({ user: ctx.user, action: 'update.check', ip: ctx.ip, details: { current: info.current, latest: info.latest, available: info.available } });
+    return info;
+  });
+
   r.get('/api/admin/stats', auth.requireAuth, auth.requirePerm('settings:manage'), () => ({
     users: db.one(`SELECT COUNT(*) n FROM users WHERE is_active=1`).n,
     clients: db.one(`SELECT COUNT(*) n FROM clients WHERE deleted_at IS NULL`).n,

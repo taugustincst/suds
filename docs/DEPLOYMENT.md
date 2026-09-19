@@ -29,6 +29,7 @@ Copy `.env.example` to `.env` and set:
 | `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, `MS_ONENOTE_USER` | optional | For direct OneNote import via Microsoft Graph. See IMPORTS.md. |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI` | optional | Single sign-on against a county identity provider. See "Single sign-on" below. |
 | `OIDC_LABEL` | no | Button text on the login page. Default "Sign in with county SSO". |
+| `UPDATE_FEED_URL` | optional | Lets Administration check for a newer release. See "Upgrades" below. |
 | `AUDIT_RETENTION_DAYS` | no | Default 2555 (7 years). |
 | `SUDS_ADMIN_USERNAME`, `SUDS_ADMIN_PASSWORD` | first run only | Initial admin. Otherwise a temporary password is printed once. |
 | `SUDS_SKIP_SETUP=1` | no | Never show the browser setup wizard (it is already skipped when keys come from the environment). |
@@ -131,10 +132,24 @@ Console output is also written to `data/logs/suds-<date>.log` (mode 0600), rolle
 
 ## 5. Upgrades
 
+For a git-checkout install, `scripts/update.js` does the sequence below as one command, refusing to run with uncommitted changes and stopping (without restarting the service) if the tests fail after pulling:
+
+```bash
+node scripts/update.js --check                                          # what would change; touches nothing
+node scripts/update.js --apply                                          # back up, pull, reinstall, rebuild, test
+node scripts/update.js --apply --restart-cmd "systemctl restart suds"   # and restart once it succeeds
+```
+
+Equivalently, by hand:
+
 ```bash
 npm run backup -- /secure/backups     # first, always
 git pull && npm ci && npm test && systemctl restart suds
 ```
+
+A packaged (non-git, zip) or Docker install has no code for `scripts/update.js` to pull — take a backup, then replace the application files (Docker: pull the new image tag) with the next release and restart; `data/` is never touched by either path.
+
+Administration → System & backups can also check whether a newer release exists (`GET /api/admin/update/check`) — off by default, since it means an outbound call to whatever `UPDATE_FEED_URL` is set to (typically `https://api.github.com/repos/<owner>/<repo>/releases/latest`, or an internal mirror for an air-gapped county). It only ever runs when an administrator clicks the button; nothing polls automatically, and it never applies anything itself — applying is always the explicit `scripts/update.js --apply` or manual step above.
 
 Schema migrations run automatically at startup (`server/db.js`), each inside a transaction with its version stamp and with `PRAGMA foreign_key_check` before it commits, so a crash midway cannot leave a half-applied schema. Before the first migration of a start-up runs, SUDS takes its own consistent snapshot of the database into `data/pre-migration/suds.db.v<version>.<timestamp>.db` (the last five are kept) and logs where it went; if the snapshot cannot be written — no disk space, no permission — the upgrade stops rather than proceeding unprotected. That snapshot is a convenience, not a substitute for the off-host backup above: it sits on the same disk. SUDS refuses to open a database written by a *newer* build rather than running against a schema it does not understand — so a rollback means restoring the backup that matches the version you are rolling back to.
 

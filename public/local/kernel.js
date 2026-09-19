@@ -10447,6 +10447,41 @@ var require_scheduled_backup = __commonJS({
   }
 });
 
+// server/update.js
+var require_update = __commonJS({
+  "server/update.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var config = require_config();
+    function compareVersions(a, b) {
+      const pa = String(a).split(".").map((n) => parseInt(n, 10) || 0);
+      const pb = String(b).split(".").map((n) => parseInt(n, 10) || 0);
+      for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const d = (pa[i] || 0) - (pb[i] || 0);
+        if (d) return d > 0 ? 1 : -1;
+      }
+      return 0;
+    }
+    async function checkForUpdate({ feedUrl = config.updateFeedUrl, currentVersion = config.version, fetchImpl = fetch } = {}) {
+      if (!feedUrl) return { configured: false };
+      const res = await fetchImpl(feedUrl, { headers: { Accept: "application/vnd.github+json", "User-Agent": "suds-update-check" } });
+      if (!res.ok) throw new Error(`Could not check for updates (HTTP ${res.status})`);
+      const rel = await res.json();
+      const latest = String(rel.tag_name || "").replace(/^v/, "");
+      if (!latest) throw new Error("The update feed did not report a version");
+      return {
+        configured: true,
+        current: currentVersion,
+        latest,
+        available: compareVersions(latest, currentVersion) > 0,
+        url: rel.html_url || null,
+        published_at: rel.published_at || null
+      };
+    }
+    module.exports = { compareVersions, checkForUpdate };
+  }
+});
+
 // server/routes/admin.js
 var require_admin = __commonJS({
   "server/routes/admin.js"(exports, module) {
@@ -10654,6 +10689,17 @@ var require_admin = __commonJS({
         const out2 = demo.remove({ actor: ctx.user.id });
         audit3.log({ user: ctx.user, action: "demo.remove.request", ip: ctx.ip, details: out2 });
         return out2;
+      });
+      const update = require_update();
+      r.get("/api/admin/update/check", auth3.requireAuth, auth3.requirePerm("settings:manage"), async (ctx) => {
+        let info;
+        try {
+          info = await update.checkForUpdate();
+        } catch (e) {
+          throw badRequest(e.message);
+        }
+        if (info.configured) audit3.log({ user: ctx.user, action: "update.check", ip: ctx.ip, details: { current: info.current, latest: info.latest, available: info.available } });
+        return info;
       });
       r.get("/api/admin/stats", auth3.requireAuth, auth3.requirePerm("settings:manage"), () => ({
         users: db3.one(`SELECT COUNT(*) n FROM users WHERE is_active=1`).n,

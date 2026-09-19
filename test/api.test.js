@@ -409,6 +409,26 @@ test('scheduled backup settings are validated, and an admin can trigger one on d
   } finally { require('node:fs').rmSync(backupsDir, { recursive: true, force: true }); }
 });
 
+test('the update check is off by default, and reports what a configured feed says', async () => {
+  const config = require('../server/config');
+  assert.equal((await nav.get('/api/admin/update/check')).status, 403);
+  assert.equal((await admin.get('/api/admin/update/check')).data.configured, false, 'no UPDATE_FEED_URL is set in this test run');
+
+  const http = require('node:http');
+  const feed = http.createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ tag_name: 'v99.0.0', html_url: 'https://example.test/r' })); });
+  await new Promise((res) => feed.listen(0, '127.0.0.1', res));
+  const prior = config.updateFeedUrl;
+  config.updateFeedUrl = `http://127.0.0.1:${feed.address().port}`;
+  try {
+    const r = await admin.get('/api/admin/update/check');
+    assert.equal(r.status, 200);
+    assert.equal(r.data.configured, true);
+    assert.equal(r.data.available, true);
+    assert.equal(r.data.latest, '99.0.0');
+    assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='update.check'`));
+  } finally { config.updateFeedUrl = prior; await new Promise((res) => feed.close(res)); }
+});
+
 test('workspace preferences and continue endpoint follow the user', async () => {
   assert.equal((await nav.put('/api/me/prefs', { theme: 'dark', tour_done: true, 'bad key!': 1 })).status, 400);
   assert.equal((await nav.put('/api/me/prefs', { theme: 'dark', tour_done: true })).status, 200);

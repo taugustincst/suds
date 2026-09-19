@@ -104,6 +104,10 @@ const config = {
     label: process.env.OIDC_LABEL || 'Sign in with county SSO',
   },
   trustProxy: process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true' || !!fileCfg.trustProxy,
+  // Off by default: nothing calls out to check for updates unless this is set and an administrator clicks
+  // "Check for updates" (server/update.js). A GitHub releases API URL, e.g.
+  // https://api.github.com/repos/<owner>/<repo>/releases/latest — or an internal mirror for an air-gapped county.
+  updateFeedUrl: process.env.UPDATE_FEED_URL || '',
   // PHI access entries are kept for the full HIPAA seven years. Routine list/search traffic is the bulk of
   // the volume and has a much shorter useful life, so it ages out sooner; the chain stays verifiable either
   // way because a purge records the hash it continues from.
