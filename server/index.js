@@ -14,6 +14,13 @@ if (config.isProd && typeof process.umask === 'function') process.umask(0o077);
 // window it was printed in.
 if (config.dbPath !== ':memory:') require('./log').start(config.dataDir);
 
+// One process per database, enforced (server/instance-lock.js) — not just documented — because a second
+// one against the same data directory can corrupt it, not merely waste resources.
+if (config.dbPath !== ':memory:') {
+  try { require('./instance-lock').acquire(config.dataDir); }
+  catch (e) { console.error(`[suds] ${e.message}`); process.exit(1); }
+}
+
 db.open();
 ensureBootstrap();
 const handler = createHandler();
