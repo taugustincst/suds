@@ -107,7 +107,7 @@ route('clients', async (r) => {
   }
   const activeFilters = [r.query.get('stale') === '1' ? 'no contact in 30 days' : null, risk ? `risk: ${risk === 'high' ? 'high or critical' : risk}` : null, substance ? `substance: ${fmt.label(substance)}` : null, mat ? `MAT: ${fmt.label(mat)}` : null, expiring ? 'consent expiring soon' : null].filter(Boolean);
   const deid = !can('clients:read');
-  const search = h('input', { type: 'search', value: q, placeholder: 'Exact last name, "Last, First", phone, DOB (YYYY-MM-DD) or client code', onKeydown: (e) => { if (e.key === 'Enter') nav(`clients?status=${status}&q=${encodeURIComponent(search.value.trim())}`); } });
+  const search = h('input', { type: 'search', value: q, placeholder: 'Last name (partial or misspelled OK), "Last, First", phone, DOB (YYYY-MM-DD) or client code', onKeydown: (e) => { if (e.key === 'Enter') nav(`clients?status=${status}&q=${encodeURIComponent(search.value.trim())}`); } });
   const statusSel = h('select', { onChange: () => nav(`clients?status=${statusSel.value}&q=${encodeURIComponent(q)}&assigned_to=${assigned}`) }, ['active', 'waitlist', 'inactive', 'closed', 'deceased', 'all'].map(s => h('option', { value: s, selected: s === status }, fmt.label(s))));
   const assignSel = !state.user.caseload_restricted ? h('select', { onChange: () => nav(`clients?status=${status}&q=${encodeURIComponent(q)}&assigned_to=${assignSel.value}`) }, h('option', { value: '' }, 'Any worker'), h('option', { value: state.user.id, selected: assigned === state.user.id }, 'Me'), state.users.filter(u => u.id !== state.user.id && ['navigator', 'clinician', 'supervisor'].includes(u.role)).map(u => h('option', { value: u.id, selected: u.id === assigned }, u.display_name))) : null;
   return h('div', {},
@@ -126,5 +126,5 @@ route('clients', async (r) => {
       { label: 'Time to engage', render: c => c.days_to_engagement === null ? '—' : h('span', { style: c.days_to_engagement < 0 ? { color: 'var(--danger)' } : {} }, `${c.days_to_engagement}d`) },
       { label: 'Last contact', render: c => h('span', { style: !c.last_contact || Date.now() - Date.parse(c.last_contact) > 30 * 86400000 ? { color: 'var(--warn)' } : {} }, fmt.ago(c.last_contact)) },
       expiring ? { label: 'Consent expires', render: c => fmt.date(expiring.get(c.id)) } : null,
-    ].filter(Boolean), rows, { onRow: deid ? null : (c) => nav(`client/${c.id}`), empty: q ? 'No one matches. Try the exact last name, the full phone number, date of birth (YYYY-MM-DD) or the client code — names are stored encrypted, so partial names do not match.' : (status === 'active' ? 'No active clients yet. Click + New client to add your first.' : 'No clients with this status.') }));
+    ].filter(Boolean), rows, { onRow: deid ? null : (c) => nav(`client/${c.id}`), empty: q ? 'No one matches. Names are stored encrypted, so search only works from the start of the last name (misspellings are tolerated) — try just the first few letters, the full phone number, date of birth (YYYY-MM-DD) or the client code.' : (status === 'active' ? 'No active clients yet. Click + New client to add your first.' : 'No clients with this status.') }));
 });

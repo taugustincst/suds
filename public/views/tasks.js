@@ -13,9 +13,35 @@ export function openTaskForm(values, { clientId, clientDisplay, onDone } = {}) {
   } });
   const m = modal(isNew ? 'New task' : 'Edit task', f);
 }
-export function taskTable(rows, { showClient = true, onChange } = {}) {
+export function taskTable(rows, { showClient = true, onChange, bulk = false } = {}) {
   const overdue = t => t.due_at && ['open', 'in_progress'].includes(t.status) && fmt.isPast(t.due_at);
-  return table([
+  const canBulk = bulk && can('tasks:write');
+  // Closing out a list of to-dos one checkbox at a time is the common case; select several and clear
+  // them in one request each instead of one round trip per box.
+  const bulkable = rows.filter(t => t.status !== 'done');
+  const selected = new Set();
+  const boxes = new Map();
+  const countEl = h('span', { class: 'small muted' }, '0 selected');
+  const markBtn = h('button', { class: 'btn sm primary', disabled: true, onClick: async () => {
+    const ids = [...selected]; markBtn.disabled = true;
+    const results = await Promise.allSettled(ids.map(id => put(`/api/tasks/${id}`, { status: 'done' })));
+    const failed = results.filter(x => x.status === 'rejected').length;
+    toast(failed ? `${ids.length - failed} of ${ids.length} marked done — ${failed} failed. Check your connection and try again.` : `${ids.length} marked done`, failed ? 'error' : 'ok');
+    onChange && onChange();
+  } }, 'Mark selected done');
+  const selectAll = h('input', { type: 'checkbox', 'aria-label': 'Select all' });
+  const updateCount = () => {
+    countEl.textContent = `${selected.size} selected`; markBtn.disabled = selected.size === 0;
+    selectAll.checked = bulkable.length > 0 && selected.size === bulkable.length;
+    selectAll.indeterminate = selected.size > 0 && selected.size < bulkable.length;
+  };
+  selectAll.addEventListener('change', () => {
+    for (const t of bulkable) { const box = boxes.get(t.id); if (!box) continue; box.checked = selectAll.checked; if (selectAll.checked) selected.add(t.id); else selected.delete(t.id); }
+    updateCount();
+  });
+  const toolbar = canBulk && bulkable.length ? h('div', { class: 'row mb', style: { alignItems: 'center', gap: '.6rem' } }, h('label', { class: 'check', style: { marginTop: 0 } }, selectAll, 'Select all'), countEl, markBtn) : null;
+
+  const tbl = table([
     { label: '', render: t => can('tasks:write') ? h('input', {
       type: 'checkbox', checked: t.status === 'done', title: 'Mark done',
       'aria-label': `Mark "${t.title}" ${t.status === 'done' ? 'not done' : 'done'}`,
@@ -33,12 +59,14 @@ export function taskTable(rows, { showClient = true, onChange } = {}) {
         } finally { e.target.disabled = false; }
       },
     }) : null },
+    canBulk ? { label: '', render: t => { if (t.status === 'done') return null; const box = h('input', { type: 'checkbox', 'aria-label': `Select "${t.title}"`, onChange: (e) => { if (e.target.checked) selected.add(t.id); else selected.delete(t.id); updateCount(); } }); boxes.set(t.id, box); return box; } } : null,
     { label: 'Task', render: t => h('div', {}, h('span', { style: t.status === 'done' ? { textDecoration: 'line-through', color: 'var(--muted)' } : {} }, t.is_milestone ? '★ ' : '', t.title), t.description ? h('div', { class: 'small muted' }, t.description.slice(0, 120)) : null) },
     showClient ? { label: 'Client', render: t => t.client_id ? h('a', { href: `#/client/${t.client_id}` }, t.client_code) : '—' } : null,
     { label: 'Due', render: t => h('span', { style: overdue(t) ? { color: 'var(--danger)', fontWeight: 600 } : {} }, t.due_at ? fmt.dt(t.due_at) : '—') },
     { label: 'Priority', render: t => badge(fmt.label(t.priority), statusKind(t.priority)) }, { label: 'Status', render: t => badge(fmt.label(t.status), statusKind(t.status)) }, { label: 'Assignee', key: 'assignee' },
     { label: '', render: t => can('tasks:write') ? h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm', onClick: () => openTaskForm(t, { onDone: onChange }) }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this task', onClick: async () => { if (await confirmDialog('Delete task', 'Delete this task?', { danger: true, okText: 'Delete' })) { await del(`/api/tasks/${t.id}`); onChange && onChange(); } } }, '✕')) : null },
   ].filter(Boolean), rows, { empty: 'Nothing here. Reminders you add, and follow-ups from visits and calls, will show up in this list.' });
+  return toolbar ? h('div', {}, toolbar, tbl) : tbl;
 }
 route('tasks', async (r) => {
   const status = r.query.get('status') || 'open'; const mine = r.query.get('mine') !== '0'; const overdue = r.query.get('overdue') === '1';
@@ -50,5 +78,5 @@ route('tasks', async (r) => {
   return h('div', {},
     pageHead('To-do list', can('tasks:write') ? h('button', { class: 'btn primary', onClick: () => openTaskForm(null, { onDone: refresh }) }, '+ Add a reminder') : null),
     h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'Status'), sel), h('button', { class: `btn sm ${mine ? 'primary' : ''}`, onClick: () => nav(`tasks?status=${status}&mine=${mine ? 0 : 1}`) }, 'Assigned to me'), h('button', { class: `btn sm ${overdue ? 'primary' : ''}`, onClick: () => nav(`tasks?status=open&mine=${mine ? 1 : 0}${overdue ? '' : '&overdue=1'}`) }, 'Overdue')),
-    taskTable(data.rows, { onChange: refresh }));
+    taskTable(data.rows, { onChange: refresh, bulk: true }));
 });
