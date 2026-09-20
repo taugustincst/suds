@@ -687,23 +687,27 @@ export async function loadRefData() {
 
 // ---------- boot (called from main.js after all views are registered) ----------
 window.__suds = { downloadCsv: (...a) => downloadCsv(...a) };
-export async function boot() {
+async function startLocalKernel(force) {
+  const k = await import('./local/kernel.js');
+  await k.start({
+    wasmUrl: new URL('./local/sql-wasm.wasm', location.href).href,
+    force,
+    // A device that has stopped being able to save is not a console message; the person using it needs
+    // to know before they type anything else in.
+    onSaveError: (err) => {
+      const full = String(err && err.name) === 'QuotaExceededError';
+      banner(full
+        ? 'This device is out of storage space, so nothing is being saved. Sync with the office, then remove sample data or attachments to free space.'
+        : 'This device has stopped saving your work. Sync with the office as soon as you can.', 'error');
+    },
+  });
+}
+export async function boot(force = false) {
   state.local = isLocalMode();
   if (state.local) {
     document.getElementById('app').innerHTML = '<div class="boot">Starting SUDS on this device…</div>';
     try {
-      const k = await import('./local/kernel.js');
-      await k.start({
-        wasmUrl: new URL('./local/sql-wasm.wasm', location.href).href,
-        // A device that has stopped being able to save is not a console message; the person using it needs
-        // to know before they type anything else in.
-        onSaveError: (err) => {
-          const full = String(err && err.name) === 'QuotaExceededError';
-          banner(full
-            ? 'This device is out of storage space, so nothing is being saved. Sync with the office, then remove sample data or attachments to free space.'
-            : 'This device has stopped saving your work. Sync with the office as soon as you can.', 'error');
-        },
-      });
+      await startLocalKernel(force);
     } catch (e) {
       // Two specific failures need their own explanation rather than a raw message.
       const alreadyOpen = e && e.code === 'SUDS_ALREADY_OPEN';
@@ -716,8 +720,19 @@ export async function boot() {
       const app = document.getElementById('app');
       clear(app);
       // This is the one screen a locked-out or broken device can reach without a kernel — reset has to work
-      // here directly. Left out for SUDS_ALREADY_OPEN: that device and its data are fine, just open elsewhere.
-      app.append(h('div', { class: 'boot error' }, msg), alreadyOpen ? null : offerDeviceReset());
+      // here directly. SUDS_ALREADY_OPEN gets its own recovery instead: that device and its data are fine,
+      // just apparently open elsewhere, so wiping it would be the wrong tool. "Try again" always works — it
+      // re-checks in case the other window closed in the meantime. Past that, once the previous holder has
+      // gone quiet long enough to be presumed gone (a crashed tab, a browser killed outright rather than
+      // closed) rather than genuinely still open, "Continue anyway" lets the person proceed instead of being
+      // locked out of their own device with no way back in.
+      app.append(
+        h('div', { class: 'boot error' }, msg),
+        alreadyOpen ? h('div', { class: 'btn-row center mt' },
+          h('button', { class: 'btn', type: 'button', onClick: () => boot() }, 'Try again'),
+          e.stale ? h('button', { class: 'btn danger', type: 'button', onClick: () => boot(true) }, 'Continue anyway — no other window is actually open') : null,
+        ) : offerDeviceReset(),
+      );
       return;
     }
     window.addEventListener('pagehide', () => { window.SUDS_LOCAL && window.SUDS_LOCAL.flush(); });

@@ -5939,9 +5939,11 @@ __export(sqlite_exports, {
   acquireLock: () => acquireLock,
   default: () => sqlite_default,
   flush: () => flush,
+  forceAcquireLock: () => forceAcquireLock,
   hasLock: () => hasLock,
   init: () => init,
   loadBytes: () => loadBytes,
+  lockIsStale: () => lockIsStale,
   saveBytes: () => saveBytes,
   setSaveErrorHandler: () => setSaveErrorHandler,
   wipe: () => wipe
@@ -5952,26 +5954,48 @@ async function init(wasmUrl) {
   SQL = await initSqlJs({ locateFile: () => wasmUrl });
   return SQL;
 }
-async function acquireLock() {
-  if (!navigator.locks || !navigator.locks.request) {
-    haveLock = true;
-    return true;
+function beat() {
+  try {
+    localStorage.setItem(HEARTBEAT_KEY, String(Date.now()));
+  } catch {
   }
+}
+async function acquireWebLock() {
+  if (!navigator.locks || !navigator.locks.request) return true;
   return new Promise((resolve2) => {
     navigator.locks.request("suds-local-db", { mode: "exclusive", ifAvailable: true }, (lock) => {
       if (!lock) {
         resolve2(false);
         return;
       }
-      haveLock = true;
       resolve2(true);
       return new Promise(() => {
       });
-    }).catch(() => {
-      haveLock = true;
-      resolve2(true);
-    });
+    }).catch(() => resolve2(true));
   });
+}
+async function acquireLock() {
+  const got = await acquireWebLock();
+  if (!got) return false;
+  haveLock = true;
+  beat();
+  clearInterval(heartbeatTimer);
+  heartbeatTimer = setInterval(beat, HEARTBEAT_MS);
+  return true;
+}
+function lockIsStale() {
+  try {
+    const last = Number(localStorage.getItem(HEARTBEAT_KEY) || 0);
+    return last > 0 && Date.now() - last > STALE_MS;
+  } catch {
+    return false;
+  }
+}
+function forceAcquireLock() {
+  haveLock = true;
+  beat();
+  clearInterval(heartbeatTimer);
+  heartbeatTimer = setInterval(beat, HEARTBEAT_MS);
 }
 function hasLock() {
   return haveLock;
@@ -6041,14 +6065,18 @@ function persistSoon() {
   flush().catch(() => {
   });
 }
-var SQL, STORE, KEY, haveLock, current, saveTimer, dirty, saving, onSaveError, Statement, DatabaseSync, sqlite_default;
+var SQL, STORE, KEY, HEARTBEAT_KEY, HEARTBEAT_MS, STALE_MS, haveLock, heartbeatTimer, current, saveTimer, dirty, saving, onSaveError, Statement, DatabaseSync, sqlite_default;
 var init_sqlite = __esm({
   "local/shims/sqlite.js"() {
     init_globals_inject();
     SQL = null;
     STORE = "suds-local";
     KEY = "db";
+    HEARTBEAT_KEY = "suds-local-lock-heartbeat";
+    HEARTBEAT_MS = 4e3;
+    STALE_MS = 2e4;
     haveLock = false;
+    heartbeatTimer = null;
     current = null;
     saveTimer = null;
     dirty = false;
@@ -6109,7 +6137,7 @@ var init_sqlite = __esm({
         return this.db.export();
       }
     };
-    sqlite_default = { DatabaseSync, init, loadBytes, saveBytes, wipe, flush, acquireLock, hasLock, setSaveErrorHandler };
+    sqlite_default = { DatabaseSync, init, loadBytes, saveBytes, wipe, flush, acquireLock, lockIsStale, forceAcquireLock, hasLock, setSaveErrorHandler };
   }
 });
 
@@ -20094,13 +20122,18 @@ var FakeRes = class {
     this.headersSent = true;
   }
 };
-async function start({ wasmUrl, onSaveError: onSaveError2 } = {}) {
+async function start({ wasmUrl, onSaveError: onSaveError2, force } = {}) {
   await sqlite_default.init(wasmUrl);
-  const locked = await sqlite_default.acquireLock();
-  if (!locked) {
-    const e = new Error("SUDS is already open in another window on this device. Use that window, or close it and reload this one.");
-    e.code = "SUDS_ALREADY_OPEN";
-    throw e;
+  if (force) {
+    sqlite_default.forceAcquireLock();
+  } else {
+    const locked = await sqlite_default.acquireLock();
+    if (!locked) {
+      const e = new Error("SUDS is already open in another window on this device. Use that window, or close it and reload this one.");
+      e.code = "SUDS_ALREADY_OPEN";
+      e.stale = sqlite_default.lockIsStale();
+      throw e;
+    }
   }
   if (onSaveError2) sqlite_default.setSaveErrorHandler(onSaveError2);
   const bytes3 = await sqlite_default.loadBytes();
