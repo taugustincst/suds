@@ -1,12 +1,19 @@
 import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav } from '../app.js';
 
-export function openInterventionForm(values, { clientId, clientDisplay, onDone } = {}) {
+// `template`: an earlier intervention for this same client to prefill from (type, location, modality,
+// supplies, funding…) when the worker is logging the same kind of visit again — the date/time, duration
+// and free-text summary are never carried over, since those are specific to today.
+export function openInterventionForm(values, { clientId, clientDisplay, onDone, template } = {}) {
   const C = state.constants; const isNew = !values;
+  // `values` (the `form()` helper's lookup for a field's starting value) wins over a field's own `value`
+  // default, so the parts of the template we do NOT want carried over — when it happened, how long it
+  // took, what was written up — have to be scrubbed from the seed itself, not overridden per-field below.
+  const seed = values || (template ? { ...template, occurred_at: new Date().toISOString(), duration_minutes: 30, summary: '', follow_up_due: '', user_id: undefined } : {});
   const f = form([
     { name: 'client_id', label: 'Client', type: 'client', required: true, value: clientId || values?.client_id, display: clientDisplay },
     { name: 'type', label: 'What did you do?', type: 'select', options: C.INTERVENTION_TYPES, required: true },
-    { name: 'occurred_at', label: 'Date & time', type: 'datetime', required: true, value: values?.occurred_at || new Date().toISOString() },
-    { name: 'duration_minutes', label: 'Duration (minutes)', type: 'number', min: 0, max: 1440, step: 1, value: values?.duration_minutes ?? 30 },
+    { name: 'occurred_at', label: 'Date & time', type: 'datetime', required: true, value: new Date().toISOString() },
+    { name: 'duration_minutes', label: 'Duration (minutes)', type: 'number', min: 0, max: 1440, step: 1, value: 30 },
     { name: 'location', label: 'Location', type: 'select', options: C.LOCATIONS, value: 'office' }, { name: 'modality', label: 'Modality', type: 'select', options: C.MODALITIES, value: 'in_person' },
     { name: 'outcome', label: 'Outcome', type: 'select', options: C.OUTCOMES }, { name: 'stage_of_change', label: 'Stage of change', type: 'select', options: C.STAGES },
     { name: 'naloxone_kits', label: 'Naloxone kits given', type: 'number', min: 0, step: 1, value: 0 }, { name: 'fentanyl_strips', label: 'Fentanyl test strips given', type: 'number', min: 0, step: 1, value: 0 },
@@ -16,11 +23,18 @@ export function openInterventionForm(values, { clientId, clientDisplay, onDone }
     isNew ? { name: 'log_time', label: 'Also log this as a time entry', type: 'checkbox', value: true } : null,
     isNew ? { name: 'time_category', label: 'Time category', type: 'select', options: C.TIME_CATEGORIES, value: 'direct_service' } : null,
     isNew && can('clients:all') ? { name: 'user_id', label: 'Worker (defaults to you)', type: 'user' } : null,
-  ].filter(Boolean), { values: values || {}, submitText: isNew ? 'Save' : 'Save changes', draftKey: values ? `intervention:${values.id}` : 'intervention:new', onCancel: () => m.close(), onSubmit: async (d) => {
+  ].filter(Boolean), { values: seed, submitText: isNew ? 'Save' : 'Save changes', draftKey: values ? `intervention:${values.id}` : 'intervention:new', onCancel: () => m.close(), onSubmit: async (d) => {
     if (isNew) await post('/api/interventions', d); else await put(`/api/interventions/${values.id}`, d);
     toast(isNew ? 'Intervention logged' : 'Saved', 'ok'); m.close(); onDone && onDone();
   } });
-  const m = modal(isNew ? 'Record a visit or service' : 'Edit visit / service', f, { wide: true });
+  const m = modal(isNew ? (template ? 'Repeat visit or service' : 'Record a visit or service') : 'Edit visit / service', f, { wide: true });
+}
+// Opens the form prefilled from the client's most recent intervention, or falls back to a blank one if
+// they have none yet — so the button on a client's page never has to know in advance whether history exists.
+export async function openRepeatInterventionForm(clientId, clientDisplay, onDone) {
+  let template = null;
+  try { const { rows } = await get(`/api/interventions?client_id=${clientId}&limit=1`); template = rows[0] || null; } catch { /* fall back to a blank form */ }
+  openInterventionForm(null, { clientId, clientDisplay, onDone, template });
 }
 
 export function interventionTable(rows, { showClient = true, onChange } = {}) {

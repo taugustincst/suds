@@ -31,9 +31,14 @@ function applyTheme() { const t = state.prefs.theme; if (t) document.documentEle
 // small. In local mode there is no HTTP server behind those URLs, so the bytes come from the in-page
 // kernel and become an object URL instead.
 const objectUrls = new Map();
+// A freshly-picked picture (a resource photo, right after upload) is passed around as a data: URL — the
+// browser's own canvas output — before anything has round-tripped through the server. That is already a
+// usable image source on its own; it is never something the local kernel's router can answer a GET for.
+const isInlineImageSrc = (path) => typeof path === 'string' && /^(data|blob):/.test(path);
 export function img(path, attrs = {}) {
-  const el = h('img', { ...attrs, src: state.local ? TRANSPARENT_PIXEL : path });
-  if (state.local && path) {
+  const local = state.local && !isInlineImageSrc(path);
+  const el = h('img', { ...attrs, src: local ? TRANSPARENT_PIXEL : path });
+  if (local) {
     if (objectUrls.has(path)) el.src = objectUrls.get(path);
     else {
       window.SUDS_LOCAL.handle('GET', path, undefined, {}).then((r) => {
@@ -50,7 +55,7 @@ const TRANSPARENT_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAE
 /** Point an existing <img> at a server path, going through the local kernel when there is no server. */
 export function setImage(el, path) {
   if (!el) return;
-  if (!state.local) { el.src = path; return; }
+  if (!state.local || isInlineImageSrc(path)) { el.src = path; return; }
   if (objectUrls.has(path)) { el.src = objectUrls.get(path); return; }
   el.src = TRANSPARENT_PIXEL;
   window.SUDS_LOCAL.handle('GET', path, undefined, {}).then((r) => {
@@ -318,11 +323,14 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
   const submitBtn = h('button', { class: 'btn primary', type: 'submit' }, submitText);
   const el = h('form', { onSubmit: async (e) => {
     e.preventDefault();
-    const data = read();
     errBox.classList.add('hidden');
     el.querySelectorAll('.field').forEach(x => { x.classList.remove('error'); x.querySelector('.err').textContent = ''; const c = x.querySelector('input,select,textarea'); if (c) c.removeAttribute('aria-invalid'); });
     submitBtn.disabled = true;
-    try { await onSubmit(data, el); if (draftKey) drafts.delete(draftKey); }
+    // `read()` is inside the try too: a browser that leaves a date/time field in a state it will not
+    // actually submit (some Android WebViews do this rather than clearing back to empty) used to throw
+    // here, before the button was even disabled — an unhandled rejection with no visible error, and the
+    // dialog just sat there looking like nothing had happened.
+    try { const data = read(); await onSubmit(data, el); if (draftKey) drafts.delete(draftKey); }
     catch (err) {
       const fieldsErr = err.data && err.data.fields;
       let firstBad = null;
@@ -351,20 +359,31 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
   // throw it away.
   if (draftKey) {
     let saveTimer;
-    el.addEventListener('input', () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => { const d = read(); if (Object.values(d).some(v => v !== '' && v !== null && v !== undefined && v !== 0)) drafts.set(draftKey, d); }, 400); });
-    el.addEventListener('change', () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => drafts.set(draftKey, read()), 400); });
+    // A field mid-typing an incomplete date/time is expected while drafting — read() now rejects that
+    // rather than silently mangling it, so the autosave tick here just skips this round instead of
+    // erroring; the field firms up (or clears) before the next tick or before the person tries to submit.
+    el.addEventListener('input', () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => { try { const d = read(); if (Object.values(d).some(v => v !== '' && v !== null && v !== undefined && v !== 0)) drafts.set(draftKey, d); } catch { /* firms up or gets fixed before submit */ } }, 400); });
+    el.addEventListener('change', () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => { try { drafts.set(draftKey, read()); } catch { /* see above */ } }, 400); });
   }
   function read() {
-    const data = {};
+    const data = {}; const bad = [];
     for (const f of fields) {
       if (f.type === 'section') continue;
       const i = inputs[f.name];
       if (f.type === 'checkbox') data[f.name] = i.checked;
       else if (f.type === 'client') data[f.name] = i.value || null;
       else if (f.type === 'number') data[f.name] = i.value === '' ? null : Number(i.value);
-      else if (f.type === 'datetime') data[f.name] = i.value ? new Date(i.value).toISOString() : null;
+      else if (f.type === 'datetime') {
+        // Some mobile browsers leave a datetime-local field in a state that looks non-empty but will not
+        // actually parse (rather than clearing it back to "" the way the HTML5 spec says an incomplete
+        // entry should) — that used to throw a bare, unlabeled RangeError straight out of read(). Flag it
+        // by field instead, the same way a server-side validation error would be shown.
+        if (i.value && (i.validity?.badInput || isNaN(Date.parse(i.value)))) { bad.push(f); data[f.name] = null; }
+        else data[f.name] = i.value ? new Date(i.value).toISOString() : null;
+      }
       else data[f.name] = i.value === '' ? null : i.value;
     }
+    if (bad.length) { const e = new Error('Check the date/time below — it does not look complete.'); e.data = { fields: Object.fromEntries(bad.map(f => [f.name, 'enter a complete date and time, or leave it blank'])) }; throw e; }
     return data;
   }
   el.read = read; el.inputs = inputs;
@@ -511,7 +530,7 @@ export function globalSearch() {
     const q = input.value.trim();
     if (q.length < 2) { list.classList.add('hidden'); return; }
     try { const r = await get(`/api/clients?limit=8&status=all&q=${encodeURIComponent(q)}`, { quiet: true }); clear(list);
-      if (!r.clients.length) list.append(h('div', { class: 'muted small' }, 'No match. Search uses the exact last name, full phone number, date of birth or client code.'));
+      if (!r.clients.length) list.append(h('div', { class: 'muted small' }, 'No match. Try just the start of the last name, the full phone number, date of birth or client code.'));
       for (const c of r.clients) list.append(h('a', { class: 'list-item', href: `#/client/${c.id}`, style: { display: 'block' }, onClick: () => list.classList.add('hidden') }, h('b', {}, c.display_name), ' ', h('span', { class: 'muted small' }, c.client_code, ' · ', fmt.label(c.status))));
       list.classList.remove('hidden'); } catch {}
   }

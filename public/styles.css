@@ -21,6 +21,9 @@
 html, body { margin: 0; height: 100%; }
 body { font-family: var(--font); font-size: 14px; color: var(--text); background: var(--bg); line-height: 1.45; }
 a { color: var(--primary); text-decoration: none; } a:hover { text-decoration: underline; }
+/* Looks and behaves like a link for a mouse, without being a second focusable control nested inside a
+   row that is already one (see noteTable in notes.js) — deliberately not reachable by keyboard/Tab. */
+.link-like { color: var(--primary); cursor: pointer; } .link-like:hover { text-decoration: underline; }
 h1, h2, h3, h4 { margin: 0 0 .5rem; font-weight: 650; line-height: 1.25; }
 h1 { font-size: 1.45rem; } h2 { font-size: 1.15rem; } h3 { font-size: 1rem; } h4 { font-size: .9rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 p { margin: 0 0 .75rem; }

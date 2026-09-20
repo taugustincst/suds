@@ -2,13 +2,21 @@ import { h, route, get, post, put, del, state, form, modal, toast, table, badge,
 
 export async function openReferralForm(values, { clientId, clientDisplay, resourceId, onDone } = {}) {
   const C = state.constants; const isNew = !values;
-  const res = (await get('/api/resources?limit=1000')).rows;
+  const theClientId = clientId || values?.client_id;
+  // Two independent reads — the provider directory and this client's consents — so fetch them together
+  // rather than one after the other; on a slow connection in the field that's the difference between one
+  // round trip and two before the modal is usable.
+  const [resResult, consentsResult] = await Promise.all([
+    get('/api/resources?limit=1000'),
+    theClientId ? get(`/api/clients/${theClientId}/consents`) : Promise.resolve({ consents: [] }),
+  ]);
+  const res = resResult.rows;
   // A phone that has not synced yet has an empty directory, and a provider nobody has entered is not a
   // reason to abandon the referral: the picker can add one without leaving this form.
   const canAdd = can('resources:write');
   const resourceLabel = (x) => `${x.name}${x.city ? ` — ${x.city}` : ''} (${fmt.label(x.category)})`;
   const ADD = '__add_resource__';
-  const consents = clientId || values?.client_id ? (await get(`/api/clients/${clientId || values.client_id}/consents`)).consents.filter(c => !c.revoked_at) : [];
+  const consents = consentsResult.consents.filter(c => !c.revoked_at);
   const f = form([
     { name: 'client_id', label: 'Client', type: 'client', required: true, value: clientId || values?.client_id, display: clientDisplay },
     { name: 'resource_id', label: 'Resource / provider', type: 'select', required: true, value: resourceId || values?.resource_id,

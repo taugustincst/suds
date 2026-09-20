@@ -6,7 +6,8 @@ import('node:fs').then(m => m.mkdirSync('/tmp/suds-shots', { recursive: true }))
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 1200, height: 900 } }); const page = await ctx.newPage();
 const errors = []; page.on('pageerror', e => errors.push('PAGEERROR ' + e.message)); page.on('console', m => { if (m.type() === 'error') errors.push('CONSOLE ' + m.text().slice(0, 300)); });
-await page.goto(base + '/?local=1#/'); await page.waitForTimeout(2500);
+await page.goto(base + '/?local=1#/');
+await until(async () => (await page.$('input[name=username]')) || (await page.$('.boot.error')), { timeout: 15000 });
 const bootText = (await page.textContent('#app')).slice(0, 120).replace(/\s+/g, ' ');
 console.log('hash:', page.url().split('#')[1], '| boot text:', bootText);
 // This whole block used to be inside `if (await page.$(...))`, so when the kernel failed to boot and the
@@ -14,41 +15,45 @@ console.log('hash:', page.url().split('#')[1], '| boot text:', bootText);
 ok(await page.$('input[name=username]'), 'the local kernel booted and offered first-run setup', bootText);
 {
   await page.fill('input[name=display_name]', 'Phone Nav'); await page.fill('input[name=username]', 'mrivera'); await page.fill('input[name=password]', 'Navigator2026!!'); await page.fill('input[name=confirm]', 'Navigator2026!!');
-  await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 10000 }); await page.waitForTimeout(800);
+  await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 10000 });
   ok(await page.$('.layout'), 'the app is usable straight after setup');
+  await page.waitForSelector('text=On this device', { timeout: 5000 }).catch(() => {});
   ok(await page.$('text=On this device'), 'and says it is running on this device');
   for (let i = 0; i < 5; i++) { const b = await page.$('.modal button.primary'); if (!b) break; await b.click(); await page.waitForTimeout(150); }
   // create a client locally
-  await page.click('text=+ Log'); await page.waitForTimeout(300); await page.click('.quick-list button:has-text("New client")'); await page.waitForSelector('.modal input[name=first_name]');
-  await page.fill('.modal input[name=first_name]', 'Local'); await page.fill('.modal input[name=last_name]', 'Phoneclient'); await page.click('.modal button[type=submit]'); await page.waitForTimeout(1000);
+  await page.click('text=+ Log'); await page.waitForSelector('.quick-list button:has-text("New client")'); await page.click('.quick-list button:has-text("New client")'); await page.waitForSelector('.modal input[name=first_name]');
+  await page.fill('.modal input[name=first_name]', 'Local'); await page.fill('.modal input[name=last_name]', 'Phoneclient'); await page.click('.modal button[type=submit]'); await page.waitForURL(/#\/client\//, { timeout: 10000 }).catch(() => {});
   ok(/^\/client\//.test(page.url().split('#')[1] || ''), 'a client created on the device opens its own page', page.url().split('#')[1]);
-  await page.click('text=+ Intervention'); await page.waitForSelector('.modal select[name=type]'); await page.selectOption('.modal select[name=type]', 'outreach'); await page.click('.modal button[type=submit]'); await page.waitForTimeout(800);
+  await page.click('text=+ Intervention'); await page.waitForSelector('.modal select[name=type]'); await page.selectOption('.modal select[name=type]', 'outreach'); await page.click('.modal button[type=submit]');
   const toasts = await until(async () => { const t = await page.$$eval('.toast', e => e.map(x => x.textContent)); return t.length ? t : null; }) || [];
   ok(toasts.length > 0 && !toasts.some(t => /error|failed|could not/i.test(t)), 'recording a visit on the device confirms it saved', toasts);
-  // persistence across reload
-  await page.waitForTimeout(800); await page.reload(); await page.waitForTimeout(2500);
+  // persistence across reload — the pre-reload wait stays fixed: the local kernel's writes flush to
+  // IndexedDB asynchronously, and reloading before that flush lands is a real race, not just UI settling.
+  await page.waitForTimeout(800); await page.reload(); await page.waitForSelector('.layout', { timeout: 15000 }).catch(() => {});
   ok(await page.$('.layout'), 'the device is still signed in after a reload', (await page.textContent('#app')).slice(0, 80));
-  await page.goto(base + '/?local=1#/clients'); await page.waitForTimeout(1200);
+  await page.goto(base + '/?local=1#/clients'); await page.waitForSelector('tbody', { timeout: 10000 }).catch(() => {});
   const rowsBefore = await page.$$eval('tbody tr', r => r.length);
   ok(rowsBefore >= 1, 'the client entered on the device survived the reload', rowsBefore);
   // sync against the dev server (same host)
-  await page.goto(base + '/?local=1#/sync'); await page.waitForTimeout(1200);
+  await page.goto(base + '/?local=1#/sync'); await page.waitForSelector('input[name=office_password]', { timeout: 10000 }).catch(() => {});
   ok((await page.inputValue('input[name=office_password]')) === '', 'the office-password field loads empty, not prefilled with the local sign-in credential');
   await page.fill('input[name=server]', base); await page.fill('input[name=username]', 'mrivera'); await page.fill('input[name=office_password]', 'Navigator2026!!');
-  await page.click('button[type=submit]'); await page.waitForTimeout(6000);
-  // The sync log stays empty until the round trip finishes; an empty read is not a pass or a failure.
-  const log = await until(async () => (await page.textContent('.card:nth-of-type(2) .small.muted.mt')) || '', { timeout: 20000 }) || '';
+  await page.click('button[type=submit]');
+  // The log reads "Connecting…" the instant the form submits, well before the round trip finishes — that
+  // placeholder is truthy too, so waiting for "any text" resolves immediately with the wrong text. Wait for
+  // it to move past that placeholder instead.
+  const log = await until(async () => { const t = (await page.textContent('.card:nth-of-type(2) .small.muted.mt')) || ''; return /connecting/i.test(t) ? null : t; }, { timeout: 20000 }) || '';
   ok(!/fail|error|could not/i.test(log), 'the sync reported no failure', log.slice(0, 200));
-  await page.goto(base + '/?local=1#/clients'); await page.waitForTimeout(1500);
+  await page.goto(base + '/?local=1#/clients');
   const rowsAfter = await until(async () => { const n = await page.$$eval('tbody tr', r => r.length); return n > rowsBefore ? n : 0; }) || await page.$$eval('tbody tr', r => r.length);
   ok(rowsAfter > rowsBefore, 'syncing brought the office caseload onto the device', { before: rowsBefore, after: rowsAfter });
   await page.screenshot({ path: '/tmp/suds-shots/local_clients.png' });
   // The Sync page's own "Erase data on this device" (someone signed in, choosing this on purpose) shares
   // the same typed-ERASE dialog as the locked-out recovery paths, not a plain confirm.
-  await page.goto(base + '/?local=1#/sync'); await page.waitForTimeout(1000);
+  await page.goto(base + '/?local=1#/sync'); await page.waitForSelector('text=Erase data on this device', { timeout: 10000 }).catch(() => {});
   await page.click('text=Erase data on this device'); await page.waitForSelector('.modal');
   ok(await page.isDisabled('.modal button.danger'), 'the Sync page erase button also starts disabled until ERASE is typed');
-  await page.click('.modal button:has-text("Cancel")'); await page.waitForTimeout(300);
+  await page.click('.modal button:has-text("Cancel")'); await until(async () => !(await page.$('.modal')), { timeout: 5000 });
   ok(!(await page.$('.modal')), 'cancelling leaves the device untouched');
   // Locked out or forgot the password, with no office admin to ask: the login screen offers a self-service
   // reset instead of a dead end.
@@ -85,7 +90,8 @@ ok(await page.$('input[name=username]'), 'the local kernel booted and offered fi
     };
     req.onerror = () => reject(req.error);
   }));
-  await failPage.goto(base + '/?local=1#/'); await failPage.waitForTimeout(2500);
+  await failPage.goto(base + '/?local=1#/');
+  await until(async () => (await failPage.$('.boot.error')) || (await failPage.$('input[name=username]')), { timeout: 15000 });
   ok(await failPage.$('.boot.error'), 'a kernel that fails to start shows the boot-error screen, not a blank page');
   ok(await failPage.$('text=Reset this device'), 'the boot-error screen offers a self-service reset without needing a session');
   await failPage.click('text=Reset this device'); await failPage.waitForSelector('.modal');

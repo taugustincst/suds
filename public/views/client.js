@@ -1,6 +1,6 @@
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, kv, stat, clientPicker } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, parseHash, kv, stat, clientPicker } from '../app.js';
 import { openClientForm } from './clients.js';
-import { openInterventionForm, interventionTable } from './interventions.js';
+import { openInterventionForm, openRepeatInterventionForm, interventionTable } from './interventions.js';
 import { openCallForm, callTable } from './calls.js';
 import { openTimeForm, timeTable } from './time.js';
 import { openReferralForm, referralTable } from './referrals.js';
@@ -12,7 +12,12 @@ route('client', async (r) => {
   const id = r.id; const tab = r.sub || 'overview';
   const { client: c } = await get(`/api/clients/${id}`);
   const disp = `${c.display_name} (${c.client_code})`;
-  const refresh = () => nav(`client/${id}/${tab}?_=${Date.now()}`);
+  // A modal's onDone fires asynchronously, after its POST/PUT resolves — by then the worker may already
+  // have clicked to a different tab, or away from this client entirely. Re-reading the hash here (instead
+  // of closing over `tab`) means a slow save refreshes wherever the worker actually is now rather than
+  // silently navigating them back to the tab that was open when they started the save; and it no-ops
+  // instead of firing at all once they've left this client's page.
+  const refresh = () => { const h = parseHash(); if (h.name === 'client' && h.id === id) nav(`client/${id}/${h.sub || 'overview'}?_=${Date.now()}`); };
   const ctxOpts = { clientId: id, clientDisplay: disp, onDone: refresh };
   const tabs = [['overview', 'Overview'], ['timeline', 'Timeline'], ['interventions', `Interventions (${c.counts.interventions})`], ['calls', `Calls (${c.counts.calls})`], ['notes', `Notes (${c.counts.notes})`], ['referrals', `Referrals (${c.counts.referrals})`], ['forms', `Forms (${c.counts.forms || 0})`], ['tasks', `Tasks (${c.counts.open_tasks})`], ['episodes', 'Episodes'], ['consents', 'Consents & ROI'], ['time', 'Time'], can('budget:read') ? ['budget', 'Assistance $'] : null, ['team', 'Care team']].filter(Boolean);
   const body = h('div', {});
@@ -21,6 +26,7 @@ route('client', async (r) => {
       h('div', { class: 'row' }, badge(fmt.label(c.status), statusKind(c.status)), badge(`Risk: ${fmt.label(c.risk_level)}`, statusKind(c.risk_level)), c.primary_substance ? badge(fmt.label(c.primary_substance)) : null, c.mat_status && c.mat_status !== 'none' ? badge(`MAT: ${fmt.label(c.mat_status)}`, 'purple') : null, c.overdose_history ? badge('OD history', 'danger') : null, c.naloxone_provided ? badge('Naloxone ✓', 'ok') : badge('No naloxone', 'warn'), c.flags ? badge(`⚠ ${c.flags}`, 'danger') : null)),
       h('div', { class: 'row' },
         can('interventions:write') ? h('button', { class: 'btn primary', onClick: () => openInterventionForm(null, ctxOpts) }, '+ Intervention') : null,
+        can('interventions:write') && c.counts.interventions ? h('button', { class: 'btn', title: 'Prefill from their most recent visit — same type, location and supplies, with today\'s date and a blank summary', onClick: () => openRepeatInterventionForm(id, disp, refresh) }, '↻ Repeat last visit') : null,
         can('calls:write') ? h('button', { class: 'btn', onClick: () => openCallForm(null, ctxOpts) }, '+ Call') : null,
         can('calls:write') ? h('button', { class: 'btn', onClick: () => openCallForm(null, { ...ctxOpts, method: 'text' }) }, '+ Text') : null,
         (can('notes:admin:write') || can('notes:clinical:write')) ? h('button', { class: 'btn', onClick: () => openNoteForm(null, ctxOpts) }, '+ Note') : null,

@@ -89,8 +89,13 @@ function addAddendum(n, done) {
   const m = modal('Add addendum', f);
 }
 export function noteTable(rows, { showClient = true, onChange } = {}) {
+  // The client code used to be a real <a> inside a cell of a row that is itself a keyboard-focusable
+  // "button" (table()'s onRow) — a link nested inside a button, which is invalid and leaves a screen
+  // reader announcing the whole row as one control while a second, separately-focusable control sits
+  // inside it. The row already opens the note, and the note itself links to the client without any such
+  // nesting, so here the client code is a plain (mouse-only) shortcut rather than its own control.
   return table([
-    { label: 'Date of service', render: n => h('span', { class: 'nowrap' }, fmt.dt(n.occurred_at)) }, showClient ? { label: 'Client', render: n => h('a', { href: `#/client/${n.client_id}`, onClick: e => e.stopPropagation() }, n.client_code) } : null,
+    { label: 'Date of service', render: n => h('span', { class: 'nowrap' }, fmt.dt(n.occurred_at)) }, showClient ? { label: 'Client', render: n => h('span', { class: 'link-like', onClick: (e) => { e.stopPropagation(); nav(`client/${n.client_id}`); } }, n.client_code) } : null,
     { label: 'Type', render: n => badge(n.kind === 'clinical' ? 'Clinical' : 'Admin', n.kind === 'clinical' ? 'purple' : 'info') }, { label: 'Format', key: 'format' }, { label: 'Title', render: n => n.title || h('span', { class: 'muted' }, '(untitled)') },
     { label: 'Status', render: n => [badge(fmt.label(n.status), statusKind(n.status)), n.addenda ? [' ', badge(`${n.addenda} addend.`)] : null] }, { label: 'Source', render: n => n.source === 'manual' ? '' : badge(fmt.label(n.source), 'warn') }, { label: 'Author', key: 'author' },
   ].filter(Boolean), rows, { onRow: n => openNote(n.id, { onChange }), empty: 'No notes yet. Notes save as drafts automatically while you type, and you sign them when they are complete.' });

@@ -37,6 +37,15 @@ async function run(label, url, login) {
   await chooser.setFiles('/tmp/suds-shots/tiny.png'); await page.waitForTimeout(2000);
   eq(await photoCount(), before + 1, `${label}: uploading a picture adds one to the profile`);
   ok(await page.$('.gallery img'), `${label}: the gallery shows the picture just uploaded`);
+  // An <img> tag existing is not the same as it having actually loaded anything — in local mode a
+  // freshly-uploaded picture used to carry a data: URL straight through to the gallery, and the shared
+  // img() helper (built for server paths, resolved through the local kernel) silently failed on it and
+  // left the element on a 1x1 transparent placeholder forever. Check it actually decoded real pixels.
+  const heroLoaded = await page.waitForFunction(() => {
+    const el = document.querySelector('.gallery .hero img');
+    return el && el.complete && el.naturalWidth > 1 ? true : null;
+  }, { timeout: 5000 }).then(() => true).catch(() => false);
+  ok(heroLoaded, `${label}: the just-uploaded picture actually renders, not a blank placeholder`);
   // open lightbox on the last thumbnail (or hero), caption, remove
   const thumbs = await page.$$('.thumb-btn'); if (thumbs.length) await thumbs[thumbs.length - 1].click(); else await page.click('.gallery .hero img');
   await page.waitForSelector('.lightbox'); page.once('dialog', d => d.accept('Front door')); await page.click('.lightbox button:has-text("Caption")'); await page.waitForTimeout(500);
