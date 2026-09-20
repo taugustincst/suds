@@ -135,6 +135,14 @@ test('discharge closes the episode, ends assignments and clears the open work', 
   assert.equal(H.db.one(`SELECT status FROM clients WHERE id=?`, c).status, 'active');
 });
 
+test('opening an episode does not silently reactivate a client set inactive on purpose', async () => {
+  const c = (await nav.post('/api/clients', { first_name: 'On', last_name: 'Hold', intake_date: '2026-01-10' })).data.id;
+  await nav.put(`/api/clients/${c}`, { status: 'inactive' });
+  assert.equal(H.db.one(`SELECT status FROM clients WHERE id=?`, c).status, 'inactive');
+  assert.equal((await nav.post(`/api/clients/${c}/episodes`, { opened_at: '2026-06-01' })).status, 201);
+  assert.equal(H.db.one(`SELECT status FROM clients WHERE id=?`, c).status, 'inactive', 'inactive is a deliberate choice, unlike closed — an episode must not override it');
+});
+
 test('a whole caseload moves when a worker leaves', async () => {
   const a = (await nav.post('/api/clients', { first_name: 'Trans', last_name: 'Fer1' })).data.id;
   const b = (await nav.post('/api/clients', { first_name: 'Trans', last_name: 'Fer2' })).data.id;

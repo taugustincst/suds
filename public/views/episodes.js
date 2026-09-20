@@ -3,7 +3,7 @@
 import { h, route, get, post, put, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog, kv } from '../app.js';
 
 const REASONS = [
-  ['completed', 'Completed the programme'],
+  ['completed', 'Completed the program'],
   ['transferred', 'Transferred to another provider'],
   ['incarcerated', 'Incarcerated'],
   ['moved', 'Moved out of the area'],

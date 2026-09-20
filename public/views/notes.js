@@ -20,7 +20,15 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
   let noteId = values?.id || null; let saving = false; let dirty = false; let asTimer;
   const status = h('span', { class: 'autosave' }, isNew ? 'Not saved yet' : 'Saved');
   async function save(d, explicit = false) {
-    const data = d || f.read();
+    let data;
+    // f.read() now throws for a required field left empty — exactly the state autosave finds this form
+    // in constantly while someone is still filling it out (a client picked, nothing typed yet). The
+    // explicit "Save draft" button goes through the form's own submit handler, which already turns that
+    // into an on-screen error; autosave calls read() directly, so it has to catch that itself and treat
+    // it as "not ready to save yet", the same as the client/content check two lines down already did for
+    // the same situation before required fields could throw at all.
+    if (d) data = d;
+    else { try { data = f.read(); } catch { if (explicit) throw new Error('Choose a client and write something first'); return; } }
     const structured = readStructured();
     if (structured) { data.structured = structured; if (!data.content || data.content === autoText) data.content = Object.entries(structured).map(([k, v]) => `${k}: ${v}`).join('\n\n'); }
     if (!data.client_id || !data.content) { if (explicit) throw new Error('Choose a client and write something first'); return; }

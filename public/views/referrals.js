@@ -79,7 +79,7 @@ export function openOutcomeForm(r, onDone) {
     m.close(); onDone && onDone();
   } });
   const m = modal(`Referral to ${r.resource_name}`, h('div', {},
-    h('p', { class: 'small muted' }, 'Recording the outcome closes the follow-up to-do and lets the programme answer how many warm handoffs actually resulted in an admission.'), f));
+    h('p', { class: 'small muted' }, 'Recording the outcome closes the follow-up to-do and lets the program answer how many warm handoffs actually resulted in an admission.'), f));
   return m;
 }
 

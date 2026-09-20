@@ -19,20 +19,53 @@ export async function init(wasmUrl) {
 
 // ---- single-writer lock ----
 // Web Locks are held for as long as the page lives and released automatically when it goes away, which is
-// exactly the lifetime we want. Where they are unavailable the app still works; it just cannot detect a
-// second tab, which is the behaviour this replaces.
+// exactly the lifetime we want in the ordinary case. But that guarantee is about the *browser*, not the
+// *device*: a browser process that gets killed outright (not just the one tab closing), or that simply never
+// tears the lock down cleanly, can leave it held with nobody left to release it — and there is no way to ask
+// Web Locks "is the holder still alive?". So whoever holds the lock also stamps a heartbeat in localStorage
+// every few seconds. A failed acquire only offers a way past it once that heartbeat has gone quiet long
+// enough that a live tab could not plausibly have missed several beats — at which point continuing anyway
+// cannot race an actual second writer, only a truly abandoned lock.
+const HEARTBEAT_KEY = 'suds-local-lock-heartbeat';
+const HEARTBEAT_MS = 4000;
+const STALE_MS = 20000;
 let haveLock = false;
-export async function acquireLock() {
-  if (!navigator.locks || !navigator.locks.request) { haveLock = true; return true; }
+let heartbeatTimer = null;
+function beat() { try { localStorage.setItem(HEARTBEAT_KEY, String(Date.now())); } catch { /* no localStorage: nothing to fall back to either */ } }
+async function acquireWebLock() {
+  if (!navigator.locks || !navigator.locks.request) return true;
   return new Promise((resolve) => {
     navigator.locks.request('suds-local-db', { mode: 'exclusive', ifAvailable: true }, (lock) => {
       if (!lock) { resolve(false); return; }
-      haveLock = true;
       resolve(true);
       // Hold it until the page is gone.
       return new Promise(() => {});
-    }).catch(() => { haveLock = true; resolve(true); });
+    }).catch(() => resolve(true));
   });
+}
+export async function acquireLock() {
+  const got = await acquireWebLock();
+  if (!got) return false;
+  haveLock = true;
+  beat();
+  clearInterval(heartbeatTimer);
+  heartbeatTimer = setInterval(beat, HEARTBEAT_MS);
+  return true;
+}
+/** True once whoever holds the lock has gone quiet for long enough that they cannot still be an active tab. */
+export function lockIsStale() {
+  try {
+    const last = Number(localStorage.getItem(HEARTBEAT_KEY) || 0);
+    return last > 0 && (Date.now() - last) > STALE_MS;
+  } catch { return false; }
+}
+/** Only meant to be called after lockIsStale() — proceeds without the previous holder's cooperation because
+ *  its silence is itself the evidence that it is gone, not because Web Locks granted anything. */
+export function forceAcquireLock() {
+  haveLock = true;
+  beat();
+  clearInterval(heartbeatTimer);
+  heartbeatTimer = setInterval(beat, HEARTBEAT_MS);
 }
 export function hasLock() { return haveLock; }
 
@@ -85,4 +118,4 @@ export class DatabaseSync {
   close() { return flush(); }
   export() { return this.db.export(); }
 }
-export default { DatabaseSync, init, loadBytes, saveBytes, wipe, flush, acquireLock, hasLock, setSaveErrorHandler };
+export default { DatabaseSync, init, loadBytes, saveBytes, wipe, flush, acquireLock, lockIsStale, forceAcquireLock, hasLock, setSaveErrorHandler };

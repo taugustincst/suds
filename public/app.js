@@ -321,7 +321,13 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
   if (restored) for (const [k, v] of Object.entries(restored)) { const i = inputs[k]; if (!i) continue; if (i.type === 'checkbox') i.checked = !!v; else i.value = v ?? ''; }
   const errBox = h('div', { class: 'banner danger hidden', role: 'alert', tabindex: '-1' });
   const submitBtn = h('button', { class: 'btn primary', type: 'submit' }, submitText);
-  const el = h('form', { onSubmit: async (e) => {
+  // noValidate: the browser's own constraint validation can silently refuse to even dispatch the submit
+  // event for a field it considers invalid — including, on some mobile browsers/WebViews, a non-required
+  // datetime-local field stuck in a broken partial state that never fires our onSubmit at all, so nothing
+  // in this file ever gets a chance to show an error. read() below now does its own required-field and
+  // bad-input checking and reports it through the same on-screen banner as every other validation error,
+  // so nothing here depends on a native UI that does not reliably render on every platform.
+  const el = h('form', { noValidate: true, onSubmit: async (e) => {
     e.preventDefault();
     errBox.classList.add('hidden');
     el.querySelectorAll('.field').forEach(x => { x.classList.remove('error'); x.querySelector('.err').textContent = ''; const c = x.querySelector('input,select,textarea'); if (c) c.removeAttribute('aria-invalid'); });
@@ -366,7 +372,7 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     el.addEventListener('change', () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => { try { drafts.set(draftKey, read()); } catch { /* see above */ } }, 400); });
   }
   function read() {
-    const data = {}; const bad = [];
+    const data = {}; const bad = []; const missing = [];
     for (const f of fields) {
       if (f.type === 'section') continue;
       const i = inputs[f.name];
@@ -382,8 +388,14 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
         else data[f.name] = i.value ? new Date(i.value).toISOString() : null;
       }
       else data[f.name] = i.value === '' ? null : i.value;
+      if (f.required && (data[f.name] === null || data[f.name] === undefined || data[f.name] === '') && !bad.includes(f)) missing.push(f);
     }
-    if (bad.length) { const e = new Error('Check the date/time below — it does not look complete.'); e.data = { fields: Object.fromEntries(bad.map(f => [f.name, 'enter a complete date and time, or leave it blank'])) }; throw e; }
+    if (bad.length || missing.length) {
+      const fields = { ...Object.fromEntries(bad.map(f => [f.name, 'enter a complete date and time, or leave it blank'])), ...Object.fromEntries(missing.map(f => [f.name, 'is required'])) };
+      const e = new Error(bad.length ? 'Check the date/time below — it does not look complete.' : 'Fill in the required field below.');
+      e.data = { fields };
+      throw e;
+    }
     return data;
   }
   el.read = read; el.inputs = inputs;
@@ -675,23 +687,27 @@ export async function loadRefData() {
 
 // ---------- boot (called from main.js after all views are registered) ----------
 window.__suds = { downloadCsv: (...a) => downloadCsv(...a) };
-export async function boot() {
+async function startLocalKernel(force) {
+  const k = await import('./local/kernel.js');
+  await k.start({
+    wasmUrl: new URL('./local/sql-wasm.wasm', location.href).href,
+    force,
+    // A device that has stopped being able to save is not a console message; the person using it needs
+    // to know before they type anything else in.
+    onSaveError: (err) => {
+      const full = String(err && err.name) === 'QuotaExceededError';
+      banner(full
+        ? 'This device is out of storage space, so nothing is being saved. Sync with the office, then remove sample data or attachments to free space.'
+        : 'This device has stopped saving your work. Sync with the office as soon as you can.', 'error');
+    },
+  });
+}
+export async function boot(force = false) {
   state.local = isLocalMode();
   if (state.local) {
     document.getElementById('app').innerHTML = '<div class="boot">Starting SUDS on this device…</div>';
     try {
-      const k = await import('./local/kernel.js');
-      await k.start({
-        wasmUrl: new URL('./local/sql-wasm.wasm', location.href).href,
-        // A device that has stopped being able to save is not a console message; the person using it needs
-        // to know before they type anything else in.
-        onSaveError: (err) => {
-          const full = String(err && err.name) === 'QuotaExceededError';
-          banner(full
-            ? 'This device is out of storage space, so nothing is being saved. Sync with the office, then remove sample data or attachments to free space.'
-            : 'This device has stopped saving your work. Sync with the office as soon as you can.', 'error');
-        },
-      });
+      await startLocalKernel(force);
     } catch (e) {
       // Two specific failures need their own explanation rather than a raw message.
       const alreadyOpen = e && e.code === 'SUDS_ALREADY_OPEN';
@@ -704,8 +720,19 @@ export async function boot() {
       const app = document.getElementById('app');
       clear(app);
       // This is the one screen a locked-out or broken device can reach without a kernel — reset has to work
-      // here directly. Left out for SUDS_ALREADY_OPEN: that device and its data are fine, just open elsewhere.
-      app.append(h('div', { class: 'boot error' }, msg), alreadyOpen ? null : offerDeviceReset());
+      // here directly. SUDS_ALREADY_OPEN gets its own recovery instead: that device and its data are fine,
+      // just apparently open elsewhere, so wiping it would be the wrong tool. "Try again" always works — it
+      // re-checks in case the other window closed in the meantime. Past that, once the previous holder has
+      // gone quiet long enough to be presumed gone (a crashed tab, a browser killed outright rather than
+      // closed) rather than genuinely still open, "Continue anyway" lets the person proceed instead of being
+      // locked out of their own device with no way back in.
+      app.append(
+        h('div', { class: 'boot error' }, msg),
+        alreadyOpen ? h('div', { class: 'btn-row center mt' },
+          h('button', { class: 'btn', type: 'button', onClick: () => boot() }, 'Try again'),
+          e.stale ? h('button', { class: 'btn danger', type: 'button', onClick: () => boot(true) }, 'Continue anyway — no other window is actually open') : null,
+        ) : offerDeviceReset(),
+      );
       return;
     }
     window.addEventListener('pagehide', () => { window.SUDS_LOCAL && window.SUDS_LOCAL.flush(); });

@@ -1,5 +1,5 @@
 // Overdose and reversal events. Every SUD funder asks for these counts, and a community reversal reported
-// by an outreach worker — with nobody identified — is exactly the kind a programme most needs to record.
+// by an outreach worker — with nobody identified — is exactly the kind a program most needs to record.
 import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog } from '../app.js';
 
 const KINDS = [

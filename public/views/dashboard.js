@@ -18,7 +18,7 @@ route('dashboard', async () => {
   if (!c.active && !c.waitlist && !caseload.caseload.length && (state.local || can('settings:manage'))) {
     try { const st = await get(state.local ? '/api/local/demo' : '/api/admin/demo', { quiet: true }); if (!st.loaded && st.clients_total === 0) sample = h('div', { class: 'banner mb', 'data-sample-banner': '1' }, h('b', {}, 'New here? '), 'Load fictional sample data to see how SUDS looks with clients, visits, notes and reports. ', h('a', { href: state.local ? '#/sync' : '#/admin?tab=settings', class: 'btn sm primary', style: { marginLeft: '.5rem' } }, 'Load sample data'), ' ', h('span', { class: 'small muted' }, 'It can be removed in one click.')); } catch { /* no permission or offline */ }
   }
-  // A brand-new programme: the wizard only creates one account, so this is where the rest of setting up
+  // A brand-new program: the wizard only creates one account, so this is where the rest of setting up
   // actually happens. Each step is one click, and the card disappears as they are done.
   let setupCard = null;
   if (can('settings:manage') && !state.local) {
@@ -42,7 +42,7 @@ route('dashboard', async () => {
         steps.push(['Put a consent form in the library', 'Including a 42 CFR Part 2 release, which you need before any record can be shared with another agency.', 'Add starter forms', async () => { (await import('./forms.js')).openStarters(() => nav('dashboard?_=' + Date.now())); }]);
       }
       if (!resources.total) {
-        steps.push(['Fill the resource directory', 'Load a regional starter directory of treatment programmes, or enter your own referral partners.', 'Open the directory', () => nav('resources')]);
+        steps.push(['Fill the resource directory', 'Load a regional starter directory of treatment programs, or enter your own referral partners.', 'Open the directory', () => nav('resources')]);
       }
       if (!(funds.funds || []).length) {
         steps.push(['Add your funding sources', 'Grants and budgets, so services and staff time can be charged to the right one and reported per fund.', 'Add funding', () => nav('budget')]);

@@ -28,7 +28,9 @@ async function openUserForm(values, onDone) {
 async function nativeAppsCard(primary) {
   const info = await get('/api/app/info', { quiet: true }).catch(() => null);
   const appUrl = primary.replace(/\/$/, '') + '/app';
-  const fileIn = h('input', { type: 'file', accept: '.apk', class: 'hidden' });
+  // .sr-only, not .hidden (display:none) — a good few mobile browsers/WebViews refuse to honor a
+  // programmatic .click() on a file input that display:none has taken out of the render tree.
+  const fileIn = h('input', { type: 'file', accept: '.apk', class: 'sr-only' });
   const status = h('div', { class: 'small muted' });
   fileIn.addEventListener('change', async () => {
     const f = fileIn.files[0]; if (!f) return; status.textContent = `Uploading ${f.name}…`;
@@ -269,7 +271,7 @@ export function transferCard() {
     { name: 'role_on_case', label: 'Role on the case', type: 'select', options: ['primary', 'secondary', 'clinician', 'peer', 'supervisor'], help: 'Leave empty to keep whatever role each assignment already has.' },
     { name: 'effective_date', label: 'Effective from', type: 'date', value: new Date().toISOString().slice(0, 10) },
     { name: 'reassign_open_tasks', label: 'Also move their open to-dos for those clients', type: 'checkbox', value: 1 },
-    { name: 'reason', label: 'Reason (recorded in the audit log)', span: true, placeholder: 'e.g. left the programme, extended leave' },
+    { name: 'reason', label: 'Reason (recorded in the audit log)', span: true, placeholder: 'e.g. left the program, extended leave' },
   ], { submitText: 'Transfer caseload', onSubmit: async (d) => {
     const from = staff.find(u => u.id === d.from_user_id), to = staff.find(u => u.id === d.to_user_id);
     if (!await confirmDialog('Transfer caseload', `Move every client currently assigned to ${from?.display_name} over to ${to?.display_name}?`, { danger: true, okText: 'Transfer' })) return;

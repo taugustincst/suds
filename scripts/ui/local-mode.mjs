@@ -69,6 +69,29 @@ ok(await page.$('input[name=username]'), 'the local kernel booted and offered fi
   await page.click('.modal button.danger'); await page.waitForSelector('input[name=display_name]', { timeout: 10000 });
   ok(!!(await page.$('input[name=display_name]')), 'typing ERASE wipes the device and returns to first-run setup', page.url());
 }
+// A stale single-writer lock is not a corrupted database — the device and its data are fine — but with no
+// recovery path, a lock that outlives the tab that held it (a crashed tab, or a browser process killed
+// outright instead of closed) would brick the app with no way back in. `page` above still holds the
+// on-device lock from its very first load; open a second tab in the same context (same storage partition,
+// so the same Web Lock namespace) to exercise the SUDS_ALREADY_OPEN screen for real.
+{
+  const page2 = await ctx.newPage();
+  await page2.goto(base + '/?local=1#/');
+  await page2.waitForSelector('.boot.error', { timeout: 15000 });
+  const lockText = (await page2.textContent('.boot.error')) || '';
+  ok(/already open in another window/i.test(lockText), 'a second tab on the same device is told SUDS is already open, not left blank');
+  ok(await page2.$('button:has-text("Try again")'), 'the already-open screen offers a way to recheck instead of only "switch windows"');
+  ok(!(await page2.$('button:has-text("Continue anyway")')), 'no override is offered while the other tab is still actively holding the lock');
+  await page2.click('button:has-text("Try again")');
+  await page2.waitForTimeout(300);
+  ok(await page2.$('.boot.error'), 'trying again while the first tab is still open still refuses, rather than letting both tabs write');
+  // Close the tab holding the lock — Web Locks release it immediately, same as a real closed window.
+  await page.close();
+  await page2.click('button:has-text("Try again")');
+  await page2.waitForSelector('input[name=username], input[name=display_name], .layout', { timeout: 10000 });
+  ok(!(await page2.$('.boot.error')), 'once the other tab is actually gone, "Try again" recovers without needing the override', page2.url());
+  await page2.close();
+}
 // A device whose kernel fails to start — a bad migration, a corrupted database — never reaches the login
 // screen at all, so the reset option has to work from the boot-failure screen itself, with no signed-in
 // session and no window.SUDS_LOCAL to lean on.

@@ -27,16 +27,23 @@ class FakeRes {
   end(body) { if (body !== undefined && body !== null) this.chunks.push(Buffer.isBuffer(body) ? body : Buffer.from(String(body))); this.headersSent = true; }
 }
 
-export async function start({ wasmUrl, onSaveError } = {}) {
+export async function start({ wasmUrl, onSaveError, force } = {}) {
   await sqlite.init(wasmUrl);
 
   // Only one page may write this device's database. Two tabs would each keep their own copy in memory and
   // persist by overwriting the whole thing, so the last one to save would silently erase the other's work.
-  const locked = await sqlite.acquireLock();
-  if (!locked) {
-    const e = new Error('SUDS is already open in another window on this device. Use that window, or close it and reload this one.');
-    e.code = 'SUDS_ALREADY_OPEN';
-    throw e;
+  if (force) {
+    sqlite.forceAcquireLock();
+  } else {
+    const locked = await sqlite.acquireLock();
+    if (!locked) {
+      const e = new Error('SUDS is already open in another window on this device. Use that window, or close it and reload this one.');
+      e.code = 'SUDS_ALREADY_OPEN';
+      // Only offered to the user once the previous holder has gone quiet long enough that it cannot still
+      // be a live tab — see local/shims/sqlite.js for why that is safe to act on.
+      e.stale = sqlite.lockIsStale();
+      throw e;
+    }
   }
   if (onSaveError) sqlite.setSaveErrorHandler(onSaveError);
 
