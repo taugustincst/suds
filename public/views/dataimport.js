@@ -5,7 +5,9 @@ export async function spreadsheetImportCard() {
   const { entities } = await get('/api/imports/data/entities');
   if (!entities.length) return null;
   const entSel = h('select', {}, entities.map(e => h('option', { value: e.key }, e.label)));
-  const fileIn = h('input', { type: 'file', accept: '.xlsx,.csv', class: 'hidden' });
+  // .sr-only, not .hidden (display:none) — a good few mobile browsers/WebViews refuse to honor a
+  // programmatic .click() on a file input that display:none has taken out of the render tree.
+  const fileIn = h('input', { type: 'file', accept: '.xlsx,.csv', class: 'sr-only' });
   const status = h('div', { class: 'small muted mt' });
   const review = h('div', { class: 'mt' });
   let preview = null; let file = null;

@@ -18,7 +18,9 @@ route('forms', async (r) => {
   // wants it in the library — instead of the full "+ Add a county form" flow (name, category, fields...)
   // being the only door in. It opens straight into the designer with the file already attached and the
   // name guessed from the filename, so the rest is just confirming, not starting from a blank form.
-  const uploadInput = h('input', { type: 'file', accept: '.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,application/pdf,image/*', class: 'hidden', onChange: async () => {
+  // .sr-only, not .hidden (display:none) — a good few mobile browsers/WebViews refuse to honor a
+  // programmatic .click() on a file input that display:none has taken out of the render tree.
+  const uploadInput = h('input', { type: 'file', accept: '.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,application/pdf,image/*', class: 'sr-only', onChange: async () => {
     const file = uploadInput.files[0]; uploadInput.value = ''; if (!file) return;
     try {
       const data = file.type.startsWith('image/') ? (await shrinkImage(file, 2000, 0.85)).dataUrl : await readFile(file);
@@ -105,7 +107,9 @@ export async function openDesigner(id, onDone, initialFile) {
   const draw = () => { clear(list); if (!fields.length) list.append(h('p', { class: 'muted small' }, 'No fields yet. Upload a fillable PDF to detect its fields automatically, or add them below.')); fields.forEach((f, i) => list.append(rowFor(f, i))); };
   draw();
   const fileInfo = h('div', { class: 'small muted' }, initialFile ? `${initialFile.name} will be saved with the form.` : t.has_file ? `${fileKind(t.content_type)} attached: ${t.filename || ''}` : 'No file attached (a blank PDF is generated from the fields).');
-  const fileInput = h('input', { type: 'file', accept: '.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,application/pdf,image/*', class: 'hidden', onChange: async () => {
+  // .sr-only, not .hidden (display:none) — a good few mobile browsers/WebViews refuse to honor a
+  // programmatic .click() on a file input that display:none has taken out of the render tree.
+  const fileInput = h('input', { type: 'file', accept: '.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,application/pdf,image/*', class: 'sr-only', onChange: async () => {
     const file = fileInput.files[0]; if (!file) return; fileName = file.name; fileInfo.textContent = `Reading ${file.name}…`;
     try { fileData = file.type.startsWith('image/') ? (await shrinkImage(file, 2000, 0.85)).dataUrl : await readFile(file); removeFile = false; fileInfo.textContent = `${file.name} (${Math.round(file.size / 1024)} KB) will be saved with the form.`; if (file.type === 'application/pdf' && !fields.length) fileInfo.textContent += ' Fields inside the PDF will be detected when you save.'; }
     catch (e) { fileInfo.textContent = e.message; fileData = null; }
@@ -167,7 +171,9 @@ export async function openClientForm(id, { onChange } = {}) {
   const files = h('div', {});
   const drawFiles = () => { clear(files); if (!f.files.length) files.append(h('span', { class: 'muted small' }, 'No signed copy attached yet.')); f.files.forEach(x => files.append(h('div', { class: 'today-item' }, h('span', {}, x.content_type.startsWith('image/') ? '🖼 ' : '📄 ', h('a', { href: '#', onClick: (e) => { e.preventDefault(); openFile(`/api/forms/${id}/files/${x.id}`); } }, x.filename), h('span', { class: 'muted small' }, ` · ${Math.round(x.bytes / 1024)} KB · ${fmt.date(x.created_at)}`)), can('forms:write') ? h('button', { class: 'btn sm ghost', 'aria-label': `Remove ${x.filename}`, onClick: async () => { if (!await confirmDialog('Remove attachment', `Remove ${x.filename}?`, { danger: true, okText: 'Remove' })) return; await del(`/api/forms/${id}/files/${x.id}`); f.files = f.files.filter(y => y.id !== x.id); drawFiles(); } }, '✕') : null))); };
   drawFiles();
-  const fileInput = h('input', { type: 'file', accept: 'image/*,application/pdf', class: 'hidden', onChange: async () => {
+  // .sr-only, not .hidden (display:none) — a good few mobile browsers/WebViews refuse to honor a
+  // programmatic .click() on a file input that display:none has taken out of the render tree.
+  const fileInput = h('input', { type: 'file', accept: 'image/*,application/pdf', class: 'sr-only', onChange: async () => {
     const file = fileInput.files[0]; fileInput.value = ''; if (!file) return;
     try { status.textContent = `Attaching ${file.name}…`; const dataUrl = file.type.startsWith('image/') ? (await shrinkImage(file, 2000, 0.85)).dataUrl : await readFile(file); const r = await post(`/api/forms/${id}/files`, { file_url: dataUrl, filename: file.name }); f.files.push({ ...r, created_at: new Date().toISOString() }); drawFiles(); status.textContent = 'Signed copy attached'; toast('Attached', 'ok'); }
     catch (e) { status.textContent = e.message; toast(e.message, 'error'); }

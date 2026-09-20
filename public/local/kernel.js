@@ -9120,7 +9120,7 @@ var require_png = __commonJS({
       crc.writeUInt32BE(crc32(td2));
       return import_buffer.Buffer.concat([len, td2, crc]);
     }
-    function encode(w, h, rgb) {
+    function encode(w, h, rgb, level = 1) {
       const raw = import_buffer.Buffer.alloc((w * 3 + 1) * h);
       for (let y = 0; y < h; y++) {
         raw[y * (w * 3 + 1)] = 0;
@@ -9134,7 +9134,7 @@ var require_png = __commonJS({
       ihdr[10] = 0;
       ihdr[11] = 0;
       ihdr[12] = 0;
-      return import_buffer.Buffer.concat([import_buffer.Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", ihdr), chunk("IDAT", zlib.deflateSync(raw)), chunk("IEND", import_buffer.Buffer.alloc(0))]);
+      return import_buffer.Buffer.concat([import_buffer.Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", ihdr), chunk("IDAT", zlib.deflateSync(raw, { level })), chunk("IEND", import_buffer.Buffer.alloc(0))]);
     }
     function placeholder(w, h, seed = 1, palette = 0) {
       const P2 = [[[58, 123, 213], [232, 240, 250], [72, 96, 120]], [[38, 140, 120], [226, 244, 236], [70, 110, 95]], [[196, 120, 60], [252, 238, 224], [120, 88, 64]], [[120, 84, 190], [240, 234, 250], [88, 72, 120]], [[40, 100, 160], [225, 235, 245], [90, 104, 120]]][palette % 5];
@@ -12781,7 +12781,7 @@ var require_episodes = __commonJS({
             v.referral_source || null,
             v.presenting_problem ? encrypt3(v.presenting_problem) : null
           );
-          db3.run(`UPDATE clients SET status=CASE WHEN status IN ('closed','inactive') THEN 'active' ELSE status END, discharge_date=NULL, discharge_reason=NULL, updated_at=? WHERE id=?`, db3.now(), ctx.params.id);
+          db3.run(`UPDATE clients SET status=CASE WHEN status='closed' THEN 'active' ELSE status END, discharge_date=NULL, discharge_reason=NULL, updated_at=? WHERE id=?`, db3.now(), ctx.params.id);
         });
         audit3.log({ user: ctx.user, action: "episode.open", entity: "episode", entityId: id, clientId: ctx.params.id, ip: ctx.ip });
         ctx.status = 201;

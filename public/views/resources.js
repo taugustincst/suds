@@ -83,7 +83,7 @@ async function regionCard(refresh) {
         h('p', { class: 'small' }, rg.description),
         rg.loaded ? [
           rg.unverified ? h('div', { class: 'banner warn small' }, h('b', {}, `${rg.unverified} of these still need checking. `), 'Open each program, call to confirm the address, phone number and intake, then press "Verified today".') : h('div', { class: 'banner small' }, 'Every imported program has been verified by your staff.'),
-          h('div', { class: 'btn-row' }, h('button', { class: 'btn', onClick: load }, 'Check for updates'), h('button', { class: 'btn', onClick: downloadPictures }, 'Download provider pictures'), h('button', { class: 'btn danger ghost sm', onClick: remove }, 'Remove'), busy)]
+          h('div', { class: 'btn-row' }, h('button', { class: 'btn', onClick: load }, 'Check for updates'), h('button', { class: 'btn', onClick: downloadPictures }, 'Download provider pictures'), h('button', { class: 'btn danger ghost sm', onClick: remove }, 'Remove starter directory'), busy)]
         : [h('p', { class: 'small muted' }, rg.sources_note),
           h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', onClick: load }, `Add ${rg.provider_count} programs`), busy)]));
     }
@@ -157,7 +157,11 @@ route('resource', async (r) => {
   };
   renderGallery();
   const status = h('div', { class: 'small muted mt' });
-  const fileInput = h('input', { type: 'file', accept: 'image/*', multiple: true, class: 'hidden', onChange: async () => {
+  // display:none (the .hidden class) takes the element out of the render tree, and a good few mobile
+  // browsers/WebViews — Android's chief among them — refuse to honor a programmatic .click() on a file
+  // input that isn't actually rendered, so the native picker silently never opens. .sr-only keeps it
+  // rendered (off-screen, zero size, clipped) instead, which every browser treats as a real trigger.
+  const fileInput = h('input', { type: 'file', accept: 'image/*', multiple: true, class: 'sr-only', onChange: async () => {
     const files = [...fileInput.files]; fileInput.value = '';
     let added = 0;
     for (const f of files) {

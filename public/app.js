@@ -321,7 +321,13 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
   if (restored) for (const [k, v] of Object.entries(restored)) { const i = inputs[k]; if (!i) continue; if (i.type === 'checkbox') i.checked = !!v; else i.value = v ?? ''; }
   const errBox = h('div', { class: 'banner danger hidden', role: 'alert', tabindex: '-1' });
   const submitBtn = h('button', { class: 'btn primary', type: 'submit' }, submitText);
-  const el = h('form', { onSubmit: async (e) => {
+  // noValidate: the browser's own constraint validation can silently refuse to even dispatch the submit
+  // event for a field it considers invalid — including, on some mobile browsers/WebViews, a non-required
+  // datetime-local field stuck in a broken partial state that never fires our onSubmit at all, so nothing
+  // in this file ever gets a chance to show an error. read() below now does its own required-field and
+  // bad-input checking and reports it through the same on-screen banner as every other validation error,
+  // so nothing here depends on a native UI that does not reliably render on every platform.
+  const el = h('form', { noValidate: true, onSubmit: async (e) => {
     e.preventDefault();
     errBox.classList.add('hidden');
     el.querySelectorAll('.field').forEach(x => { x.classList.remove('error'); x.querySelector('.err').textContent = ''; const c = x.querySelector('input,select,textarea'); if (c) c.removeAttribute('aria-invalid'); });
@@ -366,7 +372,7 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     el.addEventListener('change', () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => { try { drafts.set(draftKey, read()); } catch { /* see above */ } }, 400); });
   }
   function read() {
-    const data = {}; const bad = [];
+    const data = {}; const bad = []; const missing = [];
     for (const f of fields) {
       if (f.type === 'section') continue;
       const i = inputs[f.name];
@@ -382,8 +388,14 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
         else data[f.name] = i.value ? new Date(i.value).toISOString() : null;
       }
       else data[f.name] = i.value === '' ? null : i.value;
+      if (f.required && (data[f.name] === null || data[f.name] === undefined || data[f.name] === '') && !bad.includes(f)) missing.push(f);
     }
-    if (bad.length) { const e = new Error('Check the date/time below — it does not look complete.'); e.data = { fields: Object.fromEntries(bad.map(f => [f.name, 'enter a complete date and time, or leave it blank'])) }; throw e; }
+    if (bad.length || missing.length) {
+      const fields = { ...Object.fromEntries(bad.map(f => [f.name, 'enter a complete date and time, or leave it blank'])), ...Object.fromEntries(missing.map(f => [f.name, 'is required'])) };
+      const e = new Error(bad.length ? 'Check the date/time below — it does not look complete.' : 'Fill in the required field below.');
+      e.data = { fields };
+      throw e;
+    }
     return data;
   }
   el.read = read; el.inputs = inputs;
