@@ -73,6 +73,16 @@ class MainActivity : AppCompatActivity() {
             cacheMode = WebSettings.LOAD_DEFAULT; mediaPlaybackRequiresUserGesture = true; setSupportZoom(false)
             userAgentString = "$userAgentString SUDSApp/1.1"
         }
+        // The system Autofill framework (Google Autofill, Samsung Pass, a third-party password manager)
+        // reaches into WebView-rendered form fields the same way it reaches native ones. That is exactly
+        // wrong here: the web app's own login and its "office password" (a *different*, unrelated
+        // credential from the one that unlocks this device) sit right next to each other, and QA found the
+        // framework both offering the device's own credential into the office-password field and, on some
+        // OEM builds, painting an autofill preview into a field before its value is actually committed —
+        // "looks filled in, but the app treats it as empty." Excluding the WebView and its content from
+        // autofill entirely removes both failure modes; the autocomplete hints already in the web app's own
+        // markup are enough for a user's password manager to offer to save what they type by hand.
+        web.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
         CookieManager.getInstance().setAcceptCookie(true)
         val assets = WebViewAssetLoader.Builder().addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this)).build()
         web.addJavascriptInterface(Bridge(), "SudsNative")
