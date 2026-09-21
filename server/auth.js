@@ -149,9 +149,13 @@ function requireAuth(ctx) {
     if (due && Date.now() > Date.parse(due)) {
       throw new HttpError(403, 'Two-step verification must be set up for your role before you can continue', { mfaSetupRequired: true, mfaSetupDeadline: due });
     }
-    if (ctx.user.must_change_password) throw new HttpError(403, 'Password change required', { passwordChangeRequired: true });
+    // The page that lets someone change their password still needs the reference data and preferences the
+    // app shell loads first; refusing those too meant a brand-new account (or an expired password) was
+    // bounced straight back to the sign-in form, forever. Reads of those two, and nothing else, get through.
+    const shellOnly = ctx.method === 'GET' && (ctx.path === '/api/meta/constants' || ctx.path === '/api/me/prefs');
+    if (ctx.user.must_change_password && !shellOnly) throw new HttpError(403, 'Password change required', { passwordChangeRequired: true });
     const age = ctx.user.password_changed_at ? (Date.now() - Date.parse(ctx.user.password_changed_at)) / 86400000 : Infinity;
-    const maxAge = policy().passwordMaxAgeDays; if (age > maxAge) throw new HttpError(403, `Password is older than ${maxAge} days and must be changed`, { passwordChangeRequired: true });
+    const maxAge = policy().passwordMaxAgeDays; if (age > maxAge && !shellOnly) throw new HttpError(403, `Password is older than ${maxAge} days and must be changed`, { passwordChangeRequired: true });
   }
 }
 

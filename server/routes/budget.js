@@ -50,6 +50,18 @@ function wouldCycle(lineId, proposedParentId) {
   return false;
 }
 
+// A grant pays for what happened in its period. A date outside it, or in the future, is almost always a
+// typo -- and if it is not, it belongs on a different fund. Either way it must not quietly land in this
+// fund's totals, where the Funds card and the funder report then disagree and nobody can say why.
+function assertInPeriod(fund, date, what) {
+  if (!date) return;
+  const today = new Date().toISOString().slice(0, 10);
+  if (date > today) throw badRequest(`${what} is in the future (${date})`);
+  if (fund && ((fund.fiscal_year_start && date < fund.fiscal_year_start) || (fund.fiscal_year_end && date > fund.fiscal_year_end))) {
+    throw badRequest(`${what} ${date} is outside the period of ${fund.name} (${fund.fiscal_year_start} to ${fund.fiscal_year_end}). Charge it to the fund that covers that date.`);
+  }
+}
+
 function fundSummary(f) {
   const spent = db.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE funding_source_id=? AND status IN ('approved','reimbursed')`, f.id).n;
   const pending = db.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE funding_source_id=? AND status='pending'`, f.id).n;
@@ -143,6 +155,7 @@ module.exports = (r) => {
     },
     beforeInsert: (ctx, v) => {
       const f = db.one(`SELECT * FROM funding_sources WHERE id=? AND is_active=1`, v.funding_source_id); if (!f) throw badRequest('Unknown or inactive funding source');
+      assertInPeriod(f, v.spent_at, 'Expenditure date');
       if (v.budget_line_id) { const l = db.one(`SELECT * FROM budget_lines WHERE id=? AND funding_source_id=?`, v.budget_line_id, f.id); if (!l) throw badRequest('Budget line does not belong to fund'); if (!v.category) v.category = l.category; }
     },
     canEdit: (ctx, row) => row.status === 'pending' && (row.user_id === ctx.user.id || auth.hasPerm(ctx.user, 'budget:approve')),
@@ -162,7 +175,9 @@ module.exports = (r) => {
     return {
       totals: { budget: funds.reduce((s, f) => s + f.total_amount, 0), spent: funds.reduce((s, f) => s + f.spent, 0), pending: funds.reduce((s, f) => s + f.pending, 0), remaining: funds.reduce((s, f) => s + f.remaining, 0) },
       by_category: db.all(`SELECT category, SUM(amount) amount, COUNT(*) n FROM expenditures WHERE status IN ('approved','reimbursed') GROUP BY category ORDER BY amount DESC`),
-      by_month: db.all(`SELECT substr(spent_at,1,7) month, SUM(amount) amount FROM expenditures WHERE status<>'rejected' GROUP BY month ORDER BY month`),
+      // Approved and reimbursed only, the same as the headline "Spent (approved)" figure above it: the two
+      // used to differ by whatever was still pending, on the same page.
+      by_month: db.all(`SELECT substr(spent_at,1,7) month, SUM(amount) amount FROM expenditures WHERE status IN ('approved','reimbursed') GROUP BY month ORDER BY month`),
       per_client: db.one(`SELECT COUNT(DISTINCT client_id) clients, COALESCE(SUM(amount),0) amount FROM expenditures WHERE client_id IS NOT NULL AND status IN ('approved','reimbursed')`),
       funds,
     };
@@ -171,3 +186,4 @@ module.exports = (r) => {
 // Reused by server/routes/sync.js: the REST route validates a re-parent through this, but a sync push
 // applies budget_lines rows straight through importRow() with no such check — see that file for why.
 module.exports.wouldCycle = wouldCycle;
+module.exports.assertInPeriod = assertInPeriod;

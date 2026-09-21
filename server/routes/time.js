@@ -4,9 +4,15 @@ const auth = require('../auth');
 const crud = require('../crud');
 const C = require('../constants');
 
+// Hours charged to a grant must fall in its period, and never in the future (see budget.js's assertInPeriod).
+function checkPeriod(v) {
+  const fund = v.funding_source_id ? db.one(`SELECT * FROM funding_sources WHERE id=?`, v.funding_source_id) : null;
+  require('./budget').assertInPeriod(fund, v.work_date, 'Work date');
+}
+
 module.exports = (r) => {
   crud.build(r, {
-    table: 'time_entries', entity: 'time_entrie', base: '/api/time', perm: 'time', dateCol: 'work_date', clientRequired: false,
+    table: 'time_entries', entity: 'time_entry', base: '/api/time', perm: 'time', dateCol: 'work_date', clientRequired: false,
     // Time is personal: an entry with no client can only be read by the worker who logged it, or a manager.
     ownerOnly: 'time:all',
     joins: 'JOIN users u ON u.id=time_entries.user_id LEFT JOIN clients c ON c.id=time_entries.client_id LEFT JOIN funding_sources f ON f.id=time_entries.funding_source_id',
@@ -21,11 +27,11 @@ module.exports = (r) => {
       if (!auth.hasPerm(ctx.user, 'time:all')) { where.push('time_entries.user_id=?'); params.push(ctx.user.id); }
       const cat = ctx.query.get('category'); if (cat) { where.push('time_entries.category=?'); params.push(cat); }
     },
-    beforeInsert: (ctx, v) => { if (v.user_id && v.user_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'time:all')) v.user_id = ctx.user.id; },
+    beforeInsert: (ctx, v) => { if (v.user_id && v.user_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'time:all')) v.user_id = ctx.user.id; checkPeriod(v); },
     // Reassigning whose hours these are is a time:all action (see public/views/time.js, which only shows the
     // Worker picker when can('time:all')) -- without this, a worker who owns the row (canEdit below) could
     // still smuggle a different user_id through an update even though they could never set it on insert.
-    beforeUpdate: (ctx, v) => { if (v.user_id && v.user_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'time:all')) delete v.user_id; },
+    beforeUpdate: (ctx, v, row) => { if (v.user_id && v.user_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'time:all')) delete v.user_id; if ('work_date' in v || 'funding_source_id' in v) checkPeriod({ work_date: row.work_date, funding_source_id: row.funding_source_id, ...v }); },
     canEdit: (ctx, row) => row.user_id === ctx.user.id || auth.hasPerm(ctx.user, 'time:all'),
   });
 

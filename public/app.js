@@ -565,7 +565,7 @@ export function maybeTour() {
   if (prefs.get('tour_done') || tourOpen || document.querySelector('.modal-bg')) return;
   tourOpen = true;
   const steps = [
-    ['Welcome to SUDS', `Hi ${state.user.display_name.split(' ')[0]}. SUDS keeps everything about the people you serve in one place, and it works the same on your phone and your computer. Anything you add on one shows up on the other right away.`],
+    ['Welcome to SUDS', `Hi ${firstName(state.user.display_name)}. SUDS keeps everything about the people you serve in one place, and it works the same on your phone and your computer. Anything you add on one shows up on the other right away.`],
     ['Start with Home', 'Home shows what needs attention today: reminders due, clients you have not contacted in a while, and drafts you started on another device.'],
     ['Record work with + Log', 'The blue + Log button (top of the page, or bottom-right on a phone) records a visit, call, note, reminder or time in a few taps. Visits and calls also fill in your time sheet.'],
     ['Find anyone fast', 'Use the search box at the top with a last name, phone number or client code. Open a client to see their story: visits, calls, notes, referrals and reminders on one timeline.'],
@@ -588,6 +588,8 @@ export async function downloadCsv(path) {
 // ---------- routing ----------
 const routes = {};
 export function route(name, loader) { routes[name] = loader; }
+// "Dr. Kiran Patel" is Kiran, not Dr.
+export const firstName = (n) => (String(n || '').split(/\s+/).filter(w => !/^(dr|mr|mrs|ms|mx|rev|fr|sr|jr)\.?$/i.test(w))[0] || String(n || '').split(' ')[0] || '');
 const canAny = (perm) => (Array.isArray(perm) ? perm.some(p => can(p)) : can(perm));
 export function parseHash() {
   const [path, qs] = location.hash.replace(/^#\/?/, '').split('?');
@@ -602,7 +604,7 @@ export const NAV = [
   { name: 'clients', label: 'My clients', ico: '👤', perm: 'clients:read', help: 'Everyone you serve. Open a client to see their whole story in one place.' },
   { name: 'waitlist', label: 'Waitlist', ico: '⧗', perm: 'clients:read', help: 'People waiting for a place, longest and highest risk first.' },
   { name: 'tasks', label: 'To-do list', ico: '☑', perm: 'tasks:read', help: 'Follow-ups and reminders. Check a box when it is done.' },
-  { name: 'supervision', label: 'Supervision', ico: '✍', perm: 'notes:cosign', help: 'Notes waiting for your countersignature, drafts your team has not finished, staff time to approve, and referrals with no outcome recorded.' },
+  { name: 'supervision', label: 'Supervision', ico: '✍', perm: ['notes:cosign', 'time:approve', 'assignments:manage'], help: 'Notes waiting for your countersignature, drafts your team has not finished, staff time to approve, and referrals with no outcome recorded.' },
   { sec: 'Record work' },
   { name: 'interventions', label: 'Visits & services', ico: '✚', perm: 'interventions:read', help: 'Every face-to-face or phone service you provide: outreach, screenings, warm handoffs, naloxone, transport and more.' },
   { name: 'calls', label: 'Calls & texts', ico: '☎', perm: 'calls:read', help: 'Phone calls and text messages with clients, families and providers — including ones that went to voicemail or got no reply.' },
@@ -621,7 +623,7 @@ export const NAV = [
   { name: 'funder', label: 'Funder report', ico: '▦', perm: 'reports:read', help: 'Unduplicated counts — people, not services — by fiscal period and funding source, with admissions, discharges, demographics and overdose figures in the shape a grant report asks for.' },
   // A supervisor holds assignments:manage (moving a caseload when someone leaves lives on this page) but not
   // users:manage; gating the whole page on the latter locked them out of a feature built for them.
-  { name: 'admin', label: 'Settings', ico: '⚙', perm: ['users:manage', 'assignments:manage'], help: 'Staff accounts, security, connecting phones, and backups.' },
+  { name: 'admin', label: 'Settings', ico: '⚙', perm: ['users:manage', 'assignments:manage'], help: 'Staff accounts, security, connecting phones and backups — or, for a supervisor, moving a caseload and the audit log.' },
 ];
 
 let current = null;
@@ -638,10 +640,10 @@ export async function render() {
   if (state.user.must_change_password && r.name !== 'profile') { nav('profile?force=1'); return; }
   const navItem = NAV.find(n => n.name === r.name);
   const loader = navItem?.perm && !canAny(navItem.perm) ? (async () => emptyState('Not available for your role', `Your account does not have access to ${navItem.label}. Ask your supervisor or administrator if you need it.`, h('button', { class: 'btn', onClick: () => nav('dashboard') }, 'Back to home'))) : (routes[r.name] || routes.dashboard);
-  const main = h('div', { class: 'main' }, h('div', { class: 'boot' }, 'Loading…'));
+  const main = h('main', { class: 'main', id: 'main', tabindex: '-1' }, h('div', { class: 'boot' }, 'Loading…'));
   const side = sidebar(r);
   const qa = quickActions();
-  const layout = h('div', { class: 'layout' }, mobileBar(r, side), side, h('div', { class: 'content' }, h('div', { class: 'appbar' }, can('clients:read') ? globalSearch() : h('div', { class: 'grow' }), qa), main), qa ? h('div', { class: 'fab' }, qa.cloneNode(true)) : null);
+  const layout = h('div', { class: 'layout' }, h('a', { class: 'skip-link', href: '#main', onClick: (e) => { e.preventDefault(); main.focus(); main.scrollIntoView(); } }, 'Skip to content'), mobileBar(r, side), side, h('div', { class: 'content' }, h('div', { class: 'appbar' }, can('clients:read') ? globalSearch() : h('div', { class: 'grow' }), qa), main), qa ? h('div', { class: 'fab' }, qa.cloneNode(true)) : null);
   if (qa) layout.querySelector('.fab button')?.addEventListener('click', () => qa.click());
   clear(app).append(layout);
   // A hash change keeps the old scroll position, so leaving a long list for another page landed the
@@ -655,15 +657,25 @@ export async function render() {
 function sidebar(r) {
   return h('aside', { class: 'sidebar' },
     h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('b', {}, 'SUDS'), h('small', {}, state.org))),
-    h('nav', { class: 'nav' }, NAV.map(n => n.sec ? h('div', { class: 'sec' }, n.sec) : (!n.perm || canAny(n.perm)) ? h('a', { href: '#/' + n.name, class: r.name === n.name ? 'active' : '' }, h('span', { class: 'ico' }, n.ico), n.label) : null)),
+    h('nav', { class: 'nav' }, NAV.map((n, i) => {
+      if (n.sec) {
+        // A heading with nothing under it (a finance account and "Connect clients") is just noise.
+        const rest = NAV.slice(i + 1); const end = rest.findIndex(m => m.sec); const items = end < 0 ? rest : rest.slice(0, end);
+        return items.some(m => !m.perm || canAny(m.perm)) ? h('div', { class: 'sec' }, n.sec) : null;
+      }
+      return (!n.perm || canAny(n.perm)) ? h('a', { href: '#/' + n.name, class: r.name === n.name ? 'active' : '' }, h('span', { class: 'ico' }, n.ico), n.label) : null;
+    })),
     h('div', { class: 'foot' }, state.local ? h('a', { href: '#/sync', class: 'badge info', style: { display: 'block', textAlign: 'center', marginBottom: '.5rem' } }, '📱 On this device · Sync') : null, h('div', {}, h('b', {}, state.user.display_name)), h('div', { class: 'muted' }, fmt.label(state.user.role)),
       h('div', { class: 'row', style: { marginTop: '.5rem' } }, h('a', { href: '#/profile' }, 'Profile'), h('a', { href: '#', onClick: (e) => { e.preventDefault(); logout(); } }, 'Sign out'), h('a', { href: '#', title: 'Light / dark', onClick: (e) => { e.preventDefault(); toggleTheme(); } }, 'Light/dark'))));
 }
 function mobileBar(r, side) {
   const item = NAV.find(n => n.name === r.name) || (r.name === 'client' ? { label: 'Client' } : { label: 'SUDS' });
-  const toggle = () => { side.classList.toggle('open'); document.body.classList.toggle('nav-open', side.classList.contains('open')); };
-  side.addEventListener('click', (e) => { if (e.target.closest('a')) { side.classList.remove('open'); document.body.classList.remove('nav-open'); } });
-  return h('div', { class: 'mobilebar' }, h('button', { class: 'btn ghost', 'aria-label': 'Menu', onClick: toggle }, '☰'), h('b', {}, item.label), h('a', { href: '#/clients', class: 'btn ghost', 'aria-label': 'Clients' }, '👤'));
+  const menuBtn = h('button', { class: 'btn ghost', 'aria-label': 'Menu', 'aria-expanded': 'false', 'aria-controls': 'sidebar' }, '☰');
+  side.id = 'sidebar';
+  const toggle = () => { side.classList.toggle('open'); const open = side.classList.contains('open'); document.body.classList.toggle('nav-open', open); menuBtn.setAttribute('aria-expanded', String(open)); };
+  menuBtn.addEventListener('click', toggle);
+  side.addEventListener('click', (e) => { if (e.target.closest('a')) { side.classList.remove('open'); document.body.classList.remove('nav-open'); menuBtn.setAttribute('aria-expanded', 'false'); } });
+  return h('div', { class: 'mobilebar' }, menuBtn, h('b', {}, item.label), h('a', { href: '#/clients', class: 'btn ghost', 'aria-label': 'Clients' }, '👤'));
 }
 function toggleTheme() { const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); const next = cur === 'dark' ? 'light' : 'dark'; prefs.set('theme', next); applyTheme(); }
 try { const cached = JSON.parse(localStorage.getItem('suds.prefs') || '{}'); if (cached.theme) document.documentElement.dataset.theme = cached.theme; } catch {}
@@ -710,7 +722,9 @@ export async function loadSession() {
   } catch { state.user = null; }
 }
 export async function loadRefData() {
-  if (!state.constants) state.constants = await get('/api/meta/constants');
+  // Not fatal: an account that must change its password first is refused nearly everything, and the one
+  // page it may use has to render regardless.
+  if (!state.constants) { try { state.constants = await get('/api/meta/constants', { quiet: true }); } catch { state.constants = state.constants || {}; } }
   try { state.users = (await get('/api/users', { quiet: true })).users; } catch { state.users = []; }
   if (can('budget:read')) { try { state.funds = (await get('/api/budget/funds', { quiet: true })).funds; } catch { state.funds = []; } }
 }

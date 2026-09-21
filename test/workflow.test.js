@@ -114,6 +114,17 @@ test('an administrator can put a worker under supervision without touching the d
   assert.equal(H.db.one(`SELECT requires_cosign FROM users WHERE id=?`, nav2Id).requires_cosign, 0);
 });
 
+test('an administrator can reach clinical notes only through break-glass, on the list too', async () => {
+  const n = await trainee.post('/api/notes', { client_id: clientId, kind: 'clinical', title: 'Glass', content: 'Relapse discussed.', occurred_at: '2026-09-05T10:00:00Z' });
+  assert.equal(n.status, 201);
+  const plain = await admin.get(`/api/notes?client_id=${clientId}&kind=clinical`);
+  assert.equal(plain.status, 200); assert.ok(!plain.data.rows.some(x => x.id === n.data.id), 'hidden without a reason');
+  const glass = await admin.get(`/api/notes?client_id=${clientId}&kind=clinical`, { 'X-Break-Glass-Reason': 'Privacy officer request #12' });
+  assert.ok(glass.data.rows.some(x => x.id === n.data.id), 'visible with a documented reason');
+  const row = H.db.one(`SELECT details FROM audit_log WHERE action='note.list.breakglass' ORDER BY id DESC LIMIT 1`);
+  assert.ok(row && /Privacy officer/.test(row.details), 'and the reason is in the audit log');
+});
+
 test('a supervisor can approve a batch of staff time from the queue', async () => {
   // Regression: the validator's array branch referenced an undefined variable, so every request through
   // /api/time/approve-batch -- the only endpoint the Supervision page calls, for single rows too -- was a

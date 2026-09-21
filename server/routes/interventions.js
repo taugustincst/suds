@@ -20,6 +20,7 @@ function checkCost(ctx, v) {
     if (!v.budget_line_id) throw badRequest('A budget line is required when a cost is entered, so it is deducted from the right allocation');
     const line = db.one(`SELECT * FROM budget_lines WHERE id=? AND funding_source_id=?`, v.budget_line_id, v.funding_source_id);
     if (!line) throw badRequest('Budget line does not belong to the selected funding source');
+    if (v.occurred_at) require('./budget').assertInPeriod(db.one(`SELECT * FROM funding_sources WHERE id=?`, v.funding_source_id), String(v.occurred_at).slice(0, 10), 'Date of service');
     return line;
   }
   if (v.budget_line_id && !v.funding_source_id) throw badRequest('A funding source is required when a budget line is selected');
@@ -78,7 +79,7 @@ module.exports = (r) => {
       delete v.log_time; delete v.time_category; encodeSummary(v);
       // Only validated when this edit actually touches cost/fund/line — an unrelated edit to a record from
       // before budget_line_id existed must not suddenly demand one just because cost happens to be nonzero.
-      if ('cost' in v || 'funding_source_id' in v || 'budget_line_id' in v) checkCost(ctx, { funding_source_id: row.funding_source_id, budget_line_id: row.budget_line_id, cost: row.cost, ...v });
+      if ('cost' in v || 'funding_source_id' in v || 'budget_line_id' in v) checkCost(ctx, { funding_source_id: row.funding_source_id, budget_line_id: row.budget_line_id, cost: row.cost, occurred_at: row.occurred_at, ...v });
     },
     afterInsert: (ctx, row) => {
       // Optional automatic time entry + naloxone tracking on client

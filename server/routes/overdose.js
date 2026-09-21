@@ -20,7 +20,8 @@ module.exports = (r) => {
     shape: {
       // client_id stays optional: a bystander reversal reported by an outreach worker has no client.
       client_id: { type: 'string' }, occurred_at: { type: 'datetime', required: true },
-      kind: { type: 'string', enum: KINDS }, substances: { type: 'string', maxLen: 200 },
+      // Required: an empty form saved by accident used to become a countable reversal.
+      kind: { type: 'string', enum: KINDS, required: true }, substances: { type: 'string', maxLen: 200 },
       naloxone_used: { type: 'boolean' }, naloxone_doses: { type: 'number', integer: true, min: 0, max: 20 },
       administered_by: { type: 'string', enum: ADMINISTERED_BY }, ems_called: { type: 'boolean' },
       hospitalized: { type: 'boolean' }, survived: { type: 'boolean' },

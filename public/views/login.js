@@ -15,7 +15,9 @@ route('login', async (r) => {
     const r2 = await post('/api/auth/login', d);
     await loadSession();
     if (r2.mfaPending) { nav('mfa'); }
-    else if (r2.mfaSetupRequired) { toast('Your role requires multi-factor authentication. Please enroll now.', 'error'); nav('profile?mfa=1'); }
+    // Past the deadline the server refuses everything else anyway; inside it, the banner on every page says
+    // when -- an error toast and a hijacked landing page every morning is not "advisory".
+    else if (r2.mfaSetupRequired && (!r2.mfaSetupDeadline || Date.parse(r2.mfaSetupDeadline) < Date.now())) { toast('Two-step verification must be set up before you can continue.', 'error'); nav('profile?mfa=1'); }
     else nav('dashboard');
     render();
   } });

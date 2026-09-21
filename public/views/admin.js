@@ -204,12 +204,12 @@ route('admin', async (r) => {
   };
   // Someone without users:manage (a supervisor) reaches this page for one thing: moving a caseload.
   const full = can('users:manage');
-  const tabs = !full ? [['caseload', 'Move a caseload']]
+  const tabs = !full ? [['caseload', 'Move a caseload'], ...(can('audit:read') ? [['audit', 'Audit log']] : [])]
     : state.local ? [['users', 'Users & roles'], ['settings', 'Settings'], ['caseload', 'Move a caseload'], ['audit', 'Audit log']]
     : [['users', 'Users & roles'], ['settings', 'Settings'], ['network', 'Network & devices'], ['devices', 'Synced devices'], ['caseload', 'Move a caseload'], ['audit', 'Audit log'], ['apikeys', 'API keys (intake)'], ['system', 'System & backups']];
   const allowed = tabs.some(([k]) => k === tab) ? tab : tabs[0][0];
   body.append(await (T[allowed] || T[tabs[0][0]])());
-  return h('div', {}, pageHead(full ? 'Settings' : 'Move a caseload'), state.local ? h('div', { class: 'banner small' }, 'This is the copy of SUDS on this device. Network, API keys and backups are managed on the office SUDS; use Sync to exchange data.') : null, h('div', { class: 'tabs' }, tabs.map(([k, l]) => h('button', { class: k === tab ? 'active' : '', onClick: () => nav(`admin?tab=${k}`) }, l))), body);
+  return h('div', {}, pageHead(full ? 'Settings' : 'Supervision tools'), state.local ? h('div', { class: 'banner small' }, 'This is the copy of SUDS on this device. Network, API keys and backups are managed on the office SUDS; use Sync to exchange data.') : null, h('div', { class: 'tabs' }, tabs.map(([k, l]) => h('button', { class: k === tab ? 'active' : '', onClick: () => nav(`admin?tab=${k}`) }, l))), body);
 });
 
 // ---------------------------------------------------------------------------
@@ -284,11 +284,12 @@ export function restoreCard() {
 // ---------------------------------------------------------------------------
 export function transferCard() {
   if (!can('assignments:manage')) return null;
-  const staff = state.users.filter(u => u.is_active !== 0);
+  // Only people who carry a caseload: a finance or admin account has no clients to move.
+  const staff = state.users.filter(u => u.is_active !== 0 && ['navigator', 'clinician', 'supervisor'].includes(u.role));
   const result = h('div', { class: 'mt' });
   const f = form([
-    { name: 'from_user_id', label: 'Move clients from', type: 'user', required: true },
-    { name: 'to_user_id', label: 'To', type: 'user', required: true },
+    { name: 'from_user_id', label: 'Move clients from', type: 'select', required: true, options: staff.map(u => ({ value: u.id, label: `${u.display_name} (${fmt.label(u.role)})` })) },
+    { name: 'to_user_id', label: 'To', type: 'select', required: true, options: staff.map(u => ({ value: u.id, label: `${u.display_name} (${fmt.label(u.role)})` })) },
     { name: 'role_on_case', label: 'Role on the case', type: 'select', options: ['primary', 'secondary', 'clinician', 'peer', 'supervisor'], help: 'Leave empty to keep whatever role each assignment already has.' },
     { name: 'effective_date', label: 'Effective from', type: 'date', value: new Date().toISOString().slice(0, 10) },
     { name: 'reassign_open_tasks', label: 'Also move their open to-dos for those clients', type: 'checkbox', value: 1 },

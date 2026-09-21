@@ -21,6 +21,10 @@ function rateLimit(key, max, windowMs) {
   if (buckets.size > 10000) for (const [k, v] of buckets) if (now > v.reset) buckets.delete(k);
   return b.count <= max;
 }
+// Is this key already over its limit? Does not count an attempt; the caller counts only the ones it wants
+// to (failed sign-ins, say -- a whole office signing in at 8 a.m. from behind one router is not an attack).
+function rateLimited(key, max) { const b = buckets.get(key); return !!b && Date.now() <= b.reset && b.count >= max; }
+function rateLimitReset(key) { buckets.delete(key); }
 
 // Every route module, in one place. The local kernel builds its router from LOCAL_ROUTE_MODULES below and
 // fails loudly if it is missing a loader for one, so adding a route file cannot silently leave the feature
@@ -98,4 +102,4 @@ function createHandler() {
   };
 }
 
-module.exports = { createHandler, rateLimit, ROUTE_MODULES, LOCAL_ROUTE_MODULES };
+module.exports = { createHandler, rateLimit, rateLimited, rateLimitReset, ROUTE_MODULES, LOCAL_ROUTE_MODULES };

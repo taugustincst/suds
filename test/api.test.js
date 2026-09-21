@@ -260,7 +260,7 @@ test('a navigator records expenses but cannot restructure grants; a rejection ne
 });
 
 test('budget: nested allocations roll up, and cannot be re-parented into a cycle or another fund', async () => {
-  const f = await admin.post('/api/budget/funds', { name: 'SOR Grant FY26', source_type: 'sor_grant', fiscal_year_start: '2026-10-01', fiscal_year_end: '2027-09-30', total_amount: 50000 });
+  const f = await admin.post('/api/budget/funds', { name: 'SOR Grant FY26', source_type: 'sor_grant', fiscal_year_start: '2026-07-01', fiscal_year_end: '2027-06-30', total_amount: 50000 });
   const other = await admin.post('/api/budget/funds', { name: 'Unrelated fund', source_type: 'other', fiscal_year_start: '2026-10-01', fiscal_year_end: '2027-09-30', total_amount: 1000 });
   // A grant broken into a program-level allocation, broken into two line items under it.
   const program = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'outreach_materials', label: 'Outreach program', allocated_amount: 20000 });
@@ -268,7 +268,7 @@ test('budget: nested allocations roll up, and cannot be re-parented into a cycle
   const item1 = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'naloxone_supplies', label: 'Naloxone kits', allocated_amount: 8000, parent_id: program.data.id });
   const item2 = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'outreach_materials', label: 'Printed materials', allocated_amount: 5000, parent_id: program.data.id });
   assert.equal(item1.status, 201); assert.equal(item2.status, 201);
-  const e = await nav.post('/api/budget/expenditures', { funding_source_id: f.data.id, budget_line_id: item1.data.id, spent_at: '2026-10-05', amount: 300, category: 'naloxone_supplies', vendor: 'Pharmacy' });
+  const e = await nav.post('/api/budget/expenditures', { funding_source_id: f.data.id, budget_line_id: item1.data.id, spent_at: '2026-09-05', amount: 300, category: 'naloxone_supplies', vendor: 'Pharmacy' });
   const sfin = H.client(); await sfin.login('sup1', 'StaffPassw0rd!x');
   assert.equal((await sfin.post(`/api/budget/expenditures/${e.data.id}/approve`, { status: 'approved' })).status, 200);
 
@@ -416,6 +416,52 @@ test('deleting a budget line with sub-allocations tombstones and audit-logs ever
     assert.equal(H.db.one(`SELECT COUNT(*) n FROM tombstones WHERE table_name='budget_lines' AND id=?`, id).n, 1, 'each descendant got its own tombstone, not just the named line');
     assert.equal(H.db.one(`SELECT COUNT(*) n FROM audit_log WHERE action='budget_line.delete' AND entity_id=?`, id).n, 1, 'each descendant got its own audit entry');
   }
+});
+
+test('a brand-new account can get as far as the change-password page', async () => {
+  // Regression: an account that must change its password was refused /api/meta/constants and /api/me/prefs
+  // too, so the app shell could not load and the person was bounced back to the sign-in form for ever.
+  const u = await admin.post('/api/users', { username: 'newhire1', display_name: 'New Hire', role: 'navigator' });
+  assert.equal(u.status, 201); assert.ok(u.data.temporary_password);
+  const c = H.client(); await c.login('newhire1', u.data.temporary_password);
+  assert.equal((await c.get('/api/auth/me')).data.user.must_change_password, true);
+  assert.equal((await c.get('/api/meta/constants')).status, 200, 'reference data loads');
+  assert.equal((await c.get('/api/me/prefs')).status, 200, 'preferences load');
+  assert.equal((await c.get('/api/clients')).status, 403, 'but nothing else does');
+  assert.equal((await c.post('/api/tasks', { title: 'x' })).status, 403);
+  assert.equal((await c.post('/api/auth/password', { current_password: u.data.temporary_password, new_password: 'Brand-New-Passw0rd!' })).status, 200);
+  assert.equal((await c.get('/api/clients')).status, 200, 'and everything opens once it is changed');
+});
+
+test('only failed sign-ins count against an address', async () => {
+  // Regression: twenty successful sign-ins from one address (an office behind one router) locked everyone out.
+  const config = require('../server/config'); const was = config.loginRateLimit; config.loginRateLimit = 3;
+  require('../server/app').rateLimitReset('login:127.0.0.1'); // earlier tests in this file fail sign-ins on purpose
+  try {
+    for (let i = 0; i < 5; i++) assert.equal((await H.client().post('/api/auth/login', { username: 'nav1', password: 'StaffPassw0rd!x' })).status, 200, `sign-in ${i + 1} is fine`);
+    for (let i = 0; i < 3; i++) assert.equal((await H.client().post('/api/auth/login', { username: 'nav1', password: 'wrong-' + i })).status, 401);
+    assert.equal((await H.client().post('/api/auth/login', { username: 'nav1', password: 'StaffPassw0rd!x' })).status, 429, 'three failures and the address is limited');
+  } finally { config.loginRateLimit = was; require('../server/app').rateLimitReset('login:127.0.0.1'); }
+});
+
+test('money and hours cannot be charged to a fund outside its period, or in the future', async () => {
+  const f = await admin.post('/api/budget/funds', { name: 'FY27 period check', source_type: 'other', fiscal_year_start: '2026-07-01', fiscal_year_end: '2027-06-30', total_amount: 1000 });
+  const line = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'other', allocated_amount: 500 });
+  const early = await nav.post('/api/time', { work_date: '2026-01-15', minutes: 60, category: 'documentation', funding_source_id: f.data.id });
+  assert.equal(early.status, 400); assert.match(early.data.error, /outside the period/);
+  const future = await nav.post('/api/time', { work_date: '2099-01-01', minutes: 60, category: 'documentation' });
+  assert.equal(future.status, 400); assert.match(future.data.error, /future/);
+  assert.equal((await nav.post('/api/time', { work_date: '2026-09-01', minutes: 60, category: 'documentation', funding_source_id: f.data.id })).status, 201, 'inside the period is fine');
+  const e = await nav.post('/api/budget/expenditures', { funding_source_id: f.data.id, budget_line_id: line.data.id, spent_at: '2026-02-01', amount: 10, category: 'other' });
+  assert.equal(e.status, 400); assert.match(e.data.error, /outside the period/);
+  const iv = await nav.post('/api/interventions', { client_id: clientId, type: 'case_management', occurred_at: '2026-03-03T10:00:00Z', funding_source_id: f.data.id, budget_line_id: line.data.id, cost: 5 });
+  assert.equal(iv.status, 400, 'a service with a cost is checked the same way');
+});
+
+test('an overdose event cannot be recorded with nothing on it', async () => {
+  const r = await nav.post('/api/overdose-events', { occurred_at: '2026-09-01T10:00:00Z' });
+  assert.equal(r.status, 400, 'an accidental empty save is not a countable reversal');
+  assert.equal((await nav.post('/api/overdose-events', { occurred_at: '2026-09-01T10:00:00Z', kind: 'reversal' })).status, 201);
 });
 
 test('time entries scoped to own user unless manager', async () => {

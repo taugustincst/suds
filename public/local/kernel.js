@@ -8196,10 +8196,11 @@ var require_auth = __commonJS({
         if (due && Date.now() > Date.parse(due)) {
           throw new HttpError3(403, "Two-step verification must be set up for your role before you can continue", { mfaSetupRequired: true, mfaSetupDeadline: due });
         }
-        if (ctx.user.must_change_password) throw new HttpError3(403, "Password change required", { passwordChangeRequired: true });
+        const shellOnly = ctx.method === "GET" && (ctx.path === "/api/meta/constants" || ctx.path === "/api/me/prefs");
+        if (ctx.user.must_change_password && !shellOnly) throw new HttpError3(403, "Password change required", { passwordChangeRequired: true });
         const age = ctx.user.password_changed_at ? (Date.now() - Date.parse(ctx.user.password_changed_at)) / 864e5 : Infinity;
         const maxAge = policy().passwordMaxAgeDays;
-        if (age > maxAge) throw new HttpError3(403, `Password is older than ${maxAge} days and must be changed`, { passwordChangeRequired: true });
+        if (age > maxAge && !shellOnly) throw new HttpError3(403, `Password is older than ${maxAge} days and must be changed`, { passwordChangeRequired: true });
       }
     }
     function mfaDeadline(user) {
@@ -9988,6 +9989,7 @@ var require_demo = __commonJS({
           return id;
         });
         const y = (/* @__PURE__ */ new Date()).getFullYear();
+        const fundStart = `${y}-07-01`;
         const fund = track("funding_sources", uuid2());
         db3.run(`INSERT INTO funding_sources(id,name,source_type,grant_number,fiscal_year_start,fiscal_year_end,total_amount,restrictions) VALUES(?,?,?,?,?,?,?,?)`, fund, `Opioid Settlement \u2013 Navigation FY${String(y + 1).slice(2)}`, "opioid_settlement", "OS-2026-014", `${y}-07-01`, `${y + 1}-06-30`, 18e4, "Abatement uses only; no indirect above 10%");
         const lines = { client_assistance: 25e3, transportation: 8e3, naloxone_supplies: 6e3, housing_assistance: 3e4, staffing: 1e5, training: 3e3, ids_documents: 2e3, phones_communication: 3e3, outreach_materials: 3e3 };
@@ -10119,7 +10121,7 @@ var require_demo = __commonJS({
               rand() < 0.3 ? day(-Math.floor(rand() * 10)) : null,
               d(off, 16)
             );
-            db3.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,funding_source_id,intervention_id,description) VALUES(?,?,?,?,?,?,?,?,?)`, track("time_entries", uuid2()), c.worker, c.id, day(off), dur, type === "transport" ? "travel" : type === "care_coordination" ? "care_coordination" : type === "outreach" ? "outreach" : "direct_service", fund, iid, type.replace(/_/g, " "));
+            db3.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,funding_source_id,intervention_id,description) VALUES(?,?,?,?,?,?,?,?,?)`, track("time_entries", uuid2()), c.worker, c.id, day(off), dur, type === "transport" ? "travel" : type === "care_coordination" ? "care_coordination" : type === "outreach" ? "outreach" : "direct_service", day(off) >= fundStart ? fund : null, iid, type.replace(/_/g, " "));
             counts.interventions++;
           }
           const nc = c.cstatus === "waitlist" ? 1 : 3 + Math.floor(rand() * 4);
@@ -10288,7 +10290,8 @@ P: ${P2} (Sample data)`), encrypt3(JSON.stringify(i % 4 === 0 ? { S, O, A, P: P2
         });
         for (const w of workers) for (let k = 0; k < 10; k++) {
           const cat = pick(["documentation", "meeting", "travel", "training", "supervision", "admin", "outreach"]);
-          db3.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,funding_source_id,description) VALUES(?,?,?,?,?,?,?,?)`, track("time_entries", uuid2()), w, null, day(Math.floor(rand() * 60)), 30 + Math.floor(rand() * 6) * 15, cat, cat === "training" ? fund2 : fund, { documentation: "Charting and note sign-off", meeting: "Weekly team huddle", travel: "Drive between sites", training: "Naloxone train-the-trainer", supervision: "Supervision with program manager", admin: "Data entry for monthly report", outreach: "Encampment outreach walk" }[cat]);
+          const wd = day(Math.floor(rand() * 60));
+          db3.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,funding_source_id,description) VALUES(?,?,?,?,?,?,?,?)`, track("time_entries", uuid2()), w, null, wd, 30 + Math.floor(rand() * 6) * 15, cat, cat === "training" ? fund2 : wd >= fundStart ? fund : null, { documentation: "Charting and note sign-off", meeting: "Weekly team huddle", travel: "Drive between sites", training: "Naloxone train-the-trainer", supervision: "Supervision with program manager", admin: "Data entry for monthly report", outreach: "Encampment outreach walk" }[cat]);
         }
         for (const [cat, vendor, desc, amt] of [["naloxone_supplies", "Harm Reduction Coalition", "Naloxone kits (50)", 1500], ["outreach_materials", "PrintPro", "Outreach flyers and cards", 220], ["training", "State Peer Academy", "Peer certification course", 650]]) db3.run(`INSERT INTO expenditures(id,funding_source_id,budget_line_id,user_id,spent_at,amount,category,vendor,description,status,approved_by,approved_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, track("expenditures", uuid2()), fund, lineIds[cat], workers[0], day(20 + Math.floor(rand() * 60)), amt, cat, vendor, desc, "approved", supervisor, d(15));
         db3.setSetting("demo_ids", JSON.stringify(ids));
@@ -11214,15 +11217,22 @@ var require_auth2 = __commonJS({
     var db3 = require_db();
     var auth3 = require_auth();
     var audit3 = require_audit();
-    var { rateLimit } = require_app2();
+    var { rateLimit, rateLimited } = require_app2();
     var { HttpError: HttpError3, badRequest, unauthorized } = require_http();
     var { validate } = require_validate();
     var { hashPasswordAsync, verifyPasswordAsync, generateTotpSecret, verifyTotp, otpauthUrl, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
     module.exports = (r) => {
       r.post("/api/auth/login", async (ctx) => {
-        if (!rateLimit(`login:${ctx.ip}`, require_config().loginRateLimit, 15 * 6e4)) throw new HttpError3(429, "Too many login attempts. Try again later.");
+        const limit2 = require_config().loginRateLimit;
+        if (rateLimited(`login:${ctx.ip}`, limit2)) throw new HttpError3(429, "Too many login attempts. Try again later.");
         const { username, password } = validate(ctx.body, { username: { type: "string", required: true, maxLen: 100 }, password: { type: "string", required: true, maxLen: 500 } });
-        const result = await auth3.login({ username, password, ctx });
+        let result;
+        try {
+          result = await auth3.login({ username, password, ctx });
+        } catch (e) {
+          rateLimit(`login:${ctx.ip}`, limit2, 15 * 6e4);
+          throw e;
+        }
         ctx.res.setHeader("Set-Cookie", auth3.cookieHeader(result.token));
         const out2 = { user: result.user, mfaPending: result.mfaPending, mfaSetupRequired: result.mfaSetupRequired, mfaSetupDeadline: result.mfaSetupDeadline };
         if (ctx.headers["x-sync-client"]) out2.token = result.token;
@@ -11494,6 +11504,14 @@ var require_budget = __commonJS({
       }
       return false;
     }
+    function assertInPeriod(fund, date, what) {
+      if (!date) return;
+      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      if (date > today) throw badRequest(`${what} is in the future (${date})`);
+      if (fund && (fund.fiscal_year_start && date < fund.fiscal_year_start || fund.fiscal_year_end && date > fund.fiscal_year_end)) {
+        throw badRequest(`${what} ${date} is outside the period of ${fund.name} (${fund.fiscal_year_start} to ${fund.fiscal_year_end}). Charge it to the fund that covers that date.`);
+      }
+    }
     function fundSummary(f) {
       const spent = db3.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE funding_source_id=? AND status IN ('approved','reimbursed')`, f.id).n;
       const pending = db3.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE funding_source_id=? AND status='pending'`, f.id).n;
@@ -11623,6 +11641,7 @@ var require_budget = __commonJS({
         beforeInsert: (ctx, v) => {
           const f = db3.one(`SELECT * FROM funding_sources WHERE id=? AND is_active=1`, v.funding_source_id);
           if (!f) throw badRequest("Unknown or inactive funding source");
+          assertInPeriod(f, v.spent_at, "Expenditure date");
           if (v.budget_line_id) {
             const l = db3.one(`SELECT * FROM budget_lines WHERE id=? AND funding_source_id=?`, v.budget_line_id, f.id);
             if (!l) throw badRequest("Budget line does not belong to fund");
@@ -11646,13 +11665,16 @@ var require_budget = __commonJS({
         return {
           totals: { budget: funds.reduce((s, f) => s + f.total_amount, 0), spent: funds.reduce((s, f) => s + f.spent, 0), pending: funds.reduce((s, f) => s + f.pending, 0), remaining: funds.reduce((s, f) => s + f.remaining, 0) },
           by_category: db3.all(`SELECT category, SUM(amount) amount, COUNT(*) n FROM expenditures WHERE status IN ('approved','reimbursed') GROUP BY category ORDER BY amount DESC`),
-          by_month: db3.all(`SELECT substr(spent_at,1,7) month, SUM(amount) amount FROM expenditures WHERE status<>'rejected' GROUP BY month ORDER BY month`),
+          // Approved and reimbursed only, the same as the headline "Spent (approved)" figure above it: the two
+          // used to differ by whatever was still pending, on the same page.
+          by_month: db3.all(`SELECT substr(spent_at,1,7) month, SUM(amount) amount FROM expenditures WHERE status IN ('approved','reimbursed') GROUP BY month ORDER BY month`),
           per_client: db3.one(`SELECT COUNT(DISTINCT client_id) clients, COALESCE(SUM(amount),0) amount FROM expenditures WHERE client_id IS NOT NULL AND status IN ('approved','reimbursed')`),
           funds
         };
       });
     };
     module.exports.wouldCycle = wouldCycle;
+    module.exports.assertInPeriod = assertInPeriod;
   }
 });
 
@@ -14562,6 +14584,7 @@ var require_interventions = __commonJS({
         if (!v.budget_line_id) throw badRequest("A budget line is required when a cost is entered, so it is deducted from the right allocation");
         const line = db3.one(`SELECT * FROM budget_lines WHERE id=? AND funding_source_id=?`, v.budget_line_id, v.funding_source_id);
         if (!line) throw badRequest("Budget line does not belong to the selected funding source");
+        if (v.occurred_at) require_budget().assertInPeriod(db3.one(`SELECT * FROM funding_sources WHERE id=?`, v.funding_source_id), String(v.occurred_at).slice(0, 10), "Date of service");
         return line;
       }
       if (v.budget_line_id && !v.funding_source_id) throw badRequest("A funding source is required when a budget line is selected");
@@ -14676,7 +14699,7 @@ var require_interventions = __commonJS({
           delete v.log_time;
           delete v.time_category;
           encodeSummary(v);
-          if ("cost" in v || "funding_source_id" in v || "budget_line_id" in v) checkCost(ctx, { funding_source_id: row.funding_source_id, budget_line_id: row.budget_line_id, cost: row.cost, ...v });
+          if ("cost" in v || "funding_source_id" in v || "budget_line_id" in v) checkCost(ctx, { funding_source_id: row.funding_source_id, budget_line_id: row.budget_line_id, cost: row.cost, occurred_at: row.occurred_at, ...v });
         },
         afterInsert: (ctx, row) => {
           if (row._log_time && row.duration_minutes > 0) {
@@ -14859,6 +14882,11 @@ var require_notes = __commonJS({
       r.get("/api/notes", auth3.requireAuth, auth3.requirePerm("notes:admin:read", "notes:clinical:read", "notes:admin:write", "notes:clinical:write"), (ctx) => {
         const { limit: limit2, offset } = paging(ctx.query, { limit: 100, max: 500 });
         const kinds = ["admin", "clinical"].filter((k) => auth3.hasPerm(ctx.user, kindPerm(k, "read")) || auth3.hasPerm(ctx.user, kindPerm(k, "write")));
+        const glass = !kinds.includes("clinical") && auth3.hasPerm(ctx.user, "notes:clinical:breakglass") && ctx.headers["x-break-glass-reason"] && ctx.query.get("client_id") && ctx.query.get("kind") === "clinical";
+        if (glass) {
+          kinds.push("clinical");
+          audit3.log({ user: ctx.user, action: "note.list.breakglass", clientId: ctx.query.get("client_id"), ip: ctx.ip, details: { reason: String(ctx.headers["x-break-glass-reason"]).slice(0, 300) } });
+        }
         const where = ["n.deleted_at IS NULL", `n.kind IN (${kinds.map(() => "?").join(",") || "''"})`];
         const params = [...kinds];
         const cf = auth3.caseloadFilter(ctx.user, "n.client_id");
@@ -15242,7 +15270,8 @@ var require_overdose = __commonJS({
           // client_id stays optional: a bystander reversal reported by an outreach worker has no client.
           client_id: { type: "string" },
           occurred_at: { type: "datetime", required: true },
-          kind: { type: "string", enum: KINDS },
+          // Required: an empty form saved by accident used to become a countable reversal.
+          kind: { type: "string", enum: KINDS, required: true },
           substances: { type: "string", maxLen: 200 },
           naloxone_used: { type: "boolean" },
           naloxone_doses: { type: "number", integer: true, min: 0, max: 20 },
@@ -20154,10 +20183,14 @@ var require_time = __commonJS({
     var auth3 = require_auth();
     var crud = require_crud();
     var C = require_constants();
+    function checkPeriod(v) {
+      const fund = v.funding_source_id ? db3.one(`SELECT * FROM funding_sources WHERE id=?`, v.funding_source_id) : null;
+      require_budget().assertInPeriod(fund, v.work_date, "Work date");
+    }
     module.exports = (r) => {
       crud.build(r, {
         table: "time_entries",
-        entity: "time_entrie",
+        entity: "time_entry",
         base: "/api/time",
         perm: "time",
         dateCol: "work_date",
@@ -20191,12 +20224,14 @@ var require_time = __commonJS({
         },
         beforeInsert: (ctx, v) => {
           if (v.user_id && v.user_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "time:all")) v.user_id = ctx.user.id;
+          checkPeriod(v);
         },
         // Reassigning whose hours these are is a time:all action (see public/views/time.js, which only shows the
         // Worker picker when can('time:all')) -- without this, a worker who owns the row (canEdit below) could
         // still smuggle a different user_id through an update even though they could never set it on insert.
-        beforeUpdate: (ctx, v) => {
+        beforeUpdate: (ctx, v, row) => {
           if (v.user_id && v.user_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "time:all")) delete v.user_id;
+          if ("work_date" in v || "funding_source_id" in v) checkPeriod({ work_date: row.work_date, funding_source_id: row.funding_source_id, ...v });
         },
         canEdit: (ctx, row) => row.user_id === ctx.user.id || auth3.hasPerm(ctx.user, "time:all")
       });
@@ -20382,6 +20417,13 @@ var require_app2 = __commonJS({
       }
       return b.count <= max2;
     }
+    function rateLimited(key, max2) {
+      const b = buckets.get(key);
+      return !!b && Date.now() <= b.reset && b.count >= max2;
+    }
+    function rateLimitReset(key) {
+      buckets.delete(key);
+    }
     var ROUTE_MODULES = [
       "setup",
       "auth",
@@ -20489,7 +20531,7 @@ var require_app2 = __commonJS({
         }
       };
     }
-    module.exports = { createHandler, rateLimit, ROUTE_MODULES, LOCAL_ROUTE_MODULES: LOCAL_ROUTE_MODULES2 };
+    module.exports = { createHandler, rateLimit, rateLimited, rateLimitReset, ROUTE_MODULES, LOCAL_ROUTE_MODULES: LOCAL_ROUTE_MODULES2 };
   }
 });
 

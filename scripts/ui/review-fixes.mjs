@@ -47,10 +47,29 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   await until(async () => (await page.textContent('.main')).includes(uname));
   ok((await page.textContent('.main')).includes(uname), 'dismissing it refreshes the user list with the new person on it');
 
+  // ...and that person can actually get in and change it (they used to be bounced back to sign-in for ever)
+  {
+    const ctx2 = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+    const p2 = await ctx2.newPage();
+    await p2.goto(base + '/#/login'); await p2.fill('input[name=username]', uname); await p2.fill('input[name=password]', shown);
+    await p2.click('button[type=submit]');
+    const landed = await until(() => p2.$('.layout input[name=new_password], .layout input[type=password]'), { timeout: 10000 });
+    ok(landed, 'a new account lands on the change-password page instead of the sign-in form');
+    ok(/profile/.test(p2.url()), 'on their profile', p2.url());
+    await ctx2.close();
+  }
+
   // "Finish setting up" points at backups and MFA on a fresh install
   await go(page, 'dashboard');
   const main = await page.textContent('.main');
   ok(/Turn on scheduled backups/.test(main), 'a fresh install is told that nothing is backing it up');
+
+  // an administrator has a way in to clinical notes: break-glass, with a reason, logged
+  {
+    const clients = (await admin.api('GET', '/api/clients?limit=1')).data.clients;
+    await go(page, `client/${clients[0].id}/notes`);
+    ok(await page.$('button:has-text("Emergency access to clinical notes")'), 'the client Notes tab offers break-glass to an administrator');
+  }
 
   // a document is found by what is inside it
   const text = Buffer.from('Naloxone kits: record the lot number and expiry on every distribution log.').toString('base64');
@@ -65,6 +84,20 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   const xl = await page.evaluate(async () => { const r = await fetch('/api/reports/export/expenditures?from=2000-01-01&format=xlsx', { credentials: 'same-origin' }); const b = await r.arrayBuffer(); return { status: r.status, size: b.byteLength }; });
   eq(xl.status, 200, 'the expenditure export downloads');
   ok(xl.size > 500, 'and is a real workbook');
+}
+
+// ---- finance: can approve staff time; sees nothing it cannot use ----
+{
+  const fin = await session('afinance', 'Navigator2026!!');
+  await go(fin.page, 'supervision');
+  ok(!/Not available for your role/.test(await fin.page.textContent('.main')), 'finance (time:approve) reaches the Supervision page');
+  ok(/Staff time/.test(await fin.page.textContent('.main')), 'and sees the staff-time queue');
+  await go(fin.page, 'dashboard');
+  ok(!/need a check-in/.test(await fin.page.textContent('.main')), 'no caseload card for a role with no caseload');
+  ok(!(await fin.page.$$eval('.nav .sec', s => s.map(x => x.textContent))).includes('Connect clients'), 'no empty "Connect clients" heading');
+  await go(fin.page, 'time');
+  ok(!(await fin.page.$('tbody button:has-text("Edit")')), 'no Edit buttons on entries finance cannot edit');
+  await fin.close();
 }
 
 // ---- supervisor: reaches caseload transfer; countersigns with the note in front of them; team alert ----
@@ -82,8 +115,11 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   const supS = await session('jwalker', 'Navigator2026!!');
   const { page } = supS;
   await go(page, 'admin');
-  ok(/Move a caseload/.test(await page.textContent('h1')), 'a supervisor opening Settings lands on caseload transfer instead of "not available for your role"');
+  ok(/Supervision tools/.test(await page.textContent('h1')), 'a supervisor opening Settings gets their own tools page instead of "not available for your role"');
   ok(await page.$('select[name=from_user_id]'), 'with the transfer form in front of them');
+  ok(await page.$('.tabs button:has-text("Audit log")'), 'and the audit log they hold audit:read for');
+  const fromOpts = await page.$$eval('select[name=from_user_id] option', o => o.map(x => x.textContent));
+  ok(!fromOpts.some(t => /Finance|Administrator/.test(t)), 'the caseload picker lists only staff who carry caseloads', fromOpts);
   await go(page, 'supervision');
   const btn = await page.$('button:has-text("Countersign")');
   ok(btn, 'the signed note is waiting for countersignature');

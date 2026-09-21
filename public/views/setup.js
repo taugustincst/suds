@@ -24,11 +24,16 @@ route('setup', async () => {
     delete d.confirm;
     const r = await post('/api/setup/complete', d);
     f.classList.add('hidden'); done.classList.remove('hidden');
-    const L = r.listener; const primary = L.friendly || L.urls.find(u => !/localhost/.test(u)) || L.urls[0];
+    const L = r.listener;
+    // suds.local depends on mDNS, which Windows PCs without Bonjour and Android browsers do not have; the
+    // numeric address always works, so that is where this page sends the browser and what the QR carries.
+    const byIp = L.urls.find(u => /\/\/\d{1,3}(\.\d{1,3}){3}/.test(u));
+    const primary = byIp || L.urls.find(u => !/localhost/.test(u)) || L.urls[0];
+    const lan = d.network === 'lan';
     done.append(h('div', { class: 'banner' }, h('b', {}, 'Setup complete. '), 'SUDS is now running at the address below. This page will take you there in a moment.'),
       h('div', { class: 'grid cols-2' },
-        h('div', {}, h('h3', {}, 'Open SUDS at'), L.friendly ? h('p', {}, h('a', { href: L.friendly, style: { fontSize: '1.2rem', fontWeight: 700 } }, L.friendly), h('div', { class: 'small muted' }, 'on any phone or computer on the office Wi-Fi')) : null, h('details', {}, h('summary', { class: 'small muted' }, 'Other addresses'), h('ul', {}, L.urls.map(u => h('li', {}, h('a', { href: u }, u))))), L.tls ? h('p', { class: 'small muted' }, 'The first time, browsers warn that the certificate is self-signed. Tap "Advanced → Proceed" once per device.') : null),
-        h('div', { class: 'center' }, h('h3', {}, 'Scan with a phone'), qrSvg(primary, { size: 180 }), h('div', { class: 'small muted' }, primary))),
+        h('div', {}, h('h3', {}, 'Open SUDS at'), h('p', {}, h('a', { href: primary, style: { fontSize: '1.2rem', fontWeight: 700 } }, primary), h('div', { class: 'small muted' }, lan ? 'on any phone or computer on the office Wi-Fi' : 'on this computer')), L.friendly && lan ? h('p', { class: 'small' }, 'Also ', h('a', { href: L.friendly }, L.friendly), ' on computers and iPhones that understand that name (not Android browsers).') : null, h('details', {}, h('summary', { class: 'small muted' }, 'Other addresses'), h('ul', {}, L.urls.map(u => h('li', {}, h('a', { href: u }, u))))), L.tls ? h('p', { class: 'small muted' }, 'The first time, browsers warn that the certificate is self-signed. Tap "Advanced → Proceed" once per device.') : null),
+        lan ? h('div', { class: 'center' }, h('h3', {}, 'Scan with a phone'), qrSvg(primary, { size: 180 }), h('div', { class: 'small muted' }, primary)) : h('div', { class: 'small muted' }, 'Only this computer can reach SUDS. To let phones in later, change that under Settings → Network & devices.')),
       r.keys_file ? h('div', { class: 'banner danger mt' }, h('b', {}, 'Back up your encryption keys now. '), `They were generated for you and saved to ${r.keys_file}. Sign in, open Administration → System → "Download key backup" and store the file somewhere separate from this computer (e.g. the county password manager). Without the keys, database backups cannot be read.`) : null,
       h('div', { class: 'btn-row' }, h('a', { class: 'btn primary', href: primary + '#/login' }, 'Go to sign-in')));
     setTimeout(() => { location.href = primary + '#/login'; }, 8000);

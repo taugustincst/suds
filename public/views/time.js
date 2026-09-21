@@ -35,7 +35,7 @@ export function timeTable(rows, { showClient = true, onChange } = {}) {
       return h('div', { class: 'row nowrap' },
         // Submitted or approved time is a claim someone else has acted on; editing it silently would
         // undermine the approval it already carries.
-        (mine || can('time:all')) && !locked ? h('button', { class: 'btn sm', onClick: () => openTimeForm(r, { onDone: onChange }) }, 'Edit') : null,
+        can('time:write') && (mine || can('time:all')) && !locked ? h('button', { class: 'btn sm', onClick: () => openTimeForm(r, { onDone: onChange }) }, 'Edit') : null,
         mine && (r.status === 'draft' || r.status === 'rejected') ? h('button', { class: 'btn sm primary', onClick: async () => {
           try { await post(`/api/time/${r.id}/submit`, {}); toast('Submitted for approval', 'ok'); onChange && onChange(); }
           catch (e) { toast(e.message, 'error'); }
@@ -43,7 +43,7 @@ export function timeTable(rows, { showClient = true, onChange } = {}) {
         can('time:approve') && r.status === 'submitted' && !mine ? h('div', { class: 'row nowrap' },
           h('button', { class: 'btn sm primary', onClick: async () => { try { await post(`/api/time/${r.id}/approve`, { decision: 'approved' }); toast('Approved', 'ok'); onChange && onChange(); } catch (e) { toast(e.message, 'error'); } } }, 'Approve'),
           h('button', { class: 'btn sm', onClick: async () => { const why = await confirmDialog('Return this entry', 'Send it back to the worker to correct?', { okText: 'Return', requireReason: true }); if (!why) return; try { await post(`/api/time/${r.id}/approve`, { decision: 'rejected', note: why }); toast('Returned', 'ok'); onChange && onChange(); } catch (e) { toast(e.message, 'error'); } } }, 'Return')) : null,
-        (mine || can('time:all')) && !locked ? h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this entry', onClick: async () => { if (await confirmDialog('Delete entry', 'Delete this time entry?', { danger: true, okText: 'Delete' })) { await del(`/api/time/${r.id}`); onChange && onChange(); } } }, '✕') : null);
+        can('time:write') && (mine || can('time:all')) && !locked ? h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this entry', onClick: async () => { if (await confirmDialog('Delete entry', 'Delete this time entry?', { danger: true, okText: 'Delete' })) { try { await del(`/api/time/${r.id}`); toast('Entry deleted', 'ok'); onChange && onChange(); } catch (e) { toast(e.message, 'error'); } } } }, '✕') : null);
     } },
   ].filter(Boolean), rows, { empty: 'No time entries.' });
 }

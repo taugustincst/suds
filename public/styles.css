@@ -184,6 +184,9 @@ details.section { border: 1px solid var(--border); border-radius: 8px; padding: 
   .tabs button { scroll-snap-align: start; }
   /* Banners must never cover the table someone is reading. */
   #banners { position: static; }
+  /* Wide tables scroll inside their own wrapper; the page itself never scrolls sideways. */
+  .content, .main { overflow-x: clip; }
+  .stat .v { overflow-wrap: anywhere; }
 }
 .modal .card-head { flex-wrap: nowrap; align-items: flex-start; } .modal .card-head h2 { margin-bottom: 0; }
 .quick-list .btn { width: 100%; white-space: normal; text-align: left; }
@@ -246,6 +249,8 @@ a.bar.link:hover .lbl { color: var(--primary); text-decoration: underline; } a.b
 
 /* ---------- accessibility and persistent messages ---------- */
 /* Visually hidden but still announced by a screen reader. */
+.skip-link { position: absolute; left: -9999px; top: .5rem; z-index: 100; background: var(--panel); color: var(--primary); padding: .5rem .8rem; border-radius: 6px; border: 1px solid var(--border); }
+.skip-link:focus { left: .5rem; }
 .sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;

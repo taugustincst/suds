@@ -2,16 +2,20 @@
 const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
-const { rateLimit } = require('../app');
+const { rateLimit, rateLimited } = require('../app');
 const { HttpError, badRequest, unauthorized } = require('../http');
 const { validate } = require('../validate');
 const { hashPasswordAsync, verifyPasswordAsync, generateTotpSecret, verifyTotp, otpauthUrl, encrypt, decrypt } = require('../crypto');
 
 module.exports = (r) => {
   r.post('/api/auth/login', async (ctx) => {
-    if (!rateLimit(`login:${ctx.ip}`, require('../config').loginRateLimit, 15 * 60_000)) throw new HttpError(429, 'Too many login attempts. Try again later.');
+    const limit = require('../config').loginRateLimit;
+    if (rateLimited(`login:${ctx.ip}`, limit)) throw new HttpError(429, 'Too many login attempts. Try again later.');
     const { username, password } = validate(ctx.body, { username: { type: 'string', required: true, maxLen: 100 }, password: { type: 'string', required: true, maxLen: 500 } });
-    const result = await auth.login({ username, password, ctx });
+    let result;
+    // Only a failed attempt counts against the address: successful sign-ins are what an office does.
+    try { result = await auth.login({ username, password, ctx }); }
+    catch (e) { rateLimit(`login:${ctx.ip}`, limit, 15 * 60_000); throw e; }
     ctx.res.setHeader('Set-Cookie', auth.cookieHeader(result.token));
     // Sync clients (phone app) authenticate with a bearer token instead of the cookie
     const out = { user: result.user, mfaPending: result.mfaPending, mfaSetupRequired: result.mfaSetupRequired, mfaSetupDeadline: result.mfaSetupDeadline };
