@@ -40,11 +40,16 @@ test('policy/contract library: upload, search by title, filter by category, down
   const file = await nav.get(`/api/documents/${c.data.id}/file`);
   assert.equal(file.status, 200);
 
-  // retiring keeps it out of the default list but not the full one, and it stays downloadable
+  // retiring keeps it out of the default list but not the full one, for someone who can manage the library --
+  // and it stays not-found (not deleted) at its own id/file for THEM, but genuinely gone for a read-only role,
+  // the same as the list already treated it -- a bookmarked/guessed id must not bypass that restriction.
   assert.equal((await admin.del(`/api/documents/${c.data.id}`)).status, 200);
   assert.equal((await nav.get('/api/documents')).data.documents.length, 1, 'retired document drops out of the default list');
   assert.equal((await admin.get('/api/documents?all=1')).data.documents.length, 2, 'but is still there for someone who can manage the library');
-  assert.equal((await nav.get(`/api/documents/${c.data.id}/file`)).status, 200, 'a retired policy is still downloadable, not deleted');
+  assert.equal((await admin.get(`/api/documents/${c.data.id}`)).status, 200, 'and someone who can manage the library can still open it directly');
+  assert.equal((await admin.get(`/api/documents/${c.data.id}/file`)).status, 200, 'and still download it -- retiring does not delete the file');
+  assert.equal((await nav.get(`/api/documents/${c.data.id}`)).status, 404, 'but a read-only role cannot reach a retired document by id');
+  assert.equal((await nav.get(`/api/documents/${c.data.id}/file`)).status, 404, 'nor download its file by a bookmarked/guessed link');
 });
 
 test('policy/contract library: a file that is not actually a PDF/Word/picture is refused', async () => {

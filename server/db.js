@@ -209,6 +209,18 @@ const migrations = [
     d.exec(`CREATE INDEX IF NOT EXISTS idx_policy_documents_cat ON policy_documents(category)`);
     d.exec(`CREATE INDEX IF NOT EXISTS idx_policy_documents_updated ON policy_documents(updated_at)`);
   },
+  // 16: at most one expenditure per intervention — a second one would double-count that service's cost.
+  //     Before this, intervention_id was a writable field on the generic expenditures POST, so a database
+  //     that saw any traffic on that route could already have duplicates; keep the most recently updated
+  //     row's link and unlink the rest (they stay, just as ordinary expenditures with no linked service)
+  //     rather than deleting real financial records during a migration.
+  (d) => {
+    const dupes = d.prepare(`SELECT intervention_id, id FROM expenditures WHERE intervention_id IS NOT NULL
+      AND id NOT IN (SELECT id FROM expenditures e2 WHERE e2.intervention_id=expenditures.intervention_id ORDER BY e2.updated_at DESC LIMIT 1)`).all();
+    const unlink = d.prepare(`UPDATE expenditures SET intervention_id=NULL WHERE id=?`);
+    for (const row of dupes) unlink.run(row.id);
+    d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_exp_intervention_unique ON expenditures(intervention_id) WHERE intervention_id IS NOT NULL`);
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

@@ -427,6 +427,9 @@ CREATE TABLE IF NOT EXISTS expenditures (
 );
 CREATE INDEX IF NOT EXISTS idx_exp_fund ON expenditures(funding_source_id, spent_at);
 CREATE INDEX IF NOT EXISTS idx_exp_client ON expenditures(client_id);
+-- At most one expenditure per intervention (NULL excluded, so ordinary manually-entered expenditures with
+-- no linked service are unaffected) — a second row for the same service would double-count its cost.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_exp_intervention_unique ON expenditures(intervention_id) WHERE intervention_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS notes (
   id TEXT PRIMARY KEY,

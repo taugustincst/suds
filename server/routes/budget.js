@@ -110,8 +110,12 @@ module.exports = (r) => {
     table: 'expenditures', entity: 'expenditure', base: '/api/budget/expenditures', perm: 'budget', dateCol: 'spent_at', clientRequired: false, restrictOwner: true,
     joins: 'JOIN users u ON u.id=expenditures.user_id JOIN funding_sources f ON f.id=expenditures.funding_source_id LEFT JOIN budget_lines b ON b.id=expenditures.budget_line_id LEFT JOIN clients c ON c.id=expenditures.client_id LEFT JOIN users a ON a.id=expenditures.approved_by',
     select: 'expenditures.*, u.display_name AS worker, f.name AS fund, b.label AS line_label, b.category AS line_category, c.client_code, a.display_name AS approver',
+    // intervention_id is deliberately not writable here: it only ever means "this expenditure was
+    // auto-posted from that service record" (server/routes/interventions.js's syncExpenditure, a raw INSERT
+    // that bypasses this shape entirely). Accepting it from a normal request would let anyone attach a
+    // second expenditure to an already-linked intervention, double-counting its cost.
     shape: {
-      client_id: { type: 'string' }, user_id: { type: 'string' }, funding_source_id: { type: 'string', required: true }, budget_line_id: { type: 'string' }, intervention_id: { type: 'string' },
+      client_id: { type: 'string' }, user_id: { type: 'string' }, funding_source_id: { type: 'string', required: true }, budget_line_id: { type: 'string' },
       spent_at: { type: 'date', required: true }, amount: { type: 'number', required: true, min: 0.01 }, category: { type: 'string', required: true, enum: C.BUDGET_CATEGORIES },
       vendor: { type: 'string', maxLen: 200 }, description: { type: 'string', maxLen: 1000 }, receipt_ref: { type: 'string', maxLen: 200 },
     },
@@ -144,3 +148,6 @@ module.exports = (r) => {
     };
   });
 };
+// Reused by server/routes/sync.js: the REST route validates a re-parent through this, but a sync push
+// applies budget_lines rows straight through importRow() with no such check — see that file for why.
+module.exports.wouldCycle = wouldCycle;

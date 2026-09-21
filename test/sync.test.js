@@ -276,3 +276,23 @@ test('a nested budget line and its parent sync in the same batch, child listed f
   assert.equal(H.db.one(`SELECT parent_id FROM budget_lines WHERE id=?`, childId).parent_id, parentId);
   assert.equal(H.db.one(`SELECT COUNT(*) n FROM budget_lines WHERE id=?`, parentId).n, 1);
 });
+
+test('a sync push cannot re-parent two budget lines into a cycle', async () => {
+  // Regression: PUT /api/budget/lines/:id blocks a re-parent that would create a cycle, but a sync push
+  // applied budget_lines rows straight through with no such check -- since both lines already exist, an
+  // A.parent=B / B.parent=A pair sent together hits no FK violation either, so nothing stopped it. A cycle
+  // like this makes both lines vanish from the fund's tree (buildLineTree only walks down from roots),
+  // taking their spend with them as far as any grant report reading the per-line breakdown is concerned.
+  const fund = await admin.post('/api/budget/funds', { name: 'Cycle check fund', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 10000 });
+  const a = await admin.post(`/api/budget/funds/${fund.data.id}/lines`, { category: 'other', allocated_amount: 100 });
+  const b = await admin.post(`/api/budget/funds/${fund.data.id}/lines`, { category: 'other', allocated_amount: 100 });
+  const r = await push(admin, { tables: { budget_lines: [
+    { id: a.data.id, funding_source_id: fund.data.id, parent_id: b.data.id, category: 'other', allocated_amount: 100, updated_at: iso(Date.now()) },
+    { id: b.data.id, funding_source_id: fund.data.id, parent_id: a.data.id, category: 'other', allocated_amount: 100, updated_at: iso(Date.now()) },
+  ] } });
+  assert.equal(r.status, 200);
+  assert.ok(r.data.rejected.some(x => x.id === a.data.id || x.id === b.data.id), 'at least one side of the cycle is rejected');
+  const aRow = H.db.one(`SELECT parent_id FROM budget_lines WHERE id=?`, a.data.id);
+  const bRow = H.db.one(`SELECT parent_id FROM budget_lines WHERE id=?`, b.data.id);
+  assert.ok(!(aRow.parent_id === b.data.id && bRow.parent_id === a.data.id), 'the two lines are never left pointing at each other');
+});

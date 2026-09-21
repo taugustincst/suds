@@ -48,8 +48,15 @@ module.exports = (r) => {
       FROM policy_documents ${all ? '' : 'WHERE is_active=1'} ${cat ? `${all ? 'WHERE' : 'AND'} category=?` : ''} ORDER BY category, title`, ...(cat ? [cat] : []));
     return { documents: rows, categories: C.DOCUMENT_CATEGORIES };
   });
+  // A retired document is restricted to documents:write the same as the list route restricts it — reachable
+  // by a bookmarked/guessed id otherwise, which would defeat the point of retiring something.
+  function loadVisible(ctx, id) {
+    const d = db.one(`SELECT * FROM policy_documents WHERE id=?`, id); if (!d) throw notFound();
+    if (!d.is_active && !auth.hasPerm(ctx.user, 'documents:write')) throw notFound();
+    return d;
+  }
   r.get('/api/documents/:id', auth.requireAuth, auth.requirePerm('documents:read'), (ctx) => {
-    const d = db.one(`SELECT * FROM policy_documents WHERE id=?`, ctx.params.id); if (!d) throw notFound();
+    const d = loadVisible(ctx, ctx.params.id);
     audit.log({ user: ctx.user, action: 'document.view', entity: 'policy_document', entityId: d.id, ip: ctx.ip });
     return { document: out(d) };
   });
@@ -84,7 +91,7 @@ module.exports = (r) => {
     return { ok: true };
   });
   r.get('/api/documents/:id/file', auth.requireAuth, auth.requirePerm('documents:read'), (ctx) => {
-    const d = db.one(`SELECT * FROM policy_documents WHERE id=?`, ctx.params.id); if (!d || !d.file_b64) throw notFound('No file for this document');
+    const d = loadVisible(ctx, ctx.params.id); if (!d.file_b64) throw notFound('No file for this document');
     audit.log({ user: ctx.user, action: 'document.download', entity: 'policy_document', entityId: d.id, ip: ctx.ip });
     ctx.res.writeHead(200, { 'Content-Type': safeContentType(d.content_type), 'Content-Disposition': `${ctx.query.get('inline') === '1' ? 'inline' : 'attachment'}; filename="${(d.filename || 'document').replace(/["\r\n]/g, '')}"` });
     ctx.res.end(Buffer.from(d.file_b64, 'base64')); return null;

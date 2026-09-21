@@ -6631,6 +6631,9 @@ CREATE TABLE IF NOT EXISTS expenditures (
 );
 CREATE INDEX IF NOT EXISTS idx_exp_fund ON expenditures(funding_source_id, spent_at);
 CREATE INDEX IF NOT EXISTS idx_exp_client ON expenditures(client_id);
+-- At most one expenditure per intervention (NULL excluded, so ordinary manually-entered expenditures with
+-- no linked service are unaffected) \u2014 a second row for the same service would double-count its cost.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_exp_intervention_unique ON expenditures(intervention_id) WHERE intervention_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS notes (
   id TEXT PRIMARY KEY,
@@ -7429,6 +7432,18 @@ var require_db = __commonJS({
       uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
         d.exec(`CREATE INDEX IF NOT EXISTS idx_policy_documents_cat ON policy_documents(category)`);
         d.exec(`CREATE INDEX IF NOT EXISTS idx_policy_documents_updated ON policy_documents(updated_at)`);
+      },
+      // 16: at most one expenditure per intervention — a second one would double-count that service's cost.
+      //     Before this, intervention_id was a writable field on the generic expenditures POST, so a database
+      //     that saw any traffic on that route could already have duplicates; keep the most recently updated
+      //     row's link and unlink the rest (they stay, just as ordinary expenditures with no linked service)
+      //     rather than deleting real financial records during a migration.
+      (d) => {
+        const dupes = d.prepare(`SELECT intervention_id, id FROM expenditures WHERE intervention_id IS NOT NULL
+      AND id NOT IN (SELECT id FROM expenditures e2 WHERE e2.intervention_id=expenditures.intervention_id ORDER BY e2.updated_at DESC LIMIT 1)`).all();
+        const unlink = d.prepare(`UPDATE expenditures SET intervention_id=NULL WHERE id=?`);
+        for (const row of dupes) unlink.run(row.id);
+        d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_exp_intervention_unique ON expenditures(intervention_id) WHERE intervention_id IS NOT NULL`);
       }
     ];
     function initialise(d, schemaText, dbPath) {
@@ -11478,12 +11493,15 @@ var require_budget = __commonJS({
         restrictOwner: true,
         joins: "JOIN users u ON u.id=expenditures.user_id JOIN funding_sources f ON f.id=expenditures.funding_source_id LEFT JOIN budget_lines b ON b.id=expenditures.budget_line_id LEFT JOIN clients c ON c.id=expenditures.client_id LEFT JOIN users a ON a.id=expenditures.approved_by",
         select: "expenditures.*, u.display_name AS worker, f.name AS fund, b.label AS line_label, b.category AS line_category, c.client_code, a.display_name AS approver",
+        // intervention_id is deliberately not writable here: it only ever means "this expenditure was
+        // auto-posted from that service record" (server/routes/interventions.js's syncExpenditure, a raw INSERT
+        // that bypasses this shape entirely). Accepting it from a normal request would let anyone attach a
+        // second expenditure to an already-linked intervention, double-counting its cost.
         shape: {
           client_id: { type: "string" },
           user_id: { type: "string" },
           funding_source_id: { type: "string", required: true },
           budget_line_id: { type: "string" },
-          intervention_id: { type: "string" },
           spent_at: { type: "date", required: true },
           amount: { type: "number", required: true, min: 0.01 },
           category: { type: "string", required: true, enum: C.BUDGET_CATEGORIES },
@@ -11534,6 +11552,7 @@ var require_budget = __commonJS({
         };
       });
     };
+    module.exports.wouldCycle = wouldCycle;
   }
 });
 
@@ -12922,9 +12941,14 @@ var require_documents = __commonJS({
       FROM policy_documents ${all ? "" : "WHERE is_active=1"} ${cat ? `${all ? "WHERE" : "AND"} category=?` : ""} ORDER BY category, title`, ...cat ? [cat] : []);
         return { documents: rows, categories: C.DOCUMENT_CATEGORIES };
       });
-      r.get("/api/documents/:id", auth3.requireAuth, auth3.requirePerm("documents:read"), (ctx) => {
-        const d = db3.one(`SELECT * FROM policy_documents WHERE id=?`, ctx.params.id);
+      function loadVisible(ctx, id) {
+        const d = db3.one(`SELECT * FROM policy_documents WHERE id=?`, id);
         if (!d) throw notFound();
+        if (!d.is_active && !auth3.hasPerm(ctx.user, "documents:write")) throw notFound();
+        return d;
+      }
+      r.get("/api/documents/:id", auth3.requireAuth, auth3.requirePerm("documents:read"), (ctx) => {
+        const d = loadVisible(ctx, ctx.params.id);
         audit3.log({ user: ctx.user, action: "document.view", entity: "policy_document", entityId: d.id, ip: ctx.ip });
         return { document: out2(d) };
       });
@@ -12980,8 +13004,8 @@ var require_documents = __commonJS({
         return { ok: true };
       });
       r.get("/api/documents/:id/file", auth3.requireAuth, auth3.requirePerm("documents:read"), (ctx) => {
-        const d = db3.one(`SELECT * FROM policy_documents WHERE id=?`, ctx.params.id);
-        if (!d || !d.file_b64) throw notFound("No file for this document");
+        const d = loadVisible(ctx, ctx.params.id);
+        if (!d.file_b64) throw notFound("No file for this document");
         audit3.log({ user: ctx.user, action: "document.download", entity: "policy_document", entityId: d.id, ip: ctx.ip });
         ctx.res.writeHead(200, { "Content-Type": safeContentType(d.content_type), "Content-Disposition": `${ctx.query.get("inline") === "1" ? "inline" : "attachment"}; filename="${(d.filename || "document").replace(/["\r\n]/g, "")}"` });
         ctx.res.end(import_buffer.Buffer.from(d.file_b64, "base64"));
@@ -14227,11 +14251,13 @@ var require_interventions = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
+    var auth3 = require_auth();
     var crud = require_crud();
     var C = require_constants();
-    var { badRequest } = require_http();
+    var { badRequest, forbidden } = require_http();
     var { uuid: uuid2 } = require_crypto();
-    function checkCost(v) {
+    function checkCost(ctx, v) {
+      if (("cost" in v || "funding_source_id" in v || "budget_line_id" in v) && !auth3.hasPerm(ctx.user, "budget:write")) throw forbidden("You do not have permission to attach a cost to a funding source");
       if (v.cost && v.cost > 0) {
         if (!v.funding_source_id) throw badRequest("A funding source is required when a cost is entered");
         if (!v.budget_line_id) throw badRequest("A budget line is required when a cost is entered, so it is deducted from the right allocation");
@@ -14345,13 +14371,13 @@ var require_interventions = __commonJS({
           v._time_category = v.time_category;
           delete v.time_category;
           encodeSummary(v);
-          checkCost(v);
+          checkCost(ctx, v);
         },
         beforeUpdate: (ctx, v, row) => {
           delete v.log_time;
           delete v.time_category;
           encodeSummary(v);
-          if ("cost" in v || "funding_source_id" in v || "budget_line_id" in v) checkCost({ funding_source_id: row.funding_source_id, budget_line_id: row.budget_line_id, cost: row.cost, ...v });
+          if ("cost" in v || "funding_source_id" in v || "budget_line_id" in v) checkCost(ctx, { funding_source_id: row.funding_source_id, budget_line_id: row.budget_line_id, cost: row.cost, ...v });
         },
         afterInsert: (ctx, row) => {
           if (row._log_time && row.duration_minutes > 0) {
@@ -14393,7 +14419,7 @@ var require_interventions = __commonJS({
         },
         canEdit: crud.ownerOrManager()
       });
-      r.get("/api/meta/constants", () => C);
+      r.get("/api/meta/constants", auth3.requireAuth, () => C);
     };
   }
 });
@@ -19366,6 +19392,7 @@ var require_sync = __commonJS({
     var { badRequest, forbidden } = require_http();
     var { encrypt: encrypt3, decrypt: decrypt3, blindIndex: blindIndex2 } = require_crypto();
     var SYNC2 = require_sync_tables();
+    var { wouldCycle } = require_budget();
     var NEVER2 = "1970-01-01T00:00:00.000Z";
     var PULL_LIMIT = 2e3;
     function cols2(table) {
@@ -19504,6 +19531,10 @@ var require_sync = __commonJS({
               }
               if (t.name === "notes" && raw.kind === "clinical" && !auth3.hasPerm(user, "notes:clinical:write")) {
                 reject(t.name, raw.id, "clinical notes not permitted for this role");
+                return false;
+              }
+              if (t.name === "budget_lines" && raw.parent_id && wouldCycle(raw.id, raw.parent_id)) {
+                reject(t.name, raw.id, "would create a cycle in its allocation hierarchy");
                 return false;
               }
               const incomingAt = raw.updated_at || raw.created_at || NEVER2;

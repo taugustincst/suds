@@ -1,14 +1,20 @@
 'use strict';
 const db = require('../db');
+const auth = require('../auth');
 const crud = require('../crud');
 const C = require('../constants');
-const { badRequest } = require('../http');
+const { badRequest, forbidden } = require('../http');
 const { uuid } = require('../crypto');
 
 // A direct cost against a fund always names the specific line it draws down — mirrors expenditures, where
 // budget_line_id is optional on the column but the form never lets a real dollar amount through without a
 // category, and here the category comes from the line rather than being typed a second time.
-function checkCost(v) {
+// This touches funding_source_id/budget_line_id/cost, which is real financial data — interventions:write
+// alone is not enough to attach a cost to a fund, the same way it is not enough to POST an expenditure
+// directly. Without this check, any role that can log a service (a clinician, who holds no budget
+// permission at all) could post a pending expenditure against a fund or line they cannot even read.
+function checkCost(ctx, v) {
+  if (('cost' in v || 'funding_source_id' in v || 'budget_line_id' in v) && !auth.hasPerm(ctx.user, 'budget:write')) throw forbidden('You do not have permission to attach a cost to a funding source');
   if (v.cost && v.cost > 0) {
     if (!v.funding_source_id) throw badRequest('A funding source is required when a cost is entered');
     if (!v.budget_line_id) throw badRequest('A budget line is required when a cost is entered, so it is deducted from the right allocation');
@@ -67,12 +73,12 @@ module.exports = (r) => {
     },
     filters: (ctx, where, params) => { const t = ctx.query.get('type'); if (t) { where.push('interventions.type=?'); params.push(t); } },
     afterLoad: (ctx, row) => decodeSummary(row),
-    beforeInsert: (ctx, v) => { v._log_time = v.log_time; delete v.log_time; v._time_category = v.time_category; delete v.time_category; encodeSummary(v); checkCost(v); },
+    beforeInsert: (ctx, v) => { v._log_time = v.log_time; delete v.log_time; v._time_category = v.time_category; delete v.time_category; encodeSummary(v); checkCost(ctx, v); },
     beforeUpdate: (ctx, v, row) => {
       delete v.log_time; delete v.time_category; encodeSummary(v);
       // Only validated when this edit actually touches cost/fund/line — an unrelated edit to a record from
       // before budget_line_id existed must not suddenly demand one just because cost happens to be nonzero.
-      if ('cost' in v || 'funding_source_id' in v || 'budget_line_id' in v) checkCost({ funding_source_id: row.funding_source_id, budget_line_id: row.budget_line_id, cost: row.cost, ...v });
+      if ('cost' in v || 'funding_source_id' in v || 'budget_line_id' in v) checkCost(ctx, { funding_source_id: row.funding_source_id, budget_line_id: row.budget_line_id, cost: row.cost, ...v });
     },
     afterInsert: (ctx, row) => {
       // Optional automatic time entry + naloxone tracking on client
@@ -95,5 +101,7 @@ module.exports = (r) => {
     },
     canEdit: crud.ownerOrManager(),
   });
-  r.get('/api/meta/constants', () => C);
+  // Only ever called post-login (public/app.js's loadRefData(), itself only reached after /api/auth/me
+  // succeeds) — no reason for this to be the one route in the app reachable without a session.
+  r.get('/api/meta/constants', auth.requireAuth, () => C);
 };

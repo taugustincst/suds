@@ -330,6 +330,35 @@ test('a supervisor leaving "Worker (defaults to you)" blank logs the interventio
   assert.equal(H.db.one(`SELECT user_id FROM interventions WHERE id=?`, r.data.id).user_id, supId);
 });
 
+test('a role with no budget permission cannot attach a cost to an intervention', async () => {
+  // Regression: interventions:write alone let the funding_source_id/budget_line_id/cost fields through the
+  // same route (they were only hidden client-side, per can('budget:read') in the form) -- a clinician,
+  // who holds interventions:* but no budget permission at all, could otherwise post a real pending
+  // expenditure against a fund it cannot even list.
+  const f = await admin.post('/api/budget/funds', { name: 'Clinician escalation check', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 1000 });
+  const line = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'other', allocated_amount: 500 });
+  const r = await clin.post('/api/interventions', { client_id: clientId, type: 'case_management', occurred_at: '2026-09-09T10:00:00Z', funding_source_id: f.data.id, budget_line_id: line.data.id, cost: 50 });
+  assert.equal(r.status, 403);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM expenditures WHERE funding_source_id=?`, f.data.id).n, 0, 'no expenditure was posted');
+  // an ordinary edit that does not touch cost/fund/line is unaffected
+  const plain = await clin.post('/api/interventions', { client_id: clientId, type: 'case_management', occurred_at: '2026-09-09T10:00:00Z' });
+  assert.equal(plain.status, 201);
+  assert.equal((await clin.put(`/api/interventions/${plain.data.id}`, { outcome: 'completed' })).status, 200);
+});
+
+test('a manual expenditure post cannot link itself to someone else\'s intervention', async () => {
+  // Regression: intervention_id used to be an ordinary writable field on POST /api/budget/expenditures,
+  // so a second expenditure could be attached to an intervention that already auto-posted one -- double-
+  // counting its cost. It is no longer accepted from a request at all (only the auto-linking code sets it).
+  const f = await admin.post('/api/budget/funds', { name: 'Double-link check', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 1000 });
+  const line = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'other', allocated_amount: 500 });
+  const iv = await nav.post('/api/interventions', { client_id: clientId, type: 'case_management', occurred_at: '2026-09-09T10:00:00Z', funding_source_id: f.data.id, budget_line_id: line.data.id, cost: 40 });
+  const e = await nav.post('/api/budget/expenditures', { funding_source_id: f.data.id, budget_line_id: line.data.id, spent_at: '2026-09-09', amount: 40, category: 'other', intervention_id: iv.data.id });
+  assert.equal(e.status, 201);
+  assert.equal(H.db.one(`SELECT intervention_id FROM expenditures WHERE id=?`, e.data.id).intervention_id, null, 'the field was silently ignored, not honored');
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM expenditures WHERE intervention_id=?`, iv.data.id).n, 1, 'the intervention still has exactly its one auto-posted expenditure');
+});
+
 test('time entries scoped to own user unless manager', async () => {
   await nav.post('/api/time', { work_date: '2026-09-05', minutes: 45, category: 'documentation' });
   const own = await nav.get('/api/time'); assert.ok(own.data.rows.every(x => x.worker === 'nav1'));

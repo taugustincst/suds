@@ -15,6 +15,7 @@ const audit = require('../audit');
 const { badRequest, forbidden } = require('../http');
 const { encrypt, decrypt, blindIndex } = require('../crypto');
 const SYNC = require('../sync-tables');
+const { wouldCycle } = require('./budget');
 
 const NEVER = '1970-01-01T00:00:00.000Z';
 // One pull answers with at most this many rows per table. Beyond that the device is told to come back for
@@ -151,6 +152,11 @@ function push(user, payload) {
           if (t.name === 'clients' && existing && !auth.canAccessClient(user, raw.id)) { reject(t.name, raw.id, 'not on caseload'); return false; }
           if (t.scope === 'via-note') { const note = db.one(`SELECT client_id, kind FROM notes WHERE id=?`, raw.note_id); if (!note || !auth.canAccessClient(user, note.client_id) || (note.kind === 'clinical' && !auth.hasPerm(user, 'notes:clinical:write'))) { reject(t.name, raw.id, 'not permitted'); return false; } }
           if (t.name === 'notes' && raw.kind === 'clinical' && !auth.hasPerm(user, 'notes:clinical:write')) { reject(t.name, raw.id, 'clinical notes not permitted for this role'); return false; }
+          // The REST route (PUT /api/budget/lines/:id) blocks a re-parent that would create a cycle; a push
+          // applies rows straight through with no such check otherwise — nothing here stops two lines each
+          // pointing at the other (both already exist, so neither side hits an FK violation) from silently
+          // dropping both of them out of every fund's line tree (buildLineTree only walks from roots).
+          if (t.name === 'budget_lines' && raw.parent_id && wouldCycle(raw.id, raw.parent_id)) { reject(t.name, raw.id, 'would create a cycle in its allocation hierarchy'); return false; }
           const incomingAt = raw.updated_at || raw.created_at || NEVER;
           if (existing && (existing.updated_at || existing.created_at || NEVER) >= incomingAt) return false; // server copy is newer or same
           // Records from a device are attributed to the syncing user unless they manage all clients
