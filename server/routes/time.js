@@ -22,6 +22,10 @@ module.exports = (r) => {
       const cat = ctx.query.get('category'); if (cat) { where.push('time_entries.category=?'); params.push(cat); }
     },
     beforeInsert: (ctx, v) => { if (v.user_id && v.user_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'time:all')) v.user_id = ctx.user.id; },
+    // Reassigning whose hours these are is a time:all action (see public/views/time.js, which only shows the
+    // Worker picker when can('time:all')) -- without this, a worker who owns the row (canEdit below) could
+    // still smuggle a different user_id through an update even though they could never set it on insert.
+    beforeUpdate: (ctx, v) => { if (v.user_id && v.user_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'time:all')) delete v.user_id; },
     canEdit: (ctx, row) => row.user_id === ctx.user.id || auth.hasPerm(ctx.user, 'time:all'),
   });
 

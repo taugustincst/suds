@@ -611,6 +611,7 @@ export const NAV = [
 let current = null;
 export async function render() {
   const app = document.getElementById('app');
+  app.removeAttribute('aria-busy'); // was set on the static pre-hydration shell in index.html
   clear(document.getElementById('modal-root'));
   const r = parseHash();
   if (state.localSetupNeeded) { if (r.name !== 'localsetup') { nav('localsetup'); return; } clear(app).append(await routes.localsetup(r)); return; }
@@ -719,6 +720,7 @@ export async function boot(force = false) {
           : 'Could not start SUDS on this device: ' + (e && e.message);
       console.error(e);
       const app = document.getElementById('app');
+      app.removeAttribute('aria-busy');
       clear(app);
       // This is the one screen a locked-out or broken device can reach without a kernel — reset has to work
       // here directly. SUDS_ALREADY_OPEN gets its own recovery instead: that device and its data are fine,

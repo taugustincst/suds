@@ -11478,9 +11478,12 @@ var require_budget = __commonJS({
         return { ok: true };
       });
       r.delete("/api/budget/lines/:id", auth3.requireAuth, auth3.requirePerm("budget:write"), (ctx) => {
+        const ids = db3.all(`WITH RECURSIVE sub(id) AS (SELECT id FROM budget_lines WHERE id=? UNION ALL SELECT b.id FROM budget_lines b JOIN sub ON b.parent_id=sub.id) SELECT id FROM sub`, ctx.params.id).map((row) => row.id);
         db3.run(`DELETE FROM budget_lines WHERE id=?`, ctx.params.id);
-        db3.tombstone("budget_lines", ctx.params.id);
-        audit3.log({ user: ctx.user, action: "budget_line.delete", entity: "budget_line", entityId: ctx.params.id, ip: ctx.ip });
+        for (const id of ids) {
+          db3.tombstone("budget_lines", id);
+          audit3.log({ user: ctx.user, action: "budget_line.delete", entity: "budget_line", entityId: id, ip: ctx.ip });
+        }
         return { ok: true };
       });
       crud.build(r, {
@@ -19537,6 +19540,20 @@ var require_sync = __commonJS({
                 reject(t.name, raw.id, "would create a cycle in its allocation hierarchy");
                 return false;
               }
+              if (t.name === "budget_lines" && raw.parent_id) {
+                const parent = db3.one(`SELECT funding_source_id FROM budget_lines WHERE id=?`, raw.parent_id);
+                if (parent && parent.funding_source_id !== raw.funding_source_id) {
+                  reject(t.name, raw.id, "parent allocation does not belong to this fund");
+                  return false;
+                }
+              }
+              if (t.name === "interventions" && !auth3.hasPerm(user, "budget:write")) {
+                const changed = !existing || raw.cost !== existing.cost || raw.funding_source_id !== existing.funding_source_id || raw.budget_line_id !== existing.budget_line_id;
+                if (changed && (raw.cost && raw.cost > 0 || raw.funding_source_id || raw.budget_line_id)) {
+                  reject(t.name, raw.id, "you do not have permission to attach a cost to a funding source");
+                  return false;
+                }
+              }
               const incomingAt = raw.updated_at || raw.created_at || NEVER2;
               if (existing && (existing.updated_at || existing.created_at || NEVER2) >= incomingAt) return false;
               const OWNER = { interventions: "user_id", calls: "user_id", time_entries: "user_id", referrals: "user_id", expenditures: "user_id", notes: "author_id" }[t.name];
@@ -19835,6 +19852,12 @@ var require_time = __commonJS({
         },
         beforeInsert: (ctx, v) => {
           if (v.user_id && v.user_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "time:all")) v.user_id = ctx.user.id;
+        },
+        // Reassigning whose hours these are is a time:all action (see public/views/time.js, which only shows the
+        // Worker picker when can('time:all')) -- without this, a worker who owns the row (canEdit below) could
+        // still smuggle a different user_id through an update even though they could never set it on insert.
+        beforeUpdate: (ctx, v) => {
+          if (v.user_id && v.user_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "time:all")) delete v.user_id;
         },
         canEdit: (ctx, row) => row.user_id === ctx.user.id || auth3.hasPerm(ctx.user, "time:all")
       });

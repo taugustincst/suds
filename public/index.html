@@ -16,7 +16,26 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div id="app" class="app"><div class="boot">Loading…</div></div>
+  <!--
+    Static shell for first paint, before main.js hydrates: shaped like the real sign-in screen
+    (public/views/login.js) rather than a bare "Loading..." message, so a first-time visitor and a
+    returning one whose session already covers them both land on something that already looks like
+    the app, not a blank flash in between. render() replaces all of #app's children once it runs,
+    whichever screen (sign-in, or straight to their dashboard if already signed in) that turns out to be.
+  -->
+  <div id="app" class="app" aria-busy="true">
+    <div class="login-wrap">
+      <div class="card login">
+        <div class="brand"><img src="favicon.svg" alt=""><div><b>SUDS</b><small>SUD Navigator Services Tracker</small></div></div>
+        <div class="form-grid" style="grid-template-columns:1fr">
+          <div class="field"><label>Username</label><input disabled></div>
+          <div class="field"><label>Password</label><input type="password" disabled></div>
+        </div>
+        <button class="btn primary" disabled style="width:100%">Sign in</button>
+        <p class="small muted center mt">Loading…</p>
+      </div>
+    </div>
+  </div>
   <div id="toasts" class="toasts" aria-live="polite"></div>
   <div id="modal-root"></div>
   <script type="module" src="main.js"></script>

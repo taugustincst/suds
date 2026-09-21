@@ -6,17 +6,18 @@ const assert = require('node:assert');
 const H = require('./helpers');
 const { randomUUID } = require('node:crypto');
 
-let admin, nav, nav2, navBearer, clientId, otherClientId, navId, nav2Id;
+let admin, nav, nav2, clin, navBearer, clientId, otherClientId, navId, nav2Id;
 
 const iso = (ms) => new Date(ms).toISOString();
 async function push(client, body, headers) { return client.post('/api/sync/push', { device_now: iso(Date.now()), ...body }, headers); }
 
 before(async () => {
   await H.start();
-  H.makeUser('snav', 'navigator'); H.makeUser('snav2', 'navigator'); H.makeUser('ssup', 'supervisor');
+  H.makeUser('snav', 'navigator'); H.makeUser('snav2', 'navigator'); H.makeUser('ssup', 'supervisor'); H.makeUser('sclin', 'clinician');
   admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
   nav = H.client(); await nav.login('snav', 'StaffPassw0rd!x');
   nav2 = H.client(); await nav2.login('snav2', 'StaffPassw0rd!x');
+  clin = H.client(); await clin.login('sclin', 'StaffPassw0rd!x');
   navId = H.db.one(`SELECT id FROM users WHERE username='snav'`).id;
   nav2Id = H.db.one(`SELECT id FROM users WHERE username='snav2'`).id;
   clientId = (await nav.post('/api/clients', { first_name: 'Sync', last_name: 'Subject' })).data.id;
@@ -295,4 +296,56 @@ test('a sync push cannot re-parent two budget lines into a cycle', async () => {
   const aRow = H.db.one(`SELECT parent_id FROM budget_lines WHERE id=?`, a.data.id);
   const bRow = H.db.one(`SELECT parent_id FROM budget_lines WHERE id=?`, b.data.id);
   assert.ok(!(aRow.parent_id === b.data.id && bRow.parent_id === a.data.id), 'the two lines are never left pointing at each other');
+});
+
+test('a sync push cannot re-parent a budget line into a different fund', async () => {
+  // Regression: the REST route (PUT /api/budget/lines/:id) requires a line's parent to belong to the same
+  // fund, but a sync push only checked for a parent_id cycle -- two lines in unrelated funds' trees never
+  // collide there, so a foreign parent_id was accepted. The line then dropped out of ITS OWN fund's
+  // "allocated" total (excluded there for having a non-null parent_id, even though its real parent isn't in
+  // that fund's tree at all) while never joining the other fund's total either -- money silently vanishes
+  // from both funds' rollups while the line keeps drawing real expenditures.
+  const fundA = await admin.post('/api/budget/funds', { name: 'Fund A (parent check)', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 5000 });
+  const fundB = await admin.post('/api/budget/funds', { name: 'Fund B (parent check)', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 5000 });
+  const lineA = await admin.post(`/api/budget/funds/${fundA.data.id}/lines`, { category: 'other', allocated_amount: 1000 });
+  const lineB = await admin.post(`/api/budget/funds/${fundB.data.id}/lines`, { category: 'other', allocated_amount: 1000 });
+  const r = await push(admin, { tables: { budget_lines: [
+    { id: lineA.data.id, funding_source_id: fundA.data.id, parent_id: lineB.data.id, category: 'other', allocated_amount: 1000, updated_at: iso(Date.now()) },
+  ] } });
+  assert.equal(r.status, 200);
+  assert.ok(r.data.rejected.some(x => x.id === lineA.data.id), 'the cross-fund re-parent is rejected');
+  assert.equal(H.db.one(`SELECT parent_id FROM budget_lines WHERE id=?`, lineA.data.id).parent_id, null, 'the line was never re-parented across funds');
+});
+
+test('a sync push cannot attach a cost/fund/line to an intervention without budget:write', async () => {
+  // Regression: interventions.js's checkCost() requires budget:write to set cost/funding_source_id/
+  // budget_line_id on the REST route, but a sync push writes straight to SQL with none of that route's
+  // hooks -- a clinician (interventions:* but no budget permission at all) could otherwise reach the same
+  // fields through a push, fraudulently attributing their service to a fund/grant for reporting purposes.
+  const fund = await admin.post('/api/budget/funds', { name: 'Clinician sync check', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 2000 });
+  const line = await admin.post(`/api/budget/funds/${fund.data.id}/lines`, { category: 'other', allocated_amount: 500 });
+  // clin's own caseload (creating a client auto-assigns the creator), so caseload scoping is not what's
+  // being tested here -- only the budget-permission gate on cost/funding_source_id/budget_line_id.
+  const clinClientId = (await clin.post('/api/clients', { first_name: 'Clin', last_name: 'Caseload' })).data.id;
+  const ivId = randomUUID();
+  const r = await push(clin, { tables: { interventions: [{
+    id: ivId, client_id: clinClientId, type: 'case_management', occurred_at: iso(Date.now()),
+    funding_source_id: fund.data.id, budget_line_id: line.data.id, cost: 75,
+    created_at: iso(Date.now()), updated_at: iso(Date.now()),
+  }] } });
+  assert.equal(r.status, 200);
+  assert.ok(r.data.rejected.some(x => x.id === ivId), 'the row is rejected, not silently stripped and inserted anyway');
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM interventions WHERE id=?`, ivId).n, 0, 'no row was created at all');
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM expenditures WHERE funding_source_id=?`, fund.data.id).n, 0, 'no expenditure was posted against the fund');
+
+  // An unrelated edit to a row that already, legitimately, carries budget data (set earlier by someone
+  // with budget:write) must not suddenly need that permission just because the full row still carries it.
+  const existing = await admin.post('/api/interventions', { client_id: clinClientId, type: 'case_management', occurred_at: iso(Date.now()), funding_source_id: fund.data.id, budget_line_id: line.data.id, cost: 30 });
+  const r2 = await push(clin, { tables: { interventions: [{
+    id: existing.data.id, client_id: clinClientId, type: 'case_management', occurred_at: iso(Date.now()),
+    funding_source_id: fund.data.id, budget_line_id: line.data.id, cost: 30, summary: 'Follow-up note',
+    updated_at: iso(Date.now() + 1000),
+  }] } });
+  assert.equal(r2.status, 200);
+  assert.ok(!r2.data.rejected.some(x => x.id === existing.data.id), 'unchanged budget fields on an already-attached row do not block an unrelated edit');
 });

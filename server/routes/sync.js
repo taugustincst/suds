@@ -157,6 +157,27 @@ function push(user, payload) {
           // pointing at the other (both already exist, so neither side hits an FK violation) from silently
           // dropping both of them out of every fund's line tree (buildLineTree only walks from roots).
           if (t.name === 'budget_lines' && raw.parent_id && wouldCycle(raw.id, raw.parent_id)) { reject(t.name, raw.id, 'would create a cycle in its allocation hierarchy'); return false; }
+          // Same REST route also requires the parent to belong to the same fund. Nothing here stopped a push
+          // from re-parenting into a different fund's line: wouldCycle only walks the parent chain, so two
+          // lines in unrelated trees never collide. A line with a foreign parent_id keeps its own subtree
+          // totals (buildLineTree falls back to treating it as a root when its parent isn't in this fund's
+          // set) but drops out of its real fund's `allocated` total (it's excluded there for having a
+          // non-null parent_id) — silently inflating that fund's "unallocated" figure by the line's full
+          // amount while it still draws real expenditures.
+          if (t.name === 'budget_lines' && raw.parent_id) {
+            const parent = db.one(`SELECT funding_source_id FROM budget_lines WHERE id=?`, raw.parent_id);
+            if (parent && parent.funding_source_id !== raw.funding_source_id) { reject(t.name, raw.id, 'parent allocation does not belong to this fund'); return false; }
+          }
+          // interventions.js's checkCost() requires budget:write to attach or change a cost/fund/line on the
+          // REST route — a clinician (interventions:* but no budget permission) could otherwise use a push to
+          // set the same fields verbatim, since push writes straight to SQL with none of that route's hooks.
+          // Only rejected when the value is actually changing (or being set on a new row): a device re-syncing
+          // an unrelated edit to a row that already, legitimately, carries a fund/line/cost must not suddenly
+          // need budget:write just because that data is still sitting in the row it's sending.
+          if (t.name === 'interventions' && !auth.hasPerm(user, 'budget:write')) {
+            const changed = !existing || raw.cost !== existing.cost || raw.funding_source_id !== existing.funding_source_id || raw.budget_line_id !== existing.budget_line_id;
+            if (changed && ((raw.cost && raw.cost > 0) || raw.funding_source_id || raw.budget_line_id)) { reject(t.name, raw.id, 'you do not have permission to attach a cost to a funding source'); return false; }
+          }
           const incomingAt = raw.updated_at || raw.created_at || NEVER;
           if (existing && (existing.updated_at || existing.created_at || NEVER) >= incomingAt) return false; // server copy is newer or same
           // Records from a device are attributed to the syncing user unless they manage all clients

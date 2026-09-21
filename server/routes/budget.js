@@ -101,8 +101,18 @@ module.exports = (r) => {
     return { ok: true };
   });
   r.delete('/api/budget/lines/:id', auth.requireAuth, auth.requirePerm('budget:write'), (ctx) => {
-    db.run(`DELETE FROM budget_lines WHERE id=?`, ctx.params.id); db.tombstone('budget_lines', ctx.params.id);
-    audit.log({ user: ctx.user, action: 'budget_line.delete', entity: 'budget_line', entityId: ctx.params.id, ip: ctx.ip });
+    // budget_lines.parent_id is ON DELETE CASCADE, so deleting a line with sub-allocations removes them at
+    // the SQLite level in the same statement -- no application code runs for them. Without gathering the
+    // whole subtree up front, only the named line got a tombstone and an audit entry: other devices never
+    // learned the children were gone (so they'd keep showing them, permanently diverged, until a push on one
+    // of those phantom rows hit the FK and got rejected with no way to reconcile short of a full resync), and
+    // an arbitrarily large sub-tree could be destroyed under a single audit-log entry.
+    const ids = db.all(`WITH RECURSIVE sub(id) AS (SELECT id FROM budget_lines WHERE id=? UNION ALL SELECT b.id FROM budget_lines b JOIN sub ON b.parent_id=sub.id) SELECT id FROM sub`, ctx.params.id).map(row => row.id);
+    db.run(`DELETE FROM budget_lines WHERE id=?`, ctx.params.id); // cascades to the rest of `ids`
+    for (const id of ids) {
+      db.tombstone('budget_lines', id);
+      audit.log({ user: ctx.user, action: 'budget_line.delete', entity: 'budget_line', entityId: id, ip: ctx.ip });
+    }
     return { ok: true };
   });
 

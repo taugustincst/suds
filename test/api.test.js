@@ -359,6 +359,39 @@ test('a manual expenditure post cannot link itself to someone else\'s interventi
   assert.equal(H.db.one(`SELECT COUNT(*) n FROM expenditures WHERE intervention_id=?`, iv.data.id).n, 1, 'the intervention still has exactly its one auto-posted expenditure');
 });
 
+test('a worker cannot reassign their own time entry to someone else', async () => {
+  // Regression: beforeInsert forced user_id back to the caller when they lack time:all, but there was no
+  // equivalent beforeUpdate -- a worker who owns the row (canEdit only checks row.user_id === ctx.user.id)
+  // could still overwrite user_id on an update, reattributing their hours to an arbitrary other employee.
+  const t = await nav.post('/api/time', { work_date: '2026-09-05', minutes: 30, category: 'documentation' });
+  assert.equal(t.status, 201);
+  const navId = H.db.one(`SELECT id FROM users WHERE username='nav1'`).id;
+  const clinId = H.db.one(`SELECT id FROM users WHERE username='clin1'`).id;
+  const upd = await nav.put(`/api/time/${t.data.id}`, { user_id: clinId, minutes: 60 });
+  assert.equal(upd.status, 200, 'the update itself succeeds -- only the ownership field is refused');
+  const row = H.db.one(`SELECT user_id, minutes FROM time_entries WHERE id=?`, t.data.id);
+  assert.equal(row.user_id, navId, 'user_id stayed the entry owner, not the attempted reassignment');
+  assert.equal(row.minutes, 60, 'an ordinary field on the same request still went through');
+});
+
+test('deleting a budget line with sub-allocations tombstones and audit-logs every one of them', async () => {
+  // Regression: budget_lines.parent_id is ON DELETE CASCADE, so SQLite silently deletes descendants when
+  // the parent line is deleted -- no application code runs for them. Only the named line got a tombstone
+  // (leaving other devices permanently showing the deleted children) and only one audit entry (undercounting
+  // what was actually removed, however large the destroyed sub-tree).
+  const f = await admin.post('/api/budget/funds', { name: 'Cascade delete check', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 5000 });
+  const parent = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'other', allocated_amount: 1000 });
+  const child = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'other', allocated_amount: 400, parent_id: parent.data.id });
+  const grandchild = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'other', allocated_amount: 100, parent_id: child.data.id });
+  const del = await admin.del(`/api/budget/lines/${parent.data.id}`);
+  assert.equal(del.status, 200);
+  for (const id of [parent.data.id, child.data.id, grandchild.data.id]) {
+    assert.equal(H.db.one(`SELECT COUNT(*) n FROM budget_lines WHERE id=?`, id).n, 0, 'row is actually gone');
+    assert.equal(H.db.one(`SELECT COUNT(*) n FROM tombstones WHERE table_name='budget_lines' AND id=?`, id).n, 1, 'each descendant got its own tombstone, not just the named line');
+    assert.equal(H.db.one(`SELECT COUNT(*) n FROM audit_log WHERE action='budget_line.delete' AND entity_id=?`, id).n, 1, 'each descendant got its own audit entry');
+  }
+});
+
 test('time entries scoped to own user unless manager', async () => {
   await nav.post('/api/time', { work_date: '2026-09-05', minutes: 45, category: 'documentation' });
   const own = await nav.get('/api/time'); assert.ok(own.data.rows.every(x => x.worker === 'nav1'));
