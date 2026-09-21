@@ -173,6 +173,17 @@ details.section { border: 1px solid var(--border); border-radius: 8px; padding: 
 @media (max-width: 900px) {
   .appbar { padding: .5rem .75rem 0; } .appbar .btn.quick { display: none; }
   .fab { display: block; position: fixed; right: 1rem; bottom: calc(1rem + env(safe-area-inset-bottom)); z-index: 45; } .fab .btn { box-shadow: 0 6px 20px rgba(0,0,0,.3); font-size: 1.1rem; padding: .8rem 1.3rem; }
+  /* Room to scroll the last row out from under the floating + Log button. */
+  .main { padding-bottom: calc(5rem + env(safe-area-inset-bottom)); }
+  /* Checkboxes in lists are tapped one-handed between visits; 13px is a mis-tap waiting to happen. */
+  table input[type="checkbox"], .check input[type="checkbox"] { width: 24px; height: 24px; margin: 0 .4rem 0 0; accent-color: var(--primary); }
+  table td:has(> input[type="checkbox"]:only-child) { padding: .5rem .35rem; }
+  /* The tab strip scrolls sideways; fade the right edge so the tabs off-screen are not a secret. */
+  .tabs { position: relative; scrollbar-width: none; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent); scroll-snap-type: x proximity; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs button { scroll-snap-align: start; }
+  /* Banners must never cover the table someone is reading. */
+  #banners { position: static; }
 }
 .modal .card-head { flex-wrap: nowrap; align-items: flex-start; } .modal .card-head h2 { margin-bottom: 0; }
 .quick-list .btn { width: 100%; white-space: normal; text-align: left; }
@@ -241,7 +252,7 @@ a.bar.link:hover .lbl { color: var(--primary); text-decoration: underline; } a.b
 }
 #banners { position: sticky; top: 0; z-index: 60; }
 .banner {
-  display: flex; align-items: center; gap: .75rem; justify-content: space-between;
+  display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; justify-content: space-between;
   padding: .6rem 1rem; font-size: .95rem; border-bottom: 1px solid var(--line);
   background: var(--warn-bg, #fff4d6); color: var(--warn-fg, #5a4200);
 }

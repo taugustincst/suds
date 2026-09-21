@@ -38,7 +38,7 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
       if (!noteId) { const r = await post('/api/notes', data, { quiet: !explicit }); noteId = r.id; }
       else await put(`/api/notes/${noteId}`, data, { quiet: !explicit });
       status.textContent = `Saved ${new Date().toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })} · continue on any device`;
-    } catch (e) { status.textContent = explicit ? '' : 'Could not save yet'; if (explicit) throw e; }
+    } catch (e) { status.textContent = explicit ? '' : 'Not saved yet — will retry'; if (explicit) throw e; }
     finally { saving = false; if (dirty) { dirty = false; save(); } }
   }
   const scheduleSave = () => { clearTimeout(asTimer); status.textContent = 'Unsaved changes'; asTimer = setTimeout(() => save(), 2500); };
@@ -113,6 +113,9 @@ route('notes', async (r) => {
   const qs = `limit=300${status ? '&status=' + status : ''}${kind ? '&kind=' + kind : ''}${mine ? '&mine=1' : ''}`;
   const data = await get(`/api/notes?${qs}`);
   const refresh = () => nav(`notes?status=${status}&kind=${kind}${mine ? '&mine=1' : ''}&_=${Date.now()}`);
+  // #/notes/<id> (the supervision queue's rows link here) opens that note over the list instead of
+  // silently showing the unfiltered list and leaving the reader to hunt for it.
+  if (r.id) setTimeout(() => openNote(r.id, { onChange: refresh }), 0);
   const sSel = h('select', { onChange: () => nav(`notes?status=${sSel.value}&kind=${kind}${mine ? '&mine=1' : ''}`) }, [['', 'Any status'], ['draft', 'Unsigned drafts'], ['signed', 'Signed'], ['amended', 'Amended']].map(([v, l]) => h('option', { value: v, selected: v === status }, l)));
   const kSel = h('select', { onChange: () => nav(`notes?status=${status}&kind=${kSel.value}${mine ? '&mine=1' : ''}`) }, [['', 'All types'], ['admin', 'Administrative'], ['clinical', 'Clinical']].map(([v, l]) => h('option', { value: v, selected: v === kind }, l)));
   return h('div', {},

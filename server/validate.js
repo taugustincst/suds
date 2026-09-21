@@ -40,8 +40,8 @@ function validate(body, shape, { partial = false } = {}) {
         break;
       case 'array':
         if (!Array.isArray(v)) { errors[k] = 'must be an array'; continue; }
-        if (s.maxLen && v.length > s.maxLen) { errors[k] = `must have at most ${s.maxLen} items`; continue; }
-        if (s.of === 'string') { if (!v.every(x => typeof x === 'string' && x.length <= 200)) { errors[k] = 'must be a list of identifiers'; continue; } }
+        if (rule.maxLen && v.length > rule.maxLen) { errors[k] = `must have at most ${rule.maxLen} items`; continue; }
+        if (rule.of === 'string') { if (!v.every(x => typeof x === 'string' && x.length <= 200)) { errors[k] = 'must be a list of identifiers'; continue; } }
         break;
       default: break;
     }

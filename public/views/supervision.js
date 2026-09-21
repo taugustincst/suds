@@ -15,8 +15,15 @@ route('supervision', async () => {
   // ---- countersignatures ----
   const cosign = async (row) => {
     let password, note;
+    // A countersignature certifies that the supervisor reviewed the note, so the note itself has to be
+    // in front of them here -- not just who wrote it and when.
+    let n = null; try { n = (await get(`/api/notes/${row.id}`)).note; } catch (e) { toast(e.message, 'error'); return; }
+    const content = n.structured
+      ? h('div', {}, Object.entries(n.structured).map(([k, v]) => v ? h('div', { class: 'mb' }, h('b', {}, k), h('div', { style: { whiteSpace: 'pre-wrap' } }, v)) : null))
+      : h('pre', { class: 'note' }, n.content || '');
     const m = modal('Countersign this note', h('div', {},
-      h('p', {}, `Written by ${row.author} on ${fmt.date(row.occurred_at)}.`),
+      h('p', {}, `${n.title ? n.title + ' — ' : ''}written by ${row.author} on ${fmt.date(row.occurred_at)} for ${row.client_code}.`),
+      h('div', { class: 'card tight mb', 'data-cosign-content': '1', style: { maxHeight: '40vh', overflow: 'auto' } }, content),
       h('p', { class: 'small muted' }, 'Countersigning records your approval alongside the author. It does not replace their signature — both names stay on the record.'),
       h('div', { class: 'field' }, h('label', { for: 'cosign-note' }, 'Comment (optional)'), note = h('textarea', { id: 'cosign-note', rows: 3 })),
       h('div', { class: 'field' }, h('label', { for: 'cosign-pw' }, 'Your password *'), password = h('input', { id: 'cosign-pw', type: 'password', autocomplete: 'current-password' })),
@@ -28,7 +35,7 @@ route('supervision', async () => {
             await post(`/api/notes/${row.id}/cosign`, { password: password.value, note: note.value.trim() || undefined });
             toast('Countersigned', 'ok'); m.close(); refresh();
           } catch (e) { toast(e.message, 'error'); }
-        } }, 'Countersign'))));
+        } }, 'Countersign'))), { wide: true });
   };
 
   const cosignRows = q.awaiting_cosignature || [];

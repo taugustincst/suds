@@ -47,14 +47,15 @@ Sign in with the administrator account, enroll multi-factor authentication when 
 Nothing to install or configure on the device. Everything a person does on their phone is immediately on their computer and vice versa, because both talk to the same SUDS.
 1. On the phone, connect to the office Wi-Fi.
 2. Open the browser and go to **https://suds.local** (SUDS announces this name on the network), or scan the QR code from Settings → Network & devices.
-3. The first time, the browser warns that the certificate is not trusted (it is self-signed by your SUDS). Tap **Advanced → Proceed** (Android/Chrome) or **Show Details → visit this website** (iPhone/Safari). To remove the warning permanently, download the certificate from Administration → Network & devices and install it on the device (IT can push it with MDM).
-4. Add SUDS to the home screen: **Share → Add to Home Screen** (iPhone) or **⋮ → Install app** (Android). It then opens full-screen like an app, with the same 15-minute auto sign-out.
+3. The first time, the browser warns that the certificate is not trusted (SUDS made its own). Tap **Advanced → Proceed** (Android/Chrome) or **Show Details → visit this website** (iPhone/Safari). To remove the warning permanently, download the certificate from Administration → Network & devices and install it on the device: it is a small certificate authority of SUDS's own, which is what Android (Settings → Security → Install a certificate → CA certificate) and iPhone (install the profile, then Settings → General → About → Certificate Trust Settings → enable full trust) accept. IT can push it with MDM.
+   *Android browsers do not resolve `suds.local`*: on an Android phone use the numeric address shown under Settings → Network & devices (or the QR code, which carries it); the Android app finds the server on its own.
+4. Add SUDS to the home screen: **Share → Add to Home Screen** (iPhone) or **⋮ → Add to Home screen** (Android). It then opens like an app, with the same 15-minute auto sign-out. Until the certificate has been installed on the device, the browser treats it as a bookmark rather than an installed app (no offline shell), which is fine — everything still works while on the office network.
 
 ## Native apps (optional)
 Android staff can install a real app instead of the browser shortcut: see `docs/MOBILE_APPS.md`. Once the administrator has uploaded the app under Settings → Network & devices → Native apps, phones get it from **https://suds.local/app**.
 
 ## Backups
-Administration → **System & backups → Download encrypted backup** weekly (or use IT's scheduled backup of the whole `data` folder). Keep backups and the key file in different places.
+Administration → **System & backups → Download encrypted backup** weekly, or turn on scheduled backups under Settings (each one is read back and opened after it is written, and the result shows under System & backups). If IT backs up the `data` folder with its own tools, **exclude `data/keys.json`** from that job and keep the key file somewhere else on its own — a backup that sits next to its key is not encrypted in any useful sense.
 
 A backup can only be opened with this installation's encryption keys, so a stolen backup file is not a breach — and a backup without the keys cannot be restored at all. That is why step 4 of the wizard asks you to save the key backup somewhere separate.
 
@@ -70,10 +71,12 @@ Everything recorded after that backup was taken will be gone, so check the summa
 
 A backup from an older version of SUDS is brought up to date automatically when it is restored.
 
+Restoring through the browser handles databases up to about 450 MB. A bigger one (a county with years of scanned forms) is restored on the server itself: `node scripts/backup.js --restore <file>`, which has no size limit.
+
 ## Stopping, restarting, updating
 * **Stop:** close the black window.
 * **Restart:** double-click the launcher again.
-* **Update:** take a backup first (above), then replace the SUDS folder with the new version but keep your `data` folder. Then start as usual — the database is brought up to date the first time the new version starts. SUDS will not open a `data` folder written by a *newer* version than the one you are running, so if you ever need to go back, restore the backup that matches.
+* **Update:** take a backup first (above), then replace the SUDS folder with the new version but keep your `data` folder. Then start as usual — the database is brought up to date the first time the new version starts. Before it does, SUDS keeps a copy of the database in `data/pre-migration/`; if the update stops with an error, the database is left as it was at the last completed step and that copy (or your backup) is the way back — put the old SUDS folder back, restore, and call IT rather than retrying. SUDS will not open a `data` folder written by a *newer* version than the one you are running, so if you ever need to go back, restore the backup that matches.
 * **Start automatically at login:** Windows — create a shortcut to `Start-SUDS.bat` in `shell:startup`; Mac — System Settings → General → Login Items → add `Start-SUDS.command`.
 
 ## Getting help from IT

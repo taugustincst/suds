@@ -73,7 +73,20 @@ function selfParentOrder(rows, col) {
   return out;
 }
 
-function applyPull(payload) {
+// Columns the office row would change here, by name; encrypted columns compared as plaintext, blind
+// indexes skipped. Mirrors server/routes/sync.js.
+function changedColumns(t, existing, raw, existingCols) {
+  const out = [];
+  for (const k of existingCols) {
+    if (['id', 'updated_at', 'created_at'].includes(k) || k.endsWith('_idx') || raw[k] === undefined) continue;
+    let was = existing[k];
+    if (t.enc.includes(k) && was) { try { was = decrypt(was); } catch { was = null; } }
+    if (String(was ?? '') !== String(raw[k] ?? '')) out.push(k);
+  }
+  return out;
+}
+
+function applyPull(payload, conflicts = []) {
   const counts = {};
   const offset = payload.server_now ? Date.parse(payload.server_now) - Date.now() : 0;
   const toServer = (ts) => { const t = Date.parse(ts || NEVER); return Number.isFinite(t) ? new Date(t + offset).toISOString() : NEVER; };
@@ -89,6 +102,15 @@ function applyPull(payload) {
           const known = seenAt(t.name, existing.id);
           const untouched = known !== undefined && known === stamp(existing);
           if (!untouched && toServer(stamp(existing)) > (raw.updated_at || raw.created_at || NEVER)) continue; // our edit is newer; it gets pushed
+          if (!untouched) {
+            // The office edit is newer, so it replaces an edit made here that was never sent. That is the
+            // rule; being silent about it was not. Column names only -- the values may be PHI.
+            const lost = changedColumns(t, existing, raw, existingCols);
+            if (lost.length) {
+              conflicts.push({ table: t.name, id: raw.id, label: t.name === 'clients' ? existing.client_code : null, columns: lost });
+              audit.log({ user: { username: db.getSetting('sync_username', 'device') }, action: 'sync.conflict', entity: t.name, entityId: raw.id, clientId: t.clientCol ? raw[t.clientCol] : null, details: { columns: lost, kept: 'office' } });
+            }
+          }
         }
         const o = importRow(t, raw, existingCols); const keys = Object.keys(o).filter(k => k !== 'id');
         if (existing) db.run(`UPDATE ${t.name} SET ${keys.map(k => `${k}=?`).join(', ')} WHERE id=?`, ...keys.map(k => o[k]), raw.id);
@@ -143,7 +165,15 @@ function chunkRows(pending, maxBytes = PUSH_BYTES) {
 }
 
 async function call(server, path, opts = {}, token) {
-  const res = await fetch(server.replace(/\/$/, '') + path, { ...opts, credentials: 'omit', headers: { 'Content-Type': 'application/json', 'X-Sync-Client': '1', 'X-Device-Id': deviceId(), 'X-Requested-With': 'suds', ...(token ? { Authorization: 'Bearer ' + token } : {}), ...(opts.headers || {}) } });
+  let res;
+  try {
+    res = await fetch(server.replace(/\/$/, '') + path, { ...opts, credentials: 'omit', headers: { 'Content-Type': 'application/json', 'X-Sync-Client': '1', 'X-Device-Id': deviceId(), 'X-Requested-With': 'suds', ...(token ? { Authorization: 'Bearer ' + token } : {}), ...(opts.headers || {}) } });
+  } catch (e) {
+    // A failed fetch is the office being unreachable, not this device being broken -- the kernel's generic
+    // 500 text ("something went wrong on this device… sync if it keeps happening") is wrong on both counts
+    // here, and sits right next to the erase-this-device button.
+    throw new HttpError(502, `Could not reach the office SUDS at ${server}. Check that this device is on the office Wi-Fi (or the address IT gave you) and that the address is right, then try again. Nothing on this device was changed.`, { network: true });
+  }
   const ct = res.headers.get('content-type') || ''; const data = ct.includes('json') ? await res.json() : await res.text();
   if (!res.ok) { const e = new Error((data && data.error) || `Server returned ${res.status}`); e.status = res.status; e.data = data; throw e; }
   return data;
@@ -225,6 +255,7 @@ export async function run({ server, username, password, code, onProgress = () =>
     const demo = require('../server/demo.js');
     if (demo.status().loaded) { onProgress('Removing sample data before the first sync…'); demo.remove({ actor: null, tombstones: false }); }
 
+    const pullConflicts = [];
     // ---- pull, page by page ----
     let since = db.getSetting('sync_cursor', NEVER);
     const applied = {}; let pages = 0; let serverNow = null;
@@ -242,7 +273,7 @@ export async function run({ server, username, password, code, onProgress = () =>
         pages++;
         continue;
       }
-      const counts = applyPull(pulled);
+      const counts = applyPull(pulled, pullConflicts);
       for (const [k, v] of Object.entries(counts)) applied[k] = (applied[k] || 0) + v;
       serverNow = pulled.server_now;
       since = pulled.cursor;
@@ -256,12 +287,12 @@ export async function run({ server, username, password, code, onProgress = () =>
     const deviceNow = db.now();
     const pending = localRows();
     const chunks = chunkRows(pending);
-    const pushedCounts = {}; const rejected = [];
+    const pushedCounts = {}; const rejected = []; const conflicts = [...pullConflicts];
     for (let i = 0; i < chunks.length; i++) {
       if (chunks.length > 1) onProgress(`Uploading this device's changes (${i + 1} of ${chunks.length})…`);
       const res = await call(server, '/api/sync/push', { method: 'POST', body: JSON.stringify({ device_now: deviceNow, tables: chunks[i] }) }, token);
       const rejectedIds = new Set((res.rejected || []).map(x => x.table + ':' + x.id));
-      rejected.push(...(res.rejected || []));
+      rejected.push(...(res.rejected || [])); conflicts.push(...(res.conflicts || []));
       for (const [k, v] of Object.entries(res.applied || {})) if (typeof v === 'number') pushedCounts[k] = (pushedCounts[k] || 0) + v;
       // A row counts as exchanged only if the office did not reject it.
       db.transaction(() => {
@@ -294,8 +325,8 @@ export async function run({ server, username, password, code, onProgress = () =>
     const downloaded = await fetchBlobs(server, token, onProgress);
 
     db.setSetting('last_sync_at', db.now()); db.setSetting('sync_server', server); db.setSetting('sync_username', username);
-    audit.log({ user: { username }, action: 'sync.completed', details: { server, pulled: applied, pushed: pushedCounts, rejected: rejected.length, attachments_up: uploaded, attachments_down: downloaded } });
-    return { ok: true, pulled: applied, pushed: pushedCounts, rejected, attachments: { uploaded, downloaded }, at: db.now() };
+    audit.log({ user: { username }, action: 'sync.completed', details: { server, pulled: applied, pushed: pushedCounts, rejected: rejected.length, conflicts: conflicts.length, attachments_up: uploaded, attachments_down: downloaded } });
+    return { ok: true, pulled: applied, pushed: pushedCounts, rejected, conflicts, attachments: { uploaded, downloaded }, at: db.now() };
   } finally { try { await call(server, '/api/auth/logout', { method: 'POST', body: '{}' }, token); } catch {} }
 }
 

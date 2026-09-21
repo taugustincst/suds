@@ -24,8 +24,12 @@ route('login', async (r) => {
   // offered there — only the office server, where /api/auth/oidc/status can actually mean something.
   const oidc = state.local ? { enabled: false } : await get('/api/auth/oidc/status', { quiet: true }).catch(() => ({ enabled: false }));
   const oidcError = r.query.get('oidc_error');
+  // This browser has an on-device copy of SUDS. Someone landing here from a bookmark or an older
+  // home-screen icon is most likely looking for that, not the office server.
+  let localUsed = false; try { localUsed = !state.local && localStorage.getItem('suds.localUsed') === '1'; } catch {}
   return h('div', { class: 'login-wrap' }, h('div', { class: 'card login' },
     h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('b', {}, 'SUDS'), h('small', {}, 'SUD Navigator Services Tracker'))),
+    localUsed ? h('div', { class: 'banner info', 'data-local-hint': '1' }, h('div', {}, h('b', {}, 'Looking for your on-device copy? '), 'This is the office sign-in. Your clients recorded on this device are in ', h('a', { href: location.pathname + '?local=1' }, 'SUDS on this device'), '.')) : null,
     oidcError ? h('div', { class: 'banner danger', role: 'alert' }, OIDC_ERRORS[oidcError] || 'Single sign-on failed.') : null,
     oidc.enabled ? h('div', { class: 'btn-row mb' }, h('a', { class: 'btn primary', href: '/api/auth/oidc/start', style: { width: '100%', textAlign: 'center' } }, oidc.label)) : null,
     oidc.enabled ? h('div', { class: 'small muted center mb' }, '— or —') : null,

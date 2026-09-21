@@ -14,13 +14,29 @@ async function openUserForm(values, onDone) {
     { name: 'username', label: 'Username', required: true, pattern: '[a-zA-Z0-9._@\\-]+' }, { name: 'display_name', label: 'Display name', required: true }, { name: 'email', label: 'Email' }, { name: 'title', label: 'Job title' },
     { name: 'role', label: 'Role', type: 'select', required: true, options: [['navigator', 'Navigator — own caseload, admin notes, referrals, budget entry'], ['clinician', 'Clinician — clinical notes, own caseload'], ['supervisor', 'Supervisor — all clients, all notes, approvals, audit'], ['finance', 'Finance — budget & de-identified data only'], ['readonly', 'Read-only — reports and client summaries'], ['admin', 'Administrator — users, settings, audit (no clinical notes)']].map(([v, l]) => ({ value: v, label: l })) },
     { name: 'hourly_cost', label: 'Loaded hourly cost ($, for budget)', type: 'number', min: 0, step: 0.01 }, { name: 'is_active', label: 'Active', type: 'checkbox', value: values ? values.is_active : true },
+    { name: 'supervisor_id', label: 'Supervisor', type: 'select', placeholder: '— none —', options: state.users.filter(u => u.is_active !== 0 && ['supervisor', 'admin'].includes(u.role) && u.id !== values?.id).map(u => ({ value: u.id, label: u.display_name })), help: 'Whose Supervision page their unfinished work shows on.' },
+    { name: 'requires_cosign', label: 'Notes need a supervisor\'s countersignature (trainee or unlicensed staff)', type: 'checkbox', span: true },
     { name: 'password', label: isNew ? 'Temporary password (blank = generate)' : 'Reset password (blank = keep)', type: 'password', autocomplete: 'new-password', help: '12+ chars with upper, lower, number, symbol. User must change at next login.' },
     !isNew ? { name: 'unlock', label: 'Unlock account', type: 'checkbox' } : null, !isNew && values.mfa_enabled ? { name: 'reset_mfa', label: 'Reset MFA (user re-enrolls)', type: 'checkbox' } : null,
     oidcStatus.enabled ? { name: 'oidc_subject', label: `Single sign-on identity (${oidcStatus.label})`, span: true, help: values && values.oidc_subject ? 'Linked. Clear this field to unlink — the user can still sign in with their SUDS password.' : 'Paste the "sub" claim from the identity provider to let this user sign in with SSO instead of a SUDS password. Leave blank if they should only use their SUDS password.' } : null,
   ].filter(Boolean), { values: values || {}, submitText: isNew ? 'Create user' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => {
-    if (isNew) { const r = await post('/api/users', d); m.close(); if (r.temporary_password) modal('User created', h('div', {}, h('p', {}, 'Share this temporary password securely (not by email). The user must change it at first login.'), h('div', { class: 'qr' }, r.temporary_password))); }
-    else { await put(`/api/users/${values.id}`, d); m.close(); toast('User updated', 'ok'); }
-    await loadRefData(); onDone();
+    if (isNew) {
+      const r = await post('/api/users', d); m.close(); await loadRefData();
+      // The list refresh below re-renders the page, and render() clears every open modal with it -- so the
+      // one-time password used to flash up and vanish before anyone could read it. It now stays until
+      // the administrator dismisses it, and only then does the page move on.
+      if (r.temporary_password) {
+        const pw = modal('User created', h('div', {},
+          h('p', {}, 'Share this temporary password securely (not by email). The user must change it at first login.'),
+          h('div', { class: 'qr', 'data-temp-password': '1' }, r.temporary_password),
+          h('p', { class: 'small muted' }, 'It is not stored and cannot be shown again. If it is lost, edit the user and set a new one.'),
+          h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', onClick: () => pw.close() }, 'I have shared it'))), { onClose: onDone });
+        return;
+      }
+      toast('User created', 'ok');
+    }
+    else { await put(`/api/users/${values.id}`, d); m.close(); toast('User updated', 'ok'); await loadRefData(); }
+    onDone();
   } });
   const m = modal(isNew ? 'New user' : `Edit ${values.display_name}`, f, { wide: true });
 }
@@ -135,7 +151,7 @@ route('admin', async (r) => {
         h('div', { class: 'card' }, h('h3', {}, 'Connect a phone, tablet or another computer'), h('p', {}, 'On the office Wi-Fi, open ', h('b', {}, primary), L.mdns ? ' — no setup needed on the device.' : '.', ' Or scan this code. Then add it to the home screen: ', h('b', {}, 'iPhone'), ' Share → Add to Home Screen; ', h('b', {}, 'Android'), ' ⋮ → Install app. Everything staff do on the phone is instantly on the computer and vice versa.'),
           h('div', { class: 'center' }, qrSvg(primary, { size: 200 }), h('div', { class: 'mono' }, primary)),
           h('ul', { class: 'small mt' }, L.urls.map(u => h('li', {}, u))),
-          L.tls ? h('div', { class: 'mt small' }, h('p', {}, `The certificate is self-signed${n.cert_expires ? ` (valid until ${fmt.date(n.cert_expires)})` : ''}. Browsers show a one-time warning; choose Advanced → Proceed, or install the certificate on the device to remove the warning.`), h('a', { class: 'btn sm', href: '/api/admin/certificate', download: '' }, 'Download certificate')) : h('div', { class: 'banner danger mt' }, 'HTTPS is off. Enable it before allowing other devices to connect.')),
+          L.tls ? h('div', { class: 'mt small' }, h('p', {}, `SUDS made its own certificate${n.cert_expires ? ` (valid until ${fmt.date(n.cert_expires)})` : ''}. Browsers show a one-time warning; choose Advanced → Proceed, or install SUDS's certificate authority on the device to remove it for good (Android: Settings → Security → Install a certificate → CA certificate; iPhone: install, then Settings → General → About → Certificate Trust Settings). Android browsers cannot use the suds.local name — give them the numeric address below, or the QR code.`), h('a', { class: 'btn sm', href: '/api/admin/certificate', download: '' }, 'Download certificate (CA)')) : h('div', { class: 'banner danger mt' }, 'HTTPS is off. Enable it before allowing other devices to connect.')),
         h('div', { class: 'card' }, h('h3', {}, 'Network settings'), locked ? h('div', { class: 'banner' }, 'Network settings are controlled by environment variables on this server (see docs/DEPLOYMENT.md).') : f),
         await nativeAppsCard(primary));
     },
@@ -164,9 +180,9 @@ route('admin', async (r) => {
           h('p', { class: 'small mt' }, 'Scheduled backups: ', s.last_scheduled_backup_at ? [badge(s.last_scheduled_backup_status === 'ok' ? 'Configured' : 'Attention needed', s.last_scheduled_backup_status === 'ok' ? 'ok' : 'warn'), ` last ran ${fmt.dt(s.last_scheduled_backup_at)}${s.last_scheduled_backup_status && s.last_scheduled_backup_status !== 'ok' ? ` — ${s.last_scheduled_backup_status}` : ''}`] : badge('Off — turn on under Settings → Program settings'), ' ', h('button', { class: 'btn sm', onClick: runBackupNow }, 'Run a backup now'), ' ', runNow),
           restoreCard(),
           h('h3', { class: 'mt' }, 'About this server'), kv([['SUDS version', s.version], ['Database', h('code', {}, s.db_path)], ['Keys', s.key_source === 'file' ? 'data/keys.json (generated by setup)' : 'Environment variables'], ['Key backup last downloaded', s.key_source !== 'file' ? 'Not applicable — keys come from the environment' : s.keys_backup_at ? fmt.dt(s.keys_backup_at) : badge('Never — download it below', 'danger')], ['Addresses', (s.listener?.urls || []).join(', ')], ['Retention', 'Audit logs are kept 7 years by default. Client records are soft-deleted only.']]),
-          h('div', { class: 'row mt' }, h('button', { class: 'btn sm', onClick: checkForUpdate }, 'Check for updates'), updateStatus)),
-        transferCard());
+          h('div', { class: 'row mt' }, h('button', { class: 'btn sm', onClick: checkForUpdate }, 'Check for updates'), updateStatus)));
     },
+    async caseload() { return transferCard(); },
     async devices() {
       const { devices } = await get('/api/admin/devices');
       const act = async (id, action) => { await post(`/api/admin/devices/${id}/${action}`, {}); refresh(); };
@@ -186,9 +202,14 @@ route('admin', async (r) => {
         ], devices, { empty: 'No devices have synced yet.' }));
     },
   };
-  body.append(await (T[state.local && !['users', 'settings', 'audit'].includes(tab) ? 'users' : tab] || T.users)());
-  const tabs = state.local ? [['users', 'Users & roles'], ['settings', 'Settings'], ['audit', 'Audit log']] : [['users', 'Users & roles'], ['settings', 'Settings'], ['network', 'Network & devices'], ['devices', 'Synced devices'], ['audit', 'Audit log'], ['apikeys', 'API keys (intake)'], ['system', 'System & backups']];
-  return h('div', {}, pageHead('Settings'), state.local ? h('div', { class: 'banner small' }, 'This is the copy of SUDS on this device. Network, API keys and backups are managed on the office SUDS; use Sync to exchange data.') : null, h('div', { class: 'tabs' }, tabs.map(([k, l]) => h('button', { class: k === tab ? 'active' : '', onClick: () => nav(`admin?tab=${k}`) }, l))), body);
+  // Someone without users:manage (a supervisor) reaches this page for one thing: moving a caseload.
+  const full = can('users:manage');
+  const tabs = !full ? [['caseload', 'Move a caseload']]
+    : state.local ? [['users', 'Users & roles'], ['settings', 'Settings'], ['caseload', 'Move a caseload'], ['audit', 'Audit log']]
+    : [['users', 'Users & roles'], ['settings', 'Settings'], ['network', 'Network & devices'], ['devices', 'Synced devices'], ['caseload', 'Move a caseload'], ['audit', 'Audit log'], ['apikeys', 'API keys (intake)'], ['system', 'System & backups']];
+  const allowed = tabs.some(([k]) => k === tab) ? tab : tabs[0][0];
+  body.append(await (T[allowed] || T[tabs[0][0]])());
+  return h('div', {}, pageHead(full ? 'Settings' : 'Move a caseload'), state.local ? h('div', { class: 'banner small' }, 'This is the copy of SUDS on this device. Network, API keys and backups are managed on the office SUDS; use Sync to exchange data.') : null, h('div', { class: 'tabs' }, tabs.map(([k, l]) => h('button', { class: k === tab ? 'active' : '', onClick: () => nav(`admin?tab=${k}`) }, l))), body);
 });
 
 // ---------------------------------------------------------------------------
@@ -282,7 +303,7 @@ export function transferCard() {
     if (r.skipped && r.skipped.length) result.append(h('p', { class: 'small muted' }, `${r.skipped.length} were already assigned to the receiving worker.`));
     toast('Caseload transferred', 'ok');
   } });
-  return h('div', { class: 'card mt' },
+  return h('div', { class: 'card' },
     h('h3', {}, 'Move a caseload to another worker'),
     h('p', { class: 'small muted' }, 'When someone leaves or goes on extended leave, this ends every one of their current assignments and gives those clients to another worker in one step. Their last day is the day before the transfer takes effect, so nobody holds a client twice.'),
     f, result);

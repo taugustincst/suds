@@ -24,8 +24,12 @@ route('localsetup', async () => {
     await loadSession(); nav('dashboard'); render();
   } });
   f.querySelectorAll('.form-grid').forEach(g => g.style.gridTemplateColumns = '1fr');
+  // The same warning the Sync page shows, but here -- before the first real name is typed in, not days
+  // later on a page nobody has had a reason to open yet.
+  const protectedKeys = !!(window.SudsNative || window.__sudsSecrets);
   return h('div', { class: 'login-wrap' }, h('div', { class: 'card login', style: { maxWidth: '520px' } },
     h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('b', {}, 'SUDS on this device'), h('small', {}, 'Works without the office computer'))),
+    protectedKeys ? null : h('div', { class: 'banner warn mb', 'data-browser-copy-warning': '1' }, h('div', {}, h('b', {}, 'This is a browser copy, for trying SUDS out. '), 'Its encryption keys stay in this browser profile beside the data. Use sample data here; keep real client information in the phone app or on the office computer.')),
     h('p', { class: 'small muted' }, 'Everything you record is stored encrypted on this device. Whenever you are near the office, tap Sync to exchange changes with the office SUDS — both directions.'), f));
 });
 
@@ -53,6 +57,12 @@ route('sync', async () => {
       const r = await post('/api/local/sync', { ...rest, password: office_password });
       const sum = (o) => Object.entries(o || {}).filter(([, n]) => n).map(([k, n]) => `${n} ${fmt.label(k).toLowerCase()}`).join(', ') || 'nothing new';
       log.textContent = `Done ${fmt.dt(r.at)}. Received: ${sum(r.pulled)}. Sent: ${sum(r.pushed)}.${r.rejected.length ? ` ${r.rejected.length} item(s) were not accepted by the office (not on your caseload).` : ''}`;
+      // An edit made here that a newer office edit replaced is not a footnote: the person saw "saved".
+      const conflicts = r.conflicts || [];
+      if (conflicts.length) {
+        const what = conflicts.slice(0, 5).map(c => `${fmt.label(c.table).replace(/s$/, '')}${c.label ? ' ' + c.label : ''} (${(c.columns || []).map(x => fmt.label(x).toLowerCase()).join(', ')})`).join('; ');
+        log.append(h('div', { class: 'banner warn mt', role: 'alert', 'data-sync-conflicts': String(conflicts.length) }, h('div', {}, h('b', {}, `${conflicts.length} of your change${conflicts.length === 1 ? ' was' : 's were'} replaced by a newer edit made at the office: `), what, conflicts.length > 5 ? ` and ${conflicts.length - 5} more` : '', '. The office version is what everyone now sees; re-enter anything from your version that still matters.')));
+      }
       toast('Sync complete', 'ok'); await loadSession();
     } catch (e) {
       log.textContent = 'Sync failed: ' + e.message;

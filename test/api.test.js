@@ -75,6 +75,9 @@ test('blind-index search by last name, phone, dob, code', async () => {
     assert.equal(r.data.clients.length, 1, `search ${q}`);
   }
   assert.equal((await nav.get('/api/clients?q=smith')).data.clients.length, 0);
+  // The search box says "a name"; a first name on its own used to find nobody at all.
+  assert.equal((await nav.get('/api/clients?q=jane')).data.clients.length, 1, 'first name alone');
+  assert.equal((await nav.get('/api/clients?q=Jan')).data.clients.length, 1, 'partial first name');
 });
 test('caseload restriction hides unassigned clients from other navigators', async () => {
   assert.equal((await nav2.get(`/api/clients/${clientId}`)).status, 403);
@@ -237,6 +240,25 @@ test('budget: funds, lines, expenditures, separation of duties', async () => {
   assert.equal((await nav.post(`/api/budget/expenditures/${e.data.id}/approve`, { status: 'approved' })).status, 403);
 });
 
+test('a navigator records expenses but cannot restructure grants; a rejection needs a reason', async () => {
+  // Regression: budget:write covered both "log a bus pass for my client" and "change the total award on the
+  // county's opioid settlement grant". The second is grant administration, now behind budget:manage.
+  const f = await admin.post('/api/budget/funds', { name: 'Structure check', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 5000 });
+  assert.equal((await nav.post('/api/budget/funds', { name: 'Nav-made fund', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 1 })).status, 403);
+  assert.equal((await nav.put(`/api/budget/funds/${f.data.id}`, { total_amount: 999999 })).status, 403, 'nor change the award');
+  assert.equal((await nav.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'other', allocated_amount: 10 })).status, 403, 'nor add lines');
+  const line = await fin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'client_assistance', allocated_amount: 1000 });
+  assert.equal(line.status, 201, 'finance manages the structure');
+  const e = await nav.post('/api/budget/expenditures', { funding_source_id: f.data.id, budget_line_id: line.data.id, client_id: clientId, spent_at: '2026-09-05', amount: 40, category: 'client_assistance', vendor: 'Transit' });
+  assert.equal(e.status, 201, 'but a navigator still records client assistance');
+  assert.equal((await nav.get('/api/auth/me')).data.user.permissions.includes('budget:manage'), false);
+  const s = H.client(); await s.login('sup1', 'StaffPassw0rd!x');
+  assert.equal((await s.post(`/api/budget/expenditures/${e.data.id}/approve`, { status: 'rejected' })).status, 400, 'a rejection with no reason is refused');
+  assert.equal((await s.post(`/api/budget/expenditures/${e.data.id}/approve`, { status: 'rejected', note: 'No receipt attached' })).status, 200);
+  const row = (await nav.get(`/api/budget/expenditures?client_id=${clientId}&limit=50`)).data.rows.find(x => x.id === e.data.id);
+  assert.equal(row.status, 'rejected'); assert.equal(row.approval_note, 'No receipt attached', 'the submitter can see why');
+});
+
 test('budget: nested allocations roll up, and cannot be re-parented into a cycle or another fund', async () => {
   const f = await admin.post('/api/budget/funds', { name: 'SOR Grant FY26', source_type: 'sor_grant', fiscal_year_start: '2026-10-01', fiscal_year_end: '2027-09-30', total_amount: 50000 });
   const other = await admin.post('/api/budget/funds', { name: 'Unrelated fund', source_type: 'other', fiscal_year_start: '2026-10-01', fiscal_year_end: '2027-09-30', total_amount: 1000 });
@@ -259,6 +281,10 @@ test('budget: nested allocations roll up, and cannot be re-parented into a cycle
   assert.equal(top.unallocated, 7000, 'the program envelope still has room for more sub-allocations');
   assert.equal(top.subtree_spent, 300, 'a leaf expenditure rolls up through its parent, since it is real money out of the same envelope');
   assert.equal(top.subtree_remaining, 19700, "the parent's own allocation minus spend anywhere under it");
+  // What can still be spent directly against the parent: its envelope less what it handed down, less its own
+  // spend. The UI used to show the parent as "$20,000 left" while $13,000 of that was already committed below.
+  assert.equal(top.available, 7000, 'available to spend directly on the parent excludes its sub-allocations');
+  assert.equal(top.children.find(l => l.id === item1.data.id).available, 7700, 'a leaf: allocation less its own spend');
   assert.equal(fund.allocated, 20000, 'a sub-allocation is carved out of its parent, not an additional draw on the fund total');
 
   // A budget line cannot be its own parent.
@@ -558,7 +584,7 @@ test('scheduled backup settings are validated, and an admin can trigger one on d
     assert.ok(r.data.bytes > 1000);
     const stats = await admin.get('/api/admin/stats');
     assert.ok(stats.data.last_scheduled_backup_at);
-    assert.equal(stats.data.last_scheduled_backup_status, 'ok');
+    assert.equal(stats.data.last_scheduled_backup_status, 'ok (verified)');
     assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='backup.run_now'`));
     await admin.put('/api/admin/settings', { backup_schedule_hours: '', backup_retain_count: '' });
   } finally { require('node:fs').rmSync(backupsDir, { recursive: true, force: true }); }

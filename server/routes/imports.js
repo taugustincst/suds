@@ -69,7 +69,9 @@ module.exports = (r) => {
       else { const ext = filename.split('.').pop().toLowerCase(); items = ['json'].includes(ext) ? pocket.parse(buf, { filename }) : onenote.parseFile(buf, filename); }
     } catch (e) { throw badRequest('Could not parse file: ' + e.message); }
     const id = stage(ctx, { source: source === 'onenote' ? 'onenote_file' : source, filename, items, importedBy: ctx.user.id });
-    audit.log({ user: ctx.user, action: 'import.upload', entity: 'import', entityId: id, ip: ctx.ip, details: { source, filename, count: items.length } });
+    // Not the filename: a OneNote export is routinely named after the person it is about, and this table
+    // is kept for seven years.
+    audit.log({ user: ctx.user, action: 'import.upload', entity: 'import', entityId: id, ip: ctx.ip, details: { source, extension: (/\.([A-Za-z0-9]{1,8})$/.exec(filename) || [])[1] || null, bytes: buf.length, count: items.length } });
     ctx.status = 201; return { id, count: items.length };
   });
 

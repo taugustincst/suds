@@ -52,6 +52,29 @@ test('policy/contract library: upload, search by title, filter by category, down
   assert.equal((await nav.get(`/api/documents/${c.data.id}/file`)).status, 404, 'nor download its file by a bookmarked/guessed link');
 });
 
+test('policy/contract library: a document is found by a phrase inside the file', async () => {
+  // A PDF whose one content stream is Flate-compressed, the way real ones are.
+  const zlib = require('node:zlib');
+  const content = 'BT /F1 12 Tf 72 700 Td (Every naloxone kit must have its lot number recorded) Tj ET';
+  const comp = zlib.deflateSync(Buffer.from(content));
+  const pdf = Buffer.concat([Buffer.from(`%PDF-1.4\n1 0 obj << /Length ${comp.length} /Filter /FlateDecode >>\nstream\n`), comp, Buffer.from('\nendstream\nendobj\n%%EOF')]);
+  const c = await admin.post('/api/documents', { title: 'Naloxone Dispensing Policy', category: 'policy', file_url: 'data:application/pdf;base64,' + pdf.toString('base64') });
+  assert.equal(c.status, 201, JSON.stringify(c.data));
+  const hit = await nav.get('/api/documents?q=' + encodeURIComponent('lot number'));
+  const found = hit.data.documents.find(d => d.id === c.data.id);
+  assert.ok(found, 'a phrase that appears only inside the file finds the document');
+  assert.ok(found.snippet && /lot number/i.test(found.snippet), 'with the matching passage shown');
+  assert.equal(found.search_text, undefined, 'the full extracted text is not sent with every list');
+  const miss = await nav.get('/api/documents?q=' + encodeURIComponent('bus pass'));
+  assert.ok(!miss.data.documents.find(d => d.id === c.data.id), 'a phrase that appears nowhere does not');
+  // A Word file, too: a zip holding word/document.xml.
+  const S = require('../server/spreadsheet');
+  const docx = S.zip([['[Content_Types].xml', '<Types/>'], ['word/document.xml', '<w:document><w:body><w:p><w:r><w:t>Vendor pays a late fee of two percent</w:t></w:r></w:p></w:body></w:document>']]);
+  const w = await admin.post('/api/documents', { title: 'Vendor Agreement', category: 'contract', file_url: 'data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,' + docx.toString('base64') });
+  assert.equal(w.status, 201, JSON.stringify(w.data));
+  assert.ok((await nav.get('/api/documents?q=' + encodeURIComponent('late fee'))).data.documents.some(d => d.id === w.data.id), 'Word text is searchable too');
+});
+
 test('policy/contract library: a file that is not actually a PDF/Word/picture is refused', async () => {
   const bad = await admin.post('/api/documents', { title: 'Bad', category: 'procedure', file_url: 'data:application/pdf;base64,' + Buffer.from('not a real pdf').toString('base64') });
   assert.equal(bad.status, 400);

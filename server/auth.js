@@ -25,11 +25,11 @@ function policy() {
 // not treating staff, and must use break-glass (audited) to read clinical content.
 const PERMS = {
   admin:      ['users:manage','settings:manage','audit:read','apikeys:manage','clients:read','clients:write','clients:all',
-               'interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*','budget:read','budget:write','budget:approve',
+               'interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*','budget:read','budget:write','budget:approve','budget:manage',
                'notes:admin:read','notes:admin:write','notes:clinical:breakglass','consents:*','imports:*','reports:read','assignments:manage','export:read','export:identified','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge','documents:read','documents:write'],
   supervisor: ['clients:read','clients:write','clients:all','interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*',
-               'budget:read','budget:write','budget:approve','notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write',
+               'budget:read','budget:write','budget:approve','budget:manage','notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write',
                'consents:*','imports:*','reports:read','assignments:manage','audit:read','export:read','export:identified','users:read','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge','documents:read','documents:write'],
   clinician:  ['clients:read','clients:write','interventions:*','calls:*','time:read','time:write','resources:read','referrals:*','tasks:*',
@@ -40,7 +40,7 @@ const PERMS = {
                'episodes:*','overdose:*','documents:read'],
   // finance sees money, not people: export:read without export:identified means every export it can run
   // comes out keyed by client_code. Do not add 'export:identified' here — docs/HIPAA.md promises otherwise.
-  finance:    ['clients:list-deidentified','budget:read','budget:write','budget:approve','time:read','time:all','time:approve','reports:read','export:read','users:read','documents:read','documents:write'],
+  finance:    ['clients:list-deidentified','budget:read','budget:write','budget:approve','budget:manage','time:read','time:all','time:approve','reports:read','export:read','users:read','documents:read','documents:write'],
   readonly:   ['clients:read','clients:all','interventions:read','calls:read','referrals:read','tasks:read','resources:read','reports:read','users:read','forms:read','documents:read'],
 };
 
@@ -230,7 +230,7 @@ function publicUser(u) {
   const perms = PERMS[u.role] || [];
   return { id: u.id, username: u.username, display_name: u.display_name, email: u.email, title: u.title, role: u.role,
     mfa_enabled: !!u.mfa_enabled, must_change_password: !!u.must_change_password, permissions: perms,
-    mfa_required: policy().mfaRequiredRoles.includes(u.role), caseload_restricted: caseloadRestricted(u) };
+    mfa_required: policy().mfaRequiredRoles.includes(u.role), mfa_setup_deadline: mfaDeadline(u), caseload_restricted: caseloadRestricted(u) };
 }
 
 function passwordPolicy(pw) {

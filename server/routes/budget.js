@@ -28,6 +28,11 @@ function buildLineTree(flat) {
     for (const c of l.children) { rollup(c); subtreeSpent += c.subtree_spent; subtreePending += c.subtree_pending; }
     l.subtree_spent = subtreeSpent; l.subtree_pending = subtreePending; l.subtree_remaining = l.allocated_amount - subtreeSpent - subtreePending;
     l.child_allocated = l.children.reduce((s, c) => s + c.allocated_amount, 0); l.unallocated = l.allocated_amount - l.child_allocated;
+    // What can still be spent directly against THIS line: its envelope less what it has handed down to
+    // sub-allocations and less its own spend. subtree_remaining answers a different question ("how much
+    // of the whole envelope is unspent") and read as "$50,000 left" on a parent that had already handed
+    // $8,000 to a child -- the wrong number to be looking at while deciding whether to spend.
+    l.available = l.allocated_amount - l.child_allocated - l.spent - l.pending;
   };
   for (const r of roots) rollup(r);
   return roots;
@@ -49,6 +54,9 @@ function fundSummary(f) {
   const spent = db.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE funding_source_id=? AND status IN ('approved','reimbursed')`, f.id).n;
   const pending = db.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE funding_source_id=? AND status='pending'`, f.id).n;
   const staffMinutes = db.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE funding_source_id=?`, f.id).n;
+  // The funder report counts approved time only (what a county can invoice); this page showed all logged
+  // time under the same-sounding label, and the two never reconciled. Both are sent so the page can say which is which.
+  const staffMinutesApproved = db.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE funding_source_id=? AND status='approved'`, f.id).n;
   const staffCost = db.one(`SELECT COALESCE(SUM(t.minutes/60.0*COALESCE(u.hourly_cost,0)),0) n FROM time_entries t JOIN users u ON u.id=t.user_id WHERE t.funding_source_id=?`, f.id).n;
   const flatLines = db.all(`SELECT b.*, (SELECT COALESCE(SUM(amount),0) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status IN ('approved','reimbursed')) AS spent, (SELECT COALESCE(SUM(amount),0) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status='pending') AS pending FROM budget_lines b WHERE b.funding_source_id=? ORDER BY category`, f.id);
   // Only top-level lines count against the fund's own total — a nested sub-allocation is carved out of its
@@ -57,7 +65,7 @@ function fundSummary(f) {
   const lines = buildLineTree(flatLines);
   const totalDays = Math.max(1, (Date.parse(f.fiscal_year_end) - Date.parse(f.fiscal_year_start)) / 86400000);
   const elapsed = Math.min(totalDays, Math.max(0, (Date.now() - Date.parse(f.fiscal_year_start)) / 86400000));
-  return { ...f, spent, pending, staff_minutes: staffMinutes, staff_cost: staffCost, allocated, unallocated: f.total_amount - allocated, remaining: f.total_amount - spent - pending,
+  return { ...f, spent, pending, staff_minutes: staffMinutes, staff_minutes_approved: staffMinutesApproved, staff_cost: staffCost, allocated, unallocated: f.total_amount - allocated, remaining: f.total_amount - spent - pending,
     pct_spent: f.total_amount ? (spent / f.total_amount) * 100 : 0, pct_elapsed: (elapsed / totalDays) * 100, lines };
 }
 
@@ -66,13 +74,13 @@ module.exports = (r) => {
     const rows = db.all(`SELECT * FROM funding_sources ${ctx.query.get('all') === '1' ? '' : 'WHERE is_active=1'} ORDER BY fiscal_year_start DESC, name`);
     return { funds: rows.map(fundSummary) };
   });
-  r.post('/api/budget/funds', auth.requireAuth, auth.requirePerm('budget:write'), (ctx) => {
+  r.post('/api/budget/funds', auth.requireAuth, auth.requirePerm('budget:manage'), (ctx) => {
     const v = validate(ctx.body, fundShape); const id = uuid(); const keys = Object.keys(v);
     db.run(`INSERT INTO funding_sources(id,${keys.join(',')}) VALUES(?,${keys.map(() => '?').join(',')})`, id, ...keys.map(k => v[k]));
     audit.log({ user: ctx.user, action: 'fund.create', entity: 'funding_source', entityId: id, ip: ctx.ip });
     ctx.status = 201; return { id };
   });
-  r.put('/api/budget/funds/:id', auth.requireAuth, auth.requirePerm('budget:write'), (ctx) => {
+  r.put('/api/budget/funds/:id', auth.requireAuth, auth.requirePerm('budget:manage'), (ctx) => {
     const f = db.one(`SELECT id FROM funding_sources WHERE id=?`, ctx.params.id); if (!f) throw notFound();
     const v = validate(ctx.body, Object.fromEntries(Object.entries(fundShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
     const keys = Object.keys(v); if (!keys.length) return { ok: true };
@@ -80,7 +88,7 @@ module.exports = (r) => {
     audit.log({ user: ctx.user, action: 'fund.update', entity: 'funding_source', entityId: f.id, ip: ctx.ip, details: { fields: keys } });
     return { ok: true };
   });
-  r.post('/api/budget/funds/:id/lines', auth.requireAuth, auth.requirePerm('budget:write'), (ctx) => {
+  r.post('/api/budget/funds/:id/lines', auth.requireAuth, auth.requirePerm('budget:manage'), (ctx) => {
     const f = db.one(`SELECT id FROM funding_sources WHERE id=?`, ctx.params.id); if (!f) throw notFound();
     const v = validate(ctx.body, lineShape); const id = uuid();
     if (v.parent_id) { const p = db.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, v.parent_id, f.id); if (!p) throw badRequest('Parent allocation does not belong to this fund'); }
@@ -88,7 +96,7 @@ module.exports = (r) => {
     audit.log({ user: ctx.user, action: 'budget_line.create', entity: 'budget_line', entityId: id, ip: ctx.ip, details: v.parent_id ? { parent_id: v.parent_id } : undefined });
     ctx.status = 201; return { id };
   });
-  r.put('/api/budget/lines/:id', auth.requireAuth, auth.requirePerm('budget:write'), (ctx) => {
+  r.put('/api/budget/lines/:id', auth.requireAuth, auth.requirePerm('budget:manage'), (ctx) => {
     const l = db.one(`SELECT * FROM budget_lines WHERE id=?`, ctx.params.id); if (!l) throw notFound();
     const v = validate(ctx.body, Object.fromEntries(Object.entries(lineShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
     if ('parent_id' in v && v.parent_id) {
@@ -100,7 +108,7 @@ module.exports = (r) => {
     audit.log({ user: ctx.user, action: 'budget_line.update', entity: 'budget_line', entityId: l.id, ip: ctx.ip, details: { fields: keys } });
     return { ok: true };
   });
-  r.delete('/api/budget/lines/:id', auth.requireAuth, auth.requirePerm('budget:write'), (ctx) => {
+  r.delete('/api/budget/lines/:id', auth.requireAuth, auth.requirePerm('budget:manage'), (ctx) => {
     // budget_lines.parent_id is ON DELETE CASCADE, so deleting a line with sub-allocations removes them at
     // the SQLite level in the same statement -- no application code runs for them. Without gathering the
     // whole subtree up front, only the named line got a tombstone and an audit entry: other devices never
@@ -143,7 +151,9 @@ module.exports = (r) => {
     const e = db.one(`SELECT * FROM expenditures WHERE id=?`, ctx.params.id); if (!e) throw notFound();
     const { status, note } = validate(ctx.body, { status: { type: 'string', required: true, enum: ['approved', 'rejected', 'reimbursed'] }, note: { type: 'string', maxLen: 500 } });
     if (e.user_id === ctx.user.id && status === 'approved' && ctx.user.role !== 'admin') throw badRequest('Separation of duties: you cannot approve your own expenditure');
-    db.run(`UPDATE expenditures SET status=?, approved_by=?, approved_at=?, updated_at=? WHERE id=?`, status, ctx.user.id, db.now(), db.now(), e.id);
+    // A rejection with no reason leaves the submitter guessing, and there is no undo for a mis-click.
+    if (status === 'rejected' && !note) throw badRequest('Say why this expenditure is being rejected, so the person who submitted it knows what to fix');
+    db.run(`UPDATE expenditures SET status=?, approved_by=?, approved_at=?, approval_note=?, updated_at=? WHERE id=?`, status, ctx.user.id, db.now(), note || null, db.now(), e.id);
     audit.log({ user: ctx.user, action: `expenditure.${status}`, entity: 'expenditure', entityId: e.id, clientId: e.client_id, ip: ctx.ip, details: { note, amount: e.amount } });
     return { ok: true };
   });

@@ -36,7 +36,8 @@ test('runIfDue backs up once the interval has elapsed, then waits for the next o
   const first = scheduled.runIfDue();
   assert.ok(first, 'the first run is always due');
   assert.ok(fs.existsSync(first.file));
-  assert.equal(db.getSetting('last_scheduled_backup_status', ''), 'ok');
+  assert.equal(db.getSetting('last_scheduled_backup_status', ''), 'ok (verified)', 'the file was read back and opened before being called a backup');
+  assert.equal(first.verified, true);
 
   assert.equal(scheduled.runIfDue(), null, 'not due again immediately');
 
@@ -66,7 +67,7 @@ test('an unreachable offsite path does not lose the local backup', () => {
   const out = scheduled.run({ retain: 14, offsiteDir });
   assert.equal(out.offsiteOk, false);
   assert.ok(fs.existsSync(out.file), 'the local backup was still written');
-  assert.equal(db.getSetting('last_scheduled_backup_status', ''), 'offsite copy failed — local backup kept');
+  assert.equal(db.getSetting('last_scheduled_backup_status', ''), 'ok (verified) — offsite copy failed, local backup kept');
 });
 
 test('a working offsite path receives a copy of the backup', () => {
@@ -75,6 +76,6 @@ test('a working offsite path receives a copy of the backup', () => {
     const out = scheduled.run({ retain: 14, offsiteDir });
     assert.equal(out.offsiteOk, true);
     assert.ok(fs.existsSync(path.join(offsiteDir, path.basename(out.file))), 'the offsite copy exists');
-    assert.equal(db.getSetting('last_scheduled_backup_status', ''), 'ok');
+    assert.equal(db.getSetting('last_scheduled_backup_status', ''), 'ok (verified)');
   } finally { fs.rmSync(offsiteDir, { recursive: true, force: true }); }
 });

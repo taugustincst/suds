@@ -72,7 +72,7 @@ function createHandler() {
       }
 
       if (!['GET', 'HEAD'].includes(req.method)) {
-        const raw = await readBody(req);
+        const raw = await readBody(req, req.url.startsWith('/api/admin/restore') ? config.maxRestoreBodyBytes : config.maxBodyBytes);
         const ct = req.headers['content-type'] || '';
         if (ct.includes('application/json')) {
           try { ctx.body = raw.length ? JSON.parse(raw.toString('utf8')) : {}; } catch { throw new HttpError(400, 'Invalid JSON'); }

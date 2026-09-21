@@ -97,6 +97,8 @@ CREATE TABLE IF NOT EXISTS clients (
   -- a specific name against those, and both live in the same database as the ciphertext.
   name_prefix_idx TEXT,
   name_phonetic_idx TEXT,
+  first_name_idx TEXT,
+  first_name_prefix_idx TEXT,
   preferred_name_enc TEXT,
   dob_enc TEXT,
   dob_idx TEXT,
@@ -353,6 +355,7 @@ CREATE TABLE IF NOT EXISTS policy_documents (
   content_type TEXT,
   bytes INTEGER NOT NULL DEFAULT 0,
   file_b64 TEXT,
+  search_text TEXT,
   is_active INTEGER NOT NULL DEFAULT 1,
   uploaded_by TEXT REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -422,6 +425,7 @@ CREATE TABLE IF NOT EXISTS expenditures (
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','reimbursed')),
   approved_by TEXT REFERENCES users(id),
   approved_at TEXT,
+  approval_note TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -629,6 +633,8 @@ CREATE INDEX IF NOT EXISTS idx_clients_updated ON clients(updated_at);
 CREATE INDEX IF NOT EXISTS idx_clients_full_name_idx ON clients(full_name_idx);
 CREATE INDEX IF NOT EXISTS idx_clients_name_prefix ON clients(name_prefix_idx);
 CREATE INDEX IF NOT EXISTS idx_clients_name_phonetic ON clients(name_phonetic_idx);
+CREATE INDEX IF NOT EXISTS idx_clients_first_name ON clients(first_name_idx);
+CREATE INDEX IF NOT EXISTS idx_clients_first_name_prefix ON clients(first_name_prefix_idx);
 CREATE INDEX IF NOT EXISTS idx_resources_updated ON resources(updated_at);
 CREATE INDEX IF NOT EXISTS idx_resource_photos_updated ON resource_photos(updated_at);
 CREATE INDEX IF NOT EXISTS idx_funding_sources_updated ON funding_sources(updated_at);

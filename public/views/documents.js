@@ -32,16 +32,18 @@ function openDocumentForm(values, onDone) {
 
 route('documents', async (r) => {
   const cat = r.query.get('category') || '', q = (r.query.get('q') || '').toLowerCase(), inactive = r.query.get('inactive') === '1';
-  const data = await get(`/api/documents${cat ? `?category=${cat}` : ''}${inactive ? `${cat ? '&' : '?'}all=1` : ''}`);
-  const rows = data.documents.filter(d => (!inactive ? d.is_active : true) && (!q || `${d.title} ${d.description || ''}`.toLowerCase().includes(q)));
+  const qs = new URLSearchParams(); if (cat) qs.set('category', cat); if (inactive) qs.set('all', '1'); if (q) qs.set('q', q);
+  const data = await get(`/api/documents${qs.toString() ? '?' + qs : ''}`);
+  const rows = data.documents.filter(d => (!inactive ? d.is_active : true));
   const refresh = () => nav(`documents?category=${cat}&q=${encodeURIComponent(q)}${inactive ? '&inactive=1' : ''}&_=${Date.now()}`);
-  const search = h('input', { type: 'search', value: q, placeholder: 'Title or description', onKeydown: e => { if (e.key === 'Enter') nav(`documents?category=${cat}&q=${encodeURIComponent(search.value)}`); } });
+  const search = h('input', { type: 'search', value: q, placeholder: 'A title, or a phrase from inside a document', onKeydown: e => { if (e.key === 'Enter') nav(`documents?category=${cat}&q=${encodeURIComponent(search.value)}`); } });
   const catSel = h('select', { onChange: () => nav(`documents?category=${catSel.value}&q=${encodeURIComponent(q)}`) }, h('option', { value: '' }, 'All categories'), data.categories.map(c => h('option', { value: c, selected: c === cat }, fmt.label(c))));
   const card = (d) => h('div', { class: `card doc-card ${d.is_active ? '' : 'inactive'}` },
     h('div', { class: 'row', style: { justifyContent: 'space-between', alignItems: 'start' } },
       h('div', {}, h('div', { class: 'row' }, h('span', {}, fileIcon(d.content_type)), h('b', {}, d.title)), h('div', { class: 'small' }, badge(fmt.label(d.category), catKind[d.category]), d.is_active ? null : [' ', badge('Retired', 'warn')])),
     ),
     d.description ? h('p', { class: 'small doc-desc' }, d.description) : null,
+    d.snippet ? h('p', { class: 'small muted doc-snippet' }, h('b', {}, 'In the file: '), d.snippet) : null,
     h('div', { class: 'small muted' }, [d.effective_date ? `Effective ${fmt.date(d.effective_date)}` : null, d.expires_at ? `Expires ${fmt.date(d.expires_at)}` : null].filter(Boolean).join(' · ') || `Updated ${fmt.date(d.updated_at)}`),
     h('div', { class: 'btn-row tight' },
       d.has_file ? h('button', { class: 'btn sm primary', onClick: () => downloadCsv(`/api/documents/${d.id}/file`) }, 'Download') : h('span', { class: 'small muted' }, 'No file'),
@@ -49,7 +51,7 @@ route('documents', async (r) => {
       can('documents:write') && d.is_active ? h('button', { class: 'btn sm ghost', 'aria-label': 'Retire this document', onClick: async () => { if (await confirmDialog('Retire document', `Retire "${d.title}"? It stays in the library, marked retired.`, { danger: true, okText: 'Retire' })) { await del(`/api/documents/${d.id}`); refresh(); } } }, 'Retire') : null));
   return h('div', {},
     pageHead('Policies & contracts', can('documents:write') ? h('button', { class: 'btn primary', onClick: () => openDocumentForm(null, refresh) }, '+ Upload') : null),
-    h('p', { class: 'muted small' }, 'County policies, procedures and signed contracts. Searched by title and category — nothing is extracted from inside the files themselves.'),
+    h('p', { class: 'muted small' }, 'County policies, procedures and signed contracts. Search looks at the title, description and the text inside PDF, Word and plain-text files; a scanned image is found by its title only.'),
     h('div', { class: 'filters' }, h('div', { class: 'field grow' }, h('label', {}, 'Search'), search), h('div', { class: 'field' }, h('label', {}, 'Category'), catSel),
       h('button', { class: 'btn', onClick: () => nav(`documents?category=${cat}&q=${encodeURIComponent(search.value)}`) }, 'Search'),
       can('documents:write') ? h('label', { class: 'row small' }, h('input', { type: 'checkbox', checked: inactive, onChange: (e) => nav(`documents?category=${cat}&q=${encodeURIComponent(q)}${e.target.checked ? '&inactive=1' : ''}`) }), ' Show retired') : null),

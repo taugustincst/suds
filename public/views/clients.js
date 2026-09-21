@@ -7,7 +7,7 @@ export function clientFields(C) {
     { name: 'dob', label: 'Date of birth', type: 'date' }, { name: 'gender', label: 'Gender', type: 'select', options: ['female', 'male', 'non_binary', 'transgender_female', 'transgender_male', 'other', 'declined'] }, { name: 'pronouns', label: 'Pronouns' },
     { name: 'race_ethnicity', label: 'Race / ethnicity' }, { name: 'preferred_language', label: 'Preferred language', value: 'English' }, { name: 'veteran', label: 'Veteran', type: 'checkbox' },
     { type: 'section', label: 'How to reach them', collapsible: true, open: true },
-    { name: 'phone', label: 'Phone' }, { name: 'alt_phone', label: 'Alternate phone' }, { name: 'email', label: 'Email' },
+    { name: 'phone', label: 'Phone', type: 'tel' }, { name: 'alt_phone', label: 'Alternate phone', type: 'tel' }, { name: 'email', label: 'Email' },
     { name: 'address', label: 'Address', span: true }, { name: 'city', label: 'City' }, { name: 'zip', label: 'ZIP' },
     { name: 'ok_to_text', label: 'OK to text', type: 'checkbox' }, { name: 'ok_to_voicemail', label: 'OK to leave voicemail', type: 'checkbox' }, { name: 'contact_preferences', label: 'Contact preferences / safe contact notes', span: true },
     { name: 'emergency_contact', label: 'Emergency contact (name, relation, phone)', span: true },

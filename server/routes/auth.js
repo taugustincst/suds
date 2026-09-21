@@ -9,7 +9,7 @@ const { hashPasswordAsync, verifyPasswordAsync, generateTotpSecret, verifyTotp, 
 
 module.exports = (r) => {
   r.post('/api/auth/login', async (ctx) => {
-    if (!rateLimit(`login:${ctx.ip}`, require('../config').isTest ? 100000 : 20, 15 * 60_000)) throw new HttpError(429, 'Too many login attempts. Try again later.');
+    if (!rateLimit(`login:${ctx.ip}`, require('../config').loginRateLimit, 15 * 60_000)) throw new HttpError(429, 'Too many login attempts. Try again later.');
     const { username, password } = validate(ctx.body, { username: { type: 'string', required: true, maxLen: 100 }, password: { type: 'string', required: true, maxLen: 500 } });
     const result = await auth.login({ username, password, ctx });
     ctx.res.setHeader('Set-Cookie', auth.cookieHeader(result.token));

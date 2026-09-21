@@ -9,7 +9,7 @@ route('dashboard', async () => {
   const hour = new Date().getHours(); const greet = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
   const alerts = [];
   if (d.tasks.overdue) alerts.push(['danger', `${d.tasks.overdue} overdue reminder${d.tasks.overdue > 1 ? 's' : ''}`, '#/tasks?overdue=1']);
-  if (d.notes.unsigned) alerts.push([d.notes.unsigned_overdue ? 'danger' : 'warn', `${d.notes.unsigned} unsigned note${d.notes.unsigned > 1 ? 's' : ''}`, '#/notes?status=draft&mine=1']);
+  if (d.notes.unsigned) alerts.push([d.notes.unsigned_overdue ? 'danger' : 'warn', `${d.notes.unsigned} unsigned note${d.notes.unsigned > 1 ? 's' : ''}${d.notes.team ? ' across your team' : ''}`, d.notes.team ? '#/supervision' : '#/notes?status=draft&mine=1']);
   if (cont.staged_imports) alerts.push(['info', `${cont.staged_imports} imported note${cont.staged_imports > 1 ? 's' : ''} to review`, '#/imports']);
   if (c.no_contact_30d) alerts.push(['warn', `${c.no_contact_30d} client${c.no_contact_30d > 1 ? 's' : ''} not contacted in 30 days`, '#/clients?stale=1']);
   if (d.consents_expiring.length) alerts.push(['warn', `${d.consents_expiring.length} consent${d.consents_expiring.length > 1 ? 's' : ''} expiring soon`, '#/clients?consent_expiring=1']);
@@ -23,14 +23,23 @@ route('dashboard', async () => {
   let setupCard = null;
   if (can('settings:manage') && !state.local) {
     try {
-      const [forms, users, funds, resources, sys] = await Promise.all([
+      const [forms, users, funds, resources, sys, settings] = await Promise.all([
         get('/api/forms/starters', { quiet: true }).catch(() => null),
         get('/api/users', { quiet: true }).catch(() => ({ users: [] })),
         get('/api/budget/funds', { quiet: true }).catch(() => ({ funds: [] })),
         get('/api/resources?limit=1', { quiet: true }).catch(() => ({ total: 0 })),
         get('/api/admin/stats', { quiet: true }).catch(() => ({})),
+        get('/api/admin/settings', { quiet: true }).catch(() => null),
       ]);
       const steps = [];
+      // Nothing about the deployment was ever going to point an administrator at these. Backups off and no
+      // MFA requirement are the defaults a fresh install runs with until someone finds the Settings tab.
+      if (settings && !Number(settings.backup_schedule_hours || 0)) {
+        steps.push(['Turn on scheduled backups', 'Right now nothing is backing up this database automatically. Set how often, and where a copy should go, under Settings.', 'Set up backups', () => nav('admin?tab=settings')]);
+      }
+      if (settings && settings.policy && !(settings.policy.mfaRequiredRoles || []).length) {
+        steps.push(['Require two-step verification', 'No role has to use an authenticator app yet. Staff who can see client records should, and the county will expect it.', 'Choose roles', () => nav('admin?tab=settings')]);
+      }
       // Without the keys, every backup is unreadable — so this is the step that matters most, and it goes first.
       if (sys.key_source === 'file' && !sys.keys_backup_at) {
         steps.push(['Save a copy of your encryption keys', 'Backups of the database can only be opened with these keys. Download the file and put it somewhere separate from this computer, such as the county password manager.', 'Download key backup', '/api/admin/keys-backup']);

@@ -91,8 +91,22 @@ function pull(user, since, { limit = PULL_LIMIT } = {}) {
 }
 
 // Apply rows from a device. Last write wins by updated_at; users are never overwritten from devices.
+// Which columns a device's row would change, by name. Encrypted columns are compared as plaintext (each
+// encryption uses a fresh IV, so ciphertext never matches ciphertext) and blind indexes are skipped; the
+// values themselves never leave this function.
+function changedColumns(t, existing, raw, existingCols) {
+  const out = [];
+  for (const k of existingCols) {
+    if (['id', 'updated_at', 'created_at'].includes(k) || k.endsWith('_idx') || raw[k] === undefined) continue;
+    let was = existing[k];
+    if (t.enc.includes(k) && was) { try { was = decrypt(was); } catch { was = null; } }
+    if (String(was ?? '') !== String(raw[k] ?? '')) out.push(k);
+  }
+  return out;
+}
+
 function push(user, payload) {
-  const applied = {}; const rejected = [];
+  const applied = {}; const rejected = []; const conflicts = [];
   const reject = (table, id, reason) => { rejected.push({ table, id, reason }); };
   const rejectedIds = new Set();
 
@@ -179,11 +193,21 @@ function push(user, payload) {
             if (changed && ((raw.cost && raw.cost > 0) || raw.funding_source_id || raw.budget_line_id)) { reject(t.name, raw.id, 'you do not have permission to attach a cost to a funding source'); return false; }
           }
           const incomingAt = raw.updated_at || raw.created_at || NEVER;
-          if (existing && (existing.updated_at || existing.created_at || NEVER) >= incomingAt) return false; // server copy is newer or same
+          if (existing && (existing.updated_at || existing.created_at || NEVER) >= incomingAt) {
+            // The office copy is newer, so the device's edit loses. That is the rule -- but it must not lose
+            // silently: the person who typed it saw "saved" on their phone. Name the columns that differ (never
+            // the values) in the audit log, and tell the device so it can say so on the sync screen.
+            const lost = changedColumns(t, existing, raw, existingCols);
+            if (lost.length && (existing.updated_at || existing.created_at || NEVER) > incomingAt) {
+              conflicts.push({ table: t.name, id: raw.id, label: t.name === 'clients' ? existing.client_code : null, columns: lost, server_updated_at: existing.updated_at, device_updated_at: incomingAt });
+              audit.log({ user, action: 'sync.conflict', entity: t.name, entityId: raw.id, clientId: t.clientCol ? raw[t.clientCol] : null, ip: 'device', details: { columns: lost, server_had: existing.updated_at, device_sent: incomingAt, kept: 'office' } });
+            }
+            return false;
+          }
           // Records from a device are attributed to the syncing user unless they manage all clients
           const OWNER = { interventions: 'user_id', calls: 'user_id', time_entries: 'user_id', referrals: 'user_id', expenditures: 'user_id', notes: 'author_id' }[t.name];
           if (OWNER && !auth.hasPerm(user, 'clients:all')) { if (!existing) raw[OWNER] = user.id; else raw[OWNER] = existing[OWNER]; }
-          if (t.name === 'expenditures') { if (!existing) { raw.status = 'pending'; raw.approved_by = null; raw.approved_at = null; } else if (!auth.hasPerm(user, 'budget:approve')) { raw.status = existing.status; raw.approved_by = existing.approved_by; raw.approved_at = existing.approved_at; } }
+          if (t.name === 'expenditures') { if (!existing) { raw.status = 'pending'; raw.approved_by = null; raw.approved_at = null; } else if (!auth.hasPerm(user, 'budget:approve')) { raw.status = existing.status; raw.approved_by = existing.approved_by; raw.approved_at = existing.approved_at; raw.approval_note = existing.approval_note; } }
           if (t.name === 'time_entries') { if (!existing) { raw.status = raw.status === 'submitted' ? 'submitted' : 'draft'; raw.approved_by = null; raw.approved_at = null; } else if (!auth.hasPerm(user, 'time:approve')) { raw.status = existing.status === 'approved' || existing.status === 'rejected' ? existing.status : raw.status; raw.approved_by = existing.approved_by; raw.approved_at = existing.approved_at; } }
           if (t.name === 'notes' && existing) {
             if (existing.status !== 'draft') { raw.content_enc = undefined; raw.structured_enc = undefined; raw.status = existing.status; raw.signed_by = existing.signed_by; raw.signed_at = existing.signed_at; raw.signature_hash = existing.signature_hash; } // signed notes are immutable
@@ -250,7 +274,7 @@ function push(user, payload) {
     }
     applied._audit = auditRows.length;
   });
-  return { applied, rejected, server_now: db.now(), clock_offset_ms: offsetMs, audit_accepted: applied._audit || 0 };
+  return { applied, rejected, conflicts, server_now: db.now(), clock_offset_ms: offsetMs, audit_accepted: applied._audit || 0 };
 }
 
 /** Find a client code no other client is using. Devices generate codes offline, so collisions are normal. */

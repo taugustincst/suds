@@ -64,6 +64,7 @@ function zip(entries) {
 }
 
 // ---------- XLSX writer ----------
+const EXCEL_EPOCH = Date.UTC(1899, 11, 30);
 const xmlEsc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
 function colRef(i) { let s = ''; i++; while (i > 0) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; }
 /** sheets: [{ name, columns: [{key,label}], rows: [{...}] }] → Buffer (.xlsx) */
@@ -75,6 +76,10 @@ function writeSheetXml(sh) {
     if (v === null || v === undefined || v === '') return '';
     if (typeof v === 'number' && Number.isFinite(v)) return `<c r="${ref}"><v>${v}</v></c>`;
     if (typeof v === 'boolean') return `<c r="${ref}" t="b"><v>${v ? 1 : 0}</v></c>`;
+    // A date or timestamp becomes a real Excel date (serial number + date style) rather than text, so the
+    // column sorts and filters as dates without anyone converting it by hand first.
+    if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) { const t = Date.parse(v + 'T00:00:00Z'); if (Number.isFinite(t)) return `<c r="${ref}" s="2"><v>${(t - EXCEL_EPOCH) / 86400000}</v></c>`; }
+    if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)) { const t = Date.parse(v); if (Number.isFinite(t)) return `<c r="${ref}" s="3"><v>${(t - EXCEL_EPOCH) / 86400000}</v></c>`; }
     return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${xmlEsc(typeof v === 'object' ? JSON.stringify(v) : v)}</t></is></c>`;
   };
   const header = `<row r="1">${cols.map((c, i) => `<c r="${colRef(i)}1" t="inlineStr" s="1"><is><t>${xmlEsc(c.label)}</t></is></c>`).join('')}</row>`;
@@ -91,7 +96,7 @@ function writeWorkbookParts(sheets) {
   files.push(['_rels/.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`]);
   files.push(['xl/workbook.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((s, i) => `<sheet name="${xmlEsc(safeName(s.name, i))}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets></workbook>`]);
   files.push(['xl/_rels/workbook.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`]);
-  files.push(['xl/styles.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" applyFont="1"/></cellXfs></styleSheet>`]);
+  files.push(['xl/styles.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" applyFont="1"/><xf numFmtId="14" fontId="0" fillId="0" borderId="0" applyNumberFormat="1"/><xf numFmtId="22" fontId="0" fillId="0" borderId="0" applyNumberFormat="1"/></cellXfs></styleSheet>`]);
   sheets.forEach((s, i) => files.push([`xl/worksheets/sheet${i + 1}.xml`, writeSheetXml(s)]));
   return new Map(files);
 }

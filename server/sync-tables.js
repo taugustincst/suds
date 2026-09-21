@@ -17,8 +17,9 @@ module.exports = {
     { name: 'resources', enc: [], scope: 'all', writePerm: 'resources:write' },
     { name: 'resource_photos', enc: [], scope: 'all', writePerm: 'resources:write', parent: ['resources', 'resource_id'], blob: ['data_b64'] },
     { name: 'policy_documents', enc: [], scope: 'all', writePerm: 'documents:write', blob: ['file_b64'] },
-    { name: 'funding_sources', enc: [], scope: 'all', writePerm: 'budget:write' },
-    { name: 'budget_lines', enc: [], scope: 'all', writePerm: 'budget:write', parent: ['funding_sources', 'funding_source_id'], selfParent: 'parent_id' },
+    // Grant structure is budget:manage over REST; a device holding only budget:write must not restructure it by sync.
+    { name: 'funding_sources', enc: [], scope: 'all', writePerm: 'budget:manage' },
+    { name: 'budget_lines', enc: [], scope: 'all', writePerm: 'budget:manage', parent: ['funding_sources', 'funding_source_id'], selfParent: 'parent_id' },
     { name: 'clients', enc: ['first_name_enc', 'last_name_enc', 'preferred_name_enc', 'dob_enc', 'phone_enc', 'alt_phone_enc', 'email_enc', 'address_enc', 'medicaid_id_enc', 'emergency_contact_enc', 'goals_enc', 'flags_enc'], scope: 'client', clientCol: 'id', idx: true, writePerm: 'clients:write' },
     { name: 'assignments', enc: [], scope: 'client', clientCol: 'client_id', writePerm: 'assignments:manage', parent: ['clients', 'client_id'] },
     { name: 'episodes', enc: ['presenting_problem_enc', 'discharge_summary_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'episodes:write', parent: ['clients', 'client_id'] },
@@ -91,6 +92,7 @@ function importRow(t, r, existingCols) {
     const M = require('./clients-model');
     if (r.last_name_enc !== undefined) { o.last_name_idx = crypto.blindIndex(r.last_name_enc || ''); o.name_prefix_idx = M.namePrefixIndex(r.last_name_enc || ''); o.name_phonetic_idx = M.namePhoneticIndex(r.last_name_enc || ''); }
     if (r.last_name_enc !== undefined || r.first_name_enc !== undefined) o.full_name_idx = crypto.blindIndex((r.last_name_enc || '') + (r.first_name_enc || ''));
+    if (r.first_name_enc !== undefined) { o.first_name_idx = crypto.blindIndex(String(r.first_name_enc || '').trim().toLowerCase()); o.first_name_prefix_idx = M.namePrefixIndex(r.first_name_enc || ''); }
     if (r.dob_enc !== undefined) o.dob_idx = crypto.blindIndex(r.dob_enc || '');
     if (r.phone_enc !== undefined) o.phone_idx = crypto.blindIndex(String(r.phone_enc || '').replace(/\D/g, ''));
   }

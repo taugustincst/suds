@@ -86,11 +86,12 @@ module.exports = (r) => {
     const host = v.network === 'lan' ? '0.0.0.0' : '127.0.0.1';
     const dir = path.join(config.dataDir, 'certs'); const crt = path.join(dir, 'suds.crt'), key = path.join(dir, 'suds.key');
     let tls = 'none';
+    if (v.network === 'lan' && !v.https && !v.trust_proxy && !config.trustProxy) throw badRequest('HTTPS is required when other devices can connect');
     if (v.https) {
-      if (v.regenerate_cert || !fs.existsSync(crt)) {
+      if (v.regenerate_cert || !fs.existsSync(crt) || !fs.existsSync(path.join(dir, 'suds-ca.crt'))) {
         const hosts = ['localhost', '127.0.0.1', 'suds.local', require('node:os').hostname(), require('node:os').hostname() + '.local', ...listener.lanAddresses().map(a => a.address), ...String(v.extra_hosts || '').split(/[\s,]+/).filter(Boolean)];
         const c = require('../selfsigned').generate({ commonName: db.getSetting('org_name', 'SUDS').slice(0, 60), org: db.getSetting('org_name', 'SUDS').slice(0, 60), hosts: [...new Set(hosts)] });
-        fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); fs.writeFileSync(crt, c.cert, { mode: 0o600 }); fs.writeFileSync(key, c.key, { mode: 0o600 });
+        fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); fs.writeFileSync(crt, c.cert, { mode: 0o600 }); fs.writeFileSync(key, c.key, { mode: 0o600 }); fs.writeFileSync(path.join(dir, 'suds-ca.crt'), c.ca, { mode: 0o644 });
       }
       tls = 'selfsigned';
     }
@@ -108,8 +109,12 @@ module.exports = (r) => {
     return { ok: true, listener: desc };
   });
   function certExpiry() { try { const c = fs.readFileSync(path.join(config.dataDir, 'certs', 'suds.crt')); return new (require('node:crypto').X509Certificate)(c).validTo; } catch { return null; } }
+  // What a phone installs is the CA, not the server certificate: only a CA can be added to a device's trust
+  // store. A certs folder from before the CA existed still serves its self-signed leaf, which browsers on a
+  // computer will accept, until "Create a new certificate" is used.
   r.get('/api/admin/certificate', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
-    const crt = path.join(config.dataDir, 'certs', 'suds.crt'); if (!fs.existsSync(crt)) throw notFound('No self-signed certificate');
+    const caPath = path.join(config.dataDir, 'certs', 'suds-ca.crt'); const crt = fs.existsSync(caPath) ? caPath : path.join(config.dataDir, 'certs', 'suds.crt');
+    if (!fs.existsSync(crt)) throw notFound('No self-signed certificate');
     ctx.res.writeHead(200, { 'Content-Type': 'application/x-x509-ca-cert', 'Content-Disposition': 'attachment; filename="suds-certificate.crt"' }); ctx.res.end(fs.readFileSync(crt));
   });
 
@@ -128,8 +133,8 @@ module.exports = (r) => {
   r.post('/api/admin/backup/run-now', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
     const { retain, offsiteDir } = scheduledBackup.settings();
     const out = scheduledBackup.run({ retain, offsiteDir });
-    audit.log({ user: ctx.user, action: 'backup.run_now', ip: ctx.ip, details: { bytes: out.bytes, offsite: out.offsiteOk } });
-    return { ok: true, file: path.basename(out.file), bytes: out.bytes, offsite_ok: out.offsiteOk };
+    audit.log({ user: ctx.user, action: 'backup.run_now', ip: ctx.ip, details: { bytes: out.bytes, offsite: out.offsiteOk, verified: out.verified } });
+    return { ok: true, file: path.basename(out.file), bytes: out.bytes, offsite_ok: out.offsiteOk, verified: out.verified, verify_error: out.verifyError || null };
   });
 
   // Restoring from a backup, without a terminal. INSTALL.md is written for an office manager; telling them

@@ -1,7 +1,8 @@
 'use strict';
-// County policy/procedure/contract library: upload a file, describe it, find it again by title or category.
-// No PHI here and nothing is extracted from the files themselves — search is metadata only (title,
-// description, category), same as CLAUDE.md's zero-dependency stance rules out a PDF/Word text extractor.
+// County policy/procedure/contract library: upload a file, describe it, find it again by title, category,
+// or a phrase from inside it. No PHI here. The text of a PDF/Word/plain-text file is pulled out on upload
+// with Node built-ins (server/doc-text.js) so a policy can be found by what it says; a scan or picture is
+// still findable by title and description.
 const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
@@ -9,6 +10,7 @@ const C = require('../constants');
 const { badRequest, notFound } = require('../http');
 const { validate } = require('../validate');
 const { uuid } = require('../crypto');
+const { extractText } = require('../doc-text');
 
 const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
 const FILE_TYPES = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx', 'application/msword': 'doc', 'text/plain': 'txt' };
@@ -38,15 +40,23 @@ const SERVABLE_TYPES = new Set(['application/pdf', 'image/png', 'image/jpeg', 'i
 function safeContentType(t) { return SERVABLE_TYPES.has(String(t || '').toLowerCase().split(';')[0].trim()) ? String(t).split(';')[0].trim() : 'application/octet-stream'; }
 
 const shape = { title: { type: 'string', required: true, maxLen: 200 }, category: { type: 'string', required: true, enum: C.DOCUMENT_CATEGORIES }, description: { type: 'string', maxLen: 2000 }, effective_date: { type: 'date' }, expires_at: { type: 'date' }, filename: { type: 'string', maxLen: 200 } };
-const out = (row) => row && ({ ...row, has_file: !!row.file_b64, file_b64: undefined });
+const out = (row) => row && ({ ...row, has_file: !!row.file_b64, searchable: !!row.search_text, file_b64: undefined, search_text: undefined });
 
 module.exports = (r) => {
   r.get('/api/documents', auth.requireAuth, auth.requirePerm('documents:read'), (ctx) => {
     const all = ctx.query.get('all') === '1' && auth.hasPerm(ctx.user, 'documents:write');
     const cat = ctx.query.get('category');
-    const rows = db.all(`SELECT id,title,category,description,effective_date,expires_at,filename,content_type,bytes,is_active,uploaded_by,created_at,updated_at, (file_b64 IS NOT NULL) has_file
-      FROM policy_documents ${all ? '' : 'WHERE is_active=1'} ${cat ? `${all ? 'WHERE' : 'AND'} category=?` : ''} ORDER BY category, title`, ...(cat ? [cat] : []));
-    return { documents: rows, categories: C.DOCUMENT_CATEGORIES };
+    const q = (ctx.query.get('q') || '').trim().toLowerCase();
+    const where = []; const params = [];
+    if (!all) where.push('is_active=1');
+    if (cat) { where.push('category=?'); params.push(cat); }
+    // Every word must appear somewhere in the title, description or the file's own text.
+    for (const word of q.split(/\s+/).filter(Boolean)) { where.push(`(lower(title) LIKE ? ESCAPE '\\' OR lower(COALESCE(description,'')) LIKE ? ESCAPE '\\' OR lower(COALESCE(search_text,'')) LIKE ? ESCAPE '\\')`); const like = `%${word.replace(/[%_]/g, '\\$&')}%`; params.push(like, like, like); }
+    const rows = db.all(`SELECT id,title,category,description,effective_date,expires_at,filename,content_type,bytes,is_active,uploaded_by,created_at,updated_at, (file_b64 IS NOT NULL) has_file, (search_text IS NOT NULL AND search_text<>'') searchable, search_text
+      FROM policy_documents ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY category, title`, ...params);
+    // A few words around the first match, so the reader can see why this document came up.
+    const snippet = (text) => { if (!q || !text) return null; const t = String(text); const i = t.toLowerCase().indexOf(q.split(/\s+/)[0]); if (i < 0) return null; const s = Math.max(0, i - 60), e = Math.min(t.length, i + 100); return (s ? '…' : '') + t.slice(s, e) + (e < t.length ? '…' : ''); };
+    return { documents: rows.map(r => ({ ...r, snippet: snippet(r.search_text), search_text: undefined })), categories: C.DOCUMENT_CATEGORIES };
   });
   // A retired document is restricted to documents:write the same as the list route restricts it — reachable
   // by a bookmarked/guessed id otherwise, which would defeat the point of retiring something.
@@ -65,8 +75,8 @@ module.exports = (r) => {
     const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_DOCUMENT_BYTES, 'File');
     if (!file) throw badRequest('A file is required');
     const id = uuid();
-    db.run(`INSERT INTO policy_documents(id,title,category,description,effective_date,expires_at,filename,content_type,bytes,file_b64,uploaded_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-      id, v.title, v.category, v.description || null, v.effective_date || null, v.expires_at || null, v.filename || `${v.title}.${FILE_TYPES[file.type]}`, file.type, file.buf.length, file.b64, ctx.user.id);
+    db.run(`INSERT INTO policy_documents(id,title,category,description,effective_date,expires_at,filename,content_type,bytes,file_b64,search_text,uploaded_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+      id, v.title, v.category, v.description || null, v.effective_date || null, v.expires_at || null, v.filename || `${v.title}.${FILE_TYPES[file.type]}`, file.type, file.buf.length, file.b64, extractText(file.buf, file.type) || null, ctx.user.id);
     audit.log({ user: ctx.user, action: 'document.create', entity: 'policy_document', entityId: id, ip: ctx.ip, details: { title: v.title, category: v.category, bytes: file.buf.length } });
     ctx.status = 201; return { id };
   });
@@ -76,7 +86,7 @@ module.exports = (r) => {
     const v2 = validate({ is_active: ctx.body.is_active }, { is_active: { type: 'boolean' } }, { partial: true });
     const sets = Object.keys(v).map(k => `${k}=?`); const params = Object.keys(v).map(k => v[k]);
     for (const k of Object.keys(v2)) { sets.push(`${k}=?`); params.push(v2[k]); }
-    if (ctx.body.file_url || ctx.body.file) { const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_DOCUMENT_BYTES, 'File'); sets.push('file_b64=?', 'content_type=?', 'bytes=?', 'filename=?'); params.push(file.b64, file.type, file.buf.length, v.filename || ctx.body.filename || `document.${FILE_TYPES[file.type]}`); }
+    if (ctx.body.file_url || ctx.body.file) { const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_DOCUMENT_BYTES, 'File'); sets.push('file_b64=?', 'content_type=?', 'bytes=?', 'filename=?', 'search_text=?'); params.push(file.b64, file.type, file.buf.length, v.filename || ctx.body.filename || `document.${FILE_TYPES[file.type]}`, extractText(file.buf, file.type) || null); }
     if (!sets.length) return { ok: true };
     db.run(`UPDATE policy_documents SET ${sets.join(', ')}, updated_at=? WHERE id=?`, ...params, db.now(), d.id);
     audit.log({ user: ctx.user, action: 'document.update', entity: 'policy_document', entityId: d.id, ip: ctx.ip, details: { fields: Object.keys(v).concat(Object.keys(v2)) } });

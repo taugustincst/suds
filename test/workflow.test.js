@@ -101,10 +101,48 @@ test('staff time is submitted and approved by someone else', async () => {
   assert.equal(row.approved_by, supId);
 });
 
+test('an administrator can put a worker under supervision without touching the database', async () => {
+  // The requires_cosign/supervisor_id columns had no route or form: the countersignature workflow could
+  // only be switched on with SQL, which is not an option for the office manager this app is for.
+  assert.equal((await admin.put(`/api/users/${nav2Id}`, { requires_cosign: true, supervisor_id: supId })).status, 200);
+  const row = H.db.one(`SELECT requires_cosign, supervisor_id FROM users WHERE id=?`, nav2Id);
+  assert.equal(row.requires_cosign, 1); assert.equal(row.supervisor_id, supId);
+  assert.ok((await admin.get('/api/users')).data.users.find(u => u.id === nav2Id).requires_cosign === 1, 'and the user list shows it');
+  assert.equal((await admin.put(`/api/users/${nav2Id}`, { supervisor_id: navId })).status, 400, 'a navigator cannot be named as someone\'s supervisor');
+  assert.equal((await nav.put(`/api/users/${nav2Id}`, { requires_cosign: false })).status, 403, 'nor can a navigator change it');
+  assert.equal((await admin.put(`/api/users/${nav2Id}`, { requires_cosign: false, supervisor_id: '' })).status, 200);
+  assert.equal(H.db.one(`SELECT requires_cosign FROM users WHERE id=?`, nav2Id).requires_cosign, 0);
+});
+
+test('a supervisor can approve a batch of staff time from the queue', async () => {
+  // Regression: the validator's array branch referenced an undefined variable, so every request through
+  // /api/time/approve-batch -- the only endpoint the Supervision page calls, for single rows too -- was a
+  // 500. No staff time could be approved through the UI at all.
+  const a = await nav.post('/api/time', { work_date: '2026-09-03', minutes: 60, category: 'direct_service', client_id: clientId });
+  const b = await nav.post('/api/time', { work_date: '2026-09-04', minutes: 45, category: 'documentation' });
+  for (const t of [a, b]) assert.equal((await nav.post(`/api/time/${t.data.id}/submit`, {})).status, 200);
+  const own = await sup.post('/api/time', { work_date: '2026-09-04', minutes: 30, category: 'supervision' });
+  await sup.post(`/api/time/${own.data.id}/submit`, {});
+  const r = await sup.post('/api/time/approve-batch', { ids: [a.data.id, b.data.id, own.data.id], decision: 'approved' });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(r.data.approved, 2);
+  assert.equal(r.data.skipped.length, 1, 'the supervisor\'s own entry is skipped, not approved');
+  assert.equal(H.db.one(`SELECT status FROM time_entries WHERE id=?`, a.data.id).status, 'approved');
+  const tooMany = await sup.post('/api/time/approve-batch', { ids: Array.from({ length: 501 }, (_, i) => `x${i}`), decision: 'approved' });
+  assert.equal(tooMany.status, 400, 'the batch size limit is enforced rather than crashing');
+});
+
 test('a supervisor sees their team\'s unfinished work, not just their own', async () => {
   await trainee.post('/api/notes', { client_id: clientId, kind: 'clinical', content: 'Left as a draft.', occurred_at: '2026-09-03T10:00:00Z' });
   const q = await sup.get('/api/supervision/queue');
   assert.ok(q.data.unsigned_notes.length >= 1, 'the queue shows the team\'s drafts');
+  // The dashboard alert for a supervisor counts the team's drafts too -- it used to count only their own,
+  // which for a program manager who writes no routine notes meant it never showed anything.
+  const dash = await sup.get('/api/reports/dashboard');
+  assert.equal(dash.data.notes.team, true);
+  assert.ok(dash.data.notes.unsigned >= 1, 'the dashboard alert sees the trainee\'s draft');
+  const own = await trainee.get('/api/reports/dashboard');
+  assert.equal(own.data.notes.team, false, 'a clinician\'s alert is still just their own drafts');
   assert.ok(q.data.unsigned_notes.every(n => n.author), 'each one names its author');
   // A navigator has no supervision queue at all.
   assert.equal((await nav.get('/api/supervision/queue')).status, 403);
@@ -289,4 +327,25 @@ test('the health endpoint reports on the database, not just the listener', async
   // It must not leak anything about the installation.
   const body = JSON.stringify(r.data);
   assert.ok(!/password|key|secret|client/i.test(body.replace(/schema_version|database/gi, '')), 'it says nothing sensitive');
+  // The quiet failures: a broken audit chain and a backup schedule that stopped running are both "not ok".
+  H.db.setSetting('audit_verify_failed_at', '2026-09-01T00:00:00.000Z');
+  H.db.setSetting('backup_schedule_hours', '24'); H.db.setSetting('last_scheduled_backup_at', '2026-01-01T00:00:00.000Z');
+  const bad = await c.get('/api/health');
+  assert.equal(bad.status, 503);
+  assert.ok(bad.data.warnings.some(w => /audit log/.test(w)), 'names the audit failure');
+  assert.ok(bad.data.warnings.some(w => /Scheduled backups/.test(w)), 'and the stale backup');
+  H.db.run(`DELETE FROM settings WHERE key IN ('audit_verify_failed_at','backup_schedule_hours','last_scheduled_backup_at')`);
+  assert.equal((await c.get('/api/health')).status, 200);
+});
+
+test('a server started with the wrong encryption key refuses the database instead of running blind', () => {
+  // Regression: a data folder copied without its keys.json used to boot with freshly minted keys and look
+  // healthy while every record had become unreadable.
+  const config = require('../server/config');
+  assert.equal(H.db.checkKeyFingerprint().first, true, 'the first check records this key');
+  assert.equal(H.db.checkKeyFingerprint().first, false, 'and the same key passes');
+  const real = config.encryptionKey;
+  config.encryptionKey = Buffer.alloc(32, 7);
+  try { assert.throws(() => H.db.checkKeyFingerprint(), /not the key this database was written with/); }
+  finally { config.encryptionKey = real; H.db.run(`DELETE FROM settings WHERE key='key_fingerprint'`); }
 });

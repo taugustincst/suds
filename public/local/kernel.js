@@ -151,10 +151,10 @@ var require_ieee754 = __commonJS({
       var nBits = -7;
       var i = isLE3 ? nBytes - 1 : 0;
       var d = isLE3 ? -1 : 1;
-      var s2 = buffer[offset + i];
+      var s = buffer[offset + i];
       i += d;
-      e = s2 & (1 << -nBits) - 1;
-      s2 >>= -nBits;
+      e = s & (1 << -nBits) - 1;
+      s >>= -nBits;
       nBits += eLen;
       for (; nBits > 0; e = e * 256 + buffer[offset + i], i += d, nBits -= 8) {
       }
@@ -166,12 +166,12 @@ var require_ieee754 = __commonJS({
       if (e === 0) {
         e = 1 - eBias;
       } else if (e === eMax) {
-        return m ? NaN : (s2 ? -1 : 1) * Infinity;
+        return m ? NaN : (s ? -1 : 1) * Infinity;
       } else {
         m = m + Math.pow(2, mLen);
         e = e - eBias;
       }
-      return (s2 ? -1 : 1) * m * Math.pow(2, e - mLen);
+      return (s ? -1 : 1) * m * Math.pow(2, e - mLen);
     };
     exports.write = function(buffer, value, offset, isLE3, mLen, nBytes) {
       var e, m, c;
@@ -181,7 +181,7 @@ var require_ieee754 = __commonJS({
       var rt = mLen === 23 ? Math.pow(2, -24) - Math.pow(2, -77) : 0;
       var i = isLE3 ? 0 : nBytes - 1;
       var d = isLE3 ? 1 : -1;
-      var s2 = value < 0 || value === 0 && 1 / value < 0 ? 1 : 0;
+      var s = value < 0 || value === 0 && 1 / value < 0 ? 1 : 0;
       value = Math.abs(value);
       if (isNaN(value) || value === Infinity) {
         m = isNaN(value) ? 1 : 0;
@@ -218,7 +218,7 @@ var require_ieee754 = __commonJS({
       eLen += mLen;
       for (; eLen > 0; buffer[offset + i] = e & 255, i += d, e /= 256, eLen -= 8) {
       }
-      buffer[offset + i - d] |= s2 * 128;
+      buffer[offset + i - d] |= s * 128;
     };
   }
 });
@@ -2513,8 +2513,8 @@ var init_aes = __esm({
     rotr32_8 = (n) => n << 24 | n >>> 8;
     rotl32_8 = (n) => n << 8 | n >>> 24;
     byteSwap = (word) => word << 24 & 4278190080 | word << 8 & 16711680 | word >>> 8 & 65280 | word >>> 24 & 255;
-    tableEncoding = /* @__PURE__ */ genTtable(sbox, (s2) => mul(s2, 3) << 24 | s2 << 16 | s2 << 8 | mul(s2, 2));
-    tableDecoding = /* @__PURE__ */ genTtable(invSbox, (s2) => mul(s2, 11) << 24 | mul(s2, 13) << 16 | mul(s2, 9) << 8 | mul(s2, 14));
+    tableEncoding = /* @__PURE__ */ genTtable(sbox, (s) => mul(s, 3) << 24 | s << 16 | s << 8 | mul(s, 2));
+    tableDecoding = /* @__PURE__ */ genTtable(invSbox, (s) => mul(s, 11) << 24 | mul(s, 13) << 16 | mul(s, 9) << 8 | mul(s, 14));
     xPowers = /* @__PURE__ */ (() => {
       const p = new Uint8Array(16);
       for (let i = 0, x = 1; i < 16; i++, x = mul22(x))
@@ -3765,7 +3765,7 @@ function createHmac(alg, key) {
   } };
 }
 function concat(parts) {
-  const n = parts.reduce((s2, p) => s2 + p.length, 0);
+  const n = parts.reduce((s, p) => s + p.length, 0);
   const r = new Uint8Array(n);
   let o = 0;
   for (const p of parts) {
@@ -6184,6 +6184,9 @@ var require_config = __commonJS({
       mfaRequiredRoles: [],
       password: { minLength: 12, maxAgeDays: 90 },
       lockout: { maxAttempts: 5, minutes: 15 },
+      // One person, one device: there is no address to rate-limit, and the office server's per-address cap
+      // must not turn into a lockout here.
+      loginRateLimit: 1e5,
       msGraph: { tenantId: "", clientId: "", clientSecret: "", user: "" },
       auditRetentionDays: 2555,
       maxBodyBytes: 60 * 1024 * 1024,
@@ -6301,6 +6304,8 @@ CREATE TABLE IF NOT EXISTS clients (
   -- a specific name against those, and both live in the same database as the ciphertext.
   name_prefix_idx TEXT,
   name_phonetic_idx TEXT,
+  first_name_idx TEXT,
+  first_name_prefix_idx TEXT,
   preferred_name_enc TEXT,
   dob_enc TEXT,
   dob_idx TEXT,
@@ -6557,6 +6562,7 @@ CREATE TABLE IF NOT EXISTS policy_documents (
   content_type TEXT,
   bytes INTEGER NOT NULL DEFAULT 0,
   file_b64 TEXT,
+  search_text TEXT,
   is_active INTEGER NOT NULL DEFAULT 1,
   uploaded_by TEXT REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -6626,6 +6632,7 @@ CREATE TABLE IF NOT EXISTS expenditures (
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','reimbursed')),
   approved_by TEXT REFERENCES users(id),
   approved_at TEXT,
+  approval_note TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -6833,6 +6840,8 @@ CREATE INDEX IF NOT EXISTS idx_clients_updated ON clients(updated_at);
 CREATE INDEX IF NOT EXISTS idx_clients_full_name_idx ON clients(full_name_idx);
 CREATE INDEX IF NOT EXISTS idx_clients_name_prefix ON clients(name_prefix_idx);
 CREATE INDEX IF NOT EXISTS idx_clients_name_phonetic ON clients(name_phonetic_idx);
+CREATE INDEX IF NOT EXISTS idx_clients_first_name ON clients(first_name_idx);
+CREATE INDEX IF NOT EXISTS idx_clients_first_name_prefix ON clients(first_name_prefix_idx);
 CREATE INDEX IF NOT EXISTS idx_resources_updated ON resources(updated_at);
 CREATE INDEX IF NOT EXISTS idx_resource_photos_updated ON resource_photos(updated_at);
 CREATE INDEX IF NOT EXISTS idx_funding_sources_updated ON funding_sources(updated_at);
@@ -6992,8 +7001,8 @@ var require_crypto = __commonJS({
     function randomToken(bytes3 = 32) {
       return crypto3.randomBytes(bytes3).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     }
-    function sha2562(s2) {
-      return crypto3.createHash("sha256").update(s2).digest("hex");
+    function sha2562(s) {
+      return crypto3.createHash("sha256").update(s).digest("hex");
     }
     function uuid2() {
       return crypto3.randomUUID();
@@ -7152,17 +7161,21 @@ var require_clients_model = __commonJS({
         cols2.name_prefix_idx = namePrefixIndex(v.last_name);
         cols2.name_phonetic_idx = namePhoneticIndex(v.last_name);
       }
+      if (v.first_name !== void 0) {
+        cols2.first_name_idx = blindIndex2(String(v.first_name || "").trim().toLowerCase());
+        cols2.first_name_prefix_idx = namePrefixIndex(v.first_name);
+      }
       if (v.dob !== void 0) cols2.dob_idx = blindIndex2(v.dob);
       if (v.phone !== void 0) cols2.phone_idx = blindIndex2(String(v.phone || "").replace(/\D/g, ""));
       return cols2;
     }
     function soundex(name) {
-      const s2 = String(name || "").toUpperCase().replace(/[^A-Z]/g, "");
-      if (!s2) return "";
+      const s = String(name || "").toUpperCase().replace(/[^A-Z]/g, "");
+      if (!s) return "";
       const code = (c) => ({ B: 1, F: 1, P: 1, V: 1, C: 2, G: 2, J: 2, K: 2, Q: 2, S: 2, X: 2, Z: 2, D: 3, T: 3, L: 4, M: 5, N: 5, R: 6 })[c] || 0;
-      let out2 = s2[0];
-      let prev = code(s2[0]);
-      for (const ch of s2.slice(1)) {
+      let out2 = s[0];
+      let prev = code(s[0]);
+      for (const ch of s.slice(1)) {
         const c = code(ch);
         if (c && c !== prev) out2 += c;
         if (ch !== "H" && ch !== "W") prev = c;
@@ -7444,6 +7457,33 @@ var require_db = __commonJS({
         const unlink = d.prepare(`UPDATE expenditures SET intervention_id=NULL WHERE id=?`);
         for (const row of dupes) unlink.run(row.id);
         d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_exp_intervention_unique ON expenditures(intervention_id) WHERE intervention_id IS NOT NULL`);
+      },
+      // 17: why an expenditure was rejected. Time entries have carried this since their approval step was
+      //     added; expenditures accepted a note on the approve route and then dropped it on the floor.
+      (d) => {
+        addColumn(d, "expenditures", "approval_note", "TEXT");
+      },
+      // 18: a first name on its own finds the person (the search box always said it would), and the policy
+      //     library keeps the words inside each file so a policy can be found by what it says, not only its
+      //     title. Existing documents are indexed by server/routes/documents.js the next time they are saved.
+      (d) => {
+        const schemaText = safeSchema();
+        addColumn(d, "clients", "first_name_idx", "TEXT");
+        addColumn(d, "clients", "first_name_prefix_idx", "TEXT");
+        const { decrypt: decrypt3, blindIndex: blindIndex2 } = require_crypto();
+        const M = require_clients_model();
+        const upd = d.prepare(`UPDATE clients SET first_name_idx=?, first_name_prefix_idx=? WHERE id=?`);
+        for (const c of d.prepare(`SELECT id, first_name_enc FROM clients`).all()) {
+          let first = "";
+          try {
+            first = c.first_name_enc ? decrypt3(c.first_name_enc) : "";
+          } catch {
+            continue;
+          }
+          upd.run(blindIndex2(String(first || "").trim().toLowerCase()), M.namePrefixIndex(first), c.id);
+        }
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_clients_first_name/.test(line.trim())) d.exec(line.trim());
+        addColumn(d, "policy_documents", "search_text", "TEXT");
       }
     ];
     function initialise(d, schemaText, dbPath) {
@@ -7585,6 +7625,16 @@ var require_db = __commonJS({
         else throw e;
       }
     }
+    function checkKeyFingerprint() {
+      const fp = require_crypto().keyFingerprint();
+      const stored = getSetting("key_fingerprint", null);
+      if (!stored) {
+        setSetting("key_fingerprint", fp);
+        return { first: true };
+      }
+      if (stored !== fp) throw new Error("The encryption key this server was started with is not the key this database was written with. Nothing has been changed. Restore the key backup (keys.json) saved at setup or set SUDS_ENCRYPTION_KEY to the original key, then start again. If the key was deliberately rotated with scripts/rotate-key.js, that script records the new key; a database this happened to some other way needs the original key back.");
+      return { first: false };
+    }
     function getSetting(key, def = null) {
       const r = one(`SELECT value FROM settings WHERE key=?`, key);
       return r ? r.value : def;
@@ -7595,7 +7645,7 @@ var require_db = __commonJS({
     function tombstone(table, id) {
       run2(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now());
     }
-    module.exports = { open, openWith, get, close, LATEST_SCHEMA_VERSION: migrations.length, now, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone };
+    module.exports = { open, openWith, get, close, LATEST_SCHEMA_VERSION: migrations.length, now, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint };
   }
 });
 
@@ -7939,6 +7989,7 @@ var require_auth = __commonJS({
         "budget:read",
         "budget:write",
         "budget:approve",
+        "budget:manage",
         "notes:admin:read",
         "notes:admin:write",
         "notes:clinical:breakglass",
@@ -7973,6 +8024,7 @@ var require_auth = __commonJS({
         "budget:read",
         "budget:write",
         "budget:approve",
+        "budget:manage",
         "notes:admin:read",
         "notes:admin:write",
         "notes:clinical:read",
@@ -8044,7 +8096,7 @@ var require_auth = __commonJS({
       ],
       // finance sees money, not people: export:read without export:identified means every export it can run
       // comes out keyed by client_code. Do not add 'export:identified' here — docs/HIPAA.md promises otherwise.
-      finance: ["clients:list-deidentified", "budget:read", "budget:write", "budget:approve", "time:read", "time:all", "time:approve", "reports:read", "export:read", "users:read", "documents:read", "documents:write"],
+      finance: ["clients:list-deidentified", "budget:read", "budget:write", "budget:approve", "budget:manage", "time:read", "time:all", "time:approve", "reports:read", "export:read", "users:read", "documents:read", "documents:write"],
       readonly: ["clients:read", "clients:all", "interventions:read", "calls:read", "referrals:read", "tasks:read", "resources:read", "reports:read", "users:read", "forms:read", "documents:read"]
     };
     function hasPerm(user, perm) {
@@ -8120,20 +8172,20 @@ var require_auth = __commonJS({
       const authz = ctx.headers["authorization"];
       if (!token2 && authz && authz.startsWith("Bearer ")) token2 = authz.slice(7).trim();
       if (!token2) return null;
-      const s2 = db3.one(`SELECT * FROM sessions WHERE id=? AND revoked_at IS NULL`, sha2562(token2));
-      if (!s2) return null;
+      const s = db3.one(`SELECT * FROM sessions WHERE id=? AND revoked_at IS NULL`, sha2562(token2));
+      if (!s) return null;
       const now = Date.now();
-      if (Date.parse(s2.expires_at) < now) return null;
+      if (Date.parse(s.expires_at) < now) return null;
       const idleMs = policy().idleMinutes * 60 * 1e3;
-      if (now - Date.parse(s2.last_seen_at) > idleMs) {
-        db3.run(`UPDATE sessions SET revoked_at=? WHERE id=?`, db3.now(), s2.id);
+      if (now - Date.parse(s.last_seen_at) > idleMs) {
+        db3.run(`UPDATE sessions SET revoked_at=? WHERE id=?`, db3.now(), s.id);
         return null;
       }
-      const user = db3.one(`SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,must_change_password,password_changed_at,hourly_cost,created_at,requires_cosign,supervisor_id FROM users WHERE id=?`, s2.user_id);
+      const user = db3.one(`SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,must_change_password,password_changed_at,hourly_cost,created_at,requires_cosign,supervisor_id FROM users WHERE id=?`, s.user_id);
       if (!user || !user.is_active) return null;
-      if (now - Date.parse(s2.last_seen_at) > 6e4) db3.run(`UPDATE sessions SET last_seen_at=? WHERE id=?`, new Date(now).toISOString(), s2.id);
+      if (now - Date.parse(s.last_seen_at) > 6e4) db3.run(`UPDATE sessions SET last_seen_at=? WHERE id=?`, new Date(now).toISOString(), s.id);
       ctx.sessionToken = token2;
-      ctx.session = s2;
+      ctx.session = s;
       return user;
     }
     function requireAuth(ctx) {
@@ -8223,6 +8275,7 @@ var require_auth = __commonJS({
         must_change_password: !!u.must_change_password,
         permissions: perms,
         mfa_required: policy().mfaRequiredRoles.includes(u.role),
+        mfa_setup_deadline: mfaDeadline(u),
         caseload_restricted: caseloadRestricted(u)
       };
     }
@@ -8272,8 +8325,9 @@ var require_sync_tables = __commonJS({
         { name: "resources", enc: [], scope: "all", writePerm: "resources:write" },
         { name: "resource_photos", enc: [], scope: "all", writePerm: "resources:write", parent: ["resources", "resource_id"], blob: ["data_b64"] },
         { name: "policy_documents", enc: [], scope: "all", writePerm: "documents:write", blob: ["file_b64"] },
-        { name: "funding_sources", enc: [], scope: "all", writePerm: "budget:write" },
-        { name: "budget_lines", enc: [], scope: "all", writePerm: "budget:write", parent: ["funding_sources", "funding_source_id"], selfParent: "parent_id" },
+        // Grant structure is budget:manage over REST; a device holding only budget:write must not restructure it by sync.
+        { name: "funding_sources", enc: [], scope: "all", writePerm: "budget:manage" },
+        { name: "budget_lines", enc: [], scope: "all", writePerm: "budget:manage", parent: ["funding_sources", "funding_source_id"], selfParent: "parent_id" },
         { name: "clients", enc: ["first_name_enc", "last_name_enc", "preferred_name_enc", "dob_enc", "phone_enc", "alt_phone_enc", "email_enc", "address_enc", "medicaid_id_enc", "emergency_contact_enc", "goals_enc", "flags_enc"], scope: "client", clientCol: "id", idx: true, writePerm: "clients:write" },
         { name: "assignments", enc: [], scope: "client", clientCol: "client_id", writePerm: "assignments:manage", parent: ["clients", "client_id"] },
         { name: "episodes", enc: ["presenting_problem_enc", "discharge_summary_enc"], scope: "client", clientCol: "client_id", writePerm: "episodes:write", parent: ["clients", "client_id"] },
@@ -8366,6 +8420,10 @@ var require_sync_tables = __commonJS({
           o.name_phonetic_idx = M.namePhoneticIndex(r.last_name_enc || "");
         }
         if (r.last_name_enc !== void 0 || r.first_name_enc !== void 0) o.full_name_idx = crypto3.blindIndex((r.last_name_enc || "") + (r.first_name_enc || ""));
+        if (r.first_name_enc !== void 0) {
+          o.first_name_idx = crypto3.blindIndex(String(r.first_name_enc || "").trim().toLowerCase());
+          o.first_name_prefix_idx = M.namePrefixIndex(r.first_name_enc || "");
+        }
         if (r.dob_enc !== void 0) o.dob_idx = crypto3.blindIndex(r.dob_enc || "");
         if (r.phone_enc !== void 0) o.phone_idx = crypto3.blindIndex(String(r.phone_enc || "").replace(/\D/g, ""));
       }
@@ -8555,10 +8613,10 @@ var init_browser = __esm({
       rev[i] = ((x & 65280) >> 8 | (x & 255) << 8) >> 1;
     }
     hMap = function(cd, mb, r) {
-      var s2 = cd.length;
+      var s = cd.length;
       var i = 0;
       var l = new u16(mb);
-      for (; i < s2; ++i) {
+      for (; i < s; ++i) {
         if (cd[i])
           ++l[cd[i] - 1];
       }
@@ -8570,7 +8628,7 @@ var init_browser = __esm({
       if (r) {
         co = new u16(1 << mb);
         var rvb = 15 - mb;
-        for (i = 0; i < s2; ++i) {
+        for (i = 0; i < s; ++i) {
           if (cd[i]) {
             var sv = i << 4 | cd[i];
             var r_1 = mb - cd[i];
@@ -8581,8 +8639,8 @@ var init_browser = __esm({
           }
         }
       } else {
-        co = new u16(s2);
-        for (i = 0; i < s2; ++i) {
+        co = new u16(s);
+        for (i = 0; i < s; ++i) {
           if (cd[i]) {
             co[i] = rev[le[cd[i] - 1]++] >> 15 - cd[i];
           }
@@ -8625,12 +8683,12 @@ var init_browser = __esm({
     shft = function(p) {
       return (p + 7) / 8 | 0;
     };
-    slc = function(v, s2, e) {
-      if (s2 == null || s2 < 0)
-        s2 = 0;
+    slc = function(v, s, e) {
+      if (s == null || s < 0)
+        s = 0;
       if (e == null || e > v.length)
         e = v.length;
-      return new u82(v.subarray(s2, e));
+      return new u82(v.subarray(s, e));
     };
     ec = [
       "unexpected EOF",
@@ -8683,7 +8741,7 @@ var init_browser = __esm({
           var type = bits(dat, pos + 1, 3);
           pos += 3;
           if (!type) {
-            var s2 = shft(pos) + 4, l = dat[s2 - 4] | dat[s2 - 3] << 8, t = s2 + l;
+            var s = shft(pos) + 4, l = dat[s - 4] | dat[s - 3] << 8, t = s + l;
             if (t > sl) {
               if (noSt)
                 err(0);
@@ -8691,7 +8749,7 @@ var init_browser = __esm({
             }
             if (resize)
               cbuf(bt + l);
-            buf.set(dat.subarray(s2, t), bt);
+            buf.set(dat.subarray(s, t), bt);
             st.b = bt += l, st.p = pos = t * 8, st.f = final;
             continue;
           } else if (type == 1)
@@ -8711,16 +8769,16 @@ var init_browser = __esm({
             for (var i = 0; i < tl; ) {
               var r = clm[bits(dat, pos, clbmsk)];
               pos += r & 15;
-              var s2 = r >> 4;
-              if (s2 < 16) {
-                ldt[i++] = s2;
+              var s = r >> 4;
+              if (s < 16) {
+                ldt[i++] = s;
               } else {
                 var c = 0, n = 0;
-                if (s2 == 16)
+                if (s == 16)
                   n = 3 + bits(dat, pos, 3), pos += 2, c = ldt[i - 1];
-                else if (s2 == 17)
+                else if (s == 17)
                   n = 3 + bits(dat, pos, 7), pos += 3;
-                else if (s2 == 18)
+                else if (s == 18)
                   n = 11 + bits(dat, pos, 127), pos += 7;
                 while (n--)
                   ldt[i++] = c;
@@ -8818,11 +8876,11 @@ var init_browser = __esm({
         if (d[i])
           t.push({ s: i, f: d[i] });
       }
-      var s2 = t.length;
+      var s = t.length;
       var t2 = t.slice();
-      if (!s2)
+      if (!s)
         return { t: et, l: 0 };
-      if (s2 == 1) {
+      if (s == 1) {
         var v = new u82(t[0].s + 1);
         v[t[0].s] = 1;
         return { t: v, l: 1 };
@@ -8833,13 +8891,13 @@ var init_browser = __esm({
       t.push({ s: -1, f: 25001 });
       var l = t[0], r = t[1], i0 = 0, i1 = 1, i2 = 2;
       t[0] = { s: -1, f: l.f + r.f, l, r };
-      while (i1 != s2 - 1) {
+      while (i1 != s - 1) {
         l = t[t[i0].f < t[i2].f ? i0++ : i2++];
         r = t[i0 != i1 && t[i0].f < t[i2].f ? i0++ : i2++];
         t[i1++] = { s: -1, f: l.f + r.f, l, r };
       }
       var maxSym = t2[0].s;
-      for (var i = 1; i < s2; ++i) {
+      for (var i = 1; i < s; ++i) {
         if (t2[i].s > maxSym)
           maxSym = t2[i].s;
       }
@@ -8851,7 +8909,7 @@ var init_browser = __esm({
         t2.sort(function(a, b) {
           return tr[b.s] - tr[a.s] || a.f - b.f;
         });
-        for (; i < s2; ++i) {
+        for (; i < s; ++i) {
           var i2_1 = t2[i].s;
           if (tr[i2_1] > mb) {
             dt += cst - (1 << mbt - tr[i2_1]);
@@ -8882,16 +8940,16 @@ var init_browser = __esm({
       return n.s == -1 ? Math.max(ln(n.l, l, d + 1), ln(n.r, l, d + 1)) : l[n.s] = d;
     };
     lc = function(c) {
-      var s2 = c.length;
-      while (s2 && !c[--s2])
+      var s = c.length;
+      while (s && !c[--s])
         ;
-      var cl = new u16(++s2);
+      var cl = new u16(++s);
       var cli = 0, cln = c[0], cls = 1;
       var w = function(v) {
         cl[cli++] = v;
       };
-      for (var i = 1; i <= s2; ++i) {
-        if (c[i] == cln && i != s2)
+      for (var i = 1; i <= s; ++i) {
+        if (c[i] == cln && i != s)
           ++cls;
         else {
           if (!cln && cls > 2) {
@@ -8914,7 +8972,7 @@ var init_browser = __esm({
           cln = c[i];
         }
       }
-      return { c: cl.subarray(0, cli), n: s2 };
+      return { c: cl.subarray(0, cli), n: s };
     };
     clen = function(cf, cl) {
       var l = 0;
@@ -8923,15 +8981,15 @@ var init_browser = __esm({
       return l;
     };
     wfblk = function(out2, pos, dat) {
-      var s2 = dat.length;
+      var s = dat.length;
       var o = shft(pos + 2);
-      out2[o] = s2 & 255;
-      out2[o + 1] = s2 >> 8;
+      out2[o] = s & 255;
+      out2[o + 1] = s >> 8;
       out2[o + 2] = out2[o] ^ 255;
       out2[o + 3] = out2[o + 1] ^ 255;
-      for (var i = 0; i < s2; ++i)
+      for (var i = 0; i < s; ++i)
         out2[o + i + 4] = dat[i];
-      return (o + 4 + s2) * 8;
+      return (o + 4 + s) * 8;
     };
     wblk = function(dat, out2, final, syms, lf, df, eb, li, bs, bl, p) {
       wbits(out2, p++, final);
@@ -9000,8 +9058,8 @@ var init_browser = __esm({
     deo = /* @__PURE__ */ new i32([65540, 131080, 131088, 131104, 262176, 1048704, 1048832, 2114560, 2117632]);
     et = /* @__PURE__ */ new u82(0);
     dflt = function(dat, lvl, plvl, pre, post, st) {
-      var s2 = st.z || dat.length;
-      var o = new u82(pre + s2 + 5 * (1 + Math.ceil(s2 / 7e3)) + post);
+      var s = st.z || dat.length;
+      var o = new u82(pre + s + 5 * (1 + Math.ceil(s / 7e3)) + post);
       var w = o.subarray(pre, o.length - post);
       var lst = st.l;
       var pos = (st.r || 0) & 7;
@@ -9019,13 +9077,13 @@ var init_browser = __esm({
         var syms = new i32(25e3);
         var lf = new u16(288), df = new u16(32);
         var lc_1 = 0, eb = 0, i = st.i || 0, li = 0, wi = st.w || 0, bs = 0;
-        for (; i + 2 < s2; ++i) {
+        for (; i + 2 < s; ++i) {
           var hv = hsh(i);
           var imod = i & 32767, pimod = head[hv];
           prev[imod] = pimod;
           head[hv] = imod;
           if (wi <= i) {
-            var rem = s2 - i;
+            var rem = s - i;
             if ((lc_1 > 7e3 || li > 24576) && (rem > 423 || !lst)) {
               pos = wblk(dat, w, 0, syms, lf, df, eb, li, bs, i - bs, pos);
               li = lc_1 = eb = 0, bs = i;
@@ -9077,7 +9135,7 @@ var init_browser = __esm({
             }
           }
         }
-        for (i = Math.max(i, wi); i < s2; ++i) {
+        for (i = Math.max(i, wi); i < s; ++i) {
           syms[li++] = dat[i];
           ++lf[dat[i]];
         }
@@ -9088,15 +9146,15 @@ var init_browser = __esm({
           st.h = head, st.p = prev, st.i = i, st.w = wi;
         }
       } else {
-        for (var i = st.w || 0; i < s2 + lst; i += 65535) {
+        for (var i = st.w || 0; i < s + lst; i += 65535) {
           var e = i + 65535;
-          if (e >= s2) {
+          if (e >= s) {
             w[pos / 8 | 0] = lst;
-            e = s2;
+            e = s;
           }
           pos = wfblk(w, pos + 1, dat.subarray(i, e));
         }
-        st.i = s2;
+        st.i = s;
       }
       return slc(o, 0, pre + shft(pos) + post);
     };
@@ -9243,10 +9301,10 @@ var require_png = __commonJS({
       const P2 = [[[58, 123, 213], [232, 240, 250], [72, 96, 120]], [[38, 140, 120], [226, 244, 236], [70, 110, 95]], [[196, 120, 60], [252, 238, 224], [120, 88, 64]], [[120, 84, 190], [240, 234, 250], [88, 72, 120]], [[40, 100, 160], [225, 235, 245], [90, 104, 120]]][palette % 5];
       const [sky, light, wall] = P2;
       const px = import_buffer.Buffer.alloc(w * h * 3);
-      let s2 = seed >>> 0;
+      let s = seed >>> 0;
       const rnd = () => {
-        s2 = s2 * 1664525 + 1013904223 >>> 0;
-        return s2 / 4294967296;
+        s = s * 1664525 + 1013904223 >>> 0;
+        return s / 4294967296;
       };
       const horizon = Math.round(h * 0.68);
       for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
@@ -9426,8 +9484,8 @@ var require_pdf = __commonJS({
     var W = 612;
     var H = 792;
     var M = 54;
-    function esc(s2) {
-      return String(s2).replace(/[^\x20-\x7E\xA0-\xFF]/g, "?").replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+    function esc(s) {
+      return String(s).replace(/[^\x20-\x7E\xA0-\xFF]/g, "?").replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
     }
     function wrap(text, maxChars) {
       const out2 = [];
@@ -9494,8 +9552,8 @@ var require_pdf = __commonJS({
       }
       render() {
         const objs = [];
-        const add = (s2) => {
-          objs.push(s2);
+        const add = (s) => {
+          objs.push(s);
           return objs.length;
         };
         const font1 = add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
@@ -9953,7 +10011,7 @@ var require_demo = __commonJS({
           const phone = `555-01${String(i + 1).padStart(2, "0")}`;
           const intake = 150 - i * 11;
           db3.run(
-            `INSERT INTO clients(id,client_code,first_name_enc,last_name_enc,last_name_idx,full_name_idx,name_prefix_idx,name_phonetic_idx,preferred_name_enc,dob_enc,dob_idx,phone_enc,phone_idx,email_enc,address_enc,city,zip,gender,pronouns,preferred_language,status,intake_date,discharge_date,discharge_reason,primary_substance,secondary_substances,route_of_use,risk_level,mat_status,mat_medication,overdose_history,last_overdose_date,naloxone_provided,naloxone_last_date,housing_status,insurance,asam_level,referral_source,justice_involved,pregnant_or_parenting,co_occurring_mh,goals_enc,flags_enc,ok_to_text,ok_to_voicemail,created_by,created_at) VALUES(${Array(47).fill("?").join(",")})`,
+            `INSERT INTO clients(id,client_code,first_name_enc,last_name_enc,last_name_idx,full_name_idx,name_prefix_idx,name_phonetic_idx,first_name_idx,first_name_prefix_idx,preferred_name_enc,dob_enc,dob_idx,phone_enc,phone_idx,email_enc,address_enc,city,zip,gender,pronouns,preferred_language,status,intake_date,discharge_date,discharge_reason,primary_substance,secondary_substances,route_of_use,risk_level,mat_status,mat_medication,overdose_history,last_overdose_date,naloxone_provided,naloxone_last_date,housing_status,insurance,asam_level,referral_source,justice_involved,pregnant_or_parenting,co_occurring_mh,goals_enc,flags_enc,ok_to_text,ok_to_voicemail,created_by,created_at) VALUES(${Array(49).fill("?").join(",")})`,
             id,
             `${DEMO_PREFIX}${String(i + 1).padStart(4, "0")}`,
             encrypt3(fn),
@@ -9962,6 +10020,8 @@ var require_demo = __commonJS({
             blindIndex2(ln2 + fn),
             M.namePrefixIndex(ln2),
             M.namePhoneticIndex(ln2),
+            blindIndex2(fn.trim().toLowerCase()),
+            M.namePrefixIndex(fn),
             pref ? encrypt3(pref) : null,
             encrypt3(dob),
             blindIndex2(dob),
@@ -10360,11 +10420,11 @@ var require_validate = __commonJS({
               errors[k] = "must be an array";
               continue;
             }
-            if (s.maxLen && v.length > s.maxLen) {
-              errors[k] = `must have at most ${s.maxLen} items`;
+            if (rule.maxLen && v.length > rule.maxLen) {
+              errors[k] = `must have at most ${rule.maxLen} items`;
               continue;
             }
-            if (s.of === "string") {
+            if (rule.of === "string") {
               if (!v.every((x) => typeof x === "string" && x.length <= 200)) {
                 errors[k] = "must be a list of identifiers";
                 continue;
@@ -10587,6 +10647,15 @@ var require_scheduled_backup = __commonJS({
       const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
       const file = path.join(dir, `suds-${stamp2}.db.enc`);
       fs.writeFileSync(file, bytes3, { mode: 384 });
+      let verified = false;
+      let verifyError = null;
+      try {
+        const info = backup.inspect(backup.decrypt(fs.readFileSync(file)));
+        verified = info.counts.clients >= 0;
+      } catch (e) {
+        verifyError = String(e && e.message || e);
+        console.error("[suds] backup written but could not be read back:", verifyError);
+      }
       let offsiteOk = null;
       if (offsiteDir) {
         try {
@@ -10600,9 +10669,9 @@ var require_scheduled_backup = __commonJS({
       }
       const kept = prune(dir, retain);
       db3.setSetting("last_scheduled_backup_at", db3.now());
-      db3.setSetting("last_scheduled_backup_status", offsiteDir && offsiteOk === false ? "offsite copy failed \u2014 local backup kept" : "ok");
-      audit3.log({ user: { username: "system" }, action: "backup.scheduled", details: { bytes: bytes3.length, offsite: offsiteDir ? offsiteOk : null, kept } });
-      return { file, bytes: bytes3.length, offsiteOk };
+      db3.setSetting("last_scheduled_backup_status", !verified ? `backup written but could not be read back \u2014 ${verifyError}` : offsiteDir && offsiteOk === false ? "ok (verified) \u2014 offsite copy failed, local backup kept" : "ok (verified)");
+      audit3.log({ user: { username: "system" }, action: "backup.scheduled", details: { bytes: bytes3.length, offsite: offsiteDir ? offsiteOk : null, kept, verified } });
+      return { file, bytes: bytes3.length, offsiteOk, verified, verifyError };
     }
     function prune(dir, retain) {
       const files = fs.readdirSync(dir).filter((f) => FILE_RE.test(f)).sort();
@@ -10763,13 +10832,15 @@ var require_admin = __commonJS({
         const dir = path.join(config.dataDir, "certs");
         const crt = path.join(dir, "suds.crt"), key = path.join(dir, "suds.key");
         let tls = "none";
+        if (v.network === "lan" && !v.https && !v.trust_proxy && !config.trustProxy) throw badRequest("HTTPS is required when other devices can connect");
         if (v.https) {
-          if (v.regenerate_cert || !fs.existsSync(crt)) {
+          if (v.regenerate_cert || !fs.existsSync(crt) || !fs.existsSync(path.join(dir, "suds-ca.crt"))) {
             const hosts = ["localhost", "127.0.0.1", "suds.local", (init_os(), __toCommonJS(os_exports)).hostname(), (init_os(), __toCommonJS(os_exports)).hostname() + ".local", ...listener.lanAddresses().map((a) => a.address), ...String(v.extra_hosts || "").split(/[\s,]+/).filter(Boolean)];
             const c = (init_empty(), __toCommonJS(empty_exports)).generate({ commonName: db3.getSetting("org_name", "SUDS").slice(0, 60), org: db3.getSetting("org_name", "SUDS").slice(0, 60), hosts: [...new Set(hosts)] });
             fs.mkdirSync(dir, { recursive: true, mode: 448 });
             fs.writeFileSync(crt, c.cert, { mode: 384 });
             fs.writeFileSync(key, c.key, { mode: 384 });
+            fs.writeFileSync(path.join(dir, "suds-ca.crt"), c.ca, { mode: 420 });
           }
           tls = "selfsigned";
         }
@@ -10796,7 +10867,8 @@ var require_admin = __commonJS({
         }
       }
       r.get("/api/admin/certificate", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
-        const crt = path.join(config.dataDir, "certs", "suds.crt");
+        const caPath = path.join(config.dataDir, "certs", "suds-ca.crt");
+        const crt = fs.existsSync(caPath) ? caPath : path.join(config.dataDir, "certs", "suds.crt");
         if (!fs.existsSync(crt)) throw notFound("No self-signed certificate");
         ctx.res.writeHead(200, { "Content-Type": "application/x-x509-ca-cert", "Content-Disposition": 'attachment; filename="suds-certificate.crt"' });
         ctx.res.end(fs.readFileSync(crt));
@@ -10812,8 +10884,8 @@ var require_admin = __commonJS({
       r.post("/api/admin/backup/run-now", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
         const { retain, offsiteDir } = scheduledBackup.settings();
         const out2 = scheduledBackup.run({ retain, offsiteDir });
-        audit3.log({ user: ctx.user, action: "backup.run_now", ip: ctx.ip, details: { bytes: out2.bytes, offsite: out2.offsiteOk } });
-        return { ok: true, file: path.basename(out2.file), bytes: out2.bytes, offsite_ok: out2.offsiteOk };
+        audit3.log({ user: ctx.user, action: "backup.run_now", ip: ctx.ip, details: { bytes: out2.bytes, offsite: out2.offsiteOk, verified: out2.verified } });
+        return { ok: true, file: path.basename(out2.file), bytes: out2.bytes, offsite_ok: out2.offsiteOk, verified: out2.verified, verify_error: out2.verifyError || null };
       });
       function backupFromUpload(ctx) {
         const b64 = ctx.body && ctx.body.file_b64 || "";
@@ -11013,6 +11085,26 @@ var require_app = __commonJS({
           }
         } catch {
         }
+        const warnings = [];
+        try {
+          if (db3.getSetting("audit_verify_failed_at", null)) warnings.push(`The audit log failed its integrity check at ${db3.getSetting("audit_verify_failed_at")}. Investigate before anything else.`);
+          const hours = Number(db3.getSetting("backup_schedule_hours", "0")) || 0;
+          const last = db3.getSetting("last_scheduled_backup_at", null);
+          const status = db3.getSetting("last_scheduled_backup_status", "") || "";
+          if (hours && (!last || Date.now() - Date.parse(last) > 2 * hours * 36e5)) warnings.push(`Scheduled backups are set for every ${hours} hours but the last one ${last ? "ran " + last : "has never run"}.`);
+          if (hours && status && !/^ok/.test(status)) warnings.push(`The last scheduled backup reported: ${status}`);
+          const crt = path.join(config.dataDir, "certs", "suds.crt");
+          if (fs.existsSync(crt)) {
+            const validTo = new (init_crypto2(), __toCommonJS(crypto_exports)).X509Certificate(fs.readFileSync(crt)).validTo;
+            const left = (Date.parse(validTo) - Date.now()) / 864e5;
+            if (left < 14) warnings.push(`The HTTPS certificate ${left < 0 ? "expired" : "expires"} ${validTo}. Create a new one under Settings \u2192 Network & devices.`);
+          }
+        } catch {
+        }
+        if (warnings.length) {
+          out2.ok = false;
+          out2.warnings = warnings;
+        }
         ctx.status = out2.ok ? 200 : 503;
         return out2;
       });
@@ -11034,7 +11126,8 @@ var require_app = __commonJS({
         ctx.res.end(data);
       });
       r.get("/api/app/certificate.crt", (ctx) => {
-        const crt = path.join(config.dataDir, "certs", "suds.crt");
+        const caPath = path.join(config.dataDir, "certs", "suds-ca.crt");
+        const crt = fs.existsSync(caPath) ? caPath : path.join(config.dataDir, "certs", "suds.crt");
         if (!fs.existsSync(crt)) throw notFound("No certificate");
         ctx.res.writeHead(200, { "Content-Type": "application/x-x509-ca-cert", "Content-Disposition": 'attachment; filename="suds-certificate.crt"' });
         ctx.res.end(fs.readFileSync(crt));
@@ -11127,7 +11220,7 @@ var require_auth2 = __commonJS({
     var { hashPasswordAsync, verifyPasswordAsync, generateTotpSecret, verifyTotp, otpauthUrl, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
     module.exports = (r) => {
       r.post("/api/auth/login", async (ctx) => {
-        if (!rateLimit(`login:${ctx.ip}`, require_config().isTest ? 1e5 : 20, 15 * 6e4)) throw new HttpError3(429, "Too many login attempts. Try again later.");
+        if (!rateLimit(`login:${ctx.ip}`, require_config().loginRateLimit, 15 * 6e4)) throw new HttpError3(429, "Too many login attempts. Try again later.");
         const { username, password } = validate(ctx.body, { username: { type: "string", required: true, maxLen: 100 }, password: { type: "string", required: true, maxLen: 500 } });
         const result = await auth3.login({ username, password, ctx });
         ctx.res.setHeader("Set-Cookie", auth3.cookieHeader(result.token));
@@ -11310,7 +11403,7 @@ var require_crud = __commonJS({
         if (!row) throw notFound();
         if (row.client_id) auth3.assertClientAccess(ctx, row.client_id);
         if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden("You cannot edit this record");
-        const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s2]) => [k, { ...s2, required: false }])), { partial: true });
+        const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
         if (v.client_id && v.client_id !== row.client_id) checkClient(ctx, v.client_id);
         if (opts.restrictOwner && v[ownerCol] !== void 0 && !auth3.hasPerm(ctx.user, "clients:all")) delete v[ownerCol];
         if (opts.beforeUpdate) opts.beforeUpdate(ctx, v, row);
@@ -11383,8 +11476,9 @@ var require_budget = __commonJS({
         l.subtree_spent = subtreeSpent;
         l.subtree_pending = subtreePending;
         l.subtree_remaining = l.allocated_amount - subtreeSpent - subtreePending;
-        l.child_allocated = l.children.reduce((s2, c) => s2 + c.allocated_amount, 0);
+        l.child_allocated = l.children.reduce((s, c) => s + c.allocated_amount, 0);
         l.unallocated = l.allocated_amount - l.child_allocated;
+        l.available = l.allocated_amount - l.child_allocated - l.spent - l.pending;
       };
       for (const r of roots) rollup(r);
       return roots;
@@ -11404,9 +11498,10 @@ var require_budget = __commonJS({
       const spent = db3.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE funding_source_id=? AND status IN ('approved','reimbursed')`, f.id).n;
       const pending = db3.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE funding_source_id=? AND status='pending'`, f.id).n;
       const staffMinutes = db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE funding_source_id=?`, f.id).n;
+      const staffMinutesApproved = db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE funding_source_id=? AND status='approved'`, f.id).n;
       const staffCost = db3.one(`SELECT COALESCE(SUM(t.minutes/60.0*COALESCE(u.hourly_cost,0)),0) n FROM time_entries t JOIN users u ON u.id=t.user_id WHERE t.funding_source_id=?`, f.id).n;
       const flatLines = db3.all(`SELECT b.*, (SELECT COALESCE(SUM(amount),0) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status IN ('approved','reimbursed')) AS spent, (SELECT COALESCE(SUM(amount),0) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status='pending') AS pending FROM budget_lines b WHERE b.funding_source_id=? ORDER BY category`, f.id);
-      const allocated = flatLines.filter((l) => !l.parent_id).reduce((s2, l) => s2 + l.allocated_amount, 0);
+      const allocated = flatLines.filter((l) => !l.parent_id).reduce((s, l) => s + l.allocated_amount, 0);
       const lines = buildLineTree(flatLines);
       const totalDays = Math.max(1, (Date.parse(f.fiscal_year_end) - Date.parse(f.fiscal_year_start)) / 864e5);
       const elapsed = Math.min(totalDays, Math.max(0, (Date.now() - Date.parse(f.fiscal_year_start)) / 864e5));
@@ -11415,6 +11510,7 @@ var require_budget = __commonJS({
         spent,
         pending,
         staff_minutes: staffMinutes,
+        staff_minutes_approved: staffMinutesApproved,
         staff_cost: staffCost,
         allocated,
         unallocated: f.total_amount - allocated,
@@ -11429,7 +11525,7 @@ var require_budget = __commonJS({
         const rows = db3.all(`SELECT * FROM funding_sources ${ctx.query.get("all") === "1" ? "" : "WHERE is_active=1"} ORDER BY fiscal_year_start DESC, name`);
         return { funds: rows.map(fundSummary) };
       });
-      r.post("/api/budget/funds", auth3.requireAuth, auth3.requirePerm("budget:write"), (ctx) => {
+      r.post("/api/budget/funds", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
         const v = validate(ctx.body, fundShape);
         const id = uuid2();
         const keys = Object.keys(v);
@@ -11438,17 +11534,17 @@ var require_budget = __commonJS({
         ctx.status = 201;
         return { id };
       });
-      r.put("/api/budget/funds/:id", auth3.requireAuth, auth3.requirePerm("budget:write"), (ctx) => {
+      r.put("/api/budget/funds/:id", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
         const f = db3.one(`SELECT id FROM funding_sources WHERE id=?`, ctx.params.id);
         if (!f) throw notFound();
-        const v = validate(ctx.body, Object.fromEntries(Object.entries(fundShape).map(([k, s2]) => [k, { ...s2, required: false }])), { partial: true });
+        const v = validate(ctx.body, Object.fromEntries(Object.entries(fundShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
         const keys = Object.keys(v);
         if (!keys.length) return { ok: true };
         db3.run(`UPDATE funding_sources SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), db3.now(), f.id);
         audit3.log({ user: ctx.user, action: "fund.update", entity: "funding_source", entityId: f.id, ip: ctx.ip, details: { fields: keys } });
         return { ok: true };
       });
-      r.post("/api/budget/funds/:id/lines", auth3.requireAuth, auth3.requirePerm("budget:write"), (ctx) => {
+      r.post("/api/budget/funds/:id/lines", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
         const f = db3.one(`SELECT id FROM funding_sources WHERE id=?`, ctx.params.id);
         if (!f) throw notFound();
         const v = validate(ctx.body, lineShape);
@@ -11462,10 +11558,10 @@ var require_budget = __commonJS({
         ctx.status = 201;
         return { id };
       });
-      r.put("/api/budget/lines/:id", auth3.requireAuth, auth3.requirePerm("budget:write"), (ctx) => {
+      r.put("/api/budget/lines/:id", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
         const l = db3.one(`SELECT * FROM budget_lines WHERE id=?`, ctx.params.id);
         if (!l) throw notFound();
-        const v = validate(ctx.body, Object.fromEntries(Object.entries(lineShape).map(([k, s2]) => [k, { ...s2, required: false }])), { partial: true });
+        const v = validate(ctx.body, Object.fromEntries(Object.entries(lineShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
         if ("parent_id" in v && v.parent_id) {
           if (v.parent_id === l.id) throw badRequest("A budget line cannot be its own parent");
           const p = db3.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, v.parent_id, l.funding_source_id);
@@ -11477,7 +11573,7 @@ var require_budget = __commonJS({
         audit3.log({ user: ctx.user, action: "budget_line.update", entity: "budget_line", entityId: l.id, ip: ctx.ip, details: { fields: keys } });
         return { ok: true };
       });
-      r.delete("/api/budget/lines/:id", auth3.requireAuth, auth3.requirePerm("budget:write"), (ctx) => {
+      r.delete("/api/budget/lines/:id", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
         const ids = db3.all(`WITH RECURSIVE sub(id) AS (SELECT id FROM budget_lines WHERE id=? UNION ALL SELECT b.id FROM budget_lines b JOIN sub ON b.parent_id=sub.id) SELECT id FROM sub`, ctx.params.id).map((row) => row.id);
         db3.run(`DELETE FROM budget_lines WHERE id=?`, ctx.params.id);
         for (const id of ids) {
@@ -11518,10 +11614,10 @@ var require_budget = __commonJS({
             where.push("expenditures.funding_source_id=?");
             params.push(f);
           }
-          const s2 = ctx.query.get("status");
-          if (s2 && s2 !== "all") {
+          const s = ctx.query.get("status");
+          if (s && s !== "all") {
             where.push("expenditures.status=?");
-            params.push(s2);
+            params.push(s);
           }
         },
         beforeInsert: (ctx, v) => {
@@ -11540,14 +11636,15 @@ var require_budget = __commonJS({
         if (!e) throw notFound();
         const { status, note } = validate(ctx.body, { status: { type: "string", required: true, enum: ["approved", "rejected", "reimbursed"] }, note: { type: "string", maxLen: 500 } });
         if (e.user_id === ctx.user.id && status === "approved" && ctx.user.role !== "admin") throw badRequest("Separation of duties: you cannot approve your own expenditure");
-        db3.run(`UPDATE expenditures SET status=?, approved_by=?, approved_at=?, updated_at=? WHERE id=?`, status, ctx.user.id, db3.now(), db3.now(), e.id);
+        if (status === "rejected" && !note) throw badRequest("Say why this expenditure is being rejected, so the person who submitted it knows what to fix");
+        db3.run(`UPDATE expenditures SET status=?, approved_by=?, approved_at=?, approval_note=?, updated_at=? WHERE id=?`, status, ctx.user.id, db3.now(), note || null, db3.now(), e.id);
         audit3.log({ user: ctx.user, action: `expenditure.${status}`, entity: "expenditure", entityId: e.id, clientId: e.client_id, ip: ctx.ip, details: { note, amount: e.amount } });
         return { ok: true };
       });
       r.get("/api/budget/summary", auth3.requireAuth, auth3.requirePerm("budget:read"), () => {
         const funds = db3.all(`SELECT * FROM funding_sources WHERE is_active=1`).map(fundSummary);
         return {
-          totals: { budget: funds.reduce((s2, f) => s2 + f.total_amount, 0), spent: funds.reduce((s2, f) => s2 + f.spent, 0), pending: funds.reduce((s2, f) => s2 + f.pending, 0), remaining: funds.reduce((s2, f) => s2 + f.remaining, 0) },
+          totals: { budget: funds.reduce((s, f) => s + f.total_amount, 0), spent: funds.reduce((s, f) => s + f.spent, 0), pending: funds.reduce((s, f) => s + f.pending, 0), remaining: funds.reduce((s, f) => s + f.remaining, 0) },
           by_category: db3.all(`SELECT category, SUM(amount) amount, COUNT(*) n FROM expenditures WHERE status IN ('approved','reimbursed') GROUP BY category ORDER BY amount DESC`),
           by_month: db3.all(`SELECT substr(spent_at,1,7) month, SUM(amount) amount FROM expenditures WHERE status<>'rejected' GROUP BY month ORDER BY month`),
           per_client: db3.one(`SELECT COUNT(DISTINCT client_id) clients, COALESCE(SUM(amount),0) amount FROM expenditures WHERE client_id IS NOT NULL AND status IN ('approved','reimbursed')`),
@@ -11754,13 +11851,15 @@ var require_clients = __commonJS({
           } else {
             const parts = q.split(/[,\s]+/).filter(Boolean);
             const idxs = parts.map((p) => blindIndex2(p));
-            const clauses = [`c.last_name_idx IN (${idxs.map(() => "?").join(",")})`, "c.full_name_idx IN (?,?)"];
-            params.push(...idxs, blindIndex2(parts.join("")), blindIndex2([...parts].reverse().join("")));
+            const clauses = [`c.last_name_idx IN (${idxs.map(() => "?").join(",")})`, "c.full_name_idx IN (?,?)", `c.first_name_idx IN (${idxs.map(() => "?").join(",")})`];
+            params.push(...idxs, blindIndex2(parts.join("")), blindIndex2([...parts].reverse().join("")), ...parts.map((p) => blindIndex2(p.toLowerCase())));
             if (ctx.query.get("exact") !== "1") {
               for (const part of parts) {
                 const pfx = M.namePrefixIndex(part);
                 if (pfx) {
                   clauses.push("c.name_prefix_idx=?");
+                  params.push(pfx);
+                  clauses.push("c.first_name_prefix_idx=?");
                   params.push(pfx);
                 }
                 const snd = M.namePhoneticIndex(part);
@@ -12138,9 +12237,9 @@ var require_text = __commonJS({
     "use strict";
     init_globals_inject();
     var zlib = (init_zlib(), __toCommonJS(zlib_exports));
-    function decodeEntities(s2) {
+    function decodeEntities(s) {
       const map = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", ndash: "\u2013", mdash: "\u2014", hellip: "\u2026", rsquo: "\u2019", lsquo: "\u2018", rdquo: "\u201D", ldquo: "\u201C" };
-      return s2.replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z]+);/g, (m, e) => {
+      return s.replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z]+);/g, (m, e) => {
         if (e[0] === "#") {
           const code = e[1].toLowerCase() === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
           return Number.isFinite(code) ? String.fromCodePoint(code) : m;
@@ -12149,20 +12248,20 @@ var require_text = __commonJS({
       });
     }
     function htmlToText(html) {
-      let s2 = String(html);
-      s2 = s2.replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, "");
-      s2 = s2.replace(/<!--[\s\S]*?-->/g, "");
-      s2 = s2.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li|h[1-6]|tr|blockquote|pre)>/gi, "\n").replace(/<li[^>]*>/gi, "\u2022 ").replace(/<\/td>/gi, "	");
-      s2 = s2.replace(/<[^>]+>/g, "");
-      s2 = decodeEntities(s2);
-      return s2.replace(/\r/g, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+      let s = String(html);
+      s = s.replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, "");
+      s = s.replace(/<!--[\s\S]*?-->/g, "");
+      s = s.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li|h[1-6]|tr|blockquote|pre)>/gi, "\n").replace(/<li[^>]*>/gi, "\u2022 ").replace(/<\/td>/gi, "	");
+      s = s.replace(/<[^>]+>/g, "");
+      s = decodeEntities(s);
+      return s.replace(/\r/g, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
     }
     function extractTitle(html) {
       const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html) || /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html);
       return m ? htmlToText(m[1]).trim() : "";
     }
-    function quotedPrintableDecode(s2) {
-      return import_buffer.Buffer.from(String(s2).replace(/=\r?\n/g, "").replace(/=([0-9A-F]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16))), "binary").toString("utf8");
+    function quotedPrintableDecode(s) {
+      return import_buffer.Buffer.from(String(s).replace(/=\r?\n/g, "").replace(/=([0-9A-F]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16))), "binary").toString("utf8");
     }
     function parseMime(raw) {
       const text = import_buffer.Buffer.isBuffer(raw) ? raw.toString("latin1") : String(raw);
@@ -12217,24 +12316,24 @@ var require_text = __commonJS({
       const files = unzip(buf);
       const xml = files.get("word/document.xml");
       if (!xml) throw new Error("Not a DOCX file (word/document.xml missing)");
-      let s2 = xml.toString("utf8");
-      s2 = s2.replace(/<w:tab\/>/g, "	").replace(/<w:br\/>|<w:cr\/>/g, "\n").replace(/<\/w:p>/g, "\n").replace(/<[^>]+>/g, "");
-      return decodeEntities(s2).replace(/\n{3,}/g, "\n\n").trim();
+      let s = xml.toString("utf8");
+      s = s.replace(/<w:tab\/>/g, "	").replace(/<w:br\/>|<w:cr\/>/g, "\n").replace(/<\/w:p>/g, "\n").replace(/<[^>]+>/g, "");
+      return decodeEntities(s).replace(/\n{3,}/g, "\n\n").trim();
     }
     function sniffDate(text) {
-      const s2 = String(text || "");
-      let m = /(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?))?/.exec(s2);
+      const s = String(text || "");
+      let m = /(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?))?/.exec(s);
       if (m) {
         const d = /* @__PURE__ */ new Date(m[1] + (m[2] ? "T" + m[2] : "T12:00:00"));
         if (!isNaN(d)) return d.toISOString();
       }
-      m = /\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b(?:,?\s+(\d{1,2}:\d{2}\s*(?:AM|PM)?))?/i.exec(s2);
+      m = /\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b(?:,?\s+(\d{1,2}:\d{2}\s*(?:AM|PM)?))?/i.exec(s);
       if (m) {
         const y = m[3].length === 2 ? "20" + m[3] : m[3];
         const d = /* @__PURE__ */ new Date(`${y}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}T12:00:00`);
         if (!isNaN(d)) return d.toISOString();
       }
-      m = /\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+(\d{1,2}),?\s+(\d{4})/i.exec(s2);
+      m = /\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+(\d{1,2}),?\s+(\d{4})/i.exec(s);
       if (m) {
         const d = /* @__PURE__ */ new Date(`${m[1].slice(0, 3)} ${m[2]}, ${m[3]} 12:00:00`);
         if (!isNaN(d)) return d.toISOString();
@@ -12242,13 +12341,13 @@ var require_text = __commonJS({
       return null;
     }
     function sniffClientHints(text) {
-      const s2 = String(text || "");
+      const s = String(text || "");
       const hints = { codes: [], names: [] };
-      for (const m of s2.matchAll(/\b([CM]\d{2}-\d{4})\b/gi)) hints.codes.push(m[1].toUpperCase());
+      for (const m of s.matchAll(/\b([CM]\d{2}-\d{4})\b/gi)) hints.codes.push(m[1].toUpperCase());
       const kw = /\b(?:(?:client|participant|pt|patient|re|name|regarding)\s*[:\-]\s*|(?:with|for|regarding)\s+)/gi;
       const nameRe = /^([A-Z][a-zA-Z'\-]+(?:,\s*|\s+)[A-Z][a-zA-Z'\-]+)/;
-      for (const m of s2.matchAll(kw)) {
-        const nm = nameRe.exec(s2.slice(m.index + m[0].length));
+      for (const m of s.matchAll(kw)) {
+        const nm = nameRe.exec(s.slice(m.index + m[0].length));
         if (nm) hints.names.push(nm[1].trim());
       }
       hints.codes = [...new Set(hints.codes)];
@@ -12267,16 +12366,16 @@ var require_spreadsheet = __commonJS({
     var zlib = (init_zlib(), __toCommonJS(zlib_exports));
     var { unzip, decodeEntities } = require_text();
     function parseCsv(text) {
-      const s2 = String(text).replace(/^﻿/, "");
+      const s = String(text).replace(/^﻿/, "");
       const rows = [];
       let row = [];
       let field = "";
       let q = false;
-      for (let i = 0; i < s2.length; i++) {
-        const c = s2[i];
+      for (let i = 0; i < s.length; i++) {
+        const c = s[i];
         if (q) {
           if (c === '"') {
-            if (s2[i + 1] === '"') {
+            if (s[i + 1] === '"') {
               field += '"';
               i++;
             } else q = false;
@@ -12286,7 +12385,7 @@ var require_spreadsheet = __commonJS({
           row.push(field);
           field = "";
         } else if (c === "\n" || c === "\r") {
-          if (c === "\r" && s2[i + 1] === "\n") i++;
+          if (c === "\r" && s[i + 1] === "\n") i++;
           row.push(field);
           rows.push(row);
           row = [];
@@ -12398,16 +12497,17 @@ var require_spreadsheet = __commonJS({
       }
       return zipEnd(entries, local, central, off);
     }
-    var xmlEsc = (s2) => String(s2).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
+    var EXCEL_EPOCH = Date.UTC(1899, 11, 30);
+    var xmlEsc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
     function colRef(i) {
-      let s2 = "";
+      let s = "";
       i++;
       while (i > 0) {
         const m = (i - 1) % 26;
-        s2 = String.fromCharCode(65 + m) + s2;
+        s = String.fromCharCode(65 + m) + s;
         i = Math.floor((i - 1) / 26);
       }
-      return s2;
+      return s;
     }
     function writeSheetXml(sh) {
       const cols2 = sh.columns.map((c) => typeof c === "string" ? { key: c, label: c } : c);
@@ -12416,6 +12516,14 @@ var require_spreadsheet = __commonJS({
         if (v === null || v === void 0 || v === "") return "";
         if (typeof v === "number" && Number.isFinite(v)) return `<c r="${ref}"><v>${v}</v></c>`;
         if (typeof v === "boolean") return `<c r="${ref}" t="b"><v>${v ? 1 : 0}</v></c>`;
+        if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
+          const t = Date.parse(v + "T00:00:00Z");
+          if (Number.isFinite(t)) return `<c r="${ref}" s="2"><v>${(t - EXCEL_EPOCH) / 864e5}</v></c>`;
+        }
+        if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)) {
+          const t = Date.parse(v);
+          if (Number.isFinite(t)) return `<c r="${ref}" s="3"><v>${(t - EXCEL_EPOCH) / 864e5}</v></c>`;
+        }
         return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${xmlEsc(typeof v === "object" ? JSON.stringify(v) : v)}</t></is></c>`;
       };
       const header = `<row r="1">${cols2.map((c, i) => `<c r="${colRef(i)}1" t="inlineStr" s="1"><is><t>${xmlEsc(c.label)}</t></is></c>`).join("")}</row>`;
@@ -12428,10 +12536,10 @@ var require_spreadsheet = __commonJS({
       const safeName = (n, i) => String(n).replace(/[\\/*?:\[\]]/g, " ").slice(0, 31) || `Sheet${i + 1}`;
       files.push(["[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`]);
       files.push(["_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`]);
-      files.push(["xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((s2, i) => `<sheet name="${xmlEsc(safeName(s2.name, i))}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("")}</sheets></workbook>`]);
+      files.push(["xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((s, i) => `<sheet name="${xmlEsc(safeName(s.name, i))}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("")}</sheets></workbook>`]);
       files.push(["xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("")}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`]);
-      files.push(["xl/styles.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" applyFont="1"/></cellXfs></styleSheet>`]);
-      sheets.forEach((s2, i) => files.push([`xl/worksheets/sheet${i + 1}.xml`, writeSheetXml(s2)]));
+      files.push(["xl/styles.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" applyFont="1"/><xf numFmtId="14" fontId="0" fillId="0" borderId="0" applyNumberFormat="1"/><xf numFmtId="22" fontId="0" fillId="0" borderId="0" applyNumberFormat="1"/></cellXfs></styleSheet>`]);
+      sheets.forEach((s, i) => files.push([`xl/worksheets/sheet${i + 1}.xml`, writeSheetXml(s)]));
       return new Map(files);
     }
     function writeWorkbook(sheets) {
@@ -12439,7 +12547,7 @@ var require_spreadsheet = __commonJS({
     }
     async function writeWorkbookAsync(sheets) {
       const breathe = () => new Promise((resolve2) => setImmediate(resolve2));
-      const parts = writeWorkbookParts(sheets.map((s2) => ({ name: s2.name, columns: s2.columns, rows: [] })));
+      const parts = writeWorkbookParts(sheets.map((s) => ({ name: s.name, columns: s.columns, rows: [] })));
       for (let i = 0; i < sheets.length; i++) {
         parts.set(`xl/worksheets/sheet${i + 1}.xml`, writeSheetXml(sheets[i]));
         await breathe();
@@ -12512,10 +12620,10 @@ var require_spreadsheet = __commonJS({
     function parseFile(buf, filename = "") {
       const isZip = buf[0] === 80 && buf[1] === 75;
       const sheets = isZip ? readWorkbook(buf) : [{ name: filename.replace(/\.[^.]+$/, "") || "Sheet1", rows: parseCsv(buf.toString("utf8")) }];
-      return { sheets: sheets.map((s2) => {
-        const [h, ...rest] = s2.rows;
+      return { sheets: sheets.map((s) => {
+        const [h, ...rest] = s.rows;
         const headers = (h || []).map((x) => String(x ?? "").trim());
-        return { name: s2.name, headers, rows: rest.map((r) => Object.fromEntries(headers.map((k, i) => [k, r[i] === void 0 ? null : r[i]]))) };
+        return { name: s.name, headers, rows: rest.map((r) => Object.fromEntries(headers.map((k, i) => [k, r[i] === void 0 ? null : r[i]]))) };
       }) };
     }
     module.exports = { parseCsv, toCsv, writeWorkbook, writeWorkbookAsync, readWorkbook, parseFile, excelDate, zip };
@@ -12535,17 +12643,19 @@ var require_dataimport = __commonJS({
     var dateOf = (v) => {
       if (v === null || v === void 0 || v === "") return null;
       if (typeof v === "number") return excelDate(v);
-      const s2 = String(v).trim();
-      const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(s2);
+      const s = String(v).trim();
+      const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
       if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
-      const us = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/.exec(s2);
+      const us = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/.exec(s);
       if (us) return `${us[3].length === 2 ? "20" + us[3] : us[3]}-${us[1].padStart(2, "0")}-${us[2].padStart(2, "0")}`;
-      const d = new Date(s2);
+      const d = new Date(s);
       return isNaN(d) ? void 0 : d.toISOString().slice(0, 10);
     };
     var datetimeOf = (v) => {
       if (v === null || v === void 0 || v === "") return null;
       if (typeof v === "number") {
+        if (!Number.isFinite(v) || v < 1) return void 0;
+        if (v % 1) return new Date(Math.round((v - 25569) * 864e5)).toISOString();
         const d2 = excelDate(v);
         return d2 ? (/* @__PURE__ */ new Date(d2 + "T12:00:00")).toISOString() : void 0;
       }
@@ -12677,7 +12787,7 @@ var require_dataimport = __commonJS({
         F("receipt_ref", "Receipt #", ["receipt", "invoice", "invoice #"], str(200))
       ] }
     };
-    var norm = (s2) => String(s2 || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    var norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     function suggestMapping(entity, headers) {
       const def = ENTITIES[entity];
       const used = /* @__PURE__ */ new Set();
@@ -12694,12 +12804,12 @@ var require_dataimport = __commonJS({
       return mapping;
     }
     function resolveClient(ref, ctx, auth3) {
-      const s2 = String(ref || "").trim();
-      if (!s2) return null;
+      const s = String(ref || "").trim();
+      if (!s) return null;
       let rows;
-      if (/^[CM]\d{2}-\d+(-D)?$/i.test(s2)) rows = db3.all(`SELECT id FROM clients WHERE client_code=? AND deleted_at IS NULL`, s2.toUpperCase());
+      if (/^[CM]\d{2}-\d+(-D)?$/i.test(s)) rows = db3.all(`SELECT id FROM clients WHERE client_code=? AND deleted_at IS NULL`, s.toUpperCase());
       else {
-        const parts = s2.split(/[,\s]+/).filter(Boolean);
+        const parts = s.split(/[,\s]+/).filter(Boolean);
         if (parts.length < 2) rows = db3.all(`SELECT id FROM clients WHERE last_name_idx=? AND deleted_at IS NULL`, blindIndex2(parts[0]));
         else rows = db3.all(`SELECT id FROM clients WHERE full_name_idx IN (?,?) AND deleted_at IS NULL`, blindIndex2(parts.join("")), blindIndex2([...parts].reverse().join("")));
       }
@@ -12803,7 +12913,7 @@ var require_dataimport2 = __commonJS({
           return { n: i + 2, record, errors };
         });
         audit3.log({ user: ctx.user, action: "import.data.preview", ip: ctx.ip, details: { entity, rows: rows.length, sheet: sheet.name } });
-        return { entity, sheets: parsed.sheets.map((s2) => ({ name: s2.name, rows: s2.rows.length })), sheet: sheetIdx, headers: sheet.headers, mapping: normalizedMapping, fields: def.fields.map((f) => ({ key: f.key, label: f.label, required: !!f.required })), rows, valid: rows.filter((x) => !x.errors.length).length, invalid: rows.filter((x) => x.errors.length).length, truncated: sheet.rows.length > 2e3 };
+        return { entity, sheets: parsed.sheets.map((s) => ({ name: s.name, rows: s.rows.length })), sheet: sheetIdx, headers: sheet.headers, mapping: normalizedMapping, fields: def.fields.map((f) => ({ key: f.key, label: f.label, required: !!f.required })), rows, valid: rows.filter((x) => !x.errors.length).length, invalid: rows.filter((x) => x.errors.length).length, truncated: sheet.rows.length > 2e3 };
       });
       r.post("/api/imports/data/commit", auth3.requireAuth, (ctx) => {
         const { entity, records, skip_duplicates } = ctx.body || {};
@@ -12887,6 +12997,169 @@ var require_dataimport2 = __commonJS({
   }
 });
 
+// server/doc-text.js
+var require_doc_text = __commonJS({
+  "server/doc-text.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var zlib = (init_zlib(), __toCommonJS(zlib_exports));
+    var MAX_TEXT = 200 * 1024;
+    var MAX_SCAN = 8 * 1024 * 1024;
+    var MAX_INFLATE = 4 * MAX_TEXT;
+    function clean2(s) {
+      return String(s || "").replace(/\s+/g, " ").trim().slice(0, MAX_TEXT);
+    }
+    var ESC = { n: "\n", r: "\r", t: "	", b: "\b", f: "\f" };
+    function pdfStrings(src, out2, budget) {
+      let i = 0;
+      const n = src.length;
+      let taken = 0;
+      while (i < n && taken < budget.left) {
+        const c = src.charCodeAt(i);
+        if (c === 40) {
+          let depth = 1;
+          let s = "";
+          i++;
+          while (i < n && depth > 0) {
+            const ch = src[i];
+            if (ch === "\\") {
+              const nx = src[i + 1] || "";
+              if (nx >= "0" && nx <= "7") {
+                let oct = "";
+                let j = i + 1;
+                while (j < n && j < i + 4 && src[j] >= "0" && src[j] <= "7") oct += src[j++];
+                s += String.fromCharCode(parseInt(oct, 8));
+                i = j;
+                continue;
+              }
+              s += ESC[nx] || nx;
+              i += 2;
+              continue;
+            }
+            if (ch === "(") depth++;
+            else if (ch === ")") {
+              depth--;
+              if (!depth) {
+                i++;
+                break;
+              }
+            }
+            s += ch;
+            i++;
+          }
+          if (s) {
+            out2.push(s);
+            taken += s.length;
+          }
+          continue;
+        }
+        if (c === 60 && src[i + 1] !== "<") {
+          let j = i + 1;
+          let hex = "";
+          while (j < n && src[j] !== ">") {
+            const h = src[j];
+            if (/[0-9A-Fa-f]/.test(h)) hex += h;
+            else if (!/\s/.test(h)) break;
+            j++;
+          }
+          if (src[j] === ">" && hex.length) {
+            let s = "";
+            for (let k = 0; k + 1 < hex.length; k += 2) s += String.fromCharCode(parseInt(hex.slice(k, k + 2), 16));
+            out2.push(s);
+            taken += s.length;
+            i = j + 1;
+            continue;
+          }
+          i++;
+          continue;
+        }
+        i++;
+      }
+      budget.left -= taken;
+    }
+    function pdfText(buf) {
+      const src = buf.toString("latin1");
+      const out2 = [];
+      const budget = { left: MAX_SCAN };
+      let from = 0;
+      let streams = 0;
+      while (budget.left > 0 && streams++ < 3e3) {
+        const s = src.indexOf("stream", from);
+        if (s < 0) break;
+        let start2 = s + 6;
+        if (src[start2] === "\r") start2++;
+        if (src[start2] === "\n") start2++;
+        const end = src.indexOf("endstream", start2);
+        if (end < 0) break;
+        const raw = buf.subarray(start2, end);
+        let text;
+        try {
+          text = zlib.inflateSync(raw, { maxOutputLength: MAX_INFLATE }).toString("latin1");
+        } catch {
+          text = raw.length <= MAX_INFLATE ? raw.toString("latin1") : "";
+        }
+        pdfStrings(text, out2, budget);
+        from = end + 9;
+      }
+      return out2.join(" ");
+    }
+    function zipEntry(buf, wanted) {
+      let central = null;
+      const cdSizes = () => {
+        if (central) return central;
+        central = /* @__PURE__ */ new Map();
+        let c = buf.indexOf(import_buffer.Buffer.from([80, 75, 1, 2]));
+        while (c >= 0 && c + 46 <= buf.length && buf.readUInt32LE(c) === 33639248) {
+          const cn = buf.readUInt16LE(c + 28), cx = buf.readUInt16LE(c + 30), cc = buf.readUInt16LE(c + 32);
+          central.set(buf.toString("utf8", c + 46, c + 46 + cn), buf.readUInt32LE(c + 20));
+          c += 46 + cn + cx + cc;
+        }
+        return central;
+      };
+      let off = 0;
+      let entries = 0;
+      while (off + 30 <= buf.length && buf.readUInt32LE(off) === 67324752 && entries++ < 1e4) {
+        const method = buf.readUInt16LE(off + 8), flags = buf.readUInt16LE(off + 6);
+        let csize = buf.readUInt32LE(off + 18);
+        const nlen = buf.readUInt16LE(off + 26), xlen = buf.readUInt16LE(off + 28);
+        const name = buf.toString("utf8", off + 30, off + 30 + nlen);
+        const dataStart = off + 30 + nlen + xlen;
+        if (flags & 8) {
+          const sz = cdSizes().get(name);
+          if (sz === void 0) return null;
+          csize = sz;
+        }
+        if (name === wanted) {
+          const data = buf.subarray(dataStart, dataStart + csize);
+          try {
+            return method === 8 ? zlib.inflateRawSync(data, { maxOutputLength: MAX_INFLATE }) : method === 0 && data.length <= MAX_INFLATE ? data : null;
+          } catch {
+            return null;
+          }
+        }
+        off = dataStart + csize;
+        if (flags & 8) off += 16;
+      }
+      return null;
+    }
+    function docxText(buf) {
+      const xml = zipEntry(buf, "word/document.xml");
+      if (!xml) return "";
+      return xml.toString("utf8").replace(/<\/w:p>/g, "\n").replace(/<[^>]*>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+    }
+    function extractText(buf, type) {
+      try {
+        if (type === "text/plain") return clean2(buf.toString("utf8", 0, MAX_SCAN));
+        if (type === "application/pdf") return clean2(pdfText(buf));
+        if (type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") return clean2(docxText(buf));
+      } catch {
+      }
+      return "";
+    }
+    module.exports = { extractText };
+  }
+});
+
 // server/routes/documents.js
 var require_documents = __commonJS({
   "server/routes/documents.js"(exports, module) {
@@ -12899,6 +13172,7 @@ var require_documents = __commonJS({
     var { badRequest, notFound } = require_http();
     var { validate } = require_validate();
     var { uuid: uuid2 } = require_crypto();
+    var { extractText } = require_doc_text();
     var MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
     var FILE_TYPES = { "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx", "application/msword": "doc", "text/plain": "txt" };
     function sniff(buf) {
@@ -12935,14 +13209,35 @@ var require_documents = __commonJS({
       return SERVABLE_TYPES.has(String(t || "").toLowerCase().split(";")[0].trim()) ? String(t).split(";")[0].trim() : "application/octet-stream";
     }
     var shape = { title: { type: "string", required: true, maxLen: 200 }, category: { type: "string", required: true, enum: C.DOCUMENT_CATEGORIES }, description: { type: "string", maxLen: 2e3 }, effective_date: { type: "date" }, expires_at: { type: "date" }, filename: { type: "string", maxLen: 200 } };
-    var out2 = (row) => row && { ...row, has_file: !!row.file_b64, file_b64: void 0 };
+    var out2 = (row) => row && { ...row, has_file: !!row.file_b64, searchable: !!row.search_text, file_b64: void 0, search_text: void 0 };
     module.exports = (r) => {
       r.get("/api/documents", auth3.requireAuth, auth3.requirePerm("documents:read"), (ctx) => {
         const all = ctx.query.get("all") === "1" && auth3.hasPerm(ctx.user, "documents:write");
         const cat = ctx.query.get("category");
-        const rows = db3.all(`SELECT id,title,category,description,effective_date,expires_at,filename,content_type,bytes,is_active,uploaded_by,created_at,updated_at, (file_b64 IS NOT NULL) has_file
-      FROM policy_documents ${all ? "" : "WHERE is_active=1"} ${cat ? `${all ? "WHERE" : "AND"} category=?` : ""} ORDER BY category, title`, ...cat ? [cat] : []);
-        return { documents: rows, categories: C.DOCUMENT_CATEGORIES };
+        const q = (ctx.query.get("q") || "").trim().toLowerCase();
+        const where = [];
+        const params = [];
+        if (!all) where.push("is_active=1");
+        if (cat) {
+          where.push("category=?");
+          params.push(cat);
+        }
+        for (const word of q.split(/\s+/).filter(Boolean)) {
+          where.push(`(lower(title) LIKE ? ESCAPE '\\' OR lower(COALESCE(description,'')) LIKE ? ESCAPE '\\' OR lower(COALESCE(search_text,'')) LIKE ? ESCAPE '\\')`);
+          const like = `%${word.replace(/[%_]/g, "\\$&")}%`;
+          params.push(like, like, like);
+        }
+        const rows = db3.all(`SELECT id,title,category,description,effective_date,expires_at,filename,content_type,bytes,is_active,uploaded_by,created_at,updated_at, (file_b64 IS NOT NULL) has_file, (search_text IS NOT NULL AND search_text<>'') searchable, search_text
+      FROM policy_documents ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY category, title`, ...params);
+        const snippet = (text) => {
+          if (!q || !text) return null;
+          const t = String(text);
+          const i = t.toLowerCase().indexOf(q.split(/\s+/)[0]);
+          if (i < 0) return null;
+          const s = Math.max(0, i - 60), e = Math.min(t.length, i + 100);
+          return (s ? "\u2026" : "") + t.slice(s, e) + (e < t.length ? "\u2026" : "");
+        };
+        return { documents: rows.map((r2) => ({ ...r2, snippet: snippet(r2.search_text), search_text: void 0 })), categories: C.DOCUMENT_CATEGORIES };
       });
       function loadVisible(ctx, id) {
         const d = db3.one(`SELECT * FROM policy_documents WHERE id=?`, id);
@@ -12961,7 +13256,7 @@ var require_documents = __commonJS({
         if (!file) throw badRequest("A file is required");
         const id = uuid2();
         db3.run(
-          `INSERT INTO policy_documents(id,title,category,description,effective_date,expires_at,filename,content_type,bytes,file_b64,uploaded_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO policy_documents(id,title,category,description,effective_date,expires_at,filename,content_type,bytes,file_b64,search_text,uploaded_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
           id,
           v.title,
           v.category,
@@ -12972,6 +13267,7 @@ var require_documents = __commonJS({
           file.type,
           file.buf.length,
           file.b64,
+          extractText(file.buf, file.type) || null,
           ctx.user.id
         );
         audit3.log({ user: ctx.user, action: "document.create", entity: "policy_document", entityId: id, ip: ctx.ip, details: { title: v.title, category: v.category, bytes: file.buf.length } });
@@ -12981,7 +13277,7 @@ var require_documents = __commonJS({
       r.put("/api/documents/:id", auth3.requireAuth, auth3.requirePerm("documents:write"), (ctx) => {
         const d = db3.one(`SELECT id FROM policy_documents WHERE id=?`, ctx.params.id);
         if (!d) throw notFound();
-        const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s2]) => [k, { ...s2, required: false }])), { partial: true });
+        const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
         const v2 = validate({ is_active: ctx.body.is_active }, { is_active: { type: "boolean" } }, { partial: true });
         const sets = Object.keys(v).map((k) => `${k}=?`);
         const params = Object.keys(v).map((k) => v[k]);
@@ -12991,8 +13287,8 @@ var require_documents = __commonJS({
         }
         if (ctx.body.file_url || ctx.body.file) {
           const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_DOCUMENT_BYTES, "File");
-          sets.push("file_b64=?", "content_type=?", "bytes=?", "filename=?");
-          params.push(file.b64, file.type, file.buf.length, v.filename || ctx.body.filename || `document.${FILE_TYPES[file.type]}`);
+          sets.push("file_b64=?", "content_type=?", "bytes=?", "filename=?", "search_text=?");
+          params.push(file.b64, file.type, file.buf.length, v.filename || ctx.body.filename || `document.${FILE_TYPES[file.type]}`, extractText(file.buf, file.type) || null);
         }
         if (!sets.length) return { ok: true };
         db3.run(`UPDATE policy_documents SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, db3.now(), d.id);
@@ -13469,10 +13765,10 @@ var require_forms = __commonJS({
       return out2;
     }
     function detectPdfFields(buf) {
-      const s2 = buf.toString("latin1");
+      const s = buf.toString("latin1");
       const out2 = [];
       const seen2 = /* @__PURE__ */ new Set();
-      for (const chunk of s2.split("endobj")) {
+      for (const chunk of s.split("endobj")) {
         if (out2.length >= MAX_FIELDS) break;
         const t = /\/T\s*\(([^)]{1,80})\)/.exec(chunk);
         const ft = /\/FT\s*\/(Tx|Btn|Ch)/.exec(chunk);
@@ -13554,9 +13850,9 @@ var require_forms = __commonJS({
       return out2;
     }
     var missingRequired = (fields, values) => fields.filter((f) => f.required && (values[f.key] === void 0 || values[f.key] === null || values[f.key] === "")).map((f) => f.label);
-    var parseJson = (s2, d) => {
+    var parseJson = (s, d) => {
       try {
-        return JSON.parse(s2);
+        return JSON.parse(s);
       } catch {
         return d;
       }
@@ -13837,8 +14133,8 @@ ${content}`);
     }
     function splitText(text) {
       const t = String(text).replace(/\r\n/g, "\n").trim();
-      let chunks = t.split(/\n\s*(?:-{3,}|\*{3,}|_{3,}|={3,})\s*\n/).map((s2) => s2.trim()).filter(Boolean);
-      if (chunks.length === 1 && /^#\s/m.test(t)) chunks = t.split(/\n(?=#\s)/).map((s2) => s2.trim()).filter(Boolean);
+      let chunks = t.split(/\n\s*(?:-{3,}|\*{3,}|_{3,}|={3,})\s*\n/).map((s) => s.trim()).filter(Boolean);
+      if (chunks.length === 1 && /^#\s/m.test(t)) chunks = t.split(/\n(?=#\s)/).map((s) => s.trim()).filter(Boolean);
       return chunks;
     }
     function parse(input, { filename = "" } = {}) {
@@ -13944,7 +14240,7 @@ ${content}`) } };
     async function listNotebooks({ token: token2, user } = {}) {
       token2 = token2 || await graphToken();
       const nb = await graphGet(`${graphBase(user)}/notebooks?$expand=sections($select=id,displayName)`, token2);
-      return (nb.value || []).map((n) => ({ id: n.id, name: n.displayName, lastModified: n.lastModifiedDateTime, sections: (n.sections || []).map((s2) => ({ id: s2.id, name: s2.displayName })) }));
+      return (nb.value || []).map((n) => ({ id: n.id, name: n.displayName, lastModified: n.lastModifiedDateTime, sections: (n.sections || []).map((s) => ({ id: s.id, name: s.displayName })) }));
     }
     async function listPages(sectionId, { token: token2, user, since } = {}) {
       token2 = token2 || await graphToken();
@@ -14070,7 +14366,7 @@ var require_imports = __commonJS({
           throw badRequest("Could not parse file: " + e.message);
         }
         const id = stage(ctx, { source: source === "onenote" ? "onenote_file" : source, filename, items, importedBy: ctx.user.id });
-        audit3.log({ user: ctx.user, action: "import.upload", entity: "import", entityId: id, ip: ctx.ip, details: { source, filename, count: items.length } });
+        audit3.log({ user: ctx.user, action: "import.upload", entity: "import", entityId: id, ip: ctx.ip, details: { source, extension: (/\.([A-Za-z0-9]{1,8})$/.exec(filename) || [])[1] || null, bytes: buf.length, count: items.length } });
         ctx.status = 201;
         return { id, count: items.length };
       });
@@ -14740,7 +15036,7 @@ var require_oidc = __commonJS({
     var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
     var config = require_config();
     var b64url = (buf) => import_buffer.Buffer.from(buf).toString("base64url");
-    var fromB64url = (s2) => import_buffer.Buffer.from(s2, "base64url");
+    var fromB64url = (s) => import_buffer.Buffer.from(s, "base64url");
     var CACHE_MS = 36e5;
     var discoveryCache = null;
     var jwksCache = null;
@@ -15054,10 +15350,10 @@ var require_referrals = __commonJS({
           _disclosure_what: { type: "string", maxLen: 1e3 }
         },
         filters: (ctx, where, params) => {
-          const s2 = ctx.query.get("status");
-          if (s2 && s2 !== "all") {
+          const s = ctx.query.get("status");
+          if (s && s !== "all") {
             where.push("referrals.status=?");
-            params.push(s2);
+            params.push(s);
           }
           if (ctx.query.get("open") === "1") where.push(`referrals.status IN ('pending','contacted','accepted','waitlisted','scheduled')`);
           if (ctx.query.get("consent_revoked") === "1") where.push("referrals.consent_revoked=1");
@@ -18367,7 +18663,7 @@ var require_region = __commonJS({
     var { uuid: uuid2 } = require_crypto();
     var REGIONS = { "sacramento-metro": require_sacramento_metro() };
     var MAX_PICTURE_BYTES = 2 * 1024 * 1024;
-    var norm = (s2) => String(s2 || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    var norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     var tagList = (list2, allowed) => (Array.isArray(list2) ? list2 : String(list2 || "").split(",")).map((x) => String(x).trim().toLowerCase().replace(/[\s-]+/g, "_")).filter((x) => allowed.includes(x)).filter((x, i, a) => a.indexOf(x) === i).join(",");
     var stateKey = (id) => `region_loaded:${id}`;
     var readState = (id) => {
@@ -18846,11 +19142,20 @@ var require_reports = __commonJS({
             minutes: db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE work_date BETWEEN ? AND ? AND (user_id=? OR ?)`, from, to, ctx.user.id, auth3.hasPerm(ctx.user, "time:all") ? 1 : 0).n,
             by_category: db3.all(`SELECT category k, SUM(minutes) n FROM time_entries WHERE work_date BETWEEN ? AND ? AND (user_id=? OR ?) GROUP BY category ORDER BY n DESC`, from, to, ctx.user.id, auth3.hasPerm(ctx.user, "time:all") ? 1 : 0)
           } : null,
-          notes: {
-            unsigned: db3.one(`SELECT COUNT(*) n FROM notes WHERE status='draft' AND deleted_at IS NULL AND author_id=?`, ctx.user.id).n,
-            unsigned_overdue: db3.one(`SELECT COUNT(*) n FROM notes WHERE status='draft' AND deleted_at IS NULL AND author_id=? AND created_at < ?`, ctx.user.id, new Date(Date.now() - Number(db3.getSetting("note_lock_days", "3")) * 864e5).toISOString()).n,
-            staged_imports: db3.one(`SELECT COUNT(*) n FROM import_items x JOIN imports i ON i.id=x.import_id WHERE x.status='staged' AND (i.imported_by=? OR i.imported_by IS NULL OR ?)`, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n
-          },
+          // A supervisor's unsigned-notes alert covers the team's drafts, the same way the overdue-tasks alert
+          // above already covers the team's to-dos -- a program manager rarely writes routine notes themselves,
+          // so an alert scoped to their own drafts was dead for exactly the role it matters most to.
+          notes: (() => {
+            const team = auth3.hasPerm(ctx.user, "notes:cosign") && auth3.hasPerm(ctx.user, "clients:all");
+            const scope = team ? "1=1" : "author_id=?";
+            const p = team ? [] : [ctx.user.id];
+            return {
+              team,
+              unsigned: db3.one(`SELECT COUNT(*) n FROM notes WHERE status='draft' AND deleted_at IS NULL AND ${scope}`, ...p).n,
+              unsigned_overdue: db3.one(`SELECT COUNT(*) n FROM notes WHERE status='draft' AND deleted_at IS NULL AND ${scope} AND created_at < ?`, ...p, new Date(Date.now() - Number(db3.getSetting("note_lock_days", "3")) * 864e5).toISOString()).n,
+              staged_imports: db3.one(`SELECT COUNT(*) n FROM import_items x JOIN imports i ON i.id=x.import_id WHERE x.status='staged' AND (i.imported_by=? OR i.imported_by IS NULL OR ?)`, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n
+            };
+          })(),
           budget: auth3.hasPerm(ctx.user, "budget:read") ? db3.one(`SELECT (SELECT COALESCE(SUM(total_amount),0) FROM funding_sources WHERE is_active=1) total, (SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status IN ('approved','reimbursed')) spent, (SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status='pending') pending`) : null,
           // Scoped to active clients so this count matches what #/clients?consent_expiring=1 shows by default —
           // otherwise the badge counts a closed or inactive client's consent that the deep-linked list, filtered
@@ -18865,20 +19170,20 @@ var require_reports = __commonJS({
         const start2 = /* @__PURE__ */ new Date();
         start2.setUTCDate(1);
         start2.setUTCMonth(start2.getUTCMonth() - months + 1);
-        const s2 = start2.toISOString().slice(0, 10);
+        const s = start2.toISOString().slice(0, 10);
         return {
-          intakes: db3.all(`SELECT substr(intake_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND intake_date >= ? GROUP BY month ORDER BY month`, s2),
-          discharges: db3.all(`SELECT substr(discharge_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND discharge_date >= ? GROUP BY month ORDER BY month`, s2),
-          interventions: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s2),
-          calls: db3.all(`SELECT substr(started_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes FROM calls WHERE started_at >= ? GROUP BY month ORDER BY month`, s2),
-          referrals: db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals WHERE referred_at >= ? GROUP BY month ORDER BY month`, s2),
-          naloxone: db3.all(`SELECT substr(occurred_at,1,7) month, SUM(naloxone_kits) kits, SUM(fentanyl_strips) strips FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s2),
-          overdose_events: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN naloxone_used=1 AND survived=1 THEN 1 ELSE 0 END) reversals, SUM(CASE WHEN kind='fatal' OR survived=0 THEN 1 ELSE 0 END) fatal FROM overdose_events WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s2),
-          episodes: db3.all(`SELECT substr(opened_at,1,7) month, COUNT(*) admissions, (SELECT COUNT(*) FROM episodes x WHERE substr(x.closed_at,1,7)=substr(e.opened_at,1,7)) discharges FROM episodes e WHERE opened_at >= ? GROUP BY month ORDER BY month`, s2),
-          unduplicated_clients: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? AND client_id IS NOT NULL GROUP BY month ORDER BY month`, s2),
-          mat_linkage: db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n FROM referrals r JOIN resources res ON res.id=r.resource_id WHERE res.category IN ('mat_otp','mat_obot') AND r.status IN ('admitted','completed') AND referred_at >= ? GROUP BY month ORDER BY month`, s2),
-          spend: auth3.hasPerm(ctx.user, "budget:read") ? db3.all(`SELECT substr(spent_at,1,7) month, SUM(amount) amount FROM expenditures WHERE status IN ('approved','reimbursed') AND spent_at >= ? GROUP BY month ORDER BY month`, s2) : [],
-          time: db3.all(`SELECT substr(work_date,1,7) month, SUM(minutes) minutes FROM time_entries WHERE work_date >= ? GROUP BY month ORDER BY month`, s2)
+          intakes: db3.all(`SELECT substr(intake_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND intake_date >= ? GROUP BY month ORDER BY month`, s),
+          discharges: db3.all(`SELECT substr(discharge_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND discharge_date >= ? GROUP BY month ORDER BY month`, s),
+          interventions: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
+          calls: db3.all(`SELECT substr(started_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes FROM calls WHERE started_at >= ? GROUP BY month ORDER BY month`, s),
+          referrals: db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals WHERE referred_at >= ? GROUP BY month ORDER BY month`, s),
+          naloxone: db3.all(`SELECT substr(occurred_at,1,7) month, SUM(naloxone_kits) kits, SUM(fentanyl_strips) strips FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
+          overdose_events: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN naloxone_used=1 AND survived=1 THEN 1 ELSE 0 END) reversals, SUM(CASE WHEN kind='fatal' OR survived=0 THEN 1 ELSE 0 END) fatal FROM overdose_events WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
+          episodes: db3.all(`SELECT substr(opened_at,1,7) month, COUNT(*) admissions, (SELECT COUNT(*) FROM episodes x WHERE substr(x.closed_at,1,7)=substr(e.opened_at,1,7)) discharges FROM episodes e WHERE opened_at >= ? GROUP BY month ORDER BY month`, s),
+          unduplicated_clients: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? AND client_id IS NOT NULL GROUP BY month ORDER BY month`, s),
+          mat_linkage: db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n FROM referrals r JOIN resources res ON res.id=r.resource_id WHERE res.category IN ('mat_otp','mat_obot') AND r.status IN ('admitted','completed') AND referred_at >= ? GROUP BY month ORDER BY month`, s),
+          spend: auth3.hasPerm(ctx.user, "budget:read") ? db3.all(`SELECT substr(spent_at,1,7) month, SUM(amount) amount FROM expenditures WHERE status IN ('approved','reimbursed') AND spent_at >= ? GROUP BY month ORDER BY month`, s) : [],
+          time: db3.all(`SELECT substr(work_date,1,7) month, SUM(minutes) minutes FROM time_entries WHERE work_date >= ? GROUP BY month ORDER BY month`, s)
         };
       });
       r.get("/api/reports/funder", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
@@ -18961,21 +19266,28 @@ var require_reports = __commonJS({
         const D = require_exports().datasets(ctx, { from, to, toEnd, identified });
         const S = require_spreadsheet();
         const label = (k) => ({ key: k, label: k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) });
+        const RAW = /* @__PURE__ */ new Set(["client_code", "receipt_ref", "grant_number", "email", "website", "phone", "fax", "zip", "username", "document_ref", "medicaid_id", "address", "first_name", "last_name", "contact_name", "name", "organization", "vendor", "title", "template_name", "fund", "line", "resource", "worker", "approver", "assignee", "completed_by", "created_by", "disclosed_by", "recipient", "summary", "description", "notes", "purpose", "what", "goals", "flags", "hours", "eligibility", "services", "languages", "capacity_notes", "contact_person", "intake_process", "cost_notes", "restrictions", "label", "city"]);
+        const humanize = (v) => String(v).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).replace(/\bSbirt\b/, "SBIRT").replace(/\bMat\b/g, "MAT").replace(/\bOtp\b/, "OTP").replace(/\bObot\b/, "OBOT").replace(/\bEd\b/, "ED").replace(/\bMh\b/, "MH").replace(/\bIds\b/, "IDs").replace(/\bRoi\b/, "ROI");
+        const pretty = (rows) => rows.map((r2) => {
+          const o = {};
+          for (const [k, v] of Object.entries(r2)) o[k] = typeof v === "string" && !RAW.has(k) && /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(v) && v.length <= 40 ? humanize(v) : v;
+          return o;
+        });
         let body, filename, type;
         if (ctx.params.kind === "workbook") {
           const sheets = [];
           for (const [, d] of Object.entries(D)) {
-            sheets.push({ name: d.label, columns: d.columns.map(label), rows: d.rows() });
+            sheets.push({ name: d.label, columns: d.columns.map(label), rows: pretty(d.rows()) });
             await new Promise((resolve2) => setImmediate(resolve2));
           }
-          audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: "workbook", sheets: sheets.map((s2) => [s2.name, s2.rows.length]), identified, from, to } });
+          audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: "workbook", sheets: sheets.map((s) => [s.name, s.rows.length]), identified, from, to } });
           body = await S.writeWorkbookAsync(sheets);
           filename = `suds-export-${from}_${to}.xlsx`;
           type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
         } else {
           const d = D[ctx.params.kind === "clients" ? "clients" : ctx.params.kind];
           if (!d) throw require_http().notFound("Unknown export");
-          const rows = d.rows();
+          const rows = pretty(d.rows());
           audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: ctx.params.kind, rows: rows.length, identified, from, to, format } });
           if (format === "xlsx") {
             body = S.writeWorkbook([{ name: d.label, columns: d.columns.map(label), rows }]);
@@ -19247,6 +19559,7 @@ var require_setup = __commonJS({
         const port = v.port || "auto";
         const host = v.network === "lan" ? "0.0.0.0" : "127.0.0.1";
         let tls = "none";
+        if (v.network === "lan" && !v.https && !proc.env.TLS_CERT_PATH && !config.trustProxy) throw badRequest("HTTPS is required when other devices can connect");
         if (v.https && !proc.env.TLS_CERT_PATH) {
           const hosts = ["localhost", "127.0.0.1", "suds.local", (init_os(), __toCommonJS(os_exports)).hostname(), (init_os(), __toCommonJS(os_exports)).hostname() + ".local", ...listener.lanAddresses().map((a) => a.address), ...String(v.extra_hosts || "").split(/[\s,]+/).filter(Boolean)];
           const c = selfsigned.generate({ commonName: v.org_name.slice(0, 60), org: v.org_name.slice(0, 60), hosts: [...new Set(hosts)] });
@@ -19254,6 +19567,7 @@ var require_setup = __commonJS({
           fs.mkdirSync(dir, { recursive: true, mode: 448 });
           fs.writeFileSync(path.join(dir, "suds.crt"), c.cert, { mode: 384 });
           fs.writeFileSync(path.join(dir, "suds.key"), c.key, { mode: 384 });
+          fs.writeFileSync(path.join(dir, "suds-ca.crt"), c.ca, { mode: 420 });
           tls = "selfsigned";
         } else if (proc.env.TLS_CERT_PATH) tls = "custom";
         audit3.log({ user: { username: v.admin_username }, action: "setup.complete", ip: ctx.ip, details: { network: v.network, port, tls } });
@@ -19458,9 +19772,26 @@ var require_sync = __commonJS({
       for (const k of SYNC2.settings_keys) out2.settings[k] = db3.getSetting(k, null);
       return out2;
     }
+    function changedColumns2(t, existing, raw, existingCols) {
+      const out2 = [];
+      for (const k of existingCols) {
+        if (["id", "updated_at", "created_at"].includes(k) || k.endsWith("_idx") || raw[k] === void 0) continue;
+        let was = existing[k];
+        if (t.enc.includes(k) && was) {
+          try {
+            was = decrypt3(was);
+          } catch {
+            was = null;
+          }
+        }
+        if (String(was ?? "") !== String(raw[k] ?? "")) out2.push(k);
+      }
+      return out2;
+    }
     function push(user, payload) {
       const applied = {};
       const rejected = [];
+      const conflicts = [];
       const reject = (table, id, reason) => {
         rejected.push({ table, id, reason });
       };
@@ -19555,7 +19886,14 @@ var require_sync = __commonJS({
                 }
               }
               const incomingAt = raw.updated_at || raw.created_at || NEVER2;
-              if (existing && (existing.updated_at || existing.created_at || NEVER2) >= incomingAt) return false;
+              if (existing && (existing.updated_at || existing.created_at || NEVER2) >= incomingAt) {
+                const lost = changedColumns2(t, existing, raw, existingCols);
+                if (lost.length && (existing.updated_at || existing.created_at || NEVER2) > incomingAt) {
+                  conflicts.push({ table: t.name, id: raw.id, label: t.name === "clients" ? existing.client_code : null, columns: lost, server_updated_at: existing.updated_at, device_updated_at: incomingAt });
+                  audit3.log({ user, action: "sync.conflict", entity: t.name, entityId: raw.id, clientId: t.clientCol ? raw[t.clientCol] : null, ip: "device", details: { columns: lost, server_had: existing.updated_at, device_sent: incomingAt, kept: "office" } });
+                }
+                return false;
+              }
               const OWNER = { interventions: "user_id", calls: "user_id", time_entries: "user_id", referrals: "user_id", expenditures: "user_id", notes: "author_id" }[t.name];
               if (OWNER && !auth3.hasPerm(user, "clients:all")) {
                 if (!existing) raw[OWNER] = user.id;
@@ -19570,6 +19908,7 @@ var require_sync = __commonJS({
                   raw.status = existing.status;
                   raw.approved_by = existing.approved_by;
                   raw.approved_at = existing.approved_at;
+                  raw.approval_note = existing.approval_note;
                 }
               }
               if (t.name === "time_entries") {
@@ -19665,7 +20004,7 @@ var require_sync = __commonJS({
         }
         applied._audit = auditRows.length;
       });
-      return { applied, rejected, server_now: db3.now(), clock_offset_ms: offsetMs, audit_accepted: applied._audit || 0 };
+      return { applied, rejected, conflicts, server_now: db3.now(), clock_offset_ms: offsetMs, audit_accepted: applied._audit || 0 };
     }
     function freeClientCode(code, id) {
       let candidate = code || "M00-0000";
@@ -19780,11 +20119,11 @@ var require_tasks = __commonJS({
           completed_at: { type: "datetime" }
         },
         filters: (ctx, where, params) => {
-          const s2 = ctx.query.get("status");
-          if (s2 === "open") where.push(`tasks.status IN ('open','in_progress')`);
-          else if (s2 && s2 !== "all") {
+          const s = ctx.query.get("status");
+          if (s === "open") where.push(`tasks.status IN ('open','in_progress')`);
+          else if (s && s !== "all") {
             where.push("tasks.status=?");
-            params.push(s2);
+            params.push(s);
           }
           if (ctx.query.get("overdue") === "1") {
             where.push(`tasks.status IN ('open','in_progress') AND (CASE WHEN length(tasks.due_at)=10 THEN tasks.due_at < date('now','localtime') ELSE tasks.due_at < ? END)`);
@@ -19901,12 +20240,16 @@ var require_users = __commonJS({
       is_active: { type: "boolean" },
       hourly_cost: { type: "number", min: 0 },
       password: { type: "string", maxLen: 500 },
-      oidc_subject: { type: "string", maxLen: 300 }
+      oidc_subject: { type: "string", maxLen: 300 },
+      // Supervision: who countersigns this person's notes, and whether they need it. Until now these columns
+      // existed with no way to set them short of SQL, so the countersignature workflow could never start.
+      requires_cosign: { type: "boolean" },
+      supervisor_id: { type: "string", maxLen: 64 }
     };
     module.exports = (r) => {
       r.get("/api/users", auth3.requireAuth, auth3.requirePerm("users:read", "users:manage"), (ctx) => {
         const full = auth3.hasPerm(ctx.user, "users:manage");
-        const rows = db3.all(full ? `SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,last_login_at,locked_until,hourly_cost,created_at,oidc_subject FROM users ORDER BY display_name` : `SELECT id,display_name,title,role,is_active FROM users WHERE is_active=1 ORDER BY display_name`);
+        const rows = db3.all(full ? `SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,last_login_at,locked_until,hourly_cost,created_at,oidc_subject,requires_cosign,supervisor_id FROM users ORDER BY display_name` : `SELECT id,display_name,title,role,is_active FROM users WHERE is_active=1 ORDER BY display_name`);
         return { users: rows };
       });
       r.post("/api/users", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
@@ -19916,8 +20259,9 @@ var require_users = __commonJS({
         const errs = auth3.passwordPolicy(temp);
         if (errs.length) throw badRequest("Password must contain " + errs.join(", "));
         const id = uuid2();
+        if (v.supervisor_id && !db3.one(`SELECT 1 FROM users WHERE id=? AND role IN ('supervisor','admin')`, v.supervisor_id)) throw badRequest("The supervisor must be a supervisor or administrator account");
         db3.run(
-          `INSERT INTO users(id,username,password_hash,display_name,email,title,role,is_active,hourly_cost,must_change_password,password_changed_at) VALUES(?,?,?,?,?,?,?,?,?,1,?)`,
+          `INSERT INTO users(id,username,password_hash,display_name,email,title,role,is_active,hourly_cost,requires_cosign,supervisor_id,must_change_password,password_changed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,1,?)`,
           id,
           v.username,
           hashPassword(temp),
@@ -19927,6 +20271,8 @@ var require_users = __commonJS({
           v.role,
           v.is_active ?? 1,
           v.hourly_cost ?? null,
+          v.requires_cosign ?? 0,
+          v.supervisor_id || null,
           db3.now()
         );
         audit3.log({ user: ctx.user, action: "user.create", entity: "user", entityId: id, ip: ctx.ip, details: { username: v.username, role: v.role } });
@@ -19939,9 +20285,10 @@ var require_users = __commonJS({
         const v = validate(ctx.body, { ...shape, username: { ...shape.username, required: false }, role: { ...shape.role, required: false }, display_name: { ...shape.display_name, required: false } }, { partial: true });
         if (u.id === ctx.user.id && (v.role && v.role !== "admin" || v.is_active === 0)) throw badRequest("You cannot demote or deactivate your own account");
         if (v.oidc_subject && db3.one(`SELECT 1 FROM users WHERE oidc_subject=? AND id<>?`, v.oidc_subject, u.id)) throw badRequest("That single sign-on identity is already linked to a different account");
+        if (v.supervisor_id && !db3.one(`SELECT 1 FROM users WHERE id=? AND id<>? AND role IN ('supervisor','admin')`, v.supervisor_id, u.id)) throw badRequest("The supervisor must be a different supervisor or administrator account");
         const sets = [];
         const params = [];
-        for (const k of ["username", "display_name", "email", "title", "role", "is_active", "hourly_cost", "oidc_subject"]) if (v[k] !== void 0) {
+        for (const k of ["username", "display_name", "email", "title", "role", "is_active", "hourly_cost", "oidc_subject", "requires_cosign", "supervisor_id"]) if (v[k] !== void 0) {
           sets.push(`${k}=?`);
           params.push(v[k]);
         }
@@ -20108,7 +20455,7 @@ var require_app2 = __commonJS({
             throw new HttpError3(403, "Missing CSRF header");
           }
           if (!["GET", "HEAD"].includes(req.method)) {
-            const raw = await readBody(req);
+            const raw = await readBody(req, req.url.startsWith("/api/admin/restore") ? config.maxRestoreBodyBytes : config.maxBodyBytes);
             const ct = req.headers["content-type"] || "";
             if (ct.includes("application/json")) {
               try {
@@ -20210,7 +20557,23 @@ function selfParentOrder(rows, col) {
   }
   return out2;
 }
-function applyPull(payload) {
+function changedColumns(t, existing, raw, existingCols) {
+  const out2 = [];
+  for (const k of existingCols) {
+    if (["id", "updated_at", "created_at"].includes(k) || k.endsWith("_idx") || raw[k] === void 0) continue;
+    let was = existing[k];
+    if (t.enc.includes(k) && was) {
+      try {
+        was = (0, import_crypto2.decrypt)(was);
+      } catch {
+        was = null;
+      }
+    }
+    if (String(was ?? "") !== String(raw[k] ?? "")) out2.push(k);
+  }
+  return out2;
+}
+function applyPull(payload, conflicts = []) {
   const counts = {};
   const offset = payload.server_now ? Date.parse(payload.server_now) - Date.now() : 0;
   const toServer = (ts) => {
@@ -20238,6 +20601,13 @@ function applyPull(payload) {
           const known = seenAt(t.name, existing.id);
           const untouched = known !== void 0 && known === stamp(existing);
           if (!untouched && toServer(stamp(existing)) > (raw.updated_at || raw.created_at || NEVER)) continue;
+          if (!untouched) {
+            const lost = changedColumns(t, existing, raw, existingCols);
+            if (lost.length) {
+              conflicts.push({ table: t.name, id: raw.id, label: t.name === "clients" ? existing.client_code : null, columns: lost });
+              import_audit.default.log({ user: { username: import_db.default.getSetting("sync_username", "device") }, action: "sync.conflict", entity: t.name, entityId: raw.id, clientId: t.clientCol ? raw[t.clientCol] : null, details: { columns: lost, kept: "office" } });
+            }
+          }
         }
         const o = importRow(t, raw, existingCols);
         const keys = Object.keys(o).filter((k) => k !== "id");
@@ -20296,7 +20666,12 @@ function chunkRows(pending, maxBytes = PUSH_BYTES) {
   return chunks;
 }
 async function call(server, path, opts = {}, token2) {
-  const res = await fetch(server.replace(/\/$/, "") + path, { ...opts, credentials: "omit", headers: { "Content-Type": "application/json", "X-Sync-Client": "1", "X-Device-Id": deviceId(), "X-Requested-With": "suds", ...token2 ? { Authorization: "Bearer " + token2 } : {}, ...opts.headers || {} } });
+  let res;
+  try {
+    res = await fetch(server.replace(/\/$/, "") + path, { ...opts, credentials: "omit", headers: { "Content-Type": "application/json", "X-Sync-Client": "1", "X-Device-Id": deviceId(), "X-Requested-With": "suds", ...token2 ? { Authorization: "Bearer " + token2 } : {}, ...opts.headers || {} } });
+  } catch (e) {
+    throw new import_http.HttpError(502, `Could not reach the office SUDS at ${server}. Check that this device is on the office Wi-Fi (or the address IT gave you) and that the address is right, then try again. Nothing on this device was changed.`, { network: true });
+  }
   const ct = res.headers.get("content-type") || "";
   const data = ct.includes("json") ? await res.json() : await res.text();
   if (!res.ok) {
@@ -20390,6 +20765,7 @@ async function run({ server, username, password, code, onProgress = () => {
       onProgress("Removing sample data before the first sync\u2026");
       demo.remove({ actor: null, tombstones: false });
     }
+    const pullConflicts = [];
     let since = import_db.default.getSetting("sync_cursor", NEVER);
     const applied = {};
     let pages = 0;
@@ -20406,7 +20782,7 @@ async function run({ server, username, password, code, onProgress = () => {
         pages++;
         continue;
       }
-      const counts = applyPull(pulled);
+      const counts = applyPull(pulled, pullConflicts);
       for (const [k, v] of Object.entries(counts)) applied[k] = (applied[k] || 0) + v;
       serverNow = pulled.server_now;
       since = pulled.cursor;
@@ -20420,11 +20796,13 @@ async function run({ server, username, password, code, onProgress = () => {
     const chunks = chunkRows(pending);
     const pushedCounts = {};
     const rejected = [];
+    const conflicts = [...pullConflicts];
     for (let i = 0; i < chunks.length; i++) {
       if (chunks.length > 1) onProgress(`Uploading this device's changes (${i + 1} of ${chunks.length})\u2026`);
       const res = await call(server, "/api/sync/push", { method: "POST", body: JSON.stringify({ device_now: deviceNow, tables: chunks[i] }) }, token2);
       const rejectedIds = new Set((res.rejected || []).map((x) => x.table + ":" + x.id));
       rejected.push(...res.rejected || []);
+      conflicts.push(...res.conflicts || []);
       for (const [k, v] of Object.entries(res.applied || {})) if (typeof v === "number") pushedCounts[k] = (pushedCounts[k] || 0) + v;
       import_db.default.transaction(() => {
         for (const [table, rows] of Object.entries(chunks[i])) for (const r of rows) if (!rejectedIds.has(table + ":" + r.id)) seen(table, r.id, stamp(r));
@@ -20449,8 +20827,8 @@ async function run({ server, username, password, code, onProgress = () => {
     import_db.default.setSetting("last_sync_at", import_db.default.now());
     import_db.default.setSetting("sync_server", server);
     import_db.default.setSetting("sync_username", username);
-    import_audit.default.log({ user: { username }, action: "sync.completed", details: { server, pulled: applied, pushed: pushedCounts, rejected: rejected.length, attachments_up: uploaded, attachments_down: downloaded } });
-    return { ok: true, pulled: applied, pushed: pushedCounts, rejected, attachments: { uploaded, downloaded }, at: import_db.default.now() };
+    import_audit.default.log({ user: { username }, action: "sync.completed", details: { server, pulled: applied, pushed: pushedCounts, rejected: rejected.length, conflicts: conflicts.length, attachments_up: uploaded, attachments_down: downloaded } });
+    return { ok: true, pulled: applied, pushed: pushedCounts, rejected, conflicts, attachments: { uploaded, downloaded }, at: import_db.default.now() };
   } finally {
     try {
       await call(server, "/api/auth/logout", { method: "POST", body: "{}" }, token2);

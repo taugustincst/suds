@@ -30,7 +30,7 @@ export function openInterventionForm(values, { clientId, clientDisplay, onDone, 
     isNew && can('clients:all') ? { name: 'user_id', label: 'Worker (defaults to you)', type: 'user' } : null,
   ].filter(Boolean), { values: seed, submitText: isNew ? 'Save' : 'Save changes', draftKey: values ? `intervention:${values.id}` : 'intervention:new', onCancel: () => m.close(), onSubmit: async (d) => {
     if (isNew) await post('/api/interventions', d); else await put(`/api/interventions/${values.id}`, d);
-    toast(isNew ? 'Intervention logged' : 'Saved', 'ok'); m.close(); onDone && onDone();
+    toast(isNew ? 'Visit logged' : 'Saved', 'ok'); m.close(); onDone && onDone();
   } });
   if (can('budget:read')) {
     const fundSel = f.inputs.funding_source_id, lineSel = f.inputs.budget_line_id;

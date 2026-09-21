@@ -42,6 +42,8 @@ if (require.main === module) {
       }
     }
     audit.log({ user: { username: 'cli' }, action: 'security.key_rotated', details: { rows, values, tables: tables.map(t => t.table) } });
+    // The server refuses to open a database whose recorded key does not match its own; record the new one.
+    db.setSetting('key_fingerprint', require('../server/crypto').sha256('suds-key-check:' + newKey.toString('hex')).slice(0, 32));
   });
   db.close();
   // In development the key normally lives in data/.dev-encryption-key; update it only when rotating that default database.

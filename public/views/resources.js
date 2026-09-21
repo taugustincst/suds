@@ -16,7 +16,7 @@ export function openResourceForm(values, onDone) {
     { name: 'name', label: 'Program / service name', required: true, span: true }, { name: 'category', label: 'Category', type: 'select', options: C.RESOURCE_CATEGORIES, required: true }, { name: 'organization', label: 'Organization' },
     { name: 'summary', label: 'About this program (shown at the top of the profile)', type: 'textarea', span: true, rows: 3, placeholder: 'What they do, who it is for, what makes them a good fit. Plain language.' },
     { type: 'section', label: 'Contact & location', collapsible: true, open: true },
-    { name: 'phone', label: 'Phone' }, { name: 'fax', label: 'Fax' }, { name: 'email', label: 'Email' }, { name: 'website', label: 'Website' }, { name: 'contact_person', label: 'Contact person' },
+    { name: 'phone', label: 'Phone', type: 'tel' }, { name: 'fax', label: 'Fax', type: 'tel' }, { name: 'email', label: 'Email' }, { name: 'website', label: 'Website' }, { name: 'contact_person', label: 'Contact person' },
     { name: 'address', label: 'Address', span: true }, { name: 'city', label: 'City' }, { name: 'zip', label: 'ZIP' }, { name: 'hours', label: 'Hours' }, { name: 'languages', label: 'Languages' },
     { type: 'section', label: 'Services & admission', collapsible: true, open: !isNew },
     { name: 'levels_of_care', label: 'Levels of care (ASAM, comma separated)', placeholder: 'e.g. 3.5, 3.7, OTP' }, { name: 'mat_offered', label: 'MAT offered (e.g. buprenorphine, methadone)' },

@@ -246,6 +246,23 @@ test('paging never drops rows that share a timestamp', async () => {
   assert.deepEqual(missed, [], 'every row sharing the timestamp was delivered');
 });
 
+test('a device edit that loses to a newer office edit is reported back, and audited', async () => {
+  // Regression: the "server copy is newer" branch returned false and nothing else. The person on the phone
+  // had seen "saved"; their edit vanished with no trace anywhere.
+  const id = randomUUID();
+  await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, title: 'Phone version', priority: 'normal', created_at: iso(Date.now() - 60000), updated_at: iso(Date.now() - 60000) }] } });
+  assert.equal((await nav.put(`/api/tasks/${id}`, { title: 'Office version', priority: 'urgent' })).status, 200);
+  const stale = await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, title: 'Phone version, edited later on the phone', priority: 'low', created_at: iso(Date.now() - 60000), updated_at: iso(Date.now() - 30000) }] } });
+  assert.equal(stale.status, 200);
+  const c = (stale.data.conflicts || []).find(x => x.id === id);
+  assert.ok(c, 'the push response names the row whose edit was not taken');
+  assert.ok(c.columns.includes('title') && c.columns.includes('priority'), 'and which fields differed');
+  assert.equal(H.db.one(`SELECT title FROM tasks WHERE id=?`, id).title, 'Office version', 'the office copy is what everyone sees');
+  const row = H.db.one(`SELECT * FROM audit_log WHERE action='sync.conflict' AND entity_id=? ORDER BY id DESC LIMIT 1`, id);
+  assert.ok(row, 'the conflict is in the audit log');
+  assert.ok(!String(row.details).includes('Phone version'), 'by column name only, never the value');
+});
+
 test('an overwrite from a device is recorded, by column name only', async () => {
   // Last write wins at row granularity, so a device edit can revert a field changed at the office. That
   // still happens — it is the rule — but it used to happen with no record that anything was replaced.
@@ -296,6 +313,20 @@ test('a sync push cannot re-parent two budget lines into a cycle', async () => {
   const aRow = H.db.one(`SELECT parent_id FROM budget_lines WHERE id=?`, a.data.id);
   const bRow = H.db.one(`SELECT parent_id FROM budget_lines WHERE id=?`, b.data.id);
   assert.ok(!(aRow.parent_id === b.data.id && bRow.parent_id === a.data.id), 'the two lines are never left pointing at each other');
+});
+
+test('a sync push cannot restructure grants without budget:manage', async () => {
+  // budget:write (which navigators hold) covers recording expenditures; changing a fund's award or its
+  // budget lines is budget:manage over REST, and sync must not be the way around that.
+  const fund = await admin.post('/api/budget/funds', { name: 'Sync structure check', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 5000 });
+  const r = await push(nav, { tables: {
+    funding_sources: [{ id: fund.data.id, name: 'Sync structure check', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 999999, is_active: 1, updated_at: iso(Date.now() + 1000) }],
+    budget_lines: [{ id: randomUUID(), funding_source_id: fund.data.id, category: 'other', allocated_amount: 100, created_at: iso(Date.now()), updated_at: iso(Date.now()) }],
+  } });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.rejected.length, 2, 'both rows are refused');
+  assert.ok(r.data.rejected.every(x => /role cannot write/.test(x.reason)));
+  assert.equal(H.db.one(`SELECT total_amount FROM funding_sources WHERE id=?`, fund.data.id).total_amount, 5000, 'the award is untouched');
 });
 
 test('a sync push cannot re-parent a budget line into a different fund', async () => {

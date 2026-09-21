@@ -29,7 +29,7 @@ Full walkthrough with screenshots-free steps: [docs/INSTALL.md](docs/INSTALL.md)
 
 **Phones and other computers:** nothing to configure. SUDS announces itself on the office network as **https://suds.local** (built-in mDNS responder) and uses the standard HTTPS port when available. Staff open that address on any device, add it to the home screen, and their workspace — clients, reminders, note drafts saved while typing, preferences — is the same everywhere because every device talks to the same server.
 
-**Just a browser, nothing to install:** a fully standalone build runs entirely in the browser — no office server, no Node process, no database anywhere else. Open it on any phone or computer, add it to the home screen, and it works, including offline; sync with a real office SUDS later if the county has one. Details: [docs/WEB_APP.md](docs/WEB_APP.md).
+**Just a browser, nothing to install:** a fully standalone build runs entirely in the browser — no office server, no Node process, no database anywhere else. Open it on any phone or computer, add it to the home screen, and it works, including offline; sync with a real office SUDS later if the county has one. Its encryption keys live in that browser profile beside the data, so it is for trying SUDS out and for sample data; real client information belongs in the phone apps or on an office server. Details: [docs/WEB_APP.md](docs/WEB_APP.md).
 
 ## Quick start (development)
 
@@ -73,8 +73,8 @@ The launcher + wizard route above is production mode (`SUDS_ENV=production`) wit
 
 | Role | Sees | Can |
 | --- | --- | --- |
-| navigator | Assigned caseload | Clients, interventions, calls, time, referrals, tasks, admin notes, consents, budget entry, imports |
-| clinician | Assigned caseload | Everything a navigator can plus **clinical notes** |
+| navigator | Assigned caseload | Clients, interventions, calls, time, referrals, tasks, admin notes, consents, imports; records expenditures (grant structure itself is `budget:manage`: supervisor, finance, admin) |
+| clinician | Assigned caseload | Clients, interventions, calls, time, referrals, tasks, admin and **clinical notes**, consents, imports; reads the resource directory (no budget entry) |
 | supervisor | All clients | Everything, plus assignments, approvals, audit log, identified exports |
 | finance | De-identified list | Funding, budget lines, expenditure approval, time summaries |
 | readonly | All clients (read) | Reports and summaries; no notes |

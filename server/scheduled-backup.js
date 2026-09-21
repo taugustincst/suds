@@ -36,6 +36,11 @@ function run({ retain = 14, offsiteDir = '' } = {}) {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const file = path.join(dir, `suds-${stamp}.db.enc`);
   fs.writeFileSync(file, bytes, { mode: 0o600 });
+  // A backup nobody has ever opened is a hope, not a backup. Read the file back, decrypt it with the live
+  // key and open it read-only, the same way a restore would -- and record the answer where the admin looks.
+  let verified = false; let verifyError = null;
+  try { const info = backup.inspect(backup.decrypt(fs.readFileSync(file))); verified = info.counts.clients >= 0; }
+  catch (e) { verifyError = String(e && e.message || e); console.error('[suds] backup written but could not be read back:', verifyError); }
 
   let offsiteOk = null;
   if (offsiteDir) {
@@ -53,9 +58,9 @@ function run({ retain = 14, offsiteDir = '' } = {}) {
 
   const kept = prune(dir, retain);
   db.setSetting('last_scheduled_backup_at', db.now());
-  db.setSetting('last_scheduled_backup_status', offsiteDir && offsiteOk === false ? 'offsite copy failed — local backup kept' : 'ok');
-  audit.log({ user: { username: 'system' }, action: 'backup.scheduled', details: { bytes: bytes.length, offsite: offsiteDir ? offsiteOk : null, kept } });
-  return { file, bytes: bytes.length, offsiteOk };
+  db.setSetting('last_scheduled_backup_status', !verified ? `backup written but could not be read back — ${verifyError}` : offsiteDir && offsiteOk === false ? 'ok (verified) — offsite copy failed, local backup kept' : 'ok (verified)');
+  audit.log({ user: { username: 'system' }, action: 'backup.scheduled', details: { bytes: bytes.length, offsite: offsiteDir ? offsiteOk : null, kept, verified } });
+  return { file, bytes: bytes.length, offsiteOk, verified, verifyError };
 }
 
 /** Delete the oldest local backups beyond the retention count. ISO timestamps in the filename sort chronologically. */
