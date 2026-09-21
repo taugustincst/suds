@@ -1,4 +1,5 @@
 import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav } from '../app.js';
+import { flattenLines } from './budget.js';
 
 // `template`: an earlier intervention for this same client to prefill from (type, location, modality,
 // supplies, funding…) when the worker is logging the same kind of visit again — the date/time, duration
@@ -17,7 +18,11 @@ export function openInterventionForm(values, { clientId, clientDisplay, onDone, 
     { name: 'location', label: 'Location', type: 'select', options: C.LOCATIONS, value: 'office' }, { name: 'modality', label: 'Modality', type: 'select', options: C.MODALITIES, value: 'in_person' },
     { name: 'outcome', label: 'Outcome', type: 'select', options: C.OUTCOMES }, { name: 'stage_of_change', label: 'Stage of change', type: 'select', options: C.STAGES },
     { name: 'naloxone_kits', label: 'Naloxone kits given', type: 'number', min: 0, step: 1, value: 0 }, { name: 'fentanyl_strips', label: 'Fentanyl test strips given', type: 'number', min: 0, step: 1, value: 0 },
-    can('budget:read') ? { name: 'funding_source_id', label: 'Funding source', type: 'fund' } : null, can('budget:read') ? { name: 'cost', label: 'Direct cost ($)', type: 'number', min: 0, step: 0.01 } : null,
+    can('budget:read') ? { name: 'funding_source_id', label: 'Funding source', type: 'fund' } : null,
+    // A cost is only ever deducted from a specific allocation, never just "the fund" — the line is what
+    // actually shrinks (server/routes/interventions.js requires it once cost > 0).
+    can('budget:read') ? { name: 'budget_line_id', label: 'Budget line', type: 'select', options: [] } : null,
+    can('budget:read') ? { name: 'cost', label: 'Direct cost ($)', type: 'number', min: 0, step: 0.01 } : null,
     { name: 'summary', label: 'Short summary (no names or health details here — put those in a Note)', type: 'textarea', span: true, rows: 3 },
     { name: 'follow_up_due', label: 'Remind me to follow up on', type: 'date' },
     isNew ? { name: 'log_time', label: 'Also log this as a time entry', type: 'checkbox', value: true } : null,
@@ -27,6 +32,12 @@ export function openInterventionForm(values, { clientId, clientDisplay, onDone, 
     if (isNew) await post('/api/interventions', d); else await put(`/api/interventions/${values.id}`, d);
     toast(isNew ? 'Intervention logged' : 'Saved', 'ok'); m.close(); onDone && onDone();
   } });
+  if (can('budget:read')) {
+    const fundSel = f.inputs.funding_source_id, lineSel = f.inputs.budget_line_id;
+    const fillLines = () => { const fund = state.funds.find(x => x.id === fundSel.value); lineSel.replaceChildren(h('option', { value: '' }, '— none —'), ...flattenLines(fund ? fund.lines : []).map(l => h('option', { value: l.id, selected: l.id === seed.budget_line_id }, `${'— '.repeat(l._depth)}${l.label || fmt.label(l.category)} (${fmt.money(l.allocated_amount - l.subtree_spent)} left)`))); };
+    fundSel.addEventListener('change', fillLines);
+    fillLines();
+  }
   const m = modal(isNew ? (template ? 'Repeat visit or service' : 'Record a visit or service') : 'Edit visit / service', f, { wide: true });
 }
 // Opens the form prefilled from the client's most recent intervention, or falls back to a blank one if

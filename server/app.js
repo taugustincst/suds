@@ -27,7 +27,7 @@ function rateLimit(key, max, windowMs) {
 // out of the phone app.
 const ROUTE_MODULES = ['setup', 'auth', 'oidc', 'me', 'app', 'sync', 'dataimport', 'users', 'clients', 'assignments', 'episodes',
   'interventions', 'overdose', 'calls', 'time', 'supervision', 'resources', 'referrals', 'tasks', 'budget', 'notes',
-  'consents', 'forms', 'imports', 'reports', 'admin', 'regions', 'intake'];
+  'consents', 'forms', 'documents', 'imports', 'reports', 'admin', 'regions', 'intake'];
 
 // Not on a device: setup and app are office-server concerns (first-run wizard, APK hosting), sync is the
 // device's own runner, intake is an inbound API for other systems to call, and oidc needs a live identity

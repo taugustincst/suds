@@ -41,7 +41,7 @@ function openFundForm(values, onDone) {
 }
 // Every line in this fund, flattened out of the nested tree with its depth, in tree order (parent right
 // before its children) — used both to indent the overview table and to build the "parent allocation" picker.
-function flattenLines(lines, depth = 0, out = []) {
+export function flattenLines(lines, depth = 0, out = []) {
   for (const l of lines) { out.push({ ...l, _depth: depth }); flattenLines(l.children || [], depth + 1, out); }
   return out;
 }

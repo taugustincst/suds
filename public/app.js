@@ -602,6 +602,7 @@ export const NAV = [
   { name: 'resources', label: 'Resource directory', ico: '☰', perm: 'resources:read', help: 'Treatment programs, MAT clinics, shelters, legal aid and other partners you refer to.' },
   { sec: 'Program' },
   { name: 'budget', label: 'Funding & spending', ico: '$', perm: 'budget:read', help: 'Grants and what has been spent, including client assistance such as bus passes and IDs.' },
+  { name: 'documents', label: 'Policies & contracts', ico: '📋', perm: 'documents:read', help: 'County policies, procedures and signed contracts, searchable by title and category.' },
   { name: 'reports', label: 'Reports', ico: '▤', perm: 'reports:read', help: 'Numbers for your funders and supervisors. Exports never include client names unless you ask.' },
   { name: 'funder', label: 'Funder report', ico: '▦', perm: 'reports:read', help: 'Unduplicated counts — people, not services — by fiscal period and funding source, with admissions, discharges, demographics and overdose figures in the shape a grant report asks for.' },
   { name: 'admin', label: 'Settings', ico: '⚙', perm: 'users:manage', help: 'Staff accounts, security, connecting phones, and backups.' },

@@ -221,6 +221,9 @@ CREATE TABLE IF NOT EXISTS interventions (
   naloxone_kits INTEGER DEFAULT 0,
   fentanyl_strips INTEGER DEFAULT 0,
   funding_source_id TEXT REFERENCES funding_sources(id),
+  -- Which allocation the cost below actually draws down. Nullable: a worker can log a direct cost against
+  -- just the fund with no specific line, the same as expenditures.budget_line_id already allows.
+  budget_line_id TEXT REFERENCES budget_lines(id) ON DELETE SET NULL,
   cost REAL DEFAULT 0,
   summary_enc TEXT,
   follow_up_due TEXT,
@@ -336,6 +339,27 @@ CREATE TABLE IF NOT EXISTS resource_photos (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_resource_photos ON resource_photos(resource_id, sort_order);
+
+-- County policies, procedures and contracts: an uploaded-file library, searched by title/category/metadata
+-- only (no PHI in here, and no text extracted from the files themselves).
+CREATE TABLE IF NOT EXISTS policy_documents (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  category TEXT NOT NULL CHECK (category IN ('policy','procedure','contract')),
+  description TEXT,
+  effective_date TEXT,
+  expires_at TEXT,
+  filename TEXT,
+  content_type TEXT,
+  bytes INTEGER NOT NULL DEFAULT 0,
+  file_b64 TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  uploaded_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_policy_documents_cat ON policy_documents(category);
+CREATE INDEX IF NOT EXISTS idx_policy_documents_updated ON policy_documents(updated_at);
 
 CREATE TABLE IF NOT EXISTS referrals (
   id TEXT PRIMARY KEY,

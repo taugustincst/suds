@@ -276,6 +276,60 @@ test('budget: nested allocations roll up, and cannot be re-parented into a cycle
   assert.equal(H.db.one(`SELECT COUNT(*) n FROM budget_lines WHERE id IN (?,?)`, item1.data.id, item2.data.id).n, 0);
 });
 
+test('a service rendered with a direct cost auto-posts a pending expenditure against its budget line', async () => {
+  const f = await admin.post('/api/budget/funds', { name: 'Client Assistance Fund', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 5000 });
+  const line = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'transportation', label: 'Bus passes', allocated_amount: 1000 });
+
+  // a cost with no budget line is refused, so the deduction always has somewhere specific to come from
+  const noLine = await nav.post('/api/interventions', { client_id: clientId, type: 'case_management', occurred_at: '2026-09-05T10:00:00Z', funding_source_id: f.data.id, cost: 5 });
+  assert.equal(noLine.status, 400);
+
+  const iv = await nav.post('/api/interventions', { client_id: clientId, type: 'case_management', occurred_at: '2026-09-05T10:00:00Z', funding_source_id: f.data.id, budget_line_id: line.data.id, cost: 5, summary: 'Bus pass provided' });
+  assert.equal(iv.status, 201);
+  const auto = H.db.one(`SELECT * FROM expenditures WHERE intervention_id=?`, iv.data.id);
+  assert.ok(auto, 'recording the service posted an expenditure');
+  assert.equal(auto.amount, 5); assert.equal(auto.status, 'pending'); assert.equal(auto.category, 'transportation');
+
+  const funds1 = await fin.get('/api/budget/funds');
+  const line1 = funds1.data.funds.find(x => x.id === f.data.id).lines.find(l => l.id === line.data.id);
+  assert.equal(line1.pending, 5, 'the fund page reflects it immediately, before anyone approves it');
+  assert.equal(line1.spent, 0, 'but it is not counted as spent until approved — the approval workflow still applies');
+
+  // editing the cost while still pending updates the same expenditure rather than creating a second one
+  await nav.put(`/api/interventions/${iv.data.id}`, { cost: 8 });
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM expenditures WHERE intervention_id=?`, iv.data.id).n, 1);
+  assert.equal(H.db.one(`SELECT amount FROM expenditures WHERE intervention_id=?`, iv.data.id).amount, 8);
+
+  // once approved, it is real spend and an edit to the service record must not silently rewrite it
+  const s = H.client(); await s.login('sup1', 'StaffPassw0rd!x');
+  assert.equal((await s.post(`/api/budget/expenditures/${auto.id}/approve`, { status: 'approved' })).status, 200);
+  await nav.put(`/api/interventions/${iv.data.id}`, { cost: 500 });
+  assert.equal(H.db.one(`SELECT amount, status FROM expenditures WHERE intervention_id=?`, iv.data.id).amount, 8, 'the approved expenditure keeps the amount that was actually approved');
+
+  // deleting a service whose cost is still only pending takes the phantom expenditure with it
+  const iv2 = await nav.post('/api/interventions', { client_id: clientId, type: 'case_management', occurred_at: '2026-09-06T10:00:00Z', funding_source_id: f.data.id, budget_line_id: line.data.id, cost: 12 });
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM expenditures WHERE intervention_id=?`, iv2.data.id).n, 1);
+  assert.equal((await nav.del(`/api/interventions/${iv2.data.id}`)).status, 200);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM expenditures WHERE intervention_id=?`, iv2.data.id).n, 0, 'the pending expenditure it created is cleaned up too');
+
+  // clearing the cost back to zero while still pending removes the auto-created expenditure
+  const iv3 = await nav.post('/api/interventions', { client_id: clientId, type: 'case_management', occurred_at: '2026-09-07T10:00:00Z', funding_source_id: f.data.id, budget_line_id: line.data.id, cost: 20 });
+  await nav.put(`/api/interventions/${iv3.data.id}`, { cost: 0 });
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM expenditures WHERE intervention_id=?`, iv3.data.id).n, 0);
+});
+
+test('a supervisor leaving "Worker (defaults to you)" blank logs the intervention as themselves', async () => {
+  // Regression: the Worker picker is a blank-by-default field (unlike every other user picker in the app,
+  // which either defaults its value or is required), and validate() turns that blank into an explicit null
+  // rather than leaving the key out entirely — crud.js's auto-assign-to-self only checked for undefined,
+  // so this 500'd for any supervisor/admin who did not explicitly pick themselves from the dropdown.
+  const s = H.client(); await s.login('sup1', 'StaffPassw0rd!x');
+  const supId = H.db.one(`SELECT id FROM users WHERE username='sup1'`).id;
+  const r = await s.post('/api/interventions', { client_id: clientId, type: 'case_management', occurred_at: '2026-09-08T10:00:00Z', user_id: '' });
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  assert.equal(H.db.one(`SELECT user_id FROM interventions WHERE id=?`, r.data.id).user_id, supId);
+});
+
 test('time entries scoped to own user unless manager', async () => {
   await nav.post('/api/time', { work_date: '2026-09-05', minutes: 45, category: 'documentation' });
   const own = await nav.get('/api/time'); assert.ok(own.data.rows.every(x => x.worker === 'nav1'));

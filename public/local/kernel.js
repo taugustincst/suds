@@ -6425,6 +6425,9 @@ CREATE TABLE IF NOT EXISTS interventions (
   naloxone_kits INTEGER DEFAULT 0,
   fentanyl_strips INTEGER DEFAULT 0,
   funding_source_id TEXT REFERENCES funding_sources(id),
+  -- Which allocation the cost below actually draws down. Nullable: a worker can log a direct cost against
+  -- just the fund with no specific line, the same as expenditures.budget_line_id already allows.
+  budget_line_id TEXT REFERENCES budget_lines(id) ON DELETE SET NULL,
   cost REAL DEFAULT 0,
   summary_enc TEXT,
   follow_up_due TEXT,
@@ -6540,6 +6543,27 @@ CREATE TABLE IF NOT EXISTS resource_photos (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_resource_photos ON resource_photos(resource_id, sort_order);
+
+-- County policies, procedures and contracts: an uploaded-file library, searched by title/category/metadata
+-- only (no PHI in here, and no text extracted from the files themselves).
+CREATE TABLE IF NOT EXISTS policy_documents (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  category TEXT NOT NULL CHECK (category IN ('policy','procedure','contract')),
+  description TEXT,
+  effective_date TEXT,
+  expires_at TEXT,
+  filename TEXT,
+  content_type TEXT,
+  bytes INTEGER NOT NULL DEFAULT 0,
+  file_b64 TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  uploaded_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_policy_documents_cat ON policy_documents(category);
+CREATE INDEX IF NOT EXISTS idx_policy_documents_updated ON policy_documents(updated_at);
 
 CREATE TABLE IF NOT EXISTS referrals (
   id TEXT PRIMARY KEY,
@@ -7389,6 +7413,22 @@ var require_db = __commonJS({
       (d) => {
         addColumn(d, "budget_lines", "parent_id", "TEXT REFERENCES budget_lines(id) ON DELETE CASCADE");
         d.exec(`CREATE INDEX IF NOT EXISTS idx_budget_lines_parent ON budget_lines(parent_id)`);
+      },
+      // 14: an intervention with a direct cost against a fund can now name the specific allocation it draws
+      //     down — interventions already had funding_source_id and cost, but nothing to point at which budget
+      //     line, so recording a service never actually reduced a budget. server/routes/interventions.js now
+      //     auto-posts a matching (pending) expenditure from these three columns.
+      (d) => {
+        addColumn(d, "interventions", "budget_line_id", "TEXT REFERENCES budget_lines(id) ON DELETE SET NULL");
+      },
+      // 15: county policies, procedures and contracts — an uploaded-file library (server/routes/documents.js),
+      //     searched by title/category/metadata only, the same shape as the existing form template library.
+      (d) => {
+        d.exec(`CREATE TABLE IF NOT EXISTS policy_documents (id TEXT PRIMARY KEY, title TEXT NOT NULL, category TEXT NOT NULL CHECK (category IN ('policy','procedure','contract')),
+      description TEXT, effective_date TEXT, expires_at TEXT, filename TEXT, content_type TEXT, bytes INTEGER NOT NULL DEFAULT 0, file_b64 TEXT, is_active INTEGER NOT NULL DEFAULT 1,
+      uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_policy_documents_cat ON policy_documents(category)`);
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_policy_documents_updated ON policy_documents(updated_at)`);
       }
     ];
     function initialise(d, schemaText, dbPath) {
@@ -7898,7 +7938,9 @@ var require_auth = __commonJS({
         "time:approve",
         "episodes:*",
         "overdose:*",
-        "clients:merge"
+        "clients:merge",
+        "documents:read",
+        "documents:write"
       ],
       supervisor: [
         "clients:read",
@@ -7933,7 +7975,9 @@ var require_auth = __commonJS({
         "time:approve",
         "episodes:*",
         "overdose:*",
-        "clients:merge"
+        "clients:merge",
+        "documents:read",
+        "documents:write"
       ],
       clinician: [
         "clients:read",
@@ -7956,7 +8000,8 @@ var require_auth = __commonJS({
         "forms:read",
         "forms:write",
         "episodes:*",
-        "overdose:*"
+        "overdose:*",
+        "documents:read"
       ],
       navigator: [
         "clients:read",
@@ -7979,12 +8024,13 @@ var require_auth = __commonJS({
         "forms:read",
         "forms:write",
         "episodes:*",
-        "overdose:*"
+        "overdose:*",
+        "documents:read"
       ],
       // finance sees money, not people: export:read without export:identified means every export it can run
       // comes out keyed by client_code. Do not add 'export:identified' here — docs/HIPAA.md promises otherwise.
-      finance: ["clients:list-deidentified", "budget:read", "budget:write", "budget:approve", "time:read", "time:all", "time:approve", "reports:read", "export:read", "users:read"],
-      readonly: ["clients:read", "clients:all", "interventions:read", "calls:read", "referrals:read", "tasks:read", "resources:read", "reports:read", "users:read", "forms:read"]
+      finance: ["clients:list-deidentified", "budget:read", "budget:write", "budget:approve", "time:read", "time:all", "time:approve", "reports:read", "export:read", "users:read", "documents:read", "documents:write"],
+      readonly: ["clients:read", "clients:all", "interventions:read", "calls:read", "referrals:read", "tasks:read", "resources:read", "reports:read", "users:read", "forms:read", "documents:read"]
     };
     function hasPerm(user, perm) {
       if (!user) return false;
@@ -8210,6 +8256,7 @@ var require_sync_tables = __commonJS({
         { name: "users", enc: ["mfa_secret_enc"], scope: "users", cols: null },
         { name: "resources", enc: [], scope: "all", writePerm: "resources:write" },
         { name: "resource_photos", enc: [], scope: "all", writePerm: "resources:write", parent: ["resources", "resource_id"], blob: ["data_b64"] },
+        { name: "policy_documents", enc: [], scope: "all", writePerm: "documents:write", blob: ["file_b64"] },
         { name: "funding_sources", enc: [], scope: "all", writePerm: "budget:write" },
         { name: "budget_lines", enc: [], scope: "all", writePerm: "budget:write", parent: ["funding_sources", "funding_source_id"], selfParent: "parent_id" },
         { name: "clients", enc: ["first_name_enc", "last_name_enc", "preferred_name_enc", "dob_enc", "phone_enc", "alt_phone_enc", "email_enc", "address_enc", "medicaid_id_enc", "emergency_contact_enc", "goals_enc", "flags_enc"], scope: "client", clientCol: "id", idx: true, writePerm: "clients:write" },
@@ -8263,6 +8310,7 @@ var require_sync_tables = __commonJS({
         ["client_form_files", "uploaded_by"],
         ["resource_photos", "uploaded_by"],
         ["form_templates", "uploaded_by"],
+        ["policy_documents", "uploaded_by"],
         ["audit_log", "user_id"],
         ["sessions", "user_id"],
         ["user_prefs", "user_id"],
@@ -8359,6 +8407,7 @@ var require_constants = __commonJS({
       SERVICE_TAGS: ["detox", "residential", "inpatient", "partial_hospitalization", "intensive_outpatient", "outpatient", "mat_buprenorphine", "mat_methadone", "mat_naltrexone", "medication_management", "individual_counseling", "group_counseling", "family_program", "peer_support", "case_management", "mental_health", "trauma_informed", "co_occurring", "medical_care", "harm_reduction", "naloxone", "syringe_services", "housing", "sober_living", "employment", "legal_help", "transportation", "childcare", "telehealth", "walk_in", "same_day_intake", "crisis_24_7", "aftercare", "faith_based", "spanish_speaking"],
       POPULATIONS: ["adults", "adolescents", "women", "men", "pregnant_parenting", "families", "veterans", "lgbtq", "justice_involved", "unhoused", "older_adults", "native_american", "spanish_speakers", "deaf_hard_of_hearing"],
       FORM_CATEGORIES: ["consent_release", "intake_screening", "assessment", "treatment_plan", "referral", "assistance_request", "transportation", "housing", "benefits", "discharge", "incident", "grievance", "other"],
+      DOCUMENT_CATEGORIES: ["policy", "procedure", "contract"],
       FORM_FIELD_TYPES: ["text", "textarea", "date", "number", "checkbox", "select", "signature", "section", "note"],
       FORM_AUTOFILL: ["client.full_name", "client.first_name", "client.last_name", "client.preferred_name", "client.dob", "client.phone", "client.email", "client.address", "client.city", "client.zip", "client.client_code", "client.gender", "client.pronouns", "client.insurance", "client.medicaid_id", "client.emergency_contact", "client.primary_substance", "client.mat_status", "client.intake_date", "worker.name", "worker.title", "org.name", "org.county", "today"],
       ASAM: ["0.5", "1.0", "2.1", "2.5", "3.1", "3.3", "3.5", "3.7", "4.0", "OTP", "unknown"]
@@ -11230,7 +11279,7 @@ var require_crud = __commonJS({
         if (opts.beforeInsert) opts.beforeInsert(ctx, v);
         const id = uuid2();
         const cols2 = { id, ...v };
-        if (ownerCol && (cols2[ownerCol] === void 0 || opts.restrictOwner && !auth3.hasPerm(ctx.user, "clients:all"))) cols2[ownerCol] = ctx.user.id;
+        if (ownerCol && (cols2[ownerCol] === void 0 || cols2[ownerCol] === null || opts.restrictOwner && !auth3.hasPerm(ctx.user, "clients:all"))) cols2[ownerCol] = ctx.user.id;
         if (opts.creatorCol) cols2[opts.creatorCol] = ctx.user.id;
         const keys = Object.keys(cols2).filter((k) => cols2[k] !== void 0 && !k.startsWith("_"));
         db3.transaction(() => {
@@ -11252,6 +11301,7 @@ var require_crud = __commonJS({
         if (opts.beforeUpdate) opts.beforeUpdate(ctx, v, row);
         const keys = Object.keys(v).filter((k) => v[k] !== void 0 && !k.startsWith("_"));
         if (keys.length) db3.run(`UPDATE ${table} SET ${keys.map((k) => `${k}=?`).join(", ")}${opts.noUpdatedAt ? "" : ", updated_at=?"} WHERE id=?`, ...keys.map((k) => v[k]), ...opts.noUpdatedAt ? [] : [db3.now()], row.id);
+        if (opts.afterUpdate) opts.afterUpdate(ctx, { ...row, ...v }, row);
         audit3.log({ user: ctx.user, action: `${entity}.update`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip, details: { fields: keys } });
         return { ok: true };
       });
@@ -11261,6 +11311,7 @@ var require_crud = __commonJS({
         if (row.client_id) auth3.assertClientAccess(ctx, row.client_id);
         if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden("You cannot delete this record");
         if (opts.canDelete && !opts.canDelete(ctx, row)) throw forbidden("You cannot delete this record");
+        if (opts.beforeDelete) opts.beforeDelete(ctx, row);
         db3.run(`DELETE FROM ${table} WHERE id=?`, row.id);
         db3.tombstone(table, row.id);
         audit3.log({ user: ctx.user, action: `${entity}.delete`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip });
@@ -12814,6 +12865,132 @@ var require_dataimport2 = __commonJS({
   }
 });
 
+// server/routes/documents.js
+var require_documents = __commonJS({
+  "server/routes/documents.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var C = require_constants();
+    var { badRequest, notFound } = require_http();
+    var { validate } = require_validate();
+    var { uuid: uuid2 } = require_crypto();
+    var MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
+    var FILE_TYPES = { "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx", "application/msword": "doc", "text/plain": "txt" };
+    function sniff(buf) {
+      if (buf.length > 4 && buf.toString("ascii", 0, 4) === "%PDF") return "application/pdf";
+      if (buf.length > 3 && buf[0] === 255 && buf[1] === 216 && buf[2] === 255) return "image/jpeg";
+      if (buf.length > 8 && buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71) return "image/png";
+      if (buf.length > 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return "image/webp";
+      if (buf.length > 4 && buf[0] === 80 && buf[1] === 75 && buf[2] === 3 && buf[3] === 4) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+      if (buf.length > 8 && buf[0] === 208 && buf[1] === 207 && buf[2] === 17 && buf[3] === 224) return "application/msword";
+      return null;
+    }
+    function fromDataUrl(v, maxBytes, label) {
+      if (typeof v !== "string" || !v) return null;
+      const m = /^data:([\w.+/-]+);base64,([A-Za-z0-9+/=\s]+)$/.exec(v);
+      const b64 = (m ? m[2] : v).replace(/\s+/g, "");
+      if (!/^[A-Za-z0-9+/=]+$/.test(b64)) throw badRequest(`${label} must be base64`);
+      const buf = import_buffer.Buffer.from(b64, "base64");
+      if (!buf.length) throw badRequest(`${label} is empty`);
+      if (buf.length > maxBytes) throw badRequest(`${label} is too large (max ${Math.round(maxBytes / 1024 / 1024)} MB)`);
+      const type = sniff(buf) || (m && m[1] === "text/plain" ? "text/plain" : null);
+      if (!type || !FILE_TYPES[type]) throw badRequest(`${label} must be a PDF, Word document, picture or text file`);
+      return { b64, buf, type };
+    }
+    var SERVABLE_TYPES = /* @__PURE__ */ new Set([
+      "application/pdf",
+      "image/png",
+      "image/jpeg",
+      "image/webp",
+      "text/plain",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ]);
+    function safeContentType(t) {
+      return SERVABLE_TYPES.has(String(t || "").toLowerCase().split(";")[0].trim()) ? String(t).split(";")[0].trim() : "application/octet-stream";
+    }
+    var shape = { title: { type: "string", required: true, maxLen: 200 }, category: { type: "string", required: true, enum: C.DOCUMENT_CATEGORIES }, description: { type: "string", maxLen: 2e3 }, effective_date: { type: "date" }, expires_at: { type: "date" }, filename: { type: "string", maxLen: 200 } };
+    var out2 = (row) => row && { ...row, has_file: !!row.file_b64, file_b64: void 0 };
+    module.exports = (r) => {
+      r.get("/api/documents", auth3.requireAuth, auth3.requirePerm("documents:read"), (ctx) => {
+        const all = ctx.query.get("all") === "1" && auth3.hasPerm(ctx.user, "documents:write");
+        const cat = ctx.query.get("category");
+        const rows = db3.all(`SELECT id,title,category,description,effective_date,expires_at,filename,content_type,bytes,is_active,uploaded_by,created_at,updated_at, (file_b64 IS NOT NULL) has_file
+      FROM policy_documents ${all ? "" : "WHERE is_active=1"} ${cat ? `${all ? "WHERE" : "AND"} category=?` : ""} ORDER BY category, title`, ...cat ? [cat] : []);
+        return { documents: rows, categories: C.DOCUMENT_CATEGORIES };
+      });
+      r.get("/api/documents/:id", auth3.requireAuth, auth3.requirePerm("documents:read"), (ctx) => {
+        const d = db3.one(`SELECT * FROM policy_documents WHERE id=?`, ctx.params.id);
+        if (!d) throw notFound();
+        audit3.log({ user: ctx.user, action: "document.view", entity: "policy_document", entityId: d.id, ip: ctx.ip });
+        return { document: out2(d) };
+      });
+      r.post("/api/documents", auth3.requireAuth, auth3.requirePerm("documents:write"), (ctx) => {
+        const v = validate(ctx.body, shape);
+        const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_DOCUMENT_BYTES, "File");
+        if (!file) throw badRequest("A file is required");
+        const id = uuid2();
+        db3.run(
+          `INSERT INTO policy_documents(id,title,category,description,effective_date,expires_at,filename,content_type,bytes,file_b64,uploaded_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+          id,
+          v.title,
+          v.category,
+          v.description || null,
+          v.effective_date || null,
+          v.expires_at || null,
+          v.filename || `${v.title}.${FILE_TYPES[file.type]}`,
+          file.type,
+          file.buf.length,
+          file.b64,
+          ctx.user.id
+        );
+        audit3.log({ user: ctx.user, action: "document.create", entity: "policy_document", entityId: id, ip: ctx.ip, details: { title: v.title, category: v.category, bytes: file.buf.length } });
+        ctx.status = 201;
+        return { id };
+      });
+      r.put("/api/documents/:id", auth3.requireAuth, auth3.requirePerm("documents:write"), (ctx) => {
+        const d = db3.one(`SELECT id FROM policy_documents WHERE id=?`, ctx.params.id);
+        if (!d) throw notFound();
+        const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s2]) => [k, { ...s2, required: false }])), { partial: true });
+        const v2 = validate({ is_active: ctx.body.is_active }, { is_active: { type: "boolean" } }, { partial: true });
+        const sets = Object.keys(v).map((k) => `${k}=?`);
+        const params = Object.keys(v).map((k) => v[k]);
+        for (const k of Object.keys(v2)) {
+          sets.push(`${k}=?`);
+          params.push(v2[k]);
+        }
+        if (ctx.body.file_url || ctx.body.file) {
+          const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_DOCUMENT_BYTES, "File");
+          sets.push("file_b64=?", "content_type=?", "bytes=?", "filename=?");
+          params.push(file.b64, file.type, file.buf.length, v.filename || ctx.body.filename || `document.${FILE_TYPES[file.type]}`);
+        }
+        if (!sets.length) return { ok: true };
+        db3.run(`UPDATE policy_documents SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, db3.now(), d.id);
+        audit3.log({ user: ctx.user, action: "document.update", entity: "policy_document", entityId: d.id, ip: ctx.ip, details: { fields: Object.keys(v).concat(Object.keys(v2)) } });
+        return { ok: true };
+      });
+      r.delete("/api/documents/:id", auth3.requireAuth, auth3.requirePerm("documents:write"), (ctx) => {
+        const d = db3.one(`SELECT id FROM policy_documents WHERE id=?`, ctx.params.id);
+        if (!d) throw notFound();
+        db3.run(`UPDATE policy_documents SET is_active=0, updated_at=? WHERE id=?`, db3.now(), d.id);
+        audit3.log({ user: ctx.user, action: "document.retire", entity: "policy_document", entityId: d.id, ip: ctx.ip });
+        return { ok: true };
+      });
+      r.get("/api/documents/:id/file", auth3.requireAuth, auth3.requirePerm("documents:read"), (ctx) => {
+        const d = db3.one(`SELECT * FROM policy_documents WHERE id=?`, ctx.params.id);
+        if (!d || !d.file_b64) throw notFound("No file for this document");
+        audit3.log({ user: ctx.user, action: "document.download", entity: "policy_document", entityId: d.id, ip: ctx.ip });
+        ctx.res.writeHead(200, { "Content-Type": safeContentType(d.content_type), "Content-Disposition": `${ctx.query.get("inline") === "1" ? "inline" : "attachment"}; filename="${(d.filename || "document").replace(/["\r\n]/g, "")}"` });
+        ctx.res.end(import_buffer.Buffer.from(d.file_b64, "base64"));
+        return null;
+      });
+    };
+  }
+});
+
 // server/routes/episodes.js
 var require_episodes = __commonJS({
   "server/routes/episodes.js"(exports, module) {
@@ -14052,7 +14229,60 @@ var require_interventions = __commonJS({
     var db3 = require_db();
     var crud = require_crud();
     var C = require_constants();
+    var { badRequest } = require_http();
     var { uuid: uuid2 } = require_crypto();
+    function checkCost(v) {
+      if (v.cost && v.cost > 0) {
+        if (!v.funding_source_id) throw badRequest("A funding source is required when a cost is entered");
+        if (!v.budget_line_id) throw badRequest("A budget line is required when a cost is entered, so it is deducted from the right allocation");
+        const line = db3.one(`SELECT * FROM budget_lines WHERE id=? AND funding_source_id=?`, v.budget_line_id, v.funding_source_id);
+        if (!line) throw badRequest("Budget line does not belong to the selected funding source");
+        return line;
+      }
+      if (v.budget_line_id && !v.funding_source_id) throw badRequest("A funding source is required when a budget line is selected");
+      return null;
+    }
+    function syncExpenditure(row) {
+      const existing = db3.one(`SELECT * FROM expenditures WHERE intervention_id=?`, row.id);
+      if (existing && existing.status !== "pending") return;
+      const wantsCost = row.cost > 0 && row.funding_source_id && row.budget_line_id;
+      if (!wantsCost) {
+        if (existing) {
+          db3.run(`DELETE FROM expenditures WHERE id=?`, existing.id);
+          db3.tombstone("expenditures", existing.id);
+        }
+        return;
+      }
+      const line = db3.one(`SELECT * FROM budget_lines WHERE id=? AND funding_source_id=?`, row.budget_line_id, row.funding_source_id);
+      if (!line) return;
+      const desc = `Auto-recorded from ${row.type.replace(/_/g, " ")}`;
+      const spentAt = row.occurred_at.slice(0, 10);
+      if (existing) db3.run(
+        `UPDATE expenditures SET funding_source_id=?, budget_line_id=?, client_id=?, spent_at=?, amount=?, category=?, description=?, updated_at=? WHERE id=?`,
+        row.funding_source_id,
+        row.budget_line_id,
+        row.client_id || null,
+        spentAt,
+        row.cost,
+        line.category,
+        desc,
+        db3.now(),
+        existing.id
+      );
+      else db3.run(
+        `INSERT INTO expenditures(id,funding_source_id,budget_line_id,client_id,user_id,intervention_id,spent_at,amount,category,description) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+        uuid2(),
+        row.funding_source_id,
+        row.budget_line_id,
+        row.client_id || null,
+        row.user_id,
+        row.id,
+        spentAt,
+        row.cost,
+        line.category,
+        desc
+      );
+    }
     function encodeSummary(v) {
       if (v.summary !== void 0) {
         v.summary_enc = v.summary ? require_crypto().encrypt(v.summary) : null;
@@ -14094,6 +14324,7 @@ var require_interventions = __commonJS({
           naloxone_kits: { type: "number", integer: true, min: 0 },
           fentanyl_strips: { type: "number", integer: true, min: 0 },
           funding_source_id: { type: "string" },
+          budget_line_id: { type: "string" },
           cost: { type: "number", min: 0 },
           summary: { type: "string", maxLen: 2e3 },
           follow_up_due: { type: "date" },
@@ -14114,11 +14345,13 @@ var require_interventions = __commonJS({
           v._time_category = v.time_category;
           delete v.time_category;
           encodeSummary(v);
+          checkCost(v);
         },
-        beforeUpdate: (ctx, v) => {
+        beforeUpdate: (ctx, v, row) => {
           delete v.log_time;
           delete v.time_category;
           encodeSummary(v);
+          if ("cost" in v || "funding_source_id" in v || "budget_line_id" in v) checkCost({ funding_source_id: row.funding_source_id, budget_line_id: row.budget_line_id, cost: row.cost, ...v });
         },
         afterInsert: (ctx, row) => {
           if (row._log_time && row.duration_minutes > 0) {
@@ -14146,6 +14379,17 @@ var require_interventions = __commonJS({
             row.follow_up_due,
             "normal"
           );
+          syncExpenditure(row);
+        },
+        afterUpdate: (ctx, row) => syncExpenditure(row),
+        // The FK from expenditures.intervention_id is ON DELETE SET NULL, so this has to run before the delete
+        // — after it, there is no longer any way to find the expenditure this intervention's cost created.
+        beforeDelete: (ctx, row) => {
+          const existing = db3.one(`SELECT * FROM expenditures WHERE intervention_id=?`, row.id);
+          if (existing && existing.status === "pending") {
+            db3.run(`DELETE FROM expenditures WHERE id=?`, existing.id);
+            db3.tombstone("expenditures", existing.id);
+          }
         },
         canEdit: crud.ownerOrManager()
       });
@@ -19686,6 +19930,7 @@ var init_ = __esm({
       "./routes/clients.js": () => require_clients(),
       "./routes/consents.js": () => require_consents(),
       "./routes/dataimport.js": () => require_dataimport2(),
+      "./routes/documents.js": () => require_documents(),
       "./routes/episodes.js": () => require_episodes(),
       "./routes/forms.js": () => require_forms(),
       "./routes/imports.js": () => require_imports(),
@@ -19760,6 +20005,7 @@ var require_app2 = __commonJS({
       "notes",
       "consents",
       "forms",
+      "documents",
       "imports",
       "reports",
       "admin",
@@ -20193,6 +20439,7 @@ var routeLoaders = {
   notes: () => Promise.resolve().then(() => __toESM(require_notes())),
   consents: () => Promise.resolve().then(() => __toESM(require_consents())),
   forms: () => Promise.resolve().then(() => __toESM(require_forms())),
+  documents: () => Promise.resolve().then(() => __toESM(require_documents())),
   regions: () => Promise.resolve().then(() => __toESM(require_regions())),
   imports: () => Promise.resolve().then(() => __toESM(require_imports())),
   dataimport: () => Promise.resolve().then(() => __toESM(require_dataimport2())),

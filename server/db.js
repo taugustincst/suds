@@ -195,6 +195,20 @@ const migrations = [
     addColumn(d, 'budget_lines', 'parent_id', 'TEXT REFERENCES budget_lines(id) ON DELETE CASCADE');
     d.exec(`CREATE INDEX IF NOT EXISTS idx_budget_lines_parent ON budget_lines(parent_id)`);
   },
+  // 14: an intervention with a direct cost against a fund can now name the specific allocation it draws
+  //     down — interventions already had funding_source_id and cost, but nothing to point at which budget
+  //     line, so recording a service never actually reduced a budget. server/routes/interventions.js now
+  //     auto-posts a matching (pending) expenditure from these three columns.
+  (d) => { addColumn(d, 'interventions', 'budget_line_id', 'TEXT REFERENCES budget_lines(id) ON DELETE SET NULL'); },
+  // 15: county policies, procedures and contracts — an uploaded-file library (server/routes/documents.js),
+  //     searched by title/category/metadata only, the same shape as the existing form template library.
+  (d) => {
+    d.exec(`CREATE TABLE IF NOT EXISTS policy_documents (id TEXT PRIMARY KEY, title TEXT NOT NULL, category TEXT NOT NULL CHECK (category IN ('policy','procedure','contract')),
+      description TEXT, effective_date TEXT, expires_at TEXT, filename TEXT, content_type TEXT, bytes INTEGER NOT NULL DEFAULT 0, file_b64 TEXT, is_active INTEGER NOT NULL DEFAULT 1,
+      uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
+    d.exec(`CREATE INDEX IF NOT EXISTS idx_policy_documents_cat ON policy_documents(category)`);
+    d.exec(`CREATE INDEX IF NOT EXISTS idx_policy_documents_updated ON policy_documents(updated_at)`);
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

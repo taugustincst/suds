@@ -16,6 +16,7 @@ module.exports = {
     { name: 'users', enc: ['mfa_secret_enc'], scope: 'users', cols: null },
     { name: 'resources', enc: [], scope: 'all', writePerm: 'resources:write' },
     { name: 'resource_photos', enc: [], scope: 'all', writePerm: 'resources:write', parent: ['resources', 'resource_id'], blob: ['data_b64'] },
+    { name: 'policy_documents', enc: [], scope: 'all', writePerm: 'documents:write', blob: ['file_b64'] },
     { name: 'funding_sources', enc: [], scope: 'all', writePerm: 'budget:write' },
     { name: 'budget_lines', enc: [], scope: 'all', writePerm: 'budget:write', parent: ['funding_sources', 'funding_source_id'], selfParent: 'parent_id' },
     { name: 'clients', enc: ['first_name_enc', 'last_name_enc', 'preferred_name_enc', 'dob_enc', 'phone_enc', 'alt_phone_enc', 'email_enc', 'address_enc', 'medicaid_id_enc', 'emergency_contact_enc', 'goals_enc', 'flags_enc'], scope: 'client', clientCol: 'id', idx: true, writePerm: 'clients:write' },
@@ -48,7 +49,7 @@ module.exports = {
     ['notes', 'author_id'], ['notes', 'signed_by'], ['notes', 'cosigned_by'], ['note_addenda', 'author_id'],
     ['consents', 'created_by'], ['disclosures', 'disclosed_by'], ['imports', 'imported_by'],
     ['client_forms', 'created_by'], ['client_forms', 'completed_by'], ['client_form_files', 'uploaded_by'],
-    ['resource_photos', 'uploaded_by'], ['form_templates', 'uploaded_by'],
+    ['resource_photos', 'uploaded_by'], ['form_templates', 'uploaded_by'], ['policy_documents', 'uploaded_by'],
     ['audit_log', 'user_id'], ['sessions', 'user_id'], ['user_prefs', 'user_id'], ['api_keys', 'created_by'], ['users', 'supervisor_id'], ['devices', 'user_id'],
   ],
 };
