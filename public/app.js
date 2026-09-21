@@ -736,6 +736,13 @@ export async function boot(force = false) {
       return;
     }
     window.addEventListener('pagehide', () => { window.SUDS_LOCAL && window.SUDS_LOCAL.flush(); });
+    // Redeploying the site (new files at the same origin) never touches this device's IndexedDB/localStorage
+    // — the sign-in session, the account, and every client record already survive that on their own. What
+    // does not survive on its own is the browser treating this storage as "best-effort": under disk pressure
+    // it can be evicted with no warning, silently taking the whole device's data with it. Asking for the
+    // persistent-storage grant is the one thing actually in the app's control here; the browser still decides
+    // (based on things like whether the person installed/bookmarked the app), so this is best-effort itself.
+    try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {}
   } else if ('serviceWorker' in navigator && location.protocol !== 'file:') { try { navigator.serviceWorker.register('sw.js').catch(() => {}); } catch {} }
   await loadSession();
   startIdleWatch();
