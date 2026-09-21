@@ -237,6 +237,45 @@ test('budget: funds, lines, expenditures, separation of duties', async () => {
   assert.equal((await nav.post(`/api/budget/expenditures/${e.data.id}/approve`, { status: 'approved' })).status, 403);
 });
 
+test('budget: nested allocations roll up, and cannot be re-parented into a cycle or another fund', async () => {
+  const f = await admin.post('/api/budget/funds', { name: 'SOR Grant FY26', source_type: 'sor_grant', fiscal_year_start: '2026-10-01', fiscal_year_end: '2027-09-30', total_amount: 50000 });
+  const other = await admin.post('/api/budget/funds', { name: 'Unrelated fund', source_type: 'other', fiscal_year_start: '2026-10-01', fiscal_year_end: '2027-09-30', total_amount: 1000 });
+  // A grant broken into a program-level allocation, broken into two line items under it.
+  const program = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'outreach_materials', label: 'Outreach program', allocated_amount: 20000 });
+  assert.equal(program.status, 201);
+  const item1 = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'naloxone_supplies', label: 'Naloxone kits', allocated_amount: 8000, parent_id: program.data.id });
+  const item2 = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'outreach_materials', label: 'Printed materials', allocated_amount: 5000, parent_id: program.data.id });
+  assert.equal(item1.status, 201); assert.equal(item2.status, 201);
+  const e = await nav.post('/api/budget/expenditures', { funding_source_id: f.data.id, budget_line_id: item1.data.id, spent_at: '2026-10-05', amount: 300, category: 'naloxone_supplies', vendor: 'Pharmacy' });
+  const sfin = H.client(); await sfin.login('sup1', 'StaffPassw0rd!x');
+  assert.equal((await sfin.post(`/api/budget/expenditures/${e.data.id}/approve`, { status: 'approved' })).status, 200);
+
+  const funds = await fin.get('/api/budget/funds');
+  const fund = funds.data.funds.find(x => x.id === f.data.id);
+  const top = fund.lines.find(l => l.id === program.data.id);
+  assert.equal(top.children.length, 2, 'the two line items nest under the program allocation, not as flat peers');
+  assert.equal(top.allocated_amount, 20000, "a parent line's own allocated_amount is unchanged by nesting");
+  assert.equal(top.child_allocated, 13000, 'sum of the two sub-allocations');
+  assert.equal(top.unallocated, 7000, 'the program envelope still has room for more sub-allocations');
+  assert.equal(top.subtree_spent, 300, 'a leaf expenditure rolls up through its parent, since it is real money out of the same envelope');
+  assert.equal(top.subtree_remaining, 19700, "the parent's own allocation minus spend anywhere under it");
+  assert.equal(fund.allocated, 20000, 'a sub-allocation is carved out of its parent, not an additional draw on the fund total');
+
+  // A budget line cannot be its own parent.
+  const selfParent = await admin.put(`/api/budget/lines/${program.data.id}`, { parent_id: program.data.id });
+  assert.equal(selfParent.status, 400);
+  // Nor can a parent be re-nested under its own child — that would be a cycle.
+  const cycle = await admin.put(`/api/budget/lines/${program.data.id}`, { parent_id: item1.data.id });
+  assert.equal(cycle.status, 400);
+  // Nor can an allocation move to a line in a different fund.
+  const otherLine = await admin.post(`/api/budget/funds/${other.data.id}/lines`, { category: 'other', allocated_amount: 500 });
+  const crossFund = await admin.put(`/api/budget/lines/${item1.data.id}`, { parent_id: otherLine.data.id });
+  assert.equal(crossFund.status, 400);
+  // Deleting the parent cascades to its sub-allocations (ON DELETE CASCADE).
+  assert.equal((await admin.del(`/api/budget/lines/${program.data.id}`)).status, 200);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM budget_lines WHERE id IN (?,?)`, item1.data.id, item2.data.id).n, 0);
+});
+
 test('time entries scoped to own user unless manager', async () => {
   await nav.post('/api/time', { work_date: '2026-09-05', minutes: 45, category: 'documentation' });
   const own = await nav.get('/api/time'); assert.ok(own.data.rows.every(x => x.worker === 'nav1'));

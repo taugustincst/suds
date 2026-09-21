@@ -189,6 +189,12 @@ const migrations = [
       last_ip TEXT, sync_count INTEGER NOT NULL DEFAULT 0, wipe_requested_at TEXT, revoked_at TEXT)`);
     d.exec(`CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id)`);
   },
+  // 13: nested budget allocations — a budget line can now sit inside a larger one instead of every line
+  //     being a flat peer under the fund (server/routes/budget.js enforces same-fund + no cycles).
+  (d) => {
+    addColumn(d, 'budget_lines', 'parent_id', 'TEXT REFERENCES budget_lines(id) ON DELETE CASCADE');
+    d.exec(`CREATE INDEX IF NOT EXISTS idx_budget_lines_parent ON budget_lines(parent_id)`);
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

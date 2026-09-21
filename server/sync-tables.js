@@ -5,6 +5,9 @@
 // writePerm: the permission a device must hold for its pushed rows to be accepted (mirrors the REST routes,
 //   so syncing can never be a way around a role's limits); parent: the table a row's foreign key points at,
 //   so a child is skipped when its parent was rejected rather than blowing up on a constraint.
+// selfParent: a column that references another row in this same table (e.g. a nested budget line's
+//   parent_id) — rows are topologically sorted by it before applying, so a parent created offline in the
+//   same sync batch as its children is always applied first.
 // NOTE: the order of this array is a foreign-key ordering — a table must appear after everything it references.
 // blob: columns too large to belong in a sync payload; they are fetched by id on demand instead.
 module.exports = {
@@ -14,7 +17,7 @@ module.exports = {
     { name: 'resources', enc: [], scope: 'all', writePerm: 'resources:write' },
     { name: 'resource_photos', enc: [], scope: 'all', writePerm: 'resources:write', parent: ['resources', 'resource_id'], blob: ['data_b64'] },
     { name: 'funding_sources', enc: [], scope: 'all', writePerm: 'budget:write' },
-    { name: 'budget_lines', enc: [], scope: 'all', writePerm: 'budget:write', parent: ['funding_sources', 'funding_source_id'] },
+    { name: 'budget_lines', enc: [], scope: 'all', writePerm: 'budget:write', parent: ['funding_sources', 'funding_source_id'], selfParent: 'parent_id' },
     { name: 'clients', enc: ['first_name_enc', 'last_name_enc', 'preferred_name_enc', 'dob_enc', 'phone_enc', 'alt_phone_enc', 'email_enc', 'address_enc', 'medicaid_id_enc', 'emergency_contact_enc', 'goals_enc', 'flags_enc'], scope: 'client', clientCol: 'id', idx: true, writePerm: 'clients:write' },
     { name: 'assignments', enc: [], scope: 'client', clientCol: 'client_id', writePerm: 'assignments:manage', parent: ['clients', 'client_id'] },
     { name: 'episodes', enc: ['presenting_problem_enc', 'discharge_summary_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'episodes:write', parent: ['clients', 'client_id'] },

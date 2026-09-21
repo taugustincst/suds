@@ -11,9 +11,12 @@ export function openExpenditureForm(values, { clientId, clientDisplay, onDone } 
   ], { values: values || {}, submitText: isNew ? 'Submit expenditure' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => { if (isNew) await post('/api/budget/expenditures', d); else await put(`/api/budget/expenditures/${values.id}`, d); toast('Expenditure saved (pending approval)', 'ok'); m.close(); onDone && onDone(); } });
   lineSel = f.inputs.budget_line_id;
   const fundSel = f.inputs.funding_source_id;
-  const fillLines = () => { const fund = state.funds.find(x => x.id === fundSel.value); lineSel.replaceChildren(h('option', { value: '' }, '— none —'), ...(fund ? fund.lines : []).map(l => h('option', { value: l.id, selected: l.id === values?.budget_line_id }, `${l.label || fmt.label(l.category)} (${fmt.money(l.allocated_amount - l.spent)} left)`))); };
+  // Flattened so a sub-allocation nested under a larger one is still a pickable line, not hidden inside its
+  // parent — indented to show where it sits. "left" uses the line's own subtree, so a container line (one
+  // with sub-allocations of its own) reads as room left across all of them, not just direct spend against it.
+  const fillLines = () => { const fund = state.funds.find(x => x.id === fundSel.value); lineSel.replaceChildren(h('option', { value: '' }, '— none —'), ...flattenLines(fund ? fund.lines : []).map(l => h('option', { value: l.id, selected: l.id === values?.budget_line_id }, `${'— '.repeat(l._depth)}${l.label || fmt.label(l.category)} (${fmt.money(l.allocated_amount - l.subtree_spent)} left)`))); };
   fundSel.addEventListener('change', () => { fillLines(); const fund = state.funds.find(x => x.id === fundSel.value); if (fund && !f.inputs.category.value && fund.lines[0]) f.inputs.category.value = fund.lines[0].category; });
-  lineSel.addEventListener('change', () => { const fund = state.funds.find(x => x.id === fundSel.value); const l = fund?.lines.find(x => x.id === lineSel.value); if (l) f.inputs.category.value = l.category; });
+  lineSel.addEventListener('change', () => { const fund = state.funds.find(x => x.id === fundSel.value); const l = fund && flattenLines(fund.lines).find(x => x.id === lineSel.value); if (l) f.inputs.category.value = l.category; });
   fillLines();
   const m = modal(isNew ? 'Record expenditure' : 'Edit expenditure', f, { wide: true });
 }
@@ -36,10 +39,31 @@ function openFundForm(values, onDone) {
     { values: values || {}, submitText: isNew ? 'Create fund' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => { if (isNew) await post('/api/budget/funds', d); else await put(`/api/budget/funds/${values.id}`, d); toast('Fund saved', 'ok'); m.close(); await loadRefData(); onDone(); } });
   const m = modal(isNew ? 'New funding source' : 'Edit funding source', f, { wide: true });
 }
-function openLineForm(fund, values, onDone) {
+// Every line in this fund, flattened out of the nested tree with its depth, in tree order (parent right
+// before its children) — used both to indent the overview table and to build the "parent allocation" picker.
+function flattenLines(lines, depth = 0, out = []) {
+  for (const l of lines) { out.push({ ...l, _depth: depth }); flattenLines(l.children || [], depth + 1, out); }
+  return out;
+}
+// Everything under `id` (not id itself) — a line cannot be nested inside its own sub-allocation, so these
+// are excluded from the parent picker when editing rather than relying only on the server's cycle check.
+function descendantIds(lines, id) {
+  const out = new Set();
+  const walk = (ls, inside) => { for (const l of ls) { const nowInside = inside || l.id === id; if (nowInside && l.id !== id) out.add(l.id); walk(l.children || [], nowInside); } };
+  walk(lines, false);
+  return out;
+}
+function openLineForm(fund, values, onDone, { parentId } = {}) {
   const C = state.constants; const isNew = !values;
-  const f = form([{ name: 'category', label: 'Category', type: 'select', options: C.BUDGET_CATEGORIES, required: true }, { name: 'label', label: 'Label' }, { name: 'allocated_amount', label: 'Allocated ($)', type: 'number', min: 0, step: 0.01, required: true }, { name: 'notes', label: 'Notes', span: true }],
-    { values: values || {}, submitText: 'Save', onCancel: () => m.close(), onSubmit: async (d) => { if (isNew) await post(`/api/budget/funds/${fund.id}/lines`, d); else await put(`/api/budget/lines/${values.id}`, d); m.close(); await loadRefData(); onDone(); } });
+  const excluded = values ? descendantIds(fund.lines, values.id) : new Set();
+  if (values) excluded.add(values.id);
+  const parentOptions = flattenLines(fund.lines, 0, []).filter(l => !excluded.has(l.id)).map(l => ({ value: l.id, label: `${'— '.repeat(l._depth)}${l.label || fmt.label(l.category)}` }));
+  const f = form([
+    { name: 'category', label: 'Category', type: 'select', options: C.BUDGET_CATEGORIES, required: true }, { name: 'label', label: 'Label' },
+    { name: 'allocated_amount', label: 'Allocated ($)', type: 'number', min: 0, step: 0.01, required: true },
+    { name: 'parent_id', label: 'Part of a larger allocation?', type: 'select', options: parentOptions, placeholder: '— top-level, directly under the fund —', value: values?.parent_id || parentId || '' },
+    { name: 'notes', label: 'Notes', span: true },
+  ], { values: values || {}, submitText: 'Save', onCancel: () => m.close(), onSubmit: async (d) => { if (isNew) await post(`/api/budget/funds/${fund.id}/lines`, d); else await put(`/api/budget/lines/${values.id}`, d); m.close(); await loadRefData(); onDone(); } });
   const m = modal(`${fund.name} — budget line`, f);
 }
 route('budget', async (r) => {
@@ -54,9 +78,16 @@ route('budget', async (r) => {
     h('div', { class: 'row between small muted' }, h('span', {}, `${f.pct_spent.toFixed(0)}% spent`), h('span', {}, `${f.pct_elapsed.toFixed(0)}% of period elapsed`)),
     h('div', { class: 'progress mb' }, h('div', { class: f.pct_spent > f.pct_elapsed + 15 ? 'danger' : f.pct_spent > f.pct_elapsed + 5 ? 'warn' : '', style: { width: `${pct(f.spent, f.total_amount)}%` } })),
     f.staff_minutes ? h('div', { class: 'small muted mb' }, `Staff time charged: ${fmt.mins(f.staff_minutes)}${f.staff_cost ? ` (≈ ${fmt.money(f.staff_cost)} at loaded rates)` : ''}`) : null,
-    f.lines.length ? table([{ label: 'Line', render: l => l.label || fmt.label(l.category) }, { label: 'Category', render: l => fmt.label(l.category) }, { label: 'Allocated', render: l => fmt.money(l.allocated_amount), num: true }, { label: 'Spent', render: l => fmt.money(l.spent), num: true }, { label: 'Pending', render: l => fmt.money(l.pending), num: true }, { label: 'Remaining', render: l => h('span', { style: l.allocated_amount - l.spent - l.pending < 0 ? { color: 'var(--danger)' } : {} }, fmt.money(l.allocated_amount - l.spent - l.pending)), num: true },
-      { label: '%', render: l => h('div', { class: 'progress', style: { width: '80px' } }, h('div', { class: pct(l.spent, l.allocated_amount) > 90 ? 'danger' : '', style: { width: `${pct(l.spent, l.allocated_amount)}%` } })) },
-      { label: '', render: l => can('budget:write') ? h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm', onClick: () => openLineForm(f, l, refresh) }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this budget line', onClick: async () => { if (await confirmDialog('Delete line', 'Delete this budget line? Expenditures keep their fund.', { danger: true, okText: 'Delete' })) { await del(`/api/budget/lines/${l.id}`); refresh(); } } }, '✕')) : null }], f.lines, { wrap: false }) : h('div', { class: 'muted small' }, 'No budget lines yet.'),
+    // Allocated is always the line's own envelope — a sub-allocation is carved out of its parent's, never
+    // stacked on top, so this never sums up the tree. Spent/Pending/Remaining use the subtree total: a
+    // parent is usually just a container nobody spends directly against, so its own direct figures would
+    // read as "$0 spent" even with thousands committed under it. A leaf's subtree is identical to its own.
+    f.lines.length ? table([
+      { label: 'Line', render: l => h('div', { style: { paddingLeft: `${l._depth * 18}px` } }, l.label || fmt.label(l.category), l.children.length ? h('div', { class: 'small muted' }, `Sub-allocated: ${fmt.money(l.child_allocated)} of ${fmt.money(l.allocated_amount)}`) : null) },
+      { label: 'Category', render: l => fmt.label(l.category) }, { label: 'Allocated', render: l => fmt.money(l.allocated_amount), num: true }, { label: 'Spent', render: l => fmt.money(l.subtree_spent), num: true }, { label: 'Pending', render: l => fmt.money(l.subtree_pending), num: true }, { label: 'Remaining', render: l => h('span', { style: l.subtree_remaining < 0 ? { color: 'var(--danger)' } : {} }, fmt.money(l.subtree_remaining)), num: true },
+      { label: '%', render: l => h('div', { class: 'progress', style: { width: '80px' } }, h('div', { class: pct(l.subtree_spent, l.allocated_amount) > 90 ? 'danger' : '', style: { width: `${pct(l.subtree_spent, l.allocated_amount)}%` } })) },
+      { label: '', render: l => can('budget:write') ? h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm', onClick: () => openLineForm(f, null, refresh, { parentId: l.id }) }, '+ Sub'), h('button', { class: 'btn sm', onClick: () => openLineForm(f, l, refresh) }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this budget line', onClick: async () => { if (await confirmDialog('Delete line', l.children.length ? 'Delete this budget line and its sub-allocations? Expenditures keep their fund.' : 'Delete this budget line? Expenditures keep their fund.', { danger: true, okText: 'Delete' })) { await del(`/api/budget/lines/${l.id}`); refresh(); } } }, '✕')) : null },
+    ], flattenLines(f.lines), { wrap: false }) : h('div', { class: 'muted small' }, 'No budget lines yet.'),
     f.unallocated ? h('div', { class: 'small muted mt' }, `Unallocated: ${fmt.money(f.unallocated)}`) : null);
   return h('div', {},
     pageHead('Funding & spending', can('budget:write') ? h('button', { class: 'btn primary', onClick: () => openExpenditureForm(null, { onDone: refresh }) }, '+ Record expenditure') : null, can('budget:write') ? h('button', { class: 'btn', onClick: () => openFundForm(null, refresh) }, '+ Funding source') : null, h('button', { class: 'btn', onClick: () => downloadCsv('/api/reports/export/expenditures?from=2000-01-01&format=xlsx') }, 'Export to Excel')),

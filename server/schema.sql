@@ -192,6 +192,10 @@ CREATE TABLE IF NOT EXISTS funding_sources (
 CREATE TABLE IF NOT EXISTS budget_lines (
   id TEXT PRIMARY KEY,
   funding_source_id TEXT NOT NULL REFERENCES funding_sources(id) ON DELETE CASCADE,
+  -- A budget line can sit inside a larger one (a grant broken into program-level allocations broken into
+  -- line items) instead of every line being a flat peer under the fund. Always within the same fund; the
+  -- application enforces that plus cycle-safety, since SQLite has no way to express either as a constraint.
+  parent_id TEXT REFERENCES budget_lines(id) ON DELETE CASCADE,
   category TEXT NOT NULL,
   label TEXT,
   allocated_amount REAL NOT NULL DEFAULT 0,
@@ -200,6 +204,7 @@ CREATE TABLE IF NOT EXISTS budget_lines (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_budget_lines_updated ON budget_lines(updated_at);
+CREATE INDEX IF NOT EXISTS idx_budget_lines_parent ON budget_lines(parent_id);
 
 CREATE TABLE IF NOT EXISTS interventions (
   id TEXT PRIMARY KEY,

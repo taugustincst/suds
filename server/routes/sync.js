@@ -107,9 +107,28 @@ function push(user, payload) {
   // One lookup instead of one per user-reference column per row.
   const knownUsers = new Set(db.all(`SELECT id FROM users`).map(u => u.id));
 
+  // A row that points at its own parent within the same table (e.g. a budget sub-allocation) needs that
+  // parent applied first, same as t.parent does across tables — but nothing orders rows within one table's
+  // batch, and a device can create a whole hierarchy offline in one sitting. Stable topological sort by
+  // that self-reference column; a parent outside this batch (already synced, or simply absent) needs no
+  // reordering since it is either already in the database or the row will be rejected on its own merits.
+  function selfParentOrder(rows, col) {
+    const ids = new Set(rows.map(r => r && r.id));
+    const placed = new Set(); const out = []; let remaining = rows;
+    while (remaining.length) {
+      const [ready, waiting] = [[], []];
+      for (const r of remaining) (!r || !r[col] || !ids.has(r[col]) || placed.has(r[col]) ? ready : waiting).push(r);
+      if (!ready.length) { out.push(...waiting); break; } // a cycle within the batch — let per-row validation reject it
+      for (const r of ready) { out.push(r); if (r && r.id) placed.add(r.id); }
+      remaining = waiting;
+    }
+    return out;
+  }
+
   db.transaction(() => {
     for (const t of SYNC.tables) {
-      const rows = (payload.tables || {})[t.name]; if (!Array.isArray(rows) || !rows.length) continue;
+      let rows = (payload.tables || {})[t.name]; if (!Array.isArray(rows) || !rows.length) continue;
+      if (t.selfParent) rows = selfParentOrder(rows, t.selfParent);
       if (t.name === 'users') continue;
       // Syncing is not a way around a role's limits: the same permission the REST route requires applies here.
       if (t.writePerm && !auth.hasPerm(user, t.writePerm)) {

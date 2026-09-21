@@ -57,6 +57,22 @@ function mergeUser(localId, serverId) {
  *  - untouched since the last exchange (matches sync_seen) → the server's copy wins, no clock involved
  *  - edited here since then → keep ours only if our edit is newer once converted to server time
  */
+// Same reasoning as the server's copy of this (server/routes/sync.js): a row referencing its own parent
+// within the same table (a nested budget line) needs that parent inserted first, and nothing else orders
+// a single table's batch — the office can send a whole hierarchy created since the last sync in one go.
+function selfParentOrder(rows, col) {
+  const ids = new Set(rows.map(r => r && r.id));
+  const placed = new Set(); const out = []; let remaining = rows;
+  while (remaining.length) {
+    const ready = [], waiting = [];
+    for (const r of remaining) (!r || !r[col] || !ids.has(r[col]) || placed.has(r[col]) ? ready : waiting).push(r);
+    if (!ready.length) { out.push(...waiting); break; } // a cycle within the batch — let the FK constraint reject it
+    for (const r of ready) { out.push(r); if (r && r.id) placed.add(r.id); }
+    remaining = waiting;
+  }
+  return out;
+}
+
 function applyPull(payload) {
   const counts = {};
   const offset = payload.server_now ? Date.parse(payload.server_now) - Date.now() : 0;
@@ -64,7 +80,7 @@ function applyPull(payload) {
   db.setSetting('sync_clock_offset_ms', String(offset));
   db.transaction(() => {
     for (const t of SYNC.tables) {
-      const rows = payload.tables?.[t.name] || []; const existingCols = cols(t.name); let n = 0;
+      let rows = payload.tables?.[t.name] || []; if (t.selfParent) rows = selfParentOrder(rows, t.selfParent); const existingCols = cols(t.name); let n = 0;
       for (const raw of rows) {
         const existing = db.one(`SELECT * FROM ${t.name} WHERE id=?`, raw.id);
         if (t.name === 'users' && !existing) { const same = db.one(`SELECT id FROM users WHERE username=?`, raw.username); if (same) mergeUser(same.id, raw.id); }

@@ -6396,6 +6396,10 @@ CREATE TABLE IF NOT EXISTS funding_sources (
 CREATE TABLE IF NOT EXISTS budget_lines (
   id TEXT PRIMARY KEY,
   funding_source_id TEXT NOT NULL REFERENCES funding_sources(id) ON DELETE CASCADE,
+  -- A budget line can sit inside a larger one (a grant broken into program-level allocations broken into
+  -- line items) instead of every line being a flat peer under the fund. Always within the same fund; the
+  -- application enforces that plus cycle-safety, since SQLite has no way to express either as a constraint.
+  parent_id TEXT REFERENCES budget_lines(id) ON DELETE CASCADE,
   category TEXT NOT NULL,
   label TEXT,
   allocated_amount REAL NOT NULL DEFAULT 0,
@@ -6404,6 +6408,7 @@ CREATE TABLE IF NOT EXISTS budget_lines (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_budget_lines_updated ON budget_lines(updated_at);
+CREATE INDEX IF NOT EXISTS idx_budget_lines_parent ON budget_lines(parent_id);
 
 CREATE TABLE IF NOT EXISTS interventions (
   id TEXT PRIMARY KEY,
@@ -7378,6 +7383,12 @@ var require_db = __commonJS({
       first_seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), last_seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
       last_ip TEXT, sync_count INTEGER NOT NULL DEFAULT 0, wipe_requested_at TEXT, revoked_at TEXT)`);
         d.exec(`CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id)`);
+      },
+      // 13: nested budget allocations — a budget line can now sit inside a larger one instead of every line
+      //     being a flat peer under the fund (server/routes/budget.js enforces same-fund + no cycles).
+      (d) => {
+        addColumn(d, "budget_lines", "parent_id", "TEXT REFERENCES budget_lines(id) ON DELETE CASCADE");
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_budget_lines_parent ON budget_lines(parent_id)`);
       }
     ];
     function initialise(d, schemaText, dbPath) {
@@ -8200,7 +8211,7 @@ var require_sync_tables = __commonJS({
         { name: "resources", enc: [], scope: "all", writePerm: "resources:write" },
         { name: "resource_photos", enc: [], scope: "all", writePerm: "resources:write", parent: ["resources", "resource_id"], blob: ["data_b64"] },
         { name: "funding_sources", enc: [], scope: "all", writePerm: "budget:write" },
-        { name: "budget_lines", enc: [], scope: "all", writePerm: "budget:write", parent: ["funding_sources", "funding_source_id"] },
+        { name: "budget_lines", enc: [], scope: "all", writePerm: "budget:write", parent: ["funding_sources", "funding_source_id"], selfParent: "parent_id" },
         { name: "clients", enc: ["first_name_enc", "last_name_enc", "preferred_name_enc", "dob_enc", "phone_enc", "alt_phone_enc", "email_enc", "address_enc", "medicaid_id_enc", "emergency_contact_enc", "goals_enc", "flags_enc"], scope: "client", clientCol: "id", idx: true, writePerm: "clients:write" },
         { name: "assignments", enc: [], scope: "client", clientCol: "client_id", writePerm: "assignments:manage", parent: ["clients", "client_id"] },
         { name: "episodes", enc: ["presenting_problem_enc", "discharge_summary_enc"], scope: "client", clientCol: "client_id", writePerm: "episodes:write", parent: ["clients", "client_id"] },
@@ -11287,14 +11298,50 @@ var require_budget = __commonJS({
       notes: { type: "string", maxLen: 2e3 },
       is_active: { type: "boolean" }
     };
-    var lineShape = { category: { type: "string", required: true, enum: C.BUDGET_CATEGORIES }, label: { type: "string", maxLen: 200 }, allocated_amount: { type: "number", required: true, min: 0 }, notes: { type: "string", maxLen: 1e3 } };
+    var lineShape = { category: { type: "string", required: true, enum: C.BUDGET_CATEGORIES }, label: { type: "string", maxLen: 200 }, allocated_amount: { type: "number", required: true, min: 0 }, notes: { type: "string", maxLen: 1e3 }, parent_id: { type: "string" } };
+    function buildLineTree(flat) {
+      const byId = new Map(flat.map((l) => [l.id, { ...l, children: [] }]));
+      const roots = [];
+      for (const l of byId.values()) {
+        const p = l.parent_id && byId.get(l.parent_id);
+        if (p) p.children.push(l);
+        else roots.push(l);
+      }
+      const rollup = (l) => {
+        let subtreeSpent = l.spent, subtreePending = l.pending;
+        for (const c of l.children) {
+          rollup(c);
+          subtreeSpent += c.subtree_spent;
+          subtreePending += c.subtree_pending;
+        }
+        l.subtree_spent = subtreeSpent;
+        l.subtree_pending = subtreePending;
+        l.subtree_remaining = l.allocated_amount - subtreeSpent - subtreePending;
+        l.child_allocated = l.children.reduce((s2, c) => s2 + c.allocated_amount, 0);
+        l.unallocated = l.allocated_amount - l.child_allocated;
+      };
+      for (const r of roots) rollup(r);
+      return roots;
+    }
+    function wouldCycle(lineId, proposedParentId) {
+      let cur = proposedParentId;
+      const seen2 = /* @__PURE__ */ new Set();
+      while (cur) {
+        if (cur === lineId || seen2.has(cur)) return true;
+        seen2.add(cur);
+        const row = db3.one(`SELECT parent_id FROM budget_lines WHERE id=?`, cur);
+        cur = row ? row.parent_id : null;
+      }
+      return false;
+    }
     function fundSummary(f) {
       const spent = db3.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE funding_source_id=? AND status IN ('approved','reimbursed')`, f.id).n;
       const pending = db3.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE funding_source_id=? AND status='pending'`, f.id).n;
       const staffMinutes = db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE funding_source_id=?`, f.id).n;
       const staffCost = db3.one(`SELECT COALESCE(SUM(t.minutes/60.0*COALESCE(u.hourly_cost,0)),0) n FROM time_entries t JOIN users u ON u.id=t.user_id WHERE t.funding_source_id=?`, f.id).n;
-      const lines = db3.all(`SELECT b.*, (SELECT COALESCE(SUM(amount),0) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status IN ('approved','reimbursed')) AS spent, (SELECT COALESCE(SUM(amount),0) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status='pending') AS pending FROM budget_lines b WHERE b.funding_source_id=? ORDER BY category`, f.id);
-      const allocated = lines.reduce((s2, l) => s2 + l.allocated_amount, 0);
+      const flatLines = db3.all(`SELECT b.*, (SELECT COALESCE(SUM(amount),0) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status IN ('approved','reimbursed')) AS spent, (SELECT COALESCE(SUM(amount),0) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status='pending') AS pending FROM budget_lines b WHERE b.funding_source_id=? ORDER BY category`, f.id);
+      const allocated = flatLines.filter((l) => !l.parent_id).reduce((s2, l) => s2 + l.allocated_amount, 0);
+      const lines = buildLineTree(flatLines);
       const totalDays = Math.max(1, (Date.parse(f.fiscal_year_end) - Date.parse(f.fiscal_year_start)) / 864e5);
       const elapsed = Math.min(totalDays, Math.max(0, (Date.now() - Date.parse(f.fiscal_year_start)) / 864e5));
       return {
@@ -11340,18 +11387,28 @@ var require_budget = __commonJS({
         if (!f) throw notFound();
         const v = validate(ctx.body, lineShape);
         const id = uuid2();
-        db3.run(`INSERT INTO budget_lines(id,funding_source_id,category,label,allocated_amount,notes) VALUES(?,?,?,?,?,?)`, id, f.id, v.category, v.label || null, v.allocated_amount, v.notes || null);
-        audit3.log({ user: ctx.user, action: "budget_line.create", entity: "budget_line", entityId: id, ip: ctx.ip });
+        if (v.parent_id) {
+          const p = db3.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, v.parent_id, f.id);
+          if (!p) throw badRequest("Parent allocation does not belong to this fund");
+        }
+        db3.run(`INSERT INTO budget_lines(id,funding_source_id,parent_id,category,label,allocated_amount,notes) VALUES(?,?,?,?,?,?,?)`, id, f.id, v.parent_id || null, v.category, v.label || null, v.allocated_amount, v.notes || null);
+        audit3.log({ user: ctx.user, action: "budget_line.create", entity: "budget_line", entityId: id, ip: ctx.ip, details: v.parent_id ? { parent_id: v.parent_id } : void 0 });
         ctx.status = 201;
         return { id };
       });
       r.put("/api/budget/lines/:id", auth3.requireAuth, auth3.requirePerm("budget:write"), (ctx) => {
-        const l = db3.one(`SELECT id FROM budget_lines WHERE id=?`, ctx.params.id);
+        const l = db3.one(`SELECT * FROM budget_lines WHERE id=?`, ctx.params.id);
         if (!l) throw notFound();
         const v = validate(ctx.body, Object.fromEntries(Object.entries(lineShape).map(([k, s2]) => [k, { ...s2, required: false }])), { partial: true });
+        if ("parent_id" in v && v.parent_id) {
+          if (v.parent_id === l.id) throw badRequest("A budget line cannot be its own parent");
+          const p = db3.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, v.parent_id, l.funding_source_id);
+          if (!p) throw badRequest("Parent allocation does not belong to this fund");
+          if (wouldCycle(l.id, v.parent_id)) throw badRequest("That would nest this allocation inside one of its own sub-allocations");
+        }
         const keys = Object.keys(v);
         if (keys.length) db3.run(`UPDATE budget_lines SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), db3.now(), l.id);
-        audit3.log({ user: ctx.user, action: "budget_line.update", entity: "budget_line", entityId: l.id, ip: ctx.ip });
+        audit3.log({ user: ctx.user, action: "budget_line.update", entity: "budget_line", entityId: l.id, ip: ctx.ip, details: { fields: keys } });
         return { ok: true };
       });
       r.delete("/api/budget/lines/:id", auth3.requireAuth, auth3.requirePerm("budget:write"), (ctx) => {
@@ -19143,10 +19200,31 @@ var require_sync = __commonJS({
       };
       const TS_COLS = ["created_at", "updated_at"];
       const knownUsers = new Set(db3.all(`SELECT id FROM users`).map((u) => u.id));
+      function selfParentOrder2(rows, col) {
+        const ids = new Set(rows.map((r) => r && r.id));
+        const placed = /* @__PURE__ */ new Set();
+        const out2 = [];
+        let remaining = rows;
+        while (remaining.length) {
+          const [ready, waiting] = [[], []];
+          for (const r of remaining) (!r || !r[col] || !ids.has(r[col]) || placed.has(r[col]) ? ready : waiting).push(r);
+          if (!ready.length) {
+            out2.push(...waiting);
+            break;
+          }
+          for (const r of ready) {
+            out2.push(r);
+            if (r && r.id) placed.add(r.id);
+          }
+          remaining = waiting;
+        }
+        return out2;
+      }
       db3.transaction(() => {
         for (const t of SYNC2.tables) {
-          const rows = (payload.tables || {})[t.name];
+          let rows = (payload.tables || {})[t.name];
           if (!Array.isArray(rows) || !rows.length) continue;
+          if (t.selfParent) rows = selfParentOrder2(rows, t.selfParent);
           if (t.name === "users") continue;
           if (t.writePerm && !auth3.hasPerm(user, t.writePerm)) {
             for (const raw of rows) if (raw && typeof raw.id === "string") reject(t.name, raw.id, `your role cannot write ${t.name}`);
@@ -19812,6 +19890,26 @@ function mergeUser(localId, serverId) {
   }
   import_db.default.run(`DELETE FROM users WHERE id=?`, localId);
 }
+function selfParentOrder(rows, col) {
+  const ids = new Set(rows.map((r) => r && r.id));
+  const placed = /* @__PURE__ */ new Set();
+  const out2 = [];
+  let remaining = rows;
+  while (remaining.length) {
+    const ready = [], waiting = [];
+    for (const r of remaining) (!r || !r[col] || !ids.has(r[col]) || placed.has(r[col]) ? ready : waiting).push(r);
+    if (!ready.length) {
+      out2.push(...waiting);
+      break;
+    }
+    for (const r of ready) {
+      out2.push(r);
+      if (r && r.id) placed.add(r.id);
+    }
+    remaining = waiting;
+  }
+  return out2;
+}
 function applyPull(payload) {
   const counts = {};
   const offset = payload.server_now ? Date.parse(payload.server_now) - Date.now() : 0;
@@ -19822,7 +19920,8 @@ function applyPull(payload) {
   import_db.default.setSetting("sync_clock_offset_ms", String(offset));
   import_db.default.transaction(() => {
     for (const t of import_sync_tables.default.tables) {
-      const rows = payload.tables?.[t.name] || [];
+      let rows = payload.tables?.[t.name] || [];
+      if (t.selfParent) rows = selfParentOrder(rows, t.selfParent);
       const existingCols = cols(t.name);
       let n = 0;
       for (const raw of rows) {

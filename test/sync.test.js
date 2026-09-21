@@ -261,3 +261,18 @@ test('an overwrite from a device is recorded, by column name only', async () => 
   assert.ok(!String(row.details).includes('Original'));
   assert.equal(H.db.one(`SELECT title FROM tasks WHERE id=?`, id).title, 'Replaced by the phone', 'the newer write still wins');
 });
+
+test('a nested budget line and its parent sync in the same batch, child listed first', async () => {
+  // A supervisor can build a whole allocation hierarchy offline in one sitting; nothing guarantees the
+  // device sends the parent row before its children within a single table's batch.
+  const fund = await admin.post('/api/budget/funds', { name: 'Sync test fund', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 10000 });
+  const parentId = randomUUID(); const childId = randomUUID();
+  const r = await push(admin, { tables: { budget_lines: [
+    { id: childId, funding_source_id: fund.data.id, parent_id: parentId, category: 'other', label: 'Child, sent first', allocated_amount: 100, created_at: iso(Date.now()), updated_at: iso(Date.now()) },
+    { id: parentId, funding_source_id: fund.data.id, parent_id: null, category: 'other', label: 'Parent, sent second', allocated_amount: 500, created_at: iso(Date.now()), updated_at: iso(Date.now()) },
+  ] } });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.data.rejected, [], 'neither row is rejected for a constraint the sort should have avoided');
+  assert.equal(H.db.one(`SELECT parent_id FROM budget_lines WHERE id=?`, childId).parent_id, parentId);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM budget_lines WHERE id=?`, parentId).n, 1);
+});

@@ -13,15 +13,48 @@ const fundShape = {
   fiscal_year_start: { type: 'date', required: true }, fiscal_year_end: { type: 'date', required: true }, total_amount: { type: 'number', required: true, min: 0 },
   restrictions: { type: 'string', maxLen: 2000 }, notes: { type: 'string', maxLen: 2000 }, is_active: { type: 'boolean' },
 };
-const lineShape = { category: { type: 'string', required: true, enum: C.BUDGET_CATEGORIES }, label: { type: 'string', maxLen: 200 }, allocated_amount: { type: 'number', required: true, min: 0 }, notes: { type: 'string', maxLen: 1000 } };
+const lineShape = { category: { type: 'string', required: true, enum: C.BUDGET_CATEGORIES }, label: { type: 'string', maxLen: 200 }, allocated_amount: { type: 'number', required: true, min: 0 }, notes: { type: 'string', maxLen: 1000 }, parent_id: { type: 'string' } };
+
+// A sub-allocation is carved *out of* its parent's own envelope, not stacked on top of it — allocated_amount
+// never sums up the tree (that would double-count the same money at every level it passes through). Actual
+// spend does sum up: a transaction posted against a deeply nested line is real money leaving the whole
+// envelope above it, wherever in the hierarchy someone happened to record it against.
+function buildLineTree(flat) {
+  const byId = new Map(flat.map(l => [l.id, { ...l, children: [] }]));
+  const roots = [];
+  for (const l of byId.values()) { const p = l.parent_id && byId.get(l.parent_id); if (p) p.children.push(l); else roots.push(l); }
+  const rollup = (l) => {
+    let subtreeSpent = l.spent, subtreePending = l.pending;
+    for (const c of l.children) { rollup(c); subtreeSpent += c.subtree_spent; subtreePending += c.subtree_pending; }
+    l.subtree_spent = subtreeSpent; l.subtree_pending = subtreePending; l.subtree_remaining = l.allocated_amount - subtreeSpent - subtreePending;
+    l.child_allocated = l.children.reduce((s, c) => s + c.allocated_amount, 0); l.unallocated = l.allocated_amount - l.child_allocated;
+  };
+  for (const r of roots) rollup(r);
+  return roots;
+}
+// Would setting `proposedParentId` as lineId's parent nest a line inside its own sub-allocation? Walks up
+// from the proposed parent toward the fund's top level; if it reaches lineId first, that is a cycle.
+function wouldCycle(lineId, proposedParentId) {
+  let cur = proposedParentId; const seen = new Set();
+  while (cur) {
+    if (cur === lineId || seen.has(cur)) return true;
+    seen.add(cur);
+    const row = db.one(`SELECT parent_id FROM budget_lines WHERE id=?`, cur);
+    cur = row ? row.parent_id : null;
+  }
+  return false;
+}
 
 function fundSummary(f) {
   const spent = db.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE funding_source_id=? AND status IN ('approved','reimbursed')`, f.id).n;
   const pending = db.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE funding_source_id=? AND status='pending'`, f.id).n;
   const staffMinutes = db.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE funding_source_id=?`, f.id).n;
   const staffCost = db.one(`SELECT COALESCE(SUM(t.minutes/60.0*COALESCE(u.hourly_cost,0)),0) n FROM time_entries t JOIN users u ON u.id=t.user_id WHERE t.funding_source_id=?`, f.id).n;
-  const lines = db.all(`SELECT b.*, (SELECT COALESCE(SUM(amount),0) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status IN ('approved','reimbursed')) AS spent, (SELECT COALESCE(SUM(amount),0) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status='pending') AS pending FROM budget_lines b WHERE b.funding_source_id=? ORDER BY category`, f.id);
-  const allocated = lines.reduce((s, l) => s + l.allocated_amount, 0);
+  const flatLines = db.all(`SELECT b.*, (SELECT COALESCE(SUM(amount),0) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status IN ('approved','reimbursed')) AS spent, (SELECT COALESCE(SUM(amount),0) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status='pending') AS pending FROM budget_lines b WHERE b.funding_source_id=? ORDER BY category`, f.id);
+  // Only top-level lines count against the fund's own total — a nested sub-allocation is carved out of its
+  // parent's allocated_amount, not an additional draw on the fund (see buildLineTree).
+  const allocated = flatLines.filter(l => !l.parent_id).reduce((s, l) => s + l.allocated_amount, 0);
+  const lines = buildLineTree(flatLines);
   const totalDays = Math.max(1, (Date.parse(f.fiscal_year_end) - Date.parse(f.fiscal_year_start)) / 86400000);
   const elapsed = Math.min(totalDays, Math.max(0, (Date.now() - Date.parse(f.fiscal_year_start)) / 86400000));
   return { ...f, spent, pending, staff_minutes: staffMinutes, staff_cost: staffCost, allocated, unallocated: f.total_amount - allocated, remaining: f.total_amount - spent - pending,
@@ -50,15 +83,21 @@ module.exports = (r) => {
   r.post('/api/budget/funds/:id/lines', auth.requireAuth, auth.requirePerm('budget:write'), (ctx) => {
     const f = db.one(`SELECT id FROM funding_sources WHERE id=?`, ctx.params.id); if (!f) throw notFound();
     const v = validate(ctx.body, lineShape); const id = uuid();
-    db.run(`INSERT INTO budget_lines(id,funding_source_id,category,label,allocated_amount,notes) VALUES(?,?,?,?,?,?)`, id, f.id, v.category, v.label || null, v.allocated_amount, v.notes || null);
-    audit.log({ user: ctx.user, action: 'budget_line.create', entity: 'budget_line', entityId: id, ip: ctx.ip });
+    if (v.parent_id) { const p = db.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, v.parent_id, f.id); if (!p) throw badRequest('Parent allocation does not belong to this fund'); }
+    db.run(`INSERT INTO budget_lines(id,funding_source_id,parent_id,category,label,allocated_amount,notes) VALUES(?,?,?,?,?,?,?)`, id, f.id, v.parent_id || null, v.category, v.label || null, v.allocated_amount, v.notes || null);
+    audit.log({ user: ctx.user, action: 'budget_line.create', entity: 'budget_line', entityId: id, ip: ctx.ip, details: v.parent_id ? { parent_id: v.parent_id } : undefined });
     ctx.status = 201; return { id };
   });
   r.put('/api/budget/lines/:id', auth.requireAuth, auth.requirePerm('budget:write'), (ctx) => {
-    const l = db.one(`SELECT id FROM budget_lines WHERE id=?`, ctx.params.id); if (!l) throw notFound();
+    const l = db.one(`SELECT * FROM budget_lines WHERE id=?`, ctx.params.id); if (!l) throw notFound();
     const v = validate(ctx.body, Object.fromEntries(Object.entries(lineShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
+    if ('parent_id' in v && v.parent_id) {
+      if (v.parent_id === l.id) throw badRequest('A budget line cannot be its own parent');
+      const p = db.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, v.parent_id, l.funding_source_id); if (!p) throw badRequest('Parent allocation does not belong to this fund');
+      if (wouldCycle(l.id, v.parent_id)) throw badRequest('That would nest this allocation inside one of its own sub-allocations');
+    }
     const keys = Object.keys(v); if (keys.length) db.run(`UPDATE budget_lines SET ${keys.map(k => `${k}=?`).join(', ')}, updated_at=? WHERE id=?`, ...keys.map(k => v[k]), db.now(), l.id);
-    audit.log({ user: ctx.user, action: 'budget_line.update', entity: 'budget_line', entityId: l.id, ip: ctx.ip });
+    audit.log({ user: ctx.user, action: 'budget_line.update', entity: 'budget_line', entityId: l.id, ip: ctx.ip, details: { fields: keys } });
     return { ok: true };
   });
   r.delete('/api/budget/lines/:id', auth.requireAuth, auth.requirePerm('budget:write'), (ctx) => {
