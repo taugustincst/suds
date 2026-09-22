@@ -2,6 +2,44 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+Compliance review fixes (HIPAA / 42 CFR Part 2). Schema 19; databases upgrade in place.
+
+- **Sync cannot rewrite the legal record.** Consents, disclosures and note addenda are insert-only through
+  `POST /api/sync/push`; the only change a device may make to an existing consent is to revoke it, and the
+  revocation is attributed to the syncing user. Anything else is rejected as `immutable`.
+- **Referral outcomes are consent-gated.** `POST /api/referrals/:id/outcome` applies the same lawful-basis
+  check and disclosure record as creating or updating a referral.
+- **Safe Harbor de-identification.** De-identified exports reduce every date to year-month, ZIP codes to
+  three digits, omit city, band ages (DOB is never exported) and are labelled as such (CSV comment line,
+  Excel *About* sheet). The funder report suppresses breakdown rows under 11 (`<11`). Exports now require
+  `export:read` (supervisor, finance, admin); an identified export must name `recipient` and `purpose` and
+  writes one accounting-of-disclosures row (basis `export`) per client it contains.
+- **Disclosures without consent must be justified.** A medical-emergency basis needs a written justification
+  (20+ characters, stored encrypted); "other" additionally needs the new `disclosures:override` permission
+  (supervisor, admin).
+- **Part 2 consents carry every §2.31 element.** A `part2_disclosure` consent requires recipient, purpose,
+  scope, an expiry date or event, evidence of signature (document reference, witness or signed on paper) and
+  confirmation that the redisclosure notice was given.
+- **Break-glass review.** The reason must be at least 15 characters; every use is queued in
+  `breakglass_events` and shown under Supervision → Break-glass access, with a count on the supervisor's
+  home page, until acknowledged (`GET /api/supervision/breakglass`, `POST …/:id/ack`; nobody can acknowledge
+  their own).
+- **Audit head checkpoint.** After each scheduled verification and each purge the newest entry's id, hash
+  and the row count are HMAC-sealed into settings and written to the log; verification reports `truncated`
+  when the newest entries have been deleted.
+- **Retention, legal hold and patient rights.** `clients.legal_hold` with `POST /api/clients/:id/legal-hold`
+  (admin only); a `patient_requests` table and `/api/patient-requests` CRUD with a 30-day due date and a
+  *Requests* tab on the client page; `GET /api/clients/:id/disclosures/accounting` and a *Print accounting*
+  button; a daily retention job (`server/retention.js`, `client_retention_years`, default 7, minimum 6) that
+  hard-deletes discharged records across every table unless held.
+- **More columns encrypted.** `calls.purpose`, `referrals.outcome/barrier/notes`, `tasks.title` and
+  `overdose_events.substances` move to `_enc` columns (API field names unchanged).
+- **Roles and defaults.** `readonly` sees the de-identified client list and reports only (no `clients:all`,
+  no exports); MFA is required of every role by default; `LOCAL_MODE_ENABLED=false` makes the server serve an
+  explanation instead of the in-browser kernel; `CLIENT_RETENTION_YEARS` configures retention.
+
 ## 1.8.0 — 2026-09-18
 
 - **A fully standalone, browser-only web app.** No office server, no Node process, no database anywhere

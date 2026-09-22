@@ -32,6 +32,7 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
     { name: '_disclosure_basis', label: 'If there is no consent, the lawful basis', type: 'select',
       options: [{ value: 'medical_emergency', label: 'Medical emergency' }, { value: 'court_order', label: 'Court order' }, { value: 'qsoa', label: 'Qualified service organisation agreement' }, { value: 'child_abuse_report', label: 'Mandated child abuse report' }, { value: 'crime_on_premises', label: 'Crime on the premises' }, { value: 'other', label: 'Other (explain in notes)' }],
       help: 'Leave empty unless you are relying on something other than the client\'s written consent. Whatever you choose is recorded in the accounting of disclosures.' },
+    { name: '_disclosure_justification', label: 'Why sharing without consent is lawful', type: 'textarea', rows: 2, span: true, help: 'Required (at least 20 characters) for a medical emergency, and for "other" — which only a supervisor or administrator may use. Kept, encrypted, with the disclosure record.' },
     { name: '_disclosure_what', label: 'What is being shared', placeholder: 'Referral information (name, contact details and presenting need)', span: true },
     { name: 'follow_up_due', label: 'Follow-up due', type: 'date', help: 'A follow-up to-do is created either way; leave this empty and one is set for you based on urgency.' }, { name: 'barrier', label: 'Barrier (if any)', type: 'select', options: ['none', 'transportation', 'insurance', 'waitlist', 'no_beds', 'client_declined', 'childcare', 'documentation', 'legal', 'phone_access', 'other'] },
     { name: 'outcome', label: 'Outcome', span: true }, { name: 'notes', label: 'Notes', type: 'textarea', span: true },
@@ -66,11 +67,20 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
   const m = modal(isNew ? 'New referral' : 'Edit referral', f, { wide: true });
 }
 /** Close the loop: what happened, and were they admitted? This is what makes referrals reportable. */
-export function openOutcomeForm(r, onDone) {
+export async function openOutcomeForm(r, onDone) {
   const C = state.constants;
+  // "Admitted" or "scheduled" on a referral that was only pending is the moment the agency learns who this
+  // person is, so the outcome form carries the same consent choice as the referral form.
+  let consents = [];
+  if (!r.consent_id) { try { consents = ((await get(`/api/clients/${r.client_id}/consents`)).consents || []).filter(c => !c.revoked_at); } catch { consents = []; } }
   const f = form([
     { name: 'status', label: 'What happened', type: 'select', noBlank: true, required: true, value: r.status, options: C.REFERRAL_STATUSES },
     { name: 'admitted_at', label: 'Admitted / started on', type: 'datetime', value: r.admitted_at || '' },
+    ...(r.consent_id ? [] : [
+      { name: 'consent_id', label: 'Consent / ROI on file (42 CFR Part 2)', type: 'select', options: consents.map(c => ({ value: c.id, label: `${fmt.label(c.type)} → ${c.recipient || '—'} (signed ${fmt.date(c.signed_at)})` })), help: 'Needed once the provider has been told who this client is (contacted, scheduled, admitted…).' },
+      { name: '_disclosure_basis', label: 'If there is no consent, the lawful basis', type: 'select', options: [{ value: 'medical_emergency', label: 'Medical emergency' }, { value: 'court_order', label: 'Court order' }, { value: 'qsoa', label: 'Qualified service organisation agreement' }, { value: 'child_abuse_report', label: 'Mandated child abuse report' }, { value: 'crime_on_premises', label: 'Crime on program premises' }, { value: 'audit_evaluation', label: 'Audit or evaluation' }, { value: 'research', label: 'Research' }, { value: 'other', label: 'Other (supervisor override, must be justified)' }] },
+      { name: '_disclosure_justification', label: 'Why sharing without consent is lawful', type: 'textarea', rows: 2, span: true },
+    ]),
     { name: 'barrier', label: 'If it did not happen, why', type: 'select', options: ['none', 'transportation', 'insurance', 'waitlist', 'no_beds', 'client_declined', 'childcare', 'documentation', 'legal', 'phone_access', 'other'], value: r.barrier || '' },
     { name: 'outcome', label: 'Outcome in your words', type: 'textarea', span: true, value: r.outcome || '' },
   ], { submitText: 'Record outcome', onCancel: () => m.close(), onSubmit: async (d) => {

@@ -27,9 +27,22 @@ async function verifyIdentity(ctx) {
   }
 }
 
+// Emergency access needs a reason a privacy officer can act on. "x" is not one: the header has to carry a
+// real sentence, and every use lands in the supervision queue (breakglass_events) as well as the audit log.
+const BREAK_GLASS_MIN = 15;
+function breakGlassReason(ctx) {
+  const raw = ctx.headers['x-break-glass-reason'];
+  if (raw === undefined || raw === null || raw === '') return null;
+  const reason = String(raw).trim();
+  if (reason.length < BREAK_GLASS_MIN) throw badRequest(`A break-glass reason must be at least ${BREAK_GLASS_MIN} characters and say why emergency access is needed`);
+  return reason.slice(0, 300);
+}
+function recordBreakGlass(ctx, { clientId, noteId = null, reason }) {
+  db.run(`INSERT INTO breakglass_events(id,user_id,client_id,note_id,reason_enc,at) VALUES(?,?,?,?,?,?)`, uuid(), ctx.user.id, clientId || null, noteId, encrypt(reason), db.now());
+}
 function canRead(ctx, note) {
   if (auth.hasPerm(ctx.user, kindPerm(note.kind, 'read')) || auth.hasPerm(ctx.user, kindPerm(note.kind, 'write'))) return true;
-  if (note.kind === 'clinical' && auth.hasPerm(ctx.user, 'notes:clinical:breakglass') && ctx.headers['x-break-glass-reason']) return 'breakglass';
+  if (note.kind === 'clinical' && auth.hasPerm(ctx.user, 'notes:clinical:breakglass') && breakGlassReason(ctx)) return 'breakglass';
   return false;
 }
 
@@ -61,8 +74,12 @@ module.exports = (r) => {
     const kinds = ['admin', 'clinical'].filter(k => auth.hasPerm(ctx.user, kindPerm(k, 'read')) || auth.hasPerm(ctx.user, kindPerm(k, 'write')));
     // Break-glass on the list, one client at a time, with the reason recorded -- the same audited exception
     // the single-note route allows, so an administrator has a way to find the note in the first place.
-    const glass = !kinds.includes('clinical') && auth.hasPerm(ctx.user, 'notes:clinical:breakglass') && ctx.headers['x-break-glass-reason'] && ctx.query.get('client_id') && ctx.query.get('kind') === 'clinical';
-    if (glass) { kinds.push('clinical'); audit.log({ user: ctx.user, action: 'note.list.breakglass', clientId: ctx.query.get('client_id'), ip: ctx.ip, details: { reason: String(ctx.headers['x-break-glass-reason']).slice(0, 300) } }); }
+    const glassReason = !kinds.includes('clinical') && auth.hasPerm(ctx.user, 'notes:clinical:breakglass') && ctx.query.get('client_id') && ctx.query.get('kind') === 'clinical' ? breakGlassReason(ctx) : null;
+    if (glassReason) {
+      kinds.push('clinical');
+      audit.log({ user: ctx.user, action: 'note.list.breakglass', clientId: ctx.query.get('client_id'), ip: ctx.ip, details: { reason: glassReason } });
+      recordBreakGlass(ctx, { clientId: ctx.query.get('client_id'), reason: glassReason });
+    }
     const where = ['n.deleted_at IS NULL', `n.kind IN (${kinds.map(() => '?').join(',') || "''"})`]; const params = [...kinds];
     const cf = auth.caseloadFilter(ctx.user, 'n.client_id'); where.push(cf.sql); params.push(...cf.params);
     for (const [q, col] of [['client_id', 'n.client_id'], ['kind', 'n.kind'], ['status', 'n.status'], ['author_id', 'n.author_id'], ['source', 'n.source']]) { const v = ctx.query.get(q); if (v) { where.push(`${col}=?`); params.push(v); } }
@@ -106,7 +123,8 @@ module.exports = (r) => {
     const access = canRead(ctx, n);
     if (!access) { audit.log({ user: ctx.user, action: 'note.view.denied', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, success: false }); throw forbidden('You do not have access to this note'); }
     const addenda = db.all(`SELECT a.id,a.reason,a.created_at,a.content_enc,u.display_name AS author FROM note_addenda a JOIN users u ON u.id=a.author_id WHERE a.note_id=? ORDER BY a.created_at`, n.id).map(a => ({ ...a, content: decrypt(a.content_enc), content_enc: undefined }));
-    audit.log({ user: ctx.user, action: access === 'breakglass' ? 'note.view.breakglass' : 'note.view', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: access === 'breakglass' ? { reason: String(ctx.headers['x-break-glass-reason']).slice(0, 300) } : { kind: n.kind } });
+    audit.log({ user: ctx.user, action: access === 'breakglass' ? 'note.view.breakglass' : 'note.view', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: access === 'breakglass' ? { reason: breakGlassReason(ctx) } : { kind: n.kind } });
+    if (access === 'breakglass') recordBreakGlass(ctx, { clientId: n.client_id, noteId: n.id, reason: breakGlassReason(ctx) });
     return { note: { ...present(n), ...signatureState(n), addenda } };
   });
 

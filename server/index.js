@@ -45,6 +45,9 @@ function housekeeping() {
     require('./audit').purge(config.auditRetentionDays);
     require('./audit').purgeTombstones(config.tombstoneRetentionDays);
     require('./log').purge();
+    // Record retention: discharged clients past the county's retention period are hard-deleted, every
+    // table at once, unless the record is on legal hold (server/retention.js). Once a day.
+    require('./retention').runIfDue();
     // Verify the audit chain once a day. Tamper-evidence that nobody checks is not evidence of anything.
     const lastVerify = db.getSetting('audit_verified_at', null);
     if (!lastVerify || Date.now() - Date.parse(lastVerify) > 86400000) require('./audit').scheduledVerify();

@@ -242,6 +242,39 @@ const migrations = [
     for (const line of schemaText.split('\n')) if (/^CREATE INDEX IF NOT EXISTS idx_clients_first_name/.test(line.trim())) d.exec(line.trim());
     addColumn(d, 'policy_documents', 'search_text', 'TEXT');
   },
+  // 19: compliance review. Free text that reveals a named person's diagnosis moves into _enc columns
+  //     (call purposes, referral outcomes/barriers/notes, task titles, overdose substances); Part 2 consents
+  //     record their expiry event, paper signature and redisclosure notice; disclosures made without consent
+  //     carry an encrypted justification; clients can be placed on legal hold; break-glass events queue
+  //     for supervisor review; patient-rights requests get a table with a 30-day clock.
+  (d) => {
+    const schemaText = safeSchema();
+    for (const [t, from, to] of [
+      ['calls', 'purpose', 'purpose_enc'], ['referrals', 'outcome', 'outcome_enc'], ['referrals', 'barrier', 'barrier_enc'], ['referrals', 'notes', 'notes_enc'],
+      ['overdose_events', 'substances', 'substances_enc'],
+    ]) encryptColumn(d, t, from, to);
+    // tasks.title is NOT NULL, and stays so: every row (even a blank title) is encrypted before the
+    // plaintext goes, then the table is rebuilt so the new column carries the constraint.
+    if (tableExists(d, 'tasks') && tableCols(d, 'tasks').includes('title')) {
+      const { encrypt } = require('./crypto');
+      addColumn(d, 'tasks', 'title_enc', 'TEXT');
+      const upd = d.prepare(`UPDATE tasks SET title_enc=? WHERE id=?`);
+      for (const r of d.prepare(`SELECT id, title FROM tasks`).all()) upd.run(encrypt(String(r.title ?? '')), r.id);
+      d.exec(`ALTER TABLE tasks DROP COLUMN title`);
+      rebuildTable(d, schemaText, 'tasks');
+    }
+    addColumn(d, 'clients', 'legal_hold', 'INTEGER NOT NULL DEFAULT 0');
+    addColumn(d, 'clients', 'legal_hold_reason', 'TEXT');
+    addColumn(d, 'consents', 'expires_event', 'TEXT');
+    addColumn(d, 'consents', 'signed_on_paper', 'INTEGER NOT NULL DEFAULT 0');
+    addColumn(d, 'consents', 'redisclosure_notice_given', 'INTEGER NOT NULL DEFAULT 0');
+    addColumn(d, 'disclosures', 'justification_enc', 'TEXT');
+    for (const t of ['breakglass_events', 'patient_requests']) {
+      const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
+      if (m) d.exec(m[0]);
+    }
+    for (const line of schemaText.split('\n')) if (/^CREATE INDEX IF NOT EXISTS idx_(breakglass|patient_requests)/.test(line.trim())) d.exec(line.trim());
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

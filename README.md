@@ -75,10 +75,12 @@ The launcher + wizard route above is production mode (`SUDS_ENV=production`) wit
 | --- | --- | --- |
 | navigator | Assigned caseload | Clients, interventions, calls, time, referrals, tasks, admin notes, consents, imports; records expenditures (grant structure itself is `budget:manage`: supervisor, finance, admin) |
 | clinician | Assigned caseload | Clients, interventions, calls, time, referrals, tasks, admin and **clinical notes**, consents, imports; reads the resource directory (no budget entry) |
-| supervisor | All clients | Everything, plus assignments, approvals, audit log, identified exports |
-| finance | De-identified list | Funding, budget lines, expenditure approval, time summaries |
-| readonly | All clients (read) | Reports and summaries; no notes |
-| admin | System | Users, settings, API keys, audit; clinical notes only via audited break-glass |
+| supervisor | All clients | Everything, plus assignments, approvals, audit log, break-glass review, de-identified and identified exports, consent overrides |
+| finance | De-identified list | Funding, budget lines, expenditure approval, time summaries, de-identified exports |
+| readonly | De-identified list | Reports and summaries, resource directory; no client records, no notes, no exports |
+| admin | System | Users, settings, API keys, audit, legal holds; clinical notes only via audited break-glass |
+
+Exports need `export:read` (supervisor, finance, admin) and are de-identified to the HIPAA Safe Harbor standard unless the user also holds `export:identified` and names the recipient and purpose, which is then written to each client's accounting of disclosures. Multi-factor authentication is required of every role by default.
 
 ## Tests
 

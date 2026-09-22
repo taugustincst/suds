@@ -71,7 +71,7 @@ test('one unusable row is rejected and the rest of the batch still lands', async
       { id: badCall, client_id: randomUUID(), user_id: navId, direction: 'inbound', started_at: iso(Date.now()), created_at: iso(Date.now()), updated_at: iso(Date.now()) },
       { id: goodCall, client_id: clientId, user_id: navId, direction: 'outbound', started_at: iso(Date.now()), created_at: iso(Date.now()), updated_at: iso(Date.now()) },
     ],
-    tasks: [{ id: goodTask, client_id: clientId, created_by: navId, title: 'Still applied', created_at: iso(Date.now()), updated_at: iso(Date.now()) }],
+    tasks: [{ id: goodTask, client_id: clientId, created_by: navId, title_enc: 'Still applied', created_at: iso(Date.now()), updated_at: iso(Date.now()) }],
   } });
   assert.equal(r.status, 200);
   assert.equal(r.data.rejected.length, 1, 'only the unusable row is rejected');
@@ -93,7 +93,7 @@ test('a device cannot push past its role or its caseload', async () => {
   // another worker's client.
   const task = randomUUID(); const call = randomUUID();
   const r = await push(nav, { tables: {
-    tasks: [{ id: task, client_id: otherClientId, created_by: navId, title: 'Not mine', created_at: iso(Date.now()), updated_at: iso(Date.now()) }],
+    tasks: [{ id: task, client_id: otherClientId, created_by: navId, title_enc: 'Not mine', created_at: iso(Date.now()), updated_at: iso(Date.now()) }],
     calls: [{ id: call, client_id: otherClientId, user_id: navId, direction: 'inbound', started_at: iso(Date.now()), created_at: iso(Date.now()), updated_at: iso(Date.now()) }],
   } });
   assert.equal(r.data.rejected.length, 2, 'both cross-caseload rows are refused');
@@ -130,11 +130,11 @@ test('a device cannot assert a countersignature', async () => {
 
 test('a row that comes back from the dead does not leave its tombstone behind', async () => {
   const id = randomUUID();
-  await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, title: 'Round trip', created_at: iso(Date.now() - 10000), updated_at: iso(Date.now() - 10000) }] } });
+  await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, title_enc: 'Round trip', created_at: iso(Date.now() - 10000), updated_at: iso(Date.now() - 10000) }] } });
   assert.equal((await nav.del(`/api/tasks/${id}`)).status, 200);
   assert.ok(H.db.one(`SELECT 1 FROM tombstones WHERE table_name='tasks' AND id=?`, id), 'deleting left a tombstone');
   // The device edited it after the delete, so the edit wins and the tombstone must go.
-  await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, title: 'Edited after delete', created_at: iso(Date.now()), updated_at: iso(Date.now() + 1000) }] } });
+  await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, title_enc: 'Edited after delete', created_at: iso(Date.now()), updated_at: iso(Date.now() + 1000) }] } });
   assert.ok(H.db.one(`SELECT 1 FROM tasks WHERE id=?`, id), 'the row is alive again');
   assert.ok(!H.db.one(`SELECT 1 FROM tombstones WHERE table_name='tasks' AND id=?`, id), 'and the stale tombstone is gone');
 });
@@ -229,7 +229,7 @@ test('paging never drops rows that share a timestamp', async () => {
   const ids = [];
   for (let i = 0; i < 25; i++) {
     const id = randomUUID();
-    H.db.run(`INSERT INTO tasks(id,client_id,created_by,title,created_at,updated_at) VALUES(?,?,?,?,?,?)`, id, clientId, navId, `Bulk ${i}`, stamp, stamp);
+    H.db.run(`INSERT INTO tasks(id,client_id,created_by,title_enc,created_at,updated_at) VALUES(?,?,?,?,?,?)`, id, clientId, navId, require('../server/crypto').encrypt(`Bulk ${i}`), stamp, stamp);
     ids.push(id);
   }
   // A page far smaller than the number of rows sharing that instant.
@@ -250,14 +250,14 @@ test('a device edit that loses to a newer office edit is reported back, and audi
   // Regression: the "server copy is newer" branch returned false and nothing else. The person on the phone
   // had seen "saved"; their edit vanished with no trace anywhere.
   const id = randomUUID();
-  await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, title: 'Phone version', priority: 'normal', created_at: iso(Date.now() - 60000), updated_at: iso(Date.now() - 60000) }] } });
+  await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, title_enc: 'Phone version', priority: 'normal', created_at: iso(Date.now() - 60000), updated_at: iso(Date.now() - 60000) }] } });
   assert.equal((await nav.put(`/api/tasks/${id}`, { title: 'Office version', priority: 'urgent' })).status, 200);
-  const stale = await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, title: 'Phone version, edited later on the phone', priority: 'low', created_at: iso(Date.now() - 60000), updated_at: iso(Date.now() - 30000) }] } });
+  const stale = await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, title_enc: 'Phone version, edited later on the phone', priority: 'low', created_at: iso(Date.now() - 60000), updated_at: iso(Date.now() - 30000) }] } });
   assert.equal(stale.status, 200);
   const c = (stale.data.conflicts || []).find(x => x.id === id);
   assert.ok(c, 'the push response names the row whose edit was not taken');
-  assert.ok(c.columns.includes('title') && c.columns.includes('priority'), 'and which fields differed');
-  assert.equal(H.db.one(`SELECT title FROM tasks WHERE id=?`, id).title, 'Office version', 'the office copy is what everyone sees');
+  assert.ok(c.columns.includes('title_enc') && c.columns.includes('priority'), 'and which fields differed');
+  assert.equal(require('../server/crypto').decrypt(H.db.one(`SELECT title_enc FROM tasks WHERE id=?`, id).title_enc), 'Office version', 'the office copy is what everyone sees');
   const row = H.db.one(`SELECT * FROM audit_log WHERE action='sync.conflict' AND entity_id=? ORDER BY id DESC LIMIT 1`, id);
   assert.ok(row, 'the conflict is in the audit log');
   assert.ok(!String(row.details).includes('Phone version'), 'by column name only, never the value');
@@ -267,17 +267,17 @@ test('an overwrite from a device is recorded, by column name only', async () => 
   // Last write wins at row granularity, so a device edit can revert a field changed at the office. That
   // still happens — it is the rule — but it used to happen with no record that anything was replaced.
   const id = randomUUID();
-  await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, title: 'Original', priority: 'normal', created_at: iso(Date.now() - 20000), updated_at: iso(Date.now() - 20000) }] } });
-  await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, title: 'Replaced by the phone', priority: 'urgent', created_at: iso(Date.now() - 20000), updated_at: iso(Date.now()) }] } });
+  await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, title_enc: 'Original', priority: 'normal', created_at: iso(Date.now() - 20000), updated_at: iso(Date.now() - 20000) }] } });
+  await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, title_enc: 'Replaced by the phone', priority: 'urgent', created_at: iso(Date.now() - 20000), updated_at: iso(Date.now()) }] } });
 
   const row = H.db.one(`SELECT * FROM audit_log WHERE action='sync.overwrite' AND entity_id=? ORDER BY id DESC LIMIT 1`, id);
   assert.ok(row, 'the overwrite is recorded');
   const details = JSON.parse(row.details);
-  assert.ok(details.columns.includes('title'), 'and names the column it replaced');
+  assert.ok(details.columns.includes('title_enc'), 'and names the column it replaced');
   assert.ok(details.columns.includes('priority'));
   assert.ok(!String(row.details).includes('Replaced by the phone'), 'but never the value — this is the audit log');
   assert.ok(!String(row.details).includes('Original'));
-  assert.equal(H.db.one(`SELECT title FROM tasks WHERE id=?`, id).title, 'Replaced by the phone', 'the newer write still wins');
+  assert.equal(require('../server/crypto').decrypt(H.db.one(`SELECT title_enc FROM tasks WHERE id=?`, id).title_enc), 'Replaced by the phone', 'the newer write still wins');
 });
 
 test('a nested budget line and its parent sync in the same batch, child listed first', async () => {

@@ -24,22 +24,29 @@ module.exports = {
     { name: 'assignments', enc: [], scope: 'client', clientCol: 'client_id', writePerm: 'assignments:manage', parent: ['clients', 'client_id'] },
     { name: 'episodes', enc: ['presenting_problem_enc', 'discharge_summary_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'episodes:write', parent: ['clients', 'client_id'] },
     { name: 'interventions', enc: ['summary_enc'], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'interventions:write', parent: ['clients', 'client_id'] },
-    { name: 'overdose_events', enc: ['notes_enc'], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'overdose:write', parent: ['clients', 'client_id'] },
-    { name: 'calls', enc: ['contact_name_enc', 'phone_enc', 'summary_enc'], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'calls:write', parent: ['clients', 'client_id'] },
+    { name: 'overdose_events', enc: ['notes_enc', 'substances_enc'], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'overdose:write', parent: ['clients', 'client_id'] },
+    { name: 'calls', enc: ['contact_name_enc', 'phone_enc', 'summary_enc', 'purpose_enc'], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'calls:write', parent: ['clients', 'client_id'] },
     { name: 'time_entries', enc: [], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'time:write', parent: ['clients', 'client_id'] },
-    { name: 'referrals', enc: [], scope: 'client', clientCol: 'client_id', writePerm: 'referrals:write', parent: ['clients', 'client_id'] },
-    { name: 'tasks', enc: [], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'tasks:write', parent: ['clients', 'client_id'] },
+    { name: 'referrals', enc: ['outcome_enc', 'barrier_enc', 'notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'referrals:write', parent: ['clients', 'client_id'] },
+    { name: 'tasks', enc: ['title_enc'], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'tasks:write', parent: ['clients', 'client_id'] },
     { name: 'expenditures', enc: [], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'budget:write', parent: ['clients', 'client_id'] },
     { name: 'notes', enc: ['content_enc', 'structured_enc', 'title_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'notes:admin:write', parent: ['clients', 'client_id'] },
     { name: 'note_addenda', enc: ['content_enc'], scope: 'via-note', writePerm: 'notes:admin:write', parent: ['notes', 'note_id'] },
     { name: 'consents', enc: ['recipient_enc', 'purpose_enc', 'scope_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
-    { name: 'disclosures', enc: ['recipient_enc', 'purpose_enc', 'what_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
+    { name: 'disclosures', enc: ['recipient_enc', 'purpose_enc', 'what_enc', 'justification_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
     { name: 'imports', enc: [], scope: 'all', writePerm: 'imports:write' },
     { name: 'import_items', enc: ['content_enc', 'title_enc'], scope: 'all', writePerm: 'imports:write', parent: ['imports', 'import_id'] },
     { name: 'form_templates', enc: [], scope: 'all', writePerm: 'forms:manage', blob: ['file_b64'] },
     { name: 'client_forms', enc: ['values_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'forms:write', parent: ['clients', 'client_id'] },
     { name: 'client_form_files', enc: ['data_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'forms:write', parent: ['client_forms', 'client_form_id'], blob: ['data_enc'] },
+    { name: 'patient_requests', enc: ['notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
   ],
+  // Server-side only, never synchronised: breakglass_events is the office supervisor's review queue for
+  // emergency access, and a device has no supervisor to review it.
+  server_only: ['breakglass_events'],
+  // Rows a device may create but never change once they exist (a consent may only be revoked). The legal
+  // record of what was agreed to and what was shared cannot be rewritten by whichever phone syncs last.
+  immutable: ['consents', 'disclosures', 'note_addenda'],
   // Columns that reference users(id) somewhere in the schema. A device's local account id is meaningless on the
   // office server (and vice versa), so every one of these has to be remapped on both sides of a sync.
   user_refs: [
@@ -51,6 +58,7 @@ module.exports = {
     ['consents', 'created_by'], ['disclosures', 'disclosed_by'], ['imports', 'imported_by'],
     ['client_forms', 'created_by'], ['client_forms', 'completed_by'], ['client_form_files', 'uploaded_by'],
     ['resource_photos', 'uploaded_by'], ['form_templates', 'uploaded_by'], ['policy_documents', 'uploaded_by'],
+    ['breakglass_events', 'user_id'], ['breakglass_events', 'acknowledged_by'], ['patient_requests', 'handled_by'], ['patient_requests', 'created_by'],
     ['audit_log', 'user_id'], ['sessions', 'user_id'], ['user_prefs', 'user_id'], ['api_keys', 'created_by'], ['users', 'supervisor_id'], ['devices', 'user_id'],
   ],
 };

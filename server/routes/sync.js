@@ -164,6 +164,18 @@ function push(user, payload) {
           if ((t.scope === 'client' || t.scope === 'client-or-null') && raw[t.clientCol] && t.name !== 'clients' && !auth.canAccessClient(user, raw[t.clientCol])) { reject(t.name, raw.id, 'not on caseload'); return false; }
           const existing = db.one(`SELECT * FROM ${t.name} WHERE id=?`, raw.id);
           if (t.name === 'clients' && existing && !auth.canAccessClient(user, raw.id)) { reject(t.name, raw.id, 'not on caseload'); return false; }
+          // Consents, disclosures and addenda are the legal record: a device may add to it, never rewrite it.
+          // A push that would resurrect a revoked consent or change who a disclosure went to is refused. The
+          // one permitted change is revoking a consent that is not yet revoked, and it changes nothing else.
+          let revocation = false;
+          if (existing && SYNC.immutable.includes(t.name)) {
+            const changed = changedColumns(t, existing, raw, existingCols);
+            const onlyRevocation = t.name === 'consents' && !existing.revoked_at && raw.revoked_at && changed.every(c => ['revoked_at', 'revoked_reason', 'revoked_by'].includes(c));
+            if (!onlyRevocation) { if (changed.length) reject(t.name, raw.id, 'immutable'); return false; }
+            revocation = true;
+            for (const k of Object.keys(raw)) if (!['id', 'revoked_at', 'revoked_reason', 'updated_at'].includes(k)) delete raw[k];
+            raw.revoked_by = user.id; raw.updated_at = db.now();
+          }
           if (t.scope === 'via-note') { const note = db.one(`SELECT client_id, kind FROM notes WHERE id=?`, raw.note_id); if (!note || !auth.canAccessClient(user, note.client_id) || (note.kind === 'clinical' && !auth.hasPerm(user, 'notes:clinical:write'))) { reject(t.name, raw.id, 'not permitted'); return false; } }
           if (t.name === 'notes' && raw.kind === 'clinical' && !auth.hasPerm(user, 'notes:clinical:write')) { reject(t.name, raw.id, 'clinical notes not permitted for this role'); return false; }
           // The REST route (PUT /api/budget/lines/:id) blocks a re-parent that would create a cycle; a push
@@ -193,7 +205,7 @@ function push(user, payload) {
             if (changed && ((raw.cost && raw.cost > 0) || raw.funding_source_id || raw.budget_line_id)) { reject(t.name, raw.id, 'you do not have permission to attach a cost to a funding source'); return false; }
           }
           const incomingAt = raw.updated_at || raw.created_at || NEVER;
-          if (existing && (existing.updated_at || existing.created_at || NEVER) >= incomingAt) {
+          if (existing && !revocation && (existing.updated_at || existing.created_at || NEVER) >= incomingAt) {
             // The office copy is newer, so the device's edit loses. That is the rule -- but it must not lose
             // silently: the person who typed it saw "saved" on their phone. Name the columns that differ (never
             // the values) in the audit log, and tell the device so it can say so on the sync screen.

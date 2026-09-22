@@ -34,10 +34,10 @@ module.exports = (r) => {
       const what = row.method === 'text' ? 'text message' : 'call';
       if (row._log_time && row.duration_minutes > 0) db.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,call_id,description) VALUES(?,?,?,?,?,?,?,?)`,
         uuid(), row.user_id, row.client_id || null, row.started_at.slice(0, 10), row.duration_minutes, 'direct_service', row.id, `${row.direction} ${what}`);
-      if (row.follow_up_needed && row.follow_up_due) db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title,due_at,priority) VALUES(?,?,?,?,?,?,?)`,
-        uuid(), row.client_id || null, row.user_id, ctx.user.id, `${row.method === 'text' ? 'Text back' : 'Call back'}: ${row.purpose || row.contact_type}`, row.follow_up_due, row.crisis ? 'urgent' : 'normal');
+      if (row.follow_up_needed && row.follow_up_due) db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority) VALUES(?,?,?,?,?,?,?)`,
+        uuid(), row.client_id || null, row.user_id, ctx.user.id, encrypt(`${row.method === 'text' ? 'Text back' : 'Call back'}: ${row._purpose || row.contact_type}`), row.follow_up_due, row.crisis ? 'urgent' : 'normal');
     },
-    afterLoad: (ctx, x) => ({ ...x, contact_name: x.contact_name_enc ? decrypt(x.contact_name_enc) : null, phone: x.phone_enc ? decrypt(x.phone_enc) : null, summary: x.summary_enc ? decrypt(x.summary_enc) : null, contact_name_enc: undefined, phone_enc: undefined, summary_enc: undefined }),
+    afterLoad: (ctx, x) => ({ ...x, contact_name: x.contact_name_enc ? decrypt(x.contact_name_enc) : null, phone: x.phone_enc ? decrypt(x.phone_enc) : null, summary: x.summary_enc ? decrypt(x.summary_enc) : null, purpose: x.purpose_enc ? decrypt(x.purpose_enc) : null, contact_name_enc: undefined, phone_enc: undefined, summary_enc: undefined, purpose_enc: undefined }),
     canEdit: crud.ownerOrManager(),
   });
   // A call's outcomes and a text's outcomes do not overlap, and picking one from the wrong list would
@@ -48,7 +48,10 @@ module.exports = (r) => {
     if (!allowed.includes(v.outcome)) throw badRequest(`"${v.outcome}" is not an outcome for a ${method === 'text' ? 'text message' : 'phone call'}. Choose one of: ${allowed.join(', ')}`);
   }
   function encAll(v) {
-    for (const f of ['contact_name', 'phone', 'summary']) if (v[f] !== undefined) { v[`${f}_enc`] = v[f] === null ? null : encrypt(v[f]); delete v[f]; }
+    // The purpose of a call ("detox bed", "MAT intake") names the client's situation, so it is encrypted
+    // like the summary; the plaintext is kept only for the follow-up task title built in afterInsert.
+    if (v.purpose !== undefined) v._purpose = v.purpose;
+    for (const f of ['contact_name', 'phone', 'summary', 'purpose']) if (v[f] !== undefined) { v[`${f}_enc`] = v[f] === null ? null : encrypt(v[f]); delete v[f]; }
     v._log_time = v.log_time; delete v.log_time;
   }
 };

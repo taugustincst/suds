@@ -501,9 +501,13 @@ export function table(columns, rows, { onRow, empty = 'No records', wrap = true,
   return wrap ? h('div', { class: 'table-wrap' }, t) : t;
 }
 export function bars(items, { max, valueKey = 'n', labelKey = 'k', format = fmt.num, link = null } = {}) {
-  const m = max || Math.max(1, ...items.map(i => Number(i[valueKey] || 0)));
+  // A value can be a string such as "<11" (a suppressed small cell in the funder report): it draws no bar and
+  // is printed as sent.
+  const numOf = (i) => { const n = Number(i[valueKey]); return Number.isFinite(n) ? n : 0; };
+  const show = (v) => (Number.isFinite(Number(v)) ? format(v) : String(v ?? ''));
+  const m = max || Math.max(1, ...items.map(numOf));
   if (!items.length) return h('div', { class: 'muted small' }, 'No data');
-  return h('div', {}, items.map(i => { const href = link ? link(i) : null; const row = [h('div', { class: 'lbl', title: fmt.label(i[labelKey]) }, fmt.label(i[labelKey])), h('div', { class: 'trk' }, h('div', { class: 'fil', style: { width: `${(Number(i[valueKey] || 0) / m) * 100}%` } })), h('div', { class: 'n' }, format(i[valueKey]))];
+  return h('div', {}, items.map(i => { const href = link ? link(i) : null; const row = [h('div', { class: 'lbl', title: fmt.label(i[labelKey]) }, fmt.label(i[labelKey])), h('div', { class: 'trk' }, h('div', { class: 'fil', style: { width: `${(numOf(i) / m) * 100}%` } })), h('div', { class: 'n' }, show(i[valueKey]))];
     return href ? h('a', { class: 'bar link', href: href.startsWith('#') ? href : '#/' + href, title: 'Show these' }, row) : h('div', { class: 'bar' }, row); }));
 }
 export function sparkline(values) { const m = Math.max(1, ...values); return h('div', { class: 'spark' }, values.map(v => h('div', { style: { height: `${(v / m) * 100}%` }, title: String(v) }))); }

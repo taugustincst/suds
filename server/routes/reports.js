@@ -68,6 +68,8 @@ module.exports = (r) => {
       // Scoped to active clients so this count matches what #/clients?consent_expiring=1 shows by default —
       // otherwise the badge counts a closed or inactive client's consent that the deep-linked list, filtered
       // to active, never displays.
+      // Emergency accesses nobody has reviewed yet — the count a supervisor sees on their home page.
+      breakglass_pending: auth.hasPerm(ctx.user, 'audit:read') ? db.one(`SELECT COUNT(*) n FROM breakglass_events WHERE acknowledged_at IS NULL`).n : null,
       consents_expiring: db.all(`SELECT co.id, co.client_id, co.type, co.recipient_enc, co.expires_at, c.client_code FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ? AND c.status='active' AND ${cf.sql} ORDER BY co.expires_at LIMIT 20`, today, new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10), ...cf.params).map(x => ({ ...x, recipient: x.recipient_enc ? require('../crypto').decrypt(x.recipient_enc) : null, recipient_enc: undefined })),
     };
     // The dashboard reads across nearly every PHI table; that is a PHI read like any other.
@@ -153,8 +155,15 @@ module.exports = (r) => {
       COALESCE(SUM(CASE WHEN i.client_id IS NULL THEN i.naloxone_kits ELSE 0 END),0) community_kits
       FROM interventions i WHERE i.occurred_at BETWEEN ? AND ? ${fundJoin}`, from, toEnd, ...fundP);
 
+    // Small-cell suppression: a breakdown row counting fewer than eleven people can identify them once it is
+    // crossed with another table (the one Vietnamese-speaking veteran in a small county). Totals stay exact;
+    // any row under the threshold is reported as "<11" with the count withheld.
+    const SMALL_CELL = 11;
+    const suppress = (rows) => rows.map(x => (typeof x.n === 'number' && x.n > 0 && x.n < SMALL_CELL ? { ...x, n: '<11', suppressed: true } : x));
+
     const out = {
       from, to, funding_source_id: fund,
+      small_cell_threshold: SMALL_CELL,
       unduplicated: {
         served,
         new_admissions: db.one(`SELECT COUNT(DISTINCT c.id) n FROM clients c WHERE c.deleted_at IS NULL AND c.intake_date BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
@@ -163,14 +172,16 @@ module.exports = (r) => {
         on_mat: db.one(`SELECT COUNT(DISTINCT c.id) n FROM clients c WHERE c.deleted_at IS NULL AND c.mat_status='active' AND ${cf.sql}`, ...cf.params).n,
       },
       demographics: {
-        by_gender: demographics('gender', 'gender'),
-        by_language: demographics('preferred_language', 'language'),
-        by_housing: demographics('housing_status', 'housing'),
-        by_insurance: demographics('insurance', 'insurance'),
-        by_race_code: Object.entries(byRace).map(([k, n]) => ({ k, n })).sort((a, b) => b.n - a.n),
-        by_ethnicity: demographics('race_ethnicity', 'ethnicity'),
+        by_gender: suppress(demographics('gender', 'gender')),
+        by_language: suppress(demographics('preferred_language', 'language')),
+        by_housing: suppress(demographics('housing_status', 'housing')),
+        by_insurance: suppress(demographics('insurance', 'insurance')),
+        by_race_code: suppress(Object.entries(byRace).map(([k, n]) => ({ k, n })).sort((a, b) => b.n - a.n)),
+        by_ethnicity: suppress(demographics('race_ethnicity', 'ethnicity')),
       },
-      episodes, overdose, naloxone_distribution: distribution,
+      episodes: { ...episodes, by_discharge_reason: suppress(episodes.by_discharge_reason) },
+      overdose: { ...overdose, by_administered_by: suppress(overdose.by_administered_by) },
+      naloxone_distribution: distribution,
       by_funding_source: db.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end,
           (SELECT COUNT(DISTINCT i.client_id) FROM interventions i WHERE i.funding_source_id=f.id AND i.occurred_at BETWEEN ? AND ?) AS clients_served,
           (SELECT COUNT(*) FROM interventions i WHERE i.funding_source_id=f.id AND i.occurred_at BETWEEN ? AND ?) AS services,
@@ -181,13 +192,28 @@ module.exports = (r) => {
     return out;
   });
 
-  // Exports: CSV or Excel per table, or one Excel workbook with every table. De-identified unless identified=1 and export:read.
-  r.get('/api/reports/export/:kind', auth.requireAuth, auth.requirePerm('reports:read'), async (ctx) => {
+  // Exports: CSV or Excel per table, or one Excel workbook with every table. Needs export:read; de-identified
+  // (HIPAA Safe Harbor) unless identified=1 and the user holds export:identified — and an identified export
+  // is a disclosure: it must say to whom and why, and it writes one accounting row per client it contains.
+  r.get('/api/reports/export/:kind', auth.requireAuth, auth.requirePerm('export:read'), async (ctx) => {
     const { from, to, toEnd } = range(ctx);
     const identified = ctx.query.get('identified') === '1' && auth.hasPerm(ctx.user, 'export:identified');
+    const recipient = (ctx.query.get('recipient') || '').trim(); const purpose = (ctx.query.get('purpose') || '').trim();
+    if (identified && (!recipient || !purpose)) throw require('../http').badRequest('An identified export must name its recipient and purpose (recipient= and purpose=); they are written to the accounting of disclosures for every client it contains');
     const format = ctx.query.get('format') === 'xlsx' || ctx.params.kind === 'workbook' ? 'xlsx' : 'csv';
-    const D = require('../exports').datasets(ctx, { from, to, toEnd, identified });
+    const X = require('../exports');
+    const D = X.datasets(ctx, { from, to, toEnd, identified });
     const S = require('../spreadsheet');
+    const disclosure = require('../disclosure');
+    const accountFor = (kind, rows) => {
+      if (!identified) return 0;
+      const ids = X.clientIdsOf(rows);
+      for (const clientId of ids) disclosure.record({ clientId, recipient, purpose, what: `Identified export: ${kind} (${from} to ${to})`, method: 'export', basis: 'export', source: 'export', sourceRef: kind, user: ctx.user, ip: ctx.ip });
+      return ids.length;
+    };
+    const aboutSheet = { name: 'About', columns: [{ key: 'k', label: 'Field' }, { key: 'v', label: 'Value' }], rows: [
+      { k: 'Classification', v: identified ? `Identified export — PHI. Disclosed to: ${recipient}. Purpose: ${purpose}.` : X.DEID_LABEL },
+      { k: 'Period', v: `${from} to ${to}` }, { k: 'Generated', v: db.now() }, { k: 'Generated by', v: ctx.user.display_name || ctx.user.username }] };
     const label = (k) => ({ key: k, label: k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) });
     // Coded values ("naloxone_supplies", "reimbursed") go out the way the screen shows them ("Naloxone
     // Supplies", "Reimbursed"); a funder should not have to decode enum names. Identifier-like columns are
@@ -199,19 +225,28 @@ module.exports = (r) => {
     if (ctx.params.kind === 'workbook') {
       // Every dataset, decrypted, in one file. Yield between sheets so a full-year export does not hold
       // the event loop for several seconds and stall everyone else's requests.
-      const sheets = [];
-      for (const [, d] of Object.entries(D)) {
-        sheets.push({ name: d.label, columns: d.columns.map(label), rows: pretty(d.rows()) });
+      const sheets = [aboutSheet]; let clientsDisclosed = 0;
+      for (const [kind, d] of Object.entries(D)) {
+        const rows = d.rows();
+        clientsDisclosed += accountFor(kind, rows);
+        sheets.push({ name: d.label, columns: d.columns.map(label), rows: pretty(X.publicRows(rows)) });
         await new Promise((resolve) => setImmediate(resolve));
       }
-      audit.log({ user: ctx.user, action: 'report.export', ip: ctx.ip, details: { kind: 'workbook', sheets: sheets.map(s => [s.name, s.rows.length]), identified, from, to } });
+      audit.log({ user: ctx.user, action: 'report.export', ip: ctx.ip, details: { kind: 'workbook', sheets: sheets.map(s => [s.name, s.rows.length]), identified, from, to, clients_disclosed: identified ? clientsDisclosed : undefined } });
       body = await S.writeWorkbookAsync(sheets); filename = `suds-export-${from}_${to}.xlsx`; type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
     } else {
       const d = D[ctx.params.kind === 'clients' ? 'clients' : ctx.params.kind]; if (!d) throw require('../http').notFound('Unknown export');
-      const rows = pretty(d.rows());
-      audit.log({ user: ctx.user, action: 'report.export', ip: ctx.ip, details: { kind: ctx.params.kind, rows: rows.length, identified, from, to, format } });
-      if (format === 'xlsx') { body = S.writeWorkbook([{ name: d.label, columns: d.columns.map(label), rows }]); filename = `suds-${ctx.params.kind}-${from}_${to}.xlsx`; type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'; }
-      else { body = S.toCsv(rows, d.columns.map(label)); filename = `suds-${ctx.params.kind}-${from}_${to}.csv`; type = 'text/csv; charset=utf-8'; }
+      const raw = d.rows();
+      const clientsDisclosed = accountFor(ctx.params.kind, raw);
+      const rows = pretty(X.publicRows(raw));
+      audit.log({ user: ctx.user, action: 'report.export', ip: ctx.ip, details: { kind: ctx.params.kind, rows: rows.length, identified, from, to, format, clients_disclosed: identified ? clientsDisclosed : undefined } });
+      const suffix = identified ? 'identified' : 'deidentified';
+      if (format === 'xlsx') { body = S.writeWorkbook([{ name: d.label, columns: d.columns.map(label), rows }, aboutSheet]); filename = `suds-${ctx.params.kind}-${from}_${to}-${suffix}.xlsx`; type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'; }
+      else {
+        // A comment line ahead of the header says what the reader is holding; the header row itself is unchanged.
+        const note = identified ? `# Identified export - PHI. Disclosed to: ${recipient}. Purpose: ${purpose}. Generated ${db.now()}.` : `# ${X.DEID_LABEL} Generated ${db.now()}.`;
+        body = note.replace(/[\r\n]+/g, ' ') + '\r\n' + S.toCsv(rows, d.columns.map(label)); filename = `suds-${ctx.params.kind}-${from}_${to}-${suffix}.csv`; type = 'text/csv; charset=utf-8';
+      }
     }
     ctx.res.writeHead(200, { 'Content-Type': type, 'Content-Disposition': `attachment; filename="${filename}"` });
     ctx.res.end(body);

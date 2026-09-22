@@ -31,7 +31,9 @@ Copy `.env.example` to `.env` and set:
 | `HOST`, `PORT` | no | Default `127.0.0.1:8080`. Use `HOST=0.0.0.0` only inside a container / behind a firewall. |
 | `SESSION_IDLE_MINUTES` | no | Default 15 (auto sign-out). |
 | `SESSION_ABSOLUTE_HOURS` | no | Default 12. |
-| `MFA_REQUIRED_ROLES` | no | Default `admin,supervisor`. Set to `admin,supervisor,clinician,navigator,finance` to require MFA for everyone (recommended). |
+| `MFA_REQUIRED_ROLES` | no | Default: every role (`admin,supervisor,clinician,navigator,finance,readonly`). Narrow it only with a documented reason; a navigator's caseload is as much PHI as an administrator's console. |
+| `LOCAL_MODE_ENABLED` | no | Default `true`. Set to `false` to stop this server handing out the in-browser copy of SUDS (`/?local=1` and `/local/kernel.js`); the page then explains that local mode is off. The phone apps carry their own kernel and are unaffected. |
+| `CLIENT_RETENTION_YEARS` | no | Default `7`. Discharged client records older than this (every episode closed, no legal hold) are hard-deleted from every table once a day. Overridable in Administration → Settings; never below 6. |
 | `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, `MS_ONENOTE_USER` | optional | For direct OneNote import via Microsoft Graph. See IMPORTS.md. |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI` | optional | Single sign-on against a county identity provider. See "Single sign-on" below. |
 | `OIDC_LABEL` | no | Button text on the login page. Default "Sign in with county SSO". |

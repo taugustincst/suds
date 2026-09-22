@@ -76,8 +76,12 @@ ok(await toastSays(/saved|added|✓/i), 'a reminder is added');
 await page.waitForURL(/[?&]_=\d+/, { timeout: 5000 }).catch(() => {});
 // 6. consent
 await page.goto(`${base}/#/client/${cid}/consents`); await page.waitForSelector('text=+ Consent', { timeout: 10000 }).catch(() => {}); await page.click('text=+ Consent'); await page.waitForSelector('.modal');
-await page.selectOption('.modal select[name=type]', 'part2_disclosure'); await page.fill('.modal input[name=recipient]', 'County OTP'); await page.fill('.modal input[name=purpose]', 'Referral'); await page.fill('.modal input[name=expires_at]', '2027-09-01'); await page.click('.modal button[type=submit]');
-ok(await toastSays(/saved|recorded|✓/i), 'a 42 CFR Part 2 release is recorded');
+await page.selectOption('.modal select[name=type]', 'part2_disclosure'); await page.fill('.modal input[name=recipient]', 'County OTP'); await page.fill('.modal input[name=purpose]', 'Referral'); await page.fill('.modal input[name=expires_at]', '2027-09-01');
+// A Part 2 consent is refused until every §2.31 element is on it: what is covered, evidence it was signed,
+// and the redisclosure notice. The form marks them; this fills them the way a navigator would.
+ok(await page.$('.modal textarea[name=scope]') && await page.$('.modal input[name=redisclosure_notice_given]') && await page.$('.modal input[name=signed_on_paper]'), 'the consent form carries the Part 2 elements (scope, signature evidence, redisclosure notice)');
+await page.fill('.modal textarea[name=scope]', 'Referral summary and MAT status'); await page.check('.modal input[name=signed_on_paper]'); await page.check('.modal input[name=redisclosure_notice_given]'); await page.click('.modal button[type=submit]');
+ok(await toastSays(/saved|recorded|✓/i), 'a 42 CFR Part 2 release is recorded once every element is present');
 await page.waitForURL(/[?&]_=\d+/, { timeout: 5000 }).catch(() => {});
 // 7. referral with consent
 await page.goto(`${base}/#/client/${cid}/referrals`); await page.waitForSelector('text=+ New referral', { timeout: 10000 }).catch(() => {}); await page.click('text=+ New referral'); await page.waitForSelector('.modal');
