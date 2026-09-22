@@ -21,7 +21,18 @@ const ctx = (n, body, constructed = true) => tlv((constructed ? 0xa0 : 0x80) | n
 function oid(s) { const p = s.split('.').map(Number); const out = [40 * p[0] + p[1]]; for (const v of p.slice(2)) { const b = []; let x = v; do { b.unshift(x & 0x7f); x >>= 7; } while (x); for (let i = 0; i < b.length - 1; i++) b[i] |= 0x80; out.push(...b); } return tlv(0x06, Buffer.from(out)); }
 function utcTime(d) { const p = n => String(n).padStart(2, '0'); return tlv(0x17, Buffer.from(`${String(d.getUTCFullYear()).slice(2)}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z`)); }
 
-const OID = { cn: '2.5.4.3', o: '2.5.4.10', ecPublicKey: '1.2.840.10045.2.1', p256: '1.2.840.10045.3.1.7', ecdsaSha256: '1.2.840.10045.4.3.2', san: '2.5.29.17', basic: '2.5.29.19', keyUsage: '2.5.29.15', extKeyUsage: '2.5.29.37', serverAuth: '1.3.6.1.5.5.7.3.1', ski: '2.5.29.14', aki: '2.5.29.35' };
+const OID = { cn: '2.5.4.3', o: '2.5.4.10', ecPublicKey: '1.2.840.10045.2.1', p256: '1.2.840.10045.3.1.7', ecdsaSha256: '1.2.840.10045.4.3.2', san: '2.5.29.17', basic: '2.5.29.19', keyUsage: '2.5.29.15', extKeyUsage: '2.5.29.37', serverAuth: '1.3.6.1.5.5.7.3.1', ski: '2.5.29.14', aki: '2.5.29.35', nameConstraints: '2.5.29.30' };
+const isIPv4 = (h) => /^\d{1,3}(\.\d{1,3}){3}$/.test(h);
+// GeneralName for a host: iPAddress [7] for a dotted quad, dNSName [2] otherwise. With `mask` the
+// iPAddress form is the address+netmask pair a name constraint uses (RFC 5280 §4.2.1.10).
+function generalName(h, { mask = false } = {}) {
+  if (isIPv4(h)) { const a = Buffer.from(h.split('.').map(Number)); return ctx(7, mask ? Buffer.concat([a, Buffer.from([255, 255, 255, 255])]) : a, false); }
+  return ctx(2, Buffer.from(h, 'ascii'), false);
+}
+// How much longer than its leaf the CA lives. A CA a phone trusts is a CA that can vouch for any server
+// its constraints allow; keeping it only a month past the certificate it was made for, rather than the
+// ten years it used to get, means a leaked or forgotten one stops mattering at the next renewal.
+const CA_GRACE_DAYS = 30;
 const pem = (label, der) => `-----BEGIN ${label}-----\n${der.toString('base64').match(/.{1,64}/g).join('\n')}\n-----END ${label}-----\n`;
 const keyId = (spki) => crypto.createHash('sha1').update(spki).digest();
 
@@ -38,21 +49,28 @@ function tbsOf({ issuer, subject, spki, notBefore, notAfter, exts }) {
  */
 function generate({ commonName = 'SUDS', org = 'SUDS', hosts = ['localhost'], days = 825 } = {}) {
   const now = new Date(); const notBefore = new Date(now.getTime() - 60_000); const notAfter = new Date(now.getTime() + days * 86400000);
-  const caNotAfter = new Date(now.getTime() + Math.max(days, 3650) * 86400000);
+  const caNotAfter = new Date(notAfter.getTime() + CA_GRACE_DAYS * 86400000);
   const ca = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
   const caSpki = ca.publicKey.export({ type: 'spki', format: 'der' });
   const caName = seq(set(seq(oid(OID.o), utf8(org))), set(seq(oid(OID.cn), utf8(`${commonName} certificate authority`))));
+  // Name constraints (critical, as RFC 5280 requires): a phone that installs this CA is trusting it for
+  // exactly the names and addresses the server certificate carries and nothing else — not the county's
+  // intranet, not the public web. Each permitted subtree is a GeneralSubtree { base GeneralName }; a dNSName
+  // entry also covers its subdomains, an iPAddress entry carries a /32 mask so it covers that one address.
+  // The [0] tag is IMPLICIT (X.509's module says so), so it stands in for the GeneralSubtrees SEQUENCE tag.
+  const permitted = ctx(0, Buffer.concat(hosts.map(h => seq(generalName(h, { mask: true })))));
   const caExts = seq(
     seq(oid(OID.basic), bool(true), octstr(seq(bool(true)))),                       // cA = TRUE, critical
     seq(oid(OID.keyUsage), bool(true), octstr(tlv(0x03, Buffer.from([0x01, 0x86])))), // digitalSignature, keyCertSign, cRLSign
     seq(oid(OID.ski), octstr(octstr(keyId(caSpki)))),
+    seq(oid(OID.nameConstraints), bool(true), octstr(seq(permitted))),              // permittedSubtrees [0]
   );
   const caCert = sign(tbsOf({ issuer: caName, subject: caName, spki: caSpki, notBefore, notAfter: caNotAfter, exts: caExts }), ca.privateKey);
 
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
   const spki = publicKey.export({ type: 'spki', format: 'der' });
   const name = seq(set(seq(oid(OID.o), utf8(org))), set(seq(oid(OID.cn), utf8(commonName))));
-  const sanItems = hosts.map(h => /^\d{1,3}(\.\d{1,3}){3}$/.test(h) ? ctx(7, Buffer.from(h.split('.').map(Number)), false) : ctx(2, Buffer.from(h, 'ascii'), false));
+  const sanItems = hosts.map(h => generalName(h));
   const exts = seq(
     seq(oid(OID.basic), bool(true), octstr(seq(bool(false)))),
     seq(oid(OID.keyUsage), bool(true), octstr(tlv(0x03, Buffer.from([0x07, 0x80])))), // digitalSignature

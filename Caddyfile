@@ -1,0 +1,26 @@
+# Reverse proxy in front of SUDS for docker-compose.yml (and a template for a county's own Caddy).
+# Caddy obtains and renews the certificate itself for the name in SUDS_DOMAIN, or use a county-issued
+# certificate with `tls /path/cert.pem /path/key.pem` inside the site block instead.
+{$SUDS_DOMAIN:suds.example.gov} {
+	encode gzip
+
+	header {
+		# One year, with subdomains, browser-preload eligible. The app itself sets the rest of its security
+		# headers (server/http.js); these are the ones only the TLS terminator can vouch for.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+		# Never advertise the proxy.
+		-Server
+	}
+
+	# SUDS runs with TRUST_PROXY=1 and reads the LAST address in X-Forwarded-For — the one this proxy
+	# added — so a client cannot pick its own audit address by sending the header itself. Caddy replaces
+	# a client-supplied X-Forwarded-For with the address it actually saw, and only appends to one that
+	# came from a `trusted_proxies` entry; either way the rightmost entry is the one Caddy vouches for.
+	# Do not configure it to pass the header through untouched.
+	reverse_proxy suds:8080 {
+		header_up X-Forwarded-Proto {scheme}
+	}
+}

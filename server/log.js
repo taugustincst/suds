@@ -36,11 +36,18 @@ function openFor(day) {
   } catch { return null; }
 }
 
+// Lines that must never reach the file, whatever printed them. The first-run administrator password is
+// written to stdout directly (server/bootstrap.js), but a guard here costs nothing and outlives that.
+const REDACT = [/Temporary password/i];
+function redacted(line) { return REDACT.some(re => re.test(line)); }
+
 function write(level, args) {
+  const line = formatLine(level, args);
+  if (redacted(line)) return;
   const day = today();
   if (day !== currentDay) { try { stream && stream.end(); } catch {} stream = openFor(day); currentDay = day; }
   if (!stream) return;
-  try { stream.write(formatLine(level, args) + '\n'); } catch {}
+  try { stream.write(line + '\n'); } catch {}
 }
 function safe(v) { try { return JSON.stringify(v); } catch { return String(v); } }
 
@@ -75,4 +82,4 @@ function start(dataDir) {
   console.log(`[suds] logging to ${fileFor(currentDay)}${config.logFormat === 'json' ? ' (JSON)' : ''}`);
 }
 
-module.exports = { start, purge, formatLine, MAX_BYTES, KEEP_DAYS };
+module.exports = { start, purge, formatLine, redacted, MAX_BYTES, KEEP_DAYS };

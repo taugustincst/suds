@@ -57,6 +57,9 @@ module.exports = (r) => {
     // revoke other sessions
     db.run(`UPDATE sessions SET revoked_at=? WHERE user_id=? AND id<>? AND revoked_at IS NULL`, db.now(), u.id, ctx.session.id);
     audit.log({ user: u, action: 'auth.password.changed', ip: ctx.ip });
+    // The generated first-run password was left in a file for the operator (server/bootstrap.js). The first
+    // administrator to change theirs has retired it, so the file goes.
+    if (u.role === 'admin') require('../bootstrap').discardPasswordFile();
     return { ok: true };
   });
 

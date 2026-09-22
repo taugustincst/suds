@@ -256,6 +256,9 @@ a.bar.link:hover .lbl { color: var(--primary); text-decoration: underline; } a.b
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
 #banners { position: sticky; top: 0; z-index: 60; }
+/* The static (GitHub Pages / evaluation) build inserts this before #app: it must stay visible on every
+   screen for as long as the page is open, above everything the app itself draws. */
+.static-demo-banner { position: sticky; top: 0; z-index: 100; padding: .45rem .8rem; text-align: center; font-size: .85rem; font-weight: 600; background: var(--err-fg, #7a1b1b); color: #fff; }
 .banner {
   display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; justify-content: space-between;
   padding: .6rem 1rem; font-size: .95rem; border-bottom: 1px solid var(--line);

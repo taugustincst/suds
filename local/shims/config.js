@@ -25,7 +25,8 @@ const config = {
   // must not turn into a lockout here.
   loginRateLimit: 100000,
   msGraph: { tenantId: '', clientId: '', clientSecret: '', user: '' },
-  auditRetentionDays: 2555, maxBodyBytes: 60 * 1024 * 1024, trustProxy: false,
+  auditRetentionDays: 2555, maxBodyBytes: 60 * 1024 * 1024, maxJsonBodyBytes: 1024 * 1024, maxUnauthBodyBytes: 64 * 1024, trustProxy: false,
+  publicAppInfo: false, allowStaticSync: false, backupKey: null,
   saveServerJson() {},
 };
 config.encryptionKey = key('suds.local.enc'); config.indexKey = key('suds.local.idx');

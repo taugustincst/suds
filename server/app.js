@@ -44,6 +44,43 @@ function buildRouter() {
   return r;
 }
 
+// How much request body a route may send, decided before a byte of it is read — and after the session has
+// been resolved, so the cap depends on who is asking. Everything used to get the 60 MB upload cap, which
+// let anyone who could reach the port make the server buffer 60 MB per connection with no account at all.
+//
+// Only the routes that genuinely move files get the large cap, and only for a signed-in session that has
+// cleared its second factor; every other authenticated JSON route gets 1 MB, and a request with no session
+// (sign-in, setup, health, the inbound intake API) gets 64 KB. Order matters: a body is buffered before the
+// handler runs, so a route's own size check (documents.js, resources.js) is a second line, not the first.
+const LARGE_BODY_ROUTES = [
+  /^\/api\/documents(\/|$)/,                 // client documents (PDF/Word/pictures, up to 20 MB)
+  /^\/api\/forms\/templates(\/|$)/,          // county form templates
+  /^\/api\/forms\/[^/]+\/files(\/|$)/,       // attachments on a completed form
+  /^\/api\/resources\/[^/]+\/photos(\/|$)/,  // provider pictures
+  /^\/api\/imports\//,                       // OneNote / spreadsheet / data imports
+  /^\/api\/sync\/(push|blob)(\/|$)/,         // the phone app's sync payload and attachments
+  /^\/api\/admin\/app\/android$/,            // the APK the administrator uploads
+];
+function bodyLimit(ctx) {
+  const authed = !!ctx.user && !ctx.session?.mfa_pending;
+  if (!authed) return ctx.path.startsWith('/api/intake/') ? config.maxJsonBodyBytes : config.maxUnauthBodyBytes;
+  if (ctx.path.startsWith('/api/admin/restore')) return config.maxRestoreBodyBytes;
+  if (LARGE_BODY_ROUTES.some(re => re.test(ctx.path))) return config.maxBodyBytes;
+  return config.maxJsonBodyBytes;
+}
+
+// The client address, as seen by the audit log and the rate limiter. Behind a trusted proxy it comes from
+// X-Forwarded-For, and from that header's LAST entry: a proxy appends the address it saw the connection
+// come from, so the rightmost value is the one the proxy itself vouches for. The first entry is whatever
+// the client chose to send, which made the rate limit and the audit trail trivially spoofable.
+function clientIp(req) {
+  if (config.trustProxy) {
+    const xff = String(req.headers['x-forwarded-for'] || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (xff.length) return xff[xff.length - 1];
+  }
+  return req.socket?.remoteAddress || '';
+}
+
 function createHandler() {
   db.open();
   const router = buildRouter();
@@ -55,7 +92,7 @@ function createHandler() {
     const ctx = {
       req, res, method: req.method, path: url.pathname, query: url.searchParams, params: {},
       headers: req.headers, cookies: parseCookies(req.headers.cookie),
-      ip: (config.trustProxy && (req.headers['x-forwarded-for'] || '').split(',')[0].trim()) || req.socket?.remoteAddress || '',
+      ip: clientIp(req),
       user: null, session: null, body: null,
     };
     try {
@@ -76,7 +113,7 @@ function createHandler() {
       }
 
       if (!['GET', 'HEAD'].includes(req.method)) {
-        const raw = await readBody(req, req.url.startsWith('/api/admin/restore') ? config.maxRestoreBodyBytes : config.maxBodyBytes);
+        const raw = await readBody(req, bodyLimit(ctx));
         const ct = req.headers['content-type'] || '';
         if (ct.includes('application/json')) {
           try { ctx.body = raw.length ? JSON.parse(raw.toString('utf8')) : {}; } catch { throw new HttpError(400, 'Invalid JSON'); }
@@ -90,6 +127,9 @@ function createHandler() {
       // second write here would throw inside the catch and take the process down, so it is guarded: the
       // request is simply cut off and the error is still logged.
       if (err instanceof HttpError) {
+        // An over-limit body is still arriving (readBody stopped keeping it, not reading it); close the
+        // connection once the answer is out rather than keep draining a stream nobody wants.
+        if (err.status === 413 && !res.headersSent) res.setHeader('Connection', 'close');
         if (!res.headersSent) sendJson(res, err.status, { error: err.message, ...(err.extra || {}) });
         else res.destroy();
       } else {

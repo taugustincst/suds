@@ -20,7 +20,14 @@ function userCount() { return db.one(`SELECT COUNT(*) n FROM users`).n; }
 function onlyBootstrapAdmin() { return db.one(`SELECT COUNT(*) n FROM users WHERE NOT (username='admin' AND must_change_password=1 AND last_login_at IS NULL)`).n === 0; }
 
 module.exports = (r) => {
-  r.get('/api/setup/status', () => ({ needed: setupNeeded() && onlyBootstrapAdmin(), listener: listener.describe(), hostname: require('node:os').hostname(), keySource: config.keySource, env: config.env, version: config.version }));
+  // Before setup this is the wizard's own status call, and there is no account to ask for. Afterwards the
+  // listener's addresses, the hostname, where the keys live and the version are a description of the
+  // office network, so a caller with no session learns only that setup is done.
+  r.get('/api/setup/status', (ctx) => {
+    const needed = setupNeeded() && onlyBootstrapAdmin();
+    if (!needed && !ctx.user) return { needed: false, setupComplete: true };
+    return { needed, setupComplete: !needed, listener: listener.describe(), hostname: require('node:os').hostname(), keySource: config.keySource, env: config.env, version: config.version };
+  });
 
   r.post('/api/setup/complete', async (ctx) => {
     if (!(setupNeeded() && onlyBootstrapAdmin())) throw new HttpError(403, 'Setup has already been completed');
@@ -43,6 +50,8 @@ module.exports = (r) => {
       fs.writeFileSync(config.keysJsonPath, JSON.stringify(keys, null, 2), { mode: 0o600 });
     }
     // 2. admin account (replace bootstrap admin)
+    // The wizard replaces the bootstrap administrator, so the password file left for it (server/bootstrap.js) is retired with it.
+    require('../bootstrap').discardPasswordFile();
     db.transaction(() => {
       db.run(`DELETE FROM users WHERE username='admin' AND must_change_password=1 AND last_login_at IS NULL`);
       db.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,0,?)`, uuid(), v.admin_username, hashPassword(v.admin_password), v.admin_display_name, 'admin', db.now());

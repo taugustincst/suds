@@ -12,8 +12,21 @@ const { DatabaseSync } = require('node:sqlite');
 const config = require('./config');
 const db = require('./db');
 
-function backupKey(encryptionKey = config.encryptionKey) {
-  return crypto.createHash('sha256').update(Buffer.concat([encryptionKey, Buffer.from('suds-backup')])).digest();
+// With SUDS_BACKUP_KEY set (server/config.js) new backups are keyed from that key, on its own: rotating the
+// PHI key then leaves every existing backup readable, and a retired PHI key need not be kept just to open
+// old backup sets. An explicit encryptionKey argument (a restore under an old key) still wins.
+function backupKey(encryptionKey) {
+  if (!encryptionKey && config.backupKey) return crypto.createHash('sha256').update(Buffer.concat([config.backupKey, Buffer.from('suds-backup-key')])).digest();
+  return crypto.createHash('sha256').update(Buffer.concat([encryptionKey || config.encryptionKey, Buffer.from('suds-backup')])).digest();
+}
+// Every key a backup on this server might have been made with: the backup key if there is one, then the
+// PHI-derived key (backups from before SUDS_BACKUP_KEY was set). GCM says which one is right.
+function candidateKeys(encryptionKey) {
+  if (encryptionKey) return [backupKey(encryptionKey)];
+  const out = [];
+  if (config.backupKey) out.push(backupKey());
+  out.push(crypto.createHash('sha256').update(Buffer.concat([config.encryptionKey, Buffer.from('suds-backup')])).digest());
+  return out;
 }
 
 /** A consistent snapshot of the live database, encrypted. Returns the bytes to write or send. */
@@ -39,10 +52,12 @@ function create({ encryptionKey } = {}) {
 function decrypt(buf, { encryptionKey } = {}) {
   if (!Buffer.isBuffer(buf) || buf.length < 29) throw new Error('That does not look like a SUDS backup file');
   const iv = buf.subarray(0, 12), tag = buf.subarray(12, 28), data = buf.subarray(28);
-  const d = crypto.createDecipheriv('aes-256-gcm', backupKey(encryptionKey), iv);
-  d.setAuthTag(tag);
-  try { return Buffer.concat([d.update(data), d.final()]); }
-  catch { throw new Error('The backup could not be read. It is either damaged, or it was made with a different encryption key.'); }
+  for (const key of candidateKeys(encryptionKey)) {
+    const d = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    d.setAuthTag(tag);
+    try { return Buffer.concat([d.update(data), d.final()]); } catch { /* not this key */ }
+  }
+  throw new Error('The backup could not be read. It is either damaged, or it was made with a different encryption key.');
 }
 
 /** Open a decrypted backup read-only and describe what is inside, without touching the live database. */

@@ -179,6 +179,25 @@ async function call(server, path, opts = {}, token) {
   return data;
 }
 
+/**
+ * A copy of the app served from a static host (the GitHub Pages demo build, scripts/build-static-site.js)
+ * carries window.SUDS_STATIC_HOST. Such a copy is for evaluation: nobody in the county controls the host
+ * that served its code, so it may sync with an office server only when that server says so
+ * (ALLOW_STATIC_SYNC=1, reported as allow_static_sync by /api/app/info). Checked before the credentials
+ * are ever sent, so a refused server never sees them.
+ */
+export function isStaticHost() { try { return typeof window !== 'undefined' && window.SUDS_STATIC_HOST === true; } catch { return false; } }
+async function assertStaticHostAllowed(server, onProgress) {
+  if (!isStaticHost()) return;
+  onProgress('Checking whether the office server accepts this build…');
+  let info;
+  try { info = await call(server, '/api/app/info', { method: 'GET' }); }
+  catch (e) { if (e && e.extra && e.extra.network) throw e; info = null; }
+  if (!info || info.allow_static_sync !== true) {
+    throw new HttpError(403, 'This is a demo/evaluation copy of SUDS served from a public web host, and the office server does not allow it to sync (its administrator would have to start it with ALLOW_STATIC_SYNC=1). Use the SUDS app or the office address instead. Nothing was sent.', { staticSyncRefused: true });
+  }
+}
+
 /** Has this attachment already been exchanged with the office, in either direction? */
 const blobKey = (table, id, col) => `sync_blob:${table}:${id}:${col}`;
 
@@ -234,6 +253,7 @@ async function uploadBlobs(server, token, onProgress) {
 /** Full sync: sign in to the office server, pull changes, push local changes, record the cursor. */
 export async function run({ server, username, password, code, onProgress = () => {} }) {
   if (!server) throw new HttpError(400, 'Office server address is required');
+  await assertStaticHostAllowed(server, onProgress);
   onProgress('Signing in to the office server…');
   let login;
   try {

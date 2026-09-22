@@ -2,6 +2,7 @@
 const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
+const devices = require('../devices');
 const { badRequest, notFound } = require('../http');
 const { validate } = require('../validate');
 const { hashPassword, uuid, randomToken } = require('../crypto');
@@ -66,10 +67,16 @@ module.exports = (r) => {
     if (ctx.body.unlock) { sets.push('locked_until=NULL', 'failed_attempts=0'); }
     if (ctx.body.reset_mfa) { sets.push('mfa_enabled=0', 'mfa_secret_enc=NULL'); }
     if (v.is_active === 0) auth.revokeAllForUser(u.id);
-    if (!sets.length) return { ok: true };
+    // Deactivating someone, or resetting their password from here, ends their hold on client records on
+    // every phone they sync from too: each of their devices is told to erase itself at its next sync. The
+    // wipe is answered before the credentials are (server/auth.js login()), so an inactive account or an
+    // unknown new password does not stop it from arriving.
+    let wiped = [];
+    if (v.is_active === 0 || v.password) wiped = devices.requestWipeForUser(u.id, { actor: ctx.user, ip: ctx.ip, reason: v.is_active === 0 ? 'deactivated' : 'password_reset' });
+    if (!sets.length) return { ok: true, devices_wiped: wiped.length };
     sets.push('updated_at=?'); params.push(db.now(), u.id);
     db.run(`UPDATE users SET ${sets.join(', ')} WHERE id=?`, ...params);
-    audit.log({ user: ctx.user, action: 'user.update', entity: 'user', entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter(k => k !== 'password'), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa } });
-    return { ok: true };
+    audit.log({ user: ctx.user, action: 'user.update', entity: 'user', entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter(k => k !== 'password'), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa, devices_wiped: wiped.length } });
+    return { ok: true, devices_wiped: wiped.length };
   });
 };

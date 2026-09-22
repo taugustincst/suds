@@ -26,6 +26,11 @@ jobs:
       # These were one `&&`/`||` chain. Both operators bind at the same precedence and associate left, so a
       # failing `npm test` fell through to the `echo` and the step exited 0 — releases were published with
       # failing tests. They are separate steps now, and a stale kernel fails rather than warns.
+      - name: Node major matches .nvmrc
+        working-directory: src
+        run: |
+          want="$(tr -d '[:space:]' < .nvmrc)"; have="$(node -p 'process.versions.node.split(".")[0]')"
+          node --version; [ "$have" = "$want" ] || { echo "::error::The runner has Node $have but .nvmrc pins major $want"; exit 1; }
       - name: Install
         working-directory: src
         run: npm ci --no-audit --no-fund
@@ -46,9 +51,11 @@ jobs:
           ver="v$(node -p "require('./package.json').version")"
           if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF_NAME}" != "$ver" ]; then echo "Tag ${GITHUB_REF_NAME} does not match package.json $ver"; exit 1; fi
           node scripts/package.js "suds-$ver.zip"
+          # A checksum beside the zip: docs/DEPLOYMENT.md tells an installer to compare it before unpacking.
+          sha256sum "suds-$ver.zip" > "suds-$ver.zip.sha256"
           notes=$(awk -v v="${ver#v}" '/^## /{p = index($0, v) > 0} p' CHANGELOG.md)
-          if gh release view "$ver" >/dev/null 2>&1; then gh release upload "$ver" "suds-$ver.zip" --clobber; else
-            gh release create "$ver" "suds-$ver.zip" --target "$(git rev-parse HEAD)" --title "SUDS $ver" --notes "${notes:-See CHANGELOG.md}"; fi
+          if gh release view "$ver" >/dev/null 2>&1; then gh release upload "$ver" "suds-$ver.zip" "suds-$ver.zip.sha256" --clobber; else
+            gh release create "$ver" "suds-$ver.zip" "suds-$ver.zip.sha256" --target "$(git rev-parse HEAD)" --title "SUDS $ver" --notes "${notes:-See CHANGELOG.md}"; fi
           echo "Published https://github.com/${GITHUB_REPOSITORY}/releases/tag/$ver"
       # A real `git push origin vX.Y.Z` already fires mobile-android.yml's own tag trigger, so nothing
       # extra is needed there. But a release started from the Actions tab (workflow_dispatch) creates its

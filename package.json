@@ -16,6 +16,7 @@
     "create-admin": "node --no-warnings=ExperimentalWarning scripts/create-admin.js",
     "backup": "node --no-warnings=ExperimentalWarning scripts/backup.js",
     "rotate-key": "node --no-warnings=ExperimentalWarning scripts/rotate-key.js",
+    "rotate-index-key": "node --no-warnings=ExperimentalWarning scripts/rotate-index-key.js",
     "update": "node --no-warnings=ExperimentalWarning scripts/update.js",
     "package": "node scripts/package.js",
     "build:local": "node scripts/build-local.js",

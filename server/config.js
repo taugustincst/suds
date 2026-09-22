@@ -135,7 +135,30 @@ const config = {
   // How long deletions are remembered for devices that have been away. A device offline longer than this
   // is sent for a full resync rather than being left holding rows the office deleted.
   tombstoneRetentionDays: Number(process.env.TOMBSTONE_RETENTION_DAYS || 180),
+  // Request body caps, chosen per route in server/app.js (bodyLimit): the large one only for the file
+  // routes and only behind a session, the JSON one for every other signed-in request, and the small one
+  // for anything reachable without a session — sign-in, setup, health.
   maxBodyBytes: 60 * 1024 * 1024,
+  maxJsonBodyBytes: 1024 * 1024,
+  maxUnauthBodyBytes: 64 * 1024,
+  // What /api/app/info tells a caller who is not signed in. Off by default: the listener's addresses, the
+  // certificate fingerprint and whether an APK is hosted describe the office network to anyone who can
+  // reach the port. The get-app page still works for a signed-in browser, and a county that wants phones
+  // to fetch the APK with no account can set PUBLIC_APP_INFO=1.
+  publicAppInfo: process.env.PUBLIC_APP_INFO === '1' || process.env.PUBLIC_APP_INFO === 'true',
+  // Whether a copy of the web app served from somewhere other than this server (the GitHub Pages
+  // demo build, say) may sync with it. Off by default: a static host nobody in the county controls is
+  // not somewhere client records should be typed in, and the sync code on such a build refuses an office
+  // address unless /api/app/info here says allow_static_sync is true.
+  allowStaticSync: process.env.ALLOW_STATIC_SYNC === '1' || process.env.ALLOW_STATIC_SYNC === 'true',
+  // Backups are encrypted with a key derived from SUDS_ENCRYPTION_KEY unless SUDS_BACKUP_KEY is set,
+  // which makes the backup set independent of PHI-key rotation (docs/DEPLOYMENT.md, "Key rotation runbook").
+  backupKey: (() => {
+    const hex = process.env.SUDS_BACKUP_KEY;
+    if (!hex) return null;
+    if (!/^[0-9a-fA-F]{64}$/.test(hex)) throw new Error('SUDS_BACKUP_KEY must be 64 hex characters (32 bytes). Generate with: npm run gen-key');
+    return Buffer.from(hex, 'hex');
+  })(),
 };
 
 config.oidc.enabled = !!(config.oidc.issuer && config.oidc.clientId && config.oidc.clientSecret && config.oidc.redirectUri);

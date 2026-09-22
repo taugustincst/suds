@@ -16,6 +16,8 @@ page.on('response', r => { if (r.status() >= 400) errors.push(`HTTP ${r.status()
 
 await page.goto(base + '/'); await page.waitForTimeout(2000);
 ok(await page.evaluate(() => window.SUDS_FORCE_LOCAL === true), 'the built site forces local mode before app.js even loads');
+ok(await page.evaluate(() => window.SUDS_STATIC_HOST === true), 'and marks itself as served from a static host, which is what makes sync ask the office server for permission');
+eq(await page.$eval('.static-demo-banner', b => b.textContent), 'Demo/evaluation build — do not enter real client information', 'the demo/evaluation banner is on screen from the first paint');
 ok(await page.$('input[name=display_name]'), 'so opening it with no query string at all still lands on first-run setup, not a login screen for a server that does not exist');
 
 await page.fill('input[name=display_name]', 'Static Nav'); await page.fill('input[name=username]', 'staticnav');

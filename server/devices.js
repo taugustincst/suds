@@ -29,4 +29,20 @@ function touch(user, deviceId, ctx) {
 /** The wipe was just delivered to the device (it is about to erase itself) — revoke it so it cannot sync again unless an administrator clears it. */
 function markWiped(deviceId) { db.run(`UPDATE devices SET revoked_at=?, wipe_requested_at=NULL WHERE id=?`, db.now(), deviceId); }
 
-module.exports = { touch, markWiped, labelFrom };
+/**
+ * Ask every device this person still syncs from to erase itself at its next sync. Called when an account
+ * is deactivated or its password is reset by an administrator: both mean "this person should no longer
+ * hold client records", and a phone full of them that nobody thought to wipe separately was the gap.
+ * A device already revoked (which is what a delivered wipe leaves behind) is left alone. Returns the
+ * device ids affected; audited by the caller's action so the reason is on record.
+ */
+function requestWipeForUser(userId, { actor, ip, reason } = {}) {
+  const rows = db.all(`SELECT id FROM devices WHERE user_id=? AND revoked_at IS NULL AND wipe_requested_at IS NULL`, userId);
+  if (!rows.length) return [];
+  const now = db.now();
+  for (const d of rows) db.run(`UPDATE devices SET wipe_requested_at=? WHERE id=?`, now, d.id);
+  require('./audit').log({ user: actor, action: 'device.wipe.requested', entity: 'user', entityId: userId, ip, details: { reason, devices: rows.map(d => d.id) } });
+  return rows.map(d => d.id);
+}
+
+module.exports = { touch, markWiped, requestWipeForUser, labelFrom };

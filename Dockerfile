@@ -1,4 +1,6 @@
-FROM node:22-alpine
+# Pinned to a minor line, not a floating major: a rebuild picks up patch releases of the same runtime, never a
+# surprise minor. Bump deliberately, together with .nvmrc and the CI check.
+FROM node:22.22-alpine
 ENV NODE_ENV=production SUDS_ENV=production HOST=0.0.0.0 PORT=8080 SUDS_DATA_DIR=/data
 WORKDIR /app
 COPY package.json ./

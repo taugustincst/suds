@@ -600,6 +600,12 @@ test('security policy settings are validated and applied', async () => {
   assert.equal((await nav.get('/api/auth/me')).data.user.mfa_required, false);
   await admin.put('/api/admin/settings', { session_idle_minutes: '', mfa_required_roles: '' });
   assert.equal((await admin.get('/api/setup/status')).data.needed, false);
+  assert.equal(typeof (await admin.get('/api/setup/status')).data.keySource, 'string', 'an administrator sees the installation detail');
+  // Once setup is done the listener's addresses, hostname and key source describe the office network:
+  // a caller with no session learns only that setup is complete.
+  const anon = await H.client().get('/api/setup/status');
+  assert.equal(anon.status, 200);
+  assert.deepEqual(anon.data, { needed: false, setupComplete: true });
   assert.equal((await admin.post('/api/setup/complete', {})).status, 403);
   assert.equal((await nav.get('/api/admin/network')).status, 403);
   assert.equal((await admin.get('/api/admin/network')).status, 200);
@@ -734,7 +740,17 @@ test('workspace preferences and continue endpoint follow the user', async () => 
 });
 
 test('native app distribution: public info, admin upload, download, remove', async () => {
-  const info = await H.client().get('/api/app/info');
+  // Without a session the answer is the programme name and nothing about the network — unless the
+  // server was started with PUBLIC_APP_INFO=1 for phones that fetch the APK with no account.
+  const config = require('../server/config');
+  const anon = await H.client().get('/api/app/info');
+  assert.equal(anon.status, 200); assert.equal(typeof anon.data.name, 'string');
+  assert.equal(anon.data.public, false); assert.equal(anon.data.allow_static_sync, false);
+  assert.equal(anon.data.listener, undefined); assert.equal(anon.data.android, undefined); assert.equal(anon.data.version, undefined);
+  config.publicAppInfo = true;
+  try { const open = await H.client().get('/api/app/info'); assert.equal(open.data.public, true); assert.ok(open.data.android); assert.equal(open.data.service, '_suds._tcp'); }
+  finally { config.publicAppInfo = false; }
+  const info = await admin.get('/api/app/info');
   assert.equal(info.status, 200); assert.equal(info.data.android.available, false); assert.equal(info.data.service, '_suds._tcp');
   assert.equal((await H.client().get('/api/app/android.apk')).status, 404);
   assert.equal((await nav.req('POST', '/api/admin/app/android', Buffer.from('PK' + 'x'.repeat(2000)), { 'Content-Type': 'application/octet-stream' })).status, 403);
@@ -744,7 +760,7 @@ test('native app distribution: public info, admin upload, download, remove', asy
   const dl = await H.client().get('/api/app/android.apk');
   assert.equal(dl.status, 200); assert.equal(dl.headers.get('content-type'), 'application/vnd.android.package-archive');
   assert.equal((await admin.del('/api/admin/app/android')).status, 200);
-  assert.equal((await H.client().get('/api/app/info')).data.android.available, false);
+  assert.equal((await admin.get('/api/app/info')).data.android.available, false);
 });
 
 test('sync: bearer login, scoped pull, push with last-write-wins and tombstones', async () => {
@@ -974,4 +990,127 @@ test('deactivating an account ends its sessions', async () => {
   assert.equal((await c.get('/api/clients')).status, 200);
   assert.equal((await admin.put(`/api/users/${u.id}`, { is_active: false })).status, 200);
   assert.equal((await c.get('/api/clients')).status, 401, 'the session stops working the moment the account is disabled');
+});
+
+// ---- Offboarding order: a pending wipe reaches the phone whatever the account's state is ----
+test('a remote wipe is delivered before the credentials are judged, so deactivating the account first cannot defeat it', async () => {
+  const u = H.makeUser('leaver', 'navigator');
+  const sync = { 'X-Sync-Client': '1', 'X-Device-Id': 'device-leaver-1' };
+  assert.equal((await H.client().post('/api/auth/login', { username: u.username, password: u.password }, sync)).status, 200);
+  // The office does it in the "wrong" order: wipe requested, then the account deactivated.
+  assert.equal((await admin.post('/api/admin/devices/device-leaver-1/wipe', {})).status, 200);
+  assert.equal((await admin.put(`/api/users/${u.id}`, { is_active: false })).status, 200);
+  const r = await H.client().post('/api/auth/login', { username: u.username, password: u.password }, sync);
+  assert.equal(r.status, 403);
+  assert.equal(r.data.deviceWipeRequired, true, 'the inactive account is not what the device hears about; the wipe is');
+  const row = H.db.one(`SELECT * FROM devices WHERE id='device-leaver-1'`);
+  assert.ok(row.revoked_at); assert.equal(row.wipe_requested_at, null);
+
+  // A wrong password, or a username that does not exist, on a device with a wipe pending still gets the wipe
+  const u2 = H.makeUser('leaver2', 'navigator');
+  const sync2 = { 'X-Sync-Client': '1', 'X-Device-Id': 'device-leaver-2' };
+  assert.equal((await H.client().post('/api/auth/login', { username: u2.username, password: u2.password }, sync2)).status, 200);
+  await admin.post('/api/admin/devices/device-leaver-2/wipe', {});
+  const wrong = await H.client().post('/api/auth/login', { username: 'nobody-here', password: 'nope' }, sync2);
+  assert.equal(wrong.status, 403); assert.equal(wrong.data.deviceWipeRequired, true);
+  // and once revoked, a revoked answer — again regardless of the password
+  const again = await H.client().post('/api/auth/login', { username: u2.username, password: 'wrong-password' }, sync2);
+  assert.equal(again.status, 403); assert.equal(again.data.deviceRevoked, true);
+  // A device the server has never seen gets the ordinary answer: nothing about the account leaks through the device path
+  const fresh = await H.client().post('/api/auth/login', { username: 'nobody-here', password: 'nope' }, { 'X-Sync-Client': '1', 'X-Device-Id': 'device-never-seen' });
+  assert.equal(fresh.status, 401);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM devices WHERE id='device-never-seen'`).n, 0, 'an unknown device is only recorded once its holder has signed in');
+});
+
+test('deactivating an account, or resetting its password, queues a wipe for every device it syncs from', async () => {
+  const u = H.makeUser('offboard', 'navigator');
+  for (const id of ['device-offboard-1', 'device-offboard-2']) assert.equal((await H.client().post('/api/auth/login', { username: u.username, password: u.password }, { 'X-Sync-Client': '1', 'X-Device-Id': id })).status, 200);
+  // One of them was already revoked (a delivered wipe leaves a device revoked): it is left alone.
+  await admin.post('/api/admin/devices/device-offboard-2/revoke', {});
+  const r = await admin.put(`/api/users/${u.id}`, { is_active: false });
+  assert.equal(r.status, 200); assert.equal(r.data.devices_wiped, 1);
+  assert.ok(H.db.one(`SELECT wipe_requested_at FROM devices WHERE id='device-offboard-1'`).wipe_requested_at);
+  assert.equal(H.db.one(`SELECT wipe_requested_at FROM devices WHERE id='device-offboard-2'`).wipe_requested_at, null);
+  const a = H.db.one(`SELECT details FROM audit_log WHERE action='device.wipe.requested' AND entity='user' AND entity_id=?`, u.id);
+  assert.ok(a, 'audited'); assert.equal(JSON.parse(a.details).reason, 'deactivated');
+  // The next sync from that phone is the wipe, even though the account is now inactive.
+  const next = await H.client().post('/api/auth/login', { username: u.username, password: u.password }, { 'X-Sync-Client': '1', 'X-Device-Id': 'device-offboard-1' });
+  assert.equal(next.data.deviceWipeRequired, true);
+
+  // A password reset by an administrator does the same for a still-active account.
+  const p = H.makeUser('reset-me', 'navigator');
+  assert.equal((await H.client().post('/api/auth/login', { username: p.username, password: p.password }, { 'X-Sync-Client': '1', 'X-Device-Id': 'device-reset-1' })).status, 200);
+  const pr = await admin.put(`/api/users/${p.id}`, { password: 'BrandNewPassw0rd!x' });
+  assert.equal(pr.status, 200); assert.equal(pr.data.devices_wiped, 1);
+  assert.equal(JSON.parse(H.db.one(`SELECT details FROM audit_log WHERE action='device.wipe.requested' AND entity_id=?`, p.id).details).reason, 'password_reset');
+  const old = await H.client().post('/api/auth/login', { username: p.username, password: p.password }, { 'X-Sync-Client': '1', 'X-Device-Id': 'device-reset-1' });
+  assert.equal(old.data.deviceWipeRequired, true, 'delivered even though the phone still holds the old password');
+});
+
+// ---- Request body caps depend on the route and on whether there is a session ----
+test('an unauthenticated request cannot make the server buffer a large body; file routes keep their cap behind a session', async () => {
+  const big = JSON.stringify({ username: 'admin', password: 'x'.repeat(2 * 1024 * 1024) });
+  const r = await H.client().post('/api/auth/login', big);
+  assert.equal(r.status, 413, '2 MB to the sign-in route is refused before it is read');
+  // 64 KB is still comfortably more than any sign-in or setup form: a 40 KB body is read in full and
+  // answered by the route (validation rejects the absurd password; the point is that it was not a 413)
+  assert.equal((await H.client().post('/api/auth/login', { username: 'admin', password: 'x'.repeat(40 * 1024) })).status, 400);
+  // A signed-in JSON route gets 1 MB, not the 60 MB upload cap
+  const over = await nav.post('/api/clients', JSON.stringify({ first_name: 'Big', last_name: 'x'.repeat(1024 * 1024 + 1024) }));
+  assert.equal(over.status, 413);
+  // The sync push still accepts a payload well over that (the phone sends up to 4 MB chunks)
+  const login = await H.client().post('/api/auth/login', { username: 'nav2', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1', 'X-Device-Id': 'device-bodycap' });
+  const B = { Authorization: 'Bearer ' + login.data.token, Cookie: '' };
+  const push = await H.client().post('/api/sync/push', JSON.stringify({ tables: {}, note: 'y'.repeat(3 * 1024 * 1024) }), B);
+  assert.equal(push.status, 200, 'a 3 MB sync push is read in full');
+  // ...but not without the session that makes it a sync client
+  assert.equal((await H.client().post('/api/sync/push', JSON.stringify({ tables: {}, note: 'y'.repeat(3 * 1024 * 1024) }))).status, 413);
+});
+
+// ---- Behind a proxy, the client address is the last X-Forwarded-For hop, the one the proxy added ----
+test('TRUST_PROXY takes the rightmost X-Forwarded-For address, so a client cannot choose its own', async () => {
+  const config = require('../server/config');
+  const was = config.trustProxy; config.trustProxy = true;
+  try {
+    await H.client().post('/api/auth/login', { username: 'xff-probe', password: 'nope' }, { 'X-Forwarded-For': '9.9.9.9, 203.0.113.7' });
+    const row = H.db.one(`SELECT ip FROM audit_log WHERE action='auth.login.failed' AND username='xff-probe' ORDER BY id DESC LIMIT 1`);
+    assert.equal(row.ip, '203.0.113.7', 'the proxy appended the real address last; 9.9.9.9 is what the client claimed');
+    config.trustProxy = false;
+    await H.client().post('/api/auth/login', { username: 'xff-probe2', password: 'nope' }, { 'X-Forwarded-For': '9.9.9.9' });
+    assert.equal(H.db.one(`SELECT ip FROM audit_log WHERE action='auth.login.failed' AND username='xff-probe2' ORDER BY id DESC LIMIT 1`).ip, '127.0.0.1', 'without TRUST_PROXY the header is ignored');
+  } finally { config.trustProxy = was; }
+});
+
+// ---- The health endpoint keeps its status public and its inventory private ----
+test('the health endpoint gives the version, schema and disk figures only to an administrator or the metrics token', async () => {
+  const config = require('../server/config');
+  const anon = await H.client().get('/api/health');
+  assert.equal(anon.status, 200); assert.equal(anon.data.ok, true); assert.equal(anon.data.database, 'ok');
+  for (const k of ['version', 'schema_version', 'database_bytes', 'disk_free_bytes']) assert.equal(anon.data[k], undefined, `${k} is not in the unauthenticated answer`);
+  const mine = await admin.get('/api/health');
+  assert.equal(mine.data.version, config.version); assert.ok(mine.data.schema_version >= 7); // (disk figures need a database on disk; the suite runs in memory)
+  assert.equal((await nav.get('/api/health')).data.version, undefined, 'a navigator is not an administrator');
+  const was = config.metricsToken; config.metricsToken = 'scrape-token-1234';
+  try {
+    assert.equal((await H.client().get('/api/health', { Authorization: 'Bearer scrape-token-1234' })).data.version, config.version);
+    assert.equal((await H.client().get('/api/health', { Authorization: 'Bearer wrong-token-0000' })).data.version, undefined);
+  } finally { config.metricsToken = was; }
+});
+
+// ---- The generated first-run password file is retired with the password ----
+test('changing an administrator password deletes the first-admin password file', async () => {
+  const fs = require('node:fs');
+  const bootstrap = require('../server/bootstrap');
+  fs.writeFileSync(bootstrap.passwordFilePath(), 'Temporary-Passw0rd!\n', { mode: 0o600 });
+  try {
+    const a2 = H.makeUser('admin2', 'admin', 'AdminTwoPassw0rd!x');
+    const c = H.client(); await c.login(a2.username, a2.password);
+    assert.ok(fs.existsSync(bootstrap.passwordFilePath()), 'still there before the change');
+    // A navigator changing theirs does not count: the file is about the administrator's bootstrap password
+    assert.equal((await nav.post('/api/auth/password', { current_password: 'StaffPassw0rd!x', new_password: 'StaffPassw0rd!y' })).status, 200);
+    assert.ok(fs.existsSync(bootstrap.passwordFilePath()));
+    await nav.post('/api/auth/password', { current_password: 'StaffPassw0rd!y', new_password: 'StaffPassw0rd!x' });
+    assert.equal((await c.post('/api/auth/password', { current_password: a2.password, new_password: 'AdminTwoPassw0rd!y' })).status, 200);
+    assert.ok(!fs.existsSync(bootstrap.passwordFilePath()), 'gone once an administrator has changed their password');
+  } finally { try { fs.unlinkSync(bootstrap.passwordFilePath()); } catch {} }
 });

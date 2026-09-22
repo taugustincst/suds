@@ -333,9 +333,10 @@ test('the health endpoint reports on the database, not just the listener', async
   assert.equal(r.status, 200, 'it is reachable without signing in, for a monitor');
   assert.equal(r.data.ok, true);
   assert.equal(r.data.database, 'ok');
-  assert.ok(r.data.schema_version >= 7);
   assert.ok(typeof r.data.uptime_seconds === 'number');
-  // It must not leak anything about the installation.
+  // It must not leak anything about the installation: without an administrator's session (or the metrics
+  // token) the version, schema number and disk figures are withheld — see the api test for the full form.
+  assert.equal(r.data.schema_version, undefined); assert.equal(r.data.version, undefined); assert.equal(r.data.disk_free_bytes, undefined);
   const body = JSON.stringify(r.data);
   assert.ok(!/password|key|secret|client/i.test(body.replace(/schema_version|database/gi, '')), 'it says nothing sensitive');
   // The quiet failures: a broken audit chain and a backup schedule that stopped running are both "not ok".

@@ -20,7 +20,12 @@ Open the deployed address on any phone, tablet or computer. There is nothing to 
    browser profile. Fine for trying SUDS out; not where a real caseload belongs unless the device itself
    is the county's and is treated accordingly.
 4. **Sync**: the Sync screen can still exchange changes with a real office SUDS server if the county runs
-   one, the same as the phone apps. Without an office server, the browser copy simply stands alone.
+   one, the same as the phone apps — but only if that server allows it. This build is served by a host
+   the county does not run, so it carries a permanent banner (*Demo/evaluation build — do not enter real
+   client information*) and, before sending any credentials, asks the office server's `/api/app/info`
+   whether `allow_static_sync` is on. It is off unless the server was started with
+   `ALLOW_STATIC_SYNC=1`; otherwise the sync is refused with a message saying so and nothing is sent.
+   Without an office server, the browser copy simply stands alone.
 
 ## Where it lives
 

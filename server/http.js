@@ -66,11 +66,19 @@ function parseCookies(header) {
 function readBody(req, limit = config.maxBodyBytes) {
   return new Promise((resolve, reject) => {
     const chunks = []; let size = 0;
-    req.on('data', c => {
+    const onData = (c) => {
       size += c.length;
-      if (size > limit) { reject(new HttpError(413, 'Payload too large')); req.destroy(); return; }
-      chunks.push(c);
-    });
+      if (size > limit) {
+        // Stop keeping the bytes, but do not tear the socket down here: a reset while the client is still
+        // sending makes it discard the 413 that explains what happened. The remainder is drained and thrown
+        // away, the response goes out with Connection: close (server/app.js), and the socket ends after it.
+        chunks.length = 0;
+        req.removeListener('data', onData);
+        req.resume();
+        reject(new HttpError(413, 'Payload too large'));
+      } else chunks.push(c);
+    };
+    req.on('data', onData);
     req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });

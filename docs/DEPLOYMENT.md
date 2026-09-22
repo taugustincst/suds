@@ -27,7 +27,10 @@ Copy `.env.example` to `.env` and set:
 \* If not set, the first production start generates both keys into `data/keys.json` (mode 0600) so the browser wizard can run; the wizard and Administration → System offer a key backup download.
 | `SUDS_DB_PATH` / `SUDS_DATA_DIR` | no | Defaults to `./data/suds.db`. Put on the encrypted volume. |
 | `TLS_CERT_PATH`, `TLS_KEY_PATH` | recommended | If unset, run behind a TLS proxy. |
-| `TRUST_PROXY=1` | when proxied | Use the `X-Forwarded-For` header for audit IPs and rate limiting. Only set behind a proxy you control. |
+| `TRUST_PROXY=1` | when proxied | Use the `X-Forwarded-For` header for audit IPs and rate limiting. Only set behind a proxy you control, and one that **appends** the address it saw to the header (Caddy, nginx `proxy_add_x_forwarded_for`, IIS ARR) — SUDS reads the *last* entry, the one the proxy vouches for, so a client cannot choose its own address by sending the header itself. |
+| `SUDS_BACKUP_KEY` | recommended | 64 hex chars. Encrypts backups independently of `SUDS_ENCRYPTION_KEY`, so rotating the PHI key does not orphan the backup set. If unset, backups are keyed from `SUDS_ENCRYPTION_KEY` as before. See "Key rotation runbook". |
+| `PUBLIC_APP_INFO=1` | no | Let `GET /api/app/info` (the addresses, certificate fingerprint and APK availability the `/app` page shows) answer without a session. Off by default: a signed-in browser still gets it. |
+| `ALLOW_STATIC_SYNC=1` | no | Let the demo/evaluation build of the web app served from a static host (GitHub Pages) sync with this server. Off by default; see WEB_APP.md. |
 | `HOST`, `PORT` | no | Default `127.0.0.1:8080`. Use `HOST=0.0.0.0` only inside a container / behind a firewall. |
 | `SESSION_IDLE_MINUTES` | no | Default 15 (auto sign-out). |
 | `SESSION_ABSOLUTE_HOURS` | no | Default 12. |
@@ -38,7 +41,7 @@ Copy `.env.example` to `.env` and set:
 | `UPDATE_FEED_URL` | optional | Lets Administration check for a newer release. See "Upgrades" below. |
 | `METRICS_TOKEN`, `LOG_FORMAT` | optional | Prometheus metrics and JSON logging for an existing monitoring stack. See "Monitoring and logs" below. |
 | `AUDIT_RETENTION_DAYS` | no | Default 2555 (7 years). |
-| `SUDS_ADMIN_USERNAME`, `SUDS_ADMIN_PASSWORD` | first run only | Initial admin. Otherwise a temporary password is printed once. |
+| `SUDS_ADMIN_USERNAME`, `SUDS_ADMIN_PASSWORD` | first run only | Initial admin. Otherwise a temporary password is printed once to stdout (never to the log file) and, in production, also written to `data/first-admin-password.txt` (mode 0600), which is deleted the moment an administrator changes their password. |
 | `SUDS_SKIP_SETUP=1` | no | Never show the browser setup wizard (it is already skipped when keys come from the environment). |
 
 Store the keys in a secrets manager (Azure Key Vault, AWS Secrets Manager, HashiCorp Vault) or at minimum in a root-only file; back them up separately from the database.
@@ -84,11 +87,15 @@ WantedBy=multi-user.target
 docker compose up -d
 ```
 
-`docker-compose.yml` runs the app on an internal network and a Caddy proxy that obtains a certificate automatically for `SUDS_DOMAIN`. Mount `/data` on an encrypted volume.
+`docker-compose.yml` runs the app on an internal network and a Caddy proxy, configured by `./Caddyfile`, that obtains a certificate automatically for `SUDS_DOMAIN` and adds HSTS (one year, `includeSubDomains; preload`) and the other headers only the TLS terminator can vouch for. To use a county-issued certificate instead, add `tls /path/cert.pem /path/key.pem` to the site block. Mount `/data` on an encrypted volume. Images are pinned to a minor line (`node:22.x-alpine` in the Dockerfile, `caddy:2.x-alpine` in the compose file) so a rebuild picks up patch releases only; Dependabot (`.github/dependabot.yml`) proposes the moves.
+
+Release downloads carry a checksum beside them (`suds-v<version>.zip.sha256`, `SUDS-android.apk.sha256`); compare with `sha256sum -c` before unpacking or uploading the APK to the office server.
 
 ### Windows Server
 
-Run under a service wrapper (NSSM or `sc.exe`) with the same environment variables, and terminate TLS with IIS (ARR reverse proxy to `127.0.0.1:8080`). Set `X-Forwarded-For` so audit logs record client IPs.
+Run under a service wrapper (NSSM or `sc.exe`) with the same environment variables, and terminate TLS with IIS (ARR reverse proxy to `127.0.0.1:8080`). Set `X-Forwarded-For` (ARR appends the client address, which is what SUDS reads) so audit logs record client IPs.
+
+The double-click launchers in `launchers/` are for evaluation and single-workstation trials only: nothing restarts SUDS if the window is closed or the PC reboots, and nothing runs it as a service account. A county deployment runs under systemd (above) or NSSM.
 
 ### Files written by the setup wizard
 
@@ -96,7 +103,7 @@ Run under a service wrapper (NSSM or `sc.exe`) with the same environment variabl
 | --- | --- |
 | `data/server.json` | host (`127.0.0.1` or `0.0.0.0`), port, `tls` (`none` / `selfsigned`), `trustProxy`, `setupComplete` |
 | `data/keys.json` | encryption and index keys (only when not supplied by the environment) |
-| `data/certs/suds.crt`, `suds.key` | self-signed ECDSA P-256 certificate covering localhost, the hostname and LAN IPs (825 days) |
+| `data/certs/suds.crt`, `suds.key`, `suds-ca.crt` | self-signed ECDSA P-256 certificate covering localhost, the hostname and LAN IPs (825 days), and the private CA that signed it. The CA is name-constrained to exactly those hosts and expires 30 days after the certificate, so a phone that installs it trusts it for this server alone and for no longer than the certificate it was made for. |
 
 Network settings can be changed at runtime under Administration → Network & devices; the listener switches without a restart.
 
@@ -119,21 +126,53 @@ Schedule nightly with cron / Task Scheduler and copy off-host, or turn on the bu
 
 An administrator can also restore without a shell, from Administration → **System & backups → Restore from a backup**: it reports what the file contains before changing anything, requires the administrator's password, and keeps the replaced database as `suds.db.before-restore-<stamp>` so a mistaken restore is recoverable. The file format is identical either way — both the manual and scheduled paths use `server/backup.js`.
 
-### Rotating the encryption key
+### Key rotation runbook
+
+SUDS has three keys, each rotatable on its own. Rotate on the schedule your policy sets (annually is typical), after any suspected exposure, and when a key custodian leaves. All three procedures run with the server stopped, after a backup, in a maintenance window; none is reversible except by restoring that backup.
+
+| Key | Protects | Rotated by |
+| --- | --- | --- |
+| `SUDS_ENCRYPTION_KEY` | every PHI column (`*_enc`); backups, unless `SUDS_BACKUP_KEY` is set | `npm run rotate-key` |
+| `SUDS_INDEX_KEY` | the searchable blind indexes (`*_idx`) and the audit chain's HMAC | `npm run rotate-index-key` |
+| `SUDS_BACKUP_KEY` | backups only (optional; recommended so the two above can rotate without touching the backup set) | change the variable; the next backup uses it |
+
+**1. The PHI encryption key**
 
 ```bash
 systemctl stop suds
 npm run backup -- /secure/backups                       # take one first; this is not reversible
 NEW_ENCRYPTION_KEY=$(npm run -s gen-key) npm run rotate-key
-# set SUDS_ENCRYPTION_KEY to the new value, then:
+# set SUDS_ENCRYPTION_KEY to the new value (environment, or SUDS_ENCRYPTION_KEY in data/keys.json), then:
 systemctl start suds
 ```
 
 The columns to re-encrypt are discovered from the database, not from a list in the script, so every encrypted field — including completed county forms and their attachments — is covered.
 
+**2. The index key**
+
+```bash
+systemctl stop suds
+npm run backup -- /secure/backups
+NEW_INDEX_KEY=$(npm run -s gen-key) npm run rotate-index-key
+# the script updates data/keys.json or the development key file itself when the key came from there;
+# from the environment, set SUDS_INDEX_KEY to the new value. Then:
+systemctl start suds
+```
+
+Every blind index is re-derived from the decrypted value it was computed from, in one transaction, and the audit chain is re-signed in id order under the new key with its continuity preserved (the anchor hash a retention purge left behind is kept). The chain is verified under the old key before anything is touched — a chain that already fails is evidence, and the rotation refuses to alter it — and again under the new key before the transaction commits. The rotation itself is recorded as `security.index_key_rotated`. A blind-index column the script has no derivation for stops the rotation rather than being skipped, and `test/rotate-index-key.test.js` fails if the schema gains one.
+
+**3. Retired keys and the backup set**
+
+A backup is readable only with the key that was current when it was taken. So, with each rotation:
+
+- Set `SUDS_BACKUP_KEY` once, before any rotation if you can. From then on backups do not depend on the PHI key at all, and rotating `SUDS_ENCRYPTION_KEY` or `SUDS_INDEX_KEY` leaves every existing backup readable. Rotate the backup key itself rarely, and only with step 3 below.
+- Keep every retired `SUDS_ENCRYPTION_KEY` (or `SUDS_BACKUP_KEY`) in the secrets manager, labelled with the date range of the backups it opens, for as long as those backups are retained. A restore of an old backup under a retired key: `node scripts/backup.js --restore` with `SUDS_ENCRYPTION_KEY` (or `SUDS_BACKUP_KEY`) temporarily set to the retired value, then rotate forward again.
+- Take a fresh backup immediately after each rotation, so the most recent backup always matches the current keys. Download a fresh key backup from Administration → System if the keys live in `data/keys.json`.
+- Record who rotated what and when in the county's key-custodian log; the audit entries `security.key_rotated` and `security.index_key_rotated` are the system's side of that record.
+
 ## 4a. Monitoring and logs
 
-`GET /api/health` needs no authentication and returns `{ ok, version, schema_version, database, database_bytes, disk_free_bytes, uptime_seconds }`. It answers 503 when the database cannot be read or free disk drops below 100 MB, so it works directly as a liveness and readiness probe (the Docker image uses it).
+`GET /api/health` needs no authentication and returns `{ ok, database, uptime_seconds, warnings }`. It answers 503 when the database cannot be read, free disk drops below 100 MB, the audit chain failed verification, scheduled backups have stopped or the HTTPS certificate is within 60 days of expiry, so it works directly as a liveness and readiness probe (the Docker image uses it). The inventory figures — `version`, `schema_version`, `database_bytes`, `disk_free_bytes` — are included only for an administrator's session or a request carrying `Authorization: Bearer <METRICS_TOKEN>`, since they describe the installation to anyone who can reach the port.
 
 For a fuller picture in an existing monitoring stack, set `METRICS_TOKEN` and point Prometheus (or anything that scrapes Prometheus-format text) at `GET /api/metrics` with that value as its `bearer_token`. Off (404) until that variable is set; once set, every request needs `Authorization: Bearer <token>` or it is refused — a scraper has no way to sign in interactively, so this is its own credential, not the usual session. Reports uptime, active users/sessions, client and audit-log row counts, synced-device count, database file size and free disk — aggregate operational numbers, never PHI (`server/metrics.js`).
 
@@ -164,7 +203,10 @@ Schema migrations run automatically at startup (`server/db.js`), each inside a t
 
 ## 6. Hardening checklist
 
-- [ ] TLS 1.2+ only; HSTS enabled (automatic when the app serves TLS).
+- [ ] TLS 1.2+ only; HSTS enabled (automatic when the app serves TLS; `Caddyfile` sets it when the proxy does).
+- [ ] Behind a proxy: `TRUST_PROXY=1` only if the proxy appends to `X-Forwarded-For`; verify a sign-in failure is audited with the real client address.
+- [ ] Request body caps left at their defaults (64 KB without a session, 1 MB for signed-in JSON, the 60 MB upload cap only on file routes behind a session — `server/app.js`).
+- [ ] `PUBLIC_APP_INFO` and `ALLOW_STATIC_SYNC` left off unless there is a reason; `/api/setup/status` and `/api/health` give their detail only to a session or the metrics token.
 - [ ] Data directory permissions `0700`, database `0600`, owned by the service user.
 - [ ] Host firewall allows only 443 from the county network / VPN.
 - [ ] OS disk encryption enabled; screen lock policies on workstations.

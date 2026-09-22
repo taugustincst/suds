@@ -64,5 +64,8 @@ jobs:
             notes=$(awk -v v="${tag#v}" '/^## /{p = index($0, v) > 0} p' CHANGELOG.md)
             gh release create "$tag" --target "$(git rev-parse HEAD)" --title "SUDS $tag" --notes "${notes:-See CHANGELOG.md}"
           fi
-          gh release upload "$tag" "$GITHUB_WORKSPACE/SUDS-android.apk" --clobber
+          # A checksum beside the APK, so an administrator can confirm what they downloaded is what CI built
+          # before uploading it to the office server (Settings → Network & devices → Native apps).
+          (cd "$GITHUB_WORKSPACE" && sha256sum SUDS-android.apk > SUDS-android.apk.sha256)
+          gh release upload "$tag" "$GITHUB_WORKSPACE/SUDS-android.apk" "$GITHUB_WORKSPACE/SUDS-android.apk.sha256" --clobber
           echo "APK attached to release $tag: https://github.com/${GITHUB_REPOSITORY}/releases/tag/$tag"

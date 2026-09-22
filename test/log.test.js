@@ -32,7 +32,7 @@ test('JSON format is one parseable object per line, with the message and level i
   } finally { config.logFormat = 'text'; }
 });
 
-test('start() tees console output to a real file, in whichever format is configured', async () => {
+test('start() tees console output to a real file, in whichever format is configured, and never a temporary password', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-log-'));
   const originalLog = console.log, originalWarn = console.warn, originalError = console.error;
   after(() => { console.log = originalLog; console.warn = originalWarn; console.error = originalError; fs.rmSync(dir, { recursive: true, force: true }); });
@@ -42,6 +42,10 @@ test('start() tees console output to a real file, in whichever format is configu
     log.start(dir);
     console.log('hello from the test');
     console.warn('a warning', { detail: 1 });
+    // The first-run password is printed to stdout on purpose (server/bootstrap.js bypasses the tee); if
+    // anything ever sends such a line through console.log, the file must still not get it.
+    console.log('[suds] Temporary password: Hunter2-Not-For-The-Log!');
+    console.log('an ordinary line after it');
   } finally { config.logFormat = 'text'; }
 
   // fs.createWriteStream opens its file descriptor asynchronously; nothing here guarantees it has actually
@@ -49,9 +53,19 @@ test('start() tees console output to a real file, in whichever format is configu
   await new Promise((res) => setTimeout(res, 100));
 
   const file = path.join(dir, 'logs', `suds-${new Date().toISOString().slice(0, 10)}.log`);
-  const lines = fs.readFileSync(file, 'utf8').trim().split('\n');
+  const raw = fs.readFileSync(file, 'utf8');
+  const lines = raw.trim().split('\n');
   // The first line is log.start()'s own "[suds] logging to ..." announcement.
   const parsed = lines.map((l) => JSON.parse(l));
   assert.ok(parsed.some((p) => p.msg.includes('hello from the test') && p.level === 'INFO'));
   assert.ok(parsed.some((p) => p.msg.includes('a warning') && p.level === 'WARN'));
+  assert.ok(parsed.some((p) => p.msg.includes('an ordinary line after it')), 'ordinary lines still land in the file');
+  assert.ok(!raw.includes('Hunter2-Not-For-The-Log') && !raw.includes('Temporary password'), 'the password line does not');
+});
+
+test('the redaction guard recognises the password line and nothing else from the banner', () => {
+  assert.ok(log.redacted('[suds] Temporary password: x'));
+  assert.ok(log.redacted('2026-01-01T00:00:00.000Z INFO [suds] temporary password: x'), 'case does not matter');
+  assert.ok(!log.redacted('[suds] Created initial admin user "admin"'));
+  assert.ok(!log.redacted('[suds] You will be required to change it at first login.'));
 });

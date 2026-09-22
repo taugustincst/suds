@@ -1,4 +1,6 @@
-# Example deployment: SUDS behind a TLS-terminating reverse proxy (Caddy). Put real values in .env.
+# Example deployment: SUDS behind a TLS-terminating reverse proxy (Caddy, configured by ./Caddyfile). Put
+# real values in .env. Images are pinned to a minor line (node in the Dockerfile, caddy here) so a rebuild
+# or pull picks up patch releases only; move the pins deliberately.
 services:
   suds:
     build: .
@@ -9,18 +11,18 @@ services:
       HOST: 0.0.0.0
       PORT: 8080
       SUDS_DATA_DIR: /data
-      TRUST_PROXY: "1"           # the proxy below terminates TLS; log the client's address, not the proxy's
+      TRUST_PROXY: "1"           # the proxy below terminates TLS; log the client's address (the last X-Forwarded-For hop), not the proxy's
     volumes:
       - suds-data:/data          # place on an encrypted volume (LUKS / BitLocker / cloud KMS-backed disk)
     expose: ["8080"]
   proxy:
-    image: caddy:2
+    image: caddy:2.10-alpine
     restart: unless-stopped
     ports: ["443:443", "80:80"]
     environment:
       SUDS_DOMAIN: ${SUDS_DOMAIN:-suds.example.gov}
-    command: caddy reverse-proxy --from "https://${SUDS_DOMAIN:-suds.example.gov}" --to suds:8080
     volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
 volumes:
   suds-data:

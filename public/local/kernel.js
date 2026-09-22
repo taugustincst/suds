@@ -6190,7 +6190,12 @@ var require_config = __commonJS({
       msGraph: { tenantId: "", clientId: "", clientSecret: "", user: "" },
       auditRetentionDays: 2555,
       maxBodyBytes: 60 * 1024 * 1024,
+      maxJsonBodyBytes: 1024 * 1024,
+      maxUnauthBodyBytes: 64 * 1024,
       trustProxy: false,
+      publicAppInfo: false,
+      allowStaticSync: false,
+      backupKey: null,
       saveServerJson() {
       }
     };
@@ -7763,15 +7768,16 @@ var require_http = __commonJS({
       return new Promise((resolve2, reject) => {
         const chunks = [];
         let size = 0;
-        req.on("data", (c) => {
+        const onData = (c) => {
           size += c.length;
           if (size > limit2) {
+            chunks.length = 0;
+            req.removeListener("data", onData);
+            req.resume();
             reject(new HttpError3(413, "Payload too large"));
-            req.destroy();
-            return;
-          }
-          chunks.push(c);
-        });
+          } else chunks.push(c);
+        };
+        req.on("data", onData);
         req.on("end", () => resolve2(import_buffer.Buffer.concat(chunks)));
         req.on("error", reject);
       });
@@ -7825,14 +7831,15 @@ var require_audit = __commonJS({
     var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
     var { sha256: sha2562 } = require_crypto();
     var KEYED_PREFIX = "v2:";
-    function chainHash(payload) {
-      return KEYED_PREFIX + crypto3.createHmac("sha256", config.indexKey).update(payload).digest("hex");
+    function chainHash(payload, key = config.indexKey) {
+      return KEYED_PREFIX + crypto3.createHmac("sha256", key).update(payload).digest("hex");
     }
-    function matches(stored, payload) {
+    function matches(stored, payload, key = config.indexKey) {
       if (typeof stored !== "string") return false;
-      const expected = stored.startsWith(KEYED_PREFIX) ? chainHash(payload) : sha2562(payload);
+      const expected = stored.startsWith(KEYED_PREFIX) ? chainHash(payload, key) : sha2562(payload);
       return stored.length === expected.length && crypto3.timingSafeEqual(import_buffer.Buffer.from(stored), import_buffer.Buffer.from(expected));
     }
+    var payloadOf = (r) => [r.at, r.user_id || "", r.username || "", r.action, r.entity || "", r.entity_id || "", r.client_id || "", r.ip || "", r.success ? 1 : 0, r.details || "", r.prev_hash].join("|");
     function log({ user, action, entity, entityId, clientId, ip, success = true, details }) {
       const prev = db3.one(`SELECT hash FROM audit_log ORDER BY id DESC LIMIT 1`);
       const prevHash = prev ? prev.hash : "GENESIS";
@@ -7857,7 +7864,7 @@ var require_audit = __commonJS({
       );
     }
     var VERIFY_BATCH = 5e3;
-    function verifyChain() {
+    function verifyChain({ key = config.indexKey } = {}) {
       let prevHash = null;
       let anchoredAt = null;
       let checked = 0;
@@ -7870,9 +7877,8 @@ var require_audit = __commonJS({
           anchoredAt = rows[0].id;
         }
         for (const r of rows) {
-          const payload = [r.at, r.user_id || "", r.username || "", r.action, r.entity || "", r.entity_id || "", r.client_id || "", r.ip || "", r.success ? 1 : 0, r.details || "", r.prev_hash].join("|");
           checked++;
-          if (r.prev_hash !== prevHash || !matches(r.hash, payload)) return { ok: false, checked, firstBadId: r.id, anchoredAt };
+          if (r.prev_hash !== prevHash || !matches(r.hash, payloadOf(r), key)) return { ok: false, checked, firstBadId: r.id, anchoredAt };
           prevHash = r.hash;
         }
         afterId = rows[rows.length - 1].id;
@@ -7880,6 +7886,33 @@ var require_audit = __commonJS({
       }
       if (!checked) return { ok: true, checked: 0 };
       return { ok: true, checked, anchoredAt };
+    }
+    function resignChain(newKey) {
+      const before = verifyChain();
+      if (!before.ok) throw new Error(`The audit chain does not verify under the current key (first bad entry ${before.firstBadId}); it will not be re-signed`);
+      const upd = db3.get().prepare(`UPDATE audit_log SET prev_hash=?, hash=? WHERE id=?`);
+      let prevHash = null;
+      let afterId = 0;
+      let resigned = 0;
+      for (; ; ) {
+        const rows = db3.all(`SELECT * FROM audit_log WHERE id > ? ORDER BY id ASC LIMIT ?`, afterId, VERIFY_BATCH);
+        if (!rows.length) break;
+        if (prevHash === null) prevHash = rows[0].prev_hash;
+        for (const r of rows) {
+          const row = { ...r, prev_hash: prevHash };
+          const hash2 = String(r.hash).startsWith(KEYED_PREFIX) ? chainHash(payloadOf(row), newKey) : prevHash === r.prev_hash ? r.hash : sha2562(payloadOf(row));
+          if (hash2 !== r.hash || prevHash !== r.prev_hash) {
+            upd.run(prevHash, hash2, r.id);
+            resigned++;
+          }
+          prevHash = hash2;
+        }
+        afterId = rows[rows.length - 1].id;
+        if (rows.length < VERIFY_BATCH) break;
+      }
+      const after = verifyChain({ key: newKey });
+      if (!after.ok) throw new Error(`The audit chain does not verify under the new key after re-signing (first bad entry ${after.firstBadId})`);
+      return { resigned, checked: after.checked };
     }
     function purgeTombstones(days) {
       const cutoff = new Date(Date.now() - days * 864e5).toISOString();
@@ -7910,7 +7943,7 @@ var require_audit = __commonJS({
       db3.setSetting("audit_verify_failed_at", db3.now());
       return r;
     }
-    module.exports = { log, verifyChain, scheduledVerify, purge, purgeTombstones };
+    module.exports = { log, verifyChain, resignChain, scheduledVerify, purge, purgeTombstones };
   }
 });
 
@@ -7938,7 +7971,15 @@ var require_devices = __commonJS({
     function markWiped(deviceId2) {
       db3.run(`UPDATE devices SET revoked_at=?, wipe_requested_at=NULL WHERE id=?`, db3.now(), deviceId2);
     }
-    module.exports = { touch, markWiped, labelFrom };
+    function requestWipeForUser(userId, { actor, ip, reason } = {}) {
+      const rows = db3.all(`SELECT id FROM devices WHERE user_id=? AND revoked_at IS NULL AND wipe_requested_at IS NULL`, userId);
+      if (!rows.length) return [];
+      const now = db3.now();
+      for (const d of rows) db3.run(`UPDATE devices SET wipe_requested_at=? WHERE id=?`, now, d.id);
+      require_audit().log({ user: actor, action: "device.wipe.requested", entity: "user", entityId: userId, ip, details: { reason, devices: rows.map((d) => d.id) } });
+      return rows.map((d) => d.id);
+    }
+    module.exports = { touch, markWiped, requestWipeForUser, labelFrom };
   }
 });
 
@@ -8215,6 +8256,21 @@ var require_auth = __commonJS({
         audit3.log({ user: user ? { id: user.id, username: user.username } : { username }, action: "auth.login.failed", ip: ctx.ip, success: false, details: { reason } });
         throw unauthorized("Invalid username or password");
       };
+      const devices = require_devices();
+      const deviceId2 = ctx.headers["x-sync-client"] && ctx.headers["x-device-id"] ? String(ctx.headers["x-device-id"]).slice(0, 100) : null;
+      const who = user ? { id: user.id, username: user.username } : { username: String(username || "").slice(0, 100) };
+      if (deviceId2) {
+        const known = db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
+        if (known && known.wipe_requested_at) {
+          devices.markWiped(known.id);
+          audit3.log({ user: who, action: "auth.login.device_wiped", entity: "device", entityId: known.id, ip: ctx.ip, success: false, details: { device_user: known.user_id } });
+          throw new HttpError3(403, "An administrator has remotely wiped this device. It must be set up again before it can sync.", { deviceWipeRequired: true });
+        }
+        if (known && known.revoked_at) {
+          audit3.log({ user: who, action: "auth.login.device_revoked", entity: "device", entityId: known.id, ip: ctx.ip, success: false, details: { device_user: known.user_id } });
+          throw new HttpError3(403, "This device has been revoked and can no longer sync. Contact your administrator.", { deviceRevoked: true });
+        }
+      }
       if (!user) {
         await verifyPasswordAsync(password || "", "scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AA==");
         fail("unknown user");
@@ -8231,17 +8287,16 @@ var require_auth = __commonJS({
         fail(lock ? "locked after failures" : "bad password");
       }
       db3.run(`UPDATE users SET failed_attempts=0, locked_until=NULL, last_login_at=? WHERE id=?`, db3.now(), user.id);
-      const deviceId2 = ctx.headers["x-device-id"];
-      if (ctx.headers["x-sync-client"] && deviceId2) {
-        const device = require_devices().touch(user, String(deviceId2).slice(0, 100), ctx);
-        if (device.revoked_at) {
-          audit3.log({ user, action: "auth.login.device_revoked", ip: ctx.ip, success: false });
-          throw new HttpError3(403, "This device has been revoked and can no longer sync. Contact your administrator.", { deviceRevoked: true });
-        }
+      if (deviceId2) {
+        const device = devices.touch(user, deviceId2, ctx);
         if (device.wipe_requested_at) {
-          require_devices().markWiped(device.id);
-          audit3.log({ user, action: "auth.login.device_wiped", ip: ctx.ip, success: false });
+          devices.markWiped(device.id);
+          audit3.log({ user, action: "auth.login.device_wiped", entity: "device", entityId: device.id, ip: ctx.ip, success: false });
           throw new HttpError3(403, "An administrator has remotely wiped this device. It must be set up again before it can sync.", { deviceWipeRequired: true });
+        }
+        if (device.revoked_at) {
+          audit3.log({ user, action: "auth.login.device_revoked", entity: "device", entityId: device.id, ip: ctx.ip, success: false });
+          throw new HttpError3(403, "This device has been revoked and can no longer sync. Contact your administrator.", { deviceRevoked: true });
         }
       }
       const mfaRequiredForRole = policy().mfaRequiredRoles.includes(user.role);
@@ -10523,8 +10578,16 @@ var require_backup = __commonJS({
     var { DatabaseSync: DatabaseSync2 } = (init_sqlite(), __toCommonJS(sqlite_exports));
     var config = require_config();
     var db3 = require_db();
-    function backupKey(encryptionKey = config.encryptionKey) {
-      return crypto3.createHash("sha256").update(import_buffer.Buffer.concat([encryptionKey, import_buffer.Buffer.from("suds-backup")])).digest();
+    function backupKey(encryptionKey) {
+      if (!encryptionKey && config.backupKey) return crypto3.createHash("sha256").update(import_buffer.Buffer.concat([config.backupKey, import_buffer.Buffer.from("suds-backup-key")])).digest();
+      return crypto3.createHash("sha256").update(import_buffer.Buffer.concat([encryptionKey || config.encryptionKey, import_buffer.Buffer.from("suds-backup")])).digest();
+    }
+    function candidateKeys(encryptionKey) {
+      if (encryptionKey) return [backupKey(encryptionKey)];
+      const out2 = [];
+      if (config.backupKey) out2.push(backupKey());
+      out2.push(crypto3.createHash("sha256").update(import_buffer.Buffer.concat([config.encryptionKey, import_buffer.Buffer.from("suds-backup")])).digest());
+      return out2;
     }
     function create({ encryptionKey } = {}) {
       const tmp = path.join(config.dataDir, `.backup-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
@@ -10552,13 +10615,15 @@ var require_backup = __commonJS({
     function decrypt3(buf, { encryptionKey } = {}) {
       if (!import_buffer.Buffer.isBuffer(buf) || buf.length < 29) throw new Error("That does not look like a SUDS backup file");
       const iv = buf.subarray(0, 12), tag = buf.subarray(12, 28), data = buf.subarray(28);
-      const d = crypto3.createDecipheriv("aes-256-gcm", backupKey(encryptionKey), iv);
-      d.setAuthTag(tag);
-      try {
-        return import_buffer.Buffer.concat([d.update(data), d.final()]);
-      } catch {
-        throw new Error("The backup could not be read. It is either damaged, or it was made with a different encryption key.");
+      for (const key of candidateKeys(encryptionKey)) {
+        const d = crypto3.createDecipheriv("aes-256-gcm", key, iv);
+        d.setAuthTag(tag);
+        try {
+          return import_buffer.Buffer.concat([d.update(data), d.final()]);
+        } catch {
+        }
       }
+      throw new Error("The backup could not be read. It is either damaged, or it was made with a different encryption key.");
     }
     function inspect(plainBytes) {
       const tmp = path.join(config.dataDir, `.inspect-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
@@ -11066,11 +11131,22 @@ var require_app = __commonJS({
         return null;
       }
     }
+    var CERT_WARN_DAYS = 60;
+    function metricsTokenPresented(ctx) {
+      if (!config.metricsToken) return false;
+      const header = ctx.headers["authorization"] || "";
+      const given = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+      if (!given || given.length !== config.metricsToken.length) return false;
+      return crypto3.timingSafeEqual(import_buffer.Buffer.from(config.metricsToken), import_buffer.Buffer.from(given));
+    }
     module.exports = (r) => {
       r.get("/api/health", (ctx) => {
-        const out2 = { ok: true, version: config.version, uptime_seconds: Math.round(proc.uptime()) };
+        const detailed = ctx.user && auth3.hasPerm(ctx.user, "settings:manage") && !ctx.session?.mfa_pending || metricsTokenPresented(ctx);
+        const out2 = { ok: true, uptime_seconds: Math.round(proc.uptime()) };
+        if (detailed) out2.version = config.version;
         try {
-          out2.schema_version = Number(db3.getSetting("schema_version", "0"));
+          const schema = Number(db3.getSetting("schema_version", "0"));
+          if (detailed) out2.schema_version = schema;
           out2.database = db3.one("SELECT 1 AS ok").ok === 1 ? "ok" : "unexpected";
         } catch (e) {
           out2.ok = false;
@@ -11079,10 +11155,13 @@ var require_app = __commonJS({
         }
         try {
           const st = fs.statSync(config.dbPath);
-          out2.database_bytes = st.size;
           const fsinfo = fs.statfsSync(config.dataDir);
-          out2.disk_free_bytes = fsinfo.bavail * fsinfo.bsize;
-          if (out2.disk_free_bytes < 100 * 1024 * 1024) {
+          const free = fsinfo.bavail * fsinfo.bsize;
+          if (detailed) {
+            out2.database_bytes = st.size;
+            out2.disk_free_bytes = free;
+          }
+          if (free < 100 * 1024 * 1024) {
             out2.ok = false;
             out2.warning = "Less than 100 MB of disk space remains.";
           }
@@ -11100,7 +11179,7 @@ var require_app = __commonJS({
           if (fs.existsSync(crt)) {
             const validTo = new (init_crypto2(), __toCommonJS(crypto_exports)).X509Certificate(fs.readFileSync(crt)).validTo;
             const left = (Date.parse(validTo) - Date.now()) / 864e5;
-            if (left < 14) warnings.push(`The HTTPS certificate ${left < 0 ? "expired" : "expires"} ${validTo}. Create a new one under Settings \u2192 Network & devices.`);
+            if (left < CERT_WARN_DAYS) warnings.push(`The HTTPS certificate ${left < 0 ? "expired" : "expires"} ${validTo}. Create a new one under Settings \u2192 Network & devices.`);
           }
         } catch {
         }
@@ -11113,15 +11192,17 @@ var require_app = __commonJS({
       });
       r.get("/api/metrics", (ctx) => {
         if (!config.metricsToken) throw notFound();
-        const header = ctx.headers["authorization"] || "";
-        const given = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
-        const expected = import_buffer.Buffer.from(config.metricsToken), got = import_buffer.Buffer.from(given);
-        if (given.length !== config.metricsToken.length || !crypto3.timingSafeEqual(expected, got)) throw unauthorized("A valid bearer token is required");
+        if (!metricsTokenPresented(ctx)) throw unauthorized("A valid bearer token is required");
         const body = require_metrics().render();
         ctx.res.writeHead(200, { "Content-Type": "text/plain; version=0.0.4; charset=utf-8", "Content-Length": import_buffer.Buffer.byteLength(body) });
         ctx.res.end(body);
       });
-      r.get("/api/app/info", () => ({ name: db3.getSetting("org_name", "SUDS"), version: config.version, listener: listener.describe(), android: apkInfo(), certificate: certFingerprint(), service: "_suds._tcp" }));
+      r.get("/api/app/info", (ctx) => {
+        const name = db3.getSetting("org_name", "SUDS");
+        const authed = !!ctx.user && !ctx.session?.mfa_pending;
+        if (!authed && !config.publicAppInfo) return { name, allow_static_sync: config.allowStaticSync, public: false };
+        return { name, version: config.version, listener: listener.describe(), android: apkInfo(), certificate: certFingerprint(), service: "_suds._tcp", allow_static_sync: config.allowStaticSync, public: true };
+      });
       r.get("/api/app/android.apk", (ctx) => {
         if (!apkInfo().available) throw notFound("The Android app has not been uploaded yet");
         const data = fs.readFileSync(apkPath());
@@ -11269,6 +11350,7 @@ var require_auth2 = __commonJS({
         db3.run(`UPDATE users SET password_hash=?, must_change_password=0, password_changed_at=?, updated_at=? WHERE id=?`, await hashPasswordAsync(new_password), db3.now(), db3.now(), u.id);
         db3.run(`UPDATE sessions SET revoked_at=? WHERE user_id=? AND id<>? AND revoked_at IS NULL`, db3.now(), u.id, ctx.session.id);
         audit3.log({ user: u, action: "auth.password.changed", ip: ctx.ip });
+        if (u.role === "admin") (init_empty(), __toCommonJS(empty_exports)).discardPasswordFile();
         return { ok: true };
       });
       r.post("/api/auth/mfa/setup", (ctx) => {
@@ -19553,7 +19635,11 @@ var require_setup = __commonJS({
       return db3.one(`SELECT COUNT(*) n FROM users WHERE NOT (username='admin' AND must_change_password=1 AND last_login_at IS NULL)`).n === 0;
     }
     module.exports = (r) => {
-      r.get("/api/setup/status", () => ({ needed: setupNeeded() && onlyBootstrapAdmin(), listener: listener.describe(), hostname: (init_os(), __toCommonJS(os_exports)).hostname(), keySource: config.keySource, env: config.env, version: config.version }));
+      r.get("/api/setup/status", (ctx) => {
+        const needed = setupNeeded() && onlyBootstrapAdmin();
+        if (!needed && !ctx.user) return { needed: false, setupComplete: true };
+        return { needed, setupComplete: !needed, listener: listener.describe(), hostname: (init_os(), __toCommonJS(os_exports)).hostname(), keySource: config.keySource, env: config.env, version: config.version };
+      });
       r.post("/api/setup/complete", async (ctx) => {
         if (!(setupNeeded() && onlyBootstrapAdmin())) throw new HttpError3(403, "Setup has already been completed");
         const ip = ctx.req.socket.remoteAddress || "";
@@ -19577,6 +19663,7 @@ var require_setup = __commonJS({
           const keys = { SUDS_ENCRYPTION_KEY: config.encryptionKey.toString("hex"), SUDS_INDEX_KEY: config.indexKey.toString("hex"), created_at: (/* @__PURE__ */ new Date()).toISOString() };
           fs.writeFileSync(config.keysJsonPath, JSON.stringify(keys, null, 2), { mode: 384 });
         }
+        (init_empty(), __toCommonJS(empty_exports)).discardPasswordFile();
         db3.transaction(() => {
           db3.run(`DELETE FROM users WHERE username='admin' AND must_change_password=1 AND last_login_at IS NULL`);
           db3.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,0,?)`, uuid2(), v.admin_username, hashPassword(v.admin_password), v.admin_display_name, "admin", db3.now());
@@ -20262,6 +20349,7 @@ var require_users = __commonJS({
     var db3 = require_db();
     var auth3 = require_auth();
     var audit3 = require_audit();
+    var devices = require_devices();
     var { badRequest, notFound } = require_http();
     var { validate } = require_validate();
     var { hashPassword, uuid: uuid2, randomToken } = require_crypto();
@@ -20341,12 +20429,14 @@ var require_users = __commonJS({
           sets.push("mfa_enabled=0", "mfa_secret_enc=NULL");
         }
         if (v.is_active === 0) auth3.revokeAllForUser(u.id);
-        if (!sets.length) return { ok: true };
+        let wiped = [];
+        if (v.is_active === 0 || v.password) wiped = devices.requestWipeForUser(u.id, { actor: ctx.user, ip: ctx.ip, reason: v.is_active === 0 ? "deactivated" : "password_reset" });
+        if (!sets.length) return { ok: true, devices_wiped: wiped.length };
         sets.push("updated_at=?");
         params.push(db3.now(), u.id);
         db3.run(`UPDATE users SET ${sets.join(", ")} WHERE id=?`, ...params);
-        audit3.log({ user: ctx.user, action: "user.update", entity: "user", entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter((k) => k !== "password"), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa } });
-        return { ok: true };
+        audit3.log({ user: ctx.user, action: "user.update", entity: "user", entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter((k) => k !== "password"), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa, devices_wiped: wiped.length } });
+        return { ok: true, devices_wiped: wiped.length };
       });
     };
   }
@@ -20461,6 +20551,36 @@ var require_app2 = __commonJS({
       for (const mod of ROUTE_MODULES) globRequire_routes(`./routes/${mod}`)(r);
       return r;
     }
+    var LARGE_BODY_ROUTES = [
+      /^\/api\/documents(\/|$)/,
+      // client documents (PDF/Word/pictures, up to 20 MB)
+      /^\/api\/forms\/templates(\/|$)/,
+      // county form templates
+      /^\/api\/forms\/[^/]+\/files(\/|$)/,
+      // attachments on a completed form
+      /^\/api\/resources\/[^/]+\/photos(\/|$)/,
+      // provider pictures
+      /^\/api\/imports\//,
+      // OneNote / spreadsheet / data imports
+      /^\/api\/sync\/(push|blob)(\/|$)/,
+      // the phone app's sync payload and attachments
+      /^\/api\/admin\/app\/android$/
+      // the APK the administrator uploads
+    ];
+    function bodyLimit(ctx) {
+      const authed = !!ctx.user && !ctx.session?.mfa_pending;
+      if (!authed) return ctx.path.startsWith("/api/intake/") ? config.maxJsonBodyBytes : config.maxUnauthBodyBytes;
+      if (ctx.path.startsWith("/api/admin/restore")) return config.maxRestoreBodyBytes;
+      if (LARGE_BODY_ROUTES.some((re) => re.test(ctx.path))) return config.maxBodyBytes;
+      return config.maxJsonBodyBytes;
+    }
+    function clientIp(req) {
+      if (config.trustProxy) {
+        const xff = String(req.headers["x-forwarded-for"] || "").split(",").map((s) => s.trim()).filter(Boolean);
+        if (xff.length) return xff[xff.length - 1];
+      }
+      return req.socket?.remoteAddress || "";
+    }
     function createHandler() {
       db3.open();
       const router2 = buildRouter();
@@ -20477,7 +20597,7 @@ var require_app2 = __commonJS({
           params: {},
           headers: req.headers,
           cookies: parseCookies(req.headers.cookie),
-          ip: config.trustProxy && (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket?.remoteAddress || "",
+          ip: clientIp(req),
           user: null,
           session: null,
           body: null
@@ -20497,7 +20617,7 @@ var require_app2 = __commonJS({
             throw new HttpError3(403, "Missing CSRF header");
           }
           if (!["GET", "HEAD"].includes(req.method)) {
-            const raw = await readBody(req, req.url.startsWith("/api/admin/restore") ? config.maxRestoreBodyBytes : config.maxBodyBytes);
+            const raw = await readBody(req, bodyLimit(ctx));
             const ct = req.headers["content-type"] || "";
             if (ct.includes("application/json")) {
               try {
@@ -20517,6 +20637,7 @@ var require_app2 = __commonJS({
           if (!res.headersSent) sendJson(res, result === void 0 ? 204 : ctx.status || 200, result === void 0 ? null : result);
         } catch (err2) {
           if (err2 instanceof HttpError3) {
+            if (err2.status === 413 && !res.headersSent) res.setHeader("Connection", "close");
             if (!res.headersSent) sendJson(res, err2.status, { error: err2.message, ...err2.extra || {} });
             else res.destroy();
           } else {
@@ -20724,6 +20845,27 @@ async function call(server, path, opts = {}, token2) {
   }
   return data;
 }
+function isStaticHost() {
+  try {
+    return typeof window !== "undefined" && window.SUDS_STATIC_HOST === true;
+  } catch {
+    return false;
+  }
+}
+async function assertStaticHostAllowed(server, onProgress) {
+  if (!isStaticHost()) return;
+  onProgress("Checking whether the office server accepts this build\u2026");
+  let info;
+  try {
+    info = await call(server, "/api/app/info", { method: "GET" });
+  } catch (e) {
+    if (e && e.extra && e.extra.network) throw e;
+    info = null;
+  }
+  if (!info || info.allow_static_sync !== true) {
+    throw new import_http.HttpError(403, "This is a demo/evaluation copy of SUDS served from a public web host, and the office server does not allow it to sync (its administrator would have to start it with ALLOW_STATIC_SYNC=1). Use the SUDS app or the office address instead. Nothing was sent.", { staticSyncRefused: true });
+  }
+}
 var blobKey = (table, id, col) => `sync_blob:${table}:${id}:${col}`;
 async function fetchBlobs(server, token2, onProgress) {
   let fetched = 0;
@@ -20783,6 +20925,7 @@ async function uploadBlobs(server, token2, onProgress) {
 async function run({ server, username, password, code, onProgress = () => {
 } }) {
   if (!server) throw new import_http.HttpError(400, "Office server address is required");
+  await assertStaticHostAllowed(server, onProgress);
   onProgress("Signing in to the office server\u2026");
   let login;
   try {

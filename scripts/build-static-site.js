@@ -36,7 +36,20 @@ const count = copyDir(path.join(root, 'public'), outDir);
 // One flag, set before main.js is even requested, so the very first render already knows: nothing here
 // talks to a server. window.SUDS_LOCAL (set later, once local mode is already running) cannot be used for
 // this — see the comment on isLocalMode() in app.js.
-fs.writeFileSync(path.join(outDir, 'local-boot.js'), "window.SUDS_FORCE_LOCAL = true;\n");
+// SUDS_STATIC_HOST marks this as a copy served by a host the county does not run: local/sync.js refuses
+// to sync it with an office server unless that server opts in (ALLOW_STATIC_SYNC), and the banner below
+// stays on screen for as long as the page is open, so nobody mistakes an evaluation copy for the office
+// system and types a real person into it.
+fs.writeFileSync(path.join(outDir, 'local-boot.js'), [
+  'window.SUDS_FORCE_LOCAL = true;',
+  'window.SUDS_STATIC_HOST = true;',
+  "document.addEventListener('DOMContentLoaded', function () {",
+  "  var b = document.createElement('div'); b.className = 'static-demo-banner'; b.setAttribute('role', 'note');",
+  "  b.textContent = 'Demo/evaluation build \\u2014 do not enter real client information';",
+  '  document.body.insertBefore(b, document.body.firstChild);',
+  '});',
+  '',
+].join('\n'));
 const indexPath = path.join(outDir, 'index.html');
 const before = fs.readFileSync(indexPath, 'utf8');
 const marker = '<script type="module" src="main.js"></script>';

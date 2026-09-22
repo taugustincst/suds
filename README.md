@@ -47,7 +47,7 @@ Without seeding, the first start creates an `admin` user and prints a temporary 
 
 ## Production for IT teams
 
-The launcher + wizard route above is production mode (`SUDS_ENV=production`) with keys in `data/keys.json` and a self-signed certificate. IT teams who prefer environment variables, a real certificate, a systemd service or Docker (`docker compose up -d`, includes a Caddy TLS proxy) should read [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Environment variables always override the wizard's settings.
+The launcher + wizard route above is production mode (`SUDS_ENV=production`) with keys in `data/keys.json` and a self-signed certificate — right for an evaluation or a single workstation, not for a system other staff depend on: the launchers do not survive a closed window or a reboot. A county deployment runs SUDS as a service (systemd or NSSM) behind the county's own certificate or reverse proxy, with environment variables, or in Docker (`docker compose up -d`, includes a Caddy TLS proxy configured by `Caddyfile`): see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), including its key rotation runbook. Environment variables always override the wizard's settings. Release downloads ship with `.sha256` checksum files.
 
 ## What it tracks
 

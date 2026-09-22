@@ -1,0 +1,22 @@
+# Keeps the two supply chains SUDS has under watch. There are no runtime npm dependencies (Node built-ins
+# only, see CLAUDE.md); the npm entry covers the build-time devDependencies that go into the browser kernel
+# (esbuild, sql.js, @noble/*, fflate, buffer). The workflows use no marketplace actions today, so the
+# github-actions entry is there for the day one is added.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels: [dependencies]
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    labels: [dependencies]

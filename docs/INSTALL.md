@@ -25,6 +25,8 @@ Open the `launchers` folder inside SUDS and double-click:
 
 A black window opens (leave it open — closing it stops SUDS) and your browser opens the **setup wizard**.
 
+> **The launchers are for evaluation and single-workstation trials.** Nothing restarts SUDS if the window is closed or the computer reboots, and it runs as whoever double-clicked it. A county deployment — anything other staff depend on — runs as a service: systemd on Linux, NSSM on Windows, as `docs/DEPLOYMENT.md` describes. Ask IT to set that up before the programme goes live; the data folder and settings carry over unchanged.
+
 ## Step 4 — Setup wizard (first run only)
 The wizard asks for:
 1. **Program name**, county and privacy officer contact.
@@ -50,6 +52,14 @@ Nothing to install or configure on the device. Everything a person does on their
 3. The first time, the browser warns that the certificate is not trusted (SUDS made its own). Tap **Advanced → Proceed** (Android/Chrome) or **Show Details → visit this website** (iPhone/Safari). To remove the warning permanently, download the certificate from Administration → Network & devices and install it on the device: it is a small certificate authority of SUDS's own, which is what Android (Settings → Security → Install a certificate → CA certificate) and iPhone (install the profile, then Settings → General → About → Certificate Trust Settings → enable full trust) accept. IT can push it with MDM.
    *Android browsers do not resolve `suds.local`*: on an Android phone use the numeric address shown under Settings → Network & devices (or the QR code, which carries it); the Android app finds the server on its own.
 4. Add SUDS to the home screen: **Share → Add to Home Screen** (iPhone) or **⋮ → Add to Home screen** (Android). It then opens like an app, with the same 15-minute auto sign-out. Until the certificate has been installed on the device, the browser treats it as a bookmark rather than an installed app (no offline shell), which is fine — everything still works while on the office network.
+
+### The certificate: what the wizard makes, and what a county should use instead
+
+The certificate the wizard creates is signed by a small private certificate authority of SUDS's own. That CA is deliberately narrow: it is **name-constrained** to the addresses SUDS listens on (`suds.local`, the computer's name, its office IP addresses and anything typed under *Extra names*), so a phone that installs it trusts it for this one server and nothing else, and it **expires 30 days after the server certificate** (about 27 months from setup) rather than living for years. SUDS warns on its health check and the Administration page from 60 days before expiry.
+
+That narrowness has a cost. **When the certificate is renewed** (Administration → Network & devices → tick *Create a new certificate* and save — nothing renews it by itself, which is what the 60-day warning is for), a new CA comes with it, and every phone and computer that installed the old one must install the new one — *re-enrolment* — or the browser warning returns. Plan a renewal like a small rollout: create the new certificate on a quiet day, download it from Network & devices, push it with MDM if you have it, and walk the rest of the devices through the install steps in point 3 above. Devices that never installed the CA (they tap through the warning) need nothing.
+
+**For a county deployment, use the county's PKI instead.** IT gives the SUDS computer a name in the county DNS, issues a certificate from the county CA (which every county-managed device already trusts) and either sets `TLS_CERT_PATH` / `TLS_KEY_PATH` or, better, puts SUDS behind the county's reverse proxy (IIS, nginx, Caddy) that terminates HTTPS with that certificate and forwards to SUDS on `127.0.0.1` with `TRUST_PROXY=1`. Then renewals happen where IT already renews everything else, nothing has to be installed on phones, and the self-signed path above is never needed. `docs/DEPLOYMENT.md` has the settings.
 
 ## Native apps (optional)
 Android staff can install a real app instead of the browser shortcut: see `docs/MOBILE_APPS.md`. Once the administrator has uploaded the app under Settings → Network & devices → Native apps, phones get it from **https://suds.local/app**.

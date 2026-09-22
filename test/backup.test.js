@@ -95,6 +95,23 @@ test('a backup made with a different key, or altered in transit, is refused', ()
   assert.throws(() => backup.inspect(Buffer.from('not a database at all, just text'.repeat(10))), /./);
 });
 
+test('with SUDS_BACKUP_KEY set, backups no longer depend on the PHI key — and older ones still open', () => {
+  const config = require('../server/config');
+  const before = backup.create();                       // keyed from the PHI key, the pre-SUDS_BACKUP_KEY way
+  const phiKey = config.encryptionKey;
+  config.backupKey = Buffer.from('77'.repeat(32), 'hex');
+  try {
+    const after = backup.create();
+    assert.ok(backup.decrypt(after).length > 0, 'a new backup opens with the backup key');
+    assert.ok(backup.decrypt(before).length > 0, 'one from before the backup key was set still opens (it falls back to the PHI-derived key)');
+    // Rotating the PHI key now leaves the new backup readable: only the backup key matters to it.
+    config.encryptionKey = Buffer.from('55'.repeat(32), 'hex');
+    assert.ok(backup.decrypt(after).length > 0);
+    assert.throws(() => backup.decrypt(before), /different encryption key|damaged/, 'the old one needs the retired PHI key...');
+    assert.ok(backup.decrypt(before, { encryptionKey: phiKey }).length > 0, '...which a restore can supply explicitly');
+  } finally { config.backupKey = null; config.encryptionKey = phiKey; }
+});
+
 test('restoring replaces the live database and keeps the previous one aside', () => {
   const bytes = backup.create();
   // Work done after the backup was taken — a restore is expected to discard it.

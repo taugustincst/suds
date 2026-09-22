@@ -11,13 +11,14 @@ const { sha256 } = require('./crypto');
 // change still verify under the old scheme — the 'v2:' prefix says which is which, so an existing chain
 // stays verifiable rather than being declared broken by an upgrade.
 const KEYED_PREFIX = 'v2:';
-function chainHash(payload) { return KEYED_PREFIX + crypto.createHmac('sha256', config.indexKey).update(payload).digest('hex'); }
-function matches(stored, payload) {
+function chainHash(payload, key = config.indexKey) { return KEYED_PREFIX + crypto.createHmac('sha256', key).update(payload).digest('hex'); }
+function matches(stored, payload, key = config.indexKey) {
   if (typeof stored !== 'string') return false;
-  const expected = stored.startsWith(KEYED_PREFIX) ? chainHash(payload) : sha256(payload);
+  const expected = stored.startsWith(KEYED_PREFIX) ? chainHash(payload, key) : sha256(payload);
   // Both sides are hex of the same length whenever the scheme matches, so a timing-safe compare is cheap.
   return stored.length === expected.length && crypto.timingSafeEqual(Buffer.from(stored), Buffer.from(expected));
 }
+const payloadOf = (r) => [r.at, r.user_id || '', r.username || '', r.action, r.entity || '', r.entity_id || '', r.client_id || '', r.ip || '', r.success ? 1 : 0, r.details || '', r.prev_hash].join('|');
 
 function log({ user, action, entity, entityId, clientId, ip, success = true, details }) {
   const prev = db.one(`SELECT hash FROM audit_log ORDER BY id DESC LIMIT 1`);
@@ -36,16 +37,15 @@ function log({ user, action, entity, entityId, clientId, ip, success = true, det
 // Read in batches: at seven years of retention this table is millions of rows, and loading it whole to
 // answer an admin's "verify" click would stall the whole server.
 const VERIFY_BATCH = 5000;
-function verifyChain() {
+function verifyChain({ key = config.indexKey } = {}) {
   let prevHash = null; let anchoredAt = null; let checked = 0; let afterId = 0;
   for (;;) {
     const rows = db.all(`SELECT * FROM audit_log WHERE id > ? ORDER BY id ASC LIMIT ?`, afterId, VERIFY_BATCH);
     if (!rows.length) break;
     if (prevHash === null) { prevHash = rows[0].prev_hash; anchoredAt = rows[0].id; }
     for (const r of rows) {
-      const payload = [r.at, r.user_id || '', r.username || '', r.action, r.entity || '', r.entity_id || '', r.client_id || '', r.ip || '', r.success ? 1 : 0, r.details || '', r.prev_hash].join('|');
       checked++;
-      if (r.prev_hash !== prevHash || !matches(r.hash, payload)) return { ok: false, checked, firstBadId: r.id, anchoredAt };
+      if (r.prev_hash !== prevHash || !matches(r.hash, payloadOf(r), key)) return { ok: false, checked, firstBadId: r.id, anchoredAt };
       prevHash = r.hash;
     }
     afterId = rows[rows.length - 1].id;
@@ -53,6 +53,42 @@ function verifyChain() {
   }
   if (!checked) return { ok: true, checked: 0 };
   return { ok: true, checked, anchoredAt };
+}
+
+/**
+ * Re-key the chain: every keyed ('v2:') row's hash is recomputed under `newKey`, in id order, with each
+ * row's prev_hash rewritten to the re-signed hash before it so continuity is preserved. Rows from before
+ * keyed hashing (plain SHA-256) are left as they are; they never depended on a key.
+ *
+ * This is the one place other than the retention purge that writes to existing audit rows, and it exists
+ * only because the chain key is SUDS_INDEX_KEY: without it, rotating that key would turn every entry
+ * into a "tampered" one. Called by scripts/rotate-index-key.js with the server stopped, inside its own
+ * transaction, and only after the chain has verified under the old key — a chain that already fails is
+ * evidence and is not touched.
+ */
+function resignChain(newKey) {
+  const before = verifyChain();
+  if (!before.ok) throw new Error(`The audit chain does not verify under the current key (first bad entry ${before.firstBadId}); it will not be re-signed`);
+  const upd = db.get().prepare(`UPDATE audit_log SET prev_hash=?, hash=? WHERE id=?`);
+  let prevHash = null; let afterId = 0; let resigned = 0;
+  for (;;) {
+    const rows = db.all(`SELECT * FROM audit_log WHERE id > ? ORDER BY id ASC LIMIT ?`, afterId, VERIFY_BATCH);
+    if (!rows.length) break;
+    if (prevHash === null) prevHash = rows[0].prev_hash;   // the anchor (GENESIS, or the hash a purge continued from) is kept
+    for (const r of rows) {
+      const row = { ...r, prev_hash: prevHash };
+      // A legacy row normally follows legacy rows, so its hash stands; one that somehow follows a keyed row
+      // is recomputed under its own (unkeyed) scheme so it still verifies with its new prev_hash.
+      const hash = String(r.hash).startsWith(KEYED_PREFIX) ? chainHash(payloadOf(row), newKey) : (prevHash === r.prev_hash ? r.hash : sha256(payloadOf(row)));
+      if (hash !== r.hash || prevHash !== r.prev_hash) { upd.run(prevHash, hash, r.id); resigned++; }
+      prevHash = hash;
+    }
+    afterId = rows[rows.length - 1].id;
+    if (rows.length < VERIFY_BATCH) break;
+  }
+  const after = verifyChain({ key: newKey });
+  if (!after.ok) throw new Error(`The audit chain does not verify under the new key after re-signing (first bad entry ${after.firstBadId})`);
+  return { resigned, checked: after.checked };
 }
 
 // Tombstones tell devices what was deleted. They are kept long enough that any device still in use will
@@ -93,4 +129,4 @@ function scheduledVerify() {
   return r;
 }
 
-module.exports = { log, verifyChain, scheduledVerify, purge, purgeTombstones };
+module.exports = { log, verifyChain, resignChain, scheduledVerify, purge, purgeTombstones };
