@@ -37,9 +37,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// node_modules/base64-js/index.js
+// ../../../node_modules/base64-js/index.js
 var require_base64_js = __commonJS({
-  "node_modules/base64-js/index.js"(exports) {
+  "../../../node_modules/base64-js/index.js"(exports) {
     "use strict";
     init_globals_inject();
     exports.byteLength = byteLength;
@@ -139,9 +139,9 @@ var require_base64_js = __commonJS({
   }
 });
 
-// node_modules/ieee754/index.js
+// ../../../node_modules/ieee754/index.js
 var require_ieee754 = __commonJS({
-  "node_modules/ieee754/index.js"(exports) {
+  "../../../node_modules/ieee754/index.js"(exports) {
     init_globals_inject();
     exports.read = function(buffer, offset, isLE3, mLen, nBytes) {
       var e, m;
@@ -223,9 +223,9 @@ var require_ieee754 = __commonJS({
   }
 });
 
-// node_modules/buffer/index.js
+// ../../../node_modules/buffer/index.js
 var require_buffer = __commonJS({
-  "node_modules/buffer/index.js"(exports) {
+  "../../../node_modules/buffer/index.js"(exports) {
     "use strict";
     init_globals_inject();
     var base64 = require_base64_js();
@@ -1900,7 +1900,7 @@ var init_path = __esm({
   }
 });
 
-// node_modules/@noble/ciphers/esm/_assert.js
+// ../../../node_modules/@noble/ciphers/esm/_assert.js
 function isBytes(a) {
   return a instanceof Uint8Array || a != null && typeof a === "object" && a.constructor.name === "Uint8Array";
 }
@@ -1924,12 +1924,12 @@ function output(out2, instance) {
   }
 }
 var init_assert = __esm({
-  "node_modules/@noble/ciphers/esm/_assert.js"() {
+  "../../../node_modules/@noble/ciphers/esm/_assert.js"() {
     init_globals_inject();
   }
 });
 
-// node_modules/@noble/ciphers/esm/utils.js
+// ../../../node_modules/@noble/ciphers/esm/utils.js
 function utf8ToBytes(str) {
   if (typeof str !== "string")
     throw new Error(`string expected, got ${typeof str}`);
@@ -1992,7 +1992,7 @@ function clean(...arrays) {
 }
 var u8, u32, createView, isLE, wrapCipher;
 var init_utils = __esm({
-  "node_modules/@noble/ciphers/esm/utils.js"() {
+  "../../../node_modules/@noble/ciphers/esm/utils.js"() {
     init_globals_inject();
     init_assert();
     u8 = (arr) => new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
@@ -2008,7 +2008,7 @@ var init_utils = __esm({
   }
 });
 
-// node_modules/@noble/ciphers/esm/_polyval.js
+// ../../../node_modules/@noble/ciphers/esm/_polyval.js
 function _toGHASHKey(k) {
   k.reverse();
   const hiBit = k[15] & 1;
@@ -2031,7 +2031,7 @@ function wrapConstructorWithKey(hashCons) {
 }
 var BLOCK_SIZE, ZEROS16, ZEROS32, POLY, mul2, swapLE, estimateWindow, GHASH, Polyval, ghash, polyval;
 var init_polyval = __esm({
-  "node_modules/@noble/ciphers/esm/_polyval.js"() {
+  "../../../node_modules/@noble/ciphers/esm/_polyval.js"() {
     init_globals_inject();
     init_assert();
     init_utils();
@@ -2206,7 +2206,7 @@ var init_polyval = __esm({
   }
 });
 
-// node_modules/@noble/ciphers/esm/aes.js
+// ../../../node_modules/@noble/ciphers/esm/aes.js
 function mul22(n) {
   return n << 1 ^ POLY2 & -(n >> 7);
 }
@@ -2486,7 +2486,7 @@ function decryptBlock(xk, block) {
 }
 var BLOCK_SIZE2, BLOCK_SIZE32, EMPTY_BLOCK, POLY2, sbox, invSbox, rotr32_8, rotl32_8, byteSwap, tableEncoding, tableDecoding, xPowers, ctr, ecb, cbc, cfb, gcm, limit, siv, AESW, AESKW_IV, aeskw, AESKWP_IV, aeskwp;
 var init_aes = __esm({
-  "node_modules/@noble/ciphers/esm/aes.js"() {
+  "../../../node_modules/@noble/ciphers/esm/aes.js"() {
     init_globals_inject();
     init_assert();
     init_polyval();
@@ -2959,7 +2959,7 @@ var init_aes = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/_assert.js
+// ../../../node_modules/@noble/hashes/esm/_assert.js
 function number(n) {
   if (!Number.isSafeInteger(n) || n < 0)
     throw new Error(`positive integer expected, not ${n}`);
@@ -2993,21 +2993,21 @@ function output2(out2, instance) {
   }
 }
 var init_assert2 = __esm({
-  "node_modules/@noble/hashes/esm/_assert.js"() {
+  "../../../node_modules/@noble/hashes/esm/_assert.js"() {
     init_globals_inject();
   }
 });
 
-// node_modules/@noble/hashes/esm/crypto.js
+// ../../../node_modules/@noble/hashes/esm/crypto.js
 var crypto2;
 var init_crypto = __esm({
-  "node_modules/@noble/hashes/esm/crypto.js"() {
+  "../../../node_modules/@noble/hashes/esm/crypto.js"() {
     init_globals_inject();
     crypto2 = typeof globalThis === "object" && "crypto" in globalThis ? globalThis.crypto : void 0;
   }
 });
 
-// node_modules/@noble/hashes/esm/utils.js
+// ../../../node_modules/@noble/hashes/esm/utils.js
 function byteSwap32(arr) {
   for (let i = 0; i < arr.length; i++) {
     arr[i] = byteSwap2(arr[i]);
@@ -3049,7 +3049,7 @@ function randomBytes(bytesLength = 32) {
 }
 var u322, createView2, rotr, rotl, isLE2, byteSwap2, Hash, toStr;
 var init_utils2 = __esm({
-  "node_modules/@noble/hashes/esm/utils.js"() {
+  "../../../node_modules/@noble/hashes/esm/utils.js"() {
     init_globals_inject();
     init_crypto();
     init_assert2();
@@ -3069,7 +3069,7 @@ var init_utils2 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/_md.js
+// ../../../node_modules/@noble/hashes/esm/_md.js
 function setBigUint642(view, byteOffset, value, isLE3) {
   if (typeof view.setBigUint64 === "function")
     return view.setBigUint64(byteOffset, value, isLE3);
@@ -3084,7 +3084,7 @@ function setBigUint642(view, byteOffset, value, isLE3) {
 }
 var Chi, Maj, HashMD;
 var init_md = __esm({
-  "node_modules/@noble/hashes/esm/_md.js"() {
+  "../../../node_modules/@noble/hashes/esm/_md.js"() {
     init_globals_inject();
     init_assert2();
     init_utils2();
@@ -3179,10 +3179,10 @@ var init_md = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/sha256.js
+// ../../../node_modules/@noble/hashes/esm/sha256.js
 var SHA256_K, SHA256_IV, SHA256_W, SHA256, sha256;
 var init_sha256 = __esm({
-  "node_modules/@noble/hashes/esm/sha256.js"() {
+  "../../../node_modules/@noble/hashes/esm/sha256.js"() {
     init_globals_inject();
     init_md();
     init_utils2();
@@ -3337,10 +3337,10 @@ var init_sha256 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/sha1.js
+// ../../../node_modules/@noble/hashes/esm/sha1.js
 var SHA1_IV, SHA1_W, SHA1, sha1;
 var init_sha1 = __esm({
-  "node_modules/@noble/hashes/esm/sha1.js"() {
+  "../../../node_modules/@noble/hashes/esm/sha1.js"() {
     init_globals_inject();
     init_md();
     init_utils2();
@@ -3419,10 +3419,10 @@ var init_sha1 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/hmac.js
+// ../../../node_modules/@noble/hashes/esm/hmac.js
 var HMAC, hmac;
 var init_hmac = __esm({
-  "node_modules/@noble/hashes/esm/hmac.js"() {
+  "../../../node_modules/@noble/hashes/esm/hmac.js"() {
     init_globals_inject();
     init_assert2();
     init_utils2();
@@ -3492,7 +3492,7 @@ var init_hmac = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/pbkdf2.js
+// ../../../node_modules/@noble/hashes/esm/pbkdf2.js
 function pbkdf2Init(hash2, _password, _salt, _opts) {
   hash(hash2);
   const opts = checkOpts({ dkLen: 32, asyncTick: 10 }, _opts);
@@ -3537,7 +3537,7 @@ function pbkdf2(hash2, password, salt, opts) {
   return pbkdf2Output(PRF, PRFSalt, DK, prfW, u);
 }
 var init_pbkdf2 = __esm({
-  "node_modules/@noble/hashes/esm/pbkdf2.js"() {
+  "../../../node_modules/@noble/hashes/esm/pbkdf2.js"() {
     init_globals_inject();
     init_assert2();
     init_hmac();
@@ -3545,7 +3545,7 @@ var init_pbkdf2 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/scrypt.js
+// ../../../node_modules/@noble/hashes/esm/scrypt.js
 function XorAndSalsa(prev, pi, input, ii, out2, oi) {
   let y00 = prev[pi++] ^ input[ii++], y01 = prev[pi++] ^ input[ii++];
   let y02 = prev[pi++] ^ input[ii++], y03 = prev[pi++] ^ input[ii++];
@@ -3701,7 +3701,7 @@ function scrypt(password, salt, opts) {
   return scryptOutput(password, dkLen, B2, V, tmp);
 }
 var init_scrypt = __esm({
-  "node_modules/@noble/hashes/esm/scrypt.js"() {
+  "../../../node_modules/@noble/hashes/esm/scrypt.js"() {
     init_globals_inject();
     init_assert2();
     init_sha256();
@@ -3846,9 +3846,9 @@ var init_crypto2 = __esm({
   }
 });
 
-// node_modules/sql.js/dist/sql-wasm.js
+// ../../../node_modules/sql.js/dist/sql-wasm.js
 var require_sql_wasm = __commonJS({
-  "node_modules/sql.js/dist/sql-wasm.js"(exports, module) {
+  "../../../node_modules/sql.js/dist/sql-wasm.js"(exports, module) {
     init_globals_inject();
     var initSqlJsPromise = void 0;
     var initSqlJs = function(moduleConfig) {
@@ -6838,6 +6838,18 @@ CREATE TABLE IF NOT EXISTS import_items (
 CREATE INDEX IF NOT EXISTS idx_import_items_updated ON import_items(updated_at);
 CREATE INDEX IF NOT EXISTS idx_import_items ON import_items(import_id, status);
 
+-- Spreadsheet import provenance (server/routes/dataimport.js): one row per imported spreadsheet row, keyed
+-- by a hash of the kind of import, the row's position and what it held, so importing the same file twice
+-- skips what is already in instead of doubling every visit, call, hour and expenditure. Server-side only.
+CREATE TABLE IF NOT EXISTS import_rows (
+  row_hash TEXT PRIMARY KEY,
+  entity TEXT NOT NULL,
+  record_id TEXT,
+  imported_by TEXT,                    -- the user id; no FK, this table is server-side bookkeeping only
+  imported_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_import_rows_entity ON import_rows(entity, imported_at);
+
 CREATE TABLE IF NOT EXISTS audit_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -7309,8 +7321,17 @@ var require_db = __commonJS({
       if (db3) return db3;
       if (dbPath !== ":memory:") fs.mkdirSync(path.dirname(dbPath), { recursive: true });
       db3 = new DatabaseSync2(dbPath);
-      db3.exec("PRAGMA busy_timeout = 5000");
-      initialise(db3, fs.readFileSync(path.join("/", "schema.sql"), "utf8"), dbPath);
+      try {
+        db3.exec("PRAGMA busy_timeout = 5000");
+        initialise(db3, fs.readFileSync(path.join("/", "schema.sql"), "utf8"), dbPath);
+      } catch (e) {
+        try {
+          db3.close();
+        } catch {
+        }
+        db3 = void 0;
+        throw e;
+      }
       if (dbPath !== ":memory:") for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
         try {
           fs.chmodSync(f, 384);
@@ -7631,6 +7652,14 @@ var require_db = __commonJS({
       //     is 'active', so that is what an empty value has always meant.
       (d) => {
         d.exec(`UPDATE clients SET status='active' WHERE status IS NULL OR TRIM(status)=''`);
+      },
+      // 22: spreadsheet import idempotency — a hash per imported row (import_rows), so the same file imported
+      //     twice does not double every visit, call, hour and expenditure it holds.
+      (d) => {
+        const schemaText = safeSchema();
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS import_rows \([\s\S]*?\n\);/);
+        if (m) d.exec(m[0]);
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_import_rows/.test(line.trim())) d.exec(line.trim());
       }
     ];
     function initialise(d, schemaText, dbPath) {
@@ -8008,14 +8037,14 @@ var require_audit = __commonJS({
     function headPayload(lastId, lastHash, rowCount) {
       return `${lastId}|${lastHash}|${rowCount}`;
     }
-    function sealHead(lastId, lastHash, rowCount) {
-      return crypto3.createHmac("sha256", config.indexKey).update(headPayload(lastId, lastHash, rowCount)).digest("hex");
+    function sealHead(lastId, lastHash, rowCount, key = config.indexKey) {
+      return crypto3.createHmac("sha256", key).update(headPayload(lastId, lastHash, rowCount)).digest("hex");
     }
-    function checkpoint() {
+    function checkpoint({ key = config.indexKey } = {}) {
       const last = db3.one(`SELECT id, hash FROM audit_log ORDER BY id DESC LIMIT 1`);
       if (!last) return null;
       const rowCount = db3.one(`SELECT COUNT(*) n FROM audit_log WHERE id <= ?`, last.id).n;
-      const head = sealHead(last.id, last.hash, rowCount);
+      const head = sealHead(last.id, last.hash, rowCount, key);
       db3.setSetting("audit_head", head);
       db3.setSetting("audit_head_id", String(last.id));
       db3.setSetting("audit_head_rows", String(rowCount));
@@ -8023,7 +8052,7 @@ var require_audit = __commonJS({
       console.log(`[suds] audit checkpoint id=${last.id} rows=${rowCount} head=${head}`);
       return { lastId: last.id, rowCount, head };
     }
-    function checkHead() {
+    function checkHead({ key = config.indexKey } = {}) {
       const head = db3.getSetting("audit_head", null);
       const lastId = Number(db3.getSetting("audit_head_id", 0));
       const rowCount = Number(db3.getSetting("audit_head_rows", 0));
@@ -8033,12 +8062,12 @@ var require_audit = __commonJS({
       if (lastId > max2) return { ...out2, truncated: true, reason: `the newest ${lastId - max2} entries since the checkpoint are gone` };
       const row = db3.one(`SELECT hash FROM audit_log WHERE id=?`, lastId);
       const nowCount = row ? db3.one(`SELECT COUNT(*) n FROM audit_log WHERE id <= ?`, lastId).n : 0;
-      const expected = sealHead(lastId, row ? row.hash : "", nowCount);
+      const expected = sealHead(lastId, row ? row.hash : "", nowCount, key);
       if (!row || expected.length !== head.length || !crypto3.timingSafeEqual(import_buffer.Buffer.from(expected), import_buffer.Buffer.from(head))) return { ...out2, truncated: true, reason: row ? "entries at or before the checkpoint were removed or altered" : "the checkpointed entry itself is gone" };
       return { ...out2, truncated: false };
     }
     var VERIFY_BATCH = 5e3;
-    function verifyChain({ key = config.indexKey } = {}) {
+    function verifyChain({ key = config.indexKey, skipHead = false } = {}) {
       let prevHash = null;
       let anchoredAt = null;
       let checked = 0;
@@ -8052,13 +8081,13 @@ var require_audit = __commonJS({
         }
         for (const r of rows) {
           checked++;
-          if (r.prev_hash !== prevHash || !matches(r.hash, payloadOf(r), key)) return { ok: false, checked, firstBadId: r.id, anchoredAt, ...checkHead() };
+          if (r.prev_hash !== prevHash || !matches(r.hash, payloadOf(r), key)) return { ok: false, checked, firstBadId: r.id, anchoredAt, ...skipHead ? {} : checkHead({ key }) };
           prevHash = r.hash;
         }
         afterId = rows[rows.length - 1].id;
         if (rows.length < VERIFY_BATCH) break;
       }
-      const head = checkHead();
+      const head = skipHead ? { checkpointed: false } : checkHead({ key });
       if (head.truncated) return { ok: false, checked, anchoredAt, ...head };
       if (!checked) return { ok: true, checked: 0, ...head };
       return { ok: true, checked, anchoredAt, ...head };
@@ -8086,8 +8115,12 @@ var require_audit = __commonJS({
         afterId = rows[rows.length - 1].id;
         if (rows.length < VERIFY_BATCH) break;
       }
-      const after = verifyChain({ key: newKey });
+      const after = verifyChain({ key: newKey, skipHead: true });
       if (!after.ok) throw new Error(`The audit chain does not verify under the new key after re-signing (first bad entry ${after.firstBadId})`);
+      const hadHead = db3.getSetting("audit_head", null);
+      if (hadHead) checkpoint({ key: newKey });
+      const pinned = verifyChain({ key: newKey });
+      if (!pinned.ok) throw new Error(`The audit head does not verify under the new key after re-sealing (${pinned.reason || `first bad entry ${pinned.firstBadId}`})`);
       return { resigned, checked: after.checked };
     }
     function purgeTombstones(days) {
@@ -8131,6 +8164,7 @@ var require_devices = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
+    var { sha256: sha2562, randomToken } = require_crypto();
     function labelFrom(userAgent) {
       const ua = userAgent || "";
       if (/android/i.test(ua)) return "Android phone";
@@ -8147,7 +8181,33 @@ var require_devices = __commonJS({
       return db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
     }
     function markWiped(deviceId2) {
-      db3.run(`UPDATE devices SET revoked_at=?, wipe_requested_at=NULL WHERE id=?`, db3.now(), deviceId2);
+      db3.run(`UPDATE devices SET revoked_at=COALESCE(revoked_at, ?) WHERE id=?`, db3.now(), deviceId2);
+      db3.run(`DELETE FROM settings WHERE key=?`, ackKey(deviceId2));
+    }
+    var ACK_TTL_MS = 15 * 6e4;
+    var ackKey = (deviceId2) => `device_wipe_ack:${deviceId2}`;
+    function issueWipeToken(deviceId2) {
+      const token2 = randomToken(32);
+      db3.setSetting(ackKey(deviceId2), JSON.stringify({ hash: sha2562(token2), expires: new Date(Date.now() + ACK_TTL_MS).toISOString() }));
+      return token2;
+    }
+    function ackWipe(deviceId2, token2) {
+      const raw = db3.getSetting(ackKey(deviceId2), null);
+      if (!raw || typeof token2 !== "string" || !token2) return false;
+      let rec;
+      try {
+        rec = JSON.parse(raw);
+      } catch {
+        return false;
+      }
+      if (!rec.hash || Date.parse(rec.expires || 0) < Date.now()) {
+        db3.run(`DELETE FROM settings WHERE key=?`, ackKey(deviceId2));
+        return false;
+      }
+      const given = sha2562(token2);
+      if (given.length !== rec.hash.length || !(init_crypto2(), __toCommonJS(crypto_exports)).timingSafeEqual(import_buffer.Buffer.from(given), import_buffer.Buffer.from(rec.hash))) return false;
+      markWiped(deviceId2);
+      return true;
     }
     function requestWipeForUser(userId, { actor, ip, reason } = {}) {
       const rows = db3.all(`SELECT id FROM devices WHERE user_id=? AND revoked_at IS NULL AND wipe_requested_at IS NULL`, userId);
@@ -8157,7 +8217,7 @@ var require_devices = __commonJS({
       require_audit().log({ user: actor, action: "device.wipe.requested", entity: "user", entityId: userId, ip, details: { reason, devices: rows.map((d) => d.id) } });
       return rows.map((d) => d.id);
     }
-    module.exports = { touch, markWiped, requestWipeForUser, labelFrom };
+    module.exports = { touch, markWiped, requestWipeForUser, labelFrom, issueWipeToken, ackWipe };
   }
 });
 
@@ -8270,6 +8330,8 @@ var require_auth = __commonJS({
         "disclosures:override",
         "patient-requests:*"
       ],
+      // Front-line staff hold export:read so the Export buttons on their own screens work; without
+      // export:identified every file they can produce is de-identified (Safe Harbor) and caseload-scoped.
       clinician: [
         "clients:read",
         "clients:write",
@@ -8293,7 +8355,8 @@ var require_auth = __commonJS({
         "episodes:*",
         "overdose:*",
         "documents:read",
-        "patient-requests:*"
+        "patient-requests:*",
+        "export:read"
       ],
       navigator: [
         "clients:read",
@@ -8318,7 +8381,8 @@ var require_auth = __commonJS({
         "episodes:*",
         "overdose:*",
         "documents:read",
-        "patient-requests:*"
+        "patient-requests:*",
+        "export:read"
       ],
       // finance sees money, not people: export:read without export:identified means every export it can run
       // comes out keyed by client_code. Do not add 'export:identified' here — docs/HIPAA.md promises otherwise.
@@ -8438,34 +8502,51 @@ var require_auth = __commonJS({
       const created = Date.parse(user.created_at || 0) || Date.now();
       return new Date(created + policy().mfaGraceDays * 864e5).toISOString();
     }
+    function auditUsername(username) {
+      const u = String(username || "");
+      return `unknown:${u.slice(0, 8)}${u.length > 8 ? "\u2026" : ""}#${sha2562(u).slice(0, 12)}`;
+    }
     async function login({ username, password, ctx }) {
       const user = db3.one(`SELECT * FROM users WHERE username=?`, String(username || "").trim());
-      const fail = (reason) => {
-        audit3.log({ user: user ? { id: user.id, username: user.username } : { username }, action: "auth.login.failed", ip: ctx.ip, success: false, details: { reason } });
-        throw unauthorized("Invalid username or password");
-      };
       const devices = require_devices();
       const deviceId2 = ctx.headers["x-sync-client"] && ctx.headers["x-device-id"] ? String(ctx.headers["x-device-id"]).slice(0, 100) : null;
-      const who = user ? { id: user.id, username: user.username } : { username: String(username || "").slice(0, 100) };
+      const who = user ? { id: user.id, username: user.username } : { username: auditUsername(username) };
+      let pendingWipe = null;
       if (deviceId2) {
         const known = db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
-        if (known && known.wipe_requested_at) {
-          devices.markWiped(known.id);
-          audit3.log({ user: who, action: "auth.login.device_wiped", entity: "device", entityId: known.id, ip: ctx.ip, success: false, details: { device_user: known.user_id } });
-          throw new HttpError3(403, "An administrator has remotely wiped this device. It must be set up again before it can sync.", { deviceWipeRequired: true });
-        }
         if (known && known.revoked_at) {
-          audit3.log({ user: who, action: "auth.login.device_revoked", entity: "device", entityId: known.id, ip: ctx.ip, success: false, details: { device_user: known.user_id } });
-          throw new HttpError3(403, "This device has been revoked and can no longer sync. Contact your administrator.", { deviceRevoked: true });
+          audit3.log({ user: who, action: "auth.login.device_revoked", entity: "device", entityId: known.id, ip: ctx.ip, success: false, details: { device_user: known.user_id, wipe_requested: !!known.wipe_requested_at } });
+          throw new HttpError3(403, "This device has been revoked and can no longer sync. Contact your administrator.", { deviceRevoked: true, wipeRequested: !!known.wipe_requested_at, deviceWipeRequired: !!known.wipe_requested_at || void 0 });
         }
+        if (known && known.wipe_requested_at) pendingWipe = known;
       }
+      const wipeRequired = (verified) => {
+        const extra = { deviceWipeRequired: true };
+        if (verified) {
+          devices.markWiped(pendingWipe.id);
+          audit3.log({ user: who, action: "auth.login.device_wiped", entity: "device", entityId: pendingWipe.id, ip: ctx.ip, success: false, details: { device_user: pendingWipe.user_id } });
+        } else {
+          extra.wipeAckToken = devices.issueWipeToken(pendingWipe.id);
+          audit3.log({ user: who, action: "auth.login.device_wipe_pending", entity: "device", entityId: pendingWipe.id, ip: ctx.ip, success: false, details: { device_user: pendingWipe.user_id } });
+        }
+        throw new HttpError3(403, "An administrator has remotely wiped this device. It must be set up again before it can sync.", extra);
+      };
+      const fail = (reason) => {
+        audit3.log({ user: who, action: "auth.login.failed", ip: ctx.ip, success: false, details: { reason } });
+        if (pendingWipe) wipeRequired(false);
+        throw unauthorized("Invalid username or password");
+      };
       if (!user) {
         await verifyPasswordAsync(password || "", "scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AA==");
         fail("unknown user");
       }
-      if (!user.is_active) fail("inactive");
+      if (!user.is_active) {
+        if (pendingWipe && await verifyPasswordAsync(password || "", user.password_hash)) wipeRequired(true);
+        fail("inactive");
+      }
       if (user.locked_until && Date.parse(user.locked_until) > Date.now()) {
         audit3.log({ user, action: "auth.login.locked", ip: ctx.ip, success: false });
+        if (pendingWipe) wipeRequired(false);
         throw new HttpError3(423, "Account locked. Try again later or contact an administrator.");
       }
       if (!await verifyPasswordAsync(password || "", user.password_hash)) {
@@ -8474,17 +8555,17 @@ var require_auth = __commonJS({
         db3.run(`UPDATE users SET failed_attempts=?, locked_until=? WHERE id=?`, lock ? 0 : attempts, lock, user.id);
         fail(lock ? "locked after failures" : "bad password");
       }
+      if (pendingWipe) wipeRequired(true);
       db3.run(`UPDATE users SET failed_attempts=0, locked_until=NULL, last_login_at=? WHERE id=?`, db3.now(), user.id);
       if (deviceId2) {
         const device = devices.touch(user, deviceId2, ctx);
-        if (device.wipe_requested_at) {
-          devices.markWiped(device.id);
-          audit3.log({ user, action: "auth.login.device_wiped", entity: "device", entityId: device.id, ip: ctx.ip, success: false });
-          throw new HttpError3(403, "An administrator has remotely wiped this device. It must be set up again before it can sync.", { deviceWipeRequired: true });
-        }
         if (device.revoked_at) {
-          audit3.log({ user, action: "auth.login.device_revoked", entity: "device", entityId: device.id, ip: ctx.ip, success: false });
-          throw new HttpError3(403, "This device has been revoked and can no longer sync. Contact your administrator.", { deviceRevoked: true });
+          audit3.log({ user, action: "auth.login.device_revoked", entity: "device", entityId: device.id, ip: ctx.ip, success: false, details: { wipe_requested: !!device.wipe_requested_at } });
+          throw new HttpError3(403, "This device has been revoked and can no longer sync. Contact your administrator.", { deviceRevoked: true, wipeRequested: !!device.wipe_requested_at, deviceWipeRequired: !!device.wipe_requested_at || void 0 });
+        }
+        if (device.wipe_requested_at) {
+          pendingWipe = device;
+          wipeRequired(true);
         }
       }
       const mfaRequiredForRole = policy().mfaRequiredRoles.includes(user.role);
@@ -8749,7 +8830,7 @@ var require_constants = __commonJS({
   }
 });
 
-// node_modules/fflate/esm/browser.js
+// ../../../node_modules/fflate/esm/browser.js
 function deflateSync(data, opts) {
   return dopt(data, opts || {}, 0, 0);
 }
@@ -8769,7 +8850,7 @@ function unzlibSync(data, opts) {
 }
 var u82, u16, i32, fleb, fdeb, clim, freb, _a, fl, revfl, _b, fd, revfd, rev, x, i, hMap, flt, i, i, i, i, fdt, i, flm, flrm, fdm, fdrm, max, bits, bits16, shft, slc, ec, err, inflt, wbits, wbits16, hTree, ln, lc, clen, wfblk, wblk, deo, et, dflt, adler, dopt, wbytes, zlh, zls, td, tds;
 var init_browser = __esm({
-  "node_modules/fflate/esm/browser.js"() {
+  "../../../node_modules/fflate/esm/browser.js"() {
     init_globals_inject();
     u82 = Uint8Array;
     u16 = Uint16Array;
@@ -10866,8 +10947,10 @@ var require_backup = __commonJS({
           const has = (t) => !!d.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(t);
           if (!has("settings") || !has("clients")) throw new Error("That file is not a SUDS backup.");
           const count = (t) => has(t) ? d.prepare(`SELECT COUNT(*) n FROM ${t}`).get().n : 0;
+          const schemaVersion = Number(d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get()?.value || 0);
+          if (schemaVersion > db3.LATEST_SCHEMA_VERSION) throw new Error(`This backup was made by a newer version of SUDS (schema ${schemaVersion}; this build understands ${db3.LATEST_SCHEMA_VERSION}). Upgrade SUDS before restoring it.`);
           return {
-            schema_version: Number(d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get()?.value || 0),
+            schema_version: schemaVersion,
             org_name: d.prepare(`SELECT value FROM settings WHERE key='org_name'`).get()?.value || null,
             counts: { clients: count("clients"), notes: count("notes"), interventions: count("interventions"), users: count("users"), audit_log: count("audit_log") },
             bytes: plainBytes.length
@@ -10888,25 +10971,52 @@ var require_backup = __commonJS({
       if (dbPath === ":memory:") throw new Error("This server is running on an in-memory database; there is nothing to restore into.");
       const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
       const aside = `${dbPath}.before-restore-${stamp2}`;
-      db3.close();
-      try {
-        if (fs.existsSync(dbPath)) fs.copyFileSync(dbPath, aside);
-        fs.writeFileSync(dbPath, plainBytes, { mode: 384 });
+      const dropJournal = () => {
         for (const suffix of ["-wal", "-shm"]) {
           try {
             fs.unlinkSync(dbPath + suffix);
           } catch {
           }
         }
-      } catch (e) {
+      };
+      const rollBack = (cause) => {
         try {
-          if (fs.existsSync(aside)) fs.copyFileSync(aside, dbPath);
+          if (fs.existsSync(aside)) {
+            fs.copyFileSync(aside, dbPath);
+            dropJournal();
+          }
+        } catch (e) {
+          cause.message += ` (and the previous database could not be put back from ${aside}: ${e.message})`;
+        }
+        try {
+          db3.close();
         } catch {
         }
-        db3.open();
+        try {
+          db3.open();
+        } catch (e) {
+          cause.message += ` (the previous database could not be reopened either: ${e.message})`;
+        }
+      };
+      try {
+        db3.get().exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      } catch {
+      }
+      db3.close();
+      try {
+        if (fs.existsSync(dbPath)) fs.copyFileSync(dbPath, aside);
+        fs.writeFileSync(dbPath, plainBytes, { mode: 384 });
+        dropJournal();
+      } catch (e) {
+        rollBack(e);
         throw e;
       }
-      db3.open();
+      try {
+        db3.open();
+      } catch (e) {
+        rollBack(e);
+        throw new Error(`The backup could not be opened after it was restored, so the previous database was put back: ${e.message}`);
+      }
       return { ...info, previous_database_kept_at: aside };
     }
     module.exports = { create, decrypt: decrypt3, inspect, restore, backupKey };
@@ -10940,19 +11050,35 @@ var require_scheduled_backup = __commonJS({
     }
     function run2({ retain = 14, offsiteDir = "" } = {}) {
       const dir = path.join(config.dataDir, "backups");
-      fs.mkdirSync(dir, { recursive: true, mode: 448 });
-      const bytes3 = backup.create();
       const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
       const file = path.join(dir, `suds-${stamp2}.db.enc`);
-      fs.writeFileSync(file, bytes3, { mode: 384 });
+      let bytes3;
       let verified = false;
       let verifyError = null;
+      let kept = 0;
       try {
-        const info = backup.inspect(backup.decrypt(fs.readFileSync(file)));
-        verified = info.counts.clients >= 0;
+        fs.mkdirSync(dir, { recursive: true, mode: 448 });
+        prune(dir, Math.max(0, retain - 1));
+        bytes3 = backup.create();
+        fs.writeFileSync(file, bytes3, { mode: 384 });
+        try {
+          const info = backup.inspect(backup.decrypt(fs.readFileSync(file)));
+          verified = info.counts.clients >= 0;
+        } catch (e) {
+          verifyError = String(e && e.message || e);
+          console.error("[suds] backup written but could not be read back:", verifyError);
+        }
       } catch (e) {
-        verifyError = String(e && e.message || e);
-        console.error("[suds] backup written but could not be read back:", verifyError);
+        const reason = e && e.code === "ENOSPC" ? `no space left on the disk holding ${dir}` : String(e && e.message || e);
+        try {
+          fs.unlinkSync(file);
+        } catch {
+        }
+        console.error("[suds] scheduled backup failed:", reason);
+        db3.setSetting("last_scheduled_backup_at", db3.now());
+        db3.setSetting("last_scheduled_backup_status", `failed: ${reason}`);
+        audit3.log({ user: { username: "system" }, action: "backup.scheduled", success: false, details: { error: reason, code: e && e.code || void 0 } });
+        return { file: null, bytes: 0, offsiteOk: null, verified: false, verifyError: reason, failed: true, error: reason };
       }
       let offsiteOk = null;
       if (offsiteDir) {
@@ -10965,7 +11091,7 @@ var require_scheduled_backup = __commonJS({
           console.error("[suds] offsite backup copy failed:", e && e.message || e);
         }
       }
-      const kept = prune(dir, retain);
+      kept = prune(dir, retain);
       db3.setSetting("last_scheduled_backup_at", db3.now());
       db3.setSetting("last_scheduled_backup_status", !verified ? `backup written but could not be read back \u2014 ${verifyError}` : offsiteDir && offsiteOk === false ? "ok (verified) \u2014 offsite copy failed, local backup kept" : "ok (verified)");
       audit3.log({ user: { username: "system" }, action: "backup.scheduled", details: { bytes: bytes3.length, offsite: offsiteDir ? offsiteOk : null, kept, verified } });
@@ -11767,9 +11893,20 @@ var require_budget = __commonJS({
     var audit3 = require_audit();
     var crud = require_crud();
     var C = require_constants();
-    var { badRequest, notFound } = require_http();
+    var config = require_config();
+    var { badRequest, notFound, HttpError: HttpError3 } = require_http();
     var { validate } = require_validate();
     var { uuid: uuid2 } = require_crypto();
+    var cents = (v) => typeof v === "number" && Number.isFinite(v) ? Math.round(v * 100) / 100 : v;
+    function localDate(when = /* @__PURE__ */ new Date(), tz = config.orgTimezone) {
+      const d = when instanceof Date ? when : new Date(when);
+      if (!Number.isFinite(d.getTime())) return null;
+      try {
+        return new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+      } catch {
+        return d.toISOString().slice(0, 10);
+      }
+    }
     var fundShape = {
       name: { type: "string", required: true, maxLen: 200 },
       source_type: { type: "string", enum: C.FUNDING_TYPES },
@@ -11797,12 +11934,12 @@ var require_budget = __commonJS({
           subtreeSpent += c.subtree_spent;
           subtreePending += c.subtree_pending;
         }
-        l.subtree_spent = subtreeSpent;
-        l.subtree_pending = subtreePending;
-        l.subtree_remaining = l.allocated_amount - subtreeSpent - subtreePending;
-        l.child_allocated = l.children.reduce((s, c) => s + c.allocated_amount, 0);
-        l.unallocated = l.allocated_amount - l.child_allocated;
-        l.available = l.allocated_amount - l.child_allocated - l.spent - l.pending;
+        l.subtree_spent = cents(subtreeSpent);
+        l.subtree_pending = cents(subtreePending);
+        l.subtree_remaining = cents(l.allocated_amount - subtreeSpent - subtreePending);
+        l.child_allocated = cents(l.children.reduce((s, c) => s + c.allocated_amount, 0));
+        l.unallocated = cents(l.allocated_amount - l.child_allocated);
+        l.available = cents(l.allocated_amount - l.child_allocated - l.spent - l.pending);
       };
       for (const r of roots) rollup(r);
       return roots;
@@ -11820,19 +11957,26 @@ var require_budget = __commonJS({
     }
     function assertInPeriod(fund, date, what) {
       if (!date) return;
-      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const today = localDate();
       if (date > today) throw badRequest(`${what} is in the future (${date})`);
       if (fund && (fund.fiscal_year_start && date < fund.fiscal_year_start || fund.fiscal_year_end && date > fund.fiscal_year_end)) {
         throw badRequest(`${what} ${date} is outside the period of ${fund.name} (${fund.fiscal_year_start} to ${fund.fiscal_year_end}). Charge it to the fund that covers that date.`);
       }
     }
+    function lineAvailable(lineId, { excluding = null } = {}) {
+      const l = db3.one(`SELECT * FROM budget_lines WHERE id=?`, lineId);
+      if (!l) return null;
+      const child = db3.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE parent_id=?`, lineId).n;
+      const spent = db3.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE budget_line_id=? AND status IN ('approved','reimbursed') AND id<>?`, lineId, excluding || "").n;
+      return cents(l.allocated_amount - child - spent);
+    }
     function fundSummary(f) {
-      const spent = db3.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE funding_source_id=? AND status IN ('approved','reimbursed')`, f.id).n;
-      const pending = db3.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE funding_source_id=? AND status='pending'`, f.id).n;
+      const spent = db3.one(`SELECT ROUND(COALESCE(SUM(amount),0),2) n FROM expenditures WHERE funding_source_id=? AND status IN ('approved','reimbursed')`, f.id).n;
+      const pending = db3.one(`SELECT ROUND(COALESCE(SUM(amount),0),2) n FROM expenditures WHERE funding_source_id=? AND status='pending'`, f.id).n;
       const staffMinutes = db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE funding_source_id=?`, f.id).n;
       const staffMinutesApproved = db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE funding_source_id=? AND status='approved'`, f.id).n;
-      const staffCost = db3.one(`SELECT COALESCE(SUM(t.minutes/60.0*COALESCE(u.hourly_cost,0)),0) n FROM time_entries t JOIN users u ON u.id=t.user_id WHERE t.funding_source_id=?`, f.id).n;
-      const flatLines = db3.all(`SELECT b.*, (SELECT COALESCE(SUM(amount),0) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status IN ('approved','reimbursed')) AS spent, (SELECT COALESCE(SUM(amount),0) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status='pending') AS pending FROM budget_lines b WHERE b.funding_source_id=? ORDER BY category`, f.id);
+      const staffCost = db3.one(`SELECT ROUND(COALESCE(SUM(t.minutes/60.0*COALESCE(u.hourly_cost,0)),0),2) n FROM time_entries t JOIN users u ON u.id=t.user_id WHERE t.funding_source_id=?`, f.id).n;
+      const flatLines = db3.all(`SELECT b.*, (SELECT ROUND(COALESCE(SUM(amount),0),2) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status IN ('approved','reimbursed')) AS spent, (SELECT ROUND(COALESCE(SUM(amount),0),2) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status='pending') AS pending FROM budget_lines b WHERE b.funding_source_id=? ORDER BY category`, f.id);
       const allocated = flatLines.filter((l) => !l.parent_id).reduce((s, l) => s + l.allocated_amount, 0);
       const lines = buildLineTree(flatLines);
       const totalDays = Math.max(1, (Date.parse(f.fiscal_year_end) - Date.parse(f.fiscal_year_start)) / 864e5);
@@ -11844,9 +11988,9 @@ var require_budget = __commonJS({
         staff_minutes: staffMinutes,
         staff_minutes_approved: staffMinutesApproved,
         staff_cost: staffCost,
-        allocated,
-        unallocated: f.total_amount - allocated,
-        remaining: f.total_amount - spent - pending,
+        allocated: cents(allocated),
+        unallocated: cents(f.total_amount - allocated),
+        remaining: cents(f.total_amount - spent - pending),
         pct_spent: f.total_amount ? spent / f.total_amount * 100 : 0,
         pct_elapsed: elapsed / totalDays * 100,
         lines
@@ -11953,6 +12097,7 @@ var require_budget = __commonJS({
           }
         },
         beforeInsert: (ctx, v) => {
+          v.amount = cents(v.amount);
           const f = db3.one(`SELECT * FROM funding_sources WHERE id=? AND is_active=1`, v.funding_source_id);
           if (!f) throw badRequest("Unknown or inactive funding source");
           assertInPeriod(f, v.spent_at, "Expenditure date");
@@ -11962,33 +12107,67 @@ var require_budget = __commonJS({
             if (!v.category) v.category = l.category;
           }
         },
+        beforeUpdate: (ctx, v) => {
+          if (v.amount !== void 0 && v.amount !== null) v.amount = cents(v.amount);
+        },
         canEdit: (ctx, row) => row.status === "pending" && (row.user_id === ctx.user.id || auth3.hasPerm(ctx.user, "budget:approve"))
       });
+      const TRANSITIONS = { pending: ["approved", "rejected"], approved: ["reimbursed"] };
       r.post("/api/budget/expenditures/:id/approve", auth3.requireAuth, auth3.requirePerm("budget:approve"), (ctx) => {
         const e = db3.one(`SELECT * FROM expenditures WHERE id=?`, ctx.params.id);
         if (!e) throw notFound();
-        const { status, note } = validate(ctx.body, { status: { type: "string", required: true, enum: ["approved", "rejected", "reimbursed"] }, note: { type: "string", maxLen: 500 } });
+        const { status, note, force } = validate(ctx.body, { status: { type: "string", required: true, enum: ["approved", "rejected", "reimbursed"] }, note: { type: "string", maxLen: 500 }, force: { type: "boolean" } });
+        if (!(TRANSITIONS[e.status] || []).includes(status)) {
+          const by = e.approved_by ? db3.one(`SELECT display_name FROM users WHERE id=?`, e.approved_by) : null;
+          throw new HttpError3(409, `This expenditure is already ${e.status}${by ? ` (by ${by.display_name})` : ""}; it cannot be marked ${status}`, { current_status: e.status, approved_by: e.approved_by || null });
+        }
         if (e.user_id === ctx.user.id && status === "approved" && ctx.user.role !== "admin") throw badRequest("Separation of duties: you cannot approve your own expenditure");
         if (status === "rejected" && !note) throw badRequest("Say why this expenditure is being rejected, so the person who submitted it knows what to fix");
-        db3.run(`UPDATE expenditures SET status=?, approved_by=?, approved_at=?, approval_note=?, updated_at=? WHERE id=?`, status, ctx.user.id, db3.now(), note || null, db3.now(), e.id);
-        audit3.log({ user: ctx.user, action: `expenditure.${status}`, entity: "expenditure", entityId: e.id, clientId: e.client_id, ip: ctx.ip, details: { note, amount: e.amount } });
-        return { ok: true };
+        const details = { note, amount: e.amount };
+        if (status === "approved" && e.budget_line_id) {
+          const available = lineAvailable(e.budget_line_id, { excluding: e.id });
+          if (available !== null && cents(e.amount) > available) {
+            const over = cents(e.amount - available);
+            const line = db3.one(`SELECT label, category FROM budget_lines WHERE id=?`, e.budget_line_id);
+            const mayForce = ["supervisor", "admin"].includes(ctx.user.role);
+            if (!(force && note && mayForce)) {
+              throw new HttpError3(
+                409,
+                `Approving ${e.amount.toFixed(2)} would take ${line.label || line.category} ${over.toFixed(2)} below zero (${available.toFixed(2)} available)${mayForce ? ". Approve it anyway with force and a note saying why." : ". Ask a supervisor to approve it, or move it to a line with room."}`,
+                { overspend: true, available, over, force_allowed: mayForce }
+              );
+            }
+            details.overspend = over;
+            details.forced = true;
+          }
+        }
+        if (status === "reimbursed") {
+          db3.run(`UPDATE expenditures SET status=?, approval_note=COALESCE(?, approval_note), updated_at=? WHERE id=?`, status, note || null, db3.now(), e.id);
+          details.reimbursed_by = ctx.user.id;
+        } else {
+          db3.run(`UPDATE expenditures SET status=?, approved_by=?, approved_at=?, approval_note=?, updated_at=? WHERE id=?`, status, ctx.user.id, db3.now(), note || null, db3.now(), e.id);
+        }
+        audit3.log({ user: ctx.user, action: `expenditure.${status}`, entity: "expenditure", entityId: e.id, clientId: e.client_id, ip: ctx.ip, details });
+        return { ok: true, status };
       });
       r.get("/api/budget/summary", auth3.requireAuth, auth3.requirePerm("budget:read"), () => {
         const funds = db3.all(`SELECT * FROM funding_sources WHERE is_active=1`).map(fundSummary);
         return {
-          totals: { budget: funds.reduce((s, f) => s + f.total_amount, 0), spent: funds.reduce((s, f) => s + f.spent, 0), pending: funds.reduce((s, f) => s + f.pending, 0), remaining: funds.reduce((s, f) => s + f.remaining, 0) },
-          by_category: db3.all(`SELECT category, SUM(amount) amount, COUNT(*) n FROM expenditures WHERE status IN ('approved','reimbursed') GROUP BY category ORDER BY amount DESC`),
+          totals: { budget: cents(funds.reduce((s, f) => s + f.total_amount, 0)), spent: cents(funds.reduce((s, f) => s + f.spent, 0)), pending: cents(funds.reduce((s, f) => s + f.pending, 0)), remaining: cents(funds.reduce((s, f) => s + f.remaining, 0)) },
+          by_category: db3.all(`SELECT category, ROUND(SUM(amount),2) amount, COUNT(*) n FROM expenditures WHERE status IN ('approved','reimbursed') GROUP BY category ORDER BY amount DESC`),
           // Approved and reimbursed only, the same as the headline "Spent (approved)" figure above it: the two
           // used to differ by whatever was still pending, on the same page.
-          by_month: db3.all(`SELECT substr(spent_at,1,7) month, SUM(amount) amount FROM expenditures WHERE status IN ('approved','reimbursed') GROUP BY month ORDER BY month`),
-          per_client: db3.one(`SELECT COUNT(DISTINCT client_id) clients, COALESCE(SUM(amount),0) amount FROM expenditures WHERE client_id IS NOT NULL AND status IN ('approved','reimbursed')`),
+          by_month: db3.all(`SELECT substr(spent_at,1,7) month, ROUND(SUM(amount),2) amount FROM expenditures WHERE status IN ('approved','reimbursed') GROUP BY month ORDER BY month`),
+          per_client: db3.one(`SELECT COUNT(DISTINCT client_id) clients, ROUND(COALESCE(SUM(amount),0),2) amount FROM expenditures WHERE client_id IS NOT NULL AND status IN ('approved','reimbursed')`),
           funds
         };
       });
     };
     module.exports.wouldCycle = wouldCycle;
     module.exports.assertInPeriod = assertInPeriod;
+    module.exports.localDate = localDate;
+    module.exports.cents = cents;
+    module.exports.lineAvailable = lineAvailable;
   }
 });
 
@@ -12841,10 +13020,13 @@ var require_spreadsheet = __commonJS({
       }
       return rows.filter((r) => r.some((v) => String(v).trim() !== ""));
     }
+    var FORMULA_START = /^[=+\-@\t\r]/;
     function toCsv(rows, columns) {
       const esc = (v) => {
         if (v === null || v === void 0) return "";
-        const t = typeof v === "object" ? JSON.stringify(v) : String(v);
+        if (typeof v === "number") return Number.isFinite(v) ? String(v) : "";
+        let t = typeof v === "object" ? JSON.stringify(v) : String(v);
+        if (FORMULA_START.test(t)) return `"'` + t.replace(/"/g, '""') + '"';
         return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
       };
       return "\uFEFF" + [columns.map((c) => esc(c.label || c.key || c)).join(","), ...rows.map((r) => columns.map((c) => esc(r[c.key || c])).join(","))].join("\r\n");
@@ -13291,14 +13473,20 @@ var require_dataimport2 = __commonJS({
     var S = require_spreadsheet();
     var DI = require_dataimport();
     var { badRequest, notFound, forbidden } = require_http();
-    var { encrypt: encrypt3, blindIndex: blindIndex2, uuid: uuid2 } = require_crypto();
+    var { encrypt: encrypt3, blindIndex: blindIndex2, uuid: uuid2, sha256: sha2562 } = require_crypto();
     var M = require_clients_model();
+    function rowHash(entity, rec) {
+      const def = DI.ENTITIES[entity];
+      const keys = [...def.fields.map((f) => f.key), "client_id", "funding_source_id"].filter((k) => k !== "client_ref" && rec[k] !== void 0 && rec[k] !== null && rec[k] !== "").sort();
+      return sha2562(JSON.stringify([entity, keys.map((k) => [k, String(rec[k])])]));
+    }
     var permFor = (entity) => ({ clients: "clients:write", resources: "resources:write", interventions: "interventions:write", calls: "calls:write", time_entries: "time:write", tasks: "tasks:write", expenditures: "budget:write" })[entity];
     module.exports = (r) => {
       r.get("/api/imports/data/entities", auth3.requireAuth, (ctx) => ({ entities: Object.entries(DI.ENTITIES).filter(([k]) => auth3.hasPerm(ctx.user, permFor(k))).map(([k, e]) => ({ key: k, label: e.label, fields: e.fields.map((f) => ({ key: f.key, label: f.label, required: !!f.required, help: f.help || null })) })) }));
-      r.get("/api/imports/data/template/:entity", auth3.requireAuth, (ctx) => {
+      r.get("/api/imports/data/template/:entity", auth3.requireAuth, auth3.requirePerm("imports:read"), (ctx) => {
         const def = DI.ENTITIES[ctx.params.entity];
         if (!def) throw notFound();
+        if (!auth3.hasPerm(ctx.user, permFor(ctx.params.entity))) throw forbidden();
         const example = { clients: { first_name: "Jane", last_name: "Doe", dob: "1990-05-01", phone: "555-0100", status: "active", intake_date: "2026-09-01", primary_substance: "opioids_fentanyl", risk_level: "high" }, resources: { name: "County Opioid Treatment Program", category: "mat_otp", phone: "555-0200", accepts_medicaid: "yes" }, interventions: { client_ref: "C26-0001", occurred_at: "2026-09-10 14:00", type: "outreach", duration_minutes: 30, location: "field" }, calls: { client_ref: "C26-0001", started_at: "2026-09-10 09:15", direction: "outbound", contact_type: "client", duration_minutes: 10, outcome: "reached" }, time_entries: { work_date: "2026-09-10", minutes: 45, category: "documentation" }, tasks: { title: "Bring ID documents", client_ref: "C26-0001", due_at: "2026-09-20", priority: "normal" }, expenditures: { spent_at: "2026-09-10", amount: 25, fund: "Opioid Settlement \u2013 Navigation FY26", category: "transportation", client_ref: "C26-0001", vendor: "Metro Transit" } }[ctx.params.entity] || {};
         const fmt = ctx.query.get("format") === "csv" ? "csv" : "xlsx";
         const columns = def.fields.map((f) => ({ key: f.key, label: f.label + (f.required ? " *" : ""), width: 18 }));
@@ -13365,8 +13553,9 @@ var require_dataimport2 = __commonJS({
         if (!auth3.hasPerm(ctx.user, permFor(entity))) throw forbidden();
         if (!Array.isArray(records) || !records.length) throw badRequest("No rows to import");
         if (records.length > 2e3) throw badRequest("Import at most 2000 rows at a time");
-        let created = 0, skipped = 0;
+        let created = 0, skipped = 0, skippedDuplicates = 0;
         const errors = [];
+        const imported = [];
         db3.transaction(() => {
           records.forEach((rec, i) => {
             try {
@@ -13376,6 +13565,11 @@ var require_dataimport2 = __commonJS({
                 rec.client_id = id2 || null;
               }
               if (rec.client_id) auth3.assertClientAccess(ctx, rec.client_id);
+              const hash2 = rowHash(entity, rec);
+              if (db3.one(`SELECT 1 FROM import_rows WHERE row_hash=?`, hash2)) {
+                skippedDuplicates++;
+                return;
+              }
               const id = uuid2();
               const now = db3.now();
               switch (entity) {
@@ -13427,14 +13621,16 @@ var require_dataimport2 = __commonJS({
                 }
               }
               created++;
+              imported.push([hash2, id]);
             } catch (e) {
               errors.push({ n: rec._n || i + 1, error: e.message });
             }
           });
           if (errors.length && !ctx.body.partial) throw badRequest(`${errors.length} row(s) could not be imported; nothing was saved`, { rows: errors });
+          for (const [hash2, id] of imported) db3.run(`INSERT OR IGNORE INTO import_rows(row_hash,entity,record_id,imported_by) VALUES(?,?,?,?)`, hash2, entity, id, ctx.user.id);
         });
-        audit3.log({ user: ctx.user, action: "import.data.commit", ip: ctx.ip, details: { entity, created, skipped, errors: errors.length } });
-        return { created, skipped, errors };
+        audit3.log({ user: ctx.user, action: "import.data.commit", ip: ctx.ip, details: { entity, created, skipped, skipped_duplicates: skippedDuplicates, errors: errors.length } });
+        return { created, skipped, skipped_duplicates: skippedDuplicates, errors };
       });
     };
   }
@@ -15018,16 +15214,26 @@ var require_supplies = __commonJS({
     var { uuid: uuid2 } = require_crypto();
     var DRAWDOWN = { naloxone_kits: "Naloxone kit", fentanyl_strips: "Fentanyl test strips" };
     var list = () => db3.all(`SELECT s.*, u.display_name AS updated_by_name FROM supply_stock s LEFT JOIN users u ON u.id=s.updated_by ORDER BY s.item COLLATE NOCASE`);
-    function drawDown(ctx, row, prev = null) {
+    function applyDelta(ctx, deltas, { intervention = null, action = "supply.drawdown" } = {}) {
       for (const [col, item] of Object.entries(DRAWDOWN)) {
-        const delta = Number(row[col] || 0) - Number(prev ? prev[col] || 0 : 0);
+        const delta = Number(deltas[col] || 0);
         if (!delta) continue;
         const s = db3.one(`SELECT * FROM supply_stock WHERE item=? COLLATE NOCASE`, item);
         if (!s) continue;
-        const q = Math.max(0, s.quantity - delta);
+        const q = Math.max(0, s.quantity + delta);
         db3.run(`UPDATE supply_stock SET quantity=?, updated_by=?, updated_at=? WHERE id=?`, q, ctx.user.id, db3.now(), s.id);
-        audit3.log({ user: ctx.user, action: "supply.drawdown", entity: "supply_stock", entityId: s.id, ip: ctx.ip, details: { item, delta: -delta, quantity: q, intervention: row.id } });
+        audit3.log({ user: ctx.user, action, entity: "supply_stock", entityId: s.id, ip: ctx.ip, details: { item, delta, quantity: q, intervention } });
       }
+    }
+    function drawDown(ctx, row, prev = null) {
+      const deltas = {};
+      for (const col of Object.keys(DRAWDOWN)) deltas[col] = -(Number(row[col] || 0) - Number(prev ? prev[col] || 0 : 0));
+      applyDelta(ctx, deltas, { intervention: row.id });
+    }
+    function restore(ctx, row) {
+      const deltas = {};
+      for (const col of Object.keys(DRAWDOWN)) deltas[col] = Number(row[col] || 0);
+      applyDelta(ctx, deltas, { intervention: row.id, action: "supply.restore" });
     }
     module.exports = (r) => {
       r.get("/api/supplies", auth3.requireAuth, () => ({ rows: list(), drawdown: DRAWDOWN }));
@@ -15066,6 +15272,8 @@ var require_supplies = __commonJS({
       });
     };
     module.exports.drawDown = drawDown;
+    module.exports.restore = restore;
+    module.exports.applyDelta = applyDelta;
     module.exports.DRAWDOWN = DRAWDOWN;
   }
 });
@@ -15082,6 +15290,10 @@ var require_interventions = __commonJS({
     var { badRequest, forbidden } = require_http();
     var { uuid: uuid2 } = require_crypto();
     var supplies = require_supplies();
+    var { localDate, cents } = require_budget();
+    function serviceDate(v) {
+      return v._service_date || localDate(v.occurred_at);
+    }
     function checkCost(ctx, v) {
       if (("cost" in v || "funding_source_id" in v || "budget_line_id" in v) && !auth3.hasPerm(ctx.user, "budget:write")) throw forbidden("You do not have permission to attach a cost to a funding source");
       if (v.cost && v.cost > 0) {
@@ -15089,7 +15301,7 @@ var require_interventions = __commonJS({
         if (!v.budget_line_id) throw badRequest("A budget line is required when a cost is entered, so it is deducted from the right allocation");
         const line = db3.one(`SELECT * FROM budget_lines WHERE id=? AND funding_source_id=?`, v.budget_line_id, v.funding_source_id);
         if (!line) throw badRequest("Budget line does not belong to the selected funding source");
-        if (v.occurred_at) require_budget().assertInPeriod(db3.one(`SELECT * FROM funding_sources WHERE id=?`, v.funding_source_id), String(v.occurred_at).slice(0, 10), "Date of service");
+        if (v.occurred_at) require_budget().assertInPeriod(db3.one(`SELECT * FROM funding_sources WHERE id=?`, v.funding_source_id), serviceDate(v), "Date of service");
         return line;
       }
       if (v.budget_line_id && !v.funding_source_id) throw badRequest("A funding source is required when a budget line is selected");
@@ -15109,14 +15321,14 @@ var require_interventions = __commonJS({
       const line = db3.one(`SELECT * FROM budget_lines WHERE id=? AND funding_source_id=?`, row.budget_line_id, row.funding_source_id);
       if (!line) return;
       const desc = `Auto-recorded from ${row.type.replace(/_/g, " ")}`;
-      const spentAt = row.occurred_at.slice(0, 10);
+      const spentAt = serviceDate(row);
       if (existing) db3.run(
         `UPDATE expenditures SET funding_source_id=?, budget_line_id=?, client_id=?, spent_at=?, amount=?, category=?, description=?, updated_at=? WHERE id=?`,
         row.funding_source_id,
         row.budget_line_id,
         row.client_id || null,
         spentAt,
-        row.cost,
+        cents(row.cost),
         line.category,
         desc,
         db3.now(),
@@ -15131,7 +15343,7 @@ var require_interventions = __commonJS({
         row.user_id,
         row.id,
         spentAt,
-        row.cost,
+        cents(row.cost),
         line.category,
         desc
       );
@@ -15182,7 +15394,9 @@ var require_interventions = __commonJS({
           summary: { type: "string", maxLen: 2e3 },
           follow_up_due: { type: "date" },
           log_time: { type: "boolean" },
-          time_category: { type: "string", enum: C.TIME_CATEGORIES }
+          time_category: { type: "string", enum: C.TIME_CATEGORIES },
+          // Optional: the calendar date the service belongs to, when it is not the org-timezone date of occurred_at.
+          service_date: { type: "date" }
         },
         filters: (ctx, where, params) => {
           const t = ctx.query.get("type");
@@ -15197,14 +15411,20 @@ var require_interventions = __commonJS({
           delete v.log_time;
           v._time_category = v.time_category;
           delete v.time_category;
+          v._service_date = v.service_date || null;
+          delete v.service_date;
+          if (v.cost !== void 0 && v.cost !== null) v.cost = cents(v.cost);
           encodeSummary(v);
           checkCost(ctx, v);
         },
         beforeUpdate: (ctx, v, row) => {
           delete v.log_time;
           delete v.time_category;
+          v._service_date = v.service_date || null;
+          delete v.service_date;
+          if (v.cost !== void 0 && v.cost !== null) v.cost = cents(v.cost);
           encodeSummary(v);
-          if ("cost" in v || "funding_source_id" in v || "budget_line_id" in v) checkCost(ctx, { funding_source_id: row.funding_source_id, budget_line_id: row.budget_line_id, cost: row.cost, occurred_at: row.occurred_at, ...v });
+          if ("cost" in v || "funding_source_id" in v || "budget_line_id" in v || "occurred_at" in v) checkCost(ctx, { funding_source_id: row.funding_source_id, budget_line_id: row.budget_line_id, cost: row.cost, occurred_at: row.occurred_at, ...v });
         },
         afterInsert: (ctx, row) => {
           if (row._log_time && row.duration_minutes > 0) {
@@ -15213,7 +15433,7 @@ var require_interventions = __commonJS({
               uuid2(),
               row.user_id,
               row.client_id,
-              row.occurred_at.slice(0, 10),
+              serviceDate(row),
               row.duration_minutes,
               row._time_category || "direct_service",
               row.funding_source_id || null,
@@ -15221,7 +15441,7 @@ var require_interventions = __commonJS({
               row.type.replace(/_/g, " ")
             );
           }
-          if (row.naloxone_kits > 0 && row.client_id) db3.run(`UPDATE clients SET naloxone_provided=1, naloxone_last_date=?, updated_at=? WHERE id=?`, row.occurred_at.slice(0, 10), db3.now(), row.client_id);
+          if (row.naloxone_kits > 0 && row.client_id) db3.run(`UPDATE clients SET naloxone_provided=1, naloxone_last_date=?, updated_at=? WHERE id=?`, serviceDate(row), db3.now(), row.client_id);
           if (row.follow_up_due && row.client_id) db3.run(
             `INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority) VALUES(?,?,?,?,?,?,?)`,
             uuid2(),
@@ -15247,6 +15467,7 @@ var require_interventions = __commonJS({
             db3.run(`DELETE FROM expenditures WHERE id=?`, existing.id);
             db3.tombstone("expenditures", existing.id);
           }
+          supplies.restore(ctx, row);
         },
         canEdit: crud.ownerOrManager()
       });
@@ -15267,23 +15488,31 @@ var require_tasks = __commonJS({
     var { encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
     var audit3 = require_audit();
     var { withClientName, SELECT: NAME_COLS } = require_client_name();
+    var { localDate } = require_budget();
     function dueTasks(ctx, within) {
       const cf = auth3.caseloadFilter(ctx.user, "tasks.client_id");
-      const horizon = new Date(Date.now() + within * 6e4).toISOString();
+      const horizonMs = Date.now() + within * 6e4;
+      const horizon = new Date(horizonMs).toISOString();
+      const horizonDay = localDate(new Date(horizonMs));
       const rows = db3.all(`SELECT tasks.*, c.client_code, ${NAME_COLS} FROM tasks LEFT JOIN clients c ON c.id=tasks.client_id
     WHERE tasks.assigned_to=? AND tasks.status IN ('open','in_progress') AND tasks.due_at IS NOT NULL
-      AND (CASE WHEN length(tasks.due_at)=10 THEN tasks.due_at <= date(?,'localtime') ELSE tasks.due_at <= ? END)
+      AND (CASE WHEN length(tasks.due_at)=10 THEN tasks.due_at <= ? ELSE tasks.due_at <= ? END)
       AND (tasks.client_id IS NULL OR ${cf.sql})
-    ORDER BY tasks.due_at LIMIT 50`, ctx.user.id, horizon, horizon, ...cf.params);
+    ORDER BY tasks.due_at LIMIT 50`, ctx.user.id, horizonDay, horizon, ...cf.params);
       const now = db3.now();
-      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const today = localDate();
       return rows.map((x) => withClientName(ctx, x)).map((x) => ({ ...x, title: x.title_enc ? decrypt3(x.title_enc) : "", title_enc: void 0, overdue: x.due_at.length === 10 ? x.due_at < today : x.due_at < now }));
     }
+    var lastDue = /* @__PURE__ */ new Map();
     module.exports = (r) => {
       r.get("/api/tasks/due", auth3.requireAuth, auth3.requirePerm("tasks:read", "tasks:write"), (ctx) => {
         const within = Math.min(24 * 60, Math.max(0, Number(ctx.query.get("within") || 60)));
         const rows = dueTasks(ctx, within);
-        audit3.log({ user: ctx.user, action: "task.due", ip: ctx.ip, details: { within, count: rows.length } });
+        const signature = `${within}|${rows.map((x) => `${x.id}:${x.overdue ? 1 : 0}`).join(",")}`;
+        if (lastDue.get(ctx.user.id) !== signature) {
+          lastDue.set(ctx.user.id, signature);
+          audit3.log({ user: ctx.user, action: "task.due", ip: ctx.ip, details: { within, count: rows.length } });
+        }
         return { rows, within, overdue: rows.filter((x) => x.overdue).length, due_soon: rows.filter((x) => !x.overdue).length };
       });
       crud.build(r, {
@@ -15316,8 +15545,8 @@ var require_tasks = __commonJS({
             params.push(s);
           }
           if (ctx.query.get("overdue") === "1") {
-            where.push(`tasks.status IN ('open','in_progress') AND (CASE WHEN length(tasks.due_at)=10 THEN tasks.due_at < date('now','localtime') ELSE tasks.due_at < ? END)`);
-            params.push(db3.now());
+            where.push(`tasks.status IN ('open','in_progress') AND (CASE WHEN length(tasks.due_at)=10 THEN tasks.due_at < ? ELSE tasks.due_at < ? END)`);
+            params.push(localDate(), db3.now());
           }
           if (ctx.query.get("milestones") === "1") where.push("tasks.is_milestone=1");
         },
@@ -19788,6 +20017,27 @@ var require_exports = __commonJS({
       }
       return o;
     }
+    var DEID_COLUMNS = {
+      clients: ["client_code", "age_band", "status", "intake_date", "discharge_date", "discharge_reason", "referral_source", "referral_date", "engagement_date", "days_to_engagement", "primary_substance", "secondary_substances", "asam_level", "mat_status", "mat_medication", "risk_level", "housing_status", "insurance", "overdose_history", "naloxone_provided", "naloxone_last_date", "co_occurring_mh", "justice_involved", "pregnant_or_parenting", "zip", "gender", "preferred_language"],
+      interventions: ["occurred_at", "client_code", "type", "duration_minutes", "modality", "outcome", "stage_of_change", "naloxone_kits", "fentanyl_strips", "worker", "funding_source", "cost", "follow_up_due"],
+      calls: ["started_at", "client_code", "direction", "contact_type", "duration_minutes", "outcome", "crisis", "follow_up_needed", "follow_up_due", "worker"],
+      time: ["work_date", "worker", "client_code", "category", "minutes", "billable", "funding_source"],
+      referrals: ["referred_at", "client_code", "resource", "category", "status", "urgency", "warm_handoff", "appointment_at", "admitted_at", "closed_at", "worker"],
+      tasks: ["client_code", "assignee", "due_at", "priority", "status", "is_milestone", "completed_at"],
+      forms: ["created_at", "client_code", "template_name", "status", "completed_at", "completed_by", "created_by", "attachments"],
+      consents: ["client_code", "type", "signed_at", "expires_at", "expires_event", "revoked_at", "redisclosure_notice_given"],
+      disclosures: ["client_code", "disclosed_at", "method", "basis", "source", "disclosed_by"],
+      episodes: ["client_code", "opened_at", "closed_at", "status", "referral_source", "discharge_reason", "discharge_disposition", "funding_source"],
+      overdose_events: ["occurred_at", "client_code", "kind", "naloxone_used", "naloxone_doses", "administered_by", "ems_called", "hospitalized", "survived", "location_type"],
+      expenditures: ["spent_at", "fund", "line", "category", "amount", "status", "client_code", "worker", "approver"]
+    };
+    function projectRow(r, cols2) {
+      const o = {};
+      for (const c of cols2) if (c in r) o[c] = r[c];
+      if (r._client_id !== void 0) o._client_id = r._client_id;
+      return o;
+    }
+    var cents = (v) => typeof v === "number" && Number.isFinite(v) ? Math.round(v * 100) / 100 : v;
     function datasets(ctx, { from, to, toEnd, identified }) {
       const cf = auth3.caseloadFilter(ctx.user, "c.id");
       const all = auth3.hasPerm(ctx.user, "time:all") ? 1 : 0;
@@ -19863,15 +20113,19 @@ var require_exports = __commonJS({
         D.expenditures = {
           label: "Expenditures",
           columns: ["spent_at", "fund", "line", "category", "amount", "status", "client_code", "vendor", "description", "receipt_ref", "worker", "approver"],
-          rows: () => db3.all(`SELECT e.*, f.name fund, b.label line, c.client_code, e.client_id AS _client_id, u.display_name worker, a.display_name approver FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id LEFT JOIN budget_lines b ON b.id=e.budget_line_id LEFT JOIN clients c ON c.id=e.client_id JOIN users u ON u.id=e.user_id LEFT JOIN users a ON a.id=e.approved_by WHERE e.spent_at BETWEEN ? AND ? ORDER BY e.spent_at`, from, to)
+          rows: () => db3.all(`SELECT e.*, f.name fund, b.label line, c.client_code, e.client_id AS _client_id, u.display_name worker, a.display_name approver FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id LEFT JOIN budget_lines b ON b.id=e.budget_line_id LEFT JOIN clients c ON c.id=e.client_id JOIN users u ON u.id=e.user_id LEFT JOIN users a ON a.id=e.approved_by WHERE e.spent_at BETWEEN ? AND ? ORDER BY e.spent_at`, from, to).map((r) => ({ ...r, amount: cents(r.amount) }))
         };
       }
-      for (const d of Object.values(D)) {
+      for (const [kind, d] of Object.entries(D)) {
         const raw = d.rows;
-        d.rows = () => {
-          const rows = raw();
-          return identified || d.noClients ? rows : rows.map(deidentifyRow);
-        };
+        if (identified || d.noClients) {
+          d.rows = raw;
+          continue;
+        }
+        const allowed = DEID_COLUMNS[kind];
+        if (!allowed) throw new Error(`No de-identified column list is defined for the ${kind} dataset`);
+        d.columns = d.columns.filter((c) => allowed.includes(c));
+        d.rows = () => raw().map((r) => projectRow(deidentifyRow(r), allowed));
       }
       return D;
     }
@@ -19885,7 +20139,7 @@ var require_exports = __commonJS({
         return o;
       });
     }
-    module.exports = { datasets, ageBand, deidentifyRow, clientIdsOf, publicRows, DEID_LABEL };
+    module.exports = { datasets, ageBand, deidentifyRow, clientIdsOf, publicRows, DEID_LABEL, DEID_COLUMNS, cents };
   }
 });
 
@@ -19921,7 +20175,7 @@ var require_reports = __commonJS({
           const [q, a] = expand(sql, p);
           return db3.one(q, ...a);
         };
-        const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        const today = require_budget().localDate();
         const out2 = {
           from,
           to,
@@ -19965,7 +20219,7 @@ var require_reports = __commonJS({
           },
           tasks: {
             open: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (assigned_to=? OR ?)`, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n,
-            overdue: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (CASE WHEN length(due_at)=10 THEN due_at < date('now','localtime') ELSE due_at < ? END) AND (assigned_to=? OR ?)`, db3.now(), ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n,
+            overdue: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (CASE WHEN length(due_at)=10 THEN due_at < ? ELSE due_at < ? END) AND (assigned_to=? OR ?)`, today, db3.now(), ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n,
             due_today: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND substr(due_at,1,10)=? AND (assigned_to=? OR ?)`, today, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n
           },
           time: auth3.hasPerm(ctx.user, "time:read") || auth3.hasPerm(ctx.user, "time:write") ? {
@@ -19986,7 +20240,7 @@ var require_reports = __commonJS({
               staged_imports: db3.one(`SELECT COUNT(*) n FROM import_items x JOIN imports i ON i.id=x.import_id WHERE x.status='staged' AND (i.imported_by=? OR i.imported_by IS NULL OR ?)`, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n
             };
           })(),
-          budget: auth3.hasPerm(ctx.user, "budget:read") ? db3.one(`SELECT (SELECT COALESCE(SUM(total_amount),0) FROM funding_sources WHERE is_active=1) total, (SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status IN ('approved','reimbursed')) spent, (SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status='pending') pending`) : null,
+          budget: auth3.hasPerm(ctx.user, "budget:read") ? db3.one(`SELECT ROUND((SELECT COALESCE(SUM(total_amount),0) FROM funding_sources WHERE is_active=1),2) total, ROUND((SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status IN ('approved','reimbursed')),2) spent, ROUND((SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status='pending'),2) pending`) : null,
           // Scoped to active clients so this count matches what #/clients?consent_expiring=1 shows by default —
           // otherwise the badge counts a closed or inactive client's consent that the deep-linked list, filtered
           // to active, never displays.
@@ -20014,7 +20268,7 @@ var require_reports = __commonJS({
           episodes: db3.all(`SELECT substr(opened_at,1,7) month, COUNT(*) admissions, (SELECT COUNT(*) FROM episodes x WHERE substr(x.closed_at,1,7)=substr(e.opened_at,1,7)) discharges FROM episodes e WHERE opened_at >= ? GROUP BY month ORDER BY month`, s),
           unduplicated_clients: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? AND client_id IS NOT NULL GROUP BY month ORDER BY month`, s),
           mat_linkage: db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n FROM referrals r JOIN resources res ON res.id=r.resource_id WHERE res.category IN ('mat_otp','mat_obot') AND r.status IN ('admitted','completed') AND referred_at >= ? GROUP BY month ORDER BY month`, s),
-          spend: auth3.hasPerm(ctx.user, "budget:read") ? db3.all(`SELECT substr(spent_at,1,7) month, SUM(amount) amount FROM expenditures WHERE status IN ('approved','reimbursed') AND spent_at >= ? GROUP BY month ORDER BY month`, s) : [],
+          spend: auth3.hasPerm(ctx.user, "budget:read") ? db3.all(`SELECT substr(spent_at,1,7) month, ROUND(SUM(amount),2) amount FROM expenditures WHERE status IN ('approved','reimbursed') AND spent_at >= ? GROUP BY month ORDER BY month`, s) : [],
           time: db3.all(`SELECT substr(work_date,1,7) month, SUM(minutes) minutes FROM time_entries WHERE work_date >= ? GROUP BY month ORDER BY month`, s)
         };
       });
@@ -20105,11 +20359,9 @@ var require_reports = __commonJS({
         const D = X.datasets(ctx, { from, to, toEnd, identified });
         const S = require_spreadsheet();
         const disclosure = require_disclosure();
-        const accountFor = (kind, rows) => {
-          if (!identified) return 0;
-          const ids = X.clientIdsOf(rows);
-          for (const clientId of ids) disclosure.record({ clientId, recipient, purpose, what: `Identified export: ${kind} (${from} to ${to})`, method: "export", basis: "export", source: "export", sourceRef: kind, user: ctx.user, ip: ctx.ip });
-          return ids.length;
+        const accountFor = (kind, ids) => {
+          if (!identified) return [];
+          return ids.map((clientId) => disclosure.record({ clientId, recipient, purpose, what: `Identified export: ${kind} (${from} to ${to})`, method: "export", basis: "export", source: "export", sourceRef: kind, user: ctx.user, ip: ctx.ip }));
         };
         const aboutSheet = { name: "About", columns: [{ key: "k", label: "Field" }, { key: "v", label: "Value" }], rows: [
           { k: "Classification", v: identified ? `Identified export \u2014 PHI. Disclosed to: ${recipient}. Purpose: ${purpose}.` : X.DEID_LABEL },
@@ -20125,25 +20377,38 @@ var require_reports = __commonJS({
           for (const [k, v] of Object.entries(r2)) o[k] = typeof v === "string" && !RAW.has(k) && /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(v) && v.length <= 40 ? humanize(v) : v;
           return o;
         });
+        const classification = identified ? `Identified export - PHI. Disclosed to: ${recipient}. Purpose: ${purpose}. Generated ${db3.now()}.` : `${X.DEID_LABEL} Generated ${db3.now()}.`;
+        const headerSafe = (s) => String(s).replace(/[^\x20-\x7e]/g, "?").slice(0, 900);
         let body, filename, type;
         if (ctx.params.kind === "workbook") {
           const sheets = [aboutSheet];
-          let clientsDisclosed = 0;
+          const clientIds = /* @__PURE__ */ new Set();
+          let disclosuresSlot = -1;
           for (const [kind, d] of Object.entries(D)) {
+            if (kind === "disclosures") {
+              disclosuresSlot = sheets.length;
+              sheets.push(null);
+              continue;
+            }
             const rows = d.rows();
-            clientsDisclosed += accountFor(kind, rows);
+            for (const id of X.clientIdsOf(rows)) clientIds.add(id);
             sheets.push({ name: d.label, columns: d.columns.map(label), rows: pretty(X.publicRows(rows)) });
             await new Promise((resolve2) => setImmediate(resolve2));
           }
-          audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: "workbook", sheets: sheets.map((s) => [s.name, s.rows.length]), identified, from, to, clients_disclosed: identified ? clientsDisclosed : void 0 } });
+          const written = new Set(accountFor("workbook", [...clientIds]));
+          if (disclosuresSlot >= 0) {
+            const rows = D.disclosures.rows().filter((r2) => !written.has(r2.id));
+            sheets[disclosuresSlot] = { name: D.disclosures.label, columns: D.disclosures.columns.map(label), rows: pretty(X.publicRows(rows)) };
+          }
+          audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: "workbook", sheets: sheets.map((s) => [s.name, s.rows.length]), identified, from, to, clients_disclosed: identified ? clientIds.size : void 0 } });
           body = await S.writeWorkbookAsync(sheets);
-          filename = `suds-export-${from}_${to}.xlsx`;
+          filename = `suds-export-${from}_${to}-${identified ? "identified" : "deidentified"}.xlsx`;
           type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
         } else {
           const d = D[ctx.params.kind === "clients" ? "clients" : ctx.params.kind];
           if (!d) throw require_http().notFound("Unknown export");
           const raw = d.rows();
-          const clientsDisclosed = accountFor(ctx.params.kind, raw);
+          const clientsDisclosed = accountFor(ctx.params.kind, X.clientIdsOf(raw)).length;
           const rows = pretty(X.publicRows(raw));
           audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: ctx.params.kind, rows: rows.length, identified, from, to, format, clients_disclosed: identified ? clientsDisclosed : void 0 } });
           const suffix = identified ? "identified" : "deidentified";
@@ -20152,13 +20417,12 @@ var require_reports = __commonJS({
             filename = `suds-${ctx.params.kind}-${from}_${to}-${suffix}.xlsx`;
             type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
           } else {
-            const note = identified ? `# Identified export - PHI. Disclosed to: ${recipient}. Purpose: ${purpose}. Generated ${db3.now()}.` : `# ${X.DEID_LABEL} Generated ${db3.now()}.`;
-            body = note.replace(/[\r\n]+/g, " ") + "\r\n" + S.toCsv(rows, d.columns.map(label));
+            body = S.toCsv(rows, d.columns.map(label));
             filename = `suds-${ctx.params.kind}-${from}_${to}-${suffix}.csv`;
             type = "text/csv; charset=utf-8";
           }
         }
-        ctx.res.writeHead(200, { "Content-Type": type, "Content-Disposition": `attachment; filename="${filename}"` });
+        ctx.res.writeHead(200, { "Content-Type": type, "Content-Disposition": `attachment; filename="${filename}"`, "X-SUDS-Export": headerSafe(classification) });
         ctx.res.end(body);
       });
     };
@@ -21081,7 +21345,7 @@ var require_users = __commonJS({
     var auth3 = require_auth();
     var audit3 = require_audit();
     var devices = require_devices();
-    var { badRequest, notFound } = require_http();
+    var { badRequest, notFound, HttpError: HttpError3 } = require_http();
     var { validate } = require_validate();
     var { hashPassword, uuid: uuid2, randomToken } = require_crypto();
     var ROLES = ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"];
@@ -21098,7 +21362,11 @@ var require_users = __commonJS({
       // Supervision: who countersigns this person's notes, and whether they need it. Until now these columns
       // existed with no way to set them short of SQL, so the countersignature workflow could never start.
       requires_cosign: { type: "boolean" },
-      supervisor_id: { type: "string", maxLen: 64 }
+      supervisor_id: { type: "string", maxLen: 64 },
+      // Whether deactivating the account or resetting its password also tells every phone it syncs from to
+      // erase itself. On by default: the admin UI shows the checkbox with the device count so it is a choice
+      // made knowingly, not a side effect discovered afterwards.
+      wipe_devices: { type: "boolean" }
     };
     module.exports = (r) => {
       r.get("/api/users", auth3.requireAuth, auth3.requirePerm("users:read", "users:manage"), (ctx) => {
@@ -21161,13 +21429,24 @@ var require_users = __commonJS({
         }
         if (v.is_active === 0) auth3.revokeAllForUser(u.id);
         let wiped = [];
-        if (v.is_active === 0 || v.password) wiped = devices.requestWipeForUser(u.id, { actor: ctx.user, ip: ctx.ip, reason: v.is_active === 0 ? "deactivated" : "password_reset" });
+        const wipeDevices = v.wipe_devices === void 0 ? true : !!v.wipe_devices;
+        if ((v.is_active === 0 || v.password) && wipeDevices) wiped = devices.requestWipeForUser(u.id, { actor: ctx.user, ip: ctx.ip, reason: v.is_active === 0 ? "deactivated" : "password_reset" });
         if (!sets.length) return { ok: true, devices_wiped: wiped.length };
         sets.push("updated_at=?");
         params.push(db3.now(), u.id);
         db3.run(`UPDATE users SET ${sets.join(", ")} WHERE id=?`, ...params);
-        audit3.log({ user: ctx.user, action: "user.update", entity: "user", entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter((k) => k !== "password"), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa, devices_wiped: wiped.length } });
+        audit3.log({ user: ctx.user, action: "user.update", entity: "user", entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter((k) => k !== "password"), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa, devices_wiped: wiped.length, wipe_devices: wipeDevices } });
         return { ok: true, devices_wiped: wiped.length };
+      });
+      r.post("/api/devices/wipe-ack", (ctx) => {
+        const { device_id, token: token2 } = validate(ctx.body, { device_id: { type: "string", required: true, maxLen: 100 }, token: { type: "string", required: true, maxLen: 200 } });
+        const d = db3.one(`SELECT * FROM devices WHERE id=?`, device_id);
+        if (!d || !d.wipe_requested_at || !devices.ackWipe(d.id, token2)) {
+          audit3.log({ user: { username: "device" }, action: "device.wipe.ack.rejected", entity: "device", entityId: d ? d.id : null, ip: ctx.ip, success: false });
+          throw new HttpError3(403, "This acknowledgement is not valid");
+        }
+        audit3.log({ user: { username: "device" }, action: "device.wipe.acknowledged", entity: "device", entityId: d.id, ip: ctx.ip, details: { device_user: d.user_id } });
+        return { ok: true };
       });
     };
   }

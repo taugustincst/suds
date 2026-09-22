@@ -6,8 +6,21 @@ const audit = require('../audit');
 const S = require('../spreadsheet');
 const DI = require('../dataimport');
 const { badRequest, notFound, forbidden } = require('../http');
-const { encrypt, blindIndex, uuid } = require('../crypto');
+const { encrypt, blindIndex, uuid, sha256 } = require('../crypto');
 const M = require('../clients-model');
+
+// What makes an imported row "the same row again": the kind of import and every mapped field the file
+// gave it (values as text, keys sorted). Internal bookkeeping (_n, the raw client_ref) is left out; the
+// resolved client_id is in, since "Doe, Jane" and "C26-0001" naming the same person are the same row.
+// Position in the file is not part of it, so a re-sorted or trimmed copy of the same sheet is still
+// recognised. Two genuinely identical rows in one upload (two bus passes, same day, same fare) both go
+// in: the hashes are only written once the whole batch has been, so a row is checked against earlier
+// uploads, not against its twin a few lines up.
+function rowHash(entity, rec) {
+  const def = DI.ENTITIES[entity];
+  const keys = [...def.fields.map(f => f.key), 'client_id', 'funding_source_id'].filter(k => k !== 'client_ref' && rec[k] !== undefined && rec[k] !== null && rec[k] !== '').sort();
+  return sha256(JSON.stringify([entity, keys.map(k => [k, String(rec[k])])]));
+}
 
 const permFor = (entity) => ({ clients: 'clients:write', resources: 'resources:write', interventions: 'interventions:write', calls: 'calls:write', time_entries: 'time:write', tasks: 'tasks:write', expenditures: 'budget:write' }[entity]);
 
@@ -56,12 +69,15 @@ module.exports = (r) => {
     const { entity, records, skip_duplicates } = ctx.body || {}; const def = DI.ENTITIES[entity]; if (!def) throw badRequest('Unknown entity');
     if (!auth.hasPerm(ctx.user, permFor(entity))) throw forbidden();
     if (!Array.isArray(records) || !records.length) throw badRequest('No rows to import'); if (records.length > 2000) throw badRequest('Import at most 2000 rows at a time');
-    let created = 0, skipped = 0; const errors = [];
+    let created = 0, skipped = 0, skippedDuplicates = 0; const errors = []; const imported = [];
     db.transaction(() => {
       records.forEach((rec, i) => {
         try {
           if (rec.client_ref !== undefined && !rec.client_id) { const id = DI.resolveClient(rec.client_ref, ctx, auth); if (rec.client_ref && (!id || id === 'ambiguous')) throw new Error(`client "${rec.client_ref}" not found`); rec.client_id = id || null; }
           if (rec.client_id) auth.assertClientAccess(ctx, rec.client_id);
+          // Already imported (this file, or an earlier upload of it): skip, and say so, rather than double it.
+          const hash = rowHash(entity, rec);
+          if (db.one(`SELECT 1 FROM import_rows WHERE row_hash=?`, hash)) { skippedDuplicates++; return; }
           const id = uuid(); const now = db.now();
           switch (entity) {
             case 'clients': {
@@ -80,12 +96,13 @@ module.exports = (r) => {
             case 'tasks': { if (!rec.title) throw new Error('title is required'); db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description,due_at,priority) VALUES(?,?,?,?,?,?,?,?)`, id, rec.client_id || null, ctx.user.id, ctx.user.id, encrypt(String(rec.title)), rec.description || null, rec.due_at || null, rec.priority || 'normal'); break; }
             case 'expenditures': { const f = rec.funding_source_id ? db.one(`SELECT id FROM funding_sources WHERE id=?`, rec.funding_source_id) : db.one(`SELECT id FROM funding_sources WHERE name=? COLLATE NOCASE AND is_active=1`, rec.fund); if (!f || !rec.spent_at || !rec.amount || !rec.category) throw new Error('date, amount, funding source and category are required'); db.run(`INSERT INTO expenditures(id,funding_source_id,client_id,user_id,spent_at,amount,category,vendor,description,receipt_ref) VALUES(?,?,?,?,?,?,?,?,?,?)`, id, f.id, rec.client_id || null, ctx.user.id, rec.spent_at, rec.amount, rec.category, rec.vendor || null, rec.description || null, rec.receipt_ref || null); break; }
           }
-          created++;
+          created++; imported.push([hash, id]);
         } catch (e) { errors.push({ n: rec._n || i + 1, error: e.message }); }
       });
       if (errors.length && !ctx.body.partial) throw badRequest(`${errors.length} row(s) could not be imported; nothing was saved`, { rows: errors });
+      for (const [hash, id] of imported) db.run(`INSERT OR IGNORE INTO import_rows(row_hash,entity,record_id,imported_by) VALUES(?,?,?,?)`, hash, entity, id, ctx.user.id);
     });
-    audit.log({ user: ctx.user, action: 'import.data.commit', ip: ctx.ip, details: { entity, created, skipped, errors: errors.length } });
-    return { created, skipped, errors };
+    audit.log({ user: ctx.user, action: 'import.data.commit', ip: ctx.ip, details: { entity, created, skipped, skipped_duplicates: skippedDuplicates, errors: errors.length } });
+    return { created, skipped, skipped_duplicates: skippedDuplicates, errors };
   });
 };

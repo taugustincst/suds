@@ -73,6 +73,31 @@ test('due-soon reminders: overdue and within the hour, caseload scoped, with the
   assert.equal((await sup.get('/api/tasks/due')).data.rows.some(t => t.title === 'Yesterday'), false, 'someone else\'s to-dos are not theirs');
   assert.equal((await fin.get('/api/tasks/due')).status, 403, 'no tasks permission, no reminders');
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='task.due' AND user_id=?`, navId));
+  // The poll is audited when its answer changes, not on every repetition
+  const audits = () => H.db.one(`SELECT COUNT(*) n FROM audit_log WHERE action='task.due' AND user_id=?`, navId).n;
+  const n0 = audits();
+  await nav.get('/api/tasks/due?within=60'); await nav.get('/api/tasks/due?within=60');
+  assert.equal(audits(), n0, 'the same answer twice more writes nothing');
+  await nav.post('/api/tasks', { title: 'Another overdue one', due_at: '2020-01-03' });
+  await nav.get('/api/tasks/due?within=60');
+  assert.equal(audits(), n0 + 1, 'a changed answer is audited');
+  // "Today" for a calendar-day deadline is the organisation's day, computed once for SQL and JS alike
+  const config = require('../server/config'); const { localDate } = require('../server/routes/budget');
+  const was = config.orgTimezone;
+  try {
+    // Kiritimati (UTC+14) and Etc/GMT+12 (UTC-12) are 26 hours apart, so their calendar dates always differ.
+    const eastDay = localDate(new Date(), 'Pacific/Kiritimati');
+    await nav.post('/api/tasks', { title: 'Due on the eastern day', due_at: eastDay });
+    config.orgTimezone = 'Pacific/Kiritimati';
+    let rows = (await nav.get('/api/tasks/due?within=0')).data.rows;
+    assert.ok(rows.some(t => t.title === 'Due on the eastern day'), 'due today in the org zone');
+    assert.equal(rows.find(t => t.title === 'Due on the eastern day').overdue, false, 'due today is not overdue');
+    config.orgTimezone = 'Etc/GMT+12';
+    rows = (await nav.get('/api/tasks/due?within=0')).data.rows;
+    assert.ok(!rows.some(t => t.title === 'Due on the eastern day'), 'not yet that day in the org zone');
+    const overdue = (await nav.get('/api/tasks?overdue=1')).data.rows;
+    assert.ok(!overdue.some(t => t.title === 'Due on the eastern day'), 'nor overdue');
+  } finally { config.orgTimezone = was; }
 });
 
 test('to-do, call and time lists carry the client\'s name, never for a de-identified role', async () => {

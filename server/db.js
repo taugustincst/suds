@@ -306,6 +306,14 @@ const migrations = [
   //     including through sync) showed no status at all in the header and Overview. The column's default
   //     is 'active', so that is what an empty value has always meant.
   (d) => { d.exec(`UPDATE clients SET status='active' WHERE status IS NULL OR TRIM(status)=''`); },
+  // 22: spreadsheet import idempotency — a hash per imported row (import_rows), so the same file imported
+  //     twice does not double every visit, call, hour and expenditure it holds.
+  (d) => {
+    const schemaText = safeSchema();
+    const m = schemaText.match(/CREATE TABLE IF NOT EXISTS import_rows \([\s\S]*?\n\);/);
+    if (m) d.exec(m[0]);
+    for (const line of schemaText.split('\n')) if (/^CREATE INDEX IF NOT EXISTS idx_import_rows/.test(line.trim())) d.exec(line.trim());
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

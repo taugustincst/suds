@@ -36,7 +36,17 @@ export function expenditureTable(rows, { showClient = true, onChange } = {}) {
     let note;
     if (status === 'rejected') { note = await confirmDialog('Reject this expenditure', `Reject ${fmt.money(r.amount)}${r.vendor ? ` to ${r.vendor}` : ''} submitted by ${r.worker}? They will see your reason.`, { danger: true, okText: 'Reject', requireReason: true }); if (!note) return; }
     else if (status === 'approved') { if (!await confirmDialog('Approve this expenditure', `Approve ${fmt.money(r.amount)}${r.vendor ? ` to ${r.vendor}` : ''} against ${r.fund}?`, { okText: 'Approve' })) return; }
-    await post(`/api/budget/expenditures/${r.id}/approve`, { status, note }); toast(`Marked ${status}`, 'ok'); onChange && onChange();
+    try { await post(`/api/budget/expenditures/${r.id}/approve`, { status, note }); }
+    catch (e) {
+      // Approving would overspend the budget line: the server says by how much and whether this person
+      // may override. A supervisor confirms with a reason, which goes on the record; anyone else is told.
+      if (!(e.data && e.data.overspend)) throw e;
+      if (!e.data.force_allowed) { toast(e.message, 'error'); return; }
+      const why = await confirmDialog('This overspends the budget line', `${r.line_label || fmt.label(r.line_category)} has ${fmt.money(e.data.available)} available; approving ${fmt.money(r.amount)} would go ${fmt.money(e.data.over)} over. Approve it anyway? Say why — it is recorded with the approval.`, { danger: true, okText: 'Approve anyway', requireReason: true });
+      if (!why) return;
+      await post(`/api/budget/expenditures/${r.id}/approve`, { status, note: why, force: true });
+    }
+    toast(`Marked ${status}`, 'ok'); onChange && onChange();
   };
   return table([
     { label: 'Date', render: r => fmt.date(r.spent_at) }, { label: 'Fund', render: r => h('div', {}, r.fund, r.line_label || r.line_category ? h('div', { class: 'small muted' }, r.line_label || fmt.label(r.line_category)) : null) }, { label: 'Category', render: r => fmt.label(r.category) },

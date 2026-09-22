@@ -42,7 +42,7 @@ export async function spreadsheetImportCard() {
           const ok = await confirmDialog('Import rows', `Import ${p.valid} ${entities.find(x => x.key === p.entity).label.toLowerCase()} row(s)${errRows.length ? ` and skip ${errRows.length} with problems` : ''}?`, { okText: 'Import' }); if (!ok) return;
           e.target.disabled = true;
           try { const r = await post('/api/imports/data/commit', { entity: p.entity, records: p.rows.filter(x => !x.errors.length).map(x => ({ ...x.record, _n: x.n })), partial: true, skip_duplicates: dupes.length ? skipDup.checked : false });
-            toast(`Imported ${r.created} row(s)${r.skipped ? `, skipped ${r.skipped} duplicate(s)` : ''}${r.errors.length ? `, ${r.errors.length} failed` : ''}`, r.errors.length ? 'error' : 'ok');
+            toast(`Imported ${r.created} row(s)${r.skipped ? `, skipped ${r.skipped} duplicate(s)` : ''}${r.skipped_duplicates ? `, ${r.skipped_duplicates} already imported` : ''}${r.errors.length ? `, ${r.errors.length} failed` : ''}`, r.errors.length ? 'error' : 'ok');
             clear(review); preview = null; if (r.errors.length) review.append(table([{ label: 'Row', key: 'n' }, { label: 'Problem', key: 'error' }], r.errors, { wrap: false })); else status.textContent = 'Done. You can import another file.';
           } catch (ex) { toast(ex.message, 'error'); e.target.disabled = false; }
         } }, `Import ${p.valid} row${p.valid === 1 ? '' : 's'}`) : h('span', { class: 'muted small' }, 'Fix the column matching or the file, then try again.'))].filter(Boolean));

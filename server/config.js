@@ -169,6 +169,17 @@ const config = {
   // Years a discharged client's record is kept before the retention job hard-deletes it (server/retention.js).
   // Overridable per installation in Administration -> Settings (client_retention_years).
   clientRetentionYears: Number(process.env.CLIENT_RETENTION_YEARS || 7),
+  // The calendar the programme runs on. A visit at 9pm on June 30th in Sacramento is June 30th to the
+  // grant it is charged to, even though it is already July 1st in UTC; fiscal-period checks, expenditure
+  // dates and "due today" all take the date in this zone (server/routes/budget.js localDate). Defaults to
+  // the machine's own zone, which for a county server is the county's.
+  orgTimezone: (() => {
+    const want = process.env.ORG_TIMEZONE || fileCfg.orgTimezone || '';
+    const machine = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return 'UTC'; } })();
+    if (!want) return machine || 'UTC';
+    try { Intl.DateTimeFormat('en-US', { timeZone: want }); return want; }
+    catch { console.warn(`[suds] ORG_TIMEZONE "${want}" is not a known IANA time zone; using ${machine || 'UTC'}`); return machine || 'UTC'; }
+  })(),
 };
 
 config.oidc.enabled = !!(config.oidc.issuer && config.oidc.clientId && config.oidc.clientSecret && config.oidc.redirectUri);

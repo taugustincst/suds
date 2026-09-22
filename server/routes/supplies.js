@@ -13,18 +13,33 @@ const { uuid } = require('../crypto');
 const DRAWDOWN = { naloxone_kits: 'Naloxone kit', fentanyl_strips: 'Fentanyl test strips' };
 const list = () => db.all(`SELECT s.*, u.display_name AS updated_by_name FROM supply_stock s LEFT JOIN users u ON u.id=s.updated_by ORDER BY s.item COLLATE NOCASE`);
 
-/** Reduce stock by what a visit handed out (or by the difference when a visit is edited). Silent when the
- *  item is not tracked; never below zero, since a negative shelf count is a data-entry problem to fix by hand. */
-function drawDown(ctx, row, prev = null) {
+/**
+ * Change the shelf count of each tracked item by `deltas[col]` (positive puts stock back, negative takes it
+ * out). Silent when the item is not tracked; never below zero, since a negative shelf count is a
+ * data-entry problem to fix by hand. `action` names the audit entry.
+ */
+function applyDelta(ctx, deltas, { intervention = null, action = 'supply.drawdown' } = {}) {
   for (const [col, item] of Object.entries(DRAWDOWN)) {
-    const delta = Number(row[col] || 0) - Number(prev ? prev[col] || 0 : 0);
+    const delta = Number(deltas[col] || 0);
     if (!delta) continue;
     const s = db.one(`SELECT * FROM supply_stock WHERE item=? COLLATE NOCASE`, item);
     if (!s) continue;
-    const q = Math.max(0, s.quantity - delta);
+    const q = Math.max(0, s.quantity + delta);
     db.run(`UPDATE supply_stock SET quantity=?, updated_by=?, updated_at=? WHERE id=?`, q, ctx.user.id, db.now(), s.id);
-    audit.log({ user: ctx.user, action: 'supply.drawdown', entity: 'supply_stock', entityId: s.id, ip: ctx.ip, details: { item, delta: -delta, quantity: q, intervention: row.id } });
+    audit.log({ user: ctx.user, action, entity: 'supply_stock', entityId: s.id, ip: ctx.ip, details: { item, delta, quantity: q, intervention } });
   }
+}
+/** Reduce stock by what a visit handed out (or by the difference when a visit is edited). */
+function drawDown(ctx, row, prev = null) {
+  const deltas = {};
+  for (const col of Object.keys(DRAWDOWN)) deltas[col] = -(Number(row[col] || 0) - Number(prev ? prev[col] || 0 : 0));
+  applyDelta(ctx, deltas, { intervention: row.id });
+}
+/** Put back what a visit had drawn down — called when the visit is deleted. */
+function restore(ctx, row) {
+  const deltas = {};
+  for (const col of Object.keys(DRAWDOWN)) deltas[col] = Number(row[col] || 0);
+  applyDelta(ctx, deltas, { intervention: row.id, action: 'supply.restore' });
 }
 
 module.exports = (r) => {
@@ -59,4 +74,6 @@ module.exports = (r) => {
   });
 };
 module.exports.drawDown = drawDown;
+module.exports.restore = restore;
+module.exports.applyDelta = applyDelta;
 module.exports.DRAWDOWN = DRAWDOWN;

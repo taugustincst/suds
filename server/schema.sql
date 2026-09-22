@@ -616,6 +616,18 @@ CREATE TABLE IF NOT EXISTS import_items (
 CREATE INDEX IF NOT EXISTS idx_import_items_updated ON import_items(updated_at);
 CREATE INDEX IF NOT EXISTS idx_import_items ON import_items(import_id, status);
 
+-- Spreadsheet import provenance (server/routes/dataimport.js): one row per imported spreadsheet row, keyed
+-- by a hash of the kind of import, the row's position and what it held, so importing the same file twice
+-- skips what is already in instead of doubling every visit, call, hour and expenditure. Server-side only.
+CREATE TABLE IF NOT EXISTS import_rows (
+  row_hash TEXT PRIMARY KEY,
+  entity TEXT NOT NULL,
+  record_id TEXT,
+  imported_by TEXT,                    -- the user id; no FK, this table is server-side bookkeeping only
+  imported_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_import_rows_entity ON import_rows(entity, imported_at);
+
 CREATE TABLE IF NOT EXISTS audit_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),

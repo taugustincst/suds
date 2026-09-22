@@ -719,7 +719,10 @@ export function globalSearch() {
 }
 // Reminders due within the hour, or overdue: a count in the header, refreshed while the app is open, and
 // (only if the person switched it on under Profile) a system notification when one comes due.
-let dueCache = { at: 0, data: null }; const notifiedDue = new Set(); let dueTimer;
+// Polled every five minutes while the tab is visible, and again when it comes back into view or gets
+// focus: a tab left open overnight used to ask once a minute all night for an answer nobody was looking at.
+const DUE_POLL_MS = 5 * 60000;
+let dueCache = { at: 0, data: null }; const notifiedDue = new Set(); let dueTimer; let duePoll = null; let dueListening = false;
 export function dueBell() {
   if (!can('tasks:read')) return null;
   const count = h('span', { class: 'bell-count hidden', 'aria-hidden': 'true' });
@@ -735,7 +738,13 @@ export function dueBell() {
     try { const r = await get('/api/tasks/due?within=60', { quiet: true }); dueCache = { at: Date.now(), data: r }; paint(r); maybeNotify(r.rows); } catch { /* offline or no permission: the badge just stays as it was */ }
   }
   clearInterval(dueTimer);
-  dueTimer = setInterval(() => { if (!document.body.contains(btn)) { clearInterval(dueTimer); return; } poll(true); }, 60000);
+  dueTimer = setInterval(() => { if (!document.body.contains(btn)) { clearInterval(dueTimer); return; } if (document.visibilityState === 'visible') poll(true); }, DUE_POLL_MS);
+  duePoll = poll;
+  if (!dueListening) {
+    dueListening = true;
+    const wake = () => { if (document.visibilityState === 'visible' && duePoll) duePoll(); };
+    document.addEventListener('visibilitychange', wake); window.addEventListener('focus', wake);
+  }
   poll();
   return btn;
 }

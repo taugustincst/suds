@@ -243,6 +243,112 @@ test('budget: funds, lines, expenditures, separation of duties', async () => {
   assert.equal((await nav.post(`/api/budget/expenditures/${e.data.id}/approve`, { status: 'approved' })).status, 403);
 });
 
+test('expenditure approval is a state machine: one approver, no re-approval, overspend needs a forced supervisor approval', async () => {
+  const f = await admin.post('/api/budget/funds', { name: 'State machine fund', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 1000 });
+  const line = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'client_assistance', allocated_amount: 100 });
+  const s = H.client(); await s.login('sup1', 'StaffPassw0rd!x');
+  const mk = async (amount) => (await nav.post('/api/budget/expenditures', { funding_source_id: f.data.id, budget_line_id: line.data.id, spent_at: '2026-09-05', amount, category: 'client_assistance' })).data.id;
+  const a = await mk(80); const b = await mk(30); const c = await mk(15);
+  // pending -> approved
+  assert.equal((await s.post(`/api/budget/expenditures/${a}/approve`, { status: 'approved' })).status, 200);
+  const supId = H.db.one(`SELECT id FROM users WHERE username='sup1'`).id;
+  const first = H.db.one(`SELECT approved_by, approved_at FROM expenditures WHERE id=?`, a);
+  assert.equal(first.approved_by, supId);
+  // approved -> approved again: refused, and the first approver stays on the record
+  const again = await admin.post(`/api/budget/expenditures/${a}/approve`, { status: 'approved' });
+  assert.equal(again.status, 409); assert.equal(again.data.current_status, 'approved');
+  assert.deepEqual(H.db.one(`SELECT approved_by, approved_at FROM expenditures WHERE id=?`, a), first, 'the first approval is untouched');
+  assert.equal((await s.post(`/api/budget/expenditures/${a}/approve`, { status: 'rejected', note: 'changed my mind' })).status, 409, 'approved cannot become rejected');
+  // pending -> reimbursed is not a thing
+  assert.equal((await s.post(`/api/budget/expenditures/${c}/approve`, { status: 'reimbursed' })).status, 409);
+  // Overspend: 80 of 100 is committed, 30 would take the line to -10
+  const over = await fin.post(`/api/budget/expenditures/${b}/approve`, { status: 'approved' });
+  assert.equal(over.status, 409, 'refused'); assert.equal(over.data.overspend, true); assert.equal(over.data.available, 20); assert.equal(over.data.over, 10); assert.equal(over.data.force_allowed, false, 'finance cannot force it');
+  assert.equal((await fin.post(`/api/budget/expenditures/${b}/approve`, { status: 'approved', force: true, note: 'grant amended' })).status, 409, 'finance cannot force it even with a note');
+  assert.equal((await s.post(`/api/budget/expenditures/${b}/approve`, { status: 'approved', force: true })).status, 409, 'a supervisor needs a note to force it');
+  const forced = await s.post(`/api/budget/expenditures/${b}/approve`, { status: 'approved', force: true, note: 'Award amendment #2 raises this line; paperwork in the shared drive' });
+  assert.equal(forced.status, 200);
+  assert.equal(H.db.one(`SELECT status FROM expenditures WHERE id=?`, b).status, 'approved');
+  assert.match(H.db.one(`SELECT details FROM audit_log WHERE action='expenditure.approved' AND entity_id=?`, b).details, /"forced":true/);
+  // 15 within the line's (now negative) available is refused without force too
+  assert.equal((await s.post(`/api/budget/expenditures/${c}/approve`, { status: 'approved' })).status, 409);
+  // approved -> reimbursed keeps the approver; reimbursed is final
+  assert.equal((await fin.post(`/api/budget/expenditures/${a}/approve`, { status: 'reimbursed' })).status, 200);
+  const re = H.db.one(`SELECT status, approved_by FROM expenditures WHERE id=?`, a);
+  assert.equal(re.status, 'reimbursed'); assert.equal(re.approved_by, supId, 'the person who reimbursed did not replace the approver');
+  assert.equal((await s.post(`/api/budget/expenditures/${a}/approve`, { status: 'approved' })).status, 409);
+  // rejected is final
+  assert.equal((await s.post(`/api/budget/expenditures/${c}/approve`, { status: 'rejected', note: 'no receipt' })).status, 200);
+  assert.equal((await s.post(`/api/budget/expenditures/${c}/approve`, { status: 'approved' })).status, 409);
+});
+
+test('money is kept to cents: amounts are rounded on write and sums on read', async () => {
+  const f = await admin.post('/api/budget/funds', { name: 'Cents fund', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 1000 });
+  const line = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'client_assistance', allocated_amount: 1000 });
+  const s = H.client(); await s.login('sup1', 'StaffPassw0rd!x');
+  const ids = [];
+  for (const amount of [25.009999, 0.1, 0.2, 10.1, 20.2]) {
+    const e = await nav.post('/api/budget/expenditures', { funding_source_id: f.data.id, budget_line_id: line.data.id, spent_at: '2026-09-05', amount, category: 'client_assistance' });
+    assert.equal(e.status, 201); ids.push(e.data.id);
+    assert.equal((await s.post(`/api/budget/expenditures/${e.data.id}/approve`, { status: 'approved' })).status, 200);
+  }
+  assert.equal(H.db.one(`SELECT amount FROM expenditures WHERE id=?`, ids[0]).amount, 25.01, 'rounded to cents on write');
+  const fund = (await fin.get('/api/budget/funds')).data.funds.find(x => x.id === f.data.id);
+  assert.equal(fund.spent, 55.61); assert.equal(fund.lines[0].spent, 55.61); assert.equal(fund.remaining, 944.39); assert.equal(fund.lines[0].available, 944.39);
+  const sum = (await fin.get('/api/budget/summary')).data;
+  const cat = sum.by_category.find(x => x.category === 'client_assistance').amount;
+  assert.equal(cat, Math.round(cat * 100) / 100, `by_category=${cat}`);
+  assert.equal(sum.totals.spent, Math.round(sum.totals.spent * 100) / 100, `totals.spent=${sum.totals.spent}`);
+  const dash = (await fin.get('/api/reports/dashboard')).data;
+  assert.equal(dash.budget.spent, Math.round(dash.budget.spent * 100) / 100, `dashboard spent=${dash.budget.spent}`);
+  const csv = String((await fin.get('/api/reports/export/expenditures?from=2026-01-01&to=2026-12-31')).data);
+  assert.ok(csv.includes(',25.01,') && !csv.includes('25.009999'));
+  // A visit cost is rounded the same way
+  const iv = await nav.post('/api/interventions', { client_id: clientId, type: 'case_management', occurred_at: '2026-09-05T10:00:00Z', funding_source_id: f.data.id, budget_line_id: line.data.id, cost: 3.14159 });
+  assert.equal(iv.status, 201);
+  assert.equal(H.db.one(`SELECT amount FROM expenditures WHERE intervention_id=?`, iv.data.id).amount, 3.14);
+});
+
+test('fiscal-period checks use the organisation\'s calendar, not UTC', async () => {
+  const config = require('../server/config');
+  const was = config.orgTimezone;
+  const f = await admin.post('/api/budget/funds', { name: 'FY26 Pacific', source_type: 'other', fiscal_year_start: '2025-07-01', fiscal_year_end: '2026-06-30', total_amount: 1000 });
+  const line = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'client_assistance', allocated_amount: 1000 });
+  // 9pm on June 30th in Sacramento is 04:00 UTC on July 1st.
+  const body = { client_id: clientId, type: 'case_management', occurred_at: '2026-07-01T04:00:00Z', funding_source_id: f.data.id, budget_line_id: line.data.id, cost: 5 };
+  try {
+    config.orgTimezone = 'UTC';
+    const utc = await nav.post('/api/interventions', body);
+    assert.equal(utc.status, 400, 'in UTC that instant is July 1st, outside the period'); assert.match(utc.data.error, /outside the period/);
+    config.orgTimezone = 'America/Los_Angeles';
+    const pt = await nav.post('/api/interventions', body);
+    assert.equal(pt.status, 201, JSON.stringify(pt.data));
+    const exp = H.db.one(`SELECT spent_at FROM expenditures WHERE intervention_id=?`, pt.data.id);
+    assert.equal(exp.spent_at, '2026-06-30', 'charged to the day it happened on');
+    // An explicit service date wins over the timezone conversion
+    config.orgTimezone = 'UTC';
+    const explicit = await nav.post('/api/interventions', { ...body, service_date: '2026-06-30', log_time: true, duration_minutes: 30 });
+    assert.equal(explicit.status, 201, JSON.stringify(explicit.data));
+    assert.equal(H.db.one(`SELECT spent_at FROM expenditures WHERE intervention_id=?`, explicit.data.id).spent_at, '2026-06-30');
+    assert.equal(H.db.one(`SELECT work_date FROM time_entries WHERE intervention_id=?`, explicit.data.id).work_date, '2026-06-30', 'the time entry lands on the same day');
+    assert.equal(H.db.one(`SELECT 1 FROM pragma_table_info('interventions') WHERE name='service_date'`), undefined, 'service_date is an input, not a column');
+  } finally { config.orgTimezone = was; }
+});
+
+test('deleting a visit puts the kits and strips it drew down back on the shelf', async () => {
+  const kit = await nav.post('/api/supplies', { item: 'Naloxone kit', quantity: 10 });
+  assert.ok([200, 201].includes(kit.status));
+  const strips = await nav.post('/api/supplies', { item: 'Fentanyl test strips', quantity: 40 });
+  assert.ok([200, 201].includes(strips.status));
+  const iv = await nav.post('/api/interventions', { client_id: clientId, type: 'naloxone_distribution', occurred_at: '2026-09-06T10:00:00Z', naloxone_kits: 3, fentanyl_strips: 5 });
+  assert.equal(iv.status, 201);
+  const qty = () => Object.fromEntries((H.db.all(`SELECT item, quantity FROM supply_stock`)).map(r => [r.item.toLowerCase(), r.quantity]));
+  assert.equal(qty()['naloxone kit'], 7); assert.equal(qty()['fentanyl test strips'], 35);
+  assert.equal((await nav.del(`/api/interventions/${iv.data.id}`)).status, 200);
+  assert.equal(qty()['naloxone kit'], 10, 'kits restored'); assert.equal(qty()['fentanyl test strips'], 40, 'strips restored');
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM audit_log WHERE action='supply.restore' AND details LIKE '%' || ? || '%'`, iv.data.id).n, 2);
+});
+
 test('a navigator records expenses but cannot restructure grants; a rejection needs a reason', async () => {
   // Regression: budget:write covered both "log a bus pass for my client" and "change the total award on the
   // county's opioid settlement grant". The second is grant administration, now behind budget:manage.
@@ -890,6 +996,24 @@ test('spreadsheet import: template, preview mapping/validation, commit; Excel ex
   assert.equal(c2.status, 400, 'all-or-nothing when a row is invalid');
   const c3 = await nav.post('/api/imports/data/commit', { entity: 'interventions', records: p2.data.rows.map(r => r.record), partial: true });
   assert.equal(c3.data.created, 1); assert.equal(c3.data.errors.length, 1);
+  // The same file again: nothing is doubled
+  const visitsBefore = H.db.one(`SELECT COUNT(*) n FROM interventions WHERE client_id=?`, impId).n;
+  const c4 = await nav.post('/api/imports/data/commit', { entity: 'interventions', records: p2.data.rows.map(r => ({ ...r.record, _n: r.n })), partial: true });
+  assert.equal(c4.status, 200); assert.equal(c4.data.created, 0); assert.equal(c4.data.skipped_duplicates, 1, JSON.stringify(c4.data));
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM interventions WHERE client_id=?`, impId).n, visitsBefore);
+  const c5 = await nav.post('/api/imports/data/commit', { entity: 'interventions', records: p2.data.rows.map(r => r.record), partial: true });
+  assert.equal(c5.data.created, 0, 'with or without the row numbers the preview attached');
+  // Time and expenditures too, and two identical rows in one sheet are both real
+  const timeRows = [{ work_date: '2026-09-12', minutes: 30, category: 'direct_service', _n: 2 }, { work_date: '2026-09-12', minutes: 30, category: 'direct_service', _n: 3 }];
+  const t1 = await nav.post('/api/imports/data/commit', { entity: 'time_entries', records: timeRows });
+  assert.equal(t1.data.created, 2, 'two identical rows in one file are two entries');
+  const t2 = await nav.post('/api/imports/data/commit', { entity: 'time_entries', records: [...timeRows].reverse() });
+  assert.equal(t2.data.created, 0); assert.equal(t2.data.skipped_duplicates, 2, 'a re-sorted copy of the same sheet is still the same sheet');
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM time_entries WHERE work_date='2026-09-12' AND minutes=30`).n, 2);
+  // A failed all-or-nothing commit records nothing, so a corrected re-run is not treated as a duplicate
+  const bad = await nav.post('/api/imports/data/commit', { entity: 'time_entries', records: [{ work_date: '2026-09-13', minutes: 10, category: 'direct_service', _n: 2 }, { minutes: 5, _n: 3 }] });
+  assert.equal(bad.status, 400);
+  assert.equal((await nav.post('/api/imports/data/commit', { entity: 'time_entries', records: [{ work_date: '2026-09-13', minutes: 10, category: 'direct_service', _n: 2 }] })).data.created, 1);
   // finance cannot import clients; finance and a navigator can export a (de-identified) workbook
   assert.equal((await fin.req('POST', '/api/imports/data/preview?entity=clients', csv, { 'Content-Type': 'text/csv' })).status, 403);
   assert.equal((await nav.get('/api/reports/export/workbook')).status, 200);

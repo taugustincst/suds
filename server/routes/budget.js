@@ -4,9 +4,20 @@ const auth = require('../auth');
 const audit = require('../audit');
 const crud = require('../crud');
 const C = require('../constants');
-const { badRequest, notFound } = require('../http');
+const config = require('../config');
+const { badRequest, notFound, HttpError } = require('../http');
 const { validate } = require('../validate');
 const { uuid } = require('../crypto');
+
+/** Money is stored as REAL: round to cents at the boundary so 25.009999 is never written and never summed. */
+const cents = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v * 100) / 100 : v);
+/** The calendar date (YYYY-MM-DD) of an instant in the organisation's time zone (config.orgTimezone). */
+function localDate(when = new Date(), tz = config.orgTimezone) {
+  const d = when instanceof Date ? when : new Date(when);
+  if (!Number.isFinite(d.getTime())) return null;
+  try { return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d); }
+  catch { return d.toISOString().slice(0, 10); }
+}
 
 const fundShape = {
   name: { type: 'string', required: true, maxLen: 200 }, source_type: { type: 'string', enum: C.FUNDING_TYPES }, grant_number: { type: 'string', maxLen: 100 },
@@ -26,13 +37,13 @@ function buildLineTree(flat) {
   const rollup = (l) => {
     let subtreeSpent = l.spent, subtreePending = l.pending;
     for (const c of l.children) { rollup(c); subtreeSpent += c.subtree_spent; subtreePending += c.subtree_pending; }
-    l.subtree_spent = subtreeSpent; l.subtree_pending = subtreePending; l.subtree_remaining = l.allocated_amount - subtreeSpent - subtreePending;
-    l.child_allocated = l.children.reduce((s, c) => s + c.allocated_amount, 0); l.unallocated = l.allocated_amount - l.child_allocated;
+    l.subtree_spent = cents(subtreeSpent); l.subtree_pending = cents(subtreePending); l.subtree_remaining = cents(l.allocated_amount - subtreeSpent - subtreePending);
+    l.child_allocated = cents(l.children.reduce((s, c) => s + c.allocated_amount, 0)); l.unallocated = cents(l.allocated_amount - l.child_allocated);
     // What can still be spent directly against THIS line: its envelope less what it has handed down to
     // sub-allocations and less its own spend. subtree_remaining answers a different question ("how much
     // of the whole envelope is unspent") and read as "$50,000 left" on a parent that had already handed
     // $8,000 to a child -- the wrong number to be looking at while deciding whether to spend.
-    l.available = l.allocated_amount - l.child_allocated - l.spent - l.pending;
+    l.available = cents(l.allocated_amount - l.child_allocated - l.spent - l.pending);
   };
   for (const r of roots) rollup(r);
   return roots;
@@ -55,29 +66,41 @@ function wouldCycle(lineId, proposedParentId) {
 // fund's totals, where the Funds card and the funder report then disagree and nobody can say why.
 function assertInPeriod(fund, date, what) {
   if (!date) return;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDate();
   if (date > today) throw badRequest(`${what} is in the future (${date})`);
   if (fund && ((fund.fiscal_year_start && date < fund.fiscal_year_start) || (fund.fiscal_year_end && date > fund.fiscal_year_end))) {
     throw badRequest(`${what} ${date} is outside the period of ${fund.name} (${fund.fiscal_year_start} to ${fund.fiscal_year_end}). Charge it to the fund that covers that date.`);
   }
 }
 
+/**
+ * What can still be approved against a budget line: its allocation, less what it has handed down to
+ * sub-allocations, less what is already approved or reimbursed. Other pending items are not counted (each
+ * is judged when its own turn comes), and `excluding` leaves out the item being judged.
+ */
+function lineAvailable(lineId, { excluding = null } = {}) {
+  const l = db.one(`SELECT * FROM budget_lines WHERE id=?`, lineId); if (!l) return null;
+  const child = db.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE parent_id=?`, lineId).n;
+  const spent = db.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE budget_line_id=? AND status IN ('approved','reimbursed') AND id<>?`, lineId, excluding || '').n;
+  return cents(l.allocated_amount - child - spent);
+}
+
 function fundSummary(f) {
-  const spent = db.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE funding_source_id=? AND status IN ('approved','reimbursed')`, f.id).n;
-  const pending = db.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE funding_source_id=? AND status='pending'`, f.id).n;
+  const spent = db.one(`SELECT ROUND(COALESCE(SUM(amount),0),2) n FROM expenditures WHERE funding_source_id=? AND status IN ('approved','reimbursed')`, f.id).n;
+  const pending = db.one(`SELECT ROUND(COALESCE(SUM(amount),0),2) n FROM expenditures WHERE funding_source_id=? AND status='pending'`, f.id).n;
   const staffMinutes = db.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE funding_source_id=?`, f.id).n;
   // The funder report counts approved time only (what a county can invoice); this page showed all logged
   // time under the same-sounding label, and the two never reconciled. Both are sent so the page can say which is which.
   const staffMinutesApproved = db.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE funding_source_id=? AND status='approved'`, f.id).n;
-  const staffCost = db.one(`SELECT COALESCE(SUM(t.minutes/60.0*COALESCE(u.hourly_cost,0)),0) n FROM time_entries t JOIN users u ON u.id=t.user_id WHERE t.funding_source_id=?`, f.id).n;
-  const flatLines = db.all(`SELECT b.*, (SELECT COALESCE(SUM(amount),0) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status IN ('approved','reimbursed')) AS spent, (SELECT COALESCE(SUM(amount),0) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status='pending') AS pending FROM budget_lines b WHERE b.funding_source_id=? ORDER BY category`, f.id);
+  const staffCost = db.one(`SELECT ROUND(COALESCE(SUM(t.minutes/60.0*COALESCE(u.hourly_cost,0)),0),2) n FROM time_entries t JOIN users u ON u.id=t.user_id WHERE t.funding_source_id=?`, f.id).n;
+  const flatLines = db.all(`SELECT b.*, (SELECT ROUND(COALESCE(SUM(amount),0),2) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status IN ('approved','reimbursed')) AS spent, (SELECT ROUND(COALESCE(SUM(amount),0),2) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status='pending') AS pending FROM budget_lines b WHERE b.funding_source_id=? ORDER BY category`, f.id);
   // Only top-level lines count against the fund's own total — a nested sub-allocation is carved out of its
   // parent's allocated_amount, not an additional draw on the fund (see buildLineTree).
   const allocated = flatLines.filter(l => !l.parent_id).reduce((s, l) => s + l.allocated_amount, 0);
   const lines = buildLineTree(flatLines);
   const totalDays = Math.max(1, (Date.parse(f.fiscal_year_end) - Date.parse(f.fiscal_year_start)) / 86400000);
   const elapsed = Math.min(totalDays, Math.max(0, (Date.now() - Date.parse(f.fiscal_year_start)) / 86400000));
-  return { ...f, spent, pending, staff_minutes: staffMinutes, staff_minutes_approved: staffMinutesApproved, staff_cost: staffCost, allocated, unallocated: f.total_amount - allocated, remaining: f.total_amount - spent - pending,
+  return { ...f, spent, pending, staff_minutes: staffMinutes, staff_minutes_approved: staffMinutesApproved, staff_cost: staffCost, allocated: cents(allocated), unallocated: cents(f.total_amount - allocated), remaining: cents(f.total_amount - spent - pending),
     pct_spent: f.total_amount ? (spent / f.total_amount) * 100 : 0, pct_elapsed: (elapsed / totalDays) * 100, lines };
 }
 
@@ -154,31 +177,65 @@ module.exports = (r) => {
       const s = ctx.query.get('status'); if (s && s !== 'all') { where.push('expenditures.status=?'); params.push(s); }
     },
     beforeInsert: (ctx, v) => {
+      v.amount = cents(v.amount);
       const f = db.one(`SELECT * FROM funding_sources WHERE id=? AND is_active=1`, v.funding_source_id); if (!f) throw badRequest('Unknown or inactive funding source');
       assertInPeriod(f, v.spent_at, 'Expenditure date');
       if (v.budget_line_id) { const l = db.one(`SELECT * FROM budget_lines WHERE id=? AND funding_source_id=?`, v.budget_line_id, f.id); if (!l) throw badRequest('Budget line does not belong to fund'); if (!v.category) v.category = l.category; }
     },
+    beforeUpdate: (ctx, v) => { if (v.amount !== undefined && v.amount !== null) v.amount = cents(v.amount); },
     canEdit: (ctx, row) => row.status === 'pending' && (row.user_id === ctx.user.id || auth.hasPerm(ctx.user, 'budget:approve')),
   });
+  // The approval state machine: pending -> approved | rejected, approved -> reimbursed, nothing else. A
+  // second "approve" used to overwrite the first approver's name and date; a rejected item could be
+  // approved afterwards; a reimbursed one could be un-reimbursed by approving it again. Money that has
+  // moved keeps the record of who moved it.
+  const TRANSITIONS = { pending: ['approved', 'rejected'], approved: ['reimbursed'] };
   r.post('/api/budget/expenditures/:id/approve', auth.requireAuth, auth.requirePerm('budget:approve'), (ctx) => {
     const e = db.one(`SELECT * FROM expenditures WHERE id=?`, ctx.params.id); if (!e) throw notFound();
-    const { status, note } = validate(ctx.body, { status: { type: 'string', required: true, enum: ['approved', 'rejected', 'reimbursed'] }, note: { type: 'string', maxLen: 500 } });
+    const { status, note, force } = validate(ctx.body, { status: { type: 'string', required: true, enum: ['approved', 'rejected', 'reimbursed'] }, note: { type: 'string', maxLen: 500 }, force: { type: 'boolean' } });
+    if (!(TRANSITIONS[e.status] || []).includes(status)) {
+      const by = e.approved_by ? db.one(`SELECT display_name FROM users WHERE id=?`, e.approved_by) : null;
+      throw new HttpError(409, `This expenditure is already ${e.status}${by ? ` (by ${by.display_name})` : ''}; it cannot be marked ${status}`, { current_status: e.status, approved_by: e.approved_by || null });
+    }
     if (e.user_id === ctx.user.id && status === 'approved' && ctx.user.role !== 'admin') throw badRequest('Separation of duties: you cannot approve your own expenditure');
     // A rejection with no reason leaves the submitter guessing, and there is no undo for a mis-click.
     if (status === 'rejected' && !note) throw badRequest('Say why this expenditure is being rejected, so the person who submitted it knows what to fix');
-    db.run(`UPDATE expenditures SET status=?, approved_by=?, approved_at=?, approval_note=?, updated_at=? WHERE id=?`, status, ctx.user.id, db.now(), note || null, db.now(), e.id);
-    audit.log({ user: ctx.user, action: `expenditure.${status}`, entity: 'expenditure', entityId: e.id, clientId: e.client_id, ip: ctx.ip, details: { note, amount: e.amount } });
-    return { ok: true };
+    const details = { note, amount: e.amount };
+    if (status === 'approved' && e.budget_line_id) {
+      // Overspending a line is not something a reviewer does by accident. Recording the expense already
+      // warned; approving it is where the money is committed, so it takes a supervisor or administrator
+      // saying so (force) with a note that says why, the same shape as the confirmation on time approval.
+      const available = lineAvailable(e.budget_line_id, { excluding: e.id });
+      if (available !== null && cents(e.amount) > available) {
+        const over = cents(e.amount - available);
+        const line = db.one(`SELECT label, category FROM budget_lines WHERE id=?`, e.budget_line_id);
+        const mayForce = ['supervisor', 'admin'].includes(ctx.user.role);
+        if (!(force && note && mayForce)) {
+          throw new HttpError(409, `Approving ${e.amount.toFixed(2)} would take ${line.label || line.category} ${over.toFixed(2)} below zero (${available.toFixed(2)} available)${mayForce ? '. Approve it anyway with force and a note saying why.' : '. Ask a supervisor to approve it, or move it to a line with room.'}`,
+            { overspend: true, available, over, force_allowed: mayForce });
+        }
+        details.overspend = over; details.forced = true;
+      }
+    }
+    if (status === 'reimbursed') {
+      // The approver stays on the record; reimbursement is a later step by (often) a different person.
+      db.run(`UPDATE expenditures SET status=?, approval_note=COALESCE(?, approval_note), updated_at=? WHERE id=?`, status, note || null, db.now(), e.id);
+      details.reimbursed_by = ctx.user.id;
+    } else {
+      db.run(`UPDATE expenditures SET status=?, approved_by=?, approved_at=?, approval_note=?, updated_at=? WHERE id=?`, status, ctx.user.id, db.now(), note || null, db.now(), e.id);
+    }
+    audit.log({ user: ctx.user, action: `expenditure.${status}`, entity: 'expenditure', entityId: e.id, clientId: e.client_id, ip: ctx.ip, details });
+    return { ok: true, status };
   });
   r.get('/api/budget/summary', auth.requireAuth, auth.requirePerm('budget:read'), () => {
     const funds = db.all(`SELECT * FROM funding_sources WHERE is_active=1`).map(fundSummary);
     return {
-      totals: { budget: funds.reduce((s, f) => s + f.total_amount, 0), spent: funds.reduce((s, f) => s + f.spent, 0), pending: funds.reduce((s, f) => s + f.pending, 0), remaining: funds.reduce((s, f) => s + f.remaining, 0) },
-      by_category: db.all(`SELECT category, SUM(amount) amount, COUNT(*) n FROM expenditures WHERE status IN ('approved','reimbursed') GROUP BY category ORDER BY amount DESC`),
+      totals: { budget: cents(funds.reduce((s, f) => s + f.total_amount, 0)), spent: cents(funds.reduce((s, f) => s + f.spent, 0)), pending: cents(funds.reduce((s, f) => s + f.pending, 0)), remaining: cents(funds.reduce((s, f) => s + f.remaining, 0)) },
+      by_category: db.all(`SELECT category, ROUND(SUM(amount),2) amount, COUNT(*) n FROM expenditures WHERE status IN ('approved','reimbursed') GROUP BY category ORDER BY amount DESC`),
       // Approved and reimbursed only, the same as the headline "Spent (approved)" figure above it: the two
       // used to differ by whatever was still pending, on the same page.
-      by_month: db.all(`SELECT substr(spent_at,1,7) month, SUM(amount) amount FROM expenditures WHERE status IN ('approved','reimbursed') GROUP BY month ORDER BY month`),
-      per_client: db.one(`SELECT COUNT(DISTINCT client_id) clients, COALESCE(SUM(amount),0) amount FROM expenditures WHERE client_id IS NOT NULL AND status IN ('approved','reimbursed')`),
+      by_month: db.all(`SELECT substr(spent_at,1,7) month, ROUND(SUM(amount),2) amount FROM expenditures WHERE status IN ('approved','reimbursed') GROUP BY month ORDER BY month`),
+      per_client: db.one(`SELECT COUNT(DISTINCT client_id) clients, ROUND(COALESCE(SUM(amount),0),2) amount FROM expenditures WHERE client_id IS NOT NULL AND status IN ('approved','reimbursed')`),
       funds,
     };
   });
@@ -187,3 +244,6 @@ module.exports = (r) => {
 // applies budget_lines rows straight through importRow() with no such check — see that file for why.
 module.exports.wouldCycle = wouldCycle;
 module.exports.assertInPeriod = assertInPeriod;
+module.exports.localDate = localDate;
+module.exports.cents = cents;
+module.exports.lineAvailable = lineAvailable;
