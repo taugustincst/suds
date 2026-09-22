@@ -59,6 +59,10 @@ module.exports = (r) => {
   r.get('/api/notes', auth.requireAuth, auth.requirePerm('notes:admin:read', 'notes:clinical:read', 'notes:admin:write', 'notes:clinical:write'), (ctx) => {
     const { limit, offset } = paging(ctx.query, { limit: 100, max: 500 });
     const kinds = ['admin', 'clinical'].filter(k => auth.hasPerm(ctx.user, kindPerm(k, 'read')) || auth.hasPerm(ctx.user, kindPerm(k, 'write')));
+    // Break-glass on the list, one client at a time, with the reason recorded -- the same audited exception
+    // the single-note route allows, so an administrator has a way to find the note in the first place.
+    const glass = !kinds.includes('clinical') && auth.hasPerm(ctx.user, 'notes:clinical:breakglass') && ctx.headers['x-break-glass-reason'] && ctx.query.get('client_id') && ctx.query.get('kind') === 'clinical';
+    if (glass) { kinds.push('clinical'); audit.log({ user: ctx.user, action: 'note.list.breakglass', clientId: ctx.query.get('client_id'), ip: ctx.ip, details: { reason: String(ctx.headers['x-break-glass-reason']).slice(0, 300) } }); }
     const where = ['n.deleted_at IS NULL', `n.kind IN (${kinds.map(() => '?').join(',') || "''"})`]; const params = [...kinds];
     const cf = auth.caseloadFilter(ctx.user, 'n.client_id'); where.push(cf.sql); params.push(...cf.params);
     for (const [q, col] of [['client_id', 'n.client_id'], ['kind', 'n.kind'], ['status', 'n.status'], ['author_id', 'n.author_id'], ['source', 'n.source']]) { const v = ctx.query.get(q); if (v) { where.push(`${col}=?`); params.push(v); } }

@@ -11,7 +11,7 @@ export function openCallForm(values, { clientId, clientDisplay, method, onDone }
     { name: 'direction', label: 'Direction', type: 'select', options: isText ? [{ value: 'outbound', label: 'Sent' }, { value: 'inbound', label: 'Received' }] : ['outbound', 'inbound'], required: true, noBlank: true, value: 'outbound' },
     { name: 'started_at', label: 'Date & time', type: 'datetime', required: true, value: values?.started_at || new Date().toISOString() },
     { name: 'duration_minutes', label: isText ? 'Time spent (minutes)' : 'Duration (minutes)', type: 'number', min: 0, step: 1, value: values?.duration_minutes ?? (isText ? 1 : 5) },
-    { name: 'contact_type', label: 'Who', type: 'select', options: C.CALL_CONTACT_TYPES, value: 'client', noBlank: true, required: true }, { name: 'contact_name', label: 'Contact name (if not client)' }, { name: 'phone', label: isText ? 'Mobile number' : 'Phone number' },
+    { name: 'contact_type', label: 'Who', type: 'select', options: C.CALL_CONTACT_TYPES, value: 'client', noBlank: true, required: true }, { name: 'contact_name', label: 'Contact name (if not client)' }, { name: 'phone', label: isText ? 'Mobile number' : 'Phone number', type: 'tel' },
     { name: 'purpose', label: 'Purpose', span: true },
     { name: 'outcome', label: 'Outcome', type: 'select', options: isText ? C.TEXT_OUTCOMES : C.CALL_OUTCOMES, value: isText ? 'sent' : 'reached', noBlank: true, required: true },
     { name: 'crisis', label: `Crisis ${noun}`, type: 'checkbox' }, { name: 'follow_up_needed', label: 'Follow-up needed', type: 'checkbox' }, { name: 'follow_up_due', label: isText ? 'Remind me to follow up on' : 'Remind me to call back on', type: 'date' },

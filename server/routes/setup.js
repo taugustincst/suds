@@ -53,11 +53,14 @@ module.exports = (r) => {
     const port = v.port || 'auto';
     const host = v.network === 'lan' ? '0.0.0.0' : '127.0.0.1';
     let tls = 'none';
+    // The browser form already refuses this; the API must too, or a request that skips the form puts PHI on
+    // plain HTTP for the whole office. Behind a TLS-terminating proxy the proxy is the HTTPS.
+    if (v.network === 'lan' && !v.https && !process.env.TLS_CERT_PATH && !config.trustProxy) throw badRequest('HTTPS is required when other devices can connect');
     if (v.https && !process.env.TLS_CERT_PATH) {
       const hosts = ['localhost', '127.0.0.1', 'suds.local', require('node:os').hostname(), require('node:os').hostname() + '.local', ...listener.lanAddresses().map(a => a.address), ...String(v.extra_hosts || '').split(/[\s,]+/).filter(Boolean)];
       const c = selfsigned.generate({ commonName: v.org_name.slice(0, 60), org: v.org_name.slice(0, 60), hosts: [...new Set(hosts)] });
       const dir = path.join(config.dataDir, 'certs'); fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-      fs.writeFileSync(path.join(dir, 'suds.crt'), c.cert, { mode: 0o600 }); fs.writeFileSync(path.join(dir, 'suds.key'), c.key, { mode: 0o600 });
+      fs.writeFileSync(path.join(dir, 'suds.crt'), c.cert, { mode: 0o600 }); fs.writeFileSync(path.join(dir, 'suds.key'), c.key, { mode: 0o600 }); fs.writeFileSync(path.join(dir, 'suds-ca.crt'), c.ca, { mode: 0o644 });
       tls = 'selfsigned';
     } else if (process.env.TLS_CERT_PATH) tls = 'custom';
     

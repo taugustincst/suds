@@ -9,6 +9,7 @@ services:
       HOST: 0.0.0.0
       PORT: 8080
       SUDS_DATA_DIR: /data
+      TRUST_PROXY: "1"           # the proxy below terminates TLS; log the client's address, not the proxy's
     volumes:
       - suds-data:/data          # place on an encrypted volume (LUKS / BitLocker / cloud KMS-backed disk)
     expose: ["8080"]

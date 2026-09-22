@@ -3,6 +3,9 @@
 # Requires: npm i -D playwright && npx playwright install chromium   (not project dependencies)
 set -u
 export SUDS_ENV=development SUDS_DATA_DIR=/tmp/suds-ui-data PORT=${PORT:-8090} SUDS_ADMIN_PASSWORD='AdminPassw0rd!x'
+# Every script signs in afresh, several as more than one person; the office default of 20 sign-ins per
+# address per 15 minutes was being hit part-way through the run and failing the later scripts at login.
+export LOGIN_RATE_LIMIT=1000
 # A server left over from an earlier run holds a port and the wizard then "cannot start" on it, which
 # looks like an app defect. Say what is actually wrong instead.
 STATIC_PORT=${STATIC_PORT:-8878}
@@ -36,7 +39,7 @@ STATIC_SERVER=$!; trap 'kill $SERVER $SETUP_SERVER $STATIC_SERVER 2>/dev/null; p
 for i in $(seq 1 40); do curl -sf "http://127.0.0.1:$STATIC_PORT/" >/dev/null && break; sleep 0.5; done
 export SUDS_STATIC_URL="http://127.0.0.1:$STATIC_PORT"
 fail=0
-for s in desktop navigator-flow ux-features local-mode sync-two-way spreadsheets sample-data resource-profiles forms region dates setup static-site; do
+for s in desktop review-fixes navigator-flow ux-features local-mode sync-two-way spreadsheets sample-data resource-profiles forms region dates setup static-site; do
   echo "=== $s"
   if node scripts/ui/$s.mjs > /tmp/suds-ui-$s.log 2>&1; then grep -v '^\[2m' /tmp/suds-ui-$s.log | tail -6; else echo "FAILED"; grep -v '^\[2m' /tmp/suds-ui-$s.log | tail -25; fail=1; fi
 done

@@ -10,7 +10,7 @@ route('profile', async (r) => {
   const renderMfa = () => {
     mfaBox.replaceChildren();
     if (u.mfa_enabled) mfaBox.append(badge('MFA enabled', 'ok'), h('p', { class: 'small muted mt' }, 'Your account requires an authenticator code at sign-in.'), !u.mfa_required ? h('button', { class: 'btn sm danger', onClick: async () => { const f = form([{ name: 'password', label: 'Confirm password', type: 'password', required: true }], { submitText: 'Disable MFA', onCancel: () => m.close(), onSubmit: async (d) => { await post('/api/auth/mfa/disable', d); m.close(); await loadSession(); render(); } }); const m = modal('Disable MFA', f); } }, 'Disable') : null);
-    else mfaBox.append(u.mfa_required ? h('div', { class: 'banner warn' }, 'Your role requires MFA. Enroll now to continue using SUDS.') : null, h('button', { class: 'btn primary', onClick: enroll }, 'Enroll authenticator app'));
+    else mfaBox.append(...[u.mfa_required ? h('div', { class: 'banner warn' }, u.mfa_setup_deadline ? `Your role requires two-step verification. Set it up by ${fmt.date(u.mfa_setup_deadline)} — after that SUDS will not let you in until it is done.` : 'Your role requires two-step verification. Set it up now to keep using SUDS.') : null, h('button', { class: 'btn primary', onClick: enroll }, 'Enroll authenticator app')].filter(Boolean));
   };
   async function enroll() {
     const s = await post('/api/auth/mfa/setup', {});

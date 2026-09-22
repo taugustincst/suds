@@ -10,7 +10,9 @@ const { uuid } = require('./crypto');
 function clientExists(id) { return !!db.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, id); }
 
 /**
- * opts: { table, entity, perm, shape, clientRequired, dateCol, ownerCol, joins, select, filters(ctx,where,params), beforeInsert(ctx,v), afterLoad(ctx,row), canEdit(ctx,row) }
+ * opts: { table, entity, perm, shape, clientRequired, dateCol, ownerCol, joins, select, filters(ctx,where,params),
+ *   beforeInsert(ctx,v), afterInsert(ctx,row), beforeUpdate(ctx,v,row), afterUpdate(ctx,mergedRow,prevRow),
+ *   beforeDelete(ctx,row), afterLoad(ctx,row), canEdit(ctx,row), canDelete(ctx,row) }
  */
 function build(r, opts) {
   const { table, entity, perm, shape, dateCol = 'created_at', ownerCol = 'user_id', joins = '', select = `${table}.*`, clientRequired = true } = opts;
@@ -62,7 +64,10 @@ function build(r, opts) {
     if (opts.beforeInsert) opts.beforeInsert(ctx, v);
     const id = uuid();
     const cols = { id, ...v };
-    if (ownerCol && (cols[ownerCol] === undefined || (opts.restrictOwner && !auth.hasPerm(ctx.user, 'clients:all')))) cols[ownerCol] = ctx.user.id;
+    // validate() turns a blank field into an explicit null, not undefined — an owner picker left on its
+    // "defaults to you" blank option (interventions.js's Worker field) must fall back to the caller the same
+    // as an owner column the request never mentioned at all, not attempt a NOT NULL insert with nothing in it.
+    if (ownerCol && (cols[ownerCol] === undefined || cols[ownerCol] === null || (opts.restrictOwner && !auth.hasPerm(ctx.user, 'clients:all')))) cols[ownerCol] = ctx.user.id;
     if (opts.creatorCol) cols[opts.creatorCol] = ctx.user.id;
     const keys = Object.keys(cols).filter(k => cols[k] !== undefined && !k.startsWith('_'));
     // The insert and whatever it triggers (a time entry, a follow-up task, a client field update) are one
@@ -86,6 +91,7 @@ function build(r, opts) {
     if (opts.beforeUpdate) opts.beforeUpdate(ctx, v, row);
     const keys = Object.keys(v).filter(k => v[k] !== undefined && !k.startsWith('_'));
     if (keys.length) db.run(`UPDATE ${table} SET ${keys.map(k => `${k}=?`).join(', ')}${opts.noUpdatedAt ? '' : ', updated_at=?'} WHERE id=?`, ...keys.map(k => v[k]), ...(opts.noUpdatedAt ? [] : [db.now()]), row.id);
+    if (opts.afterUpdate) opts.afterUpdate(ctx, { ...row, ...v }, row);
     audit.log({ user: ctx.user, action: `${entity}.update`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip, details: { fields: keys } });
     return { ok: true };
   });
@@ -96,6 +102,7 @@ function build(r, opts) {
     if (row.client_id) auth.assertClientAccess(ctx, row.client_id);
     if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden('You cannot delete this record');
     if (opts.canDelete && !opts.canDelete(ctx, row)) throw forbidden('You cannot delete this record');
+    if (opts.beforeDelete) opts.beforeDelete(ctx, row);
     db.run(`DELETE FROM ${table} WHERE id=?`, row.id); db.tombstone(table, row.id);
     audit.log({ user: ctx.user, action: `${entity}.delete`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip });
     return { ok: true };

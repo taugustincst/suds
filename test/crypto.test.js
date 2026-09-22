@@ -1,4 +1,15 @@
 'use strict';
+const { test: t0 } = require('node:test');
+t0('the self-signed certificate is a CA-signed leaf, so the CA can be installed on a phone', () => {
+  const { X509Certificate } = require('node:crypto');
+  const c = require('../server/selfsigned').generate({ commonName: 'SUDS', org: 'County', hosts: ['localhost', '192.168.1.5', 'suds.local'] });
+  const leaf = new X509Certificate(c.cert), ca = new X509Certificate(c.ca);
+  require('node:assert').equal(ca.ca, true, 'the installable certificate is a CA');
+  require('node:assert').equal(leaf.ca, false, 'the server certificate is not');
+  require('node:assert').equal(leaf.verify(ca.publicKey), true, 'and is signed by it');
+  require('node:assert').match(leaf.subjectAltName, /IP Address:192\.168\.1\.5/);
+  require('node:assert').ok(c.cert.split('BEGIN CERTIFICATE').length === 3, 'the server file carries the chain');
+});
 process.env.SUDS_ENV = 'test';
 const { test } = require('node:test');
 const assert = require('node:assert');

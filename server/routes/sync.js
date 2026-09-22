@@ -15,6 +15,7 @@ const audit = require('../audit');
 const { badRequest, forbidden } = require('../http');
 const { encrypt, decrypt, blindIndex } = require('../crypto');
 const SYNC = require('../sync-tables');
+const { wouldCycle } = require('./budget');
 
 const NEVER = '1970-01-01T00:00:00.000Z';
 // One pull answers with at most this many rows per table. Beyond that the device is told to come back for
@@ -90,8 +91,22 @@ function pull(user, since, { limit = PULL_LIMIT } = {}) {
 }
 
 // Apply rows from a device. Last write wins by updated_at; users are never overwritten from devices.
+// Which columns a device's row would change, by name. Encrypted columns are compared as plaintext (each
+// encryption uses a fresh IV, so ciphertext never matches ciphertext) and blind indexes are skipped; the
+// values themselves never leave this function.
+function changedColumns(t, existing, raw, existingCols) {
+  const out = [];
+  for (const k of existingCols) {
+    if (['id', 'updated_at', 'created_at'].includes(k) || k.endsWith('_idx') || raw[k] === undefined) continue;
+    let was = existing[k];
+    if (t.enc.includes(k) && was) { try { was = decrypt(was); } catch { was = null; } }
+    if (String(was ?? '') !== String(raw[k] ?? '')) out.push(k);
+  }
+  return out;
+}
+
 function push(user, payload) {
-  const applied = {}; const rejected = [];
+  const applied = {}; const rejected = []; const conflicts = [];
   const reject = (table, id, reason) => { rejected.push({ table, id, reason }); };
   const rejectedIds = new Set();
 
@@ -107,9 +122,28 @@ function push(user, payload) {
   // One lookup instead of one per user-reference column per row.
   const knownUsers = new Set(db.all(`SELECT id FROM users`).map(u => u.id));
 
+  // A row that points at its own parent within the same table (e.g. a budget sub-allocation) needs that
+  // parent applied first, same as t.parent does across tables — but nothing orders rows within one table's
+  // batch, and a device can create a whole hierarchy offline in one sitting. Stable topological sort by
+  // that self-reference column; a parent outside this batch (already synced, or simply absent) needs no
+  // reordering since it is either already in the database or the row will be rejected on its own merits.
+  function selfParentOrder(rows, col) {
+    const ids = new Set(rows.map(r => r && r.id));
+    const placed = new Set(); const out = []; let remaining = rows;
+    while (remaining.length) {
+      const [ready, waiting] = [[], []];
+      for (const r of remaining) (!r || !r[col] || !ids.has(r[col]) || placed.has(r[col]) ? ready : waiting).push(r);
+      if (!ready.length) { out.push(...waiting); break; } // a cycle within the batch — let per-row validation reject it
+      for (const r of ready) { out.push(r); if (r && r.id) placed.add(r.id); }
+      remaining = waiting;
+    }
+    return out;
+  }
+
   db.transaction(() => {
     for (const t of SYNC.tables) {
-      const rows = (payload.tables || {})[t.name]; if (!Array.isArray(rows) || !rows.length) continue;
+      let rows = (payload.tables || {})[t.name]; if (!Array.isArray(rows) || !rows.length) continue;
+      if (t.selfParent) rows = selfParentOrder(rows, t.selfParent);
       if (t.name === 'users') continue;
       // Syncing is not a way around a role's limits: the same permission the REST route requires applies here.
       if (t.writePerm && !auth.hasPerm(user, t.writePerm)) {
@@ -132,12 +166,48 @@ function push(user, payload) {
           if (t.name === 'clients' && existing && !auth.canAccessClient(user, raw.id)) { reject(t.name, raw.id, 'not on caseload'); return false; }
           if (t.scope === 'via-note') { const note = db.one(`SELECT client_id, kind FROM notes WHERE id=?`, raw.note_id); if (!note || !auth.canAccessClient(user, note.client_id) || (note.kind === 'clinical' && !auth.hasPerm(user, 'notes:clinical:write'))) { reject(t.name, raw.id, 'not permitted'); return false; } }
           if (t.name === 'notes' && raw.kind === 'clinical' && !auth.hasPerm(user, 'notes:clinical:write')) { reject(t.name, raw.id, 'clinical notes not permitted for this role'); return false; }
+          // The REST route (PUT /api/budget/lines/:id) blocks a re-parent that would create a cycle; a push
+          // applies rows straight through with no such check otherwise — nothing here stops two lines each
+          // pointing at the other (both already exist, so neither side hits an FK violation) from silently
+          // dropping both of them out of every fund's line tree (buildLineTree only walks from roots).
+          if (t.name === 'budget_lines' && raw.parent_id && wouldCycle(raw.id, raw.parent_id)) { reject(t.name, raw.id, 'would create a cycle in its allocation hierarchy'); return false; }
+          // Same REST route also requires the parent to belong to the same fund. Nothing here stopped a push
+          // from re-parenting into a different fund's line: wouldCycle only walks the parent chain, so two
+          // lines in unrelated trees never collide. A line with a foreign parent_id keeps its own subtree
+          // totals (buildLineTree falls back to treating it as a root when its parent isn't in this fund's
+          // set) but drops out of its real fund's `allocated` total (it's excluded there for having a
+          // non-null parent_id) — silently inflating that fund's "unallocated" figure by the line's full
+          // amount while it still draws real expenditures.
+          if (t.name === 'budget_lines' && raw.parent_id) {
+            const parent = db.one(`SELECT funding_source_id FROM budget_lines WHERE id=?`, raw.parent_id);
+            if (parent && parent.funding_source_id !== raw.funding_source_id) { reject(t.name, raw.id, 'parent allocation does not belong to this fund'); return false; }
+          }
+          // interventions.js's checkCost() requires budget:write to attach or change a cost/fund/line on the
+          // REST route — a clinician (interventions:* but no budget permission) could otherwise use a push to
+          // set the same fields verbatim, since push writes straight to SQL with none of that route's hooks.
+          // Only rejected when the value is actually changing (or being set on a new row): a device re-syncing
+          // an unrelated edit to a row that already, legitimately, carries a fund/line/cost must not suddenly
+          // need budget:write just because that data is still sitting in the row it's sending.
+          if (t.name === 'interventions' && !auth.hasPerm(user, 'budget:write')) {
+            const changed = !existing || raw.cost !== existing.cost || raw.funding_source_id !== existing.funding_source_id || raw.budget_line_id !== existing.budget_line_id;
+            if (changed && ((raw.cost && raw.cost > 0) || raw.funding_source_id || raw.budget_line_id)) { reject(t.name, raw.id, 'you do not have permission to attach a cost to a funding source'); return false; }
+          }
           const incomingAt = raw.updated_at || raw.created_at || NEVER;
-          if (existing && (existing.updated_at || existing.created_at || NEVER) >= incomingAt) return false; // server copy is newer or same
+          if (existing && (existing.updated_at || existing.created_at || NEVER) >= incomingAt) {
+            // The office copy is newer, so the device's edit loses. That is the rule -- but it must not lose
+            // silently: the person who typed it saw "saved" on their phone. Name the columns that differ (never
+            // the values) in the audit log, and tell the device so it can say so on the sync screen.
+            const lost = changedColumns(t, existing, raw, existingCols);
+            if (lost.length && (existing.updated_at || existing.created_at || NEVER) > incomingAt) {
+              conflicts.push({ table: t.name, id: raw.id, label: t.name === 'clients' ? existing.client_code : null, columns: lost, server_updated_at: existing.updated_at, device_updated_at: incomingAt });
+              audit.log({ user, action: 'sync.conflict', entity: t.name, entityId: raw.id, clientId: t.clientCol ? raw[t.clientCol] : null, ip: 'device', details: { columns: lost, server_had: existing.updated_at, device_sent: incomingAt, kept: 'office' } });
+            }
+            return false;
+          }
           // Records from a device are attributed to the syncing user unless they manage all clients
           const OWNER = { interventions: 'user_id', calls: 'user_id', time_entries: 'user_id', referrals: 'user_id', expenditures: 'user_id', notes: 'author_id' }[t.name];
           if (OWNER && !auth.hasPerm(user, 'clients:all')) { if (!existing) raw[OWNER] = user.id; else raw[OWNER] = existing[OWNER]; }
-          if (t.name === 'expenditures') { if (!existing) { raw.status = 'pending'; raw.approved_by = null; raw.approved_at = null; } else if (!auth.hasPerm(user, 'budget:approve')) { raw.status = existing.status; raw.approved_by = existing.approved_by; raw.approved_at = existing.approved_at; } }
+          if (t.name === 'expenditures') { if (!existing) { raw.status = 'pending'; raw.approved_by = null; raw.approved_at = null; } else if (!auth.hasPerm(user, 'budget:approve')) { raw.status = existing.status; raw.approved_by = existing.approved_by; raw.approved_at = existing.approved_at; raw.approval_note = existing.approval_note; } }
           if (t.name === 'time_entries') { if (!existing) { raw.status = raw.status === 'submitted' ? 'submitted' : 'draft'; raw.approved_by = null; raw.approved_at = null; } else if (!auth.hasPerm(user, 'time:approve')) { raw.status = existing.status === 'approved' || existing.status === 'rejected' ? existing.status : raw.status; raw.approved_by = existing.approved_by; raw.approved_at = existing.approved_at; } }
           if (t.name === 'notes' && existing) {
             if (existing.status !== 'draft') { raw.content_enc = undefined; raw.structured_enc = undefined; raw.status = existing.status; raw.signed_by = existing.signed_by; raw.signed_at = existing.signed_at; raw.signature_hash = existing.signature_hash; } // signed notes are immutable
@@ -204,7 +274,7 @@ function push(user, payload) {
     }
     applied._audit = auditRows.length;
   });
-  return { applied, rejected, server_now: db.now(), clock_offset_ms: offsetMs, audit_accepted: applied._audit || 0 };
+  return { applied, rejected, conflicts, server_now: db.now(), clock_offset_ms: offsetMs, audit_accepted: applied._audit || 0 };
 }
 
 /** Find a client code no other client is using. Devices generate codes offline, so collisions are normal. */

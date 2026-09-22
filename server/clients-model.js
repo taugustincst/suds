@@ -38,6 +38,8 @@ function encryptFields(v) {
   if (v.last_name !== undefined) cols.last_name_idx = blindIndex(v.last_name);
   if (v.first_name !== undefined || v.last_name !== undefined) cols.full_name_idx = undefined; // computed by caller with full row
   if (v.last_name !== undefined) { cols.name_prefix_idx = namePrefixIndex(v.last_name); cols.name_phonetic_idx = namePhoneticIndex(v.last_name); }
+  // The search box promises "a name"; a first name alone used to find nobody.
+  if (v.first_name !== undefined) { cols.first_name_idx = blindIndex(String(v.first_name || '').trim().toLowerCase()); cols.first_name_prefix_idx = namePrefixIndex(v.first_name); }
   if (v.dob !== undefined) cols.dob_idx = blindIndex(v.dob);
   if (v.phone !== undefined) cols.phone_idx = blindIndex(String(v.phone || '').replace(/\D/g, ''));
   return cols;

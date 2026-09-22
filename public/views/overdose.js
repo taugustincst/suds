@@ -18,7 +18,9 @@ export function openOverdoseForm(row, { clientId = null, onDone } = {}) {
     { name: 'client_id', label: 'Client (leave empty for a community report)', type: 'client', span: true,
       help: 'A reversal you heard about or witnessed, with no client of ours involved, still counts — leave this blank.' },
     { name: 'occurred_at', label: 'When', type: 'datetime', required: true },
-    { name: 'kind', label: 'What happened', type: 'select', noBlank: true, options: KINDS },
+    // Chosen, not pre-filled: with 'reversal' and '1 dose' already in the form, saving it untouched used to
+    // record a countable naloxone reversal that never happened.
+    { name: 'kind', label: 'What happened', type: 'select', required: true, placeholder: '— choose —', options: KINDS },
     { name: 'substances', label: 'Substances involved', placeholder: 'e.g. fentanyl, benzodiazepines' },
     { name: 'naloxone_used', label: 'Naloxone was given', type: 'checkbox' },
     { name: 'naloxone_doses', label: 'Doses given', type: 'number', min: 0, max: 20 },
@@ -31,7 +33,7 @@ export function openOverdoseForm(row, { clientId = null, onDone } = {}) {
     { name: 'funding_source_id', label: 'Funding source', type: 'fund' },
     { name: 'notes', label: 'Notes', type: 'textarea', span: true, help: 'Stored encrypted.' },
   ], {
-    values: row || { client_id: clientId || '', occurred_at: new Date().toISOString(), kind: 'reversal', survived: 1, naloxone_used: 1, naloxone_doses: 1 },
+    values: row || { client_id: clientId || '', occurred_at: new Date().toISOString(), survived: 1 },
     submitText: row ? 'Save' : 'Record event',
     draftKey: row ? `overdose:${row.id}` : 'overdose:new',
     onSubmit: async (d) => {

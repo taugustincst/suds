@@ -48,11 +48,11 @@ module.exports = (r) => {
         // tolerance comes from indexing a 3-letter prefix and a Soundex code at write time.
         const parts = q.split(/[,\s]+/).filter(Boolean);
         const idxs = parts.map(p => blindIndex(p));
-        const clauses = [`c.last_name_idx IN (${idxs.map(() => '?').join(',')})`, 'c.full_name_idx IN (?,?)'];
-        params.push(...idxs, blindIndex(parts.join('')), blindIndex([...parts].reverse().join('')));
+        const clauses = [`c.last_name_idx IN (${idxs.map(() => '?').join(',')})`, 'c.full_name_idx IN (?,?)', `c.first_name_idx IN (${idxs.map(() => '?').join(',')})`];
+        params.push(...idxs, blindIndex(parts.join('')), blindIndex([...parts].reverse().join('')), ...parts.map(p => blindIndex(p.toLowerCase())));
         if (ctx.query.get('exact') !== '1') {
           for (const part of parts) {
-            const pfx = M.namePrefixIndex(part); if (pfx) { clauses.push('c.name_prefix_idx=?'); params.push(pfx); }
+            const pfx = M.namePrefixIndex(part); if (pfx) { clauses.push('c.name_prefix_idx=?'); params.push(pfx); clauses.push('c.first_name_prefix_idx=?'); params.push(pfx); }
             const snd = M.namePhoneticIndex(part); if (snd) { clauses.push('c.name_phonetic_idx=?'); params.push(snd); }
           }
         }

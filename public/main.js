@@ -21,6 +21,7 @@ import './views/setup.js';
 import './views/local.js';
 import './views/dataimport.js';
 import './views/forms.js';
+import './views/documents.js';
 import './views/supervision.js';
 import './views/episodes.js';
 import './views/overdose.js';

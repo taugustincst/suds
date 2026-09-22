@@ -146,7 +146,7 @@ export function banner(message, kind = 'warn', { id = message } = {}) {
   return el;
 }
 const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
-export function modal(title, content, { wide = false } = {}) {
+export function modal(title, content, { wide = false, onClose = null } = {}) {
   const root = document.getElementById('modal-root');
   const titleId = 'modal-title-' + Math.random().toString(36).slice(2, 9);
   const box = h('div', { class: `modal ${wide ? 'wide' : ''}`, role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': titleId },
@@ -155,10 +155,13 @@ export function modal(title, content, { wide = false } = {}) {
   // Remember where focus was, so closing the dialog returns the keyboard to what opened it.
   // activeElement can be null, and document.contains() throws on anything that is not a Node.
   const opener = document.activeElement instanceof Element ? document.activeElement : null;
+  let closed = false;
   function close() {
+    if (closed) return; closed = true;
     bg.remove();
     document.removeEventListener('keydown', onKey);
     if (opener && document.contains(opener) && typeof opener.focus === 'function') { try { opener.focus(); } catch { /* the element may have been replaced by a re-render */ } }
+    if (onClose) onClose();
   }
   function onKey(e) {
     if (e.key === 'Escape') { close(); return; }
@@ -297,6 +300,8 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
       case 'user': input = h('select', { name: f.name, required: !!f.required }, h('option', { value: '' }, f.placeholder || '—'), state.users.filter(u => u.is_active !== 0).map(u => h('option', { value: u.id, selected: u.id === v }, `${u.display_name} (${fmt.label(u.role)})`))); break;
       case 'fund': input = h('select', { name: f.name, required: !!f.required }, h('option', { value: '' }, '—'), state.funds.map(x => h('option', { value: x.id, selected: x.id === v }, x.name))); break;
       case 'password': input = h('input', { type: 'password', name: f.name, required: !!f.required, autocomplete: f.autocomplete || 'current-password' }); break;
+      // A phone number field brings up the dial pad on a phone, not the full keyboard.
+      case 'tel': input = h('input', { type: 'tel', inputmode: 'tel', autocomplete: 'off', name: f.name, required: !!f.required, value: v ?? '', placeholder: f.placeholder || '' }); break;
       default: input = h('input', { type: f.type || 'text', name: f.name, required: !!f.required, value: v ?? '', placeholder: f.placeholder || '', maxlength: f.maxLen, pattern: f.pattern, autocomplete: f.autocomplete || 'off' });
     }
     inputs[f.name] = input;
@@ -348,7 +353,10 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
         const control = w.querySelector('input,select,textarea');
         if (control) { control.setAttribute('aria-invalid', 'true'); if (!firstBad) firstBad = control; }
       }
-      const text = err.message + (fieldsErr ? ': ' + Object.entries(fieldsErr).map(([k, m]) => `${k} ${m}`).join('; ') : '');
+      // Field errors are already shown inline under each field; the banner names them the way the form
+      // does ("Client"), never by column ("client_id").
+      const labelOf = (k) => (fields.find(f => f.name === k) || {}).label || k;
+      const text = err.labelled ? err.message : err.message + (fieldsErr ? ': ' + Object.entries(fieldsErr).map(([k, m]) => `${labelOf(k)} ${m}`).join('; ') : '');
       errBox.textContent = text; errBox.classList.remove('hidden');
       // Say it out loud and put the cursor on the first thing that needs fixing, rather than leaving a
       // keyboard user to hunt for a red outline they cannot see.
@@ -392,7 +400,10 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     }
     if (bad.length || missing.length) {
       const fields = { ...Object.fromEntries(bad.map(f => [f.name, 'enter a complete date and time, or leave it blank'])), ...Object.fromEntries(missing.map(f => [f.name, 'is required'])) };
-      const e = new Error(bad.length ? 'Check the date/time below — it does not look complete.' : 'Fill in the required field below.');
+      // Name the field the way the form does ("Client"), not the way the database does ("client_id").
+      const names = missing.map(f => f.label).filter(Boolean);
+      const e = new Error(bad.length ? 'Check the date/time below — it does not look complete.' : names.length ? `Fill in ${names.length === 1 ? names[0] : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1]} below.` : 'Fill in the required field below.');
+      e.labelled = true;
       e.data = { fields };
       throw e;
     }
@@ -454,7 +465,7 @@ export function clientPicker(name, value, f = {}) {
       const r = await get(`/api/clients?limit=15&status=all${q ? '&q=' + encodeURIComponent(q) : ''}`);
       clear(list); options = []; active = -1;
       if (!r.clients.length) {
-        list.append(h('div', { class: 'muted small' }, q ? 'No matches. Try a surname, phone number, date of birth or client code.' : 'Type to search'));
+        list.append(h('div', { class: 'muted small' }, q ? 'No matches. Try a first or last name, phone number, date of birth or client code.' : 'Type to search'));
         announce('No matching clients');
       } else {
         r.clients.forEach((c, i) => {
@@ -554,7 +565,7 @@ export function maybeTour() {
   if (prefs.get('tour_done') || tourOpen || document.querySelector('.modal-bg')) return;
   tourOpen = true;
   const steps = [
-    ['Welcome to SUDS', `Hi ${state.user.display_name.split(' ')[0]}. SUDS keeps everything about the people you serve in one place, and it works the same on your phone and your computer. Anything you add on one shows up on the other right away.`],
+    ['Welcome to SUDS', `Hi ${firstName(state.user.display_name)}. SUDS keeps everything about the people you serve in one place, and it works the same on your phone and your computer. Anything you add on one shows up on the other right away.`],
     ['Start with Home', 'Home shows what needs attention today: reminders due, clients you have not contacted in a while, and drafts you started on another device.'],
     ['Record work with + Log', 'The blue + Log button (top of the page, or bottom-right on a phone) records a visit, call, note, reminder or time in a few taps. Visits and calls also fill in your time sheet.'],
     ['Find anyone fast', 'Use the search box at the top with a last name, phone number or client code. Open a client to see their story: visits, calls, notes, referrals and reminders on one timeline.'],
@@ -562,8 +573,10 @@ export function maybeTour() {
   ];
   let i = 0; const body = h('div', {}); const dots = h('div', { class: 'muted small center' });
   const draw = () => { clear(body).append(h('h2', {}, steps[i][0]), h('p', { style: { fontSize: '1.05rem' } }, steps[i][1])); dots.textContent = `${i + 1} of ${steps.length}`; };
+  // Closing the dialog any other way (backdrop, Escape, the corner button) counts as "skip" too -- it must
+  // not come back on every page load, and it must never sit blocking the app on a phone in the field.
   const finish = () => { prefs.set('tour_done', true); tourOpen = false; m.close(); };
-  const m = modal('', h('div', {}, body, h('div', { class: 'btn-row', style: { justifyContent: 'space-between', alignItems: 'center' } }, h('button', { class: 'btn ghost', onClick: finish }, 'Skip'), dots, h('button', { class: 'btn primary', onClick: () => { if (i < steps.length - 1) { i++; draw(); } else finish(); } }, 'Next'))));
+  const m = modal('', h('div', {}, body, h('div', { class: 'btn-row', style: { justifyContent: 'space-between', alignItems: 'center' } }, h('button', { class: 'btn ghost', onClick: finish }, 'Skip'), dots, h('button', { class: 'btn primary', onClick: () => { if (i < steps.length - 1) { i++; draw(); } else finish(); } }, 'Next'))), { onClose: () => { prefs.set('tour_done', true); tourOpen = false; } });
   m.el.querySelector('.card-head').remove(); draw();
 }
 export async function downloadCsv(path) {
@@ -575,6 +588,9 @@ export async function downloadCsv(path) {
 // ---------- routing ----------
 const routes = {};
 export function route(name, loader) { routes[name] = loader; }
+// "Dr. Kiran Patel" is Kiran, not Dr.
+export const firstName = (n) => (String(n || '').split(/\s+/).filter(w => !/^(dr|mr|mrs|ms|mx|rev|fr|sr|jr)\.?$/i.test(w))[0] || String(n || '').split(' ')[0] || '');
+const canAny = (perm) => (Array.isArray(perm) ? perm.some(p => can(p)) : can(perm));
 export function parseHash() {
   const [path, qs] = location.hash.replace(/^#\/?/, '').split('?');
   const parts = path.split('/').filter(Boolean);
@@ -588,7 +604,7 @@ export const NAV = [
   { name: 'clients', label: 'My clients', ico: '👤', perm: 'clients:read', help: 'Everyone you serve. Open a client to see their whole story in one place.' },
   { name: 'waitlist', label: 'Waitlist', ico: '⧗', perm: 'clients:read', help: 'People waiting for a place, longest and highest risk first.' },
   { name: 'tasks', label: 'To-do list', ico: '☑', perm: 'tasks:read', help: 'Follow-ups and reminders. Check a box when it is done.' },
-  { name: 'supervision', label: 'Supervision', ico: '✍', perm: 'notes:cosign', help: 'Notes waiting for your countersignature, drafts your team has not finished, staff time to approve, and referrals with no outcome recorded.' },
+  { name: 'supervision', label: 'Supervision', ico: '✍', perm: ['notes:cosign', 'time:approve', 'assignments:manage'], help: 'Notes waiting for your countersignature, drafts your team has not finished, staff time to approve, and referrals with no outcome recorded.' },
   { sec: 'Record work' },
   { name: 'interventions', label: 'Visits & services', ico: '✚', perm: 'interventions:read', help: 'Every face-to-face or phone service you provide: outreach, screenings, warm handoffs, naloxone, transport and more.' },
   { name: 'calls', label: 'Calls & texts', ico: '☎', perm: 'calls:read', help: 'Phone calls and text messages with clients, families and providers — including ones that went to voicemail or got no reply.' },
@@ -602,14 +618,18 @@ export const NAV = [
   { name: 'resources', label: 'Resource directory', ico: '☰', perm: 'resources:read', help: 'Treatment programs, MAT clinics, shelters, legal aid and other partners you refer to.' },
   { sec: 'Program' },
   { name: 'budget', label: 'Funding & spending', ico: '$', perm: 'budget:read', help: 'Grants and what has been spent, including client assistance such as bus passes and IDs.' },
+  { name: 'documents', label: 'Policies & contracts', ico: '📋', perm: 'documents:read', help: 'County policies, procedures and signed contracts, searchable by title and category.' },
   { name: 'reports', label: 'Reports', ico: '▤', perm: 'reports:read', help: 'Numbers for your funders and supervisors. Exports never include client names unless you ask.' },
   { name: 'funder', label: 'Funder report', ico: '▦', perm: 'reports:read', help: 'Unduplicated counts — people, not services — by fiscal period and funding source, with admissions, discharges, demographics and overdose figures in the shape a grant report asks for.' },
-  { name: 'admin', label: 'Settings', ico: '⚙', perm: 'users:manage', help: 'Staff accounts, security, connecting phones, and backups.' },
+  // A supervisor holds assignments:manage (moving a caseload when someone leaves lives on this page) but not
+  // users:manage; gating the whole page on the latter locked them out of a feature built for them.
+  { name: 'admin', label: 'Settings', ico: '⚙', perm: ['users:manage', 'assignments:manage'], help: 'Staff accounts, security, connecting phones and backups — or, for a supervisor, moving a caseload and the audit log.' },
 ];
 
 let current = null;
 export async function render() {
   const app = document.getElementById('app');
+  app.removeAttribute('aria-busy'); // was set on the static pre-hydration shell in index.html
   clear(document.getElementById('modal-root'));
   const r = parseHash();
   if (state.localSetupNeeded) { if (r.name !== 'localsetup') { nav('localsetup'); return; } clear(app).append(await routes.localsetup(r)); return; }
@@ -619,13 +639,16 @@ export async function render() {
   if (r.name === 'mfa' || r.name === 'login') { clear(app).append(await routes[r.name === 'mfa' ? 'mfa' : 'dashboard'](r)); return; }
   if (state.user.must_change_password && r.name !== 'profile') { nav('profile?force=1'); return; }
   const navItem = NAV.find(n => n.name === r.name);
-  const loader = navItem?.perm && !can(navItem.perm) ? (async () => emptyState('Not available for your role', `Your account does not have access to ${navItem.label}. Ask your supervisor or administrator if you need it.`, h('button', { class: 'btn', onClick: () => nav('dashboard') }, 'Back to home'))) : (routes[r.name] || routes.dashboard);
-  const main = h('div', { class: 'main' }, h('div', { class: 'boot' }, 'Loading…'));
+  const loader = navItem?.perm && !canAny(navItem.perm) ? (async () => emptyState('Not available for your role', `Your account does not have access to ${navItem.label}. Ask your supervisor or administrator if you need it.`, h('button', { class: 'btn', onClick: () => nav('dashboard') }, 'Back to home'))) : (routes[r.name] || routes.dashboard);
+  const main = h('main', { class: 'main', id: 'main', tabindex: '-1' }, h('div', { class: 'boot' }, 'Loading…'));
   const side = sidebar(r);
   const qa = quickActions();
-  const layout = h('div', { class: 'layout' }, mobileBar(r, side), side, h('div', { class: 'content' }, h('div', { class: 'appbar' }, can('clients:read') ? globalSearch() : h('div', { class: 'grow' }), qa), main), qa ? h('div', { class: 'fab' }, qa.cloneNode(true)) : null);
+  const layout = h('div', { class: 'layout' }, h('a', { class: 'skip-link', href: '#main', onClick: (e) => { e.preventDefault(); main.focus(); main.scrollIntoView(); } }, 'Skip to content'), mobileBar(r, side), side, h('div', { class: 'content' }, h('div', { class: 'appbar' }, can('clients:read') ? globalSearch() : h('div', { class: 'grow' }), qa), main), qa ? h('div', { class: 'fab' }, qa.cloneNode(true)) : null);
   if (qa) layout.querySelector('.fab button')?.addEventListener('click', () => qa.click());
   clear(app).append(layout);
+  // A hash change keeps the old scroll position, so leaving a long list for another page landed the
+  // reader part-way down it, with the new page's header and alerts scrolled off the top.
+  if (!current || current.name !== r.name || current.id !== r.id) window.scrollTo(0, 0);
   if (r.name === 'dashboard') setTimeout(() => { if (parseHash().name === 'dashboard') maybeTour(); }, 400);
   try { const view = await loader(r); clear(main).append(view); }
   catch (e) { clear(main).append(h('div', { class: 'banner danger' }, e.message)); }
@@ -634,20 +657,30 @@ export async function render() {
 function sidebar(r) {
   return h('aside', { class: 'sidebar' },
     h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('b', {}, 'SUDS'), h('small', {}, state.org))),
-    h('nav', { class: 'nav' }, NAV.map(n => n.sec ? h('div', { class: 'sec' }, n.sec) : (!n.perm || can(n.perm)) ? h('a', { href: '#/' + n.name, class: r.name === n.name ? 'active' : '' }, h('span', { class: 'ico' }, n.ico), n.label) : null)),
+    h('nav', { class: 'nav' }, NAV.map((n, i) => {
+      if (n.sec) {
+        // A heading with nothing under it (a finance account and "Connect clients") is just noise.
+        const rest = NAV.slice(i + 1); const end = rest.findIndex(m => m.sec); const items = end < 0 ? rest : rest.slice(0, end);
+        return items.some(m => !m.perm || canAny(m.perm)) ? h('div', { class: 'sec' }, n.sec) : null;
+      }
+      return (!n.perm || canAny(n.perm)) ? h('a', { href: '#/' + n.name, class: r.name === n.name ? 'active' : '' }, h('span', { class: 'ico' }, n.ico), n.label) : null;
+    })),
     h('div', { class: 'foot' }, state.local ? h('a', { href: '#/sync', class: 'badge info', style: { display: 'block', textAlign: 'center', marginBottom: '.5rem' } }, '📱 On this device · Sync') : null, h('div', {}, h('b', {}, state.user.display_name)), h('div', { class: 'muted' }, fmt.label(state.user.role)),
       h('div', { class: 'row', style: { marginTop: '.5rem' } }, h('a', { href: '#/profile' }, 'Profile'), h('a', { href: '#', onClick: (e) => { e.preventDefault(); logout(); } }, 'Sign out'), h('a', { href: '#', title: 'Light / dark', onClick: (e) => { e.preventDefault(); toggleTheme(); } }, 'Light/dark'))));
 }
 function mobileBar(r, side) {
   const item = NAV.find(n => n.name === r.name) || (r.name === 'client' ? { label: 'Client' } : { label: 'SUDS' });
-  const toggle = () => { side.classList.toggle('open'); document.body.classList.toggle('nav-open', side.classList.contains('open')); };
-  side.addEventListener('click', (e) => { if (e.target.closest('a')) { side.classList.remove('open'); document.body.classList.remove('nav-open'); } });
-  return h('div', { class: 'mobilebar' }, h('button', { class: 'btn ghost', 'aria-label': 'Menu', onClick: toggle }, '☰'), h('b', {}, item.label), h('a', { href: '#/clients', class: 'btn ghost', 'aria-label': 'Clients' }, '👤'));
+  const menuBtn = h('button', { class: 'btn ghost', 'aria-label': 'Menu', 'aria-expanded': 'false', 'aria-controls': 'sidebar' }, '☰');
+  side.id = 'sidebar';
+  const toggle = () => { side.classList.toggle('open'); const open = side.classList.contains('open'); document.body.classList.toggle('nav-open', open); menuBtn.setAttribute('aria-expanded', String(open)); };
+  menuBtn.addEventListener('click', toggle);
+  side.addEventListener('click', (e) => { if (e.target.closest('a')) { side.classList.remove('open'); document.body.classList.remove('nav-open'); menuBtn.setAttribute('aria-expanded', 'false'); } });
+  return h('div', { class: 'mobilebar' }, menuBtn, h('b', {}, item.label), h('a', { href: '#/clients', class: 'btn ghost', 'aria-label': 'Clients' }, '👤'));
 }
 function toggleTheme() { const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); const next = cur === 'dark' ? 'light' : 'dark'; prefs.set('theme', next); applyTheme(); }
 try { const cached = JSON.parse(localStorage.getItem('suds.prefs') || '{}'); if (cached.theme) document.documentElement.dataset.theme = cached.theme; } catch {}
 
-export async function logout() { await prefs.flush(); try { await post('/api/auth/logout', {}); } catch {} state.user = null; state.mfaPending = false; nav('login'); render(); }
+export async function logout() { await prefs.flush(); try { await post('/api/auth/logout', {}); } catch {} state.user = null; state.mfaPending = false; document.querySelectorAll('#banners [data-banner="mfa-required"]').forEach(b => b.remove()); nav('login'); render(); }
 
 // ---------- session / idle ----------
 let lastActivity = Date.now(); let idleTimer;
@@ -677,10 +710,21 @@ export async function loadSession() {
     const me = await get('/api/auth/me', { quiet: true });
     state.user = me.user; state.org = me.org_name; state.mfaPending = me.mfaPending; state.idleMinutes = me.idle_minutes || 15;
     await Promise.all([loadRefData(), prefs.load()]);
+    // Two-step verification is required of this role but not set up yet. There is a grace period, after which
+    // the server refuses every request until it is done -- so say when that is, and where to do it, instead of
+    // a vague "please enroll" that reads as advisory right up until the day everything stops working.
+    if (state.user.mfa_required && !state.user.mfa_enabled && !state.mfaPending && !state.local) {
+      const due = state.user.mfa_setup_deadline ? fmt.parse(state.user.mfa_setup_deadline) : null;
+      const when = due ? (due.getTime() < Date.now() ? 'now' : `by ${fmt.date(state.user.mfa_setup_deadline)}`) : 'now';
+      const el = banner(`Your role requires two-step verification. Set it up ${when} — after that, SUDS will not let you in until it is done.`, 'warn', { id: 'mfa-required' });
+      if (el) el.firstChild.append(' ', h('a', { href: '#/profile?mfa=1', class: 'btn sm primary', style: { marginLeft: '.5rem' } }, 'Set up now'));
+    }
   } catch { state.user = null; }
 }
 export async function loadRefData() {
-  if (!state.constants) state.constants = await get('/api/meta/constants');
+  // Not fatal: an account that must change its password first is refused nearly everything, and the one
+  // page it may use has to render regardless.
+  if (!state.constants) { try { state.constants = await get('/api/meta/constants', { quiet: true }); } catch { state.constants = state.constants || {}; } }
   try { state.users = (await get('/api/users', { quiet: true })).users; } catch { state.users = []; }
   if (can('budget:read')) { try { state.funds = (await get('/api/budget/funds', { quiet: true })).funds; } catch { state.funds = []; } }
 }
@@ -718,6 +762,7 @@ export async function boot(force = false) {
           : 'Could not start SUDS on this device: ' + (e && e.message);
       console.error(e);
       const app = document.getElementById('app');
+      app.removeAttribute('aria-busy');
       clear(app);
       // This is the one screen a locked-out or broken device can reach without a kernel — reset has to work
       // here directly. SUDS_ALREADY_OPEN gets its own recovery instead: that device and its data are fine,
@@ -736,6 +781,17 @@ export async function boot(force = false) {
       return;
     }
     window.addEventListener('pagehide', () => { window.SUDS_LOCAL && window.SUDS_LOCAL.flush(); });
+    // Redeploying the site (new files at the same origin) never touches this device's IndexedDB/localStorage
+    // — the sign-in session, the account, and every client record already survive that on their own. What
+    // does not survive on its own is the browser treating this storage as "best-effort": under disk pressure
+    // it can be evicted with no warning, silently taking the whole device's data with it. Asking for the
+    // persistent-storage grant is the one thing actually in the app's control here; the browser still decides
+    // (based on things like whether the person installed/bookmarked the app), so this is best-effort itself.
+    try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {}
+    // "Add to Home Screen" installs whatever the manifest's start_url says, and the shared manifest points at
+    // the office login -- so a phone set up here, installed the way the login screen tells people to, opened
+    // to a server sign-in with its own caseload nowhere in sight. The on-device manifest starts back here.
+    try { const link = document.querySelector('link[rel="manifest"]'); if (link) link.href = 'manifest-local.webmanifest'; localStorage.setItem('suds.localUsed', '1'); } catch {}
   } else if ('serviceWorker' in navigator && location.protocol !== 'file:') { try { navigator.serviceWorker.register('sw.js').catch(() => {}); } catch {} }
   await loadSession();
   startIdleWatch();

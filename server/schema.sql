@@ -97,6 +97,8 @@ CREATE TABLE IF NOT EXISTS clients (
   -- a specific name against those, and both live in the same database as the ciphertext.
   name_prefix_idx TEXT,
   name_phonetic_idx TEXT,
+  first_name_idx TEXT,
+  first_name_prefix_idx TEXT,
   preferred_name_enc TEXT,
   dob_enc TEXT,
   dob_idx TEXT,
@@ -192,6 +194,10 @@ CREATE TABLE IF NOT EXISTS funding_sources (
 CREATE TABLE IF NOT EXISTS budget_lines (
   id TEXT PRIMARY KEY,
   funding_source_id TEXT NOT NULL REFERENCES funding_sources(id) ON DELETE CASCADE,
+  -- A budget line can sit inside a larger one (a grant broken into program-level allocations broken into
+  -- line items) instead of every line being a flat peer under the fund. Always within the same fund; the
+  -- application enforces that plus cycle-safety, since SQLite has no way to express either as a constraint.
+  parent_id TEXT REFERENCES budget_lines(id) ON DELETE CASCADE,
   category TEXT NOT NULL,
   label TEXT,
   allocated_amount REAL NOT NULL DEFAULT 0,
@@ -200,6 +206,7 @@ CREATE TABLE IF NOT EXISTS budget_lines (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_budget_lines_updated ON budget_lines(updated_at);
+CREATE INDEX IF NOT EXISTS idx_budget_lines_parent ON budget_lines(parent_id);
 
 CREATE TABLE IF NOT EXISTS interventions (
   id TEXT PRIMARY KEY,
@@ -216,6 +223,9 @@ CREATE TABLE IF NOT EXISTS interventions (
   naloxone_kits INTEGER DEFAULT 0,
   fentanyl_strips INTEGER DEFAULT 0,
   funding_source_id TEXT REFERENCES funding_sources(id),
+  -- Which allocation the cost below actually draws down. Nullable: a worker can log a direct cost against
+  -- just the fund with no specific line, the same as expenditures.budget_line_id already allows.
+  budget_line_id TEXT REFERENCES budget_lines(id) ON DELETE SET NULL,
   cost REAL DEFAULT 0,
   summary_enc TEXT,
   follow_up_due TEXT,
@@ -332,6 +342,28 @@ CREATE TABLE IF NOT EXISTS resource_photos (
 );
 CREATE INDEX IF NOT EXISTS idx_resource_photos ON resource_photos(resource_id, sort_order);
 
+-- County policies, procedures and contracts: an uploaded-file library, searched by title/category/metadata
+-- only (no PHI in here, and no text extracted from the files themselves).
+CREATE TABLE IF NOT EXISTS policy_documents (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  category TEXT NOT NULL CHECK (category IN ('policy','procedure','contract')),
+  description TEXT,
+  effective_date TEXT,
+  expires_at TEXT,
+  filename TEXT,
+  content_type TEXT,
+  bytes INTEGER NOT NULL DEFAULT 0,
+  file_b64 TEXT,
+  search_text TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  uploaded_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_policy_documents_cat ON policy_documents(category);
+CREATE INDEX IF NOT EXISTS idx_policy_documents_updated ON policy_documents(updated_at);
+
 CREATE TABLE IF NOT EXISTS referrals (
   id TEXT PRIMARY KEY,
   client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
@@ -393,11 +425,15 @@ CREATE TABLE IF NOT EXISTS expenditures (
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','reimbursed')),
   approved_by TEXT REFERENCES users(id),
   approved_at TEXT,
+  approval_note TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_exp_fund ON expenditures(funding_source_id, spent_at);
 CREATE INDEX IF NOT EXISTS idx_exp_client ON expenditures(client_id);
+-- At most one expenditure per intervention (NULL excluded, so ordinary manually-entered expenditures with
+-- no linked service are unaffected) — a second row for the same service would double-count its cost.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_exp_intervention_unique ON expenditures(intervention_id) WHERE intervention_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS notes (
   id TEXT PRIMARY KEY,
@@ -597,6 +633,8 @@ CREATE INDEX IF NOT EXISTS idx_clients_updated ON clients(updated_at);
 CREATE INDEX IF NOT EXISTS idx_clients_full_name_idx ON clients(full_name_idx);
 CREATE INDEX IF NOT EXISTS idx_clients_name_prefix ON clients(name_prefix_idx);
 CREATE INDEX IF NOT EXISTS idx_clients_name_phonetic ON clients(name_phonetic_idx);
+CREATE INDEX IF NOT EXISTS idx_clients_first_name ON clients(first_name_idx);
+CREATE INDEX IF NOT EXISTS idx_clients_first_name_prefix ON clients(first_name_prefix_idx);
 CREATE INDEX IF NOT EXISTS idx_resources_updated ON resources(updated_at);
 CREATE INDEX IF NOT EXISTS idx_resource_photos_updated ON resource_photos(updated_at);
 CREATE INDEX IF NOT EXISTS idx_funding_sources_updated ON funding_sources(updated_at);

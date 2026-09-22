@@ -189,6 +189,59 @@ const migrations = [
       last_ip TEXT, sync_count INTEGER NOT NULL DEFAULT 0, wipe_requested_at TEXT, revoked_at TEXT)`);
     d.exec(`CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id)`);
   },
+  // 13: nested budget allocations — a budget line can now sit inside a larger one instead of every line
+  //     being a flat peer under the fund (server/routes/budget.js enforces same-fund + no cycles).
+  (d) => {
+    addColumn(d, 'budget_lines', 'parent_id', 'TEXT REFERENCES budget_lines(id) ON DELETE CASCADE');
+    d.exec(`CREATE INDEX IF NOT EXISTS idx_budget_lines_parent ON budget_lines(parent_id)`);
+  },
+  // 14: an intervention with a direct cost against a fund can now name the specific allocation it draws
+  //     down — interventions already had funding_source_id and cost, but nothing to point at which budget
+  //     line, so recording a service never actually reduced a budget. server/routes/interventions.js now
+  //     auto-posts a matching (pending) expenditure from these three columns.
+  (d) => { addColumn(d, 'interventions', 'budget_line_id', 'TEXT REFERENCES budget_lines(id) ON DELETE SET NULL'); },
+  // 15: county policies, procedures and contracts — an uploaded-file library (server/routes/documents.js),
+  //     searched by title/category/metadata only, the same shape as the existing form template library.
+  (d) => {
+    d.exec(`CREATE TABLE IF NOT EXISTS policy_documents (id TEXT PRIMARY KEY, title TEXT NOT NULL, category TEXT NOT NULL CHECK (category IN ('policy','procedure','contract')),
+      description TEXT, effective_date TEXT, expires_at TEXT, filename TEXT, content_type TEXT, bytes INTEGER NOT NULL DEFAULT 0, file_b64 TEXT, is_active INTEGER NOT NULL DEFAULT 1,
+      uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
+    d.exec(`CREATE INDEX IF NOT EXISTS idx_policy_documents_cat ON policy_documents(category)`);
+    d.exec(`CREATE INDEX IF NOT EXISTS idx_policy_documents_updated ON policy_documents(updated_at)`);
+  },
+  // 16: at most one expenditure per intervention — a second one would double-count that service's cost.
+  //     Before this, intervention_id was a writable field on the generic expenditures POST, so a database
+  //     that saw any traffic on that route could already have duplicates; keep the most recently updated
+  //     row's link and unlink the rest (they stay, just as ordinary expenditures with no linked service)
+  //     rather than deleting real financial records during a migration.
+  (d) => {
+    const dupes = d.prepare(`SELECT intervention_id, id FROM expenditures WHERE intervention_id IS NOT NULL
+      AND id NOT IN (SELECT id FROM expenditures e2 WHERE e2.intervention_id=expenditures.intervention_id ORDER BY e2.updated_at DESC LIMIT 1)`).all();
+    const unlink = d.prepare(`UPDATE expenditures SET intervention_id=NULL WHERE id=?`);
+    for (const row of dupes) unlink.run(row.id);
+    d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_exp_intervention_unique ON expenditures(intervention_id) WHERE intervention_id IS NOT NULL`);
+  },
+  // 17: why an expenditure was rejected. Time entries have carried this since their approval step was
+  //     added; expenditures accepted a note on the approve route and then dropped it on the floor.
+  (d) => { addColumn(d, 'expenditures', 'approval_note', 'TEXT'); },
+  // 18: a first name on its own finds the person (the search box always said it would), and the policy
+  //     library keeps the words inside each file so a policy can be found by what it says, not only its
+  //     title. Existing documents are indexed by server/routes/documents.js the next time they are saved.
+  (d) => {
+    const schemaText = safeSchema();
+    addColumn(d, 'clients', 'first_name_idx', 'TEXT');
+    addColumn(d, 'clients', 'first_name_prefix_idx', 'TEXT');
+    const { decrypt, blindIndex } = require('./crypto');
+    const M = require('./clients-model');
+    const upd = d.prepare(`UPDATE clients SET first_name_idx=?, first_name_prefix_idx=? WHERE id=?`);
+    for (const c of d.prepare(`SELECT id, first_name_enc FROM clients`).all()) {
+      let first = '';
+      try { first = c.first_name_enc ? decrypt(c.first_name_enc) : ''; } catch { continue; }
+      upd.run(blindIndex(String(first || '').trim().toLowerCase()), M.namePrefixIndex(first), c.id);
+    }
+    for (const line of schemaText.split('\n')) if (/^CREATE INDEX IF NOT EXISTS idx_clients_first_name/.test(line.trim())) d.exec(line.trim());
+    addColumn(d, 'policy_documents', 'search_text', 'TEXT');
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's
@@ -313,10 +366,20 @@ function savepoint(fn, onError) {
   try { const r = fn(); d.exec(`RELEASE ${sp}`); return r; }
   catch (e) { try { d.exec(`ROLLBACK TO ${sp}`); d.exec(`RELEASE ${sp}`); } catch {} if (onError) onError(e); else throw e; }
 }
+// The key this database was written with, remembered on first open and checked on every open after. A
+// server started with different keys (a data folder moved without its keys.json, an environment variable
+// mistyped) otherwise runs looking healthy while every decrypt fails and every new write mixes two keys.
+function checkKeyFingerprint() {
+  const fp = require('./crypto').keyFingerprint();
+  const stored = getSetting('key_fingerprint', null);
+  if (!stored) { setSetting('key_fingerprint', fp); return { first: true }; }
+  if (stored !== fp) throw new Error('The encryption key this server was started with is not the key this database was written with. Nothing has been changed. Restore the key backup (keys.json) saved at setup or set SUDS_ENCRYPTION_KEY to the original key, then start again. If the key was deliberately rotated with scripts/rotate-key.js, that script records the new key; a database this happened to some other way needs the original key back.');
+  return { first: false };
+}
 function getSetting(key, def = null) { const r = one(`SELECT value FROM settings WHERE key=?`, key); return r ? r.value : def; }
 function setSetting(key, value) {
   run(`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, key, String(value));
 }
 
 function tombstone(table, id) { run(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now()); }
-module.exports = { open, openWith, get, close, LATEST_SCHEMA_VERSION: migrations.length, now, all, one, run, transaction, savepoint, getSetting, setSetting, tombstone };
+module.exports = { open, openWith, get, close, LATEST_SCHEMA_VERSION: migrations.length, now, all, one, run, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint };

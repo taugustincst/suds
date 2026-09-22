@@ -21,13 +21,17 @@ function rateLimit(key, max, windowMs) {
   if (buckets.size > 10000) for (const [k, v] of buckets) if (now > v.reset) buckets.delete(k);
   return b.count <= max;
 }
+// Is this key already over its limit? Does not count an attempt; the caller counts only the ones it wants
+// to (failed sign-ins, say -- a whole office signing in at 8 a.m. from behind one router is not an attack).
+function rateLimited(key, max) { const b = buckets.get(key); return !!b && Date.now() <= b.reset && b.count >= max; }
+function rateLimitReset(key) { buckets.delete(key); }
 
 // Every route module, in one place. The local kernel builds its router from LOCAL_ROUTE_MODULES below and
 // fails loudly if it is missing a loader for one, so adding a route file cannot silently leave the feature
 // out of the phone app.
 const ROUTE_MODULES = ['setup', 'auth', 'oidc', 'me', 'app', 'sync', 'dataimport', 'users', 'clients', 'assignments', 'episodes',
   'interventions', 'overdose', 'calls', 'time', 'supervision', 'resources', 'referrals', 'tasks', 'budget', 'notes',
-  'consents', 'forms', 'imports', 'reports', 'admin', 'regions', 'intake'];
+  'consents', 'forms', 'documents', 'imports', 'reports', 'admin', 'regions', 'intake'];
 
 // Not on a device: setup and app are office-server concerns (first-run wizard, APK hosting), sync is the
 // device's own runner, intake is an inbound API for other systems to call, and oidc needs a live identity
@@ -72,7 +76,7 @@ function createHandler() {
       }
 
       if (!['GET', 'HEAD'].includes(req.method)) {
-        const raw = await readBody(req);
+        const raw = await readBody(req, req.url.startsWith('/api/admin/restore') ? config.maxRestoreBodyBytes : config.maxBodyBytes);
         const ct = req.headers['content-type'] || '';
         if (ct.includes('application/json')) {
           try { ctx.body = raw.length ? JSON.parse(raw.toString('utf8')) : {}; } catch { throw new HttpError(400, 'Invalid JSON'); }
@@ -98,4 +102,4 @@ function createHandler() {
   };
 }
 
-module.exports = { createHandler, rateLimit, ROUTE_MODULES, LOCAL_ROUTE_MODULES };
+module.exports = { createHandler, rateLimit, rateLimited, rateLimitReset, ROUTE_MODULES, LOCAL_ROUTE_MODULES };

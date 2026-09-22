@@ -75,6 +75,9 @@ test('blind-index search by last name, phone, dob, code', async () => {
     assert.equal(r.data.clients.length, 1, `search ${q}`);
   }
   assert.equal((await nav.get('/api/clients?q=smith')).data.clients.length, 0);
+  // The search box says "a name"; a first name on its own used to find nobody at all.
+  assert.equal((await nav.get('/api/clients?q=jane')).data.clients.length, 1, 'first name alone');
+  assert.equal((await nav.get('/api/clients?q=Jan')).data.clients.length, 1, 'partial first name');
 });
 test('caseload restriction hides unassigned clients from other navigators', async () => {
   assert.equal((await nav2.get(`/api/clients/${clientId}`)).status, 403);
@@ -235,6 +238,230 @@ test('budget: funds, lines, expenditures, separation of duties', async () => {
   assert.equal((await nav.get(`/api/clients/${clientId}`)).data.client.counts.spent, 125.5);
   // nav cannot approve
   assert.equal((await nav.post(`/api/budget/expenditures/${e.data.id}/approve`, { status: 'approved' })).status, 403);
+});
+
+test('a navigator records expenses but cannot restructure grants; a rejection needs a reason', async () => {
+  // Regression: budget:write covered both "log a bus pass for my client" and "change the total award on the
+  // county's opioid settlement grant". The second is grant administration, now behind budget:manage.
+  const f = await admin.post('/api/budget/funds', { name: 'Structure check', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 5000 });
+  assert.equal((await nav.post('/api/budget/funds', { name: 'Nav-made fund', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 1 })).status, 403);
+  assert.equal((await nav.put(`/api/budget/funds/${f.data.id}`, { total_amount: 999999 })).status, 403, 'nor change the award');
+  assert.equal((await nav.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'other', allocated_amount: 10 })).status, 403, 'nor add lines');
+  const line = await fin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'client_assistance', allocated_amount: 1000 });
+  assert.equal(line.status, 201, 'finance manages the structure');
+  const e = await nav.post('/api/budget/expenditures', { funding_source_id: f.data.id, budget_line_id: line.data.id, client_id: clientId, spent_at: '2026-09-05', amount: 40, category: 'client_assistance', vendor: 'Transit' });
+  assert.equal(e.status, 201, 'but a navigator still records client assistance');
+  assert.equal((await nav.get('/api/auth/me')).data.user.permissions.includes('budget:manage'), false);
+  const s = H.client(); await s.login('sup1', 'StaffPassw0rd!x');
+  assert.equal((await s.post(`/api/budget/expenditures/${e.data.id}/approve`, { status: 'rejected' })).status, 400, 'a rejection with no reason is refused');
+  assert.equal((await s.post(`/api/budget/expenditures/${e.data.id}/approve`, { status: 'rejected', note: 'No receipt attached' })).status, 200);
+  const row = (await nav.get(`/api/budget/expenditures?client_id=${clientId}&limit=50`)).data.rows.find(x => x.id === e.data.id);
+  assert.equal(row.status, 'rejected'); assert.equal(row.approval_note, 'No receipt attached', 'the submitter can see why');
+});
+
+test('budget: nested allocations roll up, and cannot be re-parented into a cycle or another fund', async () => {
+  const f = await admin.post('/api/budget/funds', { name: 'SOR Grant FY26', source_type: 'sor_grant', fiscal_year_start: '2026-07-01', fiscal_year_end: '2027-06-30', total_amount: 50000 });
+  const other = await admin.post('/api/budget/funds', { name: 'Unrelated fund', source_type: 'other', fiscal_year_start: '2026-10-01', fiscal_year_end: '2027-09-30', total_amount: 1000 });
+  // A grant broken into a program-level allocation, broken into two line items under it.
+  const program = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'outreach_materials', label: 'Outreach program', allocated_amount: 20000 });
+  assert.equal(program.status, 201);
+  const item1 = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'naloxone_supplies', label: 'Naloxone kits', allocated_amount: 8000, parent_id: program.data.id });
+  const item2 = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'outreach_materials', label: 'Printed materials', allocated_amount: 5000, parent_id: program.data.id });
+  assert.equal(item1.status, 201); assert.equal(item2.status, 201);
+  const e = await nav.post('/api/budget/expenditures', { funding_source_id: f.data.id, budget_line_id: item1.data.id, spent_at: '2026-09-05', amount: 300, category: 'naloxone_supplies', vendor: 'Pharmacy' });
+  const sfin = H.client(); await sfin.login('sup1', 'StaffPassw0rd!x');
+  assert.equal((await sfin.post(`/api/budget/expenditures/${e.data.id}/approve`, { status: 'approved' })).status, 200);
+
+  const funds = await fin.get('/api/budget/funds');
+  const fund = funds.data.funds.find(x => x.id === f.data.id);
+  const top = fund.lines.find(l => l.id === program.data.id);
+  assert.equal(top.children.length, 2, 'the two line items nest under the program allocation, not as flat peers');
+  assert.equal(top.allocated_amount, 20000, "a parent line's own allocated_amount is unchanged by nesting");
+  assert.equal(top.child_allocated, 13000, 'sum of the two sub-allocations');
+  assert.equal(top.unallocated, 7000, 'the program envelope still has room for more sub-allocations');
+  assert.equal(top.subtree_spent, 300, 'a leaf expenditure rolls up through its parent, since it is real money out of the same envelope');
+  assert.equal(top.subtree_remaining, 19700, "the parent's own allocation minus spend anywhere under it");
+  // What can still be spent directly against the parent: its envelope less what it handed down, less its own
+  // spend. The UI used to show the parent as "$20,000 left" while $13,000 of that was already committed below.
+  assert.equal(top.available, 7000, 'available to spend directly on the parent excludes its sub-allocations');
+  assert.equal(top.children.find(l => l.id === item1.data.id).available, 7700, 'a leaf: allocation less its own spend');
+  assert.equal(fund.allocated, 20000, 'a sub-allocation is carved out of its parent, not an additional draw on the fund total');
+
+  // A budget line cannot be its own parent.
+  const selfParent = await admin.put(`/api/budget/lines/${program.data.id}`, { parent_id: program.data.id });
+  assert.equal(selfParent.status, 400);
+  // Nor can a parent be re-nested under its own child — that would be a cycle.
+  const cycle = await admin.put(`/api/budget/lines/${program.data.id}`, { parent_id: item1.data.id });
+  assert.equal(cycle.status, 400);
+  // Nor can an allocation move to a line in a different fund.
+  const otherLine = await admin.post(`/api/budget/funds/${other.data.id}/lines`, { category: 'other', allocated_amount: 500 });
+  const crossFund = await admin.put(`/api/budget/lines/${item1.data.id}`, { parent_id: otherLine.data.id });
+  assert.equal(crossFund.status, 400);
+  // Deleting the parent cascades to its sub-allocations (ON DELETE CASCADE).
+  assert.equal((await admin.del(`/api/budget/lines/${program.data.id}`)).status, 200);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM budget_lines WHERE id IN (?,?)`, item1.data.id, item2.data.id).n, 0);
+});
+
+test('a service rendered with a direct cost auto-posts a pending expenditure against its budget line', async () => {
+  const f = await admin.post('/api/budget/funds', { name: 'Client Assistance Fund', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 5000 });
+  const line = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'transportation', label: 'Bus passes', allocated_amount: 1000 });
+
+  // a cost with no budget line is refused, so the deduction always has somewhere specific to come from
+  const noLine = await nav.post('/api/interventions', { client_id: clientId, type: 'case_management', occurred_at: '2026-09-05T10:00:00Z', funding_source_id: f.data.id, cost: 5 });
+  assert.equal(noLine.status, 400);
+
+  const iv = await nav.post('/api/interventions', { client_id: clientId, type: 'case_management', occurred_at: '2026-09-05T10:00:00Z', funding_source_id: f.data.id, budget_line_id: line.data.id, cost: 5, summary: 'Bus pass provided' });
+  assert.equal(iv.status, 201);
+  const auto = H.db.one(`SELECT * FROM expenditures WHERE intervention_id=?`, iv.data.id);
+  assert.ok(auto, 'recording the service posted an expenditure');
+  assert.equal(auto.amount, 5); assert.equal(auto.status, 'pending'); assert.equal(auto.category, 'transportation');
+
+  const funds1 = await fin.get('/api/budget/funds');
+  const line1 = funds1.data.funds.find(x => x.id === f.data.id).lines.find(l => l.id === line.data.id);
+  assert.equal(line1.pending, 5, 'the fund page reflects it immediately, before anyone approves it');
+  assert.equal(line1.spent, 0, 'but it is not counted as spent until approved — the approval workflow still applies');
+
+  // editing the cost while still pending updates the same expenditure rather than creating a second one
+  await nav.put(`/api/interventions/${iv.data.id}`, { cost: 8 });
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM expenditures WHERE intervention_id=?`, iv.data.id).n, 1);
+  assert.equal(H.db.one(`SELECT amount FROM expenditures WHERE intervention_id=?`, iv.data.id).amount, 8);
+
+  // once approved, it is real spend and an edit to the service record must not silently rewrite it
+  const s = H.client(); await s.login('sup1', 'StaffPassw0rd!x');
+  assert.equal((await s.post(`/api/budget/expenditures/${auto.id}/approve`, { status: 'approved' })).status, 200);
+  await nav.put(`/api/interventions/${iv.data.id}`, { cost: 500 });
+  assert.equal(H.db.one(`SELECT amount, status FROM expenditures WHERE intervention_id=?`, iv.data.id).amount, 8, 'the approved expenditure keeps the amount that was actually approved');
+
+  // deleting a service whose cost is still only pending takes the phantom expenditure with it
+  const iv2 = await nav.post('/api/interventions', { client_id: clientId, type: 'case_management', occurred_at: '2026-09-06T10:00:00Z', funding_source_id: f.data.id, budget_line_id: line.data.id, cost: 12 });
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM expenditures WHERE intervention_id=?`, iv2.data.id).n, 1);
+  assert.equal((await nav.del(`/api/interventions/${iv2.data.id}`)).status, 200);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM expenditures WHERE intervention_id=?`, iv2.data.id).n, 0, 'the pending expenditure it created is cleaned up too');
+
+  // clearing the cost back to zero while still pending removes the auto-created expenditure
+  const iv3 = await nav.post('/api/interventions', { client_id: clientId, type: 'case_management', occurred_at: '2026-09-07T10:00:00Z', funding_source_id: f.data.id, budget_line_id: line.data.id, cost: 20 });
+  await nav.put(`/api/interventions/${iv3.data.id}`, { cost: 0 });
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM expenditures WHERE intervention_id=?`, iv3.data.id).n, 0);
+});
+
+test('a supervisor leaving "Worker (defaults to you)" blank logs the intervention as themselves', async () => {
+  // Regression: the Worker picker is a blank-by-default field (unlike every other user picker in the app,
+  // which either defaults its value or is required), and validate() turns that blank into an explicit null
+  // rather than leaving the key out entirely — crud.js's auto-assign-to-self only checked for undefined,
+  // so this 500'd for any supervisor/admin who did not explicitly pick themselves from the dropdown.
+  const s = H.client(); await s.login('sup1', 'StaffPassw0rd!x');
+  const supId = H.db.one(`SELECT id FROM users WHERE username='sup1'`).id;
+  const r = await s.post('/api/interventions', { client_id: clientId, type: 'case_management', occurred_at: '2026-09-08T10:00:00Z', user_id: '' });
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  assert.equal(H.db.one(`SELECT user_id FROM interventions WHERE id=?`, r.data.id).user_id, supId);
+});
+
+test('a role with no budget permission cannot attach a cost to an intervention', async () => {
+  // Regression: interventions:write alone let the funding_source_id/budget_line_id/cost fields through the
+  // same route (they were only hidden client-side, per can('budget:read') in the form) -- a clinician,
+  // who holds interventions:* but no budget permission at all, could otherwise post a real pending
+  // expenditure against a fund it cannot even list.
+  const f = await admin.post('/api/budget/funds', { name: 'Clinician escalation check', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 1000 });
+  const line = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'other', allocated_amount: 500 });
+  const r = await clin.post('/api/interventions', { client_id: clientId, type: 'case_management', occurred_at: '2026-09-09T10:00:00Z', funding_source_id: f.data.id, budget_line_id: line.data.id, cost: 50 });
+  assert.equal(r.status, 403);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM expenditures WHERE funding_source_id=?`, f.data.id).n, 0, 'no expenditure was posted');
+  // an ordinary edit that does not touch cost/fund/line is unaffected
+  const plain = await clin.post('/api/interventions', { client_id: clientId, type: 'case_management', occurred_at: '2026-09-09T10:00:00Z' });
+  assert.equal(plain.status, 201);
+  assert.equal((await clin.put(`/api/interventions/${plain.data.id}`, { outcome: 'completed' })).status, 200);
+});
+
+test('a manual expenditure post cannot link itself to someone else\'s intervention', async () => {
+  // Regression: intervention_id used to be an ordinary writable field on POST /api/budget/expenditures,
+  // so a second expenditure could be attached to an intervention that already auto-posted one -- double-
+  // counting its cost. It is no longer accepted from a request at all (only the auto-linking code sets it).
+  const f = await admin.post('/api/budget/funds', { name: 'Double-link check', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 1000 });
+  const line = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'other', allocated_amount: 500 });
+  const iv = await nav.post('/api/interventions', { client_id: clientId, type: 'case_management', occurred_at: '2026-09-09T10:00:00Z', funding_source_id: f.data.id, budget_line_id: line.data.id, cost: 40 });
+  const e = await nav.post('/api/budget/expenditures', { funding_source_id: f.data.id, budget_line_id: line.data.id, spent_at: '2026-09-09', amount: 40, category: 'other', intervention_id: iv.data.id });
+  assert.equal(e.status, 201);
+  assert.equal(H.db.one(`SELECT intervention_id FROM expenditures WHERE id=?`, e.data.id).intervention_id, null, 'the field was silently ignored, not honored');
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM expenditures WHERE intervention_id=?`, iv.data.id).n, 1, 'the intervention still has exactly its one auto-posted expenditure');
+});
+
+test('a worker cannot reassign their own time entry to someone else', async () => {
+  // Regression: beforeInsert forced user_id back to the caller when they lack time:all, but there was no
+  // equivalent beforeUpdate -- a worker who owns the row (canEdit only checks row.user_id === ctx.user.id)
+  // could still overwrite user_id on an update, reattributing their hours to an arbitrary other employee.
+  const t = await nav.post('/api/time', { work_date: '2026-09-05', minutes: 30, category: 'documentation' });
+  assert.equal(t.status, 201);
+  const navId = H.db.one(`SELECT id FROM users WHERE username='nav1'`).id;
+  const clinId = H.db.one(`SELECT id FROM users WHERE username='clin1'`).id;
+  const upd = await nav.put(`/api/time/${t.data.id}`, { user_id: clinId, minutes: 60 });
+  assert.equal(upd.status, 200, 'the update itself succeeds -- only the ownership field is refused');
+  const row = H.db.one(`SELECT user_id, minutes FROM time_entries WHERE id=?`, t.data.id);
+  assert.equal(row.user_id, navId, 'user_id stayed the entry owner, not the attempted reassignment');
+  assert.equal(row.minutes, 60, 'an ordinary field on the same request still went through');
+});
+
+test('deleting a budget line with sub-allocations tombstones and audit-logs every one of them', async () => {
+  // Regression: budget_lines.parent_id is ON DELETE CASCADE, so SQLite silently deletes descendants when
+  // the parent line is deleted -- no application code runs for them. Only the named line got a tombstone
+  // (leaving other devices permanently showing the deleted children) and only one audit entry (undercounting
+  // what was actually removed, however large the destroyed sub-tree).
+  const f = await admin.post('/api/budget/funds', { name: 'Cascade delete check', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 5000 });
+  const parent = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'other', allocated_amount: 1000 });
+  const child = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'other', allocated_amount: 400, parent_id: parent.data.id });
+  const grandchild = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'other', allocated_amount: 100, parent_id: child.data.id });
+  const del = await admin.del(`/api/budget/lines/${parent.data.id}`);
+  assert.equal(del.status, 200);
+  for (const id of [parent.data.id, child.data.id, grandchild.data.id]) {
+    assert.equal(H.db.one(`SELECT COUNT(*) n FROM budget_lines WHERE id=?`, id).n, 0, 'row is actually gone');
+    assert.equal(H.db.one(`SELECT COUNT(*) n FROM tombstones WHERE table_name='budget_lines' AND id=?`, id).n, 1, 'each descendant got its own tombstone, not just the named line');
+    assert.equal(H.db.one(`SELECT COUNT(*) n FROM audit_log WHERE action='budget_line.delete' AND entity_id=?`, id).n, 1, 'each descendant got its own audit entry');
+  }
+});
+
+test('a brand-new account can get as far as the change-password page', async () => {
+  // Regression: an account that must change its password was refused /api/meta/constants and /api/me/prefs
+  // too, so the app shell could not load and the person was bounced back to the sign-in form for ever.
+  const u = await admin.post('/api/users', { username: 'newhire1', display_name: 'New Hire', role: 'navigator' });
+  assert.equal(u.status, 201); assert.ok(u.data.temporary_password);
+  const c = H.client(); await c.login('newhire1', u.data.temporary_password);
+  assert.equal((await c.get('/api/auth/me')).data.user.must_change_password, true);
+  assert.equal((await c.get('/api/meta/constants')).status, 200, 'reference data loads');
+  assert.equal((await c.get('/api/me/prefs')).status, 200, 'preferences load');
+  assert.equal((await c.get('/api/clients')).status, 403, 'but nothing else does');
+  assert.equal((await c.post('/api/tasks', { title: 'x' })).status, 403);
+  assert.equal((await c.post('/api/auth/password', { current_password: u.data.temporary_password, new_password: 'Brand-New-Passw0rd!' })).status, 200);
+  assert.equal((await c.get('/api/clients')).status, 200, 'and everything opens once it is changed');
+});
+
+test('only failed sign-ins count against an address', async () => {
+  // Regression: twenty successful sign-ins from one address (an office behind one router) locked everyone out.
+  const config = require('../server/config'); const was = config.loginRateLimit; config.loginRateLimit = 3;
+  require('../server/app').rateLimitReset('login:127.0.0.1'); // earlier tests in this file fail sign-ins on purpose
+  try {
+    for (let i = 0; i < 5; i++) assert.equal((await H.client().post('/api/auth/login', { username: 'nav1', password: 'StaffPassw0rd!x' })).status, 200, `sign-in ${i + 1} is fine`);
+    for (let i = 0; i < 3; i++) assert.equal((await H.client().post('/api/auth/login', { username: 'nav1', password: 'wrong-' + i })).status, 401);
+    assert.equal((await H.client().post('/api/auth/login', { username: 'nav1', password: 'StaffPassw0rd!x' })).status, 429, 'three failures and the address is limited');
+  } finally { config.loginRateLimit = was; require('../server/app').rateLimitReset('login:127.0.0.1'); }
+});
+
+test('money and hours cannot be charged to a fund outside its period, or in the future', async () => {
+  const f = await admin.post('/api/budget/funds', { name: 'FY27 period check', source_type: 'other', fiscal_year_start: '2026-07-01', fiscal_year_end: '2027-06-30', total_amount: 1000 });
+  const line = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'other', allocated_amount: 500 });
+  const early = await nav.post('/api/time', { work_date: '2026-01-15', minutes: 60, category: 'documentation', funding_source_id: f.data.id });
+  assert.equal(early.status, 400); assert.match(early.data.error, /outside the period/);
+  const future = await nav.post('/api/time', { work_date: '2099-01-01', minutes: 60, category: 'documentation' });
+  assert.equal(future.status, 400); assert.match(future.data.error, /future/);
+  assert.equal((await nav.post('/api/time', { work_date: '2026-09-01', minutes: 60, category: 'documentation', funding_source_id: f.data.id })).status, 201, 'inside the period is fine');
+  const e = await nav.post('/api/budget/expenditures', { funding_source_id: f.data.id, budget_line_id: line.data.id, spent_at: '2026-02-01', amount: 10, category: 'other' });
+  assert.equal(e.status, 400); assert.match(e.data.error, /outside the period/);
+  const iv = await nav.post('/api/interventions', { client_id: clientId, type: 'case_management', occurred_at: '2026-03-03T10:00:00Z', funding_source_id: f.data.id, budget_line_id: line.data.id, cost: 5 });
+  assert.equal(iv.status, 400, 'a service with a cost is checked the same way');
+});
+
+test('an overdose event cannot be recorded with nothing on it', async () => {
+  const r = await nav.post('/api/overdose-events', { occurred_at: '2026-09-01T10:00:00Z' });
+  assert.equal(r.status, 400, 'an accidental empty save is not a countable reversal');
+  assert.equal((await nav.post('/api/overdose-events', { occurred_at: '2026-09-01T10:00:00Z', kind: 'reversal' })).status, 201);
 });
 
 test('time entries scoped to own user unless manager', async () => {
@@ -403,7 +630,7 @@ test('scheduled backup settings are validated, and an admin can trigger one on d
     assert.ok(r.data.bytes > 1000);
     const stats = await admin.get('/api/admin/stats');
     assert.ok(stats.data.last_scheduled_backup_at);
-    assert.equal(stats.data.last_scheduled_backup_status, 'ok');
+    assert.equal(stats.data.last_scheduled_backup_status, 'ok (verified)');
     assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='backup.run_now'`));
     await admin.put('/api/admin/settings', { backup_schedule_hours: '', backup_retain_count: '' });
   } finally { require('node:fs').rmSync(backupsDir, { recursive: true, force: true }); }

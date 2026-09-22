@@ -41,7 +41,14 @@ function loadKey(envName, fileName) {
   if (fk && /^[0-9a-fA-F]{64}$/.test(fk)) { keySourceHolder.value = 'file'; return Buffer.from(fk, 'hex'); }
   if (env === 'production') {
     // First run without environment keys: generate a key file (mode 0600) so the browser setup wizard can run.
-    // The wizard reminds the administrator to back this file up.
+    // The wizard reminds the administrator to back this file up. But only on a genuinely first run: a database
+    // that already exists was written with keys, and quietly minting new ones turns every record in it into
+    // unreadable ciphertext while the server looks healthy -- the single easiest way for a county to lose
+    // everything (a data folder copied to a new PC without its 0600 key file, say).
+    const existingDb = path.join(dataDir, 'suds.db');
+    if (fs.existsSync(existingDb) && fs.statSync(existingDb).size > 0) {
+      throw new Error(`${envName} is not set and ${keysJsonPath} is missing, but a database already exists at ${existingDb}. It was written with keys this server does not have. Restore the key backup (keys.json) saved at setup, or set the keys in the environment -- do not start with new keys, which would make every record unreadable.`);
+    }
     const key = crypto.randomBytes(32);
     fileKeys[envName] = key.toString('hex'); fileKeys.created_at = fileKeys.created_at || new Date().toISOString();
     fs.writeFileSync(keysJsonPath, JSON.stringify(fileKeys, null, 2), { mode: 0o600 });
@@ -87,6 +94,9 @@ const config = {
   mfaGraceDays: Number(process.env.MFA_GRACE_DAYS ?? 14),
   password: { minLength: 12, maxAgeDays: 90 },
   lockout: { maxAttempts: 5, minutes: 15 },
+  // Sign-in attempts allowed per source address per 15 minutes. A whole office behind one NAT address
+  // shares this, so it is a knob; the test suite raises it because every script signs in afresh.
+  loginRateLimit: Number(process.env.LOGIN_RATE_LIMIT ?? (env === 'test' ? 100000 : 20)),
   msGraph: {
     tenantId: process.env.MS_TENANT_ID || '',
     clientId: process.env.MS_CLIENT_ID || '',
@@ -104,6 +114,10 @@ const config = {
     label: process.env.OIDC_LABEL || 'Sign in with county SSO',
   },
   trustProxy: process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true' || !!fileCfg.trustProxy,
+  // A restore uploads a whole database as base64 through the browser; the ordinary body cap (60 MB) fits
+  // roughly a 45 MB database. Larger ones go through here, or through scripts/backup.js --restore on the
+  // server itself, which has no such limit.
+  maxRestoreBodyBytes: Number(process.env.SUDS_MAX_RESTORE_BYTES || 600 * 1024 * 1024),
   // Off by default: nothing calls out to check for updates unless this is set and an administrator clicks
   // "Check for updates" (server/update.js). A GitHub releases API URL, e.g.
   // https://api.github.com/repos/<owner>/<repo>/releases/latest — or an internal mirror for an air-gapped county.
@@ -115,9 +129,8 @@ const config = {
   // 'json' emits newline-delimited JSON to both stdout and the log file (server/log.js), for a log
   // collector (Loki, CloudWatch, ELK); the default is the existing human-readable text.
   logFormat: process.env.LOG_FORMAT === 'json' ? 'json' : 'text',
-  // PHI access entries are kept for the full HIPAA seven years. Routine list/search traffic is the bulk of
-  // the volume and has a much shorter useful life, so it ages out sooner; the chain stays verifiable either
-  // way because a purge records the hash it continues from.
+  // Audit entries are kept for the full HIPAA seven years, then purged; the chain stays verifiable because a
+  // purge records the hash it continues from.
   auditRetentionDays: Number(process.env.AUDIT_RETENTION_DAYS || 2555),
   // How long deletions are remembered for devices that have been away. A device offline longer than this
   // is sent for a full resync rather than being left holding rows the office deleted.

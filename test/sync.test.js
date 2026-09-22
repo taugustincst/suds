@@ -6,17 +6,18 @@ const assert = require('node:assert');
 const H = require('./helpers');
 const { randomUUID } = require('node:crypto');
 
-let admin, nav, nav2, navBearer, clientId, otherClientId, navId, nav2Id;
+let admin, nav, nav2, clin, navBearer, clientId, otherClientId, navId, nav2Id;
 
 const iso = (ms) => new Date(ms).toISOString();
 async function push(client, body, headers) { return client.post('/api/sync/push', { device_now: iso(Date.now()), ...body }, headers); }
 
 before(async () => {
   await H.start();
-  H.makeUser('snav', 'navigator'); H.makeUser('snav2', 'navigator'); H.makeUser('ssup', 'supervisor');
+  H.makeUser('snav', 'navigator'); H.makeUser('snav2', 'navigator'); H.makeUser('ssup', 'supervisor'); H.makeUser('sclin', 'clinician');
   admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
   nav = H.client(); await nav.login('snav', 'StaffPassw0rd!x');
   nav2 = H.client(); await nav2.login('snav2', 'StaffPassw0rd!x');
+  clin = H.client(); await clin.login('sclin', 'StaffPassw0rd!x');
   navId = H.db.one(`SELECT id FROM users WHERE username='snav'`).id;
   nav2Id = H.db.one(`SELECT id FROM users WHERE username='snav2'`).id;
   clientId = (await nav.post('/api/clients', { first_name: 'Sync', last_name: 'Subject' })).data.id;
@@ -245,6 +246,23 @@ test('paging never drops rows that share a timestamp', async () => {
   assert.deepEqual(missed, [], 'every row sharing the timestamp was delivered');
 });
 
+test('a device edit that loses to a newer office edit is reported back, and audited', async () => {
+  // Regression: the "server copy is newer" branch returned false and nothing else. The person on the phone
+  // had seen "saved"; their edit vanished with no trace anywhere.
+  const id = randomUUID();
+  await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, title: 'Phone version', priority: 'normal', created_at: iso(Date.now() - 60000), updated_at: iso(Date.now() - 60000) }] } });
+  assert.equal((await nav.put(`/api/tasks/${id}`, { title: 'Office version', priority: 'urgent' })).status, 200);
+  const stale = await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, title: 'Phone version, edited later on the phone', priority: 'low', created_at: iso(Date.now() - 60000), updated_at: iso(Date.now() - 30000) }] } });
+  assert.equal(stale.status, 200);
+  const c = (stale.data.conflicts || []).find(x => x.id === id);
+  assert.ok(c, 'the push response names the row whose edit was not taken');
+  assert.ok(c.columns.includes('title') && c.columns.includes('priority'), 'and which fields differed');
+  assert.equal(H.db.one(`SELECT title FROM tasks WHERE id=?`, id).title, 'Office version', 'the office copy is what everyone sees');
+  const row = H.db.one(`SELECT * FROM audit_log WHERE action='sync.conflict' AND entity_id=? ORDER BY id DESC LIMIT 1`, id);
+  assert.ok(row, 'the conflict is in the audit log');
+  assert.ok(!String(row.details).includes('Phone version'), 'by column name only, never the value');
+});
+
 test('an overwrite from a device is recorded, by column name only', async () => {
   // Last write wins at row granularity, so a device edit can revert a field changed at the office. That
   // still happens — it is the rule — but it used to happen with no record that anything was replaced.
@@ -260,4 +278,105 @@ test('an overwrite from a device is recorded, by column name only', async () => 
   assert.ok(!String(row.details).includes('Replaced by the phone'), 'but never the value — this is the audit log');
   assert.ok(!String(row.details).includes('Original'));
   assert.equal(H.db.one(`SELECT title FROM tasks WHERE id=?`, id).title, 'Replaced by the phone', 'the newer write still wins');
+});
+
+test('a nested budget line and its parent sync in the same batch, child listed first', async () => {
+  // A supervisor can build a whole allocation hierarchy offline in one sitting; nothing guarantees the
+  // device sends the parent row before its children within a single table's batch.
+  const fund = await admin.post('/api/budget/funds', { name: 'Sync test fund', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 10000 });
+  const parentId = randomUUID(); const childId = randomUUID();
+  const r = await push(admin, { tables: { budget_lines: [
+    { id: childId, funding_source_id: fund.data.id, parent_id: parentId, category: 'other', label: 'Child, sent first', allocated_amount: 100, created_at: iso(Date.now()), updated_at: iso(Date.now()) },
+    { id: parentId, funding_source_id: fund.data.id, parent_id: null, category: 'other', label: 'Parent, sent second', allocated_amount: 500, created_at: iso(Date.now()), updated_at: iso(Date.now()) },
+  ] } });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.data.rejected, [], 'neither row is rejected for a constraint the sort should have avoided');
+  assert.equal(H.db.one(`SELECT parent_id FROM budget_lines WHERE id=?`, childId).parent_id, parentId);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM budget_lines WHERE id=?`, parentId).n, 1);
+});
+
+test('a sync push cannot re-parent two budget lines into a cycle', async () => {
+  // Regression: PUT /api/budget/lines/:id blocks a re-parent that would create a cycle, but a sync push
+  // applied budget_lines rows straight through with no such check -- since both lines already exist, an
+  // A.parent=B / B.parent=A pair sent together hits no FK violation either, so nothing stopped it. A cycle
+  // like this makes both lines vanish from the fund's tree (buildLineTree only walks down from roots),
+  // taking their spend with them as far as any grant report reading the per-line breakdown is concerned.
+  const fund = await admin.post('/api/budget/funds', { name: 'Cycle check fund', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 10000 });
+  const a = await admin.post(`/api/budget/funds/${fund.data.id}/lines`, { category: 'other', allocated_amount: 100 });
+  const b = await admin.post(`/api/budget/funds/${fund.data.id}/lines`, { category: 'other', allocated_amount: 100 });
+  const r = await push(admin, { tables: { budget_lines: [
+    { id: a.data.id, funding_source_id: fund.data.id, parent_id: b.data.id, category: 'other', allocated_amount: 100, updated_at: iso(Date.now()) },
+    { id: b.data.id, funding_source_id: fund.data.id, parent_id: a.data.id, category: 'other', allocated_amount: 100, updated_at: iso(Date.now()) },
+  ] } });
+  assert.equal(r.status, 200);
+  assert.ok(r.data.rejected.some(x => x.id === a.data.id || x.id === b.data.id), 'at least one side of the cycle is rejected');
+  const aRow = H.db.one(`SELECT parent_id FROM budget_lines WHERE id=?`, a.data.id);
+  const bRow = H.db.one(`SELECT parent_id FROM budget_lines WHERE id=?`, b.data.id);
+  assert.ok(!(aRow.parent_id === b.data.id && bRow.parent_id === a.data.id), 'the two lines are never left pointing at each other');
+});
+
+test('a sync push cannot restructure grants without budget:manage', async () => {
+  // budget:write (which navigators hold) covers recording expenditures; changing a fund's award or its
+  // budget lines is budget:manage over REST, and sync must not be the way around that.
+  const fund = await admin.post('/api/budget/funds', { name: 'Sync structure check', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 5000 });
+  const r = await push(nav, { tables: {
+    funding_sources: [{ id: fund.data.id, name: 'Sync structure check', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 999999, is_active: 1, updated_at: iso(Date.now() + 1000) }],
+    budget_lines: [{ id: randomUUID(), funding_source_id: fund.data.id, category: 'other', allocated_amount: 100, created_at: iso(Date.now()), updated_at: iso(Date.now()) }],
+  } });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.rejected.length, 2, 'both rows are refused');
+  assert.ok(r.data.rejected.every(x => /role cannot write/.test(x.reason)));
+  assert.equal(H.db.one(`SELECT total_amount FROM funding_sources WHERE id=?`, fund.data.id).total_amount, 5000, 'the award is untouched');
+});
+
+test('a sync push cannot re-parent a budget line into a different fund', async () => {
+  // Regression: the REST route (PUT /api/budget/lines/:id) requires a line's parent to belong to the same
+  // fund, but a sync push only checked for a parent_id cycle -- two lines in unrelated funds' trees never
+  // collide there, so a foreign parent_id was accepted. The line then dropped out of ITS OWN fund's
+  // "allocated" total (excluded there for having a non-null parent_id, even though its real parent isn't in
+  // that fund's tree at all) while never joining the other fund's total either -- money silently vanishes
+  // from both funds' rollups while the line keeps drawing real expenditures.
+  const fundA = await admin.post('/api/budget/funds', { name: 'Fund A (parent check)', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 5000 });
+  const fundB = await admin.post('/api/budget/funds', { name: 'Fund B (parent check)', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 5000 });
+  const lineA = await admin.post(`/api/budget/funds/${fundA.data.id}/lines`, { category: 'other', allocated_amount: 1000 });
+  const lineB = await admin.post(`/api/budget/funds/${fundB.data.id}/lines`, { category: 'other', allocated_amount: 1000 });
+  const r = await push(admin, { tables: { budget_lines: [
+    { id: lineA.data.id, funding_source_id: fundA.data.id, parent_id: lineB.data.id, category: 'other', allocated_amount: 1000, updated_at: iso(Date.now()) },
+  ] } });
+  assert.equal(r.status, 200);
+  assert.ok(r.data.rejected.some(x => x.id === lineA.data.id), 'the cross-fund re-parent is rejected');
+  assert.equal(H.db.one(`SELECT parent_id FROM budget_lines WHERE id=?`, lineA.data.id).parent_id, null, 'the line was never re-parented across funds');
+});
+
+test('a sync push cannot attach a cost/fund/line to an intervention without budget:write', async () => {
+  // Regression: interventions.js's checkCost() requires budget:write to set cost/funding_source_id/
+  // budget_line_id on the REST route, but a sync push writes straight to SQL with none of that route's
+  // hooks -- a clinician (interventions:* but no budget permission at all) could otherwise reach the same
+  // fields through a push, fraudulently attributing their service to a fund/grant for reporting purposes.
+  const fund = await admin.post('/api/budget/funds', { name: 'Clinician sync check', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 2000 });
+  const line = await admin.post(`/api/budget/funds/${fund.data.id}/lines`, { category: 'other', allocated_amount: 500 });
+  // clin's own caseload (creating a client auto-assigns the creator), so caseload scoping is not what's
+  // being tested here -- only the budget-permission gate on cost/funding_source_id/budget_line_id.
+  const clinClientId = (await clin.post('/api/clients', { first_name: 'Clin', last_name: 'Caseload' })).data.id;
+  const ivId = randomUUID();
+  const r = await push(clin, { tables: { interventions: [{
+    id: ivId, client_id: clinClientId, type: 'case_management', occurred_at: iso(Date.now()),
+    funding_source_id: fund.data.id, budget_line_id: line.data.id, cost: 75,
+    created_at: iso(Date.now()), updated_at: iso(Date.now()),
+  }] } });
+  assert.equal(r.status, 200);
+  assert.ok(r.data.rejected.some(x => x.id === ivId), 'the row is rejected, not silently stripped and inserted anyway');
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM interventions WHERE id=?`, ivId).n, 0, 'no row was created at all');
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM expenditures WHERE funding_source_id=?`, fund.data.id).n, 0, 'no expenditure was posted against the fund');
+
+  // An unrelated edit to a row that already, legitimately, carries budget data (set earlier by someone
+  // with budget:write) must not suddenly need that permission just because the full row still carries it.
+  const existing = await admin.post('/api/interventions', { client_id: clinClientId, type: 'case_management', occurred_at: iso(Date.now()), funding_source_id: fund.data.id, budget_line_id: line.data.id, cost: 30 });
+  const r2 = await push(clin, { tables: { interventions: [{
+    id: existing.data.id, client_id: clinClientId, type: 'case_management', occurred_at: iso(Date.now()),
+    funding_source_id: fund.data.id, budget_line_id: line.data.id, cost: 30, summary: 'Follow-up note',
+    updated_at: iso(Date.now() + 1000),
+  }] } });
+  assert.equal(r2.status, 200);
+  assert.ok(!r2.data.rejected.some(x => x.id === existing.data.id), 'unchanged budget fields on an already-attached row do not block an unrelated edit');
 });

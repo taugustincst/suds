@@ -15,7 +15,9 @@ route('login', async (r) => {
     const r2 = await post('/api/auth/login', d);
     await loadSession();
     if (r2.mfaPending) { nav('mfa'); }
-    else if (r2.mfaSetupRequired) { toast('Your role requires multi-factor authentication. Please enroll now.', 'error'); nav('profile?mfa=1'); }
+    // Past the deadline the server refuses everything else anyway; inside it, the banner on every page says
+    // when -- an error toast and a hijacked landing page every morning is not "advisory".
+    else if (r2.mfaSetupRequired && (!r2.mfaSetupDeadline || Date.parse(r2.mfaSetupDeadline) < Date.now())) { toast('Two-step verification must be set up before you can continue.', 'error'); nav('profile?mfa=1'); }
     else nav('dashboard');
     render();
   } });
@@ -24,8 +26,12 @@ route('login', async (r) => {
   // offered there — only the office server, where /api/auth/oidc/status can actually mean something.
   const oidc = state.local ? { enabled: false } : await get('/api/auth/oidc/status', { quiet: true }).catch(() => ({ enabled: false }));
   const oidcError = r.query.get('oidc_error');
+  // This browser has an on-device copy of SUDS. Someone landing here from a bookmark or an older
+  // home-screen icon is most likely looking for that, not the office server.
+  let localUsed = false; try { localUsed = !state.local && localStorage.getItem('suds.localUsed') === '1'; } catch {}
   return h('div', { class: 'login-wrap' }, h('div', { class: 'card login' },
     h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('b', {}, 'SUDS'), h('small', {}, 'SUD Navigator Services Tracker'))),
+    localUsed ? h('div', { class: 'banner info', 'data-local-hint': '1' }, h('div', {}, h('b', {}, 'Looking for your on-device copy? '), 'This is the office sign-in. Your clients recorded on this device are in ', h('a', { href: location.pathname + '?local=1' }, 'SUDS on this device'), '.')) : null,
     oidcError ? h('div', { class: 'banner danger', role: 'alert' }, OIDC_ERRORS[oidcError] || 'Single sign-on failed.') : null,
     oidc.enabled ? h('div', { class: 'btn-row mb' }, h('a', { class: 'btn primary', href: '/api/auth/oidc/start', style: { width: '100%', textAlign: 'center' } }, oidc.label)) : null,
     oidc.enabled ? h('div', { class: 'small muted center mb' }, '— or —') : null,

@@ -141,7 +141,7 @@ Console output is also written to `data/logs/suds-<date>.log` (mode 0600), rolle
 
 ## 5. Upgrades
 
-For a git-checkout install, `scripts/update.js` does the sequence below as one command, refusing to run with uncommitted changes and stopping (without restarting the service) if the tests fail after pulling:
+For a git-checkout install, `scripts/update.js` does the sequence below as one command, refusing to run with uncommitted changes and stopping (without restarting the service) if the tests fail after pulling. It needs `git` and network access to the repository, and its `npm ci` step installs the *development* dependencies (the bundler used to rebuild the on-device kernel, the browser used by the test suite); the running server still needs none of them. A packaged (zip) install is updated by hand as INSTALL.md describes:
 
 ```bash
 node scripts/update.js --check                                          # what would change; touches nothing

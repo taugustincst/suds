@@ -22,6 +22,7 @@ if (config.dbPath !== ':memory:') {
 }
 
 db.open();
+try { db.checkKeyFingerprint(); } catch (e) { console.error(`[suds] ${e.message}`); process.exit(1); }
 ensureBootstrap();
 const handler = createHandler();
 listener.start(handler);
