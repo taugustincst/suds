@@ -275,6 +275,25 @@ const migrations = [
     }
     for (const line of schemaText.split('\n')) if (/^CREATE INDEX IF NOT EXISTS idx_(breakglass|patient_requests)/.test(line.trim())) d.exec(line.trim());
   },
+  // 20: navigator field tools — a preferred name / alias finds the person too; an author can ask a
+  //     supervisor to review/co-sign a note; and a harm-reduction supply inventory that visits draw down.
+  (d) => {
+    const schemaText = safeSchema();
+    addColumn(d, 'clients', 'preferred_name_idx', 'TEXT');
+    const { decrypt } = require('./crypto');
+    const M = require('./clients-model');
+    const upd = d.prepare(`UPDATE clients SET preferred_name_idx=? WHERE id=?`);
+    for (const c of d.prepare(`SELECT id, preferred_name_enc FROM clients WHERE preferred_name_enc IS NOT NULL`).all()) {
+      let pref = '';
+      try { pref = decrypt(c.preferred_name_enc); } catch { continue; }
+      upd.run(M.preferredNameIndex(pref), c.id);
+    }
+    for (const line of schemaText.split('\n')) if (/^CREATE INDEX IF NOT EXISTS idx_clients_preferred_name/.test(line.trim())) d.exec(line.trim());
+    addColumn(d, 'notes', 'cosign_requested', 'INTEGER NOT NULL DEFAULT 0');
+    const m = schemaText.match(/CREATE TABLE IF NOT EXISTS supply_stock \([\s\S]*?\n\);/);
+    if (m) d.exec(m[0]);
+    for (const line of schemaText.split('\n')) if (/^CREATE INDEX IF NOT EXISTS idx_supply_stock/.test(line.trim())) d.exec(line.trim());
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

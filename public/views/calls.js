@@ -1,6 +1,8 @@
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, contactLinks, kv } from '../app.js';
 
-export function openCallForm(values, { clientId, clientDisplay, method, onDone } = {}) {
+// prefill: starting values for a new record (the number just dialled from a client's page) -- unlike
+// `values`, it does not make this an edit.
+export function openCallForm(values, { clientId, clientDisplay, method, onDone, prefill } = {}) {
   const C = state.constants; const isNew = !values;
   // A text message is the same record as a call with different wording: its own outcomes, no minutes
   // worth arguing about, and a reminder that what you send is part of the record.
@@ -18,7 +20,7 @@ export function openCallForm(values, { clientId, clientDisplay, method, onDone }
     { name: 'summary', label: isText ? 'What was said (encrypted)' : 'Summary (encrypted)', type: 'textarea', span: true,
       help: isText ? 'Record what was exchanged, not a screenshot. Texting a client about treatment is a disclosure if anyone else can read their phone — keep it to arranging contact unless they have agreed otherwise.' : null },
     isNew ? { name: 'log_time', label: 'Also log as time entry', type: 'checkbox', value: true } : null,
-  ].filter(Boolean), { values: values || {}, submitText: isNew ? (isText ? 'Log text' : 'Log call') : 'Save', draftKey: values ? `call:${values.id}` : `call:new:${isText ? 'text' : 'phone'}`, onCancel: () => m.close(), onSubmit: async (d) => {
+  ].filter(Boolean), { values: values || prefill || {}, submitText: isNew ? (isText ? 'Log text' : 'Log call') : 'Save', draftKey: values ? `call:${values.id}` : `call:new:${isText ? 'text' : 'phone'}`, onCancel: () => m.close(), onSubmit: async (d) => {
     d.method = isText ? 'text' : 'phone';
     if (isNew) await post('/api/calls', d); else await put(`/api/calls/${values.id}`, d);
     toast(isNew ? (isText ? 'Text logged' : 'Call logged') : 'Saved', 'ok'); m.close(); onDone && onDone();
@@ -28,14 +30,21 @@ export function openCallForm(values, { clientId, clientDisplay, method, onDone }
 export function callTable(rows, { showClient = true, onChange } = {}) {
   return table([
     { label: 'When', render: r => h('span', { class: 'nowrap' }, fmt.dt(r.started_at)) },
-    showClient ? { label: 'Client', render: r => r.client_id ? h('a', { href: `#/client/${r.client_id}` }, r.client_code) : h('span', { class: 'muted' }, r.contact_name || '—') } : null,
+    showClient ? { label: 'Client', render: r => r.client_id ? h('a', { href: `#/client/${r.client_id}` }, r.client_name || r.client_code, r.client_name ? h('div', { class: 'muted small mono' }, r.client_code) : null) : h('span', { class: 'muted' }, r.contact_name || '—') } : null,
     { label: 'How', render: r => r.method === 'text' ? badge('💬 Text', 'purple') : badge('☎ Call', 'info') },
-    { label: 'Dir', render: r => r.direction === 'inbound' ? '⇦ In' : '⇨ Out' }, { label: 'Who', render: r => [fmt.label(r.contact_type), r.contact_name ? h('div', { class: 'small muted' }, r.contact_name) : null] },
+    { label: 'Dir', render: r => r.direction === 'inbound' ? '⇦ In' : '⇨ Out' }, { label: 'Who', render: r => [fmt.label(r.contact_type), r.contact_name ? h('div', { class: 'small muted' }, r.contact_name) : null, r.phone ? h('div', { class: 'small' }, contactLinks(r.phone)) : null] },
     { label: 'Min', render: r => r.duration_minutes, num: true }, { label: 'Outcome', render: r => badge(fmt.label(r.outcome), statusKind(r.outcome)) },
     { label: 'Flags', render: r => [r.crisis ? badge('Crisis', 'danger') : null, r.follow_up_needed ? [' ', badge('Follow-up', 'warn')] : null] },
     { label: 'Purpose / summary', render: r => h('span', { class: 'small' }, r.purpose || '', r.summary ? h('div', { class: 'muted' }, r.summary.slice(0, 140)) : null) }, { label: 'Worker', key: 'worker' },
     { label: '', render: r => (r.user_id === state.user.id || can('clients:all')) && can('calls:write') ? h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm', onClick: () => openCallForm(r, { onDone: onChange }) }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': r.method === 'text' ? 'Delete this text' : 'Delete this call', onClick: async () => { if (await confirmDialog(r.method === 'text' ? 'Delete text' : 'Delete call', 'Delete this contact record?', { danger: true, okText: 'Delete' })) { await del(`/api/calls/${r.id}`); onChange && onChange(); } } }, '✕')) : null },
-  ].filter(Boolean), rows, { empty: 'No calls yet. Use + Log → Phone call after each call, even if it went to voicemail.' });
+  ].filter(Boolean), rows, { empty: 'No calls yet. Use + Log → Phone call after each call, even if it went to voicemail.',
+    rowLabel: r => `${r.method === 'text' ? 'Text' : 'Call'} ${fmt.dt(r.started_at)}${r.client_name ? ', ' + r.client_name : ''}`,
+    compact: { primary: r => [h('span', {}, showClient && r.client_id ? (r.client_name || r.client_code) : (r.contact_name || fmt.label(r.contact_type))), r.method === 'text' ? badge('💬 Text', 'purple') : badge('☎ Call', 'info')],
+      secondary: r => [h('span', {}, fmt.dt(r.started_at)), badge(fmt.label(r.outcome), statusKind(r.outcome)), r.crisis ? badge('Crisis', 'danger') : null, r.follow_up_needed ? badge('Follow-up', 'warn') : null],
+      onTap: r => {
+        if ((r.user_id === state.user.id || can('clients:all')) && can('calls:write')) { openCallForm(r, { onDone: onChange }); return; }
+        modal(r.method === 'text' ? 'Text message' : 'Phone call', kv([['When', fmt.dt(r.started_at)], ['Client', r.client_name || r.client_code || '—'], ['Who', [fmt.label(r.contact_type), r.contact_name].filter(Boolean).join(' · ')], ['Phone', contactLinks(r.phone)], ['Outcome', fmt.label(r.outcome)], ['Purpose', r.purpose], ['Summary', r.summary], ['Worker', r.worker]]));
+      } } });
 }
 route('calls', async (r) => {
   const crisis = r.query.get('crisis') === '1', fu = r.query.get('follow_up') === '1', mine = r.query.get('mine') === '1';

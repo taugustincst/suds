@@ -40,6 +40,8 @@ function encryptFields(v) {
   if (v.last_name !== undefined) { cols.name_prefix_idx = namePrefixIndex(v.last_name); cols.name_phonetic_idx = namePhoneticIndex(v.last_name); }
   // The search box promises "a name"; a first name alone used to find nobody.
   if (v.first_name !== undefined) { cols.first_name_idx = blindIndex(String(v.first_name || '').trim().toLowerCase()); cols.first_name_prefix_idx = namePrefixIndex(v.first_name); }
+  // A preferred name or street alias is how a navigator often knows someone ("Jay", "Bree").
+  if (v.preferred_name !== undefined) cols.preferred_name_idx = preferredNameIndex(v.preferred_name);
   if (v.dob !== undefined) cols.dob_idx = blindIndex(v.dob);
   if (v.phone !== undefined) cols.phone_idx = blindIndex(String(v.phone || '').replace(/\D/g, ''));
   return cols;
@@ -67,6 +69,10 @@ function namePrefixIndex(lastName) { const n = normaliseName(lastName); return n
 /** HMAC of a surname's Soundex code — lets a misspelling still find the person. */
 function namePhoneticIndex(lastName) { const c = soundex(normaliseName(lastName)); return c ? blindIndex('snd:' + c) : null; }
 
+/** Blind index of a preferred name / alias, normalised the same way first_name_idx is; null when blank.
+ *  Also the one place a sync push should recompute clients.preferred_name_idx from (see sync-tables importRow). */
+function preferredNameIndex(name) { const n = String(name || '').trim().toLowerCase(); return n ? blindIndex(n) : null; }
+
 function nextClientCode() {
   const year = new Date().getFullYear();
   // Clients created on a device (local mode) get an M prefix so codes never collide with the office server's C codes.
@@ -84,4 +90,4 @@ function summary(row, opts) {
   return o;
 }
 
-module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, summary, daysToEngagement, uuid, soundex, namePrefixIndex, namePhoneticIndex, normaliseName };
+module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, summary, daysToEngagement, uuid, soundex, namePrefixIndex, namePhoneticIndex, preferredNameIndex, normaliseName };

@@ -81,7 +81,15 @@ export async function api(method, path, body, opts = {}) {
   let payload;
   if (body instanceof Blob || body instanceof ArrayBuffer || typeof body === 'string') { payload = body; if (!headers['Content-Type']) headers['Content-Type'] = 'application/octet-stream'; }
   else if (body !== undefined) { payload = JSON.stringify(body); headers['Content-Type'] = 'application/json'; }
-  const res = await fetch(path, { method, headers, body: payload, credentials: 'same-origin' });
+  let res;
+  try { res = await fetch(path, { method, headers, body: payload, credentials: 'same-origin' }); }
+  catch (e) {
+    // A dropped connection used to surface as "Failed to fetch" (or nothing at all) and the dialog sat
+    // there with the entry in it. Say what happened, keep the form open, and put the banner up.
+    setOffline(true);
+    const err = new Error(OFFLINE_MESSAGE); err.offline = true; err.cause = e; throw err;
+  }
+  setOffline(false);
   touch();
   const ct = res.headers.get('content-type') || '';
   const data = ct.includes('json') ? await res.json() : await res.text();
@@ -91,6 +99,39 @@ export async function api(method, path, body, opts = {}) {
   return data;
 }
 export const get = (p, o) => api('GET', p, undefined, o), post = (p, b, o) => api('POST', p, b, o), put = (p, b, o) => api('PUT', p, b, o), del = (p, b, o) => api('DELETE', p, b, o);
+
+// ---------- offline ----------
+// Office mode has no offline store (PHI never sits in browser storage), so the one honest thing to do when
+// the network goes is say so, loudly, everywhere -- including on a sign-in screen served from the cached
+// shell, which used to just bounce back to the form as if the password were wrong.
+export const OFFLINE_MESSAGE = 'You appear to be offline. Your entry has been kept in this form — try again when you have signal.';
+let offlineBanner = null;
+export function setOffline(on) {
+  if (state.local) return; // the on-device copy keeps working without a network
+  if (on === state.offline) return;
+  state.offline = on;
+  document.documentElement.classList.toggle('offline', on);
+  if (on) {
+    offlineBanner = banner('Offline — changes can\'t be saved until you reconnect. For field days, use the phone app / local mode.', 'error', { id: 'offline' });
+    if (offlineBanner) offlineBanner.firstChild.append(' ', h('a', { href: 'get-app.html', class: 'small' }, 'Set up the phone app'));
+  } else {
+    document.querySelectorAll('#banners [data-banner="offline"]').forEach(b => b.remove());
+    if (offlineBanner) { toast('Back online', 'ok'); offlineBanner = null; }
+  }
+}
+window.addEventListener('offline', () => setOffline(true));
+window.addEventListener('online', () => setOffline(false));
+
+// ---------- tap-to-call / text / map ----------
+// A phone number on a screen is something a navigator standing on a sidewalk wants to tap, not copy.
+const telDigits = (p) => String(p || '').trim().replace(/[^\d+]/g, '');
+const swallow = (e) => e.stopPropagation(); // links live inside rows that are themselves clickable
+export function telLink(phone) { return phone ? h('a', { href: `tel:${telDigits(phone)}`, class: 'tel nowrap', onClick: swallow }, phone) : null; }
+export function smsLink(phone, label = 'Text') { return phone ? h('a', { href: `sms:${telDigits(phone)}`, class: 'sms small', 'aria-label': `Text ${phone}`, onClick: swallow }, label) : null; }
+export function contactLinks(phone) { return phone ? h('span', { class: 'contact' }, telLink(phone), ' ', h('span', { class: 'muted small' }, '·'), ' ', smsLink(phone)) : null; }
+export function mapLink(address, label) { return address ? h('a', { href: 'https://maps.google.com/?q=' + encodeURIComponent(address), target: '_blank', rel: 'noopener', class: 'maplink', title: 'Open in maps', onClick: swallow }, label || address) : null; }
+/** Open a tel:/sms: link the way a tap on an anchor would (the OS decides what handles it). */
+export function openHref(href) { const a = h('a', { href }); document.body.append(a); a.click(); a.remove(); }
 
 // ---------- DOM helpers ----------
 export function h(tag, attrs = {}, ...children) {
@@ -420,7 +461,7 @@ export function clientPicker(name, value, f = {}) {
   const listId = `cp-${Math.random().toString(36).slice(2, 9)}`;
   const hidden = h('input', { type: 'hidden', name });
   const text = h('input', {
-    type: 'text', placeholder: 'Search name, phone, date of birth or code…', autocomplete: 'off', required: !!f.required,
+    type: 'text', placeholder: 'Search name, code, date of birth or exact phone…', autocomplete: 'off', required: !!f.required,
     role: 'combobox', 'aria-expanded': 'false', 'aria-controls': listId, 'aria-autocomplete': 'list',
   });
   const list = h('div', { class: 'card tight hidden', id: listId, role: 'listbox', style: { position: 'absolute', zIndex: 20, maxHeight: '220px', overflow: 'auto', width: '100%' } });
@@ -465,7 +506,7 @@ export function clientPicker(name, value, f = {}) {
       const r = await get(`/api/clients?limit=15&status=all${q ? '&q=' + encodeURIComponent(q) : ''}`);
       clear(list); options = []; active = -1;
       if (!r.clients.length) {
-        list.append(h('div', { class: 'muted small' }, q ? 'No matches. Try a first or last name, phone number, date of birth or client code.' : 'Type to search'));
+        list.append(h('div', { class: 'muted small' }, q ? 'No matches. Try a first, last or preferred name, the full phone number, date of birth or client code.' : 'Type to search'));
         announce('No matching clients');
       } else {
         r.clients.forEach((c, i) => {
@@ -486,7 +527,9 @@ export function clientPicker(name, value, f = {}) {
   return wrap;
 }
 
-export function table(columns, rows, { onRow, empty = 'No records', wrap = true, rowLabel } = {}) {
+// compact: { primary(r), secondary(r), onTap(r) } -- a two-line row per record on a phone instead of every
+// column stacked as label/value pairs. The full table is still rendered for wider screens; CSS picks one.
+export function table(columns, rows, { onRow, empty = 'No records', wrap = true, rowLabel, compact } = {}) {
   if (!rows.length) return h('div', { class: 'empty' }, empty);
   // A clickable row must also be reachable and activatable from the keyboard, or the whole view is
   // mouse-only. tabindex + Enter/Space + a role is the minimum that makes that true.
@@ -498,7 +541,61 @@ export function table(columns, rows, { onRow, empty = 'No records', wrap = true,
   } : {});
   const t = h('table', {}, h('thead', {}, h('tr', {}, columns.map(c => h('th', { class: c.num ? 'num' : '', scope: 'col' }, c.label)))),
     h('tbody', {}, rows.map(r => h('tr', rowAttrs(r), columns.map(c => h('td', { class: c.num ? 'num' : '', 'data-label': c.label || '' }, c.render ? c.render(r) : (r[c.key] ?? '—')))))));
+  if (compact && wrap) {
+    const tap = compact.onTap || onRow;
+    const list = h('div', { class: 'compact-list' }, rows.map(r => h('div', tap ? {
+      class: 'compact-row click', tabindex: '0', role: 'button', 'aria-label': rowLabel ? rowLabel(r) : undefined,
+      onClick: () => tap(r), onKeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tap(r); } },
+    } : { class: 'compact-row' },
+    h('div', { class: 'primary' }, compact.primary(r)), compact.secondary ? h('div', { class: 'secondary small muted' }, compact.secondary(r)) : null)));
+    return h('div', { class: 'table-wrap has-compact' }, t, list);
+  }
   return wrap ? h('div', { class: 'table-wrap' }, t) : t;
+}
+
+// A tab strip that folds the tabs that do not fit into a "More ▾" menu instead of scrolling them off the
+// edge with nothing to say so. Re-measured on resize; the active tab is always kept in view.
+export function tabStrip(tabs, active, onPick) {
+  const strip = h('div', { class: 'tabs managed', role: 'tablist' });
+  const buttons = tabs.map(([k, label]) => h('button', { class: k === active ? 'active' : '', role: 'tab', type: 'button', 'aria-selected': String(k === active), 'data-tab': k, onClick: () => onPick(k) }, label));
+  const menu = h('div', { class: 'tabs-menu hidden', role: 'menu' });
+  const moreBtn = h('button', { class: 'tabs-more', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false', 'aria-label': 'More tabs' }, 'More ▾');
+  const wrap = h('div', { class: 'tabs-more-wrap' }, moreBtn, menu);
+  strip.append(...buttons, wrap);
+  const setOpen = (open) => { menu.classList.toggle('hidden', !open); moreBtn.setAttribute('aria-expanded', String(open)); if (open) (menu.querySelector('button.active') || menu.querySelector('button'))?.focus(); };
+  moreBtn.addEventListener('click', () => setOpen(menu.classList.contains('hidden')));
+  moreBtn.addEventListener('keydown', (e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setOpen(true); } });
+  menu.addEventListener('keydown', (e) => {
+    const items = [...menu.querySelectorAll('button')]; const i = items.indexOf(document.activeElement);
+    if (e.key === 'Escape') { e.preventDefault(); setOpen(false); moreBtn.focus(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); items[(i + 1) % items.length]?.focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length]?.focus(); }
+  });
+  const onDoc = (e) => { if (!strip.isConnected) { document.removeEventListener('click', onDoc); return; } if (!wrap.contains(e.target)) setOpen(false); };
+  document.addEventListener('click', onDoc);
+  function layout() {
+    for (const b of buttons) { b.hidden = false; strip.insertBefore(b, wrap); }
+    clear(menu); wrap.hidden = false; moreBtn.textContent = `More (${buttons.length}) ▾`; // measured at its widest
+    const avail = strip.clientWidth; if (!avail) return;
+    const widths = buttons.map(b => b.offsetWidth + 4);
+    if (widths.reduce((a, b) => a + b, 0) <= avail) { wrap.hidden = true; setOpen(false); return; }
+    const limit = avail - (wrap.offsetWidth + 8);
+    let used = 0; const overflow = [];
+    buttons.forEach((b, i) => { if (!overflow.length && used + widths[i] <= limit) used += widths[i]; else overflow.push(i); });
+    const activeIdx = buttons.findIndex(b => b.classList.contains('active'));
+    if (overflow.includes(activeIdx) && overflow[0] > 0) { overflow[overflow.indexOf(activeIdx)] = overflow[0] - 1; }
+    for (const i of overflow.sort((a, b) => a - b)) {
+      const b = buttons[i]; b.hidden = true;
+      menu.append(h('button', { role: 'menuitem', type: 'button', class: b.classList.contains('active') ? 'active' : '', onClick: () => { setOpen(false); onPick(tabs[i][0]); } }, tabs[i][1]));
+    }
+    // The active tab, if it was swapped in, goes right before the More button so the strip reads in order.
+    if (!buttons[activeIdx]?.hidden) strip.insertBefore(buttons[activeIdx], wrap);
+    moreBtn.textContent = `More (${overflow.length}) ▾`;
+  }
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => layout()).observe(strip);
+  else requestAnimationFrame(layout);
+  strip.relayout = layout;
+  return strip;
 }
 export function bars(items, { max, valueKey = 'n', labelKey = 'k', format = fmt.num, link = null } = {}) {
   // A value can be a string such as "<11" (a suppressed small cell in the funder report): it draws no bar and
@@ -545,7 +642,7 @@ export function quickActions() {
 }
 // Global client search (top bar / mobile bar)
 export function globalSearch() {
-  const input = h('input', { type: 'search', placeholder: 'Find a client: last name, phone or code…', 'aria-label': 'Find a client' });
+  const input = h('input', { type: 'search', placeholder: 'Find a client: name, code or exact phone…', 'aria-label': 'Find a client' });
   const list = h('div', { class: 'card tight hidden search-results' });
   const wrap = h('div', { class: 'gsearch' }, input, list);
   let t;
@@ -562,6 +659,39 @@ export function globalSearch() {
       list.classList.remove('hidden'); } catch {}
   }
   return wrap;
+}
+// Reminders due within the hour, or overdue: a count in the header, refreshed while the app is open, and
+// (only if the person switched it on under Profile) a system notification when one comes due.
+let dueCache = { at: 0, data: null }; const notifiedDue = new Set(); let dueTimer;
+export function dueBell() {
+  if (!can('tasks:read')) return null;
+  const count = h('span', { class: 'bell-count hidden', 'aria-hidden': 'true' });
+  const btn = h('a', { class: 'btn ghost bell', href: '#/tasks?overdue=1', 'data-due-bell': '1', 'aria-label': 'Reminders due', title: 'Reminders due within the hour, or overdue' }, h('span', { 'aria-hidden': 'true' }, '🔔'), count);
+  const paint = (r) => {
+    const n = r ? r.rows.length : 0;
+    count.textContent = String(n); count.classList.toggle('hidden', !n); btn.classList.toggle('has-due', !!n);
+    btn.setAttribute('aria-label', n ? `${n} reminder${n === 1 ? '' : 's'} due or overdue` : 'No reminders due');
+  };
+  async function poll(force = false) {
+    if (!state.user) return;
+    if (!force && dueCache.data && Date.now() - dueCache.at < 60000) { paint(dueCache.data); return; }
+    try { const r = await get('/api/tasks/due?within=60', { quiet: true }); dueCache = { at: Date.now(), data: r }; paint(r); maybeNotify(r.rows); } catch { /* offline or no permission: the badge just stays as it was */ }
+  }
+  clearInterval(dueTimer);
+  dueTimer = setInterval(() => { if (!document.body.contains(btn)) { clearInterval(dueTimer); return; } poll(true); }, 60000);
+  poll();
+  return btn;
+}
+function maybeNotify(rows) {
+  if (!prefs.get('notify_due') || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  for (const t of rows) {
+    if (notifiedDue.has(t.id)) continue;
+    notifiedDue.add(t.id);
+    try {
+      const n = new Notification(t.overdue ? 'Overdue reminder' : 'Reminder due now', { body: t.title + (t.client_name ? ` · ${t.client_name}` : ''), tag: `suds-task-${t.id}` });
+      n.onclick = () => { window.focus(); nav(`tasks?id=${t.id}`); n.close(); };
+    } catch { /* the browser refused; the badge still shows it */ }
+  }
 }
 // Welcome tour shown once per user (stored in synced preferences)
 let tourOpen = false;
@@ -617,6 +747,7 @@ export const NAV = [
   { name: 'time', label: 'My time', ico: '◷', perm: 'time:read', help: 'Your hours by activity. Visits and calls add time automatically; log meetings, travel and paperwork here.' },
   { name: 'imports', label: 'Import', ico: '⇩', perm: 'imports:write', help: 'Bring in spreadsheets (Excel / CSV) of clients, visits, calls, resources and more, or notes from Pocket AI and OneNote. Everything is checked before it is saved.' },
   { name: 'overdose', label: 'Overdose & reversals', ico: '⛑', perm: 'overdose:read', help: 'Overdoses and naloxone reversals, including ones involving people who are not clients. These are the counts funders ask for.' },
+  { name: 'supplies', label: 'Supplies', ico: '📦', help: 'Naloxone kits, test strips and other harm-reduction stock on hand. A visit that hands out kits or strips takes them off this count automatically.' },
   { sec: 'Connect clients' },
   { name: 'referrals', label: 'Referrals', ico: '⇢', perm: 'referrals:read', help: 'Track each referral from "sent" to "admitted" so nothing falls through the cracks.' },
   { name: 'resources', label: 'Resource directory', ico: '☰', perm: 'resources:read', help: 'Treatment programs, MAT clinics, shelters, legal aid and other partners you refer to.' },
@@ -647,7 +778,7 @@ export async function render() {
   const main = h('main', { class: 'main', id: 'main', tabindex: '-1' }, h('div', { class: 'boot' }, 'Loading…'));
   const side = sidebar(r);
   const qa = quickActions();
-  const layout = h('div', { class: 'layout' }, h('a', { class: 'skip-link', href: '#main', onClick: (e) => { e.preventDefault(); main.focus(); main.scrollIntoView(); } }, 'Skip to content'), mobileBar(r, side), side, h('div', { class: 'content' }, h('div', { class: 'appbar' }, can('clients:read') ? globalSearch() : h('div', { class: 'grow' }), qa), main), qa ? h('div', { class: 'fab' }, qa.cloneNode(true)) : null);
+  const layout = h('div', { class: 'layout' }, h('a', { class: 'skip-link', href: '#main', onClick: (e) => { e.preventDefault(); main.focus(); main.scrollIntoView(); } }, 'Skip to content'), mobileBar(r, side), side, h('div', { class: 'content' }, h('div', { class: 'appbar' }, can('clients:read') ? globalSearch() : h('div', { class: 'grow' }), dueBell(), qa), main), qa ? h('div', { class: 'fab' }, qa.cloneNode(true)) : null);
   if (qa) layout.querySelector('.fab button')?.addEventListener('click', () => qa.click());
   clear(app).append(layout);
   // A hash change keeps the old scroll position, so leaving a long list for another page landed the
@@ -676,9 +807,20 @@ function mobileBar(r, side) {
   const item = NAV.find(n => n.name === r.name) || (r.name === 'client' ? { label: 'Client' } : { label: 'SUDS' });
   const menuBtn = h('button', { class: 'btn ghost', 'aria-label': 'Menu', 'aria-expanded': 'false', 'aria-controls': 'sidebar' }, '☰');
   side.id = 'sidebar';
-  const toggle = () => { side.classList.toggle('open'); const open = side.classList.contains('open'); document.body.classList.toggle('nav-open', open); menuBtn.setAttribute('aria-expanded', String(open)); };
+  // Off-canvas but still in the tab order and the accessibility tree is a trap: a keyboard or screen-reader
+  // user lands on invisible links. While the drawer is closed on a phone it is inert; on a desktop it is
+  // always a real sidebar.
+  const phone = matchMedia('(max-width: 900px)');
+  const syncInert = () => { const closed = phone.matches && !side.classList.contains('open'); side.inert = closed; if (closed) side.setAttribute('aria-hidden', 'true'); else side.removeAttribute('aria-hidden'); };
+  const setOpen = (open) => { side.classList.toggle('open', open); document.body.classList.toggle('nav-open', open); menuBtn.setAttribute('aria-expanded', String(open)); syncInert(); if (open) side.querySelector('a')?.focus(); else menuBtn.focus(); };
+  const toggle = () => setOpen(!side.classList.contains('open'));
   menuBtn.addEventListener('click', toggle);
-  side.addEventListener('click', (e) => { if (e.target.closest('a')) { side.classList.remove('open'); document.body.classList.remove('nav-open'); menuBtn.setAttribute('aria-expanded', 'false'); } });
+  side.addEventListener('click', (e) => { if (e.target.closest('a')) setOpen(false); });
+  side.addEventListener('keydown', (e) => { if (e.key === 'Escape' && side.classList.contains('open')) setOpen(false); });
+  // The layout is rebuilt on every route change; keep exactly one media listener, for the current sidebar.
+  if (mobileBar.onChange) phone.removeEventListener('change', mobileBar.onChange);
+  mobileBar.onChange = syncInert; phone.addEventListener('change', syncInert);
+  syncInert();
   return h('div', { class: 'mobilebar' }, menuBtn, h('b', {}, item.label), h('a', { href: '#/clients', class: 'btn ghost', 'aria-label': 'Clients' }, '👤'));
 }
 function toggleTheme() { const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); const next = cur === 'dark' ? 'light' : 'dark'; prefs.set('theme', next); applyTheme(); }

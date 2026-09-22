@@ -1,7 +1,7 @@
 // SUDS service worker: caches the application shell only. API responses (PHI) are NEVER cached.
 const VERSION = 'suds-shell-1.8.0';
 const SHELL = ['./', 'index.html', 'styles.css', 'main.js', 'app.js', 'qr.js', 'favicon.svg', 'manifest.webmanifest', 'manifest-local.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
-  ...['login', 'dashboard', 'clients', 'client', 'interventions', 'calls', 'time', 'resources', 'referrals', 'tasks', 'budget', 'notes', 'imports', 'reports', 'admin', 'profile', 'setup', 'forms', 'documents', 'dataimport', 'local'].map(v => `views/${v}.js`)];
+  ...['login', 'dashboard', 'clients', 'client', 'interventions', 'calls', 'time', 'resources', 'referrals', 'tasks', 'budget', 'notes', 'imports', 'reports', 'admin', 'profile', 'setup', 'forms', 'documents', 'dataimport', 'local', 'supervision', 'episodes', 'overdose', 'funder', 'supplies'].map(v => `views/${v}.js`)];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', (e) => {

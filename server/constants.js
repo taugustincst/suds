@@ -37,7 +37,9 @@ module.exports = {
   REFERRAL_STATUSES: ['pending', 'contacted', 'accepted', 'waitlisted', 'scheduled', 'admitted', 'declined_by_client', 'declined_by_provider', 'no_show', 'completed', 'closed'],
   BUDGET_CATEGORIES: ['staffing', 'client_assistance', 'transportation', 'naloxone_supplies', 'harm_reduction_supplies', 'housing_assistance', 'treatment_fees', 'medication', 'phones_communication', 'food_basic_needs', 'ids_documents', 'training', 'outreach_materials', 'supplies', 'indirect', 'other'],
   FUNDING_TYPES: ['opioid_settlement', 'sor_grant', 'samhsa', 'state_block_grant', 'county_general', 'medicaid', 'foundation', 'other'],
-  NOTE_FORMATS: ['narrative', 'SOAP', 'DAP', 'BIRP', 'GIRP', 'intake', 'progress', 'discharge', 'contact', 'collateral', 'crisis', 'supervision'],
+  // 'handoff' is the shift hand-off note (what the next worker on needs to know), 'safety_plan' a structured
+  // safety plan (see SECTIONS in public/views/notes.js); both are ordinary notes as far as access rules go.
+  NOTE_FORMATS: ['narrative', 'SOAP', 'DAP', 'BIRP', 'GIRP', 'intake', 'progress', 'discharge', 'contact', 'collateral', 'crisis', 'supervision', 'handoff', 'safety_plan'],
   CONSENT_TYPES: ['part2_disclosure', 'roi', 'treatment', 'telehealth', 'contact_preferences', 'research', 'photo_media'],
   SUBSTANCES: ['opioids_fentanyl', 'opioids_heroin', 'opioids_rx', 'alcohol', 'methamphetamine', 'cocaine', 'benzodiazepines', 'cannabis', 'synthetic_cannabinoids', 'xylazine', 'nicotine', 'other', 'unknown'],
   SERVICE_TAGS: ['detox', 'residential', 'inpatient', 'partial_hospitalization', 'intensive_outpatient', 'outpatient', 'mat_buprenorphine', 'mat_methadone', 'mat_naltrexone', 'medication_management', 'individual_counseling', 'group_counseling', 'family_program', 'peer_support', 'case_management', 'mental_health', 'trauma_informed', 'co_occurring', 'medical_care', 'harm_reduction', 'naloxone', 'syringe_services', 'housing', 'sober_living', 'employment', 'legal_help', 'transportation', 'childcare', 'telehealth', 'walk_in', 'same_day_intake', 'crisis_24_7', 'aftercare', 'faith_based', 'spanish_speaking'],

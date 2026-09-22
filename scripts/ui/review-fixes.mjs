@@ -159,7 +159,8 @@ const admin = await session('admin', 'AdminPassw0rd!x');
 
   const phone = await session('mrivera', 'Navigator2026!!', { width: 390, height: 844 });
   await go(phone.page, 'tasks');
-  const box = await phone.page.$('tbody input[type=checkbox]');
+  // On a phone the to-do list is a compact row list (see app.js table() compact); the done box lives there.
+  const box = (await phone.page.$('.compact-row input[type=checkbox]')) || (await phone.page.$('tbody input[type=checkbox]'));
   const bb = box ? await box.boundingBox() : null;
   ok(bb && bb.width >= 22 && bb.height >= 22, 'to-do checkboxes are big enough to tap on a phone', JSON.stringify(bb));
   const overflow = await phone.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);

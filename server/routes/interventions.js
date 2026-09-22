@@ -5,6 +5,7 @@ const crud = require('../crud');
 const C = require('../constants');
 const { badRequest, forbidden } = require('../http');
 const { uuid } = require('../crypto');
+const supplies = require('./supplies');
 
 // A direct cost against a fund always names the specific line it draws down — mirrors expenditures, where
 // budget_line_id is optional on the column but the form never lets a real dollar amount through without a
@@ -92,8 +93,9 @@ module.exports = (r) => {
       if (row.follow_up_due && row.client_id) db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority) VALUES(?,?,?,?,?,?,?)`,
         uuid(), row.client_id, row.user_id, ctx.user.id, require('../crypto').encrypt(`Follow up: ${row.type.replace(/_/g, ' ')}`), row.follow_up_due, 'normal');
       syncExpenditure(row);
+      supplies.drawDown(ctx, row);
     },
-    afterUpdate: (ctx, row) => syncExpenditure(row),
+    afterUpdate: (ctx, row, prev) => { syncExpenditure(row); supplies.drawDown(ctx, row, prev); },
     // The FK from expenditures.intervention_id is ON DELETE SET NULL, so this has to run before the delete
     // — after it, there is no longer any way to find the expenditure this intervention's cost created.
     beforeDelete: (ctx, row) => {
@@ -104,5 +106,6 @@ module.exports = (r) => {
   });
   // Only ever called post-login (public/app.js's loadRefData(), itself only reached after /api/auth/me
   // succeeds) — no reason for this to be the one route in the app reachable without a session.
+  supplies(r);
   r.get('/api/meta/constants', auth.requireAuth, () => C);
 };

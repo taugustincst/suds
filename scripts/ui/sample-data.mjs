@@ -28,7 +28,9 @@ ok(/fictional clients/.test(loadedText), 'the card reports what was loaded', loa
 
 await page.goto(base + '/?local=1#/clients'); await page.waitForTimeout(1500);
 eq(await page.$$eval('tbody tr', r => r.length), 9, 'the client list shows the active sample clients');
-await page.waitForSelector('tbody tr.click', { timeout: 15000 }); await page.click('tbody tr.click'); await page.waitForTimeout(1200);
+// On a phone the list is the compact row list (app.js table() compact); the table rows exist but are not shown.
+const rowSel = (await page.$eval('.compact-list', l => getComputedStyle(l).display !== 'none').catch(() => false)) ? '.compact-row.click' : 'tbody tr.click';
+await page.waitForSelector(rowSel, { timeout: 15000 }); await page.click(rowSel); await page.waitForTimeout(1200);
 ok(/^\/client\//.test(page.url().split('#')[1] || ''), 'a row opens the client', page.url().split('#')[1]);
 ok((await page.textContent('h1')).trim().length > 0, 'the client page has a name in its heading');
 const cid = page.url().split('/client/')[1].split('/')[0];

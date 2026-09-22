@@ -40,6 +40,8 @@ module.exports = {
     { name: 'client_forms', enc: ['values_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'forms:write', parent: ['clients', 'client_id'] },
     { name: 'client_form_files', enc: ['data_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'forms:write', parent: ['client_forms', 'client_form_id'], blob: ['data_enc'] },
     { name: 'patient_requests', enc: ['notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
+    // Harm-reduction supply counts: shared program state, drawn down by visits on any device.
+    { name: 'supply_stock', enc: [], scope: 'all', writePerm: 'interventions:write' },
   ],
   // Server-side only, never synchronised: breakglass_events is the office supervisor's review queue for
   // emergency access, and a device has no supervisor to review it.
@@ -60,6 +62,7 @@ module.exports = {
     ['resource_photos', 'uploaded_by'], ['form_templates', 'uploaded_by'], ['policy_documents', 'uploaded_by'],
     ['breakglass_events', 'user_id'], ['breakglass_events', 'acknowledged_by'], ['patient_requests', 'handled_by'], ['patient_requests', 'created_by'],
     ['audit_log', 'user_id'], ['sessions', 'user_id'], ['user_prefs', 'user_id'], ['api_keys', 'created_by'], ['users', 'supervisor_id'], ['devices', 'user_id'],
+    ['supply_stock', 'updated_by'],
   ],
 };
 // Every column name above that points at users(id), for remapping a single pushed row.
@@ -101,6 +104,7 @@ function importRow(t, r, existingCols) {
     if (r.last_name_enc !== undefined) { o.last_name_idx = crypto.blindIndex(r.last_name_enc || ''); o.name_prefix_idx = M.namePrefixIndex(r.last_name_enc || ''); o.name_phonetic_idx = M.namePhoneticIndex(r.last_name_enc || ''); }
     if (r.last_name_enc !== undefined || r.first_name_enc !== undefined) o.full_name_idx = crypto.blindIndex((r.last_name_enc || '') + (r.first_name_enc || ''));
     if (r.first_name_enc !== undefined) { o.first_name_idx = crypto.blindIndex(String(r.first_name_enc || '').trim().toLowerCase()); o.first_name_prefix_idx = M.namePrefixIndex(r.first_name_enc || ''); }
+    if (r.preferred_name_enc !== undefined) o.preferred_name_idx = M.preferredNameIndex(r.preferred_name_enc || '');
     if (r.dob_enc !== undefined) o.dob_idx = crypto.blindIndex(r.dob_enc || '');
     if (r.phone_enc !== undefined) o.phone_idx = crypto.blindIndex(String(r.phone_enc || '').replace(/\D/g, ''));
   }

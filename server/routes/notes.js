@@ -10,7 +10,7 @@ const { encrypt, decrypt, sha256, uuid } = require('../crypto');
 const shape = {
   client_id: { type: 'string', required: true }, kind: { type: 'string', required: true, enum: ['clinical', 'admin'] }, format: { type: 'string', enum: C.NOTE_FORMATS },
   title: { type: 'string', maxLen: 200 }, content: { type: 'string', required: true, maxLen: 50000 }, structured: { type: 'object' }, occurred_at: { type: 'datetime', required: true },
-  intervention_id: { type: 'string' }, call_id: { type: 'string' }, part2_protected: { type: 'boolean' }, source: { type: 'string', enum: ['manual', 'pocket_ai', 'onenote', 'import', 'api'] }, source_ref: { type: 'string', maxLen: 300 },
+  intervention_id: { type: 'string' }, call_id: { type: 'string' }, part2_protected: { type: 'boolean' }, cosign_requested: { type: 'boolean' }, source: { type: 'string', enum: ['manual', 'pocket_ai', 'onenote', 'import', 'api'] }, source_ref: { type: 'string', maxLen: 300 },
 };
 
 function kindPerm(kind, rw) { return `notes:${kind}:${rw}`; }
@@ -55,8 +55,11 @@ function present(row, { withContent = true } = {}) {
 }
 
 // A note is complete only once everyone who owes a signature has given one.
+// cosign_required comes from the author's account (a trainee's every note); cosign_requested is the author
+// asking for a second pair of eyes on this one. Either puts it in the supervisor's queue once signed.
 function signatureState(n) {
-  return { signed: n.status !== 'draft', cosign_required: !!n.cosign_required, cosigned: !!n.cosigned_at, awaiting_cosign: !!n.cosign_required && n.status !== 'draft' && !n.cosigned_at };
+  const wanted = !!n.cosign_required || !!n.cosign_requested;
+  return { signed: n.status !== 'draft', cosign_required: !!n.cosign_required, cosign_requested: !!n.cosign_requested, cosigned: !!n.cosigned_at, awaiting_cosign: wanted && n.status !== 'draft' && !n.cosigned_at };
 }
 
 function load(ctx, id) {
@@ -88,14 +91,14 @@ module.exports = (r) => {
     // Notes this user owes a countersignature on: they are the author's supervisor, or they simply hold the
     // permission (a small county often has one supervisor for everyone).
     if (ctx.query.get('awaiting_cosign') === '1') {
-      where.push("n.cosign_required=1 AND n.status<>'draft' AND n.cosigned_at IS NULL");
+      where.push("(n.cosign_required=1 OR n.cosign_requested=1) AND n.status<>'draft' AND n.cosigned_at IS NULL");
       if (!auth.hasPerm(ctx.user, 'notes:cosign')) { where.push('1=0'); }
     }
     if (ctx.query.get('from')) { where.push('n.occurred_at >= ?'); params.push(ctx.query.get('from')); }
     if (ctx.query.get('to')) { where.push('n.occurred_at <= ?'); params.push(ctx.query.get('to') + 'T23:59:59.999Z'); }
     const w = 'WHERE ' + where.join(' AND ');
     const rows = db.all(`SELECT n.id,n.client_id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.signed_at,n.source,n.author_id,n.created_at,n.updated_at,
-      n.cosign_required,n.cosigned_at,n.cosigned_by,u.display_name AS author,cs.display_name AS cosigner,c.client_code,
+      n.cosign_required,n.cosign_requested,n.cosigned_at,n.cosigned_by,u.display_name AS author,cs.display_name AS cosigner,c.client_code,
       (SELECT COUNT(*) FROM note_addenda a WHERE a.note_id=n.id) AS addenda
       FROM notes n JOIN users u ON u.id=n.author_id LEFT JOIN users cs ON cs.id=n.cosigned_by JOIN clients c ON c.id=n.client_id ${w} ORDER BY n.occurred_at DESC LIMIT ? OFFSET ?`, ...params, limit, offset);
     const out = rows.map(x => ({ ...x, title: x.title_enc ? decrypt(x.title_enc) : null, title_enc: undefined, ...signatureState(x) }));
@@ -111,10 +114,10 @@ module.exports = (r) => {
     auth.assertClientAccess(ctx, v.client_id);
     const id = uuid();
     const author = db.one(`SELECT requires_cosign FROM users WHERE id=?`, ctx.user.id);
-    db.run(`INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,structured_enc,occurred_at,intervention_id,call_id,part2_protected,source,source_ref,cosign_required) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    db.run(`INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,structured_enc,occurred_at,intervention_id,call_id,part2_protected,source,source_ref,cosign_required,cosign_requested) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       id, v.client_id, ctx.user.id, v.kind, v.format || 'narrative', v.title ? encrypt(v.title) : null, encrypt(v.content), v.structured ? encrypt(JSON.stringify(v.structured)) : null, v.occurred_at,
-      v.intervention_id || null, v.call_id || null, v.part2_protected ?? 1, v.source || 'manual', v.source_ref || null, author?.requires_cosign ? 1 : 0);
-    audit.log({ user: ctx.user, action: 'note.create', entity: 'note', entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format } });
+      v.intervention_id || null, v.call_id || null, v.part2_protected ?? 1, v.source || 'manual', v.source_ref || null, author?.requires_cosign ? 1 : 0, v.cosign_requested ? 1 : 0);
+    audit.log({ user: ctx.user, action: 'note.create', entity: 'note', entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format, cosign_requested: v.cosign_requested ? true : undefined } });
     ctx.status = 201; return { id };
   });
 
@@ -133,15 +136,45 @@ module.exports = (r) => {
     if (!auth.hasPerm(ctx.user, kindPerm(n.kind, 'write'))) throw forbidden();
     if (n.status !== 'draft') throw badRequest('Signed notes cannot be edited; add an addendum instead');
     if (n.author_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'clients:all')) throw forbidden('Only the author can edit a draft');
-    const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected }, { partial: true });
+    const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, cosign_requested: shape.cosign_requested }, { partial: true });
     const sets = []; const params = [];
-    for (const k of ['format', 'occurred_at', 'intervention_id', 'call_id', 'part2_protected']) if (v[k] !== undefined) { sets.push(`${k}=?`); params.push(v[k]); }
+    for (const k of ['format', 'occurred_at', 'intervention_id', 'call_id', 'part2_protected', 'cosign_requested']) if (v[k] !== undefined) { sets.push(`${k}=?`); params.push(v[k]); }
     if (v.title !== undefined) { sets.push('title_enc=?'); params.push(v.title ? encrypt(v.title) : null); }
     if (v.content !== undefined) { sets.push('content_enc=?'); params.push(encrypt(v.content)); }
     if (v.structured !== undefined) { sets.push('structured_enc=?'); params.push(v.structured ? encrypt(JSON.stringify(v.structured)) : null); }
     if (sets.length) db.run(`UPDATE notes SET ${sets.join(', ')}, updated_at=? WHERE id=?`, ...params, db.now(), n.id);
     audit.log({ user: ctx.user, action: 'note.update', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { fields: Object.keys(v) } });
     return { ok: true };
+  });
+
+  // "Send to supervisor": the author flags a note (draft or already signed) for review/co-signature. A signed
+  // note is otherwise immutable, which is why this is its own route rather than part of the draft edit.
+  r.post('/api/notes/:id/request-cosign', auth.requireAuth, (ctx) => {
+    const n = load(ctx, ctx.params.id);
+    if (!auth.hasPerm(ctx.user, kindPerm(n.kind, 'write'))) throw forbidden();
+    if (n.author_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'clients:all')) throw forbidden('Only the author can ask for a review of their note');
+    if (n.cosigned_at) throw badRequest('This note has already been countersigned');
+    const { cosign_requested } = validate(ctx.body || {}, { cosign_requested: { type: 'boolean' } });
+    const flag = cosign_requested === false ? 0 : 1;
+    db.run(`UPDATE notes SET cosign_requested=?, updated_at=? WHERE id=?`, flag, db.now(), n.id);
+    audit.log({ user: ctx.user, action: flag ? 'note.cosign.requested' : 'note.cosign.request_withdrawn', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip });
+    return { ok: true, cosign_requested: !!flag, awaiting_cosign: !!flag && n.status !== 'draft' };
+  });
+
+  // Shift hand-off notes from the last day, for the whole team: what the next worker on needs to know.
+  // Read like any other admin note (caseload scoped, audited); the text is decrypted because the card
+  // exists to be read at a glance at the start of a shift.
+  r.get('/api/notes/handoffs', auth.requireAuth, auth.requirePerm('notes:admin:read', 'notes:admin:write'), (ctx) => {
+    const hours = Math.min(24 * 7, Math.max(1, Number(ctx.query.get('hours') || 24)));
+    const since = new Date(Date.now() - hours * 3600000).toISOString();
+    const cf = auth.caseloadFilter(ctx.user, 'n.client_id');
+    const { withClientName, SELECT: NAME_COLS } = require('../client-name');
+    const rows = db.all(`SELECT n.id, n.client_id, n.occurred_at, n.status, n.title_enc, n.content_enc, n.author_id, u.display_name AS author, c.client_code, ${NAME_COLS}
+      FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id
+      WHERE n.deleted_at IS NULL AND n.kind='admin' AND n.format='handoff' AND n.occurred_at >= ? AND ${cf.sql} ORDER BY n.occurred_at DESC LIMIT 50`, since, ...cf.params);
+    const out = rows.map(x => { const o = withClientName(ctx, x); let content = ''; try { content = decrypt(x.content_enc); } catch { content = ''; } return { ...o, title: x.title_enc ? decrypt(x.title_enc) : null, excerpt: content.slice(0, 240), title_enc: undefined, content_enc: undefined }; });
+    audit.log({ user: ctx.user, action: 'note.list', ip: ctx.ip, details: { count: out.length, kinds: ['admin'], filter: 'handoffs', hours } });
+    return { rows: out, hours };
   });
 
   // Electronic signature: locks the note and records a content hash

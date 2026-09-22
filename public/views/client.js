@@ -1,4 +1,4 @@
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, parseHash, kv, stat, clientPicker , clear } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, parseHash, kv, stat, clientPicker, clear, contactLinks, mapLink, openHref, tabStrip } from '../app.js';
 import { openClientForm } from './clients.js';
 import { openInterventionForm, openRepeatInterventionForm, interventionTable } from './interventions.js';
 import { openCallForm, callTable } from './calls.js';
@@ -23,7 +23,9 @@ route('client', async (r) => {
   const body = h('div', {});
   const view = h('div', {},
     h('div', { class: 'topbar' }, h('div', {}, h('h1', {}, c.display_name, ' ', h('span', { class: 'muted', style: { fontWeight: 400, fontSize: '1rem' } }, c.client_code)),
-      h('div', { class: 'row' }, badge(fmt.label(c.status), statusKind(c.status)), badge(`Risk: ${fmt.label(c.risk_level)}`, statusKind(c.risk_level)), c.primary_substance ? badge(fmt.label(c.primary_substance)) : null, c.mat_status && c.mat_status !== 'none' ? badge(`MAT: ${fmt.label(c.mat_status)}`, 'purple') : null, c.overdose_history ? badge('OD history', 'danger') : null, c.naloxone_provided ? badge('Naloxone ✓', 'ok') : badge('No naloxone', 'warn'), c.flags ? badge(`⚠ ${c.flags}`, 'danger') : null, c.legal_hold ? badge('Legal hold', 'purple') : null)),
+      h('div', { class: 'row' }, badge(fmt.label(c.status), statusKind(c.status)), badge(`Risk: ${fmt.label(c.risk_level)}`, statusKind(c.risk_level)), c.primary_substance ? badge(fmt.label(c.primary_substance)) : null, c.mat_status && c.mat_status !== 'none' ? badge(`MAT: ${fmt.label(c.mat_status)}`, 'purple') : null, c.overdose_history ? badge('OD history', 'danger') : null, c.naloxone_provided ? badge('Naloxone ✓', 'ok') : badge('No naloxone', 'warn'), c.flags ? badge(`⚠ ${c.flags}`, 'danger') : null, c.legal_hold ? badge('Legal hold', 'purple') : null,
+        // A safety plan on file is worth seeing before anything else on a bad day; the chip opens it.
+        c.safety_plan ? h('button', { class: 'chip', type: 'button', 'data-safety-plan': c.safety_plan.id, title: 'Open the safety plan', onClick: async () => (await import('./notes.js')).openNote(c.safety_plan.id, { onChange: refresh }) }, `🛟 Safety plan on file (${fmt.date(c.safety_plan.occurred_at)})`) : null)),
       h('div', { class: 'row' },
         can('interventions:write') ? h('button', { class: 'btn primary', onClick: () => openInterventionForm(null, ctxOpts) }, '+ Intervention') : null,
         can('interventions:write') && c.counts.interventions ? h('button', { class: 'btn', title: 'Prefill from their most recent visit — same type, location and supplies, with today\'s date and a blank summary', onClick: () => openRepeatInterventionForm(id, disp, refresh) }, '↻ Repeat last visit') : null,
@@ -32,17 +34,33 @@ route('client', async (r) => {
         (can('notes:admin:write') || can('notes:clinical:write')) ? h('button', { class: 'btn', onClick: () => openNoteForm(null, ctxOpts) }, '+ Note') : null,
         can('tasks:write') ? h('button', { class: 'btn', onClick: () => openTaskForm(null, ctxOpts) }, '+ Task') : null,
         can('clients:write') ? h('button', { class: 'btn', onClick: () => openClientForm(c, refresh) }, 'Edit') : null)),
-    h('div', { class: 'tabs' }, tabs.map(([k, l]) => h('button', { class: k === tab ? 'active' : '', onClick: () => nav(`client/${id}/${k}`) }, l))),
+    tabStrip(tabs, tab, (k) => nav(`client/${id}/${k}`)),
     body);
+
+  // Free text such as "Rosa (sister) 555-0134" gets its number turned into a tel: link.
+  const linkifyPhones = (text) => {
+    if (!text) return null;
+    const parts = String(text).split(/(\+?\d[\d\-\s().]{6,}\d)/);
+    return parts.length > 1 ? h('span', {}, parts.map((x, i) => (i % 2 ? contactLinks(x.trim()) : x))) : text;
+  };
+  // Tap the number to call or text; the buttons also open the log so the contact is recorded straight after.
+  const phoneRow = (phone) => {
+    if (!phone) return null;
+    const logAfter = (method) => { openHref(`${method === 'text' ? 'sms' : 'tel'}:${String(phone).replace(/[^\d+]/g, '')}`); if (can('calls:write')) openCallForm(null, { ...ctxOpts, method, prefill: { phone, contact_type: 'client', direction: 'outbound' } }); };
+    return h('span', { class: 'row', style: { gap: '.4rem', display: 'inline-flex' } }, contactLinks(phone),
+      can('calls:write') ? h('button', { class: 'btn sm', type: 'button', 'data-call': phone, onClick: () => logAfter('phone') }, '☎ Call') : null,
+      can('calls:write') && c.ok_to_text !== 0 ? h('button', { class: 'btn sm', type: 'button', 'data-text': phone, onClick: () => logAfter('text') }, '💬 Text') : null);
+  };
 
   const T = {
     async overview() {
       const age = c.dob ? Math.floor((Date.now() - Date.parse(c.dob)) / (365.25 * 86400000)) : null;
       return h('div', { class: 'grid cols-2' },
-        h('div', { class: 'card' }, h('h3', {}, 'Identity & contact'), kv([['Name', `${c.first_name} ${c.last_name}${c.preferred_name ? ` ("${c.preferred_name}")` : ''}`], ['DOB', c.dob ? `${fmt.date(c.dob)} (${age})` : null], ['Gender / pronouns', [c.gender && fmt.label(c.gender), c.pronouns].filter(Boolean).join(' · ')], ['Phone', [c.phone, c.alt_phone].filter(Boolean).join(' / ')], ['Email', c.email], ['Address', [c.address, c.city, c.zip].filter(Boolean).join(', ')], ['Language', c.preferred_language], ['Contact rules', [c.ok_to_text ? 'OK to text' : null, c.ok_to_voicemail ? 'OK to voicemail' : null, c.contact_preferences].filter(Boolean).join(' · ') || 'Not recorded — ask before texting or leaving a voicemail'], ['Emergency contact', c.emergency_contact], ['Housing', c.housing_status && fmt.label(c.housing_status)], ['Insurance', [c.insurance && fmt.label(c.insurance), c.medicaid_id && `ID ${c.medicaid_id}`].filter(Boolean).join(' · ')], ['Veteran', c.veteran ? 'Yes' : 'No']])),
+        h('div', { class: 'card' }, h('h3', {}, 'Identity & contact'), kv([['Name', `${c.first_name} ${c.last_name}${c.preferred_name ? ` ("${c.preferred_name}")` : ''}`], ['DOB', c.dob ? `${fmt.date(c.dob)} (${age})` : null], ['Gender / pronouns', [c.gender && fmt.label(c.gender), c.pronouns].filter(Boolean).join(' · ')], ['Phone', c.phone || c.alt_phone ? h('div', { class: 'row', style: { gap: '.5rem' } }, phoneRow(c.phone), c.alt_phone ? h('span', {}, h('span', { class: 'muted small' }, 'alt: '), phoneRow(c.alt_phone)) : null) : null], ['Email', c.email ? h('a', { href: `mailto:${c.email}` }, c.email) : null], ['Address', mapLink([c.address, c.city, c.zip].filter(Boolean).join(', '))], ['Language', c.preferred_language], ['Contact rules', [c.ok_to_text ? 'OK to text' : null, c.ok_to_voicemail ? 'OK to voicemail' : null, c.contact_preferences].filter(Boolean).join(' · ') || 'Not recorded — ask before texting or leaving a voicemail'], ['Emergency contact', linkifyPhones(c.emergency_contact)], ['Housing', c.housing_status && fmt.label(c.housing_status)], ['Insurance', [c.insurance && fmt.label(c.insurance), c.medicaid_id && `ID ${c.medicaid_id}`].filter(Boolean).join(' · ')], ['Veteran', c.veteran ? 'Yes' : 'No']])),
         h('div', { class: 'card' }, h('h3', {}, 'Substance use & clinical'), kv([['Primary substance', fmt.label(c.primary_substance)], ['Secondary', c.secondary_substances], ['Route', c.route_of_use && fmt.label(c.route_of_use)], ['ASAM level', c.asam_level], ['MAT', [c.mat_status && fmt.label(c.mat_status), c.mat_medication && fmt.label(c.mat_medication)].filter(Boolean).join(' — ')], ['Overdose history', c.overdose_history ? `Yes${c.last_overdose_date ? ', last ' + fmt.date(c.last_overdose_date) : ''}` : 'No'], ['Naloxone', c.naloxone_provided ? `Provided${c.naloxone_last_date ? ' ' + fmt.date(c.naloxone_last_date) : ''}` : 'Not provided'], ['Co-occurring MH', c.co_occurring_mh ? 'Yes' : 'No'], ['Justice involved', c.justice_involved ? 'Yes' : 'No'], ['Pregnant / parenting', c.pregnant_or_parenting ? 'Yes' : 'No'], ['Goals', c.goals]])),
         h('div', { class: 'card' }, h('h3', {}, 'Program'), kv([['Status', fmt.label(c.status)], ['Intake', fmt.date(c.intake_date)], ['Referral source', c.referral_source && fmt.label(c.referral_source)], ['Referral date', c.referral_date && fmt.date(c.referral_date)], ['Engagement date', c.engagement_date && fmt.date(c.engagement_date)],
           ['Time until engaged', c.days_to_engagement === null ? (c.referral_date || c.engagement_date ? h('span', { class: 'muted' }, 'needs both dates') : null) : h('span', { style: c.days_to_engagement < 0 ? { color: 'var(--danger)' } : {} }, `${c.days_to_engagement} day${Math.abs(c.days_to_engagement) === 1 ? '' : 's'}`)],
+          ['Episode', c.open_episode ? h('a', { href: `#/client/${id}/episodes` }, 'Open — ', c.counts.episodes > 1 ? `${c.counts.episodes} episodes` : 'first episode') : c.counts.episodes ? h('a', { href: `#/client/${id}/episodes`, style: { color: 'var(--warn)' } }, 'Discharged — re-admit on the Episodes tab') : h('a', { href: `#/client/${id}/episodes`, style: { color: 'var(--warn)' } }, 'None open — start one on the Episodes tab')],
           ['Discharge', c.discharge_date ? `${fmt.date(c.discharge_date)} — ${c.discharge_reason || ''}` : null], ['Care team', c.assignments.filter(a => !a.end_date).map(a => `${a.display_name} (${fmt.label(a.role_on_case)})`).join(', ') || 'Unassigned'], ['Active consents', c.active_consents.length ? c.active_consents.map(x => `${fmt.label(x.type)}${x.recipient ? ' → ' + x.recipient : ''}`).join('; ') : h('span', { style: { color: 'var(--warn)' } }, 'None on file')]])),
         h('div', { class: 'grid cols-4', style: { gridColumn: '1 / -1' } }, stat('Interventions', c.counts.interventions, '', `client/${id}/interventions`), stat('Calls', c.counts.calls, '', `client/${id}/calls`), stat('Service time', fmt.mins(c.counts.minutes), '', `client/${id}/time`), stat('Open tasks', c.counts.open_tasks, c.counts.open_tasks ? 'warn' : '', `client/${id}/tasks`), can('budget:read') ? stat('Assistance spent', fmt.money(c.counts.spent), '', `client/${id}/budget`) : null, stat('Referrals', c.counts.referrals, '', `client/${id}/referrals`)));
     },

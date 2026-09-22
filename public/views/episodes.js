@@ -1,6 +1,6 @@
 // Episodes of care: admitting someone, discharging them, and the waitlist. Before this a client entered
 // once stayed "active" forever, because there was no step that ended anything.
-import { h, route, get, post, put, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog, kv } from '../app.js';
+import { h, route, get, post, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog, kv } from '../app.js';
 
 const REASONS = [
   ['completed', 'Completed the program'],
@@ -50,15 +50,25 @@ export async function episodesPanel(clientId, { onChange } = {}) {
       h('p', { class: 'small muted' }, 'This ends the assignments on this client and closes their open to-dos, so they stop appearing on everyone\'s overdue list. Their record stays exactly as it is.'), f));
   };
 
+  // Re-admit on the same episode: for a discharge made in error or a return within days. A genuine return
+  // after a gap is a new admission, which is "+ Start a new episode" instead.
+  const reopenEpisode = async (e) => {
+    const reason = await confirmDialog('Re-admit on this episode', `Reopen the episode from ${fmt.date(e.opened_at)} (discharged ${fmt.date(e.closed_at)})? The client becomes active again and their care team is restored. Use "Start a new episode" instead if this is a genuine return after a gap — funders count that as a new admission.`, { okText: 'Reopen & re-admit', requireReason: true });
+    if (!reason) return;
+    try { await post(`/api/episodes/${e.id}/reopen`, { reason }); toast('Re-admitted — the episode is open again', 'ok'); onChange ? onChange() : nav(`client/${clientId}`); }
+    catch (err) { toast(err.message, 'error'); }
+  };
+
   const rows = episodes.map(e => ({ ...e }));
-  box.append(h('div', { class: 'card-head' }, h('h2', {}, 'Episodes of care'),
-    can('episodes:write') && !open ? h('button', { class: 'btn sm primary', onClick: openEpisode }, '+ Start an episode') : null,
+  box.append(h('div', { class: 'card-head' }, h('div', {}, h('h2', {}, 'Episodes of care'),
+      h('div', { class: 'small muted' }, 'Intake opens the first episode automatically. Discharge closes it (ending the care team and open to-dos); a returning client gets a new episode, or is re-admitted on the last one if they were discharged by mistake.')),
+    can('episodes:write') && !open ? h('button', { class: 'btn sm primary', onClick: openEpisode }, rows.length ? '+ Start a new episode' : '+ Start an episode') : null,
     can('episodes:write') && open ? h('button', { class: 'btn sm', onClick: () => closeEpisode(open) }, 'Discharge') : null));
 
   if (!rows.length) {
     // The card-head button above already offers this when there is no open episode, so the empty state
     // itself does not repeat it — two adjacent "Start an episode" buttons doing the same thing.
-    box.append(emptyState('No episodes yet', 'An episode is one period of service. Funders count admissions and discharges per episode, and closing one is what takes a client off the active caseload.'));
+    box.append(emptyState('No episodes yet', 'This person was entered without being admitted (for example, straight onto the waitlist). Starting an episode is the admission: funders count admissions and discharges per episode, and closing one is what takes a client off the active caseload.'));
   } else {
     box.append(table([
       { label: 'Opened', render: e => fmt.date(e.opened_at) },
@@ -67,6 +77,7 @@ export async function episodesPanel(clientId, { onChange } = {}) {
       { label: 'Discharge', render: e => (e.discharge_reason ? fmt.label(e.discharge_reason) : '—') },
       { label: 'Going to', render: e => e.discharge_disposition || '—' },
       { label: 'Fund', render: e => e.funding_source || '—' },
+      { label: '', render: e => e.status === 'closed' && !open && can('episodes:write') ? h('button', { class: 'btn sm', 'data-reopen': e.id, onClick: (ev) => { ev.stopPropagation(); reopenEpisode(e); } }, 'Reopen / re-admit') : null },
     ], rows, {
       onRow: (e) => modal(`Episode from ${fmt.date(e.opened_at)}`, h('div', {}, kv([
         ['Opened', `${fmt.date(e.opened_at)} by ${e.opened_by_name || '—'}`],

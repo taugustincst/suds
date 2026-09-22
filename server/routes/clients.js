@@ -48,8 +48,8 @@ module.exports = (r) => {
         // tolerance comes from indexing a 3-letter prefix and a Soundex code at write time.
         const parts = q.split(/[,\s]+/).filter(Boolean);
         const idxs = parts.map(p => blindIndex(p));
-        const clauses = [`c.last_name_idx IN (${idxs.map(() => '?').join(',')})`, 'c.full_name_idx IN (?,?)', `c.first_name_idx IN (${idxs.map(() => '?').join(',')})`];
-        params.push(...idxs, blindIndex(parts.join('')), blindIndex([...parts].reverse().join('')), ...parts.map(p => blindIndex(p.toLowerCase())));
+        const clauses = [`c.last_name_idx IN (${idxs.map(() => '?').join(',')})`, 'c.full_name_idx IN (?,?)', `c.first_name_idx IN (${idxs.map(() => '?').join(',')})`, `c.preferred_name_idx IN (${idxs.map(() => '?').join(',')})`];
+        params.push(...idxs, blindIndex(parts.join('')), blindIndex([...parts].reverse().join('')), ...parts.map(p => blindIndex(p.toLowerCase())), ...parts.map(p => M.preferredNameIndex(p)));
         if (ctx.query.get('exact') !== '1') {
           for (const part of parts) {
             const pfx = M.namePrefixIndex(part); if (pfx) { clauses.push('c.name_prefix_idx=?'); params.push(pfx); clauses.push('c.first_name_prefix_idx=?'); params.push(pfx); }
@@ -62,12 +62,18 @@ module.exports = (r) => {
     const assigned = ctx.query.get('assigned_to');
     if (assigned) { where.push(`c.id IN (SELECT client_id FROM assignments WHERE user_id=? AND ${auth.activeAssignment()})`); params.push(assigned); }
     const w = 'WHERE ' + where.join(' AND ');
+    // Caseload sort orders a navigator actually works a list by: who has gone longest without contact,
+    // who has follow-ups slipping, and who is highest risk. Anything else is most-recently-touched first.
+    const sort = ctx.query.get('sort') || '';
+    const order = { last_contact: 'last_contact IS NOT NULL, last_contact ASC', overdue: 'overdue_tasks DESC, last_contact ASC',
+      risk: `CASE c.risk_level WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'moderate' THEN 2 ELSE 3 END, last_contact ASC` }[sort] || 'c.updated_at DESC';
     const rows = db.all(`SELECT c.*, (SELECT GROUP_CONCAT(u.display_name, ', ') FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=c.id AND ${auth.activeAssignment('a.')}) AS assigned_workers,
-      (SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome IN ('reached','replied'))) AS last_contact
-      FROM clients c ${w} ORDER BY c.updated_at DESC LIMIT ? OFFSET ?`, ...params, limit, offset);
+      (SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome IN ('reached','replied'))) AS last_contact,
+      (SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.status IN ('open','in_progress') AND (CASE WHEN length(t.due_at)=10 THEN t.due_at < date('now','localtime') ELSE t.due_at < ? END)) AS overdue_tasks
+      FROM clients c ${w} ORDER BY ${order} LIMIT ? OFFSET ?`, db.now(), ...params, limit, offset);
     const total = db.one(`SELECT COUNT(*) n FROM clients c ${w}`, ...params).n;
-    audit.log({ user: ctx.user, action: 'client.list', ip: ctx.ip, details: { q: q ? '[redacted]' : '', status, count: rows.length, deidentified: deidentify } });
-    return { clients: rows.map(x => ({ ...M.summary(x, { deidentify }), assigned_workers: x.assigned_workers, last_contact: x.last_contact })), total, limit, offset };
+    audit.log({ user: ctx.user, action: 'client.list', ip: ctx.ip, details: { q: q ? '[redacted]' : '', status, sort: sort || undefined, count: rows.length, deidentified: deidentify } });
+    return { clients: rows.map(x => ({ ...M.summary(x, { deidentify }), assigned_workers: x.assigned_workers, last_contact: x.last_contact, overdue_tasks: x.overdue_tasks })), total, limit, offset };
   });
 
   /**
@@ -101,13 +107,14 @@ module.exports = (r) => {
   });
 
   r.post('/api/clients', auth.requireAuth, auth.requirePerm('clients:write'), (ctx) => {
-    const v = validate(ctx.body, { ...shape, confirm_duplicate: { type: 'boolean' } });
+    const v = validate(ctx.body, { ...shape, confirm_duplicate: { type: 'boolean' }, no_episode: { type: 'boolean' } });
     // Refuse a likely duplicate unless the worker has looked at the match and said it is a different person.
     if (!v.confirm_duplicate) {
       const matches = possibleDuplicates(v);
       if (matches.length) throw badRequest('A client with these details may already exist', { duplicates: matches, confirm_field: 'confirm_duplicate' });
     }
     delete v.confirm_duplicate;
+    const noEpisode = !!v.no_episode; delete v.no_episode;
     const id = uuid();
     const enc = M.encryptFields(v);
     enc.full_name_idx = blindIndex((v.last_name || '') + (v.first_name || ''));
@@ -115,16 +122,25 @@ module.exports = (r) => {
     for (const f of M.PLAIN_FIELDS) if (v[f] !== undefined) cols[f] = v[f];
     if (!cols.intake_date) cols.intake_date = new Date().toISOString().slice(0, 10);
     const keys = Object.keys(cols).filter(k => cols[k] !== undefined);
+    let episodeId = null;
     db.transaction(() => {
       db.run(`INSERT INTO clients(${keys.join(',')}) VALUES(${keys.map(() => '?').join(',')})`, ...keys.map(k => cols[k]));
       // auto-assign creator if they are a caseload-restricted worker
       if (auth.caseloadRestricted(ctx.user) || ['navigator', 'clinician'].includes(ctx.user.role)) {
         db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, uuid(), id, ctx.user.id, 'primary', cols.intake_date, ctx.user.id);
       }
+      // Intake is an admission: it opens the first episode of care, so discharges are countable from day one
+      // instead of every client sitting "active" with nothing to close. A waitlisted person has not started
+      // services yet, and a caller that manages episodes itself passes no_episode.
+      if (!noEpisode && cols.status !== 'waitlist' && cols.status !== 'closed' && cols.status !== 'deceased') {
+        episodeId = uuid();
+        db.run(`INSERT INTO episodes(id,client_id,opened_at,opened_by,referral_source) VALUES(?,?,?,?,?)`, episodeId, id, cols.intake_date, ctx.user.id, cols.referral_source || null);
+      }
     });
-    audit.log({ user: ctx.user, action: 'client.create', entity: 'client', entityId: id, clientId: id, ip: ctx.ip });
+    audit.log({ user: ctx.user, action: 'client.create', entity: 'client', entityId: id, clientId: id, ip: ctx.ip, details: episodeId ? { episode: episodeId } : undefined });
+    if (episodeId) audit.log({ user: ctx.user, action: 'episode.open', entity: 'episode', entityId: episodeId, clientId: id, ip: ctx.ip, details: { at_intake: true } });
     ctx.status = 201;
-    return { id, client_code: cols.client_code };
+    return { id, client_code: cols.client_code, episode_id: episodeId };
   });
 
   /**
@@ -172,9 +188,9 @@ module.exports = (r) => {
       // Recompute the kept record's blind indexes in case a name field was filled in from the duplicate.
       const after = db.one(`SELECT * FROM clients WHERE id=?`, keep.id);
       const plain = M.decryptRow(after);
-      db.run(`UPDATE clients SET dob_idx=?, phone_idx=?, name_prefix_idx=?, name_phonetic_idx=?, updated_at=? WHERE id=?`,
+      db.run(`UPDATE clients SET dob_idx=?, phone_idx=?, name_prefix_idx=?, name_phonetic_idx=?, preferred_name_idx=?, updated_at=? WHERE id=?`,
         plain.dob ? blindIndex(plain.dob) : null, plain.phone ? blindIndex(String(plain.phone).replace(/\D/g, '')) : null,
-        M.namePrefixIndex(plain.last_name || ''), M.namePhoneticIndex(plain.last_name || ''), db.now(), keep.id);
+        M.namePrefixIndex(plain.last_name || ''), M.namePhoneticIndex(plain.last_name || ''), M.preferredNameIndex(plain.preferred_name), db.now(), keep.id);
 
       db.run(`UPDATE clients SET merged_into=?, status='closed', deleted_at=?, updated_at=? WHERE id=?`, keep.id, db.now(), db.now(), source.id);
       moved._filled_fields = keys.length;
@@ -201,7 +217,14 @@ module.exports = (r) => {
       open_tasks: db.one(`SELECT COUNT(*) n FROM tasks WHERE client_id=? AND status IN ('open','in_progress')`, row.id).n,
       minutes: db.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE client_id=?`, row.id).n,
       spent: db.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE client_id=? AND status<>'rejected'`, row.id).n,
+      episodes: db.one(`SELECT COUNT(*) n FROM episodes WHERE client_id=?`, row.id).n,
     };
+    client.open_episode = !!db.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, row.id);
+    // The most recent safety plan this person may read, so the overview can say one is on file without
+    // pulling the note itself (that is a separate, audited read when they open it).
+    const kinds = ['admin', 'clinical'].filter(k => auth.hasPerm(ctx.user, `notes:${k}:read`) || auth.hasPerm(ctx.user, `notes:${k}:write`));
+    const sp = kinds.length ? db.one(`SELECT id, occurred_at, status FROM notes WHERE client_id=? AND format='safety_plan' AND deleted_at IS NULL AND kind IN (${kinds.map(() => '?').join(',')}) ORDER BY occurred_at DESC LIMIT 1`, row.id, ...kinds) : null;
+    client.safety_plan = sp || null;
     audit.log({ user: ctx.user, action: 'client.view', entity: 'client', entityId: row.id, clientId: row.id, ip: ctx.ip });
     return { client };
   });

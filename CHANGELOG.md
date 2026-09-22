@@ -4,7 +4,7 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
-Compliance review fixes (HIPAA / 42 CFR Part 2). Schema 19; databases upgrade in place.
+Compliance review fixes (HIPAA / 42 CFR Part 2) and county IT hardening. Schema 19; databases upgrade in place.
 
 - **Sync cannot rewrite the legal record.** Consents, disclosures and note addenda are insert-only through
   `POST /api/sync/push`; the only change a device may make to an existing consent is to revoke it, and the
@@ -39,6 +39,29 @@ Compliance review fixes (HIPAA / 42 CFR Part 2). Schema 19; databases upgrade in
 - **Roles and defaults.** `readonly` sees the de-identified client list and reports only (no `clients:all`,
   no exports); MFA is required of every role by default; `LOCAL_MODE_ENABLED=false` makes the server serve an
   explanation instead of the in-browser kernel; `CLIENT_RETENTION_YEARS` configures retention.
+
+Schema 20. Navigator-facing fixes from a hands-on field review.
+
+- **Tap to call, text or navigate.** Every phone number on the client page, the contact lists, the
+  calls list and the resource directory is a `tel:` link with a `sms:` "Text" beside it; addresses open
+  in maps. Call / Text buttons on the client page dial and then open the log, prefilled.
+- **Offline is said out loud.** A save with no signal keeps the dialog open and says so in plain words; a
+  persistent banner points at the phone app, including on a sign-in screen served from the cached shell.
+- **Names, not codes**, on the to-do list, Calls & texts and My time (`client_name` on those list routes,
+  never for a de-identified role). Compact two-line rows for Clients, To-do and Calls on a phone; the
+  client page's tabs fold into a keyboard-accessible "More" menu instead of scrolling off the edge.
+- **Intake opens the first episode of care** (`no_episode: true` opts out); the New client form no longer
+  asks for a discharge; a closed episode can be reopened (`POST /api/episodes/:id/reopen`, re-admission).
+- **Ask for a co-sign.** An author can request supervisor review on a draft or signed note
+  (`notes.cosign_requested`, `POST /api/notes/:id/request-cosign`); it joins the countersignature queue.
+- **Reminders that reach you**: a bell in the header with the count due within the hour or overdue
+  (`GET /api/tasks/due`), an opt-in browser notification (Profile), and Home labels overdue items first.
+- Accessibility: the closed phone drawer is `inert`; 44px tap targets on touch screens; warning text
+  meets 4.5:1 in both themes. The + Log button clears the last card, hides behind the drawer, and toasts
+  sit above it.
+- Preferred name / alias search (`clients.preferred_name_idx`); caseload sort (last contact, overdue
+  follow-ups, risk); shift hand-off notes with a Home card; a structured safety plan note shown as a chip on
+  the client page; and a supply cupboard (`supply_stock`, `/api/supplies`) that visits draw down.
 
 ## 1.8.0 — 2026-09-18
 

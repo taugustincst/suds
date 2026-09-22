@@ -32,7 +32,7 @@ function indexedColumns(d) {
 // name-index helpers read config.indexKey at call time, which is why the key is swapped in below.
 const DERIVATIONS = {
   clients: {
-    source: ['first_name_enc', 'last_name_enc', 'dob_enc', 'phone_enc'],
+    source: ['first_name_enc', 'last_name_enc', 'dob_enc', 'phone_enc', 'preferred_name_enc'],
     derive(p) {
       const M = require('../server/clients-model');
       const first = p.first_name_enc || '', last = p.last_name_enc || '';
@@ -43,6 +43,7 @@ const DERIVATIONS = {
         name_phonetic_idx: M.namePhoneticIndex(last),
         first_name_idx: blindIndex(String(first).trim().toLowerCase()),
         first_name_prefix_idx: M.namePrefixIndex(first),
+        preferred_name_idx: M.preferredNameIndex(p.preferred_name_enc || ''),
         dob_idx: blindIndex(p.dob_enc || ''),
         phone_idx: blindIndex(String(p.phone_enc || '').replace(/\D/g, '')),
       };

@@ -92,6 +92,31 @@ module.exports = (r) => {
       ].filter(Boolean) };
   });
 
+  // Re-admit: a person discharged in error, or back within days of leaving, is reopened on the same episode
+  // rather than counted as a fresh admission. Someone genuinely returning after a gap gets a new episode
+  // (POST /api/clients/:id/episodes), which is a new period of service.
+  r.post('/api/episodes/:id/reopen', auth.requireAuth, auth.requirePerm('episodes:write'), (ctx) => {
+    const e = db.one(`SELECT * FROM episodes WHERE id=?`, ctx.params.id);
+    if (!e) throw notFound('Episode not found');
+    auth.assertClientAccess(ctx, e.client_id);
+    if (e.status !== 'closed') throw badRequest('This episode is still open');
+    if (db.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, e.client_id)) throw badRequest('This client already has an open episode. Discharge it first, or record this as that episode.');
+    const { reason } = validate(ctx.body || {}, { reason: { type: 'string', maxLen: 300 } });
+    db.transaction(() => {
+      db.run(`UPDATE episodes SET status='open', closed_at=NULL, closed_by=NULL, discharge_reason=NULL, discharge_disposition=NULL, discharge_summary_enc=NULL, updated_at=? WHERE id=?`, db.now(), e.id);
+      // Re-admission is an explicit act, so the client is active again whatever status the discharge left.
+      db.run(`UPDATE clients SET status='active', discharge_date=NULL, discharge_reason=NULL, updated_at=? WHERE id=?`, db.now(), e.client_id);
+      // The discharge ended the care team on its date; re-admission restores them. Failing that, the worker
+      // who re-admits the person picks the case up themselves.
+      if (e.closed_at) db.run(`UPDATE assignments SET end_date=NULL, updated_at=? WHERE client_id=? AND end_date=? AND ended_at IS NULL`, db.now(), e.client_id, e.closed_at);
+      if (!db.one(`SELECT 1 FROM assignments WHERE client_id=? AND end_date IS NULL AND ended_at IS NULL`, e.client_id) && (auth.caseloadRestricted(ctx.user) || ['navigator', 'clinician'].includes(ctx.user.role))) {
+        db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, uuid(), e.client_id, ctx.user.id, 'primary', new Date().toISOString().slice(0, 10), ctx.user.id);
+      }
+    });
+    audit.log({ user: ctx.user, action: 'episode.reopen', entity: 'episode', entityId: e.id, clientId: e.client_id, ip: ctx.ip, details: { reason: reason || undefined, was_discharged: e.discharge_reason } });
+    return { ok: true };
+  });
+
   // Program-wide view: who was admitted and discharged in a period, and who is waiting.
   r.get('/api/episodes', auth.requireAuth, auth.requirePerm('episodes:read', 'episodes:write'), (ctx) => {
     const { limit, offset } = paging(ctx.query, { limit: 100, max: 500 });

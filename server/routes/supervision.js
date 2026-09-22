@@ -31,9 +31,12 @@ module.exports = (r) => {
 
     const out = {};
     if (auth.hasPerm(ctx.user, 'notes:cosign')) {
-      out.awaiting_cosignature = db.all(`SELECT n.id, n.client_id, n.kind, n.occurred_at, n.signed_at, n.title_enc, u.display_name AS author, c.client_code
+      // A note is here because the author's account requires countersignature, or because the author asked
+      // for a review of this one (cosign_requested) -- a navigator flagging a hard contact is a request
+      // to any supervisor, so the supervised-staff filter does not narrow those.
+      out.awaiting_cosignature = db.all(`SELECT n.id, n.client_id, n.kind, n.occurred_at, n.signed_at, n.title_enc, n.cosign_requested, u.display_name AS author, c.client_code
         FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id
-        WHERE n.deleted_at IS NULL AND n.cosign_required=1 AND n.status<>'draft' AND n.cosigned_at IS NULL AND n.author_id<>? AND ${sf.sql}
+        WHERE n.deleted_at IS NULL AND n.status<>'draft' AND n.cosigned_at IS NULL AND n.author_id<>? AND ((n.cosign_required=1 AND ${sf.sql}) OR n.cosign_requested=1)
         ORDER BY n.signed_at LIMIT 100`, ctx.user.id, ...sf.params)
         .map(x => ({ ...x, title: x.title_enc ? decrypt(x.title_enc) : null, title_enc: undefined }));
       out.unsigned_notes = db.all(`SELECT n.id, n.client_id, n.kind, n.occurred_at, n.created_at, u.display_name AS author, c.client_code,
