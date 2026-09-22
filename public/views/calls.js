@@ -61,7 +61,7 @@ route('calls', async (r) => {
     pageHead('Calls & texts',
       can('calls:write') ? h('button', { class: 'btn primary', onClick: () => openCallForm(null, { onDone: refresh }) }, '+ Log call') : null,
       can('calls:write') ? h('button', { class: 'btn', onClick: () => openCallForm(null, { method: 'text', onDone: refresh }) }, '+ Log text') : null,
-      h('button', { class: 'btn', onClick: () => downloadCsv('/api/reports/export/calls?from=2000-01-01&format=xlsx') }, 'Export to Excel')),
+      can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv('/api/reports/export/calls?from=2000-01-01&format=xlsx') }, 'Export to Excel') : null),
     h('div', { class: 'filters' },
       h('button', { class: `btn sm ${crisis ? 'primary' : ''}`, onClick: () => nav(link({ crisis: crisis ? '' : '1' })) }, 'Crisis only'),
       h('button', { class: `btn sm ${fu ? 'primary' : ''}`, onClick: () => nav(link({ follow_up: fu ? '' : '1' })) }, 'Needs follow-up'),

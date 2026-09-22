@@ -107,16 +107,26 @@ test('recording an outcome that names the client to the agency needs the same co
 test('exports need export:read; de-identified exports meet Safe Harbor', async () => {
   await nav.post('/api/interventions', { client_id: clientId, type: 'outreach', occurred_at: '2026-09-10T10:00:00Z', duration_minutes: 20 });
   await nav.post('/api/overdose-events', { client_id: clientId, occurred_at: '2026-09-11T02:00:00Z', kind: 'reversal', substances: 'fentanyl', city: 'Sacramento', naloxone_used: true });
-  assert.equal((await nav.get('/api/reports/export/clients')).status, 403, 'navigator: no export:read');
   assert.equal((await ro.get('/api/reports/export/clients')).status, 403, 'readonly: no export:read');
-  assert.equal((await clin.get('/api/reports/export/workbook')).status, 403, 'clinician: no export:read');
+  assert.equal((await ro.get('/api/reports/export/workbook')).status, 403);
+  // Front-line roles export, de-identified only: identified=1 is ignored without export:identified
+  for (const [who, c] of [['navigator', nav], ['clinician', clin]]) {
+    const r = await c.get('/api/reports/export/clients?identified=1&recipient=x&purpose=y');
+    assert.equal(r.status, 200, `${who}: export:read`);
+    assert.ok(!String(r.data).includes('Cora') && !String(r.data).includes('1980-04-12'), `${who}: never identified`);
+    assert.match(r.headers.get('x-suds-export'), /^De-identified/);
+    assert.equal((await c.get('/api/reports/export/workbook')).status, 200, `${who}: workbook`);
+  }
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM disclosures WHERE source='export'`).n, 0, 'nothing was accounted for: nobody was identified');
 
   const csv = await fin.get('/api/reports/export/clients?from=2026-01-01&to=2026-12-31');
   assert.equal(csv.status, 200);
-  const text = String(csv.data);
-  assert.match(text, /^# De-identified \(HIPAA Safe Harbor\)/, 'labelled on the first line');
+  const text = String(csv.data).replace(/^\uFEFF/, '');
+  assert.match(csv.headers.get('x-suds-export'), /^De-identified \(HIPAA Safe Harbor\)/, 'labelled in the response header');
+  assert.match(csv.headers.get('content-disposition'), /-deidentified\.csv/, 'and in the filename');
+  assert.ok(!text.startsWith('#'), 'no comment line: the header is row 1');
   const lines = text.split(/\r?\n/).filter(Boolean);
-  const header = lines[1].split(','); const data = lines.find(l => l.includes(H.db.one(`SELECT client_code FROM clients WHERE id=?`, clientId).client_code)).split(',');
+  const header = lines[0].split(','); const data = lines.find(l => l.includes(H.db.one(`SELECT client_code FROM clients WHERE id=?`, clientId).client_code)).split(',');
   const col = (name) => data[header.indexOf(name)];
   assert.ok(!text.includes('Cora') && !text.includes('1980-04-12'), 'no name, no date of birth');
   assert.ok(!header.includes('City'), 'city is dropped');
@@ -133,13 +143,98 @@ test('exports need export:read; de-identified exports meet Safe Harbor', async (
   // Identified: full dates, full ZIP, and accounted for.
   const id = String((await sup.get('/api/reports/export/clients?identified=1&recipient=County%20counsel&purpose=Subpoena%20response')).data);
   assert.ok(id.includes('Cora') && id.includes('1980-04-12') && id.includes('95814'));
-  assert.match(id, /^# Identified export/);
+  assert.ok(!id.startsWith('#') && !id.startsWith('\uFEFF#'), 'no comment line');
   // Workbook carries an About sheet naming the classification.
   const finBearer = (await H.client().post('/api/auth/login', { username: 'cfin', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' })).data.token;
   const wbRes = await fetch(`${await H.start()}/api/reports/export/workbook?from=2026-01-01&to=2026-12-31`, { headers: { Authorization: `Bearer ${finBearer}` } });
   assert.equal(wbRes.status, 200);
   const sheets = require('../server/spreadsheet').readWorkbook(Buffer.from(await wbRes.arrayBuffer()));
   assert.ok(sheets.some(s => s.name === 'About' && JSON.stringify(s.rows).includes('Safe Harbor')), 'the workbook carries an About sheet naming the classification');
+});
+
+test('a de-identified export carries exactly its allow-listed columns, whatever the row holds', async () => {
+  // Seed rows with free text in every column Safe Harbor by column name used to let through.
+  const seeded = async (p, c, path, body) => { const r = await c.post(path, body); assert.equal(r.status, 201, `${path}: ${JSON.stringify(r.data)}`); return r; };
+  await seeded(1, nav, '/api/interventions', { client_id: clientId, type: 'outreach', occurred_at: '2026-09-12T10:00:00Z', duration_minutes: 20, location: 'community', summary: 'Met Cora at her camp under the 5th St bridge by the blue tent' });
+  await seeded(1, nav, '/api/calls', { client_id: clientId, direction: 'outbound', started_at: '2026-09-12T11:00:00Z', contact_name: 'Cora Compliance', purpose: 'Check in on Cora', summary: 'Cora sounded well' });
+  await seeded(1, nav, `/api/clients/${clientId}/consents`, { ...PART2, document_ref: 'ROI-CORA-2026' });
+  await seeded(1, sup, `/api/clients/${clientId}/disclosures`, { disclosed_to: 'Riverbend OTP', purpose: 'Cora intake', info_disclosed: 'MAT status of Cora', disclosed_at: '2026-09-12T12:00:00Z', basis: 'court_order' });
+  await seeded(1, nav, '/api/tasks', { client_id: clientId, title: 'Call Cora about housing', description: 'Cora prefers mornings', due_at: '2026-09-20' });
+  await seeded(1, nav, '/api/referrals', { client_id: clientId, resource_id: resourceId, referred_at: '2026-09-12T09:00:00Z', notes: 'Cora asked for a female counsellor' });
+  const fundId = (await seeded(1, sup, '/api/budget/funds', { name: 'Deid Fund', source_type: 'sor_grant', fiscal_year_start: '2026-07-01', fiscal_year_end: '2027-06-30', total_amount: 1000 })).data.id;
+  await seeded(1, sup, '/api/budget/expenditures', { funding_source_id: fundId, client_id: clientId, spent_at: '2026-09-12', amount: 12.5, category: 'transportation', vendor: 'Cora Cabs', description: 'Ride for Cora Compliance', receipt_ref: 'RCPT-CORA-1' });
+
+  const expected = {
+    clients: ['Client Code', 'Age Band', 'Status', 'Intake Date', 'Discharge Date', 'Discharge Reason', 'Referral Source', 'Referral Date', 'Engagement Date', 'Days To Engagement', 'Primary Substance', 'Secondary Substances', 'Asam Level', 'Mat Status', 'Mat Medication', 'Risk Level', 'Housing Status', 'Insurance', 'Overdose History', 'Naloxone Provided', 'Naloxone Last Date', 'Co Occurring Mh', 'Justice Involved', 'Pregnant Or Parenting', 'Zip', 'Gender', 'Preferred Language'],
+    interventions: ['Occurred At', 'Client Code', 'Type', 'Duration Minutes', 'Modality', 'Outcome', 'Stage Of Change', 'Naloxone Kits', 'Fentanyl Strips', 'Worker', 'Funding Source', 'Cost', 'Follow Up Due'],
+    calls: ['Started At', 'Client Code', 'Direction', 'Contact Type', 'Duration Minutes', 'Outcome', 'Crisis', 'Follow Up Needed', 'Follow Up Due', 'Worker'],
+    time: ['Work Date', 'Worker', 'Client Code', 'Category', 'Minutes', 'Billable', 'Funding Source'],
+    referrals: ['Referred At', 'Client Code', 'Resource', 'Category', 'Status', 'Urgency', 'Warm Handoff', 'Appointment At', 'Admitted At', 'Closed At', 'Worker'],
+    tasks: ['Client Code', 'Assignee', 'Due At', 'Priority', 'Status', 'Is Milestone', 'Completed At'],
+    forms: ['Created At', 'Client Code', 'Template Name', 'Status', 'Completed At', 'Completed By', 'Created By', 'Attachments'],
+    consents: ['Client Code', 'Type', 'Signed At', 'Expires At', 'Expires Event', 'Revoked At', 'Redisclosure Notice Given'],
+    disclosures: ['Client Code', 'Disclosed At', 'Method', 'Basis', 'Source', 'Disclosed By'],
+    episodes: ['Client Code', 'Opened At', 'Closed At', 'Status', 'Referral Source', 'Discharge Reason', 'Discharge Disposition', 'Funding Source'],
+    overdose_events: ['Occurred At', 'Client Code', 'Kind', 'Naloxone Used', 'Naloxone Doses', 'Administered By', 'Ems Called', 'Hospitalized', 'Survived', 'Location Type'],
+    expenditures: ['Spent At', 'Fund', 'Line', 'Category', 'Amount', 'Status', 'Client Code', 'Worker', 'Approver'],
+  };
+  const X = require('../server/exports');
+  assert.deepEqual(Object.keys(X.DEID_COLUMNS).sort(), Object.keys(expected).sort(), 'every client-linked dataset has an allow-list');
+  for (const [kind, cols] of Object.entries(expected)) {
+    const r = await fin.get(`/api/reports/export/${kind}?from=2026-01-01&to=2026-12-31`);
+    assert.equal(r.status, 200, kind);
+    const text = String(r.data).replace(/^\uFEFF/, '');
+    const header = require('../server/spreadsheet').parseCsv(text)[0];
+    assert.deepEqual(header, cols, `${kind}: exact de-identified column set`);
+    for (const leak of ['Cora', 'bridge', 'blue tent', 'ROI-CORA', 'RCPT-CORA', 'Cora Cabs', 'housing', 'counsellor', 'mornings', '[redacted]']) assert.ok(!text.includes(leak), `${kind}: "${leak}" must not appear`);
+  }
+  // The same datasets identified still carry the full column set.
+  const ivr = await sup.get('/api/reports/export/interventions?identified=1&recipient=County%20counsel&purpose=Subpoena&from=2026-01-01&to=2026-12-31');
+  const iv = String(ivr.data);
+  assert.equal(ivr.status, 200, iv.slice(0, 200));
+  assert.ok(iv.includes('Location') && iv.includes('blue tent'), iv.slice(0, 600));
+});
+
+test('an identified workbook writes one disclosure per client, not one per sheet, and does not account for itself', async () => {
+  const before = H.db.one(`SELECT COUNT(*) n FROM disclosures WHERE source='export' AND client_id=?`, clientId).n;
+  const wbRes = await fetch(`${await H.start()}/api/reports/export/workbook?identified=1&recipient=State%20auditor&purpose=Grant%20audit&from=2026-01-01&to=2026-12-31`, { headers: { Authorization: `Bearer ${(await H.client().post('/api/auth/login', { username: 'csup', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' })).data.token}` } });
+  assert.equal(wbRes.status, 200);
+  assert.match(wbRes.headers.get('x-suds-export'), /^Identified export - PHI\. Disclosed to: State auditor/);
+  const rows = H.db.all(`SELECT * FROM disclosures WHERE source='export' AND client_id=? ORDER BY created_at`, clientId);
+  assert.equal(rows.length, before + 1, 'one accounting row for the client although it appears on several sheets');
+  const d = require('../server/disclosure').present(rows[rows.length - 1]);
+  assert.equal(d.source_ref, 'workbook'); assert.match(d.what, /workbook/); assert.equal(d.recipient, 'State auditor');
+  const sheets = require('../server/spreadsheet').readWorkbook(Buffer.from(await wbRes.arrayBuffer()));
+  const acct = sheets.find(s => s.name === 'Accounting of disclosures');
+  assert.ok(acct, 'the accounting sheet is still in the workbook');
+  assert.ok(!JSON.stringify(acct.rows).includes('State auditor'), 'the rows this very export wrote are not on it');
+  assert.ok(JSON.stringify(acct.rows).includes('Riverbend OTP'), 'earlier disclosures are');
+  const idx = sheets.findIndex(s => s.name === 'Accounting of disclosures');
+  assert.ok(idx > 1 && idx < sheets.length - 1, 'the sheet keeps its place among the others');
+});
+
+test('CSV cells that a spreadsheet would run as formulas are neutralised', async () => {
+  await nav.post('/api/interventions', { client_id: clientId, type: 'outreach', occurred_at: '2026-09-13T10:00:00Z', duration_minutes: 5, summary: '=HYPERLINK("http://evil.example/x","click")' });
+  await nav.post('/api/calls', { client_id: clientId, direction: 'outbound', started_at: '2026-09-13T11:00:00Z', purpose: '+cmd|\' /C calc\'!A0' });
+  const id = String((await sup.get('/api/reports/export/interventions?identified=1&recipient=County%20counsel&purpose=Subpoena&from=2026-01-01&to=2026-12-31')).data);
+  assert.ok(id.includes(`"'=HYPERLINK(""http://evil.example/x"",""click"")"`), id.split('\n').find(l => l.includes('HYPERLINK')));
+  const calls = String((await sup.get('/api/reports/export/calls?identified=1&recipient=County%20counsel&purpose=Subpoena&from=2026-01-01&to=2026-12-31')).data);
+  assert.ok(calls.includes(`"'+cmd|' /C calc'!A0"`), calls.split('\n').find(l => l.includes('cmd')));
+  assert.ok(!/(^|,)=HYPERLINK/m.test(id), 'no cell starts with =');
+  // Excel: the same text is an inline string, never a formula
+  const wb = await fetch(`${await H.start()}/api/reports/export/interventions?identified=1&recipient=County%20counsel&purpose=Subpoena&from=2026-01-01&to=2026-12-31&format=xlsx`, { headers: { Authorization: `Bearer ${(await H.client().post('/api/auth/login', { username: 'csup', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' })).data.token}` } });
+  const files = require('../server/importers/text').unzip(Buffer.from(await wb.arrayBuffer()));
+  const xml = String(files.get([...files.keys()].find(k => k.includes('worksheets/sheet1.xml'))));
+  assert.ok(!xml.includes('<f>'), 'no formula cells');
+  assert.ok(xml.includes('t="inlineStr"><is><t xml:space="preserve">=HYPERLINK'), 'written as an inline string');
+});
+
+test('the import template is not an export: it needs the import permission, not export:read', async () => {
+  assert.equal((await ro.get('/api/imports/data/template/clients')).status, 403, 'readonly cannot import');
+  assert.equal((await fin.get('/api/imports/data/template/clients')).status, 403, 'finance cannot import clients');
+  const t = await nav.get('/api/imports/data/template/clients?format=csv');
+  assert.equal(t.status, 200); assert.ok(String(t.data).includes('First name'));
+  assert.equal((await nav.get('/api/imports/data/template/clients')).status, 200);
 });
 
 test('the funder report suppresses small cells but keeps totals', async () => {

@@ -54,6 +54,7 @@ export async function spreadsheetImportCard() {
 }
 
 export function exportButtons({ kind, from, to, label = 'Export' }) {
+  if (!can('export:read')) return null;
   const q = `from=${from || '2000-01-01'}&to=${to || fmt.today()}`;
   return h('div', { class: 'row', style: { gap: '.25rem' } }, h('button', { class: 'btn', onClick: () => downloadCsv(`/api/reports/export/${kind}?${q}&format=xlsx`) }, `${label} to Excel`), h('button', { class: 'btn ghost', onClick: () => downloadCsv(`/api/reports/export/${kind}?${q}`) }, 'CSV'));
 }

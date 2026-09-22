@@ -10,6 +10,18 @@ test('csv parse and write round trip', () => {
   const csv = S.toCsv([{ a: 'x,y', b: 5 }, { a: null, b: 'q"r' }], [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }]);
   assert.equal(S.parseCsv(csv)[1][0], 'x,y'); assert.equal(S.parseCsv(csv)[2][1], 'q"r');
 });
+test('csv text that would be read as a formula is prefixed with a quote, headers included; numbers are left alone', () => {
+  const cols = [{ key: 'a', label: '=SUM(A1:A9)' }, { key: 'b', label: 'B' }];
+  const csv = S.toCsv([{ a: '=1+1', b: -5 }, { a: '+1', b: '-1' }, { a: '@cmd', b: '\tx' }, { a: '\rx', b: 'plain' }, { a: 'a=b', b: 3.5 }], cols).replace(/^\uFEFF/, '');
+  const lines = csv.split('\r\n');
+  assert.equal(lines[0], `"'=SUM(A1:A9)",B`);
+  assert.equal(lines[1], `"'=1+1",-5`);
+  assert.equal(lines[2], `"'+1","'-1"`);
+  assert.equal(lines[3], `"'@cmd","'\tx"`);
+  assert.equal(lines[4], `"'\rx",plain`);
+  assert.equal(lines[5], `a=b,3.5`);
+  assert.equal(S.parseCsv(csv)[1][0], `'=1+1`, 'round-trips as text');
+});
 test('xlsx write then read', () => {
   const buf = S.writeWorkbook([{ name: 'Clients', columns: [{ key: 'code', label: 'Client code' }, { key: 'n', label: 'Visits' }, { key: 'ok', label: 'Active' }], rows: [{ code: 'C26-0001', n: 3, ok: true }, { code: 'Ünïcode <&>', n: 0, ok: false }] }, { name: 'Empty/Sheet:2', columns: ['x'], rows: [] }]);
   assert.equal(buf[0], 0x50);

@@ -32,12 +32,14 @@ const PERMS = {
                'budget:read','budget:write','budget:approve','budget:manage','notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write',
                'consents:*','imports:*','reports:read','assignments:manage','audit:read','export:read','export:identified','users:read','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge','documents:read','documents:write','disclosures:override','patient-requests:*'],
+  // Front-line staff hold export:read so the Export buttons on their own screens work; without
+  // export:identified every file they can produce is de-identified (Safe Harbor) and caseload-scoped.
   clinician:  ['clients:read','clients:write','interventions:*','calls:*','time:read','time:write','resources:read','referrals:*','tasks:*',
                'notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write','consents:*','imports:*','reports:read','users:read','forms:read','forms:write',
-               'episodes:*','overdose:*','documents:read','patient-requests:*'],
+               'episodes:*','overdose:*','documents:read','patient-requests:*','export:read'],
   navigator:  ['clients:read','clients:write','interventions:*','calls:*','time:read','time:write','resources:*','referrals:*','tasks:*',
                'budget:read','budget:write','notes:admin:read','notes:admin:write','consents:*','imports:*','reports:read','users:read','forms:read','forms:write',
-               'episodes:*','overdose:*','documents:read','patient-requests:*'],
+               'episodes:*','overdose:*','documents:read','patient-requests:*','export:read'],
   // finance sees money, not people: export:read without export:identified means every export it can run
   // comes out keyed by client_code. Do not add 'export:identified' here — docs/HIPAA.md promises otherwise.
   finance:    ['clients:list-deidentified','budget:read','budget:write','budget:approve','budget:manage','time:read','time:all','time:approve','reports:read','export:read','users:read','documents:read','documents:write'],

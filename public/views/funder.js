@@ -30,7 +30,7 @@ route('funder', async (r) => {
 
   return h('div', {},
     pageHead('Funder report',
-      h('button', { class: 'btn', onClick: () => downloadCsv(`/api/reports/export/workbook?from=${from}&to=${to}`) }, 'Export everything to Excel')),
+      can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv(`/api/reports/export/workbook?from=${from}&to=${to}`) }, 'Export everything to Excel') : null),
     h('p', { class: 'muted' }, 'Counts of people, each counted once however many times they were served. This is the shape most grant and CalOMS reporting asks for.',
       d.small_cell_threshold ? ` Breakdown rows with fewer than ${d.small_cell_threshold} people are shown as "<${d.small_cell_threshold}" so nobody can be picked out of a small group; totals are exact.` : ''),
 

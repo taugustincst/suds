@@ -14,9 +14,11 @@ const permFor = (entity) => ({ clients: 'clients:write', resources: 'resources:w
 module.exports = (r) => {
   r.get('/api/imports/data/entities', auth.requireAuth, (ctx) => ({ entities: Object.entries(DI.ENTITIES).filter(([k]) => auth.hasPerm(ctx.user, permFor(k))).map(([k, e]) => ({ key: k, label: e.label, fields: e.fields.map(f => ({ key: f.key, label: f.label, required: !!f.required, help: f.help || null })) })) }));
 
-  // Empty template with headers and one example row
-  r.get('/api/imports/data/template/:entity', auth.requireAuth, (ctx) => {
+  // Empty template with headers and one example row. Not an export (it holds no data), so it is gated
+  // by the import permission and the entity's own write permission rather than export:read.
+  r.get('/api/imports/data/template/:entity', auth.requireAuth, auth.requirePerm('imports:read'), (ctx) => {
     const def = DI.ENTITIES[ctx.params.entity]; if (!def) throw notFound();
+    if (!auth.hasPerm(ctx.user, permFor(ctx.params.entity))) throw forbidden();
     const example = { clients: { first_name: 'Jane', last_name: 'Doe', dob: '1990-05-01', phone: '555-0100', status: 'active', intake_date: '2026-09-01', primary_substance: 'opioids_fentanyl', risk_level: 'high' }, resources: { name: 'County Opioid Treatment Program', category: 'mat_otp', phone: '555-0200', accepts_medicaid: 'yes' }, interventions: { client_ref: 'C26-0001', occurred_at: '2026-09-10 14:00', type: 'outreach', duration_minutes: 30, location: 'field' }, calls: { client_ref: 'C26-0001', started_at: '2026-09-10 09:15', direction: 'outbound', contact_type: 'client', duration_minutes: 10, outcome: 'reached' }, time_entries: { work_date: '2026-09-10', minutes: 45, category: 'documentation' }, tasks: { title: 'Bring ID documents', client_ref: 'C26-0001', due_at: '2026-09-20', priority: 'normal' }, expenditures: { spent_at: '2026-09-10', amount: 25, fund: 'Opioid Settlement – Navigation FY26', category: 'transportation', client_ref: 'C26-0001', vendor: 'Metro Transit' } }[ctx.params.entity] || {};
     const fmt = ctx.query.get('format') === 'csv' ? 'csv' : 'xlsx';
     const columns = def.fields.map(f => ({ key: f.key, label: f.label + (f.required ? ' *' : ''), width: 18 }));

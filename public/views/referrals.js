@@ -112,7 +112,7 @@ route('referrals', async (r) => {
   const refresh = () => nav(`referrals?status=${status}&_=${Date.now()}`);
   const sel = h('select', { onChange: () => nav(`referrals?status=${sel.value}`) }, [['open', 'Open (pending → scheduled)'], ['all', 'All'], ...state.constants.REFERRAL_STATUSES.map(s => [s, fmt.label(s)])].map(([v, l]) => h('option', { value: v, selected: v === status }, l)));
   return h('div', {},
-    pageHead('Referrals', can('referrals:write') ? h('button', { class: 'btn primary', onClick: () => openReferralForm(null, { onDone: refresh }) }, '+ New referral') : null, h('button', { class: 'btn', onClick: () => downloadCsv('/api/reports/export/referrals?from=2000-01-01&format=xlsx') }, 'Export to Excel')),
+    pageHead('Referrals', can('referrals:write') ? h('button', { class: 'btn primary', onClick: () => openReferralForm(null, { onDone: refresh }) }, '+ New referral') : null, can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv('/api/reports/export/referrals?from=2000-01-01&format=xlsx') }, 'Export to Excel') : null),
     h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'Status'), sel)),
     h('div', { class: 'muted small mb' }, `${data.total} referrals`), referralTable(data.rows, { onChange: refresh }));
 });

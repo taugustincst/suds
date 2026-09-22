@@ -64,7 +64,7 @@ module.exports = (r) => {
           unsigned: db.one(`SELECT COUNT(*) n FROM notes WHERE status='draft' AND deleted_at IS NULL AND ${scope}`, ...p).n,
           unsigned_overdue: db.one(`SELECT COUNT(*) n FROM notes WHERE status='draft' AND deleted_at IS NULL AND ${scope} AND created_at < ?`, ...p, new Date(Date.now() - Number(db.getSetting('note_lock_days', '3')) * 86400000).toISOString()).n,
           staged_imports: db.one(`SELECT COUNT(*) n FROM import_items x JOIN imports i ON i.id=x.import_id WHERE x.status='staged' AND (i.imported_by=? OR i.imported_by IS NULL OR ?)`, ctx.user.id, auth.hasPerm(ctx.user, 'clients:all') ? 1 : 0).n }; })(),
-      budget: auth.hasPerm(ctx.user, 'budget:read') ? db.one(`SELECT (SELECT COALESCE(SUM(total_amount),0) FROM funding_sources WHERE is_active=1) total, (SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status IN ('approved','reimbursed')) spent, (SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status='pending') pending`) : null,
+      budget: auth.hasPerm(ctx.user, 'budget:read') ? db.one(`SELECT ROUND((SELECT COALESCE(SUM(total_amount),0) FROM funding_sources WHERE is_active=1),2) total, ROUND((SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status IN ('approved','reimbursed')),2) spent, ROUND((SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status='pending'),2) pending`) : null,
       // Scoped to active clients so this count matches what #/clients?consent_expiring=1 shows by default —
       // otherwise the badge counts a closed or inactive client's consent that the deep-linked list, filtered
       // to active, never displays.
@@ -93,7 +93,7 @@ module.exports = (r) => {
       episodes: db.all(`SELECT substr(opened_at,1,7) month, COUNT(*) admissions, (SELECT COUNT(*) FROM episodes x WHERE substr(x.closed_at,1,7)=substr(e.opened_at,1,7)) discharges FROM episodes e WHERE opened_at >= ? GROUP BY month ORDER BY month`, s),
       unduplicated_clients: db.all(`SELECT substr(occurred_at,1,7) month, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? AND client_id IS NOT NULL GROUP BY month ORDER BY month`, s),
       mat_linkage: db.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n FROM referrals r JOIN resources res ON res.id=r.resource_id WHERE res.category IN ('mat_otp','mat_obot') AND r.status IN ('admitted','completed') AND referred_at >= ? GROUP BY month ORDER BY month`, s),
-      spend: auth.hasPerm(ctx.user, 'budget:read') ? db.all(`SELECT substr(spent_at,1,7) month, SUM(amount) amount FROM expenditures WHERE status IN ('approved','reimbursed') AND spent_at >= ? GROUP BY month ORDER BY month`, s) : [],
+      spend: auth.hasPerm(ctx.user, 'budget:read') ? db.all(`SELECT substr(spent_at,1,7) month, ROUND(SUM(amount),2) amount FROM expenditures WHERE status IN ('approved','reimbursed') AND spent_at >= ? GROUP BY month ORDER BY month`, s) : [],
       time: db.all(`SELECT substr(work_date,1,7) month, SUM(minutes) minutes FROM time_entries WHERE work_date >= ? GROUP BY month ORDER BY month`, s),
     };
   });
@@ -205,11 +205,11 @@ module.exports = (r) => {
     const D = X.datasets(ctx, { from, to, toEnd, identified });
     const S = require('../spreadsheet');
     const disclosure = require('../disclosure');
-    const accountFor = (kind, rows) => {
-      if (!identified) return 0;
-      const ids = X.clientIdsOf(rows);
-      for (const clientId of ids) disclosure.record({ clientId, recipient, purpose, what: `Identified export: ${kind} (${from} to ${to})`, method: 'export', basis: 'export', source: 'export', sourceRef: kind, user: ctx.user, ip: ctx.ip });
-      return ids.length;
+    // One accounting row per client per export file: the workbook is one disclosure of everything it
+    // holds, not one per sheet, so the recipient's name does not appear a dozen times in a client's accounting.
+    const accountFor = (kind, ids) => {
+      if (!identified) return [];
+      return ids.map(clientId => disclosure.record({ clientId, recipient, purpose, what: `Identified export: ${kind} (${from} to ${to})`, method: 'export', basis: 'export', source: 'export', sourceRef: kind, user: ctx.user, ip: ctx.ip }));
     };
     const aboutSheet = { name: 'About', columns: [{ key: 'k', label: 'Field' }, { key: 'v', label: 'Value' }], rows: [
       { k: 'Classification', v: identified ? `Identified export — PHI. Disclosed to: ${recipient}. Purpose: ${purpose}.` : X.DEID_LABEL },
@@ -221,34 +221,43 @@ module.exports = (r) => {
     const RAW = new Set(['client_code', 'receipt_ref', 'grant_number', 'email', 'website', 'phone', 'fax', 'zip', 'username', 'document_ref', 'medicaid_id', 'address', 'first_name', 'last_name', 'contact_name', 'name', 'organization', 'vendor', 'title', 'template_name', 'fund', 'line', 'resource', 'worker', 'approver', 'assignee', 'completed_by', 'created_by', 'disclosed_by', 'recipient', 'summary', 'description', 'notes', 'purpose', 'what', 'goals', 'flags', 'hours', 'eligibility', 'services', 'languages', 'capacity_notes', 'contact_person', 'intake_process', 'cost_notes', 'restrictions', 'label', 'city']);
     const humanize = (v) => String(v).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).replace(/\bSbirt\b/, 'SBIRT').replace(/\bMat\b/g, 'MAT').replace(/\bOtp\b/, 'OTP').replace(/\bObot\b/, 'OBOT').replace(/\bEd\b/, 'ED').replace(/\bMh\b/, 'MH').replace(/\bIds\b/, 'IDs').replace(/\bRoi\b/, 'ROI');
     const pretty = (rows) => rows.map(r => { const o = {}; for (const [k, v] of Object.entries(r)) o[k] = (typeof v === 'string' && !RAW.has(k) && /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(v) && v.length <= 40) ? humanize(v) : v; return o; });
+    // The classification travels in a response header and the filename (and, for Excel, the About sheet).
+    // It used to be a "# …" comment line ahead of the CSV header, which put the label in row 1 of every
+    // spreadsheet and broke re-import; CSV has no comment syntax.
+    const classification = identified ? `Identified export - PHI. Disclosed to: ${recipient}. Purpose: ${purpose}. Generated ${db.now()}.` : `${X.DEID_LABEL} Generated ${db.now()}.`;
+    const headerSafe = (s) => String(s).replace(/[^\x20-\x7e]/g, '?').slice(0, 900);
     let body, filename, type;
     if (ctx.params.kind === 'workbook') {
       // Every dataset, decrypted, in one file. Yield between sheets so a full-year export does not hold
-      // the event loop for several seconds and stall everyone else's requests.
-      const sheets = [aboutSheet]; let clientsDisclosed = 0;
+      // the event loop for several seconds and stall everyone else's requests. The accounting of
+      // disclosures sheet is rendered last, after the workbook's own disclosure rows have been written,
+      // and without them: a file should not account for itself.
+      const sheets = [aboutSheet]; const clientIds = new Set(); let disclosuresSlot = -1;
       for (const [kind, d] of Object.entries(D)) {
+        if (kind === 'disclosures') { disclosuresSlot = sheets.length; sheets.push(null); continue; }
         const rows = d.rows();
-        clientsDisclosed += accountFor(kind, rows);
+        for (const id of X.clientIdsOf(rows)) clientIds.add(id);
         sheets.push({ name: d.label, columns: d.columns.map(label), rows: pretty(X.publicRows(rows)) });
         await new Promise((resolve) => setImmediate(resolve));
       }
-      audit.log({ user: ctx.user, action: 'report.export', ip: ctx.ip, details: { kind: 'workbook', sheets: sheets.map(s => [s.name, s.rows.length]), identified, from, to, clients_disclosed: identified ? clientsDisclosed : undefined } });
-      body = await S.writeWorkbookAsync(sheets); filename = `suds-export-${from}_${to}.xlsx`; type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      const written = new Set(accountFor('workbook', [...clientIds]));
+      if (disclosuresSlot >= 0) {
+        const rows = D.disclosures.rows().filter(r => !written.has(r.id));
+        sheets[disclosuresSlot] = { name: D.disclosures.label, columns: D.disclosures.columns.map(label), rows: pretty(X.publicRows(rows)) };
+      }
+      audit.log({ user: ctx.user, action: 'report.export', ip: ctx.ip, details: { kind: 'workbook', sheets: sheets.map(s => [s.name, s.rows.length]), identified, from, to, clients_disclosed: identified ? clientIds.size : undefined } });
+      body = await S.writeWorkbookAsync(sheets); filename = `suds-export-${from}_${to}-${identified ? 'identified' : 'deidentified'}.xlsx`; type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
     } else {
       const d = D[ctx.params.kind === 'clients' ? 'clients' : ctx.params.kind]; if (!d) throw require('../http').notFound('Unknown export');
       const raw = d.rows();
-      const clientsDisclosed = accountFor(ctx.params.kind, raw);
+      const clientsDisclosed = accountFor(ctx.params.kind, X.clientIdsOf(raw)).length;
       const rows = pretty(X.publicRows(raw));
       audit.log({ user: ctx.user, action: 'report.export', ip: ctx.ip, details: { kind: ctx.params.kind, rows: rows.length, identified, from, to, format, clients_disclosed: identified ? clientsDisclosed : undefined } });
       const suffix = identified ? 'identified' : 'deidentified';
       if (format === 'xlsx') { body = S.writeWorkbook([{ name: d.label, columns: d.columns.map(label), rows }, aboutSheet]); filename = `suds-${ctx.params.kind}-${from}_${to}-${suffix}.xlsx`; type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'; }
-      else {
-        // A comment line ahead of the header says what the reader is holding; the header row itself is unchanged.
-        const note = identified ? `# Identified export - PHI. Disclosed to: ${recipient}. Purpose: ${purpose}. Generated ${db.now()}.` : `# ${X.DEID_LABEL} Generated ${db.now()}.`;
-        body = note.replace(/[\r\n]+/g, ' ') + '\r\n' + S.toCsv(rows, d.columns.map(label)); filename = `suds-${ctx.params.kind}-${from}_${to}-${suffix}.csv`; type = 'text/csv; charset=utf-8';
-      }
+      else { body = S.toCsv(rows, d.columns.map(label)); filename = `suds-${ctx.params.kind}-${from}_${to}-${suffix}.csv`; type = 'text/csv; charset=utf-8'; }
     }
-    ctx.res.writeHead(200, { 'Content-Type': type, 'Content-Disposition': `attachment; filename="${filename}"` });
+    ctx.res.writeHead(200, { 'Content-Type': type, 'Content-Disposition': `attachment; filename="${filename}"`, 'X-SUDS-Export': headerSafe(classification) });
     ctx.res.end(body);
   });
 };

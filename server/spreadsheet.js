@@ -18,8 +18,19 @@ function parseCsv(text) {
   if (field !== '' || row.length) { row.push(field); rows.push(row); }
   return rows.filter(r => r.some(v => String(v).trim() !== ''));
 }
+// A text cell that begins with =, +, -, @, a tab or a carriage return is read by Excel and LibreOffice as
+// a formula, so a "summary" of `=HYPERLINK(...)` or `=cmd|' /C calc'!A0` runs on the analyst's machine.
+// Such text goes out prefixed with a single quote (the spreadsheet convention for "this is text") and
+// quoted; numbers are written as numbers, which cannot be formulas. Headers get the same treatment.
+const FORMULA_START = /^[=+\-@\t\r]/;
 function toCsv(rows, columns) {
-  const esc = v => { if (v === null || v === undefined) return ''; const t = typeof v === 'object' ? JSON.stringify(v) : String(v); return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+  const esc = v => {
+    if (v === null || v === undefined) return '';
+    if (typeof v === 'number') return Number.isFinite(v) ? String(v) : '';
+    let t = typeof v === 'object' ? JSON.stringify(v) : String(v);
+    if (FORMULA_START.test(t)) return '"\'' + t.replace(/"/g, '""') + '"';
+    return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+  };
   return '﻿' + [columns.map(c => esc(c.label || c.key || c)).join(','), ...rows.map(r => columns.map(c => esc(r[c.key || c])).join(','))].join('\r\n');
 }
 

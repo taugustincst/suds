@@ -511,10 +511,11 @@ test('reports, exports, and audit chain', async () => {
   const d = await nav.get('/api/reports/dashboard?from=2026-08-01&to=2026-09-30');
   assert.equal(d.status, 200); assert.ok(d.data.interventions.total >= 1); assert.equal(d.data.interventions.naloxone_kits, 2);
   const m = await admin.get('/api/reports/monthly?months=3'); assert.equal(m.status, 200);
-  // Exports need export:read, which a navigator does not hold; finance and supervisors do.
-  assert.equal((await nav.get('/api/reports/export/interventions?from=2026-08-01&to=2026-09-30')).status, 403);
+  // Exports need export:read; a navigator's is de-identified and caseload-scoped, finance and supervisors export too.
+  assert.equal((await nav.get('/api/reports/export/interventions?from=2026-08-01&to=2026-09-30')).status, 200);
   const csv = await fin.get('/api/reports/export/interventions?from=2026-08-01&to=2026-09-30');
-  assert.equal(csv.status, 200); assert.match(csv.data, /Occurred At,Client Code/); assert.match(csv.data, /^# De-identified \(HIPAA Safe Harbor\)/);
+  assert.equal(csv.status, 200); assert.match(csv.data, /^\uFEFF?Occurred At,Client Code/, 'the header is row 1: no comment line');
+  assert.match(csv.headers.get('x-suds-export'), /^De-identified \(HIPAA Safe Harbor\)/, 'the classification travels in a header');
   const cl = await fin.get('/api/reports/export/clients?identified=1');
   assert.ok(!cl.data.includes('Jane')); // finance lacks export:identified → de-identified
   // An identified export is a disclosure: it has to say to whom and why.
@@ -889,9 +890,9 @@ test('spreadsheet import: template, preview mapping/validation, commit; Excel ex
   assert.equal(c2.status, 400, 'all-or-nothing when a row is invalid');
   const c3 = await nav.post('/api/imports/data/commit', { entity: 'interventions', records: p2.data.rows.map(r => r.record), partial: true });
   assert.equal(c3.data.created, 1); assert.equal(c3.data.errors.length, 1);
-  // finance cannot import clients; finance can export a (de-identified) workbook, a navigator cannot export
+  // finance cannot import clients; finance and a navigator can export a (de-identified) workbook
   assert.equal((await fin.req('POST', '/api/imports/data/preview?entity=clients', csv, { 'Content-Type': 'text/csv' })).status, 403);
-  assert.equal((await nav.get('/api/reports/export/workbook')).status, 403);
+  assert.equal((await nav.get('/api/reports/export/workbook')).status, 200);
   const wb = await fin.get('/api/reports/export/workbook');
   assert.equal(wb.status, 200);
   const x = await fin.get('/api/reports/export/clients?format=xlsx'); assert.equal(x.status, 200); assert.ok(x.headers.get('content-disposition').includes('.xlsx'));

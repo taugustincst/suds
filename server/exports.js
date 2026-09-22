@@ -40,6 +40,32 @@ function deidentifyRow(r) {
   return o;
 }
 
+// ---- De-identified column allow-list ----
+// Safe Harbor used to be applied by column *name* (dates, zip, city) with free text "redacted" in place —
+// which left every column whose name did not match: a visit's location, a consent's document reference,
+// an expenditure's vendor and receipt number, a call's contact name. A de-identified export now carries
+// only the columns listed here for its dataset, and nothing else survives to the file. Free text, names,
+// references and locations are not on the list. Datasets with no client link (resource directory,
+// funding sources, budget lines) are not PHI and are unaffected.
+const DEID_COLUMNS = {
+  clients: ['client_code', 'age_band', 'status', 'intake_date', 'discharge_date', 'discharge_reason', 'referral_source', 'referral_date', 'engagement_date', 'days_to_engagement', 'primary_substance', 'secondary_substances', 'asam_level', 'mat_status', 'mat_medication', 'risk_level', 'housing_status', 'insurance', 'overdose_history', 'naloxone_provided', 'naloxone_last_date', 'co_occurring_mh', 'justice_involved', 'pregnant_or_parenting', 'zip', 'gender', 'preferred_language'],
+  interventions: ['occurred_at', 'client_code', 'type', 'duration_minutes', 'modality', 'outcome', 'stage_of_change', 'naloxone_kits', 'fentanyl_strips', 'worker', 'funding_source', 'cost', 'follow_up_due'],
+  calls: ['started_at', 'client_code', 'direction', 'contact_type', 'duration_minutes', 'outcome', 'crisis', 'follow_up_needed', 'follow_up_due', 'worker'],
+  time: ['work_date', 'worker', 'client_code', 'category', 'minutes', 'billable', 'funding_source'],
+  referrals: ['referred_at', 'client_code', 'resource', 'category', 'status', 'urgency', 'warm_handoff', 'appointment_at', 'admitted_at', 'closed_at', 'worker'],
+  tasks: ['client_code', 'assignee', 'due_at', 'priority', 'status', 'is_milestone', 'completed_at'],
+  forms: ['created_at', 'client_code', 'template_name', 'status', 'completed_at', 'completed_by', 'created_by', 'attachments'],
+  consents: ['client_code', 'type', 'signed_at', 'expires_at', 'expires_event', 'revoked_at', 'redisclosure_notice_given'],
+  disclosures: ['client_code', 'disclosed_at', 'method', 'basis', 'source', 'disclosed_by'],
+  episodes: ['client_code', 'opened_at', 'closed_at', 'status', 'referral_source', 'discharge_reason', 'discharge_disposition', 'funding_source'],
+  overdose_events: ['occurred_at', 'client_code', 'kind', 'naloxone_used', 'naloxone_doses', 'administered_by', 'ems_called', 'hospitalized', 'survived', 'location_type'],
+  expenditures: ['spent_at', 'fund', 'line', 'category', 'amount', 'status', 'client_code', 'worker', 'approver'],
+};
+/** Keep only the allow-listed columns (plus the hidden _client_id used for accounting). */
+function projectRow(r, cols) { const o = {}; for (const c of cols) if (c in r) o[c] = r[c]; if (r._client_id !== undefined) o._client_id = r._client_id; return o; }
+/** Money is stored as REAL; round to cents so 25.009999 never reaches a spreadsheet. */
+const cents = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v * 100) / 100 : v);
+
 function datasets(ctx, { from, to, toEnd, identified }) {
   const cf = auth.caseloadFilter(ctx.user, 'c.id'); const all = auth.hasPerm(ctx.user, 'time:all') ? 1 : 0;
   // Free-text PHI is only ever decrypted for an identified export; otherwise it is marked redacted so the
@@ -81,13 +107,18 @@ function datasets(ctx, { from, to, toEnd, identified }) {
     D.funds = { label: 'Funding sources', noClients: true, columns: ['name', 'source_type', 'grant_number', 'fiscal_year_start', 'fiscal_year_end', 'total_amount', 'restrictions', 'is_active'], rows: () => db.all(`SELECT * FROM funding_sources ORDER BY fiscal_year_start DESC`) };
     D.budget_lines = { label: 'Budget lines', noClients: true, columns: ['fund', 'category', 'label', 'allocated_amount', 'notes'], rows: () => db.all(`SELECT b.*, f.name fund FROM budget_lines b JOIN funding_sources f ON f.id=b.funding_source_id ORDER BY f.name, b.category`) };
     D.expenditures = { label: 'Expenditures', columns: ['spent_at', 'fund', 'line', 'category', 'amount', 'status', 'client_code', 'vendor', 'description', 'receipt_ref', 'worker', 'approver'],
-      rows: () => db.all(`SELECT e.*, f.name fund, b.label line, c.client_code, e.client_id AS _client_id, u.display_name worker, a.display_name approver FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id LEFT JOIN budget_lines b ON b.id=e.budget_line_id LEFT JOIN clients c ON c.id=e.client_id JOIN users u ON u.id=e.user_id LEFT JOIN users a ON a.id=e.approved_by WHERE e.spent_at BETWEEN ? AND ? ORDER BY e.spent_at`, from, to) };
+      rows: () => db.all(`SELECT e.*, f.name fund, b.label line, c.client_code, e.client_id AS _client_id, u.display_name worker, a.display_name approver FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id LEFT JOIN budget_lines b ON b.id=e.budget_line_id LEFT JOIN clients c ON c.id=e.client_id JOIN users u ON u.id=e.user_id LEFT JOIN users a ON a.id=e.approved_by WHERE e.spent_at BETWEEN ? AND ? ORDER BY e.spent_at`, from, to).map(r => ({ ...r, amount: cents(r.amount) })) };
   }
   // Safe Harbor is applied to every client-linked dataset, uniformly, on the way out — not per column in
-  // each query, where one new date column would quietly slip through.
-  for (const d of Object.values(D)) {
+  // each query, where one new date column would quietly slip through. A de-identified dataset is also cut
+  // down to its allow-listed columns (DEID_COLUMNS), both in the column list and in the row objects.
+  for (const [kind, d] of Object.entries(D)) {
     const raw = d.rows;
-    d.rows = () => { const rows = raw(); return identified || d.noClients ? rows : rows.map(deidentifyRow); };
+    if (identified || d.noClients) { d.rows = raw; continue; }
+    const allowed = DEID_COLUMNS[kind];
+    if (!allowed) throw new Error(`No de-identified column list is defined for the ${kind} dataset`);
+    d.columns = d.columns.filter(c => allowed.includes(c));
+    d.rows = () => raw().map(r => projectRow(deidentifyRow(r), allowed));
   }
   return D;
 }
@@ -96,4 +127,4 @@ function clientIdsOf(rows) { return [...new Set(rows.map(r => r._client_id).filt
 /** Drop the internal columns before anything is written to a file. */
 function publicRows(rows) { return rows.map(r => { const o = { ...r }; delete o._client_id; return o; }); }
 
-module.exports = { datasets, ageBand, deidentifyRow, clientIdsOf, publicRows, DEID_LABEL };
+module.exports = { datasets, ageBand, deidentifyRow, clientIdsOf, publicRows, DEID_LABEL, DEID_COLUMNS, cents };
