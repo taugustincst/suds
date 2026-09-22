@@ -37,9 +37,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// ../../../node_modules/base64-js/index.js
+// node_modules/base64-js/index.js
 var require_base64_js = __commonJS({
-  "../../../node_modules/base64-js/index.js"(exports) {
+  "node_modules/base64-js/index.js"(exports) {
     "use strict";
     init_globals_inject();
     exports.byteLength = byteLength;
@@ -139,9 +139,9 @@ var require_base64_js = __commonJS({
   }
 });
 
-// ../../../node_modules/ieee754/index.js
+// node_modules/ieee754/index.js
 var require_ieee754 = __commonJS({
-  "../../../node_modules/ieee754/index.js"(exports) {
+  "node_modules/ieee754/index.js"(exports) {
     init_globals_inject();
     exports.read = function(buffer, offset, isLE3, mLen, nBytes) {
       var e, m;
@@ -223,9 +223,9 @@ var require_ieee754 = __commonJS({
   }
 });
 
-// ../../../node_modules/buffer/index.js
+// node_modules/buffer/index.js
 var require_buffer = __commonJS({
-  "../../../node_modules/buffer/index.js"(exports) {
+  "node_modules/buffer/index.js"(exports) {
     "use strict";
     init_globals_inject();
     var base64 = require_base64_js();
@@ -1900,7 +1900,7 @@ var init_path = __esm({
   }
 });
 
-// ../../../node_modules/@noble/ciphers/esm/_assert.js
+// node_modules/@noble/ciphers/esm/_assert.js
 function isBytes(a) {
   return a instanceof Uint8Array || a != null && typeof a === "object" && a.constructor.name === "Uint8Array";
 }
@@ -1924,12 +1924,12 @@ function output(out2, instance) {
   }
 }
 var init_assert = __esm({
-  "../../../node_modules/@noble/ciphers/esm/_assert.js"() {
+  "node_modules/@noble/ciphers/esm/_assert.js"() {
     init_globals_inject();
   }
 });
 
-// ../../../node_modules/@noble/ciphers/esm/utils.js
+// node_modules/@noble/ciphers/esm/utils.js
 function utf8ToBytes(str) {
   if (typeof str !== "string")
     throw new Error(`string expected, got ${typeof str}`);
@@ -1992,7 +1992,7 @@ function clean(...arrays) {
 }
 var u8, u32, createView, isLE, wrapCipher;
 var init_utils = __esm({
-  "../../../node_modules/@noble/ciphers/esm/utils.js"() {
+  "node_modules/@noble/ciphers/esm/utils.js"() {
     init_globals_inject();
     init_assert();
     u8 = (arr) => new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
@@ -2008,7 +2008,7 @@ var init_utils = __esm({
   }
 });
 
-// ../../../node_modules/@noble/ciphers/esm/_polyval.js
+// node_modules/@noble/ciphers/esm/_polyval.js
 function _toGHASHKey(k) {
   k.reverse();
   const hiBit = k[15] & 1;
@@ -2031,7 +2031,7 @@ function wrapConstructorWithKey(hashCons) {
 }
 var BLOCK_SIZE, ZEROS16, ZEROS32, POLY, mul2, swapLE, estimateWindow, GHASH, Polyval, ghash, polyval;
 var init_polyval = __esm({
-  "../../../node_modules/@noble/ciphers/esm/_polyval.js"() {
+  "node_modules/@noble/ciphers/esm/_polyval.js"() {
     init_globals_inject();
     init_assert();
     init_utils();
@@ -2206,7 +2206,7 @@ var init_polyval = __esm({
   }
 });
 
-// ../../../node_modules/@noble/ciphers/esm/aes.js
+// node_modules/@noble/ciphers/esm/aes.js
 function mul22(n) {
   return n << 1 ^ POLY2 & -(n >> 7);
 }
@@ -2486,7 +2486,7 @@ function decryptBlock(xk, block) {
 }
 var BLOCK_SIZE2, BLOCK_SIZE32, EMPTY_BLOCK, POLY2, sbox, invSbox, rotr32_8, rotl32_8, byteSwap, tableEncoding, tableDecoding, xPowers, ctr, ecb, cbc, cfb, gcm, limit, siv, AESW, AESKW_IV, aeskw, AESKWP_IV, aeskwp;
 var init_aes = __esm({
-  "../../../node_modules/@noble/ciphers/esm/aes.js"() {
+  "node_modules/@noble/ciphers/esm/aes.js"() {
     init_globals_inject();
     init_assert();
     init_polyval();
@@ -2959,7 +2959,7 @@ var init_aes = __esm({
   }
 });
 
-// ../../../node_modules/@noble/hashes/esm/_assert.js
+// node_modules/@noble/hashes/esm/_assert.js
 function number(n) {
   if (!Number.isSafeInteger(n) || n < 0)
     throw new Error(`positive integer expected, not ${n}`);
@@ -2993,21 +2993,21 @@ function output2(out2, instance) {
   }
 }
 var init_assert2 = __esm({
-  "../../../node_modules/@noble/hashes/esm/_assert.js"() {
+  "node_modules/@noble/hashes/esm/_assert.js"() {
     init_globals_inject();
   }
 });
 
-// ../../../node_modules/@noble/hashes/esm/crypto.js
+// node_modules/@noble/hashes/esm/crypto.js
 var crypto2;
 var init_crypto = __esm({
-  "../../../node_modules/@noble/hashes/esm/crypto.js"() {
+  "node_modules/@noble/hashes/esm/crypto.js"() {
     init_globals_inject();
     crypto2 = typeof globalThis === "object" && "crypto" in globalThis ? globalThis.crypto : void 0;
   }
 });
 
-// ../../../node_modules/@noble/hashes/esm/utils.js
+// node_modules/@noble/hashes/esm/utils.js
 function byteSwap32(arr) {
   for (let i = 0; i < arr.length; i++) {
     arr[i] = byteSwap2(arr[i]);
@@ -3049,7 +3049,7 @@ function randomBytes(bytesLength = 32) {
 }
 var u322, createView2, rotr, rotl, isLE2, byteSwap2, Hash, toStr;
 var init_utils2 = __esm({
-  "../../../node_modules/@noble/hashes/esm/utils.js"() {
+  "node_modules/@noble/hashes/esm/utils.js"() {
     init_globals_inject();
     init_crypto();
     init_assert2();
@@ -3069,7 +3069,7 @@ var init_utils2 = __esm({
   }
 });
 
-// ../../../node_modules/@noble/hashes/esm/_md.js
+// node_modules/@noble/hashes/esm/_md.js
 function setBigUint642(view, byteOffset, value, isLE3) {
   if (typeof view.setBigUint64 === "function")
     return view.setBigUint64(byteOffset, value, isLE3);
@@ -3084,7 +3084,7 @@ function setBigUint642(view, byteOffset, value, isLE3) {
 }
 var Chi, Maj, HashMD;
 var init_md = __esm({
-  "../../../node_modules/@noble/hashes/esm/_md.js"() {
+  "node_modules/@noble/hashes/esm/_md.js"() {
     init_globals_inject();
     init_assert2();
     init_utils2();
@@ -3179,10 +3179,10 @@ var init_md = __esm({
   }
 });
 
-// ../../../node_modules/@noble/hashes/esm/sha256.js
+// node_modules/@noble/hashes/esm/sha256.js
 var SHA256_K, SHA256_IV, SHA256_W, SHA256, sha256;
 var init_sha256 = __esm({
-  "../../../node_modules/@noble/hashes/esm/sha256.js"() {
+  "node_modules/@noble/hashes/esm/sha256.js"() {
     init_globals_inject();
     init_md();
     init_utils2();
@@ -3337,10 +3337,10 @@ var init_sha256 = __esm({
   }
 });
 
-// ../../../node_modules/@noble/hashes/esm/sha1.js
+// node_modules/@noble/hashes/esm/sha1.js
 var SHA1_IV, SHA1_W, SHA1, sha1;
 var init_sha1 = __esm({
-  "../../../node_modules/@noble/hashes/esm/sha1.js"() {
+  "node_modules/@noble/hashes/esm/sha1.js"() {
     init_globals_inject();
     init_md();
     init_utils2();
@@ -3419,10 +3419,10 @@ var init_sha1 = __esm({
   }
 });
 
-// ../../../node_modules/@noble/hashes/esm/hmac.js
+// node_modules/@noble/hashes/esm/hmac.js
 var HMAC, hmac;
 var init_hmac = __esm({
-  "../../../node_modules/@noble/hashes/esm/hmac.js"() {
+  "node_modules/@noble/hashes/esm/hmac.js"() {
     init_globals_inject();
     init_assert2();
     init_utils2();
@@ -3492,7 +3492,7 @@ var init_hmac = __esm({
   }
 });
 
-// ../../../node_modules/@noble/hashes/esm/pbkdf2.js
+// node_modules/@noble/hashes/esm/pbkdf2.js
 function pbkdf2Init(hash2, _password, _salt, _opts) {
   hash(hash2);
   const opts = checkOpts({ dkLen: 32, asyncTick: 10 }, _opts);
@@ -3537,7 +3537,7 @@ function pbkdf2(hash2, password, salt, opts) {
   return pbkdf2Output(PRF, PRFSalt, DK, prfW, u);
 }
 var init_pbkdf2 = __esm({
-  "../../../node_modules/@noble/hashes/esm/pbkdf2.js"() {
+  "node_modules/@noble/hashes/esm/pbkdf2.js"() {
     init_globals_inject();
     init_assert2();
     init_hmac();
@@ -3545,7 +3545,7 @@ var init_pbkdf2 = __esm({
   }
 });
 
-// ../../../node_modules/@noble/hashes/esm/scrypt.js
+// node_modules/@noble/hashes/esm/scrypt.js
 function XorAndSalsa(prev, pi, input, ii, out2, oi) {
   let y00 = prev[pi++] ^ input[ii++], y01 = prev[pi++] ^ input[ii++];
   let y02 = prev[pi++] ^ input[ii++], y03 = prev[pi++] ^ input[ii++];
@@ -3701,7 +3701,7 @@ function scrypt(password, salt, opts) {
   return scryptOutput(password, dkLen, B2, V, tmp);
 }
 var init_scrypt = __esm({
-  "../../../node_modules/@noble/hashes/esm/scrypt.js"() {
+  "node_modules/@noble/hashes/esm/scrypt.js"() {
     init_globals_inject();
     init_assert2();
     init_sha256();
@@ -3846,9 +3846,9 @@ var init_crypto2 = __esm({
   }
 });
 
-// ../../../node_modules/sql.js/dist/sql-wasm.js
+// node_modules/sql.js/dist/sql-wasm.js
 var require_sql_wasm = __commonJS({
-  "../../../node_modules/sql.js/dist/sql-wasm.js"(exports, module) {
+  "node_modules/sql.js/dist/sql-wasm.js"(exports, module) {
     init_globals_inject();
     var initSqlJsPromise = void 0;
     var initSqlJs = function(moduleConfig) {
@@ -8894,7 +8894,7 @@ var require_constants = __commonJS({
   }
 });
 
-// ../../../node_modules/fflate/esm/browser.js
+// node_modules/fflate/esm/browser.js
 function deflateSync(data, opts) {
   return dopt(data, opts || {}, 0, 0);
 }
@@ -8914,7 +8914,7 @@ function unzlibSync(data, opts) {
 }
 var u82, u16, i32, fleb, fdeb, clim, freb, _a, fl, revfl, _b, fd, revfd, rev, x, i, hMap, flt, i, i, i, i, fdt, i, flm, flrm, fdm, fdrm, max, bits, bits16, shft, slc, ec, err, inflt, wbits, wbits16, hTree, ln, lc, clen, wfblk, wblk, deo, et, dflt, adler, dopt, wbytes, zlh, zls, td, tds;
 var init_browser = __esm({
-  "../../../node_modules/fflate/esm/browser.js"() {
+  "node_modules/fflate/esm/browser.js"() {
     init_globals_inject();
     u82 = Uint8Array;
     u16 = Uint16Array;
@@ -22176,9 +22176,17 @@ async function run({ server, username, password, code, onProgress = () => {
   try {
     login = await call(server, "/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
   } catch (e) {
-    if (e.data && e.data.deviceWipeRequired) {
+    if (e.data && (e.data.deviceWipeRequired || e.data.deviceRevoked && e.data.wipeRequested)) {
       onProgress("This device has been remotely wiped by an administrator\u2026");
+      const id = deviceId();
+      const ackToken = e.data.wipeAckToken;
       await wipe();
+      if (ackToken) {
+        try {
+          await call(server, "/api/devices/wipe-ack", { method: "POST", body: JSON.stringify({ device_id: id, token: ackToken }) });
+        } catch {
+        }
+      }
       throw new import_http.HttpError(410, "This device was remotely wiped by an administrator. It has been erased and must be set up again.", { wiped: true });
     }
     throw e;

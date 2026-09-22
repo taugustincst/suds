@@ -350,9 +350,16 @@ export async function run({ server, username, password, code, onProgress = () =>
     // The office server has told this specific device (not the account) to erase itself, the moment it
     // tried to sign in — before any session or data exchange happened. Nothing else in the payload can be
     // trusted after this, so it wipes immediately rather than proceeding.
-    if (e.data && e.data.deviceWipeRequired) {
+    // A revoked device whose wipe was ever requested is told to wipe too (wipeRequested), so the phone
+    // never keeps records because the request and the revocation arrived in the wrong order.
+    if (e.data && (e.data.deviceWipeRequired || (e.data.deviceRevoked && e.data.wipeRequested))) {
       onProgress('This device has been remotely wiped by an administrator…');
+      const id = deviceId(); const ackToken = e.data.wipeAckToken;
       await wipeLocalDb();
+      // Tell the office the wipe happened. The token is one-time and short-lived; it is absent when the
+      // office already marked the device wiped because the sign-in credentials were valid. Best effort:
+      // the wipe itself does not depend on the office hearing about it.
+      if (ackToken) { try { await call(server, '/api/devices/wipe-ack', { method: 'POST', body: JSON.stringify({ device_id: id, token: ackToken }) }); } catch { /* offline or expired: the next credentialed sign-in marks it */ } }
       throw new HttpError(410, 'This device was remotely wiped by an administrator. It has been erased and must be set up again.', { wiped: true });
     }
     throw e;
