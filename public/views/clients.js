@@ -1,4 +1,4 @@
-import { h, route, get, post, state, form, modal, toast, nav, table, badge, statusKind, fmt, can, pageHead, clear } from '../app.js';
+import { h, route, get, post, state, form, modal, toast, nav, table, badge, statusKind, fmt, can, pageHead, clear, clientStatus } from '../app.js';
 
 export function clientFields(C) {
   return [
@@ -46,7 +46,7 @@ export function openClientForm(values, onDone) {
         h('b', {}, matches.length === 1 ? 'This person may already be on file.' : 'These people may already be on file.'),
         h('ul', { class: 'tight' }, matches.map(x => h('li', {},
           h('a', { href: `#/client/${x.id}`, onClick: () => m.close() }, x.display_name || x.client_code),
-          ' ', h('span', { class: 'muted small' }, x.client_code, x.dob ? ` · born ${fmt.date(x.dob)}` : '', ` · ${fmt.label(x.status)}`),
+          ' ', h('span', { class: 'muted small' }, x.client_code, x.dob ? ` · born ${fmt.date(x.dob)}` : '', ` · ${fmt.label(clientStatus(x))}`),
           h('div', { class: 'small muted' }, `Matched on ${x.reasons.join(' and ')}.`)))),
         h('p', { class: 'small' }, 'Open the existing record if it is the same person. If it really is somebody different, confirm below.'),
         h('label', { class: 'check' },
@@ -117,7 +117,7 @@ route('clients', async (r) => {
     h('div', { class: 'muted small mb row' }, `${activeFilters.length ? rows.length + ' of ' : ''}${data.total} client${data.total === 1 ? '' : 's'}`, activeFilters.map(f => badge(f, 'info')), activeFilters.length ? h('a', { href: `#/clients?status=${status}`, class: 'small' }, 'clear filters') : null),
     table([
       { label: 'Client', render: c => h('div', {}, h('b', {}, c.display_name), h('div', { class: 'muted small' }, c.client_code, c.dob && !deid ? ` · DOB ${fmt.date(c.dob)}` : '')) },
-      { label: 'Status', render: c => badge(fmt.label(c.status), statusKind(c.status)) },
+      { label: 'Status', render: c => badge(fmt.label(clientStatus(c)), statusKind(clientStatus(c))) },
       { label: 'Risk', render: c => badge(fmt.label(c.risk_level), statusKind(c.risk_level)) },
       { label: 'Primary substance', render: c => fmt.label(c.primary_substance) },
       { label: 'MAT', render: c => fmt.label(c.mat_status) },

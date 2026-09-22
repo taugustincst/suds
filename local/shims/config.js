@@ -25,7 +25,12 @@ const config = {
   // must not turn into a lockout here.
   loginRateLimit: 100000,
   msGraph: { tenantId: '', clientId: '', clientSecret: '', user: '' },
-  auditRetentionDays: 2555, maxBodyBytes: 60 * 1024 * 1024, trustProxy: false,
+  auditRetentionDays: 2555, maxBodyBytes: 60 * 1024 * 1024, maxRestoreBodyBytes: 60 * 1024 * 1024, trustProxy: false,
+  // Every config key the shared route code reads has to exist here, or the first route to touch it
+  // fails with "Cannot read properties of undefined" on the device — the Settings tab did exactly that
+  // over config.oidc. Single sign-on, the metrics endpoint, update checks and JSON logs are office-only.
+  oidc: { enabled: false, label: '', issuer: '', clientId: '', clientSecret: '', redirectUri: '', scopes: '', allowedDomains: [] },
+  mfaGraceDays: 14, tombstoneRetentionDays: 180, logFormat: 'text', metricsToken: '', updateFeedUrl: '',
   saveServerJson() {},
 };
 config.encryptionKey = key('suds.local.enc'); config.indexKey = key('suds.local.idx');

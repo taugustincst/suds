@@ -242,6 +242,10 @@ const migrations = [
     for (const line of schemaText.split('\n')) if (/^CREATE INDEX IF NOT EXISTS idx_clients_first_name/.test(line.trim())) d.exec(line.trim());
     addColumn(d, 'policy_documents', 'search_text', 'TEXT');
   },
+  // 19: a client whose status is NULL or blank (rows written before the value was enforced end to end,
+  //     including through sync) showed no status at all in the header and Overview. The column's default
+  //     is 'active', so that is what an empty value has always meant.
+  (d) => { d.exec(`UPDATE clients SET status='active' WHERE status IS NULL OR TRIM(status)=''`); },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

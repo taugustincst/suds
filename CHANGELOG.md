@@ -2,6 +2,18 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+- Fixes from the outside retest of the published web app (local mode): "Add resource" saved nothing
+  because a DOM error was thrown before the request (every form error now reaches the dialog's banner);
+  Settings crashed on the device over a config key the local kernel's config shim did not define; a due
+  date entered without a time was silently dropped (date & time fields are now a date plus an optional
+  time, and a date-only value is kept as the calendar day); a client with a blank status showed no status
+  (rendered as Active; migration 19 backfills such rows); the client search list no longer floats over
+  the field below it, which blocked the date picker on phones; the greeting uses the display name as
+  typed (username if blank); dialog titles no longer linger in the accessibility tree via the live
+  region. Covered by `scripts/ui/qa-retest.mjs` on both the static build and `/?local=1`.
+
 ## 1.8.0 — 2026-09-18
 
 - **A fully standalone, browser-only web app.** No office server, no Node process, no database anywhere
