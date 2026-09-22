@@ -23,15 +23,35 @@ function retentionYears() {
 function expiredClients(years = retentionYears(), now = new Date()) {
   const cutoff = new Date(now.getTime() - years * 365.25 * 86400000).toISOString().slice(0, 10);
   // The clock starts at the end of the last service: the discharge date on the record, or the close of
-  // the last episode, whichever is later. A client with no such date has not been discharged.
+  // the last episode, whichever is later. A client with no such date has not been discharged. "inactive"
+  // is not a discharge — it is a person who has drifted, and may drift back — so only closed and deceased
+  // records are ever due. A record merged into another is purged with that record (same person), never
+  // on its own clock.
   return db.all(`SELECT * FROM (
       SELECT c.id, c.client_code, c.legal_hold,
         MAX(COALESCE(c.discharge_date, ''), COALESCE((SELECT MAX(e.closed_at) FROM episodes e WHERE e.client_id=c.id), '')) AS ended
       FROM clients c
       WHERE c.legal_hold=0
-        AND c.status IN ('closed','deceased','inactive')
+        AND c.merged_into IS NULL
+        AND c.status IN ('closed','deceased')
         AND NOT EXISTS (SELECT 1 FROM episodes e WHERE e.client_id=c.id AND e.status='open')
     ) WHERE ended <> '' AND substr(ended, 1, 10) < ?`, cutoff);
+}
+
+/**
+ * Why a record that is past retention still cannot go: work that is still open on it. A purge would take
+ * an open referral or request with it, and nobody would know it had ever been waiting. Empty when clear.
+ */
+function purgeBlockers(clientId) {
+  const out = {};
+  const n = (sql) => db.one(sql, clientId).n;
+  const referrals = n(`SELECT COUNT(*) n FROM referrals WHERE client_id=? AND status IN ('pending','contacted','accepted','waitlisted','scheduled')`);
+  const tasks = n(`SELECT COUNT(*) n FROM tasks WHERE client_id=? AND status IN ('open','in_progress')`);
+  const requests = n(`SELECT COUNT(*) n FROM patient_requests WHERE client_id=? AND status='open'`);
+  if (referrals) out.open_referrals = referrals;
+  if (tasks) out.open_tasks = tasks;
+  if (requests) out.open_requests = requests;
+  return out;
 }
 
 /** Hard-delete one client and everything that hangs off the record. Audited by client code only. */
@@ -50,7 +70,14 @@ function purgeClient(client, { user = { username: 'system' }, reason = 'retentio
       if (t !== 'breakglass_events') for (const id of ids) db.tombstone(t, id);
     }
     for (const t of UNLINK_TABLES) counts[t] = db.run(`UPDATE ${t} SET client_id=NULL, updated_at=? WHERE client_id=?`, db.now(), client.id).changes;
-    db.run(`UPDATE clients SET merged_into=NULL WHERE merged_into=?`, client.id);
+    // An import item that was guessed to be this person keeps a plain (non-FK) pointer; it must not dangle.
+    counts.import_items_unlinked = db.run(`UPDATE import_items SET suggested_client_id=NULL, updated_at=? WHERE suggested_client_id=?`, db.now(), client.id).changes;
+    // Records merged into this one are the same person: they go with it, not on a clock of their own.
+    for (const dup of db.all(`SELECT id, client_code, legal_hold FROM clients WHERE merged_into=?`, client.id)) {
+      if (dup.legal_hold) { db.run(`UPDATE clients SET merged_into=NULL, updated_at=? WHERE id=?`, db.now(), dup.id); continue; }
+      purgeClient({ ...dup, ended: client.ended }, { user, reason: `merged into ${client.client_code} (${reason})` });
+      counts.merged_records = (counts.merged_records || 0) + 1;
+    }
     db.run(`DELETE FROM clients WHERE id=?`, client.id);
     db.tombstone('clients', client.id);
   });
@@ -64,13 +91,22 @@ function purgeClient(client, { user = { username: 'system' }, reason = 'retentio
 function purgeExpiredClients(opts = {}) {
   const years = retentionYears();
   const purged = [];
+  const skipped = [];
   for (const c of expiredClients(years)) {
+    const blockers = purgeBlockers(c.id);
+    if (Object.keys(blockers).length) {
+      // Skipped, not silently: the record is due and someone has to close what is still open on it.
+      console.warn(`[suds] retention: not purging ${c.client_code}: ${Object.entries(blockers).map(([k, v]) => `${v} ${k.replace('_', ' ')}`).join(', ')}`);
+      audit.log({ user: opts.user || { username: 'system' }, action: 'client.purge.skipped', entity: 'client', entityId: c.id, clientId: c.id, details: { client_code: c.client_code, ...blockers } });
+      skipped.push(c.client_code);
+      continue;
+    }
     try { purgeClient(c, opts); purged.push(c.client_code); }
     catch (e) { console.error(`[suds] retention: could not purge ${c.client_code}: ${e.message}`); }
   }
   if (purged.length) console.log(`[suds] retention: purged ${purged.length} client record(s) older than ${years} years`);
   db.setSetting('client_retention_ran_at', db.now());
-  return { years, purged };
+  return { years, purged, skipped };
 }
 
 /** Run at most once a day from the hourly housekeeping pass. */
@@ -80,4 +116,4 @@ function runIfDue() {
   return purgeExpiredClients();
 }
 
-module.exports = { retentionYears, expiredClients, purgeClient, purgeExpiredClients, runIfDue, DELETE_TABLES, UNLINK_TABLES };
+module.exports = { retentionYears, expiredClients, purgeBlockers, purgeClient, purgeExpiredClients, runIfDue, DELETE_TABLES, UNLINK_TABLES };

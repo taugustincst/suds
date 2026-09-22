@@ -29,6 +29,29 @@ function loadClient(ctx, id) {
   return row;
 }
 
+/**
+ * Existing clients who look like this one. Import already did this; direct entry did not, which is how a
+ * caseload ends up with the same person three times under three spellings.
+ * Matching is done entirely on blind indexes — no name is ever compared in the clear.
+ */
+function possibleDuplicates(v, excludeId = null) {
+  const clauses = []; const params = [];
+  const add = (sql, ...p) => { clauses.push(sql); params.push(...p); };
+  if (v.dob && v.last_name) add('(c.dob_idx=? AND c.last_name_idx=?)', blindIndex(v.dob), blindIndex(v.last_name));
+  if (v.phone) add('c.phone_idx=?', blindIndex(String(v.phone).replace(/\D/g, '')));
+  if (v.first_name && v.last_name) add('c.full_name_idx=?', blindIndex((v.last_name || '') + (v.first_name || '')));
+  if (!clauses.length) return [];
+  const rows = db.all(`SELECT c.* FROM clients c WHERE c.deleted_at IS NULL AND (${clauses.join(' OR ')}) ${excludeId ? 'AND c.id<>?' : ''} LIMIT 10`, ...params, ...(excludeId ? [excludeId] : []));
+  return rows.map(x => {
+    const d = M.decryptRow(x);
+    const reasons = [];
+    if (v.dob && v.last_name && x.dob_idx === blindIndex(v.dob) && x.last_name_idx === blindIndex(v.last_name)) reasons.push('same surname and date of birth');
+    if (v.phone && x.phone_idx === blindIndex(String(v.phone).replace(/\D/g, ''))) reasons.push('same phone number');
+    if (v.first_name && v.last_name && x.full_name_idx === blindIndex((v.last_name || '') + (v.first_name || ''))) reasons.push('same full name');
+    return { id: x.id, client_code: x.client_code, display_name: d.display_name, dob: d.dob, status: x.status, intake_date: x.intake_date, reasons };
+  });
+}
+
 module.exports = (r) => {
   r.get('/api/clients', auth.requireAuth, auth.requirePerm('clients:read', 'clients:list-deidentified'), (ctx) => {
     const deidentify = !auth.hasPerm(ctx.user, 'clients:read');
@@ -76,29 +99,6 @@ module.exports = (r) => {
     return { clients: rows.map(x => ({ ...M.summary(x, { deidentify }), assigned_workers: x.assigned_workers, last_contact: x.last_contact, overdue_tasks: x.overdue_tasks })), total, limit, offset };
   });
 
-  /**
-   * Existing clients who look like this one. Import already did this; direct entry did not, which is how a
-   * caseload ends up with the same person three times under three spellings.
-   * Matching is done entirely on blind indexes — no name is ever compared in the clear.
-   */
-  function possibleDuplicates(v, excludeId = null) {
-    const clauses = []; const params = [];
-    const add = (sql, ...p) => { clauses.push(sql); params.push(...p); };
-    if (v.dob && v.last_name) add('(c.dob_idx=? AND c.last_name_idx=?)', blindIndex(v.dob), blindIndex(v.last_name));
-    if (v.phone) add('c.phone_idx=?', blindIndex(String(v.phone).replace(/\D/g, '')));
-    if (v.first_name && v.last_name) add('c.full_name_idx=?', blindIndex((v.last_name || '') + (v.first_name || '')));
-    if (!clauses.length) return [];
-    const rows = db.all(`SELECT c.* FROM clients c WHERE c.deleted_at IS NULL AND (${clauses.join(' OR ')}) ${excludeId ? 'AND c.id<>?' : ''} LIMIT 10`, ...params, ...(excludeId ? [excludeId] : []));
-    return rows.map(x => {
-      const d = M.decryptRow(x);
-      const reasons = [];
-      if (v.dob && v.last_name && x.dob_idx === blindIndex(v.dob) && x.last_name_idx === blindIndex(v.last_name)) reasons.push('same surname and date of birth');
-      if (v.phone && x.phone_idx === blindIndex(String(v.phone).replace(/\D/g, ''))) reasons.push('same phone number');
-      if (v.first_name && v.last_name && x.full_name_idx === blindIndex((v.last_name || '') + (v.first_name || ''))) reasons.push('same full name');
-      return { id: x.id, client_code: x.client_code, display_name: d.display_name, dob: d.dob, status: x.status, intake_date: x.intake_date, reasons };
-    });
-  }
-
   // Check before entering, so the worker sees the match while they are still typing.
   r.post('/api/clients/check-duplicates', auth.requireAuth, auth.requirePerm('clients:write'), (ctx) => {
     const v = validate(ctx.body, { first_name: { type: 'string', maxLen: 100 }, last_name: { type: 'string', maxLen: 100 }, dob: { type: 'date' }, phone: { type: 'string', maxLen: 40 }, exclude_id: { type: 'string' } });
@@ -110,8 +110,15 @@ module.exports = (r) => {
     const v = validate(ctx.body, { ...shape, confirm_duplicate: { type: 'boolean' }, no_episode: { type: 'boolean' } });
     // Refuse a likely duplicate unless the worker has looked at the match and said it is a different person.
     if (!v.confirm_duplicate) {
-      const matches = possibleDuplicates(v);
-      if (matches.length) throw badRequest('A client with these details may already exist', { duplicates: matches, confirm_field: 'confirm_duplicate' });
+      // Exactly the filter /check-duplicates applies: a match outside the caller's caseload is a fact they
+      // may be told exists, never a record they may be shown. The check is audited before anything is
+      // returned, whichever way it goes, because it is a read of other people's records.
+      const all = possibleDuplicates(v);
+      const visible = all.filter(m => auth.canAccessClient(ctx.user, m.id) || auth.hasPerm(ctx.user, 'clients:all'));
+      const hidden = all.length - visible.length;
+      if (all.length) audit.log({ user: ctx.user, action: 'client.duplicate_check', ip: ctx.ip, details: { matches: all.length, hidden, shown: visible.map(m => m.client_code) } });
+      if (visible.length) throw badRequest('A client with these details may already exist', { duplicates: visible, hidden_duplicates: hidden, confirm_field: 'confirm_duplicate' });
+      if (hidden) throw badRequest('A possible duplicate exists that is outside your caseload — ask a supervisor', { hidden_duplicates: hidden, confirm_field: 'confirm_duplicate' });
     }
     delete v.confirm_duplicate;
     const noEpisode = !!v.no_episode; delete v.no_episode;
@@ -167,6 +174,9 @@ module.exports = (r) => {
     }
 
     const moved = {};
+    // The duplicate's open episode, if any: after the move the keeper may have two, and a person is in
+    // one episode of care at a time.
+    const sourceOpenEpisodes = db.all(`SELECT id FROM episodes WHERE client_id=? AND status='open'`, source.id).map(e => e.id);
     db.transaction(() => {
       for (const [table, col] of links) {
         const cols = db.all(`PRAGMA table_info(${table})`).map(c => c.name);
@@ -192,6 +202,21 @@ module.exports = (r) => {
         plain.dob ? blindIndex(plain.dob) : null, plain.phone ? blindIndex(String(plain.phone).replace(/\D/g, '')) : null,
         M.namePrefixIndex(plain.last_name || ''), M.namePhoneticIndex(plain.last_name || ''), M.preferredNameIndex(plain.preferred_name), db.now(), keep.id);
 
+      // A worker assigned to both records is now assigned to the keeper twice. Keep the assignment that
+      // started first; the rest are duplicates, not history.
+      const dupAssignments = db.all(`SELECT a.id FROM assignments a WHERE a.client_id=? AND ${auth.activeAssignment('a.')} AND a.id <> (
+          SELECT b.id FROM assignments b WHERE b.client_id=a.client_id AND b.user_id=a.user_id AND ${auth.activeAssignment('b.')} ORDER BY b.start_date, b.created_at, b.id LIMIT 1)`, keep.id);
+      for (const a of dupAssignments) { db.run(`DELETE FROM assignments WHERE id=?`, a.id); db.tombstone('assignments', a.id); }
+      if (dupAssignments.length) moved._duplicate_assignments_removed = dupAssignments.length;
+      // At most one open episode: if both records had one, the duplicate's is closed as merged — the care
+      // continues under the keeper's.
+      if (db.one(`SELECT COUNT(*) n FROM episodes WHERE client_id=? AND status='open'`, keep.id).n > 1) {
+        const today = new Date().toISOString().slice(0, 10);
+        for (const id of sourceOpenEpisodes) db.run(`UPDATE episodes SET status='closed', closed_at=?, closed_by=?, discharge_reason='merged', discharge_disposition='merged into duplicate record', updated_at=? WHERE id=? AND status='open'`, today, ctx.user.id, db.now(), id);
+        moved._episodes_closed_as_merged = sourceOpenEpisodes.length;
+      }
+      // Import suggestions are a plain (non-FK) pointer, so the loop above did not move them.
+      db.run(`UPDATE import_items SET suggested_client_id=?, updated_at=? WHERE suggested_client_id=?`, keep.id, db.now(), source.id);
       db.run(`UPDATE clients SET merged_into=?, status='closed', deleted_at=?, updated_at=? WHERE id=?`, keep.id, db.now(), db.now(), source.id);
       moved._filled_fields = keys.length;
     });
@@ -305,3 +330,4 @@ module.exports = (r) => {
     return { events: page, limit, offset, more: events.length > offset + limit };
   });
 };
+module.exports.possibleDuplicates = possibleDuplicates;

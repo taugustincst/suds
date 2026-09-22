@@ -197,6 +197,18 @@ test('the sync table description matches the actual schema', () => {
     }
     seen.add(t.name);
   }
+  // Every foreign key between two synchronised tables, not only the declared `parent`: rows are applied in
+  // array order on both sides, and with foreign keys enforced a child that arrives before what it points
+  // at (a referral before the consent it cites) is refused. A self-reference must be declared selfParent.
+  const order = SYNC.tables.map(t => t.name);
+  for (const t of SYNC.tables) {
+    if (!tableExists(t.name)) continue;
+    for (const fk of H.db.all(`PRAGMA foreign_key_list(${t.name})`)) {
+      if (!order.includes(fk.table)) continue;
+      if (fk.table === t.name) { if (t.selfParent !== fk.from) problems.push(`${t.name}.${fk.from} references its own table but is not its selfParent`); continue; }
+      if (order.indexOf(fk.table) > order.indexOf(t.name)) problems.push(`${t.name}.${fk.from} references ${fk.table}, which is listed after it`);
+    }
+  }
   for (const [table, col] of SYNC.user_refs) {
     if (!tableExists(table)) { problems.push(`user_refs names missing table ${table}`); continue; }
     if (!colsOf(table).includes(col)) problems.push(`user_refs names missing column ${table}.${col}`);
@@ -379,4 +391,230 @@ test('a sync push cannot attach a cost/fund/line to an intervention without budg
   }] } });
   assert.equal(r2.status, 200);
   assert.ok(!r2.data.rejected.some(x => x.id === existing.data.id), 'unchanged budget fields on an already-attached row do not block an unrelated edit');
+});
+
+// ---- data-integrity fixes (sync/retention/merge review) ----
+
+test('a pushed row is stamped in server time, so other devices\' incremental pulls see it', async () => {
+  // The device's updated_at was stored verbatim. A phone whose clock was behind, or that edited a row an
+  // hour before it synced, wrote a timestamp older than every other device's cursor — and pull selects
+  // updated_at > cursor, so nobody else ever received the edit.
+  const cursor = (await navBearer.client.get('/api/sync/pull?since=2999-01-01T00:00:00.000Z', navBearer.headers)).data.server_now;
+  await new Promise(r => setTimeout(r, 5));
+  const id = randomUUID();
+  const old = iso(Date.now() - 3600 * 1000);
+  const r = await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, title_enc: 'Edited an hour ago', created_at: old, updated_at: old }] } });
+  assert.deepEqual(r.data.rejected, []);
+  const row = H.db.one(`SELECT updated_at, created_at FROM tasks WHERE id=?`, id);
+  assert.ok(row.updated_at > cursor, 'stored updated_at is the server clock, not the device\'s');
+  assert.ok(Math.abs(Date.parse(row.created_at) - Date.parse(old)) < 5000, 'created_at keeps the device\'s (offset-corrected) time');
+  const pulled = (await navBearer.client.get(`/api/sync/pull?since=${encodeURIComponent(cursor)}`, navBearer.headers)).data;
+  assert.ok(pulled.tables.tasks.some(t => t.id === id), 'a second device pulling since its cursor receives the row');
+  // The device's own later edit still wins last-writer-wins against the server stamp.
+  const r2 = await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, title_enc: 'Edited again on the phone', created_at: old, updated_at: iso(Date.now() + 50) }] } });
+  assert.deepEqual(r2.data.rejected, []);
+  assert.equal(require('../server/crypto').decrypt(H.db.one(`SELECT title_enc FROM tasks WHERE id=?`, id).title_enc), 'Edited again on the phone');
+});
+
+test('created_at is shifted by the clock offset once, never on later round trips', async () => {
+  const id = randomUUID();
+  const createdOnDevice = '2026-05-01T10:00:00.000Z';
+  const skew = 3600 * 1000;
+  await nav.post('/api/sync/push', { device_now: iso(Date.now() + skew), tables: { tasks: [{ id, client_id: clientId, created_by: navId, title_enc: 'Skewed', created_at: createdOnDevice, updated_at: iso(Date.now() + skew) }] } });
+  const first = H.db.one(`SELECT created_at FROM tasks WHERE id=?`, id).created_at;
+  assert.ok(Math.abs(Date.parse(first) - (Date.parse(createdOnDevice) - skew)) < 5000, 'a new row\'s created_at is corrected into server time');
+  // The same row again from a device skewed the other way: created_at must not move.
+  await nav.post('/api/sync/push', { device_now: iso(Date.now() - 2 * skew), tables: { tasks: [{ id, client_id: clientId, created_by: navId, title_enc: 'Skewed, edited', created_at: createdOnDevice, updated_at: iso(Date.now() - 2 * skew + 10) }] } });
+  assert.equal(H.db.one(`SELECT created_at FROM tasks WHERE id=?`, id).created_at, first, 'an existing row\'s created_at is never re-shifted');
+});
+
+test('a purged client can never be resurrected by a device, nor anything attached to it', async () => {
+  const R = require('../server/retention');
+  const gone = (await nav.post('/api/clients', { first_name: 'Long', last_name: 'Gone', status: 'closed', discharge_date: '2010-01-01' })).data.id;
+  const code = H.db.one(`SELECT client_code FROM clients WHERE id=?`, gone).client_code;
+  R.purgeClient({ id: gone, client_code: code, ended: '2010-01-01' });
+  assert.ok(H.db.one(`SELECT 1 FROM tombstones WHERE table_name='clients' AND id=?`, gone));
+  const taskId = randomUUID();
+  const r = await push(nav, { tables: {
+    clients: [{ id: gone, client_code: code, first_name_enc: 'Long', last_name_enc: 'Gone', status: 'active', created_at: iso(Date.now()), updated_at: iso(Date.now() + 5000) }],
+    tasks: [{ id: taskId, client_id: gone, created_by: navId, title_enc: 'Attached to a ghost', created_at: iso(Date.now()), updated_at: iso(Date.now() + 5000) }],
+  } });
+  assert.equal(r.status, 200);
+  const c = r.data.rejected.find(x => x.id === gone); const t = r.data.rejected.find(x => x.id === taskId);
+  assert.ok(c && c.reason === 'purged' && c.permanent === true, 'the client is refused for good');
+  assert.ok(t && t.permanent === true, 'and so is its child row');
+  assert.ok(!H.db.one(`SELECT 1 FROM clients WHERE id=?`, gone), 'nothing came back');
+  assert.ok(!H.db.one(`SELECT 1 FROM tasks WHERE id=?`, taskId));
+  assert.ok(H.db.one(`SELECT 1 FROM tombstones WHERE table_name='clients' AND id=?`, gone), 'the tombstone is kept so every device is told');
+});
+
+test('a merge is not undone by a device that still holds the duplicate', async () => {
+  const keep = (await nav.post('/api/clients', { first_name: 'Keeper', last_name: 'Merged' })).data.id;
+  const dup = (await nav.post('/api/clients', { first_name: 'Dupe', last_name: 'Merged', confirm_duplicate: true })).data.id;
+  const oldTask = randomUUID();
+  const r0 = await push(nav, { tables: { tasks: [{ id: oldTask, client_id: dup, created_by: navId, title_enc: 'Before merge', created_at: iso(Date.now() - 5000), updated_at: iso(Date.now() - 5000) }] } });
+  assert.deepEqual(r0.data.rejected, []);
+  assert.equal((await admin.post(`/api/clients/${keep}/merge`, { source_id: dup })).status, 200);
+  assert.equal(H.db.one(`SELECT client_id FROM tasks WHERE id=?`, oldTask).client_id, keep, 'the merge moved the task');
+  const newTask = randomUUID();
+  const r = await push(nav, { tables: {
+    clients: [{ id: dup, client_code: 'X', first_name_enc: 'Dupe', last_name_enc: 'Merged', status: 'active', updated_at: iso(Date.now() + 5000) }],
+    tasks: [
+      { id: newTask, client_id: dup, created_by: navId, title_enc: 'Made offline on the duplicate', created_at: iso(Date.now()), updated_at: iso(Date.now()) },
+      { id: oldTask, client_id: dup, created_by: navId, title_enc: 'Edited offline on the duplicate', created_at: iso(Date.now() - 5000), updated_at: iso(Date.now() + 5000) },
+    ],
+  } });
+  const c = r.data.rejected.find(x => x.id === dup);
+  assert.ok(c && /merged/.test(c.reason) && c.permanent, 'the duplicate itself is not re-opened');
+  assert.equal(H.db.one(`SELECT merged_into FROM clients WHERE id=?`, dup).merged_into, keep, 'and stays merged');
+  assert.equal(H.db.one(`SELECT client_id FROM tasks WHERE id=?`, newTask).client_id, keep, 'a new child is re-pointed at the keeper');
+  assert.equal(H.db.one(`SELECT client_id FROM tasks WHERE id=?`, oldTask).client_id, keep, 'an existing child never moves back');
+  assert.equal(require('../server/crypto').decrypt(H.db.one(`SELECT title_enc FROM tasks WHERE id=?`, oldTask).title_enc), 'Edited offline on the duplicate', 'but its edit still lands');
+});
+
+test('merging tidies assignments and leaves one open episode', async () => {
+  const keep = (await nav.post('/api/clients', { first_name: 'Tidy', last_name: 'Keeper' })).data.id;
+  const dup = (await nav.post('/api/clients', { first_name: 'Tidy', last_name: 'Duplicate' })).data.id;
+  const active = () => H.db.one(`SELECT COUNT(*) n FROM assignments WHERE client_id=? AND user_id=? AND ${require('../server/auth').activeAssignment()}`, keep, navId).n;
+  assert.equal(active(), 1);
+  const dupEpisode = H.db.one(`SELECT id FROM episodes WHERE client_id=? AND status='open'`, dup).id;
+  H.db.run(`INSERT INTO imports(id,source,imported_by) VALUES(?,?,?)`, 'imp-merge', 'generic', navId);
+  H.db.run(`INSERT INTO import_items(id,import_id,content_enc,suggested_client_id) VALUES(?,?,?,?)`, 'item-merge', 'imp-merge', require('../server/crypto').encrypt('x'), dup);
+  assert.equal((await admin.post(`/api/clients/${keep}/merge`, { source_id: dup })).status, 200);
+  assert.equal(active(), 1, 'the worker is not assigned to the keeper twice');
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM episodes WHERE client_id=? AND status='open'`, keep).n, 1, 'one open episode');
+  const closed = H.db.one(`SELECT status, discharge_reason FROM episodes WHERE id=?`, dupEpisode);
+  assert.equal(closed.status, 'closed'); assert.equal(closed.discharge_reason, 'merged');
+  assert.equal(H.db.one(`SELECT suggested_client_id FROM import_items WHERE id='item-merge'`).suggested_client_id, keep, 'an import suggestion follows the keeper');
+});
+
+test('the intake duplicate check never names a client outside the caller\'s caseload', async () => {
+  // Regression (PHI leak): POST /api/clients threw with the full display name and date of birth of every
+  // match, including clients the caller could not otherwise see, and before any audit row was written.
+  const theirs = (await nav2.post('/api/clients', { first_name: 'Hidden', last_name: 'Match', dob: '1980-02-02' })).data.id;
+  const r = await nav.post('/api/clients', { first_name: 'Hidden', last_name: 'Match', dob: '1980-02-02' });
+  assert.equal(r.status, 400);
+  assert.match(r.data.error, /outside your caseload/);
+  assert.equal(r.data.duplicates, undefined, 'no record is listed');
+  assert.ok(!JSON.stringify(r.data).includes('Hidden'), 'no identifier leaves the server');
+  assert.equal(r.data.hidden_duplicates, 1);
+  const a = H.db.one(`SELECT * FROM audit_log WHERE action='client.duplicate_check' AND user_id=? ORDER BY id DESC LIMIT 1`, navId);
+  assert.ok(a, 'the check is audited');
+  assert.ok(!String(a.details).includes('Hidden'));
+  assert.ok(!H.db.one(`SELECT 1 FROM clients WHERE id<>? AND full_name_idx=?`, theirs, require('../server/crypto').blindIndex('MatchHidden')), 'nothing was created');
+  // A match on the caller's own caseload is still shown, as before.
+  const mine = (await nav.post('/api/clients', { first_name: 'Shown', last_name: 'Match' })).data.id;
+  const r2 = await nav.post('/api/clients', { first_name: 'Shown', last_name: 'Match' });
+  assert.equal(r2.status, 400);
+  assert.ok(r2.data.duplicates.some(d => d.id === mine), 'a visible match is listed');
+  assert.equal(r2.data.hidden_duplicates, 0);
+});
+
+test('a client created on a device that looks like an existing one lands, flagged for a supervisor', async () => {
+  const existing = (await nav.post('/api/clients', { first_name: 'Twin', last_name: 'Entered', dob: '1991-01-01' })).data.id;
+  const id = randomUUID();
+  const r = await push(nav, { tables: { clients: [{ id, client_code: 'M26-0099', first_name_enc: 'Twin', last_name_enc: 'Entered', dob_enc: '1991-01-01', status: 'active', created_at: iso(Date.now()), updated_at: iso(Date.now()) }] } });
+  assert.deepEqual(r.data.rejected, [], 'the row is accepted — the worker cannot check from the field');
+  assert.ok(H.db.one(`SELECT 1 FROM clients WHERE id=?`, id));
+  const w = (r.data.warnings || []).find(x => x.id === id);
+  assert.ok(w && /possible duplicate/.test(w.reason), 'the device is told');
+  const a = H.db.one(`SELECT details FROM audit_log WHERE action='client.possible_duplicate' AND entity_id=?`, id);
+  assert.ok(a, 'audited');
+  assert.ok(JSON.parse(a.details).matches.some(m => m.id === existing));
+  assert.ok(!a.details.includes('Twin'), 'by code and reason only');
+  const task = H.db.one(`SELECT title_enc FROM tasks WHERE client_id=? AND priority='high'`, id);
+  assert.ok(task && /Possible duplicate/.test(require('../server/crypto').decrypt(task.title_enc)), 'a task asks a supervisor to compare the two');
+});
+
+test('the office says which rejections are final, and the device contract lists them', () => {
+  const SYNC = require('../server/sync-tables');
+  for (const r of ['immutable', 'purged', 'not on caseload', 'your role cannot write tasks', 'conflicts with an existing record', 'server-owned', 'attributed to another user, which your role cannot do']) assert.equal(SYNC.isPermanentReason(r), true, r);
+  assert.equal(SYNC.isPermanentReason('database is locked'), false);
+  assert.equal(SYNC.isPermanentReason(''), false);
+});
+
+test('rejections carry a permanent flag so a device stops resending what will never be taken', async () => {
+  const task = randomUUID();
+  const r = await push(nav, { tables: { tasks: [{ id: task, client_id: otherClientId, created_by: navId, title_enc: 'Not mine', created_at: iso(Date.now()), updated_at: iso(Date.now()) }] } });
+  const x = r.data.rejected.find(y => y.id === task);
+  assert.ok(x && x.permanent === true, 'not on caseload is final');
+  const tmpl = randomUUID();
+  const t = await push(nav, { tables: { form_templates: [{ id: tmpl, name: 'Injected', category: 'other', fields_json: '[]', created_at: iso(Date.now()), updated_at: iso(Date.now()) }] } });
+  assert.equal(t.data.rejected[0].permanent, true, 'a role limit is final');
+});
+
+test('supply counts are pull-only, and a pushed visit draws the office shelf down once', async () => {
+  const stock = (await admin.post('/api/supplies', { item: 'Naloxone kit', quantity: 20 })).data;
+  const qty = () => H.db.one(`SELECT quantity FROM supply_stock WHERE id=?`, stock.id).quantity;
+  // Two devices each record a visit that handed out kits.
+  const a = randomUUID(); const b = randomUUID();
+  const r1 = await push(nav, { tables: { interventions: [{ id: a, client_id: clientId, user_id: navId, type: 'naloxone_distribution', occurred_at: iso(Date.now()), naloxone_kits: 2, fentanyl_strips: 0, created_at: iso(Date.now()), updated_at: iso(Date.now()) }] } });
+  const r2 = await push(nav2, { tables: { interventions: [{ id: b, client_id: otherClientId, user_id: nav2Id, type: 'naloxone_distribution', occurred_at: iso(Date.now()), naloxone_kits: 3, fentanyl_strips: 0, created_at: iso(Date.now()), updated_at: iso(Date.now()) }] } });
+  assert.deepEqual(r1.data.rejected, []); assert.deepEqual(r2.data.rejected, []);
+  assert.equal(qty(), 15, 'the office stock fell by the sum of both visits');
+  // The same row again (a re-sync) draws nothing more; an edit draws the difference.
+  await push(nav, { tables: { interventions: [{ id: a, client_id: clientId, user_id: navId, type: 'naloxone_distribution', occurred_at: iso(Date.now()), naloxone_kits: 2, fentanyl_strips: 0, updated_at: iso(Date.now() + 1000) }] } });
+  assert.equal(qty(), 15);
+  await push(nav, { tables: { interventions: [{ id: a, client_id: clientId, user_id: navId, type: 'naloxone_distribution', occurred_at: iso(Date.now()), naloxone_kits: 4, fentanyl_strips: 0, updated_at: iso(Date.now() + 2000) }] } });
+  assert.equal(qty(), 13, 'editing the count draws down the difference');
+  assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='supply.drawdown' AND ip='device'`), 'audited like the REST route');
+  // A device's own absolute count is never the truth.
+  const r3 = await push(nav, { tables: { supply_stock: [{ id: stock.id, item: 'Naloxone kit', quantity: 999, updated_by: navId, updated_at: iso(Date.now() + 9000) }] }, tombstones: [{ table_name: 'supply_stock', id: stock.id, deleted_at: iso(Date.now() + 9000) }] });
+  assert.equal(r3.data.rejected.filter(x => x.id === stock.id && x.reason === 'server-owned' && x.permanent).length, 2, 'both the row and the tombstone are refused');
+  assert.equal(qty(), 13);
+});
+
+test('a device may name another worker only when its user could over REST', async () => {
+  const mk = (uid) => ({ id: randomUUID(), client_id: clientId, user_id: uid, type: 'outreach', occurred_at: iso(Date.now()), created_at: iso(Date.now()), updated_at: iso(Date.now()) });
+  // A navigator on a shared phone cannot put a visit in a colleague's name.
+  const forged = mk(nav2Id);
+  const r = await push(nav, { tables: { interventions: [forged] } });
+  const x = r.data.rejected.find(y => y.id === forged.id);
+  assert.ok(x && /attributed/.test(x.reason) && x.permanent, 'rejected outright, not silently re-attributed');
+  assert.ok(!H.db.one(`SELECT 1 FROM interventions WHERE id=?`, forged.id));
+  // A supervisor/admin (clients:all) may, exactly as with POST /api/interventions.
+  const onBehalf = mk(navId);
+  const r2 = await push(admin, { tables: { interventions: [onBehalf] } });
+  assert.deepEqual(r2.data.rejected, []);
+  assert.equal(H.db.one(`SELECT user_id FROM interventions WHERE id=?`, onBehalf.id).user_id, navId);
+  // But never to an account the office has deactivated.
+  const ghost = H.makeUser('sgone', 'navigator'); H.db.run(`UPDATE users SET is_active=0 WHERE id=?`, ghost.id);
+  const r3 = await push(admin, { tables: { interventions: [mk(ghost.id)] } });
+  assert.ok(r3.data.rejected.some(y => /deactivated/.test(y.reason)));
+  // The pushing user's own id, or none, is always fine.
+  const own = mk(undefined);
+  const r4 = await push(nav, { tables: { interventions: [own] } });
+  assert.deepEqual(r4.data.rejected, []);
+  assert.equal(H.db.one(`SELECT user_id FROM interventions WHERE id=?`, own.id).user_id, navId);
+});
+
+test('retention: inactive is not a discharge, open work blocks a purge, and merged records go together', async () => {
+  const R = require('../server/retention');
+  const inactive = (await nav.post('/api/clients', { first_name: 'Drifted', last_name: 'Away', status: 'inactive', discharge_date: '2010-01-01' })).data.id;
+  H.db.run(`UPDATE episodes SET status='closed', closed_at='2010-01-01' WHERE client_id=?`, inactive);
+  assert.ok(!R.expiredClients().some(x => x.id === inactive), 'an inactive record is never due');
+
+  const blocked = (await nav.post('/api/clients', { first_name: 'Still', last_name: 'Waiting', status: 'closed', discharge_date: '2010-01-01' })).data.id;
+  const res = (await admin.post('/api/resources', { name: 'Retention test agency', category: 'other' })).data;
+  H.db.run(`INSERT INTO referrals(id,client_id,resource_id,user_id,referred_at,status) VALUES(?,?,?,?,?,?)`, randomUUID(), blocked, res.id, navId, '2010-01-01T00:00:00.000Z', 'pending');
+  assert.ok(R.expiredClients().some(x => x.id === blocked), 'due by date');
+  const run = R.purgeExpiredClients();
+  assert.ok(run.skipped.includes(H.db.one(`SELECT client_code FROM clients WHERE id=?`, blocked).client_code), 'but skipped');
+  assert.ok(H.db.one(`SELECT 1 FROM clients WHERE id=?`, blocked), 'and still there');
+  const sk = H.db.one(`SELECT details FROM audit_log WHERE action='client.purge.skipped' AND entity_id=?`, blocked);
+  assert.ok(sk && JSON.parse(sk.details).open_referrals === 1, 'with the reason on record');
+
+  const keeper = (await nav.post('/api/clients', { first_name: 'Same', last_name: 'Person', status: 'closed', discharge_date: '2010-01-01' })).data.id;
+  const dup = (await nav.post('/api/clients', { first_name: 'Same', last_name: 'Person', confirm_duplicate: true })).data.id;
+  assert.equal((await admin.post(`/api/clients/${keeper}/merge`, { source_id: dup })).status, 200);
+  H.db.run(`UPDATE episodes SET status='closed', closed_at='2010-01-01' WHERE client_id=?`, keeper);
+  H.db.run(`UPDATE tasks SET status='cancelled' WHERE client_id=?`, keeper);
+  H.db.run(`INSERT INTO imports(id,source,imported_by) VALUES(?,?,?)`, 'imp-purge', 'generic', navId);
+  H.db.run(`INSERT INTO import_items(id,import_id,content_enc,suggested_client_id) VALUES(?,?,?,?)`, 'item-purge', 'imp-purge', require('../server/crypto').encrypt('x'), keeper);
+  assert.ok(!R.expiredClients().some(x => x.id === dup), 'a merged-away record is not on a clock of its own');
+  const run2 = R.purgeExpiredClients();
+  assert.ok(run2.purged.length >= 1);
+  assert.ok(!H.db.one(`SELECT 1 FROM clients WHERE id=?`, keeper) && !H.db.one(`SELECT 1 FROM clients WHERE id=?`, dup), 'the duplicate went with the record it was merged into');
+  assert.ok(H.db.one(`SELECT 1 FROM tombstones WHERE table_name='clients' AND id=?`, dup));
+  assert.equal(H.db.one(`SELECT suggested_client_id FROM import_items WHERE id='item-purge'`).suggested_client_id, null, 'the import suggestion no longer dangles');
 });

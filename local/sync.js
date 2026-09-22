@@ -33,7 +33,26 @@ const PUSH_BYTES = 4 * 1024 * 1024;
 // Attachments fetched per sync, so a first sync is not held up by every photo in the directory.
 const BLOBS_PER_SYNC = 25;
 
-export function ensureTables() { db.get().exec(`CREATE TABLE IF NOT EXISTS sync_seen (table_name TEXT NOT NULL, id TEXT NOT NULL, updated_at TEXT, PRIMARY KEY (table_name, id))`); }
+// The dummy hash the office sends in place of every other user's real one (server/routes/sync.js pull).
+const DUMMY_HASH = 'scrypt$0$0$0$AA==$AA==';
+
+export function ensureTables() {
+  db.get().exec(`CREATE TABLE IF NOT EXISTS sync_seen (table_name TEXT NOT NULL, id TEXT NOT NULL, updated_at TEXT, PRIMARY KEY (table_name, id))`);
+  // Tombstones the office sent us. They are recorded in the local tombstones table like any other delete so
+  // the cascade works, but they are the office's deletions, not ours, and must never be echoed back.
+  db.get().exec(`CREATE TABLE IF NOT EXISTS sync_server_tombstones (table_name TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY (table_name, id))`);
+}
+/** The pull cursor is per office account: on a shared phone the second person to sync must get their own
+ *  caseload from the beginning, not only what changed since a colleague's last sync. */
+export const cursorKey = (userId) => `sync_cursor:${userId}`;
+export function readCursor(userId, username) {
+  const own = db.getSetting(cursorKey(userId), null);
+  if (own) return own;
+  // One-time adoption of the pre-1.7 device-wide cursor, but only by the account that was syncing then.
+  const legacy = db.getSetting('sync_cursor', null);
+  if (legacy && db.getSetting('sync_username', null) === username) return legacy;
+  return NEVER;
+}
 const seen = (t, id, at) => db.run(`INSERT OR REPLACE INTO sync_seen(table_name,id,updated_at) VALUES(?,?,?)`, t, id, at || null);
 const seenAt = (t, id) => db.one(`SELECT updated_at FROM sync_seen WHERE table_name=? AND id=?`, t, id)?.updated_at ?? undefined;
 const cols = (t) => db.all(`PRAGMA table_info(${t})`).map(c => c.name);
@@ -86,7 +105,7 @@ function changedColumns(t, existing, raw, existingCols) {
   return out;
 }
 
-function applyPull(payload, conflicts = []) {
+function applyPull(payload, conflicts = [], skipped = []) {
   const counts = {};
   const offset = payload.server_now ? Date.parse(payload.server_now) - Date.now() : 0;
   const toServer = (ts) => { const t = Date.parse(ts || NEVER); return Number.isFinite(t) ? new Date(t + offset).toISOString() : NEVER; };
@@ -95,60 +114,129 @@ function applyPull(payload, conflicts = []) {
     for (const t of SYNC.tables) {
       let rows = payload.tables?.[t.name] || []; if (t.selfParent) rows = selfParentOrder(rows, t.selfParent); const existingCols = cols(t.name); let n = 0;
       for (const raw of rows) {
-        const existing = db.one(`SELECT * FROM ${t.name} WHERE id=?`, raw.id);
-        if (t.name === 'users' && !existing) { const same = db.one(`SELECT id FROM users WHERE username=?`, raw.username); if (same) mergeUser(same.id, raw.id); }
-        if (t.name === 'clients') { const clash = db.one(`SELECT id FROM clients WHERE client_code=? AND id<>?`, raw.client_code, raw.id); if (clash) db.run(`UPDATE clients SET client_code=?, updated_at=? WHERE id=?`, raw.client_code + '-D', db.now(), clash.id); }
-        if (existing && t.name !== 'users') {
-          const known = seenAt(t.name, existing.id);
-          const untouched = known !== undefined && known === stamp(existing);
-          if (!untouched && toServer(stamp(existing)) > (raw.updated_at || raw.created_at || NEVER)) continue; // our edit is newer; it gets pushed
-          if (!untouched) {
-            // The office edit is newer, so it replaces an edit made here that was never sent. That is the
-            // rule; being silent about it was not. Column names only -- the values may be PHI.
-            const lost = changedColumns(t, existing, raw, existingCols);
-            if (lost.length) {
-              conflicts.push({ table: t.name, id: raw.id, label: t.name === 'clients' ? existing.client_code : null, columns: lost });
-              audit.log({ user: { username: db.getSetting('sync_username', 'device') }, action: 'sync.conflict', entity: t.name, entityId: raw.id, clientId: t.clientCol ? raw[t.clientCol] : null, details: { columns: lost, kept: 'office' } });
-            }
-          }
-        }
-        const o = importRow(t, raw, existingCols); const keys = Object.keys(o).filter(k => k !== 'id');
-        if (existing) db.run(`UPDATE ${t.name} SET ${keys.map(k => `${k}=?`).join(', ')} WHERE id=?`, ...keys.map(k => o[k]), raw.id);
-        else db.run(`INSERT INTO ${t.name}(id,${keys.join(',')}) VALUES(?,${keys.map(() => '?').join(',')})`, raw.id, ...keys.map(k => o[k]));
-        seen(t.name, raw.id, stamp(o));
-        n++;
+        if (!raw || typeof raw.id !== 'string') continue;
+        // One row the device cannot store (a constraint this build does not expect, a reference it lacks) is
+        // that row's problem. Without a savepoint it failed the whole pull, every sync, forever.
+        const stored = db.savepoint(() => applyRow(t, raw, existingCols, toServer, conflicts), (err) => {
+          const reason = String(err && err.message || 'could not be stored').slice(0, 200);
+          skipped.push({ table: t.name, id: raw.id, reason });
+          audit.log({ user: { username: db.getSetting('sync_username', 'device') }, action: 'sync.row_skipped', entity: t.name, entityId: raw.id, success: false, details: { reason } });
+        });
+        if (stored) n++;
       }
       counts[t.name] = (counts[t.name] || 0) + n;
     }
     for (const ts of payload.tombstones || []) {
       const t = SYNC.tables.find(x => x.name === ts.table_name); if (!t) continue;
-      const existing = db.one(`SELECT * FROM ${t.name} WHERE id=?`, ts.id);
-      if (existing) {
-        const known = seenAt(t.name, existing.id);
-        const untouched = known !== undefined && known === stamp(existing);
-        // Only drop a row we have not edited since the office last saw it; a local edit after the delete
-        // is a real conflict and gets pushed instead.
-        if (untouched || toServer(stamp(existing)) < ts.deleted_at) {
-          db.run(`DELETE FROM ${t.name} WHERE id=?`, ts.id);
-          db.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, t.name, ts.id);
-        }
-      }
-      db.run(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, t.name, ts.id, ts.deleted_at);
+      db.savepoint(() => applyTombstone(t, ts, toServer), (err) => skipped.push({ table: t.name, id: ts.id, reason: String(err && err.message || 'could not be deleted').slice(0, 200) }));
     }
     for (const [k, v] of Object.entries(payload.settings || {})) if (v !== null && v !== undefined) db.setSetting(k, v);
   });
   return counts;
 }
 
+/** One office row into the local database. True when it was stored; false when our own edit is newer. */
+function applyRow(t, raw, existingCols, toServer, conflicts) {
+  const existing = db.one(`SELECT * FROM ${t.name} WHERE id=?`, raw.id);
+  if (t.name === 'users' && !existing) {
+    // An account set up on this device under the same username IS this office account. The office row is
+    // inserted first, then everything the local account owns is re-pointed at it and the local row dropped
+    // -- in that order, because with foreign keys enforced nothing may point at a user that is not there yet.
+    const same = db.one(`SELECT id, password_hash FROM users WHERE username=?`, raw.username);
+    if (same && raw.password_hash === DUMMY_HASH && same.password_hash) raw.password_hash = same.password_hash;
+    // usernames are unique, so the local row steps aside for the moment it takes to insert the office one.
+    if (same) db.run(`UPDATE users SET username=? WHERE id=?`, `${raw.username}\u0000merging`, same.id);
+    const o = importRow(t, raw, existingCols); const keys = Object.keys(o).filter(k => k !== 'id');
+    db.run(`INSERT INTO ${t.name}(id,${keys.join(',')}) VALUES(?,${keys.map(() => '?').join(',')})`, raw.id, ...keys.map(k => o[k]));
+    if (same) mergeUser(same.id, raw.id);
+    seen(t.name, raw.id, stamp(o));
+    return true;
+  }
+  // The office sends a placeholder in place of everyone else's password hash. Overwriting a colleague's
+  // real hash with it would lock them out of this shared phone until their own next sync.
+  if (t.name === 'users' && raw.password_hash === DUMMY_HASH && existing && existing.password_hash && existing.password_hash !== DUMMY_HASH) raw.password_hash = existing.password_hash;
+  if (t.name === 'clients') { const clash = db.one(`SELECT id FROM clients WHERE client_code=? AND id<>?`, raw.client_code, raw.id); if (clash) db.run(`UPDATE clients SET client_code=?, updated_at=? WHERE id=?`, raw.client_code + '-D', db.now(), clash.id); }
+  if (existing && t.name !== 'users') {
+    const known = seenAt(t.name, existing.id);
+    const untouched = known !== undefined && known === stamp(existing);
+    if (!untouched && toServer(stamp(existing)) > (raw.updated_at || raw.created_at || NEVER)) return false; // our edit is newer; it gets pushed
+    if (!untouched) {
+      // The office edit is newer, so it replaces an edit made here that was never sent. That is the
+      // rule; being silent about it was not. Column names only -- the values may be PHI.
+      const lost = changedColumns(t, existing, raw, existingCols);
+      if (lost.length) {
+        conflicts.push({ table: t.name, id: raw.id, label: t.name === 'clients' ? existing.client_code : null, columns: lost });
+        audit.log({ user: { username: db.getSetting('sync_username', 'device') }, action: 'sync.conflict', entity: t.name, entityId: raw.id, clientId: t.clientCol ? raw[t.clientCol] : null, details: { columns: lost, kept: 'office' } });
+      }
+    }
+  }
+  const o = importRow(t, raw, existingCols); const keys = Object.keys(o).filter(k => k !== 'id');
+  if (existing) db.run(`UPDATE ${t.name} SET ${keys.map(k => `${k}=?`).join(', ')} WHERE id=?`, ...keys.map(k => o[k]), raw.id);
+  else db.run(`INSERT INTO ${t.name}(id,${keys.join(',')}) VALUES(?,${keys.map(() => '?').join(',')})`, raw.id, ...keys.map(k => o[k]));
+  seen(t.name, raw.id, stamp(o));
+  return true;
+}
+
+/** An office deletion. Recorded locally so the cascade works and it is never re-offered, and remembered as
+ *  the office's own so it is not echoed back (see the tombstone push in run()). */
+function applyTombstone(t, ts, toServer) {
+  const existing = db.one(`SELECT * FROM ${t.name} WHERE id=?`, ts.id);
+  if (existing) {
+    const known = seenAt(t.name, existing.id);
+    const untouched = known !== undefined && known === stamp(existing);
+    // Only drop a row we have not edited since the office last saw it; a local edit after the delete
+    // is a real conflict and gets pushed instead.
+    if (untouched || toServer(stamp(existing)) < ts.deleted_at) {
+      db.run(`DELETE FROM ${t.name} WHERE id=?`, ts.id);
+      db.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, t.name, ts.id);
+    }
+  }
+  db.run(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, t.name, ts.id, ts.deleted_at);
+  db.run(`INSERT OR REPLACE INTO sync_server_tombstones(table_name,id) VALUES(?,?)`, t.name, ts.id);
+}
+
 /** Rows this device has that the office has not seen in their current state. */
 function localRows() {
   const out = [];
   for (const t of SYNC.tables) {
-    if (t.name === 'users') continue;
+    if (t.name === 'users' || t.serverOwned) continue; // the office alone keeps server-owned tables (supply counts)
     const rows = db.all(`SELECT x.* FROM ${t.name} x WHERE NOT EXISTS (SELECT 1 FROM sync_seen s WHERE s.table_name=? AND s.id=x.id AND s.updated_at IS COALESCE(x.updated_at, x.created_at))`, t.name);
     for (const r of rows) { const e = exportRow(t, r); if (e) out.push({ table: t.name, row: e }); }
   }
   return out;
+}
+
+/** This device's own deletions that the office has not been told about. */
+export function pendingTombstones() {
+  const serverOwned = SYNC.tables.filter(t => t.serverOwned).map(t => t.name);
+  return db.all(`SELECT t.table_name, t.id, t.deleted_at FROM tombstones t WHERE t.deleted_at > ?
+    AND NOT EXISTS (SELECT 1 FROM sync_server_tombstones s WHERE s.table_name=t.table_name AND s.id=t.id)
+    ${serverOwned.length ? `AND t.table_name NOT IN (${serverOwned.map(() => '?').join(',')})` : ''}`, db.getSetting('sync_pushed', NEVER), ...serverOwned);
+}
+
+/** Whether the office said this rejection can never succeed on a retry (an older office says nothing; then the reason decides). */
+export const isPermanent = (x) => (x.permanent === true || x.permanent === false) ? x.permanent : SYNC.isPermanentReason(x.reason);
+
+/**
+ * A permanent rejection is the office's ruling: the row is marked as exchanged so it is not sent again every
+ * sync for the rest of the phone's life, and the person is told once, on the sync screen, what did not go.
+ * "purged" is the one that also changes what is on the phone: the office removed that record under its
+ * retention policy, and this device must not be the place it lives on.
+ */
+export function settleRejections(rejections, chunk, conflicts) {
+  for (const x of rejections) {
+    if (!isPermanent(x)) continue;
+    const rows = chunk[x.table] || []; const r = rows.find(y => y.id === x.id); if (!r) continue;
+    const t = SYNC.tables.find(y => y.name === x.table);
+    if (x.reason === 'purged') {
+      db.run(`DELETE FROM ${x.table} WHERE id=?`, x.id);
+      db.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, x.table, x.id);
+    } else {
+      seen(x.table, x.id, stamp(r));
+    }
+    conflicts.push({ table: x.table, id: x.id, label: x.table === 'clients' ? r.client_code : null, columns: [], reason: x.reason });
+    audit.log({ user: { username: db.getSetting('sync_username', 'device') }, action: 'sync.rejected', entity: x.table, entityId: x.id, clientId: x.table === 'clients' ? x.id : (t && t.clientCol ? r[t.clientCol] : null), details: { reason: x.reason, kept: 'office' } });
+  }
 }
 
 /** Split pending rows into payloads under the byte budget, keeping each table's rows in table order. */
@@ -275,9 +363,10 @@ export async function run({ server, username, password, code, onProgress = () =>
     const demo = require('../server/demo.js');
     if (demo.status().loaded) { onProgress('Removing sample data before the first sync…'); demo.remove({ actor: null, tombstones: false }); }
 
-    const pullConflicts = [];
+    const pullConflicts = []; const skipped = [];
     // ---- pull, page by page ----
-    let since = db.getSetting('sync_cursor', NEVER);
+    const officeUserId = (login.user && login.user.id) || username;
+    let since = readCursor(officeUserId, username);
     const applied = {}; let pages = 0; let serverNow = null;
     for (;;) {
       onProgress(pages ? `Downloading changes from the office (page ${pages + 1})…` : 'Downloading changes from the office…');
@@ -288,16 +377,16 @@ export async function run({ server, username, password, code, onProgress = () =>
         onProgress('This device has been offline a long time; rebuilding from the office copy…');
         db.run(`DELETE FROM sync_seen`);
         since = NEVER;
-        db.setSetting('sync_cursor', NEVER);
+        db.run(`DELETE FROM settings WHERE key='sync_cursor' OR key LIKE 'sync_cursor:%'`);
         if (pages > 20) throw new HttpError(409, pulled.reason || 'This device needs to be set up again from the office server');
         pages++;
         continue;
       }
-      const counts = applyPull(pulled, pullConflicts);
+      const counts = applyPull(pulled, pullConflicts, skipped);
       for (const [k, v] of Object.entries(counts)) applied[k] = (applied[k] || 0) + v;
       serverNow = pulled.server_now;
       since = pulled.cursor;
-      db.setSetting('sync_cursor', since);
+      db.setSetting(cursorKey(officeUserId), since);
       pages++;
       if (pulled.complete || pages > 200) break;
     }
@@ -313,24 +402,30 @@ export async function run({ server, username, password, code, onProgress = () =>
       const res = await call(server, '/api/sync/push', { method: 'POST', body: JSON.stringify({ device_now: deviceNow, tables: chunks[i] }) }, token);
       const rejectedIds = new Set((res.rejected || []).map(x => x.table + ':' + x.id));
       rejected.push(...(res.rejected || [])); conflicts.push(...(res.conflicts || []));
+      for (const w of res.warnings || []) conflicts.push({ table: w.table, id: w.id, label: null, columns: [], reason: w.reason, warning: true });
       for (const [k, v] of Object.entries(res.applied || {})) if (typeof v === 'number') pushedCounts[k] = (pushedCounts[k] || 0) + v;
-      // A row counts as exchanged only if the office did not reject it.
+      // A row counts as exchanged only if the office did not reject it -- or if it rejected it for good.
       db.transaction(() => {
         for (const [table, rows] of Object.entries(chunks[i])) for (const r of rows) if (!rejectedIds.has(table + ':' + r.id)) seen(table, r.id, stamp(r));
+        settleRejections(res.rejected || [], chunks[i], conflicts);
       });
     }
 
     // ---- tombstones and this device's audit trail ----
-    const tombstones = db.all(`SELECT table_name, id, deleted_at FROM tombstones WHERE deleted_at > ?`, db.getSetting('sync_pushed', NEVER));
+    // Only our own deletions go up: one the office sent us (sync_server_tombstones) is its record, and
+    // echoing it back shifted by this phone's clock offset rewrote the office's deletion time every sync.
+    const tombstones = pendingTombstones();
     const auditRows = db.all(`SELECT at, action, entity, entity_id, client_id, success, details FROM audit_log WHERE at > ? AND action NOT LIKE 'sync.%' ORDER BY at, id LIMIT 2000`, db.getSetting('audit_pushed', NEVER));
     if (tombstones.length || auditRows.length) {
       const res = await call(server, '/api/sync/push', { method: 'POST', body: JSON.stringify({ device_now: deviceNow, tombstones, audit: auditRows }) }, token);
       const rejectedIds = new Set((res.rejected || []).map(x => x.table + ':' + x.id));
       rejected.push(...(res.rejected || []));
+      const permanent = new Set((res.rejected || []).filter(x => isPermanent(x)).map(x => x.table + ':' + x.id));
       db.transaction(() => {
         // Only forget the tombstones the office actually accepted; a rejected delete stays pending so the
-        // device does not end up silently diverging from the office copy.
-        for (const ts of tombstones) if (!rejectedIds.has(ts.table_name + ':' + ts.id)) db.run(`DELETE FROM tombstones WHERE table_name=? AND id=?`, ts.table_name, ts.id);
+        // device does not end up silently diverging from the office copy -- unless the office has said it
+        // will never take it, in which case the office copy is the truth and the next pull restores it.
+        for (const ts of tombstones) if (!rejectedIds.has(ts.table_name + ':' + ts.id) || permanent.has(ts.table_name + ':' + ts.id)) db.run(`DELETE FROM tombstones WHERE table_name=? AND id=?`, ts.table_name, ts.id);
       });
       db.setSetting('sync_pushed', deviceNow);
       // Advance the audit cursor only past rows that were actually sent, never to "now" — anything above
@@ -345,10 +440,12 @@ export async function run({ server, username, password, code, onProgress = () =>
     const downloaded = await fetchBlobs(server, token, onProgress);
 
     db.setSetting('last_sync_at', db.now()); db.setSetting('sync_server', server); db.setSetting('sync_username', username);
-    audit.log({ user: { username }, action: 'sync.completed', details: { server, pulled: applied, pushed: pushedCounts, rejected: rejected.length, conflicts: conflicts.length, attachments_up: uploaded, attachments_down: downloaded } });
-    return { ok: true, pulled: applied, pushed: pushedCounts, rejected, conflicts, attachments: { uploaded, downloaded }, at: db.now() };
+    audit.log({ user: { username }, action: 'sync.completed', details: { server, pulled: applied, pushed: pushedCounts, rejected: rejected.length, conflicts: conflicts.length, skipped: skipped.length, attachments_up: uploaded, attachments_down: downloaded } });
+    return { ok: true, pulled: applied, pushed: pushedCounts, rejected, conflicts, skipped, attachments: { uploaded, downloaded }, at: db.now() };
   } finally { try { await call(server, '/api/auth/logout', { method: 'POST', body: '{}' }, token); } catch {} }
 }
+
+export { applyPull, localRows, chunkRows };
 
 export function register(router) {
   ensureTables();

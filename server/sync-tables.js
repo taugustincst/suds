@@ -13,26 +13,29 @@
 module.exports = {
   settings_keys: ['org_name', 'county_name', 'program_contact', 'note_lock_days'],
   tables: [
-    { name: 'users', enc: ['mfa_secret_enc'], scope: 'users', cols: null },
+    // supervisor_id points at another user: a supervisor must land before the people who report to them.
+    { name: 'users', enc: ['mfa_secret_enc'], scope: 'users', cols: null, selfParent: 'supervisor_id' },
     { name: 'resources', enc: [], scope: 'all', writePerm: 'resources:write' },
     { name: 'resource_photos', enc: [], scope: 'all', writePerm: 'resources:write', parent: ['resources', 'resource_id'], blob: ['data_b64'] },
     { name: 'policy_documents', enc: [], scope: 'all', writePerm: 'documents:write', blob: ['file_b64'] },
     // Grant structure is budget:manage over REST; a device holding only budget:write must not restructure it by sync.
     { name: 'funding_sources', enc: [], scope: 'all', writePerm: 'budget:manage' },
     { name: 'budget_lines', enc: [], scope: 'all', writePerm: 'budget:manage', parent: ['funding_sources', 'funding_source_id'], selfParent: 'parent_id' },
-    { name: 'clients', enc: ['first_name_enc', 'last_name_enc', 'preferred_name_enc', 'dob_enc', 'phone_enc', 'alt_phone_enc', 'email_enc', 'address_enc', 'medicaid_id_enc', 'emergency_contact_enc', 'goals_enc', 'flags_enc'], scope: 'client', clientCol: 'id', idx: true, writePerm: 'clients:write' },
+    // merged_into points at another client: the record that was kept must land before its duplicate.
+    { name: 'clients', enc: ['first_name_enc', 'last_name_enc', 'preferred_name_enc', 'dob_enc', 'phone_enc', 'alt_phone_enc', 'email_enc', 'address_enc', 'medicaid_id_enc', 'emergency_contact_enc', 'goals_enc', 'flags_enc'], scope: 'client', clientCol: 'id', idx: true, writePerm: 'clients:write', selfParent: 'merged_into' },
     { name: 'assignments', enc: [], scope: 'client', clientCol: 'client_id', writePerm: 'assignments:manage', parent: ['clients', 'client_id'] },
     { name: 'episodes', enc: ['presenting_problem_enc', 'discharge_summary_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'episodes:write', parent: ['clients', 'client_id'] },
     { name: 'interventions', enc: ['summary_enc'], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'interventions:write', parent: ['clients', 'client_id'] },
     { name: 'overdose_events', enc: ['notes_enc', 'substances_enc'], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'overdose:write', parent: ['clients', 'client_id'] },
     { name: 'calls', enc: ['contact_name_enc', 'phone_enc', 'summary_enc', 'purpose_enc'], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'calls:write', parent: ['clients', 'client_id'] },
     { name: 'time_entries', enc: [], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'time:write', parent: ['clients', 'client_id'] },
+    // A referral may cite the consent it was made under, so consents come first.
+    { name: 'consents', enc: ['recipient_enc', 'purpose_enc', 'scope_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
     { name: 'referrals', enc: ['outcome_enc', 'barrier_enc', 'notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'referrals:write', parent: ['clients', 'client_id'] },
     { name: 'tasks', enc: ['title_enc'], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'tasks:write', parent: ['clients', 'client_id'] },
     { name: 'expenditures', enc: [], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'budget:write', parent: ['clients', 'client_id'] },
     { name: 'notes', enc: ['content_enc', 'structured_enc', 'title_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'notes:admin:write', parent: ['clients', 'client_id'] },
     { name: 'note_addenda', enc: ['content_enc'], scope: 'via-note', writePerm: 'notes:admin:write', parent: ['notes', 'note_id'] },
-    { name: 'consents', enc: ['recipient_enc', 'purpose_enc', 'scope_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
     { name: 'disclosures', enc: ['recipient_enc', 'purpose_enc', 'what_enc', 'justification_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
     { name: 'imports', enc: [], scope: 'all', writePerm: 'imports:write' },
     { name: 'import_items', enc: ['content_enc', 'title_enc'], scope: 'all', writePerm: 'imports:write', parent: ['imports', 'import_id'] },
@@ -40,8 +43,20 @@ module.exports = {
     { name: 'client_forms', enc: ['values_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'forms:write', parent: ['clients', 'client_id'] },
     { name: 'client_form_files', enc: ['data_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'forms:write', parent: ['client_forms', 'client_form_id'], blob: ['data_enc'] },
     { name: 'patient_requests', enc: ['notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
-    // Harm-reduction supply counts: shared program state, drawn down by visits on any device.
-    { name: 'supply_stock', enc: [], scope: 'all', writePerm: 'interventions:write' },
+    // Harm-reduction supply counts: shared program state. Pull-only (serverOwned): the office copy is the
+    // one shelf count, drawn down there when a pushed visit lands (server/routes/sync.js calls the same
+    // draw-down the REST route does). A device's absolute count is never accepted — two phones each
+    // subtracting from their own stale copy would otherwise leave whichever synced last as the truth.
+    { name: 'supply_stock', enc: [], scope: 'all', writePerm: 'interventions:write', serverOwned: true },
+  ],
+  // Push rejection reasons that will never succeed on a retry: the office has ruled, and the device must
+  // mark the row as exchanged (office wins) rather than resend it every sync forever. Anything else
+  // (network, a 5xx, an unknown SQL error) is transient and is retried. Reasons are matched as prefixes.
+  permanent_reasons: [
+    'immutable', 'purged', 'merged into another record', 'conflicts with an existing record', 'not on caseload',
+    'not permitted', 'server-owned', 'your role cannot', 'clinical notes not permitted', 'you do not have permission',
+    'is missing a required field', 'refers to a record the office server does not have', 'attributed to',
+    'would create a cycle', 'parent allocation does not belong', 'its ', 'has a value the office does not accept',
   ],
   // Server-side only, never synchronised: breakglass_events is the office supervisor's review queue for
   // emergency access, and a device has no supervisor to review it.
@@ -111,5 +126,7 @@ function importRow(t, r, existingCols) {
   return o;
 }
 
+/** Whether a push rejection reason is one a retry can never fix (see permanent_reasons). */
+module.exports.isPermanentReason = (reason) => module.exports.permanent_reasons.some(p => String(reason || '').startsWith(p));
 module.exports.exportRow = exportRow;
 module.exports.importRow = importRow;
