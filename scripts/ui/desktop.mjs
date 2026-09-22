@@ -72,7 +72,7 @@ await page.fill('textarea', '# Field visit with Nguyen, Jamie\nDate: 2026-09-10\
 await page.click('text=Stage pasted text'); await page.waitForTimeout(800); await shot('import_review');
 ok(await until(() => /#\/imports\/.+/.test(page.url())), 'pasted field notes are staged and opened for review', page.url());
 // episodes: no episode yet means one "Start an episode" button, not two adjacent ones
-const freshClientId = await page.evaluate(() => fetch('/api/clients', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'suds' }, credentials: 'same-origin', body: JSON.stringify({ first_name: 'Episode', last_name: 'Fresh', status: 'active', risk_level: 'moderate' }) }).then(r => r.json()).then(j => j.id));
+const freshClientId = await page.evaluate(() => fetch('/api/clients', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'suds' }, credentials: 'same-origin', body: JSON.stringify({ first_name: 'Episode', last_name: 'Fresh', status: 'active', risk_level: 'moderate', no_episode: true }) }).then(r => r.json()).then(j => j.id));
 ok(!!freshClientId, 'a fresh client for the episodes check was created', freshClientId);
 await page.goto(`${base}/#/client/${freshClientId}/episodes`);
 await page.waitForSelector('button:has-text("Start an episode")', { timeout: 10000 }).catch(() => {});

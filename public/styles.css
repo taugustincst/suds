@@ -1,20 +1,20 @@
 :root {
   --bg: #f4f6f9; --panel: #ffffff; --panel-2: #f8fafc; --border: #dde3ea; --text: #1c2430; --muted: #5d6b7c;
   --primary: #1f5f8b; --primary-2: #17496b; --primary-soft: #e3eef7; --accent: #2a9d8f; --danger: #c0392b; --danger-soft: #fdecea;
-  --warn: #b7791f; --warn-soft: #fff5e0; --ok: #2f855a; --ok-soft: #e6f4ec; --info-soft: #e8f1fb; --purple: #6b46c1; --purple-soft: #efe9fb;
+  --warn: #8a5a12; --warn-soft: #fff5e0; --ok: #2f855a; --ok-soft: #e6f4ec; --info-soft: #e8f1fb; --purple: #6b46c1; --purple-soft: #efe9fb;
   --radius: 10px; --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.1);
   --sidebar-w: 236px; --font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #0f151c; --panel: #161e27; --panel-2: #1b2531; --border: #2a3644; --text: #e6edf3; --muted: #97a6b6;
   --primary: #4f9bd9; --primary-2: #7ab6e6; --primary-soft: #1a2c3d; --accent: #4fc3b3; --danger: #ef6a5a; --danger-soft: #3a1f1c;
-  --warn: #e0a942; --warn-soft: #3a2f16; --ok: #5cc48a; --ok-soft: #173325; --info-soft: #17283a; --purple: #a78bfa; --purple-soft: #2a2140;
+  --warn: #e8b24f; --warn-soft: #3a2f16; --ok: #5cc48a; --ok-soft: #173325; --info-soft: #17283a; --purple: #a78bfa; --purple-soft: #2a2140;
   --shadow: 0 1px 2px rgba(0,0,0,.4);
 } }
 :root[data-theme="dark"] {
   --bg: #0f151c; --panel: #161e27; --panel-2: #1b2531; --border: #2a3644; --text: #e6edf3; --muted: #97a6b6;
   --primary: #4f9bd9; --primary-2: #7ab6e6; --primary-soft: #1a2c3d; --accent: #4fc3b3; --danger: #ef6a5a; --danger-soft: #3a1f1c;
-  --warn: #e0a942; --warn-soft: #3a2f16; --ok: #5cc48a; --ok-soft: #173325; --info-soft: #17283a; --purple: #a78bfa; --purple-soft: #2a2140;
+  --warn: #e8b24f; --warn-soft: #3a2f16; --ok: #5cc48a; --ok-soft: #173325; --info-soft: #17283a; --purple: #a78bfa; --purple-soft: #2a2140;
   --shadow: 0 1px 2px rgba(0,0,0,.4);
 }
 * { box-sizing: border-box; }
@@ -120,7 +120,7 @@ fieldset { border: 1px solid var(--border); border-radius: 8px; padding: .6rem .
 pre.note { white-space: pre-wrap; font-family: var(--font); background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: .8rem; max-height: 50vh; overflow: auto; }
 .dropzone { border: 2px dashed var(--border); border-radius: 10px; padding: 1.5rem; text-align: center; color: var(--muted); cursor: pointer; } .dropzone.over { border-color: var(--primary); background: var(--primary-soft); }
 .list-item { padding: .6rem 0; border-bottom: 1px solid var(--border); } .list-item:last-child { border-bottom: 0; }
-.idle-warn { position: fixed; top: 0; left: 0; right: 0; background: var(--warn); color: #000; text-align: center; padding: .4rem; z-index: 200; font-weight: 600; }
+.idle-warn { position: fixed; top: 0; left: 0; right: 0; background: var(--warn); color: #fff; text-align: center; padding: .4rem; z-index: 200; font-weight: 600; }
 .qr { font-family: var(--mono); font-size: .8em; word-break: break-all; background: var(--panel-2); padding: .5rem; border-radius: 6px; }
 @media print { .sidebar, .topbar, .btn, .tabs { display: none !important; } .layout { display: block; } .card { box-shadow: none; } }
 .row > select, .row > input:not([type="checkbox"]) { width: auto; }
@@ -172,11 +172,15 @@ details.section { border: 1px solid var(--border); border-radius: 8px; padding: 
 .autosave { font-size: .8rem; color: var(--muted); }
 @media (max-width: 900px) {
   .appbar { padding: .5rem .75rem 0; } .appbar .btn.quick { display: none; }
-  .fab { display: block; position: fixed; right: 1rem; bottom: calc(1rem + env(safe-area-inset-bottom)); z-index: 45; } .fab .btn { box-shadow: 0 6px 20px rgba(0,0,0,.3); font-size: 1.1rem; padding: .8rem 1.3rem; }
-  /* Room to scroll the last row out from under the floating + Log button. */
-  .main { padding-bottom: calc(5rem + env(safe-area-inset-bottom)); }
+  .fab { display: block; position: fixed; right: 1rem; bottom: calc(1.25rem + env(safe-area-inset-bottom)); z-index: 45; } .fab .btn { box-shadow: 0 6px 20px rgba(0,0,0,.3); font-size: 1.1rem; padding: .8rem 1.3rem; }
+  /* Out of the way while the menu drawer or a dialog is up: it was floating over both. */
+  body.nav-open .fab, body:has(.modal-bg) .fab { display: none; }
+  /* Room to scroll the last card ("Continue where you left off") out from under the floating + Log button. */
+  .main { padding-bottom: calc(7.5rem + env(safe-area-inset-bottom)); }
+  /* Toasts stack above the button rather than underneath it. */
+  .toasts { bottom: calc(5.75rem + env(safe-area-inset-bottom)); }
   /* Checkboxes in lists are tapped one-handed between visits; 13px is a mis-tap waiting to happen. */
-  table input[type="checkbox"], .check input[type="checkbox"] { width: 24px; height: 24px; margin: 0 .4rem 0 0; accent-color: var(--primary); }
+  table input[type="checkbox"], .check input[type="checkbox"], .compact-row input[type="checkbox"] { width: 24px; height: 24px; margin: 0 .4rem 0 0; accent-color: var(--primary); flex: 0 0 auto; }
   table td:has(> input[type="checkbox"]:only-child) { padding: .5rem .35rem; }
   /* The tab strip scrolls sideways; fade the right edge so the tabs off-screen are not a secret. */
   .tabs { position: relative; scrollbar-width: none; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent); scroll-snap-type: x proximity; }
@@ -190,6 +194,48 @@ details.section { border: 1px solid var(--border); border-radius: 8px; padding: 
 }
 .modal .card-head { flex-wrap: nowrap; align-items: flex-start; } .modal .card-head h2 { margin-bottom: 0; }
 .quick-list .btn { width: 100%; white-space: normal; text-align: left; }
+
+/* ---------- navigator fixes: tap targets, compact lists, tab overflow, due bell, contact links ---------- */
+/* Fingers, not pointers: every small control is at least 44px on a touch screen. */
+@media (pointer: coarse) {
+  .btn.sm, .help-btn, .filters .btn, .tabs button, .tabs-more, .sidebar .foot a, .mobilebar .btn, .card-head a, .today-item a, a.chip, button.chip, .bell { min-height: 44px; }
+  .btn.sm, .help-btn, .mobilebar .btn, .bell { min-width: 44px; }
+  .sidebar .foot a, .card-head a, .today-item a { display: inline-flex; align-items: center; padding: 0 .35rem; }
+  .help-btn { width: 44px; height: 44px; font-size: 1rem; }
+  .nav a { min-height: 44px; }
+  .badge a, .contact a, a.tel, a.sms, a.maplink { display: inline-flex; align-items: center; min-height: 44px; padding: 0 .25rem; }
+}
+a.tel { font-variant-numeric: tabular-nums; } a.sms { font-weight: 600; }
+.contact { display: inline-flex; align-items: center; gap: .15rem; flex-wrap: wrap; }
+/* Two-line rows for a phone; the full table stays for a desk. */
+.compact-list { display: none; }
+.compact-row { padding: .6rem .25rem; border-bottom: 1px solid var(--border); }
+.compact-row:last-child { border-bottom: 0; } .compact-row.click { cursor: pointer; } .compact-row.click:hover, .compact-row.click:focus-visible { background: var(--panel-2); }
+.compact-row .primary { display: flex; align-items: center; justify-content: space-between; gap: .5rem; font-weight: 600; }
+.compact-row .primary > :first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.compact-row .secondary { margin-top: .15rem; display: flex; gap: .5rem; flex-wrap: wrap; }
+@media (max-width: 640px) {
+  .table-wrap.has-compact table { display: none; }
+  .table-wrap.has-compact .compact-list { display: block; }
+}
+/* Tab strip with a "More" menu for what does not fit. */
+.tabs.managed { overflow: visible; flex-wrap: nowrap; -webkit-mask-image: none; mask-image: none; position: relative; }
+.tabs-more-wrap { position: relative; margin-left: auto; flex: 0 0 auto; }
+.tabs-more { background: none; border: none; border-bottom: 2px solid transparent; padding: .55rem .8rem; cursor: pointer; color: var(--primary); font: inherit; font-weight: 600; white-space: nowrap; }
+.tabs-menu { position: absolute; right: 0; top: 100%; z-index: 30; min-width: 200px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.2); padding: .3rem; display: flex; flex-direction: column; }
+.tabs-menu button { text-align: left; background: none; border: 0; padding: .6rem .8rem; font: inherit; color: var(--text); cursor: pointer; border-radius: 6px; white-space: nowrap; }
+.tabs-menu button:hover, .tabs-menu button:focus-visible { background: var(--panel-2); } .tabs-menu button.active { color: var(--primary); font-weight: 600; }
+/* The reminders bell in the header. */
+.bell { position: relative; font-size: 1.1rem; text-decoration: none; }
+.bell-count { position: absolute; top: -.2rem; right: -.2rem; min-width: 1.2rem; height: 1.2rem; padding: 0 .3rem; border-radius: 999px; background: var(--danger); color: #fff; font-size: .7rem; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+.bell.has-due { color: var(--danger); }
+/* A safety plan on file is a chip, not a badge: it opens the plan. */
+button.chip { border: 0; cursor: pointer; font: inherit; }
+button.chip:hover { background: var(--primary); color: #fff; }
+/* Offline: the whole shell says so, and the top banner is the loud version. */
+html.offline .appbar, html.offline .mobilebar { filter: grayscale(.4); }
+.hand-off { border-left: 3px solid var(--warn); padding-left: .6rem; margin-bottom: .6rem; }
+.hand-off .excerpt { white-space: pre-wrap; }
 
 /* ---- resource directory & treatment center profiles ---- */
 .thumb { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; display: block; background: var(--panel-2); }

@@ -1,4 +1,4 @@
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, confirmDialog, nav, kv, prefs, emptyState, clear, downloadCsv, img, setImage } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, confirmDialog, nav, kv, prefs, emptyState, clear, downloadCsv, img, setImage, contactLinks, mapLink } from '../app.js';
 
 const tagOpts = (list) => list.map(t => ({ value: t, label: fmt.label(t) }));
 // Comma-separated tag fields are edited as a checkbox grid
@@ -115,7 +115,7 @@ route('resources', async (r) => {
     { label: '', render: x => thumb(x) },
     { label: 'Resource', render: x => h('div', {}, h('b', {}, x.name), x.organization ? h('div', { class: 'small muted' }, x.organization) : null) }, { label: 'Category', render: x => fmt.label(x.category) },
     { label: 'Services', render: x => h('div', { class: 'small' }, tagBadges(String(x.service_tags || '').split(',').slice(0, 4).join(','), 'purple')) },
-    { label: 'Contact', render: x => h('div', { class: 'small' }, x.phone ? h('div', {}, '☎ ', x.phone) : null, x.city ? h('div', { class: 'muted' }, x.city) : null, x.website ? h('a', { href: siteHref(x.website), target: '_blank', rel: 'noopener', onClick: e => e.stopPropagation() }, 'website') : null) },
+    { label: 'Contact', render: x => h('div', { class: 'small' }, x.phone ? h('div', {}, '☎ ', contactLinks(x.phone)) : null, x.city ? h('div', { class: 'muted' }, x.city) : null, x.website ? h('a', { href: siteHref(x.website), target: '_blank', rel: 'noopener', onClick: e => e.stopPropagation() }, 'website') : null) },
     { label: 'Accepts', render: x => [x.accepts_medicaid ? badge('Medicaid', 'ok') : null, ' ', x.accepts_uninsured ? badge('Uninsured', 'info') : null, x.mat_offered ? [' ', badge('MAT', 'purple')] : null] },
     { label: 'Referrals', key: 'referral_count', num: true }, { label: 'Verified', render: x => h('span', { style: stale(x) ? { color: 'var(--warn)' } : {} }, x.last_verified_at ? fmt.date(x.last_verified_at) : 'never') }, { label: '', render: x => x.is_active ? null : badge('Inactive', 'warn') },
   ], rows, { onRow: x => nav(`resource/${x.id}`), empty: 'No resources yet. Add treatment providers, MAT clinics, shelters, and other referral partners.' });
@@ -180,8 +180,8 @@ route('resource', async (r) => {
     h('div', {}, h('div', { class: 'row mb', style: { gap: '.35rem' } }, badge(fmt.label(x.category), 'info'), x.is_active ? null : badge('Inactive', 'warn'), x.accepts_medicaid ? badge('Medicaid', 'ok') : null, x.accepts_uninsured ? badge('Uninsured OK', 'info') : null, x.mat_offered ? badge(`MAT: ${x.mat_offered}`, 'purple') : null, stale(x) ? badge(x.last_verified_at ? `verified ${fmt.date(x.last_verified_at)}` : 'never verified', 'warn') : badge(`verified ${fmt.date(x.last_verified_at)}`, 'ok')),
       x.organization ? h('div', { class: 'muted' }, x.organization) : null,
       x.summary ? h('p', { class: 'res-lead' }, x.summary) : h('p', { class: 'muted small' }, can('resources:write') ? 'No summary yet. Click Edit to describe what this program offers.' : 'No summary yet.')));
-  const contact = kv([['Phone', x.phone ? h('a', { href: `tel:${x.phone}` }, x.phone) : null], ['Fax', x.fax], ['Email', x.email ? h('a', { href: `mailto:${x.email}` }, x.email) : null], ['Website', x.website ? h('a', { href: siteHref(x.website), target: '_blank', rel: 'noopener' }, x.website) : null], ['Contact', x.contact_person],
-    ['Address', [x.address, x.city, x.zip].filter(Boolean).join(', ') || null], ['Hours', x.hours], ['Languages', x.languages]]);
+  const contact = kv([['Phone', contactLinks(x.phone)], ['Fax', x.fax], ['Email', x.email ? h('a', { href: `mailto:${x.email}` }, x.email) : null], ['Website', x.website ? h('a', { href: siteHref(x.website), target: '_blank', rel: 'noopener' }, x.website) : null], ['Contact', x.contact_person],
+    ['Address', mapLink([x.address, x.city, x.zip].filter(Boolean).join(', ') || null)], ['Hours', x.hours], ['Languages', x.languages]]);
   const services = h('div', {},
     x.service_tags ? h('div', { class: 'mb' }, tagBadges(x.service_tags, 'purple')) : null,
     kv([['Levels of care', x.levels_of_care], ['MAT / medications', x.mat_offered], ['Populations served', x.populations ? String(x.populations).split(',').map(fmt.label).join(', ') : null], ['Services (details)', x.services], ['Eligibility', x.eligibility], ['How to refer', x.intake_process], ['Cost / payment', x.cost_notes], ['Capacity / waitlist', x.capacity_notes]].filter(([, v]) => v)),

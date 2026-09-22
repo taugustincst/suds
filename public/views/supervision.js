@@ -44,11 +44,11 @@ route('supervision', async () => {
     cosignRows.length ? table([
       { label: 'Client', key: 'client_code' },
       { label: 'Author', key: 'author' },
-      { label: 'Note', render: r => r.title || fmt.label(r.kind) },
+      { label: 'Note', render: r => [r.title || fmt.label(r.kind), r.cosign_requested ? [' ', badge('Review requested by author', 'warn')] : null] },
       { label: 'Signed', render: r => fmt.dt(r.signed_at) },
       { label: '', render: r => h('button', { class: 'btn sm primary', onClick: (e) => { e.stopPropagation(); cosign(r); } }, 'Countersign') },
     ], cosignRows, { onRow: (r) => nav(`notes/${r.id}`), rowLabel: (r) => `Note by ${r.author} for ${r.client_code}` })
-      : emptyState('Nothing to countersign', 'Notes by staff who need supervision appear here once they have signed them.')));
+      : emptyState('Nothing to countersign', 'Notes by staff who need supervision appear here once they have signed them — and any note a worker sends you for review.')));
 
   // ---- unsigned drafts across the team ----
   const drafts = q.unsigned_notes || [];

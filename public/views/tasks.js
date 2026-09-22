@@ -61,11 +61,21 @@ export function taskTable(rows, { showClient = true, onChange, bulk = false } = 
     }) : null },
     canBulk ? { label: '', render: t => { if (t.status === 'done') return null; const box = h('input', { type: 'checkbox', 'aria-label': `Select "${t.title}"`, onChange: (e) => { if (e.target.checked) selected.add(t.id); else selected.delete(t.id); updateCount(); } }); boxes.set(t.id, box); return box; } } : null,
     { label: 'Task', render: t => h('div', {}, h('span', { style: t.status === 'done' ? { textDecoration: 'line-through', color: 'var(--muted)' } : {} }, t.is_milestone ? '★ ' : '', t.title), t.description ? h('div', { class: 'small muted' }, t.description.slice(0, 120)) : null) },
-    showClient ? { label: 'Client', render: t => t.client_id ? h('a', { href: `#/client/${t.client_id}` }, t.client_code) : '—' } : null,
+    showClient ? { label: 'Client', render: t => t.client_id ? h('a', { href: `#/client/${t.client_id}` }, t.client_name || t.client_code, t.client_name ? h('div', { class: 'muted small mono' }, t.client_code) : null) : '—' } : null,
     { label: 'Due', render: t => h('span', { style: overdue(t) ? { color: 'var(--danger)', fontWeight: 600 } : {} }, t.due_at ? fmt.dt(t.due_at) : '—') },
     { label: 'Priority', render: t => badge(fmt.label(t.priority), statusKind(t.priority)) }, { label: 'Status', render: t => badge(fmt.label(t.status), statusKind(t.status)) }, { label: 'Assignee', key: 'assignee' },
     { label: '', render: t => can('tasks:write') ? h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm', onClick: () => openTaskForm(t, { onDone: onChange }) }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this task', onClick: async () => { if (await confirmDialog('Delete task', 'Delete this task?', { danger: true, okText: 'Delete' })) { await del(`/api/tasks/${t.id}`); onChange && onChange(); } } }, '✕')) : null },
-  ].filter(Boolean), rows, { empty: 'Nothing here. Reminders you add, and follow-ups from visits and calls, will show up in this list.' });
+  ].filter(Boolean), rows, { empty: 'Nothing here. Reminders you add, and follow-ups from visits and calls, will show up in this list.',
+    rowLabel: t => t.title,
+    // The done box stays on the phone row: a to-do list you cannot tick off one-handed is not a to-do list.
+    compact: { primary: t => [h('span', { class: 'row nowrap', style: { gap: '.4rem', minWidth: 0 } }, can('tasks:write') ? h('input', { type: 'checkbox', checked: t.status === 'done', 'aria-label': `Mark "${t.title}" ${t.status === 'done' ? 'not done' : 'done'}`, onClick: (e) => e.stopPropagation(), onChange: async (e) => {
+        const wanted = e.target.checked; e.target.disabled = true;
+        try { await put(`/api/tasks/${t.id}`, { status: wanted ? 'done' : 'open' }); toast(wanted ? 'Marked done' : 'Reopened', 'ok'); onChange && onChange(); }
+        catch (err) { e.target.checked = !wanted; toast(err.message || 'Could not update this to-do. Check your connection and try again.', 'error'); }
+        finally { e.target.disabled = false; }
+      } }) : null, h('span', { style: t.status === 'done' ? { textDecoration: 'line-through', color: 'var(--muted)' } : {} }, t.is_milestone ? '★ ' : '', t.title)), badge(fmt.label(t.priority), statusKind(t.priority))],
+      secondary: t => [showClient && t.client_id ? h('span', {}, t.client_name || t.client_code) : null, h('span', { style: overdue(t) ? { color: 'var(--danger)', fontWeight: 600 } : {} }, t.due_at ? (overdue(t) ? 'overdue · ' : 'due ') + fmt.dt(t.due_at) : 'no due date'), t.status === 'done' ? badge('Done', 'ok') : null],
+      onTap: t => can('tasks:write') ? openTaskForm(t, { onDone: onChange }) : null } });
   return toolbar ? h('div', {}, toolbar, tbl) : tbl;
 }
 route('tasks', async (r) => {

@@ -37,9 +37,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// node_modules/base64-js/index.js
+// ../../../node_modules/base64-js/index.js
 var require_base64_js = __commonJS({
-  "node_modules/base64-js/index.js"(exports) {
+  "../../../node_modules/base64-js/index.js"(exports) {
     "use strict";
     init_globals_inject();
     exports.byteLength = byteLength;
@@ -139,9 +139,9 @@ var require_base64_js = __commonJS({
   }
 });
 
-// node_modules/ieee754/index.js
+// ../../../node_modules/ieee754/index.js
 var require_ieee754 = __commonJS({
-  "node_modules/ieee754/index.js"(exports) {
+  "../../../node_modules/ieee754/index.js"(exports) {
     init_globals_inject();
     exports.read = function(buffer, offset, isLE3, mLen, nBytes) {
       var e, m;
@@ -223,9 +223,9 @@ var require_ieee754 = __commonJS({
   }
 });
 
-// node_modules/buffer/index.js
+// ../../../node_modules/buffer/index.js
 var require_buffer = __commonJS({
-  "node_modules/buffer/index.js"(exports) {
+  "../../../node_modules/buffer/index.js"(exports) {
     "use strict";
     init_globals_inject();
     var base64 = require_base64_js();
@@ -1900,7 +1900,7 @@ var init_path = __esm({
   }
 });
 
-// node_modules/@noble/ciphers/esm/_assert.js
+// ../../../node_modules/@noble/ciphers/esm/_assert.js
 function isBytes(a) {
   return a instanceof Uint8Array || a != null && typeof a === "object" && a.constructor.name === "Uint8Array";
 }
@@ -1924,12 +1924,12 @@ function output(out2, instance) {
   }
 }
 var init_assert = __esm({
-  "node_modules/@noble/ciphers/esm/_assert.js"() {
+  "../../../node_modules/@noble/ciphers/esm/_assert.js"() {
     init_globals_inject();
   }
 });
 
-// node_modules/@noble/ciphers/esm/utils.js
+// ../../../node_modules/@noble/ciphers/esm/utils.js
 function utf8ToBytes(str) {
   if (typeof str !== "string")
     throw new Error(`string expected, got ${typeof str}`);
@@ -1992,7 +1992,7 @@ function clean(...arrays) {
 }
 var u8, u32, createView, isLE, wrapCipher;
 var init_utils = __esm({
-  "node_modules/@noble/ciphers/esm/utils.js"() {
+  "../../../node_modules/@noble/ciphers/esm/utils.js"() {
     init_globals_inject();
     init_assert();
     u8 = (arr) => new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
@@ -2008,7 +2008,7 @@ var init_utils = __esm({
   }
 });
 
-// node_modules/@noble/ciphers/esm/_polyval.js
+// ../../../node_modules/@noble/ciphers/esm/_polyval.js
 function _toGHASHKey(k) {
   k.reverse();
   const hiBit = k[15] & 1;
@@ -2031,7 +2031,7 @@ function wrapConstructorWithKey(hashCons) {
 }
 var BLOCK_SIZE, ZEROS16, ZEROS32, POLY, mul2, swapLE, estimateWindow, GHASH, Polyval, ghash, polyval;
 var init_polyval = __esm({
-  "node_modules/@noble/ciphers/esm/_polyval.js"() {
+  "../../../node_modules/@noble/ciphers/esm/_polyval.js"() {
     init_globals_inject();
     init_assert();
     init_utils();
@@ -2206,7 +2206,7 @@ var init_polyval = __esm({
   }
 });
 
-// node_modules/@noble/ciphers/esm/aes.js
+// ../../../node_modules/@noble/ciphers/esm/aes.js
 function mul22(n) {
   return n << 1 ^ POLY2 & -(n >> 7);
 }
@@ -2486,7 +2486,7 @@ function decryptBlock(xk, block) {
 }
 var BLOCK_SIZE2, BLOCK_SIZE32, EMPTY_BLOCK, POLY2, sbox, invSbox, rotr32_8, rotl32_8, byteSwap, tableEncoding, tableDecoding, xPowers, ctr, ecb, cbc, cfb, gcm, limit, siv, AESW, AESKW_IV, aeskw, AESKWP_IV, aeskwp;
 var init_aes = __esm({
-  "node_modules/@noble/ciphers/esm/aes.js"() {
+  "../../../node_modules/@noble/ciphers/esm/aes.js"() {
     init_globals_inject();
     init_assert();
     init_polyval();
@@ -2959,7 +2959,7 @@ var init_aes = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/_assert.js
+// ../../../node_modules/@noble/hashes/esm/_assert.js
 function number(n) {
   if (!Number.isSafeInteger(n) || n < 0)
     throw new Error(`positive integer expected, not ${n}`);
@@ -2993,21 +2993,21 @@ function output2(out2, instance) {
   }
 }
 var init_assert2 = __esm({
-  "node_modules/@noble/hashes/esm/_assert.js"() {
+  "../../../node_modules/@noble/hashes/esm/_assert.js"() {
     init_globals_inject();
   }
 });
 
-// node_modules/@noble/hashes/esm/crypto.js
+// ../../../node_modules/@noble/hashes/esm/crypto.js
 var crypto2;
 var init_crypto = __esm({
-  "node_modules/@noble/hashes/esm/crypto.js"() {
+  "../../../node_modules/@noble/hashes/esm/crypto.js"() {
     init_globals_inject();
     crypto2 = typeof globalThis === "object" && "crypto" in globalThis ? globalThis.crypto : void 0;
   }
 });
 
-// node_modules/@noble/hashes/esm/utils.js
+// ../../../node_modules/@noble/hashes/esm/utils.js
 function byteSwap32(arr) {
   for (let i = 0; i < arr.length; i++) {
     arr[i] = byteSwap2(arr[i]);
@@ -3049,7 +3049,7 @@ function randomBytes(bytesLength = 32) {
 }
 var u322, createView2, rotr, rotl, isLE2, byteSwap2, Hash, toStr;
 var init_utils2 = __esm({
-  "node_modules/@noble/hashes/esm/utils.js"() {
+  "../../../node_modules/@noble/hashes/esm/utils.js"() {
     init_globals_inject();
     init_crypto();
     init_assert2();
@@ -3069,7 +3069,7 @@ var init_utils2 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/_md.js
+// ../../../node_modules/@noble/hashes/esm/_md.js
 function setBigUint642(view, byteOffset, value, isLE3) {
   if (typeof view.setBigUint64 === "function")
     return view.setBigUint64(byteOffset, value, isLE3);
@@ -3084,7 +3084,7 @@ function setBigUint642(view, byteOffset, value, isLE3) {
 }
 var Chi, Maj, HashMD;
 var init_md = __esm({
-  "node_modules/@noble/hashes/esm/_md.js"() {
+  "../../../node_modules/@noble/hashes/esm/_md.js"() {
     init_globals_inject();
     init_assert2();
     init_utils2();
@@ -3179,10 +3179,10 @@ var init_md = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/sha256.js
+// ../../../node_modules/@noble/hashes/esm/sha256.js
 var SHA256_K, SHA256_IV, SHA256_W, SHA256, sha256;
 var init_sha256 = __esm({
-  "node_modules/@noble/hashes/esm/sha256.js"() {
+  "../../../node_modules/@noble/hashes/esm/sha256.js"() {
     init_globals_inject();
     init_md();
     init_utils2();
@@ -3337,10 +3337,10 @@ var init_sha256 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/sha1.js
+// ../../../node_modules/@noble/hashes/esm/sha1.js
 var SHA1_IV, SHA1_W, SHA1, sha1;
 var init_sha1 = __esm({
-  "node_modules/@noble/hashes/esm/sha1.js"() {
+  "../../../node_modules/@noble/hashes/esm/sha1.js"() {
     init_globals_inject();
     init_md();
     init_utils2();
@@ -3419,10 +3419,10 @@ var init_sha1 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/hmac.js
+// ../../../node_modules/@noble/hashes/esm/hmac.js
 var HMAC, hmac;
 var init_hmac = __esm({
-  "node_modules/@noble/hashes/esm/hmac.js"() {
+  "../../../node_modules/@noble/hashes/esm/hmac.js"() {
     init_globals_inject();
     init_assert2();
     init_utils2();
@@ -3492,7 +3492,7 @@ var init_hmac = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/pbkdf2.js
+// ../../../node_modules/@noble/hashes/esm/pbkdf2.js
 function pbkdf2Init(hash2, _password, _salt, _opts) {
   hash(hash2);
   const opts = checkOpts({ dkLen: 32, asyncTick: 10 }, _opts);
@@ -3537,7 +3537,7 @@ function pbkdf2(hash2, password, salt, opts) {
   return pbkdf2Output(PRF, PRFSalt, DK, prfW, u);
 }
 var init_pbkdf2 = __esm({
-  "node_modules/@noble/hashes/esm/pbkdf2.js"() {
+  "../../../node_modules/@noble/hashes/esm/pbkdf2.js"() {
     init_globals_inject();
     init_assert2();
     init_hmac();
@@ -3545,7 +3545,7 @@ var init_pbkdf2 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/scrypt.js
+// ../../../node_modules/@noble/hashes/esm/scrypt.js
 function XorAndSalsa(prev, pi, input, ii, out2, oi) {
   let y00 = prev[pi++] ^ input[ii++], y01 = prev[pi++] ^ input[ii++];
   let y02 = prev[pi++] ^ input[ii++], y03 = prev[pi++] ^ input[ii++];
@@ -3701,7 +3701,7 @@ function scrypt(password, salt, opts) {
   return scryptOutput(password, dkLen, B2, V, tmp);
 }
 var init_scrypt = __esm({
-  "node_modules/@noble/hashes/esm/scrypt.js"() {
+  "../../../node_modules/@noble/hashes/esm/scrypt.js"() {
     init_globals_inject();
     init_assert2();
     init_sha256();
@@ -3846,9 +3846,9 @@ var init_crypto2 = __esm({
   }
 });
 
-// node_modules/sql.js/dist/sql-wasm.js
+// ../../../node_modules/sql.js/dist/sql-wasm.js
 var require_sql_wasm = __commonJS({
-  "node_modules/sql.js/dist/sql-wasm.js"(exports, module) {
+  "../../../node_modules/sql.js/dist/sql-wasm.js"(exports, module) {
     init_globals_inject();
     var initSqlJsPromise = void 0;
     var initSqlJs = function(moduleConfig) {
@@ -6307,6 +6307,7 @@ CREATE TABLE IF NOT EXISTS clients (
   first_name_idx TEXT,
   first_name_prefix_idx TEXT,
   preferred_name_enc TEXT,
+  preferred_name_idx TEXT,             -- blind index of the preferred name / alias, so "Jay" finds Jamie
   dob_enc TEXT,
   dob_idx TEXT,
   phone_enc TEXT,
@@ -6663,6 +6664,9 @@ CREATE TABLE IF NOT EXISTS notes (
   cosigned_at TEXT,
   cosignature_hash TEXT,
   cosign_note TEXT,
+  -- The author asked a supervisor to review/co-sign this note (a navigator flagging a difficult contact),
+  -- separate from cosign_required, which the account's supervision setting imposes on every note.
+  cosign_requested INTEGER NOT NULL DEFAULT 0,
   source TEXT NOT NULL DEFAULT 'manual',
   source_ref TEXT,
   import_item_id TEXT,
@@ -6842,6 +6846,7 @@ CREATE INDEX IF NOT EXISTS idx_clients_name_prefix ON clients(name_prefix_idx);
 CREATE INDEX IF NOT EXISTS idx_clients_name_phonetic ON clients(name_phonetic_idx);
 CREATE INDEX IF NOT EXISTS idx_clients_first_name ON clients(first_name_idx);
 CREATE INDEX IF NOT EXISTS idx_clients_first_name_prefix ON clients(first_name_prefix_idx);
+CREATE INDEX IF NOT EXISTS idx_clients_preferred_name ON clients(preferred_name_idx);
 CREATE INDEX IF NOT EXISTS idx_resources_updated ON resources(updated_at);
 CREATE INDEX IF NOT EXISTS idx_resource_photos_updated ON resource_photos(updated_at);
 CREATE INDEX IF NOT EXISTS idx_funding_sources_updated ON funding_sources(updated_at);
@@ -6902,6 +6907,18 @@ CREATE TABLE IF NOT EXISTS overdose_events (
 CREATE INDEX IF NOT EXISTS idx_overdose_client ON overdose_events(client_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_overdose_occurred ON overdose_events(occurred_at);
 CREATE INDEX IF NOT EXISTS idx_overdose_updated ON overdose_events(updated_at);
+
+-- Harm-reduction supply inventory (naloxone kits, test strips\u2026). A visit that records kits or strips
+-- handed out decrements the matching item, so the count on hand is what is actually left in the cupboard.
+CREATE TABLE IF NOT EXISTS supply_stock (
+  id TEXT PRIMARY KEY,
+  item TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  quantity INTEGER NOT NULL DEFAULT 0,
+  updated_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_supply_stock_updated ON supply_stock(updated_at);
 
 -- Hard deletes travel to devices as tombstones (created by migration 2 on databases predating 1.2).
 CREATE TABLE IF NOT EXISTS tombstones (table_name TEXT NOT NULL, id TEXT NOT NULL, deleted_at TEXT NOT NULL, PRIMARY KEY (table_name, id));
@@ -7165,6 +7182,7 @@ var require_clients_model = __commonJS({
         cols2.first_name_idx = blindIndex2(String(v.first_name || "").trim().toLowerCase());
         cols2.first_name_prefix_idx = namePrefixIndex(v.first_name);
       }
+      if (v.preferred_name !== void 0) cols2.preferred_name_idx = preferredNameIndex(v.preferred_name);
       if (v.dob !== void 0) cols2.dob_idx = blindIndex2(v.dob);
       if (v.phone !== void 0) cols2.phone_idx = blindIndex2(String(v.phone || "").replace(/\D/g, ""));
       return cols2;
@@ -7192,6 +7210,10 @@ var require_clients_model = __commonJS({
       const c = soundex(normaliseName(lastName));
       return c ? blindIndex2("snd:" + c) : null;
     }
+    function preferredNameIndex(name) {
+      const n = String(name || "").trim().toLowerCase();
+      return n ? blindIndex2(n) : null;
+    }
     function nextClientCode() {
       const year = (/* @__PURE__ */ new Date()).getFullYear();
       const prefix = `${require_config().local ? "M" : "C"}${String(year).slice(2)}-`;
@@ -7207,7 +7229,7 @@ var require_clients_model = __commonJS({
       o.days_to_engagement = daysToEngagement(d);
       return o;
     }
-    module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, summary, daysToEngagement, uuid: uuid2, soundex, namePrefixIndex, namePhoneticIndex, normaliseName };
+    module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, summary, daysToEngagement, uuid: uuid2, soundex, namePrefixIndex, namePhoneticIndex, preferredNameIndex, normaliseName };
   }
 });
 
@@ -7484,6 +7506,29 @@ var require_db = __commonJS({
         }
         for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_clients_first_name/.test(line.trim())) d.exec(line.trim());
         addColumn(d, "policy_documents", "search_text", "TEXT");
+      },
+      // 19: navigator field tools — a preferred name / alias finds the person too; an author can ask a
+      //     supervisor to review/co-sign a note; and a harm-reduction supply inventory that visits draw down.
+      (d) => {
+        const schemaText = safeSchema();
+        addColumn(d, "clients", "preferred_name_idx", "TEXT");
+        const { decrypt: decrypt3 } = require_crypto();
+        const M = require_clients_model();
+        const upd = d.prepare(`UPDATE clients SET preferred_name_idx=? WHERE id=?`);
+        for (const c of d.prepare(`SELECT id, preferred_name_enc FROM clients WHERE preferred_name_enc IS NOT NULL`).all()) {
+          let pref = "";
+          try {
+            pref = decrypt3(c.preferred_name_enc);
+          } catch {
+            continue;
+          }
+          upd.run(M.preferredNameIndex(pref), c.id);
+        }
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_clients_preferred_name/.test(line.trim())) d.exec(line.trim());
+        addColumn(d, "notes", "cosign_requested", "INTEGER NOT NULL DEFAULT 0");
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS supply_stock \([\s\S]*?\n\);/);
+        if (m) d.exec(m[0]);
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_supply_stock/.test(line.trim())) d.exec(line.trim());
       }
     ];
     function initialise(d, schemaText, dbPath) {
@@ -8347,7 +8392,9 @@ var require_sync_tables = __commonJS({
         { name: "import_items", enc: ["content_enc", "title_enc"], scope: "all", writePerm: "imports:write", parent: ["imports", "import_id"] },
         { name: "form_templates", enc: [], scope: "all", writePerm: "forms:manage", blob: ["file_b64"] },
         { name: "client_forms", enc: ["values_enc"], scope: "client", clientCol: "client_id", writePerm: "forms:write", parent: ["clients", "client_id"] },
-        { name: "client_form_files", enc: ["data_enc"], scope: "client", clientCol: "client_id", writePerm: "forms:write", parent: ["client_forms", "client_form_id"], blob: ["data_enc"] }
+        { name: "client_form_files", enc: ["data_enc"], scope: "client", clientCol: "client_id", writePerm: "forms:write", parent: ["client_forms", "client_form_id"], blob: ["data_enc"] },
+        // Harm-reduction supply counts: shared program state, drawn down by visits on any device.
+        { name: "supply_stock", enc: [], scope: "all", writePerm: "interventions:write" }
       ],
       // Columns that reference users(id) somewhere in the schema. A device's local account id is meaningless on the
       // office server (and vice versa), so every one of these has to be remapped on both sides of a sync.
@@ -8386,7 +8433,8 @@ var require_sync_tables = __commonJS({
         ["user_prefs", "user_id"],
         ["api_keys", "created_by"],
         ["users", "supervisor_id"],
-        ["devices", "user_id"]
+        ["devices", "user_id"],
+        ["supply_stock", "updated_by"]
       ]
     };
     module.exports.user_ref_cols = [...new Set(module.exports.user_refs.map(([, c]) => c))];
@@ -8475,7 +8523,9 @@ var require_constants = __commonJS({
       REFERRAL_STATUSES: ["pending", "contacted", "accepted", "waitlisted", "scheduled", "admitted", "declined_by_client", "declined_by_provider", "no_show", "completed", "closed"],
       BUDGET_CATEGORIES: ["staffing", "client_assistance", "transportation", "naloxone_supplies", "harm_reduction_supplies", "housing_assistance", "treatment_fees", "medication", "phones_communication", "food_basic_needs", "ids_documents", "training", "outreach_materials", "supplies", "indirect", "other"],
       FUNDING_TYPES: ["opioid_settlement", "sor_grant", "samhsa", "state_block_grant", "county_general", "medicaid", "foundation", "other"],
-      NOTE_FORMATS: ["narrative", "SOAP", "DAP", "BIRP", "GIRP", "intake", "progress", "discharge", "contact", "collateral", "crisis", "supervision"],
+      // 'handoff' is the shift hand-off note (what the next worker on needs to know), 'safety_plan' a structured
+      // safety plan (see SECTIONS in public/views/notes.js); both are ordinary notes as far as access rules go.
+      NOTE_FORMATS: ["narrative", "SOAP", "DAP", "BIRP", "GIRP", "intake", "progress", "discharge", "contact", "collateral", "crisis", "supervision", "handoff", "safety_plan"],
       CONSENT_TYPES: ["part2_disclosure", "roi", "treatment", "telehealth", "contact_preferences", "research", "photo_media"],
       SUBSTANCES: ["opioids_fentanyl", "opioids_heroin", "opioids_rx", "alcohol", "methamphetamine", "cocaine", "benzodiazepines", "cannabis", "synthetic_cannabinoids", "xylazine", "nicotine", "other", "unknown"],
       SERVICE_TAGS: ["detox", "residential", "inpatient", "partial_hospitalization", "intensive_outpatient", "outpatient", "mat_buprenorphine", "mat_methadone", "mat_naltrexone", "medication_management", "individual_counseling", "group_counseling", "family_program", "peer_support", "case_management", "mental_health", "trauma_informed", "co_occurring", "medical_care", "harm_reduction", "naloxone", "syringe_services", "housing", "sober_living", "employment", "legal_help", "transportation", "childcare", "telehealth", "walk_in", "same_day_intake", "crisis_24_7", "aftercare", "faith_based", "spanish_speaking"],
@@ -8489,7 +8539,7 @@ var require_constants = __commonJS({
   }
 });
 
-// node_modules/fflate/esm/browser.js
+// ../../../node_modules/fflate/esm/browser.js
 function deflateSync(data, opts) {
   return dopt(data, opts || {}, 0, 0);
 }
@@ -8509,7 +8559,7 @@ function unzlibSync(data, opts) {
 }
 var u82, u16, i32, fleb, fdeb, clim, freb, _a, fl, revfl, _b, fd, revfd, rev, x, i, hMap, flt, i, i, i, i, fdt, i, flm, flrm, fdm, fdrm, max, bits, bits16, shft, slc, ec, err, inflt, wbits, wbits16, hTree, ln, lc, clen, wfblk, wblk, deo, et, dflt, adler, dopt, wbytes, zlh, zls, td, tds;
 var init_browser = __esm({
-  "node_modules/fflate/esm/browser.js"() {
+  "../../../node_modules/fflate/esm/browser.js"() {
     init_globals_inject();
     u82 = Uint8Array;
     u16 = Uint16Array;
@@ -9649,8 +9699,8 @@ var require_demo = __commonJS({
     var M = require_clients_model();
     var audit3 = require_audit();
     var DEMO_PREFIX = "DEMO-";
-    var TABLES = ["client_form_files", "client_forms", "form_templates", "expenditures", "disclosures", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "assignments", "clients", "budget_lines", "funding_sources", "resource_photos", "resources"];
-    var SYNCED = /* @__PURE__ */ new Set(["client_form_files", "client_forms", "form_templates", "expenditures", "disclosures", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "assignments", "clients", "budget_lines", "funding_sources", "resource_photos", "resources"]);
+    var TABLES = ["client_form_files", "client_forms", "form_templates", "expenditures", "disclosures", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "episodes", "assignments", "clients", "budget_lines", "funding_sources", "resource_photos", "resources", "supply_stock"];
+    var SYNCED = /* @__PURE__ */ new Set(["client_form_files", "client_forms", "form_templates", "expenditures", "disclosures", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "episodes", "assignments", "clients", "budget_lines", "funding_sources", "resource_photos", "resources", "supply_stock"]);
     function rng(seed2) {
       let a = seed2 >>> 0;
       return () => {
@@ -10065,6 +10115,23 @@ var require_demo = __commonJS({
             d(intake, 9)
           );
           db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, track("assignments", uuid2()), id, worker, "primary", day(intake), supervisor);
+          if (cstatus !== "waitlist") {
+            const closed = cstatus === "closed";
+            db3.run(
+              `INSERT INTO episodes(id,client_id,opened_at,opened_by,referral_source,closed_at,closed_by,discharge_reason,discharge_disposition,discharge_summary_enc,status) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+              track("episodes", uuid2()),
+              id,
+              day(intake),
+              worker,
+              refSrc,
+              closed ? day(20) : null,
+              closed ? supervisor : null,
+              closed ? "completed" : null,
+              closed ? "Monthly recovery check-in calls" : null,
+              closed ? encrypt3("Completed navigation goals; connected to outpatient care and stable housing. (Sample data)") : null,
+              closed ? "closed" : "open"
+            );
+          }
           if (clinician && i % 2 === 0) db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, track("assignments", uuid2()), id, clinician, "clinician", day(intake - 3), supervisor);
           if (workers.length > 1 && i % 4 === 1) db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, track("assignments", uuid2()), id, workers[(i + 1) % workers.length], "secondary", day(intake - 10), supervisor);
         });
@@ -10174,6 +10241,11 @@ var require_demo = __commonJS({
             const signed = k > 0 || rand() < 0.5;
             db3.run(`INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,occurred_at,status,signed_at,signed_by,source,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, track("notes", uuid2()), c.id, c.worker, "admin", fmtName, encrypt3(title), encrypt3(body + " (Sample data)"), d(off), signed ? "signed" : "draft", signed ? d(off, 17) : null, signed ? c.worker : null, "manual", d(off, 17), d(off, 17));
             counts.notes++;
+          }
+          if (i === 0) db3.run(`INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,occurred_at,status,signed_at,signed_by,source,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, track("notes", uuid2()), c.id, c.worker, "admin", "handoff", encrypt3("Hand-off: detox bed pending"), encrypt3("Hope Street has a bed opening tomorrow morning. Client knows to be at the drop-in by 8am; needs a ride booked. Call the intake nurse first thing if no confirmation by 7:30. (Sample data)"), d(0, 17), "signed", d(0, 17), c.worker, "manual", d(0, 17), d(0, 17));
+          if (i === 2) {
+            const plan = { warning_signs: 'Not sleeping; stops answering texts; talk of "being done"', coping: "Walk to the river; call sponsor; music", distraction: "Recovery Caf\xE9; sister's place on weekends", people_to_ask: "Sister (Rosa); peer coach at the Caf\xE9", professionals: "Navigator 555-0100; County Crisis Line 988; Valley Behavioral 555-0206", environment: "Naloxone on hand; no using alone; roommate knows the plan", reasons_for_living: "Daughter; getting back to work" };
+            db3.run(`INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,structured_enc,occurred_at,status,signed_at,signed_by,source,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, track("notes", uuid2()), c.id, c.worker, "admin", "safety_plan", encrypt3("Safety plan"), encrypt3(Object.entries(plan).map(([k, v]) => `${k}: ${v}`).join("\n\n") + " (Sample data)"), encrypt3(JSON.stringify(plan)), d(12, 14), "signed", d(12, 15), c.worker, "manual", d(12, 14), d(12, 15));
           }
           if (clinician && i % 2 === 0) {
             const S = `Reports ${c.sub.replace(/_/g, " ")} use ${pick(["daily", "most days", "on weekends"])}; motivated by ${pick(["family", "health", "housing", "court"])}.`;
@@ -10294,6 +10366,9 @@ P: ${P2} (Sample data)`), encrypt3(JSON.stringify(i % 4 === 0 ? { S, O, A, P: P2
           db3.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,funding_source_id,description) VALUES(?,?,?,?,?,?,?,?)`, track("time_entries", uuid2()), w, null, wd, 30 + Math.floor(rand() * 6) * 15, cat, cat === "training" ? fund2 : wd >= fundStart ? fund : null, { documentation: "Charting and note sign-off", meeting: "Weekly team huddle", travel: "Drive between sites", training: "Naloxone train-the-trainer", supervision: "Supervision with program manager", admin: "Data entry for monthly report", outreach: "Encampment outreach walk" }[cat]);
         }
         for (const [cat, vendor, desc, amt] of [["naloxone_supplies", "Harm Reduction Coalition", "Naloxone kits (50)", 1500], ["outreach_materials", "PrintPro", "Outreach flyers and cards", 220], ["training", "State Peer Academy", "Peer certification course", 650]]) db3.run(`INSERT INTO expenditures(id,funding_source_id,budget_line_id,user_id,spent_at,amount,category,vendor,description,status,approved_by,approved_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, track("expenditures", uuid2()), fund, lineIds[cat], workers[0], day(20 + Math.floor(rand() * 60)), amt, cat, vendor, desc, "approved", supervisor, d(15));
+        for (const [item, qty] of [["Naloxone kit", 42], ["Fentanyl test strips", 180], ["Xylazine test strips", 60], ["Wound care kit", 25]]) {
+          if (!db3.one(`SELECT 1 FROM supply_stock WHERE item=? COLLATE NOCASE`, item)) db3.run(`INSERT INTO supply_stock(id,item,quantity,updated_by) VALUES(?,?,?,?)`, track("supply_stock", uuid2()), item, qty, workers[0]);
+        }
         db3.setSetting("demo_ids", JSON.stringify(ids));
         db3.setSetting("demo_loaded_at", nowIso);
         audit3.log({ user: actor ? { id: actor, username: "sample-data" } : { id: null, username: "seed" }, action: "demo.load", details: { clients: cids.length, ...counts } });
@@ -11678,6 +11753,33 @@ var require_budget = __commonJS({
   }
 });
 
+// server/client-name.js
+var require_client_name = __commonJS({
+  "server/client-name.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var auth3 = require_auth();
+    var M = require_clients_model();
+    var SELECT = "c.first_name_enc AS c_first_name_enc, c.last_name_enc AS c_last_name_enc";
+    function withClientName(ctx, x) {
+      const deidentify = !auth3.hasPerm(ctx.user, "clients:read");
+      let client_name = null;
+      if (x.client_id && !deidentify && (x.c_first_name_enc || x.c_last_name_enc)) {
+        try {
+          client_name = M.decryptRow({ first_name_enc: x.c_first_name_enc, last_name_enc: x.c_last_name_enc }).display_name || null;
+        } catch {
+          client_name = null;
+        }
+      }
+      const out2 = { ...x, client_name };
+      delete out2.c_first_name_enc;
+      delete out2.c_last_name_enc;
+      return out2;
+    }
+    module.exports = { withClientName, SELECT };
+  }
+});
+
 // server/routes/calls.js
 var require_calls = __commonJS({
   "server/routes/calls.js"(exports, module) {
@@ -11688,6 +11790,7 @@ var require_calls = __commonJS({
     var C = require_constants();
     var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
     var { badRequest } = require_http();
+    var { withClientName, SELECT: NAME_COLS } = require_client_name();
     module.exports = (r) => {
       crud.build(r, {
         table: "calls",
@@ -11697,7 +11800,7 @@ var require_calls = __commonJS({
         clientRequired: false,
         restrictOwner: true,
         joins: "JOIN users u ON u.id=calls.user_id LEFT JOIN clients c ON c.id=calls.client_id",
-        select: "calls.*, u.display_name AS worker, c.client_code",
+        select: `calls.*, u.display_name AS worker, c.client_code, ${NAME_COLS}`,
         shape: {
           client_id: { type: "string" },
           user_id: { type: "string" },
@@ -11759,7 +11862,7 @@ var require_calls = __commonJS({
             row.crisis ? "urgent" : "normal"
           );
         },
-        afterLoad: (ctx, x) => ({ ...x, contact_name: x.contact_name_enc ? decrypt3(x.contact_name_enc) : null, phone: x.phone_enc ? decrypt3(x.phone_enc) : null, summary: x.summary_enc ? decrypt3(x.summary_enc) : null, contact_name_enc: void 0, phone_enc: void 0, summary_enc: void 0 }),
+        afterLoad: (ctx, x) => ({ ...withClientName(ctx, x), contact_name: x.contact_name_enc ? decrypt3(x.contact_name_enc) : null, phone: x.phone_enc ? decrypt3(x.phone_enc) : null, summary: x.summary_enc ? decrypt3(x.summary_enc) : null, contact_name_enc: void 0, phone_enc: void 0, summary_enc: void 0 }),
         canEdit: crud.ownerOrManager()
       });
       function checkOutcome(v, method) {
@@ -11873,8 +11976,8 @@ var require_clients = __commonJS({
           } else {
             const parts = q.split(/[,\s]+/).filter(Boolean);
             const idxs = parts.map((p) => blindIndex2(p));
-            const clauses = [`c.last_name_idx IN (${idxs.map(() => "?").join(",")})`, "c.full_name_idx IN (?,?)", `c.first_name_idx IN (${idxs.map(() => "?").join(",")})`];
-            params.push(...idxs, blindIndex2(parts.join("")), blindIndex2([...parts].reverse().join("")), ...parts.map((p) => blindIndex2(p.toLowerCase())));
+            const clauses = [`c.last_name_idx IN (${idxs.map(() => "?").join(",")})`, "c.full_name_idx IN (?,?)", `c.first_name_idx IN (${idxs.map(() => "?").join(",")})`, `c.preferred_name_idx IN (${idxs.map(() => "?").join(",")})`];
+            params.push(...idxs, blindIndex2(parts.join("")), blindIndex2([...parts].reverse().join("")), ...parts.map((p) => blindIndex2(p.toLowerCase())), ...parts.map((p) => M.preferredNameIndex(p)));
             if (ctx.query.get("exact") !== "1") {
               for (const part of parts) {
                 const pfx = M.namePrefixIndex(part);
@@ -11900,12 +12003,19 @@ var require_clients = __commonJS({
           params.push(assigned);
         }
         const w = "WHERE " + where.join(" AND ");
+        const sort = ctx.query.get("sort") || "";
+        const order = {
+          last_contact: "last_contact IS NOT NULL, last_contact ASC",
+          overdue: "overdue_tasks DESC, last_contact ASC",
+          risk: `CASE c.risk_level WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'moderate' THEN 2 ELSE 3 END, last_contact ASC`
+        }[sort] || "c.updated_at DESC";
         const rows = db3.all(`SELECT c.*, (SELECT GROUP_CONCAT(u.display_name, ', ') FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=c.id AND ${auth3.activeAssignment("a.")}) AS assigned_workers,
-      (SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome IN ('reached','replied'))) AS last_contact
-      FROM clients c ${w} ORDER BY c.updated_at DESC LIMIT ? OFFSET ?`, ...params, limit2, offset);
+      (SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome IN ('reached','replied'))) AS last_contact,
+      (SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.status IN ('open','in_progress') AND (CASE WHEN length(t.due_at)=10 THEN t.due_at < date('now','localtime') ELSE t.due_at < ? END)) AS overdue_tasks
+      FROM clients c ${w} ORDER BY ${order} LIMIT ? OFFSET ?`, db3.now(), ...params, limit2, offset);
         const total = db3.one(`SELECT COUNT(*) n FROM clients c ${w}`, ...params).n;
-        audit3.log({ user: ctx.user, action: "client.list", ip: ctx.ip, details: { q: q ? "[redacted]" : "", status, count: rows.length, deidentified: deidentify } });
-        return { clients: rows.map((x) => ({ ...M.summary(x, { deidentify }), assigned_workers: x.assigned_workers, last_contact: x.last_contact })), total, limit: limit2, offset };
+        audit3.log({ user: ctx.user, action: "client.list", ip: ctx.ip, details: { q: q ? "[redacted]" : "", status, sort: sort || void 0, count: rows.length, deidentified: deidentify } });
+        return { clients: rows.map((x) => ({ ...M.summary(x, { deidentify }), assigned_workers: x.assigned_workers, last_contact: x.last_contact, overdue_tasks: x.overdue_tasks })), total, limit: limit2, offset };
       });
       function possibleDuplicates(v, excludeId = null) {
         const clauses = [];
@@ -11934,12 +12044,14 @@ var require_clients = __commonJS({
         return { matches };
       });
       r.post("/api/clients", auth3.requireAuth, auth3.requirePerm("clients:write"), (ctx) => {
-        const v = validate(ctx.body, { ...shape, confirm_duplicate: { type: "boolean" } });
+        const v = validate(ctx.body, { ...shape, confirm_duplicate: { type: "boolean" }, no_episode: { type: "boolean" } });
         if (!v.confirm_duplicate) {
           const matches = possibleDuplicates(v);
           if (matches.length) throw badRequest("A client with these details may already exist", { duplicates: matches, confirm_field: "confirm_duplicate" });
         }
         delete v.confirm_duplicate;
+        const noEpisode = !!v.no_episode;
+        delete v.no_episode;
         const id = uuid2();
         const enc = M.encryptFields(v);
         enc.full_name_idx = blindIndex2((v.last_name || "") + (v.first_name || ""));
@@ -11947,15 +12059,21 @@ var require_clients = __commonJS({
         for (const f of M.PLAIN_FIELDS) if (v[f] !== void 0) cols2[f] = v[f];
         if (!cols2.intake_date) cols2.intake_date = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
         const keys = Object.keys(cols2).filter((k) => cols2[k] !== void 0);
+        let episodeId = null;
         db3.transaction(() => {
           db3.run(`INSERT INTO clients(${keys.join(",")}) VALUES(${keys.map(() => "?").join(",")})`, ...keys.map((k) => cols2[k]));
           if (auth3.caseloadRestricted(ctx.user) || ["navigator", "clinician"].includes(ctx.user.role)) {
             db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, uuid2(), id, ctx.user.id, "primary", cols2.intake_date, ctx.user.id);
           }
+          if (!noEpisode && cols2.status !== "waitlist" && cols2.status !== "closed" && cols2.status !== "deceased") {
+            episodeId = uuid2();
+            db3.run(`INSERT INTO episodes(id,client_id,opened_at,opened_by,referral_source) VALUES(?,?,?,?,?)`, episodeId, id, cols2.intake_date, ctx.user.id, cols2.referral_source || null);
+          }
         });
-        audit3.log({ user: ctx.user, action: "client.create", entity: "client", entityId: id, clientId: id, ip: ctx.ip });
+        audit3.log({ user: ctx.user, action: "client.create", entity: "client", entityId: id, clientId: id, ip: ctx.ip, details: episodeId ? { episode: episodeId } : void 0 });
+        if (episodeId) audit3.log({ user: ctx.user, action: "episode.open", entity: "episode", entityId: episodeId, clientId: id, ip: ctx.ip, details: { at_intake: true } });
         ctx.status = 201;
-        return { id, client_code: cols2.client_code };
+        return { id, client_code: cols2.client_code, episode_id: episodeId };
       });
       r.post("/api/clients/:id/merge", auth3.requireAuth, auth3.requirePerm("clients:merge"), (ctx) => {
         const keep = loadClient(ctx, ctx.params.id);
@@ -11991,11 +12109,12 @@ var require_clients = __commonJS({
           const after = db3.one(`SELECT * FROM clients WHERE id=?`, keep.id);
           const plain = M.decryptRow(after);
           db3.run(
-            `UPDATE clients SET dob_idx=?, phone_idx=?, name_prefix_idx=?, name_phonetic_idx=?, updated_at=? WHERE id=?`,
+            `UPDATE clients SET dob_idx=?, phone_idx=?, name_prefix_idx=?, name_phonetic_idx=?, preferred_name_idx=?, updated_at=? WHERE id=?`,
             plain.dob ? blindIndex2(plain.dob) : null,
             plain.phone ? blindIndex2(String(plain.phone).replace(/\D/g, "")) : null,
             M.namePrefixIndex(plain.last_name || ""),
             M.namePhoneticIndex(plain.last_name || ""),
+            M.preferredNameIndex(plain.preferred_name),
             db3.now(),
             keep.id
           );
@@ -12020,8 +12139,13 @@ var require_clients = __commonJS({
           referrals: db3.one(`SELECT COUNT(*) n FROM referrals WHERE client_id=?`, row.id).n,
           open_tasks: db3.one(`SELECT COUNT(*) n FROM tasks WHERE client_id=? AND status IN ('open','in_progress')`, row.id).n,
           minutes: db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE client_id=?`, row.id).n,
-          spent: db3.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE client_id=? AND status<>'rejected'`, row.id).n
+          spent: db3.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE client_id=? AND status<>'rejected'`, row.id).n,
+          episodes: db3.one(`SELECT COUNT(*) n FROM episodes WHERE client_id=?`, row.id).n
         };
+        client.open_episode = !!db3.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, row.id);
+        const kinds = ["admin", "clinical"].filter((k) => auth3.hasPerm(ctx.user, `notes:${k}:read`) || auth3.hasPerm(ctx.user, `notes:${k}:write`));
+        const sp = kinds.length ? db3.one(`SELECT id, occurred_at, status FROM notes WHERE client_id=? AND format='safety_plan' AND deleted_at IS NULL AND kind IN (${kinds.map(() => "?").join(",")}) ORDER BY occurred_at DESC LIMIT 1`, row.id, ...kinds) : null;
+        client.safety_plan = sp || null;
         audit3.log({ user: ctx.user, action: "client.view", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip });
         return { client };
       });
@@ -13441,6 +13565,24 @@ var require_episodes = __commonJS({
           ].filter(Boolean)
         };
       });
+      r.post("/api/episodes/:id/reopen", auth3.requireAuth, auth3.requirePerm("episodes:write"), (ctx) => {
+        const e = db3.one(`SELECT * FROM episodes WHERE id=?`, ctx.params.id);
+        if (!e) throw notFound("Episode not found");
+        auth3.assertClientAccess(ctx, e.client_id);
+        if (e.status !== "closed") throw badRequest("This episode is still open");
+        if (db3.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, e.client_id)) throw badRequest("This client already has an open episode. Discharge it first, or record this as that episode.");
+        const { reason } = validate(ctx.body || {}, { reason: { type: "string", maxLen: 300 } });
+        db3.transaction(() => {
+          db3.run(`UPDATE episodes SET status='open', closed_at=NULL, closed_by=NULL, discharge_reason=NULL, discharge_disposition=NULL, discharge_summary_enc=NULL, updated_at=? WHERE id=?`, db3.now(), e.id);
+          db3.run(`UPDATE clients SET status='active', discharge_date=NULL, discharge_reason=NULL, updated_at=? WHERE id=?`, db3.now(), e.client_id);
+          if (e.closed_at) db3.run(`UPDATE assignments SET end_date=NULL, updated_at=? WHERE client_id=? AND end_date=? AND ended_at IS NULL`, db3.now(), e.client_id, e.closed_at);
+          if (!db3.one(`SELECT 1 FROM assignments WHERE client_id=? AND end_date IS NULL AND ended_at IS NULL`, e.client_id) && (auth3.caseloadRestricted(ctx.user) || ["navigator", "clinician"].includes(ctx.user.role))) {
+            db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, uuid2(), e.client_id, ctx.user.id, "primary", (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), ctx.user.id);
+          }
+        });
+        audit3.log({ user: ctx.user, action: "episode.reopen", entity: "episode", entityId: e.id, clientId: e.client_id, ip: ctx.ip, details: { reason: reason || void 0, was_discharged: e.discharge_reason } });
+        return { ok: true };
+      });
       r.get("/api/episodes", auth3.requireAuth, auth3.requirePerm("episodes:read", "episodes:write"), (ctx) => {
         const { limit: limit2, offset } = paging(ctx.query, { limit: 100, max: 500 });
         const cf = auth3.caseloadFilter(ctx.user, "e.client_id");
@@ -14566,6 +14708,71 @@ var require_intake = __commonJS({
   }
 });
 
+// server/routes/supplies.js
+var require_supplies = __commonJS({
+  "server/routes/supplies.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var { badRequest, notFound } = require_http();
+    var { validate } = require_validate();
+    var { uuid: uuid2 } = require_crypto();
+    var DRAWDOWN = { naloxone_kits: "Naloxone kit", fentanyl_strips: "Fentanyl test strips" };
+    var list = () => db3.all(`SELECT s.*, u.display_name AS updated_by_name FROM supply_stock s LEFT JOIN users u ON u.id=s.updated_by ORDER BY s.item COLLATE NOCASE`);
+    function drawDown(ctx, row, prev = null) {
+      for (const [col, item] of Object.entries(DRAWDOWN)) {
+        const delta = Number(row[col] || 0) - Number(prev ? prev[col] || 0 : 0);
+        if (!delta) continue;
+        const s = db3.one(`SELECT * FROM supply_stock WHERE item=? COLLATE NOCASE`, item);
+        if (!s) continue;
+        const q = Math.max(0, s.quantity - delta);
+        db3.run(`UPDATE supply_stock SET quantity=?, updated_by=?, updated_at=? WHERE id=?`, q, ctx.user.id, db3.now(), s.id);
+        audit3.log({ user: ctx.user, action: "supply.drawdown", entity: "supply_stock", entityId: s.id, ip: ctx.ip, details: { item, delta: -delta, quantity: q, intervention: row.id } });
+      }
+    }
+    module.exports = (r) => {
+      r.get("/api/supplies", auth3.requireAuth, () => ({ rows: list(), drawdown: DRAWDOWN }));
+      r.post("/api/supplies", auth3.requireAuth, auth3.requirePerm("interventions:write"), (ctx) => {
+        const v = validate(ctx.body, { item: { type: "string", required: true, maxLen: 80 }, quantity: { type: "number", required: true, integer: true, min: 0, max: 1e6 } });
+        const item = v.item.trim();
+        if (!item) throw badRequest("Item name is required");
+        const existing = db3.one(`SELECT id FROM supply_stock WHERE item=? COLLATE NOCASE`, item);
+        let id = existing ? existing.id : null;
+        if (existing) db3.run(`UPDATE supply_stock SET quantity=?, updated_by=?, updated_at=? WHERE id=?`, v.quantity, ctx.user.id, db3.now(), id);
+        else {
+          id = uuid2();
+          db3.run(`INSERT INTO supply_stock(id,item,quantity,updated_by) VALUES(?,?,?,?)`, id, item, v.quantity, ctx.user.id);
+        }
+        audit3.log({ user: ctx.user, action: existing ? "supply.update" : "supply.create", entity: "supply_stock", entityId: id, ip: ctx.ip, details: { item, quantity: v.quantity } });
+        ctx.status = existing ? 200 : 201;
+        return { id, item, quantity: v.quantity };
+      });
+      r.put("/api/supplies/:id", auth3.requireAuth, auth3.requirePerm("interventions:write"), (ctx) => {
+        const s = db3.one(`SELECT * FROM supply_stock WHERE id=?`, ctx.params.id);
+        if (!s) throw notFound("Supply item not found");
+        const v = validate(ctx.body, { item: { type: "string", maxLen: 80 }, quantity: { type: "number", integer: true, min: 0, max: 1e6 }, adjust: { type: "number", integer: true, min: -1e6, max: 1e6 } }, { partial: true });
+        const quantity = v.quantity !== void 0 && v.quantity !== null ? v.quantity : Math.max(0, s.quantity + Number(v.adjust || 0));
+        const item = v.item ? v.item.trim() : s.item;
+        db3.run(`UPDATE supply_stock SET item=?, quantity=?, updated_by=?, updated_at=? WHERE id=?`, item, quantity, ctx.user.id, db3.now(), s.id);
+        audit3.log({ user: ctx.user, action: "supply.update", entity: "supply_stock", entityId: s.id, ip: ctx.ip, details: { item, quantity, was: s.quantity } });
+        return { ok: true, quantity };
+      });
+      r.delete("/api/supplies/:id", auth3.requireAuth, auth3.requirePerm("interventions:write"), (ctx) => {
+        const s = db3.one(`SELECT * FROM supply_stock WHERE id=?`, ctx.params.id);
+        if (!s) throw notFound("Supply item not found");
+        db3.run(`DELETE FROM supply_stock WHERE id=?`, s.id);
+        db3.tombstone("supply_stock", s.id);
+        audit3.log({ user: ctx.user, action: "supply.delete", entity: "supply_stock", entityId: s.id, ip: ctx.ip, details: { item: s.item } });
+        return { ok: true };
+      });
+    };
+    module.exports.drawDown = drawDown;
+    module.exports.DRAWDOWN = DRAWDOWN;
+  }
+});
+
 // server/routes/interventions.js
 var require_interventions = __commonJS({
   "server/routes/interventions.js"(exports, module) {
@@ -14577,6 +14784,7 @@ var require_interventions = __commonJS({
     var C = require_constants();
     var { badRequest, forbidden } = require_http();
     var { uuid: uuid2 } = require_crypto();
+    var supplies = require_supplies();
     function checkCost(ctx, v) {
       if (("cost" in v || "funding_source_id" in v || "budget_line_id" in v) && !auth3.hasPerm(ctx.user, "budget:write")) throw forbidden("You do not have permission to attach a cost to a funding source");
       if (v.cost && v.cost > 0) {
@@ -14728,8 +14936,12 @@ var require_interventions = __commonJS({
             "normal"
           );
           syncExpenditure(row);
+          supplies.drawDown(ctx, row);
         },
-        afterUpdate: (ctx, row) => syncExpenditure(row),
+        afterUpdate: (ctx, row, prev) => {
+          syncExpenditure(row);
+          supplies.drawDown(ctx, row, prev);
+        },
         // The FK from expenditures.intervention_id is ON DELETE SET NULL, so this has to run before the delete
         // — after it, there is no longer any way to find the expenditure this intervention's cost created.
         beforeDelete: (ctx, row) => {
@@ -14741,6 +14953,7 @@ var require_interventions = __commonJS({
         },
         canEdit: crud.ownerOrManager()
       });
+      supplies(r);
       r.get("/api/meta/constants", auth3.requireAuth, () => C);
     };
   }
@@ -14835,6 +15048,7 @@ var require_notes = __commonJS({
       intervention_id: { type: "string" },
       call_id: { type: "string" },
       part2_protected: { type: "boolean" },
+      cosign_requested: { type: "boolean" },
       source: { type: "string", enum: ["manual", "pocket_ai", "onenote", "import", "api"] },
       source_ref: { type: "string", maxLen: 300 }
     };
@@ -14868,7 +15082,8 @@ var require_notes = __commonJS({
       return out2;
     }
     function signatureState(n) {
-      return { signed: n.status !== "draft", cosign_required: !!n.cosign_required, cosigned: !!n.cosigned_at, awaiting_cosign: !!n.cosign_required && n.status !== "draft" && !n.cosigned_at };
+      const wanted = !!n.cosign_required || !!n.cosign_requested;
+      return { signed: n.status !== "draft", cosign_required: !!n.cosign_required, cosign_requested: !!n.cosign_requested, cosigned: !!n.cosigned_at, awaiting_cosign: wanted && n.status !== "draft" && !n.cosigned_at };
     }
     function load(ctx, id) {
       const n = db3.one(`SELECT n.*, u.display_name AS author, s.display_name AS signer, cs.display_name AS cosigner
@@ -14905,7 +15120,7 @@ var require_notes = __commonJS({
         }
         if (ctx.query.get("unsigned") === "1") where.push("n.status='draft'");
         if (ctx.query.get("awaiting_cosign") === "1") {
-          where.push("n.cosign_required=1 AND n.status<>'draft' AND n.cosigned_at IS NULL");
+          where.push("(n.cosign_required=1 OR n.cosign_requested=1) AND n.status<>'draft' AND n.cosigned_at IS NULL");
           if (!auth3.hasPerm(ctx.user, "notes:cosign")) {
             where.push("1=0");
           }
@@ -14920,7 +15135,7 @@ var require_notes = __commonJS({
         }
         const w = "WHERE " + where.join(" AND ");
         const rows = db3.all(`SELECT n.id,n.client_id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.signed_at,n.source,n.author_id,n.created_at,n.updated_at,
-      n.cosign_required,n.cosigned_at,n.cosigned_by,u.display_name AS author,cs.display_name AS cosigner,c.client_code,
+      n.cosign_required,n.cosign_requested,n.cosigned_at,n.cosigned_by,u.display_name AS author,cs.display_name AS cosigner,c.client_code,
       (SELECT COUNT(*) FROM note_addenda a WHERE a.note_id=n.id) AS addenda
       FROM notes n JOIN users u ON u.id=n.author_id LEFT JOIN users cs ON cs.id=n.cosigned_by JOIN clients c ON c.id=n.client_id ${w} ORDER BY n.occurred_at DESC LIMIT ? OFFSET ?`, ...params, limit2, offset);
         const out2 = rows.map((x) => ({ ...x, title: x.title_enc ? decrypt3(x.title_enc) : null, title_enc: void 0, ...signatureState(x) }));
@@ -14935,7 +15150,7 @@ var require_notes = __commonJS({
         const id = uuid2();
         const author = db3.one(`SELECT requires_cosign FROM users WHERE id=?`, ctx.user.id);
         db3.run(
-          `INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,structured_enc,occurred_at,intervention_id,call_id,part2_protected,source,source_ref,cosign_required) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,structured_enc,occurred_at,intervention_id,call_id,part2_protected,source,source_ref,cosign_required,cosign_requested) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           id,
           v.client_id,
           ctx.user.id,
@@ -14950,9 +15165,10 @@ var require_notes = __commonJS({
           v.part2_protected ?? 1,
           v.source || "manual",
           v.source_ref || null,
-          author?.requires_cosign ? 1 : 0
+          author?.requires_cosign ? 1 : 0,
+          v.cosign_requested ? 1 : 0
         );
-        audit3.log({ user: ctx.user, action: "note.create", entity: "note", entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format } });
+        audit3.log({ user: ctx.user, action: "note.create", entity: "note", entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format, cosign_requested: v.cosign_requested ? true : void 0 } });
         ctx.status = 201;
         return { id };
       });
@@ -14972,10 +15188,10 @@ var require_notes = __commonJS({
         if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
         if (n.status !== "draft") throw badRequest("Signed notes cannot be edited; add an addendum instead");
         if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden("Only the author can edit a draft");
-        const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected }, { partial: true });
+        const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, cosign_requested: shape.cosign_requested }, { partial: true });
         const sets = [];
         const params = [];
-        for (const k of ["format", "occurred_at", "intervention_id", "call_id", "part2_protected"]) if (v[k] !== void 0) {
+        for (const k of ["format", "occurred_at", "intervention_id", "call_id", "part2_protected", "cosign_requested"]) if (v[k] !== void 0) {
           sets.push(`${k}=?`);
           params.push(v[k]);
         }
@@ -14994,6 +15210,38 @@ var require_notes = __commonJS({
         if (sets.length) db3.run(`UPDATE notes SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, db3.now(), n.id);
         audit3.log({ user: ctx.user, action: "note.update", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { fields: Object.keys(v) } });
         return { ok: true };
+      });
+      r.post("/api/notes/:id/request-cosign", auth3.requireAuth, (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
+        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden("Only the author can ask for a review of their note");
+        if (n.cosigned_at) throw badRequest("This note has already been countersigned");
+        const { cosign_requested } = validate(ctx.body || {}, { cosign_requested: { type: "boolean" } });
+        const flag = cosign_requested === false ? 0 : 1;
+        db3.run(`UPDATE notes SET cosign_requested=?, updated_at=? WHERE id=?`, flag, db3.now(), n.id);
+        audit3.log({ user: ctx.user, action: flag ? "note.cosign.requested" : "note.cosign.request_withdrawn", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip });
+        return { ok: true, cosign_requested: !!flag, awaiting_cosign: !!flag && n.status !== "draft" };
+      });
+      r.get("/api/notes/handoffs", auth3.requireAuth, auth3.requirePerm("notes:admin:read", "notes:admin:write"), (ctx) => {
+        const hours = Math.min(24 * 7, Math.max(1, Number(ctx.query.get("hours") || 24)));
+        const since = new Date(Date.now() - hours * 36e5).toISOString();
+        const cf = auth3.caseloadFilter(ctx.user, "n.client_id");
+        const { withClientName, SELECT: NAME_COLS } = require_client_name();
+        const rows = db3.all(`SELECT n.id, n.client_id, n.occurred_at, n.status, n.title_enc, n.content_enc, n.author_id, u.display_name AS author, c.client_code, ${NAME_COLS}
+      FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id
+      WHERE n.deleted_at IS NULL AND n.kind='admin' AND n.format='handoff' AND n.occurred_at >= ? AND ${cf.sql} ORDER BY n.occurred_at DESC LIMIT 50`, since, ...cf.params);
+        const out2 = rows.map((x) => {
+          const o = withClientName(ctx, x);
+          let content = "";
+          try {
+            content = decrypt3(x.content_enc);
+          } catch {
+            content = "";
+          }
+          return { ...o, title: x.title_enc ? decrypt3(x.title_enc) : null, excerpt: content.slice(0, 240), title_enc: void 0, content_enc: void 0 };
+        });
+        audit3.log({ user: ctx.user, action: "note.list", ip: ctx.ip, details: { count: out2.length, kinds: ["admin"], filter: "handoffs", hours } });
+        return { rows: out2, hours };
       });
       r.post("/api/notes/:id/sign", auth3.requireAuth, async (ctx) => {
         const n = load(ctx, ctx.params.id);
@@ -19643,9 +19891,9 @@ var require_supervision = __commonJS({
         const staleBefore = new Date(Date.now() - lockDays * 864e5).toISOString();
         const out2 = {};
         if (auth3.hasPerm(ctx.user, "notes:cosign")) {
-          out2.awaiting_cosignature = db3.all(`SELECT n.id, n.client_id, n.kind, n.occurred_at, n.signed_at, n.title_enc, u.display_name AS author, c.client_code
+          out2.awaiting_cosignature = db3.all(`SELECT n.id, n.client_id, n.kind, n.occurred_at, n.signed_at, n.title_enc, n.cosign_requested, u.display_name AS author, c.client_code
         FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id
-        WHERE n.deleted_at IS NULL AND n.cosign_required=1 AND n.status<>'draft' AND n.cosigned_at IS NULL AND n.author_id<>? AND ${sf.sql}
+        WHERE n.deleted_at IS NULL AND n.status<>'draft' AND n.cosigned_at IS NULL AND n.author_id<>? AND ((n.cosign_required=1 AND ${sf.sql}) OR n.cosign_requested=1)
         ORDER BY n.signed_at LIMIT 100`, ctx.user.id, ...sf.params).map((x) => ({ ...x, title: x.title_enc ? decrypt3(x.title_enc) : null, title_enc: void 0 }));
           out2.unsigned_notes = db3.all(`SELECT n.id, n.client_id, n.kind, n.occurred_at, n.created_at, u.display_name AS author, c.client_code,
           (n.created_at < ?) AS overdue
@@ -20124,7 +20372,27 @@ var require_tasks = __commonJS({
     var db3 = require_db();
     var auth3 = require_auth();
     var crud = require_crud();
+    var audit3 = require_audit();
+    var { withClientName, SELECT: NAME_COLS } = require_client_name();
+    function dueTasks(ctx, within) {
+      const cf = auth3.caseloadFilter(ctx.user, "tasks.client_id");
+      const horizon = new Date(Date.now() + within * 6e4).toISOString();
+      const rows = db3.all(`SELECT tasks.*, c.client_code, ${NAME_COLS} FROM tasks LEFT JOIN clients c ON c.id=tasks.client_id
+    WHERE tasks.assigned_to=? AND tasks.status IN ('open','in_progress') AND tasks.due_at IS NOT NULL
+      AND (CASE WHEN length(tasks.due_at)=10 THEN tasks.due_at <= date(?,'localtime') ELSE tasks.due_at <= ? END)
+      AND (tasks.client_id IS NULL OR ${cf.sql})
+    ORDER BY tasks.due_at LIMIT 50`, ctx.user.id, horizon, horizon, ...cf.params);
+      const now = db3.now();
+      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      return rows.map((x) => withClientName(ctx, x)).map((x) => ({ ...x, overdue: x.due_at.length === 10 ? x.due_at < today : x.due_at < now }));
+    }
     module.exports = (r) => {
+      r.get("/api/tasks/due", auth3.requireAuth, auth3.requirePerm("tasks:read", "tasks:write"), (ctx) => {
+        const within = Math.min(24 * 60, Math.max(0, Number(ctx.query.get("within") || 60)));
+        const rows = dueTasks(ctx, within);
+        audit3.log({ user: ctx.user, action: "task.due", ip: ctx.ip, details: { within, count: rows.length } });
+        return { rows, within, overdue: rows.filter((x) => x.overdue).length, due_soon: rows.filter((x) => !x.overdue).length };
+      });
       crud.build(r, {
         table: "tasks",
         entity: "task",
@@ -20135,7 +20403,8 @@ var require_tasks = __commonJS({
         clientRequired: false,
         order: `CASE tasks.status WHEN 'open' THEN 0 WHEN 'in_progress' THEN 0 ELSE 1 END, tasks.due_at IS NULL, tasks.due_at ASC`,
         joins: "LEFT JOIN users u ON u.id=tasks.assigned_to LEFT JOIN clients c ON c.id=tasks.client_id",
-        select: "tasks.*, u.display_name AS assignee, c.client_code",
+        select: `tasks.*, u.display_name AS assignee, c.client_code, ${NAME_COLS}`,
+        afterLoad: withClientName,
         shape: {
           client_id: { type: "string" },
           assigned_to: { type: "string" },
@@ -20183,6 +20452,7 @@ var require_time = __commonJS({
     var auth3 = require_auth();
     var crud = require_crud();
     var C = require_constants();
+    var { withClientName, SELECT: NAME_COLS } = require_client_name();
     function checkPeriod(v) {
       const fund = v.funding_source_id ? db3.one(`SELECT * FROM funding_sources WHERE id=?`, v.funding_source_id) : null;
       require_budget().assertInPeriod(fund, v.work_date, "Work date");
@@ -20198,7 +20468,8 @@ var require_time = __commonJS({
         // Time is personal: an entry with no client can only be read by the worker who logged it, or a manager.
         ownerOnly: "time:all",
         joins: "JOIN users u ON u.id=time_entries.user_id LEFT JOIN clients c ON c.id=time_entries.client_id LEFT JOIN funding_sources f ON f.id=time_entries.funding_source_id",
-        select: "time_entries.*, u.display_name AS worker, c.client_code, f.name AS funding_source",
+        select: `time_entries.*, u.display_name AS worker, c.client_code, f.name AS funding_source, ${NAME_COLS}`,
+        afterLoad: withClientName,
         shape: {
           client_id: { type: "string" },
           user_id: { type: "string" },
@@ -20382,6 +20653,7 @@ var init_ = __esm({
       "./routes/resources.js": () => require_resources(),
       "./routes/setup.js": () => require_setup(),
       "./routes/supervision.js": () => require_supervision(),
+      "./routes/supplies.js": () => require_supplies(),
       "./routes/sync.js": () => require_sync(),
       "./routes/tasks.js": () => require_tasks(),
       "./routes/time.js": () => require_time(),

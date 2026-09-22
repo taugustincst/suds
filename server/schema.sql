@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS clients (
   first_name_idx TEXT,
   first_name_prefix_idx TEXT,
   preferred_name_enc TEXT,
+  preferred_name_idx TEXT,             -- blind index of the preferred name / alias, so "Jay" finds Jamie
   dob_enc TEXT,
   dob_idx TEXT,
   phone_enc TEXT,
@@ -456,6 +457,9 @@ CREATE TABLE IF NOT EXISTS notes (
   cosigned_at TEXT,
   cosignature_hash TEXT,
   cosign_note TEXT,
+  -- The author asked a supervisor to review/co-sign this note (a navigator flagging a difficult contact),
+  -- separate from cosign_required, which the account's supervision setting imposes on every note.
+  cosign_requested INTEGER NOT NULL DEFAULT 0,
   source TEXT NOT NULL DEFAULT 'manual',
   source_ref TEXT,
   import_item_id TEXT,
@@ -635,6 +639,7 @@ CREATE INDEX IF NOT EXISTS idx_clients_name_prefix ON clients(name_prefix_idx);
 CREATE INDEX IF NOT EXISTS idx_clients_name_phonetic ON clients(name_phonetic_idx);
 CREATE INDEX IF NOT EXISTS idx_clients_first_name ON clients(first_name_idx);
 CREATE INDEX IF NOT EXISTS idx_clients_first_name_prefix ON clients(first_name_prefix_idx);
+CREATE INDEX IF NOT EXISTS idx_clients_preferred_name ON clients(preferred_name_idx);
 CREATE INDEX IF NOT EXISTS idx_resources_updated ON resources(updated_at);
 CREATE INDEX IF NOT EXISTS idx_resource_photos_updated ON resource_photos(updated_at);
 CREATE INDEX IF NOT EXISTS idx_funding_sources_updated ON funding_sources(updated_at);
@@ -695,6 +700,18 @@ CREATE TABLE IF NOT EXISTS overdose_events (
 CREATE INDEX IF NOT EXISTS idx_overdose_client ON overdose_events(client_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_overdose_occurred ON overdose_events(occurred_at);
 CREATE INDEX IF NOT EXISTS idx_overdose_updated ON overdose_events(updated_at);
+
+-- Harm-reduction supply inventory (naloxone kits, test strips…). A visit that records kits or strips
+-- handed out decrements the matching item, so the count on hand is what is actually left in the cupboard.
+CREATE TABLE IF NOT EXISTS supply_stock (
+  id TEXT PRIMARY KEY,
+  item TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  quantity INTEGER NOT NULL DEFAULT 0,
+  updated_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_supply_stock_updated ON supply_stock(updated_at);
 
 -- Hard deletes travel to devices as tombstones (created by migration 2 on databases predating 1.2).
 CREATE TABLE IF NOT EXISTS tombstones (table_name TEXT NOT NULL, id TEXT NOT NULL, deleted_at TEXT NOT NULL, PRIMARY KEY (table_name, id));

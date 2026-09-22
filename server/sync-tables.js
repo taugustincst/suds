@@ -39,6 +39,8 @@ module.exports = {
     { name: 'form_templates', enc: [], scope: 'all', writePerm: 'forms:manage', blob: ['file_b64'] },
     { name: 'client_forms', enc: ['values_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'forms:write', parent: ['clients', 'client_id'] },
     { name: 'client_form_files', enc: ['data_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'forms:write', parent: ['client_forms', 'client_form_id'], blob: ['data_enc'] },
+    // Harm-reduction supply counts: shared program state, drawn down by visits on any device.
+    { name: 'supply_stock', enc: [], scope: 'all', writePerm: 'interventions:write' },
   ],
   // Columns that reference users(id) somewhere in the schema. A device's local account id is meaningless on the
   // office server (and vice versa), so every one of these has to be remapped on both sides of a sync.
@@ -52,6 +54,7 @@ module.exports = {
     ['client_forms', 'created_by'], ['client_forms', 'completed_by'], ['client_form_files', 'uploaded_by'],
     ['resource_photos', 'uploaded_by'], ['form_templates', 'uploaded_by'], ['policy_documents', 'uploaded_by'],
     ['audit_log', 'user_id'], ['sessions', 'user_id'], ['user_prefs', 'user_id'], ['api_keys', 'created_by'], ['users', 'supervisor_id'], ['devices', 'user_id'],
+    ['supply_stock', 'updated_by'],
   ],
 };
 // Every column name above that points at users(id), for remapping a single pushed row.
