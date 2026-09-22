@@ -427,6 +427,8 @@ test('retention purge hard-deletes an expired record across every table, and not
     await nav.post('/api/time', { client_id: c, work_date: '2012-01-05', minutes: 15, category: 'direct_service' });
   }
   H.db.run(`UPDATE episodes SET status='closed', closed_at='2012-03-01' WHERE client_id IN (?,?)`, old, keep);
+  // A discharge cancels open to-dos (episodes.js); open work on a record blocks its purge.
+  H.db.run(`UPDATE tasks SET status='cancelled' WHERE client_id IN (?,?)`, old, keep);
   assert.equal((await nav.post(`/api/clients/${stillOpen}/episodes`, { opened_at: '2012-01-01' })).status, 201);
   const code = H.db.one(`SELECT client_code FROM clients WHERE id=?`, old).client_code;
   const due = R.expiredClients();

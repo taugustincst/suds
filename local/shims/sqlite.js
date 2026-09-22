@@ -106,14 +106,38 @@ class Statement {
   run(...params) { this.db.run(this.sql, this._bind(params)); markDirty(); return { changes: this.db.getRowsModified(), lastInsertRowid: 0 }; }
 }
 export class DatabaseSync {
-  constructor(path, bytes) { if (!SQL) throw new Error('sqlite shim not initialised'); this.db = bytes ? new SQL.Database(bytes) : new SQL.Database(); current = this.db; }
+  constructor(path, bytes) {
+    if (!SQL) throw new Error('sqlite shim not initialised');
+    this.db = bytes ? new SQL.Database(bytes) : new SQL.Database();
+    // node:sqlite enforces foreign keys by default; sql.js does not, and the pragma is per connection, so
+    // an existing database reopened here (the schema's own PRAGMA only runs on a fresh one) had no
+    // cascades and no referential checks at all.
+    this.db.exec('PRAGMA foreign_keys = ON');
+    current = this.db;
+  }
   prepare(sql) { return new Statement(this.db, sql); }
   exec(sql) {
     this.db.exec(sql);
     markDirty();
     // A committed transaction is work the user believes is saved. Write it out now instead of waiting for
-    // the debounce, so an OS kill of the WebView cannot lose it.
-    if (/^\s*(COMMIT|RELEASE)\b/i.test(sql)) persistSoon();
+    // the debounce, so an OS kill of the WebView cannot lose it. Only when the OUTERMOST transaction ends,
+    // though: sql.js's export() closes and reopens the database, which silently ends any transaction still
+    // open -- so persisting on a savepoint released inside a BEGIN (a per-row savepoint during a sync pull)
+    // left the enclosing COMMIT with nothing to commit and failed every sync.
+    if (this._transactionEnded(sql)) persistSoon();
+  }
+  // server/db.js issues exactly BEGIN / COMMIT / ROLLBACK, SAVEPOINT x / RELEASE x and ROLLBACK TO x (with
+  // or without a trailing RELEASE x); the depth is tracked from those, and only from statements that start
+  // with one of them, so a word in a comment or a string can never be mistaken for transaction control.
+  _transactionEnded(sql) {
+    const head = sql.trimStart().slice(0, 12).toUpperCase();
+    if (/^BEGIN\b/.test(head)) { this._began = true; this._spDepth = 0; return false; }
+    if (/^(COMMIT|END)\b/.test(head)) { this._began = false; this._spDepth = 0; return true; }
+    if (/^ROLLBACK TO\b/.test(head)) { this._spDepth = Math.max(0, (this._spDepth || 0) - (sql.match(/\bRELEASE\b/gi) || []).length); return !this._began && this._spDepth === 0 && /\bRELEASE\b/i.test(sql); }
+    if (/^ROLLBACK\b/.test(head)) { this._began = false; this._spDepth = 0; return false; }
+    if (/^SAVEPOINT\b/.test(head)) { this._spDepth = (this._spDepth || 0) + 1; return false; }
+    if (/^RELEASE\b/.test(head)) { this._spDepth = Math.max(0, (this._spDepth || 0) - 1); return !this._began && this._spDepth === 0; }
+    return false;
   }
   close() { return flush(); }
   export() { return this.db.export(); }

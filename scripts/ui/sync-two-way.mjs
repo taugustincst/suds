@@ -81,6 +81,22 @@ try {
   const after = await api('GET', '/api/clients/' + other.id);
   eq(after.client.goals, later, 'an untouched device row takes the office version');
 
+  // ---- supply counts are the office's: a visit recorded on the phone draws the office shelf down once,
+  // and the phone's own count is never pushed, only pulled back ----
+  const shelf = async () => (await fetch(base + '/api/supplies', { headers: H }).then(r => r.json())).rows.find(x => /naloxone kit/i.test(x.item));
+  const before = await shelf();
+  ok(before && before.quantity > 0, 'the office has naloxone kits on the shelf', before);
+  const kitVisit = await api('POST', '/api/interventions', { client_id: other.id, type: 'naloxone_distribution', occurred_at: new Date().toISOString(), naloxone_kits: 1 });
+  ok(kitVisit && kitVisit.id, 'the device records a visit that handed out a kit');
+  const s3 = await sync();
+  eq((s3.rejected || []).length, 0, 'the device did not try to push its own supply count', s3.rejected);
+  const after1 = await shelf();
+  eq(after1.quantity, before.quantity - 1, 'the office shelf fell by exactly the kits the phone handed out');
+  await sync();
+  eq((await shelf()).quantity, before.quantity - 1, 'and a second sync of the same visit draws nothing more');
+  const devShelf = (await api('GET', '/api/supplies')).rows.find(x => /naloxone kit/i.test(x.item));
+  eq(devShelf && devShelf.quantity, before.quantity - 1, 'the phone shows the office count after the pull');
+
   // ---- nothing left pending after a clean sync ----
   const status = await api('GET', '/api/local/sync/status');
   eq(status.pending, 0, 'no local changes are left unsent after a sync');

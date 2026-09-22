@@ -56,13 +56,25 @@ route('sync', async () => {
       const { office_password, ...rest } = d;
       const r = await post('/api/local/sync', { ...rest, password: office_password });
       const sum = (o) => Object.entries(o || {}).filter(([, n]) => n).map(([k, n]) => `${n} ${fmt.label(k).toLowerCase()}`).join(', ') || 'nothing new';
-      log.textContent = `Done ${fmt.dt(r.at)}. Received: ${sum(r.pulled)}. Sent: ${sum(r.pushed)}.${r.rejected.length ? ` ${r.rejected.length} item(s) were not accepted by the office (not on your caseload).` : ''}`;
+      const retrying = (r.rejected || []).filter(x => !(r.conflicts || []).some(c => c.table === x.table && c.id === x.id && c.reason));
+      log.textContent = `Done ${fmt.dt(r.at)}. Received: ${sum(r.pulled)}. Sent: ${sum(r.pushed)}.${retrying.length ? ` ${retrying.length} item(s) could not be sent this time and will be retried.` : ''}${(r.skipped || []).length ? ` ${r.skipped.length} office record(s) could not be stored on this device (see the audit log).` : ''}`;
       // An edit made here that a newer office edit replaced is not a footnote: the person saw "saved".
-      const conflicts = r.conflicts || [];
+      // Neither is a change the office refused for good: it is shown here, once, and then not sent again.
+      const all = r.conflicts || [];
+      const conflicts = all.filter(c => !c.reason);
+      const refused = all.filter(c => c.reason && !c.warning);
+      const warnings = all.filter(c => c.warning);
+      const name = (c) => `${fmt.label(c.table).replace(/s$/, '')}${c.label ? ' ' + c.label : ''}`;
       if (conflicts.length) {
-        const what = conflicts.slice(0, 5).map(c => `${fmt.label(c.table).replace(/s$/, '')}${c.label ? ' ' + c.label : ''} (${(c.columns || []).map(x => fmt.label(x).toLowerCase()).join(', ')})`).join('; ');
+        const what = conflicts.slice(0, 5).map(c => `${name(c)} (${(c.columns || []).map(x => fmt.label(x).toLowerCase()).join(', ')})`).join('; ');
         log.append(h('div', { class: 'banner warn mt', role: 'alert', 'data-sync-conflicts': String(conflicts.length) }, h('div', {}, h('b', {}, `${conflicts.length} of your change${conflicts.length === 1 ? ' was' : 's were'} replaced by a newer edit made at the office: `), what, conflicts.length > 5 ? ` and ${conflicts.length - 5} more` : '', '. The office version is what everyone now sees; re-enter anything from your version that still matters.')));
       }
+      if (refused.length) {
+        const why = (c) => c.reason === 'purged' ? 'the office has removed this record under its retention policy; it has been removed from this device too' : c.reason;
+        const what = refused.slice(0, 5).map(c => `${name(c)}: ${why(c)}`).join('; ');
+        log.append(h('div', { class: 'banner warn mt', role: 'alert', 'data-sync-refused': String(refused.length) }, h('div', {}, h('b', {}, `${refused.length} change${refused.length === 1 ? '' : 's'} made on this device ${refused.length === 1 ? 'was' : 'were'} not accepted by the office and will not be sent again: `), what, refused.length > 5 ? ` and ${refused.length - 5} more` : '', '. The office copy is what everyone now sees; if something still matters, ask a supervisor to enter it there.')));
+      }
+      if (warnings.length) log.append(h('div', { class: 'banner info mt', 'data-sync-warnings': String(warnings.length) }, h('div', {}, warnings.slice(0, 5).map(c => `${name(c)}: ${c.reason}`).join('; '))));
       toast('Sync complete', 'ok'); await loadSession();
     } catch (e) {
       log.textContent = 'Sync failed: ' + e.message;

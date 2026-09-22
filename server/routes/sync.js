@@ -105,22 +105,46 @@ function changedColumns(t, existing, raw, existingCols) {
   return out;
 }
 
+/** Follow a merged-away client to the record that was kept (merges can chain). */
+function keeperOf(clientId) {
+  let cur = clientId;
+  for (let i = 0; i < 25; i++) {
+    const c = db.one(`SELECT merged_into FROM clients WHERE id=?`, cur);
+    if (!c || !c.merged_into) return cur;
+    cur = c.merged_into;
+  }
+  return cur;
+}
+
+// A clients tombstone only ever comes from a hard delete on the office side — the retention purge, or
+// sample data being removed — never from a device (clients are not hard-deleted through sync). Such a row
+// must never come back, whatever a device's clock says about it.
+const clientPurged = (clientId) => !!db.one(`SELECT 1 FROM tombstones WHERE table_name='clients' AND id=?`, clientId);
+
+// Which user a device may say did the work. Mirrors the REST routes: crud.js's restrictOwner lets only
+// clients:all set user_id on someone else's behalf, time.js uses time:all, and a note's author is the person
+// who wrote it unless a manager says otherwise.
+const OWNER = { interventions: ['user_id', 'clients:all'], calls: ['user_id', 'clients:all'], time_entries: ['user_id', 'time:all'], referrals: ['user_id', 'clients:all'], expenditures: ['user_id', 'clients:all'], notes: ['author_id', 'clients:all'] };
+
 function push(user, payload) {
-  const applied = {}; const rejected = []; const conflicts = [];
-  const reject = (table, id, reason) => { rejected.push({ table, id, reason }); };
-  const rejectedIds = new Set();
+  const applied = {}; const rejected = []; const conflicts = []; const warnings = [];
+  // permanent: the office has ruled and a retry can never succeed, so the device stops resending the row.
+  const reject = (table, id, reason, permanent = SYNC.isPermanentReason(reason)) => { rejected.push({ table, id, reason, permanent }); };
+  const rejectedIds = new Map(); // `${table}:${id}` -> permanent?
 
   // Device clocks are not trusted: shift the device's own bookkeeping timestamps by the measured offset so
   // last-write-wins compares in server time. Only created_at and updated_at are shifted — signed_at,
   // approved_at and the rest are clinical and legal facts, not sync metadata, and rewriting them would
-  // silently edit the record every time a differently-skewed device synced.
+  // silently edit the record every time a differently-skewed device synced. The shifted updated_at is used
+  // for the comparison only: what is stored is the server's own clock, so every other device's incremental
+  // pull (updated_at > cursor) sees the row. A stored device timestamp in the past was invisible to them.
   const deviceNow = payload.device_now ? Date.parse(payload.device_now) : NaN;
   const offsetMs = Number.isFinite(deviceNow) ? Date.now() - deviceNow : 0;
   const shift = (ts) => { if (!ts || !offsetMs) return ts; const t = Date.parse(ts); return Number.isFinite(t) ? new Date(t + offsetMs).toISOString() : ts; };
-  const TS_COLS = ['created_at', 'updated_at'];
 
   // One lookup instead of one per user-reference column per row.
-  const knownUsers = new Set(db.all(`SELECT id FROM users`).map(u => u.id));
+  const users = new Map(db.all(`SELECT id, is_active FROM users`).map(u => [u.id, u]));
+  const knownUsers = new Set(users.keys());
 
   // A row that points at its own parent within the same table (e.g. a budget sub-allocation) needs that
   // parent applied first, same as t.parent does across tables — but nothing orders rows within one table's
@@ -145,6 +169,12 @@ function push(user, payload) {
       let rows = (payload.tables || {})[t.name]; if (!Array.isArray(rows) || !rows.length) continue;
       if (t.selfParent) rows = selfParentOrder(rows, t.selfParent);
       if (t.name === 'users') continue;
+      // Shared program state the office alone keeps (supply counts): a device's copy is never the truth.
+      if (t.serverOwned) {
+        for (const raw of rows) if (raw && typeof raw.id === 'string') reject(t.name, raw.id, 'server-owned');
+        applied[t.name] = 0;
+        continue;
+      }
       // Syncing is not a way around a role's limits: the same permission the REST route requires applies here.
       if (t.writePerm && !auth.hasPerm(user, t.writePerm)) {
         for (const raw of rows) if (raw && typeof raw.id === 'string') reject(t.name, raw.id, `your role cannot write ${t.name}`);
@@ -155,14 +185,38 @@ function push(user, payload) {
       for (const raw of rows) {
         if (!raw || typeof raw.id !== 'string') continue;
         // A child whose parent was rejected has nothing to attach to; skipping it beats a constraint error.
-        if (t.parent && raw[t.parent[1]] && rejectedIds.has(`${t.parent[0]}:${raw[t.parent[1]]}`)) { reject(t.name, raw.id, `its ${t.parent[0]} row was rejected`); rejectedIds.add(`${t.name}:${raw.id}`); continue; }
+        // The child inherits the parent's permanence: a child of a purged client will never land either.
+        if (t.parent && raw[t.parent[1]] && rejectedIds.has(`${t.parent[0]}:${raw[t.parent[1]]}`)) {
+          const permanent = rejectedIds.get(`${t.parent[0]}:${raw[t.parent[1]]}`);
+          reject(t.name, raw.id, `its ${t.parent[0]} row was rejected`, permanent); rejectedIds.set(`${t.name}:${raw.id}`, permanent); continue;
+        }
 
         const ok = db.savepoint(() => {
-          for (const c of TS_COLS) if (raw[c]) raw[c] = shift(raw[c]);
+          // The device's own idea of when it last touched the row, in server time — for the comparison only.
+          const incomingAt = shift(raw.updated_at || raw.created_at) || NEVER;
+          const existing = db.one(`SELECT * FROM ${t.name} WHERE id=?`, raw.id);
+          // created_at is shifted once, when the office first sees the row. Re-shifting it on every round
+          // trip from a differently-skewed device walked it away from the truth a little each time.
+          if (existing) delete raw.created_at; else if (raw.created_at) raw.created_at = shift(raw.created_at);
+          delete raw.updated_at;
+
+          // A purged record stays purged. Nothing a device holds can bring back a client the retention
+          // policy removed — not the client, and not anything that hangs off it.
+          if (t.name === 'clients' && clientPurged(raw.id)) { reject(t.name, raw.id, 'purged'); return false; }
+          if (t.clientCol && t.name !== 'clients' && raw[t.clientCol] && clientPurged(raw[t.clientCol])) { reject(t.name, raw.id, 'purged'); return false; }
+          if (t.scope === 'via-note' && raw.note_id && db.one(`SELECT 1 FROM tombstones WHERE table_name='notes' AND id=?`, raw.note_id)) { reject(t.name, raw.id, 'purged'); return false; }
+
+          // A merge is the office's decision about who is the same person. A device that still holds the
+          // duplicate keeps working on it offline; what it sends is re-pointed at the record that was kept,
+          // and an existing child never moves between clients by sync at all.
+          if (t.name === 'clients' && existing && existing.merged_into) { reject(t.name, raw.id, 'merged into another record'); return false; }
+          if (t.clientCol && t.name !== 'clients') {
+            if (existing) raw[t.clientCol] = existing[t.clientCol];
+            else if (raw[t.clientCol]) raw[t.clientCol] = keeperOf(raw[t.clientCol]);
+          }
           // Caseload scoping applies to everything that carries a client, including the tables where the
           // client is optional (calls, tasks, time, expenditures) — those were previously unchecked.
           if ((t.scope === 'client' || t.scope === 'client-or-null') && raw[t.clientCol] && t.name !== 'clients' && !auth.canAccessClient(user, raw[t.clientCol])) { reject(t.name, raw.id, 'not on caseload'); return false; }
-          const existing = db.one(`SELECT * FROM ${t.name} WHERE id=?`, raw.id);
           if (t.name === 'clients' && existing && !auth.canAccessClient(user, raw.id)) { reject(t.name, raw.id, 'not on caseload'); return false; }
           // Consents, disclosures and addenda are the legal record: a device may add to it, never rewrite it.
           // A push that would resurrect a revoked consent or change who a disclosure went to is refused. The
@@ -173,8 +227,8 @@ function push(user, payload) {
             const onlyRevocation = t.name === 'consents' && !existing.revoked_at && raw.revoked_at && changed.every(c => ['revoked_at', 'revoked_reason', 'revoked_by'].includes(c));
             if (!onlyRevocation) { if (changed.length) reject(t.name, raw.id, 'immutable'); return false; }
             revocation = true;
-            for (const k of Object.keys(raw)) if (!['id', 'revoked_at', 'revoked_reason', 'updated_at'].includes(k)) delete raw[k];
-            raw.revoked_by = user.id; raw.updated_at = db.now();
+            for (const k of Object.keys(raw)) if (!['id', 'revoked_at', 'revoked_reason'].includes(k)) delete raw[k];
+            raw.revoked_by = user.id;
           }
           if (t.scope === 'via-note') { const note = db.one(`SELECT client_id, kind FROM notes WHERE id=?`, raw.note_id); if (!note || !auth.canAccessClient(user, note.client_id) || (note.kind === 'clinical' && !auth.hasPerm(user, 'notes:clinical:write'))) { reject(t.name, raw.id, 'not permitted'); return false; } }
           if (t.name === 'notes' && raw.kind === 'clinical' && !auth.hasPerm(user, 'notes:clinical:write')) { reject(t.name, raw.id, 'clinical notes not permitted for this role'); return false; }
@@ -204,7 +258,6 @@ function push(user, payload) {
             const changed = !existing || raw.cost !== existing.cost || raw.funding_source_id !== existing.funding_source_id || raw.budget_line_id !== existing.budget_line_id;
             if (changed && ((raw.cost && raw.cost > 0) || raw.funding_source_id || raw.budget_line_id)) { reject(t.name, raw.id, 'you do not have permission to attach a cost to a funding source'); return false; }
           }
-          const incomingAt = raw.updated_at || raw.created_at || NEVER;
           if (existing && !revocation && (existing.updated_at || existing.created_at || NEVER) >= incomingAt) {
             // The office copy is newer, so the device's edit loses. That is the rule -- but it must not lose
             // silently: the person who typed it saw "saved" on their phone. Name the columns that differ (never
@@ -216,9 +269,22 @@ function push(user, payload) {
             }
             return false;
           }
-          // Records from a device are attributed to the syncing user unless they manage all clients
-          const OWNER = { interventions: 'user_id', calls: 'user_id', time_entries: 'user_id', referrals: 'user_id', expenditures: 'user_id', notes: 'author_id' }[t.name];
-          if (OWNER && !auth.hasPerm(user, 'clients:all')) { if (!existing) raw[OWNER] = user.id; else raw[OWNER] = existing[OWNER]; }
+          // Who did the work. A device may name another worker only when it names a real, active office
+          // account and the syncing user could have done the same over REST; otherwise the row is refused
+          // rather than quietly re-attributed to whoever happened to press Sync on a shared phone.
+          if (OWNER[t.name]) {
+            const [col, perm] = OWNER[t.name];
+            const want = raw[col];
+            if (existing && (!want || !auth.hasPerm(user, perm))) raw[col] = existing[col];
+            else if (!want) raw[col] = user.id;
+            else if (want !== user.id && want !== (existing && existing[col])) {
+              const target = users.get(want);
+              // An id the office has never heard of is a device-minted local account, not another worker:
+              // it is remapped to the syncing user below, as every other user reference is.
+              if (target && !target.is_active) { reject(t.name, raw.id, 'attributed to a user the office has deactivated'); return false; }
+              if (target && !auth.hasPerm(user, perm)) { reject(t.name, raw.id, 'attributed to another user, which your role cannot do'); return false; }
+            }
+          }
           if (t.name === 'expenditures') { if (!existing) { raw.status = 'pending'; raw.approved_by = null; raw.approved_at = null; } else if (!auth.hasPerm(user, 'budget:approve')) { raw.status = existing.status; raw.approved_by = existing.approved_by; raw.approved_at = existing.approved_at; raw.approval_note = existing.approval_note; } }
           if (t.name === 'time_entries') { if (!existing) { raw.status = raw.status === 'submitted' ? 'submitted' : 'draft'; raw.approved_by = null; raw.approved_at = null; } else if (!auth.hasPerm(user, 'time:approve')) { raw.status = existing.status === 'approved' || existing.status === 'rejected' ? existing.status : raw.status; raw.approved_by = existing.approved_by; raw.approved_at = existing.approved_at; } }
           if (t.name === 'notes' && existing) {
@@ -232,6 +298,8 @@ function push(user, payload) {
           for (const c of SYNC.user_ref_cols) if (existingCols.includes(c) && raw[c] && !knownUsers.has(raw[c])) raw[c] = user.id;
           const o = importRow(t, raw, existingCols);
           if (t.name === 'clients') o.client_code = freeClientCode(o.client_code, raw.id);
+          // Stamped in server time so every other device's next incremental pull picks the row up.
+          if (existingCols.includes('updated_at')) o.updated_at = db.now();
           const keys = Object.keys(o).filter(k => k !== 'id');
           if (existing) {
             // Last write wins at row granularity, so a device's edit can quietly revert a field someone
@@ -249,13 +317,27 @@ function push(user, payload) {
           // tables disagree and other devices are told to delete a row that is alive here.
           db.run(`DELETE FROM tombstones WHERE table_name=? AND id=?`, t.name, raw.id);
           if (t.name === 'clients' && !existing && auth.caseloadRestricted(user)) db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, require('../crypto').uuid(), raw.id, user.id, 'primary', (raw.intake_date || db.now()).slice(0, 10), user.id);
+          // A visit that handed out kits or strips draws down the office shelf count exactly as the REST
+          // route does — by the difference from what the office already had, so a re-sent row counts once.
+          if (t.name === 'interventions') {
+            const supplies = require('./supplies');
+            const counts = { id: raw.id };
+            for (const c of Object.keys(supplies.DRAWDOWN)) counts[c] = o[c] !== undefined ? o[c] : (existing ? existing[c] : 0);
+            supplies.drawDown({ user, ip: 'device' }, counts, existing);
+          }
+          // A person entered on a phone may already be on the office books under another spelling. The row
+          // still lands (the worker cannot check from the field), but a supervisor is told to look.
+          if (t.name === 'clients' && !existing) flagPossibleDuplicate(user, raw, o.client_code, warnings);
           return true;
         }, (err) => {
           // A constraint violation is this row's problem, not the batch's.
           reject(t.name, raw.id, describeError(err));
         });
         if (ok === true) n++;
-        if (ok === undefined || (ok === false && rejected.length && rejected[rejected.length - 1].id === raw.id)) rejectedIds.add(`${t.name}:${raw.id}`);
+        // A merged-away client is the one rejection its children do not inherit: they are re-pointed at
+        // the record that was kept and applied on their own merits.
+        const last = rejected.length ? rejected[rejected.length - 1] : null;
+        if (ok === undefined || (ok === false && last && last.id === raw.id && last.table === t.name)) { if (last.reason !== 'merged into another record') rejectedIds.set(`${t.name}:${raw.id}`, last.permanent); }
       }
       applied[t.name] = n;
     }
@@ -263,6 +345,7 @@ function push(user, payload) {
     for (const ts of payload.tombstones || []) {
       const t = SYNC.tables.find(x => x.name === ts.table_name); if (!t || t.name === 'users' || typeof ts.id !== 'string') continue;
       ts.deleted_at = shift(ts.deleted_at);
+      if (t.serverOwned) { reject(t.name, ts.id, 'server-owned'); continue; }
       if (t.writePerm && !auth.hasPerm(user, t.writePerm)) { reject(t.name, ts.id, `your role cannot delete ${t.name}`); continue; }
       const existing = db.one(`SELECT * FROM ${t.name} WHERE id=?`, ts.id);
       if (!existing) continue;
@@ -286,7 +369,24 @@ function push(user, payload) {
     }
     applied._audit = auditRows.length;
   });
-  return { applied, rejected, conflicts, server_now: db.now(), clock_offset_ms: offsetMs, audit_accepted: applied._audit || 0 };
+  return { applied, rejected, conflicts, warnings, server_now: db.now(), clock_offset_ms: offsetMs, audit_accepted: applied._audit || 0 };
+}
+
+/**
+ * A client created on a device that matches an existing record by the same rules as the intake form's
+ * duplicate check. There is no way to ask the worker in the field, so the row is accepted, audited (codes
+ * and reasons only, never names) and a task is raised for a supervisor to compare the two.
+ */
+function flagPossibleDuplicate(user, raw, clientCode, warnings) {
+  let matches = [];
+  try {
+    matches = require('./clients').possibleDuplicates({ first_name: raw.first_name_enc, last_name: raw.last_name_enc, dob: raw.dob_enc, phone: raw.phone_enc }, raw.id);
+  } catch { return; }
+  if (!matches.length) return;
+  const codes = matches.map(m => m.client_code);
+  audit.log({ user, action: 'client.possible_duplicate', entity: 'client', entityId: raw.id, clientId: raw.id, ip: 'device', details: { client_code: clientCode, matches: matches.map(m => ({ id: m.id, client_code: m.client_code, reasons: m.reasons })), source: 'sync' } });
+  db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,priority) VALUES(?,?,?,?,?,?)`, require('../crypto').uuid(), raw.id, null, user.id, encrypt(`Possible duplicate record: compare ${clientCode} with ${codes.join(', ')}`), 'high');
+  warnings.push({ table: 'clients', id: raw.id, reason: `possible duplicate of ${codes.length} existing record${codes.length === 1 ? '' : 's'} (${codes.join(', ')}); a supervisor has been asked to check` });
 }
 
 /** Find a client code no other client is using. Devices generate codes offline, so collisions are normal. */
@@ -306,6 +406,7 @@ function describeError(err) {
   if (/FOREIGN KEY/i.test(m)) return 'refers to a record the office server does not have';
   if (/UNIQUE/i.test(m)) return 'conflicts with an existing record';
   if (/NOT NULL/i.test(m)) return 'is missing a required field';
+  if (/CHECK constraint/i.test(m)) return 'has a value the office does not accept';
   return m.slice(0, 200);
 }
 

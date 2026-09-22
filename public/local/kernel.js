@@ -6120,6 +6120,7 @@ var init_sqlite = __esm({
       constructor(path, bytes3) {
         if (!SQL) throw new Error("sqlite shim not initialised");
         this.db = bytes3 ? new SQL.Database(bytes3) : new SQL.Database();
+        this.db.exec("PRAGMA foreign_keys = ON");
         current = this.db;
       }
       prepare(sql) {
@@ -6128,7 +6129,41 @@ var init_sqlite = __esm({
       exec(sql) {
         this.db.exec(sql);
         markDirty();
-        if (/^\s*(COMMIT|RELEASE)\b/i.test(sql)) persistSoon();
+        if (this._transactionEnded(sql)) persistSoon();
+      }
+      // server/db.js issues exactly BEGIN / COMMIT / ROLLBACK, SAVEPOINT x / RELEASE x and ROLLBACK TO x (with
+      // or without a trailing RELEASE x); the depth is tracked from those, and only from statements that start
+      // with one of them, so a word in a comment or a string can never be mistaken for transaction control.
+      _transactionEnded(sql) {
+        const head = sql.trimStart().slice(0, 12).toUpperCase();
+        if (/^BEGIN\b/.test(head)) {
+          this._began = true;
+          this._spDepth = 0;
+          return false;
+        }
+        if (/^(COMMIT|END)\b/.test(head)) {
+          this._began = false;
+          this._spDepth = 0;
+          return true;
+        }
+        if (/^ROLLBACK TO\b/.test(head)) {
+          this._spDepth = Math.max(0, (this._spDepth || 0) - (sql.match(/\bRELEASE\b/gi) || []).length);
+          return !this._began && this._spDepth === 0 && /\bRELEASE\b/i.test(sql);
+        }
+        if (/^ROLLBACK\b/.test(head)) {
+          this._began = false;
+          this._spDepth = 0;
+          return false;
+        }
+        if (/^SAVEPOINT\b/.test(head)) {
+          this._spDepth = (this._spDepth || 0) + 1;
+          return false;
+        }
+        if (/^RELEASE\b/.test(head)) {
+          this._spDepth = Math.max(0, (this._spDepth || 0) - 1);
+          return !this._began && this._spDepth === 0;
+        }
+        return false;
       }
       close() {
         return flush();
@@ -8646,26 +8681,29 @@ var require_sync_tables = __commonJS({
     module.exports = {
       settings_keys: ["org_name", "county_name", "program_contact", "note_lock_days"],
       tables: [
-        { name: "users", enc: ["mfa_secret_enc"], scope: "users", cols: null },
+        // supervisor_id points at another user: a supervisor must land before the people who report to them.
+        { name: "users", enc: ["mfa_secret_enc"], scope: "users", cols: null, selfParent: "supervisor_id" },
         { name: "resources", enc: [], scope: "all", writePerm: "resources:write" },
         { name: "resource_photos", enc: [], scope: "all", writePerm: "resources:write", parent: ["resources", "resource_id"], blob: ["data_b64"] },
         { name: "policy_documents", enc: [], scope: "all", writePerm: "documents:write", blob: ["file_b64"] },
         // Grant structure is budget:manage over REST; a device holding only budget:write must not restructure it by sync.
         { name: "funding_sources", enc: [], scope: "all", writePerm: "budget:manage" },
         { name: "budget_lines", enc: [], scope: "all", writePerm: "budget:manage", parent: ["funding_sources", "funding_source_id"], selfParent: "parent_id" },
-        { name: "clients", enc: ["first_name_enc", "last_name_enc", "preferred_name_enc", "dob_enc", "phone_enc", "alt_phone_enc", "email_enc", "address_enc", "medicaid_id_enc", "emergency_contact_enc", "goals_enc", "flags_enc"], scope: "client", clientCol: "id", idx: true, writePerm: "clients:write" },
+        // merged_into points at another client: the record that was kept must land before its duplicate.
+        { name: "clients", enc: ["first_name_enc", "last_name_enc", "preferred_name_enc", "dob_enc", "phone_enc", "alt_phone_enc", "email_enc", "address_enc", "medicaid_id_enc", "emergency_contact_enc", "goals_enc", "flags_enc"], scope: "client", clientCol: "id", idx: true, writePerm: "clients:write", selfParent: "merged_into" },
         { name: "assignments", enc: [], scope: "client", clientCol: "client_id", writePerm: "assignments:manage", parent: ["clients", "client_id"] },
         { name: "episodes", enc: ["presenting_problem_enc", "discharge_summary_enc"], scope: "client", clientCol: "client_id", writePerm: "episodes:write", parent: ["clients", "client_id"] },
         { name: "interventions", enc: ["summary_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "interventions:write", parent: ["clients", "client_id"] },
         { name: "overdose_events", enc: ["notes_enc", "substances_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "overdose:write", parent: ["clients", "client_id"] },
         { name: "calls", enc: ["contact_name_enc", "phone_enc", "summary_enc", "purpose_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "calls:write", parent: ["clients", "client_id"] },
         { name: "time_entries", enc: [], scope: "client-or-null", clientCol: "client_id", writePerm: "time:write", parent: ["clients", "client_id"] },
+        // A referral may cite the consent it was made under, so consents come first.
+        { name: "consents", enc: ["recipient_enc", "purpose_enc", "scope_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
         { name: "referrals", enc: ["outcome_enc", "barrier_enc", "notes_enc"], scope: "client", clientCol: "client_id", writePerm: "referrals:write", parent: ["clients", "client_id"] },
         { name: "tasks", enc: ["title_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "tasks:write", parent: ["clients", "client_id"] },
         { name: "expenditures", enc: [], scope: "client-or-null", clientCol: "client_id", writePerm: "budget:write", parent: ["clients", "client_id"] },
         { name: "notes", enc: ["content_enc", "structured_enc", "title_enc"], scope: "client", clientCol: "client_id", writePerm: "notes:admin:write", parent: ["clients", "client_id"] },
         { name: "note_addenda", enc: ["content_enc"], scope: "via-note", writePerm: "notes:admin:write", parent: ["notes", "note_id"] },
-        { name: "consents", enc: ["recipient_enc", "purpose_enc", "scope_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
         { name: "disclosures", enc: ["recipient_enc", "purpose_enc", "what_enc", "justification_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
         { name: "imports", enc: [], scope: "all", writePerm: "imports:write" },
         { name: "import_items", enc: ["content_enc", "title_enc"], scope: "all", writePerm: "imports:write", parent: ["imports", "import_id"] },
@@ -8673,8 +8711,33 @@ var require_sync_tables = __commonJS({
         { name: "client_forms", enc: ["values_enc"], scope: "client", clientCol: "client_id", writePerm: "forms:write", parent: ["clients", "client_id"] },
         { name: "client_form_files", enc: ["data_enc"], scope: "client", clientCol: "client_id", writePerm: "forms:write", parent: ["client_forms", "client_form_id"], blob: ["data_enc"] },
         { name: "patient_requests", enc: ["notes_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
-        // Harm-reduction supply counts: shared program state, drawn down by visits on any device.
-        { name: "supply_stock", enc: [], scope: "all", writePerm: "interventions:write" }
+        // Harm-reduction supply counts: shared program state. Pull-only (serverOwned): the office copy is the
+        // one shelf count, drawn down there when a pushed visit lands (server/routes/sync.js calls the same
+        // draw-down the REST route does). A device's absolute count is never accepted — two phones each
+        // subtracting from their own stale copy would otherwise leave whichever synced last as the truth.
+        { name: "supply_stock", enc: [], scope: "all", writePerm: "interventions:write", serverOwned: true }
+      ],
+      // Push rejection reasons that will never succeed on a retry: the office has ruled, and the device must
+      // mark the row as exchanged (office wins) rather than resend it every sync forever. Anything else
+      // (network, a 5xx, an unknown SQL error) is transient and is retried. Reasons are matched as prefixes.
+      permanent_reasons: [
+        "immutable",
+        "purged",
+        "merged into another record",
+        "conflicts with an existing record",
+        "not on caseload",
+        "not permitted",
+        "server-owned",
+        "your role cannot",
+        "clinical notes not permitted",
+        "you do not have permission",
+        "is missing a required field",
+        "refers to a record the office server does not have",
+        "attributed to",
+        "would create a cycle",
+        "parent allocation does not belong",
+        "its ",
+        "has a value the office does not accept"
       ],
       // Server-side only, never synchronised: breakglass_events is the office supervisor's review queue for
       // emergency access, and a device has no supervisor to review it.
@@ -8769,6 +8832,7 @@ var require_sync_tables = __commonJS({
       }
       return o;
     }
+    module.exports.isPermanentReason = (reason) => module.exports.permanent_reasons.some((p) => String(reason || "").startsWith(p));
     module.exports.exportRow = exportRow2;
     module.exports.importRow = importRow2;
   }
@@ -12367,6 +12431,27 @@ var require_clients = __commonJS({
       auth3.assertClientAccess(ctx, id);
       return row;
     }
+    function possibleDuplicates(v, excludeId = null) {
+      const clauses = [];
+      const params = [];
+      const add = (sql, ...p) => {
+        clauses.push(sql);
+        params.push(...p);
+      };
+      if (v.dob && v.last_name) add("(c.dob_idx=? AND c.last_name_idx=?)", blindIndex2(v.dob), blindIndex2(v.last_name));
+      if (v.phone) add("c.phone_idx=?", blindIndex2(String(v.phone).replace(/\D/g, "")));
+      if (v.first_name && v.last_name) add("c.full_name_idx=?", blindIndex2((v.last_name || "") + (v.first_name || "")));
+      if (!clauses.length) return [];
+      const rows = db3.all(`SELECT c.* FROM clients c WHERE c.deleted_at IS NULL AND (${clauses.join(" OR ")}) ${excludeId ? "AND c.id<>?" : ""} LIMIT 10`, ...params, ...excludeId ? [excludeId] : []);
+      return rows.map((x) => {
+        const d = M.decryptRow(x);
+        const reasons = [];
+        if (v.dob && v.last_name && x.dob_idx === blindIndex2(v.dob) && x.last_name_idx === blindIndex2(v.last_name)) reasons.push("same surname and date of birth");
+        if (v.phone && x.phone_idx === blindIndex2(String(v.phone).replace(/\D/g, ""))) reasons.push("same phone number");
+        if (v.first_name && v.last_name && x.full_name_idx === blindIndex2((v.last_name || "") + (v.first_name || ""))) reasons.push("same full name");
+        return { id: x.id, client_code: x.client_code, display_name: d.display_name, dob: d.dob, status: x.status, intake_date: x.intake_date, reasons };
+      });
+    }
     module.exports = (r) => {
       r.get("/api/clients", auth3.requireAuth, auth3.requirePerm("clients:read", "clients:list-deidentified"), (ctx) => {
         const deidentify = !auth3.hasPerm(ctx.user, "clients:read");
@@ -12436,27 +12521,6 @@ var require_clients = __commonJS({
         audit3.log({ user: ctx.user, action: "client.list", ip: ctx.ip, details: { q: q ? "[redacted]" : "", status, sort: sort || void 0, count: rows.length, deidentified: deidentify } });
         return { clients: rows.map((x) => ({ ...M.summary(x, { deidentify }), assigned_workers: x.assigned_workers, last_contact: x.last_contact, overdue_tasks: x.overdue_tasks })), total, limit: limit2, offset };
       });
-      function possibleDuplicates(v, excludeId = null) {
-        const clauses = [];
-        const params = [];
-        const add = (sql, ...p) => {
-          clauses.push(sql);
-          params.push(...p);
-        };
-        if (v.dob && v.last_name) add("(c.dob_idx=? AND c.last_name_idx=?)", blindIndex2(v.dob), blindIndex2(v.last_name));
-        if (v.phone) add("c.phone_idx=?", blindIndex2(String(v.phone).replace(/\D/g, "")));
-        if (v.first_name && v.last_name) add("c.full_name_idx=?", blindIndex2((v.last_name || "") + (v.first_name || "")));
-        if (!clauses.length) return [];
-        const rows = db3.all(`SELECT c.* FROM clients c WHERE c.deleted_at IS NULL AND (${clauses.join(" OR ")}) ${excludeId ? "AND c.id<>?" : ""} LIMIT 10`, ...params, ...excludeId ? [excludeId] : []);
-        return rows.map((x) => {
-          const d = M.decryptRow(x);
-          const reasons = [];
-          if (v.dob && v.last_name && x.dob_idx === blindIndex2(v.dob) && x.last_name_idx === blindIndex2(v.last_name)) reasons.push("same surname and date of birth");
-          if (v.phone && x.phone_idx === blindIndex2(String(v.phone).replace(/\D/g, ""))) reasons.push("same phone number");
-          if (v.first_name && v.last_name && x.full_name_idx === blindIndex2((v.last_name || "") + (v.first_name || ""))) reasons.push("same full name");
-          return { id: x.id, client_code: x.client_code, display_name: d.display_name, dob: d.dob, status: x.status, intake_date: x.intake_date, reasons };
-        });
-      }
       r.post("/api/clients/check-duplicates", auth3.requireAuth, auth3.requirePerm("clients:write"), (ctx) => {
         const v = validate(ctx.body, { first_name: { type: "string", maxLen: 100 }, last_name: { type: "string", maxLen: 100 }, dob: { type: "date" }, phone: { type: "string", maxLen: 40 }, exclude_id: { type: "string" } });
         const matches = possibleDuplicates(v, v.exclude_id || null).filter((m) => auth3.canAccessClient(ctx.user, m.id) || auth3.hasPerm(ctx.user, "clients:all"));
@@ -12465,8 +12529,12 @@ var require_clients = __commonJS({
       r.post("/api/clients", auth3.requireAuth, auth3.requirePerm("clients:write"), (ctx) => {
         const v = validate(ctx.body, { ...shape, confirm_duplicate: { type: "boolean" }, no_episode: { type: "boolean" } });
         if (!v.confirm_duplicate) {
-          const matches = possibleDuplicates(v);
-          if (matches.length) throw badRequest("A client with these details may already exist", { duplicates: matches, confirm_field: "confirm_duplicate" });
+          const all = possibleDuplicates(v);
+          const visible = all.filter((m) => auth3.canAccessClient(ctx.user, m.id) || auth3.hasPerm(ctx.user, "clients:all"));
+          const hidden = all.length - visible.length;
+          if (all.length) audit3.log({ user: ctx.user, action: "client.duplicate_check", ip: ctx.ip, details: { matches: all.length, hidden, shown: visible.map((m) => m.client_code) } });
+          if (visible.length) throw badRequest("A client with these details may already exist", { duplicates: visible, hidden_duplicates: hidden, confirm_field: "confirm_duplicate" });
+          if (hidden) throw badRequest("A possible duplicate exists that is outside your caseload \u2014 ask a supervisor", { hidden_duplicates: hidden, confirm_field: "confirm_duplicate" });
         }
         delete v.confirm_duplicate;
         const noEpisode = !!v.no_episode;
@@ -12509,6 +12577,7 @@ var require_clients = __commonJS({
           for (const fk of db3.all(`PRAGMA foreign_key_list(${t.name})`)) if (fk.table === "clients") links.push([t.name, fk.from]);
         }
         const moved = {};
+        const sourceOpenEpisodes = db3.all(`SELECT id FROM episodes WHERE client_id=? AND status='open'`, source.id).map((e) => e.id);
         db3.transaction(() => {
           for (const [table, col] of links) {
             const cols2 = db3.all(`PRAGMA table_info(${table})`).map((c) => c.name);
@@ -12537,6 +12606,19 @@ var require_clients = __commonJS({
             db3.now(),
             keep.id
           );
+          const dupAssignments = db3.all(`SELECT a.id FROM assignments a WHERE a.client_id=? AND ${auth3.activeAssignment("a.")} AND a.id <> (
+          SELECT b.id FROM assignments b WHERE b.client_id=a.client_id AND b.user_id=a.user_id AND ${auth3.activeAssignment("b.")} ORDER BY b.start_date, b.created_at, b.id LIMIT 1)`, keep.id);
+          for (const a of dupAssignments) {
+            db3.run(`DELETE FROM assignments WHERE id=?`, a.id);
+            db3.tombstone("assignments", a.id);
+          }
+          if (dupAssignments.length) moved._duplicate_assignments_removed = dupAssignments.length;
+          if (db3.one(`SELECT COUNT(*) n FROM episodes WHERE client_id=? AND status='open'`, keep.id).n > 1) {
+            const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+            for (const id of sourceOpenEpisodes) db3.run(`UPDATE episodes SET status='closed', closed_at=?, closed_by=?, discharge_reason='merged', discharge_disposition='merged into duplicate record', updated_at=? WHERE id=? AND status='open'`, today, ctx.user.id, db3.now(), id);
+            moved._episodes_closed_as_merged = sourceOpenEpisodes.length;
+          }
+          db3.run(`UPDATE import_items SET suggested_client_id=?, updated_at=? WHERE suggested_client_id=?`, keep.id, db3.now(), source.id);
           db3.run(`UPDATE clients SET merged_into=?, status='closed', deleted_at=?, updated_at=? WHERE id=?`, keep.id, db3.now(), db3.now(), source.id);
           moved._filled_fields = keys.length;
         });
@@ -12636,6 +12718,7 @@ var require_clients = __commonJS({
         return { events: page, limit: limit2, offset, more: events.length > offset + limit2 };
       });
     };
+    module.exports.possibleDuplicates = possibleDuplicates;
   }
 });
 
@@ -20942,14 +21025,26 @@ var require_sync = __commonJS({
       }
       return out2;
     }
+    function keeperOf(clientId) {
+      let cur = clientId;
+      for (let i = 0; i < 25; i++) {
+        const c = db3.one(`SELECT merged_into FROM clients WHERE id=?`, cur);
+        if (!c || !c.merged_into) return cur;
+        cur = c.merged_into;
+      }
+      return cur;
+    }
+    var clientPurged = (clientId) => !!db3.one(`SELECT 1 FROM tombstones WHERE table_name='clients' AND id=?`, clientId);
+    var OWNER = { interventions: ["user_id", "clients:all"], calls: ["user_id", "clients:all"], time_entries: ["user_id", "time:all"], referrals: ["user_id", "clients:all"], expenditures: ["user_id", "clients:all"], notes: ["author_id", "clients:all"] };
     function push(user, payload) {
       const applied = {};
       const rejected = [];
       const conflicts = [];
-      const reject = (table, id, reason) => {
-        rejected.push({ table, id, reason });
+      const warnings = [];
+      const reject = (table, id, reason, permanent = SYNC2.isPermanentReason(reason)) => {
+        rejected.push({ table, id, reason, permanent });
       };
-      const rejectedIds = /* @__PURE__ */ new Set();
+      const rejectedIds = /* @__PURE__ */ new Map();
       const deviceNow = payload.device_now ? Date.parse(payload.device_now) : NaN;
       const offsetMs = Number.isFinite(deviceNow) ? Date.now() - deviceNow : 0;
       const shift = (ts) => {
@@ -20957,8 +21052,8 @@ var require_sync = __commonJS({
         const t = Date.parse(ts);
         return Number.isFinite(t) ? new Date(t + offsetMs).toISOString() : ts;
       };
-      const TS_COLS = ["created_at", "updated_at"];
-      const knownUsers = new Set(db3.all(`SELECT id FROM users`).map((u) => u.id));
+      const users = new Map(db3.all(`SELECT id, is_active FROM users`).map((u) => [u.id, u]));
+      const knownUsers = new Set(users.keys());
       function selfParentOrder2(rows, col) {
         const ids = new Set(rows.map((r) => r && r.id));
         const placed = /* @__PURE__ */ new Set();
@@ -20985,6 +21080,11 @@ var require_sync = __commonJS({
           if (!Array.isArray(rows) || !rows.length) continue;
           if (t.selfParent) rows = selfParentOrder2(rows, t.selfParent);
           if (t.name === "users") continue;
+          if (t.serverOwned) {
+            for (const raw of rows) if (raw && typeof raw.id === "string") reject(t.name, raw.id, "server-owned");
+            applied[t.name] = 0;
+            continue;
+          }
           if (t.writePerm && !auth3.hasPerm(user, t.writePerm)) {
             for (const raw of rows) if (raw && typeof raw.id === "string") reject(t.name, raw.id, `your role cannot write ${t.name}`);
             applied[t.name] = 0;
@@ -20995,17 +21095,41 @@ var require_sync = __commonJS({
           for (const raw of rows) {
             if (!raw || typeof raw.id !== "string") continue;
             if (t.parent && raw[t.parent[1]] && rejectedIds.has(`${t.parent[0]}:${raw[t.parent[1]]}`)) {
-              reject(t.name, raw.id, `its ${t.parent[0]} row was rejected`);
-              rejectedIds.add(`${t.name}:${raw.id}`);
+              const permanent = rejectedIds.get(`${t.parent[0]}:${raw[t.parent[1]]}`);
+              reject(t.name, raw.id, `its ${t.parent[0]} row was rejected`, permanent);
+              rejectedIds.set(`${t.name}:${raw.id}`, permanent);
               continue;
             }
             const ok = db3.savepoint(() => {
-              for (const c of TS_COLS) if (raw[c]) raw[c] = shift(raw[c]);
+              const incomingAt = shift(raw.updated_at || raw.created_at) || NEVER2;
+              const existing = db3.one(`SELECT * FROM ${t.name} WHERE id=?`, raw.id);
+              if (existing) delete raw.created_at;
+              else if (raw.created_at) raw.created_at = shift(raw.created_at);
+              delete raw.updated_at;
+              if (t.name === "clients" && clientPurged(raw.id)) {
+                reject(t.name, raw.id, "purged");
+                return false;
+              }
+              if (t.clientCol && t.name !== "clients" && raw[t.clientCol] && clientPurged(raw[t.clientCol])) {
+                reject(t.name, raw.id, "purged");
+                return false;
+              }
+              if (t.scope === "via-note" && raw.note_id && db3.one(`SELECT 1 FROM tombstones WHERE table_name='notes' AND id=?`, raw.note_id)) {
+                reject(t.name, raw.id, "purged");
+                return false;
+              }
+              if (t.name === "clients" && existing && existing.merged_into) {
+                reject(t.name, raw.id, "merged into another record");
+                return false;
+              }
+              if (t.clientCol && t.name !== "clients") {
+                if (existing) raw[t.clientCol] = existing[t.clientCol];
+                else if (raw[t.clientCol]) raw[t.clientCol] = keeperOf(raw[t.clientCol]);
+              }
               if ((t.scope === "client" || t.scope === "client-or-null") && raw[t.clientCol] && t.name !== "clients" && !auth3.canAccessClient(user, raw[t.clientCol])) {
                 reject(t.name, raw.id, "not on caseload");
                 return false;
               }
-              const existing = db3.one(`SELECT * FROM ${t.name} WHERE id=?`, raw.id);
               if (t.name === "clients" && existing && !auth3.canAccessClient(user, raw.id)) {
                 reject(t.name, raw.id, "not on caseload");
                 return false;
@@ -21019,9 +21143,8 @@ var require_sync = __commonJS({
                   return false;
                 }
                 revocation = true;
-                for (const k of Object.keys(raw)) if (!["id", "revoked_at", "revoked_reason", "updated_at"].includes(k)) delete raw[k];
+                for (const k of Object.keys(raw)) if (!["id", "revoked_at", "revoked_reason"].includes(k)) delete raw[k];
                 raw.revoked_by = user.id;
-                raw.updated_at = db3.now();
               }
               if (t.scope === "via-note") {
                 const note = db3.one(`SELECT client_id, kind FROM notes WHERE id=?`, raw.note_id);
@@ -21052,7 +21175,6 @@ var require_sync = __commonJS({
                   return false;
                 }
               }
-              const incomingAt = raw.updated_at || raw.created_at || NEVER2;
               if (existing && !revocation && (existing.updated_at || existing.created_at || NEVER2) >= incomingAt) {
                 const lost = changedColumns2(t, existing, raw, existingCols);
                 if (lost.length && (existing.updated_at || existing.created_at || NEVER2) > incomingAt) {
@@ -21061,10 +21183,22 @@ var require_sync = __commonJS({
                 }
                 return false;
               }
-              const OWNER = { interventions: "user_id", calls: "user_id", time_entries: "user_id", referrals: "user_id", expenditures: "user_id", notes: "author_id" }[t.name];
-              if (OWNER && !auth3.hasPerm(user, "clients:all")) {
-                if (!existing) raw[OWNER] = user.id;
-                else raw[OWNER] = existing[OWNER];
+              if (OWNER[t.name]) {
+                const [col, perm] = OWNER[t.name];
+                const want = raw[col];
+                if (existing && (!want || !auth3.hasPerm(user, perm))) raw[col] = existing[col];
+                else if (!want) raw[col] = user.id;
+                else if (want !== user.id && want !== (existing && existing[col])) {
+                  const target = users.get(want);
+                  if (target && !target.is_active) {
+                    reject(t.name, raw.id, "attributed to a user the office has deactivated");
+                    return false;
+                  }
+                  if (target && !auth3.hasPerm(user, perm)) {
+                    reject(t.name, raw.id, "attributed to another user, which your role cannot do");
+                    return false;
+                  }
+                }
               }
               if (t.name === "expenditures") {
                 if (!existing) {
@@ -21111,6 +21245,7 @@ var require_sync = __commonJS({
               for (const c of SYNC2.user_ref_cols) if (existingCols.includes(c) && raw[c] && !knownUsers.has(raw[c])) raw[c] = user.id;
               const o = importRow2(t, raw, existingCols);
               if (t.name === "clients") o.client_code = freeClientCode(o.client_code, raw.id);
+              if (existingCols.includes("updated_at")) o.updated_at = db3.now();
               const keys = Object.keys(o).filter((k) => k !== "id");
               if (existing) {
                 const overwritten = keys.filter((k) => !["updated_at", "created_at"].includes(k) && String(existing[k] ?? "") !== String(o[k] ?? ""));
@@ -21129,12 +21264,22 @@ var require_sync = __commonJS({
               } else db3.run(`INSERT INTO ${t.name}(id,${keys.join(",")}) VALUES(?,${keys.map(() => "?").join(",")})`, raw.id, ...keys.map((k) => o[k]));
               db3.run(`DELETE FROM tombstones WHERE table_name=? AND id=?`, t.name, raw.id);
               if (t.name === "clients" && !existing && auth3.caseloadRestricted(user)) db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, require_crypto().uuid(), raw.id, user.id, "primary", (raw.intake_date || db3.now()).slice(0, 10), user.id);
+              if (t.name === "interventions") {
+                const supplies = require_supplies();
+                const counts = { id: raw.id };
+                for (const c of Object.keys(supplies.DRAWDOWN)) counts[c] = o[c] !== void 0 ? o[c] : existing ? existing[c] : 0;
+                supplies.drawDown({ user, ip: "device" }, counts, existing);
+              }
+              if (t.name === "clients" && !existing) flagPossibleDuplicate(user, raw, o.client_code, warnings);
               return true;
             }, (err2) => {
               reject(t.name, raw.id, describeError(err2));
             });
             if (ok === true) n++;
-            if (ok === void 0 || ok === false && rejected.length && rejected[rejected.length - 1].id === raw.id) rejectedIds.add(`${t.name}:${raw.id}`);
+            const last = rejected.length ? rejected[rejected.length - 1] : null;
+            if (ok === void 0 || ok === false && last && last.id === raw.id && last.table === t.name) {
+              if (last.reason !== "merged into another record") rejectedIds.set(`${t.name}:${raw.id}`, last.permanent);
+            }
           }
           applied[t.name] = n;
         }
@@ -21142,6 +21287,10 @@ var require_sync = __commonJS({
           const t = SYNC2.tables.find((x) => x.name === ts.table_name);
           if (!t || t.name === "users" || typeof ts.id !== "string") continue;
           ts.deleted_at = shift(ts.deleted_at);
+          if (t.serverOwned) {
+            reject(t.name, ts.id, "server-owned");
+            continue;
+          }
           if (t.writePerm && !auth3.hasPerm(user, t.writePerm)) {
             reject(t.name, ts.id, `your role cannot delete ${t.name}`);
             continue;
@@ -21171,7 +21320,20 @@ var require_sync = __commonJS({
         }
         applied._audit = auditRows.length;
       });
-      return { applied, rejected, conflicts, server_now: db3.now(), clock_offset_ms: offsetMs, audit_accepted: applied._audit || 0 };
+      return { applied, rejected, conflicts, warnings, server_now: db3.now(), clock_offset_ms: offsetMs, audit_accepted: applied._audit || 0 };
+    }
+    function flagPossibleDuplicate(user, raw, clientCode, warnings) {
+      let matches = [];
+      try {
+        matches = require_clients().possibleDuplicates({ first_name: raw.first_name_enc, last_name: raw.last_name_enc, dob: raw.dob_enc, phone: raw.phone_enc }, raw.id);
+      } catch {
+        return;
+      }
+      if (!matches.length) return;
+      const codes = matches.map((m) => m.client_code);
+      audit3.log({ user, action: "client.possible_duplicate", entity: "client", entityId: raw.id, clientId: raw.id, ip: "device", details: { client_code: clientCode, matches: matches.map((m) => ({ id: m.id, client_code: m.client_code, reasons: m.reasons })), source: "sync" } });
+      db3.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,priority) VALUES(?,?,?,?,?,?)`, require_crypto().uuid(), raw.id, null, user.id, encrypt3(`Possible duplicate record: compare ${clientCode} with ${codes.join(", ")}`), "high");
+      warnings.push({ table: "clients", id: raw.id, reason: `possible duplicate of ${codes.length} existing record${codes.length === 1 ? "" : "s"} (${codes.join(", ")}); a supervisor has been asked to check` });
     }
     function freeClientCode(code, id) {
       let candidate = code || "M00-0000";
@@ -21187,6 +21349,7 @@ var require_sync = __commonJS({
       if (/FOREIGN KEY/i.test(m)) return "refers to a record the office server does not have";
       if (/UNIQUE/i.test(m)) return "conflicts with an existing record";
       if (/NOT NULL/i.test(m)) return "is missing a required field";
+      if (/CHECK constraint/i.test(m)) return "has a value the office does not accept";
       return m.slice(0, 200);
     }
     function sanitiseDetails(d) {
@@ -21711,8 +21874,18 @@ function deviceId() {
 var NEVER = "1970-01-01T00:00:00.000Z";
 var PUSH_BYTES = 4 * 1024 * 1024;
 var BLOBS_PER_SYNC = 25;
+var DUMMY_HASH = "scrypt$0$0$0$AA==$AA==";
 function ensureTables() {
   import_db.default.get().exec(`CREATE TABLE IF NOT EXISTS sync_seen (table_name TEXT NOT NULL, id TEXT NOT NULL, updated_at TEXT, PRIMARY KEY (table_name, id))`);
+  import_db.default.get().exec(`CREATE TABLE IF NOT EXISTS sync_server_tombstones (table_name TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY (table_name, id))`);
+}
+var cursorKey = (userId) => `sync_cursor:${userId}`;
+function readCursor(userId, username) {
+  const own = import_db.default.getSetting(cursorKey(userId), null);
+  if (own) return own;
+  const legacy = import_db.default.getSetting("sync_cursor", null);
+  if (legacy && import_db.default.getSetting("sync_username", null) === username) return legacy;
+  return NEVER;
 }
 var seen = (t, id, at) => import_db.default.run(`INSERT OR REPLACE INTO sync_seen(table_name,id,updated_at) VALUES(?,?,?)`, t, id, at || null);
 var seenAt = (t, id) => import_db.default.one(`SELECT updated_at FROM sync_seen WHERE table_name=? AND id=?`, t, id)?.updated_at ?? void 0;
@@ -21763,7 +21936,7 @@ function changedColumns(t, existing, raw, existingCols) {
   }
   return out2;
 }
-function applyPull(payload, conflicts = []) {
+function applyPull(payload, conflicts = [], skipped = []) {
   const counts = {};
   const offset = payload.server_now ? Date.parse(payload.server_now) - Date.now() : 0;
   const toServer = (ts) => {
@@ -21778,58 +21951,79 @@ function applyPull(payload, conflicts = []) {
       const existingCols = cols(t.name);
       let n = 0;
       for (const raw of rows) {
-        const existing = import_db.default.one(`SELECT * FROM ${t.name} WHERE id=?`, raw.id);
-        if (t.name === "users" && !existing) {
-          const same = import_db.default.one(`SELECT id FROM users WHERE username=?`, raw.username);
-          if (same) mergeUser(same.id, raw.id);
-        }
-        if (t.name === "clients") {
-          const clash = import_db.default.one(`SELECT id FROM clients WHERE client_code=? AND id<>?`, raw.client_code, raw.id);
-          if (clash) import_db.default.run(`UPDATE clients SET client_code=?, updated_at=? WHERE id=?`, raw.client_code + "-D", import_db.default.now(), clash.id);
-        }
-        if (existing && t.name !== "users") {
-          const known = seenAt(t.name, existing.id);
-          const untouched = known !== void 0 && known === stamp(existing);
-          if (!untouched && toServer(stamp(existing)) > (raw.updated_at || raw.created_at || NEVER)) continue;
-          if (!untouched) {
-            const lost = changedColumns(t, existing, raw, existingCols);
-            if (lost.length) {
-              conflicts.push({ table: t.name, id: raw.id, label: t.name === "clients" ? existing.client_code : null, columns: lost });
-              import_audit.default.log({ user: { username: import_db.default.getSetting("sync_username", "device") }, action: "sync.conflict", entity: t.name, entityId: raw.id, clientId: t.clientCol ? raw[t.clientCol] : null, details: { columns: lost, kept: "office" } });
-            }
-          }
-        }
-        const o = importRow(t, raw, existingCols);
-        const keys = Object.keys(o).filter((k) => k !== "id");
-        if (existing) import_db.default.run(`UPDATE ${t.name} SET ${keys.map((k) => `${k}=?`).join(", ")} WHERE id=?`, ...keys.map((k) => o[k]), raw.id);
-        else import_db.default.run(`INSERT INTO ${t.name}(id,${keys.join(",")}) VALUES(?,${keys.map(() => "?").join(",")})`, raw.id, ...keys.map((k) => o[k]));
-        seen(t.name, raw.id, stamp(o));
-        n++;
+        if (!raw || typeof raw.id !== "string") continue;
+        const stored = import_db.default.savepoint(() => applyRow(t, raw, existingCols, toServer, conflicts), (err2) => {
+          const reason = String(err2 && err2.message || "could not be stored").slice(0, 200);
+          skipped.push({ table: t.name, id: raw.id, reason });
+          import_audit.default.log({ user: { username: import_db.default.getSetting("sync_username", "device") }, action: "sync.row_skipped", entity: t.name, entityId: raw.id, success: false, details: { reason } });
+        });
+        if (stored) n++;
       }
       counts[t.name] = (counts[t.name] || 0) + n;
     }
     for (const ts of payload.tombstones || []) {
       const t = import_sync_tables.default.tables.find((x) => x.name === ts.table_name);
       if (!t) continue;
-      const existing = import_db.default.one(`SELECT * FROM ${t.name} WHERE id=?`, ts.id);
-      if (existing) {
-        const known = seenAt(t.name, existing.id);
-        const untouched = known !== void 0 && known === stamp(existing);
-        if (untouched || toServer(stamp(existing)) < ts.deleted_at) {
-          import_db.default.run(`DELETE FROM ${t.name} WHERE id=?`, ts.id);
-          import_db.default.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, t.name, ts.id);
-        }
-      }
-      import_db.default.run(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, t.name, ts.id, ts.deleted_at);
+      import_db.default.savepoint(() => applyTombstone(t, ts, toServer), (err2) => skipped.push({ table: t.name, id: ts.id, reason: String(err2 && err2.message || "could not be deleted").slice(0, 200) }));
     }
     for (const [k, v] of Object.entries(payload.settings || {})) if (v !== null && v !== void 0) import_db.default.setSetting(k, v);
   });
   return counts;
 }
+function applyRow(t, raw, existingCols, toServer, conflicts) {
+  const existing = import_db.default.one(`SELECT * FROM ${t.name} WHERE id=?`, raw.id);
+  if (t.name === "users" && !existing) {
+    const same = import_db.default.one(`SELECT id, password_hash FROM users WHERE username=?`, raw.username);
+    if (same && raw.password_hash === DUMMY_HASH && same.password_hash) raw.password_hash = same.password_hash;
+    if (same) import_db.default.run(`UPDATE users SET username=? WHERE id=?`, `${raw.username}\0merging`, same.id);
+    const o2 = importRow(t, raw, existingCols);
+    const keys2 = Object.keys(o2).filter((k) => k !== "id");
+    import_db.default.run(`INSERT INTO ${t.name}(id,${keys2.join(",")}) VALUES(?,${keys2.map(() => "?").join(",")})`, raw.id, ...keys2.map((k) => o2[k]));
+    if (same) mergeUser(same.id, raw.id);
+    seen(t.name, raw.id, stamp(o2));
+    return true;
+  }
+  if (t.name === "users" && raw.password_hash === DUMMY_HASH && existing && existing.password_hash && existing.password_hash !== DUMMY_HASH) raw.password_hash = existing.password_hash;
+  if (t.name === "clients") {
+    const clash = import_db.default.one(`SELECT id FROM clients WHERE client_code=? AND id<>?`, raw.client_code, raw.id);
+    if (clash) import_db.default.run(`UPDATE clients SET client_code=?, updated_at=? WHERE id=?`, raw.client_code + "-D", import_db.default.now(), clash.id);
+  }
+  if (existing && t.name !== "users") {
+    const known = seenAt(t.name, existing.id);
+    const untouched = known !== void 0 && known === stamp(existing);
+    if (!untouched && toServer(stamp(existing)) > (raw.updated_at || raw.created_at || NEVER)) return false;
+    if (!untouched) {
+      const lost = changedColumns(t, existing, raw, existingCols);
+      if (lost.length) {
+        conflicts.push({ table: t.name, id: raw.id, label: t.name === "clients" ? existing.client_code : null, columns: lost });
+        import_audit.default.log({ user: { username: import_db.default.getSetting("sync_username", "device") }, action: "sync.conflict", entity: t.name, entityId: raw.id, clientId: t.clientCol ? raw[t.clientCol] : null, details: { columns: lost, kept: "office" } });
+      }
+    }
+  }
+  const o = importRow(t, raw, existingCols);
+  const keys = Object.keys(o).filter((k) => k !== "id");
+  if (existing) import_db.default.run(`UPDATE ${t.name} SET ${keys.map((k) => `${k}=?`).join(", ")} WHERE id=?`, ...keys.map((k) => o[k]), raw.id);
+  else import_db.default.run(`INSERT INTO ${t.name}(id,${keys.join(",")}) VALUES(?,${keys.map(() => "?").join(",")})`, raw.id, ...keys.map((k) => o[k]));
+  seen(t.name, raw.id, stamp(o));
+  return true;
+}
+function applyTombstone(t, ts, toServer) {
+  const existing = import_db.default.one(`SELECT * FROM ${t.name} WHERE id=?`, ts.id);
+  if (existing) {
+    const known = seenAt(t.name, existing.id);
+    const untouched = known !== void 0 && known === stamp(existing);
+    if (untouched || toServer(stamp(existing)) < ts.deleted_at) {
+      import_db.default.run(`DELETE FROM ${t.name} WHERE id=?`, ts.id);
+      import_db.default.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, t.name, ts.id);
+    }
+  }
+  import_db.default.run(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, t.name, ts.id, ts.deleted_at);
+  import_db.default.run(`INSERT OR REPLACE INTO sync_server_tombstones(table_name,id) VALUES(?,?)`, t.name, ts.id);
+}
 function localRows() {
   const out2 = [];
   for (const t of import_sync_tables.default.tables) {
-    if (t.name === "users") continue;
+    if (t.name === "users" || t.serverOwned) continue;
     const rows = import_db.default.all(`SELECT x.* FROM ${t.name} x WHERE NOT EXISTS (SELECT 1 FROM sync_seen s WHERE s.table_name=? AND s.id=x.id AND s.updated_at IS COALESCE(x.updated_at, x.created_at))`, t.name);
     for (const r of rows) {
       const e = exportRow(t, r);
@@ -21837,6 +22031,30 @@ function localRows() {
     }
   }
   return out2;
+}
+function pendingTombstones() {
+  const serverOwned = import_sync_tables.default.tables.filter((t) => t.serverOwned).map((t) => t.name);
+  return import_db.default.all(`SELECT t.table_name, t.id, t.deleted_at FROM tombstones t WHERE t.deleted_at > ?
+    AND NOT EXISTS (SELECT 1 FROM sync_server_tombstones s WHERE s.table_name=t.table_name AND s.id=t.id)
+    ${serverOwned.length ? `AND t.table_name NOT IN (${serverOwned.map(() => "?").join(",")})` : ""}`, import_db.default.getSetting("sync_pushed", NEVER), ...serverOwned);
+}
+var isPermanent = (x) => x.permanent === true || x.permanent === false ? x.permanent : import_sync_tables.default.isPermanentReason(x.reason);
+function settleRejections(rejections, chunk, conflicts) {
+  for (const x of rejections) {
+    if (!isPermanent(x)) continue;
+    const rows = chunk[x.table] || [];
+    const r = rows.find((y) => y.id === x.id);
+    if (!r) continue;
+    const t = import_sync_tables.default.tables.find((y) => y.name === x.table);
+    if (x.reason === "purged") {
+      import_db.default.run(`DELETE FROM ${x.table} WHERE id=?`, x.id);
+      import_db.default.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, x.table, x.id);
+    } else {
+      seen(x.table, x.id, stamp(r));
+    }
+    conflicts.push({ table: x.table, id: x.id, label: x.table === "clients" ? r.client_code : null, columns: [], reason: x.reason });
+    import_audit.default.log({ user: { username: import_db.default.getSetting("sync_username", "device") }, action: "sync.rejected", entity: x.table, entityId: x.id, clientId: x.table === "clients" ? x.id : t && t.clientCol ? r[t.clientCol] : null, details: { reason: x.reason, kept: "office" } });
+  }
 }
 function chunkRows(pending, maxBytes = PUSH_BYTES) {
   const chunks = [];
@@ -21978,7 +22196,9 @@ async function run({ server, username, password, code, onProgress = () => {
       demo.remove({ actor: null, tombstones: false });
     }
     const pullConflicts = [];
-    let since = import_db.default.getSetting("sync_cursor", NEVER);
+    const skipped = [];
+    const officeUserId = login.user && login.user.id || username;
+    let since = readCursor(officeUserId, username);
     const applied = {};
     let pages = 0;
     let serverNow = null;
@@ -21989,16 +22209,16 @@ async function run({ server, username, password, code, onProgress = () => {
         onProgress("This device has been offline a long time; rebuilding from the office copy\u2026");
         import_db.default.run(`DELETE FROM sync_seen`);
         since = NEVER;
-        import_db.default.setSetting("sync_cursor", NEVER);
+        import_db.default.run(`DELETE FROM settings WHERE key='sync_cursor' OR key LIKE 'sync_cursor:%'`);
         if (pages > 20) throw new import_http.HttpError(409, pulled.reason || "This device needs to be set up again from the office server");
         pages++;
         continue;
       }
-      const counts = applyPull(pulled, pullConflicts);
+      const counts = applyPull(pulled, pullConflicts, skipped);
       for (const [k, v] of Object.entries(counts)) applied[k] = (applied[k] || 0) + v;
       serverNow = pulled.server_now;
       since = pulled.cursor;
-      import_db.default.setSetting("sync_cursor", since);
+      import_db.default.setSetting(cursorKey(officeUserId), since);
       pages++;
       if (pulled.complete || pages > 200) break;
     }
@@ -22015,19 +22235,22 @@ async function run({ server, username, password, code, onProgress = () => {
       const rejectedIds = new Set((res.rejected || []).map((x) => x.table + ":" + x.id));
       rejected.push(...res.rejected || []);
       conflicts.push(...res.conflicts || []);
+      for (const w of res.warnings || []) conflicts.push({ table: w.table, id: w.id, label: null, columns: [], reason: w.reason, warning: true });
       for (const [k, v] of Object.entries(res.applied || {})) if (typeof v === "number") pushedCounts[k] = (pushedCounts[k] || 0) + v;
       import_db.default.transaction(() => {
         for (const [table, rows] of Object.entries(chunks[i])) for (const r of rows) if (!rejectedIds.has(table + ":" + r.id)) seen(table, r.id, stamp(r));
+        settleRejections(res.rejected || [], chunks[i], conflicts);
       });
     }
-    const tombstones = import_db.default.all(`SELECT table_name, id, deleted_at FROM tombstones WHERE deleted_at > ?`, import_db.default.getSetting("sync_pushed", NEVER));
+    const tombstones = pendingTombstones();
     const auditRows = import_db.default.all(`SELECT at, action, entity, entity_id, client_id, success, details FROM audit_log WHERE at > ? AND action NOT LIKE 'sync.%' ORDER BY at, id LIMIT 2000`, import_db.default.getSetting("audit_pushed", NEVER));
     if (tombstones.length || auditRows.length) {
       const res = await call(server, "/api/sync/push", { method: "POST", body: JSON.stringify({ device_now: deviceNow, tombstones, audit: auditRows }) }, token2);
       const rejectedIds = new Set((res.rejected || []).map((x) => x.table + ":" + x.id));
       rejected.push(...res.rejected || []);
+      const permanent = new Set((res.rejected || []).filter((x) => isPermanent(x)).map((x) => x.table + ":" + x.id));
       import_db.default.transaction(() => {
-        for (const ts of tombstones) if (!rejectedIds.has(ts.table_name + ":" + ts.id)) import_db.default.run(`DELETE FROM tombstones WHERE table_name=? AND id=?`, ts.table_name, ts.id);
+        for (const ts of tombstones) if (!rejectedIds.has(ts.table_name + ":" + ts.id) || permanent.has(ts.table_name + ":" + ts.id)) import_db.default.run(`DELETE FROM tombstones WHERE table_name=? AND id=?`, ts.table_name, ts.id);
       });
       import_db.default.setSetting("sync_pushed", deviceNow);
       if (auditRows.length) import_db.default.setSetting("audit_pushed", auditRows[auditRows.length - 1].at);
@@ -22039,8 +22262,8 @@ async function run({ server, username, password, code, onProgress = () => {
     import_db.default.setSetting("last_sync_at", import_db.default.now());
     import_db.default.setSetting("sync_server", server);
     import_db.default.setSetting("sync_username", username);
-    import_audit.default.log({ user: { username }, action: "sync.completed", details: { server, pulled: applied, pushed: pushedCounts, rejected: rejected.length, conflicts: conflicts.length, attachments_up: uploaded, attachments_down: downloaded } });
-    return { ok: true, pulled: applied, pushed: pushedCounts, rejected, conflicts, attachments: { uploaded, downloaded }, at: import_db.default.now() };
+    import_audit.default.log({ user: { username }, action: "sync.completed", details: { server, pulled: applied, pushed: pushedCounts, rejected: rejected.length, conflicts: conflicts.length, skipped: skipped.length, attachments_up: uploaded, attachments_down: downloaded } });
+    return { ok: true, pulled: applied, pushed: pushedCounts, rejected, conflicts, skipped, attachments: { uploaded, downloaded }, at: import_db.default.now() };
   } finally {
     try {
       await call(server, "/api/auth/logout", { method: "POST", body: "{}" }, token2);

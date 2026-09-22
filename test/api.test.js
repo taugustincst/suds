@@ -1035,11 +1035,14 @@ test('sync hardening: caseload on existing clients, tombstone limits, ownership,
   assert.ok(H.db.one(`SELECT 1 FROM interventions WHERE id=?`, iv.id)); assert.ok(H.db.one(`SELECT 1 FROM clients WHERE id=?`, clientId)); assert.equal(r2.data.rejected.length, 1);
   // a navigator's device cannot attribute work to someone else or self-approve spending
   const devClient = uuid(); const otherUser = H.db.one(`SELECT id FROM users WHERE username='nav1'`).id; const fund = H.db.one(`SELECT id FROM funding_sources LIMIT 1`).id; const expId = uuid(); const ivId = uuid();
-  await bare.post('/api/sync/push', { tables: { clients: [{ id: devClient, client_code: 'M26-0009', first_name_enc: 'Dev', last_name_enc: 'Own', status: 'active', created_at: now, updated_at: now }],
+  const r3 = await bare.post('/api/sync/push', { tables: { clients: [{ id: devClient, client_code: 'M26-0009', first_name_enc: 'Dev', last_name_enc: 'Own', status: 'active', created_at: now, updated_at: now }],
     interventions: [{ id: ivId, client_id: devClient, user_id: otherUser, type: 'outreach', occurred_at: now, duration_minutes: 5, created_at: now, updated_at: now }],
     expenditures: [{ id: expId, funding_source_id: fund, client_id: devClient, user_id: otherUser, spent_at: '2026-09-10', amount: 500, category: 'client_assistance', status: 'approved', approved_by: otherUser, approved_at: now, created_at: now, updated_at: now }] } }, B);
   const me = H.db.one(`SELECT id FROM users WHERE username='syncnav'`).id;
-  assert.equal(H.db.one(`SELECT user_id FROM interventions WHERE id=?`, ivId).user_id, me);
+  // Work in another (real) worker's name is refused outright rather than quietly re-attributed to whoever pressed Sync.
+  assert.ok(r3.data.rejected.some(x => x.id === ivId && /attributed/.test(x.reason)) && !H.db.one(`SELECT 1 FROM interventions WHERE id=?`, ivId));
+  assert.ok(r3.data.rejected.some(x => x.id === expId && /attributed/.test(x.reason)) && !H.db.one(`SELECT 1 FROM expenditures WHERE id=?`, expId));
+  await bare.post('/api/sync/push', { tables: { expenditures: [{ id: expId, funding_source_id: fund, client_id: devClient, user_id: me, spent_at: '2026-09-10', amount: 500, category: 'client_assistance', status: 'approved', approved_by: otherUser, approved_at: now, created_at: now, updated_at: now }] } }, B);
   const e = H.db.one(`SELECT status, approved_by, user_id FROM expenditures WHERE id=?`, expId); assert.equal(e.status, 'pending'); assert.equal(e.approved_by, null); assert.equal(e.user_id, me);
   // signed notes cannot be altered from a device; clinical notes are not pulled by navigators and cannot be pushed by them
   const signed = H.db.one(`SELECT id, content_enc FROM notes WHERE status IN ('signed','amended') LIMIT 1`);
