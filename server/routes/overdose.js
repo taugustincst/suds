@@ -35,14 +35,16 @@ module.exports = (r) => {
     },
     beforeInsert: (ctx, v) => {
       if (v.notes !== undefined) { v.notes_enc = v.notes ? encrypt(v.notes) : null; delete v.notes; }
+      if (v.substances !== undefined) { v.substances_enc = v.substances ? encrypt(v.substances) : null; delete v.substances; }
       if (v.kind === 'fatal') v.survived = 0;
       if (v.naloxone_doses > 0) v.naloxone_used = 1;
     },
     beforeUpdate: (ctx, v) => {
       if (v.notes !== undefined) { v.notes_enc = v.notes ? encrypt(v.notes) : null; delete v.notes; }
+      if (v.substances !== undefined) { v.substances_enc = v.substances ? encrypt(v.substances) : null; delete v.substances; }
       if (v.kind === 'fatal') v.survived = 0;
     },
-    afterLoad: (ctx, row) => ({ ...row, notes: row.notes_enc ? decrypt(row.notes_enc) : null, notes_enc: undefined }),
+    afterLoad: (ctx, row) => ({ ...row, notes: row.notes_enc ? decrypt(row.notes_enc) : null, substances: row.substances_enc ? decrypt(row.substances_enc) : null, notes_enc: undefined, substances_enc: undefined }),
     afterInsert: (ctx, row) => {
       // Keep the client's own summary fields in step, so the record a worker reads at the top of a file
       // still matches the events underneath it.

@@ -156,7 +156,7 @@ test('resources and referrals', async () => {
   const noConsent = await nav.post('/api/referrals', { client_id: clientId, resource_id: res.data.id, referred_at: '2026-09-03T09:00:00Z', urgency: 'urgent', warm_handoff: true });
   assert.equal(noConsent.status, 400, 'a warm handoff without consent must be refused');
   assert.match(noConsent.data.error, /consent/i);
-  const consent = await nav.post(`/api/clients/${clientId}/consents`, { type: 'part2_disclosure', recipient: 'County OTP', purpose: 'MAT referral', signed_at: '2026-09-01' });
+  const consent = await nav.post(`/api/clients/${clientId}/consents`, { type: 'part2_disclosure', recipient: 'County OTP', purpose: 'MAT referral', signed_at: '2026-09-01', scope: 'Referral summary and MAT status', expires_at: '2027-09-01', signed_on_paper: true, redisclosure_notice_given: true });
   assert.equal(consent.status, 201); referralConsentId = consent.data.id;
   const ref = await nav.post('/api/referrals', { client_id: clientId, resource_id: res.data.id, referred_at: '2026-09-03T09:00:00Z', urgency: 'urgent', warm_handoff: true, consent_id: referralConsentId });
   assert.equal(ref.status, 201);
@@ -166,7 +166,7 @@ test('resources and referrals', async () => {
   assert.equal(disc.consent_id, referralConsentId);
   assert.match(disc.recipient_enc, /^v1:/, 'the recipient is stored encrypted');
   // Closing the loop: a follow-up task exists even though the worker set no follow-up date.
-  assert.ok(H.db.one(`SELECT 1 FROM tasks WHERE client_id=? AND title LIKE 'Follow up on referral%'`, clientId));
+  assert.ok(H.db.all(`SELECT title_enc FROM tasks WHERE client_id=?`, clientId).some(t => require('../server/crypto').decrypt(t.title_enc).startsWith('Follow up on referral')));
   const up = await nav.put(`/api/referrals/${ref.data.id}`, { status: 'admitted' });
   assert.equal(up.status, 200);
   assert.ok(H.db.one(`SELECT admitted_at FROM referrals WHERE id=?`, ref.data.id).admitted_at);
@@ -206,7 +206,10 @@ test('clinical notes: navigator cannot author or read; clinician can; signing lo
 
 test('consents and disclosure accounting (42 CFR Part 2)', async () => {
   assert.equal((await nav.post(`/api/clients/${clientId}/consents`, { type: 'part2_disclosure', signed_at: '2026-09-01' })).status, 400);
-  const c = await nav.post(`/api/clients/${clientId}/consents`, { type: 'part2_disclosure', recipient: 'County OTP', purpose: 'Treatment coordination', signed_at: '2026-09-01', expires_at: '2027-09-01' });
+  // Recipient and purpose alone are not a Part 2 consent (§2.31): scope, an expiry, evidence of signature and
+  // the redisclosure notice are required too.
+  assert.equal((await nav.post(`/api/clients/${clientId}/consents`, { type: 'part2_disclosure', recipient: 'County OTP', purpose: 'Treatment coordination', signed_at: '2026-09-01', expires_at: '2027-09-01' })).status, 400);
+  const c = await nav.post(`/api/clients/${clientId}/consents`, { type: 'part2_disclosure', recipient: 'County OTP', purpose: 'Treatment coordination', signed_at: '2026-09-01', scope: 'Referral summary and MAT status', expires_at: '2027-09-01', signed_on_paper: true, redisclosure_notice_given: true });
   assert.equal(c.status, 201);
   assert.equal((await nav.post(`/api/clients/${clientId}/disclosures`, { disclosed_to: 'County OTP', purpose: 'coordination', info_disclosed: 'referral summary', disclosed_at: '2026-09-03T10:00:00Z' })).status, 400);
   assert.equal((await nav.post(`/api/clients/${clientId}/disclosures`, { consent_id: c.data.id, disclosed_to: 'County OTP', purpose: 'coordination', info_disclosed: 'referral summary', disclosed_at: '2026-09-03T10:00:00Z' })).status, 201);
@@ -508,11 +511,15 @@ test('reports, exports, and audit chain', async () => {
   const d = await nav.get('/api/reports/dashboard?from=2026-08-01&to=2026-09-30');
   assert.equal(d.status, 200); assert.ok(d.data.interventions.total >= 1); assert.equal(d.data.interventions.naloxone_kits, 2);
   const m = await admin.get('/api/reports/monthly?months=3'); assert.equal(m.status, 200);
-  const csv = await nav.get('/api/reports/export/interventions?from=2026-08-01&to=2026-09-30');
-  assert.equal(csv.status, 200); assert.match(csv.data, /Occurred At,Client Code/);
-  const cl = await nav.get('/api/reports/export/clients?identified=1');
-  assert.ok(!cl.data.includes('Jane')); // navigator lacks export:identified → de-identified
-  const cl2 = await admin.get('/api/reports/export/clients?identified=1'); assert.ok(cl2.data.includes('Jane'));
+  // Exports need export:read, which a navigator does not hold; finance and supervisors do.
+  assert.equal((await nav.get('/api/reports/export/interventions?from=2026-08-01&to=2026-09-30')).status, 403);
+  const csv = await fin.get('/api/reports/export/interventions?from=2026-08-01&to=2026-09-30');
+  assert.equal(csv.status, 200); assert.match(csv.data, /Occurred At,Client Code/); assert.match(csv.data, /^# De-identified \(HIPAA Safe Harbor\)/);
+  const cl = await fin.get('/api/reports/export/clients?identified=1');
+  assert.ok(!cl.data.includes('Jane')); // finance lacks export:identified → de-identified
+  // An identified export is a disclosure: it has to say to whom and why.
+  assert.equal((await admin.get('/api/reports/export/clients?identified=1')).status, 400);
+  const cl2 = await admin.get('/api/reports/export/clients?identified=1&recipient=County%20auditor&purpose=Annual%20audit'); assert.ok(cl2.data.includes('Jane'));
   const a = await admin.get('/api/admin/audit?action=note.'); assert.ok(a.data.total > 0);
   assert.equal((await nav.get('/api/admin/audit')).status, 403);
   const v = await admin.get('/api/admin/audit/verify'); assert.equal(v.data.ok, true);
@@ -826,11 +833,12 @@ test('spreadsheet import: template, preview mapping/validation, commit; Excel ex
   assert.equal(c2.status, 400, 'all-or-nothing when a row is invalid');
   const c3 = await nav.post('/api/imports/data/commit', { entity: 'interventions', records: p2.data.rows.map(r => r.record), partial: true });
   assert.equal(c3.data.created, 1); assert.equal(c3.data.errors.length, 1);
-  // finance cannot import clients; navigator can export a workbook
+  // finance cannot import clients; finance can export a (de-identified) workbook, a navigator cannot export
   assert.equal((await fin.req('POST', '/api/imports/data/preview?entity=clients', csv, { 'Content-Type': 'text/csv' })).status, 403);
-  const wb = await nav.get('/api/reports/export/workbook');
+  assert.equal((await nav.get('/api/reports/export/workbook')).status, 403);
+  const wb = await fin.get('/api/reports/export/workbook');
   assert.equal(wb.status, 200);
-  const x = await nav.get('/api/reports/export/clients?format=xlsx'); assert.equal(x.status, 200); assert.ok(x.headers.get('content-disposition').includes('.xlsx'));
+  const x = await fin.get('/api/reports/export/clients?format=xlsx'); assert.equal(x.status, 200); assert.ok(x.headers.get('content-disposition').includes('.xlsx'));
 });
 
 test('sync hardening: caseload on existing clients, tombstone limits, ownership, approvals, clinical filtering', async () => {
@@ -867,7 +875,7 @@ test('sync hardening: caseload on existing clients, tombstone limits, ownership,
 test('sync push maps unknown user references to the syncing user instead of failing', async () => {
   const bare = H.client(); const l = await bare.post('/api/auth/login', { username: 'nav2', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' }); const B = { Authorization: 'Bearer ' + l.data.token, Cookie: '' };
   const now = new Date().toISOString(); const id = require('node:crypto').randomUUID(); const ghost = require('node:crypto').randomUUID();
-  const r = await bare.post('/api/sync/push', { tables: { clients: [{ id, client_code: 'M26-0077', first_name_enc: 'Ghost', last_name_enc: 'Owner', status: 'active', created_by: ghost, created_at: now, updated_at: now }], tasks: [{ id: require('node:crypto').randomUUID(), client_id: id, assigned_to: ghost, created_by: ghost, title: 'from device', status: 'open', priority: 'normal', created_at: now, updated_at: now }] } }, B);
+  const r = await bare.post('/api/sync/push', { tables: { clients: [{ id, client_code: 'M26-0077', first_name_enc: 'Ghost', last_name_enc: 'Owner', status: 'active', created_by: ghost, created_at: now, updated_at: now }], tasks: [{ id: require('node:crypto').randomUUID(), client_id: id, assigned_to: ghost, created_by: ghost, title_enc: 'from device', status: 'open', priority: 'normal', created_at: now, updated_at: now }] } }, B);
   assert.equal(r.status, 200); assert.equal(r.data.applied.clients, 1); assert.equal(r.data.applied.tasks, 1);
   const me = H.db.one(`SELECT id FROM users WHERE username='nav2'`).id;
   assert.equal(H.db.one(`SELECT created_by FROM clients WHERE id=?`, id).created_by, me);

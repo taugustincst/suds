@@ -31,7 +31,45 @@ function log({ user, action, entity, entityId, clientId, ip, success = true, det
     at, user?.id || null, user?.username || null, action, entity || null, entityId || null, clientId || null, ip || null, success ? 1 : 0, detailsStr, prevHash, hash);
 }
 
-// Verify chain integrity; returns {ok, checked, firstBadId, anchoredAt}.
+// ---- head checkpoint ----
+// A hash chain proves nothing was changed *inside* it. It cannot tell that the newest rows were simply
+// deleted, because the chain is still perfect up to whatever is now the last row. So the head is pinned:
+// after every scheduled verification (and every purge) the id and hash of the newest row, and how many rows
+// stand at or before it, are sealed with the index key, which lives outside the database. Anyone who
+// truncates the table cannot re-seal a shorter chain, and the same line goes to the log file, which is
+// collected off the box, so even deleting the setting leaves evidence.
+function headPayload(lastId, lastHash, rowCount) { return `${lastId}|${lastHash}|${rowCount}`; }
+function sealHead(lastId, lastHash, rowCount) { return crypto.createHmac('sha256', config.indexKey).update(headPayload(lastId, lastHash, rowCount)).digest('hex'); }
+function checkpoint() {
+  const last = db.one(`SELECT id, hash FROM audit_log ORDER BY id DESC LIMIT 1`);
+  if (!last) return null;
+  const rowCount = db.one(`SELECT COUNT(*) n FROM audit_log WHERE id <= ?`, last.id).n;
+  const head = sealHead(last.id, last.hash, rowCount);
+  db.setSetting('audit_head', head);
+  db.setSetting('audit_head_id', String(last.id));
+  db.setSetting('audit_head_rows', String(rowCount));
+  db.setSetting('audit_head_at', db.now());
+  // Never PHI: two integers and an HMAC. Written at info level so it lands in the collected log file.
+  console.log(`[suds] audit checkpoint id=${last.id} rows=${rowCount} head=${head}`);
+  return { lastId: last.id, rowCount, head };
+}
+/** Compare the chain as it stands now with the last sealed head. */
+function checkHead() {
+  const head = db.getSetting('audit_head', null);
+  const lastId = Number(db.getSetting('audit_head_id', 0));
+  const rowCount = Number(db.getSetting('audit_head_rows', 0));
+  if (!head || !lastId) return { checkpointed: false };
+  const out = { checkpointed: true, checkpointId: lastId, checkpointAt: db.getSetting('audit_head_at', null) };
+  const max = db.one(`SELECT MAX(id) m FROM audit_log`).m || 0;
+  if (lastId > max) return { ...out, truncated: true, reason: `the newest ${lastId - max} entries since the checkpoint are gone` };
+  const row = db.one(`SELECT hash FROM audit_log WHERE id=?`, lastId);
+  const nowCount = row ? db.one(`SELECT COUNT(*) n FROM audit_log WHERE id <= ?`, lastId).n : 0;
+  const expected = sealHead(lastId, row ? row.hash : '', nowCount);
+  if (!row || expected.length !== head.length || !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(head))) return { ...out, truncated: true, reason: row ? 'entries at or before the checkpoint were removed or altered' : 'the checkpointed entry itself is gone' };
+  return { ...out, truncated: false };
+}
+
+// Verify chain integrity; returns {ok, checked, firstBadId, anchoredAt, truncated, ...}.
 // The chain is anchored at the oldest surviving row (retention purges remove the oldest rows and record an
 // 'audit.purge' entry whose details carry the hash the chain continues from).
 // Read in batches: at seven years of retention this table is millions of rows, and loading it whole to
@@ -45,14 +83,16 @@ function verifyChain({ key = config.indexKey } = {}) {
     if (prevHash === null) { prevHash = rows[0].prev_hash; anchoredAt = rows[0].id; }
     for (const r of rows) {
       checked++;
-      if (r.prev_hash !== prevHash || !matches(r.hash, payloadOf(r), key)) return { ok: false, checked, firstBadId: r.id, anchoredAt };
+      if (r.prev_hash !== prevHash || !matches(r.hash, payloadOf(r), key)) return { ok: false, checked, firstBadId: r.id, anchoredAt, ...checkHead() };
       prevHash = r.hash;
     }
     afterId = rows[rows.length - 1].id;
     if (rows.length < VERIFY_BATCH) break;
   }
-  if (!checked) return { ok: true, checked: 0 };
-  return { ok: true, checked, anchoredAt };
+  const head = checkHead();
+  if (head.truncated) return { ok: false, checked, anchoredAt, ...head };
+  if (!checked) return { ok: true, checked: 0, ...head };
+  return { ok: true, checked, anchoredAt, ...head };
 }
 
 /**
@@ -112,6 +152,9 @@ function purge(days) {
   if (!last) return 0;
   const n = db.run(`DELETE FROM audit_log WHERE at < ?`, cutoff).changes;
   log({ user: { username: 'system' }, action: 'audit.purge', details: { purged: n, before: cutoff, last_purged_id: last.id, last_purged_hash: last.hash } });
+  // The purge legitimately changed the row count behind the sealed head; re-seal it or the next
+  // verification would read the purge as truncation.
+  checkpoint();
   return n;
 }
 
@@ -121,12 +164,12 @@ function purge(days) {
  */
 function scheduledVerify() {
   const r = verifyChain();
-  if (r.ok) { db.setSetting('audit_verified_at', db.now()); return r; }
+  if (r.ok) { db.setSetting('audit_verified_at', db.now()); checkpoint(); return r; }
   // Recorded rather than thrown: the entry itself is evidence, and the server must keep serving.
-  console.error(`[suds] AUDIT CHAIN BROKEN at entry ${r.firstBadId} — investigate immediately`);
-  log({ user: { username: 'system' }, action: 'audit.verify.failed', success: false, details: { first_bad_id: r.firstBadId, checked: r.checked } });
+  console.error(`[suds] AUDIT CHAIN BROKEN ${r.truncated ? `(truncated: ${r.reason})` : `at entry ${r.firstBadId}`} — investigate immediately`);
+  log({ user: { username: 'system' }, action: 'audit.verify.failed', success: false, details: { first_bad_id: r.firstBadId, checked: r.checked, truncated: r.truncated || undefined, reason: r.reason } });
   db.setSetting('audit_verify_failed_at', db.now());
   return r;
 }
 
-module.exports = { log, verifyChain, resignChain, scheduledVerify, purge, purgeTombstones };
+module.exports = { log, verifyChain, resignChain, scheduledVerify, purge, purgeTombstones, checkpoint, checkHead };

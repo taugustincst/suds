@@ -149,6 +149,10 @@ CREATE TABLE IF NOT EXISTS clients (
   -- Set when this record was merged into another as a duplicate; the row is kept so old references and the
   -- audit trail still resolve, but it no longer appears anywhere staff work.
   merged_into TEXT REFERENCES clients(id),
+  -- A legal hold (litigation, investigation, a patient's own request) exempts the record from the retention
+  -- purge in server/retention.js and from deletion until an administrator clears it.
+  legal_hold INTEGER NOT NULL DEFAULT 0,
+  legal_hold_reason TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   deleted_at TEXT
@@ -250,7 +254,7 @@ CREATE TABLE IF NOT EXISTS calls (
   contact_type TEXT NOT NULL DEFAULT 'client',
   contact_name_enc TEXT,
   phone_enc TEXT,
-  purpose TEXT,
+  purpose_enc TEXT,                    -- why the call was made names the client's situation; encrypted
   outcome TEXT NOT NULL DEFAULT 'reached',
   crisis INTEGER NOT NULL DEFAULT 0,
   follow_up_needed INTEGER NOT NULL DEFAULT 0,
@@ -375,8 +379,8 @@ CREATE TABLE IF NOT EXISTS referrals (
   appointment_at TEXT,
   admitted_at TEXT,
   closed_at TEXT,
-  outcome TEXT,
-  barrier TEXT,
+  outcome_enc TEXT,                    -- free text about a named person's treatment: encrypted
+  barrier_enc TEXT,
   warm_handoff INTEGER DEFAULT 0,
   consent_id TEXT REFERENCES consents(id) ON DELETE SET NULL,
   -- set when the consent this referral relied on is revoked, so the worker is told to stop sharing
@@ -384,7 +388,7 @@ CREATE TABLE IF NOT EXISTS referrals (
   follow_up_due TEXT,
   outcome_recorded_at TEXT,
   episode_id TEXT REFERENCES episodes(id) ON DELETE SET NULL,
-  notes TEXT,
+  notes_enc TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -396,7 +400,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   client_id TEXT REFERENCES clients(id) ON DELETE CASCADE,
   assigned_to TEXT REFERENCES users(id),
   created_by TEXT NOT NULL REFERENCES users(id),
-  title TEXT NOT NULL,
+  title_enc TEXT NOT NULL,             -- "Call about detox bed" reveals a diagnosis: encrypted
   description TEXT,
   due_at TEXT,
   priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('low','normal','high','urgent')),
@@ -489,10 +493,15 @@ CREATE TABLE IF NOT EXISTS consents (
   scope_enc TEXT,
   signed_at TEXT NOT NULL,
   expires_at TEXT,
+  -- 42 CFR §2.31 lets a consent expire on an event ("on discharge from the program") instead of a date.
+  expires_event TEXT,
   revoked_at TEXT,
   revoked_reason TEXT,
   document_ref TEXT,
   witness TEXT,
+  signed_on_paper INTEGER NOT NULL DEFAULT 0,
+  -- The client was told that what is disclosed under this consent may not be redisclosed (§2.32).
+  redisclosure_notice_given INTEGER NOT NULL DEFAULT 0,
   revoked_by TEXT REFERENCES users(id),
   created_by TEXT NOT NULL REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -512,7 +521,9 @@ CREATE TABLE IF NOT EXISTS disclosures (
   method TEXT,
   disclosed_at TEXT NOT NULL,
   disclosed_by TEXT NOT NULL REFERENCES users(id),
-  basis TEXT,                          -- consent, court_order, medical_emergency, qsoa, audit, research
+  basis TEXT,                          -- consent, court_order, medical_emergency, qsoa, audit, research, export
+  -- Why a disclosure was made without consent (required for 'other' and 'medical_emergency'); PHI, encrypted.
+  justification_enc TEXT,
   source TEXT,                         -- referral, export, manual: what caused the disclosure to be recorded
   source_ref TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -677,7 +688,7 @@ CREATE TABLE IF NOT EXISTS overdose_events (
   client_id TEXT REFERENCES clients(id) ON DELETE CASCADE,   -- null for a community/bystander report
   occurred_at TEXT NOT NULL,
   kind TEXT NOT NULL DEFAULT 'overdose' CHECK (kind IN ('overdose','reversal','fatal')),
-  substances TEXT,
+  substances_enc TEXT,                 -- what a named person took: encrypted
   naloxone_used INTEGER NOT NULL DEFAULT 0,
   naloxone_doses INTEGER NOT NULL DEFAULT 0,
   administered_by TEXT,                -- bystander, first_responder, staff, self, unknown
@@ -699,3 +710,39 @@ CREATE INDEX IF NOT EXISTS idx_overdose_updated ON overdose_events(updated_at);
 -- Hard deletes travel to devices as tombstones (created by migration 2 on databases predating 1.2).
 CREATE TABLE IF NOT EXISTS tombstones (table_name TEXT NOT NULL, id TEXT NOT NULL, deleted_at TEXT NOT NULL, PRIMARY KEY (table_name, id));
 CREATE INDEX IF NOT EXISTS idx_tombstones_at ON tombstones(deleted_at);
+
+-- Emergency ("break-glass") access to clinical notes by someone outside the treating roles. Each use is
+-- queued here for a supervisor or privacy officer to review and acknowledge; the audit log has the same
+-- event, but a queue that empties is what makes the review actually happen. Server-side only, not synced.
+CREATE TABLE IF NOT EXISTS breakglass_events (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  client_id TEXT REFERENCES clients(id) ON DELETE SET NULL,
+  note_id TEXT,
+  reason_enc TEXT NOT NULL,            -- the stated reason may name the client or their situation: encrypted
+  at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  acknowledged_by TEXT REFERENCES users(id),
+  acknowledged_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_breakglass_open ON breakglass_events(acknowledged_at, at);
+
+-- Patient-rights requests (HIPAA §164.524 access, §164.526 amendment, §164.522 restriction, §164.528
+-- accounting of disclosures). Each has a 30-day clock from receipt, which is what due_at records.
+CREATE TABLE IF NOT EXISTS patient_requests (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('access','amendment','restriction','accounting')),
+  received_at TEXT NOT NULL,
+  due_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','fulfilled','denied')),
+  notes_enc TEXT,
+  handled_by TEXT REFERENCES users(id),
+  created_by TEXT NOT NULL REFERENCES users(id),
+  closed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_patient_requests_client ON patient_requests(client_id);
+CREATE INDEX IF NOT EXISTS idx_patient_requests_updated ON patient_requests(updated_at);

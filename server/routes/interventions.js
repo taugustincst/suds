@@ -89,8 +89,8 @@ module.exports = (r) => {
       }
       // Community distribution has no client record to update, and no client to follow up with.
       if (row.naloxone_kits > 0 && row.client_id) db.run(`UPDATE clients SET naloxone_provided=1, naloxone_last_date=?, updated_at=? WHERE id=?`, row.occurred_at.slice(0, 10), db.now(), row.client_id);
-      if (row.follow_up_due && row.client_id) db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title,due_at,priority) VALUES(?,?,?,?,?,?,?)`,
-        uuid(), row.client_id, row.user_id, ctx.user.id, `Follow up: ${row.type.replace(/_/g, ' ')}`, row.follow_up_due, 'normal');
+      if (row.follow_up_due && row.client_id) db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority) VALUES(?,?,?,?,?,?,?)`,
+        uuid(), row.client_id, row.user_id, ctx.user.id, require('../crypto').encrypt(`Follow up: ${row.type.replace(/_/g, ' ')}`), row.follow_up_due, 'normal');
       syncExpenditure(row);
     },
     afterUpdate: (ctx, row) => syncExpenditure(row),

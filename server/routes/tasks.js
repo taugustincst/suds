@@ -2,6 +2,7 @@
 const db = require('../db');
 const auth = require('../auth');
 const crud = require('../crud');
+const { encrypt, decrypt } = require('../crypto');
 
 module.exports = (r) => {
   crud.build(r, {
@@ -20,8 +21,13 @@ module.exports = (r) => {
       if (ctx.query.get('overdue') === '1') { where.push(`tasks.status IN ('open','in_progress') AND (CASE WHEN length(tasks.due_at)=10 THEN tasks.due_at < date('now','localtime') ELSE tasks.due_at < ? END)`); params.push(db.now()); }
       if (ctx.query.get('milestones') === '1') where.push('tasks.is_milestone=1');
     },
-    beforeInsert: (ctx, v) => { if (!v.assigned_to) v.assigned_to = ctx.user.id; if (v.status === 'done' && !v.completed_at) v.completed_at = db.now(); },
-    beforeUpdate: (ctx, v, row) => { if (v.status === 'done' && !row.completed_at && !v.completed_at) v.completed_at = db.now(); if (v.status && v.status !== 'done') v.completed_at = null; },
+    // A task title ("Call about detox bed") says what a named person is being treated for: encrypted.
+    beforeInsert: (ctx, v) => { if (!v.assigned_to) v.assigned_to = ctx.user.id; if (v.status === 'done' && !v.completed_at) v.completed_at = db.now(); encTitle(v); },
+    beforeUpdate: (ctx, v, row) => { if (v.status === 'done' && !row.completed_at && !v.completed_at) v.completed_at = db.now(); if (v.status && v.status !== 'done') v.completed_at = null; encTitle(v); },
+    afterLoad: (ctx, x) => ({ ...x, title: x.title_enc ? decrypt(x.title_enc) : '', title_enc: undefined }),
     canEdit: (ctx, row) => row.assigned_to === ctx.user.id || row.created_by === ctx.user.id || auth.hasPerm(ctx.user, 'clients:all'),
   });
+  function encTitle(v) { if (v.title !== undefined) { v.title_enc = encrypt(String(v.title ?? '')); delete v.title; } }
 };
+/** Decrypt a task row's title in place, for the places that read tasks outside the route. */
+module.exports.presentTask = (t) => (t ? { ...t, title: t.title_enc ? decrypt(t.title_enc) : '', title_enc: undefined } : t);

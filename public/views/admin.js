@@ -107,6 +107,8 @@ route('admin', async (r) => {
         { name: 'session_idle_minutes', label: 'Auto sign-out after inactivity (minutes, max 60)', type: 'number', min: 1, max: 60, step: 1, value: s.policy.idleMinutes }, { name: 'session_absolute_hours', label: 'Maximum session length (hours)', type: 'number', min: 1, max: 24, step: 1, value: s.policy.absoluteHours },
         { name: 'password_max_age_days', label: 'Password expires after (days)', type: 'number', min: 1, step: 1, value: s.policy.passwordMaxAgeDays },
         { name: 'mfa_required_roles', label: 'Roles that must use MFA (comma separated)', value: s.policy.mfaRequiredRoles.join(','), help: 'admin, supervisor, clinician, navigator, finance, readonly — recommended: all', span: true },
+        { type: 'section', label: 'Record retention' },
+        { name: 'client_retention_years', label: 'Keep discharged client records for (years, minimum 6)', type: 'number', min: 6, step: 1, value: s.client_retention_years || '7', help: 'Once every episode is closed and this many years have passed since discharge, the record is permanently deleted from every table — unless an administrator has placed it on legal hold from the client\'s Care team tab.' },
         { type: 'section', label: 'Scheduled backups' },
         { name: 'backup_schedule_hours', label: 'Back up automatically every (hours, 0 = off)', type: 'number', min: 0, step: 1, value: s.backup_schedule_hours || '0' },
         { name: 'backup_retain_count', label: 'Keep this many recent backups on disk', type: 'number', min: 1, step: 1, value: s.backup_retain_count || '14' },

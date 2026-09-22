@@ -55,8 +55,32 @@ module.exports = (r) => {
         WHERE r.outcome_recorded_at IS NULL AND r.status NOT IN ('pending','closed') AND ${cf.sql} ORDER BY r.referred_at LIMIT 100`, ...cf.params);
       out.referrals_consent_revoked = db.all(`SELECT r.id, r.client_id, res.name AS resource, c.client_code FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id WHERE r.consent_revoked=1 AND r.status NOT IN ('closed','declined_by_client','declined_by_provider') AND ${cf.sql} LIMIT 100`, ...cf.params);
     }
+    if (auth.hasPerm(ctx.user, 'audit:read')) out.breakglass_unacknowledged = db.one(`SELECT COUNT(*) n FROM breakglass_events WHERE acknowledged_at IS NULL`).n;
     audit.log({ user: ctx.user, action: 'supervision.queue', ip: ctx.ip, details: { cosign: out.awaiting_cosignature?.length || 0, time: out.time_awaiting_approval?.length || 0 } });
     return out;
+  });
+
+  // ---- break-glass review ----
+  // Every emergency access to a clinical note lands here until someone with audit rights has looked at it
+  // and said so. Acknowledging does not approve anything; it records that the review happened.
+  r.get('/api/supervision/breakglass', auth.requireAuth, auth.requirePerm('audit:read'), (ctx) => {
+    const all = ctx.query.get('all') === '1';
+    const rows = db.all(`SELECT b.*, u.display_name AS user_name, u.role AS user_role, c.client_code, a.display_name AS acknowledged_by_name
+      FROM breakglass_events b JOIN users u ON u.id=b.user_id LEFT JOIN clients c ON c.id=b.client_id LEFT JOIN users a ON a.id=b.acknowledged_by
+      WHERE ${all ? '1=1' : 'b.acknowledged_at IS NULL'} ORDER BY b.at DESC LIMIT 200`)
+      .map(b => { let reason = ''; try { reason = b.reason_enc ? decrypt(b.reason_enc) : ''; } catch { reason = '[could not be read]'; } return { ...b, reason, reason_enc: undefined }; });
+    audit.log({ user: ctx.user, action: 'breakglass.review', ip: ctx.ip, details: { count: rows.length, all } });
+    return { rows, unacknowledged: db.one(`SELECT COUNT(*) n FROM breakglass_events WHERE acknowledged_at IS NULL`).n };
+  });
+  r.post('/api/supervision/breakglass/:id/ack', auth.requireAuth, auth.requirePerm('audit:read'), (ctx) => {
+    const b = db.one(`SELECT * FROM breakglass_events WHERE id=?`, ctx.params.id);
+    if (!b) throw notFound('Break-glass event not found');
+    if (b.acknowledged_at) throw badRequest('This event has already been reviewed');
+    // Reviewing your own emergency access is not a review.
+    if (b.user_id === ctx.user.id) throw forbidden('You cannot acknowledge your own break-glass access');
+    db.run(`UPDATE breakglass_events SET acknowledged_by=?, acknowledged_at=?, updated_at=? WHERE id=?`, ctx.user.id, db.now(), db.now(), b.id);
+    audit.log({ user: ctx.user, action: 'breakglass.acknowledge', entity: 'breakglass_event', entityId: b.id, clientId: b.client_id, ip: ctx.ip, details: { accessed_by: b.user_id, note_id: b.note_id || undefined } });
+    return { ok: true };
   });
 
   // ---- staff time approval (mirrors the expenditure separation of duties) ----

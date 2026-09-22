@@ -88,7 +88,9 @@ const config = {
     idleMinutes: Number(process.env.SESSION_IDLE_MINUTES || 15),
     absoluteHours: Number(process.env.SESSION_ABSOLUTE_HOURS || 12),
   },
-  mfaRequiredRoles: (process.env.MFA_REQUIRED_ROLES ?? 'admin,supervisor').split(',').map(s => s.trim()).filter(Boolean),
+  // Every role by default: a navigator's caseload is as much PHI as an administrator's console. Narrow it
+  // only with a documented reason (and see docs/HIPAA.md).
+  mfaRequiredRoles: (process.env.MFA_REQUIRED_ROLES ?? 'admin,supervisor,clinician,navigator,finance,readonly').split(',').map(s => s.trim()).filter(Boolean),
   // Days a new account in one of those roles has to enrol before it is locked out of everything but the
   // enrolment screens. Set to 0 to require it immediately.
   mfaGraceDays: Number(process.env.MFA_GRACE_DAYS ?? 14),
@@ -159,6 +161,14 @@ const config = {
     if (!/^[0-9a-fA-F]{64}$/.test(hex)) throw new Error('SUDS_BACKUP_KEY must be 64 hex characters (32 bytes). Generate with: npm run gen-key');
     return Buffer.from(hex, 'hex');
   })(),
+  // Whether this server hands out the browser kernel for /?local=1 (a whole copy of SUDS running in the
+  // browser, with its keys in that browser's storage). Fine for the phone apps and for testing; a county
+  // that has not approved staff running local copies on unmanaged machines sets LOCAL_MODE_ENABLED=false
+  // and the page explains itself instead of starting.
+  localModeEnabled: !['0', 'false', 'no', 'off'].includes(String(process.env.LOCAL_MODE_ENABLED ?? fileCfg.localModeEnabled ?? 'true').toLowerCase()),
+  // Years a discharged client's record is kept before the retention job hard-deletes it (server/retention.js).
+  // Overridable per installation in Administration -> Settings (client_retention_years).
+  clientRetentionYears: Number(process.env.CLIENT_RETENTION_YEARS || 7),
 };
 
 config.oidc.enabled = !!(config.oidc.issuer && config.oidc.clientId && config.oidc.clientSecret && config.oidc.redirectUri);

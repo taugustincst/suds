@@ -13,6 +13,7 @@ route('dashboard', async () => {
   if (cont.staged_imports) alerts.push(['info', `${cont.staged_imports} imported note${cont.staged_imports > 1 ? 's' : ''} to review`, '#/imports']);
   if (c.no_contact_30d) alerts.push(['warn', `${c.no_contact_30d} client${c.no_contact_30d > 1 ? 's' : ''} not contacted in 30 days`, '#/clients?stale=1']);
   if (d.consents_expiring.length) alerts.push(['warn', `${d.consents_expiring.length} consent${d.consents_expiring.length > 1 ? 's' : ''} expiring soon`, '#/clients?consent_expiring=1']);
+  if (d.breakglass_pending) alerts.push(['danger', `${d.breakglass_pending} emergency access${d.breakglass_pending > 1 ? 'es' : ''} to clinical notes to review`, '#/supervision?tab=breakglass']);
   // Empty program: offer sample data (office admins, or anyone on a phone-only copy)
   let sample = null;
   if (!c.active && !c.waitlist && !caseload.caseload.length && (state.local || can('settings:manage'))) {
