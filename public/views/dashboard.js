@@ -10,7 +10,7 @@ route('dashboard', async () => {
   const c = d.clients, i = d.interventions;
   // auto-refresh so changes made on another device appear without a manual reload
   const timer = setInterval(() => { if (location.hash.replace(/^#\/?/, '').split('?')[0] === 'dashboard' || location.hash === '' || location.hash === '#/') { if (!document.querySelector('.modal-bg')) nav('dashboard?_=' + Date.now()); } else clearInterval(timer); }, 90_000);
-  const first = firstName(state.user.display_name);
+  const first = firstName(state.user.display_name, state.user.username);
   const hour = new Date().getHours(); const greet = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
   const alerts = [];
   if (d.tasks.overdue) alerts.push(['danger', `${d.tasks.overdue} overdue reminder${d.tasks.overdue > 1 ? 's' : ''}`, '#/tasks?overdue=1']);

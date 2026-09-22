@@ -13,7 +13,7 @@ await page.goto(base + '/#/clients'); await page.waitForTimeout(800); await page
 const cid = page.url().split('/client/')[1].split('/')[0];
 const d = new Date(); d.setDate(d.getDate() + 3); const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const expected = d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-await page.click('button:has-text("+ Task")'); await page.waitForSelector('.modal input[name=title]'); await page.fill('.modal input[name=title]', 'Bring ID to DMV appt'); await page.fill('.modal input[name=due_at]', iso + 'T17:00'); await page.click('.modal button[type=submit]'); await page.waitForTimeout(900);
+await page.click('button:has-text("+ Task")'); await page.waitForSelector('.modal input[name=title]'); await page.fill('.modal input[name=title]', 'Bring ID to DMV appt'); await page.fill('.modal input[name=due_at]', iso); await page.fill('.modal input[name=due_at_time]', '17:00'); await page.click('.modal button[type=submit]'); await page.waitForTimeout(900);
 const timeline = async () => { await page.goto(`${base}/#/client/${cid}/timeline`); await page.waitForTimeout(900); return (await page.$$eval('.timeline li', li => li.map(x => x.textContent.replace(/\s+/g, ' ')))).find(t => /Bring ID to DMV appt/.test(t)) || ''; };
 const tl = await timeline();
 ok(tl.length > 0, 'the reminder appears on the client timeline');

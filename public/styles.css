@@ -75,7 +75,7 @@ label { display: block; font-size: .8rem; font-weight: 600; color: var(--muted);
 input, select, textarea { width: 100%; font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: .5rem .6rem; }
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary-soft); border-color: var(--primary); }
 input[type="checkbox"] { width: auto; margin-right: .4rem; } textarea { min-height: 90px; resize: vertical; }
-.field { margin-bottom: .8rem; } .field .help { font-size: .78rem; color: var(--muted); margin-top: .2rem; } .field.error input, .field.error select, .field.error textarea { border-color: var(--danger); } .field .err { color: var(--danger); font-size: .78rem; }
+.field { margin-bottom: .8rem; } .dt-pair { display: flex; gap: .4rem; } .dt-pair input[type="date"] { flex: 1 1 58%; min-width: 0; } .dt-pair input[type="time"] { flex: 1 1 42%; min-width: 0; } .field .help { font-size: .78rem; color: var(--muted); margin-top: .2rem; } .field.error input, .field.error select, .field.error textarea { border-color: var(--danger); } .field .err { color: var(--danger); font-size: .78rem; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0 1rem; } .form-grid .span { grid-column: 1 / -1; }
 .check { display: flex; align-items: center; gap: .3rem; font-weight: 500; color: var(--text); margin-top: 1.4rem; }
 fieldset { border: 1px solid var(--border); border-radius: 8px; padding: .6rem .9rem; margin: 0 0 1rem; } legend { font-size: .8rem; font-weight: 700; color: var(--muted); padding: 0 .3rem; }

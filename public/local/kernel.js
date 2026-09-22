@@ -6190,12 +6190,22 @@ var require_config = __commonJS({
       msGraph: { tenantId: "", clientId: "", clientSecret: "", user: "" },
       auditRetentionDays: 2555,
       maxBodyBytes: 60 * 1024 * 1024,
+      maxRestoreBodyBytes: 60 * 1024 * 1024,
       maxJsonBodyBytes: 1024 * 1024,
       maxUnauthBodyBytes: 64 * 1024,
       trustProxy: false,
       publicAppInfo: false,
       allowStaticSync: false,
       backupKey: null,
+      // Every config key the shared route code reads has to exist here, or the first route to touch it
+      // fails with "Cannot read properties of undefined" on the device — the Settings tab did exactly that
+      // over config.oidc. Single sign-on, the metrics endpoint, update checks and JSON logs are office-only.
+      oidc: { enabled: false, label: "", issuer: "", clientId: "", clientSecret: "", redirectUri: "", scopes: "", allowedDomains: [] },
+      mfaGraceDays: 14,
+      tombstoneRetentionDays: 180,
+      logFormat: "text",
+      metricsToken: "",
+      updateFeedUrl: "",
       saveServerJson() {
       }
     };
@@ -7615,6 +7625,12 @@ var require_db = __commonJS({
         const m = schemaText.match(/CREATE TABLE IF NOT EXISTS supply_stock \([\s\S]*?\n\);/);
         if (m) d.exec(m[0]);
         for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_supply_stock/.test(line.trim())) d.exec(line.trim());
+      },
+      // 21: a client whose status is NULL or blank (rows written before the value was enforced end to end,
+      //     including through sync) showed no status at all in the header and Overview. The column's default
+      //     is 'active', so that is what an empty value has always meant.
+      (d) => {
+        d.exec(`UPDATE clients SET status='active' WHERE status IS NULL OR TRIM(status)=''`);
       }
     ];
     function initialise(d, schemaText, dbPath) {

@@ -169,7 +169,12 @@ export function announce(message) {
   }
   // Clearing first makes a repeated message announce again.
   liveRegion.textContent = '';
+  clearTimeout(liveRegion._clear);
   setTimeout(() => { liveRegion.textContent = String(message || ''); }, 50);
+  // A live region only needs its text long enough to be read out. Left in place, the last announcement
+  // (a dialog title such as "Add resource") stays in the accessibility tree of every page visited
+  // afterwards, as a stray text node that has nothing to do with what is on screen.
+  liveRegion._clear = setTimeout(() => { liveRegion.textContent = ''; }, 4000);
 }
 
 /**
@@ -304,6 +309,10 @@ export const fmt = {
   today: () => { const d = new Date(); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; },
 };
 export function badge(text, kind = '') { return h('span', { class: `badge ${kind}` }, text); }
+// A client's programme status as shown on screen. Rows from before the status column was enforced can
+// carry NULL or "" (server/db.js migration 19 backfills them); a blank badge in the header looked like
+// a missing record, so the schema default is what an empty value means here too.
+export const clientStatus = (c) => { const s = c && typeof c.status === 'string' ? c.status.trim() : ''; return s || 'active'; };
 export const statusKind = (s) => ({ active: 'ok', admitted: 'ok', completed: 'ok', done: 'ok', signed: 'ok', approved: 'ok', reimbursed: 'ok', reached: 'ok', replied: 'ok',
   waitlist: 'warn', pending: 'warn', waitlisted: 'warn', scheduled: 'info', contacted: 'info', accepted: 'info', in_progress: 'info', open: 'info', draft: 'warn', amended: 'purple', staged: 'warn', committed: 'ok',
   inactive: '', closed: '', cancelled: '', discarded: '', rejected: 'danger', deceased: 'danger', no_show: 'danger', declined_by_client: 'danger', declined_by_provider: 'danger', critical: 'danger', high: 'warn', urgent: 'danger', crisis_escalated: 'danger', no_reply: 'warn', sent: 'info', undeliverable: 'danger', opted_out: 'danger' }[s] || '');
@@ -317,6 +326,30 @@ export const can = (perm) => { const u = state.user; if (!u) return false; const
 const drafts = new Map();
 export function discardDraft(key) { drafts.delete(key); }
 export function hasDraft(key) { return drafts.has(key); }
+
+// A "date & time" field is a date input and a separate, optional time input rather than one
+// datetime-local control. Every browser renders those two natively and predictably (a calendar and a
+// clock), whereas datetime-local swallows a date entered without a time — value reads as "" while the
+// box still shows the date — and its picker is awkward on phones. The wrapper exposes `.value` in the
+// shape the drafts and read() expect: "YYYY-MM-DD", "YYYY-MM-DDTHH:MM" or "".
+function dateTimePair(f, v) {
+  const dateI = h('input', { type: 'date', name: f.name, required: !!f.required, 'aria-label': `${f.label} — date` });
+  const timeI = h('input', { type: 'time', name: `${f.name}_time`, 'aria-label': `${f.label} — time (optional)` });
+  const wrap = h('div', { class: 'dt-pair' }, dateI, timeI);
+  wrap.dateInput = dateI; wrap.timeInput = timeI;
+  Object.defineProperty(wrap, 'value', {
+    get: () => dateI.value ? (timeI.value ? `${dateI.value}T${timeI.value}` : dateI.value) : '',
+    set: (x) => {
+      const s = x == null ? '' : String(x);
+      if (!s) { dateI.value = ''; timeI.value = ''; return; }
+      if (fmt.isDateOnly(s)) { dateI.value = s; timeI.value = ''; return; }
+      const d = new Date(s); if (isNaN(d)) { dateI.value = ''; timeI.value = ''; return; }
+      const local = fmt.isoLocal(d); dateI.value = local.slice(0, 10); timeI.value = local.slice(11, 16);
+    },
+  });
+  wrap.value = v;
+  return wrap;
+}
 
 export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCancel, cancelText = 'Cancel', extra, draftKey } = {}) {
   const inputs = {};
@@ -334,7 +367,7 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
       case 'select': input = h('select', { name: f.name, required: !!f.required }, f.noBlank ? null : h('option', { value: '' }, f.placeholder || '—'), opts.map(o => h('option', { value: o.value, selected: String(o.value) === String(v) }, o.label))); break;
       case 'textarea': input = h('textarea', { name: f.name, required: !!f.required, rows: f.rows || 4, placeholder: f.placeholder || '' }, v || ''); break;
       case 'checkbox': input = h('input', { type: 'checkbox', name: f.name, checked: !!(v === 1 || v === true || v === '1') }); break;
-      case 'datetime': input = h('input', { type: 'datetime-local', name: f.name, required: !!f.required, value: v ? fmt.isoLocal(new Date(v)) : '' }); break;
+      case 'datetime': input = dateTimePair(f, v); break;
       case 'date': input = h('input', { type: 'date', name: f.name, required: !!f.required, value: v ? String(v).slice(0, 10) : '' }); break;
       case 'number': input = h('input', { type: 'number', name: f.name, required: !!f.required, value: v ?? '', min: f.min, max: f.max, step: f.step ?? 'any', placeholder: f.placeholder || '' }); break;
       case 'client': input = clientPicker(f.name, v, f); break;
@@ -351,10 +384,12 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     const fieldId = `f-${f.name}-${Math.random().toString(36).slice(2, 7)}`;
     const helpId = f.help ? `${fieldId}-help` : null;
     const errId = `${fieldId}-err`;
-    if (input && input.tagName) {
-      input.id = fieldId;
-      input.setAttribute('aria-describedby', [helpId, errId].filter(Boolean).join(' '));
-      if (f.required) input.setAttribute('aria-required', 'true');
+    // A date & time field is two controls; the label points at the date, and both are described alike.
+    for (const ctl of input && input.dateInput ? [input.dateInput, input.timeInput] : [input]) {
+      if (!ctl || !ctl.tagName) continue;
+      ctl.id = ctl === input.timeInput ? `${fieldId}-time` : fieldId;
+      ctl.setAttribute('aria-describedby', [helpId, errId].filter(Boolean).join(' '));
+      if (f.required && ctl !== input.timeInput) ctl.setAttribute('aria-required', 'true');
     }
     const errEl = h('div', { class: 'err', id: errId, role: 'alert' });
     const wrap = h('div', { class: `field ${f.span ? 'span' : ''}`, 'data-field': f.name },
@@ -376,21 +411,25 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
   const el = h('form', { noValidate: true, onSubmit: async (e) => {
     e.preventDefault();
     errBox.classList.add('hidden');
-    el.querySelectorAll('.field').forEach(x => { x.classList.remove('error'); x.querySelector('.err').textContent = ''; const c = x.querySelector('input,select,textarea'); if (c) c.removeAttribute('aria-invalid'); });
     submitBtn.disabled = true;
-    // `read()` is inside the try too: a browser that leaves a date/time field in a state it will not
-    // actually submit (some Android WebViews do this rather than clearing back to empty) used to throw
-    // here, before the button was even disabled — an unhandled rejection with no visible error, and the
-    // dialog just sat there looking like nothing had happened.
-    try { const data = read(); await onSubmit(data, el); if (draftKey) drafts.delete(draftKey); }
-    catch (err) {
+    // Everything from clearing the old errors onwards is inside the try: whatever throws — read() on a
+    // half-entered date, the request itself, or a DOM assumption that a view broke (the resource form
+    // adds `.field` blocks of its own without an `.err` slot, and clearing them used to throw before
+    // the request was even sent) — ends up in the banner, never in an unhandled rejection that leaves
+    // the dialog sitting there looking like nothing happened.
+    try {
+      el.querySelectorAll('.field').forEach(x => { x.classList.remove('error'); const errSlot = x.querySelector('.err'); if (errSlot) errSlot.textContent = ''; const c = x.querySelector('input,select,textarea'); if (c) c.removeAttribute('aria-invalid'); });
+      const data = read(); await onSubmit(data, el); if (draftKey) drafts.delete(draftKey);
+    } catch (err) {
+      if (!err || typeof err !== 'object') err = new Error(String(err || 'Something went wrong'));
+      if (!err.message) err.message = 'Something went wrong. Try again.';
       const fieldsErr = err.data && err.data.fields;
       let firstBad = null;
       if (fieldsErr) for (const [k, msg] of Object.entries(fieldsErr)) {
         const w = el.querySelector(`[data-field="${k}"]`);
         if (!w) continue;
         w.classList.add('error');
-        w.querySelector('.err').textContent = msg;
+        const slot = w.querySelector('.err'); if (slot) slot.textContent = msg;
         const control = w.querySelector('input,select,textarea');
         if (control) { control.setAttribute('aria-invalid', 'true'); if (!firstBad) firstBad = control; }
       }
@@ -429,21 +468,27 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
       else if (f.type === 'client') data[f.name] = i.value || null;
       else if (f.type === 'number') data[f.name] = i.value === '' ? null : Number(i.value);
       else if (f.type === 'datetime') {
-        // Some mobile browsers leave a datetime-local field in a state that looks non-empty but will not
-        // actually parse (rather than clearing it back to "" the way the HTML5 spec says an incomplete
-        // entry should) — that used to throw a bare, unlabeled RangeError straight out of read(). Flag it
-        // by field instead, the same way a server-side validation error would be shown.
-        if (i.value && (i.validity?.badInput || isNaN(Date.parse(i.value)))) { bad.push(f); data[f.name] = null; }
-        else data[f.name] = i.value ? new Date(i.value).toISOString() : null;
+        // A date and a separate, optional time. The old single datetime-local control silently dropped a
+        // date typed without a time: the browser reports an empty value for a partial entry (validity
+        // .badInput is set, but value is ""), so the field looked filled in and saved as nothing. Now a
+        // date on its own is a valid answer, and anything the browser cannot parse is flagged by field.
+        const d = i.dateInput, t = i.timeInput;
+        if (d.validity?.badInput || t.validity?.badInput || (t.value && !d.value) || (d.value && !/^\d{4}-\d{2}-\d{2}$/.test(d.value))) { bad.push(f); data[f.name] = null; }
+        else if (!d.value) data[f.name] = null;
+        // A required date & time (a visit, a call) with no time is midnight local, so it orders among
+        // that day's other records; an optional one (a due date, an appointment) is kept as the calendar
+        // day itself, which the server and fmt.dt already understand (a to-do due "Oct 1" is due all day).
+        else if (!t.value) data[f.name] = f.required ? new Date(`${d.value}T00:00`).toISOString() : d.value;
+        else data[f.name] = new Date(`${d.value}T${t.value}`).toISOString();
       }
       else data[f.name] = i.value === '' ? null : i.value;
       if (f.required && (data[f.name] === null || data[f.name] === undefined || data[f.name] === '') && !bad.includes(f)) missing.push(f);
     }
     if (bad.length || missing.length) {
-      const fields = { ...Object.fromEntries(bad.map(f => [f.name, 'enter a complete date and time, or leave it blank'])), ...Object.fromEntries(missing.map(f => [f.name, 'is required'])) };
+      const fields = { ...Object.fromEntries(bad.map(f => [f.name, 'enter a valid date (the time is optional), or leave both blank'])), ...Object.fromEntries(missing.map(f => [f.name, 'is required'])) };
       // Name the field the way the form does ("Client"), not the way the database does ("client_id").
       const names = missing.map(f => f.label).filter(Boolean);
-      const e = new Error(bad.length ? 'Check the date/time below — it does not look complete.' : names.length ? `Fill in ${names.length === 1 ? names[0] : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1]} below.` : 'Fill in the required field below.');
+      const e = new Error(bad.length ? 'Check the date below — it is not a valid date.' : names.length ? `Fill in ${names.length === 1 ? names[0] : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1]} below.` : 'Fill in the required field below.');
       e.labelled = true;
       e.data = { fields };
       throw e;
@@ -464,8 +509,12 @@ export function clientPicker(name, value, f = {}) {
     type: 'text', placeholder: 'Search name, code, date of birth or exact phone…', autocomplete: 'off', required: !!f.required,
     role: 'combobox', 'aria-expanded': 'false', 'aria-controls': listId, 'aria-autocomplete': 'list',
   });
-  const list = h('div', { class: 'card tight hidden', id: listId, role: 'listbox', style: { position: 'absolute', zIndex: 20, maxHeight: '220px', overflow: 'auto', width: '100%' } });
-  const wrap = h('div', { style: { position: 'relative' } }, text, hidden, list);
+  // The results sit in the flow of the form, pushing the fields under them down while open, rather than
+  // floating over those fields: on a phone the list used to cover the next field (a task's due date), so
+  // a tap on that field's date picker was swallowed — it either did nothing or chose whichever client
+  // happened to be under the finger.
+  const list = h('div', { class: 'card tight hidden client-picker-list', id: listId, role: 'listbox', style: { maxHeight: '220px', overflow: 'auto', marginTop: '.25rem' } });
+  const wrap = h('div', { class: 'client-picker' }, text, hidden, list);
   Object.defineProperty(wrap, 'value', { get: () => hidden.value, set: (v) => { hidden.value = v || ''; } });
   hidden.value = value || '';
   if (value && f.display) text.value = f.display;
@@ -486,6 +535,11 @@ export function clientPicker(name, value, f = {}) {
 
   text.addEventListener('input', () => { hidden.value = ''; clearTimeout(timer); timer = setTimeout(search, 250); });
   text.addEventListener('focus', () => { if (!hidden.value) search(); });
+  // The open list is positioned over whatever sits below the field — on a phone that is the next field
+  // down (a task's due date, for one), and it kept intercepting taps meant for that field's date picker
+  // because the "click outside" handler saw those taps as inside this picker. Close it when focus
+  // leaves, deferred so a tap on one of its options (which takes focus first) still chooses it.
+  text.addEventListener('blur', () => { setTimeout(() => { if (!wrap.contains(document.activeElement)) openList(false); }, 120); });
   text.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       if (list.classList.contains('hidden')) { search(); return; }
@@ -514,6 +568,9 @@ export function clientPicker(name, value, f = {}) {
             class: 'list-item', id: `${listId}-o${i}`, role: 'option', 'aria-selected': 'false', tabindex: '-1',
             style: { cursor: 'pointer' },
             onClick: () => choose(c),
+            // Keep focus on the search box while an option is pressed, so the blur-close above never
+            // hides the list between the press and the click that chooses.
+            onMousedown: (e) => e.preventDefault(),
             onMousemove: () => highlight(i),
           }, c.display_name, ' ', h('span', { class: 'muted small' }, c.client_code, ' · ', fmt.label(c.status)));
           options.push({ el, client: c });
@@ -723,7 +780,14 @@ export async function downloadCsv(path) {
 const routes = {};
 export function route(name, loader) { routes[name] = loader; }
 // "Dr. Kiran Patel" is Kiran, not Dr.
-export const firstName = (n) => (String(n || '').split(/\s+/).filter(w => !/^(dr|mr|mrs|ms|mx|rev|fr|sr|jr)\.?$/i.test(w))[0] || String(n || '').split(' ')[0] || '');
+// The name is used exactly as the person typed it (a single word, all capitals, a hyphenated first
+// name — none of it is re-cased or cut), and a blank display name falls back to the username so a
+// greeting is never "Good morning, ".
+export const firstName = (n, fallback = '') => {
+  const words = String(n || '').trim().split(/\s+/).filter(Boolean);
+  const real = words.filter(w => !/^(dr|mr|mrs|ms|mx|rev|fr|sr|jr)\.?$/i.test(w));
+  return real[0] || words[0] || String(fallback || '').trim();
+};
 const canAny = (perm) => (Array.isArray(perm) ? perm.some(p => can(p)) : can(perm));
 export function parseHash() {
   const [path, qs] = location.hash.replace(/^#\/?/, '').split('?');
