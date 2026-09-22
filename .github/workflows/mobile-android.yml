@@ -1,14 +1,16 @@
-name: Android app
+# DEPRECATED — the native Android app is deprecated as of SUDS 1.8.0 and will be removed in a later release.
+# The web application served by the office SUDS server is the only supported client; see docs/PLATFORM.md.
+# This workflow no longer runs on tags or pushes and attaches nothing to releases. It can still be started by
+# hand from the Actions tab for evaluation, and only for that.
+name: Android app (deprecated)
 # Uses no marketplace actions: the hosted Ubuntu image already provides git, JDK 17, the Android SDK, Gradle and gh.
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
     inputs:
       publish:
-        description: "Also attach the APK to the GitHub Release for the version in package.json (creates the release/tag if missing)"
+        description: "Also attach the APK to the GitHub Release for the version in package.json (deprecated; default off)"
         type: boolean
-        default: true
+        default: false
 permissions:
   contents: write
 jobs:
@@ -18,7 +20,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Check out
-        run: git clone --depth 1 --branch "${GITHUB_REF_NAME}" "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src
+        run: git clone --depth 1 --branch "${GITHUB_REF_NAME:-main}" "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src
       - name: Build local kernel (web app bundled into the APK)
         working-directory: src
         run: npm ci --no-audit --no-fund && npm run build:local
@@ -56,7 +58,7 @@ jobs:
           fi
           ls -la "$GITHUB_WORKSPACE"/SUDS-android*.apk
       - name: Publish to GitHub Release
-        if: (github.event_name == 'push' || inputs.publish) && env.SUDS_APK_SIGNED == '1'
+        if: inputs.publish && env.SUDS_APK_SIGNED == '1'
         run: |
           cd src
           tag="${GITHUB_REF_NAME}"; case "$tag" in v*) ;; *) tag="v$(node -p "require('./package.json').version")";; esac

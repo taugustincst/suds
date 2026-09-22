@@ -189,7 +189,7 @@ function auditUsername(username) {
 // few staff signing in at once is enough to be noticed.
 async function login({ username, password, ctx }) {
   const user = db.one(`SELECT * FROM users WHERE username=?`, String(username || '').trim());
-  // A sync client (the phone app) identifies itself with a stable device id, separate from the short-lived
+  // A sync client (a local-mode device) identifies itself with a stable device id, separate from the short-lived
   // session a sync run creates and destroys. A lost/stolen phone is handled here, before any session for it
   // is created at all — see server/devices.js and Administration -> Users -> Devices.
   //

@@ -21,12 +21,12 @@ jobs:
         working-directory: src
         run: npm test
       # The release zip is built with `git archive`, so it ships the *committed* kernel, not the one built
-      # during the release. A stale commit therefore reaches phones silently. Fail the build instead.
+      # during the release. A stale commit therefore reaches local-mode devices silently. Fail the build instead.
       - name: Local kernel and generated schema match their sources
         working-directory: src
         run: |
           npm run build:local
-          git diff --exit-code -- public/local server/schema-text.js public/sw.js mobile/android/app/build.gradle.kts mobile/ios/SUDS/Info.plist || {
+          git diff --exit-code -- public/local server/schema-text.js public/sw.js || {
             echo "::error::public/local/kernel.js or server/schema-text.js is out of date. Run 'npm run build:local' and commit the result."
             exit 1
           }

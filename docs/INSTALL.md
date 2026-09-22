@@ -1,6 +1,6 @@
-# Installing SUDS without a terminal
+# Installing SUDS
 
-This guide is for the person who will host SUDS on an office computer or small server. No command-line knowledge is needed. Allow about 15 minutes.
+This guide is for the person who will host SUDS on an office computer or small server. It covers the server and its setup wizard; staff then use SUDS in a browser (there is no app to install — see [PLATFORM.md](PLATFORM.md)). Allow about 15 minutes. IT teams running it as a service behind a reverse proxy should read [DEPLOYMENT.md](DEPLOYMENT.md) as well.
 
 ## What you need
 * A Windows or Mac computer that stays on during working hours (a county workstation or a small server). Laptops that leave the building are **not** appropriate hosts for PHI.
@@ -17,15 +17,15 @@ This guide is for the person who will host SUDS on an office computer or small s
 * Unzip it somewhere permanent, for example `C:\SUDS` or `~/Applications/SUDS`. Do not put it in Downloads.
 
 ## Step 3 — Start SUDS
-Open the `launchers` folder inside SUDS and double-click:
+Open a terminal (Command Prompt / PowerShell on Windows, Terminal on Mac) in the SUDS folder and run:
 
-| Windows | Mac | Linux |
-| --- | --- | --- |
-| `Start-SUDS.bat` | `Start-SUDS.command` (first time: right-click → **Open**) | `start-suds.sh` |
+```bash
+SUDS_ENV=production npm start        # Windows PowerShell: $env:SUDS_ENV='production'; npm start
+```
 
-A black window opens (leave it open — closing it stops SUDS) and your browser opens the **setup wizard**.
+Leave that window open (closing it stops SUDS) and open the address it prints — normally **http://127.0.0.1:8080** — in your browser: the **setup wizard** appears.
 
-> **The launchers are for evaluation and single-workstation trials.** Nothing restarts SUDS if the window is closed or the computer reboots, and it runs as whoever double-clicked it. A county deployment — anything other staff depend on — runs as a service: systemd on Linux, NSSM on Windows, as `docs/DEPLOYMENT.md` describes. Ask IT to set that up before the programme goes live; the data folder and settings carry over unchanged.
+For anything other staff depend on, run SUDS as a service instead so it survives a closed window and a reboot: systemd on Linux, NSSM on Windows, or Docker, as [DEPLOYMENT.md](DEPLOYMENT.md) describes. The data folder and the wizard's settings carry over unchanged. (The double-click launchers in `launchers/` are deprecated and will be removed; they remain for evaluation on one computer only.)
 
 ## Step 4 — Setup wizard (first run only)
 The wizard asks for:
@@ -33,8 +33,8 @@ The wizard asks for:
 2. **Your administrator account** — username and a strong password (12+ characters with upper and lower case, a number and a symbol).
 3. **Who can reach SUDS**:
    * *Only this computer* — safest; staff use SUDS on this machine only.
-   * *Phones, tablets and other computers on the office network* — enables mobile use. SUDS creates its own HTTPS certificate so traffic is encrypted.
-4. Click **Finish**. SUDS moves to its final address — normally **https://suds.local** — and shows a QR code you can scan with a phone.
+   * *Phones, tablets and other computers on the office network* — staff use SUDS in the browser on their own devices. SUDS creates its own HTTPS certificate so traffic is encrypted.
+4. Click **Finish**. SUDS moves to its final address — normally **https://suds.local** — and shows a QR code a phone can scan to open it.
 
 Encryption keys are generated for you and stored in `data/keys.json`. **Immediately download the key backup** offered at the end of the wizard (also available later under Administration → System) and store it somewhere separate from the computer — for example the county password manager. Without the keys, a backup of the database cannot be read.
 
@@ -46,12 +46,12 @@ Sign in with the administrator account, enroll multi-factor authentication when 
 **Want to look around first?** On the home screen (or under **Settings → Settings → Sample data**) choose **Load sample data**. SUDS adds fictional clients, visits, notes, referrals, reminders and funding so every screen has something on it. It is only offered while you have no clients yet, and **Remove sample data** clears all of it in one click before you enter real people.
 
 ## Using SUDS on a phone, tablet or another computer
-Nothing to install or configure on the device. Everything a person does on their phone is immediately on their computer and vice versa, because both talk to the same SUDS.
+Nothing to install or configure on the device: SUDS is used in the browser, and the `/app` page on the server (for example `https://suds.local/app`) walks staff through these steps. Everything a person does on their phone is immediately on their computer and vice versa, because both talk to the same SUDS.
 1. On the phone, connect to the office Wi-Fi.
 2. Open the browser and go to **https://suds.local** (SUDS announces this name on the network), or scan the QR code from Settings → Network & devices.
 3. The first time, the browser warns that the certificate is not trusted (SUDS made its own). Tap **Advanced → Proceed** (Android/Chrome) or **Show Details → visit this website** (iPhone/Safari). To remove the warning permanently, download the certificate from Administration → Network & devices and install it on the device: it is a small certificate authority of SUDS's own, which is what Android (Settings → Security → Install a certificate → CA certificate) and iPhone (install the profile, then Settings → General → About → Certificate Trust Settings → enable full trust) accept. IT can push it with MDM.
-   *Android browsers do not resolve `suds.local`*: on an Android phone use the numeric address shown under Settings → Network & devices (or the QR code, which carries it); the Android app finds the server on its own.
-4. Add SUDS to the home screen: **Share → Add to Home Screen** (iPhone) or **⋮ → Add to Home screen** (Android). It then opens like an app, with the same 15-minute auto sign-out. Until the certificate has been installed on the device, the browser treats it as a bookmark rather than an installed app (no offline shell), which is fine — everything still works while on the office network.
+   *Android browsers do not resolve `suds.local`*: on an Android phone use the numeric address shown under Settings → Network & devices (or the QR code, which carries it).
+4. Add SUDS to the home screen: **Share → Add to Home Screen** (iPhone) or **⋮ → Install app** (Android; desktop Chrome and Edge offer *Install* too). It then opens like an app, with the same 15-minute auto sign-out. Until the certificate has been installed on the device, the browser treats it as a bookmark rather than an installed app (no offline shell), which is fine — everything still works while on the office network.
 
 ### The certificate: what the wizard makes, and what a county should use instead
 
@@ -61,8 +61,8 @@ That narrowness has a cost. **When the certificate is renewed** (Administration 
 
 **For a county deployment, use the county's PKI instead.** IT gives the SUDS computer a name in the county DNS, issues a certificate from the county CA (which every county-managed device already trusts) and either sets `TLS_CERT_PATH` / `TLS_KEY_PATH` or, better, puts SUDS behind the county's reverse proxy (IIS, nginx, Caddy) that terminates HTTPS with that certificate and forwards to SUDS on `127.0.0.1` with `TRUST_PROXY=1`. Then renewals happen where IT already renews everything else, nothing has to be installed on phones, and the self-signed path above is never needed. `docs/DEPLOYMENT.md` has the settings.
 
-## Native apps (optional)
-Android staff can install a real app instead of the browser shortcut: see `docs/MOBILE_APPS.md`. Once the administrator has uploaded the app under Settings → Network & devices → Native apps, phones get it from **https://suds.local/app**.
+## Working offline (local mode)
+SUDS needs a connection to the office server. For navigators who record visits where there is no signal, the server can hand out an offline copy that runs inside the browser (`https://suds.local/?local=1`) and syncs later. Counties are advised to leave it off unless there is a documented need — set `LOCAL_MODE_ENABLED=false` — and the rules it runs under (the office server is authoritative; permanent rejections are final; purged records do not come back) are in [PLATFORM.md](PLATFORM.md). The former Android and iOS apps are deprecated: a phone that still has one should sync once more, erase its copy and uninstall it, and the administrator retires it under Settings → Synced devices (steps in PLATFORM.md).
 
 ## Backups
 Administration → **System & backups → Download encrypted backup** weekly, or turn on scheduled backups under Settings (each one is read back and opened after it is written, and the result shows under System & backups). If IT backs up the `data` folder with its own tools, **exclude `data/keys.json`** from that job and keep the key file somewhere else on its own — a backup that sits next to its key is not encrypted in any useful sense.
@@ -77,17 +77,15 @@ If the computer is replaced, the database is damaged, or something was deleted t
 3. Choose the backup file and press **Check this backup**. SUDS tells you what is inside it — how many clients, when it was taken, which version — and changes nothing yet.
 4. If it is the right file, press **Replace everything with this backup**, type `REPLACE`, and enter your password.
 
-Everything recorded after that backup was taken will be gone, so check the summary first. The database being replaced is kept on the server as `suds.db.before-restore-…`, so a restore of the wrong file can be undone by whoever looks after the machine. Everyone is signed out afterwards, and phones should sync once.
+Everything recorded after that backup was taken will be gone, so check the summary first. The database being replaced is kept on the server as `suds.db.before-restore-…`, so a restore of the wrong file can be undone by whoever looks after the machine. Everyone is signed out afterwards, and any local-mode devices should sync once.
 
 A backup from an older version of SUDS is brought up to date automatically when it is restored.
 
 Restoring through the browser handles databases up to about 450 MB. A bigger one (a county with years of scanned forms) is restored on the server itself: `node scripts/backup.js --restore <file>`, which has no size limit.
 
 ## Stopping, restarting, updating
-* **Stop:** close the black window.
-* **Restart:** double-click the launcher again.
+* **Stop / restart:** stop or restart the service (or close and reopen the terminal window if you started it by hand).
 * **Update:** take a backup first (above), then replace the SUDS folder with the new version but keep your `data` folder. Then start as usual — the database is brought up to date the first time the new version starts. Before it does, SUDS keeps a copy of the database in `data/pre-migration/`; if the update stops with an error, the database is left as it was at the last completed step and that copy (or your backup) is the way back — put the old SUDS folder back, restore, and call IT rather than retrying. SUDS will not open a `data` folder written by a *newer* version than the one you are running, so if you ever need to go back, restore the backup that matches.
-* **Start automatically at login:** Windows — create a shortcut to `Start-SUDS.bat` in `shell:startup`; Mac — System Settings → General → Login Items → add `Start-SUDS.command`.
 
 ## Getting help from IT
 If IT wants to run SUDS as a proper service with a real certificate and domain name, point them to `docs/DEPLOYMENT.md`. Everything the wizard did can also be configured with environment variables.

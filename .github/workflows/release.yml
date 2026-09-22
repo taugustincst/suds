@@ -1,5 +1,6 @@
 name: Release
-# Uses no marketplace actions. Creates the tag + GitHub Release with the source zip (and the Android APK if built).
+# Uses no marketplace actions. Creates the tag + GitHub Release with the source zip. The native apps and the
+# desktop launchers are deprecated (docs/PLATFORM.md): nothing else is built or attached.
 on:
   push:
     tags: ['v*']
@@ -11,9 +12,6 @@ on:
         default: ''
 permissions:
   contents: write
-  # gh workflow run (dispatching the Android build below) needs actions: write; contents: write alone
-  # gets a 403 "Resource not accessible by integration" from the Actions API.
-  actions: write
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -41,7 +39,7 @@ jobs:
         working-directory: src
         run: |
           npm run build:local
-          git diff --exit-code -- public/local server/schema-text.js public/sw.js mobile/android/app/build.gradle.kts mobile/ios/SUDS/Info.plist || {
+          git diff --exit-code -- public/local server/schema-text.js public/sw.js || {
             echo "::error::The committed kernel is stale; the release zip would ship it. Run 'npm run build:local' and commit."
             exit 1
           }
@@ -57,15 +55,3 @@ jobs:
           if gh release view "$ver" >/dev/null 2>&1; then gh release upload "$ver" "suds-$ver.zip" "suds-$ver.zip.sha256" --clobber; else
             gh release create "$ver" "suds-$ver.zip" "suds-$ver.zip.sha256" --target "$(git rev-parse HEAD)" --title "SUDS $ver" --notes "${notes:-See CHANGELOG.md}"; fi
           echo "Published https://github.com/${GITHUB_REPOSITORY}/releases/tag/$ver"
-      # A real `git push origin vX.Y.Z` already fires mobile-android.yml's own tag trigger, so nothing
-      # extra is needed there. But a release started from the Actions tab (workflow_dispatch) creates its
-      # tag through the API with GITHUB_TOKEN, which raises no push event — the Android workflow's tag
-      # trigger never fires, and the APK went missing from every release started that way. Dispatch it
-      # explicitly only on that path, so a real tag push never gets a duplicate build.
-      - name: Build and attach the Android app
-        if: github.event_name == 'workflow_dispatch'
-        working-directory: src
-        run: |
-          ver="v$(node -p "require('./package.json').version")"
-          gh workflow run mobile-android.yml --ref "$ver" -f publish=true
-          echo "Android build started for $ver; it attaches SUDS-android.apk to the release when the signing secrets are set."

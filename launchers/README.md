@@ -1,5 +1,13 @@
-# Launchers
+# Launchers — deprecated
 
-Double-click starters for trying SUDS on one computer: `Start-SUDS.bat` (Windows), `Start-SUDS.command` (Mac), `start-suds.sh` (Linux). Each checks for Node.js 22+, starts the server in a window and opens the setup wizard.
+**Deprecated as of SUDS 1.8.0; removal planned for a later release.** See
+[`docs/PLATFORM.md`](../docs/PLATFORM.md): the web application served by the office SUDS server is the
+only supported client, and the supported way to run that server is as a service (systemd on Linux, NSSM
+on Windows) or in Docker, behind the county's certificate or reverse proxy, as `docs/DEPLOYMENT.md`
+describes. The install guide no longer points here.
 
-**Evaluation and single-workstation use only.** Nothing restarts SUDS when the window is closed or the computer reboots, and it runs as whoever clicked it. A county deployment that other staff depend on runs SUDS as a service — systemd on Linux, NSSM on Windows — behind the county's certificate or reverse proxy, as `docs/DEPLOYMENT.md` describes. The data folder created here carries over to that unchanged.
+`Start-SUDS.bat` (Windows), `Start-SUDS.command` (Mac) and `start-suds.sh` (Linux) are double-click
+starters that check for Node.js 22+, start the server in a window and open the setup wizard. They remain
+in the tree for **evaluation on one computer only**: nothing restarts SUDS when the window is closed or
+the computer reboots, and it runs as whoever clicked it. Do not use them for a deployment other staff
+depend on. The data folder they create carries over unchanged to a service installation.

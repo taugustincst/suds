@@ -7,8 +7,10 @@
 
 Every page has a **?** that explains it in plain language. Records are never truly deleted, so you cannot break anything.
 
-## Phone and computer stay in sync
-Use SUDS wherever you are: on the office computer, or on your phone at **https://suds.local** (office Wi-Fi; add it to your home screen once). Your clients, notes, reminders and even half-written note drafts are the same everywhere — there is nothing to set up or sync.
+## Phone, tablet and computer stay in sync
+Use SUDS wherever you are: on the office computer, or in the browser on your phone or tablet at **https://suds.local** (office Wi-Fi). There is no app to install: open the address, sign in, and add it to your home screen once — iPhone: Safari **Share → Add to Home Screen**; Android: browser menu **⋮ → Install app**. The `/app` page (**https://suds.local/app**) shows these steps. Your clients, notes, reminders and even half-written note drafts are the same everywhere, because every device talks to the same office SUDS.
+
+SUDS needs a connection to the office. Without one, a banner says so and nothing can be saved until you reconnect. If your programme has approved an offline copy for field work (local mode), your administrator will set it up with you; the office SUDS is always the master copy, and anything it refuses on sync is final.
 
 ## Signing in
 Use your individual username. After 5 wrong passwords the account locks for 15 minutes. You are signed out automatically after 15 minutes without activity — a banner warns you one minute before. Supervisors and administrators must enroll an authenticator app (Profile → Multi-factor authentication → scan the QR code).

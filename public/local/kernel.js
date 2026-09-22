@@ -11531,20 +11531,8 @@ var require_app = __commonJS({
     var db3 = require_db();
     var config = require_config();
     var auth3 = require_auth();
-    var audit3 = require_audit();
     var listener = (init_listener(), __toCommonJS(listener_exports));
-    var { badRequest, notFound, unauthorized, HttpError: HttpError3 } = require_http();
-    var dir = () => path.join(config.dataDir, "downloads");
-    var apkPath = () => path.join(dir(), "suds.apk");
-    function apkInfo() {
-      try {
-        const st = fs.statSync(apkPath());
-        const meta = JSON.parse(fs.readFileSync(apkPath() + ".json", "utf8"));
-        return { available: true, size: st.size, uploaded_at: meta.uploaded_at, sha256: meta.sha256, version: meta.version };
-      } catch {
-        return { available: false };
-      }
-    }
+    var { notFound, unauthorized } = require_http();
     function certFingerprint() {
       try {
         const c = new crypto3.X509Certificate(fs.readFileSync(path.join(config.dataDir, "certs", "suds.crt")));
@@ -11622,14 +11610,8 @@ var require_app = __commonJS({
       r.get("/api/app/info", (ctx) => {
         const name = db3.getSetting("org_name", "SUDS");
         const authed = !!ctx.user && !ctx.session?.mfa_pending;
-        if (!authed && !config.publicAppInfo) return { name, allow_static_sync: config.allowStaticSync, public: false };
-        return { name, version: config.version, listener: listener.describe(), android: apkInfo(), certificate: certFingerprint(), service: "_suds._tcp", allow_static_sync: config.allowStaticSync, public: true };
-      });
-      r.get("/api/app/android.apk", (ctx) => {
-        if (!apkInfo().available) throw notFound("The Android app has not been uploaded yet");
-        const data = fs.readFileSync(apkPath());
-        ctx.res.writeHead(200, { "Content-Type": "application/vnd.android.package-archive", "Content-Disposition": 'attachment; filename="SUDS.apk"', "Content-Length": data.length });
-        ctx.res.end(data);
+        if (!authed && !config.publicAppInfo) return { name, allow_static_sync: config.allowStaticSync, local_mode: config.localModeEnabled, public: false };
+        return { name, version: config.version, listener: listener.describe(), certificate: certFingerprint(), service: "_suds._tcp", allow_static_sync: config.allowStaticSync, local_mode: config.localModeEnabled, public: true };
       });
       r.get("/api/app/certificate.crt", (ctx) => {
         const caPath = path.join(config.dataDir, "certs", "suds-ca.crt");
@@ -11637,27 +11619,6 @@ var require_app = __commonJS({
         if (!fs.existsSync(crt)) throw notFound("No certificate");
         ctx.res.writeHead(200, { "Content-Type": "application/x-x509-ca-cert", "Content-Disposition": 'attachment; filename="suds-certificate.crt"' });
         ctx.res.end(fs.readFileSync(crt));
-      });
-      r.post("/api/admin/app/android", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
-        const buf = ctx.rawBody;
-        if (!buf || buf.length < 1e3) throw badRequest("Upload the .apk file as the request body");
-        if (buf[0] !== 80 || buf[1] !== 75) throw badRequest("That does not look like an APK (zip) file");
-        if (buf.length > config.maxBodyBytes) throw new HttpError3(413, "APK too large");
-        fs.mkdirSync(dir(), { recursive: true, mode: 448 });
-        fs.writeFileSync(apkPath(), buf, { mode: 384 });
-        const sha2562 = crypto3.createHash("sha256").update(buf).digest("hex");
-        fs.writeFileSync(apkPath() + ".json", JSON.stringify({ uploaded_at: db3.now(), sha256: sha2562, version: String(ctx.query.get("version") || config.version), by: ctx.user.id }), { mode: 384 });
-        audit3.log({ user: ctx.user, action: "app.android.upload", ip: ctx.ip, details: { bytes: buf.length, sha256: sha2562 } });
-        return { ok: true, ...apkInfo() };
-      });
-      r.delete("/api/admin/app/android", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
-        try {
-          fs.unlinkSync(apkPath());
-          fs.unlinkSync(apkPath() + ".json");
-        } catch {
-        }
-        audit3.log({ user: ctx.user, action: "app.android.remove", ip: ctx.ip });
-        return { ok: true };
       });
     };
   }
@@ -21726,7 +21687,7 @@ var require_app2 = __commonJS({
 <style>body{font-family:system-ui,sans-serif;max-width:36rem;margin:4rem auto;padding:0 1rem;color:#222;line-height:1.5}h1{font-size:1.4rem}a{color:#0b5}</style></head>
 <body><h1>Local mode is turned off on this server</h1>
 <p>Running SUDS inside the browser (<code>?local=1</code>) keeps a copy of client records and the keys to them in this browser's own storage. This installation's administrator has disabled it.</p>
-<p>Use the office sign-in at <a href="/">the main address</a>, or the phone app your program issued. To turn local mode back on, set <code>LOCAL_MODE_ENABLED=true</code> on the server (see docs/DEPLOYMENT.md).</p></body></html>`;
+<p>Use the office sign-in at <a href="/">the main address</a>, and ask your administrator before working offline (docs/PLATFORM.md). To turn local mode back on, set <code>LOCAL_MODE_ENABLED=true</code> on the server (see docs/DEPLOYMENT.md).</p></body></html>`;
     function buildRouter() {
       const r = new Router2();
       for (const mod of ROUTE_MODULES) globRequire_routes(`./routes/${mod}`)(r);
@@ -21743,10 +21704,8 @@ var require_app2 = __commonJS({
       // provider pictures
       /^\/api\/imports\//,
       // OneNote / spreadsheet / data imports
-      /^\/api\/sync\/(push|blob)(\/|$)/,
-      // the phone app's sync payload and attachments
-      /^\/api\/admin\/app\/android$/
-      // the APK the administrator uploads
+      /^\/api\/sync\/(push|blob)(\/|$)/
+      // a local-mode device's sync payload and attachments
     ];
     function bodyLimit(ctx) {
       const authed = !!ctx.user && !ctx.session?.mfa_pending;

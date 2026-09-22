@@ -35,19 +35,20 @@ SUDS is designed to help a covered entity meet the HIPAA Security Rule (45 CFR �
 * Redisclosure notice: include the Part 2 prohibition-on-redisclosure statement in any information you release. SUDS ships a starter **consent to release information (42 CFR Part 2)** form carrying the §2.31 required elements and the redisclosure notice, and the printed accounting of disclosures carries the notice; have your county counsel review the wording before first use.
 * Consent recipients, purposes and scope, and the recipient, purpose, content and justification of each disclosure, are stored encrypted like any other PHI — who a client's records may be shared with is itself sensitive.
 
-## Phone app (local mode) and sync
+## Browser local mode (the offline copy) and sync
 
-* The phone app stores its own encrypted database on the device (AES-256-GCM, same scheme as the server). Keys are generated on the device and kept in the Android Keystore-backed encrypted preferences or the iOS Keychain (`WhenUnlockedThisDeviceOnly`), never in web storage on the apps. The app requires fingerprint / Face ID / PIN after two minutes in the background. Require device passcodes and remote wipe through MDM.
-* Sync transmits records over HTTPS to the office server, authenticated with the user's office credentials (and MFA where enabled); PHI is decrypted for transport and re-encrypted with the receiver's own key. Credentials are not stored on the device.
+* The web application on the office server is the system of record (docs/PLATFORM.md). The native phone apps are deprecated; what follows describes the browser's local mode, which a county enables deliberately (`LOCAL_MODE_ENABLED`, off recommended unless a field-work need is documented).
+* A local-mode browser stores its own encrypted database in that browser profile (AES-256-GCM, same scheme as the server, in IndexedDB). A plain browser has no protected key store, so the keys are generated on first run and kept in the same profile's `localStorage`, beside the data: anyone who can use the profile can read what is in it. Local mode therefore belongs only on county-managed devices with a device passcode, disk encryption and MDM remote wipe, and only for the people and devices the county has approved.
+* Sync transmits records over HTTPS to the office server, authenticated with the user's office credentials (and MFA where enabled); PHI is decrypted for transport and re-encrypted with the receiver's own key. Credentials are not stored on the device; each sync uses a short-lived session.
 * The server enforces minimum necessary on sync: only the user's caseload is downloaded; clinical notes only for clinical roles; MFA secrets and other users' credentials are never sent. Uploads are attributed to the syncing user, cannot change approvals or signed notes, cannot alter or delete consents, disclosures or addenda (a consent may only be revoked), cannot delete clients or notes, and are rejected outside the caseload. Every sync is audited on the server, including the device's own audit entries. Break-glass events are reviewed on the office server and are not synchronised.
-* Sync in a plain browser (`/?local=1`) keeps keys in that browser's storage and is intended for testing only. A county that does not permit it sets `LOCAL_MODE_ENABLED=false`, and the server serves an explanation instead of the kernel.
+* The office server is authoritative: permanent sync rejections are final and the device stops resending them; a purged or merged record cannot be resurrected from a device; each office account has its own sync cursor on a device. Every local-mode browser that syncs is listed under Settings → Synced devices, where an administrator can revoke or wipe it; deactivating an account or resetting its password queues a wipe for its devices. A county that does not permit local mode sets `LOCAL_MODE_ENABLED=false`, and the server serves an explanation instead of the kernel.
 
 ## Organizational responsibilities (not provided by software)
 
 1. **Risk analysis and management** (§164.308(a)(1)) — document this deployment in your risk register.
 2. **Workforce training and sanctions** — users must understand break-glass, minimum necessary and Part 2 rules.
 3. **Business Associate Agreements** — with any hosting provider, and with Pocket AI or Microsoft if PHI is recorded or stored in their services before import.
-4. **Device and media controls** — encrypted laptops/phones used with Pocket AI; secure disposal of backups.
+4. **Device and media controls** — encrypted laptops/phones used with Pocket AI or approved for local mode; retire deprecated phone-app installs (docs/PLATFORM.md); secure disposal of backups.
 5. **Contingency plan** — run the encrypted backups (docs/DEPLOYMENT.md) and test restores.
 6. **Audit review** — acknowledge break-glass events as they arrive (Supervision → Break-glass access) and review access denials and exports at least monthly. Confirm the audit verification runs and the sealed-head checkpoint line appears in the collected log.
 7. **Patient requests** — answer access, amendment, restriction and accounting requests within the 30 days the Requests tab tracks; a denial must be given to the client in writing.
@@ -79,7 +80,7 @@ SUDS is designed to help a covered entity meet the HIPAA Security Rule (45 CFR �
 * Backups are encrypted with a key derived from the encryption key; store keys and backups separately.
 
 ## Resource pictures
-Pictures on treatment center profiles are meant to show buildings, entrances and rooms. They are not PHI and are stored unencrypted alongside the resource record so they can be shown quickly and synced to phones. Staff are reminded in the app never to upload pictures of clients; if one is uploaded by mistake, remove it from the profile (audit-logged) and note the incident per your policy.
+Pictures on treatment center profiles are meant to show buildings, entrances and rooms. They are not PHI and are stored unencrypted alongside the resource record so they can be shown quickly and synced to local-mode devices. Staff are reminded in the app never to upload pictures of clients; if one is uploaded by mistake, remove it from the profile (audit-logged) and note the incident per your policy.
 
 ## County forms
 Filled-out forms and attached signed copies are PHI: their values and files are stored encrypted (AES-256-GCM) with the client record, every view, print and attachment is audit-logged, and access follows the same caseload rules as notes. Blank templates in the form library are not PHI and are shared with every device. Printed PDFs carry a Part 2 / HIPAA handling notice; treat paper copies per your program's policy.

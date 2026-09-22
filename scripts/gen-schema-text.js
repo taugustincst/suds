@@ -28,10 +28,5 @@ const stamp = (rel, pattern, replacement) => {
 // against a new API.
 stamp('public/sw.js', /(const VERSION = ')[^']*(')/, `$1suds-shell-${version}$2`);
 
-// Android refuses to install an update whose versionCode did not increase; derive both from package.json.
-const [maj, min, pat] = version.split('.').map(Number);
-const versionCode = maj * 10000 + min * 100 + pat;
-stamp('mobile/android/app/build.gradle.kts', /versionCode = \d+/, `versionCode = ${versionCode}`);
-stamp('mobile/android/app/build.gradle.kts', /versionName = "[^"]*"/, `versionName = "${version}"`);
-stamp('mobile/ios/SUDS/Info.plist', /(<key>CFBundleShortVersionString<\/key><string>)[^<]*(<\/string>)/, `$1${version}$2`);
-stamp('mobile/ios/SUDS/Info.plist', /(<key>CFBundleVersion<\/key><string>)[^<]*(<\/string>)/, `$1${versionCode}$2`);
+// The native Android and iOS projects under mobile/ are deprecated (docs/PLATFORM.md) and no longer
+// stamped; their version fields stay at whatever the last stamped release wrote.

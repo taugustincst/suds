@@ -1,6 +1,6 @@
 // SUDS frontend core: API client, hash router, DOM + form helpers, session/idle handling.
 export const state = { user: null, org: 'SUDS', constants: null, users: [], funds: [], idleMinutes: 15, prefs: {}, local: false };
-// Local mode: the whole server runs inside this page (phone app / offline). Requests go to the in-page kernel.
+// Local mode: the whole server runs inside this page (the offline copy). Requests go to the in-page kernel.
 // window.SUDS_FORCE_LOCAL is set by a small external script tag, before this module loads, on builds
 // meant to run with no backend at all (e.g. a static hosting deploy of public/ — see
 // scripts/build-static-site.js). External, not inline, so it works under the CSP the office server sends.
@@ -112,8 +112,8 @@ export function setOffline(on) {
   state.offline = on;
   document.documentElement.classList.toggle('offline', on);
   if (on) {
-    offlineBanner = banner('Offline — changes can\'t be saved until you reconnect. For field days, use the phone app / local mode.', 'error', { id: 'offline' });
-    if (offlineBanner) offlineBanner.firstChild.append(' ', h('a', { href: 'get-app.html', class: 'small' }, 'Set up the phone app'));
+    offlineBanner = banner('Offline — changes can\'t be saved until you reconnect. SUDS needs a connection to the office server.', 'error', { id: 'offline' });
+    if (offlineBanner) offlineBanner.firstChild.append(' ', h('a', { href: 'get-app.html', class: 'small' }, 'Use SUDS on this device'));
   } else {
     document.querySelectorAll('#banners [data-banner="offline"]').forEach(b => b.remove());
     if (offlineBanner) { toast('Back online', 'ok'); offlineBanner = null; }
@@ -831,7 +831,7 @@ export const NAV = [
   { name: 'funder', label: 'Funder report', ico: '▦', perm: 'reports:read', help: 'Unduplicated counts — people, not services — by fiscal period and funding source, with admissions, discharges, demographics and overdose figures in the shape a grant report asks for.' },
   // A supervisor holds assignments:manage (moving a caseload when someone leaves lives on this page) but not
   // users:manage; gating the whole page on the latter locked them out of a feature built for them.
-  { name: 'admin', label: 'Settings', ico: '⚙', perm: ['users:manage', 'assignments:manage'], help: 'Staff accounts, security, connecting phones and backups — or, for a supervisor, moving a caseload and the audit log.' },
+  { name: 'admin', label: 'Settings', ico: '⚙', perm: ['users:manage', 'assignments:manage'], help: 'Staff accounts, security, connecting devices and backups — or, for a supervisor, moving a caseload and the audit log.' },
 ];
 
 let current = null;

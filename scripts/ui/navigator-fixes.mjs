@@ -257,7 +257,7 @@ const nav = await session('mrivera', 'Navigator2026!!');
   eq(await page.$eval('.modal input[name=title]', i => i.value), 'Typed while the signal dropped', 'with what was typed still in it');
   const bannerEl = await page.$('#banners [data-banner="offline"]');
   ok(bannerEl, 'a persistent offline banner appears at the top');
-  ok(bannerEl && /phone app/.test(await bannerEl.textContent()) && await bannerEl.$('a[href="get-app.html"]'), 'pointing at the phone app / local mode');
+  ok(bannerEl && /on this device/.test(await bannerEl.textContent()) && await bannerEl.$('a[href="get-app.html"]'), 'pointing at the use-on-this-device page');
   await ctx.setOffline(false);
   await page.click('.modal button[type=submit]');
   ok(await until(async () => !(await page.$('#banners [data-banner="offline"]'))), 'the banner goes away once a request gets through');

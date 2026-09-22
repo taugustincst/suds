@@ -3,11 +3,10 @@
 // in, plus one small extra script that switches the app straight into local mode. Point any static file
 // host at the output (GitHub Pages, Netlify, S3, a USB drive with a laptop running `npx serve`, or the
 // county's own web server) and it needs nothing else — no Node process, no database, no account on file
-// anywhere. Every county worker's data stays in their own browser, exactly like the phone apps do.
+// anywhere. Every county worker's data stays in their own browser, like the office server's own local mode.
 //
-// public/ itself is untouched: it is also served by the office Node server and bundled into the Android
-// and iOS apps, both of which must keep deciding for themselves whether to run in local mode. Only the
-// staged copy this script writes carries the always-local flag.
+// public/ itself is untouched: it is also served by the office Node server, which must keep deciding for
+// itself whether to run in local mode. Only the staged copy this script writes carries the always-local flag.
 //
 // Usage: node scripts/build-static-site.js [out-dir]   (default: _site)
 const fs = require('node:fs');

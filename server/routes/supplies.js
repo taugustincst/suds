@@ -1,7 +1,7 @@
 'use strict';
 // Harm-reduction supply inventory: what is on the shelf, and the automatic draw-down when a visit records
 // kits or strips handed out. Mounted from routes/interventions.js (the visit is what consumes stock), so it
-// reaches the phone app through the same route module without touching server/app.js.
+// reaches local-mode devices through the same route module without touching server/app.js.
 const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');

@@ -6,8 +6,7 @@
 - [ ] Docs updated (`README.md`, `docs/INSTALL.md`, `docs/DEPLOYMENT.md`, `docs/HIPAA.md`)
 - [ ] No secrets, databases or `data/` contents in the tree (`git status`, `.gitignore`)
 - [ ] Upgrade path: schema migrations in `server/db.js` run on start; take a backup before upgrading
-- [ ] Android: the four signing secrets are set, so the release gets a signed APK rather than a skipped
-      publish step (`scripts/android-keystore.sh`, see docs/MOBILE_APPS.md)
+- [ ] Nothing native: no APK, launcher or mobile step is part of the release (docs/PLATFORM.md)
 
 ## Cutting a release
 ```bash
@@ -16,7 +15,7 @@ npm version 1.0.1 --no-git-tag-version   # bump, then add the CHANGELOG entry
 git commit -am "Release 1.0.1" && git push
 git tag v1.0.1 && git push origin v1.0.1
 ```
-Pushing the tag runs `.github/workflows/release.yml` (or start it from the Actions tab with *Run workflow* → type `release`; it then creates the tag itself), which re-runs the tests, packages `suds-v1.0.1.zip` (`git archive`, so no local data can leak) and publishes a GitHub Release with the zip attached. The `Android app` workflow builds `SUDS-android.apk` and attaches it to the same release. Neither workflow uses marketplace actions, so they run under restrictive Actions policies.
+Pushing the tag runs `.github/workflows/release.yml` (or start it from the Actions tab with *Run workflow* → type `release`; it then creates the tag itself), which re-runs the tests, packages `suds-v1.0.1.zip` (`git archive`, so no local data can leak) and publishes a GitHub Release with the zip attached — nothing else. The deprecated `Android app` and `iOS app` workflows run only when started by hand and attach nothing. No workflow uses marketplace actions, so they run under restrictive Actions policies.
 
 ## Release branches (works without GitHub Actions)
 Every release also has a branch `release/v<version>` pointing at the released commit. GitHub serves a zip of any branch at
@@ -24,7 +23,7 @@ Every release also has a branch `release/v<version>` pointing at the released co
 Create it with `git branch release/v1.0.1 main && git push origin release/v1.0.1`.
 
 ## How users get it
-- **Download:** the zip from the Releases page — unzip, then double-click a file in `launchers/` (see `docs/INSTALL.md`).
+- **Download:** the zip from the Releases page — unzip, then start the server (see `docs/INSTALL.md`; as a service per `docs/DEPLOYMENT.md`).
 - **Git:** `git clone https://github.com/taugustincst/suds.git` then `git checkout v1.0.1`. Upgrade with `git pull` (keep the `data/` folder).
 - **Docker:** `docker compose up -d`.
 

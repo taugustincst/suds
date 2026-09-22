@@ -144,9 +144,9 @@ const config = {
   maxJsonBodyBytes: 1024 * 1024,
   maxUnauthBodyBytes: 64 * 1024,
   // What /api/app/info tells a caller who is not signed in. Off by default: the listener's addresses, the
-  // certificate fingerprint and whether an APK is hosted describe the office network to anyone who can
-  // reach the port. The get-app page still works for a signed-in browser, and a county that wants phones
-  // to fetch the APK with no account can set PUBLIC_APP_INFO=1.
+  // certificate fingerprint describe the office network to anyone who can reach the port. The /app page
+  // still works for a signed-in browser, and a county that wants the page to answer with no account can
+  // set PUBLIC_APP_INFO=1.
   publicAppInfo: process.env.PUBLIC_APP_INFO === '1' || process.env.PUBLIC_APP_INFO === 'true',
   // Whether a copy of the web app served from somewhere other than this server (the GitHub Pages
   // demo build, say) may sync with it. Off by default: a static host nobody in the county controls is
@@ -162,7 +162,7 @@ const config = {
     return Buffer.from(hex, 'hex');
   })(),
   // Whether this server hands out the browser kernel for /?local=1 (a whole copy of SUDS running in the
-  // browser, with its keys in that browser's storage). Fine for the phone apps and for testing; a county
+  // browser, with its keys in that browser's storage). Fine for testing; a county
   // that has not approved staff running local copies on unmanaged machines sets LOCAL_MODE_ENABLED=false
   // and the page explains itself instead of starting.
   localModeEnabled: !['0', 'false', 'no', 'off'].includes(String(process.env.LOCAL_MODE_ENABLED ?? fileCfg.localModeEnabled ?? 'true').toLowerCase()),

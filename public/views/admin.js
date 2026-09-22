@@ -10,7 +10,7 @@ function oidcStatusCached() {
 async function openUserForm(values, onDone) {
   const isNew = !values;
   const oidcStatus = !isNew && !state.local ? await oidcStatusCached() : { enabled: false };
-  // How many phones this person syncs from, so the "also wipe" choice below is made with the number in view.
+  // How many devices this person syncs from, so the "also wipe" choice below is made with the number in view.
   let deviceCount = 0;
   if (!isNew && !state.local) deviceCount = await get('/api/admin/devices', { quiet: true }).then(r => r.devices.filter(d => d.user_id === values.id && !d.revoked_at).length).catch(() => 0);
   const f = form([
@@ -20,7 +20,7 @@ async function openUserForm(values, onDone) {
     { name: 'supervisor_id', label: 'Supervisor', type: 'select', placeholder: '— none —', options: state.users.filter(u => u.is_active !== 0 && ['supervisor', 'admin'].includes(u.role) && u.id !== values?.id).map(u => ({ value: u.id, label: u.display_name })), help: 'Whose Supervision page their unfinished work shows on.' },
     { name: 'requires_cosign', label: 'Notes need a supervisor\'s countersignature (trainee or unlicensed staff)', type: 'checkbox', span: true },
     { name: 'password', label: isNew ? 'Temporary password (blank = generate)' : 'Reset password (blank = keep)', type: 'password', autocomplete: 'new-password', help: '12+ chars with upper, lower, number, symbol. User must change at next login.' },
-    !isNew ? { name: 'wipe_devices', label: `Also wipe this person's synced devices when deactivating or resetting the password (${deviceCount} device${deviceCount === 1 ? '' : 's'})`, type: 'checkbox', value: true, span: true, help: 'Each phone or tablet they sync from is told to erase its local copy of client records the next time it connects.' } : null,
+    !isNew ? { name: 'wipe_devices', label: `Also wipe this person's synced devices when deactivating or resetting the password (${deviceCount} device${deviceCount === 1 ? '' : 's'})`, type: 'checkbox', value: true, span: true, help: 'Each device they sync from in local mode is told to erase its local copy of client records the next time it connects.' } : null,
     !isNew ? { name: 'unlock', label: 'Unlock account', type: 'checkbox' } : null, !isNew && values.mfa_enabled ? { name: 'reset_mfa', label: 'Reset MFA (user re-enrolls)', type: 'checkbox' } : null,
     oidcStatus.enabled ? { name: 'oidc_subject', label: `Single sign-on identity (${oidcStatus.label})`, span: true, help: values && values.oidc_subject ? 'Linked. Clear this field to unlink — the user can still sign in with their SUDS password.' : 'Paste the "sub" claim from the identity provider to let this user sign in with SSO instead of a SUDS password. Leave blank if they should only use their SUDS password.' } : null,
   ].filter(Boolean), { values: values || {}, submitText: isNew ? 'Create user' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => {
@@ -45,27 +45,13 @@ async function openUserForm(values, onDone) {
   const m = modal(isNew ? 'New user' : `Edit ${values.display_name}`, f, { wide: true });
 }
 
-async function nativeAppsCard(primary) {
-  const info = await get('/api/app/info', { quiet: true }).catch(() => null);
+// The native apps are deprecated (docs/PLATFORM.md); staff use the web app in a browser. /app is the
+// step-by-step page for adding it to a home screen.
+function useOnDevicesCard(primary) {
   const appUrl = primary.replace(/\/$/, '') + '/app';
-  // .sr-only, not .hidden (display:none) — a good few mobile browsers/WebViews refuse to honor a
-  // programmatic .click() on a file input that display:none has taken out of the render tree.
-  const fileIn = h('input', { type: 'file', accept: '.apk', class: 'sr-only' });
-  const status = h('div', { class: 'small muted' });
-  fileIn.addEventListener('change', async () => {
-    const f = fileIn.files[0]; if (!f) return; status.textContent = `Uploading ${f.name}…`;
-    try { const r = await fetch('/api/admin/app/android?version=' + encodeURIComponent(prompt('App version (as shown to staff):', state.constants ? '1.0.0' : '1.0.0') || ''), { method: 'POST', headers: { 'X-Requested-With': 'suds', 'Content-Type': 'application/octet-stream' }, body: f, credentials: 'same-origin' }); const j = await r.json(); if (!r.ok) throw new Error(j.error); toast('Android app published', 'ok'); nav('admin?tab=network&_=' + Date.now()); }
-    catch (e) { status.textContent = e.message; }
-  });
-  const a = info?.android;
-  return h('div', { class: 'card' }, h('h3', {}, 'Native apps'),
-    h('p', { class: 'small' }, 'Staff get the phone app from your own server — no app store. Send them to ', h('b', {}, appUrl), ' or let them scan this code:'),
-    h('div', { class: 'center mb' }, qrSvg(appUrl, { size: 140 })),
-    h('h4', {}, 'Android'),
-    a?.available ? h('div', {}, h('div', { class: 'row' }, badge(`Published · version ${a.version} · ${(a.size / 1048576).toFixed(1)} MB`, 'ok'), h('span', { class: 'small muted' }, `uploaded ${fmt.dt(a.uploaded_at)}`)), h('div', { class: 'small mono muted' }, `SHA-256 ${a.sha256.slice(0, 32)}…`))
-      : h('p', { class: 'small muted' }, 'Not published yet. Build the APK (GitHub Actions "Android app" workflow, or Android Studio → Build APK) and upload it here. See docs/MOBILE_APPS.md.'),
-    h('div', { class: 'row mt' }, h('button', { class: 'btn primary sm', onClick: () => fileIn.click() }, a?.available ? 'Upload new version' : 'Upload APK'), a?.available ? h('button', { class: 'btn sm', onClick: async () => { if (await confirmDialog('Remove app', 'Remove the Android app download from this server?', { danger: true, okText: 'Remove' })) { await del('/api/admin/app/android'); nav('admin?tab=network&_=' + Date.now()); } } }, 'Remove') : null, fileIn), status,
-    h('h4', { class: 'mt' }, 'iPhone / iPad'), h('p', { class: 'small muted' }, 'Apple only allows installs through TestFlight or the App Store. The Xcode project is in mobile/ios; until it is published, iPhone users open ', h('b', {}, primary), ' in Safari → Share → Add to Home Screen.'));
+  return h('div', { class: 'card' }, h('h3', {}, 'Use SUDS on phones and tablets'),
+    h('p', { class: 'small' }, 'There is no separate app to install: staff open SUDS in the browser at the address on the left and add it to their home screen. The step-by-step page for that is ', h('a', { href: appUrl, target: '_blank', rel: 'noopener' }, appUrl), '.'),
+    h('p', { class: 'small muted' }, 'The web application on this server is the system of record. The former Android and iOS apps and the desktop launchers are deprecated and will be removed; existing installs should sync one last time and be uninstalled — see docs/PLATFORM.md.'));
 }
 
 // Fictional sample data: lets a new program (or a phone with nothing on it yet) explore every screen, then remove it in one click.
@@ -85,7 +71,7 @@ export async function sampleDataCard(onChange) {
   };
   return h('div', { class: 'card', 'data-sample': st.loaded ? 'loaded' : 'empty' }, h('h3', {}, 'Sample data'),
     st.loaded ? [h('p', { class: 'small' }, badge('Sample data loaded', 'info'), ' ', `${st.counts.clients} fictional clients and ${st.total} records added ${fmt.dt(st.loaded_at)}. Client codes start with DEMO-.`),
-      h('p', { class: 'small muted' }, state.local ? 'Sample data is removed automatically before this phone syncs with the office, so it never mixes with real records.' : 'Remove it before entering real clients.'),
+      h('p', { class: 'small muted' }, state.local ? 'Sample data is removed automatically before this device syncs with the office, so it never mixes with real records.' : 'Remove it before entering real clients.'),
       h('div', { class: 'btn-row' }, h('button', { class: 'btn danger', onClick: remove }, 'Remove sample data'), busy)]
     : st.clients_total > 0 ? h('p', { class: 'small muted' }, 'Sample data can only be added while there are no clients yet, so it never mixes with real records.')
     : [h('p', { class: 'small muted' }, 'Add a set of fictional clients, visits, calls, notes, referrals, reminders, resources and funding so you can try every screen. Nothing here is real, and it can be removed in one click.'),
@@ -159,7 +145,7 @@ route('admin', async (r) => {
           h('ul', { class: 'small mt' }, L.urls.map(u => h('li', {}, u))),
           L.tls ? h('div', { class: 'mt small' }, h('p', {}, `SUDS made its own certificate${n.cert_expires ? ` (valid until ${fmt.date(n.cert_expires)})` : ''}. Browsers show a one-time warning; choose Advanced → Proceed, or install SUDS's certificate authority on the device to remove it for good (Android: Settings → Security → Install a certificate → CA certificate; iPhone: install, then Settings → General → About → Certificate Trust Settings). Android browsers cannot use the suds.local name — give them the numeric address below, or the QR code.`), h('a', { class: 'btn sm', href: '/api/admin/certificate', download: '' }, 'Download certificate (CA)')) : h('div', { class: 'banner danger mt' }, 'HTTPS is off. Enable it before allowing other devices to connect.')),
         h('div', { class: 'card' }, h('h3', {}, 'Network settings'), locked ? h('div', { class: 'banner' }, 'Network settings are controlled by environment variables on this server (see docs/DEPLOYMENT.md).') : f),
-        await nativeAppsCard(primary));
+        useOnDevicesCard(primary));
     },
     async system() {
       const s = await get('/api/admin/stats');
@@ -193,7 +179,7 @@ route('admin', async (r) => {
       const { devices } = await get('/api/admin/devices');
       const act = async (id, action) => { await post(`/api/admin/devices/${id}/${action}`, {}); refresh(); };
       return h('div', {},
-        h('div', { class: 'banner small mb' }, 'One row per phone or tablet that has synced in local mode. "Revoke" blocks it from syncing again until cleared. "Wipe" additionally erases its local database, the next time it tries to sync — it cannot reach a device that is never opened again; that limitation is inherent to working offline, not a bug in this feature.'),
+        h('div', { class: 'banner small mb' }, 'One row per device (a browser running the offline copy, local mode) that has synced with this server. "Revoke" blocks it from syncing again until cleared. "Wipe" additionally erases its local database, the next time it tries to sync — it cannot reach a device that is never opened again; that limitation is inherent to working offline, not a bug in this feature.'),
         table([
           { label: 'Device', render: d => h('div', {}, h('b', {}, d.label || 'Device'), h('div', { class: 'small mono muted' }, d.id.slice(0, 8))) },
           { label: 'Belongs to', render: d => h('div', {}, d.display_name, h('div', { class: 'small muted' }, d.username)) },

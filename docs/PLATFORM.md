@@ -1,0 +1,152 @@
+# Web-first platform and data integrity policy
+
+**Effective from SUDS 1.8.0.** Direction from the product owner: SUDS is managed and documented against the
+web version, to maintain data integrity. The native phone apps and the desktop launchers are being phased
+out.
+
+## The policy
+
+1. **The web application served by the office SUDS server is the only supported client and the system of
+   record.** Every client record, note, consent, disclosure and audit entry lives in the office server's
+   database. Staff use SUDS in a browser at the office address, on a computer, phone or tablet, and may add
+   it to the home screen (see `/app` on any SUDS server, or *Using SUDS on a phone or tablet* below).
+2. **All changes are made, managed and documented against the web application.** Features, fixes, tests,
+   release notes and user documentation describe the web app served by the office server. Nothing is
+   built, tested or documented for a native app or a launcher any more.
+3. **The native Android and iOS apps and the desktop launchers are deprecated as of 1.8.0** and will be
+   removed in a later release (roadmap below). Their source stays in git under `mobile/` and `launchers/`
+   so the decision is reversible, but nothing builds them, ships them or advertises them: the release
+   workflow attaches only the server zip, the office server no longer hosts or serves an APK, and the
+   Settings page no longer offers an upload.
+4. **Browser "local mode" remains** as the web app's offline capability, under the rules in the next
+   section. It is the same code the web app runs, held in a browser profile, and it syncs with the office
+   server on command.
+5. **The GitHub Pages build is a demonstration only** (`docs/WEB_APP.md`). It carries a permanent
+   demo/evaluation banner, never holds real client information, and cannot sync with an office server
+   unless that server was deliberately started with `ALLOW_STATIC_SYNC=1`.
+
+## Retiring an existing phone-app install
+
+Each phone or tablet that has the former Android or iOS app installed should be retired as follows. The
+navigator does steps 1–3; the administrator does 4–5.
+
+1. **Sync one final time.** Open the app, go to *Sync with the office*, connect to the office Wi-Fi (or
+   the address IT gave you), sign in with the office account and wait for the sync to report success with
+   no changes waiting to send. If a change is rejected, note the reason: a permanent rejection is the office
+   server's final ruling on that row (see *Rules* below) and is not a reason to keep the app.
+2. **Erase the local copy.** On the same Sync screen choose **Erase data on this device**, which removes
+   the app's encrypted database.
+3. **Uninstall the app.** Android: hold the SUDS icon → *Uninstall*. iPhone/iPad: hold the icon → *Remove
+   App* → *Delete App*. Then open the office address in the browser and add SUDS to the home screen instead.
+4. **Administrator: revoke (or wipe) the device.** Settings → *Synced devices* lists every device that has
+   ever synced. Choose **Revoke** for the retired device so that it can never sync again even if the app is
+   reinstalled from a backup. If the device did not complete steps 1–2 (lost, broken, or the person has
+   left), choose **Wipe** instead: the next time that device tries to sync it is told to erase itself and is
+   revoked in the same moment. Deactivating the person's account, or resetting their password, queues a
+   wipe for all their devices automatically. Neither can reach a device that never connects again; for
+   that, use the county MDM's remote wipe of the whole device.
+5. **Administrator: confirm.** When the row shows *revoked* (and *wiped* where a wipe was requested), record
+   the device as retired in the county's device inventory. If the county deployed the CA certificate to
+   phones only for the app's sake, it can stay: the browser uses it too.
+
+## Rules for local mode (the offline copy)
+
+Local mode is opened at `https://<office-suds>/?local=1`, or from the home-screen shortcut a browser makes
+of that page. It runs the whole SUDS server inside the browser (SQLite in WebAssembly, encryption in
+JavaScript) and stores an encrypted copy of the person's caseload in that browser profile. It is governed
+by these rules, all of which the server enforces:
+
+| Rule | What it means |
+| --- | --- |
+| **The office server is authoritative.** | Sync sends the device's changes to the office and applies what the office answers. Where both changed the same record, the newest change wins on the office's clock; approvals, signatures, countersignatures and other people's records are never taken from a device. |
+| **Permanent sync rejections are final.** | When the office refuses a pushed row for a reason that cannot change — outside the caseload, no permission, immutable legal record, purged parent — it marks the rejection `permanent` and the device stops resending it. The row is not lost silently: the Sync screen lists it. Re-entering it on the device does not overrule the office. |
+| **Purged and merged records cannot be resurrected.** | A client the retention job has purged, or a record merged into another, stays that way. A device that still holds the old row has it rejected (`purged`, `merged into another record`) and receives the tombstone. Nothing a device holds brings back a record the office has disposed of. |
+| **Per-user cursors.** | Each office account has its own sync position on a device (`sync_cursor:<user>`). A device used by two people does not let one person's position stand in for the other's, and a device that has been away longer than tombstones are kept is told to re-download rather than guess. |
+| **Minimum necessary applies on the device.** | Only the syncing account's caseload (all clients for a supervisor) is downloaded; clinical notes only for clinical roles; nobody else's credentials. What is on a device is listed below. |
+| **Devices are tracked.** | Every local-mode browser that syncs registers a device id. Settings → Synced devices shows them; an administrator can revoke or wipe any of them, and deactivating an account wipes its devices. |
+
+**Recommendation for counties.** Keep `LOCAL_MODE_ENABLED=false` unless there is a documented field-work
+need (navigators who record visits where there is no signal). A plain browser has no protected key store:
+the offline copy's encryption keys live in the browser profile beside the data, so anyone who can use that
+profile can read it. Where the need exists, restrict local mode to county-managed devices with a device
+passcode, disk encryption and MDM remote wipe, record which devices are approved, and review Synced devices
+when someone leaves. With local mode off, the server serves a plain explanation at `/?local=1` and nothing
+else, and the `/app` page does not mention it.
+
+## What is on a device
+
+The device-data inventory for the county's data map. Everything below is in the on-device encrypted
+database once a sync has run:
+
+- Every synchronised table, scoped to the account: clients on the caseload (all clients for a supervisor),
+  their visits, calls, notes, referrals, consents, tasks, funding and budget rows, the resource directory,
+  programme settings.
+- **The whole `users` table** — every staff account's id, username, display name, title, role, active flag
+  and supervisor, not only the syncing person's. The device needs them to name who did what on records it
+  holds. Every *other* user's password hash is blanked before it leaves the office (`scrypt$0$…`, unusable);
+  only the syncing account's own hash is sent, so the person can sign in offline. Treat the list as staff
+  directory data: not PHI, but a roster of county employees on every synced device.
+- The device's own audit trail (uploaded to the office at each sync), the sync cursor per user, its stable
+  device id and the office server address.
+- Credentials are never stored: the sync session is created and destroyed within a single run.
+
+## Lost or stolen devices, and offboarding
+
+- **Revoke** (Settings → Synced devices) blocks that device from syncing again until an administrator clears
+  it — nothing on the device is touched, so a device found a day later just needs clearing.
+- **Wipe** additionally tells the device to erase its local SUDS database the next time it tries to sync,
+  and revokes it in the same moment. Neither can reach a device that is never opened again with network
+  access; MDM's OS-level remote wipe is the backstop.
+- **Offboarding, in any order.** A pending wipe or revocation is answered *before* the username and
+  password are looked at (`server/auth.js` `login()`): a device the server knows gets the wipe instruction
+  whether the account has since been deactivated, the password has been reset, or the device is offering a
+  wrong password. Deactivating an account, and an administrator resetting its password, both queue a wipe
+  for every device that account syncs from (audited as `device.wipe.requested`, reason `deactivated` or
+  `password_reset`; devices already revoked are left alone). The response says nothing about the account.
+- **What consumes a pending wipe.** Answering the instruction does not: anyone who learned a device id could
+  otherwise make the server believe the device had erased itself. The device stays "wipe pending" until the
+  credentials sent from it verify (proof it is in the hands of someone who can unlock the account), or it
+  posts `POST /api/devices/wipe-ack` with `{ device_id, token }`, where `token` is the one-time
+  `wipeAckToken` the `deviceWipeRequired` response carried (hashed on the server, valid 15 minutes). Either
+  marks the device wiped: revoked, with the wipe request kept on the row. A bad or expired token is refused
+  with 403 and audited (`device.wipe.ack.rejected`).
+- **Password resets and wipes.** `PUT /api/users/:id` with a new `password` or `is_active: false` queues a
+  wipe for every device that account syncs from unless `wipe_devices: false` is sent; the administration
+  form shows the checkbox, checked by default, with the number of devices it will reach.
+
+## Using SUDS on a phone or tablet
+
+Nothing to install. On the office Wi-Fi open the office address (normally `https://suds.local`, or the
+numeric address under Settings → Network & devices — Android browsers do not resolve `suds.local`), sign in,
+then add it to the home screen: iPhone/iPad — Safari **Share → Add to Home Screen**; Android and desktop
+Chrome/Edge — browser menu → **Install app**. SUDS needs a connection to the office server; the page says
+so when it is offline. The `/app` page on every server carries these steps and the server's certificate.
+
+## What changed and why
+
+Until 1.7 SUDS shipped three ways to run it: the office server's web app, a native Android app (with an
+iOS project) that bundled a complete copy of SUDS, and double-click launchers for a single workstation.
+Three runtimes meant three places a record could be created, three sets of encryption keys, three things
+to test and document, and — the reason for this policy — three places for the same record to drift apart.
+A phone app with its own database is only as consistent as its last sync, and "which copy is right?" is
+not a question a programme handling Part 2 records should have to ask.
+
+From 1.8.0 there is one system of record. The web application on the office server is where records live
+and where every change is made; the browser's home-screen shortcut replaces the app icon; local mode
+remains for genuine field work, under the rules above, and is off by default in the deployment guidance.
+The native apps and the launchers are deprecated now and removed later so that counties have a release to
+retire devices on before the code goes.
+
+## Removal roadmap
+
+| What | Deprecated now (1.8.0) | Removed when |
+| --- | --- | --- |
+| Android app (`mobile/android`) | Not built on tags or releases; no APK attached to releases; no APK hosting or upload on the server; `mobile/DEPRECATED.md` | Next minor release after 1.8 (1.9.0): directory, `scripts/android-keystore.sh` and the workflow deleted |
+| iOS project (`mobile/ios`) | Workflow dispatch-only; nothing published | Same release as the Android app |
+| Version stamping of `build.gradle.kts` / `Info.plist` | Removed from `scripts/gen-schema-text.js`, CI and tests | Already removed (files left stale) |
+| Desktop launchers (`launchers/`) | Documented as deprecated, evaluation-only; not in the install path | 1.9.0: directory deleted; `scripts/print-url.js` reviewed |
+| `/app` page (`public/get-app.html`) | Repurposed: browser/home-screen instructions and certificate download, no APK | Stays |
+| `GET /api/app/info` `android` field, `GET /api/app/android.apk`, `POST/DELETE /api/admin/app/android` | Removed | Already removed |
+| Browser local mode (`/?local=1`, `LOCAL_MODE_ENABLED`) | Stays, governed by this policy; recommended off unless needed | Not planned |
+| GitHub Pages demo build (`web-app.yml`) | Stays, demo only | Not planned |
+| Device management (Synced devices, revoke, wipe) | Stays — local-mode browsers register devices | Not planned |

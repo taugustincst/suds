@@ -6,6 +6,17 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 Compliance review fixes (HIPAA / 42 CFR Part 2) and county IT hardening. Schema 19; databases upgrade in place.
 
+- **Web-first: native apps and launchers deprecated.** The web application served by the office SUDS
+  server is the only supported client and the system of record; everything is managed and documented
+  against it (`docs/PLATFORM.md`). The Android and iOS apps and the desktop launchers are deprecated and
+  will be removed in a later release: their workflows run only by hand and attach nothing, the release
+  carries the server zip alone, the office server no longer hosts an APK (`GET /api/app/android.apk`,
+  `POST/DELETE /api/admin/app/android` and the `android` field of `/api/app/info` are gone), and Settings no
+  longer offers an upload. `scripts/gen-schema-text.js` no longer stamps `build.gradle.kts` or
+  `Info.plist`. `/app` is now "Use SUDS on your phone or tablet" (browser, home screen, certificate) and
+  mentions the offline copy only when the server reports `local_mode`. Browser local mode stays, under the
+  rules in PLATFORM.md; existing phone-app installs should sync once more and be uninstalled.
+
 - **Sync cannot rewrite the legal record.** Consents, disclosures and note addenda are insert-only through
   `POST /api/sync/push`; the only change a device may make to an existing consent is to revoke it, and the
   revocation is attributed to the syncing user. Anything else is rejected as `immutable`.

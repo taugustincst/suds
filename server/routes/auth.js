@@ -17,7 +17,7 @@ module.exports = (r) => {
     try { result = await auth.login({ username, password, ctx }); }
     catch (e) { rateLimit(`login:${ctx.ip}`, limit, 15 * 60_000); throw e; }
     ctx.res.setHeader('Set-Cookie', auth.cookieHeader(result.token));
-    // Sync clients (phone app) authenticate with a bearer token instead of the cookie
+    // Sync clients (local-mode devices) authenticate with a bearer token instead of the cookie
     const out = { user: result.user, mfaPending: result.mfaPending, mfaSetupRequired: result.mfaSetupRequired, mfaSetupDeadline: result.mfaSetupDeadline };
     if (ctx.headers['x-sync-client']) out.token = result.token;
     return out;

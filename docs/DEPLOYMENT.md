@@ -1,6 +1,6 @@
 # Deployment guide
 
-> **No terminal?** See [INSTALL.md](INSTALL.md): double-click a launcher and finish setup in the browser. This document covers the environment-variable / service deployment that IT departments typically prefer. Both can be mixed: environment variables override anything the wizard wrote to `data/server.json` and `data/keys.json`.
+> **First install?** See [INSTALL.md](INSTALL.md): start the server and finish setup in the browser wizard. The platform policy — web app on the office server as the system of record, native apps and launchers deprecated — is [PLATFORM.md](PLATFORM.md). This document covers the environment-variable / service deployment that IT departments typically prefer. Both can be mixed: environment variables override anything the wizard wrote to `data/server.json` and `data/keys.json`.
 
 ## Requirements
 
@@ -29,13 +29,13 @@ Copy `.env.example` to `.env` and set:
 | `TLS_CERT_PATH`, `TLS_KEY_PATH` | recommended | If unset, run behind a TLS proxy. |
 | `TRUST_PROXY=1` | when proxied | Use the `X-Forwarded-For` header for audit IPs and rate limiting. Only set behind a proxy you control, and one that **appends** the address it saw to the header (Caddy, nginx `proxy_add_x_forwarded_for`, IIS ARR) — SUDS reads the *last* entry, the one the proxy vouches for, so a client cannot choose its own address by sending the header itself. |
 | `SUDS_BACKUP_KEY` | recommended | 64 hex chars. Encrypts backups independently of `SUDS_ENCRYPTION_KEY`, so rotating the PHI key does not orphan the backup set. If unset, backups are keyed from `SUDS_ENCRYPTION_KEY` as before. See "Key rotation runbook". |
-| `PUBLIC_APP_INFO=1` | no | Let `GET /api/app/info` (the addresses, certificate fingerprint and APK availability the `/app` page shows) answer without a session. Off by default: a signed-in browser still gets it. |
+| `PUBLIC_APP_INFO=1` | no | Let `GET /api/app/info` (the addresses and certificate fingerprint the `/app` page shows) answer without a session. Off by default: a signed-in browser still gets it. |
 | `ALLOW_STATIC_SYNC=1` | no | Let the demo/evaluation build of the web app served from a static host (GitHub Pages) sync with this server. Off by default; see WEB_APP.md. |
 | `HOST`, `PORT` | no | Default `127.0.0.1:8080`. Use `HOST=0.0.0.0` only inside a container / behind a firewall. |
 | `SESSION_IDLE_MINUTES` | no | Default 15 (auto sign-out). |
 | `SESSION_ABSOLUTE_HOURS` | no | Default 12. |
 | `MFA_REQUIRED_ROLES` | no | Default: every role (`admin,supervisor,clinician,navigator,finance,readonly`). Narrow it only with a documented reason; a navigator's caseload is as much PHI as an administrator's console. |
-| `LOCAL_MODE_ENABLED` | no | Default `true`. Set to `false` to stop this server handing out the in-browser copy of SUDS (`/?local=1` and `/local/kernel.js`); the page then explains that local mode is off. The phone apps carry their own kernel and are unaffected. |
+| `LOCAL_MODE_ENABLED` | no | Default `true`. Set to `false` to stop this server handing out the in-browser copy of SUDS (`/?local=1` and `/local/kernel.js`); the page then explains that local mode is off and `/app` does not mention it. **Recommended `false`** unless the county has a documented field-work need — see PLATFORM.md for the rules local mode runs under. |
 | `ORG_TIMEZONE` | no | IANA zone the programme runs on, e.g. `America/Los_Angeles`. Defaults to the server's own zone. Decides the calendar date of a visit for fiscal-period checks and auto-posted expenditures (a 9pm visit on June 30th stays on June 30th), and "today" for reminders and overdue to-dos. Can also be set as `orgTimezone` in `server.json`. |
 | `CLIENT_RETENTION_YEARS` | no | Default `7`. Discharged client records older than this (every episode closed, no legal hold) are hard-deleted from every table once a day. Overridable in Administration → Settings; never below 6. |
 | `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, `MS_ONENOTE_USER` | optional | For direct OneNote import via Microsoft Graph. See IMPORTS.md. |
@@ -92,13 +92,13 @@ docker compose up -d
 
 `docker-compose.yml` runs the app on an internal network and a Caddy proxy, configured by `./Caddyfile`, that obtains a certificate automatically for `SUDS_DOMAIN` and adds HSTS (one year, `includeSubDomains; preload`) and the other headers only the TLS terminator can vouch for. To use a county-issued certificate instead, add `tls /path/cert.pem /path/key.pem` to the site block. Mount `/data` on an encrypted volume. Images are pinned to a minor line (`node:22.x-alpine` in the Dockerfile, `caddy:2.x-alpine` in the compose file) so a rebuild picks up patch releases only; Dependabot (`.github/dependabot.yml`) proposes the moves.
 
-Release downloads carry a checksum beside them (`suds-v<version>.zip.sha256`, `SUDS-android.apk.sha256`); compare with `sha256sum -c` before unpacking or uploading the APK to the office server.
+Release downloads carry a checksum beside them (`suds-v<version>.zip.sha256`); compare with `sha256sum -c` before unpacking.
 
 ### Windows Server
 
 Run under a service wrapper (NSSM or `sc.exe`) with the same environment variables, and terminate TLS with IIS (ARR reverse proxy to `127.0.0.1:8080`). Set `X-Forwarded-For` (ARR appends the client address, which is what SUDS reads) so audit logs record client IPs.
 
-The double-click launchers in `launchers/` are for evaluation and single-workstation trials only: nothing restarts SUDS if the window is closed or the PC reboots, and nothing runs it as a service account. A county deployment runs under systemd (above) or NSSM.
+The double-click launchers in `launchers/` are deprecated and will be removed (PLATFORM.md); they remain for evaluation on one computer only. A county deployment runs under systemd (above) or NSSM.
 
 ### Files written by the setup wizard
 

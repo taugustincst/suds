@@ -1,10 +1,16 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Get the SUDS app</title><link rel="icon" href="favicon.svg"><link rel="stylesheet" href="styles.css"></head>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Use SUDS on your phone or tablet</title><link rel="icon" href="favicon.svg"><link rel="stylesheet" href="styles.css"></head>
 <body><div class="login-wrap"><div class="card" style="max-width:560px;width:100%">
-<div class="brand"><img src="favicon.svg" alt=""><div><b id="org">SUDS</b><small>Get the app for your phone</small></div></div>
-<div id="android" class="mb"><h3>Android</h3><p id="android-text" class="muted">Checking…</p></div>
-<div id="ios" class="mb"><h3>iPhone / iPad</h3><p>Open <b id="url">this address</b> in Safari, tap <b>Share</b> → <b>Add to Home Screen</b>. SUDS then opens like an app.</p></div>
-<div id="cert" class="mb hidden"><h3>Remove the certificate warning (optional)</h3><p class="small muted">Download and install the SUDS certificate on the device, then the browser and the app trust it. Fingerprint: <code id="fp"></code></p><a class="btn sm" href="/api/app/certificate.crt" download>Download certificate</a></div>
-<p class="small muted">Everything you do in the app is the same as on the computer — nothing to set up.</p>
+<div class="brand"><img src="favicon.svg" alt=""><div><b id="org">SUDS</b><small>Use SUDS on your phone or tablet</small></div></div>
+<p>There is no app to install. SUDS is used in the browser at the office address, on any phone, tablet or computer. Everything you do on one device is on every other device right away, because they all talk to the same office SUDS.</p>
+<div class="mb"><h3>1. Open SUDS</h3><p>On the office Wi-Fi (or a connection IT gave you), open <b id="url">this address</b> in your browser and sign in with your own account.</p></div>
+<div class="mb"><h3>2. Add it to the home screen</h3>
+<p><b>iPhone / iPad:</b> in Safari, tap <b>Share</b> → <b>Add to Home Screen</b>.<br><b>Android, Chrome or Edge on a computer:</b> open the browser menu (⋮) and choose <b>Install app</b> (or <b>Add to Home screen</b>).</p>
+<p class="small muted">SUDS then opens like an app, with the same sign-in, sign-out and rules as at the office.</p></div>
+<div class="mb"><h3>3. Stay connected</h3><p class="small">SUDS needs a connection to the office server. Without one you can look at what the browser has cached, but nothing can be saved until you reconnect — the page tells you when that happens.</p></div>
+<div id="cert" class="mb hidden"><h3>Remove the certificate warning (optional)</h3><p class="small muted">If the browser warns that the connection is not private, the office server is using the certificate SUDS made for itself. Download and install it on the device once and the warning goes away. Fingerprint: <code id="fp"></code></p><a class="btn sm" href="/api/app/certificate.crt" download>Download certificate</a></div>
+<div id="signin-note" class="small muted mb hidden">Sign in to SUDS in this browser first, then come back to this page for the exact address and the certificate fingerprint.</div>
+<div id="local" class="banner warn hidden"><b>Offline copy (local mode) — only with your administrator's approval.</b> <span class="small">This server also hands out a copy of SUDS that runs inside the browser and syncs with the office later. The office SUDS remains the system of record; the copy keeps its encryption keys in this browser profile. Do not use it for real client information unless your administrator has approved this device for field work. <a href="/?local=1">Open the offline copy</a>.</span></div>
+<p class="small muted">The former Android and iOS apps are deprecated. If one is still installed, sync it once more, then uninstall it — your administrator can confirm the device has been retired.</p>
 </div></div>
 <script src="get-app.js"></script></body></html>

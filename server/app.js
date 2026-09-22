@@ -28,12 +28,12 @@ function rateLimitReset(key) { buckets.delete(key); }
 
 // Every route module, in one place. The local kernel builds its router from LOCAL_ROUTE_MODULES below and
 // fails loudly if it is missing a loader for one, so adding a route file cannot silently leave the feature
-// out of the phone app.
+// out of the local-mode kernel.
 const ROUTE_MODULES = ['setup', 'auth', 'oidc', 'me', 'app', 'sync', 'dataimport', 'users', 'clients', 'assignments', 'episodes',
   'interventions', 'overdose', 'calls', 'time', 'supervision', 'resources', 'referrals', 'tasks', 'budget', 'notes',
   'consents', 'patient-requests', 'forms', 'documents', 'imports', 'reports', 'admin', 'regions', 'intake'];
 
-// Not on a device: setup and app are office-server concerns (first-run wizard, APK hosting), sync is the
+// Not on a device: setup and app are office-server concerns (first-run wizard, connection info), sync is the
 // device's own runner, intake is an inbound API for other systems to call, and oidc needs a live identity
 // provider to redirect to — meaningless (and always disabled) on a device with no office server behind it.
 const LOCAL_ROUTE_MODULES = ROUTE_MODULES.filter(m => !['setup', 'app', 'sync', 'intake', 'oidc'].includes(m));
@@ -43,7 +43,7 @@ const LOCAL_DISABLED_PAGE = `<!doctype html><html lang="en"><head><meta charset=
 <style>body{font-family:system-ui,sans-serif;max-width:36rem;margin:4rem auto;padding:0 1rem;color:#222;line-height:1.5}h1{font-size:1.4rem}a{color:#0b5}</style></head>
 <body><h1>Local mode is turned off on this server</h1>
 <p>Running SUDS inside the browser (<code>?local=1</code>) keeps a copy of client records and the keys to them in this browser's own storage. This installation's administrator has disabled it.</p>
-<p>Use the office sign-in at <a href="/">the main address</a>, or the phone app your program issued. To turn local mode back on, set <code>LOCAL_MODE_ENABLED=true</code> on the server (see docs/DEPLOYMENT.md).</p></body></html>`;
+<p>Use the office sign-in at <a href="/">the main address</a>, and ask your administrator before working offline (docs/PLATFORM.md). To turn local mode back on, set <code>LOCAL_MODE_ENABLED=true</code> on the server (see docs/DEPLOYMENT.md).</p></body></html>`;
 
 function buildRouter() {
   const r = new Router();
@@ -65,8 +65,7 @@ const LARGE_BODY_ROUTES = [
   /^\/api\/forms\/[^/]+\/files(\/|$)/,       // attachments on a completed form
   /^\/api\/resources\/[^/]+\/photos(\/|$)/,  // provider pictures
   /^\/api\/imports\//,                       // OneNote / spreadsheet / data imports
-  /^\/api\/sync\/(push|blob)(\/|$)/,         // the phone app's sync payload and attachments
-  /^\/api\/admin\/app\/android$/,            // the APK the administrator uploads
+  /^\/api\/sync\/(push|blob)(\/|$)/,         // a local-mode device's sync payload and attachments
 ];
 function bodyLimit(ctx) {
   const authed = !!ctx.user && !ctx.session?.mfa_pending;

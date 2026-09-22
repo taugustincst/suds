@@ -909,28 +909,26 @@ test('workspace preferences and continue endpoint follow the user', async () => 
   assert.equal((await nav.get('/api/me/prefs')).data.prefs.theme, undefined);
 });
 
-test('native app distribution: public info, admin upload, download, remove', async () => {
+test('app info: public answer is the programme name; APK distribution is gone', async () => {
   // Without a session the answer is the programme name and nothing about the network — unless the
-  // server was started with PUBLIC_APP_INFO=1 for phones that fetch the APK with no account.
+  // server was started with PUBLIC_APP_INFO=1. The native apps are deprecated (docs/PLATFORM.md): no
+  // `android` field, no APK download and no admin upload route remain, and the /app page uses
+  // `local_mode` to decide whether to mention the offline copy at all.
   const config = require('../server/config');
   const anon = await H.client().get('/api/app/info');
   assert.equal(anon.status, 200); assert.equal(typeof anon.data.name, 'string');
   assert.equal(anon.data.public, false); assert.equal(anon.data.allow_static_sync, false);
+  assert.equal(typeof anon.data.local_mode, 'boolean');
   assert.equal(anon.data.listener, undefined); assert.equal(anon.data.android, undefined); assert.equal(anon.data.version, undefined);
   config.publicAppInfo = true;
-  try { const open = await H.client().get('/api/app/info'); assert.equal(open.data.public, true); assert.ok(open.data.android); assert.equal(open.data.service, '_suds._tcp'); }
+  try { const open = await H.client().get('/api/app/info'); assert.equal(open.data.public, true); assert.equal(open.data.version, config.version); assert.equal(open.data.service, '_suds._tcp'); assert.equal(open.data.android, undefined); }
   finally { config.publicAppInfo = false; }
   const info = await admin.get('/api/app/info');
-  assert.equal(info.status, 200); assert.equal(info.data.android.available, false); assert.equal(info.data.service, '_suds._tcp');
+  assert.equal(info.status, 200); assert.equal(info.data.service, '_suds._tcp'); assert.equal(info.data.android, undefined);
+  assert.equal(info.data.local_mode, config.localModeEnabled);
   assert.equal((await H.client().get('/api/app/android.apk')).status, 404);
-  assert.equal((await nav.req('POST', '/api/admin/app/android', Buffer.from('PK' + 'x'.repeat(2000)), { 'Content-Type': 'application/octet-stream' })).status, 403);
-  assert.equal((await admin.req('POST', '/api/admin/app/android', Buffer.from('nope' + 'x'.repeat(2000)), { 'Content-Type': 'application/octet-stream' })).status, 400);
-  const up = await admin.req('POST', '/api/admin/app/android?version=1.0.0', Buffer.from('PK\x03\x04' + 'x'.repeat(2000)), { 'Content-Type': 'application/octet-stream' });
-  assert.equal(up.status, 200); assert.equal(up.data.available, true);
-  const dl = await H.client().get('/api/app/android.apk');
-  assert.equal(dl.status, 200); assert.equal(dl.headers.get('content-type'), 'application/vnd.android.package-archive');
-  assert.equal((await admin.del('/api/admin/app/android')).status, 200);
-  assert.equal((await admin.get('/api/app/info')).data.android.available, false);
+  assert.equal((await admin.req('POST', '/api/admin/app/android', Buffer.from('PK\x03\x04' + 'x'.repeat(2000)), { 'Content-Type': 'application/octet-stream' })).status, 404);
+  assert.equal((await admin.del('/api/admin/app/android')).status, 404);
 });
 
 test('sync: bearer login, scoped pull, push with last-write-wins and tombstones', async () => {

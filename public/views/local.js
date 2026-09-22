@@ -28,8 +28,8 @@ route('localsetup', async () => {
   // later on a page nobody has had a reason to open yet.
   const protectedKeys = !!(window.SudsNative || window.__sudsSecrets);
   return h('div', { class: 'login-wrap' }, h('div', { class: 'card login', style: { maxWidth: '520px' } },
-    h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('b', {}, 'SUDS on this device'), h('small', {}, 'Works without the office computer'))),
-    protectedKeys ? null : h('div', { class: 'banner warn mb', 'data-browser-copy-warning': '1' }, h('div', {}, h('b', {}, 'This is a browser copy, for trying SUDS out. '), 'Its encryption keys stay in this browser profile beside the data. Use sample data here; keep real client information in the phone app or on the office computer.')),
+    h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('b', {}, 'SUDS on this device'), h('small', {}, 'Offline copy — the office SUDS is the system of record'))),
+    protectedKeys ? null : h('div', { class: 'banner warn mb', 'data-browser-copy-warning': '1' }, h('div', {}, h('b', {}, 'This is a browser copy, for trying SUDS out. '), 'Its encryption keys stay in this browser profile beside the data. Use sample data here; keep real client information on the office SUDS unless your administrator has approved this device for field work.')),
     h('p', { class: 'small muted' }, 'Everything you record is stored encrypted on this device. Whenever you are near the office, tap Sync to exchange changes with the office SUDS — both directions.'), f));
 });
 
@@ -93,11 +93,11 @@ route('sync', async () => {
   const protectedKeys = !!(window.SudsNative || window.__sudsSecrets);
   return h('div', {}, pageHead('Sync with the office'),
     protectedKeys ? null : h('div', { class: 'banner warn mb' }, h('b', {}, 'This is a browser copy, for trying SUDS out. '),
-      'Its encryption keys are stored in this browser profile alongside the data, so anyone who can use this browser profile can read what is in it. Keep real client information on the phone app or the office computer — here, use sample data.'),
+      'Its encryption keys are stored in this browser profile alongside the data, so anyone who can use this browser profile can read what is in it. Keep real client information on the office SUDS unless your administrator has approved this device for field work — otherwise, use sample data.'),
     h('div', { class: 'grid cols-2' },
-      h('div', { class: 'card' }, h('h3', {}, 'Status'), kv([['This device', badge('Local copy', 'info')], ['Data protection', protectedKeys ? (window.SudsNative ? 'Encrypted; keys in the Android Keystore' : 'Encrypted; keys in the iOS Keychain') : badge('Keys kept in this browser', 'warn')], ['Last sync', st.last_sync_at ? fmt.dt(st.last_sync_at) : 'never'], ['Changes waiting to send', String(st.pending)], ['Office server', st.server || 'not set yet']]),
-        h('p', { class: 'small muted mt' }, 'Sync exchanges clients, visits, calls, notes, reminders, referrals and everything else in both directions. The newest change wins. The office computer does not need to be on at any other time.')),
-      h('div', { class: 'card' }, h('h3', {}, 'Sync now'), h('p', { class: 'small muted' }, 'Connect this phone to the office Wi-Fi (or the address IT gave you), then sign in with your office account.'), f, log,
+      h('div', { class: 'card' }, h('h3', {}, 'Status'), kv([['This device', badge('Local copy', 'info')], ['Data protection', protectedKeys ? 'Encrypted; keys in protected device storage' : badge('Keys kept in this browser', 'warn')], ['Last sync', st.last_sync_at ? fmt.dt(st.last_sync_at) : 'never'], ['Changes waiting to send', String(st.pending)], ['Office server', st.server || 'not set yet']]),
+        h('p', { class: 'small muted mt' }, 'Sync exchanges clients, visits, calls, notes, reminders, referrals and everything else in both directions. The office SUDS decides: the newest change wins, a change it rejects for good is not sent again, and a record the office has purged or merged does not come back.')),
+      h('div', { class: 'card' }, h('h3', {}, 'Sync now'), h('p', { class: 'small muted' }, 'Connect this device to the office Wi-Fi (or the address IT gave you), then sign in with your office account.'), f, log,
         h('div', { class: 'btn-row' }, eraseDeviceButton())),
       await sampleDataCard(() => nav('sync?_=' + Date.now()))));
 });

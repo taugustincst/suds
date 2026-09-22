@@ -2,34 +2,35 @@
 
 A HIPAA-oriented, zero-dependency web application for county **substance use disorder (SUD) navigation programs**. It tracks clients, interventions, calls, staff time, referrals and community resources, tasks and timelines, budget and expenditures, and clinical / administrative documentation — and imports field notes from **Pocket AI** and **Microsoft OneNote**.
 
-* **Runtime:** Node.js ≥ 22.13 only (built-in SQLite, crypto, HTTP). No npm packages to install or audit on the office server. (The phone apps' in-browser kernel is a separate, committed bundle that does vendor a few pinned libraries in place of Node's built-ins — see [docs/MOBILE_APPS.md](docs/MOBILE_APPS.md#what-the-phone-copy-is-built-from).)
+* **Platform:** the web application served by the office SUDS server is the only supported client and the system of record. The native phone apps and the desktop launchers are deprecated and will be removed — see [docs/PLATFORM.md](docs/PLATFORM.md).
+* **Runtime:** Node.js ≥ 22.13 only (built-in SQLite, crypto, HTTP). No npm packages to install or audit on the office server. (The browser's local-mode kernel is a separate, committed bundle that does vendor a few pinned libraries in place of Node's built-ins — see [docs/WEB_APP.md](docs/WEB_APP.md#what-the-browser-kernel-is-built-from).)
 * **Data protection:** AES-256-GCM field-level encryption of PHI, blind-index search, scrypt password hashing, TOTP MFA, role-based access with caseload scoping, 42 CFR Part 2 consent and disclosure accounting, and a hash-chained audit log.
-* **Documentation:** [Deployment](docs/DEPLOYMENT.md) · [Browser-only web app](docs/WEB_APP.md) · [API reference](docs/API.md) · [HIPAA & security controls](docs/HIPAA.md) · [Importing notes (Pocket AI / OneNote)](docs/IMPORTS.md) · [User guide](docs/USER_GUIDE.md)
+* **Documentation:** [Platform policy](docs/PLATFORM.md) · [Deployment](docs/DEPLOYMENT.md) · [Browser-only web app](docs/WEB_APP.md) · [API reference](docs/API.md) · [HIPAA & security controls](docs/HIPAA.md) · [Importing notes (Pocket AI / OneNote)](docs/IMPORTS.md) · [User guide](docs/USER_GUIDE.md)
 
 ## Get SUDS
 
 | | |
 | --- | --- |
-| **Download** | https://github.com/taugustincst/suds/releases/latest — `suds-v<version>.zip` (server + launchers) and `SUDS-android.apk` (phone app) |
+| **Download** | https://github.com/taugustincst/suds/releases/latest — `suds-v<version>.zip` (the server, which serves the web app) |
 | **Git** | `git clone https://github.com/taugustincst/suds.git` (upgrade later with `git pull`) |
 | **All releases** | https://github.com/taugustincst/suds/releases |
 | **Docker** | `docker compose up -d` |
 
 Current release: see [CHANGELOG.md](CHANGELOG.md). Release process: [docs/RELEASE.md](docs/RELEASE.md).
 
-## Install without a terminal (recommended for county staff)
+## Install
 
-1. Install Node.js LTS from https://nodejs.org (click *Next* through the installer).
-2. Unzip SUDS somewhere permanent and double-click `launchers/Start-SUDS.bat` (Windows), `launchers/Start-SUDS.command` (Mac) or `launchers/start-suds.sh` (Linux).
-3. Your browser opens the **setup wizard**: name the program, create your administrator account, and choose whether phones and tablets on the office network may connect. SUDS generates its encryption keys and an HTTPS certificate for you and shows a QR code for phones.
+1. Install Node.js 22 LTS from https://nodejs.org.
+2. Unzip SUDS somewhere permanent and start the server: `npm start` for a first look, or as a service (systemd / NSSM) or with Docker for anything staff depend on.
+3. Open the address the server prints in a browser: the **setup wizard** asks you to name the program, create your administrator account, and choose whether phones, tablets and other computers on the office network may connect. SUDS generates its encryption keys and an HTTPS certificate for you and shows a QR code for the office address.
 
-Full walkthrough with screenshots-free steps: [docs/INSTALL.md](docs/INSTALL.md). Everything the wizard sets can later be changed under **Administration → Network & devices / Settings / System & backups**.
+Full walkthrough: [docs/INSTALL.md](docs/INSTALL.md); service and reverse-proxy settings: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Everything the wizard sets can later be changed under **Administration → Network & devices / Settings / System & backups**.
 
-**Phone app (works offline, syncs on command):** the Android APK on the Releases page bundles a complete copy of SUDS. Install it, create a local account, work anywhere; tap **Sync** near the office to exchange changes both ways. The office computer does not need to be running at install time or while working. Details: [docs/MOBILE_APPS.md](docs/MOBILE_APPS.md).
+**Phones, tablets and other computers:** nothing to install or configure. SUDS announces itself on the office network as **https://suds.local** (built-in mDNS responder) and uses the standard HTTPS port when available. Staff open that address in the browser, add it to the home screen (the `/app` page on the server walks them through it), and their workspace — clients, reminders, note drafts saved while typing, preferences — is the same everywhere because every device talks to the same server.
 
-**Phones and other computers:** nothing to configure. SUDS announces itself on the office network as **https://suds.local** (built-in mDNS responder) and uses the standard HTTPS port when available. Staff open that address on any device, add it to the home screen, and their workspace — clients, reminders, note drafts saved while typing, preferences — is the same everywhere because every device talks to the same server.
+**Working offline (local mode):** the server can also hand out a copy of SUDS that runs inside the browser (`/?local=1`) and syncs with the office on command. It is governed by the rules in [docs/PLATFORM.md](docs/PLATFORM.md) — the office server is authoritative — and counties are advised to leave it off (`LOCAL_MODE_ENABLED=false`) unless there is a documented field-work need.
 
-**Just a browser, nothing to install:** a fully standalone build runs entirely in the browser — no office server, no Node process, no database anywhere else. Open it on any phone or computer, add it to the home screen, and it works, including offline; sync with a real office SUDS later if the county has one. Its encryption keys live in that browser profile beside the data, so it is for trying SUDS out and for sample data; real client information belongs in the phone apps or on an office server. Details: [docs/WEB_APP.md](docs/WEB_APP.md).
+**Demo in a browser, nothing to install:** a standalone build of the same web app runs on GitHub Pages with no server at all, for trying SUDS out with sample data only. Details: [docs/WEB_APP.md](docs/WEB_APP.md).
 
 ## Quick start (development)
 
@@ -41,13 +42,13 @@ npm start             # http://127.0.0.1:8080
 
 Demo logins (password `Navigator2026!!`): `mrivera` / `dchen` (navigators), `kpatel` (clinician), `jwalker` (supervisor), `afinance` (finance), `admin`.
 
-Without a terminal, an administrator can add the same fictional data set from inside the app (**Load sample data** on the empty home screen or under Settings) and remove it again in one click; phones offer it on their Sync screen.
+Without a terminal, an administrator can add the same fictional data set from inside the app (**Load sample data** on the empty home screen or under Settings) and remove it again in one click; a local-mode copy offers it on its Sync screen.
 
 Without seeding, the first start creates an `admin` user and prints a temporary password.
 
 ## Production for IT teams
 
-The launcher + wizard route above is production mode (`SUDS_ENV=production`) with keys in `data/keys.json` and a self-signed certificate — right for an evaluation or a single workstation, not for a system other staff depend on: the launchers do not survive a closed window or a reboot. A county deployment runs SUDS as a service (systemd or NSSM) behind the county's own certificate or reverse proxy, with environment variables, or in Docker (`docker compose up -d`, includes a Caddy TLS proxy configured by `Caddyfile`): see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), including its key rotation runbook. Environment variables always override the wizard's settings. Release downloads ship with `.sha256` checksum files.
+The wizard route above is production mode (`SUDS_ENV=production`) with keys in `data/keys.json` and a self-signed certificate — right for an evaluation or a single workstation, not for a system other staff depend on. A county deployment runs SUDS as a service (systemd or NSSM) behind the county's own certificate or reverse proxy, with environment variables, or in Docker (`docker compose up -d`, includes a Caddy TLS proxy configured by `Caddyfile`): see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), including its key rotation runbook. Environment variables always override the wizard's settings. Release downloads ship with `.sha256` checksum files.
 
 ## What it tracks
 
@@ -90,7 +91,7 @@ npm test
 
 Runs unit tests (crypto, TOTP, importers) and API integration tests (auth, lockout, MFA, RBAC, caseload scoping, encryption at rest, note signing, consents, budget, imports, intake, audit chain).
 
-The browser regression suite (`scripts/ui/run-all.sh`) seeds a throwaway server and drives Chromium through the desktop screens, the navigator workflow, phone-only mode, two-way sync, spreadsheet import/export and sample data. CI runs it on every push; locally it needs `npm i --no-save playwright && npx playwright install chromium`.
+The browser regression suite (`scripts/ui/run-all.sh`) seeds a throwaway server and drives Chromium through the desktop screens, the navigator workflow, browser local mode, two-way sync, spreadsheet import/export and sample data. CI runs it on every push; locally it needs `npm i --no-save playwright && npx playwright install chromium`.
 
 ## License
 

@@ -1,11 +1,11 @@
 'use strict';
-// Bundles the server logic + browser shims into public/local/kernel.js (used by the phone app / local mode).
+// Bundles the server logic + browser shims into public/local/kernel.js (used by local mode, the offline copy).
 const path = require('node:path');
 const fs = require('node:fs');
 const esbuild = require('esbuild');
 const root = path.join(__dirname, '..');
 // The browser has no filesystem, so it reads the schema from a generated JS copy. Regenerate it here so a
-// schema change can never ship to phones as a stale duplicate.
+// schema change can never ship to local-mode devices as a stale duplicate.
 require('./gen-schema-text.js');
 const out = path.join(root, 'public', 'local');
 fs.mkdirSync(out, { recursive: true });

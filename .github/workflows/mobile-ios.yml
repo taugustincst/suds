@@ -1,11 +1,10 @@
-name: iOS app
-# Compiles the iOS app on a macOS runner (simulator build, no signing) so Swift changes are verified.
+# DEPRECATED — the native iOS app is deprecated as of SUDS 1.8.0 and will be removed in a later release.
+# The web application served by the office SUDS server is the only supported client; see docs/PLATFORM.md.
+# This workflow no longer runs on tags, pushes or pull requests. It can still be started by hand from the
+# Actions tab for evaluation, and only for that.
+name: iOS app (deprecated)
+# Compiles the iOS app on a macOS runner (simulator build, no signing).
 on:
-  push:
-    tags: ['v*']
-    paths: ['mobile/ios/**', '.github/workflows/mobile-ios.yml']
-  pull_request:
-    paths: ['mobile/ios/**']
   workflow_dispatch:
 jobs:
   build:
