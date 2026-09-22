@@ -10,8 +10,16 @@ function open(dbPath = config.dbPath) {
   if (db) return db;
   if (dbPath !== ':memory:') fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   db = new DatabaseSync(dbPath);
-  db.exec('PRAGMA busy_timeout = 5000');
-  initialise(db, fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'), dbPath);
+  try {
+    db.exec('PRAGMA busy_timeout = 5000');
+    initialise(db, fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'), dbPath);
+  } catch (e) {
+    // A file this build refuses (a newer schema, a failed migration) must not be left as the open handle:
+    // every later db.get() would then serve the rejected database as if the open had succeeded.
+    try { db.close(); } catch {}
+    db = undefined;
+    throw e;
+  }
   if (dbPath !== ':memory:') for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) { try { fs.chmodSync(f, 0o600); } catch {} }
   return db;
 }

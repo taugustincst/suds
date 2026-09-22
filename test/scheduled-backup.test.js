@@ -50,6 +50,46 @@ test('runIfDue backs up once the interval has elapsed, then waits for the next o
   assert.notEqual(second.file, first.file);
 });
 
+test('a backup that cannot be written is recorded as failed, audited, and shown by the health check', () => {
+  const backup = require('../server/backup');
+  const real = backup.create;
+  backup.create = () => { throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' }); };
+  try {
+    db.setSetting('backup_schedule_hours', '24');
+    const out = scheduled.runIfDue();
+    assert.equal(out.failed, true);
+    assert.match(db.getSetting('last_scheduled_backup_status', ''), /^failed: no space left on the disk/);
+    assert.ok(db.getSetting('last_scheduled_backup_at', null), 'the attempt is dated, so the schedule does not retry every hour into a full disk');
+    const row = db.one(`SELECT * FROM audit_log WHERE action='backup.scheduled' ORDER BY id DESC LIMIT 1`);
+    assert.equal(row.success, 0); assert.match(row.details, /ENOSPC/);
+    assert.equal(fs.existsSync(path.join(dir, 'backups')) ? fs.readdirSync(path.join(dir, 'backups')).filter(f => f.endsWith('.db.enc')).length : 0, 0, 'no half-written file is left behind');
+  } finally { backup.create = real; }
+  // Any other exception is recorded with its message.
+  backup.create = () => { throw new Error('VACUUM INTO failed: database is locked'); };
+  try {
+    const out = scheduled.run({ retain: 3 });
+    assert.equal(out.failed, true);
+    assert.equal(db.getSetting('last_scheduled_backup_status', ''), 'failed: VACUUM INTO failed: database is locked');
+  } finally { backup.create = real; }
+  // Once the cause is fixed, the next run clears the status.
+  const ok = scheduled.run({ retain: 3 });
+  assert.equal(ok.verified, true);
+  assert.equal(db.getSetting('last_scheduled_backup_status', ''), 'ok (verified)');
+});
+
+test('pruning runs before the new backup is written, so a full retention set still has room for tonight', () => {
+  db.setSetting('backup_retain_count', '2');
+  const backupsDir = path.join(dir, 'backups'); fs.mkdirSync(backupsDir, { recursive: true });
+  for (const t of ['2020-01-01T00-00-00-000Z', '2020-01-02T00-00-00-000Z', '2020-01-03T00-00-00-000Z']) fs.writeFileSync(path.join(backupsDir, `suds-${t}.db.enc`), 'old');
+  const seen = [];
+  const backup = require('../server/backup'); const real = backup.create;
+  backup.create = () => { seen.push(fs.readdirSync(backupsDir).filter(f => f.endsWith('.db.enc')).sort()); return real(); };
+  try { scheduled.run({ retain: 2 }); } finally { backup.create = real; }
+  assert.deepEqual(seen[0], ['suds-2020-01-03T00-00-00-000Z.db.enc'], 'only retain-1 old files remained when the new one was made');
+  const after = fs.readdirSync(backupsDir).filter(f => f.endsWith('.db.enc')).sort();
+  assert.equal(after.length, 2); assert.equal(after[0], 'suds-2020-01-03T00-00-00-000Z.db.enc');
+});
+
 test('old local backups are pruned beyond the retention count', () => {
   db.setSetting('backup_retain_count', '3');
   for (let i = 0; i < 5; i++) { scheduled.run({ retain: 3 }); }

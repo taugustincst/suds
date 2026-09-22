@@ -19,7 +19,8 @@ function settings() {
   return { hours, retain, offsiteDir };
 }
 
-/** Run a scheduled backup if one is due (schedule enabled and the interval has elapsed). No-op otherwise. */
+/** Run a scheduled backup if one is due (schedule enabled and the interval has elapsed). No-op otherwise.
+ *  Never throws: a failure is recorded in last_scheduled_backup_status (and audited) for the health check. */
 function runIfDue(now = Date.now()) {
   const { hours, retain, offsiteDir } = settings();
   if (!hours) return null;
@@ -31,16 +32,33 @@ function runIfDue(now = Date.now()) {
 /** Take a backup now, prune old ones beyond `retain`, and copy offsite if `offsiteDir` is set. */
 function run({ retain = 14, offsiteDir = '' } = {}) {
   const dir = path.join(config.dataDir, 'backups');
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const bytes = backup.create();
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const file = path.join(dir, `suds-${stamp}.db.enc`);
-  fs.writeFileSync(file, bytes, { mode: 0o600 });
-  // A backup nobody has ever opened is a hope, not a backup. Read the file back, decrypt it with the live
-  // key and open it read-only, the same way a restore would -- and record the answer where the admin looks.
-  let verified = false; let verifyError = null;
-  try { const info = backup.inspect(backup.decrypt(fs.readFileSync(file))); verified = info.counts.clients >= 0; }
-  catch (e) { verifyError = String(e && e.message || e); console.error('[suds] backup written but could not be read back:', verifyError); }
+  let bytes; let verified = false; let verifyError = null; let kept = 0;
+  try {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    // Prune first: the oldest copies beyond the retention count go before the new one is written, so a
+    // disk that is full of old backups has room for tonight's rather than failing on ENOSPC with all of
+    // them still there. The new file is not on disk yet, so `retain` is the number of older ones to keep.
+    prune(dir, Math.max(0, retain - 1));
+    bytes = backup.create();
+    fs.writeFileSync(file, bytes, { mode: 0o600 });
+    // A backup nobody has ever opened is a hope, not a backup. Read the file back, decrypt it with the live
+    // key and open it read-only, the same way a restore would -- and record the answer where the admin looks.
+    try { const info = backup.inspect(backup.decrypt(fs.readFileSync(file))); verified = info.counts.clients >= 0; }
+    catch (e) { verifyError = String(e && e.message || e); console.error('[suds] backup written but could not be read back:', verifyError); }
+  } catch (e) {
+    // The failure that used to be invisible: an exception here propagated out of the housekeeping timer
+    // and nothing was recorded, so the Administration page went on saying the last backup was fine.
+    // Now it is the status the page and /api/health show, and an audit entry that says so.
+    const reason = e && e.code === 'ENOSPC' ? `no space left on the disk holding ${dir}` : String(e && e.message || e);
+    try { fs.unlinkSync(file); } catch {}
+    console.error('[suds] scheduled backup failed:', reason);
+    db.setSetting('last_scheduled_backup_at', db.now());
+    db.setSetting('last_scheduled_backup_status', `failed: ${reason}`);
+    audit.log({ user: { username: 'system' }, action: 'backup.scheduled', success: false, details: { error: reason, code: e && e.code || undefined } });
+    return { file: null, bytes: 0, offsiteOk: null, verified: false, verifyError: reason, failed: true, error: reason };
+  }
 
   let offsiteOk = null;
   if (offsiteDir) {
@@ -56,7 +74,7 @@ function run({ retain = 14, offsiteDir = '' } = {}) {
     }
   }
 
-  const kept = prune(dir, retain);
+  kept = prune(dir, retain);
   db.setSetting('last_scheduled_backup_at', db.now());
   db.setSetting('last_scheduled_backup_status', !verified ? `backup written but could not be read back — ${verifyError}` : offsiteDir && offsiteOk === false ? 'ok (verified) — offsite copy failed, local backup kept' : 'ok (verified)');
   audit.log({ user: { username: 'system' }, action: 'backup.scheduled', details: { bytes: bytes.length, offsite: offsiteDir ? offsiteOk : null, kept, verified } });

@@ -72,8 +72,12 @@ function inspect(plainBytes) {
       const has = (t) => !!d.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(t);
       if (!has('settings') || !has('clients')) throw new Error('That file is not a SUDS backup.');
       const count = (t) => (has(t) ? d.prepare(`SELECT COUNT(*) n FROM ${t}`).get().n : 0);
+      const schemaVersion = Number(d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get()?.value || 0);
+      // Checked here, before anything is swapped: db.open() would refuse the file too, but by then the
+      // live database has already been replaced and the server is left running on nothing.
+      if (schemaVersion > db.LATEST_SCHEMA_VERSION) throw new Error(`This backup was made by a newer version of SUDS (schema ${schemaVersion}; this build understands ${db.LATEST_SCHEMA_VERSION}). Upgrade SUDS before restoring it.`);
       return {
-        schema_version: Number(d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get()?.value || 0),
+        schema_version: schemaVersion,
         org_name: d.prepare(`SELECT value FROM settings WHERE key='org_name'`).get()?.value || null,
         counts: { clients: count('clients'), notes: count('notes'), interventions: count('interventions'), users: count('users'), audit_log: count('audit_log') },
         bytes: plainBytes.length,
@@ -92,19 +96,27 @@ function restore(plainBytes) {
   if (dbPath === ':memory:') throw new Error('This server is running on an in-memory database; there is nothing to restore into.');
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const aside = `${dbPath}.before-restore-${stamp}`;
+  const dropJournal = () => { for (const suffix of ['-wal', '-shm']) { try { fs.unlinkSync(dbPath + suffix); } catch {} } };
+  // Put the original back, so a failed restore is not also a lost database — whatever failed, and whether
+  // or not the swap had happened yet.
+  const rollBack = (cause) => {
+    try { if (fs.existsSync(aside)) { fs.copyFileSync(aside, dbPath); dropJournal(); } } catch (e) { cause.message += ` (and the previous database could not be put back from ${aside}: ${e.message})`; }
+    try { db.close(); } catch {}
+    try { db.open(); } catch (e) { cause.message += ` (the previous database could not be reopened either: ${e.message})`; }
+  };
+  // Checkpoint and close so the copy set aside is the whole database, not a file plus a write-ahead log.
+  try { db.get().exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch {}
   db.close();
   try {
     if (fs.existsSync(dbPath)) fs.copyFileSync(dbPath, aside);
     fs.writeFileSync(dbPath, plainBytes, { mode: 0o600 });
     // The write-ahead log belongs to the database we just replaced; leaving it would corrupt the new one.
-    for (const suffix of ['-wal', '-shm']) { try { fs.unlinkSync(dbPath + suffix); } catch {} }
-  } catch (e) {
-    // Put the original back before giving up, so a failed restore is not also a lost database.
-    try { if (fs.existsSync(aside)) fs.copyFileSync(aside, dbPath); } catch {}
-    db.open();
-    throw e;
-  }
-  db.open();
+    dropJournal();
+  } catch (e) { rollBack(e); throw e; }
+  // Reopening runs the migrations. If the file is refused after all (damaged in a way integrity_check did
+  // not catch, a migration that fails on its data), the server must come back on the database it had.
+  try { db.open(); }
+  catch (e) { rollBack(e); throw new Error(`The backup could not be opened after it was restored, so the previous database was put back: ${e.message}`); }
   return { ...info, previous_database_kept_at: aside };
 }
 

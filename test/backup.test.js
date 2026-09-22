@@ -112,6 +112,48 @@ test('with SUDS_BACKUP_KEY set, backups no longer depend on the PHI key — and 
   } finally { config.backupKey = null; config.encryptionKey = phiKey; }
 });
 
+test('a backup from a newer SUDS is refused before anything is swapped, and the server keeps serving its own data', () => {
+  const plain = backup.decrypt(backup.create());
+  // Stamp the copy as schema 99: what a backup taken on a future build looks like.
+  const { DatabaseSync } = require('node:sqlite');
+  const tmp = path.join(dir, 'future.db'); fs.writeFileSync(tmp, plain);
+  const d = new DatabaseSync(tmp); d.exec(`UPDATE settings SET value='99' WHERE key='schema_version'`); d.close();
+  const future = fs.readFileSync(tmp);
+  const clientsBefore = db.one(`SELECT COUNT(*) n FROM clients`).n;
+  const asides = () => fs.readdirSync(dir).filter(f => f.includes('.before-restore-'));
+  const asidesBefore = asides().length;
+  assert.throws(() => backup.inspect(future), /newer version of SUDS \(schema 99/);
+  assert.throws(() => backup.restore(future), /newer version of SUDS \(schema 99/);
+  assert.equal(db.one(`SELECT COUNT(*) n FROM clients`).n, clientsBefore, 'the live database is untouched');
+  assert.equal(db.getSetting('schema_version'), String(db.LATEST_SCHEMA_VERSION), 'and is still the one this build opened');
+  assert.equal(asides().length, asidesBefore, 'nothing was swapped, so nothing was set aside');
+  assert.equal(decrypt(db.one(`SELECT first_name_enc FROM clients WHERE id=?`, ids.client).first_name_enc), 'Rosa');
+});
+
+test('a file that opens for inspection but is refused on reopen is rolled back to the previous database', () => {
+  // Stub the reopen to fail once: stands in for a migration that throws on the restored data.
+  const realOpen = db.open; let calls = 0;
+  db.open = (...a) => { calls++; if (calls === 1) throw new Error('simulated migration failure'); return realOpen(...a); };
+  try {
+    const clientsBefore = db.one(`SELECT COUNT(*) n FROM clients`).n;
+    assert.throws(() => backup.restore(backup.decrypt(backup.create())), /previous database was put back: simulated migration failure/);
+    assert.equal(db.one(`SELECT COUNT(*) n FROM clients`).n, clientsBefore, 'serving the previous database again');
+    assert.equal(decrypt(db.one(`SELECT first_name_enc FROM clients WHERE id=?`, ids.client).first_name_enc), 'Rosa');
+  } finally { db.open = realOpen; }
+});
+
+test('db.open() leaves no handle behind when the file is refused', () => {
+  const { DatabaseSync } = require('node:sqlite');
+  const p = path.join(dir, 'refused.db'); fs.copyFileSync(process.env.SUDS_DB_PATH, p);
+  const d = new DatabaseSync(p); d.exec(`UPDATE settings SET value='99' WHERE key='schema_version'`); d.close();
+  db.close();
+  assert.throws(() => db.open(p), /newer version of SUDS/);
+  // The next open is a real open of the configured database, not the refused handle.
+  db.open();
+  assert.equal(db.getSetting('schema_version'), String(db.LATEST_SCHEMA_VERSION));
+  assert.equal(decrypt(db.one(`SELECT first_name_enc FROM clients WHERE id=?`, ids.client).first_name_enc), 'Rosa');
+});
+
 test('restoring replaces the live database and keeps the previous one aside', () => {
   const bytes = backup.create();
   // Work done after the backup was taken — a restore is expected to discard it.
