@@ -3,7 +3,7 @@ const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
 const devices = require('../devices');
-const { badRequest, notFound } = require('../http');
+const { badRequest, notFound, HttpError } = require('../http');
 const { validate } = require('../validate');
 const { hashPassword, uuid, randomToken } = require('../crypto');
 
@@ -22,6 +22,10 @@ const shape = {
   // existed with no way to set them short of SQL, so the countersignature workflow could never start.
   requires_cosign: { type: 'boolean' },
   supervisor_id: { type: 'string', maxLen: 64 },
+  // Whether deactivating the account or resetting its password also tells every phone it syncs from to
+  // erase itself. On by default: the admin UI shows the checkbox with the device count so it is a choice
+  // made knowingly, not a side effect discovered afterwards.
+  wipe_devices: { type: 'boolean' },
 };
 
 module.exports = (r) => {
@@ -72,11 +76,27 @@ module.exports = (r) => {
     // wipe is answered before the credentials are (server/auth.js login()), so an inactive account or an
     // unknown new password does not stop it from arriving.
     let wiped = [];
-    if (v.is_active === 0 || v.password) wiped = devices.requestWipeForUser(u.id, { actor: ctx.user, ip: ctx.ip, reason: v.is_active === 0 ? 'deactivated' : 'password_reset' });
+    const wipeDevices = v.wipe_devices === undefined ? true : !!v.wipe_devices;
+    if ((v.is_active === 0 || v.password) && wipeDevices) wiped = devices.requestWipeForUser(u.id, { actor: ctx.user, ip: ctx.ip, reason: v.is_active === 0 ? 'deactivated' : 'password_reset' });
     if (!sets.length) return { ok: true, devices_wiped: wiped.length };
     sets.push('updated_at=?'); params.push(db.now(), u.id);
     db.run(`UPDATE users SET ${sets.join(', ')} WHERE id=?`, ...params);
-    audit.log({ user: ctx.user, action: 'user.update', entity: 'user', entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter(k => k !== 'password'), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa, devices_wiped: wiped.length } });
+    audit.log({ user: ctx.user, action: 'user.update', entity: 'user', entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter(k => k !== 'password'), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa, devices_wiped: wiped.length, wipe_devices: wipeDevices } });
     return { ok: true, devices_wiped: wiped.length };
+  });
+
+  // A device that received a wipe instruction (a deviceWipeRequired login response) reports that it has
+  // erased itself, presenting the one-time token that response carried. Unauthenticated by design: the
+  // phone has just been told its credentials are no longer welcome. The device id alone is not proof of
+  // anything — without the token the pending wipe is left in place (server/devices.js ackWipe).
+  r.post('/api/devices/wipe-ack', (ctx) => {
+    const { device_id, token } = validate(ctx.body, { device_id: { type: 'string', required: true, maxLen: 100 }, token: { type: 'string', required: true, maxLen: 200 } });
+    const d = db.one(`SELECT * FROM devices WHERE id=?`, device_id);
+    if (!d || !d.wipe_requested_at || !devices.ackWipe(d.id, token)) {
+      audit.log({ user: { username: 'device' }, action: 'device.wipe.ack.rejected', entity: 'device', entityId: d ? d.id : null, ip: ctx.ip, success: false });
+      throw new HttpError(403, 'This acknowledgement is not valid');
+    }
+    audit.log({ user: { username: 'device' }, action: 'device.wipe.acknowledged', entity: 'device', entityId: d.id, ip: ctx.ip, details: { device_user: d.user_id } });
+    return { ok: true };
   });
 };

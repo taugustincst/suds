@@ -174,44 +174,78 @@ function mfaDeadline(user) {
 }
 
 // ---- Login ----
+/**
+ * What a failed sign-in's audit row records as the username. Someone who exists is named; a username
+ * nobody has is whatever the caller typed, so it is cut short and hashed instead of being written into a
+ * log that is kept for years and read by administrators.
+ */
+function auditUsername(username) {
+  const u = String(username || '');
+  return `unknown:${u.slice(0, 8)}${u.length > 8 ? '…' : ''}#${sha256(u).slice(0, 12)}`;
+}
 // Async because scrypt costs ~90ms: doing it synchronously stalls every other request in the process, and a
 // few staff signing in at once is enough to be noticed.
 async function login({ username, password, ctx }) {
   const user = db.one(`SELECT * FROM users WHERE username=?`, String(username || '').trim());
-  const fail = (reason) => {
-    audit.log({ user: user ? { id: user.id, username: user.username } : { username }, action: 'auth.login.failed', ip: ctx.ip, success: false, details: { reason } });
-    throw unauthorized('Invalid username or password');
-  };
   // A sync client (the phone app) identifies itself with a stable device id, separate from the short-lived
   // session a sync run creates and destroys. A lost/stolen phone is handled here, before any session for it
   // is created at all — see server/devices.js and Administration -> Users -> Devices.
   //
-  // This comes before the credentials are even looked at, deliberately. Offboarding goes "deactivate the
-  // account, then wipe the phone" as often as the other way round, and a wipe that is only delivered to a
-  // device whose password still works is a wipe the ex-employee's phone never receives: it would be told
-  // "inactive" and keep every record it holds. So a known device with a wipe (or revocation) pending gets
-  // that answer whatever the username and password say. The reply says nothing about the account — the
-  // same device gets the same answer whether the username exists, is inactive, or the password is wrong.
+  // The device's state is looked at before the credentials are, deliberately. Offboarding goes "deactivate
+  // the account, then wipe the phone" as often as the other way round, and a wipe that is only delivered
+  // to a device whose password still works is a wipe the ex-employee's phone never receives: it would be
+  // told "inactive" and keep every record it holds. So a known device with a wipe (or revocation) pending
+  // gets that answer whatever the username and password say. The reply says nothing about the account —
+  // the same device gets the same answer whether the username exists, is inactive, or the password is wrong.
+  //
+  // What the reply does NOT do is consume the wipe. Knowing a device id proves nothing, and the row used to
+  // be marked wiped (revoked, wipe cleared) for anyone who sent one — a way to make the server believe a
+  // stolen phone had erased itself. Now the pending wipe is cleared only when the credentials sent from
+  // the device verify (the phone is in the hands of someone who can unlock the account), or when the
+  // device posts back the one-time token this response carries (POST /api/devices/wipe-ack).
   const devices = require('./devices');
   const deviceId = ctx.headers['x-sync-client'] && ctx.headers['x-device-id'] ? String(ctx.headers['x-device-id']).slice(0, 100) : null;
-  const who = user ? { id: user.id, username: user.username } : { username: String(username || '').slice(0, 100) };
+  const who = user ? { id: user.id, username: user.username } : { username: auditUsername(username) };
+  let pendingWipe = null;
   if (deviceId) {
     const known = db.one(`SELECT * FROM devices WHERE id=?`, deviceId);
-    if (known && known.wipe_requested_at) {
-      devices.markWiped(known.id);
-      audit.log({ user: who, action: 'auth.login.device_wiped', entity: 'device', entityId: known.id, ip: ctx.ip, success: false, details: { device_user: known.user_id } });
-      throw new HttpError(403, 'An administrator has remotely wiped this device. It must be set up again before it can sync.', { deviceWipeRequired: true });
-    }
     if (known && known.revoked_at) {
-      audit.log({ user: who, action: 'auth.login.device_revoked', entity: 'device', entityId: known.id, ip: ctx.ip, success: false, details: { device_user: known.user_id } });
-      throw new HttpError(403, 'This device has been revoked and can no longer sync. Contact your administrator.', { deviceRevoked: true });
+      // A revoked device that was once told to wipe is told again: the erase may not have completed.
+      audit.log({ user: who, action: 'auth.login.device_revoked', entity: 'device', entityId: known.id, ip: ctx.ip, success: false, details: { device_user: known.user_id, wipe_requested: !!known.wipe_requested_at } });
+      throw new HttpError(403, 'This device has been revoked and can no longer sync. Contact your administrator.', { deviceRevoked: true, wipeRequested: !!known.wipe_requested_at, deviceWipeRequired: !!known.wipe_requested_at || undefined });
     }
+    if (known && known.wipe_requested_at) pendingWipe = known;
   }
+  /** The one answer a device with a wipe pending gets. `verified`: the credentials checked out, so the wipe is consumed. */
+  const wipeRequired = (verified) => {
+    const extra = { deviceWipeRequired: true };
+    if (verified) {
+      devices.markWiped(pendingWipe.id);
+      audit.log({ user: who, action: 'auth.login.device_wiped', entity: 'device', entityId: pendingWipe.id, ip: ctx.ip, success: false, details: { device_user: pendingWipe.user_id } });
+    } else {
+      extra.wipeAckToken = devices.issueWipeToken(pendingWipe.id);
+      audit.log({ user: who, action: 'auth.login.device_wipe_pending', entity: 'device', entityId: pendingWipe.id, ip: ctx.ip, success: false, details: { device_user: pendingWipe.user_id } });
+    }
+    throw new HttpError(403, 'An administrator has remotely wiped this device. It must be set up again before it can sync.', extra);
+  };
+  const fail = (reason) => {
+    // The username of an account that does not exist is attacker-chosen text; the audit log keeps a
+    // truncated, hashed form of it rather than the string itself (see auditUsername).
+    audit.log({ user: who, action: 'auth.login.failed', ip: ctx.ip, success: false, details: { reason } });
+    if (pendingWipe) wipeRequired(false);
+    throw unauthorized('Invalid username or password');
+  };
   // An unknown username still pays the hashing cost, so response time does not reveal who has an account.
   if (!user) { await verifyPasswordAsync(password || '', 'scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AA=='); fail('unknown user'); }
-  if (!user.is_active) fail('inactive');
+  if (!user.is_active) {
+    // With a wipe pending, a correct password on the deactivated account is still proof that the phone is
+    // in the hands of the person the account belonged to — enough to consume the wipe.
+    if (pendingWipe && await verifyPasswordAsync(password || '', user.password_hash)) wipeRequired(true);
+    fail('inactive');
+  }
   if (user.locked_until && Date.parse(user.locked_until) > Date.now()) {
     audit.log({ user, action: 'auth.login.locked', ip: ctx.ip, success: false });
+    if (pendingWipe) wipeRequired(false);
     throw new HttpError(423, 'Account locked. Try again later or contact an administrator.');
   }
   if (!(await verifyPasswordAsync(password || '', user.password_hash))) {
@@ -220,21 +254,18 @@ async function login({ username, password, ctx }) {
     db.run(`UPDATE users SET failed_attempts=?, locked_until=? WHERE id=?`, lock ? 0 : attempts, lock, user.id);
     fail(lock ? 'locked after failures' : 'bad password');
   }
+  if (pendingWipe) wipeRequired(true);
   db.run(`UPDATE users SET failed_attempts=0, locked_until=NULL, last_login_at=? WHERE id=?`, db.now(), user.id);
   // Only a device that has just proven who holds it is recorded (or reattributed) as that person's. The
   // flags are read again from the row touch() returns: an administrator acting between the check above
   // and this point still gets the device stopped on this very login.
   if (deviceId) {
     const device = devices.touch(user, deviceId, ctx);
-    if (device.wipe_requested_at) {
-      devices.markWiped(device.id);
-      audit.log({ user, action: 'auth.login.device_wiped', entity: 'device', entityId: device.id, ip: ctx.ip, success: false });
-      throw new HttpError(403, 'An administrator has remotely wiped this device. It must be set up again before it can sync.', { deviceWipeRequired: true });
-    }
     if (device.revoked_at) {
-      audit.log({ user, action: 'auth.login.device_revoked', entity: 'device', entityId: device.id, ip: ctx.ip, success: false });
-      throw new HttpError(403, 'This device has been revoked and can no longer sync. Contact your administrator.', { deviceRevoked: true });
+      audit.log({ user, action: 'auth.login.device_revoked', entity: 'device', entityId: device.id, ip: ctx.ip, success: false, details: { wipe_requested: !!device.wipe_requested_at } });
+      throw new HttpError(403, 'This device has been revoked and can no longer sync. Contact your administrator.', { deviceRevoked: true, wipeRequested: !!device.wipe_requested_at, deviceWipeRequired: !!device.wipe_requested_at || undefined });
     }
+    if (device.wipe_requested_at) { pendingWipe = device; wipeRequired(true); }
   }
   const mfaRequiredForRole = policy().mfaRequiredRoles.includes(user.role);
   const mfaPending = !!user.mfa_enabled;

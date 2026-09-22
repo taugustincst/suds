@@ -63,6 +63,30 @@ test('search still finds the client after the index key is rotated, and the audi
   assert.equal((await admin.get('/api/admin/audit/verify')).data.ok, true);
 });
 
+test('rotation succeeds once the audit head has been checkpointed, and re-seals the head under the new key', async () => {
+  // Before: the head was sealed under the old key, so the post-rotation verification read the untouched
+  // chain as truncated and rolled the whole rotation back.
+  await nav.post('/api/clients', { first_name: 'Before', last_name: 'Checkpoint' });
+  assert.ok(audit.checkpoint(), 'a checkpoint exists');
+  assert.equal(audit.verifyChain().checkpointed, true);
+  const headBefore = H.db.getSetting('audit_head');
+  const oldKey = config.indexKey;
+  const newKey = require('node:crypto').createHash('sha256').update('rotated-after-checkpoint').digest();
+  const result = rotateIndexKey(newKey);
+  assert.ok(result.chain.resigned >= 1);
+  assert.ok(config.indexKey.equals(newKey));
+  const v = audit.verifyChain();
+  assert.equal(v.ok, true, JSON.stringify(v));
+  assert.equal(v.checkpointed, true, 'still pinned');
+  assert.equal(v.truncated, false);
+  assert.notEqual(H.db.getSetting('audit_head'), headBefore, 'the head was re-sealed under the new key');
+  assert.equal(audit.verifyChain({ key: oldKey }).ok, false);
+  const sv = audit.scheduledVerify();
+  assert.equal(sv.ok, true);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM audit_log WHERE action='audit.verify.failed'`).n, 0, 'the scheduled verification after a rotation is clean');
+  assert.equal((await admin.get('/api/admin/audit/verify')).data.ok, true);
+});
+
 test('a chain that already fails is not re-signed', () => {
   H.db.run(`UPDATE audit_log SET details='tampered' WHERE id=(SELECT MIN(id) FROM audit_log WHERE details IS NOT NULL)`);
   const another = require('node:crypto').createHash('sha256').update('third-key').digest();

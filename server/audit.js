@@ -39,12 +39,13 @@ function log({ user, action, entity, entityId, clientId, ip, success = true, det
 // truncates the table cannot re-seal a shorter chain, and the same line goes to the log file, which is
 // collected off the box, so even deleting the setting leaves evidence.
 function headPayload(lastId, lastHash, rowCount) { return `${lastId}|${lastHash}|${rowCount}`; }
-function sealHead(lastId, lastHash, rowCount) { return crypto.createHmac('sha256', config.indexKey).update(headPayload(lastId, lastHash, rowCount)).digest('hex'); }
-function checkpoint() {
+function sealHead(lastId, lastHash, rowCount, key = config.indexKey) { return crypto.createHmac('sha256', key).update(headPayload(lastId, lastHash, rowCount)).digest('hex'); }
+/** Seal the current head. `key` defaults to the index key in use; key rotation passes the new key explicitly. */
+function checkpoint({ key = config.indexKey } = {}) {
   const last = db.one(`SELECT id, hash FROM audit_log ORDER BY id DESC LIMIT 1`);
   if (!last) return null;
   const rowCount = db.one(`SELECT COUNT(*) n FROM audit_log WHERE id <= ?`, last.id).n;
-  const head = sealHead(last.id, last.hash, rowCount);
+  const head = sealHead(last.id, last.hash, rowCount, key);
   db.setSetting('audit_head', head);
   db.setSetting('audit_head_id', String(last.id));
   db.setSetting('audit_head_rows', String(rowCount));
@@ -54,7 +55,7 @@ function checkpoint() {
   return { lastId: last.id, rowCount, head };
 }
 /** Compare the chain as it stands now with the last sealed head. */
-function checkHead() {
+function checkHead({ key = config.indexKey } = {}) {
   const head = db.getSetting('audit_head', null);
   const lastId = Number(db.getSetting('audit_head_id', 0));
   const rowCount = Number(db.getSetting('audit_head_rows', 0));
@@ -64,7 +65,7 @@ function checkHead() {
   if (lastId > max) return { ...out, truncated: true, reason: `the newest ${lastId - max} entries since the checkpoint are gone` };
   const row = db.one(`SELECT hash FROM audit_log WHERE id=?`, lastId);
   const nowCount = row ? db.one(`SELECT COUNT(*) n FROM audit_log WHERE id <= ?`, lastId).n : 0;
-  const expected = sealHead(lastId, row ? row.hash : '', nowCount);
+  const expected = sealHead(lastId, row ? row.hash : '', nowCount, key);
   if (!row || expected.length !== head.length || !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(head))) return { ...out, truncated: true, reason: row ? 'entries at or before the checkpoint were removed or altered' : 'the checkpointed entry itself is gone' };
   return { ...out, truncated: false };
 }
@@ -75,7 +76,10 @@ function checkHead() {
 // Read in batches: at seven years of retention this table is millions of rows, and loading it whole to
 // answer an admin's "verify" click would stall the whole server.
 const VERIFY_BATCH = 5000;
-function verifyChain({ key = config.indexKey } = {}) {
+// `skipHead` leaves the sealed head out of the verdict: key rotation re-signs the rows under the new key
+// before the head is re-sealed, so between those two steps the head (sealed under the old key) would
+// read as "truncated" although nothing is missing.
+function verifyChain({ key = config.indexKey, skipHead = false } = {}) {
   let prevHash = null; let anchoredAt = null; let checked = 0; let afterId = 0;
   for (;;) {
     const rows = db.all(`SELECT * FROM audit_log WHERE id > ? ORDER BY id ASC LIMIT ?`, afterId, VERIFY_BATCH);
@@ -83,13 +87,13 @@ function verifyChain({ key = config.indexKey } = {}) {
     if (prevHash === null) { prevHash = rows[0].prev_hash; anchoredAt = rows[0].id; }
     for (const r of rows) {
       checked++;
-      if (r.prev_hash !== prevHash || !matches(r.hash, payloadOf(r), key)) return { ok: false, checked, firstBadId: r.id, anchoredAt, ...checkHead() };
+      if (r.prev_hash !== prevHash || !matches(r.hash, payloadOf(r), key)) return { ok: false, checked, firstBadId: r.id, anchoredAt, ...(skipHead ? {} : checkHead({ key })) };
       prevHash = r.hash;
     }
     afterId = rows[rows.length - 1].id;
     if (rows.length < VERIFY_BATCH) break;
   }
-  const head = checkHead();
+  const head = skipHead ? { checkpointed: false } : checkHead({ key });
   if (head.truncated) return { ok: false, checked, anchoredAt, ...head };
   if (!checked) return { ok: true, checked: 0, ...head };
   return { ok: true, checked, anchoredAt, ...head };
@@ -126,8 +130,15 @@ function resignChain(newKey) {
     afterId = rows[rows.length - 1].id;
     if (rows.length < VERIFY_BATCH) break;
   }
-  const after = verifyChain({ key: newKey });
+  // The sealed head still carries the old key's HMAC, so the rows are verified without it and then the
+  // head is re-sealed under the new key in the same transaction — a rotation must leave the chain both
+  // verifiable and pinned, or the next scheduled verification reports truncation that never happened.
+  const after = verifyChain({ key: newKey, skipHead: true });
   if (!after.ok) throw new Error(`The audit chain does not verify under the new key after re-signing (first bad entry ${after.firstBadId})`);
+  const hadHead = db.getSetting('audit_head', null);
+  if (hadHead) checkpoint({ key: newKey });
+  const pinned = verifyChain({ key: newKey });
+  if (!pinned.ok) throw new Error(`The audit head does not verify under the new key after re-sealing (${pinned.reason || `first bad entry ${pinned.firstBadId}`})`);
   return { resigned, checked: after.checked };
 }
 

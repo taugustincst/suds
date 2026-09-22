@@ -10,6 +10,9 @@ function oidcStatusCached() {
 async function openUserForm(values, onDone) {
   const isNew = !values;
   const oidcStatus = !isNew && !state.local ? await oidcStatusCached() : { enabled: false };
+  // How many phones this person syncs from, so the "also wipe" choice below is made with the number in view.
+  let deviceCount = 0;
+  if (!isNew && !state.local) deviceCount = await get('/api/admin/devices', { quiet: true }).then(r => r.devices.filter(d => d.user_id === values.id && !d.revoked_at).length).catch(() => 0);
   const f = form([
     { name: 'username', label: 'Username', required: true, pattern: '[a-zA-Z0-9._@\\-]+' }, { name: 'display_name', label: 'Display name', required: true }, { name: 'email', label: 'Email' }, { name: 'title', label: 'Job title' },
     { name: 'role', label: 'Role', type: 'select', required: true, options: [['navigator', 'Navigator — own caseload, admin notes, referrals, budget entry'], ['clinician', 'Clinician — clinical notes, own caseload'], ['supervisor', 'Supervisor — all clients, all notes, approvals, audit'], ['finance', 'Finance — budget & de-identified data only'], ['readonly', 'Read-only — reports and client summaries'], ['admin', 'Administrator — users, settings, audit (no clinical notes)']].map(([v, l]) => ({ value: v, label: l })) },
@@ -17,6 +20,7 @@ async function openUserForm(values, onDone) {
     { name: 'supervisor_id', label: 'Supervisor', type: 'select', placeholder: '— none —', options: state.users.filter(u => u.is_active !== 0 && ['supervisor', 'admin'].includes(u.role) && u.id !== values?.id).map(u => ({ value: u.id, label: u.display_name })), help: 'Whose Supervision page their unfinished work shows on.' },
     { name: 'requires_cosign', label: 'Notes need a supervisor\'s countersignature (trainee or unlicensed staff)', type: 'checkbox', span: true },
     { name: 'password', label: isNew ? 'Temporary password (blank = generate)' : 'Reset password (blank = keep)', type: 'password', autocomplete: 'new-password', help: '12+ chars with upper, lower, number, symbol. User must change at next login.' },
+    !isNew ? { name: 'wipe_devices', label: `Also wipe this person's synced devices when deactivating or resetting the password (${deviceCount} device${deviceCount === 1 ? '' : 's'})`, type: 'checkbox', value: true, span: true, help: 'Each phone or tablet they sync from is told to erase its local copy of client records the next time it connects.' } : null,
     !isNew ? { name: 'unlock', label: 'Unlock account', type: 'checkbox' } : null, !isNew && values.mfa_enabled ? { name: 'reset_mfa', label: 'Reset MFA (user re-enrolls)', type: 'checkbox' } : null,
     oidcStatus.enabled ? { name: 'oidc_subject', label: `Single sign-on identity (${oidcStatus.label})`, span: true, help: values && values.oidc_subject ? 'Linked. Clear this field to unlink — the user can still sign in with their SUDS password.' : 'Paste the "sub" claim from the identity provider to let this user sign in with SSO instead of a SUDS password. Leave blank if they should only use their SUDS password.' } : null,
   ].filter(Boolean), { values: values || {}, submitText: isNew ? 'Create user' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => {
@@ -196,7 +200,7 @@ route('admin', async (r) => {
           { label: 'First seen', render: d => fmt.dt(d.first_seen_at) },
           { label: 'Last synced', render: d => fmt.dt(d.last_seen_at) },
           { label: 'Syncs', key: 'sync_count' },
-          { label: 'Status', render: d => d.revoked_at ? badge('Revoked', 'danger') : d.wipe_requested_at ? badge('Wipe pending', 'warn') : badge('Active', 'ok') },
+          { label: 'Status', render: d => d.revoked_at ? badge(d.wipe_requested_at ? 'Wiped' : 'Revoked', 'danger') : d.wipe_requested_at ? badge('Wipe pending', 'warn') : badge('Active', 'ok') },
           { label: '', render: d => h('div', { class: 'row' },
             !d.revoked_at && !d.wipe_requested_at ? h('button', { class: 'btn sm', onClick: () => act(d.id, 'revoke') }, 'Revoke') : null,
             !d.wipe_requested_at && !d.revoked_at ? h('button', { class: 'btn sm danger', onClick: async () => { if (await confirmDialog('Wipe this device', `The next time "${d.label || 'this device'}" (${d.display_name}) tries to sync, it will be told to erase everything it has stored and will need to be set up again. This cannot reach a device that never syncs again.`, { danger: true, okText: 'Request wipe' })) act(d.id, 'wipe'); } }, 'Wipe') : null,

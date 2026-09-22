@@ -3,6 +3,7 @@
 // once (local/sync.js) and sends on every sync call. Never keyed by the sync session itself — that is
 // created fresh and destroyed at the end of every single sync run (see local/sync.js's finally block).
 const db = require('./db');
+const { sha256, randomToken } = require('./crypto');
 
 function labelFrom(userAgent) {
   const ua = userAgent || '';
@@ -26,8 +27,44 @@ function touch(user, deviceId, ctx) {
   return db.one(`SELECT * FROM devices WHERE id=?`, deviceId);
 }
 
-/** The wipe was just delivered to the device (it is about to erase itself) — revoke it so it cannot sync again unless an administrator clears it. */
-function markWiped(deviceId) { db.run(`UPDATE devices SET revoked_at=?, wipe_requested_at=NULL WHERE id=?`, db.now(), deviceId); }
+/**
+ * The wipe was delivered to the device and it has erased itself (or its holder has just signed in on it,
+ * which is the same proof that the wipe reached the right phone) — revoke it so it cannot sync again
+ * unless an administrator clears it. `wipe_requested_at` is kept: a revoked device that was once told to
+ * wipe is still told to wipe if it ever shows up again (auth.js login()), because the erase may not have
+ * completed the first time.
+ */
+function markWiped(deviceId) {
+  db.run(`UPDATE devices SET revoked_at=COALESCE(revoked_at, ?) WHERE id=?`, db.now(), deviceId);
+  db.run(`DELETE FROM settings WHERE key=?`, ackKey(deviceId));
+}
+
+// ---- wipe acknowledgement ----
+// A wipe instruction is answered to any request that carries a known device id, before credentials are
+// checked (see auth.js for why). That must not be what *consumes* the wipe: anyone who learned a device id
+// could otherwise make the server believe the phone had been erased. So the pending wipe is cleared only
+// when the device proves it received it — either by signing in with working credentials, or by posting
+// back a one-time token that only the wipe response carried. The token's hash lives in the settings table
+// (no schema change) with a short life; the device id alone never suffices.
+const ACK_TTL_MS = 15 * 60_000;
+const ackKey = (deviceId) => `device_wipe_ack:${deviceId}`;
+/** Mint the one-time token the deviceWipeRequired response carries. Re-issued on every delivery; the newest wins. */
+function issueWipeToken(deviceId) {
+  const token = randomToken(32);
+  db.setSetting(ackKey(deviceId), JSON.stringify({ hash: sha256(token), expires: new Date(Date.now() + ACK_TTL_MS).toISOString() }));
+  return token;
+}
+/** True (and the device marked wiped) when `token` is the live acknowledgement token for this device. */
+function ackWipe(deviceId, token) {
+  const raw = db.getSetting(ackKey(deviceId), null);
+  if (!raw || typeof token !== 'string' || !token) return false;
+  let rec; try { rec = JSON.parse(raw); } catch { return false; }
+  if (!rec.hash || Date.parse(rec.expires || 0) < Date.now()) { db.run(`DELETE FROM settings WHERE key=?`, ackKey(deviceId)); return false; }
+  const given = sha256(token);
+  if (given.length !== rec.hash.length || !require('node:crypto').timingSafeEqual(Buffer.from(given), Buffer.from(rec.hash))) return false;
+  markWiped(deviceId);
+  return true;
+}
 
 /**
  * Ask every device this person still syncs from to erase itself at its next sync. Called when an account
@@ -45,4 +82,4 @@ function requestWipeForUser(userId, { actor, ip, reason } = {}) {
   return rows.map(d => d.id);
 }
 
-module.exports = { touch, markWiped, requestWipeForUser, labelFrom };
+module.exports = { touch, markWiped, requestWipeForUser, labelFrom, issueWipeToken, ackWipe };

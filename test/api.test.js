@@ -703,14 +703,70 @@ test('a syncing device is tracked, and an admin can revoke or remotely wipe it',
   assert.equal(wipedLogin.data.deviceWipeRequired, true);
   const afterWipe = H.db.one(`SELECT * FROM devices WHERE id=?`, row.id);
   assert.ok(afterWipe.revoked_at, 'the device is revoked the instant the wipe is delivered, so it cannot loop into repeated wipes');
-  assert.equal(afterWipe.wipe_requested_at, null);
+  assert.ok(afterWipe.wipe_requested_at, 'the record that a wipe was requested is kept on the revoked row');
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='auth.login.device_wiped'`));
+  // A revoked device that was told to wipe is told again if it ever comes back, in case the erase never finished
+  const again = await H.client().post('/api/auth/login', { username: 'nav1', password: 'StaffPassw0rd!x' }, sync);
+  assert.equal(again.status, 403); assert.equal(again.data.deviceRevoked, true); assert.equal(again.data.wipeRequested, true); assert.equal(again.data.deviceWipeRequired, true);
 
   // A browser login (no sync headers) is never subject to any of this
   const office = H.client();
   assert.equal((await office.login('nav1', 'StaffPassw0rd!x')).user.username, 'nav1');
 
   await admin.post(`/api/admin/devices/${row.id}/clear`, {});
+});
+
+test('a pending wipe is not consumed by whoever knows the device id; only credentials or the acknowledgement token consume it', async () => {
+  const sync = { 'X-Sync-Client': '1', 'X-Device-Id': 'device-test-2' };
+  assert.equal((await H.client().post('/api/auth/login', { username: 'nav1', password: 'StaffPassw0rd!x' }, sync)).status, 200);
+  const row = (await admin.get('/api/admin/devices')).data.devices.find(d => d.id === 'device-test-2');
+  assert.equal((await admin.post(`/api/admin/devices/${row.id}/wipe`, {})).status, 200);
+  const pending = H.db.one(`SELECT * FROM devices WHERE id=?`, row.id);
+
+  // Anonymous / wrong-password request from the device id: the wipe instruction is answered, the row is untouched
+  const anon = await H.client().post('/api/auth/login', { username: 'nobody-here', password: 'wrong' }, sync);
+  assert.equal(anon.status, 403); assert.equal(anon.data.deviceWipeRequired, true);
+  assert.ok(anon.data.wipeAckToken, 'the response carries a one-time acknowledgement token');
+  let after = H.db.one(`SELECT * FROM devices WHERE id=?`, row.id);
+  assert.equal(after.revoked_at, null, 'not revoked by a request that proved nothing');
+  assert.equal(after.wipe_requested_at, pending.wipe_requested_at, 'the wipe is still pending');
+  assert.equal(after.sync_count, pending.sync_count);
+
+  // A bad token does not consume it either
+  assert.equal((await H.client().post('/api/devices/wipe-ack', { device_id: row.id, token: 'not-the-token' })).status, 403);
+  assert.equal((await H.client().post('/api/devices/wipe-ack', { device_id: 'unknown-device', token: anon.data.wipeAckToken })).status, 403);
+  after = H.db.one(`SELECT * FROM devices WHERE id=?`, row.id);
+  assert.equal(after.revoked_at, null);
+  assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='device.wipe.ack.rejected'`));
+
+  // The token from the wipe response does: the device is marked wiped (revoked), once
+  assert.equal((await H.client().post('/api/devices/wipe-ack', { device_id: row.id, token: anon.data.wipeAckToken })).status, 200);
+  after = H.db.one(`SELECT * FROM devices WHERE id=?`, row.id);
+  assert.ok(after.revoked_at, 'acknowledged wipes revoke the device');
+  assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='device.wipe.acknowledged' AND entity_id=?`, row.id));
+  assert.equal((await H.client().post('/api/devices/wipe-ack', { device_id: row.id, token: anon.data.wipeAckToken })).status, 403, 'the token is one-time');
+
+  // Credentialed login on the device consumes a pending wipe (the phone proved it is the one being wiped)
+  await admin.post(`/api/admin/devices/${row.id}/clear`, {});
+  assert.equal((await admin.post(`/api/admin/devices/${row.id}/wipe`, {})).status, 200);
+  const cred = await H.client().post('/api/auth/login', { username: 'nav1', password: 'StaffPassw0rd!x' }, sync);
+  assert.equal(cred.status, 403); assert.equal(cred.data.deviceWipeRequired, true);
+  after = H.db.one(`SELECT * FROM devices WHERE id=?`, row.id);
+  assert.ok(after.revoked_at, 'marked wiped after verified credentials');
+  await admin.post(`/api/admin/devices/${row.id}/clear`, {});
+});
+
+test('an administrator password reset wipes synced devices by default, and wipe_devices:false keeps them', async () => {
+  const sync = { 'X-Sync-Client': '1', 'X-Device-Id': 'device-test-3' };
+  const u = H.makeUser('devowner', 'navigator');
+  assert.equal((await H.client().post('/api/auth/login', { username: 'devowner', password: 'StaffPassw0rd!x' }, sync)).status, 200);
+  const keep = await admin.put(`/api/users/${u.id}`, { password: 'AnotherPassw0rd!x', wipe_devices: false });
+  assert.equal(keep.status, 200); assert.equal(keep.data.devices_wiped, 0);
+  assert.equal(H.db.one(`SELECT wipe_requested_at w FROM devices WHERE id='device-test-3'`).w, null);
+  const wipe = await admin.put(`/api/users/${u.id}`, { password: 'YetAnotherPassw0rd!x' });
+  assert.equal(wipe.status, 200); assert.equal(wipe.data.devices_wiped, 1, 'the default is to wipe');
+  assert.ok(H.db.one(`SELECT wipe_requested_at w FROM devices WHERE id='device-test-3'`).w);
+  assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='user.update' AND details LIKE '%"wipe_devices":false%'`));
 });
 
 test('the metrics endpoint is off by default, then bearer-token gated once configured', async () => {
@@ -1012,7 +1068,7 @@ test('a remote wipe is delivered before the credentials are judged, so deactivat
   assert.equal(r.status, 403);
   assert.equal(r.data.deviceWipeRequired, true, 'the inactive account is not what the device hears about; the wipe is');
   const row = H.db.one(`SELECT * FROM devices WHERE id='device-leaver-1'`);
-  assert.ok(row.revoked_at); assert.equal(row.wipe_requested_at, null);
+  assert.ok(row.revoked_at, 'the right password on the deactivated account proves the phone is the one being wiped'); assert.ok(row.wipe_requested_at);
 
   // A wrong password, or a username that does not exist, on a device with a wipe pending still gets the wipe
   const u2 = H.makeUser('leaver2', 'navigator');
@@ -1021,9 +1077,14 @@ test('a remote wipe is delivered before the credentials are judged, so deactivat
   await admin.post('/api/admin/devices/device-leaver-2/wipe', {});
   const wrong = await H.client().post('/api/auth/login', { username: 'nobody-here', password: 'nope' }, sync2);
   assert.equal(wrong.status, 403); assert.equal(wrong.data.deviceWipeRequired, true);
-  // and once revoked, a revoked answer — again regardless of the password
+  // ... and keeps getting it until the device proves it heard: a wrong password proves nothing
+  const stillPending = await H.client().post('/api/auth/login', { username: u2.username, password: 'wrong-password' }, sync2);
+  assert.equal(stillPending.status, 403); assert.equal(stillPending.data.deviceWipeRequired, true); assert.ok(stillPending.data.wipeAckToken);
+  assert.equal(H.db.one(`SELECT revoked_at r FROM devices WHERE id='device-leaver-2'`).r, null);
+  // The acknowledgement (what the phone sends after erasing itself) does; once revoked, a revoked answer — again regardless of the password
+  assert.equal((await H.client().post('/api/devices/wipe-ack', { device_id: 'device-leaver-2', token: stillPending.data.wipeAckToken })).status, 200);
   const again = await H.client().post('/api/auth/login', { username: u2.username, password: 'wrong-password' }, sync2);
-  assert.equal(again.status, 403); assert.equal(again.data.deviceRevoked, true);
+  assert.equal(again.status, 403); assert.equal(again.data.deviceRevoked, true); assert.equal(again.data.wipeRequested, true);
   // A device the server has never seen gets the ordinary answer: nothing about the account leaks through the device path
   const fresh = await H.client().post('/api/auth/login', { username: 'nobody-here', password: 'nope' }, { 'X-Sync-Client': '1', 'X-Device-Id': 'device-never-seen' });
   assert.equal(fresh.status, 401);
@@ -1081,12 +1142,24 @@ test('TRUST_PROXY takes the rightmost X-Forwarded-For address, so a client canno
   const was = config.trustProxy; config.trustProxy = true;
   try {
     await H.client().post('/api/auth/login', { username: 'xff-probe', password: 'nope' }, { 'X-Forwarded-For': '9.9.9.9, 203.0.113.7' });
-    const row = H.db.one(`SELECT ip FROM audit_log WHERE action='auth.login.failed' AND username='xff-probe' ORDER BY id DESC LIMIT 1`);
+    const row = H.db.one(`SELECT ip FROM audit_log WHERE action='auth.login.failed' AND username LIKE 'unknown:xff-prob%' ORDER BY id DESC LIMIT 1`);
     assert.equal(row.ip, '203.0.113.7', 'the proxy appended the real address last; 9.9.9.9 is what the client claimed');
     config.trustProxy = false;
     await H.client().post('/api/auth/login', { username: 'xff-probe2', password: 'nope' }, { 'X-Forwarded-For': '9.9.9.9' });
-    assert.equal(H.db.one(`SELECT ip FROM audit_log WHERE action='auth.login.failed' AND username='xff-probe2' ORDER BY id DESC LIMIT 1`).ip, '127.0.0.1', 'without TRUST_PROXY the header is ignored');
+    assert.equal(H.db.one(`SELECT ip FROM audit_log WHERE action='auth.login.failed' AND username LIKE 'unknown:xff-prob%' ORDER BY id DESC LIMIT 1`).ip, '127.0.0.1', 'without TRUST_PROXY the header is ignored');
   } finally { config.trustProxy = was; }
+});
+
+test('a failed sign-in for a username nobody has is audited in truncated, hashed form; a real account is named', async () => {
+  const chosen = 'DROP TABLE clients; <script>alert(1)</script> ' + 'x'.repeat(40);
+  await H.client().post('/api/auth/login', { username: chosen, password: 'nope' });
+  const row = H.db.one(`SELECT username FROM audit_log WHERE action='auth.login.failed' ORDER BY id DESC LIMIT 1`);
+  assert.ok(row.username.startsWith('unknown:DROP TAB'), row.username);
+  assert.ok(row.username.length < 40, 'cut short');
+  assert.ok(!row.username.includes('<script>'), 'the attacker-chosen text is not stored verbatim');
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM audit_log WHERE username=?`, chosen).n, 0);
+  await H.client().post('/api/auth/login', { username: 'nav1', password: 'nope' });
+  assert.equal(H.db.one(`SELECT username FROM audit_log WHERE action='auth.login.failed' ORDER BY id DESC LIMIT 1`).username, 'nav1', 'an existing account keeps its name');
 });
 
 // ---- The health endpoint keeps its status public and its inventory private ----
