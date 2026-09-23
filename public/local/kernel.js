@@ -37,9 +37,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// node_modules/base64-js/index.js
+// ../../../node_modules/base64-js/index.js
 var require_base64_js = __commonJS({
-  "node_modules/base64-js/index.js"(exports) {
+  "../../../node_modules/base64-js/index.js"(exports) {
     "use strict";
     init_globals_inject();
     exports.byteLength = byteLength;
@@ -139,9 +139,9 @@ var require_base64_js = __commonJS({
   }
 });
 
-// node_modules/ieee754/index.js
+// ../../../node_modules/ieee754/index.js
 var require_ieee754 = __commonJS({
-  "node_modules/ieee754/index.js"(exports) {
+  "../../../node_modules/ieee754/index.js"(exports) {
     init_globals_inject();
     exports.read = function(buffer, offset, isLE3, mLen, nBytes) {
       var e, m;
@@ -223,9 +223,9 @@ var require_ieee754 = __commonJS({
   }
 });
 
-// node_modules/buffer/index.js
+// ../../../node_modules/buffer/index.js
 var require_buffer = __commonJS({
-  "node_modules/buffer/index.js"(exports) {
+  "../../../node_modules/buffer/index.js"(exports) {
     "use strict";
     init_globals_inject();
     var base64 = require_base64_js();
@@ -1900,7 +1900,7 @@ var init_path = __esm({
   }
 });
 
-// node_modules/@noble/ciphers/esm/_assert.js
+// ../../../node_modules/@noble/ciphers/esm/_assert.js
 function isBytes(a) {
   return a instanceof Uint8Array || a != null && typeof a === "object" && a.constructor.name === "Uint8Array";
 }
@@ -1924,12 +1924,12 @@ function output(out2, instance) {
   }
 }
 var init_assert = __esm({
-  "node_modules/@noble/ciphers/esm/_assert.js"() {
+  "../../../node_modules/@noble/ciphers/esm/_assert.js"() {
     init_globals_inject();
   }
 });
 
-// node_modules/@noble/ciphers/esm/utils.js
+// ../../../node_modules/@noble/ciphers/esm/utils.js
 function utf8ToBytes(str) {
   if (typeof str !== "string")
     throw new Error(`string expected, got ${typeof str}`);
@@ -1992,7 +1992,7 @@ function clean(...arrays) {
 }
 var u8, u32, createView, isLE, wrapCipher;
 var init_utils = __esm({
-  "node_modules/@noble/ciphers/esm/utils.js"() {
+  "../../../node_modules/@noble/ciphers/esm/utils.js"() {
     init_globals_inject();
     init_assert();
     u8 = (arr) => new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
@@ -2008,7 +2008,7 @@ var init_utils = __esm({
   }
 });
 
-// node_modules/@noble/ciphers/esm/_polyval.js
+// ../../../node_modules/@noble/ciphers/esm/_polyval.js
 function _toGHASHKey(k) {
   k.reverse();
   const hiBit = k[15] & 1;
@@ -2031,7 +2031,7 @@ function wrapConstructorWithKey(hashCons) {
 }
 var BLOCK_SIZE, ZEROS16, ZEROS32, POLY, mul2, swapLE, estimateWindow, GHASH, Polyval, ghash, polyval;
 var init_polyval = __esm({
-  "node_modules/@noble/ciphers/esm/_polyval.js"() {
+  "../../../node_modules/@noble/ciphers/esm/_polyval.js"() {
     init_globals_inject();
     init_assert();
     init_utils();
@@ -2206,7 +2206,7 @@ var init_polyval = __esm({
   }
 });
 
-// node_modules/@noble/ciphers/esm/aes.js
+// ../../../node_modules/@noble/ciphers/esm/aes.js
 function mul22(n) {
   return n << 1 ^ POLY2 & -(n >> 7);
 }
@@ -2486,7 +2486,7 @@ function decryptBlock(xk, block) {
 }
 var BLOCK_SIZE2, BLOCK_SIZE32, EMPTY_BLOCK, POLY2, sbox, invSbox, rotr32_8, rotl32_8, byteSwap, tableEncoding, tableDecoding, xPowers, ctr, ecb, cbc, cfb, gcm, limit, siv, AESW, AESKW_IV, aeskw, AESKWP_IV, aeskwp;
 var init_aes = __esm({
-  "node_modules/@noble/ciphers/esm/aes.js"() {
+  "../../../node_modules/@noble/ciphers/esm/aes.js"() {
     init_globals_inject();
     init_assert();
     init_polyval();
@@ -2959,7 +2959,7 @@ var init_aes = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/_assert.js
+// ../../../node_modules/@noble/hashes/esm/_assert.js
 function number(n) {
   if (!Number.isSafeInteger(n) || n < 0)
     throw new Error(`positive integer expected, not ${n}`);
@@ -2993,21 +2993,21 @@ function output2(out2, instance) {
   }
 }
 var init_assert2 = __esm({
-  "node_modules/@noble/hashes/esm/_assert.js"() {
+  "../../../node_modules/@noble/hashes/esm/_assert.js"() {
     init_globals_inject();
   }
 });
 
-// node_modules/@noble/hashes/esm/crypto.js
+// ../../../node_modules/@noble/hashes/esm/crypto.js
 var crypto2;
 var init_crypto = __esm({
-  "node_modules/@noble/hashes/esm/crypto.js"() {
+  "../../../node_modules/@noble/hashes/esm/crypto.js"() {
     init_globals_inject();
     crypto2 = typeof globalThis === "object" && "crypto" in globalThis ? globalThis.crypto : void 0;
   }
 });
 
-// node_modules/@noble/hashes/esm/utils.js
+// ../../../node_modules/@noble/hashes/esm/utils.js
 function byteSwap32(arr) {
   for (let i = 0; i < arr.length; i++) {
     arr[i] = byteSwap2(arr[i]);
@@ -3049,7 +3049,7 @@ function randomBytes(bytesLength = 32) {
 }
 var u322, createView2, rotr, rotl, isLE2, byteSwap2, Hash, toStr;
 var init_utils2 = __esm({
-  "node_modules/@noble/hashes/esm/utils.js"() {
+  "../../../node_modules/@noble/hashes/esm/utils.js"() {
     init_globals_inject();
     init_crypto();
     init_assert2();
@@ -3069,7 +3069,7 @@ var init_utils2 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/_md.js
+// ../../../node_modules/@noble/hashes/esm/_md.js
 function setBigUint642(view, byteOffset, value, isLE3) {
   if (typeof view.setBigUint64 === "function")
     return view.setBigUint64(byteOffset, value, isLE3);
@@ -3084,7 +3084,7 @@ function setBigUint642(view, byteOffset, value, isLE3) {
 }
 var Chi, Maj, HashMD;
 var init_md = __esm({
-  "node_modules/@noble/hashes/esm/_md.js"() {
+  "../../../node_modules/@noble/hashes/esm/_md.js"() {
     init_globals_inject();
     init_assert2();
     init_utils2();
@@ -3179,10 +3179,10 @@ var init_md = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/sha256.js
+// ../../../node_modules/@noble/hashes/esm/sha256.js
 var SHA256_K, SHA256_IV, SHA256_W, SHA256, sha256;
 var init_sha256 = __esm({
-  "node_modules/@noble/hashes/esm/sha256.js"() {
+  "../../../node_modules/@noble/hashes/esm/sha256.js"() {
     init_globals_inject();
     init_md();
     init_utils2();
@@ -3337,10 +3337,10 @@ var init_sha256 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/sha1.js
+// ../../../node_modules/@noble/hashes/esm/sha1.js
 var SHA1_IV, SHA1_W, SHA1, sha1;
 var init_sha1 = __esm({
-  "node_modules/@noble/hashes/esm/sha1.js"() {
+  "../../../node_modules/@noble/hashes/esm/sha1.js"() {
     init_globals_inject();
     init_md();
     init_utils2();
@@ -3419,10 +3419,10 @@ var init_sha1 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/hmac.js
+// ../../../node_modules/@noble/hashes/esm/hmac.js
 var HMAC, hmac;
 var init_hmac = __esm({
-  "node_modules/@noble/hashes/esm/hmac.js"() {
+  "../../../node_modules/@noble/hashes/esm/hmac.js"() {
     init_globals_inject();
     init_assert2();
     init_utils2();
@@ -3492,7 +3492,7 @@ var init_hmac = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/pbkdf2.js
+// ../../../node_modules/@noble/hashes/esm/pbkdf2.js
 function pbkdf2Init(hash2, _password, _salt, _opts) {
   hash(hash2);
   const opts = checkOpts({ dkLen: 32, asyncTick: 10 }, _opts);
@@ -3537,7 +3537,7 @@ function pbkdf2(hash2, password, salt, opts) {
   return pbkdf2Output(PRF, PRFSalt, DK, prfW, u);
 }
 var init_pbkdf2 = __esm({
-  "node_modules/@noble/hashes/esm/pbkdf2.js"() {
+  "../../../node_modules/@noble/hashes/esm/pbkdf2.js"() {
     init_globals_inject();
     init_assert2();
     init_hmac();
@@ -3545,7 +3545,7 @@ var init_pbkdf2 = __esm({
   }
 });
 
-// node_modules/@noble/hashes/esm/scrypt.js
+// ../../../node_modules/@noble/hashes/esm/scrypt.js
 function XorAndSalsa(prev, pi, input, ii, out2, oi) {
   let y00 = prev[pi++] ^ input[ii++], y01 = prev[pi++] ^ input[ii++];
   let y02 = prev[pi++] ^ input[ii++], y03 = prev[pi++] ^ input[ii++];
@@ -3701,7 +3701,7 @@ function scrypt(password, salt, opts) {
   return scryptOutput(password, dkLen, B2, V, tmp);
 }
 var init_scrypt = __esm({
-  "node_modules/@noble/hashes/esm/scrypt.js"() {
+  "../../../node_modules/@noble/hashes/esm/scrypt.js"() {
     init_globals_inject();
     init_assert2();
     init_sha256();
@@ -3846,9 +3846,9 @@ var init_crypto2 = __esm({
   }
 });
 
-// node_modules/sql.js/dist/sql-wasm.js
+// ../../../node_modules/sql.js/dist/sql-wasm.js
 var require_sql_wasm = __commonJS({
-  "node_modules/sql.js/dist/sql-wasm.js"(exports, module) {
+  "../../../node_modules/sql.js/dist/sql-wasm.js"(exports, module) {
     init_globals_inject();
     var initSqlJsPromise = void 0;
     var initSqlJs = function(moduleConfig) {
@@ -8267,9 +8267,11 @@ var require_auth = __commonJS({
     var { sha256: sha2562, randomToken, verifyPassword, verifyPasswordAsync, verifyTotp, decrypt: decrypt3 } = require_crypto();
     var { unauthorized, forbidden, HttpError: HttpError3 } = require_http();
     function policy() {
-      const num = (k, d) => {
-        const v = Number(db3.getSetting(k, ""));
-        return Number.isFinite(v) && v > 0 ? v : d;
+      const num = (k, d, { zero = false } = {}) => {
+        const raw = db3.getSetting(k, null);
+        if (raw === null || String(raw).trim() === "") return d;
+        const v = Number(raw);
+        return Number.isFinite(v) && (v > 0 || zero && v === 0) ? v : d;
       };
       const roles = db3.getSetting("mfa_required_roles", null);
       return {
@@ -8279,7 +8281,7 @@ var require_auth = __commonJS({
         mfaRequiredRoles: roles === null ? config.mfaRequiredRoles : roles.split(",").map((x) => x.trim()).filter(Boolean),
         // How long a new account in a role that requires two-step verification has to set it up. Without this
         // the very first administrator would be locked out the moment the setup wizard created them.
-        mfaGraceDays: num("mfa_grace_days", config.mfaGraceDays)
+        mfaGraceDays: num("mfa_grace_days", config.mfaGraceDays, { zero: true })
       };
     }
     var PERMS = {
@@ -8894,7 +8896,7 @@ var require_constants = __commonJS({
   }
 });
 
-// node_modules/fflate/esm/browser.js
+// ../../../node_modules/fflate/esm/browser.js
 function deflateSync(data, opts) {
   return dopt(data, opts || {}, 0, 0);
 }
@@ -8914,7 +8916,7 @@ function unzlibSync(data, opts) {
 }
 var u82, u16, i32, fleb, fdeb, clim, freb, _a, fl, revfl, _b, fd, revfd, rev, x, i, hMap, flt, i, i, i, i, fdt, i, flm, flrm, fdm, fdrm, max, bits, bits16, shft, slc, ec, err, inflt, wbits, wbits16, hTree, ln, lc, clen, wfblk, wblk, deo, et, dflt, adler, dopt, wbytes, zlh, zls, td, tds;
 var init_browser = __esm({
-  "node_modules/fflate/esm/browser.js"() {
+  "../../../node_modules/fflate/esm/browser.js"() {
     init_globals_inject();
     u82 = Uint8Array;
     u16 = Uint16Array;
@@ -11099,6 +11101,7 @@ var require_scheduled_backup = __commonJS({
     var audit3 = require_audit();
     var backup = require_backup();
     var FILE_RE = /^suds-.*\.db\.enc$/;
+    var OFFSITE_MISSING = "offsite directory does not exist (is the share mounted?)";
     function settings() {
       const hours = Number(db3.getSetting("backup_schedule_hours", "0")) || 0;
       const retain = Math.max(1, Number(db3.getSetting("backup_retain_count", "14")) || 14);
@@ -11145,21 +11148,28 @@ var require_scheduled_backup = __commonJS({
         return { file: null, bytes: 0, offsiteOk: null, verified: false, verifyError: reason, failed: true, error: reason };
       }
       let offsiteOk = null;
+      let offsiteError = null;
       if (offsiteDir) {
         try {
-          fs.mkdirSync(offsiteDir, { recursive: true });
+          let st = null;
+          try {
+            st = fs.statSync(offsiteDir);
+          } catch {
+          }
+          if (!st || !st.isDirectory()) throw new Error(OFFSITE_MISSING);
           fs.copyFileSync(file, path.join(offsiteDir, path.basename(file)));
           offsiteOk = true;
         } catch (e) {
           offsiteOk = false;
-          console.error("[suds] offsite backup copy failed:", e && e.message || e);
+          offsiteError = String(e && e.message || e);
+          console.error("[suds] offsite backup copy failed:", offsiteError);
         }
       }
       kept = prune(dir, retain);
       db3.setSetting("last_scheduled_backup_at", db3.now());
-      db3.setSetting("last_scheduled_backup_status", !verified ? `backup written but could not be read back \u2014 ${verifyError}` : offsiteDir && offsiteOk === false ? "ok (verified) \u2014 offsite copy failed, local backup kept" : "ok (verified)");
-      audit3.log({ user: { username: "system" }, action: "backup.scheduled", details: { bytes: bytes3.length, offsite: offsiteDir ? offsiteOk : null, kept, verified } });
-      return { file, bytes: bytes3.length, offsiteOk, verified, verifyError };
+      db3.setSetting("last_scheduled_backup_status", !verified ? `backup written but could not be read back \u2014 ${verifyError}` : offsiteDir && offsiteOk === false ? `ok (verified) \u2014 offsite copy failed: ${offsiteError}; local backup kept` : "ok (verified)");
+      audit3.log({ user: { username: "system" }, action: "backup.scheduled", details: { bytes: bytes3.length, offsite: offsiteDir ? offsiteOk : null, offsite_error: offsiteError || void 0, kept, verified } });
+      return { file, bytes: bytes3.length, offsiteOk, offsiteError, verified, verifyError };
     }
     function prune(dir, retain) {
       const files = fs.readdirSync(dir).filter((f) => FILE_RE.test(f)).sort();
@@ -11220,7 +11230,7 @@ var require_admin = __commonJS({
     var auth3 = require_auth();
     var audit3 = require_audit();
     var config = require_config();
-    var { badRequest, notFound, forbidden } = require_http();
+    var { badRequest, notFound, forbidden, HttpError: HttpError3 } = require_http();
     var { validate, paging } = require_validate();
     var { uuid: uuid2, randomToken, sha256: sha2562 } = require_crypto();
     var SETTING_KEYS = [
@@ -11246,7 +11256,10 @@ var require_admin = __commonJS({
     module.exports = (r) => {
       r.get("/api/admin/settings", auth3.requireAuth, auth3.requirePerm("settings:manage"), () => {
         const out2 = {};
-        for (const k of SETTING_KEYS) out2[k] = db3.getSetting(k, "");
+        for (const k of SETTING_KEYS) {
+          const v = db3.getSetting(k, null);
+          out2[k] = v === "" ? null : v;
+        }
         const pol = auth3.policy();
         out2.policy = pol;
         out2.env = { env: config.env, tls: !!config.tls.cert, tls_mode: config.tls.mode, key_source: config.keySource, idle_minutes: pol.idleMinutes, absolute_hours: pol.absoluteHours, mfa_required_roles: pol.mfaRequiredRoles, listener: listener.describe(), ms_graph_configured: !!(config.msGraph.tenantId && config.msGraph.clientId && config.msGraph.clientSecret && config.msGraph.user), oidc_configured: config.oidc.enabled, oidc_label: config.oidc.label };
@@ -11254,15 +11267,19 @@ var require_admin = __commonJS({
       });
       r.put("/api/admin/settings", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
         const changed = [];
-        for (const k of SETTING_KEYS) if (ctx.body[k] !== void 0) {
-          let v = ctx.body[k] === null ? "" : String(ctx.body[k]).slice(0, 500);
-          if (["session_idle_minutes", "session_absolute_hours", "password_max_age_days", "mfa_grace_days", "backup_schedule_hours", "backup_retain_count", "client_retention_years"].includes(k) && v !== "" && !(Number(v) >= 0)) throw badRequest(`${k} must be a non-negative number`);
-          if (k === "client_retention_years" && v !== "" && Number(v) < 6) throw badRequest("Client records must be kept at least 6 years (45 CFR \xA7164.316(b)(2)); most SUD programs keep 7 or more");
-          if (k === "mfa_required_roles") v = v.split(",").map((x) => x.trim()).filter((x) => ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"].includes(x)).join(",");
-          if (k === "session_idle_minutes" && v !== "" && Number(v) > 60) throw badRequest("Idle timeout may not exceed 60 minutes (HIPAA automatic logoff)");
-          db3.setSetting(k, v);
-          changed.push(k);
-        }
+        db3.transaction(() => {
+          for (const k of SETTING_KEYS) if (ctx.body[k] !== void 0) {
+            let v = ctx.body[k] === null ? "" : String(ctx.body[k]).slice(0, 500);
+            if (["session_idle_minutes", "session_absolute_hours", "password_max_age_days", "mfa_grace_days", "backup_schedule_hours", "backup_retain_count", "client_retention_years"].includes(k) && v !== "" && !(Number(v) >= 0)) throw badRequest(`${k} must be a non-negative number`);
+            if (["session_idle_minutes", "session_absolute_hours", "password_max_age_days", "backup_retain_count"].includes(k) && v !== "" && Number(v) < 1) throw badRequest(`${k} must be at least 1; leave it blank to use the default`);
+            if (k === "client_retention_years" && v !== "" && Number(v) < 6) throw badRequest("Client records must be kept at least 6 years (45 CFR \xA7164.316(b)(2)); most SUD programs keep 7 or more");
+            if (k === "mfa_required_roles") v = v.split(",").map((x) => x.trim()).filter((x) => ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"].includes(x)).join(",");
+            if (k === "session_idle_minutes" && v !== "" && Number(v) > 60) throw badRequest("Idle timeout may not exceed 60 minutes (HIPAA automatic logoff)");
+            if (v === "") db3.run(`DELETE FROM settings WHERE key=?`, k);
+            else db3.setSetting(k, v);
+            changed.push(k);
+          }
+        });
         audit3.log({ user: ctx.user, action: "settings.update", ip: ctx.ip, details: { changed } });
         return { ok: true };
       });
@@ -11375,16 +11392,24 @@ var require_admin = __commonJS({
         const { retain, offsiteDir } = scheduledBackup.settings();
         const out2 = scheduledBackup.run({ retain, offsiteDir });
         audit3.log({ user: ctx.user, action: "backup.run_now", ip: ctx.ip, details: { bytes: out2.bytes, offsite: out2.offsiteOk, verified: out2.verified } });
-        return { ok: true, file: path.basename(out2.file), bytes: out2.bytes, offsite_ok: out2.offsiteOk, verified: out2.verified, verify_error: out2.verifyError || null };
+        return { ok: true, file: path.basename(out2.file), bytes: out2.bytes, offsite_ok: out2.offsiteOk, offsite_error: out2.offsiteError || null, verified: out2.verified, verify_error: out2.verifyError || null };
       });
       function backupFromUpload(ctx) {
         const b64 = ctx.body && ctx.body.file_b64 || "";
         if (!b64 || typeof b64 !== "string") throw badRequest("Choose the backup file to upload");
         const raw = import_buffer.Buffer.from(b64.replace(/^data:[^,]*,/, ""), "base64");
-        return backup.decrypt(raw);
+        return asBadRequest(() => backup.decrypt(raw));
+      }
+      function asBadRequest(fn) {
+        try {
+          return fn();
+        } catch (e) {
+          if (e instanceof HttpError3) throw e;
+          throw badRequest(e.message);
+        }
       }
       r.post("/api/admin/restore/preview", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
-        const info = backup.inspect(backupFromUpload(ctx));
+        const info = asBadRequest(() => backup.inspect(backupFromUpload(ctx)));
         audit3.log({ user: ctx.user, action: "backup.preview", ip: ctx.ip, details: { schema_version: info.schema_version, clients: info.counts.clients } });
         return { ...info, current: { clients: db3.one(`SELECT COUNT(*) n FROM clients WHERE deleted_at IS NULL`).n, schema_version: Number(db3.getSetting("schema_version", "0")) } };
       });
@@ -11397,6 +11422,7 @@ var require_admin = __commonJS({
           throw forbidden("Password verification failed");
         }
         const plain = backupFromUpload(ctx);
+        asBadRequest(() => backup.inspect(plain));
         audit3.log({ user: ctx.user, action: "backup.restore.start", ip: ctx.ip, details: { bytes: plain.length } });
         const out2 = backup.restore(plain);
         audit3.log({ user: ctx.user, action: "backup.restore", ip: ctx.ip, details: { clients: out2.counts.clients, schema_version: out2.schema_version, kept: path.basename(out2.previous_database_kept_at) } });
@@ -11988,6 +12014,19 @@ var require_budget = __commonJS({
         throw badRequest(`${what} ${date} is outside the period of ${fund.name} (${fund.fiscal_year_start} to ${fund.fiscal_year_end}). Charge it to the fund that covers that date.`);
       }
     }
+    var money = (n) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    function assertPeriodOrder(start2, end) {
+      if (start2 && end && end < start2) throw badRequest(`The period ends (${end}) before it starts (${start2})`);
+    }
+    function assertRoom(fundId, parentId, amount, { excluding = null } = {}) {
+      const siblings = parentId ? db3.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE parent_id=? AND id<>?`, parentId, excluding || "").n : db3.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE funding_source_id=? AND parent_id IS NULL AND id<>?`, fundId, excluding || "").n;
+      const holder = parentId ? db3.one(`SELECT COALESCE(label, category) AS name, allocated_amount AS cap FROM budget_lines WHERE id=?`, parentId) : db3.one(`SELECT name, total_amount AS cap FROM funding_sources WHERE id=?`, fundId);
+      if (!holder) return;
+      const total = cents(siblings + amount);
+      if (total > cents(holder.cap)) {
+        throw badRequest(`That would allocate ${money(total)} against ${holder.name}, which ${parentId ? "is allocated" : "totals"} ${money(holder.cap)}; ${money(cents(holder.cap - siblings))} is left to allocate. Reduce the amount, or raise ${parentId ? "the parent allocation" : "the fund's total"} first.`);
+      }
+    }
     function lineAvailable(lineId, { excluding = null } = {}) {
       const l = db3.one(`SELECT * FROM budget_lines WHERE id=?`, lineId);
       if (!l) return null;
@@ -12030,17 +12069,19 @@ var require_budget = __commonJS({
         const v = validate(ctx.body, fundShape);
         const id = uuid2();
         const keys = Object.keys(v);
+        assertPeriodOrder(v.fiscal_year_start, v.fiscal_year_end);
         db3.run(`INSERT INTO funding_sources(id,${keys.join(",")}) VALUES(?,${keys.map(() => "?").join(",")})`, id, ...keys.map((k) => v[k]));
         audit3.log({ user: ctx.user, action: "fund.create", entity: "funding_source", entityId: id, ip: ctx.ip });
         ctx.status = 201;
         return { id };
       });
       r.put("/api/budget/funds/:id", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
-        const f = db3.one(`SELECT id FROM funding_sources WHERE id=?`, ctx.params.id);
+        const f = db3.one(`SELECT * FROM funding_sources WHERE id=?`, ctx.params.id);
         if (!f) throw notFound();
         const v = validate(ctx.body, Object.fromEntries(Object.entries(fundShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
         const keys = Object.keys(v);
         if (!keys.length) return { ok: true };
+        assertPeriodOrder(v.fiscal_year_start ?? f.fiscal_year_start, v.fiscal_year_end ?? f.fiscal_year_end);
         db3.run(`UPDATE funding_sources SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), db3.now(), f.id);
         audit3.log({ user: ctx.user, action: "fund.update", entity: "funding_source", entityId: f.id, ip: ctx.ip, details: { fields: keys } });
         return { ok: true };
@@ -12054,6 +12095,7 @@ var require_budget = __commonJS({
           const p = db3.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, v.parent_id, f.id);
           if (!p) throw badRequest("Parent allocation does not belong to this fund");
         }
+        assertRoom(f.id, v.parent_id || null, v.allocated_amount);
         db3.run(`INSERT INTO budget_lines(id,funding_source_id,parent_id,category,label,allocated_amount,notes) VALUES(?,?,?,?,?,?,?)`, id, f.id, v.parent_id || null, v.category, v.label || null, v.allocated_amount, v.notes || null);
         audit3.log({ user: ctx.user, action: "budget_line.create", entity: "budget_line", entityId: id, ip: ctx.ip, details: v.parent_id ? { parent_id: v.parent_id } : void 0 });
         ctx.status = 201;
@@ -12068,6 +12110,13 @@ var require_budget = __commonJS({
           const p = db3.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, v.parent_id, l.funding_source_id);
           if (!p) throw badRequest("Parent allocation does not belong to this fund");
           if (wouldCycle(l.id, v.parent_id)) throw badRequest("That would nest this allocation inside one of its own sub-allocations");
+        }
+        if ("allocated_amount" in v || "parent_id" in v) {
+          const parentId = "parent_id" in v ? v.parent_id || null : l.parent_id;
+          const amount = v.allocated_amount ?? l.allocated_amount;
+          assertRoom(l.funding_source_id, parentId, amount, { excluding: l.id });
+          const handedDown = db3.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE parent_id=?`, l.id).n;
+          if (cents(amount) < cents(handedDown)) throw badRequest(`Its sub-allocations already total ${money(handedDown)}; reduce those first`);
         }
         const keys = Object.keys(v);
         if (keys.length) db3.run(`UPDATE budget_lines SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), db3.now(), l.id);
@@ -12132,8 +12181,18 @@ var require_budget = __commonJS({
             if (!v.category) v.category = l.category;
           }
         },
-        beforeUpdate: (ctx, v) => {
+        beforeUpdate: (ctx, v, row) => {
           if (v.amount !== void 0 && v.amount !== null) v.amount = cents(v.amount);
+          if ("spent_at" in v || "funding_source_id" in v || "budget_line_id" in v) {
+            const f = db3.one(`SELECT * FROM funding_sources WHERE id=? AND is_active=1`, v.funding_source_id || row.funding_source_id);
+            if (!f) throw badRequest("Unknown or inactive funding source");
+            assertInPeriod(f, v.spent_at || row.spent_at, "Expenditure date");
+            const lineId = "budget_line_id" in v ? v.budget_line_id : row.budget_line_id;
+            if (lineId) {
+              const l = db3.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, lineId, f.id);
+              if (!l) throw badRequest("Budget line does not belong to fund");
+            }
+          }
         },
         canEdit: (ctx, row) => row.status === "pending" && (row.user_id === ctx.user.id || auth3.hasPerm(ctx.user, "budget:approve"))
       });
@@ -12146,7 +12205,7 @@ var require_budget = __commonJS({
           const by = e.approved_by ? db3.one(`SELECT display_name FROM users WHERE id=?`, e.approved_by) : null;
           throw new HttpError3(409, `This expenditure is already ${e.status}${by ? ` (by ${by.display_name})` : ""}; it cannot be marked ${status}`, { current_status: e.status, approved_by: e.approved_by || null });
         }
-        if (e.user_id === ctx.user.id && status === "approved" && ctx.user.role !== "admin") throw badRequest("Separation of duties: you cannot approve your own expenditure");
+        if (e.user_id === ctx.user.id && status === "approved") throw badRequest("Separation of duties: you cannot approve your own expenditure; another approver must review it");
         if (status === "rejected" && !note) throw badRequest("Say why this expenditure is being rejected, so the person who submitted it knows what to fix");
         const details = { note, amount: e.amount };
         if (status === "approved" && e.budget_line_id) {
@@ -15280,7 +15339,7 @@ var require_supplies = __commonJS({
       applyDelta(ctx, deltas, { intervention: row.id, action: "supply.restore" });
     }
     module.exports = (r) => {
-      r.get("/api/supplies", auth3.requireAuth, () => ({ rows: list(), drawdown: DRAWDOWN }));
+      r.get("/api/supplies", auth3.requireAuth, auth3.requirePerm("interventions:read"), () => ({ rows: list(), drawdown: DRAWDOWN }));
       r.post("/api/supplies", auth3.requireAuth, auth3.requirePerm("interventions:write"), (ctx) => {
         const v = validate(ctx.body, { item: { type: "string", required: true, maxLen: 80 }, quantity: { type: "number", required: true, integer: true, min: 0, max: 1e6 } });
         const item = v.item.trim();
@@ -20690,11 +20749,14 @@ var require_setup = __commonJS({
     function onlyBootstrapAdmin() {
       return db3.one(`SELECT COUNT(*) n FROM users WHERE NOT (username='admin' AND must_change_password=1 AND last_login_at IS NULL)`).n === 0;
     }
+    function isNeeded() {
+      return setupNeeded() && onlyBootstrapAdmin();
+    }
     module.exports = (r) => {
       r.get("/api/setup/status", (ctx) => {
         const needed = setupNeeded() && onlyBootstrapAdmin();
         if (!needed && !ctx.user) return { needed: false, setupComplete: true };
-        return { needed, setupComplete: !needed, listener: listener.describe(), hostname: (init_os(), __toCommonJS(os_exports)).hostname(), keySource: config.keySource, env: config.env, version: config.version };
+        return { needed, setupComplete: !needed, listener: listener.describe(), hostname: (init_os(), __toCommonJS(os_exports)).hostname(), keySource: config.keySource, env: config.env, version: config.version, port_env: !!proc.env.PORT };
       });
       r.post("/api/setup/complete", async (ctx) => {
         if (!(setupNeeded() && onlyBootstrapAdmin())) throw new HttpError3(403, "Setup has already been completed");
@@ -20728,7 +20790,7 @@ var require_setup = __commonJS({
           if (v.program_contact) db3.setSetting("program_contact", v.program_contact);
           db3.setSetting("caseload_restriction", "1");
         });
-        const port = v.port || "auto";
+        const port = proc.env.PORT ? config.port : v.port || "auto";
         const host = v.network === "lan" ? "0.0.0.0" : "127.0.0.1";
         let tls = "none";
         if (v.network === "lan" && !v.https && !proc.env.TLS_CERT_PATH && !config.trustProxy) throw badRequest("HTTPS is required when other devices can connect");
@@ -20754,6 +20816,7 @@ var require_setup = __commonJS({
         return { ok: true, listener: desc, keys_file: config.keySource === "env" ? null : config.keysJsonPath };
       });
     };
+    module.exports.isNeeded = isNeeded;
   }
 });
 
@@ -20768,12 +20831,12 @@ var require_supervision = __commonJS({
     var { badRequest, notFound, forbidden } = require_http();
     var { validate } = require_validate();
     var { decrypt: decrypt3 } = require_crypto();
-    function supervisedIds(user) {
-      if (auth3.hasPerm(user, "clients:all")) return null;
+    function supervisedIds(user, allPerm = "clients:all") {
+      if (auth3.hasPerm(user, allPerm)) return null;
       return db3.all(`SELECT id FROM users WHERE supervisor_id=?`, user.id).map((u) => u.id);
     }
-    function staffFilter(user, col) {
-      const ids = supervisedIds(user);
+    function staffFilter(user, col, allPerm) {
+      const ids = supervisedIds(user, allPerm);
       if (ids === null) return { sql: "1=1", params: [] };
       if (!ids.length) return { sql: "1=0", params: [] };
       return { sql: `${col} IN (${ids.map(() => "?").join(",")})`, params: ids };
@@ -20781,7 +20844,7 @@ var require_supervision = __commonJS({
     module.exports = (r) => {
       r.get("/api/supervision/queue", auth3.requireAuth, auth3.requirePerm("notes:cosign", "time:approve", "assignments:manage"), (ctx) => {
         const sf = staffFilter(ctx.user, "n.author_id");
-        const tf = staffFilter(ctx.user, "t.user_id");
+        const tf = staffFilter(ctx.user, "t.user_id", "time:all");
         const lockDays = Number(db3.getSetting("note_lock_days", "3"));
         const staleBefore = new Date(Date.now() - lockDays * 864e5).toISOString();
         const out2 = {};
@@ -20838,6 +20901,7 @@ var require_supervision = __commonJS({
         audit3.log({ user: ctx.user, action: "breakglass.acknowledge", entity: "breakglass_event", entityId: b.id, clientId: b.client_id, ip: ctx.ip, details: { accessed_by: b.user_id, note_id: b.note_id || void 0 } });
         return { ok: true };
       });
+      const NO_REASON = "Say why this time is being returned, so the worker knows what to correct";
       function loadEntry(ctx, id) {
         const t = db3.one(`SELECT * FROM time_entries WHERE id=?`, id);
         if (!t) throw notFound("Time entry not found");
@@ -20862,12 +20926,14 @@ var require_supervision = __commonJS({
         const v = validate(ctx.body, { decision: { type: "string", required: true, enum: ["approved", "rejected"] }, note: { type: "string", maxLen: 500 } });
         if (t.user_id === ctx.user.id) throw forbidden("You cannot approve your own time");
         if (t.status !== "submitted") throw badRequest("Only submitted time can be approved or returned");
+        if (v.decision === "rejected" && !v.note) throw badRequest(NO_REASON);
         db3.run(`UPDATE time_entries SET status=?, approved_by=?, approved_at=?, approval_note=?, updated_at=? WHERE id=?`, v.decision, ctx.user.id, db3.now(), v.note || null, db3.now(), t.id);
         audit3.log({ user: ctx.user, action: `time.${v.decision}`, entity: "time_entry", entityId: t.id, clientId: t.client_id, ip: ctx.ip, details: { worker: t.user_id, minutes: t.minutes } });
         return { ok: true };
       });
       r.post("/api/time/approve-batch", auth3.requireAuth, auth3.requirePerm("time:approve"), (ctx) => {
         const v = validate(ctx.body, { ids: { type: "array", required: true, maxLen: 500 }, decision: { type: "string", required: true, enum: ["approved", "rejected"] }, note: { type: "string", maxLen: 500 } });
+        if (v.decision === "rejected" && !v.note) throw badRequest(NO_REASON);
         let n = 0;
         const skipped = [];
         db3.transaction(() => {
@@ -21721,6 +21787,11 @@ var require_app2 = __commonJS({
       }
       return req.socket?.remoteAddress || "";
     }
+    function isDiskFull(err2) {
+      if (!err2) return false;
+      if (err2.code === "SQLITE_FULL" || err2.errcode === 13 || err2.code === "ENOSPC") return true;
+      return /database or disk is full/i.test(String(err2.message || "")) || /database or disk is full/i.test(String(err2.errstr || ""));
+    }
     function createHandler() {
       db3.open();
       const router2 = buildRouter();
@@ -21788,6 +21859,10 @@ var require_app2 = __commonJS({
           if (err2 instanceof HttpError3) {
             if (err2.status === 413 && !res.headersSent) res.setHeader("Connection", "close");
             if (!res.headersSent) sendJson(res, err2.status, { error: err2.message, ...err2.extra || {} });
+            else res.destroy();
+          } else if (isDiskFull(err2)) {
+            console.error(`[suds] ${req.method} ${url.pathname}: disk full:`, err2.message);
+            if (!res.headersSent) sendJson(res, 507, { error: "The server's disk is full; contact IT", diskFull: true });
             else res.destroy();
           } else {
             console.error(`[suds] ${req.method} ${url.pathname}:`, err2);

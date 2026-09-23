@@ -731,8 +731,11 @@ test('a blank optional setting clears it instead of saving the word "null"', asy
   // text setting, would have literally saved "null" as the value.
   assert.equal((await admin.put('/api/admin/settings', { session_idle_minutes: null, county_name: null })).status, 200);
   const s = await admin.get('/api/admin/settings');
-  assert.equal(s.data.session_idle_minutes, '');
-  assert.equal(s.data.county_name, '');
+  // A cleared setting is reported as null (unset), never '': the form takes '' as a value and would render
+  // the policy field blank instead of showing its default.
+  assert.equal(s.data.session_idle_minutes, null);
+  assert.equal(s.data.county_name, null);
+  assert.equal(H.db.getSetting('session_idle_minutes', 'gone'), 'gone', 'the row is removed rather than stored empty');
   assert.equal(s.data.policy.idleMinutes, 15, 'a cleared setting falls back to the default, not to the word "null"');
 });
 

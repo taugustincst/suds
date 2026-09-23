@@ -39,7 +39,15 @@ async function openUserForm(values, onDone) {
       }
       toast('User created', 'ok');
     }
-    else { await put(`/api/users/${values.id}`, d); m.close(); toast('User updated', 'ok'); await loadRefData(); }
+    else {
+      // Turning an account off is confirmed: it ends every session and, with the box above ticked, tells
+      // each of their synced devices to erase its local copy. Neither is a thing to do by mis-click.
+      if (values.is_active && !d.is_active) {
+        const wipe = d.wipe_devices && deviceCount ? ` ${deviceCount} synced device${deviceCount === 1 ? '' : 's'} will be told to erase ${deviceCount === 1 ? 'its' : 'their'} local copy of client records the next time ${deviceCount === 1 ? 'it' : 'they'} connect.` : '';
+        if (!await confirmDialog('Deactivate this account', `${values.display_name} will be signed out everywhere and can no longer sign in.${wipe} Continue?`, { danger: true, okText: 'Deactivate' })) return;
+      }
+      await put(`/api/users/${values.id}`, d); m.close(); toast('User updated', 'ok'); await loadRefData();
+    }
     onDone();
   } });
   const m = modal(isNew ? 'New user' : `Edit ${values.display_name}`, f, { wide: true });
@@ -152,7 +160,7 @@ route('admin', async (r) => {
       const runNow = h('span', { class: 'small muted' });
       const runBackupNow = async () => {
         runNow.textContent = 'Running…';
-        try { const r = await post('/api/admin/backup/run-now', {}); runNow.textContent = r.offsite_ok === false ? 'Backup saved, but the offsite copy failed — check the path and try again.' : 'Backup saved.'; }
+        try { const r = await post('/api/admin/backup/run-now', {}); runNow.textContent = r.offsite_ok === false ? `Backup saved, but the offsite copy failed${r.offsite_error ? `: ${r.offsite_error}` : ''} — check the path and try again.` : 'Backup saved.'; }
         catch (e) { runNow.textContent = e.message; }
       };
       const updateStatus = h('span', { class: 'small muted' });
@@ -188,7 +196,7 @@ route('admin', async (r) => {
           { label: 'Syncs', key: 'sync_count' },
           { label: 'Status', render: d => d.revoked_at ? badge(d.wipe_requested_at ? 'Wiped' : 'Revoked', 'danger') : d.wipe_requested_at ? badge('Wipe pending', 'warn') : badge('Active', 'ok') },
           { label: '', render: d => h('div', { class: 'row' },
-            !d.revoked_at && !d.wipe_requested_at ? h('button', { class: 'btn sm', onClick: () => act(d.id, 'revoke') }, 'Revoke') : null,
+            !d.revoked_at && !d.wipe_requested_at ? h('button', { class: 'btn sm', onClick: async () => { if (await confirmDialog('Revoke this device', `"${d.label || 'This device'}" (${d.display_name}) will be blocked from syncing until you clear it. Its local copy is kept; use Wipe to erase it.`, { danger: true, okText: 'Revoke' })) act(d.id, 'revoke'); } }, 'Revoke') : null,
             !d.wipe_requested_at && !d.revoked_at ? h('button', { class: 'btn sm danger', onClick: async () => { if (await confirmDialog('Wipe this device', `The next time "${d.label || 'this device'}" (${d.display_name}) tries to sync, it will be told to erase everything it has stored and will need to be set up again. This cannot reach a device that never syncs again.`, { danger: true, okText: 'Request wipe' })) act(d.id, 'wipe'); } }, 'Wipe') : null,
             (d.revoked_at || d.wipe_requested_at) ? h('button', { class: 'btn sm', onClick: () => act(d.id, 'clear') }, 'Clear') : null) },
         ], devices, { empty: 'No devices have synced yet.' }));
@@ -257,8 +265,12 @@ export function restoreCard() {
             const r = await post('/api/admin/restore', { file_b64: fileB64, password: password.value, confirm: confirmBox.value.trim() });
             m.close();
             toast(`Restored ${r.counts.clients} client record(s).`, 'ok');
-            await confirmDialog('Restore complete', `${r.note} The database that was replaced is kept on the server as ${r.previous_database_kept_at.split('/').pop()}.`, { okText: 'Sign in again' });
-            location.hash = '#/login'; location.reload();
+            // The session this page holds belongs to the database that was just replaced, so there is
+            // nothing to cancel back to: however the dialog is dismissed, the next stop is the sign-in page.
+            const signIn = async () => { try { await post('/api/auth/logout', {}); } catch { /* the session is already gone with the old database */ } location.hash = '#/login'; location.reload(); };
+            const done = modal('Restore complete', h('div', {},
+              h('p', {}, `${r.note} The database that was replaced is kept on the server as ${r.previous_database_kept_at.split('/').pop()}.`),
+              h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', 'data-restore-done': '1', onClick: () => done.close() }, 'Sign in again'))), { onClose: signIn });
           } catch (e) { toast(e.message, 'error'); }
         } }, 'Replace everything'))));
   };

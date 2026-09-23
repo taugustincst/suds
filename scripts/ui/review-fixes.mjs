@@ -86,12 +86,67 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   ok(xl.size > 500, 'and is a real workbook');
 }
 
+// ---- administrator: the Settings form shows the policy defaults, and saving it keeps them ----
+{
+  const { page } = admin;
+  await go(page, 'admin?tab=settings');
+  const val = (n) => page.$eval(`input[name=${n}]`, e => e.value);
+  eq(await val('session_idle_minutes'), '15', 'a fresh install shows the idle timeout default in the field, not a blank');
+  eq(await val('session_absolute_hours'), '12', 'and the session length default');
+  eq(await val('password_max_age_days'), '90', 'and the password age default');
+  eq(await val('mfa_required_roles'), 'admin,supervisor,clinician,navigator,finance,readonly', 'and every role listed for MFA');
+  eq(await val('backup_retain_count'), '14', 'and the backup retention default');
+  await page.fill('input[name=county_name]', 'Demo County');
+  await page.click('button[type=submit]:has-text("Save settings")');
+  await until(async () => /Settings saved/.test(await page.textContent('body')));
+  const after = (await admin.api('GET', '/api/admin/settings')).data;
+  eq(after.county_name, 'Demo County', 'the county was saved');
+  eq(after.policy.mfaRequiredRoles.join(','), 'admin,supervisor,clinician,navigator,finance,readonly', 'saving the form as shown did not switch MFA off for anyone');
+  eq(after.policy.idleMinutes, 15, 'nor blank the idle timeout');
+  eq(after.policy.passwordMaxAgeDays, 90, 'nor the password age');
+}
+
 // ---- finance: can approve staff time; sees nothing it cannot use ----
 {
+  // Something to approve: a navigator's submitted entry. Finance supervises nobody, so before the fix the
+  // queue was scoped to "staff who name me as supervisor" and stayed empty for ever.
+  const users = (await admin.api('GET', '/api/users')).data.users;
+  const worker = users.find(u => u.username === 'mrivera');
+  const entry = await admin.api('POST', '/api/time', { user_id: worker.id, work_date: new Date().toISOString().slice(0, 10), minutes: 35, category: 'travel', description: 'Browser check: to be returned' });
+  eq(entry.status, 201, 'a time entry is logged for the navigator');
+  eq((await admin.api('POST', `/api/time/${entry.data.id}/submit`, {})).status, 200, 'and submitted');
   const fin = await session('afinance', 'Navigator2026!!');
   await go(fin.page, 'supervision');
   ok(!/Not available for your role/.test(await fin.page.textContent('.main')), 'finance (time:approve) reaches the Supervision page');
   ok(/Staff time/.test(await fin.page.textContent('.main')), 'and sees the staff-time queue');
+  const returnBtn = await fin.page.$('tbody button:has-text("Return")');
+  ok(returnBtn, 'with the submitted entry in it (time:all, not "supervised staff")');
+  if (returnBtn) {
+    await returnBtn.click();
+    const dialog = await until(() => fin.page.$('.modal input'));
+    ok(dialog, 'Return asks for a reason before anything happens');
+    await fin.page.click('.modal button:has-text("Cancel")');
+    await until(async () => !(await fin.page.$('.modal-bg')));
+    const entryRow = async () => (await fin.api('GET', `/api/time/${entry.data.id}`)).data.row;
+    eq((await entryRow()).status, 'submitted', 'cancelling leaves the entry waiting');
+    await fin.page.click('tbody button:has-text("Return")');
+    await until(() => fin.page.$('.modal input'));
+    await fin.page.click('.modal button:has-text("Return")');
+    await fin.page.waitForTimeout(300);
+    ok(await fin.page.$('.modal input'), 'an empty reason does not send it back');
+    await fin.page.fill('.modal input', 'Wrong date: the visit was on Tuesday');
+    await fin.page.click('.modal button:has-text("Return")');
+    await until(async () => (await entryRow()).status === 'rejected');
+    const row = await entryRow();
+    eq(row.status, 'rejected', 'with a reason, the entry is returned');
+    eq(row.approval_note, 'Wrong date: the visit was on Tuesday', 'and the reason is on the record');
+    const navS = await session('mrivera', 'Navigator2026!!');
+    await go(navS.page, 'time');
+    const reason = await until(() => navS.page.$('[data-return-reason]'));
+    ok(reason, 'the worker sees the returned entry on My time');
+    ok(reason && /Returned: Wrong date/.test(await reason.textContent()), 'with the reason spelled out, not hidden in a tooltip');
+    await navS.close();
+  }
   await go(fin.page, 'dashboard');
   ok(!/need a check-in/.test(await fin.page.textContent('.main')), 'no caseload card for a role with no caseload');
   ok(!(await fin.page.$$eval('.nav .sec', s => s.map(x => x.textContent))).includes('Connect clients'), 'no empty "Connect clients" heading');

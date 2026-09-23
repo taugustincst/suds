@@ -19,7 +19,8 @@ const statusBadge = (r) => {
   const s = r.status || 'draft';
   if (s === 'approved') return badge('Approved', 'ok');
   if (s === 'submitted') return badge('Awaiting approval', 'warn');
-  if (s === 'rejected') return h('span', { title: r.approval_note || '' }, badge('Returned', 'danger'));
+  // The reason is on the page, not hidden in a tooltip nobody hovers: it is what the worker needs to fix.
+  if (s === 'rejected') return h('span', {}, badge('Returned', 'danger'), r.approval_note ? h('div', { class: 'small', 'data-return-reason': '1' }, `Returned: ${r.approval_note}`) : null);
   return badge('Draft');
 };
 

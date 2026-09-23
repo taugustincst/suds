@@ -7,7 +7,10 @@ const { unauthorized, forbidden, HttpError } = require('./http');
 
 // Security policy: settings table (editable in Administration) overrides environment defaults.
 function policy() {
-  const num = (k, d) => { const v = Number(db.getSetting(k, '')); return Number.isFinite(v) && v > 0 ? v : d; };
+  // A blank or missing setting means the default. Zero is a real value only where zero means something
+  // (a grace period of no days); for a timeout or a password age it would mean the default too, and the
+  // Settings route refuses to store it so nobody is told "0" and given 15.
+  const num = (k, d, { zero = false } = {}) => { const raw = db.getSetting(k, null); if (raw === null || String(raw).trim() === '') return d; const v = Number(raw); return Number.isFinite(v) && (v > 0 || (zero && v === 0)) ? v : d; };
   const roles = db.getSetting('mfa_required_roles', null);
   return {
     idleMinutes: num('session_idle_minutes', config.session.idleMinutes),
@@ -16,7 +19,7 @@ function policy() {
     mfaRequiredRoles: roles === null ? config.mfaRequiredRoles : roles.split(',').map(x => x.trim()).filter(Boolean),
     // How long a new account in a role that requires two-step verification has to set it up. Without this
     // the very first administrator would be locked out the moment the setup wizard created them.
-    mfaGraceDays: num('mfa_grace_days', config.mfaGraceDays),
+    mfaGraceDays: num('mfa_grace_days', config.mfaGraceDays, { zero: true }),
   };
 }
 

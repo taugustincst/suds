@@ -1,7 +1,7 @@
 // What is waiting on a supervisor: notes to countersign, drafts the team has left, time to approve, and
 // referrals with no outcome recorded. Before this, the dashboard only counted the signed-in user's own
 // unsigned notes, so none of this was visible to the person responsible for it.
-import { h, route, get, post, state, toast, table, badge, fmt, can, pageHead, nav, emptyState, modal, form, announce } from '../app.js';
+import { h, route, get, post, state, toast, table, badge, fmt, can, pageHead, nav, emptyState, modal, form, announce, confirmDialog } from '../app.js';
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const hoursOf = (m) => fmt.mins(m);
@@ -99,8 +99,15 @@ route('supervision', async (r) => {
     const selected = new Set();
     const decide = async (decision, ids) => {
       if (!ids.length) { toast('Select at least one entry', 'error'); return; }
+      // Returning time is confirmed and needs a reason, the same as rejecting an expenditure: the worker
+      // sees it on their My time page, and there is no undo for a mis-click on "Return".
+      let note;
+      if (decision === 'rejected') {
+        note = await confirmDialog(ids.length === 1 ? 'Return this entry' : `Return ${ids.length} entries`, `Send ${ids.length === 1 ? 'it' : 'them'} back to be corrected? The worker will see your reason.`, { okText: 'Return', requireReason: true });
+        if (!note) return;
+      }
       try {
-        const r = await post('/api/time/approve-batch', { ids, decision });
+        const r = await post('/api/time/approve-batch', { ids, decision, note });
         toast(`${plural(r[decision] || 0, 'entry', 'entries')} ${decision}`, 'ok');
         if (r.skipped && r.skipped.length) toast(`${r.skipped.length} skipped (${r.skipped[0].reason})`, 'warn');
         refresh();

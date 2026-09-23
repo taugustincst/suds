@@ -9,13 +9,13 @@ const { badRequest, notFound, forbidden } = require('../http');
 const { validate } = require('../validate');
 const { decrypt } = require('../crypto');
 
-/** Staff this user supervises: those who name them, plus everyone if they manage all clients. */
-function supervisedIds(user) {
-  if (auth.hasPerm(user, 'clients:all')) return null; // null means "no restriction"
+/** Staff this user supervises: those who name them, plus everyone if they hold the given "see all" permission. */
+function supervisedIds(user, allPerm = 'clients:all') {
+  if (auth.hasPerm(user, allPerm)) return null; // null means "no restriction"
   return db.all(`SELECT id FROM users WHERE supervisor_id=?`, user.id).map(u => u.id);
 }
-function staffFilter(user, col) {
-  const ids = supervisedIds(user);
+function staffFilter(user, col, allPerm) {
+  const ids = supervisedIds(user, allPerm);
   if (ids === null) return { sql: '1=1', params: [] };
   if (!ids.length) return { sql: '1=0', params: [] };
   return { sql: `${col} IN (${ids.map(() => '?').join(',')})`, params: ids };
@@ -25,7 +25,10 @@ module.exports = (r) => {
   // One place that answers "what is waiting on me?" for a supervisor.
   r.get('/api/supervision/queue', auth.requireAuth, auth.requirePerm('notes:cosign', 'time:approve', 'assignments:manage'), (ctx) => {
     const sf = staffFilter(ctx.user, 'n.author_id');
-    const tf = staffFilter(ctx.user, 't.user_id');
+    // Time is scoped by time:all, not clients:all: finance approves staff time but supervises nobody, so
+    // scoping its queue to "staff who name me as supervisor" left it permanently empty while the approve
+    // button itself worked.
+    const tf = staffFilter(ctx.user, 't.user_id', 'time:all');
     const lockDays = Number(db.getSetting('note_lock_days', '3'));
     const staleBefore = new Date(Date.now() - lockDays * 86400000).toISOString();
 
@@ -87,6 +90,8 @@ module.exports = (r) => {
   });
 
   // ---- staff time approval (mirrors the expenditure separation of duties) ----
+  // Returned time with no reason leaves the worker guessing what to fix, the same as a rejected expenditure.
+  const NO_REASON = 'Say why this time is being returned, so the worker knows what to correct';
   function loadEntry(ctx, id) {
     const t = db.one(`SELECT * FROM time_entries WHERE id=?`, id);
     if (!t) throw notFound('Time entry not found');
@@ -116,6 +121,7 @@ module.exports = (r) => {
     // The same rule as expenditures: nobody signs off their own claim.
     if (t.user_id === ctx.user.id) throw forbidden('You cannot approve your own time');
     if (t.status !== 'submitted') throw badRequest('Only submitted time can be approved or returned');
+    if (v.decision === 'rejected' && !v.note) throw badRequest(NO_REASON);
     db.run(`UPDATE time_entries SET status=?, approved_by=?, approved_at=?, approval_note=?, updated_at=? WHERE id=?`, v.decision, ctx.user.id, db.now(), v.note || null, db.now(), t.id);
     audit.log({ user: ctx.user, action: `time.${v.decision}`, entity: 'time_entry', entityId: t.id, clientId: t.client_id, ip: ctx.ip, details: { worker: t.user_id, minutes: t.minutes } });
     return { ok: true };
@@ -123,6 +129,7 @@ module.exports = (r) => {
 
   r.post('/api/time/approve-batch', auth.requireAuth, auth.requirePerm('time:approve'), (ctx) => {
     const v = validate(ctx.body, { ids: { type: 'array', required: true, maxLen: 500 }, decision: { type: 'string', required: true, enum: ['approved', 'rejected'] }, note: { type: 'string', maxLen: 500 } });
+    if (v.decision === 'rejected' && !v.note) throw badRequest(NO_REASON);
     let n = 0; const skipped = [];
     db.transaction(() => {
       for (const id of v.ids) {

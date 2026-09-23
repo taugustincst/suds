@@ -44,7 +44,9 @@ function restore(ctx, row) {
 
 module.exports = (r) => {
   // Every role may see what is on hand; changing it is a field-staff action (navigator, clinician, supervisor, admin).
-  r.get('/api/supplies', auth.requireAuth, () => ({ rows: list(), drawdown: DRAWDOWN }));
+  // The cupboard belongs to the staff who record the visits that draw it down. A read-only or finance
+  // account has no visits to record, so it has no reason to see the shelf count either.
+  r.get('/api/supplies', auth.requireAuth, auth.requirePerm('interventions:read'), () => ({ rows: list(), drawdown: DRAWDOWN }));
   r.post('/api/supplies', auth.requireAuth, auth.requirePerm('interventions:write'), (ctx) => {
     const v = validate(ctx.body, { item: { type: 'string', required: true, maxLen: 80 }, quantity: { type: 'number', required: true, integer: true, min: 0, max: 1000000 } });
     const item = v.item.trim(); if (!item) throw badRequest('Item name is required');

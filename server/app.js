@@ -87,6 +87,14 @@ function clientIp(req) {
   return req.socket?.remoteAddress || '';
 }
 
+// node:sqlite reports SQLITE_FULL as errcode 13 with the library's own message; a wrapped error may carry
+// only the message, so both are checked.
+function isDiskFull(err) {
+  if (!err) return false;
+  if (err.code === 'SQLITE_FULL' || err.errcode === 13 || err.code === 'ENOSPC') return true;
+  return /database or disk is full/i.test(String(err.message || '')) || /database or disk is full/i.test(String(err.errstr || ''));
+}
+
 function createHandler() {
   db.open();
   const router = buildRouter();
@@ -146,6 +154,12 @@ function createHandler() {
         // connection once the answer is out rather than keep draining a stream nobody wants.
         if (err.status === 413 && !res.headersSent) res.setHeader('Connection', 'close');
         if (!res.headersSent) sendJson(res, err.status, { error: err.message, ...(err.extra || {}) });
+        else res.destroy();
+      } else if (isDiskFull(err)) {
+        // SQLite could not write because the disk under the database is full. Nothing the person at the
+        // keyboard did caused it and nothing they can do fixes it; say what is wrong and who to tell.
+        console.error(`[suds] ${req.method} ${url.pathname}: disk full:`, err.message);
+        if (!res.headersSent) sendJson(res, 507, { error: "The server's disk is full; contact IT", diskFull: true });
         else res.destroy();
       } else {
         console.error(`[suds] ${req.method} ${url.pathname}:`, err);

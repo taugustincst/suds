@@ -18,6 +18,8 @@ const selfsigned = require('../selfsigned');
 function setupNeeded() { return !config.setupComplete && !config.isTest && config.keySource !== 'env' && !process.env.SUDS_SKIP_SETUP; }
 function userCount() { return db.one(`SELECT COUNT(*) n FROM users`).n; }
 function onlyBootstrapAdmin() { return db.one(`SELECT COUNT(*) n FROM users WHERE NOT (username='admin' AND must_change_password=1 AND last_login_at IS NULL)`).n === 0; }
+/** Is the first-run wizard still the way in? The same answer /api/setup/status gives, for the startup banner. */
+function isNeeded() { return setupNeeded() && onlyBootstrapAdmin(); }
 
 module.exports = (r) => {
   // Before setup this is the wizard's own status call, and there is no account to ask for. Afterwards the
@@ -26,7 +28,9 @@ module.exports = (r) => {
   r.get('/api/setup/status', (ctx) => {
     const needed = setupNeeded() && onlyBootstrapAdmin();
     if (!needed && !ctx.user) return { needed: false, setupComplete: true };
-    return { needed, setupComplete: !needed, listener: listener.describe(), hostname: require('node:os').hostname(), keySource: config.keySource, env: config.env, version: config.version };
+    // port_env: the port is fixed by the PORT environment variable, so the wizard does not offer to change it
+    // (Settings → Network & devices says the same once setup is done).
+    return { needed, setupComplete: !needed, listener: listener.describe(), hostname: require('node:os').hostname(), keySource: config.keySource, env: config.env, version: config.version, port_env: !!process.env.PORT };
   });
 
   r.post('/api/setup/complete', async (ctx) => {
@@ -59,7 +63,8 @@ module.exports = (r) => {
       db.setSetting('caseload_restriction', '1');
     });
     // 3. network + TLS
-    const port = v.port || 'auto';
+    // With PORT set in the environment the port is IT's decision, not the wizard's: keep listening on it.
+    const port = process.env.PORT ? config.port : (v.port || 'auto');
     const host = v.network === 'lan' ? '0.0.0.0' : '127.0.0.1';
     let tls = 'none';
     // The browser form already refuses this; the API must too, or a request that skips the form puts PHI on
@@ -87,3 +92,4 @@ module.exports = (r) => {
     return { ok: true, listener: desc, keys_file: config.keySource === 'env' ? null : config.keysJsonPath };
   });
 };
+module.exports.isNeeded = isNeeded;

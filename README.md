@@ -77,11 +77,11 @@ The wizard route above is production mode (`SUDS_ENV=production`) with keys in `
 | navigator | Assigned caseload | Clients, interventions, calls, time, referrals, tasks, admin notes, consents, imports, de-identified exports of their own caseload; records expenditures (grant structure itself is `budget:manage`: supervisor, finance, admin) |
 | clinician | Assigned caseload | Clients, interventions, calls, time, referrals, tasks, admin and **clinical notes**, consents, imports, de-identified exports of their own caseload; reads the resource directory (no budget entry) |
 | supervisor | All clients | Everything, plus assignments, approvals, audit log, break-glass review, de-identified and identified exports, consent overrides |
-| finance | De-identified list | Funding, budget lines, expenditure approval, time summaries, de-identified exports |
+| finance | De-identified list | Funding, budget lines, expenditure approval, staff time approval (every submitted entry, on the Supervision page), time summaries, de-identified exports |
 | readonly | De-identified list | Reports and summaries, resource directory; no client records, no notes, no exports |
 | admin | System | Users, settings, API keys, audit, legal holds; clinical notes only via audited break-glass |
 
-Exports need `export:read` (every role but readonly) and are de-identified to the HIPAA Safe Harbor standard — each dataset carries only an allow-listed set of columns, with free text, names, references and locations left out — unless the user also holds `export:identified` (supervisor, admin) and names the recipient and purpose, which is then written to each client's accounting of disclosures (once per client per file). CSV cells that would be read as formulas are neutralised, and every export response carries its classification in an `X-SUDS-Export` header and its filename. Multi-factor authentication is required of every role by default.
+Nobody approves their own expenditure or their own time, administrators included; another approver must review it. Exports need `export:read` (every role but readonly) and are de-identified to the HIPAA Safe Harbor standard — each dataset carries only an allow-listed set of columns, with free text, names, references and locations left out — unless the user also holds `export:identified` (supervisor, admin) and names the recipient and purpose, which is then written to each client's accounting of disclosures (once per client per file). CSV cells that would be read as formulas are neutralised, and every export response carries its classification in an `X-SUDS-Export` header and its filename. Multi-factor authentication is required of every role by default.
 
 ## Tests
 

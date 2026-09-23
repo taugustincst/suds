@@ -11,6 +11,7 @@ const audit = require('./audit');
 const backup = require('./backup');
 
 const FILE_RE = /^suds-.*\.db\.enc$/;
+const OFFSITE_MISSING = 'offsite directory does not exist (is the share mounted?)';
 
 function settings() {
   const hours = Number(db.getSetting('backup_schedule_hours', '0')) || 0;
@@ -60,25 +61,28 @@ function run({ retain = 14, offsiteDir = '' } = {}) {
     return { file: null, bytes: 0, offsiteOk: null, verified: false, verifyError: reason, failed: true, error: reason };
   }
 
-  let offsiteOk = null;
+  let offsiteOk = null; let offsiteError = null;
   if (offsiteDir) {
     // A missing or unreachable offsite path (an unmounted network share, most likely) must not lose the
-    // local backup that already succeeded — it is recorded as a status, not thrown.
+    // local backup that already succeeded — it is recorded as a status, not thrown. The directory is
+    // never created here: an unmounted share is an empty mount point, and mkdir -p would quietly put the
+    // "offsite" copy on the very disk it exists to survive losing.
     try {
-      fs.mkdirSync(offsiteDir, { recursive: true });
+      let st = null; try { st = fs.statSync(offsiteDir); } catch {}
+      if (!st || !st.isDirectory()) throw new Error(OFFSITE_MISSING);
       fs.copyFileSync(file, path.join(offsiteDir, path.basename(file)));
       offsiteOk = true;
     } catch (e) {
-      offsiteOk = false;
-      console.error('[suds] offsite backup copy failed:', e && e.message || e);
+      offsiteOk = false; offsiteError = String(e && e.message || e);
+      console.error('[suds] offsite backup copy failed:', offsiteError);
     }
   }
 
   kept = prune(dir, retain);
   db.setSetting('last_scheduled_backup_at', db.now());
-  db.setSetting('last_scheduled_backup_status', !verified ? `backup written but could not be read back — ${verifyError}` : offsiteDir && offsiteOk === false ? 'ok (verified) — offsite copy failed, local backup kept' : 'ok (verified)');
-  audit.log({ user: { username: 'system' }, action: 'backup.scheduled', details: { bytes: bytes.length, offsite: offsiteDir ? offsiteOk : null, kept, verified } });
-  return { file, bytes: bytes.length, offsiteOk, verified, verifyError };
+  db.setSetting('last_scheduled_backup_status', !verified ? `backup written but could not be read back — ${verifyError}` : offsiteDir && offsiteOk === false ? `ok (verified) — offsite copy failed: ${offsiteError}; local backup kept` : 'ok (verified)');
+  audit.log({ user: { username: 'system' }, action: 'backup.scheduled', details: { bytes: bytes.length, offsite: offsiteDir ? offsiteOk : null, offsite_error: offsiteError || undefined, kept, verified } });
+  return { file, bytes: bytes.length, offsiteOk, offsiteError, verified, verifyError };
 }
 
 /** Delete the oldest local backups beyond the retention count. ISO timestamps in the filename sort chronologically. */

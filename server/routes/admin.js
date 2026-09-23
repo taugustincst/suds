@@ -3,7 +3,7 @@ const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
 const config = require('../config');
-const { badRequest, notFound, forbidden } = require('../http');
+const { badRequest, notFound, forbidden, HttpError } = require('../http');
 const { validate, paging } = require('../validate');
 const { uuid, randomToken, sha256 } = require('../crypto');
 
@@ -16,7 +16,10 @@ const path = require('node:path');
 module.exports = (r) => {
   r.get('/api/admin/settings', auth.requireAuth, auth.requirePerm('settings:manage'), () => {
     const out = {};
-    for (const k of SETTING_KEYS) out[k] = db.getSetting(k, '');
+    // An unset key is null, never ''. The Settings form fills a field from this value when it is present
+    // and from the field's own default otherwise -- and '' counts as present, so every policy field used to
+    // render blank on a fresh install and be saved back blank, which switched MFA off for every role.
+    for (const k of SETTING_KEYS) { const v = db.getSetting(k, null); out[k] = v === '' ? null : v; }
     const pol = auth.policy();
     out.policy = pol;
     out.env = { env: config.env, tls: !!config.tls.cert, tls_mode: config.tls.mode, key_source: config.keySource, idle_minutes: pol.idleMinutes, absolute_hours: pol.absoluteHours, mfa_required_roles: pol.mfaRequiredRoles, listener: listener.describe(), ms_graph_configured: !!(config.msGraph.tenantId && config.msGraph.clientId && config.msGraph.clientSecret && config.msGraph.user), oidc_configured: config.oidc.enabled, oidc_label: config.oidc.label };
@@ -24,18 +27,28 @@ module.exports = (r) => {
   });
   r.put('/api/admin/settings', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
     const changed = [];
-    for (const k of SETTING_KEYS) if (ctx.body[k] !== undefined) {
-      // A blank number field reaches here as null (the frontend form reads an empty input as null, not
-      // ''), and String(null) is the four-character string "null" — which failed every numeric check
-      // below and, for a text setting, silently saved the literal word "null" as its value.
-      let v = ctx.body[k] === null ? '' : String(ctx.body[k]).slice(0, 500);
-      if (['session_idle_minutes', 'session_absolute_hours', 'password_max_age_days', 'mfa_grace_days', 'backup_schedule_hours', 'backup_retain_count', 'client_retention_years'].includes(k) && v !== '' && !(Number(v) >= 0)) throw badRequest(`${k} must be a non-negative number`);
-      // Shorter than HIPAA's six-year documentation floor is not a setting, it is a policy violation.
-      if (k === 'client_retention_years' && v !== '' && Number(v) < 6) throw badRequest('Client records must be kept at least 6 years (45 CFR §164.316(b)(2)); most SUD programs keep 7 or more');
-      if (k === 'mfa_required_roles') v = v.split(',').map(x => x.trim()).filter(x => ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'].includes(x)).join(',');
-      if (k === 'session_idle_minutes' && v !== '' && Number(v) > 60) throw badRequest('Idle timeout may not exceed 60 minutes (HIPAA automatic logoff)');
-      db.setSetting(k, v); changed.push(k);
-    }
+    // One transaction: a bad value part-way through the form must not leave the fields before it saved
+    // and the ones after it not.
+    db.transaction(() => {
+      for (const k of SETTING_KEYS) if (ctx.body[k] !== undefined) {
+        // A blank number field reaches here as null (the frontend form reads an empty input as null, not
+        // ''), and String(null) is the four-character string "null" — which failed every numeric check
+        // below and, for a text setting, silently saved the literal word "null" as its value.
+        let v = ctx.body[k] === null ? '' : String(ctx.body[k]).slice(0, 500);
+        if (['session_idle_minutes', 'session_absolute_hours', 'password_max_age_days', 'mfa_grace_days', 'backup_schedule_hours', 'backup_retain_count', 'client_retention_years'].includes(k) && v !== '' && !(Number(v) >= 0)) throw badRequest(`${k} must be a non-negative number`);
+        // A zero here would not mean zero: the policy falls back to its default for anything under 1, so
+        // "0 minutes" quietly became 15. Say so instead. (0 grace days and 0 schedule hours do mean 0.)
+        if (['session_idle_minutes', 'session_absolute_hours', 'password_max_age_days', 'backup_retain_count'].includes(k) && v !== '' && Number(v) < 1) throw badRequest(`${k} must be at least 1; leave it blank to use the default`);
+        // Shorter than HIPAA's six-year documentation floor is not a setting, it is a policy violation.
+        if (k === 'client_retention_years' && v !== '' && Number(v) < 6) throw badRequest('Client records must be kept at least 6 years (45 CFR §164.316(b)(2)); most SUD programs keep 7 or more');
+        if (k === 'mfa_required_roles') v = v.split(',').map(x => x.trim()).filter(x => ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'].includes(x)).join(',');
+        if (k === 'session_idle_minutes' && v !== '' && Number(v) > 60) throw badRequest('Idle timeout may not exceed 60 minutes (HIPAA automatic logoff)');
+        // Blank means "back to the default", so the row goes rather than an empty string being stored:
+        // policy() read '' in mfa_required_roles as "no role needs MFA". Nothing here ever stores ''.
+        if (v === '') db.run(`DELETE FROM settings WHERE key=?`, k); else db.setSetting(k, v);
+        changed.push(k);
+      }
+    });
     audit.log({ user: ctx.user, action: 'settings.update', ip: ctx.ip, details: { changed } });
     return { ok: true };
   });
@@ -136,7 +149,7 @@ module.exports = (r) => {
     const { retain, offsiteDir } = scheduledBackup.settings();
     const out = scheduledBackup.run({ retain, offsiteDir });
     audit.log({ user: ctx.user, action: 'backup.run_now', ip: ctx.ip, details: { bytes: out.bytes, offsite: out.offsiteOk, verified: out.verified } });
-    return { ok: true, file: path.basename(out.file), bytes: out.bytes, offsite_ok: out.offsiteOk, verified: out.verified, verify_error: out.verifyError || null };
+    return { ok: true, file: path.basename(out.file), bytes: out.bytes, offsite_ok: out.offsiteOk, offsite_error: out.offsiteError || null, verified: out.verified, verify_error: out.verifyError || null };
   });
 
   // Restoring from a backup, without a terminal. INSTALL.md is written for an office manager; telling them
@@ -145,12 +158,19 @@ module.exports = (r) => {
     const b64 = (ctx.body && ctx.body.file_b64) || '';
     if (!b64 || typeof b64 !== 'string') throw badRequest('Choose the backup file to upload');
     const raw = Buffer.from(b64.replace(/^data:[^,]*,/, ''), 'base64');
-    return backup.decrypt(raw);
+    return asBadRequest(() => backup.decrypt(raw));
+  }
+  // server/backup.js speaks in plain Errors (it is shared with the CLI). Everything it can say about a file
+  // -- wrong key, damaged, not a SUDS backup, made by a newer SUDS -- is the uploader's answer, not an
+  // internal error, so it reaches the page as a 400 with the message rather than "Internal server error".
+  function asBadRequest(fn) {
+    try { return fn(); }
+    catch (e) { if (e instanceof HttpError) throw e; throw badRequest(e.message); }
   }
 
   // Step 1: say what is in the file. Nothing is changed.
   r.post('/api/admin/restore/preview', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
-    const info = backup.inspect(backupFromUpload(ctx));
+    const info = asBadRequest(() => backup.inspect(backupFromUpload(ctx)));
     audit.log({ user: ctx.user, action: 'backup.preview', ip: ctx.ip, details: { schema_version: info.schema_version, clients: info.counts.clients } });
     return { ...info, current: { clients: db.one(`SELECT COUNT(*) n FROM clients WHERE deleted_at IS NULL`).n, schema_version: Number(db.getSetting('schema_version', '0')) } };
   });
@@ -163,6 +183,8 @@ module.exports = (r) => {
     const me = db.one(`SELECT password_hash FROM users WHERE id=?`, ctx.user.id);
     if (!(await require('../crypto').verifyPasswordAsync(password, me.password_hash))) { audit.log({ user: ctx.user, action: 'backup.restore.failed', ip: ctx.ip, success: false }); throw forbidden('Password verification failed'); }
     const plain = backupFromUpload(ctx);
+    // Refused here, before anything is touched, with the same message the preview gave.
+    asBadRequest(() => backup.inspect(plain));
     // Logged before the swap, because afterwards this audit log is the restored file's, not ours.
     audit.log({ user: ctx.user, action: 'backup.restore.start', ip: ctx.ip, details: { bytes: plain.length } });
     const out = backup.restore(plain);

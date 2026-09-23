@@ -202,8 +202,8 @@ test('a safety plan is a structured note the client overview can point at', asyn
   assert.deepEqual((await nav.get(`/api/notes/${n.data.id}`)).data.note.structured, plan);
 });
 
-test('supply inventory: every role reads it, field staff change it, a visit draws it down', async () => {
-  assert.equal((await ro.get('/api/supplies')).status, 200, 'read-only can see the cupboard');
+test('supply inventory: visit-recording roles read it, field staff change it, a visit draws it down', async () => {
+  assert.equal((await ro.get('/api/supplies')).status, 403, 'read-only has no visits to record, so no cupboard to look in');
   assert.equal((await fin.post('/api/supplies', { item: 'Naloxone kit', quantity: 5 })).status, 403, 'finance cannot stock it');
   assert.equal((await ro.post('/api/supplies', { item: 'Naloxone kit', quantity: 5 })).status, 403);
   const add = await nav.post('/api/supplies', { item: 'Naloxone kit', quantity: 10 });

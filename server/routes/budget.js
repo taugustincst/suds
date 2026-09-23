@@ -73,6 +73,30 @@ function assertInPeriod(fund, date, what) {
   }
 }
 
+const money = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/** A period that ends before it starts is a typo, and every date check downstream would refuse everything. */
+function assertPeriodOrder(start, end) {
+  if (start && end && end < start) throw badRequest(`The period ends (${end}) before it starts (${start})`);
+}
+/**
+ * A budget line is carved out of whatever holds it: a sub-allocation out of its parent's allocated_amount,
+ * a top-level line out of the fund's total. Lines that together promise more than that read as covered
+ * money that does not exist, so they are refused, with the numbers, before they are written.
+ */
+function assertRoom(fundId, parentId, amount, { excluding = null } = {}) {
+  const siblings = parentId
+    ? db.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE parent_id=? AND id<>?`, parentId, excluding || '').n
+    : db.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE funding_source_id=? AND parent_id IS NULL AND id<>?`, fundId, excluding || '').n;
+  const holder = parentId
+    ? db.one(`SELECT COALESCE(label, category) AS name, allocated_amount AS cap FROM budget_lines WHERE id=?`, parentId)
+    : db.one(`SELECT name, total_amount AS cap FROM funding_sources WHERE id=?`, fundId);
+  if (!holder) return;
+  const total = cents(siblings + amount);
+  if (total > cents(holder.cap)) {
+    throw badRequest(`That would allocate ${money(total)} against ${holder.name}, which ${parentId ? 'is allocated' : 'totals'} ${money(holder.cap)}; ${money(cents(holder.cap - siblings))} is left to allocate. Reduce the amount, or raise ${parentId ? "the parent allocation" : "the fund's total"} first.`);
+  }
+}
+
 /**
  * What can still be approved against a budget line: its allocation, less what it has handed down to
  * sub-allocations, less what is already approved or reimbursed. Other pending items are not counted (each
@@ -111,14 +135,16 @@ module.exports = (r) => {
   });
   r.post('/api/budget/funds', auth.requireAuth, auth.requirePerm('budget:manage'), (ctx) => {
     const v = validate(ctx.body, fundShape); const id = uuid(); const keys = Object.keys(v);
+    assertPeriodOrder(v.fiscal_year_start, v.fiscal_year_end);
     db.run(`INSERT INTO funding_sources(id,${keys.join(',')}) VALUES(?,${keys.map(() => '?').join(',')})`, id, ...keys.map(k => v[k]));
     audit.log({ user: ctx.user, action: 'fund.create', entity: 'funding_source', entityId: id, ip: ctx.ip });
     ctx.status = 201; return { id };
   });
   r.put('/api/budget/funds/:id', auth.requireAuth, auth.requirePerm('budget:manage'), (ctx) => {
-    const f = db.one(`SELECT id FROM funding_sources WHERE id=?`, ctx.params.id); if (!f) throw notFound();
+    const f = db.one(`SELECT * FROM funding_sources WHERE id=?`, ctx.params.id); if (!f) throw notFound();
     const v = validate(ctx.body, Object.fromEntries(Object.entries(fundShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
     const keys = Object.keys(v); if (!keys.length) return { ok: true };
+    assertPeriodOrder(v.fiscal_year_start ?? f.fiscal_year_start, v.fiscal_year_end ?? f.fiscal_year_end);
     db.run(`UPDATE funding_sources SET ${keys.map(k => `${k}=?`).join(', ')}, updated_at=? WHERE id=?`, ...keys.map(k => v[k]), db.now(), f.id);
     audit.log({ user: ctx.user, action: 'fund.update', entity: 'funding_source', entityId: f.id, ip: ctx.ip, details: { fields: keys } });
     return { ok: true };
@@ -127,6 +153,7 @@ module.exports = (r) => {
     const f = db.one(`SELECT id FROM funding_sources WHERE id=?`, ctx.params.id); if (!f) throw notFound();
     const v = validate(ctx.body, lineShape); const id = uuid();
     if (v.parent_id) { const p = db.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, v.parent_id, f.id); if (!p) throw badRequest('Parent allocation does not belong to this fund'); }
+    assertRoom(f.id, v.parent_id || null, v.allocated_amount);
     db.run(`INSERT INTO budget_lines(id,funding_source_id,parent_id,category,label,allocated_amount,notes) VALUES(?,?,?,?,?,?,?)`, id, f.id, v.parent_id || null, v.category, v.label || null, v.allocated_amount, v.notes || null);
     audit.log({ user: ctx.user, action: 'budget_line.create', entity: 'budget_line', entityId: id, ip: ctx.ip, details: v.parent_id ? { parent_id: v.parent_id } : undefined });
     ctx.status = 201; return { id };
@@ -138,6 +165,15 @@ module.exports = (r) => {
       if (v.parent_id === l.id) throw badRequest('A budget line cannot be its own parent');
       const p = db.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, v.parent_id, l.funding_source_id); if (!p) throw badRequest('Parent allocation does not belong to this fund');
       if (wouldCycle(l.id, v.parent_id)) throw badRequest('That would nest this allocation inside one of its own sub-allocations');
+    }
+    if ('allocated_amount' in v || 'parent_id' in v) {
+      const parentId = 'parent_id' in v ? (v.parent_id || null) : l.parent_id;
+      const amount = v.allocated_amount ?? l.allocated_amount;
+      assertRoom(l.funding_source_id, parentId, amount, { excluding: l.id });
+      // Shrinking a line below what it has already handed down to sub-allocations is the same overrun from
+      // the other side.
+      const handedDown = db.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE parent_id=?`, l.id).n;
+      if (cents(amount) < cents(handedDown)) throw badRequest(`Its sub-allocations already total ${money(handedDown)}; reduce those first`);
     }
     const keys = Object.keys(v); if (keys.length) db.run(`UPDATE budget_lines SET ${keys.map(k => `${k}=?`).join(', ')}, updated_at=? WHERE id=?`, ...keys.map(k => v[k]), db.now(), l.id);
     audit.log({ user: ctx.user, action: 'budget_line.update', entity: 'budget_line', entityId: l.id, ip: ctx.ip, details: { fields: keys } });
@@ -182,7 +218,17 @@ module.exports = (r) => {
       assertInPeriod(f, v.spent_at, 'Expenditure date');
       if (v.budget_line_id) { const l = db.one(`SELECT * FROM budget_lines WHERE id=? AND funding_source_id=?`, v.budget_line_id, f.id); if (!l) throw badRequest('Budget line does not belong to fund'); if (!v.category) v.category = l.category; }
     },
-    beforeUpdate: (ctx, v) => { if (v.amount !== undefined && v.amount !== null) v.amount = cents(v.amount); },
+    beforeUpdate: (ctx, v, row) => {
+      if (v.amount !== undefined && v.amount !== null) v.amount = cents(v.amount);
+      // The date and fund are held to the same rules on an edit as on entry: a pending item could otherwise
+      // be recorded in-period and then moved outside it, or into the future, once nobody was looking.
+      if ('spent_at' in v || 'funding_source_id' in v || 'budget_line_id' in v) {
+        const f = db.one(`SELECT * FROM funding_sources WHERE id=? AND is_active=1`, v.funding_source_id || row.funding_source_id); if (!f) throw badRequest('Unknown or inactive funding source');
+        assertInPeriod(f, v.spent_at || row.spent_at, 'Expenditure date');
+        const lineId = 'budget_line_id' in v ? v.budget_line_id : row.budget_line_id;
+        if (lineId) { const l = db.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, lineId, f.id); if (!l) throw badRequest('Budget line does not belong to fund'); }
+      }
+    },
     canEdit: (ctx, row) => row.status === 'pending' && (row.user_id === ctx.user.id || auth.hasPerm(ctx.user, 'budget:approve')),
   });
   // The approval state machine: pending -> approved | rejected, approved -> reimbursed, nothing else. A
@@ -197,7 +243,8 @@ module.exports = (r) => {
       const by = e.approved_by ? db.one(`SELECT display_name FROM users WHERE id=?`, e.approved_by) : null;
       throw new HttpError(409, `This expenditure is already ${e.status}${by ? ` (by ${by.display_name})` : ''}; it cannot be marked ${status}`, { current_status: e.status, approved_by: e.approved_by || null });
     }
-    if (e.user_id === ctx.user.id && status === 'approved' && ctx.user.role !== 'admin') throw badRequest('Separation of duties: you cannot approve your own expenditure');
+    // No role is exempt: an administrator's own claim waits for someone else exactly like anyone's.
+    if (e.user_id === ctx.user.id && status === 'approved') throw badRequest('Separation of duties: you cannot approve your own expenditure; another approver must review it');
     // A rejection with no reason leaves the submitter guessing, and there is no undo for a mis-click.
     if (status === 'rejected' && !note) throw badRequest('Say why this expenditure is being rejected, so the person who submitted it knows what to fix');
     const details = { note, amount: e.amount };

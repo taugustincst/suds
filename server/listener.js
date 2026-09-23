@@ -61,7 +61,11 @@ async function start(handler) {
   }
   const d = describe();
   console.log(`[suds] SUD Navigator Services Tracker listening on ${d.urls.join('  ')} (${config.env})`);
-  if (!config.setupComplete) console.log('[suds] First run: open the address above in a browser to complete setup.');
+  // "Complete setup" only when the wizard is actually the way in: a server configured by environment
+  // variables (keys from env, SUDS_SKIP_SETUP) or one whose administrator already exists never shows it,
+  // and telling someone to open a wizard that will not appear sends them looking for a fault.
+  let setupNeeded = false; try { setupNeeded = require('./routes/setup').isNeeded(); } catch { setupNeeded = !config.setupComplete; }
+  if (setupNeeded) console.log('[suds] First run: open the address above in a browser to complete setup.');
   else if (!d.tls && config.isProd) console.warn('[suds] WARNING: TLS not configured. Run behind a TLS-terminating reverse proxy or enable HTTPS in Administration.');
   server._handler = handler;
   return d;
@@ -70,9 +74,22 @@ async function start(handler) {
 // Switch to new options; the old listener closes after the new one is bound. Returns the new description.
 async function relisten(opts) {
   const handler = server._handler;
-  const { s: next, port } = await makeWithFallback(handler, opts);
+  const old = server;
+  // Rebinding the port already in use (the port is fixed by PORT in the environment and setup is switching
+  // HTTPS on, or opening the listener to the network) needs the old listener to let go of it first.
+  // close() stops accepting new connections and releases the port; the connection carrying this very
+  // request stays open until its response has gone out, and is cut with the rest below.
+  const samePort = !!current && Number(opts.port) === Number(current.port);
+  if (samePort) { old.close(); await new Promise(r => setTimeout(r, 150)); }
+  let next, port;
+  try { ({ s: next, port } = await makeWithFallback(handler, opts)); }
+  catch (e) {
+    // Put the old listener back, so a port that could not be bound does not leave the server unreachable.
+    if (samePort) { try { server = await make(handler, current); server._handler = handler; } catch {} }
+    throw e;
+  }
   next._handler = handler;
-  const old = server; server = next; current = { ...opts, port }; updateMdns();
+  server = next; current = { ...opts, port }; updateMdns();
   setTimeout(() => { try { old.close(); old.closeAllConnections?.(); } catch {} }, 1500);
   const d = describe();
   console.log(`[suds] now listening on ${d.urls.join('  ')}`);

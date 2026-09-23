@@ -820,7 +820,7 @@ export const NAV = [
   { name: 'time', label: 'My time', ico: '◷', perm: 'time:read', help: 'Your hours by activity. Visits and calls add time automatically; log meetings, travel and paperwork here.' },
   { name: 'imports', label: 'Import', ico: '⇩', perm: 'imports:write', help: 'Bring in spreadsheets (Excel / CSV) of clients, visits, calls, resources and more, or notes from Pocket AI and OneNote. Everything is checked before it is saved.' },
   { name: 'overdose', label: 'Overdose & reversals', ico: '⛑', perm: 'overdose:read', help: 'Overdoses and naloxone reversals, including ones involving people who are not clients. These are the counts funders ask for.' },
-  { name: 'supplies', label: 'Supplies', ico: '📦', help: 'Naloxone kits, test strips and other harm-reduction stock on hand. A visit that hands out kits or strips takes them off this count automatically.' },
+  { name: 'supplies', label: 'Supplies', ico: '📦', perm: 'interventions:read', help: 'Naloxone kits, test strips and other harm-reduction stock on hand. A visit that hands out kits or strips takes them off this count automatically.' },
   { sec: 'Connect clients' },
   { name: 'referrals', label: 'Referrals', ico: '⇢', perm: 'referrals:read', help: 'Track each referral from "sent" to "admitted" so nothing falls through the cracks.' },
   { name: 'resources', label: 'Resource directory', ico: '☰', perm: 'resources:read', help: 'Treatment programs, MAT clinics, shelters, legal aid and other partners you refer to.' },

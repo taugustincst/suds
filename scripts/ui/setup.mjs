@@ -6,7 +6,7 @@
 import { chromium } from 'playwright';
 import { makeChecks, until } from './assert.mjs';
 const base = process.env.SUDS_SETUP_URL || 'http://127.0.0.1:8095';
-const port = Number(process.env.SETUP_PORT || 8496);
+let port = Number(process.env.SETUP_PORT || 8496);
 const { ok, eq, finish } = makeChecks('setup');
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1200, height: 900 } }); const page = await ctx.newPage();
@@ -20,9 +20,19 @@ ok(/#\/setup$/.test(page.url()), 'an unconfigured server opens on the setup wiza
 await page.fill('input[name=org_name]', 'Demo County SUD Navigation'); await page.fill('input[name=admin_display_name]', 'Pat Admin'); await page.fill('input[name=admin_username]', 'padmin');
 await page.fill('input[name=admin_password]', 'SetupPassw0rd!x'); await page.fill('input[name=confirm]', 'SetupPassw0rd!x');
 // The port lives under "Advanced", collapsed: a county leaves it blank and gets the standard port. The
-// test cannot bind 443, so it opens the section and picks one.
+// test cannot bind 443, so it opens the section and picks one -- unless PORT is set in the environment
+// (run-all.sh sets it), in which case the wizard must not offer to change it and the server stays where
+// IT put it, switching HTTPS on in place.
 await page.evaluate(() => document.querySelectorAll('details.section').forEach(d => { d.open = true; }));
-await page.fill('input[name=port]', String(port));
+const status = await page.evaluate(() => fetch('/api/setup/status').then(r => r.json()));
+if (status.port_env) {
+  ok(!(await page.$('input[name=port]')), 'with PORT fixed by the environment the wizard offers no port field');
+  ok(await page.$('[data-port-env]'), 'and says why');
+  port = Number(new URL(base).port);
+} else {
+  ok(await page.$('input[name=port]'), 'without PORT in the environment the wizard offers a port field');
+  await page.fill('input[name=port]', String(port));
+}
 eq(await page.$eval('input[name=https]', e => e.checked), true, 'HTTPS is on by default');
 eq(await page.$eval('select[name=network]', e => e.value), 'lan', 'phones on the office network are allowed by default');
 await page.click('button[type=submit]');

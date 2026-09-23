@@ -116,9 +116,10 @@ route('budget', async (r) => {
       { label: '%', render: l => h('div', { class: 'progress', style: { width: '80px' } }, h('div', { class: pct(l.subtree_spent, l.allocated_amount) > 90 ? 'danger' : '', style: { width: `${pct(l.subtree_spent, l.allocated_amount)}%` } })) },
       { label: '', render: l => can('budget:manage') ? h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm', onClick: () => openLineForm(f, null, refresh, { parentId: l.id }) }, '+ Sub'), h('button', { class: 'btn sm', onClick: () => openLineForm(f, l, refresh) }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this budget line', onClick: async () => { if (await confirmDialog('Delete line', l.children.length ? 'Delete this budget line and its sub-allocations? Expenditures keep their fund.' : 'Delete this budget line? Expenditures keep their fund.', { danger: true, okText: 'Delete' })) { await del(`/api/budget/lines/${l.id}`); refresh(); } } }, '✕')) : null },
     ], flattenLines(f.lines)) : h('div', { class: 'muted small' }, 'No budget lines yet.'),
-    // Over-allocating (lines totaling more than the award) is deliberately not blocked -- a fund's total_amount
-    // is itself just the recorded award and may be amended later -- but it must not read the same as an
-    // ordinary, harmless remainder, or a report built from these lines can overstate what is actually covered.
+    // The server refuses a line that would take the total over the award (and a sub-allocation over its
+    // parent), so this is normally a plain remainder. A fund whose award was later reduced below what was
+    // already allocated can still be over, and that must not read the same as an ordinary remainder, or a
+    // report built from these lines can overstate what is actually covered.
     f.unallocated ? h('div', { class: 'small mt', style: f.unallocated < 0 ? { color: 'var(--danger)' } : { color: 'var(--muted)' } }, f.unallocated < 0 ? `Over-allocated by ${fmt.money(-f.unallocated)}` : `Unallocated: ${fmt.money(f.unallocated)}`) : null);
   return h('div', {},
     pageHead('Funding & spending', can('budget:write') ? h('button', { class: 'btn primary', onClick: () => openExpenditureForm(null, { onDone: refresh }) }, '+ Record expenditure') : null, can('budget:manage') ? h('button', { class: 'btn', onClick: () => openFundForm(null, refresh) }, '+ Funding source') : null, can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv('/api/reports/export/expenditures?from=2000-01-01&format=xlsx') }, 'Export to Excel') : null),

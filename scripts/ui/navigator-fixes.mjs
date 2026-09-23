@@ -228,8 +228,11 @@ const nav = await session('mrivera', 'Navigator2026!!');
   eq(Number((await page.$eval('[data-qty="Naloxone kit"]', e => e.textContent)).replace(/,/g, '')), before - 1, '+ adds one back');
   const ro = await session('afinance', 'Navigator2026!!');
   await go(ro.page, 'supplies');
-  ok(/Naloxone kit/.test(await ro.page.textContent('.main')), 'finance can read the cupboard');
-  ok(!(await ro.page.$('button:has-text("+ Add item")')), 'but cannot change it');
+  // The cupboard belongs to the staff who record the visits that draw it down (interventions:read); a
+  // finance account has no visits to record, so neither the page nor the nav item is offered.
+  ok(!/Naloxone kit/.test(await ro.page.textContent('.main')), 'finance does not see the cupboard');
+  ok(!(await ro.page.$('.nav a[href="#/supplies"]')), 'and has no Supplies link in the navigation');
+  eq((await ro.api('GET', '/api/supplies')).status, 403, 'the API refuses it too');
   await ro.close();
 }
 

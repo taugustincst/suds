@@ -16,9 +16,11 @@ route('setup', async () => {
     { name: 'network', label: 'Access', type: 'select', noBlank: true, required: true, value: 'lan', options: [{ value: 'lan', label: 'Phones, tablets and other computers on the office network (recommended for mobile use)' }, { value: 'local', label: 'Only this computer' }], span: true },
     { name: 'https', label: 'Encrypt connections (HTTPS) — recommended, created automatically', type: 'checkbox', value: true, span: true },
     { type: 'section', label: 'Advanced (usually not needed)', collapsible: true },
-    { name: 'port', label: 'Port', type: 'number', min: 1, max: 65535, step: 1, help: 'Leave blank: SUDS picks the standard port so the address needs no number.' },
+    // With PORT set in the environment the port is IT's decision (Settings → Network & devices says the same
+    // afterwards), so the wizard does not offer a field it would then ignore.
+    status.port_env ? null : { name: 'port', label: 'Port', type: 'number', min: 1, max: 65535, step: 1, help: 'Leave blank: SUDS picks the standard port so the address needs no number.' },
     { name: 'extra_hosts', label: 'Extra names for the certificate', placeholder: 'e.g. suds.county.local', help: 'Only if IT gives this computer a name.' },
-  ], { submitText: 'Finish setup', onSubmit: async (d) => {
+  ].filter(Boolean), { submitText: 'Finish setup', onSubmit: async (d) => {
     if (d.admin_password !== d.confirm) throw new Error('Passwords do not match');
     if (d.network === 'lan' && !d.https) throw new Error('HTTPS is required when other devices can connect');
     delete d.confirm;
@@ -40,5 +42,6 @@ route('setup', async () => {
   } });
   return h('div', { class: 'login-wrap' }, h('div', { class: 'card', style: { maxWidth: '760px', width: '100%' } },
     h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('b', {}, 'Welcome to SUDS'), h('small', {}, 'First-run setup — about 2 minutes'))),
-    h('p', { class: 'muted' }, `Three quick questions and SUDS is ready on this computer and on staff phones. (Running on ${status.hostname}; setup can only be completed from this computer.)`), f, done));
+    h('p', { class: 'muted' }, `Three quick questions and SUDS is ready on this computer and on staff phones. (Running on ${status.hostname}; setup can only be completed from this computer.)`),
+    status.port_env ? h('p', { class: 'small muted', 'data-port-env': '1' }, `The port (${status.listener?.port}) is set by the PORT environment variable on this server, so it is not asked here.`) : null, f, done));
 });

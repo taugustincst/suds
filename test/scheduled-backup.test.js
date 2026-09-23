@@ -107,7 +107,23 @@ test('an unreachable offsite path does not lose the local backup', () => {
   const out = scheduled.run({ retain: 14, offsiteDir });
   assert.equal(out.offsiteOk, false);
   assert.ok(fs.existsSync(out.file), 'the local backup was still written');
-  assert.equal(db.getSetting('last_scheduled_backup_status', ''), 'ok (verified) — offsite copy failed, local backup kept');
+  assert.match(db.getSetting('last_scheduled_backup_status', ''), /^ok \(verified\) — offsite copy failed: .+; local backup kept$/);
+});
+
+test('an offsite directory that does not exist is reported, not created', () => {
+  // The offsite path used to be mkdir -p'd, so an unmounted network share (an empty mount point, or a path
+  // under one) got a fresh local folder and the copy "succeeded" onto the office computer's own disk --
+  // exactly the disk the offsite copy exists to survive losing.
+  const offsiteDir = path.join(dir, 'unmounted-share', 'suds-backups');
+  const out = scheduled.run({ retain: 14, offsiteDir });
+  assert.equal(out.offsiteOk, false);
+  assert.equal(out.offsiteError, 'offsite directory does not exist (is the share mounted?)');
+  assert.equal(fs.existsSync(offsiteDir), false, 'nothing was created in its place');
+  assert.ok(fs.existsSync(out.file), 'the local backup was still written');
+  assert.equal(db.getSetting('last_scheduled_backup_status', ''), 'ok (verified) — offsite copy failed: offsite directory does not exist (is the share mounted?); local backup kept');
+  // A file where the directory should be is the same answer.
+  const blocker = path.join(dir, 'a-file'); fs.writeFileSync(blocker, 'x');
+  assert.equal(scheduled.run({ retain: 14, offsiteDir: blocker }).offsiteError, 'offsite directory does not exist (is the share mounted?)');
 });
 
 test('a working offsite path receives a copy of the backup', () => {
