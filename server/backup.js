@@ -117,6 +117,7 @@ function restore(plainBytes) {
   // not catch, a migration that fails on its data), the server must come back on the database it had.
   try { db.open(); }
   catch (e) { rollBack(e); throw new Error(`The backup could not be opened after it was restored, so the previous database was put back: ${e.message}`); }
+  db.setSetting('db_generation', require('./crypto').uuid()); // a new lineage: devices see it on their next pull and re-offer what the backup lacks (server/routes/sync.js)
   return { ...info, previous_database_kept_at: aside };
 }
 

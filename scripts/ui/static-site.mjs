@@ -47,5 +47,25 @@ const manifest = await page.evaluate(async () => {
 });
 ok(manifest && manifest.display === 'standalone' && Array.isArray(manifest.icons) && manifest.icons.length > 0, 'the page is installable to a home screen (a valid, standalone manifest with icons)', manifest);
 
+// The demo build never syncs (docs/WEB_APP.md): the Sync screen says so instead of offering a form that
+// could only fail, and nothing is sent to any office address.
+await page.goto(base + '/#/sync'); await page.waitForSelector('[data-static-no-sync], input[name=office_password]', { timeout: 10000 }).catch(() => {});
+ok(await page.$('[data-static-no-sync]'), 'the Sync screen says sync is not available from the demo site');
+eq(await page.$eval('[data-static-no-sync]', b => /Sync is not available from the demo site/.test(b.textContent)), true, 'in those words');
+ok(!(await page.$('input[name=office_password]')), 'and offers no office sign-in form');
+const syncAttempt = await page.evaluate(() => window.SUDS_LOCAL.handle('POST', '/api/local/sync', { server: 'https://suds.local', username: 'x', password: 'y' }, {}).then(r => r.json));
+ok(syncAttempt && /not available from the demo site/.test(syncAttempt.error) && syncAttempt.staticSyncRefused, 'the kernel refuses a sync outright, before any credential leaves the browser', syncAttempt);
+
+// Installed to a home screen, it has to open with no connection: the service worker caches the kernel.
+const swActive = await until(() => page.evaluate(() => navigator.serviceWorker.getRegistration().then(r => !!(r && r.active))), { timeout: 15000 });
+ok(swActive, 'the demo build registers its service worker');
+const cachedBoot = await until(() => page.evaluate(async () => { for (const k of await caches.keys()) { const c = await caches.open(k); if (await c.match('local-boot.js') && await c.match('local/kernel.js', { ignoreSearch: true })) return true; } return false; }), { timeout: 15000 });
+ok(cachedBoot, 'the boot script and the kernel are in its shell cache');
+await ctx.setOffline(true);
+await page.reload().catch(() => {});
+await until(() => page.$('.layout, input[name=username], input[name=display_name]'), { timeout: 20000 });
+ok(await page.$('.layout'), 'with no connection at all the installed demo still opens, signed in', (await page.textContent('body')).slice(0, 120));
+await ctx.setOffline(false);
+
 finish(errors);
 await browser.close();

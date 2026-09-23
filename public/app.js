@@ -66,12 +66,21 @@ export function setImage(el, path) {
 }
 
 // ---------- API ----------
+// A request the person did not just cause — the reminder bell's poll, the dashboard's auto-refresh, a
+// quiet lookup — must not count as activity, or a tab left open never times out (H1). `background: true`
+// says so explicitly; `quiet` requests are treated the same; and any request made after a minute with no
+// input at all cannot have been the person either. Such requests carry X-Background: 1 so the office
+// server leaves the session's last-seen time alone as well (server/auth.js).
+const BACKGROUND_AFTER_MS = 60_000;
+function isBackground(opts) { return opts.background === true || opts.quiet === true || Date.now() - lastActivity > BACKGROUND_AFTER_MS; }
+
 export async function api(method, path, body, opts = {}) {
-  const headers = { 'X-Requested-With': 'suds', ...(opts.headers || {}) };
+  const background = isBackground(opts);
+  const headers = { 'X-Requested-With': 'suds', ...(background ? { 'X-Background': '1' } : {}), ...(opts.headers || {}) };
   if (state.local && window.SUDS_LOCAL) {
     let payload = body; if (body instanceof Blob) payload = await body.arrayBuffer();
     const r = await window.SUDS_LOCAL.handle(method, path, payload, headers);
-    touch();
+    if (!background) touch();
     const data = r.json !== undefined ? r.json : (r.body ? (String(r.headers['content-type'] || '').includes('json') ? JSON.parse(r.body.toString()) : r.body.toString()) : null);
     if (r.status === 401 && state.user && !opts.quiet) { if (data && data.mfaRequired) location.hash = '#/mfa'; else { state.user = null; render(); } }
     if (r.status === 403 && data && data.passwordChangeRequired) location.hash = '#/profile?force=1';
@@ -90,7 +99,7 @@ export async function api(method, path, body, opts = {}) {
     const err = new Error(OFFLINE_MESSAGE); err.offline = true; err.cause = e; throw err;
   }
   setOffline(false);
-  touch();
+  if (!background) touch();
   const ct = res.headers.get('content-type') || '';
   const data = ct.includes('json') ? await res.json() : await res.text();
   if (res.status === 401 && state.user && !opts.quiet) { if (data && data.mfaRequired) { location.hash = '#/mfa'; } else { state.user = null; render(); toast('Session expired. Please sign in again.', 'error'); } }
@@ -735,7 +744,7 @@ export function dueBell() {
   async function poll(force = false) {
     if (!state.user) return;
     if (!force && dueCache.data && Date.now() - dueCache.at < 60000) { paint(dueCache.data); return; }
-    try { const r = await get('/api/tasks/due?within=60', { quiet: true }); dueCache = { at: Date.now(), data: r }; paint(r); maybeNotify(r.rows); } catch { /* offline or no permission: the badge just stays as it was */ }
+    try { const r = await get('/api/tasks/due?within=60', { quiet: true, background: true }); dueCache = { at: Date.now(), data: r }; paint(r); maybeNotify(r.rows); } catch { /* offline or no permission: the badge just stays as it was */ }
   }
   clearInterval(dueTimer);
   dueTimer = setInterval(() => { if (!document.body.contains(btn)) { clearInterval(dueTimer); return; } if (document.visibilityState === 'visible') poll(true); }, DUE_POLL_MS);
@@ -911,7 +920,7 @@ function startIdleWatch() {
     if (!state.user) return;
     const idleMs = Date.now() - lastActivity; const limit = state.idleMinutes * 60000;
     let w = document.getElementById('idle-warn');
-    if (idleMs > limit - 60000 && !w) { w = h('div', { id: 'idle-warn', class: 'idle-warn' }, 'You will be signed out in 1 minute due to inactivity. Move the mouse or press a key to stay signed in.'); document.body.append(w); }
+    if (idleMs > limit - 60000 && !w) { w = h('div', { id: 'idle-warn', class: 'idle-warn' }, 'You will be signed out in 1 minute due to inactivity. Tap the screen, move the mouse or press a key to stay signed in.'); document.body.append(w); }
     if (idleMs <= limit - 60000 && w) w.remove();
     if (idleMs > limit) {
       if (w) w.remove();
@@ -950,10 +959,14 @@ export async function loadRefData() {
 
 // ---------- boot (called from main.js after all views are registered) ----------
 window.__suds = { downloadCsv: (...a) => downloadCsv(...a) };
+// Stamped by scripts/build-local.js from package.json. The two kernel assets are requested with it as a
+// version query so the browser may keep them for good (server/http.js serves `?v=` as immutable) while a
+// new release, with a new version, is a new URL. public/sw.js caches the same URLs for offline starts.
+const SUDS_VERSION = '1.8.0';
 async function startLocalKernel(force) {
-  const k = await import('./local/kernel.js');
+  const k = await import(`./local/kernel.js?v=${SUDS_VERSION}`);
   await k.start({
-    wasmUrl: new URL('./local/sql-wasm.wasm', location.href).href,
+    wasmUrl: new URL(`./local/sql-wasm.wasm?v=${SUDS_VERSION}`, location.href).href,
     force,
     // A device that has stopped being able to save is not a console message; the person using it needs
     // to know before they type anything else in.
@@ -999,7 +1012,14 @@ export async function boot(force = false) {
       );
       return;
     }
-    window.addEventListener('pagehide', () => { window.SUDS_LOCAL && window.SUDS_LOCAL.flush(); });
+    // Anything written in the last moments before the page goes away is persisted on the way out: pagehide
+    // for a close or navigation, visibilitychange for a phone switching apps (where pagehide may never
+    // come). An urgent flush issues the IndexedDB write synchronously and commits it without waiting for
+    // any callback, so the browser finishes it even as the page unloads; nothing is awaited here because
+    // nothing after unload would run.
+    const flushNow = () => { try { window.SUDS_LOCAL && window.SUDS_LOCAL.flush({ urgent: true }); } catch {} };
+    window.addEventListener('pagehide', flushNow);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushNow(); });
     // Redeploying the site (new files at the same origin) never touches this device's IndexedDB/localStorage
     // — the sign-in session, the account, and every client record already survive that on their own. What
     // does not survive on its own is the browser treating this storage as "best-effort": under disk pressure
@@ -1011,7 +1031,10 @@ export async function boot(force = false) {
     // the office login -- so a phone set up here, installed the way the login screen tells people to, opened
     // to a server sign-in with its own caseload nowhere in sight. The on-device manifest starts back here.
     try { const link = document.querySelector('link[rel="manifest"]'); if (link) link.href = 'manifest-local.webmanifest'; localStorage.setItem('suds.localUsed', '1'); } catch {}
-  } else if ('serviceWorker' in navigator && location.protocol !== 'file:') { try { navigator.serviceWorker.register('sw.js').catch(() => {}); } catch {} }
+  }
+  // Registered in local mode too: the worker caches the kernel and the shell, so a device set up for local
+  // mode (or the demo build installed to a home screen) starts with no connection at all (H4).
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') { try { navigator.serviceWorker.register('sw.js').catch(() => {}); } catch {} }
   await loadSession();
   startIdleWatch();
   window.addEventListener('hashchange', render);

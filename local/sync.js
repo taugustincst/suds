@@ -156,7 +156,9 @@ function applyRow(t, raw, existingCols, toServer, conflicts) {
   // real hash with it would lock them out of this shared phone until their own next sync.
   if (t.name === 'users' && raw.password_hash === DUMMY_HASH && existing && existing.password_hash && existing.password_hash !== DUMMY_HASH) raw.password_hash = existing.password_hash;
   if (t.name === 'clients') { const clash = db.one(`SELECT id FROM clients WHERE client_code=? AND id<>?`, raw.client_code, raw.id); if (clash) db.run(`UPDATE clients SET client_code=?, updated_at=? WHERE id=?`, raw.client_code + '-D', db.now(), clash.id); }
-  if (existing && t.name !== 'users') {
+  // A server-owned table (supply counts) is the office's alone: whatever this device holds is replaced,
+  // never weighed by timestamp — a count edited here would otherwise have stuck until the office touched it.
+  if (existing && t.name !== 'users' && !t.serverOwned) {
     const known = seenAt(t.name, existing.id);
     const untouched = known !== undefined && known === stamp(existing);
     if (!untouched && toServer(stamp(existing)) > (raw.updated_at || raw.created_at || NEVER)) return false; // our edit is newer; it gets pushed
@@ -174,7 +176,23 @@ function applyRow(t, raw, existingCols, toServer, conflicts) {
   if (existing) db.run(`UPDATE ${t.name} SET ${keys.map(k => `${k}=?`).join(', ')} WHERE id=?`, ...keys.map(k => o[k]), raw.id);
   else db.run(`INSERT INTO ${t.name}(id,${keys.join(',')}) VALUES(?,${keys.map(() => '?').join(',')})`, raw.id, ...keys.map(k => o[k]));
   seen(t.name, raw.id, stamp(o));
+  // The office merged this client into another. What this device holds against the duplicate — visits,
+  // notes, tasks recorded here and not yet sent — moves to the record that was kept, exactly as the office
+  // moved its own; the office re-points anything pushed under the old id anyway (server/routes/sync.js
+  // keeperOf), so nothing is stamped as edited. The merged row itself stays, marked, and the lists hide it.
+  if (t.name === 'clients' && o.merged_into && (!existing || existing.merged_into !== o.merged_into)) repointMergedClient(raw.id, o.merged_into);
   return true;
+}
+
+function repointMergedClient(oldId, keeper) {
+  if (!db.one(`SELECT 1 FROM clients WHERE id=?`, keeper)) return; // the keeper is not on this device (yet)
+  for (const t of SYNC.tables) {
+    if (t.name === 'clients' || !t.clientCol || t.serverOwned) continue;
+    if (!db.one(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`, t.name)) continue;
+    // A row that was already exchanged keeps matching sync_seen (its timestamp did not change), so it is
+    // not re-offered; one made here and never sent goes up under the keeper's id.
+    db.run(`UPDATE ${t.name} SET ${t.clientCol}=? WHERE ${t.clientCol}=?`, keeper, oldId);
+  }
 }
 
 /** An office deletion. Recorded locally so the cascade works and it is never re-offered, and remembered as
@@ -263,8 +281,28 @@ async function call(server, path, opts = {}, token) {
     throw new HttpError(502, `Could not reach the office SUDS at ${server}. Check that this device is on the office Wi-Fi (or the address IT gave you) and that the address is right, then try again. Nothing on this device was changed.`, { network: true });
   }
   const ct = res.headers.get('content-type') || ''; const data = ct.includes('json') ? await res.json() : await res.text();
-  if (!res.ok) { const e = new Error((data && data.error) || `Server returned ${res.status}`); e.status = res.status; e.data = data; throw e; }
+  if (!res.ok) throw officeError(res.status, data);
   return data;
+}
+
+/**
+ * What the office answered, as the error the Sync screen shows. A plain Error here became the kernel's
+ * generic 500 ("Something went wrong on this device"), so a wrong office password, a revoked device and
+ * a password the office wants changed all read as a fault on the phone. The office's own message and
+ * status travel instead — except two signals the app shell would act on as if they were about the device's
+ * own session: `mfaRequired` (it would open the device's #/mfa page) and `passwordChangeRequired` (its own
+ * profile page). Those are turned into words about the office account.
+ */
+function officeError(status, data) {
+  const body = data && typeof data === 'object' ? data : {};
+  let message = body.error || (typeof data === 'string' && data.trim() ? data.trim().slice(0, 200) : `The office server answered ${status}`);
+  const extra = { office: true, ...body };
+  delete extra.error; delete extra.mfaRequired; delete extra.passwordChangeRequired;
+  if (body.passwordChangeRequired) { message = 'Your office password has to be changed before this device can sync. Sign in at the office address, change it there, then sync again.'; extra.officePasswordChangeRequired = true; }
+  if (body.mfaRequired) { message = 'The office account uses two-step verification: enter the code from your authenticator app.'; extra.officeMfaRequired = true; }
+  const e = new HttpError(status, message, extra);
+  e.data = data;
+  return e;
 }
 
 /**
@@ -275,15 +313,12 @@ async function call(server, path, opts = {}, token) {
  * are ever sent, so a refused server never sees them.
  */
 export function isStaticHost() { try { return typeof window !== 'undefined' && window.SUDS_STATIC_HOST === true; } catch { return false; } }
-async function assertStaticHostAllowed(server, onProgress) {
-  if (!isStaticHost()) return;
-  onProgress('Checking whether the office server accepts this build…');
-  let info;
-  try { info = await call(server, '/api/app/info', { method: 'GET' }); }
-  catch (e) { if (e && e.extra && e.extra.network) throw e; info = null; }
-  if (!info || info.allow_static_sync !== true) {
-    throw new HttpError(403, 'This is a demo/evaluation copy of SUDS served from a public web host, and the office server does not allow it to sync (its administrator would have to start it with ALLOW_STATIC_SYNC=1). Use the SUDS app or the office address instead. Nothing was sent.', { staticSyncRefused: true });
-  }
+export const STATIC_HOST_MESSAGE = 'Sync is not available from the demo site. Open SUDS at the office address instead; this copy is for trying SUDS out and never talks to an office server.';
+/** A demo copy never syncs: a browser on another origin cannot reach the office API (no CORS, and the
+ *  office's connect-src forbids it), so promising a sync that then fails was worse than saying so. Nothing
+ *  is sent — not even the credentials. */
+function assertNotStaticHost() {
+  if (isStaticHost()) throw new HttpError(403, STATIC_HOST_MESSAGE, { staticSyncRefused: true });
 }
 
 /** Has this attachment already been exchanged with the office, in either direction? */
@@ -338,10 +373,25 @@ async function uploadBlobs(server, token, onProgress) {
   return sent;
 }
 
+/**
+ * The office database was restored from a backup (its db_generation changed since this device last
+ * synced), so rows this device had already sent — and marked as exchanged — may be gone at the office.
+ * Forget what was exchanged: every row here is offered again (the office keeps whichever is newer, as
+ * always), attachments are re-offered, the pull starts from the beginning for every account, and this
+ * device's own deletions since the beginning are sent again.
+ */
+export function resetExchangeState() {
+  db.run(`DELETE FROM sync_seen`);
+  db.run(`DELETE FROM settings WHERE key='sync_cursor' OR key LIKE 'sync_cursor:%' OR key LIKE 'sync_blob:%'`);
+  db.setSetting('sync_pushed', NEVER);
+}
+export const RESTORED_MESSAGE = 'The office database was restored from a backup; re-sending this device\'s records';
+const generationOf = (pulled) => (pulled.db_generation === null || pulled.db_generation === undefined ? '' : String(pulled.db_generation));
+
 /** Full sync: sign in to the office server, pull changes, push local changes, record the cursor. */
 export async function run({ server, username, password, code, onProgress = () => {} }) {
   if (!server) throw new HttpError(400, 'Office server address is required');
-  await assertStaticHostAllowed(server, onProgress);
+  assertNotStaticHost();
   onProgress('Signing in to the office server…');
   let login;
   try {
@@ -355,7 +405,9 @@ export async function run({ server, username, password, code, onProgress = () =>
     if (e.data && (e.data.deviceWipeRequired || (e.data.deviceRevoked && e.data.wipeRequested))) {
       onProgress('This device has been remotely wiped by an administrator…');
       const id = deviceId(); const ackToken = e.data.wipeAckToken;
-      await wipeLocalDb();
+      // The kernel's wipe (local/kernel.js wipeDevice) also drops the session token and the encryption keys
+      // and stops every later save; the shim's own wipe is the fallback when running outside the kernel.
+      if (typeof window !== 'undefined' && window.SUDS_LOCAL && window.SUDS_LOCAL.wipe) await window.SUDS_LOCAL.wipe(); else await wipeLocalDb();
       // Tell the office the wipe happened. The token is one-time and short-lived; it is absent when the
       // office already marked the device wiped because the sign-in credentials were valid. Best effort:
       // the wipe itself does not depend on the office hearing about it.
@@ -365,19 +417,34 @@ export async function run({ server, username, password, code, onProgress = () =>
     throw e;
   }
   const token = login.token; if (!token) throw new HttpError(400, 'The office server did not return a sync token (update the server to 1.1 or newer)');
-  if (login.mfaPending) { if (!code) throw new HttpError(401, 'MFA code required', { mfaRequired: true }); await call(server, '/api/auth/mfa/verify', { method: 'POST', body: JSON.stringify({ code }) }, token); }
+  // `officeMfaRequired`, not `mfaRequired`: the latter is what the app shell reads as "this device's own
+  // session needs a code" and it navigated the device to its own #/mfa page (public/app.js).
+  if (login.mfaPending) { if (!code) throw new HttpError(401, 'The office account uses two-step verification: enter the code from your authenticator app.', { officeMfaRequired: true }); await call(server, '/api/auth/mfa/verify', { method: 'POST', body: JSON.stringify({ code }) }, token); }
   try {
     const demo = require('../server/demo.js');
     if (demo.status().loaded) { onProgress('Removing sample data before the first sync…'); demo.remove({ actor: null, tombstones: false }); }
 
-    const pullConflicts = []; const skipped = [];
+    const pullConflicts = []; const skipped = []; const notices = [];
     // ---- pull, page by page ----
     const officeUserId = (login.user && login.user.id) || username;
     let since = readCursor(officeUserId, username);
-    const applied = {}; let pages = 0; let serverNow = null;
+    const applied = {}; let pages = 0; let serverNow = null; let generationReset = false;
     for (;;) {
       onProgress(pages ? `Downloading changes from the office (page ${pages + 1})…` : 'Downloading changes from the office…');
       const pulled = await call(server, `/api/sync/pull?since=${encodeURIComponent(since)}`, {}, token);
+      // A restored office database (see resetExchangeState). Checked before this page is applied, so the
+      // whole pull restarts from the beginning under the new generation.
+      const generation = generationOf(pulled); const known = db.getSetting('office_db_generation', null);
+      if (known !== null && known !== generation && !generationReset) {
+        generationReset = true;
+        onProgress(RESTORED_MESSAGE + '…');
+        db.transaction(() => { resetExchangeState(); db.setSetting('office_db_generation', generation); });
+        audit.log({ user: { username }, action: 'sync.office_restored', details: { server, from: known || null, to: generation || null } });
+        notices.push(RESTORED_MESSAGE + '.');
+        since = NEVER; pages++;
+        continue;
+      }
+      if (known === null) db.setSetting('office_db_generation', generation);
       if (pulled.full_resync_required) {
         // This device has been away longer than deletions are kept, so it cannot be brought up to date
         // incrementally without silently keeping rows the office has dropped. Start over from NEVER.
@@ -448,7 +515,7 @@ export async function run({ server, username, password, code, onProgress = () =>
 
     db.setSetting('last_sync_at', db.now()); db.setSetting('sync_server', server); db.setSetting('sync_username', username);
     audit.log({ user: { username }, action: 'sync.completed', details: { server, pulled: applied, pushed: pushedCounts, rejected: rejected.length, conflicts: conflicts.length, skipped: skipped.length, attachments_up: uploaded, attachments_down: downloaded } });
-    return { ok: true, pulled: applied, pushed: pushedCounts, rejected, conflicts, skipped, attachments: { uploaded, downloaded }, at: db.now() };
+    return { ok: true, pulled: applied, pushed: pushedCounts, rejected, conflicts, skipped, notices, attachments: { uploaded, downloaded }, at: db.now() };
   } finally { try { await call(server, '/api/auth/logout', { method: 'POST', body: '{}' }, token); } catch {} }
 }
 

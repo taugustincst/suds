@@ -472,6 +472,83 @@ test('a merge is not undone by a device that still holds the duplicate', async (
   assert.equal(require('../server/crypto').decrypt(H.db.one(`SELECT title_enc FROM tasks WHERE id=?`, oldTask).title_enc), 'Edited offline on the duplicate', 'but its edit still lands');
 });
 
+test('a client created in the field syncs with the assignment the device made, and only that one', async () => {
+  // The device auto-creates the worker's primary assignment at intake (as POST /api/clients does). The
+  // office refused it — "your role cannot write assignments" — on every push, while adding its own
+  // auto-assignment, so the device carried a permanently rejected row for every client it ever created.
+  const clientId2 = randomUUID(); const asg = randomUUID(); const localUser = randomUUID();
+  const r = await push(nav, { tables: {
+    clients: [{ id: clientId2, client_code: 'M26-0044', first_name_enc: 'Field', last_name_enc: 'Created', status: 'active', created_by: localUser, intake_date: '2026-09-01', created_at: iso(Date.now()), updated_at: iso(Date.now()) }],
+    assignments: [{ id: asg, client_id: clientId2, user_id: localUser, role_on_case: 'primary', start_date: '2026-09-01', created_by: localUser, created_at: iso(Date.now()), updated_at: iso(Date.now()) }],
+  } });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.data.rejected, [], 'neither the client nor its self-assignment is refused');
+  const rows = H.db.all(`SELECT id, user_id, role_on_case FROM assignments WHERE client_id=?`, clientId2);
+  assert.equal(rows.length, 1, 'exactly one assignment: the office did not add a second one of its own');
+  assert.equal(rows[0].id, asg, 'and it is the row the device sent');
+  assert.equal(rows[0].user_id, navId, 'attributed to the syncing worker');
+  // Re-sending it (a retry, or a later edit of the same row) is still accepted and still one row.
+  const again = await push(nav, { tables: { assignments: [{ id: asg, client_id: clientId2, user_id: navId, role_on_case: 'primary', start_date: '2026-09-01', created_by: navId, created_at: iso(Date.now()), updated_at: iso(Date.now() + 1000) }] } });
+  assert.deepEqual(again.data.rejected, []);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM assignments WHERE client_id=?`, clientId2).n, 1);
+
+  // What the exception does not cover: assigning someone else, or a client this worker did not create.
+  const other = randomUUID(); const foreign = randomUUID();
+  const r2 = await push(nav, { tables: { assignments: [
+    { id: other, client_id: clientId2, user_id: nav2Id, role_on_case: 'primary', start_date: '2026-09-01', created_by: navId, created_at: iso(Date.now()), updated_at: iso(Date.now()) },
+    { id: foreign, client_id: otherClientId, user_id: navId, role_on_case: 'primary', start_date: '2026-09-01', created_by: navId, created_at: iso(Date.now()), updated_at: iso(Date.now()) },
+  ] } });
+  assert.equal(r2.data.rejected.length, 2);
+  assert.ok(r2.data.rejected.every(x => /role cannot write assignments/.test(x.reason) && x.permanent), JSON.stringify(r2.data.rejected));
+  assert.ok(!H.db.one(`SELECT 1 FROM assignments WHERE id IN (?,?)`, other, foreign));
+
+  // A device from before this rule: the office already auto-assigned, so the device's duplicate is refused
+  // for good rather than becoming a second open primary assignment.
+  const c3 = randomUUID(); const dupAsg = randomUUID();
+  await push(nav, { tables: { clients: [{ id: c3, client_code: 'M26-0045', first_name_enc: 'Older', last_name_enc: 'Device', status: 'active', created_at: iso(Date.now()), updated_at: iso(Date.now()) }] } });
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM assignments WHERE client_id=?`, c3).n, 1, 'the office auto-assigned when no assignment was sent');
+  const r3 = await push(nav, { tables: { assignments: [{ id: dupAsg, client_id: c3, user_id: navId, role_on_case: 'primary', start_date: '2026-09-01', created_by: navId, created_at: iso(Date.now()), updated_at: iso(Date.now()) }] } });
+  assert.equal(r3.data.rejected.length, 1, JSON.stringify(r3.data));
+  assert.ok(/conflicts with an existing record/.test(r3.data.rejected[0].reason) && r3.data.rejected[0].permanent, JSON.stringify(r3.data.rejected));
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM assignments WHERE client_id=?`, c3).n, 1, JSON.stringify(H.db.all(`SELECT * FROM assignments WHERE client_id=?`, c3)));
+});
+
+test('a client merged away at the office reaches the device that still holds it', async () => {
+  // After a merge the duplicate's assignments belong to the keeper, so the duplicate fell outside the
+  // navigator's pull scope and lingered on every device for ever.
+  const since = iso(Date.now() - 1000);
+  const keep = (await nav.post('/api/clients', { first_name: 'Keeper', last_name: 'Lingers' })).data.id;
+  const dup = (await nav.post('/api/clients', { first_name: 'Dupe', last_name: 'Lingers', confirm_duplicate: true })).data.id;
+  assert.equal((await admin.post(`/api/clients/${keep}/merge`, { source_id: dup })).status, 200);
+  const p = await nav.get(`/api/sync/pull?since=${encodeURIComponent(since)}`);
+  assert.equal(p.status, 200);
+  const merged = p.data.tables.clients.find(c => c.id === dup);
+  assert.ok(merged, 'the merged-away client is in the pull');
+  assert.equal(merged.merged_into, keep, 'marked with the record that was kept');
+  assert.ok(merged.deleted_at, 'and as no longer current');
+  assert.ok(p.data.tables.clients.some(c => c.id === keep), 'alongside the keeper');
+  // Not a way around the caseload: a merge between someone else's clients is not sent to this worker.
+  const theirs = (await nav2.post('/api/clients', { first_name: 'Theirs', last_name: 'Lingers', confirm_duplicate: true })).data.id;
+  const theirsDup = (await nav2.post('/api/clients', { first_name: 'Theirs', last_name: 'Lingers', confirm_duplicate: true })).data.id;
+  assert.equal((await admin.post(`/api/clients/${theirs}/merge`, { source_id: theirsDup })).status, 200);
+  const p2 = await nav2.get(`/api/sync/pull?since=${encodeURIComponent(since)}`);
+  assert.ok(!p2.data.tables.clients.some(c => c.id === dup), 'another worker does not receive a merge that is not on their caseload');
+  assert.ok(p2.data.tables.clients.some(c => c.id === theirsDup), 'but does receive their own');
+  const p3 = await nav.get(`/api/sync/pull?since=${encodeURIComponent(since)}`);
+  assert.ok(!p3.data.tables.clients.some(c => c.id === theirsDup || c.id === theirs), 'a merge between clients outside the caseload is not sent');
+});
+
+test('a pull carries the office database generation, and a restore changes it', async () => {
+  const p = await nav.get(`/api/sync/pull?since=${encodeURIComponent(iso(Date.now()))}`);
+  assert.equal(p.status, 200);
+  assert.ok('db_generation' in p.data, 'the field is always present');
+  assert.equal(p.data.db_generation, null, 'null until the database has ever been restored');
+  H.db.setSetting('db_generation', 'gen-after-restore'); // what server/backup.js restore() writes, with a fresh uuid
+  const p2 = await nav.get(`/api/sync/pull?since=${encodeURIComponent(iso(Date.now()))}`);
+  assert.equal(p2.data.db_generation, 'gen-after-restore');
+  H.db.run(`DELETE FROM settings WHERE key='db_generation'`);
+});
+
 test('merging tidies assignments and leaves one open episode', async () => {
   const keep = (await nav.post('/api/clients', { first_name: 'Tidy', last_name: 'Keeper' })).data.id;
   const dup = (await nav.post('/api/clients', { first_name: 'Tidy', last_name: 'Duplicate' })).data.id;

@@ -2,6 +2,7 @@
 // Bundles the server logic + browser shims into public/local/kernel.js (used by local mode, the offline copy).
 const path = require('node:path');
 const fs = require('node:fs');
+const zlib = require('node:zlib');
 const esbuild = require('esbuild');
 const root = path.join(__dirname, '..');
 // The browser has no filesystem, so it reads the schema from a generated JS copy. Regenerate it here so a
@@ -27,5 +28,25 @@ await esbuild.build({
   }],
 });
 for (const f of ['sql-wasm.wasm']) fs.copyFileSync(path.join(root, 'node_modules', 'sql.js', 'dist', f), path.join(out, f));
-console.log('local kernel written to public/local/ (' + (fs.statSync(path.join(out, 'kernel.js')).size / 1024).toFixed(0) + ' KB)');
+// Precompressed copies for server/http.js to serve with Content-Encoding (a phone on a slow connection
+// downloads a quarter of the bytes). Both are deterministic for the same input — Node's gzip writes no
+// mtime — so the committed files only change when the kernel does, and CI's drift check stays meaningful.
+// Written only when the bytes differ, so an unchanged build leaves the files' mtimes alone.
+const writeIfChanged = (file, bytes) => { if (!fs.existsSync(file) || !fs.readFileSync(file).equals(bytes)) fs.writeFileSync(file, bytes); };
+for (const f of ['kernel.js', 'sql-wasm.wasm']) {
+  const src = fs.readFileSync(path.join(out, f));
+  writeIfChanged(path.join(out, f + '.gz'), zlib.gzipSync(src, { level: 9 }));
+  writeIfChanged(path.join(out, f + '.br'), zlib.brotliCompressSync(src, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 11, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: src.length } }));
+}
+// public/app.js requests the kernel as `local/kernel.js?v=<version>` (see startLocalKernel there): the
+// version comes from package.json through this stamp, the same way scripts/gen-schema-text.js stamps sw.js.
+{
+  const appJs = path.join(root, 'public', 'app.js');
+  const version = require(path.join(root, 'package.json')).version;
+  const before = fs.readFileSync(appJs, 'utf8');
+  const after = before.replace(/(const SUDS_VERSION = ')[^']*(')/, `$1${version}$2`);
+  if (after !== before) { fs.writeFileSync(appJs, after); console.log(`[suds] stamped public/app.js with version ${version}`); }
+}
+const kb = (f) => (fs.statSync(path.join(out, f)).size / 1024).toFixed(0) + ' KB';
+console.log(`local kernel written to public/local/ (kernel.js ${kb('kernel.js')}, gzip ${kb('kernel.js.gz')}, brotli ${kb('kernel.js.br')}; sql-wasm.wasm ${kb('sql-wasm.wasm')}, gzip ${kb('sql-wasm.wasm.gz')}, brotli ${kb('sql-wasm.wasm.br')})`);
 })().catch((e) => { console.error(e.message || e); process.exit(1); });

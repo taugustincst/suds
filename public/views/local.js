@@ -1,4 +1,11 @@
 import { h, route, get, post, state, form, toast, nav, render, loadSession, badge, fmt, pageHead, eraseDeviceButton, kv } from '../app.js';
+
+// A column name as the person would say it: `first_name_enc` is "first name" (the suffix is how the
+// database marks an encrypted column, not something a navigator should have to read past).
+const column = (x) => fmt.label(String(x).replace(/_enc$/, '').replace(/_idx$/, '')).toLowerCase();
+// The demo build served from a static host (scripts/build-static-site.js). It never syncs: see local/sync.js.
+const isStaticHost = () => { try { return window.SUDS_STATIC_HOST === true; } catch { return false; } };
+const STATIC_HOST_MESSAGE = 'Sync is not available from the demo site. Open SUDS at the office address instead; this copy is for trying SUDS out and never talks to an office server.';
 import { sampleDataCard } from './admin.js';
 
 // First run on a device: create the local account (no server needed)
@@ -39,7 +46,7 @@ route('sync', async () => {
   const st = await get('/api/local/sync/status');
   const disc = window.SudsNative && window.SudsNative.discover ? JSON.parse(window.SudsNative.discover() || 'null') : null;
   const serverGuess = st.server || disc || 'https://suds.local';
-  const log = h('div', { class: 'small muted mt' });
+  const log = h('div', { class: 'small muted mt', 'data-sync-log': '1' });
   const f = form([
     { name: 'server', label: 'Office SUDS address', required: true, value: serverGuess, help: 'Usually https://suds.local on the office Wi-Fi. Shown under Settings → Network & devices on the office computer.', span: true },
     { name: 'username', label: 'Your office username', required: true, value: st.username || state.user.username },
@@ -54,7 +61,10 @@ route('sync', async () => {
     log.textContent = 'Connecting…';
     try {
       const { office_password, ...rest } = d;
-      const r = await post('/api/local/sync', { ...rest, password: office_password });
+      // quiet: what comes back is about the *office* account (a wrong office password is a 401, an office
+      // account that needs a code is a 401 too) and must not be read by api() as this device's own session
+      // expiring or needing its own second factor.
+      const r = await post('/api/local/sync', { ...rest, password: office_password }, { quiet: true });
       const sum = (o) => Object.entries(o || {}).filter(([, n]) => n).map(([k, n]) => `${n} ${fmt.label(k).toLowerCase()}`).join(', ') || 'nothing new';
       const retrying = (r.rejected || []).filter(x => !(r.conflicts || []).some(c => c.table === x.table && c.id === x.id && c.reason));
       log.textContent = `Done ${fmt.dt(r.at)}. Received: ${sum(r.pulled)}. Sent: ${sum(r.pushed)}.${retrying.length ? ` ${retrying.length} item(s) could not be sent this time and will be retried.` : ''}${(r.skipped || []).length ? ` ${r.skipped.length} office record(s) could not be stored on this device (see the audit log).` : ''}`;
@@ -66,7 +76,7 @@ route('sync', async () => {
       const warnings = all.filter(c => c.warning);
       const name = (c) => `${fmt.label(c.table).replace(/s$/, '')}${c.label ? ' ' + c.label : ''}`;
       if (conflicts.length) {
-        const what = conflicts.slice(0, 5).map(c => `${name(c)} (${(c.columns || []).map(x => fmt.label(x).toLowerCase()).join(', ')})`).join('; ');
+        const what = conflicts.slice(0, 5).map(c => `${name(c)} (${(c.columns || []).map(column).join(', ')})`).join('; ');
         log.append(h('div', { class: 'banner warn mt', role: 'alert', 'data-sync-conflicts': String(conflicts.length) }, h('div', {}, h('b', {}, `${conflicts.length} of your change${conflicts.length === 1 ? ' was' : 's were'} replaced by a newer edit made at the office: `), what, conflicts.length > 5 ? ` and ${conflicts.length - 5} more` : '', '. The office version is what everyone now sees; re-enter anything from your version that still matters.')));
       }
       if (refused.length) {
@@ -75,12 +85,24 @@ route('sync', async () => {
         log.append(h('div', { class: 'banner warn mt', role: 'alert', 'data-sync-refused': String(refused.length) }, h('div', {}, h('b', {}, `${refused.length} change${refused.length === 1 ? '' : 's'} made on this device ${refused.length === 1 ? 'was' : 'were'} not accepted by the office and will not be sent again: `), what, refused.length > 5 ? ` and ${refused.length - 5} more` : '', '. The office copy is what everyone now sees; if something still matters, ask a supervisor to enter it there.')));
       }
       if (warnings.length) log.append(h('div', { class: 'banner info mt', 'data-sync-warnings': String(warnings.length) }, h('div', {}, warnings.slice(0, 5).map(c => `${name(c)}: ${c.reason}`).join('; '))));
+      // The office database was restored from a backup, so this device re-sent everything it holds.
+      for (const n of r.notices || []) log.append(h('div', { class: 'banner info mt', 'data-sync-notice': '1' }, h('div', {}, n)));
       toast('Sync complete', 'ok'); await loadSession();
     } catch (e) {
+      // The office account uses two-step verification and no code was given: ask for it here, on this
+      // form, rather than treating it as an error (and never as this device's own MFA prompt).
+      if (e.data && e.data.officeMfaRequired) {
+        log.textContent = '';
+        log.append(h('div', { class: 'banner info mt', role: 'alert', 'data-office-mfa': '1' }, h('div', {}, h('b', {}, 'Enter the code from your authenticator app'), ' for your office account, then tap Sync now again.')));
+        try { f.inputs.code.focus(); } catch {}
+        return;
+      }
       log.textContent = 'Sync failed: ' + e.message;
       // The device has already erased its local database (local/sync.js, before this error even reached
-      // here) — show why, then start over exactly as a brand-new device would.
-      if (e.data && e.data.wiped) { toast('This device was remotely wiped by an administrator', 'error'); setTimeout(() => location.reload(), 2500); return; }
+      // here) — show why, then start over exactly as a brand-new device would. The erase resolved before
+      // the error was thrown; the flush is a no-op after a wipe and is awaited so a save that was already
+      // in flight cannot outlive the reload.
+      if (e.data && e.data.wiped) { toast('This device was remotely wiped by an administrator', 'error'); setTimeout(async () => { try { await window.SUDS_LOCAL.flush(); } catch {} location.reload(); }, 1500); return; }
       throw e;
     }
   } });
@@ -91,13 +113,17 @@ route('sync', async () => {
   // profile's localStorage, beside the data they protect. Say so where someone is about to put real
   // client information into it, not only in the documentation.
   const protectedKeys = !!(window.SudsNative || window.__sudsSecrets);
+  // The demo site: no form at all, and nothing is ever sent. Honest, instead of a sync that always fails.
+  const syncCard = isStaticHost()
+    ? h('div', { class: 'card' }, h('h3', {}, 'Sync now'), h('div', { class: 'banner info', 'data-static-no-sync': '1' }, h('div', {}, STATIC_HOST_MESSAGE)), h('div', { class: 'btn-row mt' }, eraseDeviceButton()))
+    : h('div', { class: 'card' }, h('h3', {}, 'Sync now'), h('p', { class: 'small muted' }, 'Connect this device to the office Wi-Fi (or the address IT gave you), then sign in with your office account.'), f, log,
+        h('div', { class: 'btn-row' }, eraseDeviceButton()));
   return h('div', {}, pageHead('Sync with the office'),
     protectedKeys ? null : h('div', { class: 'banner warn mb' }, h('b', {}, 'This is a browser copy, for trying SUDS out. '),
       'Its encryption keys are stored in this browser profile alongside the data, so anyone who can use this browser profile can read what is in it. Keep real client information on the office SUDS unless your administrator has approved this device for field work — otherwise, use sample data.'),
     h('div', { class: 'grid cols-2' },
       h('div', { class: 'card' }, h('h3', {}, 'Status'), kv([['This device', badge('Local copy', 'info')], ['Data protection', protectedKeys ? 'Encrypted; keys in protected device storage' : badge('Keys kept in this browser', 'warn')], ['Last sync', st.last_sync_at ? fmt.dt(st.last_sync_at) : 'never'], ['Changes waiting to send', String(st.pending)], ['Office server', st.server || 'not set yet']]),
         h('p', { class: 'small muted mt' }, 'Sync exchanges clients, visits, calls, notes, reminders, referrals and everything else in both directions. The office SUDS decides: the newest change wins, a change it rejects for good is not sent again, and a record the office has purged or merged does not come back.')),
-      h('div', { class: 'card' }, h('h3', {}, 'Sync now'), h('p', { class: 'small muted' }, 'Connect this device to the office Wi-Fi (or the address IT gave you), then sign in with your office account.'), f, log,
-        h('div', { class: 'btn-row' }, eraseDeviceButton())),
+      syncCard,
       await sampleDataCard(() => nav('sync?_=' + Date.now()))));
 });

@@ -18,7 +18,20 @@ const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
   '.woff2': 'font/woff2', '.wasm': 'application/wasm', '.txt': 'text/plain; charset=utf-8', '.md': 'text/markdown; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
 };
+
+// A request target the URL parser refuses (`GET /%` and friends) used to throw before any try/catch in
+// the static server, which took the whole process down; `GET //x` parsed as a protocol-relative URL and
+// answered for the wrong path. Leading slashes are collapsed and a target that still cannot be parsed
+// is a 400, on both the office server (server/app.js) and the static-site server (scripts/serve-static.js).
+function parseRequestUrl(rawUrl, base = 'http://localhost') {
+  const target = String(rawUrl || '/').replace(/^\/{2,}/, '/');
+  let url;
+  try { url = new URL(target.startsWith('/') ? target : '/' + target, base); } catch { throw new HttpError(400, 'Malformed request URL'); }
+  try { decodeURIComponent(url.pathname); } catch { throw new HttpError(400, 'Malformed request URL'); }
+  return url;
+}
 
 class Router {
   constructor() { this.routes = []; }
@@ -100,25 +113,54 @@ function sendJson(res, status, obj) {
   res.end(body);
 }
 
-function sendFile(res, filePath) {
+// The local-mode kernel and its WebAssembly are the two big downloads a phone makes (over a megabyte
+// each, uncompressed). `npm run build:local` writes a .gz and a .br beside each; a request whose
+// Accept-Encoding allows one gets it, with Content-Encoding set, and anything else gets the plain file.
+const PRECOMPRESSED = [['br', '.br'], ['gzip', '.gz']];
+function pickEncoding(req, filePath) {
+  const accept = String((req && req.headers && req.headers['accept-encoding']) || '').toLowerCase();
+  for (const [enc, ext] of PRECOMPRESSED) {
+    if (!new RegExp(`(^|,)\\s*${enc}\\s*(;|,|$)`).test(accept)) continue;
+    if (fs.existsSync(filePath + ext)) return { enc, file: filePath + ext };
+  }
+  return null;
+}
+
+// Cache policy for a static file. Everything is `no-store` by default (securityHeaders) so a shared computer
+// keeps nothing; the two kernel assets are the exception when they are requested with a version query
+// (`/local/kernel.js?v=1.8.0`): the URL changes with every release, so the copy may be kept for good. The
+// HTML shell, the app modules and anything without a version stay no-store.
+function cachePolicy(url) {
+  if (url && url.pathname.startsWith('/local/') && url.searchParams.get('v')) return 'public, max-age=31536000, immutable';
+  return null;
+}
+
+function sendFile(res, filePath, { req, url } = {}) {
   const ext = path.extname(filePath).toLowerCase();
-  const data = fs.readFileSync(filePath);
-  res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Content-Length': data.length });
+  const headers = { 'Content-Type': MIME[ext] || 'application/octet-stream' };
+  const cache = cachePolicy(url); if (cache) headers['Cache-Control'] = cache;
+  const pre = req ? pickEncoding(req, filePath) : null;
+  if (pre) { headers['Content-Encoding'] = pre.enc; headers.Vary = 'Accept-Encoding'; }
+  const data = fs.readFileSync(pre ? pre.file : filePath);
+  headers['Content-Length'] = data.length;
+  res.writeHead(200, headers);
   res.end(data);
 }
 
 function serveStatic(root) {
   root = path.resolve(root);
   return (req, res) => {
-    let p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+    let url;
+    try { url = parseRequestUrl(req.url, 'http://x'); } catch (e) { sendJson(res, e.status || 400, { error: e.message }); return true; }
+    let p = decodeURIComponent(url.pathname);
     if (p === '/app' || p === '/app/') p = '/get-app.html';
     else if (p === '/' || !path.extname(p)) p = '/index.html'; // SPA fallback
     const file = path.resolve(path.join(root, p));
     if (!file.startsWith(root + path.sep) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
       sendJson(res, 404, { error: 'Not found' }); return true;
     }
-    sendFile(res, file); return true;
+    sendFile(res, file, { req, url }); return true;
   };
 }
 
-module.exports = { Router, HttpError, badRequest, unauthorized, forbidden, notFound, conflict, parseCookies, readBody, securityHeaders, sendJson, sendFile, serveStatic };
+module.exports = { Router, HttpError, badRequest, unauthorized, forbidden, notFound, conflict, parseCookies, parseRequestUrl, readBody, securityHeaders, sendJson, sendFile, serveStatic };
