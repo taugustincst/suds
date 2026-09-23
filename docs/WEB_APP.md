@@ -21,13 +21,16 @@ Open the deployed address on any phone, tablet or computer. There is nothing to 
    browser, encrypted the same way the office server encrypts it (`docs/HIPAA.md`), with the same warning
    as local mode: a plain browser has no protected key store, so its keys live alongside the data in that
    browser profile. Fine for trying SUDS out; not where a real caseload belongs.
-4. **Sync**: the Sync screen can still exchange changes with a real office SUDS server if the county runs
-   one, the same as local mode does — but only if that server allows it. This build is served by a host
-   the county does not run, so it carries a permanent banner (*Demo/evaluation build — do not enter real
-   client information*) and, before sending any credentials, asks the office server's `/api/app/info`
-   whether `allow_static_sync` is on. It is off unless the server was started with
-   `ALLOW_STATIC_SYNC=1`; otherwise the sync is refused with a message saying so and nothing is sent.
-   Without an office server, the browser copy simply stands alone.
+4. **No sync.** The demo build never exchanges data with an office server. Its Sync screen says so
+   (*Sync is not available from the demo site; use the office address*) and offers no form: a page served
+   from one origin cannot call another origin's API (the office server sends no CORS headers and its
+   `connect-src` forbids it), so a sync attempted from here could only fail, and nothing — not even a
+   password — is sent. Someone who wants their offline copy to sync uses local mode at the office address
+   (`docs/PLATFORM.md`). The server flag `ALLOW_STATIC_SYNC` still exists and is reported by
+   `/api/app/info` as `allow_static_sync`, but nothing reads it any more: it is a no-op kept only so
+   existing deployments do not fail on an unknown setting.
+5. **Offline**: the build registers the same service worker as the office app, with the kernel in its
+   shell, so a copy added to the home screen opens with no connection at all.
 
 ## Where it lives
 

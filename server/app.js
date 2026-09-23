@@ -1,12 +1,11 @@
 'use strict';
 // Builds the request handler (used by both the real server and tests).
 const path = require('node:path');
-const { URL } = require('node:url');
 const config = require('./config');
 const db = require('./db');
 const audit = require('./audit');
 const auth = require('./auth');
-const { Router, HttpError, parseCookies, readBody, securityHeaders, sendJson, serveStatic } = require('./http');
+const { Router, HttpError, parseCookies, parseRequestUrl, readBody, securityHeaders, sendJson, serveStatic } = require('./http');
 
 // Simple in-memory rate limiter (per IP + bucket). Deliberately process-local, not shared across
 // instances: SUDS runs as exactly one process per database (server/instance-lock.js enforces this at
@@ -102,7 +101,9 @@ function createHandler() {
 
   return async function handle(req, res) {
     securityHeaders(res);
-    const url = new URL(req.url, 'http://localhost');
+    // Parsed before the try below used to mean a target the parser refused hung the socket; see parseRequestUrl.
+    let url;
+    try { url = parseRequestUrl(req.url, 'http://localhost'); } catch (e) { sendJson(res, e.status || 400, { error: e.message }); return; }
     const ctx = {
       req, res, method: req.method, path: url.pathname, query: url.searchParams, params: {},
       headers: req.headers, cookies: parseCookies(req.headers.cookie),

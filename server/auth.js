@@ -138,8 +138,10 @@ function resolveSession(ctx) {
   }
   const user = db.one(`SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,must_change_password,password_changed_at,hourly_cost,created_at,requires_cosign,supervisor_id FROM users WHERE id=?`, s.user_id);
   if (!user || !user.is_active) return null;
-  // throttle last_seen writes to once/minute
-  if (now - Date.parse(s.last_seen_at) > 60_000) db.run(`UPDATE sessions SET last_seen_at=? WHERE id=?`, new Date(now).toISOString(), s.id);
+  // throttle last_seen writes to once/minute — and a background request (the reminder bell's poll, the
+  // dashboard's auto-refresh; `X-Background: 1` from public/app.js) is not the person being present, so it
+  // never counts towards idle: without this a tab left open on the dashboard could never time out.
+  if (ctx.headers['x-background'] !== '1' && now - Date.parse(s.last_seen_at) > 60_000) db.run(`UPDATE sessions SET last_seen_at=? WHERE id=?`, new Date(now).toISOString(), s.id);
   ctx.sessionToken = token;
   ctx.session = s;
   return user;

@@ -97,8 +97,21 @@ export async function start({ wasmUrl, onSaveError, force } = {}) {
     return demo.seed({ actor: ctx.user.id, workers: [ctx.user.id], clinician: null, supervisor: ctx.user.id });
   });
   router.delete('/api/local/demo', (ctx) => { if (!ctx.user) throw new HttpError(401, 'Sign in first'); return demo.remove({ actor: ctx.user.id }); });
-  window.SUDS_LOCAL = { handle, flush: () => sqlite.flush(), wipe: async () => { await sqlite.wipe(); localStorage.removeItem('suds.local.session'); }, sync: (opts) => sync.run(opts) };
+  window.SUDS_LOCAL = { handle, flush: (opts) => sqlite.flush(opts), wipe: wipeDevice, sync: (opts) => sync.run(opts), isWiped: () => sqlite.isWiped() };
   return window.SUDS_LOCAL;
+}
+
+/**
+ * Erase everything SUDS keeps in this browser profile: the database (and the in-memory copy, so nothing
+ * writes it back), the sign-in token, and the encryption keys — so even a stale copy of the database that
+ * somehow survives is unreadable. The device id lives inside the database and goes with it; the office is
+ * told the wipe happened with the id captured before the erase (local/sync.js), and the next set-up on
+ * this browser registers as a new device. Resolves once the delete has been committed to IndexedDB.
+ */
+async function wipeDevice() {
+  await sqlite.wipe();
+  for (const k of ['suds.local.session', 'suds.local.enc', 'suds.local.idx', 'suds.prefs']) { try { localStorage.removeItem(k); } catch {} }
+  token = '';
 }
 
 async function handle(method, path, body, headers = {}) {
@@ -106,6 +119,13 @@ async function handle(method, path, body, headers = {}) {
   const res = new FakeRes();
   const ctx = { req: { socket: { remoteAddress: '127.0.0.1' } }, res, method, path: url.pathname, query: url.searchParams, params: {}, headers: Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v])), cookies: {}, ip: 'device', user: null, session: null, body: null, rawBody: null };
   try {
+    // Nothing runs against an erased database: the page is about to reload into first-run setup.
+    if (sqlite.isWiped()) throw new HttpError(410, 'This device has been erased and needs to be set up again.', { wiped: true });
+    // Harm-reduction supply counts are the office's shelf count (server/sync-tables.js serverOwned): a
+    // change made here would never be sent and would be silently overwritten at the next sync, so it is
+    // refused up front instead of looking saved. Visits recorded here still draw the office shelf down
+    // when they sync.
+    if (method !== 'GET' && /^\/api\/supplies(\/|$)/.test(url.pathname)) throw new HttpError(403, 'Supply counts are kept at the office and cannot be changed on this device. Visits you record here draw the office count down when you sync.', { serverOwned: true });
     const m = router.match(method, url.pathname);
     if (!m) throw new HttpError(404, 'Not found');
     if (m.methodNotAllowed) throw new HttpError(405, 'Method not allowed');

@@ -22,8 +22,8 @@ out.
    section. It is the same code the web app runs, held in a browser profile, and it syncs with the office
    server on command.
 5. **The GitHub Pages build is a demonstration only** (`docs/WEB_APP.md`). It carries a permanent
-   demo/evaluation banner, never holds real client information, and cannot sync with an office server
-   unless that server was deliberately started with `ALLOW_STATIC_SYNC=1`.
+   demo/evaluation banner, never holds real client information, and does not sync with an office server:
+   its Sync screen says so and sends nothing. (`ALLOW_STATIC_SYNC` is a no-op kept for compatibility.)
 
 ## Retiring an existing phone-app install
 
@@ -61,6 +61,7 @@ by these rules, all of which the server enforces:
 | **The office server is authoritative.** | Sync sends the device's changes to the office and applies what the office answers. Where both changed the same record, the newest change wins on the office's clock; approvals, signatures, countersignatures and other people's records are never taken from a device. |
 | **Permanent sync rejections are final.** | When the office refuses a pushed row for a reason that cannot change — outside the caseload, no permission, immutable legal record, purged parent — it marks the rejection `permanent` and the device stops resending it. The row is not lost silently: the Sync screen lists it. Re-entering it on the device does not overrule the office. |
 | **Purged and merged records cannot be resurrected.** | A client the retention job has purged, or a record merged into another, stays that way. A device that still holds the old row has it rejected (`purged`, `merged into another record`) and receives the tombstone. Nothing a device holds brings back a record the office has disposed of. |
+| **A restored office database is re-synced to.** | Every restore from a backup (`server/backup.js`) starts a new `db_generation`, which every pull reports. A device that sees it change forgets what it believed was exchanged and offers every record it holds again (the office still keeps whichever copy is newer), so work synced after the backup was taken is not silently lost. The Sync screen says *The office database was restored from a backup; re-sending this device's records*. |
 | **Per-user cursors.** | Each office account has its own sync position on a device (`sync_cursor:<user>`). A device used by two people does not let one person's position stand in for the other's, and a device that has been away longer than tombstones are kept is told to re-download rather than guess. |
 | **Minimum necessary applies on the device.** | Only the syncing account's caseload (all clients for a supervisor) is downloaded; clinical notes only for clinical roles; nobody else's credentials. What is on a device is listed below. |
 | **Devices are tracked.** | Every local-mode browser that syncs registers a device id. Settings → Synced devices shows them; an administrator can revoke or wipe any of them, and deactivating an account wipes its devices. |
@@ -95,8 +96,11 @@ database once a sync has run:
 - **Revoke** (Settings → Synced devices) blocks that device from syncing again until an administrator clears
   it — nothing on the device is touched, so a device found a day later just needs clearing.
 - **Wipe** additionally tells the device to erase its local SUDS database the next time it tries to sync,
-  and revokes it in the same moment. Neither can reach a device that is never opened again with network
-  access; MDM's OS-level remote wipe is the backstop.
+  and revokes it in the same moment. On the device the erase drops the database from IndexedDB, the copy in
+  memory (so nothing can write it back before the page reloads), the sign-in token and the encryption keys
+  from the browser profile; the device id lives inside the database and goes with it, and the
+  acknowledgement (`wipe-ack`) is sent with the id captured before the erase. Neither can reach a device
+  that is never opened again with network access; MDM's OS-level remote wipe is the backstop.
 - **Offboarding, in any order.** A pending wipe or revocation is answered *before* the username and
   password are looked at (`server/auth.js` `login()`): a device the server knows gets the wipe instruction
   whether the account has since been deactivated, the password has been reset, or the device is offering a

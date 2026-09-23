@@ -73,13 +73,29 @@ function namePhoneticIndex(lastName) { const c = soundex(normaliseName(lastName)
  *  Also the one place a sync push should recompute clients.preferred_name_idx from (see sync-tables importRow). */
 function preferredNameIndex(name) { const n = String(name || '').trim().toLowerCase(); return n ? blindIndex(n) : null; }
 
+/** The numeric part of a client code, or 0 when it has none. `C26-0009-D2` (a code the office renamed after a
+ *  device collision) is 9, not NaN. */
+function codeNumber(code, prefix) {
+  const m = /^(\d+)/.exec(String(code || '').slice(prefix.length));
+  return m ? Number(m[1]) : 0;
+}
+
 function nextClientCode() {
   const year = new Date().getFullYear();
   // Clients created on a device (local mode) get an M prefix so codes never collide with the office server's C codes.
   const prefix = `${require('./config').local ? 'M' : 'C'}${String(year).slice(2)}-`;
-  const last = db.one(`SELECT client_code FROM clients WHERE client_code LIKE ? ORDER BY client_code DESC LIMIT 1`, prefix + '%');
-  const n = last ? Number(last.client_code.slice(prefix.length)) + 1 : 1;
-  return prefix + String(n).padStart(4, '0');
+  // A per-prefix counter is the source of truth, so a renamed code (`-D2`) or a code past 9999 (which sorts
+  // *below* 9999 as a string) cannot derail the sequence. The table is still scanned numerically as a floor,
+  // for databases from before the counter existed and for codes that arrived by sync or import.
+  const counterKey = `client_code_counter:${prefix}`;
+  const counter = Number(db.getSetting(counterKey, '0')) || 0;
+  // CAST takes the leading digits (`0009-D2` is 9), the same as codeNumber() below.
+  const scanned = db.one(`SELECT MAX(CAST(SUBSTR(client_code, ?) AS INTEGER)) m FROM clients WHERE client_code LIKE ?`, prefix.length + 1, prefix + '%');
+  const max = Math.max(counter, Number(scanned && scanned.m) || 0);
+  let n = max + 1; let code = prefix + String(n).padStart(4, '0');
+  while (db.one(`SELECT 1 FROM clients WHERE client_code=?`, code)) { n++; code = prefix + String(n).padStart(4, '0'); }
+  db.setSetting(counterKey, String(n));
+  return code;
 }
 
 function summary(row, opts) {
@@ -90,4 +106,4 @@ function summary(row, opts) {
   return o;
 }
 
-module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, summary, daysToEngagement, uuid, soundex, namePrefixIndex, namePhoneticIndex, preferredNameIndex, normaliseName };
+module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, codeNumber, summary, daysToEngagement, uuid, soundex, namePrefixIndex, namePhoneticIndex, preferredNameIndex, normaliseName };

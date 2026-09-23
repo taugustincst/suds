@@ -5942,6 +5942,7 @@ __export(sqlite_exports, {
   forceAcquireLock: () => forceAcquireLock,
   hasLock: () => hasLock,
   init: () => init,
+  isWiped: () => isWiped,
   loadBytes: () => loadBytes,
   lockIsStale: () => lockIsStale,
   saveBytes: () => saveBytes,
@@ -6001,71 +6002,167 @@ function hasLock() {
   return haveLock;
 }
 function idb() {
+  if (conn) return Promise.resolve(conn);
   return new Promise((res, rej) => {
     const r = indexedDB.open(STORE, 1);
     r.onupgradeneeded = () => r.result.createObjectStore("kv");
-    r.onsuccess = () => res(r.result);
+    r.onsuccess = () => {
+      conn = r.result;
+      conn.onclose = () => {
+        conn = null;
+      };
+      conn.onversionchange = () => {
+        try {
+          conn.close();
+        } catch {
+        }
+        conn = null;
+      };
+      res(conn);
+    };
     r.onerror = () => rej(r.error);
   });
 }
 async function loadBytes() {
   try {
     const d = await idb();
-    return await new Promise((res, rej) => {
+    const bytes3 = await new Promise((res, rej) => {
       const t = d.transaction("kv", "readonly").objectStore("kv").get(KEY);
       t.onsuccess = () => res(t.result || null);
       t.onerror = () => rej(t.error);
     });
+    if (bytes3) hadPersisted = true;
+    return bytes3;
   } catch {
     return null;
   }
 }
-async function saveBytes(bytes3) {
+function saveBytes(bytes3, { urgent = false } = {}) {
+  const write = (d) => new Promise((res, rej) => {
+    const t = d.transaction("kv", "readwrite");
+    const store = t.objectStore("kv");
+    let withheld = false;
+    const probe = store.get(KEY);
+    store.put(bytes3, KEY);
+    probe.onsuccess = () => {
+      if (hadPersisted && probe.result === void 0) {
+        withheld = true;
+        wiped = true;
+        try {
+          t.abort();
+        } catch {
+        }
+      }
+    };
+    t.oncomplete = () => {
+      if (inflight === t) inflight = null;
+      hadPersisted = true;
+      res(true);
+    };
+    t.onabort = () => {
+      if (inflight === t) inflight = null;
+      if (withheld) res(false);
+      else rej(t.error || new Error("save aborted"));
+    };
+    t.onerror = () => {
+      if (!withheld) rej(t.error);
+    };
+    inflight = t;
+    if (urgent && typeof t.commit === "function") {
+      try {
+        t.commit();
+      } catch {
+      }
+    }
+  });
+  if (conn) {
+    try {
+      return write(conn);
+    } catch (e) {
+      conn = null;
+    }
+  }
+  return idb().then(write);
+}
+async function wipe() {
+  wiped = true;
+  dirty = false;
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  if (saving) {
+    try {
+      await saving;
+    } catch {
+    }
+  }
+  if (current) {
+    try {
+      current.close();
+    } catch {
+    }
+    current = null;
+  }
   const d = await idb();
   await new Promise((res, rej) => {
     const t = d.transaction("kv", "readwrite");
-    t.objectStore("kv").put(bytes3, KEY);
-    t.oncomplete = res;
-    t.onerror = () => rej(t.error);
-  });
-}
-async function wipe() {
-  const d = await idb();
-  await new Promise((res) => {
-    const t = d.transaction("kv", "readwrite");
     t.objectStore("kv").delete(KEY);
     t.oncomplete = res;
+    t.onerror = () => rej(t.error);
+    t.onabort = () => rej(t.error);
   });
+  hadPersisted = false;
+}
+function isWiped() {
+  return wiped;
 }
 function setSaveErrorHandler(fn) {
   onSaveError = fn;
 }
-function flush() {
-  if (!current || !dirty) return Promise.resolve();
-  if (saving) return saving.then(() => flush());
+function flush({ urgent = false } = {}) {
+  if (wiped || !current) return Promise.resolve();
+  if (urgent && inflight && typeof inflight.commit === "function") {
+    try {
+      inflight.commit();
+    } catch {
+    }
+  }
+  if (!dirty) return saving || Promise.resolve();
+  if (saving && !urgent) return saving.then(() => flush());
+  if (inTransaction) return Promise.resolve();
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  const seq = writeSeq;
   const bytes3 = current.export();
-  saving = saveBytes(bytes3).then(() => {
-    dirty = false;
+  const p = saveBytes(bytes3, { urgent }).then((stored) => {
+    if (stored && writeSeq === seq) dirty = false;
   }).catch((e) => {
     onSaveError(e);
     throw e;
   }).finally(() => {
-    saving = null;
+    if (saving === p) saving = null;
   });
-  return saving;
+  saving = p;
+  return p;
 }
 function markDirty() {
+  if (wiped) return;
   dirty = true;
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => flush().catch(() => {
-  }), 1500);
+  writeSeq++;
+  if (inTransaction) return;
+  if (!saveTimer) saveTimer = setTimeout(() => {
+    saveTimer = null;
+    flush().catch(() => {
+    });
+  }, COALESCE_MS);
 }
 function persistSoon() {
+  if (wiped) return;
   clearTimeout(saveTimer);
+  saveTimer = null;
   flush().catch(() => {
   });
 }
-var SQL, STORE, KEY, HEARTBEAT_KEY, HEARTBEAT_MS, STALE_MS, haveLock, heartbeatTimer, current, saveTimer, dirty, saving, onSaveError, Statement, DatabaseSync, sqlite_default;
+var SQL, STORE, KEY, HEARTBEAT_KEY, HEARTBEAT_MS, STALE_MS, haveLock, heartbeatTimer, conn, hadPersisted, inflight, current, saveTimer, dirty, saving, wiped, inTransaction, onSaveError, COALESCE_MS, writeSeq, Statement, DatabaseSync, sqlite_default;
 var init_sqlite = __esm({
   "local/shims/sqlite.js"() {
     init_globals_inject();
@@ -6077,11 +6174,18 @@ var init_sqlite = __esm({
     STALE_MS = 2e4;
     haveLock = false;
     heartbeatTimer = null;
+    conn = null;
+    hadPersisted = false;
+    inflight = null;
     current = null;
     saveTimer = null;
     dirty = false;
     saving = null;
+    wiped = false;
+    inTransaction = false;
     onSaveError = (e) => console.error("[suds-local] save failed", e);
+    COALESCE_MS = 100;
+    writeSeq = 0;
     Statement = class {
       constructor(db3, sql) {
         this.db = db3;
@@ -6128,8 +6232,10 @@ var init_sqlite = __esm({
       }
       exec(sql) {
         this.db.exec(sql);
+        const ended = this._transactionEnded(sql);
+        inTransaction = !!this._began || (this._spDepth || 0) > 0;
         markDirty();
-        if (this._transactionEnded(sql)) persistSoon();
+        if (ended) persistSoon();
       }
       // server/db.js issues exactly BEGIN / COMMIT / ROLLBACK, SAVEPOINT x / RELEASE x and ROLLBACK TO x (with
       // or without a trailing RELEASE x); the depth is tracked from those, and only from statements that start
@@ -6172,7 +6278,7 @@ var init_sqlite = __esm({
         return this.db.export();
       }
     };
-    sqlite_default = { DatabaseSync, init, loadBytes, saveBytes, wipe, flush, acquireLock, lockIsStale, forceAcquireLock, hasLock, setSaveErrorHandler };
+    sqlite_default = { DatabaseSync, init, loadBytes, saveBytes, wipe, isWiped, flush, acquireLock, lockIsStale, forceAcquireLock, hasLock, setSaveErrorHandler };
   }
 });
 
@@ -7325,12 +7431,25 @@ var require_clients_model = __commonJS({
       const n = String(name || "").trim().toLowerCase();
       return n ? blindIndex2(n) : null;
     }
+    function codeNumber(code, prefix) {
+      const m = /^(\d+)/.exec(String(code || "").slice(prefix.length));
+      return m ? Number(m[1]) : 0;
+    }
     function nextClientCode() {
       const year = (/* @__PURE__ */ new Date()).getFullYear();
       const prefix = `${require_config().local ? "M" : "C"}${String(year).slice(2)}-`;
-      const last = db3.one(`SELECT client_code FROM clients WHERE client_code LIKE ? ORDER BY client_code DESC LIMIT 1`, prefix + "%");
-      const n = last ? Number(last.client_code.slice(prefix.length)) + 1 : 1;
-      return prefix + String(n).padStart(4, "0");
+      const counterKey = `client_code_counter:${prefix}`;
+      const counter = Number(db3.getSetting(counterKey, "0")) || 0;
+      const scanned = db3.one(`SELECT MAX(CAST(SUBSTR(client_code, ?) AS INTEGER)) m FROM clients WHERE client_code LIKE ?`, prefix.length + 1, prefix + "%");
+      const max2 = Math.max(counter, Number(scanned && scanned.m) || 0);
+      let n = max2 + 1;
+      let code = prefix + String(n).padStart(4, "0");
+      while (db3.one(`SELECT 1 FROM clients WHERE client_code=?`, code)) {
+        n++;
+        code = prefix + String(n).padStart(4, "0");
+      }
+      db3.setSetting(counterKey, String(n));
+      return code;
     }
     function summary(row, opts) {
       const d = decryptRow(row, opts);
@@ -7340,7 +7459,7 @@ var require_clients_model = __commonJS({
       o.days_to_engagement = daysToEngagement(d);
       return o;
     }
-    module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, summary, daysToEngagement, uuid: uuid2, soundex, namePrefixIndex, namePhoneticIndex, preferredNameIndex, normaliseName };
+    module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, codeNumber, summary, daysToEngagement, uuid: uuid2, soundex, namePrefixIndex, namePhoneticIndex, preferredNameIndex, normaliseName };
   }
 });
 
@@ -7916,8 +8035,24 @@ var require_http = __commonJS({
       ".woff2": "font/woff2",
       ".wasm": "application/wasm",
       ".txt": "text/plain; charset=utf-8",
-      ".md": "text/markdown; charset=utf-8"
+      ".md": "text/markdown; charset=utf-8",
+      ".webmanifest": "application/manifest+json; charset=utf-8"
     };
+    function parseRequestUrl(rawUrl, base = "http://localhost") {
+      const target = String(rawUrl || "/").replace(/^\/{2,}/, "/");
+      let url;
+      try {
+        url = new URL2(target.startsWith("/") ? target : "/" + target, base);
+      } catch {
+        throw new HttpError3(400, "Malformed request URL");
+      }
+      try {
+        decodeURIComponent(url.pathname);
+      } catch {
+        throw new HttpError3(400, "Malformed request URL");
+      }
+      return url;
+    }
     var Router2 = class {
       constructor() {
         this.routes = [];
@@ -8009,16 +8144,45 @@ var require_http = __commonJS({
       res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": import_buffer.Buffer.byteLength(body) });
       res.end(body);
     }
-    function sendFile(res, filePath) {
+    var PRECOMPRESSED = [["br", ".br"], ["gzip", ".gz"]];
+    function pickEncoding(req, filePath) {
+      const accept = String(req && req.headers && req.headers["accept-encoding"] || "").toLowerCase();
+      for (const [enc, ext] of PRECOMPRESSED) {
+        if (!new RegExp(`(^|,)\\s*${enc}\\s*(;|,|$)`).test(accept)) continue;
+        if (fs.existsSync(filePath + ext)) return { enc, file: filePath + ext };
+      }
+      return null;
+    }
+    function cachePolicy(url) {
+      if (url && url.pathname.startsWith("/local/") && url.searchParams.get("v")) return "public, max-age=31536000, immutable";
+      return null;
+    }
+    function sendFile(res, filePath, { req, url } = {}) {
       const ext = path.extname(filePath).toLowerCase();
-      const data = fs.readFileSync(filePath);
-      res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream", "Content-Length": data.length });
+      const headers = { "Content-Type": MIME[ext] || "application/octet-stream" };
+      const cache = cachePolicy(url);
+      if (cache) headers["Cache-Control"] = cache;
+      const pre = req ? pickEncoding(req, filePath) : null;
+      if (pre) {
+        headers["Content-Encoding"] = pre.enc;
+        headers.Vary = "Accept-Encoding";
+      }
+      const data = fs.readFileSync(pre ? pre.file : filePath);
+      headers["Content-Length"] = data.length;
+      res.writeHead(200, headers);
       res.end(data);
     }
     function serveStatic(root) {
       root = path.resolve(root);
       return (req, res) => {
-        let p = decodeURIComponent(new URL2(req.url, "http://x").pathname);
+        let url;
+        try {
+          url = parseRequestUrl(req.url, "http://x");
+        } catch (e) {
+          sendJson(res, e.status || 400, { error: e.message });
+          return true;
+        }
+        let p = decodeURIComponent(url.pathname);
         if (p === "/app" || p === "/app/") p = "/get-app.html";
         else if (p === "/" || !path.extname(p)) p = "/index.html";
         const file = path.resolve(path.join(root, p));
@@ -8026,11 +8190,11 @@ var require_http = __commonJS({
           sendJson(res, 404, { error: "Not found" });
           return true;
         }
-        sendFile(res, file);
+        sendFile(res, file, { req, url });
         return true;
       };
     }
-    module.exports = { Router: Router2, HttpError: HttpError3, badRequest, unauthorized, forbidden, notFound, conflict, parseCookies, readBody, securityHeaders, sendJson, sendFile, serveStatic };
+    module.exports = { Router: Router2, HttpError: HttpError3, badRequest, unauthorized, forbidden, notFound, conflict, parseCookies, parseRequestUrl, readBody, securityHeaders, sendJson, sendFile, serveStatic };
   }
 });
 
@@ -8520,7 +8684,7 @@ var require_auth = __commonJS({
       }
       const user = db3.one(`SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,must_change_password,password_changed_at,hourly_cost,created_at,requires_cosign,supervisor_id FROM users WHERE id=?`, s.user_id);
       if (!user || !user.is_active) return null;
-      if (now - Date.parse(s.last_seen_at) > 6e4) db3.run(`UPDATE sessions SET last_seen_at=? WHERE id=?`, new Date(now).toISOString(), s.id);
+      if (ctx.headers["x-background"] !== "1" && now - Date.parse(s.last_seen_at) > 6e4) db3.run(`UPDATE sessions SET last_seen_at=? WHERE id=?`, new Date(now).toISOString(), s.id);
       ctx.sessionToken = token2;
       ctx.session = s;
       return user;
@@ -11090,6 +11254,7 @@ var require_backup = __commonJS({
         rollBack(e);
         throw new Error(`The backup could not be opened after it was restored, so the previous database was put back: ${e.message}`);
       }
+      db3.setSetting("db_generation", require_crypto().uuid());
       return { ...info, previous_database_kept_at: aside };
     }
     module.exports = { create, decrypt: decrypt3, inspect, restore, backupKey };
@@ -21047,6 +21212,10 @@ var require_sync = __commonJS({
     function scopeSql(t, user, alias) {
       const cf = auth3.caseloadFilter(user, `${alias}.${t.clientCol}`);
       if (t.scope === "all" || t.scope === "users") return { sql: "1=1", params: [] };
+      if (t.name === "clients" && cf.sql !== "1=1") {
+        const kf = auth3.caseloadFilter(user, `${alias}.merged_into`);
+        return { sql: `(${cf.sql} OR (${alias}.merged_into IS NOT NULL AND ${kf.sql}))`, params: [...cf.params, ...kf.params] };
+      }
       if (t.scope === "via-note") {
         const nf = auth3.caseloadFilter(user, "n.client_id");
         return { sql: `${alias}.note_id IN (SELECT n.id FROM notes n WHERE ${nf.sql})`, params: nf.params };
@@ -21077,7 +21246,7 @@ var require_sync = __commonJS({
       }
       const cursor = capped.length ? capped.reduce((a, b) => a < b ? a : b) : serverNow;
       const complete = capped.length === 0;
-      const out2 = { cursor, server_now: serverNow, complete, tables: {}, tombstones: [], settings: {}, skipped: [] };
+      const out2 = { cursor, server_now: serverNow, complete, db_generation: db3.getSetting("db_generation", null), tables: {}, tombstones: [], settings: {}, skipped: [] };
       for (const t of SYNC2.tables) {
         let rows = raw[t.name].filter((r) => r.updated_at <= cursor);
         if (t.name === "users") rows = rows.map((r) => ({ ...r.id === user.id ? r : { ...r, password_hash: "scrypt$0$0$0$AA==$AA==" }, mfa_secret_enc: null, mfa_enabled: 0 }));
@@ -21127,6 +21296,17 @@ var require_sync = __commonJS({
     }
     var clientPurged = (clientId) => !!db3.one(`SELECT 1 FROM tombstones WHERE table_name='clients' AND id=?`, clientId);
     var OWNER = { interventions: ["user_id", "clients:all"], calls: ["user_id", "clients:all"], time_entries: ["user_id", "time:all"], referrals: ["user_id", "clients:all"], expenditures: ["user_id", "clients:all"], notes: ["author_id", "clients:all"] };
+    function isSelfAssignment(raw, user, knownUsers, batchClients) {
+      if (!raw || typeof raw.client_id !== "string") return false;
+      if (raw.user_id && raw.user_id !== user.id && knownUsers.has(raw.user_id)) return false;
+      if ((raw.role_on_case || "primary") !== "primary") return false;
+      const existing = db3.one(`SELECT user_id FROM assignments WHERE id=?`, raw.id);
+      if (existing && existing.user_id !== user.id) return false;
+      const client = db3.one(`SELECT created_by FROM clients WHERE id=?`, raw.client_id);
+      if (client) return client.created_by === user.id;
+      const inBatch = batchClients.get(raw.client_id);
+      return !!inBatch && (!inBatch.created_by || inBatch.created_by === user.id || !knownUsers.has(inBatch.created_by));
+    }
     function push(user, payload) {
       const applied = {};
       const rejected = [];
@@ -21145,6 +21325,13 @@ var require_sync = __commonJS({
       };
       const users = new Map(db3.all(`SELECT id, is_active FROM users`).map((u) => [u.id, u]));
       const knownUsers = new Set(users.keys());
+      const batchClients = new Map(((payload.tables || {}).clients || []).filter((r) => r && typeof r.id === "string").map((r) => [r.id, r]));
+      const pushedSelfAssignments = /* @__PURE__ */ new Map();
+      const selfAssignmentIds = /* @__PURE__ */ new Set();
+      for (const raw of (payload.tables || {}).assignments || []) if (raw && typeof raw.id === "string" && isSelfAssignment(raw, user, knownUsers, batchClients)) {
+        pushedSelfAssignments.set(raw.client_id, raw);
+        selfAssignmentIds.add(raw.id);
+      }
       function selfParentOrder2(rows, col) {
         const ids = new Set(rows.map((r) => r && r.id));
         const placed = /* @__PURE__ */ new Set();
@@ -21177,9 +21364,20 @@ var require_sync = __commonJS({
             continue;
           }
           if (t.writePerm && !auth3.hasPerm(user, t.writePerm)) {
-            for (const raw of rows) if (raw && typeof raw.id === "string") reject(t.name, raw.id, `your role cannot write ${t.name}`);
-            applied[t.name] = 0;
-            continue;
+            const kept = [];
+            for (const raw of rows) {
+              if (!raw || typeof raw.id !== "string") continue;
+              if (t.name === "assignments" && selfAssignmentIds.has(raw.id)) {
+                kept.push(raw);
+                continue;
+              }
+              reject(t.name, raw.id, `your role cannot write ${t.name}`);
+            }
+            if (!kept.length) {
+              applied[t.name] = 0;
+              continue;
+            }
+            rows = kept;
           }
           const existingCols = cols2(t.name);
           let n = 0;
@@ -21217,13 +21415,20 @@ var require_sync = __commonJS({
                 if (existing) raw[t.clientCol] = existing[t.clientCol];
                 else if (raw[t.clientCol]) raw[t.clientCol] = keeperOf(raw[t.clientCol]);
               }
-              if ((t.scope === "client" || t.scope === "client-or-null") && raw[t.clientCol] && t.name !== "clients" && !auth3.canAccessClient(user, raw[t.clientCol])) {
+              if ((t.scope === "client" || t.scope === "client-or-null") && raw[t.clientCol] && t.name !== "clients" && !selfAssignmentIds.has(raw.id) && !auth3.canAccessClient(user, raw[t.clientCol])) {
                 reject(t.name, raw.id, "not on caseload");
                 return false;
               }
               if (t.name === "clients" && existing && !auth3.canAccessClient(user, raw.id)) {
                 reject(t.name, raw.id, "not on caseload");
                 return false;
+              }
+              if (t.name === "assignments" && !existing && selfAssignmentIds.has(raw.id)) {
+                const dup = db3.one(`SELECT id FROM assignments WHERE client_id=? AND user_id=? AND role_on_case=? AND id<>? AND ${auth3.activeAssignment()}`, raw.client_id, user.id, raw.role_on_case || "primary", raw.id);
+                if (dup) {
+                  reject(t.name, raw.id, "conflicts with an existing record");
+                  return false;
+                }
               }
               let revocation = false;
               if (existing && SYNC2.immutable.includes(t.name)) {
@@ -21334,6 +21539,7 @@ var require_sync = __commonJS({
               }
               if (db3.one(`SELECT 1 FROM tombstones WHERE table_name=? AND id=? AND deleted_at > ?`, t.name, raw.id, incomingAt)) return false;
               for (const c of SYNC2.user_ref_cols) if (existingCols.includes(c) && raw[c] && !knownUsers.has(raw[c])) raw[c] = user.id;
+              if (t.name === "clients" && !existing && !raw.created_by) raw.created_by = user.id;
               const o = importRow2(t, raw, existingCols);
               if (t.name === "clients") o.client_code = freeClientCode(o.client_code, raw.id);
               if (existingCols.includes("updated_at")) o.updated_at = db3.now();
@@ -21354,7 +21560,7 @@ var require_sync = __commonJS({
                 db3.run(`UPDATE ${t.name} SET ${keys.map((k) => `${k}=?`).join(", ")} WHERE id=?`, ...keys.map((k) => o[k]), raw.id);
               } else db3.run(`INSERT INTO ${t.name}(id,${keys.join(",")}) VALUES(?,${keys.map(() => "?").join(",")})`, raw.id, ...keys.map((k) => o[k]));
               db3.run(`DELETE FROM tombstones WHERE table_name=? AND id=?`, t.name, raw.id);
-              if (t.name === "clients" && !existing && auth3.caseloadRestricted(user)) db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, require_crypto().uuid(), raw.id, user.id, "primary", (raw.intake_date || db3.now()).slice(0, 10), user.id);
+              if (t.name === "clients" && !existing && auth3.caseloadRestricted(user) && !pushedSelfAssignments.get(raw.id)) db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, require_crypto().uuid(), raw.id, user.id, "primary", (raw.intake_date || db3.now()).slice(0, 10), user.id);
               if (t.name === "interventions") {
                 const supplies = require_supplies();
                 const counts = { id: raw.id };
@@ -21682,15 +21888,15 @@ var require_users = __commonJS({
           sets.push("mfa_enabled=0", "mfa_secret_enc=NULL");
         }
         if (v.is_active === 0) auth3.revokeAllForUser(u.id);
-        let wiped = [];
+        let wiped2 = [];
         const wipeDevices = v.wipe_devices === void 0 ? true : !!v.wipe_devices;
-        if ((v.is_active === 0 || v.password) && wipeDevices) wiped = devices.requestWipeForUser(u.id, { actor: ctx.user, ip: ctx.ip, reason: v.is_active === 0 ? "deactivated" : "password_reset" });
-        if (!sets.length) return { ok: true, devices_wiped: wiped.length };
+        if ((v.is_active === 0 || v.password) && wipeDevices) wiped2 = devices.requestWipeForUser(u.id, { actor: ctx.user, ip: ctx.ip, reason: v.is_active === 0 ? "deactivated" : "password_reset" });
+        if (!sets.length) return { ok: true, devices_wiped: wiped2.length };
         sets.push("updated_at=?");
         params.push(db3.now(), u.id);
         db3.run(`UPDATE users SET ${sets.join(", ")} WHERE id=?`, ...params);
-        audit3.log({ user: ctx.user, action: "user.update", entity: "user", entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter((k) => k !== "password"), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa, devices_wiped: wiped.length, wipe_devices: wipeDevices } });
-        return { ok: true, devices_wiped: wiped.length };
+        audit3.log({ user: ctx.user, action: "user.update", entity: "user", entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter((k) => k !== "password"), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa, devices_wiped: wiped2.length, wipe_devices: wipeDevices } });
+        return { ok: true, devices_wiped: wiped2.length };
       });
       r.post("/api/devices/wipe-ack", (ctx) => {
         const { device_id, token: token2 } = validate(ctx.body, { device_id: { type: "string", required: true, maxLen: 100 }, token: { type: "string", required: true, maxLen: 200 } });
@@ -21753,12 +21959,11 @@ var require_app2 = __commonJS({
     init_globals_inject();
     init_();
     var path = (init_path(), __toCommonJS(path_exports));
-    var { URL: URL2 } = (init_url(), __toCommonJS(url_exports));
     var config = require_config();
     var db3 = require_db();
     var audit3 = require_audit();
     var auth3 = require_auth();
-    var { Router: Router2, HttpError: HttpError3, parseCookies, readBody, securityHeaders, sendJson, serveStatic } = require_http();
+    var { Router: Router2, HttpError: HttpError3, parseCookies, parseRequestUrl, readBody, securityHeaders, sendJson, serveStatic } = require_http();
     var buckets = /* @__PURE__ */ new Map();
     function rateLimit(key, max2, windowMs) {
       const now = Date.now();
@@ -21862,7 +22067,13 @@ var require_app2 = __commonJS({
       const staticHandler = serveStatic(path.join("/", "..", "public"));
       return async function handle2(req, res) {
         securityHeaders(res);
-        const url = new URL2(req.url, "http://localhost");
+        let url;
+        try {
+          url = parseRequestUrl(req.url, "http://localhost");
+        } catch (e) {
+          sendJson(res, e.status || 400, { error: e.message });
+          return;
+        }
         const ctx = {
           req,
           res,
@@ -22086,7 +22297,7 @@ function applyRow(t, raw, existingCols, toServer, conflicts) {
     const clash = import_db.default.one(`SELECT id FROM clients WHERE client_code=? AND id<>?`, raw.client_code, raw.id);
     if (clash) import_db.default.run(`UPDATE clients SET client_code=?, updated_at=? WHERE id=?`, raw.client_code + "-D", import_db.default.now(), clash.id);
   }
-  if (existing && t.name !== "users") {
+  if (existing && t.name !== "users" && !t.serverOwned) {
     const known = seenAt(t.name, existing.id);
     const untouched = known !== void 0 && known === stamp(existing);
     if (!untouched && toServer(stamp(existing)) > (raw.updated_at || raw.created_at || NEVER)) return false;
@@ -22103,7 +22314,16 @@ function applyRow(t, raw, existingCols, toServer, conflicts) {
   if (existing) import_db.default.run(`UPDATE ${t.name} SET ${keys.map((k) => `${k}=?`).join(", ")} WHERE id=?`, ...keys.map((k) => o[k]), raw.id);
   else import_db.default.run(`INSERT INTO ${t.name}(id,${keys.join(",")}) VALUES(?,${keys.map(() => "?").join(",")})`, raw.id, ...keys.map((k) => o[k]));
   seen(t.name, raw.id, stamp(o));
+  if (t.name === "clients" && o.merged_into && (!existing || existing.merged_into !== o.merged_into)) repointMergedClient(raw.id, o.merged_into);
   return true;
+}
+function repointMergedClient(oldId, keeper) {
+  if (!import_db.default.one(`SELECT 1 FROM clients WHERE id=?`, keeper)) return;
+  for (const t of import_sync_tables.default.tables) {
+    if (t.name === "clients" || !t.clientCol || t.serverOwned) continue;
+    if (!import_db.default.one(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`, t.name)) continue;
+    import_db.default.run(`UPDATE ${t.name} SET ${t.clientCol}=? WHERE ${t.clientCol}=?`, keeper, oldId);
+  }
 }
 function applyTombstone(t, ts, toServer) {
   const existing = import_db.default.one(`SELECT * FROM ${t.name} WHERE id=?`, ts.id);
@@ -22180,13 +22400,27 @@ async function call(server, path, opts = {}, token2) {
   }
   const ct = res.headers.get("content-type") || "";
   const data = ct.includes("json") ? await res.json() : await res.text();
-  if (!res.ok) {
-    const e = new Error(data && data.error || `Server returned ${res.status}`);
-    e.status = res.status;
-    e.data = data;
-    throw e;
-  }
+  if (!res.ok) throw officeError(res.status, data);
   return data;
+}
+function officeError(status, data) {
+  const body = data && typeof data === "object" ? data : {};
+  let message = body.error || (typeof data === "string" && data.trim() ? data.trim().slice(0, 200) : `The office server answered ${status}`);
+  const extra = { office: true, ...body };
+  delete extra.error;
+  delete extra.mfaRequired;
+  delete extra.passwordChangeRequired;
+  if (body.passwordChangeRequired) {
+    message = "Your office password has to be changed before this device can sync. Sign in at the office address, change it there, then sync again.";
+    extra.officePasswordChangeRequired = true;
+  }
+  if (body.mfaRequired) {
+    message = "The office account uses two-step verification: enter the code from your authenticator app.";
+    extra.officeMfaRequired = true;
+  }
+  const e = new import_http.HttpError(status, message, extra);
+  e.data = data;
+  return e;
 }
 function isStaticHost() {
   try {
@@ -22195,19 +22429,9 @@ function isStaticHost() {
     return false;
   }
 }
-async function assertStaticHostAllowed(server, onProgress) {
-  if (!isStaticHost()) return;
-  onProgress("Checking whether the office server accepts this build\u2026");
-  let info;
-  try {
-    info = await call(server, "/api/app/info", { method: "GET" });
-  } catch (e) {
-    if (e && e.extra && e.extra.network) throw e;
-    info = null;
-  }
-  if (!info || info.allow_static_sync !== true) {
-    throw new import_http.HttpError(403, "This is a demo/evaluation copy of SUDS served from a public web host, and the office server does not allow it to sync (its administrator would have to start it with ALLOW_STATIC_SYNC=1). Use the SUDS app or the office address instead. Nothing was sent.", { staticSyncRefused: true });
-  }
+var STATIC_HOST_MESSAGE = "Sync is not available from the demo site. Open SUDS at the office address instead; this copy is for trying SUDS out and never talks to an office server.";
+function assertNotStaticHost() {
+  if (isStaticHost()) throw new import_http.HttpError(403, STATIC_HOST_MESSAGE, { staticSyncRefused: true });
 }
 var blobKey = (table, id, col) => `sync_blob:${table}:${id}:${col}`;
 async function fetchBlobs(server, token2, onProgress) {
@@ -22265,10 +22489,17 @@ async function uploadBlobs(server, token2, onProgress) {
   }
   return sent;
 }
+function resetExchangeState() {
+  import_db.default.run(`DELETE FROM sync_seen`);
+  import_db.default.run(`DELETE FROM settings WHERE key='sync_cursor' OR key LIKE 'sync_cursor:%' OR key LIKE 'sync_blob:%'`);
+  import_db.default.setSetting("sync_pushed", NEVER);
+}
+var RESTORED_MESSAGE = "The office database was restored from a backup; re-sending this device's records";
+var generationOf = (pulled) => pulled.db_generation === null || pulled.db_generation === void 0 ? "" : String(pulled.db_generation);
 async function run({ server, username, password, code, onProgress = () => {
 } }) {
   if (!server) throw new import_http.HttpError(400, "Office server address is required");
-  await assertStaticHostAllowed(server, onProgress);
+  assertNotStaticHost();
   onProgress("Signing in to the office server\u2026");
   let login;
   try {
@@ -22278,7 +22509,8 @@ async function run({ server, username, password, code, onProgress = () => {
       onProgress("This device has been remotely wiped by an administrator\u2026");
       const id = deviceId();
       const ackToken = e.data.wipeAckToken;
-      await wipe();
+      if (typeof window !== "undefined" && window.SUDS_LOCAL && window.SUDS_LOCAL.wipe) await window.SUDS_LOCAL.wipe();
+      else await wipe();
       if (ackToken) {
         try {
           await call(server, "/api/devices/wipe-ack", { method: "POST", body: JSON.stringify({ device_id: id, token: ackToken }) });
@@ -22292,7 +22524,7 @@ async function run({ server, username, password, code, onProgress = () => {
   const token2 = login.token;
   if (!token2) throw new import_http.HttpError(400, "The office server did not return a sync token (update the server to 1.1 or newer)");
   if (login.mfaPending) {
-    if (!code) throw new import_http.HttpError(401, "MFA code required", { mfaRequired: true });
+    if (!code) throw new import_http.HttpError(401, "The office account uses two-step verification: enter the code from your authenticator app.", { officeMfaRequired: true });
     await call(server, "/api/auth/mfa/verify", { method: "POST", body: JSON.stringify({ code }) }, token2);
   }
   try {
@@ -22303,14 +22535,32 @@ async function run({ server, username, password, code, onProgress = () => {
     }
     const pullConflicts = [];
     const skipped = [];
+    const notices = [];
     const officeUserId = login.user && login.user.id || username;
     let since = readCursor(officeUserId, username);
     const applied = {};
     let pages = 0;
     let serverNow = null;
+    let generationReset = false;
     for (; ; ) {
       onProgress(pages ? `Downloading changes from the office (page ${pages + 1})\u2026` : "Downloading changes from the office\u2026");
       const pulled = await call(server, `/api/sync/pull?since=${encodeURIComponent(since)}`, {}, token2);
+      const generation = generationOf(pulled);
+      const known = import_db.default.getSetting("office_db_generation", null);
+      if (known !== null && known !== generation && !generationReset) {
+        generationReset = true;
+        onProgress(RESTORED_MESSAGE + "\u2026");
+        import_db.default.transaction(() => {
+          resetExchangeState();
+          import_db.default.setSetting("office_db_generation", generation);
+        });
+        import_audit.default.log({ user: { username }, action: "sync.office_restored", details: { server, from: known || null, to: generation || null } });
+        notices.push(RESTORED_MESSAGE + ".");
+        since = NEVER;
+        pages++;
+        continue;
+      }
+      if (known === null) import_db.default.setSetting("office_db_generation", generation);
       if (pulled.full_resync_required) {
         onProgress("This device has been offline a long time; rebuilding from the office copy\u2026");
         import_db.default.run(`DELETE FROM sync_seen`);
@@ -22369,7 +22619,7 @@ async function run({ server, username, password, code, onProgress = () => {
     import_db.default.setSetting("sync_server", server);
     import_db.default.setSetting("sync_username", username);
     import_audit.default.log({ user: { username }, action: "sync.completed", details: { server, pulled: applied, pushed: pushedCounts, rejected: rejected.length, conflicts: conflicts.length, skipped: skipped.length, attachments_up: uploaded, attachments_down: downloaded } });
-    return { ok: true, pulled: applied, pushed: pushedCounts, rejected, conflicts, skipped, attachments: { uploaded, downloaded }, at: import_db.default.now() };
+    return { ok: true, pulled: applied, pushed: pushedCounts, rejected, conflicts, skipped, notices, attachments: { uploaded, downloaded }, at: import_db.default.now() };
   } finally {
     try {
       await call(server, "/api/auth/logout", { method: "POST", body: "{}" }, token2);
@@ -22509,17 +22759,26 @@ async function start({ wasmUrl, onSaveError: onSaveError2, force } = {}) {
     if (!ctx.user) throw new import_http2.HttpError(401, "Sign in first");
     return demo.remove({ actor: ctx.user.id });
   });
-  window.SUDS_LOCAL = { handle, flush: () => sqlite_default.flush(), wipe: async () => {
-    await sqlite_default.wipe();
-    localStorage.removeItem("suds.local.session");
-  }, sync: (opts) => run(opts) };
+  window.SUDS_LOCAL = { handle, flush: (opts) => sqlite_default.flush(opts), wipe: wipeDevice, sync: (opts) => run(opts), isWiped: () => sqlite_default.isWiped() };
   return window.SUDS_LOCAL;
+}
+async function wipeDevice() {
+  await sqlite_default.wipe();
+  for (const k of ["suds.local.session", "suds.local.enc", "suds.local.idx", "suds.prefs"]) {
+    try {
+      localStorage.removeItem(k);
+    } catch {
+    }
+  }
+  token = "";
 }
 async function handle(method, path, body, headers = {}) {
   const url = new URL(path, "http://local");
   const res = new FakeRes();
   const ctx = { req: { socket: { remoteAddress: "127.0.0.1" } }, res, method, path: url.pathname, query: url.searchParams, params: {}, headers: Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v])), cookies: {}, ip: "device", user: null, session: null, body: null, rawBody: null };
   try {
+    if (sqlite_default.isWiped()) throw new import_http2.HttpError(410, "This device has been erased and needs to be set up again.", { wiped: true });
+    if (method !== "GET" && /^\/api\/supplies(\/|$)/.test(url.pathname)) throw new import_http2.HttpError(403, "Supply counts are kept at the office and cannot be changed on this device. Visits you record here draw the office count down when you sync.", { serverOwned: true });
     const m = router.match(method, url.pathname);
     if (!m) throw new import_http2.HttpError(404, "Not found");
     if (m.methodNotAllowed) throw new import_http2.HttpError(405, "Method not allowed");

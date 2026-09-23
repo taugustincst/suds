@@ -30,6 +30,11 @@ const { exportRow, importRow } = SYNC;
 function scopeSql(t, user, alias) {
   const cf = auth.caseloadFilter(user, `${alias}.${t.clientCol}`);
   if (t.scope === 'all' || t.scope === 'users') return { sql: '1=1', params: [] };
+  // A client merged away at the office drops off the caseload (its assignments moved to the record that
+  // was kept), so the device that still held it was never told and showed a duplicate for ever. The merged
+  // row travels when the record it was merged into is on the caseload: the device marks it merged and
+  // re-points what it holds, exactly as the office did.
+  if (t.name === 'clients' && cf.sql !== '1=1') { const kf = auth.caseloadFilter(user, `${alias}.merged_into`); return { sql: `(${cf.sql} OR (${alias}.merged_into IS NOT NULL AND ${kf.sql}))`, params: [...cf.params, ...kf.params] }; }
   if (t.scope === 'via-note') { const nf = auth.caseloadFilter(user, 'n.client_id'); return { sql: `${alias}.note_id IN (SELECT n.id FROM notes n WHERE ${nf.sql})`, params: nf.params }; }
   if (t.scope === 'client-or-null') return { sql: `(${alias}.${t.clientCol} IS NULL OR ${cf.sql})`, params: cf.params };
   return cf;
@@ -67,7 +72,10 @@ function pull(user, since, { limit = PULL_LIMIT } = {}) {
   const cursor = capped.length ? capped.reduce((a, b) => (a < b ? a : b)) : serverNow;
   const complete = capped.length === 0;
 
-  const out = { cursor, server_now: serverNow, complete, tables: {}, tombstones: [], settings: {}, skipped: [] };
+  // db_generation changes when the office database is restored from a backup (server/backup.js). A device
+  // that sees a value it did not expect knows the office may have lost rows it had already accepted, forgets
+  // what it thought was exchanged, and offers everything it holds again.
+  const out = { cursor, server_now: serverNow, complete, db_generation: db.getSetting('db_generation', null), tables: {}, tombstones: [], settings: {}, skipped: [] };
   for (const t of SYNC.tables) {
     let rows = raw[t.name].filter(r => r.updated_at <= cursor);
     if (t.name === 'users') rows = rows.map(r => ({ ...(r.id === user.id ? r : { ...r, password_hash: 'scrypt$0$0$0$AA==$AA==' }), mfa_secret_enc: null, mfa_enabled: 0 })); // devices get own password hash for offline login; never MFA secrets
@@ -126,6 +134,27 @@ const clientPurged = (clientId) => !!db.one(`SELECT 1 FROM tombstones WHERE tabl
 // who wrote it unless a manager says otherwise.
 const OWNER = { interventions: ['user_id', 'clients:all'], calls: ['user_id', 'clients:all'], time_entries: ['user_id', 'time:all'], referrals: ['user_id', 'clients:all'], expenditures: ['user_id', 'clients:all'], notes: ['author_id', 'clients:all'] };
 
+/**
+ * An assignment a worker without assignments:manage may still push: their own (user_id is theirs, or a
+ * device-minted id that is about to be remapped to them), as primary, on a client they created — the
+ * one the device auto-created at intake, the same way POST /api/clients does at the office. The client
+ * is checked against the office copy, so the clients rows of the same push (applied first, in table
+ * order) count; a client someone else created, or one the office has never seen, does not qualify.
+ */
+function isSelfAssignment(raw, user, knownUsers, batchClients) {
+  if (!raw || typeof raw.client_id !== 'string') return false;
+  if (raw.user_id && raw.user_id !== user.id && knownUsers.has(raw.user_id)) return false;
+  if ((raw.role_on_case || 'primary') !== 'primary') return false;
+  const existing = db.one(`SELECT user_id FROM assignments WHERE id=?`, raw.id);
+  if (existing && existing.user_id !== user.id) return false;
+  const client = db.one(`SELECT created_by FROM clients WHERE id=?`, raw.client_id);
+  if (client) return client.created_by === user.id;
+  // Not at the office yet: the same push must be creating it, and by this worker (a device-minted creator
+  // id is remapped to the syncing user when the client row lands).
+  const inBatch = batchClients.get(raw.client_id);
+  return !!inBatch && (!inBatch.created_by || inBatch.created_by === user.id || !knownUsers.has(inBatch.created_by));
+}
+
 function push(user, payload) {
   const applied = {}; const rejected = []; const conflicts = []; const warnings = [];
   // permanent: the office has ruled and a retry can never succeed, so the device stops resending the row.
@@ -145,6 +174,10 @@ function push(user, payload) {
   // One lookup instead of one per user-reference column per row.
   const users = new Map(db.all(`SELECT id, is_active FROM users`).map(u => [u.id, u]));
   const knownUsers = new Set(users.keys());
+  // client id -> the self-assignment row the device is sending for it (so the client insert does not add its own).
+  const batchClients = new Map(((payload.tables || {}).clients || []).filter(r => r && typeof r.id === 'string').map(r => [r.id, r]));
+  const pushedSelfAssignments = new Map(); const selfAssignmentIds = new Set();
+  for (const raw of (payload.tables || {}).assignments || []) if (raw && typeof raw.id === 'string' && isSelfAssignment(raw, user, knownUsers, batchClients)) { pushedSelfAssignments.set(raw.client_id, raw); selfAssignmentIds.add(raw.id); }
 
   // A row that points at its own parent within the same table (e.g. a budget sub-allocation) needs that
   // parent applied first, same as t.parent does across tables — but nothing orders rows within one table's
@@ -176,10 +209,18 @@ function push(user, payload) {
         continue;
       }
       // Syncing is not a way around a role's limits: the same permission the REST route requires applies here.
+      // One exception, mirroring POST /api/clients: a worker who creates a client is put on it as primary
+      // without needing assignments:manage, and the device does exactly that offline — so the assignment it
+      // then pushes (its own, on a client it created) is accepted rather than refused on every sync.
       if (t.writePerm && !auth.hasPerm(user, t.writePerm)) {
-        for (const raw of rows) if (raw && typeof raw.id === 'string') reject(t.name, raw.id, `your role cannot write ${t.name}`);
-        applied[t.name] = 0;
-        continue;
+        const kept = [];
+        for (const raw of rows) {
+          if (!raw || typeof raw.id !== 'string') continue;
+          if (t.name === 'assignments' && selfAssignmentIds.has(raw.id)) { kept.push(raw); continue; }
+          reject(t.name, raw.id, `your role cannot write ${t.name}`);
+        }
+        if (!kept.length) { applied[t.name] = 0; continue; }
+        rows = kept;
       }
       const existingCols = cols(t.name); let n = 0;
       for (const raw of rows) {
@@ -216,8 +257,16 @@ function push(user, payload) {
           }
           // Caseload scoping applies to everything that carries a client, including the tables where the
           // client is optional (calls, tasks, time, expenditures) — those were previously unchecked.
-          if ((t.scope === 'client' || t.scope === 'client-or-null') && raw[t.clientCol] && t.name !== 'clients' && !auth.canAccessClient(user, raw[t.clientCol])) { reject(t.name, raw.id, 'not on caseload'); return false; }
+          // (A self-assignment is what puts the new client on the caseload, so it cannot be judged by it.)
+          if ((t.scope === 'client' || t.scope === 'client-or-null') && raw[t.clientCol] && t.name !== 'clients' && !selfAssignmentIds.has(raw.id) && !auth.canAccessClient(user, raw[t.clientCol])) { reject(t.name, raw.id, 'not on caseload'); return false; }
           if (t.name === 'clients' && existing && !auth.canAccessClient(user, raw.id)) { reject(t.name, raw.id, 'not on caseload'); return false; }
+          // A self-assignment the device made for a client it created (see isSelfAssignment). A matching
+          // open assignment under another id — the office's own, from a sync before this rule existed —
+          // makes the device's row a duplicate, which is refused for good so the device stops offering it.
+          if (t.name === 'assignments' && !existing && selfAssignmentIds.has(raw.id)) {
+            const dup = db.one(`SELECT id FROM assignments WHERE client_id=? AND user_id=? AND role_on_case=? AND id<>? AND ${auth.activeAssignment()}`, raw.client_id, user.id, raw.role_on_case || 'primary', raw.id);
+            if (dup) { reject(t.name, raw.id, 'conflicts with an existing record'); return false; }
+          }
           // Consents, disclosures and addenda are the legal record: a device may add to it, never rewrite it.
           // A push that would resurrect a revoked consent or change who a disclosure went to is refused. The
           // one permitted change is revoking a consent that is not yet revoked, and it changes nothing else.
@@ -296,6 +345,9 @@ function push(user, payload) {
           if (db.one(`SELECT 1 FROM tombstones WHERE table_name=? AND id=? AND deleted_at > ?`, t.name, raw.id, incomingAt)) return false; // deleted on server after device edit
           // A user id minted on the device means nothing here, so it becomes the syncing user.
           for (const c of SYNC.user_ref_cols) if (existingCols.includes(c) && raw[c] && !knownUsers.has(raw[c])) raw[c] = user.id;
+          // A client that arrives with no creator was created by whoever is sending it (POST /api/clients
+          // records the same); isSelfAssignment above relies on it.
+          if (t.name === 'clients' && !existing && !raw.created_by) raw.created_by = user.id;
           const o = importRow(t, raw, existingCols);
           if (t.name === 'clients') o.client_code = freeClientCode(o.client_code, raw.id);
           // Stamped in server time so every other device's next incremental pull picks the row up.
@@ -316,7 +368,9 @@ function push(user, payload) {
           // A row that comes back after being deleted must not leave its tombstone behind, or the two
           // tables disagree and other devices are told to delete a row that is alive here.
           db.run(`DELETE FROM tombstones WHERE table_name=? AND id=?`, t.name, raw.id);
-          if (t.name === 'clients' && !existing && auth.caseloadRestricted(user)) db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, require('../crypto').uuid(), raw.id, user.id, 'primary', (raw.intake_date || db.now()).slice(0, 10), user.id);
+          // The office's own auto-assignment for a client created in the field — unless the device is sending
+          // the one it made, in which case that row is the assignment and a second would be a duplicate.
+          if (t.name === 'clients' && !existing && auth.caseloadRestricted(user) && !(pushedSelfAssignments.get(raw.id))) db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, require('../crypto').uuid(), raw.id, user.id, 'primary', (raw.intake_date || db.now()).slice(0, 10), user.id);
           // A visit that handed out kits or strips draws down the office shelf count exactly as the REST
           // route does — by the difference from what the office already had, so a re-sent row counts once.
           if (t.name === 'interventions') {

@@ -57,4 +57,14 @@ if (!before.includes(marker)) throw new Error(`build-static-site: expected to fi
 // server sends, which forbids inline scripts, even though a static host will not enforce it itself.
 fs.writeFileSync(indexPath, before.replace(marker, `<script src="local-boot.js"></script>\n  ${marker}`));
 
-console.log(`[suds] static site written to ${path.relative(root, outDir)}/ (${count} files, always-local)`);
+// The service worker is copied verbatim with public/ (above); this build's shell has one file more, the
+// boot script, and it cannot be left out: a home-screen install that could not load it would open as the
+// office login instead of local mode. Registered by app.js in local mode like everywhere else, so an
+// installed demo copy opens with no connection at all.
+const swPath = path.join(outDir, 'sw.js');
+const sw = fs.readFileSync(swPath, 'utf8');
+const shellMarker = "const SHELL = ['./', 'index.html',";
+if (!sw.includes(shellMarker)) throw new Error('build-static-site: expected to find the SHELL list in sw.js');
+fs.writeFileSync(swPath, sw.replace(shellMarker, "const SHELL = ['./', 'index.html', 'local-boot.js',"));
+
+console.log(`[suds] static site written to ${path.relative(root, outDir)}/ (${count + 1} files, always-local)`);
