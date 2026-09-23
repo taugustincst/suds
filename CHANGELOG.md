@@ -16,6 +16,7 @@ set up on a build from before the first round of fixes. Replayed by `scripts/ui/
   `cache: 'no-cache'`, and hands the page every app file marked `no-cache` so the next reload comes back
   to it; a new worker taking control reloads the page once. Offline, `index.html` stands in only for a
   navigation; a missing script or image is a real failure. `get-app.html` is in the shell.
+- **A write on the device is on disk before it answers.** With the worker answering navigations from its cache, the next page could arrive before the previous page's unload write was committed; every write request now persists before responding, so an edit made in the instant before leaving survives.
 - **"+ Add pictures" is now a label over the file input itself** (`.file-btn`): a tap on the button is a tap
   on the input, so the picker opens as a direct gesture everywhere and an automated click aimed at the
   input is no longer "obscured" by the button that used to forward to it.

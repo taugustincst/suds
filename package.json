@@ -1,6 +1,6 @@
 {
   "name": "suds",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "description": "SUD Navigator Services Tracker — HIPAA-oriented tracking for county substance use disorder navigation services",
   "private": true,
   "type": "commonjs",
