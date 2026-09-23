@@ -23,7 +23,10 @@ export function taskTable(rows, { showClient = true, onChange, bulk = false } = 
   const boxes = new Map();
   const countEl = h('span', { class: 'small muted' }, '0 selected');
   const markBtn = h('button', { class: 'btn sm primary', disabled: true, onClick: async () => {
-    const ids = [...selected]; markBtn.disabled = true;
+    const ids = [...selected];
+    // Several to-dos at once is exactly where a stray tap does the most damage, so say how many first.
+    if (!(await confirmDialog('Mark selected done', `Mark ${ids.length} to-do${ids.length === 1 ? '' : 's'} as done?`, { okText: `Mark ${ids.length} done` }))) return;
+    markBtn.disabled = true;
     const results = await Promise.allSettled(ids.map(id => put(`/api/tasks/${id}`, { status: 'done' })));
     const failed = results.filter(x => x.status === 'rejected').length;
     toast(failed ? `${ids.length - failed} of ${ids.length} marked done — ${failed} failed. Check your connection and try again.` : `${ids.length} marked done`, failed ? 'error' : 'ok');

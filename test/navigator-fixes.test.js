@@ -197,8 +197,11 @@ test('a safety plan is a structured note the client overview can point at', asyn
   const plan = { warning_signs: 'Not sleeping', coping: 'Walk', distraction: 'Cafe', people_to_ask: 'Sister', professionals: 'Crisis line 988', environment: 'Naloxone on hand', reasons_for_living: 'Kids' };
   const n = await nav.post('/api/notes', { client_id: c, kind: 'admin', format: 'safety_plan', title: 'Safety plan', content: 'see sections', structured: plan, occurred_at: '2026-09-01T10:00:00.000Z' });
   assert.equal(n.status, 201);
+  // A draft is not a plan anyone should act on: the chip appears once the plan is signed.
+  assert.equal((await nav.get(`/api/clients/${c}`)).data.client.safety_plan, null, 'an unsigned plan is not offered');
+  assert.equal((await nav.post(`/api/notes/${n.data.id}/sign`, { password: 'StaffPassw0rd!x' })).status, 200);
   const sp = (await nav.get(`/api/clients/${c}`)).data.client.safety_plan;
-  assert.equal(sp.id, n.data.id); assert.equal(sp.occurred_at, '2026-09-01T10:00:00.000Z');
+  assert.equal(sp.id, n.data.id); assert.equal(sp.occurred_at, '2026-09-01T10:00:00.000Z'); assert.equal(sp.status, 'signed');
   assert.deepEqual((await nav.get(`/api/notes/${n.data.id}`)).data.note.structured, plan);
 });
 

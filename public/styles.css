@@ -87,7 +87,9 @@ fieldset { border: 1px solid var(--border); border-radius: 8px; padding: .6rem .
 .filters { display: flex; gap: .5rem; align-items: end; flex-wrap: wrap; margin-bottom: .75rem; } .filters .field { margin: 0; min-width: 140px; }
 
 /* Modal, toasts */
-.modal-bg { position: fixed; inset: 0; background: rgba(10,15,20,.55); display: flex; align-items: flex-start; justify-content: center; padding: 3vh 1rem; overflow: auto; z-index: 50; }
+/* Layering: banners (60) sit over the page, a dialog (70) over the banners — on a phone the MFA banner used to
+   cover the first row of the + Log sheet — and toasts (100) over everything, so a save error is never hidden. */
+.modal-bg { position: fixed; inset: 0; background: rgba(10,15,20,.55); display: flex; align-items: flex-start; justify-content: center; padding: 3vh 1rem; overflow: auto; z-index: 70; }
 .modal { background: var(--panel); border-radius: 12px; width: 100%; max-width: 760px; box-shadow: 0 20px 60px rgba(0,0,0,.35); padding: 1.25rem 1.4rem; margin: auto; }
 .modal.wide { max-width: 1040px; } .modal h2 { margin-bottom: 1rem; }
 .toasts { position: fixed; right: 1rem; bottom: 1rem; display: flex; flex-direction: column; gap: .5rem; z-index: 100; }

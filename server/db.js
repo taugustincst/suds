@@ -314,6 +314,9 @@ const migrations = [
     if (m) d.exec(m[0]);
     for (const line of schemaText.split('\n')) if (/^CREATE INDEX IF NOT EXISTS idx_import_rows/.test(line.trim())) d.exec(line.trim());
   },
+  // 23: a referral's follow-up to-do remembers which referral it belongs to. Recording one referral's
+  //     outcome used to close every "Follow up on referral…" to-do on the client, by title prefix.
+  (d) => { addColumn(d, 'tasks', 'referral_id', 'TEXT REFERENCES referrals(id) ON DELETE SET NULL'); },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

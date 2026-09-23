@@ -227,11 +227,19 @@ export function modal(title, content, { wide = false, onClose = null } = {}) {
   if (first) first.focus();
   return { close, el: box };
 }
-export function confirmDialog(title, message, { danger = false, okText = 'Confirm', requireReason = false } = {}) {
+export function confirmDialog(title, message, { danger = false, okText = 'Confirm', requireReason = false, minLength = 0 } = {}) {
   return new Promise((resolve) => {
     let reason;
-    const m = modal(title, h('div', {}, h('p', {}, message), requireReason ? h('div', { class: 'field' }, h('label', {}, 'Reason (recorded in audit log)'), reason = h('input', { required: true })) : null,
-      h('div', { class: 'btn-row' }, h('button', { class: 'btn', onClick: () => { m.close(); resolve(null); } }, 'Cancel'), h('button', { class: `btn ${danger ? 'danger' : 'primary'}`, onClick: () => { if (requireReason && !reason.value.trim()) { reason.focus(); return; } m.close(); resolve(requireReason ? reason.value.trim() : true); } }, okText))));
+    const err = h('div', { class: 'err', role: 'alert' });
+    const m = modal(title, h('div', {}, h('p', {}, message), requireReason ? h('div', { class: 'field' }, h('label', {}, `Reason (recorded in audit log${minLength ? `, at least ${minLength} characters` : ''})`), reason = h('input', { required: true, minLength: minLength || null }), err) : null,
+      h('div', { class: 'btn-row' }, h('button', { class: 'btn', onClick: () => { m.close(); resolve(null); } }, 'Cancel'), h('button', { class: `btn ${danger ? 'danger' : 'primary'}`, onClick: () => {
+        if (requireReason) {
+          const text = reason.value.trim();
+          // Say what is wrong rather than quietly refusing: a too-short reason used to look like a button that did nothing.
+          if (!text || text.length < minLength) { err.textContent = !text ? 'A reason is required.' : `The reason must be at least ${minLength} characters — say why, so it can be reviewed.`; reason.closest('.field').classList.add('error'); reason.setAttribute('aria-invalid', 'true'); reason.focus(); return; }
+        }
+        m.close(); resolve(requireReason ? reason.value.trim() : true);
+      } }, okText))));
   });
 }
 
@@ -364,11 +372,11 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     let input; const v = values[f.name] ?? f.value ?? '';
     const opts = (f.options || []).map(o => typeof o === 'string' ? { value: o, label: fmt.label(o) } : o);
     switch (f.type) {
-      case 'select': input = h('select', { name: f.name, required: !!f.required }, f.noBlank ? null : h('option', { value: '' }, f.placeholder || '—'), opts.map(o => h('option', { value: o.value, selected: String(o.value) === String(v) }, o.label))); break;
+      case 'select': input = h('select', { name: f.name, required: !!f.required }, f.noBlank ? null : h('option', { value: '' }, f.placeholder || '—'), opts.map(o => h('option', { value: o.value, selected: String(o.value) === String(v), disabled: !!o.disabled, title: o.title || null }, o.label))); break;
       case 'textarea': input = h('textarea', { name: f.name, required: !!f.required, rows: f.rows || 4, placeholder: f.placeholder || '' }, v || ''); break;
       case 'checkbox': input = h('input', { type: 'checkbox', name: f.name, checked: !!(v === 1 || v === true || v === '1') }); break;
       case 'datetime': input = dateTimePair(f, v); break;
-      case 'date': input = h('input', { type: 'date', name: f.name, required: !!f.required, value: v ? String(v).slice(0, 10) : '' }); break;
+      case 'date': input = h('input', { type: 'date', name: f.name, required: !!f.required, value: v ? String(v).slice(0, 10) : '', min: f.min || null, max: f.max || null }); break;
       case 'number': input = h('input', { type: 'number', name: f.name, required: !!f.required, value: v ?? '', min: f.min, max: f.max, step: f.step ?? 'any', placeholder: f.placeholder || '' }); break;
       case 'client': input = clientPicker(f.name, v, f); break;
       case 'user': input = h('select', { name: f.name, required: !!f.required }, h('option', { value: '' }, f.placeholder || '—'), state.users.filter(u => u.is_active !== 0).map(u => h('option', { value: u.id, selected: u.id === v }, `${u.display_name} (${fmt.label(u.role)})`))); break;
@@ -402,6 +410,7 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
   if (restored) for (const [k, v] of Object.entries(restored)) { const i = inputs[k]; if (!i) continue; if (i.type === 'checkbox') i.checked = !!v; else i.value = v ?? ''; }
   const errBox = h('div', { class: 'banner danger hidden', role: 'alert', tabindex: '-1' });
   const submitBtn = h('button', { class: 'btn primary', type: 'submit' }, submitText);
+  let submitted = false; let saveTimer;
   // noValidate: the browser's own constraint validation can silently refuse to even dispatch the submit
   // event for a field it considers invalid — including, on some mobile browsers/WebViews, a non-required
   // datetime-local field stuck in a broken partial state that never fires our onSubmit at all, so nothing
@@ -419,7 +428,11 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     // the dialog sitting there looking like nothing happened.
     try {
       el.querySelectorAll('.field').forEach(x => { x.classList.remove('error'); const errSlot = x.querySelector('.err'); if (errSlot) errSlot.textContent = ''; const c = x.querySelector('input,select,textarea'); if (c) c.removeAttribute('aria-invalid'); });
-      const data = read(); await onSubmit(data, el); if (draftKey) drafts.delete(draftKey);
+      const data = read(); await onSubmit(data, el);
+      // Saved: the draft is finished with, and no autosave still queued behind this submit may put it back
+      // — the debounced savers below used to fire after the delete, so the next "+ New client" opened
+      // prefilled with the person just created.
+      submitted = true; clearTimeout(saveTimer); if (draftKey) drafts.delete(draftKey);
     } catch (err) {
       if (!err || typeof err !== 'object') err = new Error(String(err || 'Something went wrong'));
       if (!err.message) err.message = 'Something went wrong. Try again.';
@@ -452,13 +465,15 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
   // Keep what has been typed so a dialog closed by accident, a route change, or an idle sign-out does not
   // throw it away.
   if (draftKey) {
-    let saveTimer;
     // A field mid-typing an incomplete date/time is expected while drafting — read() now rejects that
     // rather than silently mangling it, so the autosave tick here just skips this round instead of
     // erroring; the field firms up (or clears) before the next tick or before the person tries to submit.
-    el.addEventListener('input', () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => { try { const d = read(); if (Object.values(d).some(v => v !== '' && v !== null && v !== undefined && v !== 0)) drafts.set(draftKey, d); } catch { /* firms up or gets fixed before submit */ } }, 400); });
-    el.addEventListener('change', () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => { try { drafts.set(draftKey, read()); } catch { /* see above */ } }, 400); });
+    const save = (onlyIfSomething) => { if (submitted) return; try { const d = read(); if (!onlyIfSomething || Object.values(d).some(v => v !== '' && v !== null && v !== undefined && v !== 0)) drafts.set(draftKey, d); } catch { /* firms up or gets fixed before submit */ } };
+    el.addEventListener('input', () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => save(true), 400); });
+    el.addEventListener('change', () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => save(false), 400); });
   }
+  // For a dialog that closes this form after a save of its own (not through onSubmit): stop drafting.
+  el.finished = () => { submitted = true; clearTimeout(saveTimer); if (draftKey) drafts.delete(draftKey); };
   function read() {
     const data = {}; const bad = []; const missing = [];
     for (const f of fields) {
@@ -785,6 +800,14 @@ export async function downloadCsv(path) {
   const a = h('a', { href: path, download: '' }); document.body.append(a); a.click(); a.remove();
 }
 
+// A promise nobody caught (a click handler that awaited a request and did not try/catch) used to fail
+// silently: the button did nothing, the console said why, and nobody reads the console on a phone.
+window.addEventListener('unhandledrejection', (e) => {
+  const err = e.reason;
+  const msg = (err && (err.message || (typeof err === 'string' ? err : ''))) || 'Something went wrong. Try again.';
+  try { toast(msg, 'error'); } catch { /* the toast host is not on the page yet */ }
+});
+
 // ---------- routing ----------
 const routes = {};
 export function route(name, loader) { routes[name] = loader; }
@@ -847,7 +870,10 @@ export async function render() {
   if (r.name === 'mfa' || r.name === 'login') { clear(app).append(await routes[r.name === 'mfa' ? 'mfa' : 'dashboard'](r)); return; }
   if (state.user.must_change_password && r.name !== 'profile') { nav('profile?force=1'); return; }
   const navItem = NAV.find(n => n.name === r.name);
-  const loader = navItem?.perm && !canAny(navItem.perm) ? (async () => emptyState('Not available for your role', `Your account does not have access to ${navItem.label}. Ask your supervisor or administrator if you need it.`, h('button', { class: 'btn', onClick: () => nav('dashboard') }, 'Back to home'))) : (routes[r.name] || routes.dashboard);
+  // An address that goes nowhere (a mistyped link, a page that no longer exists) says so, instead of
+  // quietly showing Home under the wrong address.
+  const loader = navItem?.perm && !canAny(navItem.perm) ? (async () => emptyState('Not available for your role', `Your account does not have access to ${navItem.label}. Ask your supervisor or administrator if you need it.`, h('button', { class: 'btn', onClick: () => nav('dashboard') }, 'Back to home')))
+    : routes[r.name] || (async () => h('div', { 'data-not-found': '1' }, emptyState('Page not found', `There is no page at "#/${r.name}". The link may be out of date.`, h('a', { class: 'btn primary', href: '#/dashboard' }, 'Go to Home'))));
   const main = h('main', { class: 'main', id: 'main', tabindex: '-1' }, h('div', { class: 'boot' }, 'Loading…'));
   const side = sidebar(r);
   const qa = quickActions();

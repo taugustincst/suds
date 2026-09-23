@@ -129,6 +129,26 @@ route('supervision', async (r) => {
         : emptyState('No time waiting', 'Time your staff submit for the period appears here.')));
   }
 
+  // ---- patient-rights requests on the 30-day clock ----
+  // A count, and the overdue ones by name: the request itself lives on the client's Requests tab.
+  if (can('patient-requests:read')) {
+    let prq = null; try { prq = (await get('/api/patient-requests?status=open&limit=500', { quiet: true })).rows; } catch { prq = null; }
+    if (prq) {
+      const late = prq.filter(x => x.overdue);
+      page.append(h('section', { class: 'card', 'data-patient-requests': '1' },
+        h('div', { class: 'card-head' }, h('h2', {}, 'Open patient requests'), badge(late.length ? `${prq.length} open · ${late.length} overdue` : String(prq.length), late.length ? 'danger' : prq.length ? 'warn' : 'ok')),
+        h('p', { class: 'small muted' }, 'Requests for access, amendment, restriction or an accounting of disclosures. Each must be answered within 30 days of receipt.'),
+        prq.length ? table([
+          { label: 'Client', render: x => h('a', { href: `#/client/${x.client_id}/requests` }, x.client_code) },
+          { label: 'Request', render: x => fmt.label(x.kind) },
+          { label: 'Received', render: x => fmt.date(x.received_at) },
+          { label: 'Due', render: x => h('span', { style: x.overdue ? { color: 'var(--danger)', fontWeight: 600 } : {} }, fmt.date(x.due_at), x.overdue ? ' — overdue' : '') },
+          { label: 'Handled by', key: 'handler' },
+        ], prq.slice(0, 50), { rowLabel: (x) => `${fmt.label(x.kind)} request for ${x.client_code}` })
+          : emptyState('No open requests', 'Patient-rights requests recorded on a client\'s Requests tab appear here until they are fulfilled or denied.')));
+    }
+  }
+
   // ---- referrals that never closed the loop ----
   const open = q.referrals_awaiting_outcome || [];
   const revoked = q.referrals_consent_revoked || [];

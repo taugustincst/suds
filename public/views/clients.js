@@ -2,19 +2,23 @@ import { h, route, get, post, state, form, modal, toast, nav, table, badge, stat
 
 // hasEpisodes: an existing client whose discharge lives on the Episodes tab (the New client form never
 // shows discharge fields: intake opens an episode, and discharging is what closes it).
-export function clientFields(C, { isNew = true, hasEpisodes = false } = {}) {
+export function clientFields(C, { isNew = true, hasEpisodes = false, openEpisode = false } = {}) {
+  // While an episode is open, closing the record (or recording a death) is a discharge, and the discharge
+  // is what closes the episode, ends the care team and clears the to-dos — so those two are taken off the
+  // menu here and the help text says where they went. The server refuses them too.
+  const statusOptions = ['waitlist', 'active', 'inactive', 'closed', 'deceased'].map(sv => ({ value: sv, label: fmt.label(sv), disabled: openEpisode && (sv === 'closed' || sv === 'deceased'), title: openEpisode && (sv === 'closed' || sv === 'deceased') ? 'Discharge on the Episodes tab' : null }));
   return [
     { type: 'section', label: 'Who they are', collapsible: true, open: true, hint: 'only first and last name are required' },
     { name: 'first_name', label: 'First name', required: true }, { name: 'last_name', label: 'Last name', required: true }, { name: 'preferred_name', label: 'Preferred name' },
-    { name: 'dob', label: 'Date of birth', type: 'date' }, { name: 'gender', label: 'Gender', type: 'select', options: ['female', 'male', 'non_binary', 'transgender_female', 'transgender_male', 'other', 'declined'] }, { name: 'pronouns', label: 'Pronouns' },
+    { name: 'dob', label: 'Date of birth', type: 'date', max: fmt.today(), min: '1900-01-01' }, { name: 'gender', label: 'Gender', type: 'select', options: ['female', 'male', 'non_binary', 'transgender_female', 'transgender_male', 'other', 'declined'] }, { name: 'pronouns', label: 'Pronouns' },
     { name: 'race_ethnicity', label: 'Race / ethnicity' }, { name: 'preferred_language', label: 'Preferred language', value: 'English' }, { name: 'veteran', label: 'Veteran', type: 'checkbox' },
     { type: 'section', label: 'How to reach them', collapsible: true, open: true },
-    { name: 'phone', label: 'Phone', type: 'tel' }, { name: 'alt_phone', label: 'Alternate phone', type: 'tel' }, { name: 'email', label: 'Email' },
+    { name: 'phone', label: 'Phone', type: 'tel' }, { name: 'alt_phone', label: 'Alternate phone', type: 'tel' }, { name: 'email', label: 'Email', type: 'email' },
     { name: 'address', label: 'Address', span: true }, { name: 'city', label: 'City' }, { name: 'zip', label: 'ZIP' },
     { name: 'ok_to_text', label: 'OK to text', type: 'checkbox' }, { name: 'ok_to_voicemail', label: 'OK to leave voicemail', type: 'checkbox' }, { name: 'contact_preferences', label: 'Contact preferences / safe contact notes', span: true },
     { name: 'emergency_contact', label: 'Emergency contact (name, relation, phone)', span: true },
     { type: 'section', label: 'Program status', collapsible: true, open: true },
-    { name: 'status', label: 'Status', type: 'select', options: ['waitlist', 'active', 'inactive', 'closed', 'deceased'], value: 'active', required: true, noBlank: true, help: hasEpisodes ? 'To discharge, use the Episodes tab: it closes the episode, ends the care team and clears open to-dos.' : (isNew ? 'Anyone not on the waitlist is admitted: intake opens their first episode of care.' : undefined) },
+    { name: 'status', label: 'Status', type: 'select', options: statusOptions, value: 'active', required: true, noBlank: true, help: openEpisode ? 'An episode of care is open, so "Closed" and "Deceased" are set by discharging on the Episodes tab: that closes the episode, ends the care team and clears open to-dos.' : hasEpisodes ? 'To discharge, use the Episodes tab: it closes the episode, ends the care team and clears open to-dos.' : (isNew ? 'Anyone not on the waitlist is admitted: intake opens their first episode of care.' : undefined) },
     { name: 'intake_date', label: 'Intake date', type: 'date', value: fmt.today() },
     { name: 'referral_source', label: 'Referral source', type: 'select', options: ['self', 'family', 'emergency_dept', 'hospital', 'ems', 'law_enforcement', 'jail', 'court_probation', 'treatment_provider', 'primary_care', 'shelter', 'outreach', 'hotline', 'school', 'other'] },
     { name: 'referral_date', label: 'Referral date', type: 'date', help: 'When this person was referred in — not necessarily the same as intake.' },
@@ -31,6 +35,16 @@ export function clientFields(C, { isNew = true, hasEpisodes = false } = {}) {
     { name: 'co_occurring_mh', label: 'Co-occurring mental health', type: 'checkbox' }, { name: 'justice_involved', label: 'Justice involved', type: 'checkbox' }, { name: 'pregnant_or_parenting', label: 'Pregnant or parenting', type: 'checkbox' },
     { name: 'goals', label: 'Client goals', type: 'textarea', span: true }, { name: 'flags', label: 'Safety flags (comma separated)', span: true, help: 'e.g. no home visits alone, allergy: naltrexone, do not contact via family' },
   ];
+}
+
+// The same checks the server makes (server/routes/clients.js checkContactFields), so a typo is caught
+// before the round trip and shown under the field it belongs to.
+export function checkClientFields(d) {
+  const fields = {};
+  if (d.dob) { if (d.dob > fmt.today()) fields.dob = 'cannot be in the future'; else if (d.dob < '1900-01-01') fields.dob = 'must be after 1900'; }
+  if (d.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(d.email)) fields.email = 'is not a valid email address';
+  for (const f of ['phone', 'alt_phone']) if (d[f] && String(d[f]).replace(/\D/g, '').length < 7) fields[f] = 'must contain at least 7 digits';
+  if (Object.keys(fields).length) { const e = new Error('Check the highlighted fields.'); e.data = { fields }; throw e; }
 }
 
 export function openClientForm(values, onDone) {
@@ -58,7 +72,8 @@ export function openClientForm(values, onDone) {
     dupBox.scrollIntoView({ block: 'center', behavior: 'smooth' });
   };
 
-  const f = form(clientFields(state.constants, { isNew, hasEpisodes: !!(values && values.counts && values.counts.episodes) }), { values: values || {}, submitText: isNew ? 'Create client' : 'Save changes', onCancel: () => m.close(), extra: dupBox, draftKey: isNew ? 'client:new' : `client:${values.id}`, onSubmit: async (d) => {
+  const f = form(clientFields(state.constants, { isNew, hasEpisodes: !!(values && values.counts && values.counts.episodes), openEpisode: !!(values && values.open_episode) }), { values: values || {}, submitText: isNew ? 'Create client' : 'Save changes', onCancel: () => m.close(), extra: dupBox, draftKey: isNew ? 'client:new' : `client:${values.id}`, onSubmit: async (d) => {
+    checkClientFields(d);
     if (isNew) {
       try {
         const r = await post('/api/clients', { ...d, confirm_duplicate: confirmedDuplicate || undefined });
@@ -111,7 +126,14 @@ route('clients', async (r) => {
     expiring = new Map(rep.consents_expiring.map(x => [x.client_id, x.expires_at]));
     rows = rows.filter(c => expiring.has(c.id));
   }
-  const activeFilters = [r.query.get('stale') === '1' ? 'no contact in 30 days' : null, risk ? `risk: ${risk === 'high' ? 'high or critical' : risk}` : null, substance ? `substance: ${fmt.label(substance)}` : null, mat ? `MAT: ${fmt.label(mat)}` : null, expiring ? 'consent expiring soon' : null].filter(Boolean);
+  // The Home card for open patient-rights requests lands here, narrowed to the clients that have one.
+  let requests = null;
+  if (r.query.get('patient_requests') === '1' && can('patient-requests:read')) {
+    const rq = await get('/api/patient-requests?status=open&limit=500');
+    requests = new Map(); for (const x of rq.rows) requests.set(x.client_id, [...(requests.get(x.client_id) || []), x]);
+    rows = rows.filter(c => requests.has(c.id));
+  }
+  const activeFilters = [requests ? 'open patient request' : null, r.query.get('stale') === '1' ? 'no contact in 30 days' : null, risk ? `risk: ${risk === 'high' ? 'high or critical' : risk}` : null, substance ? `substance: ${fmt.label(substance)}` : null, mat ? `MAT: ${fmt.label(mat)}` : null, expiring ? 'consent expiring soon' : null].filter(Boolean);
   const deid = !can('clients:read');
   const search = h('input', { type: 'search', value: q, placeholder: 'Name or preferred name (partial or misspelled OK), "Last, First", client code, DOB (YYYY-MM-DD) or exact phone', onKeydown: (e) => { if (e.key === 'Enter') nav(link({ q: search.value.trim() })); } });
   const statusSel = h('select', { onChange: () => nav(link({ status: statusSel.value })) }, ['active', 'waitlist', 'inactive', 'closed', 'deceased', 'all'].map(s => h('option', { value: s, selected: s === status }, fmt.label(s))));
@@ -133,6 +155,7 @@ route('clients', async (r) => {
       { label: 'Time to engage', render: c => c.days_to_engagement === null ? '—' : h('span', { style: c.days_to_engagement < 0 ? { color: 'var(--danger)' } : {} }, `${c.days_to_engagement}d`) },
       { label: 'Last contact', render: c => [h('span', { style: !c.last_contact || Date.now() - Date.parse(c.last_contact) > 30 * 86400000 ? { color: 'var(--warn)' } : {} }, fmt.ago(c.last_contact)), c.overdue_tasks ? [' ', badge(`${c.overdue_tasks} overdue`, 'danger')] : null] },
       expiring ? { label: 'Consent expires', render: c => fmt.date(expiring.get(c.id)) } : null,
+      requests ? { label: 'Request due', render: c => h('a', { href: `#/client/${c.id}/requests` }, (requests.get(c.id) || []).map(x => h('div', { style: x.overdue ? { color: 'var(--danger)', fontWeight: 600 } : {} }, `${fmt.label(x.kind)} · ${fmt.date(x.due_at)}${x.overdue ? ' — overdue' : ''}`))) } : null,
     ].filter(Boolean), rows, { onRow: deid ? null : (c) => nav(`client/${c.id}`), rowLabel: c => `${c.display_name}, ${fmt.label(c.status)}`,
     compact: { primary: c => [h('span', {}, c.display_name), badge(fmt.label(c.risk_level), statusKind(c.risk_level))], secondary: c => [h('span', {}, 'last contact ', fmt.ago(c.last_contact)), h('span', {}, '· ', fmt.label(c.status)), c.overdue_tasks ? badge(`${c.overdue_tasks} overdue`, 'danger') : null, deid ? null : h('span', { class: 'mono' }, c.client_code)] },
     empty: q ? 'No one matches. Names are stored encrypted, so search only works from the start of the last name (misspellings are tolerated) — try just the first few letters, the full phone number, date of birth (YYYY-MM-DD) or the client code.' : (status === 'active' ? 'No active clients yet. Click + New client to add your first.' : 'No clients with this status.') }));
