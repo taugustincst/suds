@@ -32,7 +32,9 @@ export async function episodesPanel(clientId, { onChange } = {}) {
 
   const closeEpisode = (e) => {
     const f = form([
-      { name: 'discharge_reason', label: 'Reason for discharge', type: 'select', noBlank: true, required: true, options: REASONS.map(([value, label]) => ({ value, label })) },
+      // No default: "Completed the program" is a claim the funder report counts, not something a worker
+      // should be able to record by clicking straight through.
+      { name: 'discharge_reason', label: 'Reason for discharge', type: 'select', required: true, placeholder: 'Choose a reason…', options: REASONS.map(([value, label]) => ({ value, label })) },
       { name: 'discharge_disposition', label: 'Where are they going?', placeholder: 'e.g. outpatient at County OTP, residential, unknown' },
       { name: 'closed_at', label: 'Discharge date', type: 'date', value: new Date().toISOString().slice(0, 10) },
       { name: 'discharge_summary', label: 'Discharge summary', type: 'textarea', rows: 5, span: true },

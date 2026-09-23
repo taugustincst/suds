@@ -10,7 +10,14 @@ import { openExpenditureForm, expenditureTable } from './budget.js';
 
 route('client', async (r) => {
   const id = r.id; const tab = r.sub || 'overview';
-  const { client: c } = await get(`/api/clients/${id}`);
+  let c;
+  try { ({ client: c } = await get(`/api/clients/${id}`)); }
+  catch (e) {
+    // A duplicate that was merged away: the old link (a bookmark, a synced phone) goes on to the record
+    // that replaced it, and says so.
+    if (e.data && e.data.merged_into) { toast('This record was merged into another client — showing the record it was merged into.', 'ok'); nav(`client/${e.data.merged_into}${r.sub ? '/' + r.sub : ''}`); return h('div', { class: 'boot', 'data-merged-redirect': e.data.merged_into }, 'Redirecting…'); }
+    throw e;
+  }
   const disp = `${c.display_name} (${c.client_code})`;
   // A modal's onDone fires asynchronously, after its POST/PUT resolves — by then the worker may already
   // have clicked to a different tab, or away from this client entirely. Re-reading the hash here (instead
@@ -76,11 +83,15 @@ route('client', async (r) => {
     async notes() {
       const d = await get(`/api/notes?client_id=${id}&limit=500`);
       // An administrator holds break-glass but had nowhere to use it except a note link they could not see.
-      const breakGlass = !can('notes:clinical:read') && can('notes:clinical:breakglass') ? h('button', { class: 'btn sm danger', onClick: async () => {
-        const reason = await confirmDialog('Break-glass access', 'Clinical notes are outside your normal role. Emergency access is permitted only with a documented reason and is reported to the privacy officer.', { danger: true, okText: 'Show clinical notes', requireReason: true });
+      const breakGlass = !can('notes:clinical:read') && can('notes:clinical:breakglass') ? h('button', { class: 'btn sm danger', 'data-breakglass': '1', onClick: async () => {
+        // The server insists on a reason of at least 15 characters; the dialog asks for the same, so a
+        // one-word reason is corrected in the dialog rather than refused by the server after it closed.
+        const reason = await confirmDialog('Break-glass access', 'Clinical notes are outside your normal role. Emergency access is permitted only with a documented reason (at least 15 characters, saying why) and is reported to the privacy officer.', { danger: true, okText: 'Show clinical notes', requireReason: true, minLength: 15 });
         if (!reason) return;
-        const cl = await get(`/api/notes?client_id=${id}&kind=clinical&limit=500`, { headers: { 'X-Break-Glass-Reason': reason } });
-        const box = document.getElementById('breakglass-notes'); clear(box).append(h('h4', {}, 'Clinical notes (emergency access — logged)'), noteTable(cl.rows, { showClient: false, onChange: refresh }));
+        try {
+          const cl = await get(`/api/notes?client_id=${id}&kind=clinical&limit=500`, { headers: { 'X-Break-Glass-Reason': reason } });
+          const box = document.getElementById('breakglass-notes'); clear(box).append(h('h4', {}, 'Clinical notes (emergency access — logged)'), noteTable(cl.rows, { showClient: false, onChange: refresh }));
+        } catch (e) { toast(e.message || 'Emergency access was refused', 'error'); }
       } }, 'Emergency access to clinical notes') : null;
       return h('div', {}, !can('notes:clinical:read') ? h('div', { class: 'banner small' }, 'Clinical notes are hidden from your role. ', breakGlass) : null, noteTable(d.rows, { showClient: false, onChange: refresh }), h('div', { id: 'breakglass-notes', class: 'mt' }));
     },
@@ -118,7 +129,7 @@ route('client', async (r) => {
           'A consent on this client has been revoked. Any referral that relied on it is flagged — stop sharing information under it and close those referrals out.') : null,
         h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Consents & releases'), can('consents:write') ? h('button', { class: 'btn sm primary', onClick: addConsent }, '+ Consent') : null),
           table([{ label: 'Type', render: x => fmt.label(x.type) }, { label: 'Recipient', key: 'recipient' }, { label: 'Purpose', key: 'purpose' }, { label: 'Signed', render: x => fmt.date(x.signed_at) }, { label: 'Expires', render: x => x.expires_at ? h('span', { style: Date.parse(x.expires_at) < Date.now() ? { color: 'var(--danger)' } : {} }, fmt.date(x.expires_at)) : '—' }, { label: 'Status', render: x => x.revoked_at ? badge('Revoked', 'danger') : (x.expires_at && Date.parse(x.expires_at) < Date.now()) ? badge('Expired', 'warn') : badge('Active', 'ok') },
-            { label: '', render: x => !x.revoked_at && can('consents:write') ? h('button', { class: 'btn sm ghost', onClick: async () => { const reason = await confirmDialog('Revoke consent', 'Record that the client revoked this consent?', { danger: true, okText: 'Revoke', requireReason: true }); if (reason) { await post(`/api/consents/${x.id}/revoke`, { reason }); refresh(); } } }, 'Revoke') : null }], d.consents, { empty: 'No consents on file. SUD records cannot be shared without written consent.' })),
+            { label: '', render: x => !x.revoked_at && can('consents:write') ? h('button', { class: 'btn sm ghost', onClick: async () => { const reason = await confirmDialog('Revoke consent', 'Record that the client revoked this consent?', { danger: true, okText: 'Revoke', requireReason: true }); if (reason) { try { await post(`/api/consents/${x.id}/revoke`, { reason }); toast('Consent revoked — any referral that relied on it is now flagged', 'ok'); refresh(); } catch (e) { toast(e.message, 'error'); } } } }, 'Revoke') : null }], d.consents, { empty: 'No consents on file. SUD records cannot be shared without written consent.' })),
         h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Accounting of disclosures'), h('div', { class: 'row' }, h('button', { class: 'btn sm', 'data-print-accounting': '1', onClick: printAccounting }, 'Print accounting'), can('consents:write') ? h('button', { class: 'btn sm primary', onClick: addDisclosure }, '+ Disclosure') : null)),
           table([{ label: 'Date', render: x => fmt.dt(x.disclosed_at) }, { label: 'To', key: 'recipient' }, { label: 'Purpose', key: 'purpose' }, { label: 'What', key: 'what' }, { label: 'Basis', render: x => h('span', {}, fmt.label(x.basis), x.justification ? h('div', { class: 'small muted' }, x.justification) : null) }, { label: 'How it was recorded', render: x => fmt.label(x.source || 'manual') }, { label: 'By', key: 'disclosed_by_name' }], d.disclosures, { empty: 'No disclosures recorded. Every time identifiable information leaves this program, it is recorded here.' })));
     },
@@ -134,12 +145,19 @@ route('client', async (r) => {
           { label: '', render: x => x.status === 'open' && can('patient-requests:write') ? h('div', { class: 'row' }, h('button', { class: 'btn sm primary', onClick: () => close(x, 'fulfilled') }, 'Fulfilled'), h('button', { class: 'btn sm', onClick: () => close(x, 'denied') }, 'Denied')) : null }], d.rows, { empty: 'No requests recorded for this client.' }));
     },
     async team() {
-      const assign = () => { const f = form([{ name: 'user_id', label: 'Worker', type: 'user', required: true }, { name: 'role_on_case', label: 'Role', type: 'select', options: ['primary', 'secondary', 'clinician', 'peer', 'supervisor'], value: 'primary', noBlank: true }, { name: 'start_date', label: 'Start', type: 'date', value: fmt.today() }, { name: 'notes', label: 'Notes', span: true }], { submitText: 'Assign', onCancel: () => m.close(), onSubmit: async (v) => { await post(`/api/clients/${id}/assignments`, v); toast('Assigned', 'ok'); m.close(); refresh(); } }); const m = modal('Assign worker', f); };
+      // A client has one primary: assigning a new one ends the current one's assignment (and, for a
+      // caseload-restricted worker, their access). Said up front, and confirmed, rather than discovered.
+      const currentPrimary = c.assignments.find(a => a.role_on_case === 'primary' && !a.end_date);
+      const assign = () => { const f = form([{ name: 'user_id', label: 'Worker', type: 'user', required: true }, { name: 'role_on_case', label: 'Role', type: 'select', options: ['primary', 'secondary', 'clinician', 'peer', 'supervisor'], value: 'primary', noBlank: true, help: currentPrimary ? `${currentPrimary.display_name} is the current primary. Assigning another primary ends their assignment today.` : null }, { name: 'start_date', label: 'Start', type: 'date', value: fmt.today() }, { name: 'notes', label: 'Notes', span: true }], { submitText: 'Assign', onCancel: () => m.close(), onSubmit: async (v) => {
+        if ((v.role_on_case || 'primary') === 'primary' && currentPrimary && currentPrimary.user_id !== v.user_id) {
+          if (!(await confirmDialog('Replace the primary worker?', `${currentPrimary.display_name} is currently primary on this case. Their assignment ends today and the new worker takes over. Continue?`, { okText: 'Replace primary' }))) return;
+        }
+        await post(`/api/clients/${id}/assignments`, v); toast('Assigned', 'ok'); m.close(); refresh(); } }); const m = modal('Assign worker', f); };
       return h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Care team assignments'), can('assignments:manage') ? h('button', { class: 'btn sm primary', onClick: assign }, '+ Assign worker') : null),
         table([{ label: 'Worker', key: 'display_name' }, { label: 'Staff role', render: a => fmt.label(a.user_role) }, { label: 'Role on case', render: a => fmt.label(a.role_on_case) }, { label: 'Start', render: a => fmt.date(a.start_date) }, { label: 'End', render: a => a.end_date ? fmt.date(a.end_date) : badge('Current', 'ok') }, { label: 'Notes', key: 'notes' }, { label: '', render: a => !a.end_date && can('assignments:manage') ? h('button', { class: 'btn sm ghost', onClick: async () => { if (await confirmDialog('End assignment', `Remove ${a.display_name} from this case?`, { okText: 'End' })) { await post(`/api/assignments/${a.id}/end`, {}); refresh(); } } }, 'End') : null }], c.assignments, { empty: 'No workers assigned.' }),
         can('clients:merge') ? h('div', { class: 'card mt' },
           h('h3', {}, 'Merge a duplicate into this record'),
-          h('p', { class: 'small muted' }, 'If the same person was entered twice, merge the other record into this one. Everything attached to it — visits, calls, notes, referrals, forms — moves here, and anything this record is missing is filled in from the duplicate. The other record is kept, marked as merged, so old links still work.'),
+          h('p', { class: 'small muted' }, 'If the same person was entered twice, merge the other record into this one. Everything attached to it — visits, calls, notes, referrals, forms — moves here, and anything this record is missing is filled in from the duplicate. The other record is kept, marked as merged: an old link to it sends you here. A record on legal hold cannot be merged.'),
           (() => {
             const picker = clientPicker('merge_source', '', { placeholder: 'Find the duplicate record…' });
             return h('div', {}, picker, h('div', { class: 'btn-row' }, h('button', { class: 'btn', onClick: async () => {

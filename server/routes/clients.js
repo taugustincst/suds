@@ -2,7 +2,7 @@
 const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
-const { badRequest, notFound, forbidden } = require('../http');
+const { badRequest, notFound, forbidden, conflict, HttpError } = require('../http');
 const { validate, paging } = require('../validate');
 const { blindIndex, uuid, decrypt } = require('../crypto');
 const M = require('../clients-model');
@@ -24,9 +24,30 @@ const shape = {
 
 function loadClient(ctx, id) {
   const row = db.one(`SELECT * FROM clients WHERE id=? AND deleted_at IS NULL`, id);
-  if (!row) throw notFound('Client not found');
+  if (!row) {
+    // A duplicate that was merged away is kept, pointing at the record that replaced it, so an old link
+    // (a bookmark, a to-do, a synced phone) can be sent on to the keeper instead of dead-ending on 404.
+    const merged = db.one(`SELECT merged_into FROM clients WHERE id=? AND merged_into IS NOT NULL`, id);
+    if (merged) throw new HttpError(404, 'This record was merged into another client', { merged_into: merged.merged_into });
+    throw notFound('Client not found');
+  }
   auth.assertClientAccess(ctx, id);
   return row;
+}
+
+// Contact details that cannot be right are worse than none: a birth date in the future, "notanemail", a
+// phone number with no digits. The form checks the same things, so a worker sees it before saving.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+function checkContactFields(v) {
+  const fields = {};
+  if (v.dob) {
+    const today = require('./budget').localDate();
+    if (v.dob > today) fields.dob = 'cannot be in the future';
+    else if (v.dob < '1900-01-01') fields.dob = 'must be after 1900';
+  }
+  if (v.email && !EMAIL_RE.test(v.email)) fields.email = 'is not a valid email address';
+  for (const f of ['phone', 'alt_phone']) if (v[f] && String(v[f]).replace(/\D/g, '').length < 7) fields[f] = 'must contain at least 7 digits';
+  if (Object.keys(fields).length) throw badRequest('Validation failed', { fields });
 }
 
 /**
@@ -62,7 +83,7 @@ module.exports = (r) => {
     if (status && status !== 'all') { where.push('c.status=?'); params.push(status); }
     const q = (ctx.query.get('q') || '').trim();
     if (q) {
-      if (/^[CM]\d{2}-\d+(-D)?$/i.test(q)) { where.push('c.client_code=?'); params.push(q.toUpperCase()); }
+      if (/^[A-Z]+\d*-\d+(-D)?$/i.test(q)) { where.push('c.client_code=?'); params.push(q.toUpperCase()); }
       else if (/^\d{4}-\d{2}-\d{2}$/.test(q)) { where.push('c.dob_idx=?'); params.push(blindIndex(q)); }
       else if (/^[\d\-() .+]{7,}$/.test(q)) { where.push('c.phone_idx=?'); params.push(blindIndex(q.replace(/\D/g, ''))); }
       else {
@@ -108,6 +129,7 @@ module.exports = (r) => {
 
   r.post('/api/clients', auth.requireAuth, auth.requirePerm('clients:write'), (ctx) => {
     const v = validate(ctx.body, { ...shape, confirm_duplicate: { type: 'boolean' }, no_episode: { type: 'boolean' } });
+    checkContactFields(v);
     // Refuse a likely duplicate unless the worker has looked at the match and said it is a different person.
     if (!v.confirm_duplicate) {
       // Exactly the filter /check-duplicates applies: a match outside the caller's caseload is a fact they
@@ -165,6 +187,14 @@ module.exports = (r) => {
     if (source.merged_into) throw badRequest('That record has already been merged into another client');
     if (source.deleted_at) throw badRequest('That record has been deleted');
     auth.assertClientAccess(ctx, source.id);
+    // A record on legal hold has to stay exactly as it is: merging it would delete it (the duplicate ends
+    // up soft-deleted) or rewrite it (the keeper is filled in from the duplicate), and the hold would go
+    // with it. Refused, and the refusal is audited, since counsel may ask who tried.
+    if (keep.legal_hold || source.legal_hold) {
+      const held = keep.legal_hold && source.legal_hold ? 'Both records are' : keep.legal_hold ? `This record (${keep.client_code}) is` : `The record to merge in (${source.client_code}) is`;
+      audit.log({ user: ctx.user, action: 'client.merge.refused', entity: 'client', entityId: keep.id, clientId: keep.id, ip: ctx.ip, success: false, details: { source: source.id, reason: 'legal_hold', keep_on_hold: !!keep.legal_hold, source_on_hold: !!source.legal_hold } });
+      throw conflict(`${held} on legal hold and cannot be merged until an administrator clears the hold`);
+    }
 
     // Every column in the database that points at clients(id), minus the clients table itself.
     const links = [];
@@ -245,10 +275,11 @@ module.exports = (r) => {
       episodes: db.one(`SELECT COUNT(*) n FROM episodes WHERE client_id=?`, row.id).n,
     };
     client.open_episode = !!db.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, row.id);
-    // The most recent safety plan this person may read, so the overview can say one is on file without
-    // pulling the note itself (that is a separate, audited read when they open it).
+    // The most recent signed safety plan this person may read, so the overview can say one is on file
+    // without pulling the note itself (that is a separate, audited read when they open it). A draft is
+    // not a plan anyone should act on, so it does not earn the chip.
     const kinds = ['admin', 'clinical'].filter(k => auth.hasPerm(ctx.user, `notes:${k}:read`) || auth.hasPerm(ctx.user, `notes:${k}:write`));
-    const sp = kinds.length ? db.one(`SELECT id, occurred_at, status FROM notes WHERE client_id=? AND format='safety_plan' AND deleted_at IS NULL AND kind IN (${kinds.map(() => '?').join(',')}) ORDER BY occurred_at DESC LIMIT 1`, row.id, ...kinds) : null;
+    const sp = kinds.length ? db.one(`SELECT id, occurred_at, status FROM notes WHERE client_id=? AND format='safety_plan' AND deleted_at IS NULL AND status IN ('signed','amended') AND kind IN (${kinds.map(() => '?').join(',')}) ORDER BY occurred_at DESC LIMIT 1`, row.id, ...kinds) : null;
     client.safety_plan = sp || null;
     audit.log({ user: ctx.user, action: 'client.view', entity: 'client', entityId: row.id, clientId: row.id, ip: ctx.ip });
     return { client };
@@ -257,6 +288,13 @@ module.exports = (r) => {
   r.put('/api/clients/:id', auth.requireAuth, auth.requirePerm('clients:write'), (ctx) => {
     const row = loadClient(ctx, ctx.params.id);
     const v = validate(ctx.body, { ...shape, first_name: { ...shape.first_name, required: false }, last_name: { ...shape.last_name, required: false } }, { partial: true });
+    checkContactFields(v);
+    // Closing a client is a discharge, and a discharge is what closes the episode, ends the care team and
+    // clears the open to-dos. Setting the status by hand while an episode is open would leave all of that
+    // running against a "closed" person, so it has to go through the Episodes tab.
+    if ((v.status === 'closed' || v.status === 'deceased') && v.status !== row.status && db.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, row.id)) {
+      throw badRequest(`This client has an open episode of care. To ${v.status === 'deceased' ? 'record a death' : 'close the record'}, discharge them on the Episodes tab — that closes the episode and sets the status.`, { fields: { status: 'discharge on the Episodes tab instead' }, open_episode: true });
+    }
     const enc = M.encryptFields(v);
     if (v.first_name !== undefined || v.last_name !== undefined) {
       const cur = M.decryptRow(row);

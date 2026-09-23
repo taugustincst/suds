@@ -55,6 +55,18 @@ function syncExpenditure(row) {
     uuid(), row.funding_source_id, row.budget_line_id, row.client_id || null, row.user_id, row.id, spentAt, cents(row.cost), line.category, desc);
 }
 
+// A visit that logged its own time entry keeps that entry right when the visit is corrected: a duration
+// or date typed wrong and fixed on the visit used to leave the time sheet with the wrong number, and a
+// supervisor approving hours nobody had actually worked. Only while the entry is still unapproved —
+// approved or rejected time has been ruled on and is not rewritten behind the approver's back.
+function syncTimeEntry(row, prev) {
+  if (row.duration_minutes === prev.duration_minutes && row.occurred_at === prev.occurred_at && !row._service_date) return;
+  const te = db.one(`SELECT * FROM time_entries WHERE intervention_id=?`, row.id);
+  if (!te || (te.status !== 'draft' && te.status !== 'submitted')) return;
+  if (!(row.duration_minutes > 0)) { db.run(`DELETE FROM time_entries WHERE id=?`, te.id); db.tombstone('time_entries', te.id); return; }
+  db.run(`UPDATE time_entries SET minutes=?, work_date=?, updated_at=? WHERE id=?`, row.duration_minutes, serviceDate(row), db.now(), te.id);
+}
+
 // The visit summary is clinical narrative about a named person, so it is stored encrypted like any other
 // PHI field and decrypted on the way out.
 function encodeSummary(v) { if (v.summary !== undefined) { v.summary_enc = v.summary ? require('../crypto').encrypt(v.summary) : null; delete v.summary; } }
@@ -104,12 +116,18 @@ module.exports = (r) => {
       syncExpenditure(row);
       supplies.drawDown(ctx, row);
     },
-    afterUpdate: (ctx, row, prev) => { syncExpenditure(row); supplies.drawDown(ctx, row, prev); },
-    // The FK from expenditures.intervention_id is ON DELETE SET NULL, so this has to run before the delete
-    // — after it, there is no longer any way to find the expenditure this intervention's cost created.
+    afterUpdate: (ctx, row, prev) => { syncExpenditure(row); syncTimeEntry(row, prev); supplies.drawDown(ctx, row, prev); },
+    // The FKs from expenditures.intervention_id and time_entries.intervention_id are ON DELETE SET NULL, so
+    // this has to run before the delete — after it, there is no longer any way to find the records this
+    // intervention created.
     beforeDelete: (ctx, row) => {
       const existing = db.one(`SELECT * FROM expenditures WHERE intervention_id=?`, row.id);
       if (existing && existing.status === 'pending') { db.run(`DELETE FROM expenditures WHERE id=?`, existing.id); db.tombstone('expenditures', existing.id); }
+      // The visit's automatic time entry: gone with the visit while nobody has approved it; once approved
+      // it is part of a signed-off time sheet, so it is detached and marked instead of silently rewritten.
+      const te = db.one(`SELECT * FROM time_entries WHERE intervention_id=?`, row.id);
+      if (te && (te.status === 'draft' || te.status === 'submitted')) { db.run(`DELETE FROM time_entries WHERE id=?`, te.id); db.tombstone('time_entries', te.id); }
+      else if (te) db.run(`UPDATE time_entries SET intervention_id=NULL, description=?, updated_at=? WHERE id=?`, `${te.description || ''} (the visit this was logged from was deleted)`.trim(), db.now(), te.id);
       // The kits and strips this visit drew from the cupboard go back on the shelf: a deleted visit
       // handed nothing out.
       supplies.restore(ctx, row);

@@ -100,8 +100,8 @@ module.exports = (r) => {
     },
     afterInsert: (ctx, row) => {
       if (sharesInformation(row)) recordDisclosure(ctx, row, row);
-      db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority) VALUES(?,?,?,?,?,?,?)`,
-        uuid(), row.client_id, row.user_id, ctx.user.id, encrypt(`Follow up on referral to ${resourceName(row.resource_id)}`), row.follow_up_due, row.urgency === 'emergent' ? 'urgent' : 'normal');
+      db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority,referral_id) VALUES(?,?,?,?,?,?,?,?)`,
+        uuid(), row.client_id, row.user_id, ctx.user.id, encrypt(`Follow up on referral to ${resourceName(row.resource_id)}`), row.follow_up_due, row.urgency === 'emergent' ? 'urgent' : 'normal', row.id);
     },
     canEdit: crud.ownerOrManager(),
   });
@@ -126,11 +126,16 @@ module.exports = (r) => {
       db.run(`UPDATE referrals SET status=?, outcome_enc=?, barrier_enc=?, admitted_at=?, closed_at=?, outcome_recorded_at=?, consent_id=COALESCE(?, consent_id), updated_at=? WHERE id=?`,
         v.status, v.outcome ? encrypt(v.outcome) : row.outcome_enc, v.barrier ? encrypt(v.barrier) : row.barrier_enc, admitted ? (v.admitted_at || row.admitted_at || db.now()) : row.admitted_at,
         CLOSED_STATUSES.includes(v.status) ? (row.closed_at || db.now()) : row.closed_at, db.now(), v.consent_id || null, db.now(), row.id);
-      // The follow-up task has served its purpose once the outcome is known. Titles are encrypted, so the
-      // client's open tasks are read back rather than matched with LIKE.
-      for (const t of db.all(`SELECT id, title_enc FROM tasks WHERE client_id=? AND status<>'done'`, row.client_id)) {
-        let title = ''; try { title = t.title_enc ? decrypt(t.title_enc) : ''; } catch { continue; }
-        if (title.startsWith('Follow up on referral')) db.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, db.now(), db.now(), t.id);
+      // This referral's follow-up task has served its purpose once the outcome is known — this one's, not
+      // every referral follow-up the client has. A task created before tasks carried referral_id is matched
+      // on the resource's name in its title instead (titles are encrypted, so they are read back, not LIKEd).
+      const closed = db.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE referral_id=? AND status IN ('open','in_progress')`, db.now(), db.now(), row.id).changes;
+      if (!closed) {
+        const legacyTitle = `Follow up on referral to ${resourceName(row.resource_id)}`;
+        for (const t of db.all(`SELECT id, title_enc FROM tasks WHERE client_id=? AND referral_id IS NULL AND status IN ('open','in_progress')`, row.client_id)) {
+          let title = ''; try { title = t.title_enc ? decrypt(t.title_enc) : ''; } catch { continue; }
+          if (title === legacyTitle) db.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, db.now(), db.now(), t.id);
+        }
       }
     });
     audit.log({ user: ctx.user, action: 'referral.outcome', entity: 'referral', entityId: row.id, clientId: row.client_id, ip: ctx.ip, details: { status: v.status, admitted } });

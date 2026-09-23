@@ -16,13 +16,18 @@ SUDS needs a connection to the office. Without one, a banner says so and nothing
 Use your individual username. After 5 wrong passwords the account locks for 15 minutes. You are signed out automatically after 15 minutes without activity — a banner warns you one minute before. Supervisors and administrators must enroll an authenticator app (Profile → Multi-factor authentication → scan the QR code).
 
 ## Dashboard
-Shows alerts (overdue tasks, unsigned notes, imported notes waiting for review, clients with no intervention in 30 days, consents expiring), your caseload sorted by risk and last contact, and 90-day activity charts.
+Shows alerts (overdue tasks, unsigned notes, imported notes waiting for review, clients with no intervention in 30 days, consents expiring, open patient-rights requests and how many are past their 30-day deadline), your caseload sorted by risk and last contact, and 90-day activity charts. The same open-requests count appears on the Supervision page.
 
 ## Clients
 * **Search** matches exact last name, "Last, First", phone number, date of birth (YYYY-MM-DD) or client code. Names are encrypted, so partial-name search is not available.
 * **New client** — enter what you know; only first and last name are required. Set status *waitlist* if not yet enrolled.
 * The client page has tabs: Overview, Timeline (everything in date order), Interventions, Calls, Notes, Referrals, Tasks, Consents & ROI, Time, Assistance $ and Care team.
 * **Safety flags** (e.g. "no home visits alone") appear as a red badge on every page for that client.
+* **Status and episodes.** Starting an episode of care makes the client *active* (including someone taken off the waitlist). While an episode is open, *Closed* and *Deceased* cannot be chosen on the Edit form: discharge on the Episodes tab instead — that closes the episode, ends the care team and clears open to-dos. The discharge dialog has no default reason; choose one.
+* **After a discharge**, a navigator whose only link to the client was their assignment loses access to the record the next day (the discharge ends every assignment). If you need to look back at a discharged client — to answer a records request, or when they return — ask a supervisor to assign you again, or to look it up for you. Supervisors and administrators see every record.
+* **Duplicates.** Merge a duplicate from the Care team tab. The record merged away is kept, marked as merged, and an old link to it opens the record it was merged into. A record on **legal hold** cannot be merged, in either direction, until an administrator clears the hold.
+* **Legal hold** can only be placed or cleared by an administrator (it usually comes from counsel). A supervisor who needs one placed should ask the administrator; the hold, its reason and who set it are in the audit log.
+* **Contact details** are checked when saved: a date of birth cannot be in the future or before 1900, an email must look like one, and a phone number needs at least seven digits.
 
 ## Logging work
 * **+ Intervention** — the core service record. Pick the type (outreach, SBIRT screening, warm handoff, naloxone distribution, post-overdose follow-up…), duration, location, outcome. Enter naloxone kits / fentanyl strips given — they roll up into reports and update the client's naloxone status. Set a follow-up date to create a task automatically. Leave *Also log as time entry* checked so your time sheet fills itself.

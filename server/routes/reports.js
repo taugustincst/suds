@@ -70,6 +70,11 @@ module.exports = (r) => {
       // to active, never displays.
       // Emergency accesses nobody has reviewed yet — the count a supervisor sees on their home page.
       breakglass_pending: auth.hasPerm(ctx.user, 'audit:read') ? db.one(`SELECT COUNT(*) n FROM breakglass_events WHERE acknowledged_at IS NULL`).n : null,
+      // Patient-rights requests (access, amendment, restriction, accounting) each run a 30-day clock; the
+      // count of open ones, and how many have run out, so a deadline is not first noticed when it is missed.
+      patient_requests: auth.hasPerm(ctx.user, 'patient-requests:read') || auth.hasPerm(ctx.user, 'patient-requests:write')
+        ? scoped1(`SELECT COUNT(*) n, COALESCE(SUM(CASE WHEN p.due_at < ? THEN 1 ELSE 0 END),0) overdue FROM patient_requests p JOIN clients c ON c.id=p.client_id WHERE p.status='open' AND c.deleted_at IS NULL AND {CF}`, today)
+        : null,
       consents_expiring: db.all(`SELECT co.id, co.client_id, co.type, co.recipient_enc, co.expires_at, c.client_code FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ? AND c.status='active' AND ${cf.sql} ORDER BY co.expires_at LIMIT 20`, today, new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10), ...cf.params).map(x => ({ ...x, recipient: x.recipient_enc ? require('../crypto').decrypt(x.recipient_enc) : null, recipient_enc: undefined })),
     };
     // The dashboard reads across nearly every PHI table; that is a PHI read like any other.

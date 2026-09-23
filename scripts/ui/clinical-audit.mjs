@@ -1,0 +1,243 @@
+// The clinical-side fixes from the functional audit, checked in a real browser: a saved form does not
+// come back as a draft, the discharge dialog has no default reason, Edit cannot close a client with an
+// open episode, break-glass says why a short reason was refused and nothing fails silently, a merged-away
+// link goes on to the keeper, patient requests reach Home and Supervision, a dialog sits above the
+// banners on a phone, contact details are checked before saving, expired consents are not offered,
+// bulk "Mark done" asks first, assigning a new primary warns, and an unknown address says so.
+import { chromium } from 'playwright';
+import { makeChecks, until } from './assert.mjs';
+
+const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium/chrome' }).catch(() => chromium.launch());
+const { ok, eq, finish } = makeChecks('clinical-audit');
+const errors = [];
+
+const H = { 'Content-Type': 'application/json', 'X-Requested-With': 'suds' };
+async function session(user, pass, viewport = { width: 1360, height: 900 }, extra = {}) {
+  const ctx = await browser.newContext({ viewport, ...extra });
+  const page = await ctx.newPage();
+  page.on('pageerror', e => errors.push('PAGEERROR: ' + e.message));
+  page.on('response', r => { if (r.status() >= 500) errors.push(`HTTP ${r.status()} ${r.url()}`); });
+  await page.goto(base + '/#/login');
+  await page.fill('input[name=username]', user); await page.fill('input[name=password]', pass);
+  await page.click('button[type=submit]');
+  await page.waitForSelector('.layout', { timeout: 10000 });
+  await page.evaluate((h) => fetch('/api/me/prefs', { method: 'PUT', headers: h, body: JSON.stringify({ tour_done: true }) }), H);
+  await page.waitForTimeout(400); await page.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove()));
+  const api = (method, path, body) => page.evaluate(async ({ method, path, body, h }) => { const r = await fetch(path, { method, headers: h, body: body === undefined ? undefined : JSON.stringify(body), credentials: 'same-origin' }); const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = t; } return { status: r.status, data: j }; }, { method, path, body, h: H });
+  return { page, ctx, api, close: () => ctx.close() };
+}
+const go = async (page, hash) => { await page.goto(`${base}/#/${hash}${hash.includes('?') ? '&' : '?'}_=${Date.now()}`); await page.waitForSelector('.main .boot', { state: 'detached', timeout: 10000 }).catch(() => {}); await page.waitForTimeout(500); };
+const closeModal = async (page) => { await page.keyboard.press('Escape'); await until(async () => !(await page.$('.modal-bg'))); };
+const day = (offset) => new Date(Date.now() + offset * 86400000).toISOString().slice(0, 10);
+const stamp = Date.now().toString().slice(-5);
+let createdId;
+
+// ---------------- navigator on a desktop ----------------
+const nav = await session('mrivera', 'Navigator2026!!');
+{
+  const { page, api } = nav;
+
+  // H2. a client saved from + New client does not come back as a draft in the next + New client
+  await go(page, 'clients');
+  await page.click('text=+ New client'); await page.waitForSelector('.modal input[name=first_name]');
+  await page.fill('.modal input[name=first_name]', 'Draft'); await page.fill('.modal input[name=last_name]', 'Gone' + stamp);
+  await page.fill('.modal input[name=city]', 'Auburn');
+  await page.click('.modal button[type=submit]'); await page.waitForURL(/#\/client\//, { timeout: 10000 });
+  createdId = page.url().split('/client/')[1].split('/')[0];
+  await page.waitForTimeout(900); // longer than the 400ms autosave debounce that used to fire after the save
+  await go(page, 'clients');
+  await page.click('text=+ New client'); await page.waitForSelector('.modal input[name=first_name]');
+  eq(await page.inputValue('.modal input[name=first_name]'), '', 'the next New client form opens empty');
+  eq(await page.inputValue('.modal input[name=city]'), '', 'including fields typed later');
+  ok(!(await page.$('.modal .banner:has-text("Restored")')), 'and shows no "Restored" banner');
+  // L1. contact details are checked in the form, under the field, before any request
+  await page.fill('.modal input[name=first_name]', 'Bad'); await page.fill('.modal input[name=last_name]', 'Email' + stamp);
+  await page.fill('.modal input[name=email]', 'notanemail'); await page.fill('.modal input[name=phone]', 'abc');
+  await page.fill('.modal input[name=dob]', day(3));
+  await page.click('.modal button[type=submit]'); await page.waitForTimeout(500);
+  ok(await page.$('.modal .field[data-field=email].error'), 'a bad email is flagged under its field');
+  ok(await page.$('.modal .field[data-field=phone].error'), 'so is a phone with no digits');
+  ok(await page.$('.modal .field[data-field=dob].error'), 'and a birth date in the future');
+  ok(/^\d{4}-\d{2}-\d{2}$/.test(await page.$eval('.modal input[name=dob]', i => i.max)), 'the date picker itself stops at today');
+  ok(await page.$('.modal'), 'the form stays open to be corrected');
+  await closeModal(page);
+
+  // M2. Edit on a client with an open episode cannot pick Closed or Deceased
+  await go(page, `client/${createdId}`);
+  await page.click('button:has-text("Edit")'); await page.waitForSelector('.modal select[name=status]');
+  eq(await page.$eval('.modal select[name=status] option[value=closed]', o => o.disabled), true, 'Closed is disabled while an episode is open');
+  eq(await page.$eval('.modal select[name=status] option[value=deceased]', o => o.disabled), true, 'so is Deceased');
+  eq(await page.$eval('.modal select[name=status] option[value=inactive]', o => o.disabled), false, 'Inactive is still a choice');
+  ok(/Episodes tab/.test(await page.$eval('.modal .field[data-field=status]', f => f.textContent)), 'the help text says to discharge on the Episodes tab');
+  await closeModal(page);
+  const refused = await api('PUT', `/api/clients/${createdId}`, { status: 'closed' });
+  eq(refused.status, 400, 'and the server refuses it regardless');
+
+  // M1. the discharge dialog has no default reason and will not submit without one
+  await go(page, `client/${createdId}/episodes`);
+  await page.click('button:has-text("Discharge")'); await page.waitForSelector('.modal select[name=discharge_reason]');
+  eq(await page.inputValue('.modal select[name=discharge_reason]'), '', 'the reason starts blank');
+  ok(/Choose a reason/.test(await page.$eval('.modal select[name=discharge_reason] option:first-child', o => o.textContent)), 'with a placeholder, not "Completed the program"');
+  await page.click('.modal button[type=submit]'); await page.waitForTimeout(400);
+  ok(await page.$('.modal .banner.danger:not(.hidden)'), 'submitting without a reason is refused in the dialog');
+  ok(await page.$('.modal .field[data-field=discharge_reason].error'), 'with the reason field marked');
+  eq((await api('GET', `/api/clients/${createdId}`)).data.client.open_episode, true, 'and the episode is still open');
+  await closeModal(page);
+
+  // L2. a client whose only consent has expired: the referral form says so and points at the Consents tab
+  const exp = (await api('POST', '/api/clients', { first_name: 'Expired', last_name: 'Consent' + stamp, confirm_duplicate: true })).data;
+  await api('POST', `/api/clients/${exp.id}/consents`, { type: 'part2_disclosure', recipient: 'Granite Detox', purpose: 'referral', scope: 'dates of service', signed_at: day(-400), expires_at: day(-1), signed_on_paper: true, redisclosure_notice_given: true });
+  await go(page, `client/${exp.id}/referrals`);
+  await page.click('button:has-text("+ New referral")'); await page.waitForSelector('.modal select[name=consent_id]');
+  eq(await page.$$eval('.modal select[name=consent_id] option', o => o.filter(x => x.value).length), 0, 'the expired consent is not offered');
+  ok(/\(expired\)/.test(await page.$eval('.modal select[name=consent_id] option:first-child', o => o.textContent)), 'the empty choice reads "(expired)"');
+  ok(await page.$('.modal a[data-add-consent]'), 'with a link to record a new release');
+  ok(/expired/.test(await page.$eval('.modal .field[data-field=consent_id] .help', f => f.textContent)), 'and the help text says why');
+  await closeModal(page);
+
+  // L5. bulk "Mark selected done" asks first, with the count
+  await api('POST', '/api/tasks', { client_id: createdId, title: 'Bulk one ' + stamp, due_at: day(1) });
+  await api('POST', '/api/tasks', { client_id: createdId, title: 'Bulk two ' + stamp, due_at: day(1) });
+  await go(page, 'tasks');
+  await page.evaluate(() => { const t = document.querySelector('.has-compact table'); if (t) t.style.display = 'table'; });
+  const selectBoxes = await page.$$('tbody input[aria-label^="Select "]');
+  ok(selectBoxes.length >= 2, 'the to-do list offers per-row selection', selectBoxes.length);
+  if (selectBoxes.length >= 2) {
+    await selectBoxes[0].check(); await selectBoxes[1].check();
+    await page.click('button:has-text("Mark selected done")');
+    const dlg = await until(() => page.$('.modal:has-text("Mark selected done")'));
+    ok(dlg, 'a confirmation appears');
+    ok(dlg && /Mark 2 to-dos as done\?/.test(await dlg.textContent()), 'naming how many', dlg && (await dlg.textContent()).slice(0, 120));
+    const openBefore = (await api('GET', '/api/tasks?status=open&mine=1&limit=300')).data.total;
+    await page.click('.modal button:has-text("Cancel")'); await page.waitForTimeout(400);
+    eq((await api('GET', '/api/tasks?status=open&mine=1&limit=300')).data.total, openBefore, 'Cancel changes nothing');
+  }
+
+  // M7. an overdue patient request shows on Home
+  await api('POST', '/api/patient-requests', { client_id: createdId, kind: 'access', received_at: day(-40) });
+  await go(page, 'dashboard');
+  const prCard = await page.$('[data-patient-requests]');
+  ok(prCard, 'Home has an open patient requests card');
+  ok(prCard && /overdue/.test(await prCard.textContent()), 'which says one is overdue', prCard && (await prCard.textContent()).trim());
+  ok(await page.$('a.badge:has-text("patient request")'), 'and an alert badge links to the list');
+  await go(page, 'clients?status=all&patient_requests=1');
+  ok(/open patient request/.test(await page.textContent('.main')), 'the badge leads to the clients with an open request');
+  ok((await page.textContent('.main')).includes('Gone' + stamp), 'including this one');
+
+  // L9. an address that goes nowhere
+  await go(page, 'nonsense');
+  ok(await page.$('[data-not-found]'), 'an unknown address renders a "Page not found" view');
+  ok(/Page not found/.test(await page.textContent('.main')), 'saying so');
+  ok(await page.$('[data-not-found] a[href="#/dashboard"]'), 'with a link home');
+
+  // M5b. a rejection nobody caught is shown, not swallowed
+  await page.evaluate(() => { Promise.reject(new Error('Boom test ' + 'unhandled')); });
+  const boom = await until(() => page.$('.toast.error:has-text("Boom test")'));
+  ok(boom, 'an unhandled rejection becomes an error toast');
+  // The rejection is deliberately still reported to the console (for whoever is debugging), so it is
+  // not a page error this script should fail on.
+  for (let i = errors.length - 1; i >= 0; i--) if (/Boom test/.test(errors[i])) errors.splice(i, 1);
+}
+
+// ---------------- supervisor: merged-away links, supervision count, consent revoke ----------------
+const sup = await session('jwalker', 'Navigator2026!!');
+{
+  const { page, api } = sup;
+  const keep = (await api('POST', '/api/clients', { first_name: 'Keeper', last_name: 'Merge' + stamp, confirm_duplicate: true })).data;
+  const dup = (await api('POST', '/api/clients', { first_name: 'Dup', last_name: 'Merge' + stamp, confirm_duplicate: true })).data;
+  eq((await api('POST', `/api/clients/${keep.id}/merge`, { source_id: dup.id })).status, 200, 'the duplicate merges');
+  await go(page, `client/${dup.id}`);
+  await until(() => page.url().includes(`/client/${keep.id}`));
+  ok(page.url().includes(`/client/${keep.id}`), 'an old link to the merged-away record goes on to the keeper');
+  ok(await page.$('.toast:has-text("merged into")'), 'and says so');
+  await go(page, `client/${keep.id}/team`);
+  ok(/an old link to it sends you here/.test(await page.textContent('.main')), 'the merge copy describes what actually happens');
+  ok(/legal hold cannot be merged/.test(await page.textContent('.main')), 'and that a held record cannot be merged');
+
+  // L7. assigning a new primary says the current one will be ended (the navigator is primary from intake)
+  await go(page, `client/${createdId}/team`);
+  await page.click('button:has-text("+ Assign worker")'); await page.waitForSelector('.modal select[name=role_on_case]');
+  ok(/Maria Rivera is the current primary/.test(await page.$eval('.modal .field[data-field=role_on_case]', f => f.textContent)), 'the Assign dialog warns that the current primary will be ended');
+  const users = (await api('GET', '/api/users')).data.users; const other = users.find(u => u.username === 'dchen');
+  if (other) {
+    await page.selectOption('.modal select[name=user_id]', other.id);
+    await page.click('.modal button[type=submit]');
+    const confirm = await until(() => page.$('.modal:has-text("Replace the primary worker?")'));
+    ok(confirm, 'and asks before replacing them');
+    if (confirm) { await page.click('.modal button:has-text("Cancel")'); await page.waitForTimeout(300); }
+    const primaries = (await api('GET', `/api/clients/${createdId}`)).data.client.assignments.filter(a => a.role_on_case === 'primary' && !a.end_date);
+    eq(primaries.length, 1, 'Cancel leaves the current primary in place');
+    ok(primaries[0] && primaries[0].user_id !== other.id, 'unchanged');
+  }
+  await page.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove()));
+
+  await go(page, 'supervision');
+  const block = await page.$('[data-patient-requests]');
+  ok(block, 'Supervision shows the open patient requests');
+  ok(block && /overdue/.test(await block.textContent()), 'with the overdue count');
+
+  // L6. revoking a consent says so
+  const rc = (await api('POST', '/api/clients', { first_name: 'Revoke', last_name: 'Toast' + stamp, confirm_duplicate: true })).data;
+  await api('POST', `/api/clients/${rc.id}/consents`, { type: 'roi', recipient: 'Hope Housing', purpose: 'housing referral', signed_at: day(-1) });
+  await go(page, `client/${rc.id}/consents`);
+  await page.click('button:has-text("Revoke")'); const rd = await until(() => page.$('.modal input'));
+  if (rd) { await rd.fill('Client withdrew consent in person'); await page.click('.modal button:has-text("Revoke")'); }
+  ok(await until(() => page.$('.toast:has-text("Consent revoked")')), 'revoking a consent shows a toast');
+}
+
+// ---------------- admin: break-glass reason length ----------------
+const adm = await session('admin', 'AdminPassw0rd!x');
+{
+  const { page, api } = adm;
+  const list = (await api('GET', '/api/clients?limit=5&status=active')).data.clients;
+  await go(page, `client/${list[0].id}/notes`);
+  const bg = await page.$('button[data-breakglass]');
+  ok(bg, 'an administrator is offered emergency access on the Notes tab');
+  if (bg) {
+    await bg.click(); await page.waitForSelector('.modal input');
+    await page.fill('.modal input', 'short');
+    await page.click('.modal button:has-text("Show clinical notes")'); await page.waitForTimeout(300);
+    ok(await page.$('.modal'), 'a too-short reason keeps the dialog open');
+    ok(/at least 15 characters/.test(await page.$eval('.modal .err', e => e.textContent)), 'and says why', await page.$eval('.modal .err', e => e.textContent).catch(() => ''));
+    await page.fill('.modal input', 'Client in ED, treating physician needs the plan');
+    await page.click('.modal button:has-text("Show clinical notes")');
+    const shown = await until(() => page.$('#breakglass-notes h4'));
+    ok(shown, 'a proper reason opens the clinical notes');
+    ok(!(await page.$('.modal')), 'and the dialog has closed');
+  }
+}
+
+// ---------------- phone: a dialog sits above the banners ----------------
+const phone = await session('mrivera', 'Navigator2026!!', { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
+{
+  const { page } = phone;
+  await go(page, 'dashboard');
+  // The MFA banner is there in a fresh development install; put one there regardless so the check is
+  // about layering, not about which roles need two-step verification this week.
+  await page.evaluate(() => {
+    let host = document.getElementById('banners'); if (!host) { host = document.createElement('div'); host.id = 'banners'; document.body.prepend(host); }
+    if (!host.querySelector('.banner')) { const b = document.createElement('div'); b.className = 'banner warn'; b.setAttribute('data-banner', 'test'); b.textContent = 'Your role requires two-step verification. Set it up now.'; host.append(b); }
+  });
+  ok(await page.$('#banners .banner'), 'a banner is on the page');
+  await page.click('.fab button');
+  const first = await until(() => page.$('.modal .quick-list .btn'));
+  ok(first, 'the + Log sheet opens');
+  if (first) {
+    const zBanner = await page.$eval('#banners', b => Number(getComputedStyle(b).zIndex) || 0);
+    const zModal = await page.$eval('.modal-bg', m => Number(getComputedStyle(m).zIndex) || 0);
+    ok(zModal > zBanner, 'the dialog layer is above the banner layer', [zModal, zBanner]);
+    const zToasts = await page.$eval('.toasts', t => Number(getComputedStyle(t).zIndex) || 0);
+    ok(zToasts > zModal, 'and toasts are above the dialog', [zToasts, zModal]);
+    const box = await first.boundingBox();
+    const hit = await page.evaluate(({ x, y }) => { const el = document.elementFromPoint(x, y); return el ? !!el.closest('.quick-list .btn') : false; }, { x: box.x + box.width / 2, y: box.y + box.height / 2 });
+    ok(hit, 'the first item of the sheet is what a tap would land on, not the banner');
+    await first.tap();
+    ok(await until(() => page.$('.modal form')), 'and tapping it opens the visit form');
+  }
+}
+
+await phone.close(); await adm.close(); await sup.close(); await nav.close();
+await browser.close();
+if (errors.length) { console.log('ERRORS:'); errors.forEach(e => console.log('  ' + e)); } else console.log('NO ERRORS');
+finish(errors);

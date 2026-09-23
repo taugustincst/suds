@@ -6666,7 +6666,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   is_milestone INTEGER NOT NULL DEFAULT 0,
   completed_at TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  -- the referral whose follow-up this is, so recording that referral's outcome closes this to-do and no other
+  referral_id TEXT REFERENCES referrals(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assigned_to, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_client ON tasks(client_id);
@@ -7695,6 +7697,11 @@ var require_db = __commonJS({
         const m = schemaText.match(/CREATE TABLE IF NOT EXISTS import_rows \([\s\S]*?\n\);/);
         if (m) d.exec(m[0]);
         for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_import_rows/.test(line.trim())) d.exec(line.trim());
+      },
+      // 23: a referral's follow-up to-do remembers which referral it belongs to. Recording one referral's
+      //     outcome used to close every "Follow up on referral…" to-do on the client, by title prefix.
+      (d) => {
+        addColumn(d, "tasks", "referral_id", "TEXT REFERENCES referrals(id) ON DELETE SET NULL");
       }
     ];
     function initialise(d, schemaText, dbPath) {
@@ -12334,10 +12341,12 @@ var require_calls = __commonJS({
           const method = v.method || "phone";
           if (method === "text" && !v.outcome) v.outcome = "sent";
           checkOutcome(v, method);
+          deriveCrisis(v);
           encAll(v);
         },
         beforeUpdate: (ctx, v, row) => {
           checkOutcome(v, v.method || row.method || "phone");
+          deriveCrisis(v);
           encAll(v);
         },
         afterInsert: (ctx, row) => {
@@ -12372,6 +12381,9 @@ var require_calls = __commonJS({
         const allowed = method === "text" ? C.TEXT_OUTCOMES : C.CALL_OUTCOMES;
         if (!allowed.includes(v.outcome)) throw badRequest(`"${v.outcome}" is not an outcome for a ${method === "text" ? "text message" : "phone call"}. Choose one of: ${allowed.join(", ")}`);
       }
+      function deriveCrisis(v) {
+        if (v.outcome === "crisis_escalated") v.crisis = 1;
+      }
       function encAll(v) {
         if (v.purpose !== void 0) v._purpose = v.purpose;
         for (const f of ["contact_name", "phone", "summary", "purpose"]) if (v[f] !== void 0) {
@@ -12393,7 +12405,7 @@ var require_clients = __commonJS({
     var db3 = require_db();
     var auth3 = require_auth();
     var audit3 = require_audit();
-    var { badRequest, notFound, forbidden } = require_http();
+    var { badRequest, notFound, forbidden, conflict, HttpError: HttpError3 } = require_http();
     var { validate, paging } = require_validate();
     var { blindIndex: blindIndex2, uuid: uuid2, decrypt: decrypt3 } = require_crypto();
     var M = require_clients_model();
@@ -12447,9 +12459,25 @@ var require_clients = __commonJS({
     };
     function loadClient(ctx, id) {
       const row = db3.one(`SELECT * FROM clients WHERE id=? AND deleted_at IS NULL`, id);
-      if (!row) throw notFound("Client not found");
+      if (!row) {
+        const merged = db3.one(`SELECT merged_into FROM clients WHERE id=? AND merged_into IS NOT NULL`, id);
+        if (merged) throw new HttpError3(404, "This record was merged into another client", { merged_into: merged.merged_into });
+        throw notFound("Client not found");
+      }
       auth3.assertClientAccess(ctx, id);
       return row;
+    }
+    var EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    function checkContactFields(v) {
+      const fields = {};
+      if (v.dob) {
+        const today = require_budget().localDate();
+        if (v.dob > today) fields.dob = "cannot be in the future";
+        else if (v.dob < "1900-01-01") fields.dob = "must be after 1900";
+      }
+      if (v.email && !EMAIL_RE.test(v.email)) fields.email = "is not a valid email address";
+      for (const f of ["phone", "alt_phone"]) if (v[f] && String(v[f]).replace(/\D/g, "").length < 7) fields[f] = "must contain at least 7 digits";
+      if (Object.keys(fields).length) throw badRequest("Validation failed", { fields });
     }
     function possibleDuplicates(v, excludeId = null) {
       const clauses = [];
@@ -12488,7 +12516,7 @@ var require_clients = __commonJS({
         }
         const q = (ctx.query.get("q") || "").trim();
         if (q) {
-          if (/^[CM]\d{2}-\d+(-D)?$/i.test(q)) {
+          if (/^[A-Z]+\d*-\d+(-D)?$/i.test(q)) {
             where.push("c.client_code=?");
             params.push(q.toUpperCase());
           } else if (/^\d{4}-\d{2}-\d{2}$/.test(q)) {
@@ -12548,6 +12576,7 @@ var require_clients = __commonJS({
       });
       r.post("/api/clients", auth3.requireAuth, auth3.requirePerm("clients:write"), (ctx) => {
         const v = validate(ctx.body, { ...shape, confirm_duplicate: { type: "boolean" }, no_episode: { type: "boolean" } });
+        checkContactFields(v);
         if (!v.confirm_duplicate) {
           const all = possibleDuplicates(v);
           const visible = all.filter((m) => auth3.canAccessClient(ctx.user, m.id) || auth3.hasPerm(ctx.user, "clients:all"));
@@ -12591,6 +12620,11 @@ var require_clients = __commonJS({
         if (source.merged_into) throw badRequest("That record has already been merged into another client");
         if (source.deleted_at) throw badRequest("That record has been deleted");
         auth3.assertClientAccess(ctx, source.id);
+        if (keep.legal_hold || source.legal_hold) {
+          const held = keep.legal_hold && source.legal_hold ? "Both records are" : keep.legal_hold ? `This record (${keep.client_code}) is` : `The record to merge in (${source.client_code}) is`;
+          audit3.log({ user: ctx.user, action: "client.merge.refused", entity: "client", entityId: keep.id, clientId: keep.id, ip: ctx.ip, success: false, details: { source: source.id, reason: "legal_hold", keep_on_hold: !!keep.legal_hold, source_on_hold: !!source.legal_hold } });
+          throw conflict(`${held} on legal hold and cannot be merged until an administrator clears the hold`);
+        }
         const links = [];
         for (const t of db3.all(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`)) {
           if (t.name === "clients") continue;
@@ -12665,7 +12699,7 @@ var require_clients = __commonJS({
         };
         client.open_episode = !!db3.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, row.id);
         const kinds = ["admin", "clinical"].filter((k) => auth3.hasPerm(ctx.user, `notes:${k}:read`) || auth3.hasPerm(ctx.user, `notes:${k}:write`));
-        const sp = kinds.length ? db3.one(`SELECT id, occurred_at, status FROM notes WHERE client_id=? AND format='safety_plan' AND deleted_at IS NULL AND kind IN (${kinds.map(() => "?").join(",")}) ORDER BY occurred_at DESC LIMIT 1`, row.id, ...kinds) : null;
+        const sp = kinds.length ? db3.one(`SELECT id, occurred_at, status FROM notes WHERE client_id=? AND format='safety_plan' AND deleted_at IS NULL AND status IN ('signed','amended') AND kind IN (${kinds.map(() => "?").join(",")}) ORDER BY occurred_at DESC LIMIT 1`, row.id, ...kinds) : null;
         client.safety_plan = sp || null;
         audit3.log({ user: ctx.user, action: "client.view", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip });
         return { client };
@@ -12673,6 +12707,10 @@ var require_clients = __commonJS({
       r.put("/api/clients/:id", auth3.requireAuth, auth3.requirePerm("clients:write"), (ctx) => {
         const row = loadClient(ctx, ctx.params.id);
         const v = validate(ctx.body, { ...shape, first_name: { ...shape.first_name, required: false }, last_name: { ...shape.last_name, required: false } }, { partial: true });
+        checkContactFields(v);
+        if ((v.status === "closed" || v.status === "deceased") && v.status !== row.status && db3.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, row.id)) {
+          throw badRequest(`This client has an open episode of care. To ${v.status === "deceased" ? "record a death" : "close the record"}, discharge them on the Episodes tab \u2014 that closes the episode and sets the status.`, { fields: { status: "discharge on the Episodes tab instead" }, open_episode: true });
+        }
         const enc = M.encryptFields(v);
         if (v.first_name !== void 0 || v.last_name !== void 0) {
           const cur = M.decryptRow(row);
@@ -14108,7 +14146,7 @@ var require_episodes = __commonJS({
             v.referral_source || null,
             v.presenting_problem ? encrypt3(v.presenting_problem) : null
           );
-          db3.run(`UPDATE clients SET status=CASE WHEN status='closed' THEN 'active' ELSE status END, discharge_date=NULL, discharge_reason=NULL, updated_at=? WHERE id=?`, db3.now(), ctx.params.id);
+          db3.run(`UPDATE clients SET status=CASE WHEN status IN ('closed','waitlist') THEN 'active' ELSE status END, discharge_date=NULL, discharge_reason=NULL, updated_at=? WHERE id=?`, db3.now(), ctx.params.id);
         });
         audit3.log({ user: ctx.user, action: "episode.open", entity: "episode", entityId: id, clientId: ctx.params.id, ip: ctx.ip });
         ctx.status = 201;
@@ -15451,6 +15489,17 @@ var require_interventions = __commonJS({
         desc
       );
     }
+    function syncTimeEntry(row, prev) {
+      if (row.duration_minutes === prev.duration_minutes && row.occurred_at === prev.occurred_at && !row._service_date) return;
+      const te = db3.one(`SELECT * FROM time_entries WHERE intervention_id=?`, row.id);
+      if (!te || te.status !== "draft" && te.status !== "submitted") return;
+      if (!(row.duration_minutes > 0)) {
+        db3.run(`DELETE FROM time_entries WHERE id=?`, te.id);
+        db3.tombstone("time_entries", te.id);
+        return;
+      }
+      db3.run(`UPDATE time_entries SET minutes=?, work_date=?, updated_at=? WHERE id=?`, row.duration_minutes, serviceDate(row), db3.now(), te.id);
+    }
     function encodeSummary(v) {
       if (v.summary !== void 0) {
         v.summary_enc = v.summary ? require_crypto().encrypt(v.summary) : null;
@@ -15560,16 +15609,23 @@ var require_interventions = __commonJS({
         },
         afterUpdate: (ctx, row, prev) => {
           syncExpenditure(row);
+          syncTimeEntry(row, prev);
           supplies.drawDown(ctx, row, prev);
         },
-        // The FK from expenditures.intervention_id is ON DELETE SET NULL, so this has to run before the delete
-        // — after it, there is no longer any way to find the expenditure this intervention's cost created.
+        // The FKs from expenditures.intervention_id and time_entries.intervention_id are ON DELETE SET NULL, so
+        // this has to run before the delete — after it, there is no longer any way to find the records this
+        // intervention created.
         beforeDelete: (ctx, row) => {
           const existing = db3.one(`SELECT * FROM expenditures WHERE intervention_id=?`, row.id);
           if (existing && existing.status === "pending") {
             db3.run(`DELETE FROM expenditures WHERE id=?`, existing.id);
             db3.tombstone("expenditures", existing.id);
           }
+          const te = db3.one(`SELECT * FROM time_entries WHERE intervention_id=?`, row.id);
+          if (te && (te.status === "draft" || te.status === "submitted")) {
+            db3.run(`DELETE FROM time_entries WHERE id=?`, te.id);
+            db3.tombstone("time_entries", te.id);
+          } else if (te) db3.run(`UPDATE time_entries SET intervention_id=NULL, description=?, updated_at=? WHERE id=?`, `${te.description || ""} (the visit this was logged from was deleted)`.trim(), db3.now(), te.id);
           supplies.restore(ctx, row);
         },
         canEdit: crud.ownerOrManager()
@@ -16511,14 +16567,15 @@ var require_referrals = __commonJS({
         afterInsert: (ctx, row) => {
           if (sharesInformation(row)) recordDisclosure(ctx, row, row);
           db3.run(
-            `INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority) VALUES(?,?,?,?,?,?,?)`,
+            `INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority,referral_id) VALUES(?,?,?,?,?,?,?,?)`,
             uuid2(),
             row.client_id,
             row.user_id,
             ctx.user.id,
             encrypt3(`Follow up on referral to ${resourceName(row.resource_id)}`),
             row.follow_up_due,
-            row.urgency === "emergent" ? "urgent" : "normal"
+            row.urgency === "emergent" ? "urgent" : "normal",
+            row.id
           );
         },
         canEdit: crud.ownerOrManager()
@@ -16554,14 +16611,18 @@ var require_referrals = __commonJS({
             db3.now(),
             row.id
           );
-          for (const t of db3.all(`SELECT id, title_enc FROM tasks WHERE client_id=? AND status<>'done'`, row.client_id)) {
-            let title = "";
-            try {
-              title = t.title_enc ? decrypt3(t.title_enc) : "";
-            } catch {
-              continue;
+          const closed = db3.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE referral_id=? AND status IN ('open','in_progress')`, db3.now(), db3.now(), row.id).changes;
+          if (!closed) {
+            const legacyTitle = `Follow up on referral to ${resourceName(row.resource_id)}`;
+            for (const t of db3.all(`SELECT id, title_enc FROM tasks WHERE client_id=? AND referral_id IS NULL AND status IN ('open','in_progress')`, row.client_id)) {
+              let title = "";
+              try {
+                title = t.title_enc ? decrypt3(t.title_enc) : "";
+              } catch {
+                continue;
+              }
+              if (title === legacyTitle) db3.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), t.id);
             }
-            if (title.startsWith("Follow up on referral")) db3.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), t.id);
           }
         });
         audit3.log({ user: ctx.user, action: "referral.outcome", entity: "referral", entityId: row.id, clientId: row.client_id, ip: ctx.ip, details: { status: v.status, admitted } });
@@ -20349,6 +20410,9 @@ var require_reports = __commonJS({
           // to active, never displays.
           // Emergency accesses nobody has reviewed yet — the count a supervisor sees on their home page.
           breakglass_pending: auth3.hasPerm(ctx.user, "audit:read") ? db3.one(`SELECT COUNT(*) n FROM breakglass_events WHERE acknowledged_at IS NULL`).n : null,
+          // Patient-rights requests (access, amendment, restriction, accounting) each run a 30-day clock; the
+          // count of open ones, and how many have run out, so a deadline is not first noticed when it is missed.
+          patient_requests: auth3.hasPerm(ctx.user, "patient-requests:read") || auth3.hasPerm(ctx.user, "patient-requests:write") ? scoped1(`SELECT COUNT(*) n, COALESCE(SUM(CASE WHEN p.due_at < ? THEN 1 ELSE 0 END),0) overdue FROM patient_requests p JOIN clients c ON c.id=p.client_id WHERE p.status='open' AND c.deleted_at IS NULL AND {CF}`, today) : null,
           consents_expiring: db3.all(`SELECT co.id, co.client_id, co.type, co.recipient_enc, co.expires_at, c.client_code FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ? AND c.status='active' AND ${cf.sql} ORDER BY co.expires_at LIMIT 20`, today, new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10), ...cf.params).map((x) => ({ ...x, recipient: x.recipient_enc ? require_crypto().decrypt(x.recipient_enc) : null, recipient_enc: void 0 }))
         };
         audit3.log({ user: ctx.user, action: "report.dashboard", ip: ctx.ip, details: { from, to } });

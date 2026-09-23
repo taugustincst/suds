@@ -409,7 +409,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   is_milestone INTEGER NOT NULL DEFAULT 0,
   completed_at TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  -- the referral whose follow-up this is, so recording that referral's outcome closes this to-do and no other
+  referral_id TEXT REFERENCES referrals(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assigned_to, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_client ON tasks(client_id);

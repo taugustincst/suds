@@ -45,12 +45,12 @@ module.exports = (r) => {
     db.transaction(() => {
       db.run(`INSERT INTO episodes(id,client_id,funding_source_id,opened_at,opened_by,referral_source,presenting_problem_enc) VALUES(?,?,?,?,?,?,?)`,
         id, ctx.params.id, v.funding_source_id || null, v.opened_at || new Date().toISOString().slice(0, 10), ctx.user.id, v.referral_source || null, v.presenting_problem ? encrypt(v.presenting_problem) : null);
-      // Reopening service makes the client active again; a returning client should not stay "closed" —
-      // that status only exists paired with a discharge, which this same episode undoes. "inactive" is a
-      // different, deliberate choice (on hold, unreachable, incarcerated) with no discharge attached to
-      // clear, and a worker who set it did not stop meaning it just because someone opened an episode —
-      // even one of theirs. Only "closed" gets auto-reactivated here.
-      db.run(`UPDATE clients SET status=CASE WHEN status='closed' THEN 'active' ELSE status END, discharge_date=NULL, discharge_reason=NULL, updated_at=? WHERE id=?`, db.now(), ctx.params.id);
+      // Opening an episode is the admission, so the client is active from here: a returning client should
+      // not stay "closed" (that status only exists paired with a discharge, which this episode undoes) and a
+      // waitlisted person has now started services. "inactive" is a different, deliberate choice (on hold,
+      // unreachable, incarcerated) with no discharge attached to clear, and a worker who set it did not stop
+      // meaning it just because someone opened an episode — so it is left alone, as is "deceased".
+      db.run(`UPDATE clients SET status=CASE WHEN status IN ('closed','waitlist') THEN 'active' ELSE status END, discharge_date=NULL, discharge_reason=NULL, updated_at=? WHERE id=?`, db.now(), ctx.params.id);
     });
     audit.log({ user: ctx.user, action: 'episode.open', entity: 'episode', entityId: id, clientId: ctx.params.id, ip: ctx.ip });
     ctx.status = 201; return { id };

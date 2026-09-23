@@ -28,9 +28,9 @@ module.exports = (r) => {
       const method = v.method || 'phone';
       // The column defaults to 'reached', which is a call's word: a text with no outcome was simply sent.
       if (method === 'text' && !v.outcome) v.outcome = 'sent';
-      checkOutcome(v, method); encAll(v);
+      checkOutcome(v, method); deriveCrisis(v); encAll(v);
     },
-    beforeUpdate: (ctx, v, row) => { checkOutcome(v, v.method || row.method || 'phone'); encAll(v); },
+    beforeUpdate: (ctx, v, row) => { checkOutcome(v, v.method || row.method || 'phone'); deriveCrisis(v); encAll(v); },
     afterInsert: (ctx, row) => {
       const what = row.method === 'text' ? 'text message' : 'call';
       if (row._log_time && row.duration_minutes > 0) db.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,call_id,description) VALUES(?,?,?,?,?,?,?,?)`,
@@ -48,6 +48,9 @@ module.exports = (r) => {
     const allowed = method === 'text' ? C.TEXT_OUTCOMES : C.CALL_OUTCOMES;
     if (!allowed.includes(v.outcome)) throw badRequest(`"${v.outcome}" is not an outcome for a ${method === 'text' ? 'text message' : 'phone call'}. Choose one of: ${allowed.join(', ')}`);
   }
+  // "Crisis escalated" is a crisis whether or not the box was ticked; the crisis flag is what the reports
+  // and the follow-up priority read, so it follows from the outcome rather than depending on a second click.
+  function deriveCrisis(v) { if (v.outcome === 'crisis_escalated') v.crisis = 1; }
   function encAll(v) {
     // The purpose of a call ("detox bed", "MAT intake") names the client's situation, so it is encrypted
     // like the summary; the plaintext is kept only for the follow-up task title built in afterInsert.
