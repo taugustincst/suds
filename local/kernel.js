@@ -137,6 +137,11 @@ async function handle(method, path, body, headers = {}) {
     else ctx.body = body || {};
     let result;
     for (const h of m.handlers) result = await h(ctx);
+    // A write is on disk before its caller hears back. The coalescing timer alone lost anything written in
+    // the instant before the page went away once the service worker started answering navigations from
+    // its cache (the next document arrives before the pagehide write is committed); persisting at the end
+    // of every write request means the response itself is the guarantee.
+    if (method !== 'GET' && method !== 'HEAD' && !sqlite.isWiped()) { try { await sqlite.flush(); } catch {} }
     // login/logout manage the bearer token that replaces the cookie
     const setCookie = res.headers['set-cookie'];
     if (setCookie) { const mm = /suds_session=([^;]*)/.exec(setCookie); token = mm && mm[1] ? mm[1] : ''; if (token) localStorage.setItem('suds.local.session', token); else localStorage.removeItem('suds.local.session'); }

@@ -22794,6 +22794,12 @@ async function handle(method, path, body, headers = {}) {
     } else ctx.body = body || {};
     let result;
     for (const h of m.handlers) result = await h(ctx);
+    if (method !== "GET" && method !== "HEAD" && !sqlite_default.isWiped()) {
+      try {
+        await sqlite_default.flush();
+      } catch {
+      }
+    }
     const setCookie = res.headers["set-cookie"];
     if (setCookie) {
       const mm = /suds_session=([^;]*)/.exec(setCookie);
