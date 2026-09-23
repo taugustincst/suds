@@ -13,7 +13,9 @@ export async function until(fn, { timeout = 10000, every = 200 } = {}) {
   const deadline = Date.now() + timeout;
   let last;
   for (;;) {
-    last = await fn();
+    // A probe that throws because the page is mid-navigation ("execution context was destroyed") is the
+    // same as a probe that found nothing yet: keep polling until the deadline, then let the error out.
+    try { last = await fn(); } catch (e) { if (Date.now() >= deadline) throw e; last = null; }
     if (last) return last;
     if (Date.now() >= deadline) return last;
     await new Promise(r => setTimeout(r, every));

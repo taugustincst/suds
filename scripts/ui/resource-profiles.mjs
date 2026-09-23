@@ -33,7 +33,7 @@ async function run(label, url, login) {
   }, rid);
   const before = await photoCount();
   // upload a picture
-  const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.click('button:has-text("+ Add pictures")')]);
+  const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.click('label.file-btn:has-text("+ Add pictures")')]);
   await chooser.setFiles('/tmp/suds-shots/tiny.png'); await page.waitForTimeout(2000);
   eq(await photoCount(), before + 1, `${label}: uploading a picture adds one to the profile`);
   ok(await page.$('.gallery img'), `${label}: the gallery shows the picture just uploaded`);
