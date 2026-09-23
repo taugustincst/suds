@@ -1,6 +1,6 @@
 # Web-first platform and data integrity policy
 
-**Effective from SUDS 1.8.0.** Direction from the product owner: SUDS is managed and documented against the
+**Effective from SUDS 1.9.0.** Direction from the product owner: SUDS is managed and documented against the
 web version, to maintain data integrity. The native phone apps and the desktop launchers are being phased
 out.
 
@@ -13,7 +13,7 @@ out.
 2. **All changes are made, managed and documented against the web application.** Features, fixes, tests,
    release notes and user documentation describe the web app served by the office server. Nothing is
    built, tested or documented for a native app or a launcher any more.
-3. **The native Android and iOS apps and the desktop launchers are deprecated as of 1.8.0** and will be
+3. **The native Android and iOS apps and the desktop launchers are deprecated as of 1.9.0** and will be
    removed in a later release (roadmap below). Their source stays in git under `mobile/` and `launchers/`
    so the decision is reversible, but nothing builds them, ships them or advertises them: the release
    workflow attaches only the server zip, the office server no longer hosts or serves an APK, and the
@@ -135,7 +135,7 @@ to test and document, and — the reason for this policy — three places for th
 A phone app with its own database is only as consistent as its last sync, and "which copy is right?" is
 not a question a programme handling Part 2 records should have to ask.
 
-From 1.8.0 there is one system of record. The web application on the office server is where records live
+From 1.9.0 there is one system of record. The web application on the office server is where records live
 and where every change is made; the browser's home-screen shortcut replaces the app icon; local mode
 remains for genuine field work, under the rules above, and is off by default in the deployment guidance.
 The native apps and the launchers are deprecated now and removed later so that counties have a release to
@@ -143,7 +143,7 @@ retire devices on before the code goes.
 
 ## Removal roadmap
 
-| What | Deprecated now (1.8.0) | Removed when |
+| What | Deprecated now (1.9.0) | Removed when |
 | --- | --- | --- |
 | Android app (`mobile/android`) | Not built on tags or releases; no APK attached to releases; no APK hosting or upload on the server; `mobile/DEPRECATED.md` | Next minor release after 1.8 (1.9.0): directory, `scripts/android-keystore.sh` and the workflow deleted |
 | iOS project (`mobile/ios`) | Workflow dispatch-only; nothing published | Same release as the Android app |

@@ -1,6 +1,6 @@
 # Launchers — deprecated
 
-**Deprecated as of SUDS 1.8.0; removal planned for a later release.** See
+**Deprecated as of SUDS 1.9.0; removal planned for a later release.** See
 [`docs/PLATFORM.md`](../docs/PLATFORM.md): the web application served by the office SUDS server is the
 only supported client, and the supported way to run that server is as a service (systemd on Linux, NSSM
 on Windows) or in Docker, behind the county's certificate or reverse proxy, as `docs/DEPLOYMENT.md`

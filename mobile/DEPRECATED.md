@@ -1,7 +1,7 @@
 # Native apps — deprecated
 
 The Android app (`android/`) and the iOS project (`ios/`) in this directory are **deprecated as of SUDS
-1.8.0** and will be removed in a later release. See [`docs/PLATFORM.md`](../docs/PLATFORM.md): the web
+1.9.0** and will be removed in a later release. See [`docs/PLATFORM.md`](../docs/PLATFORM.md): the web
 application served by the office SUDS server is the only supported client and the system of record.
 
 What this means today:

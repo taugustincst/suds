@@ -2,9 +2,11 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.9.0 — 2026-09-23
 
-Compliance review fixes (HIPAA / 42 CFR Part 2) and county IT hardening. Schema 19; databases upgrade in place.
+A hardening and audit release. Schema 23 (migrations 19–23); databases upgrade in place on first start — take a backup first. This is the first release under the web-first platform policy (`docs/PLATFORM.md`): the office server's web app is the only supported client; the native apps and launchers no longer build or ship.
+
+Compliance review fixes (HIPAA / 42 CFR Part 2) and county IT hardening.
 
 - **Web-first: native apps and launchers deprecated.** The web application served by the office SUDS
   server is the only supported client and the system of record; everything is managed and documented
@@ -83,6 +85,33 @@ Schema 20. Navigator-facing fixes from a hands-on field review.
   the field below it, which blocked the date picker on phones; the greeting uses the display name as
   typed (username if blank); dialog titles no longer linger in the accessibility tree via the live
   region. Covered by `scripts/ui/qa-retest.mjs` on both the static build and `/?local=1`.
+
+Sync and data integrity (from the weakness review).
+
+- **Offline work reaches every device.** Rows a device pushes are stored with the office's clock, so other devices' incremental pulls receive them; the pull cursor is per office user, so a second person on a shared device gets their whole caseload.
+- **Purged and merged records stay that way.** A push for a client the retention job purged (or any of its records) is refused as `purged` and the tombstone kept; the device deletes its copy. Records of a merged-away duplicate are re-pointed to the keeper and a pushed row can never move a record between clients.
+- **Rejections say whether they are final.** Every rejection carries `permanent`; the device settles a permanent one (office wins), shows it once on the Sync page and never resends it. Transient failures still retry.
+- **Supply stock is server-owned**: devices cannot push counts; a pushed visit draws stock down on the office by the delta, and deleting a visit restores it.
+- Device-supplied owners are honoured only when the syncing user may act for them; creation timestamps no longer drift with the device clock; device pull applies row by row with savepoints, foreign keys are on for every open, and office tombstones are never echoed back.
+- A restore from backup stamps a database generation; devices notice it on the next pull, reset their exchange state and re-offer their records, so nothing created on a phone is lost to a restore.
+- Client codes are generated from a numeric counter (a collision rename no longer poisons the sequence; codes past 9999 work).
+
+Security, exports, backups and finance (from the weakness review).
+
+- Index-key rotation re-seals the audit head under the new key (it failed after the first scheduled verification). A pending device wipe is no longer consumed by anyone who knows the device id: the office answers the wipe instruction without changing state until valid credentials arrive on that device or the device acknowledges with a one-time token; the device now erases itself completely (the in-memory copy no longer writes itself back) and a revoke that carried a wipe wipes too.
+- Navigators and clinicians can export de-identified data again; every Export button is permission-gated; the identified workbook asks for recipient and purpose and writes one accounting-of-disclosures row per client. CSV exports have no comment line and neutralise formula-triggering cells; de-identified datasets use explicit per-dataset column lists. The duplicate check on client create no longer reveals people outside the caller's caseload.
+- A refused restore leaves the original database in place; a backup that fails to write is recorded, audited and surfaced by `/api/health`; the offsite copy is reported as failed when the share is not mounted rather than silently written to the local disk; a backup from a newer SUDS is refused with a plain message.
+- Service dates use the organisation's time zone (`ORG_TIMEZONE`) for fiscal-period checks; expenditure approval follows a strict state machine (pending → approved | rejected, approved → reimbursed) with a supervisor-only overspend override and no self-approval for any role; money is rounded to cents on write and in every sum; budget structure is checked (period order, sub-allocations within their parent, lines within the fund); a pending expenditure cannot be moved outside the period.
+- Re-importing a spreadsheet skips rows already imported; the due-reminder poll no longer floods the audit log; failed sign-ins for unknown usernames are audited hashed.
+
+Functional audit before this release (every workflow walked by role, in the browser).
+
+- **Settings no longer blank the policy on a fresh install**: saving any field used to store empty values and disable MFA for every role. Unset settings render their defaults; an empty MFA-roles value means "default", never "nobody"; the save is all-or-nothing.
+- Returning a time entry requires a reason, shown to the worker; the time-approval queue shows all submitted time to finance and admins; `mfa_grace_days = 0` means immediately.
+- Legal hold blocks merge in both directions; a discharge needs a reason; opening an episode makes the client active and a client with an open episode cannot be closed through Edit; a referral outcome closes only its own follow-up; editing or deleting a visit keeps the auto-created time entry in step; merged-away links redirect to the keeper; open patient-rights requests and overdue ones are counted on Home and in Supervision; contact-field validation (DOB, email, phone); expired consents are not offered for referrals; a crisis-escalated call is counted as a crisis.
+- Forms no longer re-save a draft after a successful submit (the New client dialog reopened pre-filled with the person just created). Dialogs sit above banners on phones; the break-glass dialog enforces the reason length; unhandled errors surface as a toast; unknown routes show "Page not found".
+- Local mode: idle sign-out fires even while the reminders poll runs; office-side sync errors show their real message; an office account with MFA is asked for its code inline instead of being sent to the device's own MFA screen; the service worker is registered in local mode and precaches the kernel so a home-screen install opens offline; writes in the last moments before leaving the page are flushed; field-created clients no longer trip an "assignments" rejection; a merged-away client is re-pointed on the device; a device-side edit of a server-owned supply count is overwritten by the office. The kernel and WebAssembly ship precompressed with immutable caching (Slow 3G cold start 57 s → 31 s). Sync from the demo site is refused up front with an honest message.
+- Operations: a full disk answers 507 with a plain message; a double leading slash in a URL no longer hangs a request; `.webmanifest` has the right type; device revoke and user deactivation ask for confirmation; the restore-complete dialog has one action, "Sign in again"; the wizard hides the port when `PORT` is set by the environment.
 
 ## 1.8.0 — 2026-09-18
 

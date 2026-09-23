@@ -1,6 +1,6 @@
 # Native mobile apps — deprecated
 
-The SUDS Android app and the iOS project are **deprecated as of 1.8.0** and will be removed in a later
+The SUDS Android app and the iOS project are **deprecated as of 1.9.0** and will be removed in a later
 release. The web application served by the office SUDS server is the only supported client and the
 system of record. Everything that used to be here has moved:
 
