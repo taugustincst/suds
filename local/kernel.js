@@ -27,23 +27,22 @@ class FakeRes {
   end(body) { if (body !== undefined && body !== null) this.chunks.push(Buffer.isBuffer(body) ? body : Buffer.from(String(body))); this.headersSent = true; }
 }
 
-export async function start({ wasmUrl, onSaveError, force } = {}) {
+export async function start({ wasmUrl, onSaveError, onLockLost, force } = {}) {
   await sqlite.init(wasmUrl);
 
   // Only one page may write this device's database. Two tabs would each keep their own copy in memory and
   // persist by overwriting the whole thing, so the last one to save would silently erase the other's work.
-  if (force) {
-    sqlite.forceAcquireLock();
-  } else {
-    const locked = await sqlite.acquireLock();
-    if (!locked) {
-      const e = new Error('SUDS is already open in another window on this device. Use that window, or close it and reload this one.');
-      e.code = 'SUDS_ALREADY_OPEN';
-      // Only offered to the user once the previous holder has gone quiet long enough that it cannot still
-      // be a live tab — see local/shims/sqlite.js for why that is safe to act on.
-      e.stale = sqlite.lockIsStale();
-      throw e;
-    }
+  // A page that cannot get the lock is told so, unless the holder is plainly not a live competitor: the
+  // previous document of this same tab (a reload), or a holder whose heartbeat has gone quiet — those take
+  // over without asking. `force` is the person's own "use SUDS in this window": the holder is asked to
+  // write out and step aside, then displaced.
+  if (onLockLost) sqlite.onLockLost(onLockLost);
+  let locked = force ? await sqlite.acquireLock({ steal: true }) : await sqlite.acquireLock();
+  if (!locked && (sqlite.lockHeldBySelf() || sqlite.lockIsStale())) locked = await sqlite.acquireLock({ steal: true });
+  if (!locked) {
+    const e = new Error('SUDS is open in another window on this device.');
+    e.code = 'SUDS_ALREADY_OPEN';
+    throw e;
   }
   if (onSaveError) sqlite.setSaveErrorHandler(onSaveError);
 
@@ -121,6 +120,9 @@ async function handle(method, path, body, headers = {}) {
   try {
     // Nothing runs against an erased database: the page is about to reload into first-run setup.
     if (sqlite.isWiped()) throw new HttpError(410, 'This device has been erased and needs to be set up again.', { wiped: true });
+    // Another window took the database over (see local/shims/sqlite.js): this page must not write, and a
+    // read here could show what that window has since changed. The page shows its own explanation.
+    if (sqlite.isFrozen()) throw new HttpError(409, 'SUDS is now open in another window on this device. Use that window, or take it back here.', { frozen: true });
     // Harm-reduction supply counts are the office's shelf count (server/sync-tables.js serverOwned): a
     // change made here would never be sent and would be silently overwritten at the next sync, so it is
     // refused up front instead of looking saved. Visits recorded here still draw the office shelf down

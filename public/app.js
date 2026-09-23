@@ -84,6 +84,7 @@ export async function api(method, path, body, opts = {}) {
     const data = r.json !== undefined ? r.json : (r.body ? (String(r.headers['content-type'] || '').includes('json') ? JSON.parse(r.body.toString()) : r.body.toString()) : null);
     if (r.status === 401 && state.user && !opts.quiet) { if (data && data.mfaRequired) location.hash = '#/mfa'; else { state.user = null; render(); } }
     if (r.status === 403 && data && data.passwordChangeRequired) location.hash = '#/profile?force=1';
+    if (r.status === 409 && data && data.frozen) showPausedScreen();
     if (r.status >= 400) { const err = new Error((data && data.error) || `Request failed (${r.status})`); err.status = r.status; err.data = data; throw err; }
     return data;
   }
@@ -1006,6 +1007,7 @@ async function startLocalKernel(force) {
   await k.start({
     wasmUrl: new URL(`./local/sql-wasm.wasm?v=${SUDS_VERSION}`, location.href).href,
     force,
+    onLockLost: showPausedScreen,
     // A device that has stopped being able to save is not a console message; the person using it needs
     // to know before they type anything else in.
     onSaveError: (err) => {
@@ -1015,6 +1017,20 @@ async function startLocalKernel(force) {
         : 'This device has stopped saving your work. Sync with the office as soon as you can.', 'error');
     },
   });
+}
+// Another window on this device took the database over (see local/shims/sqlite.js). This page has stepped
+// aside: it shows why, and offers to take it back rather than failing request by request.
+let pausedShown = false;
+function showPausedScreen() {
+  if (pausedShown) return; pausedShown = true;
+  const app = document.getElementById('app');
+  clear(app);
+  app.append(
+    h('div', { class: 'boot error' }, 'SUDS is now open in another window on this device, so this one has been paused. Your work here was saved first.'),
+    h('div', { class: 'btn-row center mt' },
+      h('button', { class: 'btn primary', type: 'button', onClick: () => { pausedShown = false; boot(true); } }, 'Use SUDS here instead'),
+    ),
+  );
 }
 export async function boot(force = false) {
   state.local = isLocalMode();
@@ -1026,7 +1042,7 @@ export async function boot(force = false) {
       // Two specific failures need their own explanation rather than a raw message.
       const alreadyOpen = e && e.code === 'SUDS_ALREADY_OPEN';
       const msg = alreadyOpen
-        ? 'SUDS is already open in another window on this device. Switch to that window, or close it and reload this page.'
+        ? 'SUDS is open in another tab or window on this device.'
         : e && e.code === 'SUDS_KEY_LOST'
           ? e.message
           : 'Could not start SUDS on this device: ' + (e && e.message);
@@ -1036,16 +1052,18 @@ export async function boot(force = false) {
       clear(app);
       // This is the one screen a locked-out or broken device can reach without a kernel — reset has to work
       // here directly. SUDS_ALREADY_OPEN gets its own recovery instead: that device and its data are fine,
-      // just apparently open elsewhere, so wiping it would be the wrong tool. "Try again" always works — it
-      // re-checks in case the other window closed in the meantime. Past that, once the previous holder has
-      // gone quiet long enough to be presumed gone (a crashed tab, a browser killed outright rather than
-      // closed) rather than genuinely still open, "Continue anyway" lets the person proceed instead of being
-      // locked out of their own device with no way back in.
+      // just open elsewhere, so wiping it would be the wrong tool. Only a genuinely live other window lands
+      // here (a reload of this tab, or a holder that stopped answering, takes over on its own in the
+      // kernel). The person decides: use SUDS here, which asks the other window to write out and step
+      // aside, or go back to it. Nobody is left hunting for a tab on a phone.
       app.append(
         h('div', { class: 'boot error' }, msg),
-        alreadyOpen ? h('div', { class: 'btn-row center mt' },
-          h('button', { class: 'btn', type: 'button', onClick: () => boot() }, 'Try again'),
-          e.stale ? h('button', { class: 'btn danger', type: 'button', onClick: () => boot(true) }, 'Continue anyway — no other window is actually open') : null,
+        alreadyOpen ? h('div', {},
+          h('p', { class: 'muted center' }, 'You can use it here instead — the other window will be paused so nothing is written twice.'),
+          h('div', { class: 'btn-row center mt' },
+            h('button', { class: 'btn primary', type: 'button', onClick: () => boot(true) }, 'Use SUDS in this window'),
+            h('button', { class: 'btn', type: 'button', onClick: () => boot() }, 'Try again'),
+          ),
         ) : offerDeviceReset(),
       );
       return;

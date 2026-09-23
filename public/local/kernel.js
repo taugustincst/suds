@@ -5942,9 +5942,12 @@ __export(sqlite_exports, {
   forceAcquireLock: () => forceAcquireLock,
   hasLock: () => hasLock,
   init: () => init,
+  isFrozen: () => isFrozen,
   isWiped: () => isWiped,
   loadBytes: () => loadBytes,
+  lockHeldBySelf: () => lockHeldBySelf,
   lockIsStale: () => lockIsStale,
+  onLockLost: () => onLockLost,
   saveBytes: () => saveBytes,
   setSaveErrorHandler: () => setSaveErrorHandler,
   wipe: () => wipe
@@ -5955,16 +5958,57 @@ async function init(wasmUrl) {
   SQL = await initSqlJs({ locateFile: () => wasmUrl });
   return SQL;
 }
+function tabId() {
+  try {
+    let id = sessionStorage.getItem(TAB_KEY);
+    if (!id) {
+      id = crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2);
+      sessionStorage.setItem(TAB_KEY, id);
+    }
+    return id;
+  } catch {
+    return "no-session-storage";
+  }
+}
 function beat() {
   try {
     localStorage.setItem(HEARTBEAT_KEY, String(Date.now()));
   } catch {
   }
 }
-async function acquireWebLock() {
+function stopHolding() {
+  haveLock = false;
+  clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
+}
+function openChannel() {
+  if (channel || typeof BroadcastChannel !== "function") return;
+  channel = new BroadcastChannel(CHANNEL);
+  channel.onmessage = async (ev) => {
+    const m = ev.data || {};
+    if (m.type !== "takeover" || !haveLock || m.from === tabId()) return;
+    stopHolding();
+    try {
+      await flush();
+    } catch {
+    }
+    frozen = true;
+    try {
+      channel.postMessage({ type: "takeover-ack", to: m.from });
+    } catch {
+    }
+    if (lostHandler) {
+      try {
+        lostHandler();
+      } catch {
+      }
+    }
+  };
+}
+async function acquireWebLock({ steal = false } = {}) {
   if (!navigator.locks || !navigator.locks.request) return true;
   return new Promise((resolve2) => {
-    navigator.locks.request("suds-local-db", { mode: "exclusive", ifAvailable: true }, (lock) => {
+    navigator.locks.request("suds-local-db", { mode: "exclusive", ...steal ? { steal: true } : { ifAvailable: true } }, (lock) => {
       if (!lock) {
         resolve2(false);
         return;
@@ -5972,14 +6016,58 @@ async function acquireWebLock() {
       resolve2(true);
       return new Promise(() => {
       });
-    }).catch(() => resolve2(true));
+    }).catch(() => {
+      if (haveLock) {
+        stopHolding();
+        frozen = true;
+        if (lostHandler) {
+          try {
+            lostHandler();
+          } catch {
+          }
+        }
+      } else resolve2(true);
+    });
   });
 }
-async function acquireLock() {
-  const got = await acquireWebLock();
+function lockHeldBySelf() {
+  try {
+    return localStorage.getItem(HOLDER_KEY) === tabId();
+  } catch {
+    return false;
+  }
+}
+async function acquireLock({ steal = false } = {}) {
+  openChannel();
+  if (steal) {
+    if (channel) {
+      await new Promise((res) => {
+        const timer = setTimeout(res, 700);
+        const onAck = (ev) => {
+          if (ev.data && ev.data.type === "takeover-ack" && ev.data.to === tabId()) {
+            clearTimeout(timer);
+            res();
+          }
+        };
+        channel.addEventListener("message", onAck, { once: true });
+        try {
+          channel.postMessage({ type: "takeover", from: tabId() });
+        } catch {
+          clearTimeout(timer);
+          res();
+        }
+      });
+    }
+  }
+  const got = await acquireWebLock({ steal });
   if (!got) return false;
   haveLock = true;
+  frozen = false;
   beat();
+  try {
+    localStorage.setItem(HOLDER_KEY, tabId());
+  } catch {
+  }
   clearInterval(heartbeatTimer);
   heartbeatTimer = setInterval(beat, HEARTBEAT_MS);
   return true;
@@ -5993,13 +6081,16 @@ function lockIsStale() {
   }
 }
 function forceAcquireLock() {
-  haveLock = true;
-  beat();
-  clearInterval(heartbeatTimer);
-  heartbeatTimer = setInterval(beat, HEARTBEAT_MS);
+  return acquireLock({ steal: true });
 }
 function hasLock() {
   return haveLock;
+}
+function isFrozen() {
+  return frozen;
+}
+function onLockLost(fn) {
+  lostHandler = fn;
 }
 function idb() {
   if (conn) return Promise.resolve(conn);
@@ -6119,7 +6210,7 @@ function setSaveErrorHandler(fn) {
   onSaveError = fn;
 }
 function flush({ urgent = false } = {}) {
-  if (wiped || !current) return Promise.resolve();
+  if (wiped || frozen || !current) return Promise.resolve();
   if (urgent && inflight && typeof inflight.commit === "function") {
     try {
       inflight.commit();
@@ -6145,7 +6236,7 @@ function flush({ urgent = false } = {}) {
   return p;
 }
 function markDirty() {
-  if (wiped) return;
+  if (wiped || frozen) return;
   dirty = true;
   writeSeq++;
   if (inTransaction) return;
@@ -6156,13 +6247,13 @@ function markDirty() {
   }, COALESCE_MS);
 }
 function persistSoon() {
-  if (wiped) return;
+  if (wiped || frozen) return;
   clearTimeout(saveTimer);
   saveTimer = null;
   flush().catch(() => {
   });
 }
-var SQL, STORE, KEY, HEARTBEAT_KEY, HEARTBEAT_MS, STALE_MS, haveLock, heartbeatTimer, conn, hadPersisted, inflight, current, saveTimer, dirty, saving, wiped, inTransaction, onSaveError, COALESCE_MS, writeSeq, Statement, DatabaseSync, sqlite_default;
+var SQL, STORE, KEY, HEARTBEAT_KEY, HOLDER_KEY, TAB_KEY, CHANNEL, HEARTBEAT_MS, STALE_MS, haveLock, frozen, heartbeatTimer, channel, lostHandler, conn, hadPersisted, inflight, current, saveTimer, dirty, saving, wiped, inTransaction, onSaveError, COALESCE_MS, writeSeq, Statement, DatabaseSync, sqlite_default;
 var init_sqlite = __esm({
   "local/shims/sqlite.js"() {
     init_globals_inject();
@@ -6170,10 +6261,27 @@ var init_sqlite = __esm({
     STORE = "suds-local";
     KEY = "db";
     HEARTBEAT_KEY = "suds-local-lock-heartbeat";
+    HOLDER_KEY = "suds-local-lock-holder";
+    TAB_KEY = "suds-local-tab";
+    CHANNEL = "suds-local-lock";
     HEARTBEAT_MS = 4e3;
     STALE_MS = 2e4;
     haveLock = false;
+    frozen = false;
     heartbeatTimer = null;
+    channel = null;
+    lostHandler = null;
+    try {
+      window.addEventListener("pagehide", () => {
+        if (haveLock) {
+          try {
+            if (localStorage.getItem(HOLDER_KEY) === tabId()) localStorage.removeItem(HOLDER_KEY);
+          } catch {
+          }
+        }
+      });
+    } catch {
+    }
     conn = null;
     hadPersisted = false;
     inflight = null;
@@ -6278,7 +6386,7 @@ var init_sqlite = __esm({
         return this.db.export();
       }
     };
-    sqlite_default = { DatabaseSync, init, loadBytes, saveBytes, wipe, isWiped, flush, acquireLock, lockIsStale, forceAcquireLock, hasLock, setSaveErrorHandler };
+    sqlite_default = { DatabaseSync, init, loadBytes, saveBytes, wipe, isWiped, flush, acquireLock, lockIsStale, lockHeldBySelf, forceAcquireLock, hasLock, isFrozen, onLockLost, setSaveErrorHandler };
   }
 });
 
@@ -22692,18 +22800,15 @@ var FakeRes = class {
     this.headersSent = true;
   }
 };
-async function start({ wasmUrl, onSaveError: onSaveError2, force } = {}) {
+async function start({ wasmUrl, onSaveError: onSaveError2, onLockLost: onLockLost2, force } = {}) {
   await sqlite_default.init(wasmUrl);
-  if (force) {
-    sqlite_default.forceAcquireLock();
-  } else {
-    const locked = await sqlite_default.acquireLock();
-    if (!locked) {
-      const e = new Error("SUDS is already open in another window on this device. Use that window, or close it and reload this one.");
-      e.code = "SUDS_ALREADY_OPEN";
-      e.stale = sqlite_default.lockIsStale();
-      throw e;
-    }
+  if (onLockLost2) sqlite_default.onLockLost(onLockLost2);
+  let locked = force ? await sqlite_default.acquireLock({ steal: true }) : await sqlite_default.acquireLock();
+  if (!locked && (sqlite_default.lockHeldBySelf() || sqlite_default.lockIsStale())) locked = await sqlite_default.acquireLock({ steal: true });
+  if (!locked) {
+    const e = new Error("SUDS is open in another window on this device.");
+    e.code = "SUDS_ALREADY_OPEN";
+    throw e;
   }
   if (onSaveError2) sqlite_default.setSaveErrorHandler(onSaveError2);
   const bytes3 = await sqlite_default.loadBytes();
@@ -22778,6 +22883,7 @@ async function handle(method, path, body, headers = {}) {
   const ctx = { req: { socket: { remoteAddress: "127.0.0.1" } }, res, method, path: url.pathname, query: url.searchParams, params: {}, headers: Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v])), cookies: {}, ip: "device", user: null, session: null, body: null, rawBody: null };
   try {
     if (sqlite_default.isWiped()) throw new import_http2.HttpError(410, "This device has been erased and needs to be set up again.", { wiped: true });
+    if (sqlite_default.isFrozen()) throw new import_http2.HttpError(409, "SUDS is now open in another window on this device. Use that window, or take it back here.", { frozen: true });
     if (method !== "GET" && /^\/api\/supplies(\/|$)/.test(url.pathname)) throw new import_http2.HttpError(403, "Supply counts are kept at the office and cannot be changed on this device. Visits you record here draw the office count down when you sync.", { serverOwned: true });
     const m = router.match(method, url.pathname);
     if (!m) throw new import_http2.HttpError(404, "Not found");

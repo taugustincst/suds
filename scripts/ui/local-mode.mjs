@@ -69,27 +69,33 @@ ok(await page.$('input[name=username]'), 'the local kernel booted and offered fi
   await page.click('.modal button.danger'); await page.waitForSelector('input[name=display_name]', { timeout: 10000 });
   ok(!!(await page.$('input[name=display_name]')), 'typing ERASE wipes the device and returns to first-run setup', page.url());
 }
-// A stale single-writer lock is not a corrupted database — the device and its data are fine — but with no
-// recovery path, a lock that outlives the tab that held it (a crashed tab, or a browser process killed
-// outright instead of closed) would brick the app with no way back in. `page` above still holds the
-// on-device lock from its very first load; open a second tab in the same context (same storage partition,
-// so the same Web Lock namespace) to exercise the SUDS_ALREADY_OPEN screen for real.
+// Only one window may write the device's database, but on a phone the "other window" is usually a tab the
+// person forgot, or the very tab that just reloaded, and a screen that says "go and find it" is a dead end.
+// `page` above still holds the on-device lock from its very first load; a second tab in the same context
+// (same storage partition, so the same Web Lock namespace) exercises the takeover for real.
 {
   const page2 = await ctx.newPage();
   await page2.goto(base + '/?local=1#/');
   await page2.waitForSelector('.boot.error', { timeout: 15000 });
   const lockText = (await page2.textContent('.boot.error')) || '';
-  ok(/already open in another window/i.test(lockText), 'a second tab on the same device is told SUDS is already open, not left blank');
-  ok(await page2.$('button:has-text("Try again")'), 'the already-open screen offers a way to recheck instead of only "switch windows"');
-  ok(!(await page2.$('button:has-text("Continue anyway")')), 'no override is offered while the other tab is still actively holding the lock');
-  await page2.click('button:has-text("Try again")');
-  await page2.waitForTimeout(300);
-  ok(await page2.$('.boot.error'), 'trying again while the first tab is still open still refuses, rather than letting both tabs write');
-  // Close the tab holding the lock — Web Locks release it immediately, same as a real closed window.
+  ok(/open in another tab or window/i.test(lockText), 'a second tab on the same device is told SUDS is open elsewhere, not left blank');
+  ok(await page2.$('button:has-text("Use SUDS in this window")'), 'and offers to use SUDS here instead of sending the person hunting for a tab');
+  ok(await page2.$('button:has-text("Try again")'), 'with "Try again" still there for the case where the other window was just closed');
+  // Take over: the first tab is asked to write out and step aside, then this one loads the database.
+  await page2.click('button:has-text("Use SUDS in this window")');
+  await page2.waitForSelector('input[name=username], input[name=display_name], .layout', { timeout: 15000 });
+  ok(!(await page2.$('.boot.error')), '"Use SUDS in this window" takes the database over and boots', page2.url());
+  await until(() => page.$('.boot.error'), { timeout: 10000 });
+  const pausedText = (await page.textContent('.boot.error').catch(() => '')) || '';
+  ok(/paused/i.test(pausedText), 'the tab that held the lock is told it has been paused, not left running against a stale copy', pausedText);
+  ok(await page.$('button:has-text("Use SUDS here instead")'), 'and can take it back');
+  const refused = await page.evaluate(() => window.SUDS_LOCAL.handle('GET', '/api/local/status', undefined, {}).then(r => r.status));
+  eq(refused, 409, 'the paused tab refuses every request (nothing there can be written again)');
+  // A reload of the tab that holds the lock is not "another window": it takes over on its own, silently.
+  await page2.reload();
+  await page2.waitForSelector('input[name=username], input[name=display_name], .layout', { timeout: 15000 });
+  ok(!(await page2.$('.boot.error')), 'reloading the tab that holds the lock boots straight back in, with no already-open screen');
   await page.close();
-  await page2.click('button:has-text("Try again")');
-  await page2.waitForSelector('input[name=username], input[name=display_name], .layout', { timeout: 10000 });
-  ok(!(await page2.$('.boot.error')), 'once the other tab is actually gone, "Try again" recovers without needing the override', page2.url());
   await page2.close();
 }
 // A device whose kernel fails to start — a bad migration, a corrupted database — never reaches the login

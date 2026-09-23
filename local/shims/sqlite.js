@@ -27,27 +27,86 @@ export async function init(wasmUrl) {
 // enough that a live tab could not plausibly have missed several beats — at which point continuing anyway
 // cannot race an actual second writer, only a truly abandoned lock.
 const HEARTBEAT_KEY = 'suds-local-lock-heartbeat';
+const HOLDER_KEY = 'suds-local-lock-holder';
+const TAB_KEY = 'suds-local-tab';
+const CHANNEL = 'suds-local-lock';
 const HEARTBEAT_MS = 4000;
 const STALE_MS = 20000;
 let haveLock = false;
+let frozen = false; // this page gave the database up to another window: nothing here may save again
 let heartbeatTimer = null;
+let channel = null;
+let lostHandler = null;
+// One id per tab, kept across reloads of that tab (sessionStorage) but never shared with another tab: the
+// lock holder records it, so a reload can tell "the previous document of this very tab" from "another tab".
+function tabId() {
+  try {
+    let id = sessionStorage.getItem(TAB_KEY);
+    if (!id) { id = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)); sessionStorage.setItem(TAB_KEY, id); }
+    return id;
+  } catch { return 'no-session-storage'; }
+}
 function beat() { try { localStorage.setItem(HEARTBEAT_KEY, String(Date.now())); } catch { /* no localStorage: nothing to fall back to either */ } }
-async function acquireWebLock() {
+function stopHolding() { haveLock = false; clearInterval(heartbeatTimer); heartbeatTimer = null; }
+function openChannel() {
+  if (channel || typeof BroadcastChannel !== 'function') return;
+  channel = new BroadcastChannel(CHANNEL);
+  channel.onmessage = async (ev) => {
+    const m = ev.data || {};
+    if (m.type !== 'takeover' || !haveLock || m.from === tabId()) return;
+    // Another window is taking the database over. Write out what this page has, then step aside: from here
+    // on every request is refused (frozen) so two copies can never both be saved. The ack tells the other
+    // window it is safe to load.
+    stopHolding();
+    try { await flush(); } catch {}
+    frozen = true;
+    try { channel.postMessage({ type: 'takeover-ack', to: m.from }); } catch {}
+    if (lostHandler) { try { lostHandler(); } catch {} }
+  };
+}
+async function acquireWebLock({ steal = false } = {}) {
   if (!navigator.locks || !navigator.locks.request) return true;
   return new Promise((resolve) => {
-    navigator.locks.request('suds-local-db', { mode: 'exclusive', ifAvailable: true }, (lock) => {
+    navigator.locks.request('suds-local-db', { mode: 'exclusive', ...(steal ? { steal: true } : { ifAvailable: true }) }, (lock) => {
       if (!lock) { resolve(false); return; }
       resolve(true);
       // Hold it until the page is gone.
       return new Promise(() => {});
-    }).catch(() => resolve(true));
+    }).catch(() => {
+      // The request settling while we hold the lock means it was stolen without the courtesy message (a
+      // window that never got to load this code). Freeze without flushing: the thief has already loaded
+      // its copy, and a late write from here would overwrite it.
+      if (haveLock) { stopHolding(); frozen = true; if (lostHandler) { try { lostHandler(); } catch {} } }
+      else resolve(true);
+    });
   });
 }
-export async function acquireLock() {
-  const got = await acquireWebLock();
+/** Is the lock recorded as held by this very tab (a previous document of it, e.g. before a reload)? */
+export function lockHeldBySelf() { try { return localStorage.getItem(HOLDER_KEY) === tabId(); } catch { return false; } }
+/**
+ * Take the single-writer lock. With `steal`, the current holder (another window on this device) is asked to
+ * write out and step aside first, and is then displaced: this is the "Use SUDS in this window" path, and
+ * also what a reload of the holding tab itself does silently.
+ */
+export async function acquireLock({ steal = false } = {}) {
+  openChannel();
+  if (steal) {
+    if (channel) {
+      // Give the holder a moment to flush and acknowledge; a holder that never answers (crashed, killed)
+      // is simply displaced after the wait.
+      await new Promise((res) => {
+        const timer = setTimeout(res, 700);
+        const onAck = (ev) => { if (ev.data && ev.data.type === 'takeover-ack' && ev.data.to === tabId()) { clearTimeout(timer); res(); } };
+        channel.addEventListener('message', onAck, { once: true });
+        try { channel.postMessage({ type: 'takeover', from: tabId() }); } catch { clearTimeout(timer); res(); }
+      });
+    }
+  }
+  const got = await acquireWebLock({ steal });
   if (!got) return false;
-  haveLock = true;
+  haveLock = true; frozen = false;
   beat();
+  try { localStorage.setItem(HOLDER_KEY, tabId()); } catch {}
   clearInterval(heartbeatTimer);
   heartbeatTimer = setInterval(beat, HEARTBEAT_MS);
   return true;
@@ -59,15 +118,16 @@ export function lockIsStale() {
     return last > 0 && (Date.now() - last) > STALE_MS;
   } catch { return false; }
 }
-/** Only meant to be called after lockIsStale() — proceeds without the previous holder's cooperation because
- *  its silence is itself the evidence that it is gone, not because Web Locks granted anything. */
-export function forceAcquireLock() {
-  haveLock = true;
-  beat();
-  clearInterval(heartbeatTimer);
-  heartbeatTimer = setInterval(beat, HEARTBEAT_MS);
-}
+/** Displace whoever holds the lock (see acquireLock with steal). Kept for callers of the old name. */
+export function forceAcquireLock() { return acquireLock({ steal: true }); }
 export function hasLock() { return haveLock; }
+/** True once this page has handed the database to another window; every request is refused after that. */
+export function isFrozen() { return frozen; }
+/** Called when another window takes the database over, so the page can say so instead of failing quietly. */
+export function onLockLost(fn) { lostHandler = fn; }
+// Releasing on the way out lets a reload of this same tab, or the next tab, start without waiting on the
+// heartbeat to go stale. The Web Lock itself goes with the document; the holder record is ours to clear.
+try { window.addEventListener('pagehide', () => { if (haveLock) { try { if (localStorage.getItem(HOLDER_KEY) === tabId()) localStorage.removeItem(HOLDER_KEY); } catch {} } }); } catch {}
 
 // One open connection, kept for the life of the page: a save must be able to start its transaction
 // synchronously (see saveBytes), which an open() that resolves on a later task cannot offer.
@@ -147,7 +207,7 @@ export function setSaveErrorHandler(fn) { onSaveError = fn; }
  * flight is told to commit too rather than waited for, because nothing can be waited for after unload.
  */
 export function flush({ urgent = false } = {}) {
-  if (wiped || !current) return Promise.resolve();
+  if (wiped || frozen || !current) return Promise.resolve();
   if (urgent && inflight && typeof inflight.commit === 'function') { try { inflight.commit(); } catch {} }
   if (!dirty) return saving || Promise.resolve();
   if (saving && !urgent) return saving.then(() => flush()); // a save is in flight; queue behind it
@@ -171,13 +231,13 @@ export function flush({ urgent = false } = {}) {
 const COALESCE_MS = 100;
 let writeSeq = 0;
 function markDirty() {
-  if (wiped) return;
+  if (wiped || frozen) return;
   dirty = true; writeSeq++;
   if (inTransaction) return; // persisted at COMMIT
   if (!saveTimer) saveTimer = setTimeout(() => { saveTimer = null; flush().catch(() => {}); }, COALESCE_MS);
 }
 /** Persist now rather than on the timer — used at the end of a write transaction. */
-function persistSoon() { if (wiped) return; clearTimeout(saveTimer); saveTimer = null; flush().catch(() => {}); }
+function persistSoon() { if (wiped || frozen) return; clearTimeout(saveTimer); saveTimer = null; flush().catch(() => {}); }
 
 class Statement {
   constructor(db, sql) { this.db = db; this.sql = sql; }
@@ -225,4 +285,4 @@ export class DatabaseSync {
   close() { return flush(); }
   export() { return this.db.export(); }
 }
-export default { DatabaseSync, init, loadBytes, saveBytes, wipe, isWiped, flush, acquireLock, lockIsStale, forceAcquireLock, hasLock, setSaveErrorHandler };
+export default { DatabaseSync, init, loadBytes, saveBytes, wipe, isWiped, flush, acquireLock, lockIsStale, lockHeldBySelf, forceAcquireLock, hasLock, isFrozen, onLockLost, setSaveErrorHandler };
