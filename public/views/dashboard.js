@@ -1,4 +1,4 @@
-import { h, route, get, put, state, stat, bars, fmt, badge, statusKind, table, can, nav, pageHead, sparkline, quickActions, emptyState, toast, firstName } from '../app.js';
+import { h, route, get, put, state, stat, bars, fmt, badge, statusKind, table, can, nav, pageHead, sparkline, quickActions, emptyState, toast, greetingName } from '../app.js';
 
 route('dashboard', async () => {
   const [d, cont, caseload, handoffs] = await Promise.all([get('/api/reports/dashboard'), get('/api/me/continue'), can('clients:read') ? get('/api/caseload') : { caseload: [] },
@@ -10,7 +10,7 @@ route('dashboard', async () => {
   const c = d.clients, i = d.interventions;
   // auto-refresh so changes made on another device appear without a manual reload
   const timer = setInterval(() => { if (location.hash.replace(/^#\/?/, '').split('?')[0] === 'dashboard' || location.hash === '' || location.hash === '#/') { if (!document.querySelector('.modal-bg')) nav('dashboard?_=' + Date.now()); } else clearInterval(timer); }, 90_000);
-  const first = firstName(state.user.display_name, state.user.username);
+  const first = greetingName(state.user.display_name, state.user.username);
   const hour = new Date().getHours(); const greet = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
   const alerts = [];
   if (d.tasks.overdue) alerts.push(['danger', `${d.tasks.overdue} overdue reminder${d.tasks.overdue > 1 ? 's' : ''}`, '#/tasks?overdue=1']);
@@ -109,6 +109,6 @@ route('dashboard', async () => {
           : can('clients:all') ? emptyState('Nothing on your own caseload', c.active ? `You see every client already (${c.active} active). This list only shows people assigned to you directly.` : 'Add the first client with the + Log button, or load sample data to look around.')
           : emptyState('No clients assigned to you yet', can('clients:write') ? 'Add your first client with the + Log button, or ask your supervisor to assign clients to you.' : 'Ask your supervisor to assign clients to you.')) : null,
       h('div', { class: 'card' }, h('h3', {}, 'What you have been doing (90 days)'), bars(i.by_type.slice(0, 8), { link: x => `interventions?type=${x.k}` }), h('div', { class: 'mt' }, sparkline(i.by_week.map(w => w.n)), h('div', { class: 'muted small' }, 'visits per week'))),
-      state.user.role === 'admin' && !state.local ? h('div', { class: 'card' }, h('h3', {}, 'Use SUDS on phones and tablets'), h('p', { class: 'small muted' }, 'There is no app to install: staff open SUDS in the browser on the office Wi-Fi and add it to their home screen. Show them the QR code under Settings → Network & devices, or send them to /app.'), h('a', { class: 'btn sm', href: '#/admin?tab=network' }, 'Connect a device')) : null,
+      state.user.role === 'admin' && !state.local ? h('div', { class: 'card' }, h('h3', {}, 'Use SUDS on phones and tablets'), h('p', { class: 'small muted' }, 'There is no app to install: staff open SUDS in the browser on the office Wi-Fi and add it to their home screen. Show them the QR code under Settings → Network & devices, or send them to ', h('a', { href: 'get-app.html' }, 'Use SUDS on your phone or tablet'), '.'), h('a', { class: 'btn sm', href: '#/admin?tab=network' }, 'Connect a device')) : null,
       d.consents_expiring.length ? h('div', { class: 'card' }, h('h3', {}, 'Consents expiring soon'), table([{ label: 'Client', render: r => h('a', { href: `#/client/${r.client_id}` }, r.client_code) }, { label: 'Type', render: r => fmt.label(r.type) }, { label: 'Recipient', key: 'recipient' }, { label: 'Expires', render: r => fmt.date(r.expires_at) }], d.consents_expiring, { wrap: false })) : null));
 });

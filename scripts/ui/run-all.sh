@@ -9,7 +9,7 @@ export LOGIN_RATE_LIMIT=1000
 # A server left over from an earlier run holds a port and the wizard then "cannot start" on it, which
 # looks like an app defect. Say what is actually wrong instead.
 STATIC_PORT=${STATIC_PORT:-8878}
-for p in "$PORT" 8095 "${SETUP_PORT:-8496}" "$STATIC_PORT"; do
+for p in "$PORT" 8095 "${SETUP_PORT:-8496}" "$STATIC_PORT" "${SUDS_UPGRADE_PORT:-8879}"; do
   if curl -sk -o /dev/null --max-time 2 "http://127.0.0.1:$p/" || curl -sk -o /dev/null --max-time 2 "https://127.0.0.1:$p/"; then
     echo "port $p is already in use (a server from an earlier run?). Stop it and start again." >&2; exit 2
   fi
@@ -30,14 +30,17 @@ for i in $(seq 1 40); do curl -sf "http://127.0.0.1:8095/api/setup/status" >/dev
 export SUDS_SETUP_URL="http://127.0.0.1:8095"
 # The standalone static build: no office server, no database, nothing but the files a plain web host
 # would serve. Built once here (build-local already ran above via package.json's build:local step, but
-# build-static-site re-runs it defensively) and served with the office server's own static-file logic,
-# so the check matches what a real static host returns.
+# build-static-site re-runs it defensively) and served like a plain static host (files, index.html for
+# the root, real 404s — no rewrites), so the check matches what GitHub Pages or S3 would return.
 rm -rf /tmp/suds-static-site
 node scripts/build-static-site.js /tmp/suds-static-site >/dev/null
 node scripts/serve-static.js /tmp/suds-static-site "$STATIC_PORT" > /tmp/suds-static-server.log 2>&1 &
 STATIC_SERVER=$!; trap 'kill $SERVER $SETUP_SERVER $STATIC_SERVER 2>/dev/null; pkill -f "suds-setup-data" 2>/dev/null' EXIT
 for i in $(seq 1 40); do curl -sf "http://127.0.0.1:$STATIC_PORT/" >/dev/null && break; sleep 0.5; done
 export SUDS_STATIC_URL="http://127.0.0.1:$STATIC_PORT"
+# qa-retest.mjs replays the tester's upgraded browser profile: the static site of an older commit first,
+# then this build (SUDS_STATIC_DIR) at the same origin, on its own port.
+export SUDS_STATIC_DIR=/tmp/suds-static-site SUDS_UPGRADE_PORT=${SUDS_UPGRADE_PORT:-8879}
 fail=0
 # SCRIPTS="a b" runs a subset (the servers are still started the same way).
 for s in ${SCRIPTS:-desktop review-fixes navigator-flow navigator-fixes ux-features local-mode sync-two-way device-audit spreadsheets sample-data resource-profiles forms region dates setup static-site qa-retest clinical-audit}; do

@@ -56,6 +56,14 @@ if (!before.includes(marker)) throw new Error(`build-static-site: expected to fi
 // A plain external script, not inline: this build is meant to be servable behind the same CSP the office
 // server sends, which forbids inline scripts, even though a static host will not enforce it itself.
 fs.writeFileSync(indexPath, before.replace(marker, `<script src="local-boot.js"></script>\n  ${marker}`));
+// The "use SUDS on your phone or tablet" page is a plain file here (the office server serves it as /app,
+// a rewrite a static host does not have). It loads the same boot script so it knows it is the static
+// build — no certificate download, no office address — and carries the same demo banner.
+const getAppPath = path.join(outDir, 'get-app.html');
+const getApp = fs.readFileSync(getAppPath, 'utf8');
+const getAppMarker = '<script src="get-app.js"></script>';
+if (!getApp.includes(getAppMarker)) throw new Error(`build-static-site: expected to find ${JSON.stringify(getAppMarker)} in get-app.html`);
+fs.writeFileSync(getAppPath, getApp.replace(getAppMarker, `<script src="local-boot.js"></script>${getAppMarker}`));
 
 // The service worker is copied verbatim with public/ (above); this build's shell has one file more, the
 // boot script, and it cannot be left out: a home-screen install that could not load it would open as the
@@ -65,6 +73,7 @@ const swPath = path.join(outDir, 'sw.js');
 const sw = fs.readFileSync(swPath, 'utf8');
 const shellMarker = "const SHELL = ['./', 'index.html',";
 if (!sw.includes(shellMarker)) throw new Error('build-static-site: expected to find the SHELL list in sw.js');
+if (!/'get-app\.html'/.test(sw)) throw new Error('build-static-site: sw.js must list get-app.html in its shell');
 fs.writeFileSync(swPath, sw.replace(shellMarker, "const SHELL = ['./', 'index.html', 'local-boot.js',"));
 
 console.log(`[suds] static site written to ${path.relative(root, outDir)}/ (${count + 1} files, always-local)`);

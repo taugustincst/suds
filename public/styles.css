@@ -81,6 +81,11 @@ input[type="checkbox"] { width: auto; margin-right: .4rem; } textarea { min-heig
 fieldset { border: 1px solid var(--border); border-radius: 8px; padding: .6rem .9rem; margin: 0 0 1rem; } legend { font-size: .8rem; font-weight: 700; color: var(--muted); padding: 0 .3rem; }
 .btn { display: inline-flex; align-items: center; gap: .4rem; font: inherit; font-weight: 600; padding: .5rem .85rem; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer; white-space: nowrap; }
 .btn:hover { background: var(--panel-2); } .btn:disabled { opacity: .55; cursor: not-allowed; }
+/* A button that is really a file input: the input covers the label, invisible but hit-testable, so both a
+   tap on the words and a click aimed at the input open the picker; the label carries the focus ring. */
+.file-btn { position: relative; overflow: hidden; }
+.file-btn input[type=file] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; margin: 0; font-size: 0; }
+.file-btn:has(input:focus-visible) { outline: 2px solid var(--primary); outline-offset: 2px; }
 .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; } .btn.primary:hover { background: var(--primary-2); }
 .btn.danger { background: var(--danger-soft); border-color: transparent; color: var(--danger); } .btn.sm { padding: .3rem .6rem; font-size: .82rem; } .btn.ghost { border-color: transparent; background: transparent; }
 .btn-row { display: flex; gap: .5rem; justify-content: flex-end; margin-top: 1rem; flex-wrap: wrap; }
@@ -306,7 +311,9 @@ a.bar.link:hover .lbl { color: var(--primary); text-decoration: underline; } a.b
 #banners { position: sticky; top: 0; z-index: 60; }
 /* The static (GitHub Pages / evaluation) build inserts this before #app: it must stay visible on every
    screen for as long as the page is open, above everything the app itself draws. */
-.static-demo-banner { position: sticky; top: 0; z-index: 100; padding: .45rem .8rem; text-align: center; font-size: .85rem; font-weight: 600; background: var(--err-fg, #7a1b1b); color: #fff; }
+/* pointer-events: none — the banner is a notice, not a control; drawn above a dialog's top edge it must
+   never swallow a tap meant for the field underneath (a date picker scrolled up under it, for example). */
+.static-demo-banner { position: sticky; top: 0; z-index: 100; pointer-events: none; padding: .45rem .8rem; text-align: center; font-size: .85rem; font-weight: 600; background: var(--err-fg, #7a1b1b); color: #fff; }
 .banner {
   display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; justify-content: space-between;
   padding: .6rem 1rem; font-size: .95rem; border-bottom: 1px solid var(--line);

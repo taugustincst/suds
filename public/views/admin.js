@@ -54,9 +54,10 @@ async function openUserForm(values, onDone) {
 }
 
 // The native apps are deprecated (docs/PLATFORM.md); staff use the web app in a browser. /app is the
-// step-by-step page for adding it to a home screen.
+// step-by-step page for adding it to a home screen — on the office server, which rewrites that path. A
+// static host (the published demo build) has no rewrite, so there the page is linked by its file name.
 function useOnDevicesCard(primary) {
-  const appUrl = primary.replace(/\/$/, '') + '/app';
+  const appUrl = window.SUDS_STATIC_HOST || state.local ? 'get-app.html' : primary.replace(/\/$/, '') + '/app';
   return h('div', { class: 'card' }, h('h3', {}, 'Use SUDS on phones and tablets'),
     h('p', { class: 'small' }, 'There is no separate app to install: staff open SUDS in the browser at the address on the left and add it to their home screen. The step-by-step page for that is ', h('a', { href: appUrl, target: '_blank', rel: 'noopener' }, appUrl), '.'),
     h('p', { class: 'small muted' }, 'The web application on this server is the system of record. The former Android and iOS apps and the desktop launchers are deprecated and will be removed; existing installs should sync one last time and be uninstalled — see docs/PLATFORM.md.'));

@@ -11,8 +11,10 @@ const ctx = await browser.newContext({ ...devices['iPhone 13'], isMobile: true, 
 const page = await ctx.newPage();
 const errors = [];
 page.on('pageerror', e => errors.push('PAGEERROR ' + e.message));
-page.on('console', m => { if (m.type() === 'error') errors.push('CONSOLE ' + m.text().slice(0, 250)); });
-page.on('response', r => { if (r.status() >= 400) errors.push(`HTTP ${r.status()} ${r.url()}`); });
+// /app and views/no-such-view.js are requested on purpose below, to prove they are real 404s.
+const probe = (u) => /\/app$|no-such-view/.test(u);
+page.on('console', m => { if (m.type() === 'error' && !probe(m.location()?.url || '') && !/404/.test(m.text())) errors.push('CONSOLE ' + m.text().slice(0, 250)); });
+page.on('response', r => { if (r.status() >= 400 && !probe(r.url())) errors.push(`HTTP ${r.status()} ${r.url()}`); });
 
 await page.goto(base + '/'); await page.waitForTimeout(2000);
 ok(await page.evaluate(() => window.SUDS_FORCE_LOCAL === true), 'the built site forces local mode before app.js even loads');
@@ -47,6 +49,29 @@ const manifest = await page.evaluate(async () => {
 });
 ok(manifest && manifest.display === 'standalone' && Array.isArray(manifest.icons) && manifest.icons.length > 0, 'the page is installable to a home screen (a valid, standalone manifest with icons)', manifest);
 
+// "Use SUDS on your phone or tablet" is a plain file here. The office server serves it as /app, a rewrite
+// no static host has, so nothing on this build may link to /app: the tester could not find the page at all.
+eq(await page.evaluate(async () => (await fetch('app')).status), 404, 'a plain static host answers 404 for /app (this suite\'s server does not imitate the office rewrite)');
+await page.goto(base + '/get-app.html'); await page.waitForSelector('#static-url, #url', { timeout: 10000 }).catch(() => {});
+eq(await page.title(), 'Use SUDS on your phone or tablet', 'get-app.html is in the build and opens');
+ok(await page.$('.static-demo-banner'), 'with the demo banner on it too');
+ok(await page.$eval('[data-static]:not(.hidden)', el => /demo\/evaluation copy/.test(el.textContent)), 'it says this is the evaluation copy that runs in the browser');
+ok(await page.$$eval('[data-office]', els => els.every(el => el.classList.contains('hidden'))), 'the office-address and "stay connected" wording is hidden');
+ok(await page.$eval('#cert', el => el.classList.contains('hidden')), 'there is no certificate to download');
+ok(await page.$eval('#signin-note', el => el.classList.contains('hidden')), 'and no "sign in first" note for a server that does not exist');
+ok(await page.$eval('#static-local', el => !el.classList.contains('hidden') && /Offline copy/.test(el.textContent)), 'the offline-copy section is shown');
+eq(await page.$eval('#static-local a', a => a.getAttribute('href')), './', 'and its link opens this site');
+ok(await page.$eval('#static-url', el => /127\.0\.0\.1/.test(el.textContent) && !/get-app/.test(el.textContent)), 'the address shown is this site\'s, not a server\'s', await page.$eval('#static-url', el => el.textContent));
+// every way into that page uses the file name: the login screen's tip, the offline banner, the admin card
+await page.goto(base + '/'); await page.waitForSelector('.layout', { timeout: 10000 });
+await page.evaluate(async () => (await import('./app.js')).logout());
+await page.waitForSelector('input[name=username]', { timeout: 10000 });
+eq(await page.$eval('.login-wrap a[href="get-app.html"]', a => a.textContent), 'Use SUDS on your phone or tablet', 'the login screen links the page by file name');
+await page.fill('input[name=username]', 'staticnav'); await page.fill('input[name=password]', 'Navigator2026!!'); await page.click('button[type=submit]');
+await page.waitForSelector('.layout', { timeout: 10000 });
+ok(await page.$('.layout'), 'signed back in');
+eq(await page.evaluate(() => [...document.querySelectorAll('a[href]')].map(a => a.getAttribute('href')).filter(h => /(^|\/)app\/?$/.test(h)).length), 0, 'nothing on the page links to /app');
+
 // The demo build never syncs (docs/WEB_APP.md): the Sync screen says so instead of offering a form that
 // could only fail, and nothing is sent to any office address.
 await page.goto(base + '/#/sync'); await page.waitForSelector('[data-static-no-sync], input[name=office_password]', { timeout: 10000 }).catch(() => {});
@@ -61,10 +86,16 @@ const swActive = await until(() => page.evaluate(() => navigator.serviceWorker.g
 ok(swActive, 'the demo build registers its service worker');
 const cachedBoot = await until(() => page.evaluate(async () => { for (const k of await caches.keys()) { const c = await caches.open(k); if (await c.match('local-boot.js') && await c.match('local/kernel.js', { ignoreSearch: true })) return true; } return false; }), { timeout: 15000 });
 ok(cachedBoot, 'the boot script and the kernel are in its shell cache');
+ok(await page.evaluate(async () => { for (const k of await caches.keys()) { const c = await caches.open(k); if (await c.match('get-app.html') && await c.match('get-app.js')) return true; } return false; }), 'so is the phone/tablet page');
+// a request for a file that does not exist gets a real 404 from the network — and offline a real failure,
+// not index.html: only a navigation falls back to the app shell
+eq(await page.evaluate(async () => (await fetch('views/no-such-view.js')).status), 404, 'a missing file is a 404 through the worker');
 await ctx.setOffline(true);
 await page.reload().catch(() => {});
 await until(() => page.$('.layout, input[name=username], input[name=display_name]'), { timeout: 20000 });
 ok(await page.$('.layout'), 'with no connection at all the installed demo still opens, signed in', (await page.textContent('body')).slice(0, 120));
+ok(await page.evaluate(() => fetch('views/no-such-view.js').then(r => r.status !== 200 && !/<!doctype/i.test(r.headers.get('content-type') || ''), () => true)), 'offline, a missing script is a failure, not index.html served as a 200');
+ok(await page.evaluate(() => fetch('get-app.html').then(r => r.ok && r.headers.get('content-type').includes('html'))), 'offline, the phone/tablet page still opens from the shell cache');
 await ctx.setOffline(false);
 
 finish(errors);

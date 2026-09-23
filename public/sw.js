@@ -4,16 +4,33 @@ const VERSION = 'suds-shell-1.9.0';
 // no connection at all (they are only ever *downloaded* when local mode is used; index.html never loads
 // them). The versioned URL is what app.js requests, so the cache key matches without a second download.
 const KERNEL_VERSION = VERSION.replace(/^suds-shell-/, '');
-const SHELL = ['./', 'index.html', 'styles.css', 'main.js', 'app.js', 'qr.js', 'favicon.svg', 'manifest.webmanifest', 'manifest-local.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
+const SHELL = ['./', 'index.html', 'styles.css', 'main.js', 'app.js', 'qr.js', 'get-app.html', 'get-app.js', 'favicon.svg', 'manifest.webmanifest', 'manifest-local.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
   `local/kernel.js?v=${KERNEL_VERSION}`, `local/sql-wasm.wasm?v=${KERNEL_VERSION}`,
   ...['login', 'dashboard', 'clients', 'client', 'interventions', 'calls', 'time', 'resources', 'referrals', 'tasks', 'budget', 'notes', 'imports', 'reports', 'admin', 'profile', 'setup', 'forms', 'documents', 'dataimport', 'local', 'supervision', 'episodes', 'overdose', 'funder', 'supplies'].map(v => `views/${v}.js`)];
 // Each shell file is fetched on its own: addAll() fails the whole install if one file is missing (a server
 // with local mode switched off answers 404 for local/*), which used to leave nothing cached at all.
-self.addEventListener('install', (e) => { e.waitUntil(caches.open(VERSION).then(c => Promise.all(SHELL.map(u => c.add(u).catch(() => {})))).then(() => self.skipWaiting())); });
+// `cache: 'reload'` fills the shell from the network, never from the browser's HTTP cache: a static host
+// (GitHub Pages sends max-age=600) can otherwise hand a *new* worker the *previous* build's app.js, and the
+// device then runs the old code from the new cache until the next release.
+self.addEventListener('install', (e) => { e.waitUntil(caches.open(VERSION).then(c => Promise.all(SHELL.map(u => c.add(new Request(u, { cache: 'reload' })).catch(() => {})))).then(() => self.skipWaiting())); });
+// A new VERSION drops every older cache and takes over the open pages at once; app.js reloads them once it
+// sees the controller change, so nobody keeps running a build the server no longer serves.
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.pathname.includes('/api/')) return; // network only, never cached
-  // network-first for the shell so updates arrive promptly; fall back to cache when offline
-  e.respondWith(fetch(e.request).then(res => { if (res.ok) { const copy = res.clone(); caches.open(VERSION).then(c => c.put(e.request, copy)); } return res; }).catch(() => caches.match(e.request, { ignoreSearch: true }).then(r => r || caches.match('index.html'))));
+  const versioned = /^\/local\//.test(url.pathname) && url.searchParams.has('v');
+  // Network-first for the shell so updates arrive promptly, revalidated with the server rather than served
+  // from the HTTP cache (`no-cache`), so a release is picked up on the next load and not up to ten minutes
+  // later; the versioned kernel assets are immutable and may come from any cache. Offline, fall back to the
+  // shell cache. index.html stands in only for a *navigation* (the app's own routes are hash routes, so any
+  // page-level request is the app); a script, image or fetch() for something not cached gets a real failure,
+  // not an HTML document dressed up as a 200.
+  // The page gets the file with `Cache-Control: no-cache`, whatever the host sent: the renderer keeps what
+  // it was handed in a memory cache that a plain reload reuses for as long as the host's max-age says it is
+  // fresh — without ever asking this worker — so a reload after a release would run the old build for
+  // that long (GitHub Pages: ten minutes). Marked no-cache, the next reload comes back here.
+  const fresh = (res) => { if (versioned || res.type === 'opaque' || res.type === 'opaqueredirect') return res; const headers = new Headers(res.headers); headers.set('Cache-Control', 'no-cache'); return new Response(res.body, { status: res.status, statusText: res.statusText, headers }); };
+  e.respondWith(fetch(versioned ? e.request : new Request(e.request, { cache: 'no-cache' })).then(res => { if (res.ok) { const copy = res.clone(); caches.open(VERSION).then(c => c.put(e.request, copy)); } return fresh(res); })
+    .catch(() => caches.match(e.request, { ignoreSearch: true }).then(r => r || (e.request.mode === 'navigate' ? caches.match('index.html') : Response.error()))));
 });

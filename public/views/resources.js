@@ -157,11 +157,12 @@ route('resource', async (r) => {
   };
   renderGallery();
   const status = h('div', { class: 'small muted mt' });
-  // display:none (the .hidden class) takes the element out of the render tree, and a good few mobile
-  // browsers/WebViews — Android's chief among them — refuse to honor a programmatic .click() on a file
-  // input that isn't actually rendered, so the native picker silently never opens. .sr-only keeps it
-  // rendered (off-screen, zero size, clipped) instead, which every browser treats as a real trigger.
-  const fileInput = h('input', { type: 'file', accept: 'image/*', multiple: true, class: 'sr-only', onChange: async () => {
+  // The file input *is* the button: a <label class="btn"> with the input laid transparently over it
+  // (.file-btn). A tap anywhere on the button lands on the input itself, so the native picker opens as a
+  // direct user gesture on every browser and WebView — nothing relies on a programmatic .click() on an
+  // off-screen input, which Android WebViews refuse and which automated testers report as "the file
+  // control is obscured" (an off-screen input can only be reached through the button that forwards to it).
+  const fileInput = h('input', { type: 'file', accept: 'image/*', multiple: true, 'aria-label': 'Add pictures', onChange: async () => {
     const files = [...fileInput.files]; fileInput.value = '';
     let added = 0;
     for (const f of files) {
@@ -195,7 +196,7 @@ route('resource', async (r) => {
       can('resources:write') ? h('button', { class: 'btn primary', onClick: () => openResourceForm(x, refresh) }, 'Edit') : null),
     head,
     h('div', { class: 'grid cols-2' },
-      h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Pictures'), can('resources:write') ? h('div', {}, h('button', { class: 'btn sm', onClick: () => fileInput.click() }, '+ Add pictures'), fileInput) : null), gallery, status,
+      h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Pictures'), can('resources:write') ? h('div', {}, h('label', { class: 'btn sm file-btn' }, '+ Add pictures', fileInput)) : null), gallery, status,
         can('resources:write') ? h('p', { class: 'small muted mt' }, 'Pictures are shrunk on this device before saving. Do not upload pictures of clients.') : null),
       h('div', {}, h('div', { class: 'card mb' }, h('h3', {}, 'Services offered'), services), h('div', { class: 'card' }, h('h3', {}, 'Contact & location'), contact))),
     h('div', { class: 'grid cols-2 mt' }, h('div', { class: 'card' }, h('h3', {}, 'Referral outcomes'), outcomes, recent ? h('div', { class: 'mt' }, recent) : null),

@@ -2,7 +2,16 @@
 // The native apps are deprecated (docs/PLATFORM.md), so nothing here downloads an app; the only downloads
 // are the office server's own certificate, for a browser that must trust a self-signed server.
 (async () => {
-  const j = await fetch('/api/app/info').then(r => r.json()).catch(() => null);
+  // The published static build (scripts/build-static-site.js) sets window.SUDS_STATIC_HOST before this runs.
+  // There is no office server behind it: no certificate to download, no office address to show, and the
+  // "offline copy" is the site itself.
+  if (window.SUDS_STATIC_HOST) {
+    document.querySelectorAll('[data-office]').forEach(el => el.classList.add('hidden'));
+    document.querySelectorAll('[data-static]').forEach(el => el.classList.remove('hidden'));
+    document.getElementById('static-url').textContent = location.href.replace(/^https?:\/\//, '').replace(/get-app\.html.*$/, '');
+    return;
+  }
+  const j = await fetch('/api/app/info').then(r => (r.ok ? r.json() : null)).catch(() => null);
   if (!j) return;
   document.getElementById('org').textContent = j.name;
   const url = (j.listener && (j.listener.friendly || j.listener.urls[0])) || location.origin;

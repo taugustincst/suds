@@ -824,10 +824,22 @@ export function route(name, loader) { routes[name] = loader; }
 // The name is used exactly as the person typed it (a single word, all capitals, a hyphenated first
 // name — none of it is re-cased or cut), and a blank display name falls back to the username so a
 // greeting is never "Good morning, ".
+const HONORIFIC = /^(dr|mr|mrs|ms|mx|rev|fr|sr|jr|prof)\.?$/i;
 export const firstName = (n, fallback = '') => {
   const words = String(n || '').trim().split(/\s+/).filter(Boolean);
-  const real = words.filter(w => !/^(dr|mr|mrs|ms|mx|rev|fr|sr|jr)\.?$/i.test(w));
+  const real = words.filter(w => !HONORIFIC.test(w));
   return real[0] || words[0] || String(fallback || '').trim();
+};
+// The name a greeting uses. A display name of one or two words ("QATEST", "QA Tester", "Mary-Jo Baker")
+// is used whole — cutting "QA Tester" to "QA" reads as a truncation, not a first name. Only a longer,
+// formal name ("Dr. Kiran Patel", "Maria de la Cruz Jones") is shortened to the first name, honorifics
+// skipped. Never re-cased; a blank display name falls back to the username.
+export const greetingName = (n, fallback = '') => {
+  const words = String(n || '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return String(fallback || '').trim();
+  const real = words.filter(w => !HONORIFIC.test(w));
+  if (words.length <= 2 && real.length === words.length) return words.join(' ');
+  return real[0] || words[0];
 };
 const canAny = (perm) => (Array.isArray(perm) ? perm.some(p => can(p)) : can(perm));
 export function parseHash() {
@@ -1060,7 +1072,18 @@ export async function boot(force = false) {
   }
   // Registered in local mode too: the worker caches the kernel and the shell, so a device set up for local
   // mode (or the demo build installed to a home screen) starts with no connection at all (H4).
-  if ('serviceWorker' in navigator && location.protocol !== 'file:') { try { navigator.serviceWorker.register('sw.js').catch(() => {}); } catch {} }
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    try {
+      // When a newer worker takes over (a release was published while this page was open, or this is the
+      // first load after one), reload once so the page runs the files that worker now serves, rather than
+      // the previous build's modules the browser already had. Only when a worker was in control before:
+      // the very first registration must not reload the page someone has just started using.
+      const hadController = !!navigator.serviceWorker.controller;
+      let reloaded = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloaded && !document.querySelector('.modal-bg')) { reloaded = true; location.reload(); } });
+      navigator.serviceWorker.register('sw.js').then(r => r && r.update && r.update()).catch(() => {});
+    } catch {}
+  }
   await loadSession();
   startIdleWatch();
   window.addEventListener('hashchange', render);

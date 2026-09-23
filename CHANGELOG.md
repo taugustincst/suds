@@ -2,6 +2,31 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+Second external retest of the published (static, always-local) build, in a browser profile that had been
+set up on a build from before the first round of fixes. Replayed by `scripts/ui/qa-retest.mjs`
+("upgraded profile": the static site of the old commit, then this build at the same origin) and
+`scripts/ui/static-site.mjs`.
+
+- **Stale app files after a release on a static host.** A host that sends `max-age` (GitHub Pages: ten
+  minutes) let a plain reload keep running the previous build's `app.js` and views from the browser's own
+  caches, with the service worker never asked — every fix of the first retest looked "still broken" for
+  as long as that lasted. The worker now fills its shell with `cache: 'reload'`, fetches app files with
+  `cache: 'no-cache'`, and hands the page every app file marked `no-cache` so the next reload comes back
+  to it; a new worker taking control reloads the page once. Offline, `index.html` stands in only for a
+  navigation; a missing script or image is a real failure. `get-app.html` is in the shell.
+- **"+ Add pictures" is now a label over the file input itself** (`.file-btn`): a tap on the button is a tap
+  on the input, so the picker opens as a direct gesture everywhere and an automated click aimed at the
+  input is no longer "obscured" by the button that used to forward to it.
+- **The greeting uses a one- or two-word display name whole** ("QA Tester", "QATEST"); only a longer formal
+  name is shortened to the first name (`greetingName`). Never re-cased; username fallback.
+- **The demo banner no longer intercepts taps** on a dialog scrolled up under it (`pointer-events: none`).
+- **"Use SUDS on your phone or tablet" on the static build**: linked as `get-app.html` from the login tip,
+  the Home card and the Settings card (a static host has no `/app` rewrite); the page hides the
+  certificate download and office-address wording there and shows the offline-copy section.
+  `scripts/serve-static.js` now behaves like a plain static host (no rewrites, real 404s).
+
 ## 1.9.0 — 2026-09-23
 
 A hardening and audit release. Schema 23 (migrations 19–23); databases upgrade in place on first start — take a backup first. This is the first release under the web-first platform policy (`docs/PLATFORM.md`): the office server's web app is the only supported client; the native apps and launchers no longer build or ship.

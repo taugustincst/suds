@@ -16,7 +16,9 @@ Open the deployed address on any phone, tablet or computer. There is nothing to 
 
 1. **First visit**: create a local account (any name; there is no office to match it against yet).
 2. **Add it to the home screen** for something that opens like an app: on iPhone, Safari's Share sheet →
-   *Add to Home Screen*; on Android and desktop Chrome/Edge, the address bar offers *Install*.
+   *Add to Home Screen*; on Android and desktop Chrome/Edge, the address bar offers *Install*. The
+   step-by-step page is `get-app.html` next to the site (the office server's `/app` is a rewrite a static
+   host does not have, so every link in the app uses the file name).
 3. Everything — clients, visits, calls, notes, reminders, referrals — is recorded and stays only in that
    browser, encrypted the same way the office server encrypts it (`docs/HIPAA.md`), with the same warning
    as local mode: a plain browser has no protected key store, so its keys live alongside the data in that
