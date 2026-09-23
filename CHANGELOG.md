@@ -2,7 +2,7 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.9.1 — 2026-09-23
 
 Second external retest of the published (static, always-local) build, in a browser profile that had been
 set up on a build from before the first round of fixes. Replayed by `scripts/ui/qa-retest.mjs`
