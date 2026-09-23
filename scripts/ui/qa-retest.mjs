@@ -25,7 +25,7 @@ const repo = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../.
 const { plainStatic } = require(path.join(repo, 'scripts/serve-static.js'));
 const VERSION = require(path.join(repo, 'package.json')).version;
 // The commit the tester's profile was set up on. Its static build is cached across runs.
-const OLD_COMMIT = 'cf48979';
+const OLD_COMMIT = 'cf4897983d80d5b5f9e965afb8d15c046ca76043'; // the build before the first retest's fixes
 const surfaces = [
   ['static site', (process.env.SUDS_STATIC_URL || 'http://127.0.0.1:8877') + '/'],
   ['office server in local mode', (process.env.SUDS_URL || 'http://127.0.0.1:8090') + '/?local=1'],
@@ -152,13 +152,16 @@ for (const [label, base] of surfaces) {
 // Upgraded profile: the static site from OLD_COMMIT, a profile set up on it, then the current build at the
 // same origin into the same profile. Skipped (with a failure) when the old build cannot be produced.
 // ---------------------------------------------------------------------------------------------------
-const oldSite = process.env.SUDS_OLD_STATIC_DIR || path.join(os.tmpdir(), `suds-static-${OLD_COMMIT}`);
+const oldSite = process.env.SUDS_OLD_STATIC_DIR || path.join(os.tmpdir(), `suds-static-${OLD_COMMIT.slice(0, 7)}`);
 const newSite = process.env.SUDS_STATIC_DIR || '';
 function buildOldSite() {
   if (fs.existsSync(path.join(oldSite, 'sw.js'))) return true;
   const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-old-wt-'));
   const git = (...args) => execFileSync('git', ['-C', repo, ...args], { stdio: 'pipe' });
   try {
+    // CI checks out with --depth 1, so the old commit is not in the clone until it is fetched by hash.
+    try { git('rev-parse', '--verify', '--quiet', OLD_COMMIT + '^{commit}'); }
+    catch { git('fetch', '--depth=1', 'origin', OLD_COMMIT); }
     git('worktree', 'add', '--detach', wt, OLD_COMMIT);
     fs.symlinkSync(path.join(repo, 'node_modules'), path.join(wt, 'node_modules'));
     execFileSync('node', [path.join(wt, 'scripts/build-static-site.js'), oldSite], { stdio: 'pipe', cwd: wt });
