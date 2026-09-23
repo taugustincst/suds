@@ -988,7 +988,7 @@ window.__suds = { downloadCsv: (...a) => downloadCsv(...a) };
 // Stamped by scripts/build-local.js from package.json. The two kernel assets are requested with it as a
 // version query so the browser may keep them for good (server/http.js serves `?v=` as immutable) while a
 // new release, with a new version, is a new URL. public/sw.js caches the same URLs for offline starts.
-const SUDS_VERSION = '1.8.0';
+const SUDS_VERSION = '1.9.0';
 async function startLocalKernel(force) {
   const k = await import(`./local/kernel.js?v=${SUDS_VERSION}`);
   await k.start({
