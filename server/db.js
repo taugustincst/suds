@@ -24,10 +24,13 @@ function open(dbPath = config.dbPath) {
   return db;
 }
 
-// Used by the local (in-browser) kernel: open from serialized bytes instead of a file path.
+// Used by the local (in-browser) kernel: open from serialized bytes instead of a file path. Always opens
+// what it is given: a copy already open is closed first (the browser shim drops it unsaved), because the
+// caller has just read these bytes as the current database and a page that kept its earlier in-memory copy
+// would later save that stale copy over them (1.9.2: taking a window back did exactly that).
 function openWith(bytes) {
-  if (db) return db;
-  db = new DatabaseSync(':memory:', bytes || undefined);
+  if (db) { try { db.close(); } catch {} db = undefined; }
+  db = bytes ? new DatabaseSync(':memory:', bytes) : new DatabaseSync(':memory:');
   try { db.exec('PRAGMA busy_timeout = 5000'); } catch {}
   initialise(db, safeSchema());
   return db;

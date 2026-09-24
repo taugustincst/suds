@@ -9,7 +9,7 @@ export LOGIN_RATE_LIMIT=1000
 # A server left over from an earlier run holds a port and the wizard then "cannot start" on it, which
 # looks like an app defect. Say what is actually wrong instead.
 STATIC_PORT=${STATIC_PORT:-8878}
-for p in "$PORT" 8095 "${SETUP_PORT:-8496}" "$STATIC_PORT" "${SUDS_UPGRADE_PORT:-8879}"; do
+for p in "$PORT" 8095 "${SETUP_PORT:-8496}" "$STATIC_PORT" "${SUDS_UPGRADE_PORT:-8879}" "${SUDS_MULTITAB_PORT:-8881}"; do
   if curl -sk -o /dev/null --max-time 2 "http://127.0.0.1:$p/" || curl -sk -o /dev/null --max-time 2 "https://127.0.0.1:$p/"; then
     echo "port $p is already in use (a server from an earlier run?). Stop it and start again." >&2; exit 2
   fi
@@ -43,7 +43,7 @@ export SUDS_STATIC_URL="http://127.0.0.1:$STATIC_PORT"
 export SUDS_STATIC_DIR=/tmp/suds-static-site SUDS_UPGRADE_PORT=${SUDS_UPGRADE_PORT:-8879}
 fail=0
 # SCRIPTS="a b" runs a subset (the servers are still started the same way).
-for s in ${SCRIPTS:-desktop review-fixes navigator-flow navigator-fixes ux-features local-mode sync-two-way device-audit spreadsheets sample-data resource-profiles forms region dates setup static-site qa-retest clinical-audit}; do
+for s in ${SCRIPTS:-desktop review-fixes navigator-flow navigator-fixes ux-features local-mode multitab sync-two-way device-audit spreadsheets sample-data resource-profiles forms region dates setup static-site qa-retest clinical-audit}; do
   echo "=== $s"
   if node scripts/ui/$s.mjs > /tmp/suds-ui-$s.log 2>&1; then grep -v '^\[2m' /tmp/suds-ui-$s.log | tail -6; else echo "FAILED"; grep -v '^\[2m' /tmp/suds-ui-$s.log | tail -25; fail=1; fi
 done

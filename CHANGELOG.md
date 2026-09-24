@@ -2,6 +2,39 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+- **Two windows can no longer erase each other's work on a device (fencing).** 1.9.2's takeover lost
+  confirmed records four ways: taking a window back kept its stale in-memory copy and saved it over the
+  other window's work; a tab still on 1.9.0/1.9.1 kept saving after being displaced; a frozen background
+  tab was taken over without asking and saved over the new holder when it woke; a duplicated tab took over
+  silently. Now every holder claims an `epoch` in IndexedDB, saves only under `db2:<its epoch>`, and an
+  ordinary save checks the epoch in the same transaction as its put (a displaced page pauses instead);
+  the unload save writes a key nobody reads once the page is displaced. The first start moves the database
+  from the old `db` key, which older releases keep writing to unread — so work typed into a tab still on an
+  old release after another took over is not carried across. Nothing is taken over without asking except
+  a reload of the same tab, which waits for its previous page to let go. "Use SUDS here instead" reloads the
+  page. The paused screen closes open dialogs, survives hash changes and the dashboard refresh, and says
+  "saved first" only when it was. `local/shims/sqlite.js`, `local/kernel.js`, `server/db.js` (`openWith`
+  always opens what it is given), `public/app.js`; `scripts/ui/multitab.mjs` (new), `scripts/ui/local-mode.mjs`.
+- **Writes on a device answer in about 1–3 ms again** (1.9.1 exported the whole database on every write:
+  ~37 ms at 1,500 clients). Saves are coalesced (250 ms) and the page saves on pagehide, when hidden and on
+  `freeze`; the next page of the same tab waits for the lock before reading, so an edit made just before
+  navigating away still survives (`scripts/ui/device-audit.mjs`, under the service worker). A failed save
+  still raises the "stopped saving" banner.
+- **A new release no longer reloads the page under someone.** When a new service worker takes over, or
+  `version.json` (new; written by `npm run build:local`, never cached) names another version, the page
+  shows *A new version of SUDS is ready — Reload*, and reloads on its own only when hidden or at the next
+  page change — never with a dialog open, a form half-filled or a sync running, and once per release.
+- **Build stamp**: "SUDS <version>" on the sign-in/start screens and in the sidebar.
+- **Error beacon**: uncaught errors, unhandled rejections and 5xx answers are reported without PHI (message
+  cut to 300 characters with long digit runs masked, file:line frames, route without query, version,
+  browser family). The office app posts them to `POST /api/client-errors` (signed-in session, 10 a minute
+  per person, application log at WARN, not the audit log); a device keeps the last 50 and lists them on its
+  Sync page under *Errors on this device*. `server/routes/client-errors.js`, `test/client-errors.test.js`.
+- **Service worker**: the office server's `no-store` is passed through instead of being weakened to
+  `no-cache`, and a re-headed response no longer carries the original `Content-Encoding`/`Content-Length`.
+
 ## 1.9.2 — 2026-09-23
 
 - **No more "SUDS is already open in another window" dead end on a phone.** The single-writer lock stays

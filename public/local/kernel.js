@@ -5938,14 +5938,15 @@ __export(sqlite_exports, {
   DatabaseSync: () => DatabaseSync,
   acquireLock: () => acquireLock,
   default: () => sqlite_default,
+  epoch: () => epoch,
   flush: () => flush,
   forceAcquireLock: () => forceAcquireLock,
   hasLock: () => hasLock,
   init: () => init,
+  isDirty: () => isDirty,
   isFrozen: () => isFrozen,
   isWiped: () => isWiped,
   loadBytes: () => loadBytes,
-  lockHeldBySelf: () => lockHeldBySelf,
   lockIsStale: () => lockIsStale,
   onLockLost: () => onLockLost,
   saveBytes: () => saveBytes,
@@ -5958,18 +5959,6 @@ async function init(wasmUrl) {
   SQL = await initSqlJs({ locateFile: () => wasmUrl });
   return SQL;
 }
-function tabId() {
-  try {
-    let id = sessionStorage.getItem(TAB_KEY);
-    if (!id) {
-      id = crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2);
-      sessionStorage.setItem(TAB_KEY, id);
-    }
-    return id;
-  } catch {
-    return "no-session-storage";
-  }
-}
 function beat() {
   try {
     localStorage.setItem(HEARTBEAT_KEY, String(Date.now()));
@@ -5981,96 +5970,163 @@ function stopHolding() {
   clearInterval(heartbeatTimer);
   heartbeatTimer = null;
 }
+function lose(info) {
+  stopHolding();
+  frozen = true;
+  steppingAside = false;
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  try {
+    sessionStorage.removeItem(HELD_KEY);
+  } catch {
+  }
+  if (lostNotified) return;
+  lostNotified = true;
+  if (lostHandler) {
+    try {
+      lostHandler(info);
+    } catch {
+    }
+  }
+}
 function openChannel() {
   if (channel || typeof BroadcastChannel !== "function") return;
   channel = new BroadcastChannel(CHANNEL);
   channel.onmessage = async (ev) => {
     const m = ev.data || {};
-    if (m.type !== "takeover" || !haveLock || m.from === tabId()) return;
-    stopHolding();
+    if (m.type !== "takeover" || m.from === docId || !haveLock || frozen || steppingAside) return;
+    steppingAside = true;
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    let savedFirst = false;
     try {
       await flush();
+      savedFirst = !dirty && !frozen && !wiped;
     } catch {
     }
-    frozen = true;
     try {
-      channel.postMessage({ type: "takeover-ack", to: m.from });
+      channel.postMessage({ type: "takeover-ack", to: m.from, saved: savedFirst });
     } catch {
     }
-    if (lostHandler) {
-      try {
-        lostHandler();
-      } catch {
-      }
-    }
+    lose({ savedFirst });
   };
 }
-async function acquireWebLock({ steal = false } = {}) {
-  if (!navigator.locks || !navigator.locks.request) return true;
+function timeoutSignal(ms) {
+  if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) return AbortSignal.timeout(ms);
+  const c = new AbortController();
+  setTimeout(() => c.abort(), ms);
+  return c.signal;
+}
+function requestWebLock(opts) {
+  if (!navigator.locks || !navigator.locks.request) return Promise.resolve(true);
   return new Promise((resolve2) => {
-    navigator.locks.request("suds-local-db", { mode: "exclusive", ...steal ? { steal: true } : { ifAvailable: true } }, (lock) => {
+    let granted = false;
+    navigator.locks.request(LOCK_NAME, { mode: "exclusive", ...opts }, (lock) => {
       if (!lock) {
         resolve2(false);
         return;
       }
+      granted = true;
       resolve2(true);
       return new Promise(() => {
       });
     }).catch(() => {
-      if (haveLock) {
-        stopHolding();
-        frozen = true;
-        if (lostHandler) {
-          try {
-            lostHandler();
-          } catch {
-          }
-        }
-      } else resolve2(true);
+      if (granted) {
+        if (haveLock || steppingAside) lose({ savedFirst: false });
+      } else resolve2(false);
     });
   });
 }
-function lockHeldBySelf() {
+function askHolderToStepAside() {
+  if (!channel) return Promise.resolve(false);
+  return new Promise((res) => {
+    const onAck = (ev) => {
+      const d = ev.data || {};
+      if (d.type === "takeover-ack" && d.to === docId) {
+        clearTimeout(timer);
+        channel.removeEventListener("message", onAck);
+        res(true);
+      }
+    };
+    const timer = setTimeout(() => {
+      channel.removeEventListener("message", onAck);
+      res(false);
+    }, ACK_WAIT_MS);
+    channel.addEventListener("message", onAck);
+    try {
+      channel.postMessage({ type: "takeover", from: docId });
+    } catch {
+      clearTimeout(timer);
+      channel.removeEventListener("message", onAck);
+      res(false);
+    }
+  });
+}
+function previousDocumentOfThisTab() {
   try {
-    return localStorage.getItem(HOLDER_KEY) === tabId();
+    if (sessionStorage.getItem(HELD_KEY) === "1") return true;
+  } catch {
+  }
+  try {
+    const nav = performance.getEntriesByType("navigation")[0];
+    return !!nav && nav.type === "reload";
   } catch {
     return false;
   }
 }
-async function acquireLock({ steal = false } = {}) {
+async function acquireLock({ force = false } = {}) {
   openChannel();
-  if (steal) {
-    if (channel) {
-      await new Promise((res) => {
-        const timer = setTimeout(res, 700);
-        const onAck = (ev) => {
-          if (ev.data && ev.data.type === "takeover-ack" && ev.data.to === tabId()) {
-            clearTimeout(timer);
-            res();
-          }
-        };
-        channel.addEventListener("message", onAck, { once: true });
-        try {
-          channel.postMessage({ type: "takeover", from: tabId() });
-        } catch {
-          clearTimeout(timer);
-          res();
-        }
-      });
-    }
-  }
-  const got = await acquireWebLock({ steal });
+  let got = await requestWebLock({ ifAvailable: true });
+  if (!got && force) {
+    await askHolderToStepAside();
+    got = await requestWebLock({ steal: true });
+  } else if (!got && previousDocumentOfThisTab()) got = await requestWebLock({ signal: timeoutSignal(SAME_TAB_WAIT_MS) });
   if (!got) return false;
   haveLock = true;
   frozen = false;
-  beat();
+  steppingAside = false;
+  lostNotified = false;
+  const claim = await claimEpoch();
+  myEpoch = claim.epoch;
+  claimedBytes = claim.bytes;
   try {
-    localStorage.setItem(HOLDER_KEY, tabId());
+    sessionStorage.setItem(HELD_KEY, "1");
   } catch {
   }
+  beat();
   clearInterval(heartbeatTimer);
   heartbeatTimer = setInterval(beat, HEARTBEAT_MS);
   return true;
+}
+function claimEpoch() {
+  return idb().then((d) => new Promise((res, rej) => {
+    const t = d.transaction("kv", "readwrite");
+    const s = t.objectStore("kv");
+    let epoch2 = null;
+    let bytes3 = null;
+    let migrated = false;
+    const g = s.get(EPOCH_KEY);
+    g.onsuccess = () => {
+      const prev = typeof g.result === "number" ? g.result : null;
+      epoch2 = Math.max((prev || 0) + 1, Date.now());
+      const src = s.get(prev === null ? LEGACY_KEY : dbKey(prev));
+      src.onsuccess = () => {
+        bytes3 = src.result || null;
+        migrated = prev === null && !!bytes3;
+        s.put(epoch2, EPOCH_KEY);
+        if (bytes3) s.put(bytes3, dbKey(epoch2));
+        const keys = s.getAllKeys(IDBKeyRange.bound(DB_PREFIX, DB_PREFIX + "\uFFFF"));
+        keys.onsuccess = () => {
+          for (const k of keys.result) if (k !== dbKey(epoch2)) s.delete(k);
+        };
+      };
+    };
+    t.oncomplete = () => res({ epoch: epoch2, bytes: bytes3, migrated });
+    t.onerror = () => rej(t.error);
+    t.onabort = () => rej(t.error || new Error("could not claim the on-device database"));
+  }));
 }
 function lockIsStale() {
   try {
@@ -6081,13 +6137,16 @@ function lockIsStale() {
   }
 }
 function forceAcquireLock() {
-  return acquireLock({ steal: true });
+  return acquireLock({ force: true });
 }
 function hasLock() {
   return haveLock;
 }
+function epoch() {
+  return myEpoch;
+}
 function isFrozen() {
-  return frozen;
+  return frozen || steppingAside;
 }
 function onLockLost(fn) {
   lostHandler = fn;
@@ -6115,48 +6174,59 @@ function idb() {
   });
 }
 async function loadBytes() {
-  try {
-    const d = await idb();
-    const bytes3 = await new Promise((res, rej) => {
-      const t = d.transaction("kv", "readonly").objectStore("kv").get(KEY);
-      t.onsuccess = () => res(t.result || null);
-      t.onerror = () => rej(t.error);
-    });
-    if (bytes3) hadPersisted = true;
-    return bytes3;
-  } catch {
-    return null;
-  }
+  return claimedBytes;
 }
 function saveBytes(bytes3, { urgent = false } = {}) {
   const write = (d) => new Promise((res, rej) => {
+    if (myEpoch === null) {
+      rej(new Error("the on-device database was never claimed"));
+      return;
+    }
     const t = d.transaction("kv", "readwrite");
     const store = t.objectStore("kv");
-    let withheld = false;
-    const probe = store.get(KEY);
-    store.put(bytes3, KEY);
-    probe.onsuccess = () => {
-      if (hadPersisted && probe.result === void 0) {
-        withheld = true;
+    const key = dbKey(myEpoch);
+    let outcome = null;
+    const probe = store.get(EPOCH_KEY);
+    const judge = () => {
+      const e = probe.result;
+      if (e === void 0) outcome = "wiped";
+      else if (e !== myEpoch) outcome = "fenced";
+    };
+    if (urgent) {
+      store.put(bytes3, key);
+      probe.onsuccess = () => {
+        judge();
+      };
+    } else {
+      probe.onsuccess = () => {
+        judge();
+        if (outcome) {
+          try {
+            t.abort();
+          } catch {
+          }
+        } else store.put(bytes3, key);
+      };
+    }
+    const settle = () => {
+      if (outcome === "wiped") {
         wiped = true;
-        try {
-          t.abort();
-        } catch {
-        }
-      }
+        dirty = false;
+      } else if (outcome === "fenced") lose({ savedFirst: false });
     };
     t.oncomplete = () => {
       if (inflight === t) inflight = null;
-      hadPersisted = true;
-      res(true);
+      if (outcome) {
+        settle();
+        res(false);
+      } else res(true);
     };
     t.onabort = () => {
       if (inflight === t) inflight = null;
-      if (withheld) res(false);
-      else rej(t.error || new Error("save aborted"));
-    };
-    t.onerror = () => {
-      if (!withheld) rej(t.error);
+      if (outcome) {
+        settle();
+        res(false);
+      } else rej(t.error || new Error("save aborted"));
     };
     inflight = t;
     if (urgent && typeof t.commit === "function") {
@@ -6187,21 +6257,21 @@ async function wipe() {
     }
   }
   if (current) {
+    const c = current;
+    current = null;
     try {
-      current.close();
+      c.close();
     } catch {
     }
-    current = null;
   }
   const d = await idb();
   await new Promise((res, rej) => {
     const t = d.transaction("kv", "readwrite");
-    t.objectStore("kv").delete(KEY);
+    t.objectStore("kv").clear();
     t.oncomplete = res;
     t.onerror = () => rej(t.error);
     t.onabort = () => rej(t.error);
   });
-  hadPersisted = false;
 }
 function isWiped() {
   return wiped;
@@ -6210,7 +6280,7 @@ function setSaveErrorHandler(fn) {
   onSaveError = fn;
 }
 function flush({ urgent = false } = {}) {
-  if (wiped || frozen || !current) return Promise.resolve();
+  if (wiped || frozen || !current || myEpoch === null) return Promise.resolve();
   if (urgent && inflight && typeof inflight.commit === "function") {
     try {
       inflight.commit();
@@ -6235,6 +6305,9 @@ function flush({ urgent = false } = {}) {
   saving = p;
   return p;
 }
+function isDirty() {
+  return dirty;
+}
 function markDirty() {
   if (wiped || frozen) return;
   dirty = true;
@@ -6246,44 +6319,35 @@ function markDirty() {
     });
   }, COALESCE_MS);
 }
-function persistSoon() {
-  if (wiped || frozen) return;
-  clearTimeout(saveTimer);
-  saveTimer = null;
-  flush().catch(() => {
-  });
-}
-var SQL, STORE, KEY, HEARTBEAT_KEY, HOLDER_KEY, TAB_KEY, CHANNEL, HEARTBEAT_MS, STALE_MS, haveLock, frozen, heartbeatTimer, channel, lostHandler, conn, hadPersisted, inflight, current, saveTimer, dirty, saving, wiped, inTransaction, onSaveError, COALESCE_MS, writeSeq, Statement, DatabaseSync, sqlite_default;
+var SQL, STORE, LEGACY_KEY, EPOCH_KEY, DB_PREFIX, dbKey, myEpoch, claimedBytes, LOCK_NAME, HEARTBEAT_KEY, HELD_KEY, CHANNEL, HEARTBEAT_MS, STALE_MS, ACK_WAIT_MS, SAME_TAB_WAIT_MS, docId, haveLock, frozen, steppingAside, heartbeatTimer, channel, lostHandler, lostNotified, conn, inflight, current, saveTimer, dirty, saving, wiped, inTransaction, onSaveError, COALESCE_MS, writeSeq, Statement, DatabaseSync, sqlite_default;
 var init_sqlite = __esm({
   "local/shims/sqlite.js"() {
     init_globals_inject();
     SQL = null;
     STORE = "suds-local";
-    KEY = "db";
+    LEGACY_KEY = "db";
+    EPOCH_KEY = "epoch";
+    DB_PREFIX = "db2:";
+    dbKey = (e) => DB_PREFIX + e;
+    myEpoch = null;
+    claimedBytes = null;
+    LOCK_NAME = "suds-local-db";
     HEARTBEAT_KEY = "suds-local-lock-heartbeat";
-    HOLDER_KEY = "suds-local-lock-holder";
-    TAB_KEY = "suds-local-tab";
+    HELD_KEY = "suds-local-held";
     CHANNEL = "suds-local-lock";
     HEARTBEAT_MS = 4e3;
     STALE_MS = 2e4;
+    ACK_WAIT_MS = 3e3;
+    SAME_TAB_WAIT_MS = 3e3;
+    docId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now();
     haveLock = false;
     frozen = false;
+    steppingAside = false;
     heartbeatTimer = null;
     channel = null;
     lostHandler = null;
-    try {
-      window.addEventListener("pagehide", () => {
-        if (haveLock) {
-          try {
-            if (localStorage.getItem(HOLDER_KEY) === tabId()) localStorage.removeItem(HOLDER_KEY);
-          } catch {
-          }
-        }
-      });
-    } catch {
-    }
+    lostNotified = false;
     conn = null;
-    hadPersisted = false;
     inflight = null;
     current = null;
     saveTimer = null;
@@ -6292,7 +6356,7 @@ var init_sqlite = __esm({
     wiped = false;
     inTransaction = false;
     onSaveError = (e) => console.error("[suds-local] save failed", e);
-    COALESCE_MS = 100;
+    COALESCE_MS = 250;
     writeSeq = 0;
     Statement = class {
       constructor(db3, sql) {
@@ -6340,10 +6404,9 @@ var init_sqlite = __esm({
       }
       exec(sql) {
         this.db.exec(sql);
-        const ended = this._transactionEnded(sql);
+        this._transactionEnded(sql);
         inTransaction = !!this._began || (this._spDepth || 0) > 0;
         markDirty();
-        if (ended) persistSoon();
       }
       // server/db.js issues exactly BEGIN / COMMIT / ROLLBACK, SAVEPOINT x / RELEASE x and ROLLBACK TO x (with
       // or without a trailing RELEASE x); the depth is tracked from those, and only from statements that start
@@ -6379,14 +6442,25 @@ var init_sqlite = __esm({
         }
         return false;
       }
+      // Closing drops this copy without saving it: server/db.js closes the open database before opening another
+      // (openWith), and a copy being replaced must never be written over the one replacing it.
       close() {
-        return flush();
+        if (current === this.db) {
+          current = null;
+          dirty = false;
+          clearTimeout(saveTimer);
+          saveTimer = null;
+        }
+        try {
+          this.db.close();
+        } catch {
+        }
       }
       export() {
         return this.db.export();
       }
     };
-    sqlite_default = { DatabaseSync, init, loadBytes, saveBytes, wipe, isWiped, flush, acquireLock, lockIsStale, lockHeldBySelf, forceAcquireLock, hasLock, isFrozen, onLockLost, setSaveErrorHandler };
+    sqlite_default = { DatabaseSync, init, loadBytes, saveBytes, wipe, isWiped, flush, isDirty, acquireLock, lockIsStale, forceAcquireLock, hasLock, epoch, isFrozen, onLockLost, setSaveErrorHandler };
   }
 });
 
@@ -7605,8 +7679,14 @@ var require_db = __commonJS({
       return db3;
     }
     function openWith(bytes3) {
-      if (db3) return db3;
-      db3 = new DatabaseSync2(":memory:", bytes3 || void 0);
+      if (db3) {
+        try {
+          db3.close();
+        } catch {
+        }
+        db3 = void 0;
+      }
+      db3 = bytes3 ? new DatabaseSync2(":memory:", bytes3) : new DatabaseSync2(":memory:");
       try {
         db3.exec("PRAGMA busy_timeout = 5000");
       } catch {
@@ -12667,6 +12747,43 @@ var require_calls = __commonJS({
         delete v.log_time;
       }
     };
+  }
+});
+
+// server/routes/client-errors.js
+var require_client_errors = __commonJS({
+  "server/routes/client-errors.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var auth3 = require_auth();
+    var { HttpError: HttpError3 } = require_http();
+    var PER_MINUTE = 10;
+    var clean2 = (v, max2) => String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\d{5,}/g, (m) => "#".repeat(Math.min(m.length, 8))).slice(0, max2);
+    var scrub = (s) => s.replace(/[^\s@"'<>]+@[^\s@"'<>]+/g, "[email]").replace(/\b\d{3}[-. ]\d{2,3}[-. ]\d{4}\b/g, "[number]");
+    var FRAME = /^[\w./-]{1,80}:\d{1,6}$/;
+    function sanitize(body) {
+      const b = body && typeof body === "object" ? body : {};
+      const frames = Array.isArray(b.stack) ? b.stack.slice(0, 5).map((f) => clean2(f, 90)).filter((f) => FRAME.test(f)) : [];
+      return {
+        kind: ["error", "rejection", "api"].includes(b.kind) ? b.kind : "error",
+        message: scrub(clean2(b.message, 300)),
+        stack: frames,
+        route: clean2(String(b.route || "").split("?")[0], 80).replace(/[^\w#/.-]/g, ""),
+        version: clean2(b.version, 20).replace(/[^\w.-]/g, ""),
+        browser: clean2(b.browser, 40).replace(/[^\w ./-]/g, ""),
+        status: Number.isInteger(b.status) && b.status >= 100 && b.status < 600 ? b.status : void 0
+      };
+    }
+    module.exports = (r) => {
+      r.post("/api/client-errors", auth3.requireAuth, (ctx) => {
+        const { rateLimit } = require_app2();
+        if (!rateLimit(`client-errors:${ctx.user.id}`, PER_MINUTE, 6e4)) throw new HttpError3(429, "Too many error reports");
+        const e = sanitize(ctx.body);
+        console.warn("[client-error]", JSON.stringify({ user: ctx.user.id, ...e }));
+        return { ok: true };
+      });
+    };
+    module.exports.sanitize = sanitize;
   }
 });
 
@@ -22031,6 +22148,7 @@ var init_ = __esm({
       "./routes/auth.js": () => require_auth2(),
       "./routes/budget.js": () => require_budget(),
       "./routes/calls.js": () => require_calls(),
+      "./routes/client-errors.js": () => require_client_errors(),
       "./routes/clients.js": () => require_clients(),
       "./routes/consents.js": () => require_consents(),
       "./routes/dataimport.js": () => require_dataimport2(),
@@ -22123,9 +22241,10 @@ var require_app2 = __commonJS({
       "reports",
       "admin",
       "regions",
-      "intake"
+      "intake",
+      "client-errors"
     ];
-    var LOCAL_ROUTE_MODULES2 = ROUTE_MODULES.filter((m) => !["setup", "app", "sync", "intake", "oidc"].includes(m));
+    var LOCAL_ROUTE_MODULES2 = ROUTE_MODULES.filter((m) => !["setup", "app", "sync", "intake", "oidc", "client-errors"].includes(m));
     var LOCAL_DISABLED_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SUDS \u2014 local mode is off</title>
 <style>body{font-family:system-ui,sans-serif;max-width:36rem;margin:4rem auto;padding:0 1rem;color:#222;line-height:1.5}h1{font-size:1.4rem}a{color:#0b5}</style></head>
 <body><h1>Local mode is turned off on this server</h1>
@@ -22803,11 +22922,11 @@ var FakeRes = class {
 async function start({ wasmUrl, onSaveError: onSaveError2, onLockLost: onLockLost2, force } = {}) {
   await sqlite_default.init(wasmUrl);
   if (onLockLost2) sqlite_default.onLockLost(onLockLost2);
-  let locked = force ? await sqlite_default.acquireLock({ steal: true }) : await sqlite_default.acquireLock();
-  if (!locked && (sqlite_default.lockHeldBySelf() || sqlite_default.lockIsStale())) locked = await sqlite_default.acquireLock({ steal: true });
+  const locked = await sqlite_default.acquireLock({ force: !!force });
   if (!locked) {
     const e = new Error("SUDS is open in another window on this device.");
     e.code = "SUDS_ALREADY_OPEN";
+    e.stale = sqlite_default.lockIsStale();
     throw e;
   }
   if (onSaveError2) sqlite_default.setSaveErrorHandler(onSaveError2);
@@ -22864,7 +22983,7 @@ async function start({ wasmUrl, onSaveError: onSaveError2, onLockLost: onLockLos
     if (!ctx.user) throw new import_http2.HttpError(401, "Sign in first");
     return demo.remove({ actor: ctx.user.id });
   });
-  window.SUDS_LOCAL = { handle, flush: (opts) => sqlite_default.flush(opts), wipe: wipeDevice, sync: (opts) => run(opts), isWiped: () => sqlite_default.isWiped() };
+  window.SUDS_LOCAL = { handle, flush: (opts) => sqlite_default.flush(opts), isDirty: () => sqlite_default.isDirty(), epoch: () => sqlite_default.epoch(), wipe: wipeDevice, sync: (opts) => run(opts), isWiped: () => sqlite_default.isWiped(), isFrozen: () => sqlite_default.isFrozen() };
   return window.SUDS_LOCAL;
 }
 async function wipeDevice() {
@@ -22900,12 +23019,6 @@ async function handle(method, path, body, headers = {}) {
     } else ctx.body = body || {};
     let result;
     for (const h of m.handlers) result = await h(ctx);
-    if (method !== "GET" && method !== "HEAD" && !sqlite_default.isWiped()) {
-      try {
-        await sqlite_default.flush();
-      } catch {
-      }
-    }
     const setCookie = res.headers["set-cookie"];
     if (setCookie) {
       const mm = /suds_session=([^;]*)/.exec(setCookie);

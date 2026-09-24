@@ -47,7 +47,7 @@ async function setupDevice(page, { username, password, name }) {
 }
 const idbHasDb = (page) => page.evaluate(() => new Promise((resolve) => {
   const req = indexedDB.open('suds-local', 1); req.onupgradeneeded = () => req.result.createObjectStore('kv');
-  req.onsuccess = () => { const g = req.result.transaction('kv', 'readonly').objectStore('kv').get('db'); g.onsuccess = () => resolve(g.result !== undefined && g.result !== null); g.onerror = () => resolve(false); };
+  req.onsuccess = () => { const g = req.result.transaction('kv', 'readonly').objectStore('kv').getAllKeys(); g.onsuccess = () => resolve(g.result.some(k => k === 'db' || String(k).startsWith('db2:'))); g.onerror = () => resolve(false); };
   req.onerror = () => resolve(false);
 }));
 const syncLog = (page) => until(async () => { const t = (await page.textContent('[data-sync-log]')) || ''; return /connecting/i.test(t) ? null : t; }, { timeout: 30000 });
@@ -99,6 +99,10 @@ try {
   eq(back.json && back.json.client && back.json.client.goals, goal, 'an edit made 150 ms before a reload is still there afterwards');
   {
     // And with no wait at all: the pagehide flush starts the IndexedDB write on the way out.
+    // Under the service worker, which answers the next navigation from its cache before this document is
+    // gone: the case 1.9.1 flushed on every write for. Writes are no longer saved per request (1.9.3); the
+    // unload save and the next document waiting for this one's lock have to carry it.
+    ok(await until(() => page.evaluate(() => !!navigator.serviceWorker.controller), { timeout: 15000 }), 'the page is controlled by the service worker before navigating away');
     const goal2 = 'Written and gone ' + Date.now();
     await page.evaluate(([id, g]) => window.SUDS_LOCAL.handle('PUT', '/api/clients/' + id, { goals: g }, {}), [cl.json.id, goal2]);
     // A different query string is a real navigation (a hash change alone would not unload the page).
