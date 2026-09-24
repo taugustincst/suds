@@ -194,9 +194,13 @@ module.exports = (r) => {
           uuid(), a.client_id, to.id, v.role_on_case || a.role_on_case, when, v.reason ? `Transferred from ${from.display_name}: ${v.reason}` : `Transferred from ${from.display_name}`, ctx.user.id);
         moved++;
       }
-      if (v.reassign_open_tasks !== 0 && moved) {
-        const ids = open.map(a => a.client_id);
+      if (v.reassign_open_tasks !== 0) {
+        // Every client the departing worker held now sits with the receiving one (moved, or already theirs).
+        const ids = [...new Set(open.map(a => a.client_id))];
         if (ids.length) tasks = db.run(`UPDATE tasks SET assigned_to=?, updated_at=? WHERE assigned_to=? AND status IN ('open','in_progress') AND client_id IN (${ids.map(() => '?').join(',')})`, to.id, db.now(), from.id, ...ids).changes;
+        // Moving the whole caseload (the usual case: someone leaving) takes their to-dos that name no client
+        // too, or those stay with an account nobody signs in to. A chosen few clients leaves them alone.
+        if (!v.client_ids || !v.client_ids.length) tasks += db.run(`UPDATE tasks SET assigned_to=?, updated_at=? WHERE assigned_to=? AND status IN ('open','in_progress') AND client_id IS NULL`, to.id, db.now(), from.id).changes;
       }
     });
     audit.log({ user: ctx.user, action: 'caseload.transfer', entity: 'user', entityId: from.id, ip: ctx.ip, details: { to: to.id, clients: moved, tasks, skipped: skipped.length, effective_date: when } });

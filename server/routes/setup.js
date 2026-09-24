@@ -10,7 +10,7 @@ const auth = require('../auth');
 const listener = require('../listener');
 const { badRequest, HttpError } = require('../http');
 const { validate } = require('../validate');
-const { hashPassword, uuid } = require('../crypto');
+const { hashPasswordAsync, uuid } = require('../crypto');
 const selfsigned = require('../selfsigned');
 
 // The wizard is only needed for self-managed installs. Deployments configured by environment variables
@@ -56,12 +56,15 @@ module.exports = (r) => {
       const keys = { SUDS_ENCRYPTION_KEY: config.encryptionKey.toString('hex'), SUDS_INDEX_KEY: config.indexKey.toString('hex'), created_at: new Date().toISOString() };
       fs.writeFileSync(config.keysJsonPath, JSON.stringify(keys, null, 2), { mode: 0o600 });
     }
-    // 2. admin account (replace bootstrap admin)
+    // 2. admin account (replace bootstrap admin). Hashed off the event loop; a second submission that arrived
+    // while this one was hashing finds the wizard already answered.
+    const adminHash = await hashPasswordAsync(v.admin_password);
+    if (!(setupNeeded() && onlyBootstrapAdmin())) throw new HttpError(403, 'Setup has already been completed');
     // The wizard replaces the bootstrap administrator, so the password file left for it (server/bootstrap.js) is retired with it.
     require('../bootstrap').discardPasswordFile();
     db.transaction(() => {
       db.run(`DELETE FROM users WHERE username='admin' AND must_change_password=1 AND last_login_at IS NULL`);
-      db.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,0,?)`, uuid(), v.admin_username, hashPassword(v.admin_password), v.admin_display_name, 'admin', db.now());
+      db.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,0,?)`, uuid(), v.admin_username, adminHash, v.admin_display_name, 'admin', db.now());
       db.setSetting('org_name', v.org_name); if (v.county_name) db.setSetting('county_name', v.county_name); if (v.program_contact) db.setSetting('program_contact', v.program_contact);
       db.setSetting('caseload_restriction', '1');
     });

@@ -5,7 +5,7 @@ const audit = require('../audit');
 const devices = require('../devices');
 const { badRequest, notFound, HttpError } = require('../http');
 const { validate } = require('../validate');
-const { hashPassword, uuid, randomToken } = require('../crypto');
+const { hashPasswordAsync, uuid, randomToken } = require('../crypto');
 
 const ROLES = ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'];
 const shape = {
@@ -38,7 +38,38 @@ module.exports = (r) => {
     return { users: rows };
   });
 
-  r.post('/api/users', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
+  // ---- What a person still holds: open client assignments and open to-dos ----
+  // Deactivating someone ends their sessions but not their caseload, so the administrator is told how much
+  // work is still assigned to them (Users -> edit -> Deactivate) and a supervisor is warned when clients sit
+  // with an inactive account (Home). Counts and the person's name only: nothing about any client or to-do.
+  // "Open" matches what POST /api/caseload/transfer moves (server/routes/episodes.js).
+  const caseloadCounts = (userId) => {
+    const today = new Date().toISOString().slice(0, 10);
+    const where = userId ? 'AND u.id=?' : '';
+    const args = userId ? [userId] : [];
+    return db.all(`SELECT u.id, u.display_name, u.role, u.is_active,
+        (SELECT COUNT(DISTINCT a.client_id) FROM assignments a JOIN clients c ON c.id=a.client_id
+          WHERE a.user_id=u.id AND (a.end_date IS NULL OR a.end_date >= ?) AND a.ended_at IS NULL AND c.deleted_at IS NULL) AS clients,
+        (SELECT COUNT(*) FROM tasks t LEFT JOIN clients c ON c.id=t.client_id
+          WHERE t.assigned_to=u.id AND t.status IN ('open','in_progress') AND (t.client_id IS NULL OR c.deleted_at IS NULL)) AS open_tasks
+      FROM users u WHERE 1=1 ${where} ORDER BY u.display_name`, today, ...args);
+  };
+  const canSeeCaseloads = auth.requirePerm('users:manage', 'assignments:manage');
+  // Everyone who holds any open work, active or not. Supervisors need the inactive ones in particular: they
+  // are who "Move a caseload" must be able to move clients away from, and GET /api/users (the directory
+  // behind every assignment picker) deliberately lists only active staff to them.
+  r.get('/api/users/caseloads', auth.requireAuth, canSeeCaseloads, () => {
+    const users = caseloadCounts().filter(u => u.clients || u.open_tasks);
+    const inactive = users.filter(u => !u.is_active);
+    return { users, inactive_clients: inactive.reduce((n, u) => n + u.clients, 0), inactive_tasks: inactive.reduce((n, u) => n + u.open_tasks, 0) };
+  });
+  r.get('/api/users/:id/caseload', auth.requireAuth, canSeeCaseloads, (ctx) => {
+    const [u] = caseloadCounts(ctx.params.id);
+    if (!u) throw notFound();
+    return u;
+  });
+
+  r.post('/api/users', auth.requireAuth, auth.requirePerm('users:manage'), async (ctx) => {
     const v = validate(ctx.body, shape);
     if (db.one(`SELECT 1 FROM users WHERE username=?`, v.username)) throw badRequest('Username already exists');
     const temp = v.password || (randomToken(10) + 'Aa1!');
@@ -46,14 +77,17 @@ module.exports = (r) => {
     if (errs.length) throw badRequest('Password must contain ' + errs.join(', '));
     const id = uuid();
     if (v.supervisor_id && !db.one(`SELECT 1 FROM users WHERE id=? AND role IN ('supervisor','admin')`, v.supervisor_id)) throw badRequest('The supervisor must be a supervisor or administrator account');
+    // scrypt costs ~90 ms: hashed off the event loop, and before the username is checked again below.
+    const hash = await hashPasswordAsync(temp);
+    if (db.one(`SELECT 1 FROM users WHERE username=?`, v.username)) throw badRequest('Username already exists');
     db.run(`INSERT INTO users(id,username,password_hash,display_name,email,title,role,is_active,hourly_cost,requires_cosign,supervisor_id,must_change_password,password_changed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,1,?)`,
-      id, v.username, hashPassword(temp), v.display_name, v.email || null, v.title || null, v.role, v.is_active ?? 1, v.hourly_cost ?? null, v.requires_cosign ?? 0, v.supervisor_id || null, db.now());
+      id, v.username, hash, v.display_name, v.email || null, v.title || null, v.role, v.is_active ?? 1, v.hourly_cost ?? null, v.requires_cosign ?? 0, v.supervisor_id || null, db.now());
     audit.log({ user: ctx.user, action: 'user.create', entity: 'user', entityId: id, ip: ctx.ip, details: { username: v.username, role: v.role } });
     ctx.status = 201;
     return { id, temporary_password: v.password ? undefined : temp };
   });
 
-  r.put('/api/users/:id', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
+  r.put('/api/users/:id', auth.requireAuth, auth.requirePerm('users:manage'), async (ctx) => {
     const u = db.one(`SELECT * FROM users WHERE id=?`, ctx.params.id);
     if (!u) throw notFound();
     const v = validate(ctx.body, { ...shape, username: { ...shape.username, required: false }, role: { ...shape.role, required: false }, display_name: { ...shape.display_name, required: false } }, { partial: true });
@@ -65,7 +99,7 @@ module.exports = (r) => {
     if (v.password) {
       const errs = auth.passwordPolicy(v.password);
       if (errs.length) throw badRequest('Password must contain ' + errs.join(', '));
-      sets.push('password_hash=?', 'must_change_password=1', 'password_changed_at=?'); params.push(hashPassword(v.password), db.now());
+      sets.push('password_hash=?', 'must_change_password=1', 'password_changed_at=?'); params.push(await hashPasswordAsync(v.password), db.now());
       auth.revokeAllForUser(u.id);
     }
     if (ctx.body.unlock) { sets.push('locked_until=NULL', 'failed_attempts=0'); }

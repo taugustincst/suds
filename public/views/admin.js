@@ -42,16 +42,60 @@ async function openUserForm(values, onDone) {
     else {
       // Turning an account off is confirmed: it ends every session and, with the box above ticked, tells
       // each of their synced devices to erase its local copy. Neither is a thing to do by mis-click.
+      let moveTo = null;
       if (values.is_active && !d.is_active) {
         const wipe = d.wipe_devices && deviceCount ? ` ${deviceCount} synced device${deviceCount === 1 ? '' : 's'} will be told to erase ${deviceCount === 1 ? 'its' : 'their'} local copy of client records the next time ${deviceCount === 1 ? 'it' : 'they'} connect.` : '';
-        if (!await confirmDialog('Deactivate this account', `${values.display_name} will be signed out everywhere and can no longer sign in.${wipe} Continue?`, { danger: true, okText: 'Deactivate' })) return;
+        const answer = await deactivateDialog(values, `${values.display_name} will be signed out everywhere and can no longer sign in.${wipe}`);
+        if (!answer) return;
+        moveTo = answer.moveTo;
       }
-      await put(`/api/users/${values.id}`, d); m.close(); toast('User updated', 'ok'); await loadRefData();
+      await put(`/api/users/${values.id}`, d); m.close(); toast('User updated', 'ok');
+      // The caseload moves through the same audited transfer as Settings -> Move a caseload. If that fails the
+      // account is still deactivated, and Home's "assigned to inactive staff" warning keeps it in view.
+      if (moveTo) {
+        try {
+          const r = await post('/api/caseload/transfer', { from_user_id: values.id, to_user_id: moveTo, reassign_open_tasks: true, reason: 'Account deactivated' });
+          toast(`${r.transferred} client${r.transferred === 1 ? '' : 's'}${r.tasks_reassigned ? ` and ${r.tasks_reassigned} to-do${r.tasks_reassigned === 1 ? '' : 's'}` : ''} moved to ${r.to}`, 'ok');
+        } catch (e) { toast(`The account is deactivated, but its caseload was not moved: ${e.message}. Move it under Settings → Move a caseload.`, 'error'); }
+      }
+      await loadRefData();
     }
     onDone();
   } });
   const m = modal(isNew ? 'New user' : `Edit ${values.display_name}`, f, { wide: true });
 }
+
+// Deactivating an account does not take its clients and to-dos away from it, so the confirmation says how
+// many there are and -- for someone who may move caseloads -- offers to move them to an active worker in the
+// same step. Resolves { moveTo } (an id, or null to leave them) or null when cancelled.
+async function deactivateDialog(values, intro) {
+  const load = await get(`/api/users/${values.id}/caseload`, { quiet: true }).catch(() => null);
+  const n = load ? load.clients : 0, t = load ? load.open_tasks : 0;
+  const plural = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+  const held = n || t ? `${plural(n, 'client', 'clients')} and ${plural(t, 'open to-do', 'open to-dos')} ${n + t === 1 ? 'is' : 'are'} assigned to ${values.display_name}.` : '';
+  const mayMove = (n || t) && can('assignments:manage');
+  const staff = caseloadStaff().filter(u => u.id !== values.id);
+  let pick = null;
+  return new Promise((resolve) => {
+    let answered = false;
+    const done = (v) => { answered = true; m.close(); resolve(v); };
+    const okBtn = h('button', { class: 'btn danger', 'data-deactivate-ok': '1', onClick: () => done({ moveTo: pick && pick.value ? pick.value : null }) }, 'Deactivate');
+    const m = modal('Deactivate this account', h('div', { 'data-deactivate': '1' },
+      h('p', {}, intro),
+      held ? h('p', { 'data-deactivate-caseload': `${n}/${t}` }, h('b', {}, held)) : null,
+      mayMove ? h('div', { class: 'field' },
+        h('label', { for: 'deactivate-move-to' }, 'Move them to'),
+        pick = h('select', { id: 'deactivate-move-to', name: 'move_to', onChange: () => { okBtn.textContent = pick.value ? 'Move and deactivate' : 'Deactivate'; } },
+          h('option', { value: '' }, '— leave them for now —'), staff.map(u => h('option', { value: u.id }, `${u.display_name} (${fmt.label(u.role)})`))),
+        h('div', { class: 'small muted' }, 'Their current assignments end today and the other worker takes over, with their open to-dos. Left for now, they can be moved later under Move a caseload.'))
+        : (n || t) ? h('p', { class: 'small muted', 'data-deactivate-supervisor': '1' }, 'A supervisor must move them to another worker (Supervision tools → Move a caseload). Until then nobody is working them.') : null,
+      h('p', {}, 'Continue?'),
+      h('div', { class: 'btn-row' }, h('button', { class: 'btn', onClick: () => done(null) }, 'Cancel'), okBtn)), { onClose: () => { if (!answered) resolve(null); } });
+  });
+}
+
+// Active staff who carry a caseload: who clients can be given to. A finance or admin account has none.
+function caseloadStaff() { return state.users.filter(u => u.is_active !== 0 && ['navigator', 'clinician', 'supervisor'].includes(u.role)); }
 
 // There is no native app (removed in 1.9.3, docs/PLATFORM.md); staff use the web app in a browser. /app is the
 // step-by-step page for adding it to a home screen — on the office server, which rewrites that path. A
@@ -190,7 +234,7 @@ route('admin', async (r) => {
           h('h3', { class: 'mt' }, 'About this server'), kv([['SUDS version', s.version], ['Database', h('code', {}, s.db_path)], ['Keys', s.key_source === 'file' ? 'data/keys.json (generated by setup)' : 'Environment variables'], ['Key backup last downloaded', s.key_source !== 'file' ? 'Not applicable — keys come from the environment' : s.keys_backup_at ? fmt.dt(s.keys_backup_at) : badge('Never — download it below', 'danger')], ['Addresses', (s.listener?.urls || []).join(', ')], ['Retention', 'Audit logs are kept 7 years by default. Client records are soft-deleted only.']]),
           h('div', { class: 'row mt' }, h('button', { class: 'btn sm', onClick: checkForUpdate }, 'Check for updates'), updateStatus)));
     },
-    async caseload() { return transferCard(); },
+    async caseload() { return transferCard(r.query.get('from')); },
     async devices() {
       const { devices } = await get('/api/admin/devices');
       const act = async (id, action) => { await post(`/api/admin/devices/${id}/${action}`, {}); refresh(); };
@@ -214,9 +258,12 @@ route('admin', async (r) => {
   const full = can('users:manage');
   // Waiting account requests are counted on the tab itself, so they are seen from any tab of this page.
   const pending = full && !state.local ? await get('/api/users/access-requests', { quiet: true }).then(x => x.requests.length).catch(() => 0) : 0;
-  const tabs = !full ? [['caseload', 'Move a caseload'], ...(can('audit:read') ? [['audit', 'Audit log']] : [])]
+  let tabs = !full ? [['caseload', 'Move a caseload'], ...(can('audit:read') ? [['audit', 'Audit log']] : [])]
     : state.local ? [['users', 'Users & roles'], ['settings', 'Settings'], ['caseload', 'Move a caseload'], ['audit', 'Audit log']]
     : [['users', pending ? `Users & roles (${pending})` : 'Users & roles'], ['settings', 'Settings'], ['network', 'Network & devices'], ['devices', 'Synced devices'], ['caseload', 'Move a caseload'], ['audit', 'Audit log'], ['apikeys', 'API keys (intake)'], ['system', 'System & backups']];
+  // Moving a caseload needs assignments:manage; a role that manages users without it does not get a tab
+  // whose form it could not submit (the deactivate dialog tells it a supervisor must move the clients).
+  if (!can('assignments:manage')) tabs = tabs.filter(([k]) => k !== 'caseload');
   const allowed = tabs.some(([k]) => k === tab) ? tab : tabs[0][0];
   body.append(await (T[allowed] || T[tabs[0][0]])());
   return h('div', {}, pageHead(full ? 'Settings' : 'Supervision tools'), state.local ? h('div', { class: 'banner small' }, window.SUDS_STATIC_HOST ? 'This is SUDS on this device. Backups, and who may sign up here, are on the This device page.' : 'This is the copy of SUDS on this device. Network, API keys and backups are managed on the office SUDS; use Sync to exchange data.') : null, h('div', { class: 'tabs' }, tabs.map(([k, l]) => h('button', { class: k === tab ? 'active' : '', onClick: () => nav(`admin?tab=${k}`) }, l))), body);
@@ -327,20 +374,25 @@ export function restoreCard() {
 // Moving a whole caseload when a worker leaves. Doing this one client at a time
 // through the care-team tab is how clients get missed.
 // ---------------------------------------------------------------------------
-export function transferCard() {
-  if (!can('assignments:manage')) return null;
-  // Only people who carry a caseload: a finance or admin account has no clients to move.
-  const staff = state.users.filter(u => u.is_active !== 0 && ['navigator', 'clinician', 'supervisor'].includes(u.role));
+export async function transferCard(fromId) {
+  if (!can('assignments:manage')) return h('div', { class: 'card' }, h('p', { class: 'small muted' }, 'Moving a caseload needs a supervisor account. Ask a supervisor to move the clients.'));
+  const staff = caseloadStaff();
+  // Someone already deactivated can still be holding clients (GET /api/users lists only active staff to a
+  // supervisor), so those come from the caseload counts and are marked as inactive.
+  const { users: holders = [] } = await get('/api/users/caseloads', { quiet: true }).catch(() => ({}));
+  const inactive = holders.filter(u => !u.is_active && (u.clients || u.open_tasks) && !staff.some(s => s.id === u.id));
+  const fromList = [...staff, ...inactive];
+  const label = (u) => `${u.display_name} (${fmt.label(u.role)})${u.is_active === 0 ? ' (inactive)' : ''}`;
   const result = h('div', { class: 'mt' });
   const f = form([
-    { name: 'from_user_id', label: 'Move clients from', type: 'select', required: true, options: staff.map(u => ({ value: u.id, label: `${u.display_name} (${fmt.label(u.role)})` })) },
-    { name: 'to_user_id', label: 'To', type: 'select', required: true, options: staff.map(u => ({ value: u.id, label: `${u.display_name} (${fmt.label(u.role)})` })) },
+    { name: 'from_user_id', label: 'Move clients from', type: 'select', required: true, value: fromList.some(u => u.id === fromId) ? fromId : undefined, options: fromList.map(u => ({ value: u.id, label: label(u) })) },
+    { name: 'to_user_id', label: 'To', type: 'select', required: true, options: staff.map(u => ({ value: u.id, label: label(u) })) },
     { name: 'role_on_case', label: 'Role on the case', type: 'select', options: ['primary', 'secondary', 'clinician', 'peer', 'supervisor'], help: 'Leave empty to keep whatever role each assignment already has.' },
     { name: 'effective_date', label: 'Effective from', type: 'date', value: new Date().toISOString().slice(0, 10) },
     { name: 'reassign_open_tasks', label: 'Also move their open to-dos for those clients', type: 'checkbox', value: 1 },
     { name: 'reason', label: 'Reason (recorded in the audit log)', span: true, placeholder: 'e.g. left the program, extended leave' },
   ], { submitText: 'Transfer caseload', onSubmit: async (d) => {
-    const from = staff.find(u => u.id === d.from_user_id), to = staff.find(u => u.id === d.to_user_id);
+    const from = fromList.find(u => u.id === d.from_user_id), to = staff.find(u => u.id === d.to_user_id);
     if (!await confirmDialog('Transfer caseload', `Move every client currently assigned to ${from?.display_name} over to ${to?.display_name}?`, { danger: true, okText: 'Transfer' })) return;
     const r = await post('/api/caseload/transfer', d);
     clear(result);

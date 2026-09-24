@@ -191,6 +191,67 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   await supS.close();
 }
 
+// ---- deactivating a worker no longer strands their caseload ----
+{
+  const { page, api } = admin;
+  const users = (await api('GET', '/api/users')).data.users;
+  const clin = users.find(u => u.username === 'kpatel'), leaver = users.find(u => u.username === 'dchen'), keeper = users.find(u => u.username === 'mrivera');
+  const deactivate = async (name) => {
+    await go(page, 'admin?tab=users');
+    await page.click(`tr:has-text("${name}") button:has-text("Edit")`);
+    await page.waitForSelector('.modal input[name=is_active]');
+    await page.uncheck('.modal input[name=is_active]');
+    await page.click('.modal button[type=submit]');
+    return until(() => page.$('[data-deactivate]'));
+  };
+  // 1. The administrator is told what the person holds and moves it in the same step.
+  const before = (await api('GET', `/api/users/${clin.id}/caseload`)).data;
+  ok(before.clients > 0, 'the clinician holds clients before leaving', before);
+  let dlg = await deactivate('Dr. Kiran Patel');
+  const said = dlg ? await page.textContent('[data-deactivate-caseload]').catch(() => '') : '';
+  ok(said.includes(`${before.clients} client`) && said.includes('assigned to Dr. Kiran Patel'), 'the deactivate confirmation says how many clients and to-dos are assigned to them', said);
+  const moveOpts = await page.$$eval('#deactivate-move-to option', o => o.map(x => x.textContent));
+  ok(moveOpts.some(t => /Jordan Walker/.test(t)) && !moveOpts.some(t => /Kiran Patel|Administrator|Finance/.test(t)), 'and offers the other active caseload staff to move them to', moveOpts);
+  await page.selectOption('#deactivate-move-to', { label: 'Jordan Walker (Supervisor)' });
+  eq((await page.textContent('[data-deactivate-ok]')).trim(), 'Move and deactivate', 'the button says both things will happen');
+  await page.click('[data-deactivate-ok]');
+  const afterMove = await until(async () => { const r = (await api('GET', `/api/users/${clin.id}/caseload`)).data; return r.clients === 0 ? r : null; });
+  ok(afterMove && afterMove.is_active === 0, 'the clinician is deactivated and holds no clients afterwards', afterMove);
+  const audited = (await api('GET', '/api/admin/audit?action=caseload.transfer&limit=5')).data;
+  ok(JSON.stringify(audited).includes(clin.id), 'the move went through the audited caseload transfer');
+
+  // 2. Deactivated without moving anything: the clients stay with the inactive account...
+  const held = (await api('GET', `/api/users/${leaver.id}/caseload`)).data;
+  dlg = await deactivate('David Chen');
+  ok(dlg, 'the confirmation opens for the navigator too');
+  await page.click('[data-deactivate-ok]');
+  await until(async () => (await api('GET', `/api/users/${leaver.id}/caseload`)).data.is_active === 0);
+  eq((await api('GET', `/api/users/${leaver.id}/caseload`)).data.clients, held.clients, 'left for now, the clients stay assigned to the inactive navigator');
+
+  // ...and the supervisor is warned on Home and can move them from the inactive person.
+  const supS = await session('jwalker', 'Navigator2026!!');
+  const sp = supS.page;
+  await go(sp, 'dashboard');
+  const warn = await until(() => sp.$('a.badge:has-text("assigned to inactive staff")'));
+  ok(warn && (await warn.textContent()).includes(`${held.clients} client`), 'Home warns the supervisor how many clients sit with inactive staff', warn && await warn.textContent());
+  if (warn) { await warn.click(); await sp.waitForSelector('select[name=from_user_id]'); await settle(sp); }
+  eq(await sp.$eval('select[name=from_user_id]', s => s.value).catch(() => ''), leaver.id, 'the warning opens Move a caseload with the inactive navigator chosen');
+  const fromLabel = await sp.$eval('select[name=from_user_id]', s => s.selectedOptions[0].textContent).catch(() => '');
+  ok(/David Chen.*\(inactive\)/.test(fromLabel), 'labelled as inactive', fromLabel);
+  const toOpts = await sp.$$eval('select[name=to_user_id] option', o => o.map(x => x.textContent));
+  ok(!toOpts.some(t => /David Chen|Kiran Patel/.test(t)), 'nobody inactive is offered as the receiving worker', toOpts);
+  await sp.selectOption('select[name=to_user_id]', keeper.id);
+  await sp.click('button[type=submit]:has-text("Transfer caseload")');
+  await until(() => sp.$('.modal-bg button:has-text("Transfer")'));
+  await sp.click('.modal-bg button.danger:has-text("Transfer")');
+  const banner = await until(() => sp.$('.banner.ok'));
+  ok(banner && /moved from David Chen to Maria Rivera/.test(await banner.textContent()), 'the supervisor moves them', banner && await banner.textContent());
+  eq((await supS.api('GET', `/api/users/${leaver.id}/caseload`)).data.clients, 0, 'the inactive navigator holds nothing afterwards');
+  await go(sp, 'dashboard');
+  ok(!(await sp.$('a.badge:has-text("assigned to inactive staff")')), 'and the Home warning is gone');
+  await supS.close();
+}
+
 // ---- navigator: records expenses but cannot restructure grants; phone ergonomics; validation wording ----
 {
   const navS = await session('mrivera', 'Navigator2026!!');
