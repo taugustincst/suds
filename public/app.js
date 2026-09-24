@@ -721,6 +721,46 @@ export function table(columns, rows, { onRow, empty = 'No records', wrap = true,
   return wrap ? h('div', { class: 'table-wrap' }, t) : t;
 }
 
+/**
+ * A list that shows its first page and a "Load more" button while there are more rows on the server.
+ * The list pages used to ask for 300 (the client list 200) and stop there, with nothing to say so.
+ *   first: the first page's response ({ rows|clients, total }); url: the same request without limit/offset;
+ *   key: the array in the response; limit: rows per further page; render(rows): the table (or anything)
+ *   for everything loaded so far; summary(rows, total): optional line above it that updates as rows arrive.
+ * Rows already shown are not repeated if something was added in between (offset paging shifts by one).
+ */
+export function pagedList({ first, url, key = 'rows', limit = 200, render, summary }) {
+  let rows = (first[key] || []).slice(); let total = Number(first.total ?? rows.length); let offset = rows.length;
+  const box = h('div', { 'data-paged-list': '1' });
+  const draw = (focusFrom) => {
+    clear(box);
+    if (summary) box.append(summary(rows, total));
+    box.append(render(rows));
+    if (rows.length < total) {
+      const btn = h('button', { class: 'btn', type: 'button', 'data-load-more': '1', onClick: () => more(btn) }, `Load more (${fmt.num(Math.min(limit, total - rows.length))} of ${fmt.num(total - rows.length)} remaining)`);
+      box.append(h('div', { class: 'row mt load-more' }, h('span', { class: 'muted small', 'data-shown': String(rows.length) }, `Showing ${fmt.num(rows.length)} of ${fmt.num(total)}`), btn));
+    }
+    // Keep a keyboard user where they were: on the first row that just arrived.
+    if (focusFrom !== undefined) { const r = box.querySelectorAll('tbody tr')[focusFrom]; if (r) { if (!r.hasAttribute('tabindex')) r.setAttribute('tabindex', '-1'); r.focus({ preventScroll: true }); } }
+  };
+  const more = async (btn) => {
+    btn.disabled = true; btn.textContent = 'Loading…';
+    try {
+      const d = await get(`${url}${url.includes('?') ? '&' : '?'}limit=${limit}&offset=${offset}`);
+      offset += (d[key] || []).length;
+      const seen = new Set(rows.map(r => r.id));
+      const from = rows.length;
+      rows = rows.concat((d[key] || []).filter(r => !r.id || !seen.has(r.id)));
+      total = Number(d.total ?? total);
+      // Nothing new came back (rows were deleted meanwhile): stop offering more rather than loop.
+      if (!(d[key] || []).length || offset >= total) total = rows.length;
+      draw(from);
+    } catch (e) { btn.disabled = false; btn.textContent = 'Load more'; toast(e.message || 'Could not load more', 'error'); }
+  };
+  draw();
+  return box;
+}
+
 // A tab strip that folds the tabs that do not fit into a "More ▾" menu instead of scrolling them off the
 // edge with nothing to say so. Re-measured on resize; the active tab is always kept in view.
 export function tabStrip(tabs, active, onPick) {

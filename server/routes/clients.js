@@ -6,6 +6,7 @@ const { badRequest, notFound, forbidden, conflict, HttpError } = require('../htt
 const { validate, paging } = require('../validate');
 const { blindIndex, uuid, decrypt } = require('../crypto');
 const M = require('../clients-model');
+const F = require('../client-filters');
 
 const shape = {
   first_name: { type: 'string', required: true, maxLen: 100 }, last_name: { type: 'string', required: true, maxLen: 100 },
@@ -105,6 +106,21 @@ module.exports = (r) => {
     }
     const assigned = ctx.query.get('assigned_to');
     if (assigned) { where.push(`c.id IN (SELECT client_id FROM assignments WHERE user_id=? AND ${auth.activeAssignment()})`); params.push(assigned); }
+    // The Home page's tiles and alerts link here. Each filter is the same predicate the dashboard counts
+    // with (server/client-filters.js), applied inside the caseload-scoped query, so the total is right
+    // and every page after the first is reachable — not a filter over whatever the first page held.
+    const filters = [];
+    const addFilter = (name, f) => { where.push(f.sql); params.push(...f.params); filters.push(name); };
+    const risk = ctx.query.get('risk');
+    if (risk && ['high', 'low', 'moderate', 'critical'].includes(risk)) addFilter('risk', F.risk(risk));
+    if (ctx.query.get('stale') === '1') addFilter('stale', F.noContactSince());
+    const substance = (ctx.query.get('substance') || '').slice(0, 60);
+    if (substance) addFilter('substance', F.substance(substance));
+    const mat = (ctx.query.get('mat') || '').slice(0, 60);
+    if (mat) addFilter('mat', F.mat(mat));
+    const consentWindow = ctx.query.get('consent_expiring') === '1' ? F.consentWindow() : null;
+    if (consentWindow) addFilter('consent_expiring', F.consentExpiring(consentWindow));
+    if (ctx.query.get('patient_requests') === '1' && (auth.hasPerm(ctx.user, 'patient-requests:read') || auth.hasPerm(ctx.user, 'patient-requests:write'))) addFilter('patient_requests', F.openPatientRequest());
     const w = 'WHERE ' + where.join(' AND ');
     // Caseload sort orders a navigator actually works a list by: who has gone longest without contact,
     // who has follow-ups slipping, and who is highest risk. Anything else is most-recently-touched first.
@@ -114,10 +130,11 @@ module.exports = (r) => {
     const rows = db.all(`SELECT c.*, (SELECT GROUP_CONCAT(u.display_name, ', ') FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=c.id AND ${auth.activeAssignment('a.')}) AS assigned_workers,
       (SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome IN ('reached','replied'))) AS last_contact,
       (SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.status IN ('open','in_progress') AND (CASE WHEN length(t.due_at)=10 THEN t.due_at < date('now','localtime') ELSE t.due_at < ? END)) AS overdue_tasks
-      FROM clients c ${w} ORDER BY ${order} LIMIT ? OFFSET ?`, db.now(), ...params, limit, offset);
+      ${consentWindow ? `, (SELECT MIN(co.expires_at) FROM consents co WHERE co.client_id=c.id AND co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ?) AS consent_expires_at` : ''}
+      FROM clients c ${w} ORDER BY ${order}, c.id LIMIT ? OFFSET ?`, db.now(), ...(consentWindow ? [consentWindow.from, consentWindow.to] : []), ...params, limit, offset);
     const total = db.one(`SELECT COUNT(*) n FROM clients c ${w}`, ...params).n;
-    audit.log({ user: ctx.user, action: 'client.list', ip: ctx.ip, details: { q: q ? '[redacted]' : '', status, sort: sort || undefined, count: rows.length, deidentified: deidentify } });
-    return { clients: rows.map(x => ({ ...M.summary(x, { deidentify }), assigned_workers: x.assigned_workers, last_contact: x.last_contact, overdue_tasks: x.overdue_tasks })), total, limit, offset };
+    audit.log({ user: ctx.user, action: 'client.list', ip: ctx.ip, details: { q: q ? '[redacted]' : '', status, sort: sort || undefined, filters: filters.length ? filters : undefined, offset: offset || undefined, count: rows.length, deidentified: deidentify } });
+    return { clients: rows.map(x => ({ ...M.summary(x, { deidentify }), assigned_workers: x.assigned_workers, last_contact: x.last_contact, overdue_tasks: x.overdue_tasks, ...(consentWindow ? { consent_expires_at: x.consent_expires_at } : {}) })), total, limit, offset };
   });
 
   // Check before entering, so the worker sees the match while they are still typing.

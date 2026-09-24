@@ -135,15 +135,22 @@ module.exports = (r) => {
   // The waitlist, ordered by how long people have been waiting — the question a program asks every morning.
   r.get('/api/waitlist', auth.requireAuth, auth.requirePerm('clients:read'), (ctx) => {
     const cf = auth.caseloadFilter(ctx.user, 'c.id');
-    const rows = db.all(`SELECT c.id, c.client_code, c.intake_date, c.risk_level, c.primary_substance, c.asam_level, c.referral_source,
+    // Paged: a busy program's waitlist ran past the 500 rows this used to stop at, and the people cut off
+    // were the ones who had waited least — invisible until someone above them was admitted.
+    const { limit, offset } = paging(ctx.query, { limit: 200, max: 500 });
+    const where = `c.deleted_at IS NULL AND c.status='waitlist' AND ${cf.sql}`;
+    const rows = db.all(`SELECT c.*,
         CAST(julianday('now') - julianday(COALESCE(c.intake_date, date(c.created_at))) AS INTEGER) AS days_waiting,
         (SELECT MAX(occurred_at) FROM interventions i WHERE i.client_id=c.id) AS last_contact
-      FROM clients c WHERE c.deleted_at IS NULL AND c.status='waitlist' AND ${cf.sql}
-      ORDER BY c.risk_level='critical' DESC, c.risk_level='high' DESC, days_waiting DESC LIMIT 500`, ...cf.params);
+      FROM clients c WHERE ${where}
+      ORDER BY c.risk_level='critical' DESC, c.risk_level='high' DESC, days_waiting DESC, c.id LIMIT ? OFFSET ?`, ...cf.params, limit, offset);
+    const total = db.one(`SELECT COUNT(*) n FROM clients c WHERE ${where}`, ...cf.params).n;
     const M = require('../clients-model');
-    const full = rows.map(x => ({ ...x, ...M.summary(db.one(`SELECT * FROM clients WHERE id=?`, x.id), { deidentify: !auth.hasPerm(ctx.user, 'clients:read') }) }));
-    audit.log({ user: ctx.user, action: 'waitlist.view', ip: ctx.ip, details: { count: rows.length } });
-    return { rows: full, total: rows.length };
+    const deidentify = !auth.hasPerm(ctx.user, 'clients:read');
+    const full = rows.map(x => ({ id: x.id, client_code: x.client_code, intake_date: x.intake_date, risk_level: x.risk_level, primary_substance: x.primary_substance,
+      asam_level: x.asam_level, referral_source: x.referral_source, days_waiting: x.days_waiting, last_contact: x.last_contact, ...M.summary(x, { deidentify }) }));
+    audit.log({ user: ctx.user, action: 'waitlist.view', ip: ctx.ip, details: { count: rows.length, offset: offset || undefined } });
+    return { rows: full, total, limit, offset };
   });
 
   // Moving a caseload. When a navigator leaves, someone has to pick up every client they held; doing that

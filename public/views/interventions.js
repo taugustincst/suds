@@ -1,4 +1,4 @@
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav } from '../app.js';
+import { h, route, get, pagedList, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav } from '../app.js';
 import { flattenLines } from './budget.js';
 
 // `template`: an earlier intervention for this same client to prefill from (type, location, modality,
@@ -62,18 +62,18 @@ export function interventionTable(rows, { showClient = true, onChange } = {}) {
 
 route('interventions', async (r) => {
   const type = r.query.get('type') || ''; const from = r.query.get('from') || ''; const to = r.query.get('to') || ''; const mine = r.query.get('mine') === '1';
-  const qs = `limit=300${type ? '&type=' + type : ''}${from ? '&from=' + from : ''}${to ? '&to=' + to : ''}${mine ? '&mine=1' : ''}`;
-  const data = await get(`/api/interventions?${qs}`);
+  const qs = `${type ? '&type=' + type : ''}${from ? '&from=' + from : ''}${to ? '&to=' + to : ''}${mine ? '&mine=1' : ''}`.replace(/^&/, '');
+  const PAGE = 200;
+  const data = await get(`/api/interventions?limit=${PAGE}${qs ? '&' + qs : ''}`);
   const refresh = () => nav(`interventions?${qs}&_=${Date.now()}`);
   const C = state.constants;
   const typeSel = h('select', { onChange: () => nav(`interventions?type=${typeSel.value}&from=${from}&to=${to}${mine ? '&mine=1' : ''}`) }, h('option', { value: '' }, 'All types'), C.INTERVENTION_TYPES.map(t => h('option', { value: t, selected: t === type }, fmt.label(t))));
   const fromI = h('input', { type: 'date', value: from }), toI = h('input', { type: 'date', value: to });
   const mineI = h('input', { type: 'checkbox', checked: mine });
   const apply = () => nav(`interventions?type=${type}&from=${fromI.value}&to=${toI.value}${mineI.checked ? '&mine=1' : ''}`);
-  const totalMin = data.rows.reduce((s, x) => s + (x.duration_minutes || 0), 0);
   return h('div', {},
     pageHead('Visits & services', can('interventions:write') ? h('button', { class: 'btn primary', onClick: () => openInterventionForm(null, { onDone: refresh }) }, '+ Log a visit or service') : null, can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv(`/api/reports/export/interventions?from=${from || '2000-01-01'}&to=${to || fmt.today()}&format=xlsx`) }, 'Export to Excel') : null),
     h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'Type'), typeSel), h('div', { class: 'field' }, h('label', {}, 'From'), fromI), h('div', { class: 'field' }, h('label', {}, 'To'), toI), h('label', { class: 'check', style: { marginTop: 0 } }, mineI, 'Mine only'), h('button', { class: 'btn', onClick: apply }, 'Apply')),
-    h('div', { class: 'muted small mb' }, `${data.total} interventions · ${fmt.mins(totalMin)} shown`),
-    interventionTable(data.rows, { onChange: refresh }));
+    pagedList({ first: data, url: `/api/interventions${qs ? '?' + qs : ''}`, limit: PAGE, render: (rows) => interventionTable(rows, { onChange: refresh }),
+      summary: (rows, total) => h('div', { class: 'muted small mb' }, `${total} interventions · ${fmt.mins(rows.reduce((s, x) => s + (x.duration_minutes || 0), 0))} shown`) }));
 });
