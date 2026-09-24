@@ -102,6 +102,9 @@ const config = {
   // Sign-in attempts allowed per source address per 15 minutes. A whole office behind one NAT address
   // shares this, so it is a knob; the test suite raises it because every script signs in afresh.
   loginRateLimit: Number(process.env.LOGIN_RATE_LIMIT ?? (env === 'test' ? 100000 : 20)),
+  // Account requests (POST /api/auth/signup) per address per hour. Every attempt counts, accepted or not:
+  // the form is open to anyone who can reach the sign-in page.
+  signupRateLimit: Number(process.env.SIGNUP_RATE_LIMIT ?? 5),
   msGraph: {
     tenantId: process.env.MS_TENANT_ID || '',
     clientId: process.env.MS_CLIENT_ID || '',

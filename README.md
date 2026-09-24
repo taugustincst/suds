@@ -1,11 +1,28 @@
 # SUDS — SUD Navigator Services Tracker
 
-A HIPAA-oriented, zero-dependency web application for county **substance use disorder (SUD) navigation programs**. It tracks clients, interventions, calls, staff time, referrals and community resources, tasks and timelines, budget and expenditures, and clinical / administrative documentation — and imports field notes from **Pocket AI** and **Microsoft OneNote**.
+SUDS is a HIPAA-oriented web application for county **substance use disorder (SUD) navigation programs**. It tracks clients, visits and services, calls, staff time, referrals and community resources, reminders, budget and expenditures, and clinical / administrative documentation — with 42 CFR Part 2 consent and disclosure accounting, encryption of every piece of client information, and an audit log of everything.
 
-* **Platform:** the web application served by the office SUDS server is the only supported client and the system of record. The native phone apps and the desktop launchers were removed in 1.9.3 (their source remains in git history) — see [docs/PLATFORM.md](docs/PLATFORM.md).
+## Two ways to run it
+
+| | **On an office server** | **On this device** (no server) |
+| --- | --- | --- |
+| What | Install SUDS on an office computer ([docs/INSTALL.md](docs/INSTALL.md)); staff open it in any browser, and every phone, tablet and computer sees the same records. | Open the published web app (GitHub Pages) in a browser and start. Records are kept encrypted in that browser on that device, and nowhere else. |
+| For | A programme whose staff share records. The office server is the system of record. | One navigator, or a few people sharing one device, with no office server. |
+| Keeping records safe | The server's scheduled, encrypted backups. | **Download a backup** regularly (the *This device* page); Home reminds you. Read [where your records live](docs/WEB_APP.md#where-your-records-live) first. |
+
+## Log in or sign up
+
+The sign-in page has two options, **Log in** and **Sign up** (link straight to either with `#/login?mode=login` or `#/login?mode=signup`).
+
+* **Office server:** *Sign up* asks for an account — your name, a username, the password you choose and a line about your role. An administrator approves it under **Settings → Users & roles → Access requests** and chooses your role; then you *Log in*. Administrators can turn Sign up off; the page then says to ask them.
+* **On this device:** the first *Sign up* creates your account and makes you the person who manages the device, once you confirm you understand where the records are kept. Anyone else sharing the device can *Sign up* for their own account (they see only their own clients) until you turn sign-ups off.
+
+## At a glance
+
+* **Platform:** the web application — served by an office SUDS server (the system of record for its programme), or published as SUDS on this device. It also imports field notes from **Pocket AI** and **Microsoft OneNote**. The native phone apps and the desktop launchers were removed in 1.9.3 (their source remains in git history) — see [docs/PLATFORM.md](docs/PLATFORM.md).
 * **Runtime:** Node.js ≥ 22.13 only (built-in SQLite, crypto, HTTP). No npm packages to install or audit on the office server. (The browser's local-mode kernel is a separate, committed bundle that does vendor a few pinned libraries in place of Node's built-ins — see [docs/WEB_APP.md](docs/WEB_APP.md#what-the-browser-kernel-is-built-from).)
 * **Data protection:** AES-256-GCM field-level encryption of PHI, blind-index search, scrypt password hashing, TOTP MFA, role-based access with caseload scoping, 42 CFR Part 2 consent and disclosure accounting, and a hash-chained audit log.
-* **Documentation:** [Platform policy](docs/PLATFORM.md) · [Adopting SUDS (for a county CIO)](docs/ADOPTION.md) · [Deployment](docs/DEPLOYMENT.md) · [Browser-only web app](docs/WEB_APP.md) · [API reference](docs/API.md) · [HIPAA & security controls](docs/HIPAA.md) · [Importing notes (Pocket AI / OneNote)](docs/IMPORTS.md) · [User guide](docs/USER_GUIDE.md)
+* **Documentation:** [Platform policy](docs/PLATFORM.md) · [Adopting SUDS (for a county CIO)](docs/ADOPTION.md) · [Deployment](docs/DEPLOYMENT.md) · [SUDS on this device (GitHub Pages)](docs/WEB_APP.md) · [API reference](docs/API.md) · [HIPAA & security controls](docs/HIPAA.md) · [Importing notes (Pocket AI / OneNote)](docs/IMPORTS.md) · [User guide](docs/USER_GUIDE.md)
 
 ## Get SUDS
 
@@ -30,7 +47,7 @@ Full walkthrough: [docs/INSTALL.md](docs/INSTALL.md); service and reverse-proxy 
 
 **Working offline (local mode):** the server can also hand out a copy of SUDS that runs inside the browser (`/?local=1`) and syncs with the office on command. It is **off by default**: it is turned on by answering *Yes* in the setup wizard or with `LOCAL_MODE_ENABLED=true`, and counties are advised to do so only for a documented field-work need. It is governed by the rules in [docs/PLATFORM.md](docs/PLATFORM.md) — the office server is authoritative.
 
-**Demo in a browser, nothing to install:** a standalone build of the same web app runs on GitHub Pages with no server at all, for trying SUDS out with sample data only. It is republished only when a release is cut, so it always shows a released version. Details: [docs/WEB_APP.md](docs/WEB_APP.md).
+**No server at all — SUDS on this device:** the same web app is published on GitHub Pages and runs entirely in the browser, keeping each person's records encrypted on their own device, with device backups and a backup reminder. It is republished only when a release is cut, so it always serves a released version. Details, including exactly where the records live and what that means: [docs/WEB_APP.md](docs/WEB_APP.md).
 
 ## Quick start (development)
 

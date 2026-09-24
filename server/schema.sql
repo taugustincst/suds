@@ -35,6 +35,13 @@ CREATE TABLE IF NOT EXISTS users (
   -- account on its own. The 'sub' claim from the county's identity provider, matched against config.oidc's
   -- single configured issuer — not itself an issuer/subject pair, since this server only ever trusts one IdP.
   oidc_subject TEXT,
+  -- Self sign-up (POST /api/auth/signup): a request for an account is a users row that cannot sign in
+  -- (is_active=0, access_status='pending') until an administrator approves it under Settings -> Users &
+  -- roles. access_note is the requester's own "why I need access" (staff text, never client information);
+  -- requested_at is when they asked. Every account created any other way is 'active' from the start.
+  access_status TEXT NOT NULL DEFAULT 'active' CHECK (access_status IN ('active','pending','declined')),
+  access_note TEXT,
+  requested_at TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );

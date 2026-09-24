@@ -23,12 +23,19 @@ page.on('response', r => { if (r.status() >= 400 && !probe(r.url())) errors.push
 
 await page.goto(base + '/'); await settle(page);
 ok(await page.evaluate(() => window.SUDS_FORCE_LOCAL === true), 'the built site forces local mode before app.js even loads');
-ok(await page.evaluate(() => window.SUDS_STATIC_HOST === true), 'and marks itself as served from a static host, which is what makes sync ask the office server for permission');
-eq(await page.$eval('.static-demo-banner', b => b.textContent), 'Demo/evaluation build — do not enter real client information', 'the demo/evaluation banner is on screen from the first paint');
+ok(await page.evaluate(() => window.SUDS_STATIC_HOST === true), 'and marks itself as served from a static host (the internal marker that turns office sync off)');
+// The production on-device app: no demo/evaluation banner, and no wording that says so, anywhere.
+ok(!(await page.$('.static-demo-banner')), 'there is no demo banner on the page');
+ok(!/demo|evaluation|do not enter real client/i.test(await page.textContent('body')), 'and nothing on the first screen calls this a demo or an evaluation copy', (await page.textContent('body')).slice(0, 200));
 ok(await page.$('input[name=display_name]'), 'so opening it with no query string at all still lands on first-run setup, not a login screen for a server that does not exist');
+eq(await page.getAttribute('[data-mode-tab=signup]', 'aria-selected'), 'true', 'first-run set-up is the Sign up option, selected because the device has no account');
+ok(await page.$('[data-storage-notice]') && /nowhere else/.test(await page.textContent('[data-storage-notice]')), 'it says once where the records are kept');
 
 await page.fill('input[name=display_name]', 'Static Nav'); await page.fill('input[name=username]', 'staticnav');
 await page.fill('input[name=password]', 'Navigator2026!!'); await page.fill('input[name=confirm]', 'Navigator2026!!');
+await page.click('button[type=submit]'); await settle(page);
+ok(!(await page.$('.layout')) && /where your records are kept/.test(await page.textContent('.login-wrap')), 'without ticking the storage confirmation the account is not created');
+await page.check('input[name=storage_ack]');
 await page.click('button[type=submit]');
 await page.waitForSelector('.layout', { timeout: 10000 }).catch(() => {});
 ok(await page.$('.layout'), 'setup completes with no server round trip');
@@ -46,21 +53,16 @@ ok(await page.$('.layout'), 'the session survives a reload without signing in ag
 await page.goto(base + '/#/clients'); await settle(page);
 eq(await page.$$eval('tbody tr', r => r.length), 1, 'and the client entered offline is still there');
 
-// Sample data beside what someone typed in: the demo holds nothing real, so a client entered while trying
-// SUDS out no longer locks the sample data away (an office-served copy still refuses; test/demo.test.js).
+// The on-device app holds real records now: fictional sample clients are only offered to an empty device
+// (as on an office server), never mixed in beside a real one (ux-polish.mjs loads them on an empty device).
 await page.goto(base + '/#/sync'); await settle(page);
-ok(!(await page.$('[data-sample-refused]')), 'the demo does not refuse sample data because a client already exists');
-ok(await page.$('[data-sample-alongside]'), 'it offers to add the sample clients beside the one entered here');
-await page.click('[data-sample] button:has-text("Load sample data")');
-await page.waitForSelector('[data-sample=loaded]', { timeout: 20000 }).catch(() => {});
-ok(await page.$('[data-sample=loaded]'), 'and loads them');
+eq(await page.textContent('h1'), 'This device', 'the device page is called "This device"');
+ok(await page.$('[data-sample-refused]'), 'with a client on the device, sample data is refused');
+ok(!(await page.$('[data-sample-alongside]')), 'and not offered beside the real client');
+const refusedLoad = await page.evaluate(() => window.SUDS_LOCAL.handle('POST', '/api/local/demo', {}, {}).then(r => r.status));
+eq(refusedLoad, 400, 'the kernel refuses it too');
 await page.goto(base + '/#/clients?status=all'); await settle(page);
-ok(await page.$$eval('tbody tr', r => r.length) > 1 && await page.$('tbody tr:has-text("Offline")'), 'the sample clients sit beside the client entered offline', await page.$$eval('tbody tr', r => r.length));
-await page.goto(base + '/#/sync'); await settle(page);
-await page.click('button:has-text("Remove sample data")'); await page.waitForSelector('.modal button.danger');
-await page.click('.modal button.danger'); await page.waitForSelector('[data-sample=empty]', { timeout: 20000 }).catch(() => {});
-await page.goto(base + '/#/clients?status=all'); await settle(page);
-eq(await page.$$eval('tbody tr', r => r.length), 1, 'removing the sample data leaves only the client entered offline');
+eq(await page.$$eval('tbody tr', r => r.length), 1, 'the device still holds only the client entered offline');
 
 // installable as a home-screen app: the manifest has to actually resolve and be well-formed, not just linked
 const manifest = await page.evaluate(async () => {
@@ -75,12 +77,12 @@ ok(manifest && manifest.display === 'standalone' && Array.isArray(manifest.icons
 eq(await page.evaluate(async () => (await fetch('app')).status), 404, 'a plain static host answers 404 for /app (this suite\'s server does not imitate the office rewrite)');
 await page.goto(base + '/get-app.html'); await page.waitForSelector('#static-url, #url', { timeout: 10000 }).catch(() => {});
 eq(await page.title(), 'Use SUDS on your phone or tablet', 'get-app.html is in the build and opens');
-ok(await page.$('.static-demo-banner'), 'with the demo banner on it too');
-ok(await page.$eval('[data-static]:not(.hidden)', el => /demo\/evaluation copy/.test(el.textContent)), 'it says this is the evaluation copy that runs in the browser');
+ok(!(await page.$('.static-demo-banner')) && !/demo|evaluation/i.test(await page.textContent('body')), 'with no demo banner or evaluation wording on it either');
+ok(await page.$eval('[data-static]:not(.hidden)', el => /SUDS on this device runs entirely inside your browser/.test(el.textContent)), 'it says SUDS on this device runs in the browser');
 ok(await page.$$eval('[data-office]', els => els.every(el => el.classList.contains('hidden'))), 'the office-address and "stay connected" wording is hidden');
 ok(await page.$eval('#cert', el => el.classList.contains('hidden')), 'there is no certificate to download');
 ok(await page.$eval('#signin-note', el => el.classList.contains('hidden')), 'and no "sign in first" note for a server that does not exist');
-ok(await page.$eval('#static-local', el => !el.classList.contains('hidden') && /Offline copy/.test(el.textContent)), 'the offline-copy section is shown');
+ok(await page.$eval('#static-local', el => !el.classList.contains('hidden') && /Your records stay on this device/.test(el.textContent) && /backup/.test(el.textContent)), 'the "your records stay on this device" section is shown, with the advice to back up');
 eq(await page.$eval('#static-local a', a => a.getAttribute('href')), './', 'and its link opens this site');
 ok(await page.$eval('#static-url', el => /127\.0\.0\.1/.test(el.textContent) && !/get-app/.test(el.textContent)), 'the address shown is this site\'s, not a server\'s', await page.$eval('#static-url', el => el.textContent));
 // every way into that page uses the file name: the login screen's tip, the offline banner, the admin card
@@ -93,18 +95,18 @@ await page.waitForSelector('.layout', { timeout: 10000 });
 ok(await page.$('.layout'), 'signed back in');
 eq(await page.evaluate(() => [...document.querySelectorAll('a[href]')].map(a => a.getAttribute('href')).filter(h => /(^|\/)app\/?$/.test(h)).length), 0, 'nothing on the page links to /app');
 
-// The demo build never syncs (docs/WEB_APP.md): the Sync screen says so instead of offering a form that
+// The on-device app never syncs (docs/WEB_APP.md): its device page says so instead of offering a form that
 // could only fail, and nothing is sent to any office address.
 await page.goto(base + '/#/sync'); await page.waitForSelector('[data-static-no-sync], input[name=office_password]', { timeout: 10000 }).catch(() => {});
-ok(await page.$('[data-static-no-sync]'), 'the Sync screen says sync is not available from the demo site');
-eq(await page.$eval('[data-static-no-sync]', b => /Sync is not available from the demo site/.test(b.textContent)), true, 'in those words');
+ok(await page.$('[data-static-no-sync]'), 'the device page says it does not sync with an office server');
+eq(await page.$eval('[data-static-no-sync]', b => /does not sync with an office server/.test(b.textContent)), true, 'in those words');
 ok(!(await page.$('input[name=office_password]')), 'and offers no office sign-in form');
 const syncAttempt = await page.evaluate(() => window.SUDS_LOCAL.handle('POST', '/api/local/sync', { server: 'https://suds.local', username: 'x', password: 'y' }, {}).then(r => r.json));
-ok(syncAttempt && /not available from the demo site/.test(syncAttempt.error) && syncAttempt.staticSyncRefused, 'the kernel refuses a sync outright, before any credential leaves the browser', syncAttempt);
+ok(syncAttempt && /does not sync with an office server/.test(syncAttempt.error) && syncAttempt.staticSyncRefused, 'the kernel refuses a sync outright, before any credential leaves the browser', syncAttempt);
 
 // Installed to a home screen, it has to open with no connection: the service worker caches the kernel.
 const swActive = await until(() => page.evaluate(() => navigator.serviceWorker.getRegistration().then(r => !!(r && r.active))), { timeout: 15000 });
-ok(swActive, 'the demo build registers its service worker');
+ok(swActive, 'the on-device build registers its service worker');
 const cachedBoot = await until(() => page.evaluate(async () => { for (const k of await caches.keys()) { const c = await caches.open(k); if (await c.match('local-boot.js') && await c.match('local/kernel.js', { ignoreSearch: true })) return true; } return false; }), { timeout: 15000 });
 ok(cachedBoot, 'the boot script and the kernel are in its shell cache');
 ok(await page.evaluate(async () => { for (const k of await caches.keys()) { const c = await caches.open(k); if (await c.match('get-app.html') && await c.match('get-app.js')) return true; } return false; }), 'so is the phone/tablet page');
@@ -114,7 +116,7 @@ eq(await page.evaluate(async () => (await fetch('views/no-such-view.js')).status
 await ctx.setOffline(true);
 await page.reload().catch(() => {});
 await until(() => page.$('.layout, input[name=username], input[name=display_name]'), { timeout: 20000 });
-ok(await page.$('.layout'), 'with no connection at all the installed demo still opens, signed in', (await page.textContent('body')).slice(0, 120));
+ok(await page.$('.layout'), 'with no connection at all the installed app still opens, signed in', (await page.textContent('body')).slice(0, 120));
 ok(await page.evaluate(() => fetch('views/no-such-view.js').then(r => r.status !== 200 && !/<!doctype/i.test(r.headers.get('content-type') || ''), () => true)), 'offline, a missing script is a failure, not index.html served as a 200');
 const offlineGetApp = await page.evaluate(async () => {
   // Diagnostics for engines where this has failed (WebKit): what the worker holds, and what fetch() saw.

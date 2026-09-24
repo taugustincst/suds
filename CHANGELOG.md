@@ -2,6 +2,60 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+- **The GitHub Pages build is now SUDS on this device, a production web app — not a demo.** The
+  "Demo/evaluation build" banner and its `--demo-banner-h` layout machinery are gone, and no screen calls it a
+  demo or an evaluation copy. It keeps its records encrypted in the browser that holds them, never syncs, and
+  says so honestly (`docs/WEB_APP.md`, *Where your records live*). "Try it with sample data" remains, folded
+  away below the Sign up form, and sample data is now only offered to an empty device (as on an office
+  server), never mixed in with real records.
+- **Log in / Sign up on the sign-in page**, on both builds: a two-option tab list (arrow keys, 44px targets on
+  a phone), deep-linkable as `#/login?mode=login|signup`, with the programme contact in the footer.
+  - *Office server:* Sign up requests an account (name, username, optional email, password, a line about the
+    role). `POST /api/auth/signup` is unauthenticated, needs the CSRF header, is rate limited per address
+    (`SIGNUP_RATE_LIMIT`, default 5/hour), answers the same whether or not the username exists, and is audited
+    as `user.signup.requested`. The account cannot sign in until an administrator approves it under
+    **Settings → Users & roles → Access requests (N)** (`POST /api/users/:id/approve` with the role and an
+    optional supervisor, or `/decline`); the correct password on a pending account is told it is waiting,
+    anything else gets the ordinary failure. The MFA grace period runs from approval. Home and the Users tab
+    show administrators how many requests wait. New setting `self_signup` (on by default); off, Sign up says to
+    ask an administrator and the route answers 403.
+  - *On this device:* the first Sign up is the first-run set-up and makes that account the device's manager;
+    later sign-ups create navigator accounts at once, and from the second account on everyone sees only their
+    own caseload. The manager can turn sign-ups off (`/api/local/signup`, `/api/local/device`).
+- **Safeguards for records that live only on a device.** First-run Sign up states once where records are kept
+  and that clearing site data or losing the device loses them, and requires a checkbox. **This device** (the
+  page formerly called Sync on this build) shows whether the browser has granted persistent storage
+  (requested at account creation) and the last backup. **Download a backup** makes a passphrase-encrypted
+  file (WebCrypto PBKDF2-SHA256, 600,000 iterations → AES-256-GCM; `local/backup.js`) holding the database and
+  the keys that read it; **Restore from a backup** (also on an empty device's sign-in page) checks the
+  passphrase and the file, shows what it holds, requires typing RESTORE, and writes the database under a newly
+  claimed epoch (`local/shims/sqlite.js` `replaceWith`). Home reminds the device's manager after 7 days
+  without a backup (dismissible for the day).
+- **Settings:** `mfa_grace_days` is now on the form; `program_contact` is shown on the sign-in page; the unused
+  `default_funding_source_id` is no longer accepted.
+- Migration 25 adds `users.access_status`, `users.access_note` and `users.requested_at`. `access_note` is not
+  sent to devices by sync.
+- The browser suite gains `scripts/ui/signup.mjs`; `run-all.sh` takes `SUDS_UI_TMP` and `SETUP_BOOT_PORT` so two
+  suites can run side by side. Docs: `WEB_APP.md` and `PLATFORM.md` rewritten for the two ways to run SUDS;
+  README, INSTALL, HIPAA (risk register), DEPLOYMENT updated.
+- **Completeness fixes.**
+  - Local mode and SUDS on this device: "Everything as one Excel workbook" now works (no `setImmediate`; the
+    zip falls back to synchronous compression).
+  - A fatal overdose discharges the client as deceased after confirmation; changing the outcome or deleting
+    the event restores the client, episode, care team and to-dos. Overdose events can be deleted.
+  - Signed notes have **Verify signature** ("Signature intact" / "Changed after signing") and show the full
+    hash on demand.
+  - Finance no longer sees client links that lead to a 403; the client page says "Not available for your role".
+  - Patient-rights requests can be edited and deleted from the client's Requests tab.
+  - Reports: an Episodes of care card (admissions, discharges by reason) and single-table exports for
+    episodes, overdose events, client forms and disclosures. `GET /api/episodes` returns period counts.
+  - Discharge reasons, overdose options and request kinds come from the server's meta lists.
+  - Supervision hides the note sections from roles that cannot countersign.
+  - Imports: a staged item can only be discarded by the person who imported it, or a manager.
+  - Docs: `API.md` regenerated; user guide updated.
+
 ## 1.9.4 — 2026-09-24
 
 - **The paused screen tells the truth in every event order.** A displaced tab says its work was "saved first"

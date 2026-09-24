@@ -4,7 +4,7 @@
 (async () => {
   // The published static build (scripts/build-static-site.js) sets window.SUDS_STATIC_HOST before this runs.
   // There is no office server behind it: no certificate to download, no office address to show, and the
-  // "offline copy" is the site itself.
+  // records live in the browser that opens the site itself (SUDS on this device).
   if (window.SUDS_STATIC_HOST) {
     document.querySelectorAll('[data-office]').forEach(el => el.classList.add('hidden'));
     document.querySelectorAll('[data-static]').forEach(el => el.classList.remove('hidden'));

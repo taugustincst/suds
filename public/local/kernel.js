@@ -57,46 +57,46 @@ var require_base64_js = __commonJS({
     var len;
     revLookup["-".charCodeAt(0)] = 62;
     revLookup["_".charCodeAt(0)] = 63;
-    function getLens(b64) {
-      var len2 = b64.length;
+    function getLens(b642) {
+      var len2 = b642.length;
       if (len2 % 4 > 0) {
         throw new Error("Invalid string. Length must be a multiple of 4");
       }
-      var validLen = b64.indexOf("=");
+      var validLen = b642.indexOf("=");
       if (validLen === -1) validLen = len2;
       var placeHoldersLen = validLen === len2 ? 0 : 4 - validLen % 4;
       return [validLen, placeHoldersLen];
     }
-    function byteLength(b64) {
-      var lens = getLens(b64);
+    function byteLength(b642) {
+      var lens = getLens(b642);
       var validLen = lens[0];
       var placeHoldersLen = lens[1];
       return (validLen + placeHoldersLen) * 3 / 4 - placeHoldersLen;
     }
-    function _byteLength(b64, validLen, placeHoldersLen) {
+    function _byteLength(b642, validLen, placeHoldersLen) {
       return (validLen + placeHoldersLen) * 3 / 4 - placeHoldersLen;
     }
-    function toByteArray(b64) {
+    function toByteArray(b642) {
       var tmp;
-      var lens = getLens(b64);
+      var lens = getLens(b642);
       var validLen = lens[0];
       var placeHoldersLen = lens[1];
-      var arr = new Arr(_byteLength(b64, validLen, placeHoldersLen));
+      var arr = new Arr(_byteLength(b642, validLen, placeHoldersLen));
       var curByte = 0;
       var len2 = placeHoldersLen > 0 ? validLen - 4 : validLen;
       var i2;
       for (i2 = 0; i2 < len2; i2 += 4) {
-        tmp = revLookup[b64.charCodeAt(i2)] << 18 | revLookup[b64.charCodeAt(i2 + 1)] << 12 | revLookup[b64.charCodeAt(i2 + 2)] << 6 | revLookup[b64.charCodeAt(i2 + 3)];
+        tmp = revLookup[b642.charCodeAt(i2)] << 18 | revLookup[b642.charCodeAt(i2 + 1)] << 12 | revLookup[b642.charCodeAt(i2 + 2)] << 6 | revLookup[b642.charCodeAt(i2 + 3)];
         arr[curByte++] = tmp >> 16 & 255;
         arr[curByte++] = tmp >> 8 & 255;
         arr[curByte++] = tmp & 255;
       }
       if (placeHoldersLen === 2) {
-        tmp = revLookup[b64.charCodeAt(i2)] << 2 | revLookup[b64.charCodeAt(i2 + 1)] >> 4;
+        tmp = revLookup[b642.charCodeAt(i2)] << 2 | revLookup[b642.charCodeAt(i2 + 1)] >> 4;
         arr[curByte++] = tmp & 255;
       }
       if (placeHoldersLen === 1) {
-        tmp = revLookup[b64.charCodeAt(i2)] << 10 | revLookup[b64.charCodeAt(i2 + 1)] << 4 | revLookup[b64.charCodeAt(i2 + 2)] >> 2;
+        tmp = revLookup[b642.charCodeAt(i2)] << 10 | revLookup[b642.charCodeAt(i2 + 1)] << 4 | revLookup[b642.charCodeAt(i2 + 2)] >> 2;
         arr[curByte++] = tmp >> 8 & 255;
         arr[curByte++] = tmp & 255;
       }
@@ -663,7 +663,7 @@ var require_buffer = __commonJS({
       if (this === b) return true;
       return Buffer2.compare(this, b) === 0;
     };
-    Buffer2.prototype.inspect = function inspect() {
+    Buffer2.prototype.inspect = function inspect2() {
       let str = "";
       const max2 = exports.INSPECT_MAX_BYTES;
       str = this.toString("hex", 0, max2).replace(/(.{2})/g, "$1 ").trim();
@@ -3732,13 +3732,13 @@ function randomBytes2(n) {
 function randomUUID() {
   return crypto.randomUUID();
 }
-function toU8(x, enc) {
+function toU8(x, enc2) {
   if (import_buffer.Buffer.isBuffer(x) || x instanceof Uint8Array) return new Uint8Array(x.buffer, x.byteOffset, x.byteLength);
-  return new Uint8Array(import_buffer.Buffer.from(String(x), enc || "utf8"));
+  return new Uint8Array(import_buffer.Buffer.from(String(x), enc2 || "utf8"));
 }
-function out(u83, enc) {
+function out(u83, enc2) {
   const b = import_buffer.Buffer.from(u83);
-  return enc ? b.toString(enc) : b;
+  return enc2 ? b.toString(enc2) : b;
 }
 function createHash(alg) {
   const h = HASHES[alg];
@@ -5939,16 +5939,20 @@ __export(sqlite_exports, {
   acquireLock: () => acquireLock,
   default: () => sqlite_default,
   epoch: () => epoch,
+  exportCurrent: () => exportCurrent,
   flush: () => flush,
   forceAcquireLock: () => forceAcquireLock,
   hasLock: () => hasLock,
   init: () => init,
+  inspect: () => inspect,
   isDirty: () => isDirty,
   isFrozen: () => isFrozen,
+  isReplaced: () => isReplaced,
   isWiped: () => isWiped,
   loadBytes: () => loadBytes,
   lockIsStale: () => lockIsStale,
   onLockLost: () => onLockLost,
+  replaceWith: () => replaceWith,
   saveBytes: () => saveBytes,
   setSaveErrorHandler: () => setSaveErrorHandler,
   wipe: () => wipe
@@ -6276,11 +6280,85 @@ async function wipe() {
 function isWiped() {
   return wiped;
 }
+async function replaceWith(bytes3) {
+  if (wiped || frozen || myEpoch === null) throw new Error("This window no longer holds the on-device database. Reload and try again.");
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  if (saving) {
+    try {
+      await saving;
+    } catch {
+    }
+  }
+  const d = await idb();
+  const epoch2 = await new Promise((res, rej) => {
+    const t = d.transaction("kv", "readwrite");
+    const s = t.objectStore("kv");
+    let next = null;
+    let fenced = false;
+    const g = s.get(EPOCH_KEY);
+    g.onsuccess = () => {
+      if (g.result !== myEpoch) {
+        fenced = true;
+        try {
+          t.abort();
+        } catch {
+        }
+        return;
+      }
+      next = Math.max(myEpoch + 1, Date.now());
+      s.put(next, EPOCH_KEY);
+      s.put(bytes3, dbKey(next));
+      const keys = s.getAllKeys(IDBKeyRange.bound(DB_PREFIX, DB_PREFIX + "\uFFFF"));
+      keys.onsuccess = () => {
+        for (const k of keys.result) if (k !== dbKey(next)) s.delete(k);
+      };
+    };
+    t.oncomplete = () => res(next);
+    t.onabort = () => rej(fenced ? new Error("SUDS is open in another window on this device; restore from that window.") : t.error || new Error("The restore could not be written"));
+    t.onerror = () => rej(t.error);
+  });
+  myEpoch = epoch2;
+  replaced = true;
+  dirty = false;
+  if (current) {
+    const c = current;
+    current = null;
+    try {
+      c.close();
+    } catch {
+    }
+  }
+}
+function exportCurrent() {
+  if (!current) throw new Error("The on-device database is not open");
+  return current.export();
+}
+function isReplaced() {
+  return replaced;
+}
+function inspect(bytes3, fn) {
+  if (!SQL) throw new Error("sqlite shim not initialised");
+  const d = new SQL.Database(bytes3);
+  try {
+    return fn({ one: (sql, ...p) => {
+      const st = d.prepare(sql);
+      try {
+        st.bind(p);
+        return st.step() ? st.getAsObject() : void 0;
+      } finally {
+        st.free();
+      }
+    } });
+  } finally {
+    d.close();
+  }
+}
 function setSaveErrorHandler(fn) {
   onSaveError = fn;
 }
 function flush({ urgent = false } = {}) {
-  if (wiped || frozen || !current || myEpoch === null) return Promise.resolve();
+  if (wiped || frozen || replaced || !current || myEpoch === null) return Promise.resolve();
   if (urgent && inflight && typeof inflight.commit === "function") {
     try {
       inflight.commit();
@@ -6309,7 +6387,7 @@ function isDirty() {
   return dirty;
 }
 function markDirty() {
-  if (wiped || frozen) return;
+  if (wiped || frozen || replaced) return;
   dirty = true;
   writeSeq++;
   if (inTransaction) return;
@@ -6319,7 +6397,7 @@ function markDirty() {
     });
   }, COALESCE_MS);
 }
-var SQL, STORE, LEGACY_KEY, EPOCH_KEY, DB_PREFIX, dbKey, myEpoch, claimedBytes, LOCK_NAME, HEARTBEAT_KEY, HELD_KEY, CHANNEL, HEARTBEAT_MS, STALE_MS, ACK_WAIT_MS, SAME_TAB_WAIT_MS, docId, haveLock, frozen, steppingAside, heartbeatTimer, channel, lostHandler, lostNotified, conn, inflight, current, saveTimer, dirty, saving, wiped, inTransaction, onSaveError, COALESCE_MS, writeSeq, Statement, DatabaseSync, sqlite_default;
+var SQL, STORE, LEGACY_KEY, EPOCH_KEY, DB_PREFIX, dbKey, myEpoch, claimedBytes, LOCK_NAME, HEARTBEAT_KEY, HELD_KEY, CHANNEL, HEARTBEAT_MS, STALE_MS, ACK_WAIT_MS, SAME_TAB_WAIT_MS, docId, haveLock, frozen, steppingAside, heartbeatTimer, channel, lostHandler, lostNotified, conn, inflight, current, saveTimer, dirty, saving, wiped, replaced, inTransaction, onSaveError, COALESCE_MS, writeSeq, Statement, DatabaseSync, sqlite_default;
 var init_sqlite = __esm({
   "local/shims/sqlite.js"() {
     init_globals_inject();
@@ -6354,6 +6432,7 @@ var init_sqlite = __esm({
     dirty = false;
     saving = null;
     wiped = false;
+    replaced = false;
     inTransaction = false;
     onSaveError = (e) => console.error("[suds-local] save failed", e);
     COALESCE_MS = 250;
@@ -6460,7 +6539,7 @@ var init_sqlite = __esm({
         return this.db.export();
       }
     };
-    sqlite_default = { DatabaseSync, init, loadBytes, saveBytes, wipe, isWiped, flush, isDirty, acquireLock, lockIsStale, forceAcquireLock, hasLock, epoch, isFrozen, onLockLost, setSaveErrorHandler };
+    sqlite_default = { DatabaseSync, init, loadBytes, saveBytes, wipe, isWiped, replaceWith, isReplaced, inspect, exportCurrent, flush, isDirty, acquireLock, lockIsStale, forceAcquireLock, hasLock, epoch, isFrozen, onLockLost, setSaveErrorHandler };
   }
 });
 
@@ -6470,12 +6549,12 @@ var require_config = __commonJS({
     init_globals_inject();
     var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
     function key(name) {
-      let hex = localStorage.getItem(name);
-      if (!hex) {
-        hex = crypto3.randomBytes(32).toString("hex");
-        localStorage.setItem(name, hex);
+      let hex2 = localStorage.getItem(name);
+      if (!hex2) {
+        hex2 = crypto3.randomBytes(32).toString("hex");
+        localStorage.setItem(name, hex2);
       }
-      return import_buffer.Buffer.from(hex, "hex");
+      return import_buffer.Buffer.from(hex2, "hex");
     }
     var config = {
       version: true ? "1.9.4" : "local",
@@ -6500,6 +6579,7 @@ var require_config = __commonJS({
       // One person, one device: there is no address to rate-limit, and the office server's per-address cap
       // must not turn into a lockout here.
       loginRateLimit: 1e5,
+      signupRateLimit: 1e5,
       msGraph: { tenantId: "", clientId: "", clientSecret: "", user: "" },
       auditRetentionDays: 2555,
       maxBodyBytes: 60 * 1024 * 1024,
@@ -6573,6 +6653,13 @@ CREATE TABLE IF NOT EXISTS users (
   -- account on its own. The 'sub' claim from the county's identity provider, matched against config.oidc's
   -- single configured issuer \u2014 not itself an issuer/subject pair, since this server only ever trusts one IdP.
   oidc_subject TEXT,
+  -- Self sign-up (POST /api/auth/signup): a request for an account is a users row that cannot sign in
+  -- (is_active=0, access_status='pending') until an administrator approves it under Settings -> Users &
+  -- roles. access_note is the requester's own "why I need access" (staff text, never client information);
+  -- requested_at is when they asked. Every account created any other way is 'active' from the start.
+  access_status TEXT NOT NULL DEFAULT 'active' CHECK (access_status IN ('active','pending','declined')),
+  access_note TEXT,
+  requested_at TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -7326,20 +7413,20 @@ var require_crypto = __commonJS({
     init_globals_inject();
     var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
     var config = require_config();
-    var VERSION = "v1";
+    var VERSION2 = "v1";
     function encrypt3(plain, key = config.encryptionKey) {
       if (plain === null || plain === void 0) return null;
       const text = String(plain);
       const iv = crypto3.randomBytes(12);
       const cipher = crypto3.createCipheriv("aes-256-gcm", key, iv);
-      const enc = import_buffer.Buffer.concat([cipher.update(text, "utf8"), cipher.final()]);
+      const enc2 = import_buffer.Buffer.concat([cipher.update(text, "utf8"), cipher.final()]);
       const tag = cipher.getAuthTag();
-      return `${VERSION}:${iv.toString("base64")}:${tag.toString("base64")}:${enc.toString("base64")}`;
+      return `${VERSION2}:${iv.toString("base64")}:${tag.toString("base64")}:${enc2.toString("base64")}`;
     }
     function decrypt3(payload, key = config.encryptionKey) {
       if (payload === null || payload === void 0 || payload === "") return payload ?? null;
       const parts = String(payload).split(":");
-      if (parts.length !== 4 || parts[0] !== VERSION) throw new Error("Unrecognized ciphertext format");
+      if (parts.length !== 4 || parts[0] !== VERSION2) throw new Error("Unrecognized ciphertext format");
       const iv = import_buffer.Buffer.from(parts[1], "base64");
       const tag = import_buffer.Buffer.from(parts[2], "base64");
       const data = import_buffer.Buffer.from(parts[3], "base64");
@@ -7648,7 +7735,7 @@ var require_db = __commonJS({
     var { DatabaseSync: DatabaseSync2 } = (init_sqlite(), __toCommonJS(sqlite_exports));
     var config = require_config();
     var db3;
-    function open(dbPath = config.dbPath) {
+    function open2(dbPath = config.dbPath) {
       if (db3) return db3;
       if (dbPath !== ":memory:") fs.mkdirSync(path.dirname(dbPath), { recursive: true });
       db3 = new DatabaseSync2(dbPath);
@@ -7797,10 +7884,10 @@ var require_db = __commonJS({
         }
         if (tableExists(d, "episodes")) {
           const { uuid: uuid2 } = require_crypto();
-          const open2 = d.prepare(`SELECT id, intake_date, created_at, created_by, referral_source, status, discharge_date, discharge_reason FROM clients WHERE deleted_at IS NULL`).all();
+          const open3 = d.prepare(`SELECT id, intake_date, created_at, created_by, referral_source, status, discharge_date, discharge_reason FROM clients WHERE deleted_at IS NULL`).all();
           const ins = d.prepare(`INSERT INTO episodes(id,client_id,opened_at,opened_by,referral_source,closed_at,discharge_reason,status) VALUES(?,?,?,?,?,?,?,?)`);
           const has = d.prepare(`SELECT 1 FROM episodes WHERE client_id=?`);
-          for (const c of open2) {
+          for (const c of open3) {
             if (has.get(c.id)) continue;
             const closed = c.status === "closed" || c.status === "deceased";
             ins.run(uuid2(), c.id, c.intake_date || String(c.created_at).slice(0, 10), c.created_by, c.referral_source, closed ? c.discharge_date || c.created_at : null, closed ? c.discharge_reason : null, closed ? "closed" : "open");
@@ -8011,6 +8098,13 @@ var require_db = __commonJS({
         if (!tableExists(d, "tasks") || !tableCols(d, "tasks").includes("description")) return;
         encryptColumn(d, "tasks", "description", "description_enc");
         rebuildTable(d, safeSchema(), "tasks");
+      },
+      // 25: self sign-up. A request for an account is a users row that cannot sign in until an administrator
+      //     approves it (access_status 'pending'); every existing account is 'active'.
+      (d) => {
+        addColumn(d, "users", "access_status", `TEXT NOT NULL DEFAULT 'active' CHECK (access_status IN ('active','pending','declined'))`);
+        addColumn(d, "users", "access_note", "TEXT");
+        addColumn(d, "users", "requested_at", "TEXT");
       }
     ];
     function initialise(d, schemaText, dbPath) {
@@ -8091,7 +8185,7 @@ var require_db = __commonJS({
       }
     }
     function get() {
-      if (!db3) open();
+      if (!db3) open2();
       return db3;
     }
     function close() {
@@ -8172,7 +8266,7 @@ var require_db = __commonJS({
     function tombstone(table, id) {
       run2(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now());
     }
-    module.exports = { open, openWith, get, close, LATEST_SCHEMA_VERSION: migrations.length, now, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint };
+    module.exports = { open: open2, openWith, get, close, LATEST_SCHEMA_VERSION: migrations.length, now, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint };
   }
 });
 
@@ -8337,9 +8431,9 @@ var require_http = __commonJS({
     var PRECOMPRESSED = [["br", ".br"], ["gzip", ".gz"]];
     function pickEncoding(req, filePath) {
       const accept = String(req && req.headers && req.headers["accept-encoding"] || "").toLowerCase();
-      for (const [enc, ext] of PRECOMPRESSED) {
-        if (!new RegExp(`(^|,)\\s*${enc}\\s*(;|,|$)`).test(accept)) continue;
-        if (fs.existsSync(filePath + ext)) return { enc, file: filePath + ext };
+      for (const [enc2, ext] of PRECOMPRESSED) {
+        if (!new RegExp(`(^|,)\\s*${enc2}\\s*(;|,|$)`).test(accept)) continue;
+        if (fs.existsSync(filePath + ext)) return { enc: enc2, file: filePath + ext };
       }
       return null;
     }
@@ -8938,6 +9032,11 @@ var require_auth = __commonJS({
         await verifyPasswordAsync(password || "", "scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AA==");
         fail("unknown user");
       }
+      if (!user.is_active && (user.access_status === "pending" || user.access_status === "declined") && !pendingWipe) {
+        if (!await verifyPasswordAsync(password || "", user.password_hash)) fail("bad password");
+        audit3.log({ user: who, action: "auth.login.access_" + user.access_status, ip: ctx.ip, success: false });
+        throw new HttpError3(403, user.access_status === "pending" ? "Your request is waiting for an administrator to approve it. You can sign in once it has been approved." : "Your request for an account was not approved. Ask your administrator if you think this is a mistake.", { accessPending: user.access_status === "pending", accessDeclined: user.access_status === "declined" });
+      }
       if (!user.is_active) {
         if (pendingWipe && await verifyPasswordAsync(password || "", user.password_hash)) wipeRequired(true);
         fail("inactive");
@@ -9011,6 +9110,7 @@ var require_auth = __commonJS({
       return errors;
     }
     module.exports = {
+      auditUsername,
       policy,
       PERMS,
       hasPerm,
@@ -9171,6 +9271,7 @@ var require_sync_tables = __commonJS({
       if (t.name === "users") {
         delete o.failed_attempts;
         delete o.locked_until;
+        delete o.access_note;
       }
       return o;
     }
@@ -11346,7 +11447,7 @@ var require_backup = __commonJS({
       out2.push(crypto3.createHash("sha256").update(import_buffer.Buffer.concat([config.encryptionKey, import_buffer.Buffer.from("suds-backup")])).digest());
       return out2;
     }
-    function create({ encryptionKey } = {}) {
+    function create2({ encryptionKey } = {}) {
       const tmp = path.join(config.dataDir, `.backup-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
       let plain;
       try {
@@ -11382,7 +11483,7 @@ var require_backup = __commonJS({
       }
       throw new Error("The backup could not be read. It is either damaged, or it was made with a different encryption key.");
     }
-    function inspect(plainBytes) {
+    function inspect2(plainBytes) {
       const tmp = path.join(config.dataDir, `.inspect-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
       fs.writeFileSync(tmp, plainBytes, { mode: 384 });
       try {
@@ -11412,7 +11513,7 @@ var require_backup = __commonJS({
       }
     }
     function restore(plainBytes) {
-      const info = inspect(plainBytes);
+      const info = inspect2(plainBytes);
       const dbPath = config.dbPath;
       if (dbPath === ":memory:") throw new Error("This server is running on an in-memory database; there is nothing to restore into.");
       const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
@@ -11466,7 +11567,7 @@ var require_backup = __commonJS({
       db3.setSetting("db_generation", require_crypto().uuid());
       return { ...info, previous_database_kept_at: aside };
     }
-    module.exports = { create, decrypt: decrypt3, inspect, restore, backupKey };
+    module.exports = { create: create2, decrypt: decrypt3, inspect: inspect2, restore, backupKey };
   }
 });
 
@@ -11619,7 +11720,7 @@ var require_admin = __commonJS({
       "caseload_restriction",
       "county_name",
       "program_contact",
-      "default_funding_source_id",
+      "self_signup",
       "note_lock_days",
       "session_idle_minutes",
       "session_absolute_hours",
@@ -11654,6 +11755,7 @@ var require_admin = __commonJS({
             if (["session_idle_minutes", "session_absolute_hours", "password_max_age_days", "mfa_grace_days", "backup_schedule_hours", "backup_retain_count", "client_retention_years"].includes(k) && v !== "" && !(Number(v) >= 0)) throw badRequest(`${k} must be a non-negative number`);
             if (["session_idle_minutes", "session_absolute_hours", "password_max_age_days", "backup_retain_count"].includes(k) && v !== "" && Number(v) < 1) throw badRequest(`${k} must be at least 1; leave it blank to use the default`);
             if (k === "client_retention_years" && v !== "" && Number(v) < 6) throw badRequest("Client records must be kept at least 6 years (45 CFR \xA7164.316(b)(2)); most SUD programs keep 7 or more");
+            if (k === "self_signup" && v !== "" && !["0", "1"].includes(v)) throw badRequest("self_signup must be 1 (on) or 0 (off)");
             if (k === "mfa_required_roles") v = v.split(",").map((x) => x.trim()).filter((x) => ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"].includes(x)).join(",");
             if (k === "session_idle_minutes" && v !== "" && Number(v) > 60) throw badRequest("Idle timeout may not exceed 60 minutes (HIPAA automatic logoff)");
             if (v === "") db3.run(`DELETE FROM settings WHERE key=?`, k);
@@ -11763,10 +11865,10 @@ var require_admin = __commonJS({
       });
       const backup = require_backup();
       r.get("/api/admin/backup", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
-        const enc = backup.create();
-        audit3.log({ user: ctx.user, action: "backup.download", ip: ctx.ip, details: { bytes: enc.length } });
+        const enc2 = backup.create();
+        audit3.log({ user: ctx.user, action: "backup.download", ip: ctx.ip, details: { bytes: enc2.length } });
         ctx.res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Disposition": `attachment; filename="suds-backup-${(/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-")}.db.enc"` });
-        ctx.res.end(enc);
+        ctx.res.end(enc2);
       });
       const scheduledBackup = require_scheduled_backup();
       r.post("/api/admin/backup/run-now", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
@@ -11776,9 +11878,9 @@ var require_admin = __commonJS({
         return { ok: true, file: path.basename(out2.file), bytes: out2.bytes, offsite_ok: out2.offsiteOk, offsite_error: out2.offsiteError || null, verified: out2.verified, verify_error: out2.verifyError || null };
       });
       function backupFromUpload(ctx) {
-        const b64 = ctx.body && ctx.body.file_b64 || "";
-        if (!b64 || typeof b64 !== "string") throw badRequest("Choose the backup file to upload");
-        const raw = import_buffer.Buffer.from(b64.replace(/^data:[^,]*,/, ""), "base64");
+        const b642 = ctx.body && ctx.body.file_b64 || "";
+        if (!b642 || typeof b642 !== "string") throw badRequest("Choose the backup file to upload");
+        const raw = import_buffer.Buffer.from(b642.replace(/^data:[^,]*,/, ""), "base64");
         return asBadRequest(() => backup.decrypt(raw));
       }
       function asBadRequest(fn) {
@@ -12107,6 +12209,46 @@ var require_auth2 = __commonJS({
         const out2 = { user: result.user, mfaPending: result.mfaPending, mfaSetupRequired: result.mfaSetupRequired, mfaSetupDeadline: result.mfaSetupDeadline };
         if (ctx.headers["x-sync-client"]) out2.token = result.token;
         return out2;
+      });
+      const signupEnabled = () => db3.getSetting("self_signup", "1") !== "0";
+      r.get("/api/auth/signup/status", () => ({ enabled: signupEnabled(), program_contact: db3.getSetting("program_contact", "") || "", org_name: db3.getSetting("org_name", "SUDS") }));
+      r.post("/api/auth/signup", async (ctx) => {
+        if (ctx.headers["x-requested-with"] !== "suds") throw new HttpError3(403, "Missing CSRF header");
+        if (require_config().local) throw new HttpError3(404, "Not found");
+        const limit2 = require_config().signupRateLimit;
+        if (!rateLimit(`signup:${ctx.ip}`, limit2, 60 * 6e4)) throw new HttpError3(429, "Too many account requests from this address. Try again later.");
+        if (!signupEnabled()) throw new HttpError3(403, "Sign-up is turned off here. Ask your administrator for an account.", { signupDisabled: true });
+        const v = validate(ctx.body, {
+          display_name: { type: "string", required: true, maxLen: 120 },
+          username: { type: "string", required: true, maxLen: 60, pattern: /^[a-zA-Z0-9._@-]+$/ },
+          email: { type: "string", maxLen: 200 },
+          password: { type: "string", required: true, maxLen: 500 },
+          reason: { type: "string", maxLen: 200 }
+        });
+        const errs = auth3.passwordPolicy(v.password);
+        if (errs.length) throw badRequest("Password must contain " + errs.join(", "));
+        const hash2 = await hashPasswordAsync(v.password);
+        const taken = !!db3.one(`SELECT 1 FROM users WHERE username=?`, v.username);
+        if (!taken) {
+          const { uuid: uuid2 } = require_crypto();
+          const id = uuid2();
+          db3.run(
+            `INSERT INTO users(id,username,password_hash,display_name,email,role,is_active,access_status,access_note,requested_at,must_change_password,password_changed_at) VALUES(?,?,?,?,?,'readonly',0,'pending',?,?,0,?)`,
+            id,
+            v.username,
+            hash2,
+            v.display_name,
+            v.email || null,
+            v.reason || null,
+            db3.now(),
+            db3.now()
+          );
+          audit3.log({ user: { id, username: v.username }, action: "user.signup.requested", entity: "user", entityId: id, ip: ctx.ip });
+        } else {
+          audit3.log({ user: { username: auth3.auditUsername(v.username) }, action: "user.signup.requested", ip: ctx.ip, success: false, details: { reason: "username taken" } });
+        }
+        ctx.status = 202;
+        return { ok: true, message: "Thank you. If the request can be accepted, an administrator will review it; you can sign in once it is approved." };
       });
       r.post("/api/auth/mfa/verify", (ctx) => {
         if (!ctx.user) throw unauthorized();
@@ -12999,9 +13141,9 @@ var require_clients = __commonJS({
         const noEpisode = !!v.no_episode;
         delete v.no_episode;
         const id = uuid2();
-        const enc = M.encryptFields(v);
-        enc.full_name_idx = blindIndex2((v.last_name || "") + (v.first_name || ""));
-        const cols2 = { id, client_code: M.nextClientCode(), ...enc, created_by: ctx.user.id };
+        const enc2 = M.encryptFields(v);
+        enc2.full_name_idx = blindIndex2((v.last_name || "") + (v.first_name || ""));
+        const cols2 = { id, client_code: M.nextClientCode(), ...enc2, created_by: ctx.user.id };
         for (const f of M.PLAIN_FIELDS) if (v[f] !== void 0) cols2[f] = v[f];
         if (!cols2.intake_date) cols2.intake_date = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
         const keys = Object.keys(cols2).filter((k) => cols2[k] !== void 0);
@@ -13121,12 +13263,12 @@ var require_clients = __commonJS({
         if ((v.status === "closed" || v.status === "deceased") && v.status !== row.status && db3.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, row.id)) {
           throw badRequest(`This client has an open episode of care. To ${v.status === "deceased" ? "record a death" : "close the record"}, discharge them on the Episodes tab \u2014 that closes the episode and sets the status.`, { fields: { status: "discharge on the Episodes tab instead" }, open_episode: true });
         }
-        const enc = M.encryptFields(v);
+        const enc2 = M.encryptFields(v);
         if (v.first_name !== void 0 || v.last_name !== void 0) {
           const cur = M.decryptRow(row);
-          enc.full_name_idx = blindIndex2((v.last_name ?? cur.last_name ?? "") + (v.first_name ?? cur.first_name ?? ""));
+          enc2.full_name_idx = blindIndex2((v.last_name ?? cur.last_name ?? "") + (v.first_name ?? cur.first_name ?? ""));
         }
-        const cols2 = { ...enc };
+        const cols2 = { ...enc2 };
         for (const f of M.PLAIN_FIELDS) if (v[f] !== void 0) cols2[f] = v[f];
         const keys = Object.keys(cols2).filter((k) => cols2[k] !== void 0);
         if (!keys.length) return { ok: true };
@@ -13459,9 +13601,9 @@ var require_text = __commonJS({
       return out2;
     }
     function decodePart(headers, body) {
-      const enc = (/content-transfer-encoding:\s*([^\r\n]+)/i.exec(headers) || [, "7bit"])[1].trim().toLowerCase();
-      if (enc === "quoted-printable") return quotedPrintableDecode(body);
-      if (enc === "base64") return import_buffer.Buffer.from(body.replace(/\s+/g, ""), "base64");
+      const enc2 = (/content-transfer-encoding:\s*([^\r\n]+)/i.exec(headers) || [, "7bit"])[1].trim().toLowerCase();
+      if (enc2 === "quoted-printable") return quotedPrintableDecode(body);
+      if (enc2 === "base64") return import_buffer.Buffer.from(body.replace(/\s+/g, ""), "base64");
       return import_buffer.Buffer.from(body, "latin1").toString("utf8");
     }
     function unzip(buf) {
@@ -14130,9 +14272,9 @@ var require_dataimport2 = __commonJS({
                     skipped++;
                     return;
                   }
-                  const enc = M.encryptFields(rec);
-                  enc.full_name_idx = blindIndex2((rec.last_name || "") + (rec.first_name || ""));
-                  const cols2 = { id, client_code: M.nextClientCode(), ...enc, created_by: ctx.user.id, intake_date: rec.intake_date || now.slice(0, 10) };
+                  const enc2 = M.encryptFields(rec);
+                  enc2.full_name_idx = blindIndex2((rec.last_name || "") + (rec.first_name || ""));
+                  const cols2 = { id, client_code: M.nextClientCode(), ...enc2, created_by: ctx.user.id, intake_date: rec.intake_date || now.slice(0, 10) };
                   for (const f of M.PLAIN_FIELDS) if (rec[f] !== void 0 && rec[f] !== null) cols2[f] = rec[f];
                   const keys = Object.keys(cols2).filter((k) => cols2[k] !== void 0);
                   db3.run(`INSERT INTO clients(${keys.join(",")}) VALUES(${keys.map(() => "?").join(",")})`, ...keys.map((k) => cols2[k]));
@@ -14246,16 +14388,16 @@ var require_doc_text = __commonJS({
         }
         if (c === 60 && src[i + 1] !== "<") {
           let j = i + 1;
-          let hex = "";
+          let hex2 = "";
           while (j < n && src[j] !== ">") {
             const h = src[j];
-            if (/[0-9A-Fa-f]/.test(h)) hex += h;
+            if (/[0-9A-Fa-f]/.test(h)) hex2 += h;
             else if (!/\s/.test(h)) break;
             j++;
           }
-          if (src[j] === ">" && hex.length) {
+          if (src[j] === ">" && hex2.length) {
             let s = "";
-            for (let k = 0; k + 1 < hex.length; k += 2) s += String.fromCharCode(parseInt(hex.slice(k, k + 2), 16));
+            for (let k = 0; k + 1 < hex2.length; k += 2) s += String.fromCharCode(parseInt(hex2.slice(k, k + 2), 16));
             out2.push(s);
             taken += s.length;
             i = j + 1;
@@ -14378,14 +14520,14 @@ var require_documents = __commonJS({
     function fromDataUrl(v, maxBytes, label) {
       if (typeof v !== "string" || !v) return null;
       const m = /^data:([\w.+/-]+);base64,([A-Za-z0-9+/=\s]+)$/.exec(v);
-      const b64 = (m ? m[2] : v).replace(/\s+/g, "");
-      if (!/^[A-Za-z0-9+/=]+$/.test(b64)) throw badRequest(`${label} must be base64`);
-      const buf = import_buffer.Buffer.from(b64, "base64");
+      const b642 = (m ? m[2] : v).replace(/\s+/g, "");
+      if (!/^[A-Za-z0-9+/=]+$/.test(b642)) throw badRequest(`${label} must be base64`);
+      const buf = import_buffer.Buffer.from(b642, "base64");
       if (!buf.length) throw badRequest(`${label} is empty`);
       if (buf.length > maxBytes) throw badRequest(`${label} is too large (max ${Math.round(maxBytes / 1024 / 1024)} MB)`);
       const type = sniff(buf) || (m && m[1] === "text/plain" ? "text/plain" : null);
       if (!type || !FILE_TYPES[type]) throw badRequest(`${label} must be a PDF, Word document, picture or text file`);
-      return { b64, buf, type };
+      return { b64: b642, buf, type };
     }
     var SERVABLE_TYPES = /* @__PURE__ */ new Set([
       "application/pdf",
@@ -14700,13 +14842,13 @@ var require_episodes = __commonJS({
         const when = v.effective_date || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
         const lastDay = new Date(Date.parse(when) - 864e5).toISOString().slice(0, 10);
         const scope = v.client_ids && v.client_ids.length ? { sql: `AND a.client_id IN (${v.client_ids.map(() => "?").join(",")})`, params: v.client_ids } : { sql: "", params: [] };
-        const open = db3.all(`SELECT a.* FROM assignments a JOIN clients c ON c.id=a.client_id
+        const open2 = db3.all(`SELECT a.* FROM assignments a JOIN clients c ON c.id=a.client_id
       WHERE a.user_id=? AND (a.end_date IS NULL OR a.end_date >= ?) AND a.ended_at IS NULL AND c.deleted_at IS NULL ${scope.sql}`, from.id, when, ...scope.params);
         let moved = 0;
         let tasks = 0;
         const skipped = [];
         db3.transaction(() => {
-          for (const a of open) {
+          for (const a of open2) {
             if (db3.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND (end_date IS NULL OR end_date >= ?)`, a.client_id, to.id, when)) {
               db3.run(`UPDATE assignments SET end_date=?, updated_at=? WHERE id=?`, lastDay, db3.now(), a.id);
               skipped.push({ client_id: a.client_id, reason: "already assigned to the receiving worker" });
@@ -14726,7 +14868,7 @@ var require_episodes = __commonJS({
             moved++;
           }
           if (v.reassign_open_tasks !== 0 && moved) {
-            const ids = open.map((a) => a.client_id);
+            const ids = open2.map((a) => a.client_id);
             if (ids.length) tasks = db3.run(`UPDATE tasks SET assigned_to=?, updated_at=? WHERE assigned_to=? AND status IN ('open','in_progress') AND client_id IN (${ids.map(() => "?").join(",")})`, to.id, db3.now(), from.id, ...ids).changes;
           }
         });
@@ -14956,14 +15098,14 @@ var require_forms = __commonJS({
     function fromDataUrl(v, maxBytes, label) {
       if (typeof v !== "string" || !v) return null;
       const m = /^data:([\w.+/-]+);base64,([A-Za-z0-9+/=\s]+)$/.exec(v);
-      const b64 = (m ? m[2] : v).replace(/\s+/g, "");
-      if (!/^[A-Za-z0-9+/=]+$/.test(b64)) throw badRequest(`${label} must be base64`);
-      const buf = import_buffer.Buffer.from(b64, "base64");
+      const b642 = (m ? m[2] : v).replace(/\s+/g, "");
+      if (!/^[A-Za-z0-9+/=]+$/.test(b642)) throw badRequest(`${label} must be base64`);
+      const buf = import_buffer.Buffer.from(b642, "base64");
       if (!buf.length) throw badRequest(`${label} is empty`);
       if (buf.length > maxBytes) throw badRequest(`${label} is too large (max ${Math.round(maxBytes / 1024 / 1024)} MB)`);
       const type = sniff(buf) || (m && m[1] === "text/plain" ? "text/plain" : null);
       if (!type || !FILE_TYPES[type]) throw badRequest(`${label} must be a PDF, Word document, picture or text file`);
-      return { b64, buf, type };
+      return { b64: b642, buf, type };
     }
     function cleanFields(list) {
       if (!Array.isArray(list)) throw badRequest("fields must be a list");
@@ -21162,14 +21304,14 @@ var require_resources = __commonJS({
     function fromDataUrl(v, maxBytes, label) {
       if (typeof v !== "string") throw badRequest(`${label} is required`);
       const m = /^data:(image\/[a-z+]+);base64,([A-Za-z0-9+/=\s]+)$/.exec(v);
-      const b64 = m ? m[2].replace(/\s+/g, "") : v.replace(/\s+/g, "");
-      if (!/^[A-Za-z0-9+/=]+$/.test(b64)) throw badRequest(`${label} must be a base64 picture`);
-      const buf = import_buffer.Buffer.from(b64, "base64");
+      const b642 = m ? m[2].replace(/\s+/g, "") : v.replace(/\s+/g, "");
+      if (!/^[A-Za-z0-9+/=]+$/.test(b642)) throw badRequest(`${label} must be a base64 picture`);
+      const buf = import_buffer.Buffer.from(b642, "base64");
       if (!buf.length) throw badRequest(`${label} is empty`);
       if (buf.length > maxBytes) throw badRequest(`${label} is too large (max ${Math.round(maxBytes / 1024)} KB); the app normally shrinks pictures before sending them`);
       const type = sniff(buf);
       if (!type) throw badRequest(`${label} must be a JPEG, PNG or WebP picture`);
-      return { b64, buf, type };
+      return { b64: b642, buf, type };
     }
     var b64Type = (b) => !b ? null : b.startsWith("iVBOR") ? "image/png" : b.startsWith("UklGR") ? "image/webp" : "image/jpeg";
     var tagList = (v, allowed) => v == null ? v : String(v).split(",").map((x) => x.trim().toLowerCase().replace(/[\s-]+/g, "_")).filter((x) => allowed.includes(x)).filter((x, i, a) => a.indexOf(x) === i).join(",");
@@ -22182,7 +22324,7 @@ var require_users = __commonJS({
     module.exports = (r) => {
       r.get("/api/users", auth3.requireAuth, auth3.requirePerm("users:read", "users:manage"), (ctx) => {
         const full = auth3.hasPerm(ctx.user, "users:manage");
-        const rows = db3.all(full ? `SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,last_login_at,locked_until,hourly_cost,created_at,oidc_subject,requires_cosign,supervisor_id FROM users ORDER BY display_name` : `SELECT id,display_name,title,role,is_active FROM users WHERE is_active=1 ORDER BY display_name`);
+        const rows = db3.all(full ? `SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,last_login_at,locked_until,hourly_cost,created_at,oidc_subject,requires_cosign,supervisor_id,access_status FROM users WHERE access_status<>'pending' ORDER BY display_name` : `SELECT id,display_name,title,role,is_active FROM users WHERE is_active=1 ORDER BY display_name`);
         return { users: rows };
       });
       r.post("/api/users", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
@@ -22235,6 +22377,7 @@ var require_users = __commonJS({
         if (ctx.body.unlock) {
           sets.push("locked_until=NULL", "failed_attempts=0");
         }
+        if (v.is_active === 1 && u.access_status !== "active") sets.push(`access_status='active'`);
         if (ctx.body.reset_mfa) {
           sets.push("mfa_enabled=0", "mfa_secret_enc=NULL");
         }
@@ -22248,6 +22391,35 @@ var require_users = __commonJS({
         db3.run(`UPDATE users SET ${sets.join(", ")} WHERE id=?`, ...params);
         audit3.log({ user: ctx.user, action: "user.update", entity: "user", entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter((k) => k !== "password"), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa, devices_wiped: wiped2.length, wipe_devices: wipeDevices } });
         return { ok: true, devices_wiped: wiped2.length };
+      });
+      r.get("/api/users/access-requests", auth3.requireAuth, auth3.requirePerm("users:manage"), () => ({ requests: db3.all(`SELECT id,username,display_name,email,access_note AS reason,requested_at FROM users WHERE access_status='pending' ORDER BY requested_at, username`) }));
+      function pendingRequest(ctx) {
+        const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.params.id);
+        if (!u) throw notFound();
+        if (u.access_status !== "pending") throw badRequest("This request has already been answered");
+        return u;
+      }
+      r.post("/api/users/:id/approve", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
+        const u = pendingRequest(ctx);
+        const v = validate(ctx.body, { role: shape.role, supervisor_id: shape.supervisor_id, title: shape.title });
+        if (v.supervisor_id && !db3.one(`SELECT 1 FROM users WHERE id=? AND id<>? AND is_active=1 AND role IN ('supervisor','admin')`, v.supervisor_id, u.id)) throw badRequest("The supervisor must be an active supervisor or administrator account");
+        db3.run(
+          `UPDATE users SET role=?, supervisor_id=?, title=COALESCE(?, title), is_active=1, access_status='active', failed_attempts=0, locked_until=NULL, created_at=?, updated_at=? WHERE id=?`,
+          v.role,
+          v.supervisor_id || null,
+          v.title || null,
+          db3.now(),
+          db3.now(),
+          u.id
+        );
+        audit3.log({ user: ctx.user, action: "user.signup.approved", entity: "user", entityId: u.id, ip: ctx.ip, details: { username: u.username, role: v.role } });
+        return { ok: true };
+      });
+      r.post("/api/users/:id/decline", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
+        const u = pendingRequest(ctx);
+        db3.run(`UPDATE users SET access_status='declined', is_active=0, updated_at=? WHERE id=?`, db3.now(), u.id);
+        audit3.log({ user: ctx.user, action: "user.signup.declined", entity: "user", entityId: u.id, ip: ctx.ip, details: { username: u.username } });
+        return { ok: true };
       });
       r.post("/api/devices/wipe-ack", (ctx) => {
         const { device_id, token: token2 } = validate(ctx.body, { device_id: { type: "string", required: true, maxLen: 100 }, token: { type: "string", required: true, maxLen: 200 } });
@@ -22562,6 +22734,7 @@ function mergeUser(localId, serverId) {
     import_db.default.run(`UPDATE ${t} SET ${c}=? WHERE ${c}=?`, serverId, localId);
   }
   import_db.default.run(`DELETE FROM users WHERE id=?`, localId);
+  if (import_db.default.getSetting("device_admin_user_id", null) === localId) import_db.default.setSetting("device_admin_user_id", serverId);
 }
 function selfParentOrder(rows, col) {
   const ids = new Set(rows.map((r) => r && r.id));
@@ -22783,7 +22956,7 @@ function isStaticHost() {
     return false;
   }
 }
-var STATIC_HOST_MESSAGE = "Sync is not available from the demo site. Open SUDS at the office address instead; this copy is for trying SUDS out and never talks to an office server.";
+var STATIC_HOST_MESSAGE = 'SUDS on this device does not sync with an office server: your records stay in this browser. Keep them safe with "Download a backup" on this page. If your programme runs an office SUDS server, use SUDS at its address instead.';
 function assertNotStaticHost() {
   if (isStaticHost()) throw new import_http.HttpError(403, STATIC_HOST_MESSAGE, { staticSyncRefused: true });
 }
@@ -22995,6 +23168,98 @@ function register(router2) {
   }));
 }
 
+// local/backup.js
+init_globals_inject();
+var FORMAT = "suds-device-backup";
+var VERSION = 1;
+var ITERATIONS = 6e5;
+var MIN_ITERATIONS = 31e4;
+var MAX_ITERATIONS = 5e6;
+var MIN_PASSPHRASE = 12;
+var enc = new TextEncoder();
+var dec = new TextDecoder();
+var b64 = (u83) => {
+  let s = "";
+  for (let i = 0; i < u83.length; i += 32768) s += String.fromCharCode.apply(null, u83.subarray(i, i + 32768));
+  return btoa(s);
+};
+var unb64 = (s) => Uint8Array.from(atob(String(s)), (c) => c.charCodeAt(0));
+var hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+var BackupError = class extends Error {
+  constructor(message, code) {
+    super(message);
+    this.code = code;
+  }
+};
+async function derive(passphrase, salt, iterations) {
+  const base = await crypto.subtle.importKey("raw", enc.encode(passphrase), "PBKDF2", false, ["deriveBits"]);
+  const bits2 = new Uint8Array(await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations }, base, 512));
+  const key = await crypto.subtle.importKey("raw", bits2.slice(0, 32), "AES-GCM", false, ["encrypt", "decrypt"]);
+  const check = hex(await crypto.subtle.digest("SHA-256", bits2.slice(32))).slice(0, 32);
+  bits2.fill(0);
+  return { key, check };
+}
+async function create({ bytes: bytes3, meta, passphrase, appVersion }) {
+  if (typeof passphrase !== "string" || passphrase.length < MIN_PASSPHRASE) throw new BackupError(`Choose a passphrase of at least ${MIN_PASSPHRASE} characters.`, "weak");
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const { key, check } = await derive(passphrase, salt, ITERATIONS);
+  const header = { format: FORMAT, version: VERSION, kdf: "PBKDF2-SHA256", iterations: ITERATIONS, salt: b64(salt), iv: b64(iv), check, created_at: meta.created_at, app_version: appVersion };
+  const headerLine = enc.encode(JSON.stringify(header));
+  const metaBytes = enc.encode(JSON.stringify(meta));
+  const plain = new Uint8Array(4 + metaBytes.length + bytes3.length);
+  new DataView(plain.buffer).setUint32(0, metaBytes.length);
+  plain.set(metaBytes, 4);
+  plain.set(bytes3, 4 + metaBytes.length);
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: headerLine }, key, plain));
+  plain.fill(0);
+  const out2 = new Uint8Array(headerLine.length + 1 + ct.length);
+  out2.set(headerLine, 0);
+  out2[headerLine.length] = 10;
+  out2.set(ct, headerLine.length + 1);
+  return out2;
+}
+function readHeader(file) {
+  const u83 = file instanceof Uint8Array ? file : new Uint8Array(file);
+  const nl = u83.indexOf(10);
+  if (nl < 2 || nl > 4096) throw new BackupError("This is not a SUDS device backup file.", "format");
+  let header;
+  try {
+    header = JSON.parse(dec.decode(u83.subarray(0, nl)));
+  } catch {
+    throw new BackupError("This is not a SUDS device backup file.", "format");
+  }
+  if (!header || header.format !== FORMAT) throw new BackupError("This is not a SUDS device backup file.", "format");
+  if (header.version !== VERSION) throw new BackupError("This backup was made by a newer version of SUDS. Update SUDS on this device, then try again.", "version");
+  if (header.kdf !== "PBKDF2-SHA256" || !Number.isInteger(header.iterations) || header.iterations < MIN_ITERATIONS || header.iterations > MAX_ITERATIONS) throw new BackupError("This backup file is damaged or has been altered.", "tampered");
+  return { header, headerLine: u83.subarray(0, nl), ciphertext: u83.subarray(nl + 1) };
+}
+async function open(file, passphrase) {
+  const { header, headerLine, ciphertext } = readHeader(file);
+  let salt, iv;
+  try {
+    salt = unb64(header.salt);
+    iv = unb64(header.iv);
+  } catch {
+    throw new BackupError("This backup file is damaged or has been altered.", "tampered");
+  }
+  if (salt.length < 16 || iv.length !== 12) throw new BackupError("This backup file is damaged or has been altered.", "tampered");
+  const { key, check } = await derive(String(passphrase || ""), salt, header.iterations);
+  if (check !== header.check) throw new BackupError("That passphrase does not open this backup.", "passphrase");
+  let plain;
+  try {
+    plain = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv, additionalData: headerLine }, key, ciphertext));
+  } catch {
+    throw new BackupError("This backup file is damaged or has been altered, so it cannot be restored.", "tampered");
+  }
+  const n = new DataView(plain.buffer, plain.byteOffset).getUint32(0);
+  const meta = JSON.parse(dec.decode(plain.subarray(4, 4 + n)));
+  const bytes3 = plain.slice(4 + n);
+  if (!meta || !meta.keys || !/^[0-9a-f]{64}$/.test(meta.keys.enc || "") || !/^[0-9a-f]{64}$/.test(meta.keys.idx || "")) throw new BackupError("This backup file is damaged or has been altered.", "tampered");
+  if (dec.decode(bytes3.subarray(0, 15)) !== "SQLite format 3") throw new BackupError("This backup file is damaged or has been altered.", "tampered");
+  return { header, meta, bytes: bytes3 };
+}
+
 // local/kernel.js
 var import_app = __toESM(require_app2());
 var routeLoaders = {
@@ -23026,6 +23291,7 @@ var routeLoaders = {
 };
 var router;
 var token = localStorage.getItem("suds.local.session") || "";
+var RESTORED_KEY = "suds.local.restored";
 var FakeRes = class {
   constructor() {
     this.status = 200;
@@ -23079,23 +23345,151 @@ async function start({ wasmUrl, onSaveError: onSaveError2, onLockLost: onLockLos
     mod(router);
   }
   register(router);
-  router.get("/api/local/status", () => ({ local: true, users: import_db2.default.one(`SELECT COUNT(*) n FROM users`).n, last_sync: import_db2.default.getSetting("last_sync_at", null), sync_server: import_db2.default.getSetting("sync_server", null) }));
-  router.post("/api/local/setup", (ctx) => {
-    if (import_db2.default.one(`SELECT COUNT(*) n FROM users`).n > 0) throw new import_http2.HttpError(403, "Already set up");
-    const { validate } = require_validate();
-    const v = validate(ctx.body, { display_name: { type: "string", required: true, maxLen: 120 }, username: { type: "string", required: true, maxLen: 60, pattern: /^[a-zA-Z0-9._@-]+$/ }, password: { type: "string", required: true, maxLen: 500 }, org_name: { type: "string", maxLen: 200 }, role: { type: "string", enum: ["navigator", "clinician", "supervisor", "admin"] } });
+  const deviceAdminId = () => import_db2.default.getSetting("device_admin_user_id", null) || (import_db2.default.one(`SELECT id FROM users WHERE password_hash NOT LIKE 'scrypt$0$%' ORDER BY created_at, rowid LIMIT 1`) || {}).id || null;
+  const isDeviceAdmin = (u) => !!u && u.id === deviceAdminId();
+  const userCount = () => import_db2.default.one(`SELECT COUNT(*) n FROM users`).n;
+  const clientCount = () => import_db2.default.one(`SELECT COUNT(*) n FROM clients WHERE deleted_at IS NULL`).n;
+  const signupEnabled = () => isStaticHost() && import_db2.default.getSetting("local_signup", "1") !== "0";
+  router.get("/api/local/status", () => ({ local: true, static: isStaticHost(), users: userCount(), signup_enabled: userCount() === 0 || signupEnabled(), last_sync: import_db2.default.getSetting("last_sync_at", null), sync_server: import_db2.default.getSetting("sync_server", null), program_contact: import_db2.default.getSetting("program_contact", "") || "" }));
+  const { validate } = require_validate();
+  const accountShape = { display_name: { type: "string", required: true, maxLen: 120 }, username: { type: "string", required: true, maxLen: 60, pattern: /^[a-zA-Z0-9._@-]+$/ }, password: { type: "string", required: true, maxLen: 500 }, org_name: { type: "string", maxLen: 200 }, role: { type: "string", enum: ["navigator", "clinician", "supervisor", "admin"] }, storage_ack: { type: "boolean" } };
+  function createFirstAccount(body) {
+    if (userCount() > 0) throw new import_http2.HttpError(403, "Already set up");
+    const v = validate(body, accountShape);
+    if (isStaticHost() && !v.storage_ack) throw new import_http2.HttpError(400, "Confirm that you understand where your records are kept before creating the account.", { storageAckRequired: true });
     const errs = import_auth2.default.passwordPolicy(v.password);
     if (errs.length) throw new import_http2.HttpError(400, "Password must contain " + errs.join(", "));
     const { hashPassword, uuid: uuid2 } = require_crypto();
-    import_db2.default.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,0,?)`, uuid2(), v.username, hashPassword(v.password), v.display_name, v.role || "navigator", import_db2.default.now());
+    const id = uuid2();
+    import_db2.default.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,0,?)`, id, v.username, hashPassword(v.password), v.display_name, v.role || "navigator", import_db2.default.now());
     import_db2.default.setSetting("org_name", v.org_name || "SUDS on this device");
     import_db2.default.setSetting("caseload_restriction", "0");
     import_db2.default.setSetting("local_mode", "1");
-    import_audit2.default.log({ user: { username: v.username }, action: "local.setup" });
+    import_db2.default.setSetting("device_admin_user_id", id);
+    import_audit2.default.log({ user: { id, username: v.username }, action: "local.setup" });
+    return { ok: true, device_admin: true };
+  }
+  router.post("/api/local/setup", (ctx) => createFirstAccount(ctx.body));
+  router.post("/api/local/signup", (ctx) => {
+    if (userCount() === 0) return createFirstAccount(ctx.body);
+    if (!signupEnabled()) throw new import_http2.HttpError(403, isStaticHost() ? "Sign-ups are turned off on this device. Ask the person who manages it to turn them back on." : "This device is already set up. Accounts come from the office SUDS.", { signupDisabled: true });
+    const v = validate(ctx.body, { display_name: accountShape.display_name, username: accountShape.username, password: accountShape.password });
+    const errs = import_auth2.default.passwordPolicy(v.password);
+    if (errs.length) throw new import_http2.HttpError(400, "Password must contain " + errs.join(", "));
+    if (import_db2.default.one(`SELECT 1 FROM users WHERE username=?`, v.username)) throw new import_http2.HttpError(400, "That username cannot be used here. Choose another.");
+    const { hashPassword, uuid: uuid2 } = require_crypto();
+    const id = uuid2();
+    import_db2.default.transaction(() => {
+      import_db2.default.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,'navigator',0,?)`, id, v.username, hashPassword(v.password), v.display_name, import_db2.default.now());
+      import_db2.default.setSetting("caseload_restriction", "1");
+    });
+    import_audit2.default.log({ user: { id, username: v.username }, action: "local.signup", entity: "user", entityId: id });
+    return { ok: true, role: "navigator" };
+  });
+  router.get("/api/local/device", (ctx) => {
+    if (!ctx.user) throw new import_http2.HttpError(401, "Sign in first");
+    return { static: isStaticHost(), device_admin: isDeviceAdmin(ctx.user), signup_enabled: signupEnabled(), users: userCount(), clients: clientCount(), last_backup_at: import_db2.default.getSetting("last_backup_at", null) };
+  });
+  router.put("/api/local/device", (ctx) => {
+    if (!ctx.user) throw new import_http2.HttpError(401, "Sign in first");
+    if (!isDeviceAdmin(ctx.user)) throw new import_http2.HttpError(403, "Only the person who manages this device can change this.");
+    const v = validate(ctx.body, { signup_enabled: { type: "boolean" } });
+    if (v.signup_enabled !== void 0) import_db2.default.setSetting("local_signup", v.signup_enabled ? "1" : "0");
+    import_audit2.default.log({ user: ctx.user, action: "local.device.settings", details: { signup_enabled: v.signup_enabled } });
     return { ok: true };
   });
+  const keysHex = () => {
+    const c = require_config();
+    return { enc: import_buffer.Buffer.from(c.encryptionKey).toString("hex"), idx: import_buffer.Buffer.from(c.indexKey).toString("hex") };
+  };
+  const mayRestore = (ctx) => {
+    if (userCount() === 0) return;
+    if (!ctx.user) throw new import_http2.HttpError(401, "Sign in first");
+    if (!isDeviceAdmin(ctx.user)) throw new import_http2.HttpError(403, "Only the person who manages this device can restore a backup.");
+  };
+  const asHttp = async (fn) => {
+    try {
+      return await fn();
+    } catch (e) {
+      if (e instanceof BackupError) throw new import_http2.HttpError(400, e.message, { backupError: e.code });
+      throw e;
+    }
+  };
+  router.post("/api/local/backup", async (ctx) => {
+    if (!ctx.user) throw new import_http2.HttpError(401, "Sign in first");
+    if (!isDeviceAdmin(ctx.user)) throw new import_http2.HttpError(403, "Only the person who manages this device can download its backup.");
+    const v = validate(ctx.body, { passphrase: { type: "string", required: true, maxLen: 500 } });
+    if (v.passphrase.length < MIN_PASSPHRASE) throw new import_http2.HttpError(400, `Choose a passphrase of at least ${MIN_PASSPHRASE} characters.`);
+    const at = import_db2.default.now();
+    const previous = import_db2.default.getSetting("last_backup_at", null);
+    import_db2.default.setSetting("last_backup_at", at);
+    const clients = clientCount();
+    import_audit2.default.log({ user: ctx.user, action: "device.backup.created", details: { clients } });
+    const meta = { keys: keysHex(), org_name: import_db2.default.getSetting("org_name", ""), clients, users: userCount(), schema_version: Number(import_db2.default.getSetting("schema_version", "0")), created_at: at };
+    let file;
+    try {
+      file = await asHttp(() => create({ bytes: sqlite_default.exportCurrent(), meta, passphrase: v.passphrase, appVersion: require_config().version }));
+    } catch (e) {
+      if (previous) import_db2.default.setSetting("last_backup_at", previous);
+      else import_db2.default.run(`DELETE FROM settings WHERE key='last_backup_at'`);
+      throw e;
+    }
+    const name = `suds-device-backup-${at.slice(0, 10)}.sudsbackup`;
+    ctx.res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Disposition": `attachment; filename="${name}"` });
+    ctx.res.end(import_buffer.Buffer.from(file));
+  });
+  async function openUpload(ctx) {
+    const v = validate(ctx.body, { file_b64: { type: "string", required: true, maxLen: 400 * 1024 * 1024 }, passphrase: { type: "string", required: true, maxLen: 500 }, confirm: { type: "string", maxLen: 40 } });
+    const file = Uint8Array.from(import_buffer.Buffer.from(v.file_b64.replace(/^data:[^,]*,/, ""), "base64"));
+    const out2 = await asHttp(() => open(file, v.passphrase));
+    const damaged = () => new import_http2.HttpError(400, "This backup file is damaged or has been altered, so it cannot be restored.", { backupError: "tampered" });
+    let info;
+    try {
+      info = sqlite_default.inspect(out2.bytes, (d) => ({
+        schema_version: Number((d.one(`SELECT value FROM settings WHERE key='schema_version'`) || {}).value || 0),
+        clients: d.one(`SELECT COUNT(*) n FROM clients WHERE deleted_at IS NULL`).n,
+        users: d.one(`SELECT COUNT(*) n FROM users`).n,
+        fingerprint: (d.one(`SELECT value FROM settings WHERE key='encryption_key_fingerprint'`) || {}).value || null
+      }));
+    } catch {
+      throw damaged();
+    }
+    if (info.schema_version > import_db2.default.LATEST_SCHEMA_VERSION) throw new import_http2.HttpError(400, "This backup was made by a newer version of SUDS. Update SUDS on this device, then try again.");
+    const { sha256: sha2562 } = require_crypto();
+    if (info.fingerprint && info.fingerprint !== sha2562("suds-key-check:" + out2.meta.keys.enc).slice(0, 32)) throw damaged();
+    return { v, out: out2, info };
+  }
+  router.post("/api/local/restore/preview", async (ctx) => {
+    mayRestore(ctx);
+    const { out: out2, info } = await openUpload(ctx);
+    return { created_at: out2.meta.created_at || out2.header.created_at, app_version: out2.header.app_version, org_name: out2.meta.org_name || "", clients: info.clients, users: info.users, schema_version: info.schema_version, current: { clients: userCount() ? clientCount() : 0 } };
+  });
+  router.post("/api/local/restore", async (ctx) => {
+    mayRestore(ctx);
+    const { v, out: out2, info } = await openUpload(ctx);
+    if (v.confirm !== "RESTORE") throw new import_http2.HttpError(400, "Type RESTORE to confirm that everything on this device will be replaced.");
+    const before = { enc: localStorage.getItem("suds.local.enc"), idx: localStorage.getItem("suds.local.idx") };
+    localStorage.setItem("suds.local.enc", out2.meta.keys.enc);
+    localStorage.setItem("suds.local.idx", out2.meta.keys.idx);
+    try {
+      await sqlite_default.replaceWith(out2.bytes);
+    } catch (e) {
+      for (const [k, val] of [["suds.local.enc", before.enc], ["suds.local.idx", before.idx]]) {
+        if (val === null) localStorage.removeItem(k);
+        else localStorage.setItem(k, val);
+      }
+      throw new import_http2.HttpError(409, e.message);
+    }
+    try {
+      localStorage.removeItem("suds.local.session");
+      localStorage.setItem(RESTORED_KEY, JSON.stringify({ at: (/* @__PURE__ */ new Date()).toISOString(), backup_created_at: out2.meta.created_at || null, by: ctx.user ? ctx.user.username : null, clients: info.clients }));
+    } catch {
+    }
+    token = "";
+    return { ok: true, clients: info.clients, users: info.users };
+  });
   const demo = require_demo();
-  const demoOpts = () => ({ alongside: isStaticHost() });
+  const demoOpts = () => ({ alongside: false });
   router.get("/api/local/demo", (ctx) => {
     if (!ctx.user) throw new import_http2.HttpError(401, "Sign in first");
     return demo.offer(demoOpts());
@@ -23110,6 +23504,15 @@ async function start({ wasmUrl, onSaveError: onSaveError2, onLockLost: onLockLos
     if (!ctx.user) throw new import_http2.HttpError(401, "Sign in first");
     return demo.remove({ actor: ctx.user.id });
   });
+  try {
+    const r = localStorage.getItem(RESTORED_KEY);
+    if (r) {
+      localStorage.removeItem(RESTORED_KEY);
+      const d = JSON.parse(r);
+      import_audit2.default.log({ user: { username: d.by || "device" }, action: "device.restore", details: { at: d.at, backup_created_at: d.backup_created_at, clients: d.clients } });
+    }
+  } catch {
+  }
   window.SUDS_LOCAL = { handle, flush: (opts) => sqlite_default.flush(opts), isDirty: () => sqlite_default.isDirty(), epoch: () => sqlite_default.epoch(), wipe: wipeDevice, sync: (opts) => run(opts), isWiped: () => sqlite_default.isWiped(), isFrozen: () => sqlite_default.isFrozen() };
   return window.SUDS_LOCAL;
 }
@@ -23129,6 +23532,7 @@ async function handle(method, path, body, headers = {}) {
   const ctx = { req: { socket: { remoteAddress: "127.0.0.1" } }, res, method, path: url.pathname, query: url.searchParams, params: {}, headers: Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v])), cookies: {}, ip: "device", user: null, session: null, body: null, rawBody: null };
   try {
     if (sqlite_default.isWiped()) throw new import_http2.HttpError(410, "This device has been erased and needs to be set up again.", { wiped: true });
+    if (sqlite_default.isReplaced()) throw new import_http2.HttpError(409, "A backup has just been restored on this device. Reload to continue.", { restored: true });
     if (sqlite_default.isFrozen()) throw new import_http2.HttpError(409, "SUDS is now open in another window on this device. Use that window, or take it back here.", { frozen: true });
     if (method !== "GET" && /^\/api\/supplies(\/|$)/.test(url.pathname)) throw new import_http2.HttpError(403, "Supply counts are kept at the office and cannot be changed on this device. Visits you record here draw the office count down when you sync.", { serverOwned: true });
     const m = router.match(method, url.pathname);

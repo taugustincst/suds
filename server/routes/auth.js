@@ -23,6 +23,50 @@ module.exports = (r) => {
     return out;
   });
 
+  // ---- Sign up: ask for an account ----
+  // On the office server "Sign up" is a request, never an account: the row it creates cannot sign in until
+  // an administrator approves it (Settings -> Users & roles -> Access requests), choosing the role then.
+  // The programme can switch the form off (Settings -> self_signup); it is on unless someone turns it off.
+  const signupEnabled = () => db.getSetting('self_signup', '1') !== '0';
+  // Unauthenticated, so everything here is public: whether the form is open, and the programme's contact
+  // line (the privacy officer the Part 2 notice names), which the sign-in page shows in its footer.
+  r.get('/api/auth/signup/status', () => ({ enabled: signupEnabled(), program_contact: db.getSetting('program_contact', '') || '', org_name: db.getSetting('org_name', 'SUDS') }));
+  r.post('/api/auth/signup', async (ctx) => {
+    // No session exists yet, so the pipeline's CSRF check (cookie-authenticated requests only) does not
+    // apply; a cross-site form post cannot set this header without a CORS preflight the server never grants.
+    if (ctx.headers['x-requested-with'] !== 'suds') throw new HttpError(403, 'Missing CSRF header');
+    // A device has no administrator to approve anything: it creates accounts itself (/api/local/signup).
+    if (require('../config').local) throw new HttpError(404, 'Not found');
+    const limit = require('../config').signupRateLimit;
+    if (!rateLimit(`signup:${ctx.ip}`, limit, 60 * 60_000)) throw new HttpError(429, 'Too many account requests from this address. Try again later.');
+    if (!signupEnabled()) throw new HttpError(403, 'Sign-up is turned off here. Ask your administrator for an account.', { signupDisabled: true });
+    const v = validate(ctx.body, {
+      display_name: { type: 'string', required: true, maxLen: 120 },
+      username: { type: 'string', required: true, maxLen: 60, pattern: /^[a-zA-Z0-9._@-]+$/ },
+      email: { type: 'string', maxLen: 200 },
+      password: { type: 'string', required: true, maxLen: 500 },
+      reason: { type: 'string', maxLen: 200 },
+    });
+    const errs = auth.passwordPolicy(v.password);
+    if (errs.length) throw badRequest('Password must contain ' + errs.join(', '));
+    // Hashed whether or not the name is free, so neither the answer nor its timing says which it was.
+    const hash = await hashPasswordAsync(v.password);
+    const taken = !!db.one(`SELECT 1 FROM users WHERE username=?`, v.username);
+    if (!taken) {
+      const { uuid } = require('../crypto');
+      const id = uuid();
+      // 'readonly' is a placeholder until approval (the role column cannot be empty): the administrator
+      // chooses the real role, and nothing can sign in as this row before then anyway.
+      db.run(`INSERT INTO users(id,username,password_hash,display_name,email,role,is_active,access_status,access_note,requested_at,must_change_password,password_changed_at) VALUES(?,?,?,?,?,'readonly',0,'pending',?,?,0,?)`,
+        id, v.username, hash, v.display_name, v.email || null, v.reason || null, db.now(), db.now());
+      audit.log({ user: { id, username: v.username }, action: 'user.signup.requested', entity: 'user', entityId: id, ip: ctx.ip });
+    } else {
+      audit.log({ user: { username: auth.auditUsername(v.username) }, action: 'user.signup.requested', ip: ctx.ip, success: false, details: { reason: 'username taken' } });
+    }
+    ctx.status = 202;
+    return { ok: true, message: 'Thank you. If the request can be accepted, an administrator will review it; you can sign in once it is approved.' };
+  });
+
   r.post('/api/auth/mfa/verify', (ctx) => {
     if (!ctx.user) throw unauthorized();
     if (!rateLimit(`mfa:${ctx.user.id}`, 10, 10 * 60_000)) throw new HttpError(429, 'Too many attempts');

@@ -7,7 +7,8 @@ const { badRequest, notFound, forbidden, HttpError } = require('../http');
 const { validate, paging } = require('../validate');
 const { uuid, randomToken, sha256 } = require('../crypto');
 
-const SETTING_KEYS = ['org_name', 'caseload_restriction', 'county_name', 'program_contact', 'default_funding_source_id', 'note_lock_days', 'session_idle_minutes', 'session_absolute_hours', 'password_max_age_days', 'mfa_required_roles', 'mfa_grace_days',
+// default_funding_source_id used to be accepted here and was read by nothing; it is gone (1.9.5).
+const SETTING_KEYS = ['org_name', 'caseload_restriction', 'county_name', 'program_contact', 'self_signup', 'note_lock_days', 'session_idle_minutes', 'session_absolute_hours', 'password_max_age_days', 'mfa_required_roles', 'mfa_grace_days',
   'backup_schedule_hours', 'backup_retain_count', 'backup_offsite_dir', 'client_retention_years'];
 const listener = require('../listener');
 const fs = require('node:fs');
@@ -41,6 +42,8 @@ module.exports = (r) => {
         if (['session_idle_minutes', 'session_absolute_hours', 'password_max_age_days', 'backup_retain_count'].includes(k) && v !== '' && Number(v) < 1) throw badRequest(`${k} must be at least 1; leave it blank to use the default`);
         // Shorter than HIPAA's six-year documentation floor is not a setting, it is a policy violation.
         if (k === 'client_retention_years' && v !== '' && Number(v) < 6) throw badRequest('Client records must be kept at least 6 years (45 CFR §164.316(b)(2)); most SUD programs keep 7 or more');
+        // Sign-up on the sign-in page (POST /api/auth/signup): on unless switched off.
+        if (k === 'self_signup' && v !== '' && !['0', '1'].includes(v)) throw badRequest('self_signup must be 1 (on) or 0 (off)');
         if (k === 'mfa_required_roles') v = v.split(',').map(x => x.trim()).filter(x => ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'].includes(x)).join(',');
         if (k === 'session_idle_minutes' && v !== '' && Number(v) > 60) throw badRequest('Idle timeout may not exceed 60 minutes (HIPAA automatic logoff)');
         // Blank means "back to the default", so the row goes rather than an empty string being stored:

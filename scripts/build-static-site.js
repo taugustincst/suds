@@ -3,7 +3,9 @@
 // in, plus one small extra script that switches the app straight into local mode. Point any static file
 // host at the output (GitHub Pages, Netlify, S3, a USB drive with a laptop running `npx serve`, or the
 // county's own web server) and it needs nothing else — no Node process, no database, no account on file
-// anywhere. Every county worker's data stays in their own browser, like the office server's own local mode.
+// anywhere. This is "SUDS on this device", the production web app for people without an office server:
+// each person's records stay in their own browser, encrypted, like the office server's own local mode,
+// and are protected by the device backups they download (docs/WEB_APP.md).
 //
 // public/ itself is untouched: it is also served by the office Node server, which must keep deciding for
 // itself whether to run in local mode. Only the staged copy this script writes carries the always-local flag.
@@ -35,18 +37,13 @@ const count = copyDir(path.join(root, 'public'), outDir);
 // One flag, set before main.js is even requested, so the very first render already knows: nothing here
 // talks to a server. window.SUDS_LOCAL (set later, once local mode is already running) cannot be used for
 // this — see the comment on isLocalMode() in app.js.
-// SUDS_STATIC_HOST marks this as a copy served by a host the county does not run: local/sync.js refuses
-// to sync it with an office server unless that server opts in (ALLOW_STATIC_SYNC), and the banner below
-// stays on screen for as long as the page is open, so nobody mistakes an evaluation copy for the office
-// system and types a real person into it.
+// SUDS_STATIC_HOST is an internal marker for the few things that differ on this build (SUDS on this
+// device): it never syncs with an office server (local/sync.js), later sign-ups create accounts on the
+// device, and the first-run set-up asks the person to confirm where their records are kept. Nothing is
+// drawn on screen because of it.
 fs.writeFileSync(path.join(outDir, 'local-boot.js'), [
   'window.SUDS_FORCE_LOCAL = true;',
   'window.SUDS_STATIC_HOST = true;',
-  "document.addEventListener('DOMContentLoaded', function () {",
-  "  var b = document.createElement('div'); b.className = 'static-demo-banner'; b.setAttribute('role', 'note');",
-  "  b.textContent = 'Demo/evaluation build \\u2014 do not enter real client information';",
-  '  document.body.insertBefore(b, document.body.firstChild);',
-  '});',
   '',
 ].join('\n'));
 const indexPath = path.join(outDir, 'index.html');
@@ -58,7 +55,7 @@ if (!before.includes(marker)) throw new Error(`build-static-site: expected to fi
 fs.writeFileSync(indexPath, before.replace(marker, `<script src="local-boot.js"></script>\n  ${marker}`));
 // The "use SUDS on your phone or tablet" page is a plain file here (the office server serves it as /app,
 // a rewrite a static host does not have). It loads the same boot script so it knows it is the static
-// build — no certificate download, no office address — and carries the same demo banner.
+// build — no certificate download, no office address.
 const getAppPath = path.join(outDir, 'get-app.html');
 const getApp = fs.readFileSync(getAppPath, 'utf8');
 const getAppMarker = '<script src="get-app.js"></script>';
@@ -68,7 +65,7 @@ fs.writeFileSync(getAppPath, getApp.replace(getAppMarker, `<script src="local-bo
 // The service worker is copied verbatim with public/ (above); this build's shell has one file more, the
 // boot script, and it cannot be left out: a home-screen install that could not load it would open as the
 // office login instead of local mode. Registered by app.js in local mode like everywhere else, so an
-// installed demo copy opens with no connection at all.
+// installed copy opens with no connection at all.
 const swPath = path.join(outDir, 'sw.js');
 const sw = fs.readFileSync(swPath, 'utf8');
 const shellMarker = "const SHELL = ['./', 'index.html',";

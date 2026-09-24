@@ -107,7 +107,8 @@ function exportRow(t, r) {
   }
   for (const k of Object.keys(o)) if (k.endsWith('_idx')) delete o[k];
   for (const c of t.blob || []) delete o[c];
-  if (t.name === 'users') { delete o.failed_attempts; delete o.locked_until; }
+  // access_note is an access request's free-text reason: the office's business, not a device's.
+  if (t.name === 'users') { delete o.failed_attempts; delete o.locked_until; delete o.access_note; }
   return o;
 }
 

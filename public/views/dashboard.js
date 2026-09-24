@@ -1,3 +1,4 @@
+import { backupReminderCard } from './local.js';
 import { h, route, get, put, post, confirmDialog, loadRefData, state, stat, bars, fmt, badge, statusKind, table, can, nav, pageHead, sparkline, quickActions, emptyState, toast, greetingName } from '../app.js';
 
 route('dashboard', async () => {
@@ -22,6 +23,14 @@ route('dashboard', async () => {
   // Patient-rights requests run a 30-day clock: an overdue one is a compliance failure, not a to-do.
   const pr = d.patient_requests;
   if (pr && pr.n) alerts.push([pr.overdue ? 'danger' : 'warn', `${pr.n} open patient request${pr.n > 1 ? 's' : ''}${pr.overdue ? ` (${pr.overdue} overdue)` : ''}`, '#/clients?status=all&patient_requests=1']);
+  // Account requests from the sign-in page's Sign up, waiting for an administrator (office server only).
+  if (can('users:manage') && !state.local) {
+    const reqs = await get('/api/users/access-requests', { quiet: true }).catch(() => null);
+    const n = reqs ? reqs.requests.length : 0;
+    if (n) alerts.push(['warn', `${n} access request${n > 1 ? 's' : ''} waiting`, '#/admin?tab=users']);
+  }
+  // The on-device app keeps its records nowhere else: a week without a backup is worth a word on Home.
+  const backupReminder = await backupReminderCard();
   // Empty program: offer sample data (office admins, or anyone on a phone-only copy)
   let sample = null;
   if (!c.active && !c.waitlist && !caseload.caseload.length && (state.local || can('settings:manage'))) {
@@ -99,6 +108,7 @@ route('dashboard', async () => {
   };
   return h('div', {},
     pageHead(`${greet}, ${first}`),
+    backupReminder,
     sample,
     setupCard,
     cont.other_device ? h('div', { class: 'muted small mb' }, `Also signed in on ${cont.other_device.mobile ? 'your phone' : 'another computer'} (${fmt.ago(cont.other_device.last_seen_at) === 'today' ? 'active today' : fmt.ago(cont.other_device.last_seen_at)}). Everything stays in sync.`) : null,

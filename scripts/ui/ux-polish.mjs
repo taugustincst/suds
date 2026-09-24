@@ -1,8 +1,10 @@
-// The phone review of the static (demo) build, replayed with real taps on a Pixel-7-sized touch screen:
-//   H2 the demo banner covered the top of every dialog (title and ✕ hidden), worst at 200% text
+// The phone review of the static build (SUDS on this device), replayed with real taps on a Pixel-7-sized
+// touch screen:
+//   H2 the (since removed) demo banner covered the top of every dialog (title and ✕ hidden), worst at 200%
+//      text; now: a dialog's title and ✕ start on screen, with nothing drawn over them
 //   H3 a referral started from a provider's page never loaded the chosen client's consents
 //   M1 "Load sample data" on Home went to another page instead of loading it
-//   M2 the demo promised a sync it never does ("both directions", "shows up on the other", pending counts)
+//   M2 the on-device app promised a sync it never does ("both directions", "shows up on the other", pending counts)
 //   M3 nothing said what SUDS is; no one-step "try it with sample data"
 //   M5 tap targets under 44px (to-do boxes, chart rows); the + Log button over an open menu
 //   M6 200% text: forms wider than the screen, top bar and buttons not scaling
@@ -29,9 +31,10 @@ const bigText = (page) => page.evaluate(() => { if (document.getElementById('big
 const normalText = (page) => page.evaluate(() => document.getElementById('big-text')?.remove());
 const go = async (page, hash) => { await normalText(page).catch(() => {}); await page.goto(`${base}/#/${hash}${hash.includes('?') ? '&' : '?'}_=${Date.now()}`); await page.waitForSelector('.layout', { timeout: 15000 }); await page.waitForSelector('.main .boot', { state: 'detached', timeout: 15000 }).catch(() => {}); await settle(page); };
 const kernel = (page, method, path, body) => page.evaluate(async ({ method, path, body }) => { const r = await window.SUDS_LOCAL.handle(method, path, body, { 'X-Requested-With': 'suds' }); const data = r.json !== undefined ? r.json : (r.body ? JSON.parse(r.body.toString()) : null); return { status: r.status, data }; }, { method, path, body });
-// Where the dialog's title and ✕ are, against the bottom of the demo banner.
+// Where the dialog's title and ✕ are, against the top of the screen (there is no banner above them any more;
+// `banner` stays 0 so the checks below read the same as when there was one).
 const dialogTop = (page) => page.evaluate(() => {
-  const b = document.querySelector('.static-demo-banner').getBoundingClientRect();
+  const b = document.querySelector('.static-demo-banner')?.getBoundingClientRect() || { bottom: 0 };
   const x = document.querySelector('.modal button[aria-label=Close]'); const t = document.querySelector('.modal h2');
   const xr = x ? x.getBoundingClientRect() : null; const tr = t ? t.getBoundingClientRect() : null;
   // The banner lets taps through (pointer-events: none), so hit-testing cannot see it: compare boxes.
@@ -47,27 +50,31 @@ const overflowing = (page) => page.evaluate(() => {
     .map(({ el, r }) => `${el.tagName.toLowerCase()}.${String(el.className).split(' ').join('.')}[${(el.textContent || el.name || '').trim().slice(0, 20)}] right=${Math.round(r.right)}`);
 });
 
-// ---------------- first run on the demo site ----------------
+// ---------------- first run on the on-device app ----------------
 const ctx = await browser.newContext(PIXEL7);
-const page = await ctx.newPage(); watch(page, 'demo');
+const page = await ctx.newPage(); watch(page, 'device');
 await page.goto(base + '/'); await page.waitForSelector('input[name=display_name]', { timeout: 15000 });
 await shot(page, 'setup');
 eq(await page.$eval('[data-purpose]', p => p.textContent), 'Track services, referrals and follow-ups for people in substance-use-disorder care.', 'M3: the first screen says what SUDS is');
 const setupText = await page.textContent('.login-wrap');
-ok(!/both directions|tap Sync/i.test(setupText), 'M2: first-run setup on the demo does not promise a sync with the office');
-ok(/stays in this browser/.test(setupText) && /office SUDS address/.test(setupText), 'M2: it says the demo stays in this browser, and where to use SUDS for real');
-ok(await page.$('[data-try-sample]'), 'M3: the demo offers "Try it with sample data"');
+ok(!/both directions|tap Sync/i.test(setupText), 'M2: first-run setup on the device does not promise a sync with the office');
+ok(/in this browser on this device, and nowhere else/.test(setupText) && /backup/.test(setupText), 'M2: it says the records stay in this browser, and to back them up');
+ok(!(await page.$('.static-demo-banner')) && !/\bdemo\b|evaluation/i.test(setupText), 'no demo banner, and nothing calls this a demo or an evaluation copy');
+ok(await page.$('[data-try-it]'), 'M3: the device still offers "Try it with sample data" — optional, after the sign-up form');
+const tryFirst = await page.evaluate(() => { const f = document.querySelector('[data-first-run] form'); const t = document.querySelector('[data-try-it]'); return !!(f && t && (f.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING)); });
+ok(tryFirst, 'and it comes after the account form, not as the lead');
+await page.tap('[data-try-it] summary');
 await page.tap('[data-try-sample]');
 await page.waitForSelector('.layout', { timeout: 30000 });
 await settle(page);
 
 // the tour
 const tour = await until(() => page.$('.modal'), { timeout: 5000 });
-ok(tour, 'the welcome tour opens for the new demo account');
+ok(tour, 'the welcome tour opens for the new sample account');
 const step1 = tour ? await page.textContent('.modal') : '';
-ok(!/shows up on the other right away/.test(step1), 'M2: the tour does not promise that entries appear on other devices in the demo', step1.slice(0, 200));
-ok(/stays in this browser/.test(step1), 'M2: the tour says the demo stays in this browser');
-ok(/^Hi Demo\./.test(step1.replace(/^Welcome to SUDS/, '').trim()), 'the tour greets "Demo User" as Demo', step1.slice(0, 60));
+ok(!/shows up on the other right away/.test(step1), 'M2: the tour does not promise that entries appear on other devices', step1.slice(0, 200));
+ok(/stays in this browser/.test(step1) && /backup/.test(step1), 'M2: the tour says records stay in this browser, and to back them up');
+ok(/^Hi Sample\./.test(step1.replace(/^Welcome to SUDS/, '').trim()), 'the tour greets "Sample User" as Sample', step1.slice(0, 60));
 let labels = [];
 for (let i = 0; i < 8; i++) { const b = await page.$('.modal button.primary'); if (!b) break; labels.push((await b.textContent()).trim()); if (labels.at(-1) === 'Done') { await shot(page, 'tour-last-step'); } await b.tap(); await settle(page); }
 eq(labels.at(-1), 'Done', 'the last tour step\'s button says Done');
@@ -75,7 +82,7 @@ ok(labels.slice(0, -1).every(l => l === 'Next'), 'the steps before it say Next',
 ok(!(await page.$('.modal-bg')), 'Done closes the tour');
 
 const h1 = (await page.textContent('h1')).trim();
-ok(/^Good (morning|afternoon|evening), Demo$/.test(h1), 'the greeting uses the first name', h1);
+ok(/^Good (morning|afternoon|evening), Sample$/.test(h1), 'the greeting uses the first name', h1);
 const clients = await kernel(page, 'GET', '/api/clients?limit=100&status=all');
 ok(clients.data.clients.length > 5, 'M3: one tap created the account and loaded the sample data', clients.data.clients.length);
 
@@ -83,7 +90,8 @@ ok(clients.data.clients.length > 5, 'M3: one tap created the account and loaded 
 await page.tap('.fab button'); await page.waitForSelector('.modal');
 let top = await dialogTop(page);
 await shot(page, 'log-sheet');
-ok(top.close >= top.banner - 0.5 && top.title >= top.banner - 0.5, 'H2: the + Log sheet\'s title and ✕ start below the demo banner', top);
+ok(!(await page.$('.static-demo-banner')), 'H2: nothing is pinned over the top of the screen');
+ok(top.close >= top.banner - 0.5 && top.title >= top.banner - 0.5, 'H2: the + Log sheet\'s title and ✕ start on screen', top);
 ok(top.closeHit, 'H2: and a tap on the ✕ lands on it');
 await page.tap('.modal button[aria-label=Close]');
 ok(await until(async () => !(await page.$('.modal-bg')), { timeout: 3000 }), 'H2: tapping the ✕ closes the sheet');
@@ -92,8 +100,8 @@ await bigText(page); await settle(page);
 await page.tap('.fab button'); await page.waitForSelector('.modal');
 top = await dialogTop(page);
 await shot(page, 'log-sheet-200');
-ok(top.banner > 100, 'at 200% text the banner is tall (the case the review measured)', top.banner);
-ok(top.close >= top.banner - 0.5 && top.title >= top.banner - 0.5, 'H2: at 200% text the title and ✕ still start below the banner', top);
+ok(!(await page.$('.static-demo-banner')), 'at 200% text there is still nothing pinned over the page (the review measured a 150px banner here)');
+ok(top.close >= top.banner - 0.5 && top.title >= top.banner - 0.5, 'H2: at 200% text the title and ✕ still start on screen', top);
 eq((await overflowing(page)).join(' | '), '', 'M6: nothing in the + Log sheet is wider than the screen at 200% text');
 
 // ---------------- Back closes the dialog, not the page ----------------
@@ -150,13 +158,13 @@ const err = await until(async () => { const t = await page.$eval('.modal [data-f
 eq(err, 'First name is required', 'the required-field error names the field');
 await page.tap('.modal button[aria-label=Close]'); await settle(page);
 
-// ---------------- M2: the demo's Sync page ----------------
+// ---------------- M2: the device page (formerly Sync) ----------------
 await go(page, 'sync');
 const syncText = await page.textContent('.main');
-ok(!/Changes waiting to send|Office server/.test(syncText), 'M2: the demo\'s Sync page shows no pending-change count or office server', syncText.slice(0, 200));
-ok(await page.$('[data-static-status]') && /stays in this browser/.test(syncText), 'M2: it says the demo stays in this browser');
-ok(/office SUDS address/.test(syncText), 'M2: and where to use SUDS for real');
-await shot(page, 'sync-demo');
+ok(!/Changes waiting to send|Office server:/.test(syncText) && !(await page.$('input[name=office_password]')), 'M2: the device page shows no pending-change count, office server or sync form', syncText.slice(0, 200));
+ok(await page.$('[data-static-status]') && /stay in this browser/.test(syncText), 'M2: it says the records stay in this browser');
+ok(/does not sync with an office server/.test(syncText), 'M2: and that it does not sync with an office server');
+await shot(page, 'device-page');
 
 // ---------------- M5: tap targets ----------------
 await go(page, 'tasks?mine=0');
@@ -255,12 +263,13 @@ ok(man && !/get-app/.test(man.start) && man.start === new URL('./', man.here).hr
 ok(await page.$('a[data-open-suds]'), 'and it has an Open SUDS button');
 await ctx.close();
 
-// ---------------- M1: Load sample data from Home, on a fresh demo ----------------
+// ---------------- M1: Load sample data from Home, on a fresh device ----------------
 {
   const c2 = await browser.newContext(PIXEL7); const p = await c2.newPage(); watch(p, 'fresh');
   await p.goto(base + '/'); await p.waitForSelector('input[name=display_name]', { timeout: 15000 });
   await p.fill('input[name=display_name]', 'Kiran Patel'); await p.fill('input[name=username]', 'kpatel');
   await p.fill('input[name=password]', 'Navigator2026!!'); await p.fill('input[name=confirm]', 'Navigator2026!!');
+  await p.check('input[name=storage_ack]');
   await p.tap('button[type=submit]'); await p.waitForSelector('.layout', { timeout: 15000 }); await settle(p);
   for (let i = 0; i < 6; i++) { const b = await p.$('.modal button.primary'); if (!b) break; await b.tap(); await settle(p); }
   ok(/, Kiran$/.test((await p.textContent('h1')).trim()), '"Kiran Patel" is greeted as Kiran');

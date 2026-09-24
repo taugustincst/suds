@@ -228,20 +228,6 @@ export function banner(message, kind = 'warn', { id = message } = {}) {
   return el;
 }
 const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
-// The static demo build pins a notice to the top of the screen (.static-demo-banner, scripts/build-static-site.js).
-// A dialog is full-screen on a phone, and used to start underneath it: the title and the ✕ were hidden (at
-// large text sizes the notice is ~150px tall). Its measured height is published as --demo-banner-h, which
-// styles.css uses to start dialogs (and the sticky phone header) below it.
-let bannerWatched = false;
-function trackDemoBanner() {
-  const b = document.querySelector('.static-demo-banner');
-  if (!b) return;
-  const setH = () => document.documentElement.style.setProperty('--demo-banner-h', `${b.offsetHeight}px`);
-  setH();
-  if (bannerWatched) return; bannerWatched = true;
-  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(setH).observe(b); else window.addEventListener('resize', setH);
-}
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', trackDemoBanner); else trackDemoBanner();
 // The phone's Back button (Android, or a browser's back) closes the dialog on top instead of leaving the
 // page underneath it. Opening a dialog pushes a history entry (same URL, so no route change) marked with
 // its id; Back pops it and the popstate below closes that dialog. A dialog closed any other way (✕,
@@ -266,7 +252,6 @@ window.addEventListener('popstate', (e) => {
   if ((prev.closed && prev.url === location.href) || (landed && !modalStack.some(m => m.id === landed))) history.back();
 });
 export function modal(title, content, { wide = false, onClose = null } = {}) {
-  trackDemoBanner();
   const root = document.getElementById('modal-root');
   const titleId = 'modal-title-' + Math.random().toString(36).slice(2, 9);
   const box = h('div', { class: `modal ${wide ? 'wide' : ''}`, role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': titleId },
@@ -371,7 +356,8 @@ function openDeviceResetDialog(onDone) {
         if (confirmBox.value.trim() !== 'ERASE') { confirmBox.focus(); return; }
         await wipeLocalDatabase();
         m.close();
-        onDone ? onDone() : location.reload();
+        // The erased device starts over at first-run Sign up, whatever address this page was on.
+        if (onDone) onDone(); else { try { history.replaceState(null, '', '#/login?mode=signup'); } catch {} location.reload(); }
       } }, 'Erase this device'))));
 }
 /** A "Reset this device" link + typed-confirmation dialog, usable wherever a local device might need
@@ -877,9 +863,9 @@ export function maybeTour() {
   tourOpen = true;
   const steps = [
     ['Welcome to SUDS', `Hi ${greetingName(state.user.display_name, state.user.username)}. SUDS helps you track services, referrals and follow-ups for people in substance-use-disorder care, all in one place. ${window.SUDS_STATIC_HOST
-      // The demo build never syncs with anything (local/sync.js): promising "shows up on the other right
+      // The on-device app never syncs with anything (local/sync.js): promising "shows up on the other right
       // away" there sent people looking for their entries on a second device.
-      ? 'This is a demo: everything you enter stays in this browser on this device and is never sent anywhere. To use SUDS for real, open your county\'s office SUDS address.'
+      ? 'Everything you record stays in this browser on this device, encrypted. Download a backup regularly from This device so a cleared browser or a lost phone does not take your records with it.'
       : state.local ? 'This copy keeps your work on this device; it reaches the office SUDS when you sync.'
       : 'It works the same on your phone and your computer. Anything you add on one shows up on the other right away.'}`],
     ['Start with Home', 'Home shows what needs attention today: reminders due, clients you have not contacted in a while, and drafts you started on another device.'],
@@ -979,6 +965,17 @@ export const NAV = [
 ];
 
 let current = null;
+// A view that rewrites its own address in place (the sign-in page's Log in / Sign up, #/login?mode=…) is
+// still the render that finished: replaceHash() records the rewrite so render() can tell it from a redirect.
+let replacedDuringRender = null;
+/** Change the address without a new history entry or a re-render (a view switching its own panel). */
+export function replaceHash(to) {
+  const from = location.hash;
+  try { history.replaceState(history.state, '', to); } catch { return; }
+  syncHere();
+  if (activity.rendered === from) activity.rendered = location.hash; else replacedDuringRender = { from, to: location.hash };
+  activity.at = Date.now();
+}
 export async function render() {
   const hash = location.hash;
   busy(1);
@@ -986,6 +983,8 @@ export async function render() {
   finally {
     // A render that redirected (nav() to another address) is not the one that finished this address.
     if (location.hash === hash) activity.rendered = hash;
+    else if (replacedDuringRender && replacedDuringRender.from === hash && replacedDuringRender.to === location.hash) activity.rendered = location.hash;
+    replacedDuringRender = null;
     busy(-1);
   }
 }
@@ -998,7 +997,8 @@ async function renderPage() {
   if (updateArmed && !updateBlocked({ navigating: true })) { reloadForUpdate(); return; }
   clear(document.getElementById('modal-root'));
   const r = parseHash();
-  if (state.localSetupNeeded) { if (r.name !== 'localsetup') { nav('localsetup'); return; } clear(app).append(await routes.localsetup(r)); return; }
+  // A device with no account yet opens the sign-in page on Sign up, which is its first-run set-up.
+  if (state.localSetupNeeded) { if (r.name !== 'localsetup' && r.name !== 'login') { nav('login?mode=signup'); return; } clear(app).append(await routes.login(r)); return; }
   if (state.setupNeeded) { if (r.name !== 'setup') { nav('setup'); return; } clear(app).append(await routes.setup(r)); return; }
   if (!state.user) { clear(app).append(await routes.login(r)); return; }
   if (state.mfaPending && r.name !== 'mfa') { nav('mfa'); return; }
@@ -1034,7 +1034,7 @@ function sidebar(r) {
       }
       return (!n.perm || canAny(n.perm)) ? h('a', { href: '#/' + n.name, class: r.name === n.name ? 'active' : '' }, h('span', { class: 'ico' }, n.ico), n.label) : null;
     })),
-    h('div', { class: 'foot' }, state.local ? h('a', { href: '#/sync', class: 'badge info', style: { display: 'block', textAlign: 'center', marginBottom: '.5rem' } }, '📱 On this device · Sync') : null, h('div', {}, h('b', {}, state.user.display_name)), h('div', { class: 'muted' }, fmt.label(state.user.role)),
+    h('div', { class: 'foot' }, state.local ? h('a', { href: '#/sync', class: 'badge info', style: { display: 'block', textAlign: 'center', marginBottom: '.5rem' } }, window.SUDS_STATIC_HOST ? '📱 On this device · Backup' : '📱 On this device · Sync') : null, h('div', {}, h('b', {}, state.user.display_name)), h('div', { class: 'muted' }, fmt.label(state.user.role)),
       h('div', { class: 'row', style: { marginTop: '.5rem' } }, h('a', { href: '#/profile' }, 'Profile'), h('a', { href: '#', onClick: (e) => { e.preventDefault(); logout(); } }, 'Sign out'), h('a', { href: '#', title: 'Light / dark', onClick: (e) => { e.preventDefault(); toggleTheme(); } }, 'Light/dark')),
       h('div', { class: 'small muted', 'data-build-stamp': '1', style: { marginTop: '.4rem' } }, `SUDS ${SUDS_VERSION}`)));
 }
@@ -1245,8 +1245,8 @@ async function startLocalKernel(force) {
       const full = String(err && err.name) === 'QuotaExceededError';
       reportClientError({ kind: 'error', message: `save failed: ${err && err.name}` });
       banner(full
-        ? 'This device is out of storage space, so nothing is being saved. Sync with the office, then remove sample data or attachments to free space.'
-        : 'This device has stopped saving your work. Sync with the office as soon as you can.', 'error');
+        ? (window.SUDS_STATIC_HOST ? 'This device is out of storage space, so nothing is being saved. Download a backup now (This device), then free up space on the device.' : 'This device is out of storage space, so nothing is being saved. Sync with the office, then remove sample data or attachments to free space.')
+        : (window.SUDS_STATIC_HOST ? 'This device has stopped saving your work. Download a backup from This device as soon as you can.' : 'This device has stopped saving your work. Sync with the office as soon as you can.'), 'error');
     },
   });
 }
@@ -1334,7 +1334,7 @@ export async function boot(force = false) {
     try { const link = document.querySelector('link[rel="manifest"]'); if (link) link.href = 'manifest-local.webmanifest'; localStorage.setItem('suds.localUsed', '1'); } catch {}
   }
   // Registered in local mode too: the worker caches the kernel and the shell, so a device set up for local
-  // mode (or the demo build installed to a home screen) starts with no connection at all (H4).
+  // mode (or the on-device app installed to a home screen) starts with no connection at all (H4).
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     try {
       // A newer worker taking control means a release was published while this page was open (or this is

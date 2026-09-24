@@ -244,6 +244,15 @@ async function login({ username, password, ctx }) {
   };
   // An unknown username still pays the hashing cost, so response time does not reveal who has an account.
   if (!user) { await verifyPasswordAsync(password || '', 'scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AA=='); fail('unknown user'); }
+  if (!user.is_active && (user.access_status === 'pending' || user.access_status === 'declined') && !pendingWipe) {
+    // A self sign-up an administrator has not approved (yet). Only someone who knows the password they
+    // chose is told where the request stands; anyone else gets the same answer as for any bad sign-in.
+    if (!(await verifyPasswordAsync(password || '', user.password_hash))) fail('bad password');
+    audit.log({ user: who, action: 'auth.login.access_' + user.access_status, ip: ctx.ip, success: false });
+    throw new HttpError(403, user.access_status === 'pending'
+      ? 'Your request is waiting for an administrator to approve it. You can sign in once it has been approved.'
+      : 'Your request for an account was not approved. Ask your administrator if you think this is a mistake.', { accessPending: user.access_status === 'pending', accessDeclined: user.access_status === 'declined' });
+  }
   if (!user.is_active) {
     // With a wipe pending, a correct password on the deactivated account is still proof that the phone is
     // in the hands of the person the account belonged to — enough to consume the wipe.
@@ -311,5 +320,5 @@ function passwordPolicy(pw) {
   return errors;
 }
 
-module.exports = { policy, PERMS, hasPerm, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted,
+module.exports = { auditUsername, policy, PERMS, hasPerm, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted,
   createSession, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };
