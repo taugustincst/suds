@@ -19,12 +19,22 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
   // A consent that has run out authorises nothing: it is not offered, and if none is left the form says
   // so and points at where to record one rather than presenting an empty list.
   const today = fmt.today();
-  const allConsents = consentsResult.consents.filter(c => !c.revoked_at);
-  const consents = allConsents.filter(c => !c.expires_at || c.expires_at >= today);
-  const expiredOnly = !!(theClientId && !consents.length && allConsents.length);
-  const consentHelp = h('span', {}, consents.length ? 'Required before the provider is told who this client is. A referral left as "pending" with no warm handoff — just a phone number handed to the client — needs none.'
-    : theClientId ? [expiredOnly ? `${allConsents.length === 1 ? 'The consent on file has' : 'All consents on file have'} expired. ` : 'No consent is on file. ', h('a', { href: `#/client/${theClientId}/consents`, 'data-add-consent': '1', onClick: () => m.close() }, 'Record a new release on the Consents tab'), ' before the provider is told who this client is.']
-    : 'Choose the client first to see their consents on file.');
+  // Recomputed whenever the client changes: a referral started from a provider's page has no client yet,
+  // and the consents are only known once one is picked (the list used to stay empty, and saving then
+  // asked for a consent the client already had).
+  let consentState;
+  const consentStateFor = (clientId, list) => {
+    const all = (list || []).filter(c => !c.revoked_at);
+    const valid = all.filter(c => !c.expires_at || c.expires_at >= today);
+    return { clientId, all, valid, expiredOnly: !!(clientId && !valid.length && all.length) };
+  };
+  const consentOption = (c) => ({ value: c.id, label: `${fmt.label(c.type)} → ${c.recipient || '—'} (signed ${fmt.date(c.signed_at)}${c.expires_at ? `, expires ${fmt.date(c.expires_at)}` : ''})` });
+  const consentHelpContent = ({ clientId, all, valid, expiredOnly }) => valid.length ? ['Required before the provider is told who this client is. A referral left as "pending" with no warm handoff — just a phone number handed to the client — needs none.']
+    : clientId ? [expiredOnly ? `${all.length === 1 ? 'The consent on file has' : 'All consents on file have'} expired. ` : 'No consent is on file. ', h('a', { href: `#/client/${clientId}/consents`, 'data-add-consent': '1', onClick: () => m.close() }, 'Record a new release on the Consents tab'), ' before the provider is told who this client is.']
+    : ['Choose the client first to see their consents on file.'];
+  consentState = consentStateFor(theClientId, consentsResult.consents);
+  const consents = consentState.valid; const expiredOnly = consentState.expiredOnly;
+  const consentHelp = h('span', { 'data-consent-help': '1' }, consentHelpContent(consentState));
   const f = form([
     { name: 'client_id', label: 'Client', type: 'client', required: true, value: clientId || values?.client_id, display: clientDisplay },
     { name: 'resource_id', label: 'Resource / provider', type: 'select', required: true, value: resourceId || values?.resource_id,
@@ -35,7 +45,7 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
     { name: 'referred_at', label: 'Referral date', type: 'datetime', required: true, value: values?.referred_at || new Date().toISOString() },
     { name: 'status', label: 'Status', type: 'select', options: C.REFERRAL_STATUSES, value: 'pending', noBlank: true, required: true }, { name: 'urgency', label: 'Urgency', type: 'select', options: ['routine', 'urgent', 'emergent'], value: 'routine', noBlank: true },
     { name: 'warm_handoff', label: 'Warm handoff', type: 'checkbox' }, { name: 'appointment_at', label: 'Appointment', type: 'datetime' }, { name: 'admitted_at', label: 'Admitted / started', type: 'datetime' },
-    { name: 'consent_id', label: 'Consent / ROI on file (42 CFR Part 2)', type: 'select', placeholder: expiredOnly ? '(expired)' : undefined, options: consents.map(c => ({ value: c.id, label: `${fmt.label(c.type)} → ${c.recipient || '—'} (signed ${fmt.date(c.signed_at)}${c.expires_at ? `, expires ${fmt.date(c.expires_at)}` : ''})` })),
+    { name: 'consent_id', label: 'Consent / ROI on file (42 CFR Part 2)', type: 'select', placeholder: expiredOnly ? '(expired)' : undefined, options: consents.map(consentOption),
       help: consentHelp },
     { name: '_disclosure_basis', label: 'If there is no consent, the lawful basis', type: 'select',
       options: [{ value: 'medical_emergency', label: 'Medical emergency' }, { value: 'court_order', label: 'Court order' }, { value: 'qsoa', label: 'Qualified service organisation agreement' }, { value: 'child_abuse_report', label: 'Mandated child abuse report' }, { value: 'crime_on_premises', label: 'Crime on the premises' }, { value: 'other', label: 'Other (explain in notes)' }],
@@ -48,8 +58,14 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
     try {
       if (isNew) await post('/api/referrals', d); else await put(`/api/referrals/${values.id}`, d);
     } catch (e) {
-      // The commonest failure by far is sharing without a consent on file; say what to do about it.
-      if (/consent/i.test(e.message || '')) throw new Error(e.message + ' Record the release on the client\'s Consents tab, or choose a lawful basis above.');
+      // The commonest failure by far is sharing without a consent; say what to do about it, once (the
+      // server's message already ends in its own advice, and appending ours repeated it).
+      if (/valid, unexpired consent/i.test(e.message || '')) {
+        const err = new Error(consentState.valid.length
+          ? 'Choose the client\'s consent under "Consent / ROI on file" before the provider is told who this client is — or, if you are relying on something else, choose the lawful basis.'
+          : 'This client has no valid consent on file. Record the release on the client\'s Consents tab, or choose a lawful basis above.');
+        err.status = e.status; err.data = e.data; throw err;
+      }
       throw e;
     }
     toast('Referral saved', 'ok'); m.close(); onDone && onDone();
@@ -71,6 +87,27 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
       sel.dispatchEvent(new Event('input', { bubbles: true }));
       toast('Provider added — carry on with the referral', 'ok');
     });
+  });
+  // Picking (or changing) the client reloads that client's consents into the list and its help text.
+  const consentSel = f.inputs.consent_id;
+  const consentHelpEl = consentSel.closest('.field')?.querySelector('.help');
+  const rebuildConsents = (st) => {
+    consentState = st;
+    const keep = consentSel.value;
+    while (consentSel.firstChild) consentSel.firstChild.remove();
+    consentSel.append(h('option', { value: '' }, st.expiredOnly ? '(expired)' : '—'), ...st.valid.map(c => { const o = consentOption(c); return h('option', { value: o.value }, o.label); }));
+    // Never chosen for the worker: whether this referral discloses anything at all is their call.
+    consentSel.value = st.valid.some(c => c.id === keep) ? keep : '';
+    if (consentHelpEl) { while (consentHelpEl.firstChild) consentHelpEl.firstChild.remove(); consentHelpEl.append(h('span', { 'data-consent-help': '1' }, consentHelpContent(st))); }
+  };
+  let seq = 0;
+  f.inputs.client_id.addEventListener('change', async () => {
+    const id = f.inputs.client_id.value; const mine = ++seq;
+    if (!id) { rebuildConsents(consentStateFor(null, [])); return; }
+    try {
+      const r = await get(`/api/clients/${id}/consents`);
+      if (mine === seq) rebuildConsents(consentStateFor(id, r.consents));
+    } catch (e) { if (mine === seq) rebuildConsents(consentStateFor(id, [])); toast(e.message || 'Could not load this client\'s consents', 'error'); }
   });
   const m = modal(isNew ? 'New referral' : 'Edit referral', f, { wide: true });
 }

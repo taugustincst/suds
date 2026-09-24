@@ -47,7 +47,7 @@ export SUDS_STATIC_URL="http://127.0.0.1:$STATIC_PORT"
 export SUDS_STATIC_DIR=/tmp/suds-static-site SUDS_UPGRADE_PORT=${SUDS_UPGRADE_PORT:-8879}
 fail=0
 # SCRIPTS="a b" runs a subset (the servers are still started the same way).
-for s in ${SCRIPTS:-desktop review-fixes navigator-flow navigator-fixes ux-features local-mode sync-two-way device-audit spreadsheets sample-data resource-profiles forms region dates setup static-site qa-retest clinical-audit}; do
+for s in ${SCRIPTS:-desktop review-fixes navigator-flow navigator-fixes ux-features local-mode sync-two-way device-audit spreadsheets sample-data resource-profiles forms region dates setup static-site qa-retest clinical-audit ux-polish}; do
   echo "=== $s"
   if node scripts/ui/$s.mjs > /tmp/suds-ui-$s.log 2>&1; then grep -v '^\[2m' /tmp/suds-ui-$s.log | tail -6; else echo "FAILED"; grep -v '^\[2m' /tmp/suds-ui-$s.log | tail -25; fail=1; fi
 done

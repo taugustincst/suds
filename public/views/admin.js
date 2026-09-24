@@ -82,7 +82,10 @@ export async function sampleDataCard(onChange) {
     st.loaded ? [h('p', { class: 'small' }, badge('Sample data loaded', 'info'), ' ', `${st.counts.clients} fictional clients and ${st.total} records added ${fmt.dt(st.loaded_at)}. Client codes start with DEMO-.`),
       h('p', { class: 'small muted' }, state.local ? 'Sample data is removed automatically before this device syncs with the office, so it never mixes with real records.' : 'Remove it before entering real clients.'),
       h('div', { class: 'btn-row' }, h('button', { class: 'btn danger', onClick: remove }, 'Remove sample data'), busy)]
-    : st.clients_total > 0 ? h('p', { class: 'small muted' }, 'Sample data can only be added while there are no clients yet, so it never mixes with real records.')
+    : st.clients_total > 0 ? h('p', { class: 'small muted', 'data-sample-refused': '1' }, window.SUDS_STATIC_HOST
+      // The demo holds nothing real, but the on-device kernel still refuses once a client exists; say how to get there.
+      ? 'Sample data can only be added while this demo has no clients. To start the demo again with sample data, use "Erase data on this device" on this page, then choose "Try it with sample data".'
+      : 'Sample data can only be added while there are no clients yet, so it never mixes with real records.')
     : [h('p', { class: 'small muted' }, 'Add a set of fictional clients, visits, calls, notes, referrals, reminders, resources and funding so you can try every screen. Nothing here is real, and it can be removed in one click.'),
       h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', onClick: load }, 'Load sample data'), busy)]);
 }

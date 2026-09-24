@@ -59,11 +59,11 @@ for (const [label, base] of surfaces) {
   ok(/^Good (morning|afternoon|evening), QATEST$/.test(h1.trim()), `${label}: the greeting shows the display name exactly as typed`, h1.trim());
   const fallback = await page.evaluate(async () => { const m = await import('./app.js'); return [m.greetingName('', 'jdoe'), m.greetingName('Dr. Kiran Patel'), m.clientStatus({ status: '' }), m.clientStatus({ status: null }), m.clientStatus({ status: 'inactive' }), m.greetingName('QA Tester'), m.greetingName('QATEST'), m.greetingName('Maria de la Cruz Jones'), m.greetingName('Dr. Patel'), m.firstName('Dr. Kiran Patel')]; });
   eq(fallback[0], 'jdoe', `${label}: a blank display name greets by username`);
-  eq(fallback[1], 'Kiran', `${label}: a formal name with an honorific greets by first name`);
-  eq(fallback[5], 'QA Tester', `${label}: a two-word display name is greeted whole, not cut to "QA"`);
+  eq(fallback[1], 'Dr. Patel', `${label}: a name with an honorific greets as honorific + surname`);
+  eq(fallback[5], 'QA', `${label}: an ordinary two-word name greets by its first word, as typed (not re-cased)`);
   eq(fallback[6], 'QATEST', `${label}: a one-word, all-capitals name is neither cut nor re-cased`);
   eq(fallback[7], 'Maria', `${label}: a long formal name is shortened to the first name`);
-  eq(fallback[8], 'Patel', `${label}: an honorific is skipped even in a two-word name`);
+  eq(fallback[8], 'Dr. Patel', `${label}: "Dr. Patel" keeps the honorific with the surname`);
   eq(fallback[9], 'Kiran', `${label}: firstName (the welcome tour) still gives the first name`);
   eq(fallback[2], 'active', `${label}: a client with an empty status is shown as Active, not blank`);
   eq(fallback[3], 'active', `${label}: a client with a null status is shown as Active, not blank`);

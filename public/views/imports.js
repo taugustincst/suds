@@ -58,7 +58,7 @@ async function importDetail(id) {
   const cards = staged.map(it => {
     const picker = clientPicker('client_id', it.suggested_client_id || '', { display: it.suggested_client_name ? `${it.suggested_client_name} (${it.suggested_client_code})` : undefined, required: true });
     const kindSel = h('select', {}, kinds.map(k => h('option', { value: k }, k === 'clinical' ? 'Clinical note' : 'Administrative / contact note')));
-    const fmtSel = h('select', {}, C.NOTE_FORMATS.map(f => h('option', { value: f, selected: f === 'contact' }, f)));
+    const fmtSel = h('select', {}, C.NOTE_FORMATS.map(f => h('option', { value: f, selected: f === 'contact' }, fmt.label(f))));
     const title = h('input', { value: it.title || '' });
     const when = h('input', { type: 'datetime-local', value: it.captured_at ? fmt.isoLocal(new Date(it.captured_at)) : fmt.isoLocal() });
     const content = h('textarea', { rows: 8 }, it.content);

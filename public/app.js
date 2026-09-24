@@ -202,7 +202,45 @@ export function banner(message, kind = 'warn', { id = message } = {}) {
   return el;
 }
 const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+// The static demo build pins a notice to the top of the screen (.static-demo-banner, scripts/build-static-site.js).
+// A dialog is full-screen on a phone, and used to start underneath it: the title and the ✕ were hidden (at
+// large text sizes the notice is ~150px tall). Its measured height is published as --demo-banner-h, which
+// styles.css uses to start dialogs (and the sticky phone header) below it.
+let bannerWatched = false;
+function trackDemoBanner() {
+  const b = document.querySelector('.static-demo-banner');
+  if (!b) return;
+  const setH = () => document.documentElement.style.setProperty('--demo-banner-h', `${b.offsetHeight}px`);
+  setH();
+  if (bannerWatched) return; bannerWatched = true;
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(setH).observe(b); else window.addEventListener('resize', setH);
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', trackDemoBanner); else trackDemoBanner();
+// The phone's Back button (Android, or a browser's back) closes the dialog on top instead of leaving the
+// page underneath it. Opening a dialog pushes a history entry (same URL, so no route change) marked with
+// its id; Back pops it and the popstate below closes that dialog. A dialog closed any other way (✕,
+// Escape, Save) does not call history.back() — that is asynchronous, and a Save that navigates or opens
+// the next dialog straight afterwards would be undone by it — but rewrites its entry in place as "closed"
+// (sudsClosed). The next dialog reuses such an entry, and a Back press that would only step from it onto
+// the same page is followed through to the page before, so no press is ever spent on nothing.
+const modalStack = [];
+let here = { closed: false, url: location.href };
+const syncHere = () => { here = { closed: !!(history.state && history.state.sudsClosed), url: location.href }; };
+window.addEventListener('hashchange', syncHere);
+window.addEventListener('popstate', (e) => {
+  const prev = here;
+  const landed = e.state && e.state.sudsModal;
+  syncHere();
+  for (let i = modalStack.length - 1; i >= 0; i--) if (!modalStack[i].bg.isConnected) modalStack.splice(i, 1);
+  let closedAny = false;
+  while (modalStack.length && modalStack[modalStack.length - 1].id !== landed) { modalStack.pop().close({ fromHistory: true }); closedAny = true; }
+  if (closedAny) return;
+  // Stepped off a spent entry onto the same page, or onto the entry of a dialog that is already gone
+  // (removed by a re-render): nothing changed on screen, so take the next step too.
+  if ((prev.closed && prev.url === location.href) || (landed && !modalStack.some(m => m.id === landed))) history.back();
+});
 export function modal(title, content, { wide = false, onClose = null } = {}) {
+  trackDemoBanner();
   const root = document.getElementById('modal-root');
   const titleId = 'modal-title-' + Math.random().toString(36).slice(2, 9);
   const box = h('div', { class: `modal ${wide ? 'wide' : ''}`, role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': titleId },
@@ -212,8 +250,19 @@ export function modal(title, content, { wide = false, onClose = null } = {}) {
   // activeElement can be null, and document.contains() throws on anything that is not a Node.
   const opener = document.activeElement instanceof Element ? document.activeElement : null;
   let closed = false;
-  function close() {
+  const historyId = 'm' + Math.random().toString(36).slice(2, 10);
+  function close(opts) {
     if (closed) return; closed = true;
+    const fromHistory = !!(opts && opts.fromHistory);
+    const at = modalStack.findIndex(x => x.id === historyId); if (at >= 0) modalStack.splice(at, 1);
+    if (!fromHistory) {
+      try {
+        if (history.state && history.state.sudsModal === historyId) {
+          const parent = modalStack.length ? modalStack[modalStack.length - 1].id : undefined;
+          history.replaceState({ ...history.state, sudsModal: parent, sudsClosed: true }, ''); syncHere();
+        }
+      } catch { /* no history API */ }
+    }
     bg.remove();
     document.removeEventListener('keydown', onKey);
     if (opener && document.contains(opener) && typeof opener.focus === 'function') { try { opener.focus(); } catch { /* the element may have been replaced by a re-render */ } }
@@ -232,6 +281,12 @@ export function modal(title, content, { wide = false, onClose = null } = {}) {
   }
   document.addEventListener('keydown', onKey);
   root.append(bg);
+  try {
+    const st = { ...(history.state || {}), sudsModal: historyId, sudsClosed: false };
+    // A spent entry (a dialog closed with ✕ on this same page) is reused rather than piling up more.
+    if (history.state && history.state.sudsClosed) history.replaceState(st, ''); else history.pushState(st, '');
+    syncHere(); modalStack.push({ id: historyId, bg, close });
+  } catch { /* no history API: Back leaves the page as before */ }
   announce(title);
   const first = box.querySelector('input,select,textarea,button.primary') || box.querySelector(FOCUSABLE);
   if (first) first.focus();
@@ -321,7 +376,7 @@ export const fmt = {
   bytes: (n) => { n = Number(n || 0); const u = ['B', 'KB', 'MB', 'GB']; let i = 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return `${n < 10 && i ? n.toFixed(1) : Math.round(n)} ${u[i]}`; },
   num: (n) => Number(n || 0).toLocaleString(),
   mins: (m) => { m = Number(m || 0); const hh = Math.floor(m / 60), mm = m % 60; return hh ? `${hh}h ${mm}m` : `${mm}m`; },
-  label: (s) => s ? String(s).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).replace(/\bSbirt\b/, 'SBIRT').replace(/\bMat\b/g, 'MAT').replace(/\bOtp\b/, 'OTP').replace(/\bObot\b/, 'OBOT').replace(/\bEd\b/, 'ED').replace(/\bMh\b/, 'MH').replace(/\bRx\b/, 'Rx').replace(/\bIds\b/, 'IDs').replace(/\bRoi\b/, 'ROI') : '—',
+  label: (s) => s ? String(s).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).replace(/\bSbirt\b/, 'SBIRT').replace(/\bMat\b/g, 'MAT').replace(/\bOtp\b/, 'OTP').replace(/\bObot\b/, 'OBOT').replace(/\bEd\b/, 'ED').replace(/\bMh\b/, 'MH').replace(/\bRx\b/, 'Rx').replace(/\bIds\b/, 'IDs').replace(/\bRoi\b/, 'ROI').replace(/\bPart2 Disclosure\b/, 'Part 2 disclosure').replace(/\bPart2\b/g, 'Part 2') : '—',
   ago: (s) => { const p = fmt.parse(s); if (!p) return 'never'; const d = (Date.now() - p.getTime()) / 86400000; if (d < 1) return 'today'; if (d < 2) return 'yesterday'; return `${Math.floor(d)}d ago`; },
   isoLocal: (d = new Date()) => { const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; },
   today: () => { const d = new Date(); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; },
@@ -448,17 +503,19 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
       if (!err.message) err.message = 'Something went wrong. Try again.';
       const fieldsErr = err.data && err.data.fields;
       let firstBad = null;
+      const labelOf = (k) => (fields.find(f => f.name === k) || {}).label || k;
       if (fieldsErr) for (const [k, msg] of Object.entries(fieldsErr)) {
         const w = el.querySelector(`[data-field="${k}"]`);
         if (!w) continue;
         w.classList.add('error');
-        const slot = w.querySelector('.err'); if (slot) slot.textContent = msg;
+        // Under the field, say which field: "Client is required", not a bare "is required" (a server
+        // message in that shape gets the label put in front of it too).
+        const slot = w.querySelector('.err'); if (slot) slot.textContent = /^(is|must|should)\b/.test(String(msg)) ? `${labelOf(k)} ${msg}` : msg;
         const control = w.querySelector('input,select,textarea');
         if (control) { control.setAttribute('aria-invalid', 'true'); if (!firstBad) firstBad = control; }
       }
       // Field errors are already shown inline under each field; the banner names them the way the form
       // does ("Client"), never by column ("client_id").
-      const labelOf = (k) => (fields.find(f => f.name === k) || {}).label || k;
       const text = err.labelled ? err.message : err.message + (fieldsErr ? ': ' + Object.entries(fieldsErr).map(([k, m]) => `${labelOf(k)} ${m}`).join('; ') : '');
       errBox.textContent = text; errBox.classList.remove('hidden');
       // Say it out loud and put the cursor on the first thing that needs fixing, rather than leaving a
@@ -510,7 +567,7 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
       if (f.required && (data[f.name] === null || data[f.name] === undefined || data[f.name] === '') && !bad.includes(f)) missing.push(f);
     }
     if (bad.length || missing.length) {
-      const fields = { ...Object.fromEntries(bad.map(f => [f.name, 'enter a valid date (the time is optional), or leave both blank'])), ...Object.fromEntries(missing.map(f => [f.name, 'is required'])) };
+      const fields = { ...Object.fromEntries(bad.map(f => [f.name, 'enter a valid date (the time is optional), or leave both blank'])), ...Object.fromEntries(missing.map(f => [f.name, `${f.label || 'This field'} is required`])) };
       // Name the field the way the form does ("Client"), not the way the database does ("client_id").
       const names = missing.map(f => f.label).filter(Boolean);
       const e = new Error(bad.length ? 'Check the date below — it is not a valid date.' : names.length ? `Fill in ${names.length === 1 ? names[0] : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1]} below.` : 'Fill in the required field below.');
@@ -790,18 +847,25 @@ export function maybeTour() {
   if (prefs.get('tour_done') || tourOpen || document.querySelector('.modal-bg')) return;
   tourOpen = true;
   const steps = [
-    ['Welcome to SUDS', `Hi ${firstName(state.user.display_name)}. SUDS keeps everything about the people you serve in one place, and it works the same on your phone and your computer. Anything you add on one shows up on the other right away.`],
+    ['Welcome to SUDS', `Hi ${greetingName(state.user.display_name, state.user.username)}. SUDS helps you track services, referrals and follow-ups for people in substance-use-disorder care, all in one place. ${window.SUDS_STATIC_HOST
+      // The demo build never syncs with anything (local/sync.js): promising "shows up on the other right
+      // away" there sent people looking for their entries on a second device.
+      ? 'This is a demo: everything you enter stays in this browser on this device and is never sent anywhere. To use SUDS for real, open your county\'s office SUDS address.'
+      : state.local ? 'This copy keeps your work on this device; it reaches the office SUDS when you sync.'
+      : 'It works the same on your phone and your computer. Anything you add on one shows up on the other right away.'}`],
     ['Start with Home', 'Home shows what needs attention today: reminders due, clients you have not contacted in a while, and drafts you started on another device.'],
     ['Record work with + Log', 'The blue + Log button (top of the page, or bottom-right on a phone) records a visit, call, note, reminder or time in a few taps. Visits and calls also fill in your time sheet.'],
     ['Find anyone fast', 'Use the search box at the top with a last name, phone number or client code. Open a client to see their story: visits, calls, notes, referrals and reminders on one timeline.'],
     ['Look for the ? marks', 'Every page has a ? that explains it in plain language. You cannot break anything: records are never truly deleted and every change is logged.'],
   ];
   let i = 0; const body = h('div', {}); const dots = h('div', { class: 'muted small center' });
-  const draw = () => { clear(body).append(h('h2', {}, steps[i][0]), h('p', { style: { fontSize: '1.05rem' } }, steps[i][1])); dots.textContent = `${i + 1} of ${steps.length}`; };
+  let nextBtn;
+  // The last step's button ends the tour, so it says so rather than promising a step that is not there.
+  const draw = () => { clear(body).append(h('h2', {}, steps[i][0]), h('p', { style: { fontSize: '1.05rem' } }, steps[i][1])); dots.textContent = `${i + 1} of ${steps.length}`; if (nextBtn) nextBtn.textContent = i === steps.length - 1 ? 'Done' : 'Next'; };
   // Closing the dialog any other way (backdrop, Escape, the corner button) counts as "skip" too -- it must
   // not come back on every page load, and it must never sit blocking the app on a phone in the field.
   const finish = () => { prefs.set('tour_done', true); tourOpen = false; m.close(); };
-  const m = modal('', h('div', {}, body, h('div', { class: 'btn-row', style: { justifyContent: 'space-between', alignItems: 'center' } }, h('button', { class: 'btn ghost', onClick: finish }, 'Skip'), dots, h('button', { class: 'btn primary', onClick: () => { if (i < steps.length - 1) { i++; draw(); } else finish(); } }, 'Next'))), { onClose: () => { prefs.set('tour_done', true); tourOpen = false; } });
+  const m = modal('', h('div', {}, body, h('div', { class: 'btn-row', style: { justifyContent: 'space-between', alignItems: 'center' } }, h('button', { class: 'btn ghost', onClick: finish }, 'Skip'), dots, nextBtn = h('button', { class: 'btn primary', onClick: () => { if (i < steps.length - 1) { i++; draw(); } else finish(); } }, 'Next'))), { onClose: () => { prefs.set('tour_done', true); tourOpen = false; } });
   m.el.querySelector('.card-head').remove(); draw();
 }
 export async function downloadCsv(path) {
@@ -831,15 +895,21 @@ export const firstName = (n, fallback = '') => {
   const real = words.filter(w => !HONORIFIC.test(w));
   return real[0] || words[0] || String(fallback || '').trim();
 };
-// The name a greeting uses. A display name of one or two words ("QATEST", "QA Tester", "Mary-Jo Baker")
-// is used whole — cutting "QA Tester" to "QA" reads as a truncation, not a first name. Only a longer,
-// formal name ("Dr. Kiran Patel", "Maria de la Cruz Jones") is shortened to the first name, honorifics
-// skipped. Never re-cased; a blank display name falls back to the username.
+// The name a greeting uses, the way a colleague would say it:
+//   "Kiran Patel" -> "Kiran" (the given name), "Mary-Jo Baker" -> "Mary-Jo";
+//   "Dr. Patel" and "Dr Kiran Patel" -> "Dr. Patel" (someone who put a title in their name wants it used,
+//   with the surname — "Hi Kiran" to a person who signs as Dr. Patel, or "Hi Patel", is wrong either way);
+//   a single word ("QATEST") is used whole, exactly as typed.
+// Never re-cased; a blank display name falls back to the username.
 export const greetingName = (n, fallback = '') => {
   const words = String(n || '').trim().split(/\s+/).filter(Boolean);
   if (!words.length) return String(fallback || '').trim();
+  if (words.length === 1) return words[0];
   const real = words.filter(w => !HONORIFIC.test(w));
-  if (words.length <= 2 && real.length === words.length) return words.join(' ');
+  if (HONORIFIC.test(words[0]) && real.length) {
+    const title = words[0].endsWith('.') ? words[0] : words[0] + '.';
+    return `${title} ${real[real.length - 1]}`;
+  }
   return real[0] || words[0];
 };
 const canAny = (perm) => (Array.isArray(perm) ? perm.some(p => can(p)) : can(perm));

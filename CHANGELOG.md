@@ -29,6 +29,15 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 - **Docs:** new `docs/ADOPTION.md` (code owner, pilot, staged releases, real-device checklist, drills,
   independent review, staffing); HIPAA.md *Risk register notes* (blind-index leakage, index key also keying
   the audit chain, single instance, local-mode keys beside the data); Node 24 migration plan in DEPLOYMENT.md.
+- **Phone review of the demo build (UX polish).** Dialogs start below the demo banner (`--demo-banner-h`),
+  so titles and ✕ stay visible at any text size; Back closes the open dialog instead of leaving the page;
+  a referral started from a provider page loads the chosen client's consents (and says what to do once);
+  Home's "Load sample data" loads it in place; the demo no longer promises a sync it never does (setup,
+  tour, Sync page) and offers "Try it with sample data"; the first screen says what SUDS is; 44px touch
+  targets for to-do boxes and chart rows; text sizes in rem and no sideways overflow at 200% text; Title
+  Case note formats and "Part 2 disclosure"; "<Field> is required"; 4.5:1 green badges; the last tour
+  step says Done; greetings use the given name ("Dr. Patel" kept whole); `get-app.html` installs the app.
+  Covered by `scripts/ui/ux-polish.mjs`.
 
 ## 1.9.2 — 2026-09-23
 
