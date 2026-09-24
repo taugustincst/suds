@@ -50,8 +50,11 @@ module.exports = (r) => {
     const cat = ctx.query.get('category'); if (cat) { where.push('category=?'); params.push(cat); }
     if (ctx.query.get('active') !== '0') where.push('is_active=1');
     const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
-    const rows = db.all(`SELECT r.*, (SELECT COUNT(*) FROM referrals x WHERE x.resource_id=r.id) AS referral_count, (SELECT COUNT(*) FROM resource_photos p WHERE p.resource_id=r.id) AS photo_count, (SELECT p.id FROM resource_photos p WHERE p.resource_id=r.id AND p.thumb_b64 IS NOT NULL ORDER BY p.sort_order, p.created_at LIMIT 1) AS cover_photo_id FROM resources r ${w} ORDER BY category, name LIMIT ? OFFSET ?`, ...params, limit, offset)
-      .map(r => ({ ...r, cover_url: r.cover_photo_id ? `/api/resources/${r.id}/photos/${r.cover_photo_id}/thumb` : null }));
+    const rows = db.all(`SELECT r.*, (SELECT COUNT(*) FROM referrals x WHERE x.resource_id=r.id) AS referral_count, (SELECT COUNT(*) FROM resource_photos p WHERE p.resource_id=r.id) AS photo_count, (SELECT p.id || ':' || (p.thumb_b64 IS NOT NULL) FROM resource_photos p WHERE p.resource_id=r.id AND (p.thumb_b64 IS NOT NULL OR p.data_b64 IS NOT NULL) ORDER BY p.sort_order, p.created_at LIMIT 1) AS cover_photo FROM resources r ${w} ORDER BY category, name LIMIT ? OFFSET ?`, ...params, limit, offset)
+      // The cover is the main (lowest-sorted) picture: its thumbnail, or the picture itself while it has none
+      // (a downloaded provider picture before the browser has made one). It used to skip to the next picture
+      // with a thumbnail, which for a downloaded picture was the generated card it was meant to replace.
+      .map(({ cover_photo, ...r }) => { const [pid, thumbed] = String(cover_photo || '').split(':'); return { ...r, cover_url: pid ? `/api/resources/${r.id}/photos/${pid}/${thumbed === '1' ? 'thumb' : 'image'}` : null }; });
     return { rows, total: db.one(`SELECT COUNT(*) n FROM resources r ${w}`, ...params).n };
   });
   r.get('/api/resources/:id', auth.requireAuth, auth.requirePerm('resources:read', 'resources:write'), (ctx) => {
@@ -107,7 +110,18 @@ module.exports = (r) => {
       others.forEach((id, i) => db.run(`UPDATE resource_photos SET sort_order=?, updated_at=? WHERE id=?`, i, db.now(), id));
     }
     if (v.caption !== undefined) db.run(`UPDATE resource_photos SET caption=?, updated_at=? WHERE id=?`, v.caption, db.now(), p.id);
-    audit.log({ user: ctx.user, action: 'resource.photo.update', entity: 'resource', entityId: p.resource_id, ip: ctx.ip, details: { photo_id: p.id, fields: Object.keys(v) } });
+    // A thumbnail made in the browser for a picture that arrived without one (a downloaded provider
+    // picture: the server cannot resize a JPEG). Checked exactly like the one sent with an upload.
+    const fields = Object.keys(v);
+    if (ctx.body.thumb_url !== undefined) {
+      const thumb = fromDataUrl(ctx.body.thumb_url, MAX_THUMB_BYTES, 'Thumbnail');
+      db.run(`UPDATE resource_photos SET thumb_b64=?, updated_at=? WHERE id=?`, thumb.b64, db.now(), p.id);
+      // The directory's cover comes from this row; the resource's own updated_at is what a device's sync
+      // and the list's caching go by.
+      db.run(`UPDATE resources SET updated_at=? WHERE id=?`, db.now(), p.resource_id);
+      fields.push('thumb');
+    }
+    audit.log({ user: ctx.user, action: 'resource.photo.update', entity: 'resource', entityId: p.resource_id, ip: ctx.ip, details: { photo_id: p.id, fields } });
     return { ok: true };
   });
   r.delete('/api/resources/:id/photos/:pid', auth.requireAuth, auth.requirePerm('resources:write'), (ctx) => {

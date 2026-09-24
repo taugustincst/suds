@@ -110,6 +110,20 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   administrators. Editing a record charged to a deactivated funding source now keeps that source instead of
   clearing it.
 - Migration 28 adds `option_overrides`, which devices receive from the office and cannot change.
+- **"Download provider pictures" works, and the pictures show.**
+  - On SUDS on this device, a browser cannot download pictures from providers' websites (no CORS), so every
+    one failed. The site is now published with each starter-directory provider's picture, fetched at build
+    time (`scripts/fetch-region-pictures.js`, `SUDS_REGION_PICTURES`); a program the build has no picture
+    for says so.
+  - A downloaded picture now shows on the directory card: the browser makes a real thumbnail instead of the
+    card keeping the generated placeholder. Pressing the button again repairs pictures downloaded earlier.
+  - The result (how many, and why the rest are missing) stays on screen and is shown as a toast. On a device
+    that syncs with an office server the button is replaced by a note that pictures arrive with sync.
+  - An office server that cannot reach the internet says so and names `HTTPS_PROXY` + `NODE_USE_ENV_PROXY=1`
+    (or `NODE_EXTRA_CA_CERTS`), instead of "fetch failed" for every program (`DEPLOYMENT.md`, *Outbound
+    internet*).
+  - API: `POST /api/regions/:id/pictures` results include `photo_id`/`resource_id`; `GET` returns `thumbs`;
+    `PUT /api/resources/:id/photos/:pid` accepts `thumb_url`.
 
 ## 1.9.4 — 2026-09-24
 

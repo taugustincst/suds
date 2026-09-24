@@ -7,9 +7,10 @@ const C = require('./constants');
 const audit = require('./audit');
 const png = require('./png');
 const { uuid } = require('./crypto');
+const config = require('./config');
+const pictures = require('./region-pictures');
 
-const REGIONS = { 'sacramento-metro': require('./regions/sacramento-metro') };
-const MAX_PICTURE_BYTES = 2 * 1024 * 1024;
+const REGIONS = pictures.REGIONS;
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 const tagList = (list, allowed) => (Array.isArray(list) ? list : String(list || '').split(',')).map(x => String(x).trim().toLowerCase().replace(/[\s-]+/g, '_')).filter(x => allowed.includes(x)).filter((x, i, a) => a.indexOf(x) === i).join(',');
 const stateKey = (id) => `region_loaded:${id}`;
@@ -85,97 +86,92 @@ function load({ regionId, actor, withPictures = true }) {
 
 /** Programs in a loaded region whose own website we could look at for a logo or photo. */
 function pictureTargets(regionId) {
-  const region = REGIONS[regionId]; if (!region) throw new Error('Unknown region');
+  if (!REGIONS[regionId]) throw new Error('Unknown region');
   const st = readState(regionId); if (!st) return [];
-  return region.providers.filter(p => (p.image_url || p.website) && st.ids[p.key]).map(p => ({ key: p.key, id: st.ids[p.key], name: p.name, category: p.category, url: p.image_url || null, website: p.website }))
+  return pictures.regionTargets(regionId).filter(t => st.ids[t.key]).map(t => ({ ...t, id: st.ids[t.key], region: regionId }))
     .map(t => { const r = db.one(`SELECT id, category FROM resources WHERE id=?`, t.id); return r ? { ...t, category: t.category || r.category } : null; })
     .filter(Boolean);
 }
-const sniff = (buf) => buf.length > 3 && buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF ? 'image/jpeg'
-  : buf.length > 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47 ? 'image/png'
-  : buf.length > 12 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP' ? 'image/webp' : null;
 
-/** Picks the picture a site advertises for itself: the social preview image, then the touch icon. */
-function pickImageUrl(html, baseUrl) {
-  const head = String(html).slice(0, 512 * 1024);
-  const meta = (prop) => { const m = new RegExp(`<meta[^>]+(?:property|name)=["']${prop}["'][^>]*>`, 'i').exec(head); if (!m) return null; const c = /content=["']([^"']+)["']/i.exec(m[0]); return c ? c[1] : null; };
-  const link = (rel) => { const m = new RegExp(`<link[^>]+rel=["'][^"']*${rel}[^"']*["'][^>]*>`, 'i').exec(head); if (!m) return null; const c = /href=["']([^"']+)["']/i.exec(m[0]); return c ? c[1] : null; };
-  const candidate = meta('og:image') || meta('og:image:secure_url') || meta('twitter:image') || link('apple-touch-icon') || link('icon');
-  if (!candidate) return null;
-  try { const u = new URL(candidate, baseUrl); return u.protocol === 'https:' ? u.href : null; } catch { return null; }
-}
-// A provider's website is an address the county typed in, and any hop it redirects to is not. Redirects
-// are followed by hand so every URL in the chain is checked: https only, and never an address that
-// resolves to this machine or the county's own network.
-const PRIVATE_HOST = /^(localhost|.*\.local|.*\.internal|.*\.localhost)$/i;
-function assertPublicHttps(u) {
-  const url = new URL(u);
-  if (url.protocol !== 'https:') throw Object.assign(new Error('not an https address'), { soft: true });
-  const host = url.hostname.replace(/^\[|\]$/g, '');
-  if (PRIVATE_HOST.test(host)) throw Object.assign(new Error('that address is not on the public internet'), { soft: true });
-  // Literal IP addresses: block loopback, link-local, and the private ranges.
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
-    const [a, b] = host.split('.').map(Number);
-    if (a === 127 || a === 0 || a === 10 || a === 169 && b === 254 || a === 172 && b >= 16 && b <= 31 || a === 192 && b === 168 || a >= 224) {
-      throw Object.assign(new Error('that address is not on the public internet'), { soft: true });
-    }
-  }
-  if (host.includes(':') || /^::/.test(host)) throw Object.assign(new Error('that address is not on the public internet'), { soft: true });
-  return url.href;
+/**
+ * Downloaded pictures still waiting for a real thumbnail. The browser makes those (on a canvas, as for a
+ * photo someone adds by hand) and saves them with PUT /api/resources/:id/photos/:pid — the server cannot
+ * resize a JPEG without a dependency. Until then the card shows the picture itself; pictures downloaded
+ * before this was fixed carry the generated card as their thumbnail, which is why those count here too.
+ */
+function picturesNeedingThumbnails(regionId) {
+  const ids = pictureTargets(regionId).map(t => t.id); if (!ids.length) return [];
+  return db.all(`SELECT p.id AS photo_id, p.resource_id FROM resource_photos p WHERE p.resource_id IN (${ids.map(() => '?').join(',')}) AND p.caption LIKE 'From %'
+    AND (p.thumb_b64 IS NULL OR p.thumb_b64 IN (SELECT q.thumb_b64 FROM resource_photos q WHERE q.resource_id=p.resource_id AND q.caption LIKE '%(placeholder%'))`, ...ids);
 }
 
-async function get(url, { timeoutMs, maxBytes, hops = 4 }) {
-  let target = assertPublicHttps(url);
-  let res;
-  for (let i = 0; i <= hops; i++) {
-    res = await fetch(target, { signal: AbortSignal.timeout(timeoutMs), redirect: 'manual', headers: { 'User-Agent': 'SUDS resource directory', Accept: '*/*' } });
-    if (res.status < 300 || res.status >= 400) break;
-    const location = res.headers.get('location');
-    if (!location) break;
-    if (i === hops) throw Object.assign(new Error('too many redirects'), { soft: true });
-    target = assertPublicHttps(new URL(location, target).href);
+// ---- the static "SUDS on this device" build ----
+// A browser cannot read a provider's website: the sites send no CORS headers, a manual redirect comes
+// back opaque and User-Agent is a forbidden header, so every download used to fail. That build carries
+// the pictures with it instead, fetched when the site is built (scripts/fetch-region-pictures.js) and
+// served from its own origin under region-pictures/<region>/, and the kernel reads them from there.
+const manifests = new Map();
+function bundleBase(regionId) { return new URL(`region-pictures/${encodeURIComponent(regionId)}/`, globalThis.location.href); }
+function bundledManifest(regionId) {
+  if (!manifests.has(regionId)) {
+    const p = (async () => {
+      let res; try { res = await fetch(new URL('manifest.json', bundleBase(regionId)).href, { cache: 'no-cache' }); } catch { res = null; }
+      if (!res || !res.ok) return null;
+      try { const m = await res.json(); return m && m.pictures && typeof m.pictures === 'object' ? m : null; } catch { return null; }
+    })();
+    manifests.set(regionId, p);
+    // A failed read is not remembered: the next click tries again (the phone may have been offline).
+    p.then((m) => { if (!m) manifests.delete(regionId); });
   }
-  if (!res.ok) throw Object.assign(new Error(`site returned ${res.status}`), { soft: true });
-  if (Number(res.headers.get('content-length') || 0) > maxBytes) throw Object.assign(new Error('file is too large'), { soft: true });
+  return manifests.get(regionId);
+}
+const NOT_IN_BUILD = 'not available on this device build (it was published without a picture for this program)';
+async function bundledPicture(target) {
+  const manifest = await bundledManifest(target.region);
+  if (!manifest) return { ok: false, error: 'provider pictures are not available on this device build (none were included when it was published)', bundle: 'missing' };
+  const entry = manifest.pictures[target.key];
+  if (!entry || typeof entry.file !== 'string') return { ok: false, error: NOT_IN_BUILD };
+  const base = bundleBase(target.region); const file = new URL(entry.file, base);
+  // Only a file beside the manifest, on this site's own origin.
+  if (file.origin !== base.origin || !file.pathname.startsWith(base.pathname)) return { ok: false, error: NOT_IN_BUILD };
+  let res; try { res = await fetch(file.href); } catch { return { ok: false, error: 'this device could not load the picture from the SUDS site; check the connection and try again' }; }
+  if (!res.ok) return { ok: false, error: NOT_IN_BUILD };
   const buf = Buffer.from(await res.arrayBuffer());
-  if (buf.length > maxBytes) throw Object.assign(new Error('file is too large'), { soft: true });
-  return buf;
+  if (buf.length > pictures.MAX_PICTURE_BYTES) return { ok: false, error: 'file is too large' };
+  const type = pictures.sniff(buf); if (!type) return { ok: false, error: 'not a JPEG, PNG or WebP picture' };
+  return { ok: true, buf, type, url: /^https:\/\//.test(entry.source_url || '') ? entry.source_url : file.href };
 }
+const isStaticBuild = () => { try { return globalThis.SUDS_STATIC_HOST === true; } catch { return false; } };
+// A thumbnail stays within the upload route's limit; a small logo can be its own thumbnail.
+const MAX_THUMB_BYTES = 96 * 1024;
 
-/** Downloads a provider picture from the provider's own website and makes it the resource's main picture. */
+/** Downloads a provider picture and makes it the resource's main picture. */
 async function fetchPicture(target, { actor, timeoutMs = 12000, deadline = 0 } = {}) {
-  let url = target.url;
-  // A target can need two fetches (the website, then the picture). When the caller is working through a
-  // batch it passes a deadline for the whole batch, and each fetch gets whatever is left of it.
-  const budget = () => (deadline ? Math.min(timeoutMs, deadline - Date.now()) : timeoutMs);
-  try {
-    if (budget() <= 0) return { key: target.key, ok: false, error: 'ran out of time — try this one again' };
-    if (!url) {
-      if (!/^https:\/\//i.test(target.website || '')) return { key: target.key, ok: false, error: 'no website on file' };
-      const html = await get(target.website, { timeoutMs: budget(), maxBytes: 2 * 1024 * 1024 });
-      url = pickImageUrl(html.toString('utf8'), target.website);
-      if (!url) return { key: target.key, ok: false, error: 'their website does not advertise a picture' };
-    }
-    if (!/^https:\/\//i.test(url)) return { key: target.key, ok: false, error: 'not an https address' };
-    if (budget() <= 0) return { key: target.key, ok: false, error: 'ran out of time — try this one again' };
-    const buf = await get(url, { timeoutMs: budget(), maxBytes: MAX_PICTURE_BYTES });
-    const type = sniff(buf); if (!type) return { key: target.key, ok: false, error: 'not a JPEG, PNG or WebP picture' };
-    db.transaction(() => {
-      // Reordering is a change devices need to see, so it bumps updated_at like any other edit.
-      db.run(`UPDATE resource_photos SET sort_order = sort_order + 1, updated_at=? WHERE resource_id=?`, db.now(), target.id);
-      // The downloaded picture has no thumbnail (we cannot resize a JPEG here), so it carries the
-      // generated card as its thumbnail. Without this the resource card lost the picture it already had:
-      // the cover is the lowest-sorted photo's thumb_b64, and this row's would have been null.
-      const placeholder = png.initialsCard(target.name || 'Provider', target.category || 'other', 320, 180).toString('base64');
-      db.run(`INSERT INTO resource_photos(id,resource_id,caption,content_type,bytes,data_b64,thumb_b64,sort_order,uploaded_by) VALUES(?,?,?,?,?,?,?,0,?)`,
-        uuid(), target.id, `From ${new URL(url).hostname}`, type, buf.length, buf.toString('base64'), placeholder, actor || null);
-      db.run(`UPDATE resources SET updated_at=? WHERE id=?`, db.now(), target.id);
-    });
-    audit.log({ user: { id: actor, username: 'region-import' }, action: 'region.picture', entity: 'resource', entityId: target.id, details: { url, bytes: buf.length, type } });
-    return { key: target.key, ok: true, bytes: buf.length, type, url };
-  } catch (e) {
-    return { key: target.key, ok: false, error: e.soft ? e.message : e.name === 'TimeoutError' ? 'timed out' : (e.message || 'could not connect') };
+  let got;
+  if (config.local) {
+    // An offline copy that syncs with an office server receives the office's pictures at its next sync;
+    // the static build reads the ones it was published with. Neither can reach a provider's website.
+    got = isStaticBuild() ? await bundledPicture(target)
+      : { ok: false, error: 'download provider pictures on the office server; they reach this device at its next sync' };
+  } else {
+    got = await pictures.downloadPicture(target, { timeoutMs, deadline });
   }
+  if (!got.ok) { const { buf: _unused, ...rest } = got; return { key: target.key, ...rest }; }
+  const { buf, type, url } = got;
+  const photoId = uuid();
+  db.transaction(() => {
+    // Reordering is a change devices need to see, so it bumps updated_at like any other edit.
+    db.run(`UPDATE resource_photos SET sort_order = sort_order + 1, updated_at=? WHERE resource_id=?`, db.now(), target.id);
+    // The generated card is no longer stored as this picture's thumbnail: the card is what the directory
+    // shows, so a successful download looked exactly like one that had done nothing. A small picture is
+    // its own thumbnail; a larger one has none until the browser makes one (the result carries photo_id
+    // for that), and meanwhile the directory shows the picture itself (server/routes/resources.js).
+    db.run(`INSERT INTO resource_photos(id,resource_id,caption,content_type,bytes,data_b64,thumb_b64,sort_order,uploaded_by) VALUES(?,?,?,?,?,?,?,0,?)`,
+      photoId, target.id, `From ${new URL(url).hostname}`, type, buf.length, buf.toString('base64'), buf.length <= MAX_THUMB_BYTES ? buf.toString('base64') : null, actor || null);
+    db.run(`UPDATE resources SET updated_at=? WHERE id=?`, db.now(), target.id);
+  });
+  audit.log({ user: { id: actor, username: 'region-import' }, action: 'region.picture', entity: 'resource', entityId: target.id, details: { url, bytes: buf.length, type } });
+  return { key: target.key, ok: true, bytes: buf.length, type, url, photo_id: photoId, resource_id: target.id };
 }
 
 /** Removes programs this import added that nobody has used or edited. */
@@ -195,4 +191,4 @@ function remove({ regionId, actor }) {
   });
   return { removed, kept };
 }
-module.exports = { REGIONS, list, load, remove, pictureTargets, fetchPicture, pickImageUrl };
+module.exports = { REGIONS, list, load, remove, pictureTargets, picturesNeedingThumbnails, fetchPicture, pickImageUrl: pictures.pickImageUrl };

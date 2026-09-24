@@ -40,6 +40,8 @@ Shows alerts (overdue tasks, unsigned notes, imported notes waiting for review, 
 ## Referrals and resources
 The **Resource Directory** holds treatment providers, MAT clinics, shelters, harm reduction, legal aid, transport, etc. Keep *Last verified* current (entries older than 6 months are flagged). Create a **referral** from the client's Referrals tab, link the **consent / ROI** that authorizes sharing, then update the status as it moves: pending → contacted → accepted/waitlisted → scheduled → admitted → completed. Record barriers so the program can report on them.
 
+**Provider pictures.** After adding a starter directory, **Download provider pictures** replaces each program's generated card with the picture from the provider's own website: on an office server it downloads them (the server needs internet access), on SUDS on this device it uses the copies the site was published with. When it finishes it says how many pictures it got — on screen and in a pop-up message — and, under "Why some had no picture", why the rest keep their generated card. On a phone or tablet that syncs with an office server the button is not shown: the office's pictures arrive with the next sync. You can always add your own photos on a program's page (**+ Add pictures**).
+
 ## Notes
 * **Administrative / contact notes** — visible to the whole care team; use for contacts, coordination, logistics.
 * **Clinical notes** — only clinicians and supervisors can write or read them; use SOAP/DAP/BIRP/GIRP formats (sections auto-build the narrative).

@@ -190,5 +190,29 @@ ok(await page.$('input[name=username]'), 'the local kernel booted and offered fi
   eq(await op.evaluate(() => localStorage.getItem('suds.errors')), null, 'nothing is kept in the office browser');
   await oc.close();
 }
+// An offline copy that syncs with the office cannot reach provider websites (a browser gets no CORS
+// headers from them), and it receives the office's pictures when it syncs. So it offers no "Download
+// provider pictures" button, says where they come from, and its kernel refuses the download with that
+// reason instead of 80 lines of "Failed to fetch". A fresh device of its own, so nothing here syncs.
+{
+  const dc = await browser.newContext({ viewport: { width: 1200, height: 900 } }); const dp = await dc.newPage();
+  dp.on('pageerror', e => errors.push('PAGEERROR ' + e.message));
+  await dp.goto(base + '/?local=1#/'); await dp.waitForSelector('input[name=display_name]', { timeout: 15000 });
+  await dp.fill('input[name=display_name]', 'Picture Nav'); await dp.fill('input[name=username]', 'picnav'); await dp.fill('input[name=password]', 'Navigator2026!!'); await dp.fill('input[name=confirm]', 'Navigator2026!!');
+  await dp.click('button[type=submit]'); await dp.waitForSelector('.layout', { timeout: 15000 });
+  await dp.goto(base + '/?local=1#/resources'); await settle(dp);
+  await dp.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove()));
+  await dp.click('[data-region=sacramento-metro] button:has-text("Add")');
+  await dp.waitForSelector('[data-region=sacramento-metro] button:has-text("Check for updates")', { timeout: 90000 });
+  await settle(dp);
+  eq(await dp.$$eval('[data-region=sacramento-metro] button', b => b.filter(x => /Download provider pictures/.test(x.textContent)).length), 0, 'an office device offers no "Download provider pictures" button');
+  ok(/downloaded on the office server and reach this device when it syncs/.test(await dp.textContent('[data-region=sacramento-metro]')), 'it says where the pictures come from instead');
+  const refused = await dp.evaluate(async () => {
+    const { pending } = (await window.SUDS_LOCAL.handle('GET', '/api/regions/sacramento-metro/pictures', undefined, {})).json;
+    return (await window.SUDS_LOCAL.handle('POST', '/api/regions/sacramento-metro/pictures', { keys: [pending[0].key] }, { 'X-Requested-With': 'suds' })).json.results[0];
+  });
+  ok(refused && !refused.ok && /on the office server/.test(refused.error), 'and its kernel refuses a download with that reason', refused);
+  await dc.close();
+}
 finish(errors.slice(0, 8));
 await browser.close();

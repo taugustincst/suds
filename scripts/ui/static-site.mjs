@@ -5,6 +5,9 @@
 import * as pw from 'playwright';
 const { devices } = pw;
 import { makeChecks, until, settle } from './assert.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+import { createRequire } from 'node:module';
 // SUDS_BROWSER=webkit (or firefox) runs this script in that engine instead of Chromium; CI's WebKit smoke
 // job uses it as the nearest thing to iPhone Safari a Linux runner has.
 const browserType = pw[process.env.SUDS_BROWSER || 'chromium'];
@@ -17,7 +20,9 @@ const page = await ctx.newPage();
 const errors = [];
 page.on('pageerror', e => errors.push('PAGEERROR ' + e.message));
 // /app and views/no-such-view.js are requested on purpose below, to prove they are real 404s.
-const probe = (u) => /\/app$|no-such-view/.test(u);
+// A build published without provider pictures answers 404 for region-pictures/…/manifest.json, which is how
+// the kernel learns there are none (checked below).
+const probe = (u) => /\/app$|no-such-view|region-pictures\//.test(u);
 page.on('console', m => { if (m.type() === 'error' && !probe(m.location()?.url || '') && !/404/.test(m.text())) errors.push('CONSOLE ' + m.text().slice(0, 250)); });
 page.on('response', r => { if (r.status() >= 400 && !probe(r.url())) errors.push(`HTTP ${r.status()} ${r.url()}`); });
 
@@ -94,6 +99,84 @@ await page.fill('input[name=username]', 'staticnav'); await page.fill('input[nam
 await page.waitForSelector('.layout', { timeout: 10000 });
 ok(await page.$('.layout'), 'signed back in');
 eq(await page.evaluate(() => [...document.querySelectorAll('a[href]')].map(a => a.getAttribute('href')).filter(h => /(^|\/)app\/?$/.test(h)).length), 0, 'nothing on the page links to /app');
+
+// "Download provider pictures" on this build. A browser cannot read a provider's own website (no CORS
+// headers there), so every download used to fail with "Failed to fetch". The build now carries the pictures
+// (region-pictures/<region>/, scripts/fetch-region-pictures.js). run-all.sh serves the site from
+// SUDS_STATIC_DIR: two fixture pictures go there — a large one that needs a thumbnail made in the browser, a
+// small one that is its own — and the directory's cards must then show them instead of the generated cards.
+// Without SUDS_STATIC_DIR (the Pages workflow checking its real build) whatever the build bundled is used.
+{
+  const require = createRequire(import.meta.url);
+  const providers = require('../../server/regions')['sacramento-metro'].providers.filter(p => p.website || p.image_url);
+  const [big, small] = providers;
+  let fixture = false;
+  if (process.env.SUDS_STATIC_DIR) {
+    const png = require('../../server/png');
+    const dir = path.join(process.env.SUDS_STATIC_DIR, 'region-pictures', 'sacramento-metro'); fs.mkdirSync(dir, { recursive: true });
+    const solid = (w, hgt, [r, g, b], noise) => { const px = Buffer.alloc(w * hgt * 3); for (let i = 0; i < px.length; i += 3) { const n = noise ? Math.floor(Math.random() * noise) : 0; px[i] = r - n; px[i + 1] = g + n; px[i + 2] = b - n; } return png.encode(w, hgt, px); };
+    const bigPng = solid(900, 506, [250, 0, 250], 12); const smallPng = solid(64, 36, [0, 170, 0], 0);
+    ok(bigPng.length > 96 * 1024 && bigPng.length < 2 * 1024 * 1024 && smallPng.length < 96 * 1024, 'fixture pictures: one too big to be its own thumbnail, one small enough', [bigPng.length, smallPng.length]);
+    fs.writeFileSync(path.join(dir, 'big.png'), bigPng); fs.writeFileSync(path.join(dir, 'small.png'), smallPng);
+    const at = new Date().toISOString();
+    fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ region: 'sacramento-metro', fetched_at: at, pictures: {
+      [big.key]: { file: 'big.png', content_type: 'image/png', bytes: bigPng.length, source_url: 'https://pictures.example.org/big.png', fetched_at: at },
+      [small.key]: { file: 'small.png', content_type: 'image/png', bytes: smallPng.length, source_url: 'https://pictures.example.org/small.png', fetched_at: at },
+    }, failures: {} }));
+    fixture = true;
+  }
+  const bundled = fixture || await page.evaluate(() => fetch('region-pictures/sacramento-metro/manifest.json').then(r => r.ok, () => false));
+  await page.goto(base + '/#/resources'); await settle(page);
+  await page.click('[data-region=sacramento-metro] button:has-text("Add")');
+  await page.waitForSelector('[data-region=sacramento-metro] button:has-text("Download provider pictures")', { timeout: 90000 });
+  await settle(page);
+  await page.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove()));
+  await page.click('[data-region=sacramento-metro] button:has-text("Download provider pictures")');
+  const outcome = await until(() => page.$eval('[data-picture-status] .banner', b => b.textContent).catch(() => null), { timeout: 120000 });
+  await settle(page, { timeout: 30000 });
+  const toastSeen = await page.evaluate(() => document.querySelector('#toasts')?.textContent || '');
+  if (bundled) {
+    ok(/provider pictures downloaded/.test(outcome || ''), 'the download reports how many provider pictures it got', outcome);
+    ok(/provider pictures downloaded/.test(toastSeen), 'and says so in a toast too, where a phone user is looking', toastSeen);
+    // The outcome stays on screen after the refresh that shows the new pictures (it used to be wiped by it).
+    ok(await page.$('[data-picture-status] .banner'), 'the outcome is still on screen after the directory refreshes');
+  } else {
+    ok(/not available on this device build/.test(outcome || ''), 'a build published without pictures says so plainly, once', outcome);
+    ok(/not available on this device build/.test(toastSeen), 'in a toast as well', toastSeen);
+  }
+  if (fixture) {
+    ok(/2 of \d+ provider pictures downloaded/.test(outcome), 'exactly the two bundled pictures were downloaded', outcome);
+    ok(/not available on this device build/.test(outcome), 'and the rest say they are not in this build', outcome);
+    // The directory card of each program shows its picture, not the generated initials card.
+    const cardColour = (name) => page.evaluate(async (n) => {
+      const card = [...document.querySelectorAll('.res-card')].find(c => c.querySelector('b')?.textContent === n);
+      const im = card && card.querySelector('img.res-cover'); if (!im) return null; im.scrollIntoView(); // the covers load lazily
+      for (let i = 0; i < 50 && !(im.complete && im.naturalWidth > 1); i++) await new Promise(r => setTimeout(r, 100));
+      const c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight; const ctx = c.getContext('2d'); ctx.drawImage(im, 0, 0);
+      const d = ctx.getImageData(Math.floor(c.width / 2), Math.floor(c.height / 2), 1, 1).data; return [d[0], d[1], d[2], im.naturalWidth];
+    }, name);
+    const bigColour = await until(async () => { const v = await cardColour(big.name); return v && v[0] > 200 && v[1] < 70 && v[2] > 200 ? v : null; }, { timeout: 15000 });
+    ok(bigColour, `the card for ${big.name} now shows its provider picture`, bigColour || await cardColour(big.name));
+    const smallColour = await until(async () => { const v = await cardColour(small.name); return v && v[0] < 60 && v[1] > 130 && v[2] < 60 ? v : null; }, { timeout: 15000 });
+    ok(smallColour, `and so does the card for ${small.name}`, smallColour || await cardColour(small.name));
+    const photos = await page.evaluate(async (n) => {
+      const list = await window.SUDS_LOCAL.handle('GET', '/api/resources?limit=1000', undefined, {}).then(r => r.json.rows);
+      const row = list.find(x => x.name === n);
+      const one = await window.SUDS_LOCAL.handle('GET', `/api/resources/${row.id}`, undefined, {}).then(r => r.json.row);
+      const main = one.photos[0];
+      const thumb = await window.SUDS_LOCAL.handle('GET', main.thumb_url, undefined, {});
+      return { caption: main.caption, bytes: main.bytes, hasThumb: main.has_thumb, thumbType: thumb.headers['content-type'], thumbBytes: thumb.body && thumb.body.length, cover: row.cover_url, count: one.photos.length };
+    }, big.name);
+    ok(/From pictures\.example\.org/.test(photos.caption) && photos.count === 2, 'the downloaded picture is the main one, ahead of the generated card', photos);
+    ok(photos.hasThumb && photos.thumbType === 'image/jpeg' && photos.thumbBytes < 96 * 1024 && photos.thumbBytes < photos.bytes, 'and it has a real thumbnail, made on the device from the picture', photos);
+    ok(/\/thumb$/.test(photos.cover), 'which is what the card shows', photos.cover);
+    // Pressing it again finds nothing left to fetch and says so, rather than doing nothing.
+    await page.click('[data-region=sacramento-metro] button:has-text("Download provider pictures")');
+    const again = await until(() => page.$eval('[data-picture-status] .banner', b => b.textContent).then(t => (/not available on this device build/i.test(t) && !/2 of/.test(t) ? t : null)).catch(() => null), { timeout: 60000 });
+    ok(again, 'pressing it again reports the programs this build has no picture for', again);
+  }
+  await page.screenshot({ path: '/tmp/suds-shots/static-site-provider-pictures.png' }).catch(() => {});
+}
 
 // The on-device app never syncs (docs/WEB_APP.md): its device page says so instead of offering a form that
 // could only fail, and nothing is sent to any office address.

@@ -18,3 +18,7 @@ SUDS_KEYSTORE_BASE64.txt
 
 # Build output of scripts/build-static-site.js — generated, published to gh-pages by CI, never committed here.
 /_site/
+
+# Provider pictures downloaded by scripts/fetch-region-pictures.js for the static build: other
+# organisations' logos and photos, refreshed at each build, never committed (docs/WEB_APP.md).
+/_region-pictures/

@@ -22,7 +22,8 @@
     "build:local": "node scripts/build-local.js",
     "gen-api-docs": "node --no-warnings=ExperimentalWarning scripts/gen-api-docs.js",
     "gen-key": "node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
-    "gen:schema": "node scripts/gen-schema-text.js"
+    "gen:schema": "node scripts/gen-schema-text.js",
+    "fetch-region-pictures": "node scripts/fetch-region-pictures.js"
   },
   "repository": {
     "type": "git",

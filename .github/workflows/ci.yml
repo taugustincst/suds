@@ -51,6 +51,10 @@ jobs:
         run: npm ci --no-audit --no-fund && npm i --no-save --no-audit --no-fund playwright@1.56.1 && npx playwright install --with-deps chromium
       - name: Browser regression suite
         working-directory: src
+        # The suite's static build must not download 80 providers' pictures from the internet on every push;
+        # static-site.mjs serves a fixture picture of its own instead (the Pages build fetches the real ones).
+        env:
+          SUDS_REGION_PICTURES: 'off'
         run: npm run build:local && scripts/ui/run-all.sh
   # Node 22 leaves maintenance in April 2027 and node:sqlite is still experimental, so the suite also runs on
   # the next LTS line to catch breakage early (docs/DEPLOYMENT.md, "Node.js support and the move to 24").
@@ -97,4 +101,5 @@ jobs:
         env:
           SUDS_BROWSER: webkit
           SCRIPTS: static-site qa-retest
+          SUDS_REGION_PICTURES: 'off'
         run: npm run build:local && scripts/ui/run-all.sh
