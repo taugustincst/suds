@@ -8,6 +8,8 @@ const png = require('../server/png');
 let admin, nav, nav2, ro, clientId;
 before(async () => {
   await H.start();
+  // These tests sync like a device does, which needs local mode on (it is off by default on a server).
+  require('../server/config').localModeEnabled = true;
   H.makeUser('nav1', 'navigator'); H.makeUser('nav2', 'navigator'); H.makeUser('ro1', 'readonly');
   admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
   nav = H.client(); await nav.login('nav1', 'StaffPassw0rd!x');

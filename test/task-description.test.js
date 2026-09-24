@@ -66,6 +66,8 @@ test('the API keeps `description`, stores it encrypted, and exports and sync tre
   process.env.SUDS_DB_PATH = ':memory:';
   const H = require('./helpers');
   await H.start();
+  // These tests sync like a device does, which needs local mode on (it is off by default on a server).
+  require('../server/config').localModeEnabled = true;
   try {
     H.makeUser('tdnav', 'navigator');
     const admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');

@@ -479,8 +479,17 @@ function sanitiseDetails(d) {
   return out;
 }
 
+// Local mode switched off (LOCAL_MODE_ENABLED, or the setup wizard's answer in server.json) has to mean
+// no device copies at all — the same setting that stops /?local=1 and /local/kernel.js being served
+// (server/app.js). Without this a copy made before the switch, or a static-site build, went on pulling and
+// pushing PHI after the office had said no. The kernel itself (config.local) is never refused its own routes.
+function requireLocalMode() {
+  const config = require('../config');
+  if (!config.localModeEnabled && !config.local) throw forbidden('Local mode (offline copies on devices) is turned off on this server, so devices cannot sync. An administrator can turn it on in the server settings (LOCAL_MODE_ENABLED, or the setup answer saved in server.json).');
+}
+
 module.exports = (r) => {
-  r.get('/api/sync/pull', auth.requireAuth, (ctx) => {
+  r.get('/api/sync/pull', requireLocalMode, auth.requireAuth, (ctx) => {
     if (!auth.hasPerm(ctx.user, 'clients:read')) throw forbidden('Your role cannot sync client data');
     const since = ctx.query.get('since') || NEVER;
     const limit = Math.min(Number(ctx.query.get('limit')) || PULL_LIMIT, PULL_LIMIT);
@@ -489,7 +498,7 @@ module.exports = (r) => {
     return out;
   });
 
-  r.post('/api/sync/push', auth.requireAuth, (ctx) => {
+  r.post('/api/sync/push', requireLocalMode, auth.requireAuth, (ctx) => {
     if (!auth.hasPerm(ctx.user, 'clients:write')) throw forbidden('Your role cannot sync client data');
     if (!ctx.body || typeof ctx.body !== 'object') throw badRequest('JSON body required');
     const res = push(ctx.user, ctx.body);
@@ -498,7 +507,7 @@ module.exports = (r) => {
   });
 
   // Blobs (photos, template files, form attachments) are kept out of the sync payload and fetched by id.
-  r.get('/api/sync/blob/:table/:id/:column', auth.requireAuth, (ctx) => {
+  r.get('/api/sync/blob/:table/:id/:column', requireLocalMode, auth.requireAuth, (ctx) => {
     const t = SYNC.tables.find(x => x.name === ctx.params.table && (x.blob || []).includes(ctx.params.column));
     if (!t) throw badRequest('Not a synchronised attachment');
     if (t.writePerm && !auth.hasPerm(ctx.user, t.writePerm.replace(/:(write|manage)$/, ':read')) && !auth.hasPerm(ctx.user, t.writePerm)) throw forbidden('You cannot read this attachment');
@@ -514,7 +523,7 @@ module.exports = (r) => {
 
   // The other direction: a device uploading an attachment it captured offline, one at a time so a large
   // one cannot wedge the whole push.
-  r.post('/api/sync/blob/:table/:id/:column', auth.requireAuth, (ctx) => {
+  r.post('/api/sync/blob/:table/:id/:column', requireLocalMode, auth.requireAuth, (ctx) => {
     const t = SYNC.tables.find(x => x.name === ctx.params.table && (x.blob || []).includes(ctx.params.column));
     if (!t) throw badRequest('Not a synchronised attachment');
     if (t.writePerm && !auth.hasPerm(ctx.user, t.writePerm)) throw forbidden('You cannot upload this attachment');
