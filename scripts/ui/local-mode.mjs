@@ -57,7 +57,11 @@ ok(await page.$('input[name=username]'), 'the local kernel booted and offered fi
   ok(!(await page.$('.modal')), 'cancelling leaves the device untouched');
   // Locked out or forgot the password, with no office admin to ask: the login screen offers a self-service
   // reset instead of a dead end.
-  await page.click('text=Sign out'); await page.waitForSelector('input[name=username]', { timeout: 8000 });
+  // CI once timed out here with "element is outside of the viewport" (not reproduced in many local runs).
+  // If it happens again, record what the page looked like instead of a bare timeout.
+  const signOutState = () => page.evaluate(() => { const a = [...document.querySelectorAll('a')].find(x => /^Sign out$/.test(x.textContent.trim())); const r = a && a.getBoundingClientRect(); const side = document.querySelector('.sidebar'); return { url: location.href, viewport: [innerWidth, innerHeight], scrollY, docHeight: document.documentElement.scrollHeight, signOut: r && [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)], sidebarTransform: side && getComputedStyle(side).transform, sidebarRect: side && side.getBoundingClientRect().toJSON(), modal: !!document.querySelector('.modal'), banners: [...document.querySelectorAll('#banners > *')].map(b => b.textContent.slice(0, 60)), paused: !!document.querySelector('[data-paused]') }; });
+  await page.click('text=Sign out', { timeout: 10000 }).catch(async (e) => { fail(`could not click Sign out: ${e.message.split('\n')[0]} — ${JSON.stringify(await signOutState().catch(() => null))}`); throw e; });
+  await page.waitForSelector('input[name=username]', { timeout: 8000 });
   ok(!(await page.$('input[name=display_name]')), 'signing out lands back on the login screen, not first-run setup', page.url());
   ok(await page.$('text=Reset this device'), 'a locked-out device offers a self-service reset instead of only "ask an admin"');
   await page.click('text=Reset this device'); await page.waitForSelector('.modal');
