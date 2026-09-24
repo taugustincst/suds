@@ -280,7 +280,11 @@ else if (buildOldSite()) {
     const getApp = await page.evaluate(async (b) => { const r = await fetch(b + '/get-app.html'); const t = await r.text(); return [r.status, /Use SUDS on your phone or tablet/.test(t)]; }, base);
     ok(getApp[0] === 200 && getApp[1], `${label}: get-app.html is served by the plain static host`, getApp);
     eq((await page.evaluate(async (b) => (await fetch(b + '/app')).status, base)), 404, `${label}: /app is a real 404 on a plain static host (no rewrite to rely on)`);
-    ok(await page.evaluate((v) => caches.open('suds-shell-' + v).then(c => c.match('get-app.html')).then(r => !!r), VERSION), `${label}: get-app.html is in the shell cache`);
+    // The worker fills its shell asynchronously after install; wait for it rather than sampling once, and
+    // say what the cache held if it never arrives (WebKit has failed this).
+    const inShell = await until(() => page.evaluate((v) => caches.open('suds-shell-' + v).then(c => c.match('get-app.html')).then(r => !!r), VERSION), { timeout: 15000 });
+    const shellKeys = inShell ? null : await page.evaluate(async () => { const out = {}; for (const k of await caches.keys()) out[k] = (await (await caches.open(k)).keys()).map(r => new URL(r.url).pathname).filter(p => /get-app|index|app\.js/.test(p)); return out; });
+    ok(inShell, `${label}: get-app.html is in the shell cache`, shellKeys);
     // item 6: no stray dialog title in the accessibility tree
     await page.goto(base + '/#/admin?tab=settings'); await until(async () => !/Loading…/.test((await page.textContent('#main')) || ''), { timeout: 10000 });
     ok(await until(async () => !(await a11yHas(page, /add a reminder|add resource/i)), { timeout: 8000 }), `${label}: no stray dialog title remains in the accessibility tree`);

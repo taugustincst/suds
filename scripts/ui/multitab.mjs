@@ -111,8 +111,11 @@ for (const freezeSave of [true, false]) {
   // A wakes: its pending save timer and the queued takeover message both get their chance to write.
   await until(() => isPaused(A), { timeout: 10000 });
   ok(await isPaused(A), `tab A, on waking, finds it was displaced and pauses${tag}`);
-  eq(await A.getAttribute('[data-paused]', 'data-paused'), 'unsaved', `a holder that never answered does not claim its work was saved first${tag}`);
-  ok(/may need to be re-entered/.test(await A.textContent('#app')), `and says the last moment's changes may need re-entering${tag}`);
+  // What A tells the person must match what actually happened to its last write, whichever of its queued
+  // callbacks runs first on waking: saved on the freeze (and carried into B's copy) → "saved first"; still
+  // pending when B took over → "may need to be re-entered".
+  eq(await A.getAttribute('[data-paused]', 'data-paused'), freezeSave ? 'saved' : 'unsaved', `the paused tab says truthfully whether its last write was saved first${tag}`);
+  ok(freezeSave ? /saved first/.test(await A.textContent('#app')) : /may need to be re-entered/.test(await A.textContent('#app')), `and words it that way${tag}`);
   await A.waitForTimeout(800); // intentional: give A's pending save timer its chance to fire into the fence
   await B.reload(); await booted(B); await until(() => B.evaluate(() => !!window.SUDS_LOCAL), { timeout: 10000 });
   ok(/Echo/.test(await clientNames(B)), `B's record survives A waking up${tag}`);
@@ -138,6 +141,30 @@ for (const freezeSave of [true, false]) {
   ok(!(await A.$(PROMPT)) && (await A.$('.layout')), 'reloading the holding tab boots straight back in with no prompt');
   await until(() => A.evaluate(() => !!window.SUDS_LOCAL), { timeout: 10000 });
   ok(/Golf/.test(await clientNames(A)), 'the record written right before the reload is there');
+  await ctx.close();
+}
+
+// ---- 3b. the order a frozen tab's queued work runs in on waking must not decide what it tells the person ----
+// Deterministic version of a race CI hit once in three runs: the displaced tab ran an unload-style save (no
+// fence: it writes its own key) before handling the takeover message, found nothing left unsaved, and said
+// "your work here was saved first" although that save went to a key nobody reads. Here another window's claim
+// is made directly in the store, then the tab does the unload save, then receives the takeover message.
+{
+  const ctx = await newCtx();
+  const A = watch(await ctx.newPage(), 'A'); await setup(A, base + '/?local=1#/');
+  // One step, so the regular 250 ms save timer cannot run in between and hide the race: a write leaves the
+  // page with unsaved work, another window's claim moves the epoch, the unload save writes the page's own
+  // (now dead) key, and only then does the takeover message arrive.
+  const status = await A.evaluate(async () => {
+    const r = await window.SUDS_LOCAL.handle('POST', '/api/clients', { first_name: 'Tab', last_name: 'Racer' }, {});
+    await new Promise((res, rej) => { const o = indexedDB.open('suds-local', 1); o.onsuccess = () => { const d = o.result; const t = d.transaction('kv', 'readwrite'); const st = t.objectStore('kv'); const g = st.get('epoch'); g.onsuccess = () => st.put((g.result || 0) + 1000, 'epoch'); t.oncomplete = () => { d.close(); res(); }; t.onerror = () => rej(t.error); }; o.onerror = () => rej(o.error); });
+    window.dispatchEvent(new Event('pagehide'));
+    new BroadcastChannel('suds-local-lock').postMessage({ type: 'takeover', from: 'another-window' });
+    return r.status;
+  });
+  eq(status, 201, 'tab A records a client (queued-work order case)');
+  await until(() => isPaused(A), { timeout: 10000 });
+  eq(await A.getAttribute('[data-paused]', 'data-paused').catch(() => null), 'unsaved', 'a tab whose last write was refused by the fence (another window claimed first) does not claim it was saved');
   await ctx.close();
 }
 

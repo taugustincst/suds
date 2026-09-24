@@ -2,6 +2,16 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+- **The paused screen tells the truth in every event order.** A displaced tab says its work was "saved first"
+  exactly when nothing is left unsaved (a save refused by the fence leaves it unsaved), on every path that
+  pauses it; before, a frozen tab that had saved on its `freeze` event said "may need to be re-entered" or
+  "saved first" depending on which of its queued callbacks ran first on waking (seen once in three CI runs).
+  `scripts/ui/multitab.mjs` now expects the truthful answer for both variants and fails on the old code.
+- WebKit smoke checks report what the shell cache holds instead of crashing, and wait for the worker to finish
+  filling it.
+
 ## 1.9.3 — 2026-09-24
 
 Fixes from the critical review of 1.9.2, re-checked by an independent verifier with its own multi-tab, frozen-tab, old-tab-upgrade and phone scripts before release (no data loss in any scenario). **Upgrade note:** local mode is now off by default on the office server; a county that relies on it sets `LOCAL_MODE_ENABLED=true` (or answers Yes in the setup wizard). Schema 24 (`tasks.description` encrypted).

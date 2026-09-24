@@ -116,7 +116,14 @@ await page.reload().catch(() => {});
 await until(() => page.$('.layout, input[name=username], input[name=display_name]'), { timeout: 20000 });
 ok(await page.$('.layout'), 'with no connection at all the installed demo still opens, signed in', (await page.textContent('body')).slice(0, 120));
 ok(await page.evaluate(() => fetch('views/no-such-view.js').then(r => r.status !== 200 && !/<!doctype/i.test(r.headers.get('content-type') || ''), () => true)), 'offline, a missing script is a failure, not index.html served as a 200');
-ok(await page.evaluate(() => fetch('get-app.html').then(r => r.ok && r.headers.get('content-type').includes('html'))), 'offline, the phone/tablet page still opens from the shell cache');
+const offlineGetApp = await page.evaluate(async () => {
+  // Diagnostics for engines where this has failed (WebKit): what the worker holds, and what fetch() saw.
+  const keys = []; for (const k of await caches.keys()) { const c = await caches.open(k); for (const r of await c.keys()) if (/get-app|index\.html/.test(r.url)) keys.push(`${k}:${new URL(r.url).pathname}`); }
+  const controlled = !!navigator.serviceWorker.controller;
+  try { const r = await fetch('get-app.html'); return { ok: r.ok && (r.headers.get('content-type') || '').includes('html'), status: r.status, type: r.headers.get('content-type'), controlled, keys }; }
+  catch (e) { return { ok: false, error: String(e), controlled, keys }; }
+});
+ok(offlineGetApp.ok, 'offline, the phone/tablet page still opens from the shell cache', offlineGetApp);
 await ctx.setOffline(false);
 
 finish(errors);

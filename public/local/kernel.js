@@ -6003,7 +6003,7 @@ function openChannel() {
     let savedFirst = false;
     try {
       await flush();
-      savedFirst = !dirty && !frozen && !wiped;
+      savedFirst = !dirty && !wiped;
     } catch {
     }
     try {
@@ -6034,7 +6034,7 @@ function requestWebLock(opts) {
       });
     }).catch(() => {
       if (granted) {
-        if (haveLock || steppingAside) lose({ savedFirst: false });
+        if (haveLock || steppingAside) lose({ savedFirst: !dirty && !wiped });
       } else resolve2(false);
     });
   });

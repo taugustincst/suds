@@ -102,7 +102,10 @@ function openChannel() {
     steppingAside = true; clearInterval(heartbeatTimer); heartbeatTimer = null;
     clearTimeout(saveTimer); saveTimer = null;
     let savedFirst = false;
-    try { await flush(); savedFirst = !dirty && !frozen && !wiped; } catch {}
+    // A save that reaches the store while this page's epoch is current clears `dirty`; one refused by the
+    // fence (or written to a key a newer claim has left behind) leaves it set. So "nothing left unsaved" is
+    // exactly "this page's work was carried into the new owner's copy" — the same test on every path.
+    try { await flush(); savedFirst = !dirty && !wiped; } catch {}
     try { channel.postMessage({ type: 'takeover-ack', to: m.from, saved: savedFirst }); } catch {}
     lose({ savedFirst });
   };
@@ -122,7 +125,7 @@ function requestWebLock(opts) {
     }).catch(() => {
       // Settling after it was granted means another page stole it. That page's claim has moved (or is about
       // to move) the epoch, so nothing here could be saved anyway: stop now, not at the next refused save.
-      if (granted) { if (haveLock || steppingAside) lose({ savedFirst: false }); }
+      if (granted) { if (haveLock || steppingAside) lose({ savedFirst: !dirty && !wiped }); }
       else resolve(false); // a wait that timed out
     });
   });
