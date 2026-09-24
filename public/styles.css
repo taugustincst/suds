@@ -1,7 +1,7 @@
 :root {
   --bg: #f4f6f9; --panel: #ffffff; --panel-2: #f8fafc; --border: #dde3ea; --text: #1c2430; --muted: #5d6b7c;
   --primary: #1f5f8b; --primary-2: #17496b; --primary-soft: #e3eef7; --accent: #2a9d8f; --danger: #c0392b; --danger-soft: #fdecea;
-  --warn: #8a5a12; --warn-soft: #fff5e0; --ok: #2f855a; --ok-soft: #e6f4ec; --info-soft: #e8f1fb; --purple: #6b46c1; --purple-soft: #efe9fb;
+  --warn: #8a5a12; --warn-soft: #fff5e0; --ok: #276749; --ok-soft: #e6f4ec; --info-soft: #e8f1fb; --purple: #6b46c1; --purple-soft: #efe9fb;
   --radius: 10px; --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.1);
   --sidebar-w: 236px; --font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
@@ -19,7 +19,9 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
-body { font-family: var(--font); font-size: 14px; color: var(--text); background: var(--bg); line-height: 1.45; }
+/* rem, not px: a phone's larger-text setting (or a reader's own default size) has to reach every screen,
+   the top bar and the buttons included; at 14px they stayed small while the rest grew. */
+body { font-family: var(--font); font-size: .875rem; color: var(--text); background: var(--bg); line-height: 1.45; }
 a { color: var(--primary); text-decoration: none; } a:hover { text-decoration: underline; }
 /* Looks and behaves like a link for a mouse, without being a second focusable control nested inside a
    row that is already one (see noteTable in notes.js) — deliberately not reachable by keyboard/Tab. */
@@ -57,7 +59,7 @@ code, .mono { font-family: var(--mono); font-size: .85em; }
 .stat.warn .v { color: var(--warn); } .stat.danger .v { color: var(--danger); } .stat.ok .v { color: var(--ok); }
 table { width: 100%; border-collapse: collapse; font-size: .92em; } th, td { text-align: left; padding: .5rem .6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
 th { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; background: var(--panel-2); position: sticky; top: 0; }
-tr.click { cursor: pointer; } tr.click:hover td { background: var(--panel-2); } td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+tr.click { cursor: pointer; } tr.click:hover td { background: var(--panel-2); } td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .table-wrap { overflow: auto; max-height: 70vh; border: 1px solid var(--border); border-radius: 8px; } .table-wrap table th { top: 0; }
 .empty { padding: 1.5rem; text-align: center; color: var(--muted); }
 
@@ -79,7 +81,7 @@ input[type="checkbox"] { width: auto; margin-right: .4rem; } textarea { min-heig
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0 1rem; } .form-grid .span { grid-column: 1 / -1; }
 .check { display: flex; align-items: center; gap: .3rem; font-weight: 500; color: var(--text); margin-top: 1.4rem; }
 fieldset { border: 1px solid var(--border); border-radius: 8px; padding: .6rem .9rem; margin: 0 0 1rem; } legend { font-size: .8rem; font-weight: 700; color: var(--muted); padding: 0 .3rem; }
-.btn { display: inline-flex; align-items: center; gap: .4rem; font: inherit; font-weight: 600; padding: .5rem .85rem; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer; white-space: nowrap; }
+.btn { display: inline-flex; align-items: center; gap: .4rem; font: inherit; font-weight: 600; padding: .5rem .85rem; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer; white-space: nowrap; max-width: 100%; }
 .btn:hover { background: var(--panel-2); } .btn:disabled { opacity: .55; cursor: not-allowed; }
 /* A button that is really a file input: the input covers the label, invisible but hit-testable, so both a
    tap on the words and a click aimed at the input open the picker; the label carries the focus ring. */
@@ -94,8 +96,8 @@ fieldset { border: 1px solid var(--border); border-radius: 8px; padding: .6rem .
 /* Modal, toasts */
 /* Layering: banners (60) sit over the page, a dialog (70) over the banners — on a phone the MFA banner used to
    cover the first row of the + Log sheet — and toasts (100) over everything, so a save error is never hidden. */
-.modal-bg { position: fixed; inset: 0; background: rgba(10,15,20,.55); display: flex; align-items: flex-start; justify-content: center; padding: 3vh 1rem; overflow: auto; z-index: 70; }
-.modal { background: var(--panel); border-radius: 12px; width: 100%; max-width: 760px; box-shadow: 0 20px 60px rgba(0,0,0,.35); padding: 1.25rem 1.4rem; margin: auto; }
+.modal-bg { position: fixed; inset: 0; top: var(--demo-banner-h, 0px); background: rgba(10,15,20,.55); display: flex; align-items: flex-start; justify-content: center; padding: 3vh 1rem; overflow: auto; z-index: 70; }
+.modal { background: var(--panel); border-radius: 12px; width: 100%; min-width: 0; max-width: 760px; box-shadow: 0 20px 60px rgba(0,0,0,.35); padding: 1.25rem 1.4rem; margin: auto; }
 .modal.wide { max-width: 1040px; } .modal h2 { margin-bottom: 1rem; }
 .toasts { position: fixed; right: 1rem; bottom: 1rem; display: flex; flex-direction: column; gap: .5rem; z-index: 100; }
 .toast { background: var(--text); color: var(--bg); padding: .6rem .9rem; border-radius: 8px; box-shadow: var(--shadow); max-width: 380px; font-weight: 500; }
@@ -118,7 +120,7 @@ fieldset { border: 1px solid var(--border); border-radius: 8px; padding: .6rem .
 
 /* Bars / charts */
 .bar { display: flex; align-items: center; gap: .5rem; font-size: .85em; margin: .25rem 0; } .bar .lbl { width: 40%; min-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bar .trk { flex: 1; background: var(--panel-2); border-radius: 4px; height: 12px; overflow: hidden; } .bar .fil { height: 100%; background: var(--primary); border-radius: 4px; } .bar .n { width: 3.5rem; text-align: right; font-variant-numeric: tabular-nums; }
+.bar .trk { flex: 1; background: var(--panel-2); border-radius: 4px; height: 12px; overflow: hidden; } .bar .fil { height: 100%; background: var(--primary); border-radius: 4px; } .bar .n { min-width: 3.5rem; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .progress { height: 10px; background: var(--panel-2); border-radius: 5px; overflow: hidden; } .progress > div { height: 100%; background: var(--accent); } .progress > div.warn { background: var(--warn); } .progress > div.danger { background: var(--danger); }
 .spark { display: flex; align-items: flex-end; gap: 2px; height: 48px; } .spark div { flex: 1; background: var(--primary); border-radius: 2px 2px 0 0; min-height: 2px; opacity: .85; }
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: .25rem .9rem; font-size: .92em; } .kv dt { color: var(--muted); } .kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
@@ -148,13 +150,12 @@ pre.note { white-space: pre-wrap; font-family: var(--font); background: var(--pa
      sits underneath the FAB and cannot be tapped. */
   .main { padding: .75rem .75rem calc(7rem + env(safe-area-inset-bottom)); }
   .topbar { flex-direction: column; align-items: stretch; } .topbar h1 { font-size: 1.25rem; } .topbar .row { justify-content: flex-start; }
-  .modal-bg { padding: 0; align-items: stretch; } .modal, .modal.wide { max-width: none; border-radius: 0; min-height: 100vh; padding: 1rem; padding-bottom: calc(1rem + env(safe-area-inset-bottom)); }
+  .modal-bg { padding: 0; align-items: stretch; } .modal, .modal.wide { max-width: none; border-radius: 0; min-height: calc(100vh - var(--demo-banner-h, 0px)); padding: 1rem; padding-bottom: calc(1rem + env(safe-area-inset-bottom)); }
   .form-grid { grid-template-columns: 1fr; }
-  .btn { padding: .65rem 1rem; } input, select, textarea { font-size: 16px; padding: .6rem .7rem; } /* 16px prevents iOS zoom */
+  .btn { padding: .65rem 1rem; } input, select, textarea { font-size: max(16px, 1rem); padding: .6rem .7rem; } /* 16px prevents iOS zoom */
   .filters .field { min-width: 45%; }
   .tabs button { padding: .7rem .8rem; }
   .table-wrap { max-height: none; }
-  .grid.cols-4 { grid-template-columns: repeat(2, 1fr); }
   .stat .v { font-size: 1.3rem; }
   .timeline { padding-left: 1rem; }
   .toasts { left: .75rem; right: .75rem; bottom: calc(.75rem + env(safe-area-inset-bottom)); } .toast { max-width: none; }
@@ -179,9 +180,9 @@ details.section { border: 1px solid var(--border); border-radius: 8px; padding: 
 .autosave { font-size: .8rem; color: var(--muted); }
 @media (max-width: 900px) {
   .appbar { padding: .5rem .75rem 0; } .appbar .btn.quick { display: none; }
-  .fab { display: block; position: fixed; right: 1rem; bottom: calc(1.25rem + env(safe-area-inset-bottom)); z-index: 45; } .fab .btn { box-shadow: 0 6px 20px rgba(0,0,0,.3); font-size: 1.1rem; padding: .8rem 1.3rem; }
+  .fab { display: block; position: fixed; right: 1rem; bottom: calc(1.25rem + env(safe-area-inset-bottom)); z-index: 45; } .fab .btn { box-shadow: 0 6px 20px rgba(0,0,0,.3); font-size: min(1.1rem, 20px); padding: 12px 20px; }
   /* Out of the way while the menu drawer or a dialog is up: it was floating over both. */
-  body.nav-open .fab, body:has(.modal-bg) .fab { display: none; }
+  body.nav-open .fab, body:has(.modal-bg) .fab, body:has(.tabs-menu:not(.hidden)) .fab, body:has(.helptip:not(.hidden)) .fab { display: none; }
   /* Room to scroll the last card ("Continue where you left off") out from under the floating + Log button. */
   .main { padding-bottom: calc(7.5rem + env(safe-area-inset-bottom)); }
   /* Toasts stack above the button rather than underneath it. */
@@ -197,7 +198,9 @@ details.section { border: 1px solid var(--border); border-radius: 8px; padding: 
   #banners { position: static; }
   /* Wide tables scroll inside their own wrapper; the page itself never scrolls sideways. */
   .content, .main { overflow-x: clip; }
-  .stat .v { overflow-wrap: anywhere; }
+  /* Never break a figure ("$1,2|34.56") to fit: the cards go one to a row instead when the text is large. */
+  .stat .v { overflow-wrap: normal; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .grid.cols-4 { grid-template-columns: repeat(auto-fill, minmax(min(100%, 10rem), 1fr)); }
 }
 .modal .card-head { flex-wrap: nowrap; align-items: flex-start; } .modal .card-head h2 { margin-bottom: 0; }
 .quick-list .btn { width: 100%; white-space: normal; text-align: left; }
@@ -337,3 +340,36 @@ tr.click:focus-visible,
 
 /* Keyboard highlight in the client picker's list of matches. */
 .list-item.active, .list-item:hover { background: var(--hover, rgba(0, 0, 0, .05)); }
+
+/* ---------- phone review round: large text, the demo banner, tap targets ---------- */
+/* The demo notice is sticky at the top; the sticky phone header goes under it, not behind it. */
+.static-demo-banner ~ #app .mobilebar { top: var(--demo-banner-h, 0px); }
+/* Nothing in a form may be wider than the screen at 200% text: grid and flex children shrink, rows wrap. */
+.form-grid > *, .field, .row > *, .filters > *, .card, .grid > * { min-width: 0; }
+input, select, textarea { max-width: 100%; }
+.field label { overflow-wrap: anywhere; }
+@media (max-width: 900px) {
+  /* 1fr alone lets the widest thing on the page (a card grid, the search bar) set the column's minimum. */
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .btn { white-space: normal; text-align: center; }
+  .btn-row { justify-content: flex-start; }
+  .modal .card-head h2 { min-width: 0; overflow-wrap: anywhere; }
+  .kv { grid-template-columns: minmax(5.5em, 38%) minmax(0, 1fr); }
+  .kv dt { overflow-wrap: anywhere; }
+  .mobilebar > b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 1rem; }
+  .gsearch { min-width: 0; }
+  .appbar { flex-wrap: wrap; }
+}
+@media (pointer: coarse) {
+  /* A checkbox is 24px to look at but 44px to hit: its label is the target (tasks.js, dashboard.js). */
+  .tap-target { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; margin: 0; cursor: pointer; flex: 0 0 auto; }
+  .today-item .check { min-height: 44px; }
+  .today-item { padding: .35rem 0; }
+  a.bar.link { min-height: 44px; }
+}
+/* A figure of money is one word. */
+.money { white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* The + Log sheet at large text: a long word ("paperwork…)") set the column wider than the screen. */
+.quick-list { grid-template-columns: minmax(0, 1fr); } .quick-list .btn { min-width: 0; overflow-wrap: anywhere; }
+/* The closed drawer's shadow bled 40px into the left edge of every phone screen. */
+@media (max-width: 900px) { .sidebar:not(.open) { box-shadow: none; } }

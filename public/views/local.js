@@ -7,6 +7,10 @@ const column = (x) => fmt.label(String(x).replace(/_enc$/, '').replace(/_idx$/, 
 const isStaticHost = () => { try { return window.SUDS_STATIC_HOST === true; } catch { return false; } };
 const STATIC_HOST_MESSAGE = 'Sync is not available from the demo site. Open SUDS at the office address instead; this copy is for trying SUDS out and never talks to an office server.';
 import { sampleDataCard } from './admin.js';
+import { PURPOSE } from './login.js';
+// The demo account the static build's "Try it with sample data" button creates. Shown on screen before
+// it is used: this copy lives in one browser, holds only fictional records, and has nobody to ask for a reset.
+const DEMO_ACCOUNT = { username: 'demo', password: 'Demo-SUDS-2026', display_name: 'Demo User', role: 'admin', org_name: 'SUDS demo' };
 
 // First run on a device: create the local account (no server needed)
 route('localsetup', async () => {
@@ -31,13 +35,39 @@ route('localsetup', async () => {
     await loadSession(); nav('dashboard'); render();
   } });
   f.querySelectorAll('.form-grid').forEach(g => g.style.gridTemplateColumns = '1fr');
+  // The demo site: one tap from nothing to a full set of fictional records, without inventing an account.
+  let tryIt = null;
+  if (isStaticHost()) {
+    const status = h('span', { class: 'small muted', role: 'status' });
+    const btn = h('button', { type: 'button', class: 'btn primary', 'data-try-sample': '1', onClick: async () => {
+      btn.disabled = true; status.textContent = 'Setting up the demo…';
+      try {
+        await post('/api/local/setup', DEMO_ACCOUNT);
+        await post('/api/auth/login', { username: DEMO_ACCOUNT.username, password: DEMO_ACCOUNT.password });
+        await loadSession();
+        status.textContent = 'Adding sample data…';
+        const r = await post('/api/local/demo', {});
+        toast(`Demo ready: ${r.counts.clients} fictional clients to explore`, 'ok');
+        await loadSession(); nav('dashboard'); render();
+      } catch (e) { btn.disabled = false; status.textContent = ''; toast(e.message || 'Could not set up the demo', 'error'); }
+    } }, 'Try it with sample data');
+    tryIt = h('div', { class: 'card tight mb', 'data-try-it': '1' },
+      h('p', { class: 'mb' }, h('b', {}, 'Just looking? '), 'Start with a ready-made demo account and a set of fictional clients, visits, notes and referrals.'),
+      h('div', { class: 'row' }, btn, status),
+      h('p', { class: 'small muted mt', style: { marginBottom: 0 } }, `Signs you in as “${DEMO_ACCOUNT.username}” with the password “${DEMO_ACCOUNT.password}” (change it under Profile). Or set up your own account below.`));
+  }
   // The same warning the Sync page shows, but here -- before the first real name is typed in, not days
   // later on a page nobody has had a reason to open yet.
   const protectedKeys = !!(window.SudsNative || window.__sudsSecrets);
   return h('div', { class: 'login-wrap' }, h('div', { class: 'card login', style: { maxWidth: '520px' } },
-    h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('b', {}, 'SUDS on this device'), h('small', {}, 'Offline copy — the office SUDS is the system of record'))),
+    h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('b', {}, 'SUDS on this device'), h('small', {}, isStaticHost() ? 'Demo — runs entirely in this browser' : 'Offline copy — the office SUDS is the system of record'))),
+    h('p', { class: 'small muted', 'data-purpose': '1' }, PURPOSE),
+    tryIt,
     protectedKeys ? null : h('div', { class: 'banner warn mb', 'data-browser-copy-warning': '1' }, h('div', {}, h('b', {}, 'This is a browser copy, for trying SUDS out. '), 'Its encryption keys stay in this browser profile beside the data. Use sample data here; keep real client information on the office SUDS unless your administrator has approved this device for field work.')),
-    h('p', { class: 'small muted' }, 'Everything you record is stored encrypted on this device. Whenever you are near the office, tap Sync to exchange changes with the office SUDS — both directions.'), f));
+    isStaticHost()
+      // The demo never syncs (local/sync.js refuses): do not promise it.
+      ? h('p', { class: 'small muted', 'data-static-setup-note': '1' }, 'This is a demo: everything you enter stays in this browser on this device and is never sent anywhere. To use SUDS for real, open your county\'s office SUDS address.')
+      : h('p', { class: 'small muted' }, 'Everything you record is stored encrypted on this device. Whenever you are near the office, tap Sync to exchange changes with the office SUDS — both directions.'), f));
 });
 
 // Sync screen (local mode)
@@ -118,11 +148,16 @@ route('sync', async () => {
     ? h('div', { class: 'card' }, h('h3', {}, 'Sync now'), h('div', { class: 'banner info', 'data-static-no-sync': '1' }, h('div', {}, STATIC_HOST_MESSAGE)), h('div', { class: 'btn-row mt' }, eraseDeviceButton()))
     : h('div', { class: 'card' }, h('h3', {}, 'Sync now'), h('p', { class: 'small muted' }, 'Connect this device to the office Wi-Fi (or the address IT gave you), then sign in with your office account.'), f, log,
         h('div', { class: 'btn-row' }, eraseDeviceButton()));
-  return h('div', {}, pageHead('Sync with the office'),
+  return h('div', {}, pageHead(isStaticHost() ? 'This demo copy' : 'Sync with the office'),
     protectedKeys ? null : h('div', { class: 'banner warn mb' }, h('b', {}, 'This is a browser copy, for trying SUDS out. '),
       'Its encryption keys are stored in this browser profile alongside the data, so anyone who can use this browser profile can read what is in it. Keep real client information on the office SUDS unless your administrator has approved this device for field work — otherwise, use sample data.'),
     h('div', { class: 'grid cols-2' },
-      h('div', { class: 'card' }, h('h3', {}, 'Status'), kv([['This device', badge('Local copy', 'info')], ['Data protection', protectedKeys ? 'Encrypted; keys in protected device storage' : badge('Keys kept in this browser', 'warn')], ['Last sync', st.last_sync_at ? fmt.dt(st.last_sync_at) : 'never'], ['Changes waiting to send', String(st.pending)], ['Office server', st.server || 'not set yet']]),
+      isStaticHost()
+        // The demo has nothing waiting to go anywhere and no office server to name: a count of "changes
+        // waiting to send" there read as work at risk.
+        ? h('div', { class: 'card', 'data-static-status': '1' }, h('h3', {}, 'Status'), kv([['This device', badge('Demo copy', 'info')], ['Where your data is', 'In this browser on this device only'], ['Sync', 'Not available in the demo']]),
+          h('p', { class: 'small muted mt' }, 'This demo stays in this browser. Nothing you enter is sent anywhere, and clearing the browser\'s site data erases it. To use SUDS for real, open your county\'s office SUDS address.'))
+        : h('div', { class: 'card' }, h('h3', {}, 'Status'), kv([['This device', badge('Local copy', 'info')], ['Data protection', protectedKeys ? 'Encrypted; keys in protected device storage' : badge('Keys kept in this browser', 'warn')], ['Last sync', st.last_sync_at ? fmt.dt(st.last_sync_at) : 'never'], ['Changes waiting to send', String(st.pending)], ['Office server', st.server || 'not set yet']]),
         h('p', { class: 'small muted mt' }, 'Sync exchanges clients, visits, calls, notes, reminders, referrals and everything else in both directions. The office SUDS decides: the newest change wins, a change it rejects for good is not sent again, and a record the office has purged or merged does not come back.')),
       syncCard,
       await sampleDataCard(() => nav('sync?_=' + Date.now()))));

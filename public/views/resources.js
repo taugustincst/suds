@@ -180,7 +180,7 @@ route('resource', async (r) => {
   const head = h('div', { class: 'res-head' },
     h('div', {}, h('div', { class: 'row mb', style: { gap: '.35rem' } }, badge(fmt.label(x.category), 'info'), x.is_active ? null : badge('Inactive', 'warn'), x.accepts_medicaid ? badge('Medicaid', 'ok') : null, x.accepts_uninsured ? badge('Uninsured OK', 'info') : null, x.mat_offered ? badge(`MAT: ${x.mat_offered}`, 'purple') : null, stale(x) ? badge(x.last_verified_at ? `verified ${fmt.date(x.last_verified_at)}` : 'never verified', 'warn') : badge(`verified ${fmt.date(x.last_verified_at)}`, 'ok')),
       x.organization ? h('div', { class: 'muted' }, x.organization) : null,
-      x.summary ? h('p', { class: 'res-lead' }, x.summary) : h('p', { class: 'muted small' }, can('resources:write') ? 'No summary yet. Click Edit to describe what this program offers.' : 'No summary yet.')));
+      x.summary ? h('p', { class: 'res-lead' }, x.summary) : h('p', { class: 'muted small' }, can('resources:write') ? 'No summary yet. Tap or click Edit to describe what this program offers.' : 'No summary yet.')));
   const contact = kv([['Phone', contactLinks(x.phone)], ['Fax', x.fax], ['Email', x.email ? h('a', { href: `mailto:${x.email}` }, x.email) : null], ['Website', x.website ? h('a', { href: siteHref(x.website), target: '_blank', rel: 'noopener' }, x.website) : null], ['Contact', x.contact_person],
     ['Address', mapLink([x.address, x.city, x.zip].filter(Boolean).join(', ') || null)], ['Hours', x.hours], ['Languages', x.languages]]);
   const services = h('div', {},
@@ -189,6 +189,8 @@ route('resource', async (r) => {
     !x.service_tags && !x.services && !x.eligibility ? h('p', { class: 'muted small' }, 'No service details yet.') : null);
   const outcomes = x.referral_stats.length ? h('div', {}, x.referral_stats.map(s => [badge(`${fmt.label(s.status)}: ${s.n}`), ' '])) : h('p', { class: 'muted small' }, 'No referrals yet.');
   const recent = (x.recent_referrals || []).length ? table([{ label: 'Client', render: y => h('a', { href: `#/client/${y.client_id}/referrals` }, y.client_code) }, { label: 'Referred', render: y => fmt.date(y.referred_at) }, { label: 'Status', render: y => badge(fmt.label(y.status)) }], x.recent_referrals) : null;
+  // The phone's top bar names the page; a provider's page is not in the menu, so it said "SUDS".
+  const barTitle = document.querySelector('.mobilebar > b'); if (barTitle) { barTitle.textContent = x.name; barTitle.title = x.name; }
   return h('div', {},
     pageHead(x.name, h('a', { class: 'btn', href: '#/resources' }, '← Directory'),
       can('referrals:write') ? h('button', { class: 'btn', onClick: async () => (await import('./referrals.js')).openReferralForm(null, { resourceId: x.id, onDone: refresh }) }, '+ Refer a client') : null,

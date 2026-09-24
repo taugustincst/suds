@@ -71,12 +71,14 @@ export function taskTable(rows, { showClient = true, onChange, bulk = false } = 
   ].filter(Boolean), rows, { empty: 'Nothing here. Reminders you add, and follow-ups from visits and calls, will show up in this list.',
     rowLabel: t => t.title,
     // The done box stays on the phone row: a to-do list you cannot tick off one-handed is not a to-do list.
-    compact: { primary: t => [h('span', { class: 'row nowrap', style: { gap: '.4rem', minWidth: 0 } }, can('tasks:write') ? h('input', { type: 'checkbox', checked: t.status === 'done', 'aria-label': `Mark "${t.title}" ${t.status === 'done' ? 'not done' : 'done'}`, onClick: (e) => e.stopPropagation(), onChange: async (e) => {
+    compact: { primary: t => [h('span', { class: 'row nowrap', style: { gap: '.4rem', minWidth: 0 } }, // Inside a 44px label (.tap-target): the box itself is 24px, and a near miss used to open the to-do
+      // (the row) instead of ticking it off.
+      can('tasks:write') ? h('label', { class: 'tap-target', onClick: (e) => e.stopPropagation() }, h('input', { type: 'checkbox', checked: t.status === 'done', 'aria-label': `Mark "${t.title}" ${t.status === 'done' ? 'not done' : 'done'}`, onClick: (e) => e.stopPropagation(), onChange: async (e) => {
         const wanted = e.target.checked; e.target.disabled = true;
         try { await put(`/api/tasks/${t.id}`, { status: wanted ? 'done' : 'open' }); toast(wanted ? 'Marked done' : 'Reopened', 'ok'); onChange && onChange(); }
         catch (err) { e.target.checked = !wanted; toast(err.message || 'Could not update this to-do. Check your connection and try again.', 'error'); }
         finally { e.target.disabled = false; }
-      } }) : null, h('span', { style: t.status === 'done' ? { textDecoration: 'line-through', color: 'var(--muted)' } : {} }, t.is_milestone ? '★ ' : '', t.title)), badge(fmt.label(t.priority), statusKind(t.priority))],
+      } })) : null, h('span', { style: t.status === 'done' ? { textDecoration: 'line-through', color: 'var(--muted)' } : {} }, t.is_milestone ? '★ ' : '', t.title)), badge(fmt.label(t.priority), statusKind(t.priority))],
       secondary: t => [showClient && t.client_id ? h('span', {}, t.client_name || t.client_code) : null, h('span', { style: overdue(t) ? { color: 'var(--danger)', fontWeight: 600 } : {} }, t.due_at ? (overdue(t) ? 'overdue · ' : 'due ') + fmt.dt(t.due_at) : 'no due date'), t.status === 'done' ? badge('Done', 'ok') : null],
       onTap: t => can('tasks:write') ? openTaskForm(t, { onDone: onChange }) : null } });
   return toolbar ? h('div', {}, toolbar, tbl) : tbl;

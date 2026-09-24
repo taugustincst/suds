@@ -13,7 +13,7 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
   const f = form([
     { name: 'client_id', label: 'Client', type: 'client', required: true, value: clientId || values?.client_id, display: clientDisplay },
     { name: 'kind', label: 'Note type', type: 'select', options: kinds.map(k => ({ value: k, label: k === 'clinical' ? 'Clinical (restricted to clinical roles)' : 'Administrative / contact' })), value: kind || values?.kind || kinds[0], noBlank: true, required: true },
-    { name: 'format', label: 'Format', type: 'select', options: C.NOTE_FORMATS.map(f => ({ value: f, label: FORMAT_LABELS[f] || f })), value: prefill?.format || 'narrative', noBlank: true }, { name: 'occurred_at', label: 'Date of service', type: 'datetime', required: true, value: values?.occurred_at || new Date().toISOString() },
+    { name: 'format', label: 'Format', type: 'select', options: C.NOTE_FORMATS.map(f => ({ value: f, label: FORMAT_LABELS[f] || fmt.label(f) })), value: prefill?.format || 'narrative', noBlank: true }, { name: 'occurred_at', label: 'Date of service', type: 'datetime', required: true, value: values?.occurred_at || new Date().toISOString() },
     { name: 'title', label: 'Title', span: true, value: prefill?.title }, { name: 'content', label: 'Narrative', type: 'textarea', span: true, rows: 10, required: true, value: prefill?.content },
     { name: 'part2_protected', label: 'Contains 42 CFR Part 2 protected SUD information', type: 'checkbox', value: values ? values.part2_protected : true },
     { name: 'cosign_requested', label: 'Request supervisor co-sign / review', type: 'checkbox', help: 'Puts this note in the supervisor queue once it is signed — for a difficult contact, a safety concern, or anything you want a second pair of eyes on.' },
@@ -97,7 +97,7 @@ export async function openNote(id, { onChange } = {}) {
         catch (e) { toast(e.message, 'error'); }
       } }, 'Send to supervisor') : null,
       h('button', { class: 'btn ghost', onClick: () => window.print() }, 'Print')));
-  const m = modal(n.title || `${n.format} note`, body, { wide: true });
+  const m = modal(n.title || `${fmt.label(n.format)} note`, body, { wide: true });
 }
 
 function signNote(n, done) {
@@ -116,7 +116,7 @@ export function noteTable(rows, { showClient = true, onChange } = {}) {
   // nesting, so here the client code is a plain (mouse-only) shortcut rather than its own control.
   return table([
     { label: 'Date of service', render: n => h('span', { class: 'nowrap' }, fmt.dt(n.occurred_at)) }, showClient ? { label: 'Client', render: n => h('span', { class: 'link-like', onClick: (e) => { e.stopPropagation(); nav(`client/${n.client_id}`); } }, n.client_code) } : null,
-    { label: 'Type', render: n => badge(n.kind === 'clinical' ? 'Clinical' : 'Admin', n.kind === 'clinical' ? 'purple' : 'info') }, { label: 'Format', key: 'format' }, { label: 'Title', render: n => n.title || h('span', { class: 'muted' }, '(untitled)') },
+    { label: 'Type', render: n => badge(n.kind === 'clinical' ? 'Clinical' : 'Admin', n.kind === 'clinical' ? 'purple' : 'info') }, { label: 'Format', render: n => fmt.label(n.format) }, { label: 'Title', render: n => n.title || h('span', { class: 'muted' }, '(untitled)') },
     { label: 'Status', render: n => [badge(fmt.label(n.status), statusKind(n.status)), n.addenda ? [' ', badge(`${n.addenda} addend.`)] : null, n.cosigned_at ? [' ', badge('Countersigned', 'ok')] : n.awaiting_cosign ? [' ', badge('Awaiting review', 'warn')] : n.cosign_requested ? [' ', badge('Review requested', 'warn')] : null] }, { label: 'Source', render: n => n.source === 'manual' ? '' : badge(fmt.label(n.source), 'warn') }, { label: 'Author', key: 'author' },
   ].filter(Boolean), rows, { onRow: n => openNote(n.id, { onChange }), empty: 'No notes yet. Notes save as drafts automatically while you type, and you sign them when they are complete.' });
 }
