@@ -333,8 +333,11 @@ const migrations = [
     rebuildTable(d, safeSchema(), 'tasks');
   },
   // 27 (numbered 27 in the release: 25 and 26 land from parallel work — renumber this comment at merge):
-  //     idempotency_keys, so a retried POST is answered once instead of creating everything twice.
+  //     idempotency_keys, so a retried POST is answered once instead of creating everything twice; and
+  //     breakglass_events.kind, because the supervisors' review queue now also receives re-admissions of
+  //     discharged clients by a worker whose caseload they were not on (POST /api/clients/:id/readmit).
   (d) => {
+    addColumn(d, 'breakglass_events', 'kind', "TEXT NOT NULL DEFAULT 'clinical_note'");
     const schemaText = safeSchema();
     const m = schemaText.match(/CREATE TABLE IF NOT EXISTS idempotency_keys \([\s\S]*?\n\);/);
     if (m) d.exec(m[0]);

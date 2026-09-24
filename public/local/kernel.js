@@ -7293,7 +7293,10 @@ CREATE TABLE IF NOT EXISTS breakglass_events (
   acknowledged_by TEXT REFERENCES users(id),
   acknowledged_at TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  -- What the exception was: 'clinical_note' (a clinical note opened with a break-glass reason) or
+  -- 'readmission' (a discharged client outside the worker's caseload re-admitted by them at intake).
+  kind TEXT NOT NULL DEFAULT 'clinical_note'
 );
 CREATE INDEX IF NOT EXISTS idx_breakglass_open ON breakglass_events(acknowledged_at, at);
 
@@ -8030,8 +8033,11 @@ var require_db = __commonJS({
         rebuildTable(d, safeSchema(), "tasks");
       },
       // 27 (numbered 27 in the release: 25 and 26 land from parallel work — renumber this comment at merge):
-      //     idempotency_keys, so a retried POST is answered once instead of creating everything twice.
+      //     idempotency_keys, so a retried POST is answered once instead of creating everything twice; and
+      //     breakglass_events.kind, because the supervisors' review queue now also receives re-admissions of
+      //     discharged clients by a worker whose caseload they were not on (POST /api/clients/:id/readmit).
       (d) => {
+        addColumn(d, "breakglass_events", "kind", "TEXT NOT NULL DEFAULT 'clinical_note'");
         const schemaText = safeSchema();
         const m = schemaText.match(/CREATE TABLE IF NOT EXISTS idempotency_keys \([\s\S]*?\n\);/);
         if (m) d.exec(m[0]);
@@ -12990,7 +12996,7 @@ var require_clients = __commonJS({
     var audit3 = require_audit();
     var { badRequest, notFound, forbidden, conflict, HttpError: HttpError3 } = require_http();
     var { validate, paging } = require_validate();
-    var { blindIndex: blindIndex2, uuid: uuid2, decrypt: decrypt3 } = require_crypto();
+    var { blindIndex: blindIndex2, uuid: uuid2, decrypt: decrypt3, encrypt: encrypt3 } = require_crypto();
     var M = require_clients_model();
     var F = require_client_filters();
     var shape = {
@@ -13084,6 +13090,20 @@ var require_clients = __commonJS({
         return { id: x.id, client_code: x.client_code, display_name: d.display_name, dob: d.dob, status: x.status, intake_date: x.intake_date, reasons };
       });
     }
+    var strongMatch = (m) => m.reasons.includes("same surname and date of birth") || m.reasons.includes("same phone number");
+    function isDischarged(id) {
+      return !!db3.one(`SELECT 1 FROM clients c WHERE c.id=? AND c.deleted_at IS NULL AND c.merged_into IS NULL AND c.status IN ('closed','inactive')
+    AND NOT EXISTS (SELECT 1 FROM episodes e WHERE e.client_id=c.id AND e.status='open')
+    AND NOT EXISTS (SELECT 1 FROM assignments a WHERE a.client_id=c.id AND ${auth3.activeAssignment("a.")})`, id);
+    }
+    var canReadmit = (user) => auth3.hasPerm(user, "clients:write") && auth3.hasPerm(user, "episodes:write");
+    function readmitOffers(ctx, hidden) {
+      if (!canReadmit(ctx.user)) return [];
+      return hidden.filter((m) => strongMatch(m) && isDischarged(m.id)).map((m) => {
+        const c = db3.one(`SELECT client_code, status, discharge_date, discharge_reason FROM clients WHERE id=?`, m.id);
+        return { id: m.id, client_code: c.client_code, status: c.status, discharge_date: c.discharge_date, discharge_reason: c.discharge_reason, reasons: m.reasons };
+      });
+    }
     module.exports = (r) => {
       r.get("/api/clients", auth3.requireAuth, auth3.requirePerm("clients:read", "clients:list-deidentified"), (ctx) => {
         const deidentify = !auth3.hasPerm(ctx.user, "clients:read");
@@ -13172,8 +13192,13 @@ var require_clients = __commonJS({
       });
       r.post("/api/clients/check-duplicates", auth3.requireAuth, auth3.requirePerm("clients:write"), (ctx) => {
         const v = validate(ctx.body, { first_name: { type: "string", maxLen: 100 }, last_name: { type: "string", maxLen: 100 }, dob: { type: "date" }, phone: { type: "string", maxLen: 40 }, exclude_id: { type: "string" } });
-        const matches = possibleDuplicates(v, v.exclude_id || null).filter((m) => auth3.canAccessClient(ctx.user, m.id) || auth3.hasPerm(ctx.user, "clients:all"));
-        return { matches };
+        const all = possibleDuplicates(v, v.exclude_id || null);
+        const visible = (m) => auth3.canAccessClient(ctx.user, m.id) || auth3.hasPerm(ctx.user, "clients:all");
+        const matches = all.filter(visible);
+        const hidden = all.filter((m) => !visible(m));
+        const readmit = readmitOffers(ctx, hidden);
+        if (all.length) audit3.log({ user: ctx.user, action: "client.duplicate_check", ip: ctx.ip, details: { matches: all.length, hidden: hidden.length, shown: matches.map((m) => m.client_code), readmit_offered: readmit.map((m) => m.client_code) } });
+        return { matches, hidden_duplicates: hidden.length, readmit };
       });
       r.post("/api/clients", auth3.requireAuth, auth3.requirePerm("clients:write"), (ctx) => {
         const v = validate(ctx.body, { ...shape, confirm_duplicate: { type: "boolean" }, no_episode: { type: "boolean" } });
@@ -13182,8 +13207,10 @@ var require_clients = __commonJS({
           const all = possibleDuplicates(v);
           const visible = all.filter((m) => auth3.canAccessClient(ctx.user, m.id) || auth3.hasPerm(ctx.user, "clients:all"));
           const hidden = all.length - visible.length;
-          if (all.length) audit3.log({ user: ctx.user, action: "client.duplicate_check", ip: ctx.ip, details: { matches: all.length, hidden, shown: visible.map((m) => m.client_code) } });
-          if (visible.length) throw badRequest("A client with these details may already exist", { duplicates: visible, hidden_duplicates: hidden, confirm_field: "confirm_duplicate" });
+          const readmit = readmitOffers(ctx, all.filter((m) => !visible.includes(m)));
+          if (all.length) audit3.log({ user: ctx.user, action: "client.duplicate_check", ip: ctx.ip, details: { matches: all.length, hidden, shown: visible.map((m) => m.client_code), readmit_offered: readmit.length ? readmit.map((m) => m.client_code) : void 0 } });
+          if (visible.length) throw badRequest("A client with these details may already exist", { duplicates: visible, hidden_duplicates: hidden, readmit, confirm_field: "confirm_duplicate" });
+          if (readmit.length) throw badRequest("An earlier record exists for this person and they were discharged. Re-admit it to carry on their record rather than starting a new one.", { hidden_duplicates: hidden, readmit, confirm_field: "confirm_duplicate" });
           if (hidden) throw badRequest("A possible duplicate exists that is outside your caseload \u2014 ask a supervisor", { hidden_duplicates: hidden, confirm_field: "confirm_duplicate" });
         }
         delete v.confirm_duplicate;
@@ -13211,6 +13238,40 @@ var require_clients = __commonJS({
         if (episodeId) audit3.log({ user: ctx.user, action: "episode.open", entity: "episode", entityId: episodeId, clientId: id, ip: ctx.ip, details: { at_intake: true } });
         ctx.status = 201;
         return { id, client_code: cols2.client_code, episode_id: episodeId };
+      });
+      r.post("/api/clients/:id/readmit", auth3.requireAuth, auth3.requirePerm("clients:write"), auth3.requirePerm("episodes:write"), (ctx) => {
+        const v = validate(ctx.body, {
+          first_name: { type: "string", maxLen: 100 },
+          last_name: { type: "string", maxLen: 100 },
+          dob: { type: "date" },
+          phone: { type: "string", maxLen: 40 },
+          reason: { type: "string", required: true, maxLen: 300 },
+          referral_source: { type: "string", maxLen: 120 }
+        });
+        if (v.reason.length < 15) throw badRequest("Say why you are re-admitting this person (at least 15 characters) \u2014 a supervisor reviews every re-admission", { fields: { reason: "must be at least 15 characters" } });
+        const row = db3.one(`SELECT * FROM clients WHERE id=? AND deleted_at IS NULL AND merged_into IS NULL`, ctx.params.id);
+        if (!row) throw notFound("Client not found");
+        const match = possibleDuplicates(v).find((m) => m.id === row.id);
+        if (!match || !strongMatch(match)) {
+          audit3.log({ user: ctx.user, action: "authz.denied", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip, success: false, details: { reason: "readmit: details do not match the record" } });
+          throw forbidden("Those details do not match that record. Enter the surname and date of birth, or the phone number, as the person gives them.");
+        }
+        if (!isDischarged(row.id)) {
+          audit3.log({ user: ctx.user, action: "client.readmit.refused", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip, success: false, details: { status: row.status } });
+          throw conflict("This record is not a discharged one: it is active or on someone's caseload. Ask a supervisor to assign it to you.");
+        }
+        const hadAccess = auth3.canAccessClient(ctx.user, row.id);
+        const today = require_budget().localDate();
+        const episodeId = uuid2();
+        db3.transaction(() => {
+          db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, uuid2(), row.id, ctx.user.id, "primary", today, ctx.user.id);
+          db3.run(`INSERT INTO episodes(id,client_id,opened_at,opened_by,referral_source) VALUES(?,?,?,?,?)`, episodeId, row.id, today, ctx.user.id, v.referral_source || null);
+          db3.run(`UPDATE clients SET status='active', discharge_date=NULL, discharge_reason=NULL, updated_at=? WHERE id=?`, db3.now(), row.id);
+          if (!hadAccess) db3.run(`INSERT INTO breakglass_events(id,user_id,client_id,note_id,reason_enc,at,kind) VALUES(?,?,?,?,?,?,?)`, uuid2(), ctx.user.id, row.id, null, encrypt3(v.reason), db3.now(), "readmission");
+        });
+        audit3.log({ user: ctx.user, action: "client.readmit", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip, details: { episode: episodeId, prior_status: row.status, discharged: row.discharge_date || void 0, outside_caseload: !hadAccess, matched_on: match.reasons } });
+        audit3.log({ user: ctx.user, action: "episode.open", entity: "episode", entityId: episodeId, clientId: row.id, ip: ctx.ip, details: { readmission: true } });
+        return { id: row.id, client_code: row.client_code, episode_id: episodeId };
       });
       r.post("/api/clients/:id/merge", auth3.requireAuth, auth3.requirePerm("clients:merge"), (ctx) => {
         const keep = loadClient(ctx, ctx.params.id);

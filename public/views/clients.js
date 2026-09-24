@@ -1,4 +1,4 @@
-import { h, route, get, post, put, state, form, modal, toast, nav, table, pagedList, badge, statusKind, fmt, can, pageHead, clear, clientStatus } from '../app.js';
+import { h, route, get, post, put, state, form, modal, confirmDialog, toast, nav, table, pagedList, badge, statusKind, fmt, can, pageHead, clear, clientStatus } from '../app.js';
 
 // hasEpisodes: an existing client whose discharge lives on the Episodes tab (the New client form never
 // shows discharge fields: intake opens an episode, and discharging is what closes it).
@@ -55,9 +55,33 @@ export function openClientForm(values, onDone) {
   const dupBox = h('div');
   let confirmedDuplicate = false;
 
-  const showDuplicates = (matches) => {
+  // A returning client whose earlier record was discharged and is on nobody's caseload (so this worker cannot
+  // open it): the server offers it for re-admission instead of a dead end. Only the client code and the
+  // discharge are shown — nothing from the stored record that the person at the desk has not just said.
+  const readmit = async (x, btn) => {
+    const read = (n) => f.querySelector(`[name="${n}"]`)?.value || undefined;
+    const reason = await confirmDialog('Re-admit this person', `The earlier record ${x.client_code} comes onto your caseload, a new episode of care opens, and a supervisor reviews the re-admission. Say why (for example "walked in asking to restart services").`, { okText: 'Re-admit', requireReason: true, minLength: 15 });
+    if (!reason) return;
+    btn.disabled = true;
+    try {
+      const r = await post(`/api/clients/${x.id}/readmit`, { first_name: read('first_name'), last_name: read('last_name'), dob: read('dob'), phone: read('phone'), referral_source: read('referral_source'), reason });
+      f.finished(); toast(`${r.client_code} re-admitted to your caseload`, 'ok'); m.close(); onDone ? onDone(r.id) : nav(`client/${r.id}`);
+    } catch (e) { btn.disabled = false; toast(e.message, 'error'); }
+  };
+  const readmitBanner = (offers) => offers.length ? h('div', { class: 'banner warn', role: 'alert', 'data-readmit-offer': '1' },
+    h('div', {},
+      h('b', {}, offers.length === 1 ? 'An earlier record exists for this person, and they were discharged.' : 'Earlier records exist for this person, and they were discharged.'),
+      h('ul', { class: 'tight' }, offers.map(x => h('li', {},
+        h('span', { class: 'mono' }, x.client_code), ' ', h('span', { class: 'muted small' }, x.discharge_date ? `discharged ${fmt.date(x.discharge_date)}${x.discharge_reason ? ` (${fmt.label(x.discharge_reason)})` : ''}` : fmt.label(x.status)),
+        h('div', { class: 'small muted' }, `Matched on ${x.reasons.join(' and ')}.`),
+        h('button', { class: 'btn sm primary', type: 'button', 'data-readmit': x.id, onClick: (e) => readmit(x, e.currentTarget) }, 'Re-admit this person')))),
+      h('p', { class: 'small' }, 'It is not on your caseload, so you cannot open it — but re-admitting carries on their record instead of starting a second one. It is logged and a supervisor reviews it.'))) : null;
+
+  const showDuplicates = (matches, offers = []) => {
     clear(dupBox);
     confirmedDuplicate = false;
+    if (offers.length) dupBox.append(readmitBanner(offers));
+    if (!matches.length) { dupBox.scrollIntoView({ block: 'center', behavior: 'smooth' }); return; }
     dupBox.append(h('div', { class: 'banner warn', role: 'alert' },
       h('div', {},
         h('b', {}, matches.length === 1 ? 'This person may already be on file.' : 'These people may already be on file.'),
@@ -79,7 +103,8 @@ export function openClientForm(values, onDone) {
         const r = await post('/api/clients', { ...d, confirm_duplicate: confirmedDuplicate || undefined });
         toast(`Client ${r.client_code} created`, 'ok'); m.close(); onDone ? onDone(r.id) : nav(`client/${r.id}`);
       } catch (e) {
-        if (e.data && e.data.duplicates) { showDuplicates(e.data.duplicates); throw new Error('Check the possible match below before continuing.'); }
+        if (e.data && e.data.duplicates) { showDuplicates(e.data.duplicates, e.data.readmit || []); throw new Error('Check the possible match below before continuing.'); }
+        if (e.data && e.data.readmit && e.data.readmit.length) { showDuplicates([], e.data.readmit); throw new Error('This person has an earlier record. Re-admit it below.'); }
         throw e;
       }
     } else {
@@ -102,7 +127,7 @@ export function openClientForm(values, onDone) {
       if (!body.last_name || (!body.dob && !body.phone && !body.first_name)) return;
       try {
         const r = await post('/api/clients/check-duplicates', body, { quiet: true });
-        if (r.matches.length) showDuplicates(r.matches); else clear(dupBox);
+        if (r.matches.length || (r.readmit && r.readmit.length)) showDuplicates(r.matches, r.readmit || []); else clear(dupBox);
       } catch { /* a failed check must never block entering a client */ }
     };
     for (const n of ['last_name', 'dob', 'phone']) {

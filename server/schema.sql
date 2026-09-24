@@ -755,7 +755,10 @@ CREATE TABLE IF NOT EXISTS breakglass_events (
   acknowledged_by TEXT REFERENCES users(id),
   acknowledged_at TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  -- What the exception was: 'clinical_note' (a clinical note opened with a break-glass reason) or
+  -- 'readmission' (a discharged client outside the worker's caseload re-admitted by them at intake).
+  kind TEXT NOT NULL DEFAULT 'clinical_note'
 );
 CREATE INDEX IF NOT EXISTS idx_breakglass_open ON breakglass_events(acknowledged_at, at);
 

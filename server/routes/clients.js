@@ -4,7 +4,7 @@ const auth = require('../auth');
 const audit = require('../audit');
 const { badRequest, notFound, forbidden, conflict, HttpError } = require('../http');
 const { validate, paging } = require('../validate');
-const { blindIndex, uuid, decrypt } = require('../crypto');
+const { blindIndex, uuid, decrypt, encrypt } = require('../crypto');
 const M = require('../clients-model');
 const F = require('../client-filters');
 
@@ -74,6 +74,34 @@ function possibleDuplicates(v, excludeId = null) {
   });
 }
 
+// ---- returning clients ----
+// A person discharged years ago walks back in, often out of hours, and the worker on duty has no way to
+// them: search is caseload-scoped (and stays that way), opening the record is refused, and intake used to
+// end at "outside your caseload — ask a supervisor". The one exception made here is narrow and after-the-
+// fact reviewed, the same shape as break-glass access to clinical notes: the duplicate check at intake may
+// say that an earlier, discharged record exists, and a worker who can admit people may re-admit it onto
+// their own caseload, giving a reason. That assigns them, opens a new episode, writes an audit entry and
+// puts the event in the supervisors' review queue (breakglass_events, kind 'readmission'), which the Home
+// page and Supervision already surface until someone acknowledges it.
+
+/** Matched on something only the person (or their paperwork) supplies, not on a name alone. */
+const strongMatch = (m) => m.reasons.includes('same surname and date of birth') || m.reasons.includes('same phone number');
+/** Discharged and nobody's: closed or inactive, no open episode, no active assignment. */
+function isDischarged(id) {
+  return !!db.one(`SELECT 1 FROM clients c WHERE c.id=? AND c.deleted_at IS NULL AND c.merged_into IS NULL AND c.status IN ('closed','inactive')
+    AND NOT EXISTS (SELECT 1 FROM episodes e WHERE e.client_id=c.id AND e.status='open')
+    AND NOT EXISTS (SELECT 1 FROM assignments a WHERE a.client_id=c.id AND ${auth.activeAssignment('a.')})`, id);
+}
+const canReadmit = (user) => auth.hasPerm(user, 'clients:write') && auth.hasPerm(user, 'episodes:write');
+/** Hidden matches this worker may re-admit, described without anything from the stored record's PHI. */
+function readmitOffers(ctx, hidden) {
+  if (!canReadmit(ctx.user)) return [];
+  return hidden.filter(m => strongMatch(m) && isDischarged(m.id)).map(m => {
+    const c = db.one(`SELECT client_code, status, discharge_date, discharge_reason FROM clients WHERE id=?`, m.id);
+    return { id: m.id, client_code: c.client_code, status: c.status, discharge_date: c.discharge_date, discharge_reason: c.discharge_reason, reasons: m.reasons };
+  });
+}
+
 module.exports = (r) => {
   r.get('/api/clients', auth.requireAuth, auth.requirePerm('clients:read', 'clients:list-deidentified'), (ctx) => {
     const deidentify = !auth.hasPerm(ctx.user, 'clients:read');
@@ -140,8 +168,13 @@ module.exports = (r) => {
   // Check before entering, so the worker sees the match while they are still typing.
   r.post('/api/clients/check-duplicates', auth.requireAuth, auth.requirePerm('clients:write'), (ctx) => {
     const v = validate(ctx.body, { first_name: { type: 'string', maxLen: 100 }, last_name: { type: 'string', maxLen: 100 }, dob: { type: 'date' }, phone: { type: 'string', maxLen: 40 }, exclude_id: { type: 'string' } });
-    const matches = possibleDuplicates(v, v.exclude_id || null).filter(m => auth.canAccessClient(ctx.user, m.id) || auth.hasPerm(ctx.user, 'clients:all'));
-    return { matches };
+    const all = possibleDuplicates(v, v.exclude_id || null);
+    const visible = (m) => auth.canAccessClient(ctx.user, m.id) || auth.hasPerm(ctx.user, 'clients:all');
+    const matches = all.filter(visible);
+    const hidden = all.filter(m => !visible(m));
+    const readmit = readmitOffers(ctx, hidden);
+    if (all.length) audit.log({ user: ctx.user, action: 'client.duplicate_check', ip: ctx.ip, details: { matches: all.length, hidden: hidden.length, shown: matches.map(m => m.client_code), readmit_offered: readmit.map(m => m.client_code) } });
+    return { matches, hidden_duplicates: hidden.length, readmit };
   });
 
   r.post('/api/clients', auth.requireAuth, auth.requirePerm('clients:write'), (ctx) => {
@@ -155,8 +188,10 @@ module.exports = (r) => {
       const all = possibleDuplicates(v);
       const visible = all.filter(m => auth.canAccessClient(ctx.user, m.id) || auth.hasPerm(ctx.user, 'clients:all'));
       const hidden = all.length - visible.length;
-      if (all.length) audit.log({ user: ctx.user, action: 'client.duplicate_check', ip: ctx.ip, details: { matches: all.length, hidden, shown: visible.map(m => m.client_code) } });
-      if (visible.length) throw badRequest('A client with these details may already exist', { duplicates: visible, hidden_duplicates: hidden, confirm_field: 'confirm_duplicate' });
+      const readmit = readmitOffers(ctx, all.filter(m => !visible.includes(m)));
+      if (all.length) audit.log({ user: ctx.user, action: 'client.duplicate_check', ip: ctx.ip, details: { matches: all.length, hidden, shown: visible.map(m => m.client_code), readmit_offered: readmit.length ? readmit.map(m => m.client_code) : undefined } });
+      if (visible.length) throw badRequest('A client with these details may already exist', { duplicates: visible, hidden_duplicates: hidden, readmit, confirm_field: 'confirm_duplicate' });
+      if (readmit.length) throw badRequest('An earlier record exists for this person and they were discharged. Re-admit it to carry on their record rather than starting a new one.', { hidden_duplicates: hidden, readmit, confirm_field: 'confirm_duplicate' });
       if (hidden) throw badRequest('A possible duplicate exists that is outside your caseload — ask a supervisor', { hidden_duplicates: hidden, confirm_field: 'confirm_duplicate' });
     }
     delete v.confirm_duplicate;
@@ -187,6 +222,43 @@ module.exports = (r) => {
     if (episodeId) audit.log({ user: ctx.user, action: 'episode.open', entity: 'episode', entityId: episodeId, clientId: id, ip: ctx.ip, details: { at_intake: true } });
     ctx.status = 201;
     return { id, client_code: cols.client_code, episode_id: episodeId };
+  });
+
+  // Re-admit a discharged client found by the intake duplicate check (see the comment above readmitOffers).
+  // The caller proves they are dealing with this person by sending the details that matched (surname and
+  // date of birth, or phone number), not just an id, and says why; the record must be discharged and on
+  // nobody's caseload. Everything else about access is unchanged: this is the only door, and it is logged
+  // and reviewed.
+  r.post('/api/clients/:id/readmit', auth.requireAuth, auth.requirePerm('clients:write'), auth.requirePerm('episodes:write'), (ctx) => {
+    const v = validate(ctx.body, { first_name: { type: 'string', maxLen: 100 }, last_name: { type: 'string', maxLen: 100 }, dob: { type: 'date' }, phone: { type: 'string', maxLen: 40 },
+      reason: { type: 'string', required: true, maxLen: 300 }, referral_source: { type: 'string', maxLen: 120 } });
+    if (v.reason.length < 15) throw badRequest('Say why you are re-admitting this person (at least 15 characters) — a supervisor reviews every re-admission', { fields: { reason: 'must be at least 15 characters' } });
+    const row = db.one(`SELECT * FROM clients WHERE id=? AND deleted_at IS NULL AND merged_into IS NULL`, ctx.params.id);
+    if (!row) throw notFound('Client not found');
+    const match = possibleDuplicates(v).find(m => m.id === row.id);
+    if (!match || !strongMatch(match)) {
+      audit.log({ user: ctx.user, action: 'authz.denied', entity: 'client', entityId: row.id, clientId: row.id, ip: ctx.ip, success: false, details: { reason: 'readmit: details do not match the record' } });
+      throw forbidden('Those details do not match that record. Enter the surname and date of birth, or the phone number, as the person gives them.');
+    }
+    if (!isDischarged(row.id)) {
+      audit.log({ user: ctx.user, action: 'client.readmit.refused', entity: 'client', entityId: row.id, clientId: row.id, ip: ctx.ip, success: false, details: { status: row.status } });
+      throw conflict('This record is not a discharged one: it is active or on someone\'s caseload. Ask a supervisor to assign it to you.');
+    }
+    const hadAccess = auth.canAccessClient(ctx.user, row.id);
+    const today = require('./budget').localDate();
+    const episodeId = uuid();
+    db.transaction(() => {
+      db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, uuid(), row.id, ctx.user.id, 'primary', today, ctx.user.id);
+      db.run(`INSERT INTO episodes(id,client_id,opened_at,opened_by,referral_source) VALUES(?,?,?,?,?)`, episodeId, row.id, today, ctx.user.id, v.referral_source || null);
+      // The same status change opening an episode makes (routes/episodes.js): a returning client is active.
+      db.run(`UPDATE clients SET status='active', discharge_date=NULL, discharge_reason=NULL, updated_at=? WHERE id=?`, db.now(), row.id);
+      // A worker who could not see this record has just put it on their caseload: a supervisor looks at it.
+      if (!hadAccess) db.run(`INSERT INTO breakglass_events(id,user_id,client_id,note_id,reason_enc,at,kind) VALUES(?,?,?,?,?,?,?)`, uuid(), ctx.user.id, row.id, null, encrypt(v.reason), db.now(), 'readmission');
+    });
+    // The reason stays in the review queue, encrypted; it may describe the person, so it is not in the log.
+    audit.log({ user: ctx.user, action: 'client.readmit', entity: 'client', entityId: row.id, clientId: row.id, ip: ctx.ip, details: { episode: episodeId, prior_status: row.status, discharged: row.discharge_date || undefined, outside_caseload: !hadAccess, matched_on: match.reasons } });
+    audit.log({ user: ctx.user, action: 'episode.open', entity: 'episode', entityId: episodeId, clientId: row.id, ip: ctx.ip, details: { readmission: true } });
+    return { id: row.id, client_code: row.client_code, episode_id: episodeId };
   });
 
   /**
