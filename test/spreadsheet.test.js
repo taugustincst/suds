@@ -38,3 +38,28 @@ test('xlsx with shared strings (as Excel writes) is read', () => {
   const p = S.parseFile(S.zip(files), 'excel.xlsx');
   assert.equal(p.sheets[0].rows[0]['Last name'], "O'Brien"); assert.equal(S.excelDate(p.sheets[0].rows[0].DOB), '1990-05-07');
 });
+
+test('the async workbook writer runs where setImmediate and callback zlib do not exist (the browser kernel)', async () => {
+  const zlib = require('node:zlib');
+  const saved = { setImmediate: globalThis.setImmediate, deflateRaw: zlib.deflateRaw };
+  const file = require.resolve('../server/spreadsheet');
+  delete require.cache[file];
+  delete globalThis.setImmediate; zlib.deflateRaw = undefined;
+  try {
+    const S2 = require('../server/spreadsheet');
+    const buf = await S2.writeWorkbookAsync([{ name: 'A', columns: ['x'], rows: [{ x: 1 }] }, { name: 'B', columns: ['y'], rows: [{ y: 'two' }] }]);
+    const sheets = S2.readWorkbook(buf);
+    assert.deepEqual(sheets.map(s => s.name), ['A', 'B']);
+    assert.deepEqual(sheets[1].rows[1], ['two']);
+    await new Promise((resolve) => S2.defer(resolve));
+  } finally {
+    globalThis.setImmediate = saved.setImmediate; zlib.deflateRaw = saved.deflateRaw; delete require.cache[file];
+  }
+});
+
+test('no code bundled into the browser kernel calls a Node-only scheduling global unguarded', () => {
+  const fs = require('node:fs'); const path = require('node:path');
+  const kernel = fs.readFileSync(path.join(__dirname, '..', 'public', 'local', 'kernel.js'), 'utf8');
+  const bad = kernel.split('\n').filter(l => /\b(setImmediate|process\.nextTick|process\.uptime|process\.hrtime)\s*\(/.test(l) && !/globalThis\.setImmediate/.test(l));
+  assert.deepEqual(bad, []);
+});

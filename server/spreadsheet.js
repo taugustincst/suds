@@ -50,10 +50,16 @@ function zipEnd(entries, local, central, off) {
   return Buffer.concat([...local, cd, eocd]);
 }
 
+// setImmediate is Node-only: the browser kernel (local mode, the static build) bundles this file too.
+const defer = globalThis.setImmediate ? (f) => setImmediate(f) : (f) => setTimeout(f, 0);
+
 /** Compress off the event loop, one entry at a time, for archives big enough to be felt. */
 async function zipAsync(entries) {
   const local = [], central = []; let off = 0;
-  const deflate = (buf) => new Promise((resolve, reject) => zlib.deflateRaw(buf, (err, out) => (err ? reject(err) : resolve(out))));
+  // The browser kernel's zlib shim has no callback form; compress synchronously there, a yield apart.
+  const deflate = (buf) => (typeof zlib.deflateRaw === 'function'
+    ? new Promise((resolve, reject) => zlib.deflateRaw(buf, (err, out) => (err ? reject(err) : resolve(out))))
+    : new Promise((resolve) => defer(resolve)).then(() => zlib.deflateRawSync(buf)));
   for (const [name, content] of entries) {
     const data = Buffer.isBuffer(content) ? content : Buffer.from(content, 'utf8');
     off = zipEntry(name, data, await deflate(data), off, local, central);
@@ -121,7 +127,7 @@ function writeWorkbook(sheets) { return zip([...writeWorkbookParts(sheets).entri
  * request in the process while one person exported.
  */
 async function writeWorkbookAsync(sheets) {
-  const breathe = () => new Promise((resolve) => setImmediate(resolve));
+  const breathe = () => new Promise((resolve) => defer(resolve));
   const parts = writeWorkbookParts(sheets.map(s => ({ name: s.name, columns: s.columns, rows: [] })));
   for (let i = 0; i < sheets.length; i++) {
     parts.set(`xl/worksheets/sheet${i + 1}.xml`, writeSheetXml(sheets[i]));
@@ -179,4 +185,4 @@ function parseFile(buf, filename = '') {
   return { sheets: sheets.map(s => { const [h, ...rest] = s.rows; const headers = (h || []).map(x => String(x ?? '').trim()); return { name: s.name, headers, rows: rest.map(r => Object.fromEntries(headers.map((k, i) => [k, r[i] === undefined ? null : r[i]]))) }; }) };
 }
 
-module.exports = { parseCsv, toCsv, writeWorkbook, writeWorkbookAsync, readWorkbook, parseFile, excelDate, zip };
+module.exports = { parseCsv, toCsv, writeWorkbook, writeWorkbookAsync, readWorkbook, parseFile, excelDate, zip, defer };

@@ -13629,10 +13629,11 @@ var require_spreadsheet = __commonJS({
       eocd.writeUInt32LE(off, 16);
       return import_buffer.Buffer.concat([...local, cd, eocd]);
     }
+    var defer = globalThis.setImmediate ? (f) => setImmediate(f) : (f) => setTimeout(f, 0);
     async function zipAsync(entries) {
       const local = [], central = [];
       let off = 0;
-      const deflate = (buf) => new Promise((resolve2, reject) => zlib.deflateRaw(buf, (err2, out2) => err2 ? reject(err2) : resolve2(out2)));
+      const deflate = (buf) => typeof zlib.deflateRaw === "function" ? new Promise((resolve2, reject) => zlib.deflateRaw(buf, (err2, out2) => err2 ? reject(err2) : resolve2(out2))) : new Promise((resolve2) => defer(resolve2)).then(() => zlib.deflateRawSync(buf));
       for (const [name, content] of entries) {
         const data = import_buffer.Buffer.isBuffer(content) ? content : import_buffer.Buffer.from(content, "utf8");
         off = zipEntry(name, data, await deflate(data), off, local, central);
@@ -13722,7 +13723,7 @@ var require_spreadsheet = __commonJS({
       return zip([...writeWorkbookParts(sheets).entries()]);
     }
     async function writeWorkbookAsync(sheets) {
-      const breathe = () => new Promise((resolve2) => setImmediate(resolve2));
+      const breathe = () => new Promise((resolve2) => defer(resolve2));
       const parts = writeWorkbookParts(sheets.map((s) => ({ name: s.name, columns: s.columns, rows: [] })));
       for (let i = 0; i < sheets.length; i++) {
         parts.set(`xl/worksheets/sheet${i + 1}.xml`, writeSheetXml(sheets[i]));
@@ -13802,7 +13803,7 @@ var require_spreadsheet = __commonJS({
         return { name: s.name, headers, rows: rest.map((r) => Object.fromEntries(headers.map((k, i) => [k, r[i] === void 0 ? null : r[i]]))) };
       }) };
     }
-    module.exports = { parseCsv, toCsv, writeWorkbook, writeWorkbookAsync, readWorkbook, parseFile, excelDate, zip };
+    module.exports = { parseCsv, toCsv, writeWorkbook, writeWorkbookAsync, readWorkbook, parseFile, excelDate, zip, defer };
   }
 });
 
@@ -20741,6 +20742,7 @@ var require_reports = __commonJS({
     var audit3 = require_audit();
     var { sendJson } = require_http();
     var M = require_clients_model();
+    var { defer } = require_spreadsheet();
     function range(ctx) {
       const to = ctx.query.get("to") || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
       const from = ctx.query.get("from") || new Date(Date.parse(to) - 89 * 864e5).toISOString().slice(0, 10);
@@ -20984,7 +20986,7 @@ var require_reports = __commonJS({
             const rows = d.rows();
             for (const id of X.clientIdsOf(rows)) clientIds.add(id);
             sheets.push({ name: d.label, columns: d.columns.map(label), rows: pretty(X.publicRows(rows)) });
-            await new Promise((resolve2) => setImmediate(resolve2));
+            await new Promise((resolve2) => defer(resolve2));
           }
           const written = new Set(accountFor("workbook", [...clientIds]));
           if (disclosuresSlot >= 0) {

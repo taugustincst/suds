@@ -4,6 +4,8 @@ const auth = require('../auth');
 const audit = require('../audit');
 const { sendJson } = require('../http');
 const M = require('../clients-model');
+// Yield to other work between sheets; setImmediate does not exist in the browser kernel.
+const { defer } = require('../spreadsheet');
 
 function range(ctx) {
   const to = ctx.query.get('to') || new Date().toISOString().slice(0, 10);
@@ -243,7 +245,7 @@ module.exports = (r) => {
         const rows = d.rows();
         for (const id of X.clientIdsOf(rows)) clientIds.add(id);
         sheets.push({ name: d.label, columns: d.columns.map(label), rows: pretty(X.publicRows(rows)) });
-        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => defer(resolve));
       }
       const written = new Set(accountFor('workbook', [...clientIds]));
       if (disclosuresSlot >= 0) {

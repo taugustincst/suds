@@ -34,5 +34,12 @@ ok(/First name/i.test(lwb[0].rows[0].join(',')), 'a phone with no server still b
 await lp.setInputFiles('input[type=file][accept=".xlsx,.csv"]', '/tmp/suds-shots/clients-import.csv'); await lp.waitForSelector('button:has-text("Import 2 rows")', { timeout: 15000 }).catch(() => {});
 await lp.click('button:has-text("Import 2 rows")'); await lp.waitForSelector('.modal button.primary'); await lp.click('.modal button.primary'); await settle(lp);
 ok(await until(async () => /import/i.test((await lp.$$eval('.toast', e => e.map(x => x.textContent))).join('|'))), 'and imports a spreadsheet on the device itself');
+// The whole-programme workbook, built by the in-page kernel: it used to fail on a phone and on the static
+// build because the route and the writer yielded with setImmediate, which a browser does not have.
+await lp.goto(base + '/?local=1#/reports'); await settle(lp);
+const [lwbDl] = await Promise.all([lp.waitForEvent('download', { timeout: 20000 }).catch(() => null), lp.click('text=Everything as one Excel workbook')]);
+const lwbFile = lwbDl ? readWorkbook(fs.readFileSync(await lwbDl.path())) : [];
+ok(lwbDl && /\.xlsx$/.test(lwbDl.suggestedFilename()), 'a phone with no server exports everything as one workbook', lwbDl ? lwbDl.suggestedFilename() : (await lp.$$eval('.toast', e => e.map(x => x.textContent))).join('|'));
+ok(lwbFile.length >= 5 && lwbFile.some(sh => /client/i.test(sh.name) && sh.rows.length > 1), 'with a sheet per record type, including the clients just imported', lwbFile.map(sh => `${sh.name}:${sh.rows.length - 1}`).join(' '));
 finish(errors);
 await browser.close();
