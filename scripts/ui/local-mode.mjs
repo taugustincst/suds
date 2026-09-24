@@ -57,13 +57,36 @@ ok(await page.$('input[name=username]'), 'the local kernel booted and offered fi
   ok(!(await page.$('.modal')), 'cancelling leaves the device untouched');
   // Locked out or forgot the password, with no office admin to ask: the login screen offers a self-service
   // reset instead of a dead end.
-  // CI once timed out here with "element is outside of the viewport" (not reproduced in many local runs).
-  // If it happens again, record what the page looked like instead of a bare timeout.
-  const signOutState = () => page.evaluate(() => { const a = [...document.querySelectorAll('a')].find(x => /^Sign out$/.test(x.textContent.trim())); const r = a && a.getBoundingClientRect(); const side = document.querySelector('.sidebar'); return { url: location.href, viewport: [innerWidth, innerHeight], scrollY, docHeight: document.documentElement.scrollHeight, signOut: r && [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)], sidebarTransform: side && getComputedStyle(side).transform, sidebarRect: side && side.getBoundingClientRect().toJSON(), modal: !!document.querySelector('.modal'), banners: [...document.querySelectorAll('#banners > *')].map(b => b.textContent.slice(0, 60)), paused: !!document.querySelector('[data-paused]'), active: document.activeElement && document.activeElement.outerHTML.slice(0, 80), sideScroll: side && [side.scrollTop, side.scrollHeight, side.clientHeight], matches: [...document.querySelectorAll('body *')].filter(el => /sign out/i.test(el.textContent) && ![...el.children].some(c => /sign out/i.test(c.textContent))).map(el => { const b = el.getBoundingClientRect(); return `${el.tagName}.${el.className}@${Math.round(b.left)},${Math.round(b.top)}:${el.textContent.trim().slice(0, 30)}`; }) }; });
-  await page.click('text=Sign out', { timeout: 10000 }).catch(async (e) => { const st = JSON.stringify(await signOutState().catch(() => null)); console.error(` FAIL  could not click Sign out — page state ${st}`); fail(`could not click Sign out: ${e.message.split('\n')[0]} — ${st}`); throw e; });
-  await page.waitForSelector('input[name=username]', { timeout: 8000 });
+  // CI failed 4 runs in 9 on the "Reset this device" click below with "element is outside of the viewport":
+  // signing out rendered the sign-in page twice (logout() rendered, then the hash change rendered again),
+  // and the second render cleared #app before awaiting the page, so for as long as /api/local/status took
+  // the screen was blank. The only "Reset this device" text left was the screen-reader live region, still
+  // holding the title of the erase dialog cancelled a moment ago (a 1x1 clipped box at the viewport's
+  // edge), and Playwright held on to that element until the click timed out. (When the two renders
+  // overlapped instead, the page showed two sign-in forms.) Answer the first sign-in page's status request
+  // at once and any later one slowly, as a loaded runner does, and watch #app.
+  await page.evaluate(() => {
+    const L = window.SUDS_LOCAL; const handle = L.handle.bind(L); const app = document.getElementById('app'); let asked = 0;
+    L.handle = (method, path, ...rest) => method === 'GET' && path.startsWith('/api/local/status') && asked++ > 0
+      ? new Promise(r => setTimeout(r, 800)).then(() => handle(method, path, ...rest)) : handle(method, path, ...rest);
+    window.__signinScreens = [];
+    new MutationObserver(() => window.__signinScreens.push({ forms: app.querySelectorAll('.login input[name=username]').length, resetLinks: [...app.querySelectorAll('a')].filter(a => a.textContent === 'Reset this device').length }))
+      .observe(app, { childList: true });
+  });
+  await page.click('text=Sign out');
+  // The Sync page has a username field of its own (the office sign-in), so wait for the sign-in page itself.
+  await page.waitForSelector('.login input[name=username]', { timeout: 8000 });
+  // What a click on "Reset this device" would land on a moment later (inside the slowed render's window).
+  await new Promise(r => setTimeout(r, 250));
+  const matchedFirst = await page.$eval('text=Reset this device', el => el.tagName).catch(() => null);
+  await new Promise(r => setTimeout(r, 1200)); // long enough for a second, slowed render to land
+  const screens = await page.evaluate(() => window.__signinScreens);
+  const shown = screens.findIndex(s => s.forms > 0);
+  ok(shown >= 0 && screens.slice(shown).every(s => s.forms > 0 && s.resetLinks > 0), 'once the sign-in page is showing after Sign out, it is never blanked by a second render', screens);
+  eq(await page.$$eval('input[name=username]', e => e.length), 1, 'signing out draws one sign-in form, not two (and nothing of the page it left)');
+  eq(matchedFirst, 'A', '"Reset this device" on the sign-in page is the link, not the screen-reader announcement of the dialog just closed');
   ok(!(await page.$('input[name=display_name]')), 'signing out lands back on the login screen, not first-run setup', page.url());
-  ok(await page.$('text=Reset this device'), 'a locked-out device offers a self-service reset instead of only "ask an admin"');
+  ok(await page.$('#app a:has-text("Reset this device")'), 'a locked-out device offers a self-service reset instead of only "ask an admin"');
   await page.click('text=Reset this device'); await page.waitForSelector('.modal');
   ok(await page.isDisabled('.modal button.danger'), 'the erase button starts disabled until the confirmation text matches');
   await page.fill('#reset-device-confirm', 'nope');

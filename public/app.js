@@ -1088,6 +1088,7 @@ export const NAV = [
 ];
 
 let current = null;
+let renderSeq = 0;
 // A view that rewrites its own address in place (the sign-in page's Log in / Sign up, #/login?mode=…) is
 // still the render that finished: replaceHash() records the rewrite so render() can tell it from a redirect.
 let replacedDuringRender = null;
@@ -1120,12 +1121,19 @@ async function renderPage() {
   if (updateArmed && !updateBlocked({ navigating: true })) { reloadForUpdate(); return; }
   clear(document.getElementById('modal-root'));
   const r = parseHash();
+  // A whole-screen view (sign-in, set-up, MFA) is built first and swapped in whole. Clearing #app and then
+  // awaiting the view left the screen blank for as long as the view's request took, and a second render
+  // (signing out re-renders, then the hash change renders again) blanked a sign-in page that was already
+  // showing. Only the latest render swaps in, so an older, slower one never lands on top of a newer one
+  // (two overlapping sign-in renders used to append two sign-in forms).
+  const seq = ++renderSeq;
+  const show = async (pending) => { const view = await pending; if (seq === renderSeq) clear(app).append(view); };
   // A device with no account yet opens the sign-in page on Sign up, which is its first-run set-up.
-  if (state.localSetupNeeded) { if (r.name !== 'localsetup' && r.name !== 'login') { nav('login?mode=signup'); return; } clear(app).append(await routes.login(r)); return; }
-  if (state.setupNeeded) { if (r.name !== 'setup') { nav('setup'); return; } clear(app).append(await routes.setup(r)); return; }
-  if (!state.user) { clear(app).append(await routes.login(r)); return; }
+  if (state.localSetupNeeded) { if (r.name !== 'localsetup' && r.name !== 'login') { nav('login?mode=signup'); return; } return show(routes.login(r)); }
+  if (state.setupNeeded) { if (r.name !== 'setup') { nav('setup'); return; } return show(routes.setup(r)); }
+  if (!state.user) return show(routes.login(r));
   if (state.mfaPending && r.name !== 'mfa') { nav('mfa'); return; }
-  if (r.name === 'mfa' || r.name === 'login') { clear(app).append(await routes[r.name === 'mfa' ? 'mfa' : 'dashboard'](r)); return; }
+  if (r.name === 'mfa' || r.name === 'login') return show(routes[r.name === 'mfa' ? 'mfa' : 'dashboard'](r));
   if (state.user.must_change_password && r.name !== 'profile') { nav('profile?force=1'); return; }
   const navItem = NAV.find(n => n.name === r.name);
   // An address that goes nowhere (a mistyped link, a page that no longer exists) says so, instead of
@@ -1185,7 +1193,9 @@ function mobileBar(r, side) {
 function toggleTheme() { const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); const next = cur === 'dark' ? 'light' : 'dark'; prefs.set('theme', next); applyTheme(); }
 try { const cached = JSON.parse(localStorage.getItem('suds.prefs') || '{}'); if (cached.theme) document.documentElement.dataset.theme = cached.theme; } catch {}
 
-export async function logout() { await prefs.flush(); try { await post('/api/auth/logout', {}); } catch {} state.user = null; state.mfaPending = false; document.querySelectorAll('#banners [data-banner="mfa-required"]').forEach(b => b.remove()); nav('login'); render(); }
+export async function logout() { await prefs.flush(); try { await post('/api/auth/logout', {}); } catch {} state.user = null; state.mfaPending = false; document.querySelectorAll('#banners [data-banner="mfa-required"]').forEach(b => b.remove());
+  // nav() to a new address renders through the hash change; rendering here as well drew the sign-in page twice.
+  const from = location.hash; nav('login'); if (location.hash === from) render(); }
 
 // ---------- session / idle ----------
 let lastActivity = Date.now(); let idleTimer;
