@@ -22,7 +22,7 @@ export function openCallForm(values, { clientId, clientDisplay, method, onDone, 
     isNew ? { name: 'log_time', label: 'Also log as time entry', type: 'checkbox', value: true } : null,
   ].filter(Boolean), { values: values || prefill || {}, submitText: isNew ? (isText ? 'Log text' : 'Log call') : 'Save', draftKey: values ? `call:${values.id}` : `call:new:${isText ? 'text' : 'phone'}`, onCancel: () => m.close(), onSubmit: async (d) => {
     d.method = isText ? 'text' : 'phone';
-    if (isNew) await post('/api/calls', d); else await put(`/api/calls/${values.id}`, d);
+    if (isNew) await post('/api/calls', d); else await put(`/api/calls/${values.id}`, { ...d, if_updated_at: values.updated_at });
     toast(isNew ? (isText ? 'Text logged' : 'Call logged') : 'Saved', 'ok'); m.close(); onDone && onDone();
   } });
   const m = modal(isNew ? (isText ? 'Log text message' : 'Log call') : `Edit ${noun}`, f, { wide: true });

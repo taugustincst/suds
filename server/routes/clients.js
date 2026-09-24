@@ -304,6 +304,7 @@ module.exports = (r) => {
 
   r.put('/api/clients/:id', auth.requireAuth, auth.requirePerm('clients:write'), (ctx) => {
     const row = loadClient(ctx, ctx.params.id);
+    require('../crud').assertFresh(ctx, row, 'client');
     const v = validate(ctx.body, { ...shape, first_name: { ...shape.first_name, required: false }, last_name: { ...shape.last_name, required: false } }, { partial: true });
     checkContactFields(v);
     // Closing a client is a discharge, and a discharge is what closes the episode, ends the care team and
@@ -320,10 +321,11 @@ module.exports = (r) => {
     const cols = { ...enc };
     for (const f of M.PLAIN_FIELDS) if (v[f] !== undefined) cols[f] = v[f];
     const keys = Object.keys(cols).filter(k => cols[k] !== undefined);
-    if (!keys.length) return { ok: true };
-    db.run(`UPDATE clients SET ${keys.map(k => `${k}=?`).join(', ')}, updated_at=? WHERE id=?`, ...keys.map(k => cols[k]), db.now(), row.id);
+    if (!keys.length) return { ok: true, updated_at: row.updated_at };
+    const stamp = db.now();
+    db.run(`UPDATE clients SET ${keys.map(k => `${k}=?`).join(', ')}, updated_at=? WHERE id=?`, ...keys.map(k => cols[k]), stamp, row.id);
     audit.log({ user: ctx.user, action: 'client.update', entity: 'client', entityId: row.id, clientId: row.id, ip: ctx.ip, details: { fields: Object.keys(v) } });
-    return { ok: true };
+    return { ok: true, updated_at: stamp };
   });
 
   // A legal hold keeps the record out of the retention purge (server/retention.js) and blocks deletion

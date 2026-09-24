@@ -38,7 +38,7 @@ export function openOverdoseForm(row, { clientId = null, onDone } = {}) {
     draftKey: row ? `overdose:${row.id}` : 'overdose:new',
     onSubmit: async (d) => {
       if (!d.client_id) delete d.client_id;
-      if (row) await put(`/api/overdose-events/${row.id}`, d); else await post('/api/overdose-events', d);
+      if (row) await put(`/api/overdose-events/${row.id}`, { ...d, if_updated_at: row.updated_at }); else await post('/api/overdose-events', d);
       toast(row ? 'Event updated' : 'Event recorded', 'ok'); m.close(); onDone && onDone();
     },
   });

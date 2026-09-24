@@ -24,7 +24,7 @@ function openDocumentForm(values, onDone) {
     onSubmit: async (d) => {
       if (file) { d.file_url = file; if (!d.filename) d.filename = fileLabel; }
       if (isNew && !file) { toast('Choose a file to upload', 'error'); throw new Error('no file'); }
-      if (isNew) await post('/api/documents', d); else await put(`/api/documents/${values.id}`, d);
+      if (isNew) await post('/api/documents', d); else await put(`/api/documents/${values.id}`, { ...d, if_updated_at: values.updated_at });
       toast(isNew ? 'Document uploaded' : 'Saved', 'ok'); m.close(); onDone();
     } });
   const m = modal(isNew ? 'Upload a policy, procedure or contract' : 'Edit document', f, { wide: true });

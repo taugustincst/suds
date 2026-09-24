@@ -81,16 +81,18 @@ module.exports = (r) => {
     ctx.status = 201; return { id };
   });
   r.put('/api/documents/:id', auth.requireAuth, auth.requirePerm('documents:write'), (ctx) => {
-    const d = db.one(`SELECT id FROM policy_documents WHERE id=?`, ctx.params.id); if (!d) throw notFound();
+    const d = db.one(`SELECT id, updated_at FROM policy_documents WHERE id=?`, ctx.params.id); if (!d) throw notFound();
+    require('../crud').assertFresh(ctx, d, 'document');
     const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
     const v2 = validate({ is_active: ctx.body.is_active }, { is_active: { type: 'boolean' } }, { partial: true });
     const sets = Object.keys(v).map(k => `${k}=?`); const params = Object.keys(v).map(k => v[k]);
     for (const k of Object.keys(v2)) { sets.push(`${k}=?`); params.push(v2[k]); }
     if (ctx.body.file_url || ctx.body.file) { const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_DOCUMENT_BYTES, 'File'); sets.push('file_b64=?', 'content_type=?', 'bytes=?', 'filename=?', 'search_text=?'); params.push(file.b64, file.type, file.buf.length, v.filename || ctx.body.filename || `document.${FILE_TYPES[file.type]}`, extractText(file.buf, file.type) || null); }
-    if (!sets.length) return { ok: true };
-    db.run(`UPDATE policy_documents SET ${sets.join(', ')}, updated_at=? WHERE id=?`, ...params, db.now(), d.id);
+    if (!sets.length) return { ok: true, updated_at: d.updated_at };
+    const stamp = db.now();
+    db.run(`UPDATE policy_documents SET ${sets.join(', ')}, updated_at=? WHERE id=?`, ...params, stamp, d.id);
     audit.log({ user: ctx.user, action: 'document.update', entity: 'policy_document', entityId: d.id, ip: ctx.ip, details: { fields: Object.keys(v).concat(Object.keys(v2)) } });
-    return { ok: true };
+    return { ok: true, updated_at: stamp };
   });
   // Soft delete (retire), same as the form template library — the library is a record of what has been in
   // effect, so a retired contract or superseded policy stays findable rather than disappearing outright.

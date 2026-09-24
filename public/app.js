@@ -497,6 +497,10 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
       f.help ? h('div', { class: 'help', id: helpId }, f.help) : null, errEl);
     target.append(wrap);
   }
+  // What each control showed when the form opened (before any restored draft), so an edit form can send
+  // only what the person actually changed (el.changedKeys) instead of every field it happens to display.
+  const rawValue = (f) => { const i = inputs[f.name]; if (!i) return undefined; return f.type === 'checkbox' ? !!i.checked : String(i.value ?? ''); };
+  const initial = Object.fromEntries(fields.filter(f => f.type !== 'section').map(f => [f.name, rawValue(f)]));
   // A draft kept from an earlier attempt at this same form wins over the defaults.
   const restored = draftKey && drafts.get(draftKey);
   if (restored) for (const [k, v] of Object.entries(restored)) { const i = inputs[k]; if (!i) continue; if (i.type === 'checkbox') i.checked = !!v; else i.value = v ?? ''; }
@@ -545,6 +549,12 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
       // does ("Client"), never by column ("client_id").
       const text = err.labelled ? err.message : err.message + (fieldsErr ? ': ' + Object.entries(fieldsErr).map(([k, m]) => `${labelOf(k)} ${m}`).join('; ') : '');
       errBox.textContent = text; errBox.classList.remove('hidden');
+      // Someone else saved this record after it was opened (409 from if_updated_at). Saving again would
+      // overwrite their changes, so the way forward is to reload and see them. The draft goes too: restoring
+      // it over the fresh record would put back the very values the other person just changed.
+      if (err.status === 409 && err.data && err.data.stale) {
+        errBox.append(' ', h('button', { class: 'btn sm', type: 'button', 'data-reload-stale': '1', onClick: () => { submitted = true; clearTimeout(saveTimer); if (draftKey) drafts.delete(draftKey); render(); } }, 'Reload'));
+      }
       // Say it out loud and put the cursor on the first thing that needs fixing, rather than leaving a
       // keyboard user to hunt for a red outline they cannot see.
       announce(text);
@@ -607,6 +617,8 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     return data;
   }
   el.read = read; el.inputs = inputs;
+  // Names of the fields whose control differs from what the form opened with.
+  el.changedKeys = () => fields.filter(f => f.type !== 'section' && inputs[f.name] && rawValue(f) !== initial[f.name]).map(f => f.name);
   return el;
 }
 

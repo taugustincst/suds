@@ -17,7 +17,7 @@ export function openExpenditureForm(values, { clientId, clientDisplay, onDone } 
       const over = Number(d.amount) - prior - line.available;
       if (!await confirmDialog('This overspends the budget line', `${line.label || fmt.label(line.category)} has ${fmt.money(line.available)} available${line.children && line.children.length ? ' after its sub-allocations' : ''}; this would go ${fmt.money(over)} over. Record it anyway?`, { danger: true, okText: 'Record anyway' })) return;
     }
-    if (isNew) await post('/api/budget/expenditures', d); else await put(`/api/budget/expenditures/${values.id}`, d); toast('Expenditure saved (pending approval)', 'ok'); m.close(); onDone && onDone(); } });
+    if (isNew) await post('/api/budget/expenditures', d); else await put(`/api/budget/expenditures/${values.id}`, { ...d, if_updated_at: values.updated_at }); toast('Expenditure saved (pending approval)', 'ok'); m.close(); onDone && onDone(); } });
   lineSel = f.inputs.budget_line_id;
   const fundSel = f.inputs.funding_source_id;
   // Flattened so a sub-allocation nested under a larger one is still a pickable line, not hidden inside its
@@ -64,7 +64,7 @@ function openFundForm(values, onDone) {
   const f = form([{ name: 'name', label: 'Fund / grant name', required: true, span: true }, { name: 'source_type', label: 'Source type', type: 'select', options: C.FUNDING_TYPES, required: true }, { name: 'grant_number', label: 'Grant / award #' },
     { name: 'fiscal_year_start', label: 'Period start', type: 'date', required: true }, { name: 'fiscal_year_end', label: 'Period end', type: 'date', required: true }, { name: 'total_amount', label: 'Total award ($)', type: 'number', min: 0, step: 0.01, required: true },
     { name: 'restrictions', label: 'Allowable uses / restrictions', type: 'textarea', span: true, rows: 2 }, { name: 'notes', label: 'Notes', type: 'textarea', span: true, rows: 2 }, { name: 'is_active', label: 'Active', type: 'checkbox', value: values ? values.is_active : true }],
-    { values: values || {}, submitText: isNew ? 'Create fund' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => { if (isNew) await post('/api/budget/funds', d); else await put(`/api/budget/funds/${values.id}`, d); toast('Fund saved', 'ok'); m.close(); await loadRefData(); onDone(); } });
+    { values: values || {}, submitText: isNew ? 'Create fund' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => { if (isNew) await post('/api/budget/funds', d); else await put(`/api/budget/funds/${values.id}`, { ...d, if_updated_at: values.updated_at }); toast('Fund saved', 'ok'); m.close(); await loadRefData(); onDone(); } });
   const m = modal(isNew ? 'New funding source' : 'Edit funding source', f, { wide: true });
 }
 // Every line in this fund, flattened out of the nested tree with its depth, in tree order (parent right
@@ -91,7 +91,7 @@ function openLineForm(fund, values, onDone, { parentId } = {}) {
     { name: 'allocated_amount', label: 'Allocated ($)', type: 'number', min: 0, step: 0.01, required: true },
     { name: 'parent_id', label: 'Part of a larger allocation?', type: 'select', options: parentOptions, placeholder: '— top-level, directly under the fund —', value: values?.parent_id || parentId || '' },
     { name: 'notes', label: 'Notes', span: true },
-  ], { values: values || {}, submitText: 'Save', onCancel: () => m.close(), onSubmit: async (d) => { if (isNew) await post(`/api/budget/funds/${fund.id}/lines`, d); else await put(`/api/budget/lines/${values.id}`, d); m.close(); await loadRefData(); onDone(); } });
+  ], { values: values || {}, submitText: 'Save', onCancel: () => m.close(), onSubmit: async (d) => { if (isNew) await post(`/api/budget/funds/${fund.id}/lines`, d); else await put(`/api/budget/lines/${values.id}`, { ...d, if_updated_at: values.updated_at }); m.close(); await loadRefData(); onDone(); } });
   const m = modal(`${fund.name} — budget line`, f);
 }
 route('budget', async (r) => {

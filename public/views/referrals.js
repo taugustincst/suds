@@ -56,7 +56,7 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
     { name: 'outcome', label: 'Outcome', span: true }, { name: 'notes', label: 'Notes', type: 'textarea', span: true },
   ], { values: values || {}, submitText: isNew ? 'Create referral' : 'Save', draftKey: isNew ? 'referral:new' : `referral:${values.id}`, onCancel: () => m.close(), onSubmit: async (d) => {
     try {
-      if (isNew) await post('/api/referrals', d); else await put(`/api/referrals/${values.id}`, d);
+      if (isNew) await post('/api/referrals', d); else await put(`/api/referrals/${values.id}`, { ...d, if_updated_at: values.updated_at });
     } catch (e) {
       // The commonest failure by far is sharing without a consent; say what to do about it, once (the
       // server's message already ends in its own advice, and appending ours repeated it).

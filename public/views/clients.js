@@ -1,4 +1,4 @@
-import { h, route, get, post, state, form, modal, toast, nav, table, pagedList, badge, statusKind, fmt, can, pageHead, clear, clientStatus } from '../app.js';
+import { h, route, get, post, put, state, form, modal, toast, nav, table, pagedList, badge, statusKind, fmt, can, pageHead, clear, clientStatus } from '../app.js';
 
 // hasEpisodes: an existing client whose discharge lives on the Episodes tab (the New client form never
 // shows discharge fields: intake opens an episode, and discharging is what closes it).
@@ -82,7 +82,15 @@ export function openClientForm(values, onDone) {
         if (e.data && e.data.duplicates) { showDuplicates(e.data.duplicates); throw new Error('Check the possible match below before continuing.'); }
         throw e;
       }
-    } else { await (await import('../app.js')).put(`/api/clients/${values.id}`, d); toast('Client updated', 'ok'); m.close(); onDone && onDone(values.id); }
+    } else {
+      // Only what this person changed goes to the server, with the version they opened: a save used to send
+      // every field on the form, so it quietly put back whatever a colleague had changed in the meantime.
+      const changed = f.changedKeys();
+      if (!changed.length) { toast('No changes to save', 'ok'); f.finished(); m.close(); return; }
+      const body = Object.fromEntries(changed.map(k => [k, d[k]]));
+      await put(`/api/clients/${values.id}`, { ...body, if_updated_at: values.updated_at });
+      toast('Client updated', 'ok'); m.close(); onDone && onDone(values.id);
+    }
   } });
 
   // Check while they are still typing, so the match appears before the form is finished.

@@ -3,11 +3,27 @@
 const db = require('./db');
 const auth = require('./auth');
 const audit = require('./audit');
-const { notFound, forbidden } = require('./http');
+const { notFound, forbidden, HttpError } = require('./http');
 const { validate, paging } = require('./validate');
 const { uuid } = require('./crypto');
 
 function clientExists(id) { return !!db.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, id); }
+
+// ---- optimistic concurrency ----
+// Two people editing the same record used to be last-write-wins, silently: the second save put back every
+// field the first person had just changed. A form now sends the updated_at it was opened with as
+// `if_updated_at`; if the record has changed since, the save is refused with 409 and the person is told to
+// reload. A request without the token (sync, imports, API integrations, quick one-field actions such as
+// ticking a to-do done) is accepted as before. Handlers are synchronous, so nothing can change the row
+// between this check and the UPDATE that follows it.
+const STALE_MESSAGE = 'This record was changed by someone else since you opened it. Reload to see their changes.';
+function assertFresh(ctx, row, entity) {
+  const token = ctx.body && typeof ctx.body === 'object' ? ctx.body.if_updated_at : undefined;
+  if (token === undefined || token === null || token === '') return;
+  if (row.updated_at && String(token) === String(row.updated_at)) return;
+  audit.log({ user: ctx.user, action: `${entity}.update.conflict`, entity, entityId: row.id, clientId: row.client_id || (entity === 'client' ? row.id : null), ip: ctx.ip, success: false });
+  throw new HttpError(409, STALE_MESSAGE, { stale: true, updated_at: row.updated_at || null });
+}
 
 /**
  * opts: { table, entity, perm, shape, clientRequired, dateCol, ownerCol, joins, select, filters(ctx,where,params),
@@ -85,15 +101,19 @@ function build(r, opts) {
     if (!row) throw notFound();
     if (row.client_id) auth.assertClientAccess(ctx, row.client_id);
     if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden('You cannot edit this record');
+    if (!opts.noUpdatedAt) assertFresh(ctx, row, entity);
     const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
     if (v.client_id && v.client_id !== row.client_id) checkClient(ctx, v.client_id);
     if (opts.restrictOwner && v[ownerCol] !== undefined && !auth.hasPerm(ctx.user, 'clients:all')) delete v[ownerCol];
     if (opts.beforeUpdate) opts.beforeUpdate(ctx, v, row);
     const keys = Object.keys(v).filter(k => v[k] !== undefined && !k.startsWith('_'));
-    if (keys.length) db.run(`UPDATE ${table} SET ${keys.map(k => `${k}=?`).join(', ')}${opts.noUpdatedAt ? '' : ', updated_at=?'} WHERE id=?`, ...keys.map(k => v[k]), ...(opts.noUpdatedAt ? [] : [db.now()]), row.id);
+    const stamp = db.now();
+    if (keys.length) db.run(`UPDATE ${table} SET ${keys.map(k => `${k}=?`).join(', ')}${opts.noUpdatedAt ? '' : ', updated_at=?'} WHERE id=?`, ...keys.map(k => v[k]), ...(opts.noUpdatedAt ? [] : [stamp]), row.id);
     if (opts.afterUpdate) opts.afterUpdate(ctx, { ...row, ...v }, row);
     audit.log({ user: ctx.user, action: `${entity}.update`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip, details: { fields: keys } });
-    return { ok: true };
+    // The new version, so a form that stays open (or saves again) sends the right if_updated_at next time.
+    // Read back rather than assumed: afterUpdate may have touched the row again.
+    return { ok: true, updated_at: opts.noUpdatedAt ? undefined : (db.one(`SELECT updated_at FROM ${table} WHERE id=?`, row.id) || {}).updated_at };
   });
 
   r.delete(`${base}/:id`, auth.requireAuth, auth.requirePerm(writePerm), (ctx) => {
@@ -114,4 +134,4 @@ function ownerOrManager(col = 'user_id') {
   return (ctx, row) => row[col] === ctx.user.id || auth.hasPerm(ctx.user, 'clients:all');
 }
 
-module.exports = { build, ownerOrManager, clientExists };
+module.exports = { build, ownerOrManager, clientExists, assertFresh, STALE_MESSAGE };

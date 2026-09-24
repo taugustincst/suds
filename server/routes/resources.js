@@ -126,13 +126,15 @@ module.exports = (r) => {
     ctx.status = 201; return { id };
   });
   r.put('/api/resources/:id', auth.requireAuth, auth.requirePerm('resources:write'), (ctx) => {
-    const row = db.one(`SELECT id FROM resources WHERE id=?`, ctx.params.id); if (!row) throw notFound();
+    const row = db.one(`SELECT id, updated_at FROM resources WHERE id=?`, ctx.params.id); if (!row) throw notFound();
+    require('../crud').assertFresh(ctx, row, 'resource');
     const v = validate(ctx.body, { ...shape, name: { ...shape.name, required: false }, category: { ...shape.category, required: false } }, { partial: true });
     if ('service_tags' in v) v.service_tags = tagList(v.service_tags, C.SERVICE_TAGS); if ('populations' in v) v.populations = tagList(v.populations, C.POPULATIONS);
-    const keys = Object.keys(v); if (!keys.length) return { ok: true };
-    db.run(`UPDATE resources SET ${keys.map(k => `${k}=?`).join(', ')}, updated_at=? WHERE id=?`, ...keys.map(k => v[k]), db.now(), row.id);
+    const keys = Object.keys(v); if (!keys.length) return { ok: true, updated_at: row.updated_at };
+    const stamp = db.now();
+    db.run(`UPDATE resources SET ${keys.map(k => `${k}=?`).join(', ')}, updated_at=? WHERE id=?`, ...keys.map(k => v[k]), stamp, row.id);
     audit.log({ user: ctx.user, action: 'resource.update', entity: 'resource', entityId: row.id, ip: ctx.ip, details: { fields: keys } });
-    return { ok: true };
+    return { ok: true, updated_at: stamp };
   });
   r.delete('/api/resources/:id', auth.requireAuth, auth.requirePerm('resources:write'), (ctx) => {
     const row = db.one(`SELECT id FROM resources WHERE id=?`, ctx.params.id); if (!row) throw notFound();

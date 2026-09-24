@@ -29,7 +29,7 @@ export function openInterventionForm(values, { clientId, clientDisplay, onDone, 
     isNew ? { name: 'time_category', label: 'Time category', type: 'select', options: C.TIME_CATEGORIES, value: 'direct_service' } : null,
     isNew && can('clients:all') ? { name: 'user_id', label: 'Worker (defaults to you)', type: 'user' } : null,
   ].filter(Boolean), { values: seed, submitText: isNew ? 'Save' : 'Save changes', draftKey: values ? `intervention:${values.id}` : 'intervention:new', onCancel: () => m.close(), onSubmit: async (d) => {
-    if (isNew) await post('/api/interventions', d); else await put(`/api/interventions/${values.id}`, d);
+    if (isNew) await post('/api/interventions', d); else await put(`/api/interventions/${values.id}`, { ...d, if_updated_at: values.updated_at });
     toast(isNew ? 'Visit logged' : 'Saved', 'ok'); m.close(); onDone && onDone();
   } });
   if (can('budget:read')) {
