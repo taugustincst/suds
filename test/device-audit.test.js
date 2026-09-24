@@ -58,6 +58,10 @@ test('the static-site server survives the same malformed targets', async () => {
 });
 
 test('the kernel assets are served precompressed and, when versioned, as immutable', async () => {
+  // Local mode is off by default on an office server; this is about how the kernel is served when a
+  // county has turned it on.
+  const config = require('../server/config'); const was = config.localModeEnabled; config.localModeEnabled = true;
+  try {
   const pub = path.join(__dirname, '..', 'public', 'local');
   for (const f of ['kernel.js', 'sql-wasm.wasm']) {
     assert.ok(fs.existsSync(path.join(pub, f + '.gz')), `${f}.gz is built and committed (npm run build:local)`);
@@ -80,6 +84,7 @@ test('the kernel assets are served precompressed and, when versioned, as immutab
   assert.match(br.headers.get('content-type'), /^application\/wasm/);
   const html = await fetch(base + '/?local=1', { headers: { 'Accept-Encoding': 'gzip, br' } });
   assert.equal(html.headers.get('cache-control'), 'no-store', 'the HTML shell is never cached');
+  } finally { config.localModeEnabled = was; }
 });
 
 test('app.js requests the kernel with the release version, and the service worker caches the same URL', () => {

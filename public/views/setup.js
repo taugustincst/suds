@@ -15,6 +15,13 @@ route('setup', async () => {
     { type: 'section', label: 'Who can reach SUDS' },
     { name: 'network', label: 'Access', type: 'select', noBlank: true, required: true, value: 'lan', options: [{ value: 'lan', label: 'Phones, tablets and other computers on the office network (recommended for mobile use)' }, { value: 'local', label: 'Only this computer' }], span: true },
     { name: 'https', label: 'Encrypt connections (HTTPS) — recommended, created automatically', type: 'checkbox', value: true, span: true },
+    // The web app on this server is the system of record (docs/PLATFORM.md). An offline copy keeps an encrypted
+    // caseload in a browser whose keys sit beside it, so it is off unless the county has a field-work need.
+    // With LOCAL_MODE_ENABLED set on the server the environment decides, and the page says so instead.
+    status.local_mode_env ? null : { type: 'section', label: 'Working offline' },
+    status.local_mode_env ? null : { name: 'local_mode', label: 'Allow staff to keep an offline copy on their devices? Recommended: No', type: 'select', noBlank: true, required: true, value: 'no', span: true,
+        options: [{ value: 'no', label: 'No — staff use SUDS while connected to this server (recommended)' }, { value: 'yes', label: 'Yes — navigators may keep an encrypted offline copy in their browser and sync it later' }],
+        help: 'Only say Yes for a documented field-work need, on county-managed devices with a passcode and remote wipe. IT can change this later with LOCAL_MODE_ENABLED.' },
     { type: 'section', label: 'Advanced (usually not needed)', collapsible: true },
     // With PORT set in the environment the port is IT's decision (Settings → Network & devices says the same
     // afterwards), so the wizard does not offer a field it would then ignore.
@@ -24,6 +31,7 @@ route('setup', async () => {
     if (d.admin_password !== d.confirm) throw new Error('Passwords do not match');
     if (d.network === 'lan' && !d.https) throw new Error('HTTPS is required when other devices can connect');
     delete d.confirm;
+    if ('local_mode' in d) d.local_mode = d.local_mode === 'yes';
     const r = await post('/api/setup/complete', d);
     f.classList.add('hidden'); done.classList.remove('hidden');
     const L = r.listener;
@@ -42,6 +50,7 @@ route('setup', async () => {
   } });
   return h('div', { class: 'login-wrap' }, h('div', { class: 'card', style: { maxWidth: '760px', width: '100%' } },
     h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('b', {}, 'Welcome to SUDS'), h('small', {}, 'First-run setup — about 2 minutes'))),
-    h('p', { class: 'muted' }, `Three quick questions and SUDS is ready on this computer and on staff phones. (Running on ${status.hostname}; setup can only be completed from this computer.)`),
+    h('p', { class: 'muted' }, `A few quick questions and SUDS is ready on this computer and on staff phones. (Running on ${status.hostname}; setup can only be completed from this computer.)`),
+    status.local_mode_env ? h('p', { class: 'small muted', 'data-local-mode-env': '1' }, `Offline copies on staff devices are ${status.local_mode ? 'allowed' : 'not allowed'} by the LOCAL_MODE_ENABLED setting on this server, so that is not asked here.`) : null,
     status.port_env ? h('p', { class: 'small muted', 'data-port-env': '1' }, `The port (${status.listener?.port}) is set by the PORT environment variable on this server, so it is not asked here.`) : null, f, done));
 });

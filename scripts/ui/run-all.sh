@@ -6,6 +6,10 @@ export SUDS_ENV=development SUDS_DATA_DIR=/tmp/suds-ui-data PORT=${PORT:-8090} S
 # Every script signs in afresh, several as more than one person; the office default of 20 sign-ins per
 # address per 15 minutes was being hit part-way through the run and failing the later scripts at login.
 export LOGIN_RATE_LIMIT=1000
+# Local mode (/?local=1) is off by default on an office server; the dev server the suite drives turns it on
+# so the local-mode, sync and device scripts have a kernel to load. The first-run wizard's server below
+# clears it again, so the wizard asks the question the way a county sees it.
+export LOCAL_MODE_ENABLED=true
 # A server left over from an earlier run holds a port and the wizard then "cannot start" on it, which
 # looks like an app defect. Say what is actually wrong instead.
 STATIC_PORT=${STATIC_PORT:-8878}
@@ -24,7 +28,7 @@ export SUDS_URL="http://127.0.0.1:$PORT"
 # wizard restarts it on SETUP_PORT with a self-signed certificate, so that port must be free too.
 export SETUP_PORT=${SETUP_PORT:-8496}
 rm -rf /tmp/suds-setup-data; mkdir -p /tmp/suds-setup-data
-SUDS_ENV=production SUDS_DATA_DIR=/tmp/suds-setup-data PORT=8095 SUDS_ADMIN_PASSWORD= node --no-warnings=ExperimentalWarning server/index.js > /tmp/suds-setup-server.log 2>&1 &
+SUDS_ENV=production SUDS_DATA_DIR=/tmp/suds-setup-data PORT=8095 SUDS_ADMIN_PASSWORD= LOCAL_MODE_ENABLED= node --no-warnings=ExperimentalWarning server/index.js > /tmp/suds-setup-server.log 2>&1 &
 SETUP_SERVER=$!; trap 'kill $SERVER $SETUP_SERVER 2>/dev/null; pkill -f "suds-setup-data" 2>/dev/null' EXIT
 for i in $(seq 1 40); do curl -sf "http://127.0.0.1:8095/api/setup/status" >/dev/null && break; sleep 0.5; done
 export SUDS_SETUP_URL="http://127.0.0.1:8095"

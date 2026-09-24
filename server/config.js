@@ -65,6 +65,9 @@ function loadKey(envName, fileName) {
   return key;
 }
 
+/** LOCAL_MODE_ENABLED / server.json localModeEnabled: on only when explicitly true. Unset means off. */
+function parseLocalMode(v) { return ['1', 'true', 'yes', 'on'].includes(String(v ?? '').trim().toLowerCase()); }
+
 const config = {
   version: require('../package.json').version,
   env,
@@ -162,10 +165,11 @@ const config = {
     return Buffer.from(hex, 'hex');
   })(),
   // Whether this server hands out the browser kernel for /?local=1 (a whole copy of SUDS running in the
-  // browser, with its keys in that browser's storage). Fine for testing; a county
-  // that has not approved staff running local copies on unmanaged machines sets LOCAL_MODE_ENABLED=false
-  // and the page explains itself instead of starting.
-  localModeEnabled: !['0', 'false', 'no', 'off'].includes(String(process.env.LOCAL_MODE_ENABLED ?? fileCfg.localModeEnabled ?? 'true').toLowerCase()),
+  // browser, with its keys in that browser's storage beside the data). Off by default: the office server is
+  // the system of record (docs/PLATFORM.md), and an offline copy is something a county turns on for a
+  // documented field-work need. The setup wizard asks and stores the answer in server.json
+  // (localModeEnabled); LOCAL_MODE_ENABLED in the environment overrides it either way.
+  localModeEnabled: parseLocalMode(process.env.LOCAL_MODE_ENABLED ? process.env.LOCAL_MODE_ENABLED : fileCfg.localModeEnabled),
   // Years a discharged client's record is kept before the retention job hard-deletes it (server/retention.js).
   // Overridable per installation in Administration -> Settings (client_retention_years).
   clientRetentionYears: Number(process.env.CLIENT_RETENTION_YEARS || 7),
@@ -184,5 +188,7 @@ const config = {
 
 config.oidc.enabled = !!(config.oidc.issuer && config.oidc.clientId && config.oidc.clientSecret && config.oidc.redirectUri);
 config.keySource = keySourceHolder.value;
+config.localModeFromEnv = !!process.env.LOCAL_MODE_ENABLED;
+config.parseLocalMode = parseLocalMode;
 config.saveServerJson = (patch) => { Object.assign(fileCfg, patch); fs.writeFileSync(serverJsonPath, JSON.stringify(fileCfg, null, 2), { mode: 0o600 }); config.setupComplete = !!fileCfg.setupComplete; };
 module.exports = config;

@@ -501,11 +501,12 @@ test('readonly sees codes, not people; MFA covers every role by default; local m
   const config = require('../server/config');
   const c = H.client();
   assert.equal((await c.get('/?local=1')).status, 200);
+  const was = config.localModeEnabled;
   config.localModeEnabled = false;
   try {
     const page = await c.get('/?local=1');
     assert.equal(page.status, 200); assert.match(String(page.data), /Local mode is turned off/);
     assert.equal((await c.get('/local/kernel.js')).status, 404);
     assert.equal((await c.get('/')).status, 200, 'the office app still serves');
-  } finally { config.localModeEnabled = true; }
+  } finally { config.localModeEnabled = was; }
 });

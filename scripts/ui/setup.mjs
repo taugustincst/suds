@@ -35,6 +35,10 @@ if (status.port_env) {
 }
 eq(await page.$eval('input[name=https]', e => e.checked), true, 'HTTPS is on by default');
 eq(await page.$eval('select[name=network]', e => e.value), 'lan', 'phones on the office network are allowed by default');
+// Offline copies are a deliberate choice: the wizard asks, and the recommended answer (No) is preselected.
+eq(status.local_mode_env, false, 'LOCAL_MODE_ENABLED is not set for the wizard server, so the wizard decides local mode');
+eq(await page.$eval('select[name=local_mode]', e => e.value).catch(() => null), 'no', 'the wizard asks about offline copies and defaults to No');
+ok(/offline copy on their devices\? Recommended: No/.test(await page.textContent('#app')), 'with the recommendation in the question');
 await page.click('button[type=submit]');
 ok(await until(() => page.textContent('#app').then(t => /Setup complete/.test(t)), { timeout: 20000 }), 'the wizard completes');
 const done = (await page.textContent('#app')).replace(/\s+/g, ' ');
@@ -49,6 +53,13 @@ await page.goto(after + '/#/login'); await page.waitForTimeout(800);
 await page.fill('input[name=username]', 'padmin'); await page.fill('input[name=password]', 'SetupPassw0rd!x'); await page.click('button[type=submit]');
 await page.waitForSelector('.layout', { timeout: 10000 }).catch(() => {});
 ok(await page.$('.layout'), 'the administrator signs in over HTTPS at the new address');
+// The wizard's No is honoured straight away: the server serves the explanation, not the kernel.
+{
+  const lp = await ctx.newPage(); await lp.goto(after + '/?local=1'); await lp.waitForTimeout(400);
+  ok(/Local mode is turned off/.test(await lp.textContent('body')), 'after answering No, /?local=1 explains that local mode is off');
+  eq((await ctx.request.get(after + '/local/kernel.js')).status(), 404, 'and the kernel is not served');
+  await lp.close();
+}
 await page.keyboard.press('Escape');
 // Nothing to protect yet, so the setup card must lead with the one step that cannot wait: the key backup.
 await page.goto(after + '/#/dashboard'); await page.waitForTimeout(1200);
