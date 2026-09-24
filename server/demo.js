@@ -21,6 +21,21 @@ function status() {
   return { loaded: !!ids, loaded_at: db.getSetting('demo_loaded_at', null), counts, total, clients_total: db.one(`SELECT COUNT(*) n FROM clients WHERE deleted_at IS NULL`).n };
 }
 
+/**
+ * Why sample data cannot be loaded right now, or null when it can. Where records may be real (the office
+ * server, or a browser copy the office hands out), sample data is only offered to an empty program, so it
+ * never mixes with real records. `alongside` is for the static demo build, which never holds anything
+ * real: there it is added beside whatever someone typed in while trying SUDS out, and every sample row is
+ * still tagged (demo_ids), so "Remove sample data" takes away only those.
+ */
+function loadRefusal(st, { alongside = false } = {}) {
+  if (st.loaded) return 'Sample data is already loaded';
+  if (st.clients_total > 0 && !alongside) return 'Sample data can only be added while there are no clients yet, so it never mixes with real records';
+  return null;
+}
+/** status() plus whether "Load sample data" is available, for the screens that offer it. */
+function offer(opts) { const st = status(); return { ...st, can_load: !loadRefusal(st, opts), alongside: !!(opts && opts.alongside) }; }
+
 const PEOPLE = [
   ['Jamie', 'Nguyen', 'Jay', 'they/them', '1988-04-12', 'opioids_fentanyl', 'xylazine', 'injected', 'critical', 'active', 'active', 'buprenorphine', 1, 'shelter', 'medicaid', '2.1', 'emergency_dept', 1, 1, 0, 'contemplation', 'Stay on bupe; get an ID; find a bed at Bridge Housing'],
   ['Marcus', 'Bell', null, 'he/him', '1975-11-02', 'alcohol', '', 'oral', 'moderate', 'active', 'none', null, 0, 'stable', 'uninsured', '1.0', 'self', 0, 0, 0, 'action', 'Keep the job; attend IOP three nights a week'],
@@ -287,4 +302,4 @@ function staffFor(user) {
   return { actor: user.id, workers: workers.slice(0, 4), clinician, supervisor };
 }
 
-module.exports = { seed, remove, status, staffFor, DEMO_PREFIX };
+module.exports = { seed, remove, status, offer, loadRefusal, staffFor, DEMO_PREFIX };

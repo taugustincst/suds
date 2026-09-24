@@ -6,13 +6,15 @@ export const state = { user: null, org: 'SUDS', constants: null, users: [], fund
 // scripts/build-static-site.js). External, not inline, so it works under the CSP the office server sends.
 // It is distinct from window.SUDS_LOCAL, which the boot sequence itself sets only after local mode is
 // already chosen, so it cannot be used to make that choice.
-export function isLocalMode() { try { return new URLSearchParams(location.search).get('local') === '1' || location.protocol === 'file:' || location.protocol === 'suds:' || location.hostname === 'appassets.androidplatform.net' || window.SUDS_FORCE_LOCAL === true || !!window.SUDS_LOCAL; } catch { return false; } }
+export function isLocalMode() { try { return new URLSearchParams(location.search).get('local') === '1' || location.protocol === 'file:' || window.SUDS_FORCE_LOCAL === true || !!window.SUDS_LOCAL; } catch { return false; } }
 
 // ---------- workspace preferences (follow the user across devices) ----------
 let prefsTimer; const prefsDirty = {};
 export const prefs = {
   get: (k, d) => (state.prefs[k] === undefined ? d : state.prefs[k]),
-  set(k, v) { state.prefs[k] = v; prefsDirty[k] = v; try { localStorage.setItem('suds.prefs', JSON.stringify(state.prefs)); } catch {} clearTimeout(prefsTimer); prefsTimer = setTimeout(prefs.flush, 800); },
+  set(k, v) { state.prefs[k] = v; prefsDirty[k] = v; try { localStorage.setItem('suds.prefs', JSON.stringify(state.prefs)); } catch {} // The pending save counts as work in progress (see activity below), so "has the page finished?" covers it.
+    if (prefsTimer) clearTimeout(prefsTimer); else busy(1);
+    prefsTimer = setTimeout(() => { prefsTimer = null; busy(-1); prefs.flush(); }, 800); },
   async flush() {
     const body = { ...prefsDirty };
     if (!Object.keys(body).length || !state.user) return;
@@ -74,7 +76,18 @@ export function setImage(el, path) {
 const BACKGROUND_AFTER_MS = 60_000;
 function isBackground(opts) { return opts.background === true || opts.quiet === true || Date.now() - lastActivity > BACKGROUND_AFTER_MS; }
 
+// What the page is still doing, for anything that needs to know when it has finished: requests in flight,
+// work scheduled to run shortly (the Home tour), and the address the last render completed for. The
+// browser suite waits on this (settle() in scripts/ui/assert.mjs) instead of sleeping a fixed time and
+// hoping the page was done. It holds counts and a hash, never data.
+const activity = { pending: 0, rendered: null, at: Date.now() };
+try { window.__sudsActivity = activity; } catch {}
+const busy = (n) => { activity.pending += n; activity.at = Date.now(); };
 export async function api(method, path, body, opts = {}) {
+  busy(1);
+  try { return await apiCall(method, path, body, opts); } finally { busy(-1); }
+}
+async function apiCall(method, path, body, opts) {
   const background = isBackground(opts);
   const headers = { 'X-Requested-With': 'suds', ...(background ? { 'X-Background': '1' } : {}), ...(opts.headers || {}) };
   if (state.local && window.SUDS_LOCAL) {
@@ -877,7 +890,7 @@ export function maybeTour() {
   m.el.querySelector('.card-head').remove(); draw();
 }
 export async function downloadCsv(path) {
-  if (state.local && window.SUDS_LOCAL) { const r = await window.SUDS_LOCAL.handle('GET', path, undefined, {}); if (r.status >= 400) { toast('Download failed', 'error'); return; } const name = (/filename="([^"]+)"/.exec(r.headers['content-disposition'] || '') || [])[1] || 'download'; if (window.SudsNative && window.SudsNative.saveFile) { let bin = ''; const bytes = new Uint8Array(r.body); for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]); window.SudsNative.saveFile(name, btoa(bin), r.headers['content-type'] || 'application/octet-stream'); return; }
+  if (state.local && window.SUDS_LOCAL) { const r = await window.SUDS_LOCAL.handle('GET', path, undefined, {}); if (r.status >= 400) { toast('Download failed', 'error'); return; } const name = (/filename="([^"]+)"/.exec(r.headers['content-disposition'] || '') || [])[1] || 'download'; 
     const blob = new Blob([r.body], { type: r.headers['content-type'] || 'application/octet-stream' }); const u = URL.createObjectURL(blob); const a = h('a', { href: u, download: name }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 5000); return; }
   const a = h('a', { href: path, download: '' }); document.body.append(a); a.click(); a.remove();
 }
@@ -959,6 +972,16 @@ export const NAV = [
 
 let current = null;
 export async function render() {
+  const hash = location.hash;
+  busy(1);
+  try { await renderPage(); }
+  finally {
+    // A render that redirected (nav() to another address) is not the one that finished this address.
+    if (location.hash === hash) activity.rendered = hash;
+    busy(-1);
+  }
+}
+async function renderPage() {
   const app = document.getElementById('app');
   app.removeAttribute('aria-busy'); // was set on the static pre-hydration shell in index.html
   // A paused window stays paused: a hash change or a view's own refresh must not draw the app back over it.
@@ -987,7 +1010,7 @@ export async function render() {
   // A hash change keeps the old scroll position, so leaving a long list for another page landed the
   // reader part-way down it, with the new page's header and alerts scrolled off the top.
   if (!current || current.name !== r.name || current.id !== r.id) window.scrollTo(0, 0);
-  if (r.name === 'dashboard') setTimeout(() => { if (parseHash().name === 'dashboard') maybeTour(); }, 400);
+  if (r.name === 'dashboard') { busy(1); setTimeout(() => { try { if (parseHash().name === 'dashboard') maybeTour(); } finally { busy(-1); } }, 400); }
   try { const view = await loader(r); clear(main).append(view); if (state.local && r.name === 'sync') main.append(deviceErrorsCard()); }
   catch (e) { clear(main).append(h('div', { class: 'banner danger' }, e.message)); }
   current = r;

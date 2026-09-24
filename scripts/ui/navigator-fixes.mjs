@@ -4,7 +4,7 @@
 // inert drawer and tap targets, the reminders bell, the overdue label on Home, alias search, caseload
 // sort, the hand-offs card, the safety-plan chip and the supply cupboard.
 import { chromium } from 'playwright';
-import { makeChecks, until } from './assert.mjs';
+import { makeChecks, until, settle } from './assert.mjs';
 
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium/chrome' }).catch(() => chromium.launch());
@@ -22,12 +22,12 @@ async function session(user, pass, viewport = { width: 1360, height: 900 }, extr
   await page.click('button[type=submit]');
   await page.waitForSelector('.layout', { timeout: 10000 });
   await page.evaluate((h) => fetch('/api/me/prefs', { method: 'PUT', headers: h, body: JSON.stringify({ tour_done: true }) }), H);
-  await page.waitForTimeout(400); await page.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove()));
+  await settle(page); await page.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove()));
   const api = (method, path, body) => page.evaluate(async ({ method, path, body, h }) => { const r = await fetch(path, { method, headers: h, body: body === undefined ? undefined : JSON.stringify(body), credentials: 'same-origin' }); const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = t; } return { status: r.status, data: j }; }, { method, path, body, h: H });
   return { page, ctx, api, close: () => ctx.close() };
 }
 // A cache-buster: a hash-only navigation to the same URL never re-renders.
-const go = async (page, hash) => { await page.goto(`${base}/#/${hash}${hash.includes('?') ? '&' : '?'}_=${Date.now()}`); await page.waitForSelector('.main .boot', { state: 'detached', timeout: 10000 }).catch(() => {}); await page.waitForTimeout(500); };
+const go = async (page, hash) => { await page.goto(`${base}/#/${hash}${hash.includes('?') ? '&' : '?'}_=${Date.now()}`); await page.waitForSelector('.main .boot', { state: 'detached', timeout: 10000 }).catch(() => {}); await settle(page); };
 const closeModal = async (page) => { await page.keyboard.press('Escape'); await until(async () => !(await page.$('.modal-bg'))); };
 
 // ---------------- desktop: navigator ----------------
@@ -89,7 +89,7 @@ const nav = await session('mrivera', 'Navigator2026!!');
     ok(await until(async () => page.$eval('.tabs-menu', m => m.classList.contains('hidden'))), 'Escape closes it');
     await more.click(); const last = await until(() => page.$('.tabs-menu:not(.hidden) button:last-child'));
     const label = last ? await last.textContent() : '';
-    if (last) { await last.click(); await page.waitForTimeout(500); ok(new RegExp(label.split(' ')[0]).test(await page.$eval('.tabs > button.active', b => b.textContent)), 'choosing a menu item opens that tab and brings it into the strip', label); }
+    if (last) { await last.click(); await settle(page); ok(new RegExp(label.split(' ')[0]).test(await page.$eval('.tabs > button.active', b => b.textContent)), 'choosing a menu item opens that tab and brings it into the strip', label); }
   }
   await page.setViewportSize({ width: 1360, height: 900 });
 
@@ -101,7 +101,7 @@ const nav = await session('mrivera', 'Navigator2026!!');
   await page.fill('.modal input[name=preferred_name]', 'Sparky');
   await page.click('.modal button[type=submit]'); await page.waitForURL(/#\/client\//, { timeout: 10000 });
   const newId = page.url().split('/client/')[1].split('/')[0];
-  await page.waitForTimeout(600);
+  await settle(page);
   ok(/Open — first episode/.test(await page.textContent('.main')), 'the overview says the first episode is open');
   await go(page, `client/${newId}/episodes`);
   ok(/Intake opens the first episode automatically/.test(await page.textContent('.main')), 'the Episodes tab explains the model');
@@ -116,7 +116,7 @@ const nav = await session('mrivera', 'Navigator2026!!');
   if (reopen) {
     await reopen.click(); const dlg = await until(() => page.$('.modal input'));
     if (dlg) { await dlg.fill('Discharged by mistake'); await page.click('.modal button:has-text("Reopen")'); }
-    await page.waitForTimeout(800);
+    await settle(page);
     const st = (await api('GET', `/api/clients/${newId}`)).data.client;
     eq(st.status, 'active', 're-admission makes the client active again'); eq(st.open_episode, true, 'and the episode is open');
   }
@@ -141,7 +141,7 @@ const nav = await session('mrivera', 'Navigator2026!!');
   if (sortSel) {
     const opts = await page.$$eval('select[data-sort] option', o => o.map(x => x.textContent));
     ok(opts.some(o => /oldest first/.test(o)) && opts.some(o => /Overdue/.test(o)) && opts.some(o => /Risk/.test(o)), 'with last-contact, overdue and risk orders', opts);
-    await page.selectOption('select[data-sort]', 'risk'); await page.waitForTimeout(700);
+    await page.selectOption('select[data-sort]', 'risk'); await settle(page);
     ok(/sort=risk/.test(page.url()), 'the choice is in the URL');
     const firstRisk = await page.$eval('tbody tr:first-child', r => r.textContent);
     ok(/Critical/.test(firstRisk), 'risk order puts a critical client first', firstRisk.slice(0, 80));
@@ -186,7 +186,7 @@ const nav = await session('mrivera', 'Navigator2026!!');
   await page.fill('.modal input[name=title]', 'Needs a second look'); await page.fill('.modal textarea[name=content]', 'Client disclosed a safety concern; want this reviewed.');
   await page.check('.modal input[name=cosign_requested]');
   await page.click('.modal button[type=submit]'); await until(async () => !(await page.$('.modal-bg')));
-  await page.waitForTimeout(700);
+  await settle(page);
   const mine = (await api('GET', `/api/notes?client_id=${c.id}&mine=1&status=draft`)).data.rows.find(n => n.title === 'Needs a second look');
   ok(mine && mine.cosign_requested === true, 'the draft is saved with the request', mine && mine.cosign_requested);
   if (mine) {
@@ -224,7 +224,7 @@ const nav = await session('mrivera', 'Navigator2026!!');
   await go(page, 'supplies');
   const after = Number((await page.$eval('[data-qty="Naloxone kit"]', e => e.textContent)).replace(/,/g, ''));
   eq(after, before - 2, 'logging a visit with 2 kits takes 2 off the shelf count');
-  await page.click('button[aria-label="One more Naloxone kit"]'); await page.waitForTimeout(700);
+  await page.click('button[aria-label="One more Naloxone kit"]'); await settle(page);
   eq(Number((await page.$eval('[data-qty="Naloxone kit"]', e => e.textContent)).replace(/,/g, '')), before - 1, '+ adds one back');
   const ro = await session('afinance', 'Navigator2026!!');
   await go(ro.page, 'supplies');
@@ -268,7 +268,8 @@ const nav = await session('mrivera', 'Navigator2026!!');
   // reload while offline: the cached shell shows the banner on the sign-in screen instead of a silent bounce
   await ctx.setOffline(true);
   await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
-  await page.waitForTimeout(1500);
+  // Offline, the requests fail rather than finish, so wait for the screen itself rather than for quiet.
+  await until(async () => (await page.$('#banners [data-banner="offline"]')) && (await page.$('input[name=username], .layout')), { timeout: 10000 });
   const offBanner = await page.$('#banners [data-banner="offline"]');
   const shell = await page.$('input[name=username], .layout');
   ok(offBanner, 'reloading while offline still shows the offline banner', await page.evaluate(() => document.body.innerText.slice(0, 120)));
@@ -296,11 +297,11 @@ const nav = await session('mrivera', 'Navigator2026!!');
   // 8. the closed drawer is inert; opening it makes it live
   eq(await page.$eval('#sidebar', s => s.inert), true, 'the closed drawer is inert');
   eq(await page.$eval('#sidebar', s => s.getAttribute('aria-hidden')), 'true', 'and hidden from assistive tech');
-  await page.click('button[aria-label=Menu]'); await page.waitForTimeout(300);
+  await page.click('button[aria-label=Menu]'); await until(() => page.$eval('#sidebar', s => !s.inert), { timeout: 5000 });
   eq(await page.$eval('#sidebar', s => s.inert), false, 'opening the menu makes it live');
   eq(await page.$eval('#sidebar', s => s.getAttribute('aria-hidden')), null, 'and visible to assistive tech');
   eq(await page.$eval('.fab', f => getComputedStyle(f).display), 'none', 'the + Log button hides while the drawer is open');
-  await page.keyboard.press('Escape'); await page.waitForTimeout(300);
+  await page.keyboard.press('Escape'); await until(() => page.$eval('#sidebar', s => s.inert), { timeout: 5000 });
   eq(await page.$eval('#sidebar', s => s.inert), true, 'Escape closes it and it is inert again');
   // tap targets
   await go(page, 'tasks');
@@ -319,7 +320,7 @@ const nav = await session('mrivera', 'Navigator2026!!');
   const toastsBottom = await page.$eval('.toasts', t => window.innerHeight - t.getBoundingClientRect().bottom);
   ok(toastsBottom > 60, 'toasts sit above the floating button', toastsBottom);
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-  await page.waitForTimeout(300);
+  await page.waitForFunction(() => window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2, null, { timeout: 5000 }).catch(() => {});
   const lastCard = await page.$eval('.main > :last-child', el => el.getBoundingClientRect().bottom);
   const fabTop = await page.$eval('.fab', f => f.getBoundingClientRect().top);
   ok(lastCard <= fabTop + 1, 'scrolled to the end, the last card clears the floating button', [lastCard, fabTop]);

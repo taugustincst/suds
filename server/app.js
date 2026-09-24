@@ -37,12 +37,13 @@ const ROUTE_MODULES = ['setup', 'auth', 'oidc', 'me', 'app', 'sync', 'dataimport
 // provider to redirect to — meaningless (and always disabled) on a device with no office server behind it.
 const LOCAL_ROUTE_MODULES = ROUTE_MODULES.filter(m => !['setup', 'app', 'sync', 'intake', 'oidc', 'client-errors'].includes(m));
 
-// Served in place of the app shell when LOCAL_MODE_ENABLED is off. No scripts, nothing to configure.
+// Served in place of the app shell when local mode is off (the wizard's answer in server.json, or LOCAL_MODE_ENABLED). No scripts, nothing to configure.
 const LOCAL_DISABLED_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SUDS — local mode is off</title>
 <style>body{font-family:system-ui,sans-serif;max-width:36rem;margin:4rem auto;padding:0 1rem;color:#222;line-height:1.5}h1{font-size:1.4rem}a{color:#0b5}</style></head>
 <body><h1>Local mode is turned off on this server</h1>
 <p>Running SUDS inside the browser (<code>?local=1</code>) keeps a copy of client records and the keys to them in this browser's own storage. This installation's administrator has disabled it.</p>
-<p>Use the office sign-in at <a href="/">the main address</a>, and ask your administrator before working offline (docs/PLATFORM.md). To turn local mode back on, set <code>LOCAL_MODE_ENABLED=true</code> on the server (see docs/DEPLOYMENT.md).</p></body></html>`;
+<p>Use the office sign-in at <a href="/">the main address</a>, and ask your administrator before working offline (docs/PLATFORM.md).</p>
+<p>For the administrator: this follows the answer given to <i>Allow staff to keep an offline copy on their devices?</i> in the first-run setup wizard, which is saved as <code>"localModeEnabled"</code> in <code>server.json</code> in the SUDS data folder. To change it, set that to <code>true</code> or <code>false</code> and restart SUDS. A <code>LOCAL_MODE_ENABLED</code> environment variable, where one is set, takes precedence over the file (see docs/DEPLOYMENT.md).</p></body></html>`;
 
 function buildRouter() {
   const r = new Router();

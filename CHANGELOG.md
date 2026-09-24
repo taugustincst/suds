@@ -4,6 +4,19 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+- **The demo build loads sample data beside clients you already entered.** On the static (GitHub Pages)
+  build, "Load sample data" no longer refuses once a client exists; the sample rows are tagged and "Remove
+  sample data" takes away only them. An office server, and a browser copy it hands out, still offer it
+  only to an empty program (`server/demo.js` `loadRefusal`/`offer`, `local/kernel.js`). The "local mode is
+  off" page now names the setup wizard's answer and `server.json` `localModeEnabled`, not only the
+  variable. Leftover native-app branches (`SudsNative`, `__sudsSecrets`, the `suds:` and Android WebView
+  hosts) are gone from the web app.
+- **Browser suite: order-independent, condition waits, summary table.** `scripts/ui/run-all.sh` reseeds
+  and restarts the office server before every script that uses it, prints a per-script table (checks,
+  result, seconds) and exits non-zero on any failure; its readiness probe no longer waits out 20 s on a
+  401. Fixed sleeps are replaced by `settle()` / `saved()` (`scripts/ui/assert.mjs`), which wait on
+  `window.__sudsActivity` (requests in flight, the pending prefs save and Home tour, the last rendered
+  address) and on the kernel's unsaved state; the few sleeps left wait for time to pass on purpose.
 - **Local mode is off by default on the office server.** `/?local=1` serves a short explanation unless the
   setup wizard's new question — *Allow staff to keep an offline copy on their devices? Recommended: No* —
   is answered Yes (stored in `data/server.json` as `localModeEnabled`) or `LOCAL_MODE_ENABLED=true` is set;
@@ -14,8 +27,9 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 - **To-do details are encrypted.** `tasks.description` moves into `description_enc` (migration 24; the
   migration-19 rebuild now encrypts it first so a 1.6.x upgrade keeps it). The API field is still
   `description`; de-identified exports never include it, identified exports decrypt it; sync declares it.
-  A 1.9.2 device that pushes a to-do's details before reloading the new kernel has the details dropped
-  (the column no longer exists); the title and the rest of the row apply. `test/task-description.test.js`.
+  A 1.9.2 device that pushes a to-do's plaintext `description` has it carried into `description_enc` by
+  the office (a `legacy` column map in `server/sync-tables.js`); an old kernel's empty value never erases
+  the office copy. `test/task-description.test.js`, `test/sync.test.js`.
 - **The native apps and launchers are removed** (`mobile/`, `launchers/`, `mobile-android.yml`,
   `mobile-ios.yml`, `probe.yml`, `scripts/android-keystore.sh`, `scripts/print-url.js`) and the native
   key-store lookups in `local/shims/config.js`; the code stays in git history. PLATFORM.md's roadmap had

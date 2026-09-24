@@ -4,7 +4,7 @@
 // phone, so it gets the same end-to-end proof the office app and the phone apps get.
 import * as pw from 'playwright';
 const { devices } = pw;
-import { makeChecks, until } from './assert.mjs';
+import { makeChecks, until, settle } from './assert.mjs';
 // SUDS_BROWSER=webkit (or firefox) runs this script in that engine instead of Chromium; CI's WebKit smoke
 // job uses it as the nearest thing to iPhone Safari a Linux runner has.
 const browserType = pw[process.env.SUDS_BROWSER || 'chromium'];
@@ -21,7 +21,7 @@ const probe = (u) => /\/app$|no-such-view/.test(u);
 page.on('console', m => { if (m.type() === 'error' && !probe(m.location()?.url || '') && !/404/.test(m.text())) errors.push('CONSOLE ' + m.text().slice(0, 250)); });
 page.on('response', r => { if (r.status() >= 400 && !probe(r.url())) errors.push(`HTTP ${r.status()} ${r.url()}`); });
 
-await page.goto(base + '/'); await page.waitForTimeout(2000);
+await page.goto(base + '/'); await settle(page);
 ok(await page.evaluate(() => window.SUDS_FORCE_LOCAL === true), 'the built site forces local mode before app.js even loads');
 ok(await page.evaluate(() => window.SUDS_STATIC_HOST === true), 'and marks itself as served from a static host, which is what makes sync ask the office server for permission');
 eq(await page.$eval('.static-demo-banner', b => b.textContent), 'Demo/evaluation build — do not enter real client information', 'the demo/evaluation banner is on screen from the first paint');
@@ -36,15 +36,31 @@ ok(await page.evaluate(() => !!window.SUDS_LOCAL), 'the in-browser kernel is wha
 ok(!(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)), 'the page fits a phone screen width');
 
 // data survives a reload — this is IndexedDB, not memory, and it is the whole point of running locally
-await page.goto(base + '/#/clients'); await page.waitForTimeout(1000);
+await page.goto(base + '/#/clients'); await settle(page);
 await page.click('button:has-text("New client")'); await page.waitForSelector('.modal');
 await page.fill('.modal input[name=first_name]', 'Offline'); await page.fill('.modal input[name=last_name]', 'Test');
-await page.click('.modal button[type=submit]'); await page.waitForTimeout(1000);
+await page.click('.modal button[type=submit]'); await settle(page);
 ok(/\/client\//.test(page.url()), 'a client can be created with no network connection at all');
-await page.reload(); await page.waitForTimeout(2000);
+await page.reload(); await settle(page);
 ok(await page.$('.layout'), 'the session survives a reload without signing in again');
-await page.goto(base + '/#/clients'); await page.waitForTimeout(1200);
+await page.goto(base + '/#/clients'); await settle(page);
 eq(await page.$$eval('tbody tr', r => r.length), 1, 'and the client entered offline is still there');
+
+// Sample data beside what someone typed in: the demo holds nothing real, so a client entered while trying
+// SUDS out no longer locks the sample data away (an office-served copy still refuses; test/demo.test.js).
+await page.goto(base + '/#/sync'); await settle(page);
+ok(!(await page.$('[data-sample-refused]')), 'the demo does not refuse sample data because a client already exists');
+ok(await page.$('[data-sample-alongside]'), 'it offers to add the sample clients beside the one entered here');
+await page.click('[data-sample] button:has-text("Load sample data")');
+await page.waitForSelector('[data-sample=loaded]', { timeout: 20000 }).catch(() => {});
+ok(await page.$('[data-sample=loaded]'), 'and loads them');
+await page.goto(base + '/#/clients?status=all'); await settle(page);
+ok(await page.$$eval('tbody tr', r => r.length) > 1 && await page.$('tbody tr:has-text("Offline")'), 'the sample clients sit beside the client entered offline', await page.$$eval('tbody tr', r => r.length));
+await page.goto(base + '/#/sync'); await settle(page);
+await page.click('button:has-text("Remove sample data")'); await page.waitForSelector('.modal button.danger');
+await page.click('.modal button.danger'); await page.waitForSelector('[data-sample=empty]', { timeout: 20000 }).catch(() => {});
+await page.goto(base + '/#/clients?status=all'); await settle(page);
+eq(await page.$$eval('tbody tr', r => r.length), 1, 'removing the sample data leaves only the client entered offline');
 
 // installable as a home-screen app: the manifest has to actually resolve and be well-formed, not just linked
 const manifest = await page.evaluate(async () => {

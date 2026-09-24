@@ -5,7 +5,7 @@
 // banners on a phone, contact details are checked before saving, expired consents are not offered,
 // bulk "Mark done" asks first, assigning a new primary warns, and an unknown address says so.
 import { chromium } from 'playwright';
-import { makeChecks, until } from './assert.mjs';
+import { makeChecks, until, settle } from './assert.mjs';
 
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium/chrome' }).catch(() => chromium.launch());
@@ -23,11 +23,11 @@ async function session(user, pass, viewport = { width: 1360, height: 900 }, extr
   await page.click('button[type=submit]');
   await page.waitForSelector('.layout', { timeout: 10000 });
   await page.evaluate((h) => fetch('/api/me/prefs', { method: 'PUT', headers: h, body: JSON.stringify({ tour_done: true }) }), H);
-  await page.waitForTimeout(400); await page.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove()));
+  await settle(page); await page.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove()));
   const api = (method, path, body) => page.evaluate(async ({ method, path, body, h }) => { const r = await fetch(path, { method, headers: h, body: body === undefined ? undefined : JSON.stringify(body), credentials: 'same-origin' }); const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = t; } return { status: r.status, data: j }; }, { method, path, body, h: H });
   return { page, ctx, api, close: () => ctx.close() };
 }
-const go = async (page, hash) => { await page.goto(`${base}/#/${hash}${hash.includes('?') ? '&' : '?'}_=${Date.now()}`); await page.waitForSelector('.main .boot', { state: 'detached', timeout: 10000 }).catch(() => {}); await page.waitForTimeout(500); };
+const go = async (page, hash) => { await page.goto(`${base}/#/${hash}${hash.includes('?') ? '&' : '?'}_=${Date.now()}`); await page.waitForSelector('.main .boot', { state: 'detached', timeout: 10000 }).catch(() => {}); await settle(page); };
 const closeModal = async (page) => { await page.keyboard.press('Escape'); await until(async () => !(await page.$('.modal-bg'))); };
 const day = (offset) => new Date(Date.now() + offset * 86400000).toISOString().slice(0, 10);
 const stamp = Date.now().toString().slice(-5);
@@ -45,7 +45,7 @@ const nav = await session('mrivera', 'Navigator2026!!');
   await page.fill('.modal input[name=city]', 'Auburn');
   await page.click('.modal button[type=submit]'); await page.waitForURL(/#\/client\//, { timeout: 10000 });
   createdId = page.url().split('/client/')[1].split('/')[0];
-  await page.waitForTimeout(900); // longer than the 400ms autosave debounce that used to fire after the save
+  await page.waitForTimeout(900); // intentional: let the 400ms autosave debounce window pass (it used to fire after the save)
   await go(page, 'clients');
   await page.click('text=+ New client'); await page.waitForSelector('.modal input[name=first_name]');
   eq(await page.inputValue('.modal input[name=first_name]'), '', 'the next New client form opens empty');
@@ -55,7 +55,7 @@ const nav = await session('mrivera', 'Navigator2026!!');
   await page.fill('.modal input[name=first_name]', 'Bad'); await page.fill('.modal input[name=last_name]', 'Email' + stamp);
   await page.fill('.modal input[name=email]', 'notanemail'); await page.fill('.modal input[name=phone]', 'abc');
   await page.fill('.modal input[name=dob]', day(3));
-  await page.click('.modal button[type=submit]'); await page.waitForTimeout(500);
+  await page.click('.modal button[type=submit]'); await settle(page);
   ok(await page.$('.modal .field[data-field=email].error'), 'a bad email is flagged under its field');
   ok(await page.$('.modal .field[data-field=phone].error'), 'so is a phone with no digits');
   ok(await page.$('.modal .field[data-field=dob].error'), 'and a birth date in the future');
@@ -79,7 +79,7 @@ const nav = await session('mrivera', 'Navigator2026!!');
   await page.click('button:has-text("Discharge")'); await page.waitForSelector('.modal select[name=discharge_reason]');
   eq(await page.inputValue('.modal select[name=discharge_reason]'), '', 'the reason starts blank');
   ok(/Choose a reason/.test(await page.$eval('.modal select[name=discharge_reason] option:first-child', o => o.textContent)), 'with a placeholder, not "Completed the program"');
-  await page.click('.modal button[type=submit]'); await page.waitForTimeout(400);
+  await page.click('.modal button[type=submit]'); await settle(page);
   ok(await page.$('.modal .banner.danger:not(.hidden)'), 'submitting without a reason is refused in the dialog');
   ok(await page.$('.modal .field[data-field=discharge_reason].error'), 'with the reason field marked');
   eq((await api('GET', `/api/clients/${createdId}`)).data.client.open_episode, true, 'and the episode is still open');
@@ -110,7 +110,7 @@ const nav = await session('mrivera', 'Navigator2026!!');
     ok(dlg, 'a confirmation appears');
     ok(dlg && /Mark 2 to-dos as done\?/.test(await dlg.textContent()), 'naming how many', dlg && (await dlg.textContent()).slice(0, 120));
     const openBefore = (await api('GET', '/api/tasks?status=open&mine=1&limit=300')).data.total;
-    await page.click('.modal button:has-text("Cancel")'); await page.waitForTimeout(400);
+    await page.click('.modal button:has-text("Cancel")'); await settle(page);
     eq((await api('GET', '/api/tasks?status=open&mine=1&limit=300')).data.total, openBefore, 'Cancel changes nothing');
   }
 
@@ -165,7 +165,7 @@ const sup = await session('jwalker', 'Navigator2026!!');
     await page.click('.modal button[type=submit]');
     const confirm = await until(() => page.$('.modal:has-text("Replace the primary worker?")'));
     ok(confirm, 'and asks before replacing them');
-    if (confirm) { await page.click('.modal button:has-text("Cancel")'); await page.waitForTimeout(300); }
+    if (confirm) { await page.click('.modal button:has-text("Cancel")'); await settle(page); }
     const primaries = (await api('GET', `/api/clients/${createdId}`)).data.client.assignments.filter(a => a.role_on_case === 'primary' && !a.end_date);
     eq(primaries.length, 1, 'Cancel leaves the current primary in place');
     ok(primaries[0] && primaries[0].user_id !== other.id, 'unchanged');
@@ -197,7 +197,7 @@ const adm = await session('admin', 'AdminPassw0rd!x');
   if (bg) {
     await bg.click(); await page.waitForSelector('.modal input');
     await page.fill('.modal input', 'short');
-    await page.click('.modal button:has-text("Show clinical notes")'); await page.waitForTimeout(300);
+    await page.click('.modal button:has-text("Show clinical notes")'); await settle(page);
     ok(await page.$('.modal'), 'a too-short reason keeps the dialog open');
     ok(/at least 15 characters/.test(await page.$eval('.modal .err', e => e.textContent)), 'and says why', await page.$eval('.modal .err', e => e.textContent).catch(() => ''));
     await page.fill('.modal input', 'Client in ED, treating physician needs the plan');

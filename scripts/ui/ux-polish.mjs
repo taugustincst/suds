@@ -11,7 +11,7 @@
 // Screenshots go to $SHOTS (default /tmp/suds-ux-polish) so a person can look at them.
 import { chromium } from 'playwright';
 import fs from 'node:fs';
-import { makeChecks, until } from './assert.mjs';
+import { makeChecks, until, settle } from './assert.mjs';
 const base = process.env.SUDS_STATIC_URL || 'http://127.0.0.1:8877';
 const SHOTS = process.env.SHOTS || '/tmp/suds-ux-polish';
 fs.mkdirSync(SHOTS, { recursive: true });
@@ -27,7 +27,7 @@ const shot = (page, name) => page.screenshot({ path: `${SHOTS}/${name}.png` });
 // A hash-only goto does not reload the page, so the large-text style is taken off again explicitly.
 const bigText = (page) => page.evaluate(() => { if (document.getElementById('big-text')) return; const s = document.createElement('style'); s.id = 'big-text'; s.textContent = 'html { font-size: 200% !important; }'; document.head.append(s); });
 const normalText = (page) => page.evaluate(() => document.getElementById('big-text')?.remove());
-const go = async (page, hash) => { await normalText(page).catch(() => {}); await page.goto(`${base}/#/${hash}${hash.includes('?') ? '&' : '?'}_=${Date.now()}`); await page.waitForSelector('.layout', { timeout: 15000 }); await page.waitForSelector('.main .boot', { state: 'detached', timeout: 15000 }).catch(() => {}); await page.waitForTimeout(300); };
+const go = async (page, hash) => { await normalText(page).catch(() => {}); await page.goto(`${base}/#/${hash}${hash.includes('?') ? '&' : '?'}_=${Date.now()}`); await page.waitForSelector('.layout', { timeout: 15000 }); await page.waitForSelector('.main .boot', { state: 'detached', timeout: 15000 }).catch(() => {}); await settle(page); };
 const kernel = (page, method, path, body) => page.evaluate(async ({ method, path, body }) => { const r = await window.SUDS_LOCAL.handle(method, path, body, { 'X-Requested-With': 'suds' }); const data = r.json !== undefined ? r.json : (r.body ? JSON.parse(r.body.toString()) : null); return { status: r.status, data }; }, { method, path, body });
 // Where the dialog's title and ✕ are, against the bottom of the demo banner.
 const dialogTop = (page) => page.evaluate(() => {
@@ -59,7 +59,7 @@ ok(/stays in this browser/.test(setupText) && /office SUDS address/.test(setupTe
 ok(await page.$('[data-try-sample]'), 'M3: the demo offers "Try it with sample data"');
 await page.tap('[data-try-sample]');
 await page.waitForSelector('.layout', { timeout: 30000 });
-await page.waitForTimeout(800);
+await settle(page);
 
 // the tour
 const tour = await until(() => page.$('.modal'), { timeout: 5000 });
@@ -69,7 +69,7 @@ ok(!/shows up on the other right away/.test(step1), 'M2: the tour does not promi
 ok(/stays in this browser/.test(step1), 'M2: the tour says the demo stays in this browser');
 ok(/^Hi Demo\./.test(step1.replace(/^Welcome to SUDS/, '').trim()), 'the tour greets "Demo User" as Demo', step1.slice(0, 60));
 let labels = [];
-for (let i = 0; i < 8; i++) { const b = await page.$('.modal button.primary'); if (!b) break; labels.push((await b.textContent()).trim()); if (labels.at(-1) === 'Done') { await shot(page, 'tour-last-step'); } await b.tap(); await page.waitForTimeout(200); }
+for (let i = 0; i < 8; i++) { const b = await page.$('.modal button.primary'); if (!b) break; labels.push((await b.textContent()).trim()); if (labels.at(-1) === 'Done') { await shot(page, 'tour-last-step'); } await b.tap(); await settle(page); }
 eq(labels.at(-1), 'Done', 'the last tour step\'s button says Done');
 ok(labels.slice(0, -1).every(l => l === 'Next'), 'the steps before it say Next', labels);
 ok(!(await page.$('.modal-bg')), 'Done closes the tour');
@@ -88,7 +88,7 @@ ok(top.closeHit, 'H2: and a tap on the ✕ lands on it');
 await page.tap('.modal button[aria-label=Close]');
 ok(await until(async () => !(await page.$('.modal-bg')), { timeout: 3000 }), 'H2: tapping the ✕ closes the sheet');
 await go(page, 'dashboard');
-await bigText(page); await page.waitForTimeout(300);
+await bigText(page); await settle(page);
 await page.tap('.fab button'); await page.waitForSelector('.modal');
 top = await dialogTop(page);
 await shot(page, 'log-sheet-200');
@@ -98,7 +98,7 @@ eq((await overflowing(page)).join(' | '), '', 'M6: nothing in the + Log sheet is
 
 // ---------------- Back closes the dialog, not the page ----------------
 const before = page.url();
-await page.goBack(); await page.waitForTimeout(400);
+await page.goBack(); await settle(page);
 ok(!(await page.$('.modal-bg')), 'Back closes the open dialog');
 eq(page.url(), before, 'and stays on the page underneath');
 ok(await page.$('.layout'), 'with the app still there');
@@ -107,19 +107,19 @@ const clientsUrl = page.url();
 await page.tap('.fab button'); await page.waitForSelector('.modal');
 await page.tap('.modal .quick-list button:has-text("Reminder")');
 await page.waitForSelector('.modal input[name=title]');
-await page.goBack(); await page.waitForTimeout(400);
+await page.goBack(); await settle(page);
 ok(!(await page.$('.modal-bg')), 'Back closes a form opened from the + Log sheet');
 eq(page.url(), clientsUrl, 'and leaves the client list where it was');
 // A dialog closed with its ✕ takes its history entry with it: the next Back leaves the page as usual.
 await page.tap('.fab button'); await page.waitForSelector('.modal');
-await page.tap('.modal button[aria-label=Close]'); await page.waitForTimeout(300);
-await page.goBack(); await page.waitForTimeout(500);
+await page.tap('.modal button[aria-label=Close]'); await settle(page);
+await page.goBack(); await settle(page);
 ok(!/#\/clients/.test(page.url()), 'after closing a dialog with ✕, Back goes to the previous page (no dead press)', page.url().split('#')[1]);
 
 // ---------------- M6: 200% text on the main screens ----------------
 const cid = clients.data.clients[0].id;
 for (const hash of ['dashboard', 'clients', `client/${cid}`, 'tasks', 'referrals', 'sync', 'resources']) {
-  await go(page, hash); await bigText(page); await page.waitForTimeout(400);
+  await go(page, hash); await bigText(page); await settle(page);
   const w = await page.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
   ok(w[0] <= w[1], `M6: #/${hash} does not scroll sideways at 200% text`, w);
   eq((await overflowing(page)).join(' | '), '', `M6: nothing on #/${hash} sticks out past the right edge at 200% text`);
@@ -136,7 +136,7 @@ await shot(page, 'new-client-200');
 await page.tap('.modal button[type=submit]');
 const err = await until(async () => { const t = await page.$eval('.modal [data-field=first_name] .err', e => e.textContent).catch(() => ''); return t || null; }, { timeout: 4000 });
 eq(err, 'First name is required', 'the required-field error names the field');
-await page.tap('.modal button[aria-label=Close]'); await page.waitForTimeout(300);
+await page.tap('.modal button[aria-label=Close]'); await settle(page);
 
 // ---------------- M2: the demo's Sync page ----------------
 await go(page, 'sync');
@@ -163,10 +163,10 @@ const bars = await page.$$eval('a.bar.link', a => a.map(x => x.getBoundingClient
 ok(bars.length && bars.every(hh => hh >= 44), 'M5: the Home chart rows are 44px tap targets', bars);
 const today = await page.$$eval('.today-item .check', a => a.map(x => x.getBoundingClientRect().height));
 ok(today.every(hh => hh >= 44), 'M5: Home\'s to-do rows are 44px tap targets', today);
-await go(page, `client/${cid}`); await bigText(page); await page.waitForTimeout(400);
+await go(page, `client/${cid}`); await bigText(page); await settle(page);
 const more = await page.$('.tabs-more:visible');
 if (more) {
-  await more.tap(); await page.waitForTimeout(200);
+  await more.tap(); await settle(page);
   ok(await page.$eval('.fab', f => getComputedStyle(f).display === 'none'), 'M5: the + Log button steps aside while the tab menu is open');
   await shot(page, 'client-more-menu-200');
   await more.tap();
@@ -249,8 +249,8 @@ await ctx.close();
   await p.goto(base + '/'); await p.waitForSelector('input[name=display_name]', { timeout: 15000 });
   await p.fill('input[name=display_name]', 'Kiran Patel'); await p.fill('input[name=username]', 'kpatel');
   await p.fill('input[name=password]', 'Navigator2026!!'); await p.fill('input[name=confirm]', 'Navigator2026!!');
-  await p.tap('button[type=submit]'); await p.waitForSelector('.layout', { timeout: 15000 }); await p.waitForTimeout(800);
-  for (let i = 0; i < 6; i++) { const b = await p.$('.modal button.primary'); if (!b) break; await b.tap(); await p.waitForTimeout(150); }
+  await p.tap('button[type=submit]'); await p.waitForSelector('.layout', { timeout: 15000 }); await settle(p);
+  for (let i = 0; i < 6; i++) { const b = await p.$('.modal button.primary'); if (!b) break; await b.tap(); await settle(p); }
   ok(/, Kiran$/.test((await p.textContent('h1')).trim()), '"Kiran Patel" is greeted as Kiran');
   const btn = await until(() => p.$('[data-sample-banner] [data-load-sample]'), { timeout: 5000 });
   ok(btn, 'M1: Home offers to load sample data with a button');

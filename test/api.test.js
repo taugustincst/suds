@@ -914,7 +914,7 @@ test('workspace preferences and continue endpoint follow the user', async () => 
 
 test('app info: public answer is the programme name; APK distribution is gone', async () => {
   // Without a session the answer is the programme name and nothing about the network — unless the
-  // server was started with PUBLIC_APP_INFO=1. The native apps are deprecated (docs/PLATFORM.md): no
+  // server was started with PUBLIC_APP_INFO=1. The native apps were removed in 1.9.3 (docs/PLATFORM.md): no
   // `android` field, no APK download and no admin upload route remain, and the /app page uses
   // `local_mode` to decide whether to mention the offline copy at all.
   const config = require('../server/config');

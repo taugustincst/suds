@@ -2,7 +2,7 @@
 // the supervisor locked out of caseload transfer, countersigning blind, navigators editing grant totals,
 // hidden-in-the-file document search, the local-mode hint on the office login, and phone ergonomics.
 import { chromium } from 'playwright';
-import { makeChecks, until } from './assert.mjs';
+import { makeChecks, until, settle } from './assert.mjs';
 
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium/chrome' }).catch(() => chromium.launch());
@@ -20,11 +20,11 @@ async function session(user, pass, viewport = { width: 1360, height: 900 }) {
   await page.click('button[type=submit]');
   await page.waitForSelector('.layout', { timeout: 10000 });
   await page.evaluate((h) => fetch('/api/me/prefs', { method: 'PUT', headers: h, body: JSON.stringify({ tour_done: true }) }), H);
-  await page.waitForTimeout(400); await page.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove()));
+  await settle(page); await page.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove()));
   const api = (method, path, body) => page.evaluate(async ({ method, path, body, h }) => { const r = await fetch(path, { method, headers: h, body: body === undefined ? undefined : JSON.stringify(body), credentials: 'same-origin' }); const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = t; } return { status: r.status, data: j }; }, { method, path, body, h: H });
   return { page, api, close: () => ctx.close() };
 }
-const go = async (page, hash) => { await page.goto(`${base}/#/${hash}`); await page.waitForSelector('.main .boot', { state: 'detached', timeout: 10000 }).catch(() => {}); await page.waitForTimeout(500); };
+const go = async (page, hash) => { await page.goto(`${base}/#/${hash}`); await page.waitForSelector('.main .boot', { state: 'detached', timeout: 10000 }).catch(() => {}); await settle(page); };
 
 // ---- administrator: the generated temporary password is shown and stays until dismissed ----
 const admin = await session('admin', 'AdminPassw0rd!x');
@@ -41,7 +41,7 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   ok(pw, 'creating a user with a generated password shows that password');
   const shown = pw ? (await pw.textContent()).trim() : '';
   ok(shown.length >= 12, 'and it is a real password, not a placeholder', shown);
-  await page.waitForTimeout(1500);
+  await settle(page);
   ok(await page.$('[data-temp-password]'), 'it is still on screen a moment later (the list refresh no longer wipes it)');
   await page.click('text=I have shared it');
   await until(async () => (await page.textContent('.main')).includes(uname));
@@ -132,7 +132,7 @@ const admin = await session('admin', 'AdminPassw0rd!x');
     await fin.page.click('tbody button:has-text("Return")');
     await until(() => fin.page.$('.modal input'));
     await fin.page.click('.modal button:has-text("Return")');
-    await fin.page.waitForTimeout(300);
+    await settle(fin.page);
     ok(await fin.page.$('.modal input'), 'an empty reason does not send it back');
     await fin.page.fill('.modal input', 'Wrong date: the visit was on Tuesday');
     await fin.page.click('.modal button:has-text("Return")');

@@ -172,7 +172,7 @@ test('the generated browser schema matches schema.sql', () => {
 test('every place that carries a version number agrees with package.json', () => {
   // The version lived in several hand-maintained files, so a release could ship with some of them bumped.
   // scripts/gen-schema-text.js stamps the service worker from package.json; this fails if it has drifted.
-  // The native Android/iOS projects are deprecated (docs/PLATFORM.md) and are no longer stamped or checked.
+  // The native Android/iOS projects were removed in 1.9.3 (docs/PLATFORM.md), so there is nothing else to stamp.
   const root = path.join(__dirname, '..');
   const version = require('../package.json').version;
   const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8');

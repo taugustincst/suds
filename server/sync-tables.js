@@ -10,6 +10,9 @@
 //   same sync batch as its children is always applied first.
 // NOTE: the order of this array is a foreign-key ordering — a table must appear after everything it references.
 // blob: columns too large to belong in a sync payload; they are fetched by id on demand instead.
+// legacy: { oldColumn: newColumn } for a column a migration renamed. A device still running an older kernel
+//   keeps sending the old name, which no longer exists here and would be dropped with its value (see
+//   upgradeLegacyRow). The new column must be listed in enc when the move was into an encrypted column.
 module.exports = {
   settings_keys: ['org_name', 'county_name', 'program_contact', 'note_lock_days'],
   tables: [
@@ -32,7 +35,8 @@ module.exports = {
     // A referral may cite the consent it was made under, so consents come first.
     { name: 'consents', enc: ['recipient_enc', 'purpose_enc', 'scope_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
     { name: 'referrals', enc: ['outcome_enc', 'barrier_enc', 'notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'referrals:write', parent: ['clients', 'client_id'] },
-    { name: 'tasks', enc: ['title_enc', 'description_enc'], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'tasks:write', parent: ['clients', 'client_id'] },
+    // Migration 24 moved tasks.description into description_enc; kernels before 1.9.3 still push `description`.
+    { name: 'tasks', enc: ['title_enc', 'description_enc'], legacy: { description: 'description_enc' }, scope: 'client-or-null', clientCol: 'client_id', writePerm: 'tasks:write', parent: ['clients', 'client_id'] },
     { name: 'expenditures', enc: [], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'budget:write', parent: ['clients', 'client_id'] },
     { name: 'notes', enc: ['content_enc', 'structured_enc', 'title_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'notes:admin:write', parent: ['clients', 'client_id'] },
     { name: 'note_addenda', enc: ['content_enc'], scope: 'via-note', writePerm: 'notes:admin:write', parent: ['notes', 'note_id'] },
@@ -126,7 +130,24 @@ function importRow(t, r, existingCols) {
   return o;
 }
 
+/**
+ * Carry a pushed row's pre-migration columns over to where they live now (t.legacy), in place. A value is
+ * only moved when the row does not also carry the new column (a current kernel sends that) and is not
+ * empty: an old kernel never received the new column, so its null means "I do not have it", and moving
+ * it would erase the office's copy of the details on every edit the device makes to anything else.
+ * Encrypted targets travel as plaintext like every other _enc value; importRow encrypts them.
+ */
+function upgradeLegacyRow(t, r) {
+  for (const [from, to] of Object.entries(t.legacy || {})) {
+    if (!(from in r)) continue;
+    if (r[to] === undefined && r[from] !== null && r[from] !== '') r[to] = r[from];
+    delete r[from];
+  }
+  return r;
+}
+
 /** Whether a push rejection reason is one a retry can never fix (see permanent_reasons). */
 module.exports.isPermanentReason = (reason) => module.exports.permanent_reasons.some(p => String(reason || '').startsWith(p));
 module.exports.exportRow = exportRow;
 module.exports.importRow = importRow;
+module.exports.upgradeLegacyRow = upgradeLegacyRow;

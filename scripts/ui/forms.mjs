@@ -1,6 +1,6 @@
 // Form library + clickable cards: library cards, designer, fill from a client record with autofill, complete, PDF, attach a signed copy; office and phone-only mode.
 import { chromium } from 'playwright';
-import { makeChecks, until } from './assert.mjs';
+import { makeChecks, until, settle } from './assert.mjs';
 import fs from 'node:fs';
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const browser = await chromium.launch(); const errors = [];
@@ -17,7 +17,7 @@ async function dismissTour(p) {
     if (window.SUDS_LOCAL) await window.SUDS_LOCAL.handle('PUT', '/api/me/prefs', { tour_done: true }, { 'X-Requested-With': 'suds' });
     else await fetch('/api/me/prefs', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'suds' }, body: JSON.stringify({ tour_done: true }) });
   });
-  await p.waitForTimeout(700); await p.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove()));
+  await settle(p); await p.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove()));
 }
 async function run(label, root, login) {
   const ctx = await browser.newContext({ viewport: { width: 1250, height: 900 } }); const page = await ctx.newPage(); let loggedIn = false;

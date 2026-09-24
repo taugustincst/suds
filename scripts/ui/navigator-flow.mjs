@@ -1,6 +1,6 @@
 import { chromium } from 'playwright';
-import { makeChecks, until } from './assert.mjs';
-async function dismissTour(p) { await p.evaluate(() => fetch('/api/me/prefs', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'suds' }, body: JSON.stringify({ tour_done: true }) })); await p.waitForTimeout(700); await p.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove())); }
+import { makeChecks, until, settle } from './assert.mjs';
+async function dismissTour(p) { await p.evaluate(() => fetch('/api/me/prefs', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'suds' }, body: JSON.stringify({ tour_done: true }) })); await settle(p); await p.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove())); }
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 import('node:fs').then(m => m.mkdirSync('/tmp/suds-shots', { recursive: true }));
 const browser = await chromium.launch();

@@ -11,7 +11,9 @@ import path from 'node:path';
 import http from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { makeChecks, until } from './assert.mjs';
+import { makeChecks, until, settle, saved } from './assert.mjs';
+// A page of the 1.9.0 build has no activity hook (window.__sudsActivity) to wait on; pace it the old way.
+const pace = async (p) => ((await p.evaluate(() => !!window.__sudsActivity).catch(() => false)) ? settle(p) : p.waitForTimeout(150));
 
 const { ok, eq, fail, finish } = makeChecks('multitab');
 const require = createRequire(import.meta.url);
@@ -40,7 +42,7 @@ async function setup(page, url) {
   await page.fill('input[name=display_name]', 'Tab Tester'); await page.fill('input[name=username]', 'tabs');
   await page.fill('input[name=password]', 'Navigator2026!!'); await page.fill('input[name=confirm]', 'Navigator2026!!');
   await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 15000 });
-  for (let i = 0; i < 5; i++) { const b = await page.$('.modal button.primary'); if (!b) break; await b.click(); await page.waitForTimeout(150); }
+  for (let i = 0; i < 5; i++) { const b = await page.$('.modal button.primary'); if (!b) break; await b.click(); await pace(page); }
 }
 async function takeOver(page) {
   await page.waitForSelector(PROMPT, { timeout: 20000 });
@@ -70,12 +72,12 @@ async function takeOver(page) {
   // Paused means paused: a hash change, or the dashboard's own 90-second refresh (which is a hash change to
   // #/dashboard?_=<time>), must not render the app back over it against a database this tab no longer owns.
   await B.evaluate(() => { location.hash = '#/clients'; });
-  await B.waitForTimeout(400);
+  await settle(B); // the render that hash change starts has run (and kept the paused screen)
   ok(await isPaused(B), 'the paused screen survives a hash change');
   await B.evaluate(() => { location.hash = '#/dashboard?_=' + Date.now(); });
-  await B.waitForTimeout(400);
+  await settle(B);
   ok(await isPaused(B) && !(await B.$('.layout')), 'and the dashboard refresh', (await B.textContent('#app')).slice(0, 80));
-  await A.waitForTimeout(600);
+  await saved(A);
   await A.reload(); await booted(A); await until(() => A.evaluate(() => !!window.SUDS_LOCAL), { timeout: 10000 });
   const after = await clientNames(A);
   ok(/Alpha/.test(after) && /Bravo/.test(after) && /Charlie/.test(after), 'after a reload all three records are on the device', after.match(/"last_name":"[^"]*"/g));
@@ -104,14 +106,14 @@ for (const freezeSave of [true, false]) {
   const deltaInB = /Delta/.test(await clientNames(B));
   if (freezeSave) ok(deltaInB, 'the write made just before A was frozen was saved on the freeze and reached B');
   else ok(!deltaInB, 'without it, A\'s last write had not reached the store when B took over', deltaInB);
-  await B.waitForTimeout(600);
+  await saved(B);
   await cdp.send('Debugger.resume');
   // A wakes: its pending save timer and the queued takeover message both get their chance to write.
   await until(() => isPaused(A), { timeout: 10000 });
   ok(await isPaused(A), `tab A, on waking, finds it was displaced and pauses${tag}`);
   eq(await A.getAttribute('[data-paused]', 'data-paused'), 'unsaved', `a holder that never answered does not claim its work was saved first${tag}`);
   ok(/may need to be re-entered/.test(await A.textContent('#app')), `and says the last moment's changes may need re-entering${tag}`);
-  await A.waitForTimeout(800);
+  await A.waitForTimeout(800); // intentional: give A's pending save timer its chance to fire into the fence
   await B.reload(); await booted(B); await until(() => B.evaluate(() => !!window.SUDS_LOCAL), { timeout: 10000 });
   ok(/Echo/.test(await clientNames(B)), `B's record survives A waking up${tag}`);
   await ctx.close();
@@ -169,17 +171,17 @@ else if (buildOld()) {
     const ctx = await newCtx();
     const A = watch(await ctx.newPage(), 'old'); await setup(A, sbase + '/');
     eq((await addClient(A, 'Oldone')).status, 201, 'a tab on 1.9.0 records a client');
-    await A.waitForTimeout(600);
+    await A.waitForTimeout(600); // intentional: the 1.9.0 tab saves on its own timer and exposes nothing to wait on
     handler = plainStatic(newSite);
     const B = watch(await ctx.newPage(), 'new'); await B.goto(sbase + '/');
     await takeOver(B);
     ok(/Oldone/.test(await clientNames(B)), 'the new build picks up what the 1.9.0 tab had saved');
     eq((await addClient(B, 'Newone')).status, 201, 'the new tab records a client');
-    await B.waitForTimeout(600);
+    await saved(B);
     // The old tab does not know it was displaced and keeps saving its own copy.
     const late = await addClient(A, 'Oldtwo');
     ok(late.status === 201, 'the 1.9.0 tab still accepts a write (it cannot know better)', late.status);
-    await A.waitForTimeout(800);
+    await A.waitForTimeout(800); // intentional: let the 1.9.0 tab's save timer fire (nothing observable to wait on)
     await B.reload(); await booted(B); await until(() => B.evaluate(() => !!window.SUDS_LOCAL), { timeout: 10000 });
     const names = await clientNames(B);
     ok(/Newone/.test(names) && /Oldone/.test(names), 'the new tab\'s data is intact after the old tab saved again', names.match(/"last_name":"[^"]*"/g));

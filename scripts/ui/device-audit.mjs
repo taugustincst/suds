@@ -6,7 +6,7 @@
 // raw column names (LOW).
 import { chromium } from 'playwright';
 import { createHmac } from 'node:crypto';
-import { makeChecks, until } from './assert.mjs';
+import { makeChecks, until, settle } from './assert.mjs';
 
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const { ok, eq, fail, finish } = makeChecks('device-audit');
@@ -43,7 +43,7 @@ async function setupDevice(page, { username, password, name }) {
   await page.fill('input[name=display_name]', name); await page.fill('input[name=username]', username);
   await page.fill('input[name=password]', password); await page.fill('input[name=confirm]', password);
   await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 15000 });
-  for (let i = 0; i < 5; i++) { const b = await page.$('.modal button.primary'); if (!b) break; await b.click(); await page.waitForTimeout(150); }
+  for (let i = 0; i < 5; i++) { const b = await page.$('.modal button.primary'); if (!b) break; await b.click(); await settle(page); }
 }
 const idbHasDb = (page) => page.evaluate(() => new Promise((resolve) => {
   const req = indexedDB.open('suds-local', 1); req.onupgradeneeded = () => req.result.createObjectStore('kv');
@@ -93,7 +93,7 @@ try {
   ok(cl.status === 201 || cl.status === 200, 'a client is recorded on the device', cl);
   const goal = 'Typed just before leaving ' + Date.now();
   await api(page, 'PUT', '/api/clients/' + cl.json.id, { goals: goal });
-  await page.waitForTimeout(150);
+  await page.waitForTimeout(150); // intentional: the case under test is an edit 150 ms before a reload
   await page.reload(); await page.waitForSelector('.layout', { timeout: 20000 });
   const back = await api(page, 'GET', '/api/clients/' + cl.json.id);
   eq(back.json && back.json.client && back.json.client.goals, goal, 'an edit made 150 ms before a reload is still there afterwards');
@@ -193,12 +193,12 @@ try {
   await syncViaForm(page, { password: 'Navigator2026!!', code: totp(mfaSecret) });
   const wipeLog = await syncLog(page);
   ok(/remotely wiped/i.test(wipeLog), 'the device reports that it was wiped', wipeLog);
-  await page.waitForTimeout(400);
+  await until(async () => !(await idbHasDb(page).catch(() => true)), { timeout: 10000 });
   eq(await idbHasDb(page), false, 'the database is gone from IndexedDB before the page reloads');
   eq(await page.evaluate(() => localStorage.getItem('suds.local.enc')), null, 'and so are the encryption keys');
   await until(() => page.$('input[name=display_name]'), { timeout: 15000 });
   ok(await page.$('input[name=display_name]'), 'the page reloads into first-run setup', page.url());
-  await page.waitForTimeout(2500); // the old debounce window, and then some
+  await page.waitForTimeout(2500); // intentional: outlast the old debounce window, and then some, before checking nothing wrote back
   eq((await api(page, 'GET', '/api/local/status')).json.users, 0, 'nothing wrote the old database back after the reload: the device has no account');
   await page.reload(); await until(() => page.$('input[name=display_name]'), { timeout: 15000 });
   ok(await page.$('input[name=display_name]'), 'reopening the same profile still starts from first-run setup');

@@ -225,6 +225,8 @@ function push(user, payload) {
       const existingCols = cols(t.name); let n = 0;
       for (const raw of rows) {
         if (!raw || typeof raw.id !== 'string') continue;
+        // A device on an older kernel names a renamed column the old way; without this its value is dropped.
+        SYNC.upgradeLegacyRow(t, raw);
         // A child whose parent was rejected has nothing to attach to; skipping it beats a constraint error.
         // The child inherits the parent's permanence: a child of a purged client will never land either.
         if (t.parent && raw[t.parent[1]] && rejectedIds.has(`${t.parent[0]}:${raw[t.parent[1]]}`)) {

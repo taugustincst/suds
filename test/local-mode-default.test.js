@@ -49,6 +49,11 @@ test('with the default config, /?local=1 serves the interstitial and not the ker
   assert.equal(page.status, 200);
   assert.match(String(page.data), /Local mode is turned off/);
   assert.doesNotMatch(String(page.data), /<script/i, 'the explanation runs no scripts');
+  // An administrator reading it learns where the setting actually lives: the wizard's answer, kept in
+  // server.json, with the environment variable only as the override — not the variable alone.
+  assert.match(String(page.data), /setup wizard/);
+  assert.match(String(page.data), /"localModeEnabled"<\/code> in <code>server\.json/);
+  assert.match(String(page.data), /LOCAL_MODE_ENABLED/);
   assert.equal((await c.get('/local/kernel.js')).status, 404);
   const info = await c.get('/api/app/info');
   assert.equal(info.data.local_mode, false, '/app is told not to mention the offline copy');

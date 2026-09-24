@@ -84,14 +84,17 @@ export async function start({ wasmUrl, onSaveError, onLockLost, force } = {}) {
     audit.log({ user: { username: v.username }, action: 'local.setup' });
     return { ok: true };
   });
-  // Sample data on the phone: the device user is a navigator, so expose it here (not behind settings:manage)
+  // Sample data in a browser copy: the device user may be a navigator, so expose it here (not behind
+  // settings:manage). A copy the office server hands out (/?local=1) may hold real clients, so there it is
+  // only for an empty device, as at the office. The static demo build never holds anything real: there it
+  // is added alongside what someone typed in while trying SUDS out, tagged, and removable in one click.
   const demo = require('../server/demo.js');
-  router.get('/api/local/demo', (ctx) => { if (!ctx.user) throw new HttpError(401, 'Sign in first'); return demo.status(); });
+  const demoOpts = () => ({ alongside: sync.isStaticHost() });
+  router.get('/api/local/demo', (ctx) => { if (!ctx.user) throw new HttpError(401, 'Sign in first'); return demo.offer(demoOpts()); });
   router.post('/api/local/demo', (ctx) => {
     if (!ctx.user) throw new HttpError(401, 'Sign in first');
-    const st = demo.status();
-    if (st.loaded) throw new HttpError(400, 'Sample data is already loaded');
-    if (st.clients_total > 0) throw new HttpError(400, 'Sample data can only be added while this device has no clients yet');
+    const refused = demo.loadRefusal(demo.status(), demoOpts());
+    if (refused) throw new HttpError(400, refused);
     return demo.seed({ actor: ctx.user.id, workers: [ctx.user.id], clinician: null, supervisor: ctx.user.id });
   });
   router.delete('/api/local/demo', (ctx) => { if (!ctx.user) throw new HttpError(401, 'Sign in first'); return demo.remove({ actor: ctx.user.id }); });

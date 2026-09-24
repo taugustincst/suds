@@ -19,7 +19,9 @@ import path from 'node:path';
 import http from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { makeChecks, until } from './assert.mjs';
+import { makeChecks, until, settle } from './assert.mjs';
+// A page of the older build has no activity hook (window.__sudsActivity) to wait on; pace it the old way.
+const pace = async (p) => ((await p.evaluate(() => !!window.__sudsActivity).catch(() => false)) ? settle(p) : p.waitForTimeout(150));
 // SUDS_BROWSER=webkit (or firefox) runs this script in that engine instead of Chromium; CI's WebKit smoke
 // job uses it as the nearest thing to iPhone Safari a Linux runner has.
 const browserType = pw[process.env.SUDS_BROWSER || 'chromium'];
@@ -51,8 +53,8 @@ for (const [label, base] of surfaces) {
   // The tester's own account: a one-word, all-capitals display name, administrator.
   await page.fill('input[name=display_name]', 'QATEST'); await page.selectOption('select[name=role]', 'admin');
   await page.fill('input[name=username]', 'qatest'); await page.fill('input[name=password]', 'Navigator2026!!'); await page.fill('input[name=confirm]', 'Navigator2026!!');
-  await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 10000 });
-  for (let i = 0; i < 5; i++) { const b = await page.$('.modal button.primary'); if (!b) break; await b.click(); await page.waitForTimeout(150); }
+  await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 10000 }); await settle(page);
+  for (let i = 0; i < 5; i++) { const b = await page.$('.modal button.primary'); if (!b) break; await b.click(); await settle(page); }
 
   // P3-1 greeting
   const h1 = (await page.textContent('h1')) || '';
@@ -182,7 +184,7 @@ else if (buildOldSite()) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-qa-profile-'));
   const phone = { ...devices['iPhone 13'], isMobile: true, hasTouch: true };
   const label = 'upgraded profile';
-  const dismissTour = async (page) => { for (let i = 0; i < 5; i++) { const b = await page.$('.modal button.primary'); if (!b) break; await b.click(); await page.waitForTimeout(150); } };
+  const dismissTour = async (page) => { await pace(page); for (let i = 0; i < 5; i++) { const b = await page.$('.modal button.primary'); if (!b) break; await b.click(); await pace(page); } };
   try {
     // --- the tester's history, on the old build ---
     let ctx = await browserType.launchPersistentContext(profile, phone);
@@ -202,7 +204,7 @@ else if (buildOldSite()) {
     await until(async () => /Inactive/.test((await page.textContent('#main')) || ''), { timeout: 8000 });
     ok(/M26-0001/.test(await page.textContent('#main')) && /Inactive/.test(await page.textContent('#main')), `${label}: client M26-0001 set to Inactive on the old build`);
     // the old build's "Add resource" was the P0 defect (it saved nothing), so the resource is added after the upgrade
-    await page.evaluate(() => window.SUDS_LOCAL.flush && window.SUDS_LOCAL.flush()); await page.waitForTimeout(500);
+    await page.evaluate(() => window.SUDS_LOCAL.flush && window.SUDS_LOCAL.flush()); // evaluate awaits the flush's promise: written when it returns
     await ctx.close();
 
     // --- the current build, same origin, same profile ---

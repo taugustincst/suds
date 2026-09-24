@@ -189,6 +189,11 @@ test('the sync table description matches the actual schema', () => {
     for (const c of t.enc) if (!cols.includes(c)) problems.push(`${t.name}.${c} is listed as encrypted but is not a column`);
     for (const c of cols) if (c.endsWith('_enc') && !t.enc.includes(c)) problems.push(`${t.name}.${c} is encrypted PHI but is not declared in sync-tables`);
     for (const c of t.blob || []) if (!cols.includes(c)) problems.push(`${t.name}.${c} is listed as a blob but is not a column`);
+    for (const [from, to] of Object.entries(t.legacy || {})) {
+      if (cols.includes(from)) problems.push(`${t.name}.${from} is declared a legacy column but still exists`);
+      if (!cols.includes(to)) problems.push(`${t.name}.${from} maps to ${to}, which is not a column`);
+      if (to.endsWith('_enc') && !t.enc.includes(to)) problems.push(`${t.name}.${from} maps to ${to}, which is not declared encrypted`);
+    }
     if (t.clientCol && !cols.includes(t.clientCol)) problems.push(`${t.name}.${t.clientCol} is the caseload column but is not a column`);
     if (t.name !== 'users' && !cols.includes('updated_at')) problems.push(`${t.name} has no updated_at, so changes to it can never sync`);
     if (t.parent) {
@@ -426,6 +431,31 @@ test('created_at is shifted by the clock offset once, never on later round trips
   // The same row again from a device skewed the other way: created_at must not move.
   await nav.post('/api/sync/push', { device_now: iso(Date.now() - 2 * skew), tables: { tasks: [{ id, client_id: clientId, created_by: navId, title_enc: 'Skewed, edited', created_at: createdOnDevice, updated_at: iso(Date.now() - 2 * skew + 10) }] } });
   assert.equal(H.db.one(`SELECT created_at FROM tasks WHERE id=?`, id).created_at, first, 'an existing row\'s created_at is never re-shifted');
+});
+
+test('a device on a pre-1.9.3 kernel still syncs a to-do\'s details, encrypted', async () => {
+  // Migration 24 moved tasks.description into description_enc. An older kernel still sends the plaintext
+  // column, which no longer exists at the office: the details were silently dropped.
+  const { decrypt } = require('../server/crypto');
+  const id = randomUUID();
+  const at = () => iso(Date.now());
+  let r = await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, assigned_to: navId, title_enc: 'Detox bed', description: 'Granite on Tuesday; bring the MAT letter', created_at: at(), updated_at: at() }] } });
+  assert.equal(r.status, 200, JSON.stringify(r.data)); assert.equal(r.data.rejected.length, 0, JSON.stringify(r.data.rejected));
+  const row = H.db.one(`SELECT * FROM tasks WHERE id=?`, id);
+  assert.ok(!('description' in row), 'there is no plaintext column to land in');
+  assert.ok(row.description_enc && !/Granite/.test(row.description_enc), 'the details are stored, encrypted');
+  assert.equal(decrypt(row.description_enc), 'Granite on Tuesday; bring the MAT letter');
+  assert.equal((await nav.get(`/api/tasks/${id}`)).data.row.description, 'Granite on Tuesday; bring the MAT letter', 'and read back through the API');
+  // The old kernel never received description_enc, so its null means "not known here": an edit to the
+  // status must not erase the office's copy of the details.
+  r = await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, assigned_to: navId, title_enc: 'Detox bed', description: null, status: 'done', updated_at: iso(Date.now() + 1000) }] } });
+  assert.equal(r.status, 200); assert.equal(r.data.rejected.length, 0, JSON.stringify(r.data.rejected));
+  const after = H.db.one(`SELECT status, description_enc FROM tasks WHERE id=?`, id);
+  assert.equal(after.status, 'done'); assert.equal(decrypt(after.description_enc), 'Granite on Tuesday; bring the MAT letter');
+  // A current kernel sends description_enc; a stray legacy column beside it never overrides it.
+  r = await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, assigned_to: navId, title_enc: 'Detox bed', description_enc: 'Moved to Thursday', description: 'stale', updated_at: iso(Date.now() + 2000) }] } });
+  assert.equal(r.status, 200);
+  assert.equal(decrypt(H.db.one(`SELECT description_enc FROM tasks WHERE id=?`, id).description_enc), 'Moved to Thursday');
 });
 
 test('a purged client can never be resurrected by a device, nor anything attached to it', async () => {

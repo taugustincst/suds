@@ -38,3 +38,27 @@ test('sample data: admin loads it, staff see it, it is removed cleanly with tomb
   assert.equal((await nav.post('/api/clients', { first_name: 'Real', last_name: 'Person' })).status, 201);
   assert.equal((await admin.post('/api/admin/demo', {})).status, 400);
 });
+
+test('sample data beside existing clients: refused where records may be real, allowed on the static demo, removed cleanly', async () => {
+  // Runs after the test above, which leaves one real client ("Real Person") behind.
+  const demo = require('../server/demo');
+  const st = demo.status();
+  assert.ok(st.clients_total > 0 && !st.loaded);
+  // The office server (and a browser copy it hands out) says why, and the screens are told not to offer it.
+  const offered = (await admin.get('/api/admin/demo')).data;
+  assert.equal(offered.can_load, false); assert.equal(offered.alongside, false);
+  assert.match(demo.loadRefusal(st), /only be added while there are no clients/);
+  // The static demo build (local/kernel.js passes alongside when window.SUDS_STATIC_HOST is set) holds
+  // nothing real, so it may add sample data beside what someone typed in while trying SUDS out.
+  assert.equal(demo.loadRefusal(st, { alongside: true }), null);
+  const realIds = db.all(`SELECT id FROM clients WHERE deleted_at IS NULL`).map(r => r.id);
+  const adminId = db.one(`SELECT id FROM users WHERE username='admin'`).id;
+  const out = demo.seed({ actor: adminId, workers: [adminId], clinician: null, supervisor: adminId });
+  assert.equal(out.loaded, true); assert.equal(out.counts.clients, 12);
+  assert.equal(db.one(`SELECT COUNT(*) n FROM clients WHERE deleted_at IS NULL`).n, realIds.length + 12, 'the sample clients sit beside the real one');
+  assert.match(demo.loadRefusal(demo.status(), { alongside: true }), /already loaded/, 'but only once');
+  // Every sample row is tagged, so removing them leaves what the person entered themselves.
+  demo.remove({ actor: adminId });
+  assert.deepEqual(db.all(`SELECT id FROM clients WHERE deleted_at IS NULL`).map(r => r.id).sort(), [...realIds].sort());
+  assert.equal(demo.offer({ alongside: true }).can_load, true);
+});

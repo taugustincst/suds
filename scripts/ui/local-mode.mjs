@@ -1,5 +1,5 @@
 import { chromium } from 'playwright';
-import { makeChecks, until } from './assert.mjs';
+import { makeChecks, until, settle, saved } from './assert.mjs';
 const { ok, eq, fail, finish } = makeChecks('local-mode');
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 import('node:fs').then(m => m.mkdirSync('/tmp/suds-shots', { recursive: true }));
@@ -19,7 +19,7 @@ ok(await page.$('input[name=username]'), 'the local kernel booted and offered fi
   ok(await page.$('.layout'), 'the app is usable straight after setup');
   await page.waitForSelector('text=On this device', { timeout: 5000 }).catch(() => {});
   ok(await page.$('text=On this device'), 'and says it is running on this device');
-  for (let i = 0; i < 5; i++) { const b = await page.$('.modal button.primary'); if (!b) break; await b.click(); await page.waitForTimeout(150); }
+  for (let i = 0; i < 5; i++) { const b = await page.$('.modal button.primary'); if (!b) break; await b.click(); await settle(page); }
   // create a client locally
   await page.click('text=+ Log'); await page.waitForSelector('.quick-list button:has-text("New client")'); await page.click('.quick-list button:has-text("New client")'); await page.waitForSelector('.modal input[name=first_name]');
   await page.fill('.modal input[name=first_name]', 'Local'); await page.fill('.modal input[name=last_name]', 'Phoneclient'); await page.click('.modal button[type=submit]'); await page.waitForURL(/#\/client\//, { timeout: 10000 }).catch(() => {});
@@ -27,9 +27,9 @@ ok(await page.$('input[name=username]'), 'the local kernel booted and offered fi
   await page.click('text=+ Intervention'); await page.waitForSelector('.modal select[name=type]'); await page.selectOption('.modal select[name=type]', 'outreach'); await page.click('.modal button[type=submit]');
   const toasts = await until(async () => { const t = await page.$$eval('.toast', e => e.map(x => x.textContent)); return t.length ? t : null; }) || [];
   ok(toasts.length > 0 && !toasts.some(t => /error|failed|could not/i.test(t)), 'recording a visit on the device confirms it saved', toasts);
-  // persistence across reload — the pre-reload wait stays fixed: the local kernel's writes flush to
-  // IndexedDB asynchronously, and reloading before that flush lands is a real race, not just UI settling.
-  await page.waitForTimeout(800); await page.reload(); await page.waitForSelector('.layout', { timeout: 15000 }).catch(() => {});
+  // persistence across reload: the local kernel's writes flush to IndexedDB asynchronously, and reloading
+  // before that flush lands is a real race, not just UI settling — so wait until it reports nothing unsaved.
+  await settle(page); await saved(page); await page.reload(); await page.waitForSelector('.layout', { timeout: 15000 }).catch(() => {});
   ok(await page.$('.layout'), 'the device is still signed in after a reload', (await page.textContent('#app')).slice(0, 80));
   await page.goto(base + '/?local=1#/clients'); await page.waitForSelector('tbody', { timeout: 10000 }).catch(() => {});
   const rowsBefore = await page.$$eval('tbody tr', r => r.length);
@@ -140,11 +140,11 @@ ok(await page.$('input[name=username]'), 'the local kernel booted and offered fi
   eq((await p.textContent('[data-build-stamp]') || '').trim(), `SUDS ${version}`, 'the start screen shows which build is running');
   await p.fill('input[name=display_name]', 'Stamp Nav'); await p.fill('input[name=username]', 'stamp'); await p.fill('input[name=password]', 'Navigator2026!!'); await p.fill('input[name=confirm]', 'Navigator2026!!');
   await p.click('button[type=submit]'); await p.waitForSelector('.layout', { timeout: 10000 });
-  for (let i = 0; i < 5; i++) { const b = await p.$('.modal button.primary'); if (!b) break; await b.click(); await p.waitForTimeout(150); }
+  for (let i = 0; i < 5; i++) { const b = await p.$('.modal button.primary'); if (!b) break; await b.click(); await settle(p); }
   ok(/SUDS \d+\.\d+\.\d+/.test(await p.textContent('.sidebar .foot')), 'and so does the sidebar once signed in');
   // An uncaught error is kept on the device, without long digit runs, and listed on the Sync page.
   await p.evaluate(() => { setTimeout(() => { throw new Error('Exploded near record 12345678'); }, 0); });
-  await p.waitForTimeout(200);
+  await settle(p); // the report is written through the kernel like any other request
   await p.goto(base + '/?local=1#/sync'); await p.waitForSelector('[data-device-errors]', { timeout: 10000 });
   const errText = await p.textContent('[data-device-errors]');
   ok(/Errors on this device/.test(errText) && /Exploded near record #{8}/.test(errText), 'the Sync page lists the error under "Errors on this device"', errText.slice(0, 200));
@@ -158,7 +158,7 @@ ok(await page.$('input[name=username]'), 'the local kernel booted and offered fi
   await p.evaluate(() => document.dispatchEvent(new Event('visibilitychange'))); // visible again: checks version.json
   ok(await p.waitForSelector('[data-banner="update-ready"] [data-update-reload]', { timeout: 10000 }).catch(() => null), 'a new version on the server shows "A new version of SUDS is ready — Reload"');
   await p.evaluate(() => { Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); delete document.visibilityState; });
-  await p.waitForTimeout(800);
+  await p.waitForTimeout(800); // intentional: proving a reload does NOT happen needs time to pass
   ok(await p.evaluate(() => window.__sameDocument === true) && (await p.inputValue('.modal input[name=first_name]')) === 'Halfway', 'going to the background mid-form does not reload the page or lose the typing');
   await p.click('.modal button:has-text("Cancel")').catch(() => p.keyboard.press('Escape'));
   await p.evaluate(() => { location.hash = '#/clients'; });
@@ -168,7 +168,7 @@ ok(await page.$('input[name=username]'), 'the local kernel booted and offered fi
   // and the page does not reload again on every move.
   await p.waitForSelector('.layout', { timeout: 15000 });
   await p.evaluate(() => { window.__sameDocument = true; location.hash = '#/dashboard'; });
-  await p.waitForTimeout(1200);
+  await p.waitForTimeout(1200); // intentional: proving a second reload does NOT happen needs time to pass
   ok(await p.evaluate(() => window.__sameDocument === true), 'one automatic reload per release, not one per page');
   ok(await p.$('[data-banner="update-ready"]'), 'the Reload banner is still offered');
   await c.close();

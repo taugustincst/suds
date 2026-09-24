@@ -1,7 +1,7 @@
 // Two-way sync between a device and the office server, end to end in a real browser.
 // Every line here used to be a console.log compared to nothing, so this script passed with sync broken.
 import { chromium } from 'playwright';
-import { makeChecks } from './assert.mjs';
+import { makeChecks, settle } from './assert.mjs';
 
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const { ok, eq, fail, finish } = makeChecks('sync-two-way');
@@ -19,14 +19,14 @@ const sync = () => api('POST', '/api/local/sync', { server: base, username: 'mri
 
 try {
   // ---- a fresh device sets itself up and syncs for the first time ----
-  await page.goto(base + '/?local=1#/'); await page.waitForTimeout(2500);
+  await page.goto(base + '/?local=1#/'); await settle(page);
   ok(await page.$('input[name=username]'), 'the device offers first-run setup');
   await page.fill('input[name=display_name]', 'Dev Two');
   await page.fill('input[name=username]', 'mrivera');
   await page.fill('input[name=password]', 'Navigator2026!!');
   await page.fill('input[name=confirm]', 'Navigator2026!!');
   await page.click('button[type=submit]');
-  await page.waitForSelector('.layout', { timeout: 15000 }); await page.waitForTimeout(500);
+  await page.waitForSelector('.layout', { timeout: 15000 }); await settle(page);
 
   const s1 = await sync();
   ok(s1 && s1.ok, 'the first sync completes', s1 && s1.error);

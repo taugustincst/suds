@@ -1,8 +1,9 @@
 'use strict';
-// File logging. The server only ever wrote to stdout, and the launchers do not redirect anywhere, so
-// closing the window destroyed the entire operational history — including the one line that said what went
-// wrong. Everything still goes to the console; it is additionally appended to a dated file under
-// <dataDir>/logs, kept 0600 because an error message can name a file path or a table.
+// File logging. The server only ever wrote to stdout, and nothing that starts it (a terminal window, a
+// service manager) is guaranteed to keep that, so closing the window destroyed the entire operational
+// history — including the one line that said what went wrong. Everything still goes to the console; it is
+// additionally appended to a dated file under <dataDir>/logs, kept 0600 because an error message can
+// name a file path or a table.
 //
 // Log lines must never carry PHI. Route errors log the path and the message, never the body.
 const fs = require('node:fs');

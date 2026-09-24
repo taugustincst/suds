@@ -201,11 +201,10 @@ module.exports = (r) => {
 
   // Fictional sample data (safe in production: only when the database has no real clients yet, removable in one click)
   const demo = require('../demo');
-  r.get('/api/admin/demo', auth.requireAuth, auth.requirePerm('settings:manage'), () => demo.status());
+  r.get('/api/admin/demo', auth.requireAuth, auth.requirePerm('settings:manage'), () => demo.offer());
   r.post('/api/admin/demo', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
-    const st = demo.status();
-    if (st.loaded) throw badRequest('Sample data is already loaded');
-    if (st.clients_total > 0) throw badRequest('Sample data can only be added while there are no clients yet, so it never mixes with real records');
+    const refused = demo.loadRefusal(demo.status());
+    if (refused) throw badRequest(refused);
     const out = demo.seed(demo.staffFor(ctx.user));
     audit.log({ user: ctx.user, action: 'demo.load.request', ip: ctx.ip, details: { total: out.total } });
     return out;

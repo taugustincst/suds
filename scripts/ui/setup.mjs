@@ -4,7 +4,7 @@
 // Needs a fresh production server (run-all.sh starts one): the wizard restarts it on the port it is
 // given, with a self-signed certificate.
 import { chromium } from 'playwright';
-import { makeChecks, until } from './assert.mjs';
+import { makeChecks, until, settle } from './assert.mjs';
 const base = process.env.SUDS_SETUP_URL || 'http://127.0.0.1:8095';
 let port = Number(process.env.SETUP_PORT || 8496);
 const { ok, eq, finish } = makeChecks('setup');
@@ -15,7 +15,7 @@ const errors = []; page.on('pageerror', e => errors.push('PAGEERROR ' + e.messag
 // self-signed one once per device, the test never does. Everything else on the console is a defect.
 page.on('console', m => { if (m.type() === 'error' && !/40[13]|net::ERR|Failed to fetch|SSL certificate error/.test(m.text())) errors.push('CONSOLE ' + m.text().slice(0, 200)); });
 
-await page.goto(base + '/'); await page.waitForTimeout(800);
+await page.goto(base + '/'); await settle(page);
 ok(/#\/setup$/.test(page.url()), 'an unconfigured server opens on the setup wizard, not a sign-in', page.url());
 await page.fill('input[name=org_name]', 'Demo County SUD Navigation'); await page.fill('input[name=admin_display_name]', 'Pat Admin'); await page.fill('input[name=admin_username]', 'padmin');
 await page.fill('input[name=admin_password]', 'SetupPassw0rd!x'); await page.fill('input[name=confirm]', 'SetupPassw0rd!x');
@@ -49,22 +49,22 @@ ok(/Back up your encryption keys/.test(done), 'and tells the administrator to ba
 ok(new RegExp(`https://[^\\s]*:${port}`).test(done), `and shows the HTTPS address it is now listening on (port ${port})`, done.slice(0, 200));
 
 const after = `https://127.0.0.1:${port}`;
-await page.goto(after + '/#/login'); await page.waitForTimeout(800);
+await page.goto(after + '/#/login'); await settle(page);
 await page.fill('input[name=username]', 'padmin'); await page.fill('input[name=password]', 'SetupPassw0rd!x'); await page.click('button[type=submit]');
 await page.waitForSelector('.layout', { timeout: 10000 }).catch(() => {});
 ok(await page.$('.layout'), 'the administrator signs in over HTTPS at the new address');
 // The wizard's No is honoured straight away: the server serves the explanation, not the kernel.
 {
-  const lp = await ctx.newPage(); await lp.goto(after + '/?local=1'); await lp.waitForTimeout(400);
+  const lp = await ctx.newPage(); await lp.goto(after + '/?local=1'); await lp.waitForSelector('h1', { timeout: 10000 }).catch(() => {}); // a static page: no app to settle
   ok(/Local mode is turned off/.test(await lp.textContent('body')), 'after answering No, /?local=1 explains that local mode is off');
   eq((await ctx.request.get(after + '/local/kernel.js')).status(), 404, 'and the kernel is not served');
   await lp.close();
 }
 await page.keyboard.press('Escape');
 // Nothing to protect yet, so the setup card must lead with the one step that cannot wait: the key backup.
-await page.goto(after + '/#/dashboard'); await page.waitForTimeout(1200);
+await page.goto(after + '/#/dashboard'); await settle(page);
 ok(/Save a copy of your encryption keys/.test(await page.textContent('#app')), 'Home asks for the key backup first');
-await page.goto(after + '/#/admin?tab=system'); await page.waitForTimeout(900);
+await page.goto(after + '/#/admin?tab=system'); await settle(page);
 const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 10000 }), page.click('text=Download encrypted backup')]);
 ok(/\.enc$|\.db/.test(dl.suggestedFilename()), 'the first encrypted backup downloads', dl.suggestedFilename());
 const [kdl] = await Promise.all([page.waitForEvent('download', { timeout: 10000 }), page.click('text=Download key backup')]);

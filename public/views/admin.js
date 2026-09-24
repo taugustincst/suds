@@ -53,14 +53,14 @@ async function openUserForm(values, onDone) {
   const m = modal(isNew ? 'New user' : `Edit ${values.display_name}`, f, { wide: true });
 }
 
-// The native apps are deprecated (docs/PLATFORM.md); staff use the web app in a browser. /app is the
+// There is no native app (removed in 1.9.3, docs/PLATFORM.md); staff use the web app in a browser. /app is the
 // step-by-step page for adding it to a home screen — on the office server, which rewrites that path. A
 // static host (the published demo build) has no rewrite, so there the page is linked by its file name.
 function useOnDevicesCard(primary) {
   const appUrl = window.SUDS_STATIC_HOST || state.local ? 'get-app.html' : primary.replace(/\/$/, '') + '/app';
   return h('div', { class: 'card' }, h('h3', {}, 'Use SUDS on phones and tablets'),
     h('p', { class: 'small' }, 'There is no separate app to install: staff open SUDS in the browser at the address on the left and add it to their home screen. The step-by-step page for that is ', h('a', { href: appUrl, target: '_blank', rel: 'noopener' }, appUrl), '.'),
-    h('p', { class: 'small muted' }, 'The web application on this server is the system of record. The former Android and iOS apps and the desktop launchers are deprecated and will be removed; existing installs should sync one last time and be uninstalled — see docs/PLATFORM.md.'));
+    h('p', { class: 'small muted' }, 'The web application on this server is the system of record. The former Android and iOS apps and the desktop launchers were removed in SUDS 1.9.3; a phone that still has one should sync one last time and uninstall it — see docs/PLATFORM.md.'));
 }
 
 // Fictional sample data: lets a new program (or a phone with nothing on it yet) explore every screen, then remove it in one click.
@@ -82,10 +82,12 @@ export async function sampleDataCard(onChange) {
     st.loaded ? [h('p', { class: 'small' }, badge('Sample data loaded', 'info'), ' ', `${st.counts.clients} fictional clients and ${st.total} records added ${fmt.dt(st.loaded_at)}. Client codes start with DEMO-.`),
       h('p', { class: 'small muted' }, state.local ? 'Sample data is removed automatically before this device syncs with the office, so it never mixes with real records.' : 'Remove it before entering real clients.'),
       h('div', { class: 'btn-row' }, h('button', { class: 'btn danger', onClick: remove }, 'Remove sample data'), busy)]
-    : st.clients_total > 0 ? h('p', { class: 'small muted', 'data-sample-refused': '1' }, window.SUDS_STATIC_HOST
-      // The demo holds nothing real, but the on-device kernel still refuses once a client exists; say how to get there.
-      ? 'Sample data can only be added while this demo has no clients. To start the demo again with sample data, use "Erase data on this device" on this page, then choose "Try it with sample data".'
-      : 'Sample data can only be added while there are no clients yet, so it never mixes with real records.')
+    // can_load comes from the server (or the in-browser kernel), which decides: an office server, or a
+    // browser copy it hands out, offers sample data only to an empty program; the static demo build adds it
+    // alongside whatever someone typed in while trying SUDS out (server/demo.js loadRefusal).
+    : !(st.can_load ?? st.clients_total === 0) ? h('p', { class: 'small muted', 'data-sample-refused': '1' }, 'Sample data can only be added while there are no clients yet, so it never mixes with real records.')
+    : st.clients_total > 0 ? [h('p', { class: 'small muted', 'data-sample-alongside': '1' }, `Add a set of fictional clients, visits, notes, referrals and funding beside the ${st.clients_total === 1 ? 'client' : `${st.clients_total} clients`} you entered yourself. Sample client codes start with DEMO-, and "Remove sample data" takes away only those, leaving yours.`),
+      h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', onClick: load }, 'Load sample data'), busy)]
     : [h('p', { class: 'small muted' }, 'Add a set of fictional clients, visits, calls, notes, referrals, reminders, resources and funding so you can try every screen. Nothing here is real, and it can be removed in one click.'),
       h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', onClick: load }, 'Load sample data'), busy)]);
 }

@@ -25,7 +25,7 @@ route('dashboard', async () => {
   // Empty program: offer sample data (office admins, or anyone on a phone-only copy)
   let sample = null;
   if (!c.active && !c.waitlist && !caseload.caseload.length && (state.local || can('settings:manage'))) {
-    try { const st = await get(state.local ? '/api/local/demo' : '/api/admin/demo', { quiet: true }); if (!st.loaded && st.clients_total === 0) {
+    try { const st = await get(state.local ? '/api/local/demo' : '/api/admin/demo', { quiet: true }); if (st.can_load ?? (!st.loaded && st.clients_total === 0)) {
       // Loaded right here, after a confirmation — the button used to send people to the Sync page (or
       // Settings) and leave them to find a second "Load sample data" at the bottom of it.
       const path = state.local ? '/api/local/demo' : '/api/admin/demo';
@@ -37,7 +37,7 @@ route('dashboard', async () => {
         try { const r = await post(path, {}); toast(`Added ${r.counts.clients} sample clients with visits, calls, notes, referrals and reminders`, 'ok'); state.funds = null; await loadRefData(); nav('dashboard?_=' + Date.now()); }
         catch (err) { btn.disabled = false; busy.textContent = ''; toast(err.message || 'Could not load sample data', 'error'); }
       };
-      sample = h('div', { class: 'banner mb', 'data-sample-banner': '1' }, h('b', {}, 'New here? '), 'Load fictional sample data to see how SUDS looks with clients, visits, notes and reports. ', h('button', { type: 'button', class: 'btn sm primary', 'data-load-sample': '1', style: { marginLeft: '.5rem' }, onClick: loadHere }, 'Load sample data'), ' ', busy);
+      sample = h('div', { class: 'banner mb', 'data-sample-banner': '1' }, h('b', {}, 'New here? '), st.clients_total > 0 ? 'Load fictional sample clients beside yours to see how SUDS looks with a full caseload, visits, notes and reports. ' : 'Load fictional sample data to see how SUDS looks with clients, visits, notes and reports. ', h('button', { type: 'button', class: 'btn sm primary', 'data-load-sample': '1', style: { marginLeft: '.5rem' }, onClick: loadHere }, 'Load sample data'), ' ', busy);
     } } catch { /* no permission or offline */ }
   }
   // A brand-new program: the wizard only creates one account, so this is where the rest of setting up

@@ -9063,7 +9063,8 @@ var require_sync_tables = __commonJS({
         // A referral may cite the consent it was made under, so consents come first.
         { name: "consents", enc: ["recipient_enc", "purpose_enc", "scope_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
         { name: "referrals", enc: ["outcome_enc", "barrier_enc", "notes_enc"], scope: "client", clientCol: "client_id", writePerm: "referrals:write", parent: ["clients", "client_id"] },
-        { name: "tasks", enc: ["title_enc", "description_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "tasks:write", parent: ["clients", "client_id"] },
+        // Migration 24 moved tasks.description into description_enc; kernels before 1.9.3 still push `description`.
+        { name: "tasks", enc: ["title_enc", "description_enc"], legacy: { description: "description_enc" }, scope: "client-or-null", clientCol: "client_id", writePerm: "tasks:write", parent: ["clients", "client_id"] },
         { name: "expenditures", enc: [], scope: "client-or-null", clientCol: "client_id", writePerm: "budget:write", parent: ["clients", "client_id"] },
         { name: "notes", enc: ["content_enc", "structured_enc", "title_enc"], scope: "client", clientCol: "client_id", writePerm: "notes:admin:write", parent: ["clients", "client_id"] },
         { name: "note_addenda", enc: ["content_enc"], scope: "via-note", writePerm: "notes:admin:write", parent: ["notes", "note_id"] },
@@ -9195,9 +9196,18 @@ var require_sync_tables = __commonJS({
       }
       return o;
     }
+    function upgradeLegacyRow(t, r) {
+      for (const [from, to] of Object.entries(t.legacy || {})) {
+        if (!(from in r)) continue;
+        if (r[to] === void 0 && r[from] !== null && r[from] !== "") r[to] = r[from];
+        delete r[from];
+      }
+      return r;
+    }
     module.exports.isPermanentReason = (reason) => module.exports.permanent_reasons.some((p) => String(reason || "").startsWith(p));
     module.exports.exportRow = exportRow2;
     module.exports.importRow = importRow2;
+    module.exports.upgradeLegacyRow = upgradeLegacyRow;
   }
 });
 
@@ -10439,6 +10449,15 @@ var require_demo = __commonJS({
       }
       return { loaded: !!ids, loaded_at: db3.getSetting("demo_loaded_at", null), counts, total, clients_total: db3.one(`SELECT COUNT(*) n FROM clients WHERE deleted_at IS NULL`).n };
     }
+    function loadRefusal(st, { alongside = false } = {}) {
+      if (st.loaded) return "Sample data is already loaded";
+      if (st.clients_total > 0 && !alongside) return "Sample data can only be added while there are no clients yet, so it never mixes with real records";
+      return null;
+    }
+    function offer(opts) {
+      const st = status();
+      return { ...st, can_load: !loadRefusal(st, opts), alongside: !!(opts && opts.alongside) };
+    }
     var PEOPLE = [
       ["Jamie", "Nguyen", "Jay", "they/them", "1988-04-12", "opioids_fentanyl", "xylazine", "injected", "critical", "active", "active", "buprenorphine", 1, "shelter", "medicaid", "2.1", "emergency_dept", 1, 1, 0, "contemplation", "Stay on bupe; get an ID; find a bed at Bridge Housing"],
       ["Marcus", "Bell", null, "he/him", "1975-11-02", "alcohol", "", "oral", "moderate", "active", "none", null, 0, "stable", "uninsured", "1.0", "self", 0, 0, 0, "action", "Keep the job; attend IOP three nights a week"],
@@ -11120,7 +11139,7 @@ P: ${P2} (Sample data)`), encrypt3(JSON.stringify(i % 4 === 0 ? { S, O, A, P: P2
       const supervisor = byRole("supervisor")[0] || byRole("admin")[0] || user.id;
       return { actor: user.id, workers: workers.slice(0, 4), clinician, supervisor };
     }
-    module.exports = { seed, remove, status, staffFor, DEMO_PREFIX };
+    module.exports = { seed, remove, status, offer, loadRefusal, staffFor, DEMO_PREFIX };
   }
 });
 
@@ -11798,11 +11817,10 @@ var require_admin = __commonJS({
         ctx.res.end(fs.readFileSync(config.keysJsonPath));
       });
       const demo = require_demo();
-      r.get("/api/admin/demo", auth3.requireAuth, auth3.requirePerm("settings:manage"), () => demo.status());
+      r.get("/api/admin/demo", auth3.requireAuth, auth3.requirePerm("settings:manage"), () => demo.offer());
       r.post("/api/admin/demo", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
-        const st = demo.status();
-        if (st.loaded) throw badRequest("Sample data is already loaded");
-        if (st.clients_total > 0) throw badRequest("Sample data can only be added while there are no clients yet, so it never mixes with real records");
+        const refused = demo.loadRefusal(demo.status());
+        if (refused) throw badRequest(refused);
         const out2 = demo.seed(demo.staffFor(ctx.user));
         audit3.log({ user: ctx.user, action: "demo.load.request", ip: ctx.ip, details: { total: out2.total } });
         return out2;
@@ -21628,6 +21646,7 @@ var require_sync = __commonJS({
           let n = 0;
           for (const raw of rows) {
             if (!raw || typeof raw.id !== "string") continue;
+            SYNC2.upgradeLegacyRow(t, raw);
             if (t.parent && raw[t.parent[1]] && rejectedIds.has(`${t.parent[0]}:${raw[t.parent[1]]}`)) {
               const permanent = rejectedIds.get(`${t.parent[0]}:${raw[t.parent[1]]}`);
               reject(t.name, raw.id, `its ${t.parent[0]} row was rejected`, permanent);
@@ -22269,7 +22288,8 @@ var require_app2 = __commonJS({
 <style>body{font-family:system-ui,sans-serif;max-width:36rem;margin:4rem auto;padding:0 1rem;color:#222;line-height:1.5}h1{font-size:1.4rem}a{color:#0b5}</style></head>
 <body><h1>Local mode is turned off on this server</h1>
 <p>Running SUDS inside the browser (<code>?local=1</code>) keeps a copy of client records and the keys to them in this browser's own storage. This installation's administrator has disabled it.</p>
-<p>Use the office sign-in at <a href="/">the main address</a>, and ask your administrator before working offline (docs/PLATFORM.md). To turn local mode back on, set <code>LOCAL_MODE_ENABLED=true</code> on the server (see docs/DEPLOYMENT.md).</p></body></html>`;
+<p>Use the office sign-in at <a href="/">the main address</a>, and ask your administrator before working offline (docs/PLATFORM.md).</p>
+<p>For the administrator: this follows the answer given to <i>Allow staff to keep an offline copy on their devices?</i> in the first-run setup wizard, which is saved as <code>"localModeEnabled"</code> in <code>server.json</code> in the SUDS data folder. To change it, set that to <code>true</code> or <code>false</code> and restart SUDS. A <code>LOCAL_MODE_ENABLED</code> environment variable, where one is set, takes precedence over the file (see docs/DEPLOYMENT.md).</p></body></html>`;
     function buildRouter() {
       const r = new Router2();
       for (const mod of ROUTE_MODULES) globRequire_routes(`./routes/${mod}`)(r);
@@ -22988,15 +23008,15 @@ async function start({ wasmUrl, onSaveError: onSaveError2, onLockLost: onLockLos
     return { ok: true };
   });
   const demo = require_demo();
+  const demoOpts = () => ({ alongside: isStaticHost() });
   router.get("/api/local/demo", (ctx) => {
     if (!ctx.user) throw new import_http2.HttpError(401, "Sign in first");
-    return demo.status();
+    return demo.offer(demoOpts());
   });
   router.post("/api/local/demo", (ctx) => {
     if (!ctx.user) throw new import_http2.HttpError(401, "Sign in first");
-    const st = demo.status();
-    if (st.loaded) throw new import_http2.HttpError(400, "Sample data is already loaded");
-    if (st.clients_total > 0) throw new import_http2.HttpError(400, "Sample data can only be added while this device has no clients yet");
+    const refused = demo.loadRefusal(demo.status(), demoOpts());
+    if (refused) throw new import_http2.HttpError(400, refused);
     return demo.seed({ actor: ctx.user.id, workers: [ctx.user.id], clinician: null, supervisor: ctx.user.id });
   });
   router.delete("/api/local/demo", (ctx) => {

@@ -27,6 +27,3 @@ const stamp = (rel, pattern, replacement) => {
 // The service worker's cache name must change with every release, or phones keep serving the old shell
 // against a new API.
 stamp('public/sw.js', /(const VERSION = ')[^']*(')/, `$1suds-shell-${version}$2`);
-
-// The native Android and iOS projects under mobile/ are deprecated (docs/PLATFORM.md) and no longer
-// stamped; their version fields stay at whatever the last stamped release wrote.

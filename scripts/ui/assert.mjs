@@ -22,6 +22,24 @@ export async function until(fn, { timeout = 10000, every = 200 } = {}) {
   }
 }
 
+/**
+ * Wait until the app has finished what it was doing: no request in flight, nothing scheduled (the Home
+ * tour), the current address rendered, and quiet for `quiet` ms (public/app.js keeps window.__sudsActivity).
+ * This is what the fixed waitForTimeout() calls after a goto, a reload or a click were guessing at.
+ * Throws on timeout, so a page that never settles fails the script instead of passing by luck.
+ */
+export async function settle(page, { timeout = 15000, quiet = 120 } = {}) {
+  await page.waitForFunction((q) => {
+    const a = window.__sudsActivity;
+    return !!a && a.pending === 0 && a.rendered === location.hash && Date.now() - a.at >= q;
+  }, quiet, { timeout, polling: 50 });
+}
+
+/** Wait until the in-browser kernel has written everything to IndexedDB (its save is debounced). */
+export async function saved(page, { timeout = 15000 } = {}) {
+  await page.waitForFunction(() => window.SUDS_LOCAL && !(window.SUDS_LOCAL.isDirty && window.SUDS_LOCAL.isDirty()), null, { timeout, polling: 50 });
+}
+
 export function makeChecks(name) {
   const failures = [];
   const results = [];
