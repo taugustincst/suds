@@ -37,6 +37,12 @@ A JSON array or \`{ "notes": [...] }\` is also accepted. Response: \`202 { impor
 ## Break-glass
 
 Administrators may read a clinical note by sending \`X-Break-Glass-Reason: <reason>\` with \`GET /api/notes/:id\`; the access and reason are written to the audit log.
+
+## Retries and concurrent edits
+
+- **Idempotency-Key** (POST): send a key (1-255 printable characters) and a repeat of the same request by the same user within 24 hours returns the first answer (with \`Idempotent-Replayed: true\`) instead of running again. The same key with a different body is refused with 422. Only successful answers are remembered. Not applied to sign-in, sync, setup or account routes.
+- **if_updated_at** (PUT body): the \`updated_at\` of the record as you loaded it. If the record has changed since, the save is refused with \`409 { error, stale: true, updated_at }\` and nothing is written. Omit it to save unconditionally. Successful PUTs return the new \`updated_at\`.
+- **Re-admission**: \`POST /api/clients/check-duplicates\` returns \`readmit\` (discharged records outside the caller's caseload that match on surname + date of birth or phone). \`POST /api/clients/:id/readmit { first_name, last_name, dob, phone, reason }\` assigns the caller, opens an episode and queues the event for supervisor review.
 `;
 fs.writeFileSync(require('node:path').join(__dirname, '..', 'docs', 'API.md'), out);
 console.log(`${rows.length} routes documented`);
