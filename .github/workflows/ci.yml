@@ -52,3 +52,49 @@ jobs:
       - name: Browser regression suite
         working-directory: src
         run: npm run build:local && scripts/ui/run-all.sh
+  # Node 22 leaves maintenance in April 2027 and node:sqlite is still experimental, so the suite also runs on
+  # the next LTS line to catch breakage early (docs/DEPLOYMENT.md, "Node.js support and the move to 24").
+  # Advisory only: a failure here does not fail the build until .nvmrc moves to 24. There is no setup-node
+  # action (marketplace actions are off), so the official tarball is downloaded and checked against SHASUMS.
+  node24:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Check out
+        run: git clone --depth 1 "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
+      - name: Install Node 24 (official tarball, checksum verified)
+        run: |
+          base=https://nodejs.org/dist/latest-v24.x
+          cd "$RUNNER_TEMP"
+          curl -fsSLO "$base/SHASUMS256.txt"
+          file="$(grep -o 'node-v24\.[0-9.]*-linux-x64\.tar\.xz' SHASUMS256.txt | head -1)"
+          [ -n "$file" ] || { echo "::error::No linux-x64 tarball listed in $base/SHASUMS256.txt"; exit 1; }
+          curl -fsSLO "$base/$file"
+          grep " $file\$" SHASUMS256.txt | sha256sum -c -
+          mkdir -p node24 && tar -xJf "$file" -C node24 --strip-components=1
+          echo "$RUNNER_TEMP/node24/bin" >> "$GITHUB_PATH"
+      - name: Install
+        working-directory: src
+        run: node --version && npm ci --no-audit --no-fund
+      - name: Test on Node 24
+        working-directory: src
+        run: npm test
+  # The browser suite drives Chromium; iPhones run WebKit. This smoke subset runs the two phone-shaped
+  # scripts (the static build and the tester's retest, both on an iPhone 13 profile) in Playwright's WebKit.
+  # Advisory while it beds in (continue-on-error). Playwright's WebKit on Linux is not iOS Safari, so the
+  # real-device release checklist (docs/ADOPTION.md) still applies.
+  webkit:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Check out
+        run: git clone --depth 1 "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
+      - name: Install Playwright WebKit (test-only)
+        working-directory: src
+        run: npm ci --no-audit --no-fund && npm i --no-save --no-audit --no-fund playwright@1.56.1 && npx playwright install --with-deps webkit
+      - name: WebKit smoke subset
+        working-directory: src
+        env:
+          SUDS_BROWSER: webkit
+          SCRIPTS: static-site qa-retest
+        run: npm run build:local && scripts/ui/run-all.sh

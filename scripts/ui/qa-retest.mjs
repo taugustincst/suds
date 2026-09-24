@@ -11,7 +11,8 @@
 // old build) and every finding "was still broken". The "upgraded profile" section at the end replays
 // exactly that: the static site built from the pre-fix commit, a profile set up on it, then the current
 // build served at the same origin into the same profile — the situation a fresh profile never covers.
-import { chromium, devices } from 'playwright';
+import * as pw from 'playwright';
+const { devices } = pw;
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -19,6 +20,10 @@ import http from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { makeChecks, until } from './assert.mjs';
+// SUDS_BROWSER=webkit (or firefox) runs this script in that engine instead of Chromium; CI's WebKit smoke
+// job uses it as the nearest thing to iPhone Safari a Linux runner has.
+const browserType = pw[process.env.SUDS_BROWSER || 'chromium'];
+if (!browserType || !browserType.launch) throw new Error(`SUDS_BROWSER=${process.env.SUDS_BROWSER} is not a Playwright browser (chromium, webkit, firefox)`);
 const { ok, eq, fail, finish } = makeChecks('qa-retest');
 const require = createRequire(import.meta.url);
 const repo = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..');
@@ -32,7 +37,7 @@ const surfaces = [
 ];
 const png = '/tmp/suds-qa-retest.png';
 fs.writeFileSync(png, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAADklEQVQI12P4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==', 'base64'));
-const browser = await chromium.launch();
+const browser = await browserType.launch();
 const errors = [];
 const a11yHas = async (page, re) => { const walk = (n) => !!n && (re.test(n.name || '') || (n.children || []).some(walk)); return walk(await page.accessibility.snapshot()); };
 
@@ -180,7 +185,7 @@ else if (buildOldSite()) {
   const dismissTour = async (page) => { for (let i = 0; i < 5; i++) { const b = await page.$('.modal button.primary'); if (!b) break; await b.click(); await page.waitForTimeout(150); } };
   try {
     // --- the tester's history, on the old build ---
-    let ctx = await chromium.launchPersistentContext(profile, phone);
+    let ctx = await browserType.launchPersistentContext(profile, phone);
     let page = ctx.pages()[0] || await ctx.newPage();
     await page.goto(base + '/'); await page.waitForSelector('input[name=display_name]', { timeout: 15000 });
     await page.fill('input[name=display_name]', 'QATEST'); await page.selectOption('select[name=role]', 'admin');
@@ -202,7 +207,7 @@ else if (buildOldSite()) {
 
     // --- the current build, same origin, same profile ---
     handler = plainStatic(newSite);
-    ctx = await chromium.launchPersistentContext(profile, phone);
+    ctx = await browserType.launchPersistentContext(profile, phone);
     page = ctx.pages()[0] || await ctx.newPage();
     const upErrors = [];
     page.on('pageerror', e => upErrors.push(`${label}: PAGEERROR ${e.message}`));

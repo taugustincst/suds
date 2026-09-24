@@ -1,20 +1,37 @@
-# Keeps the two supply chains SUDS has under watch. There are no runtime npm dependencies (Node built-ins
-# only, see CLAUDE.md); the npm entry covers the build-time devDependencies that go into the browser kernel
-# (esbuild, sql.js, @noble/*, fflate, buffer). The workflows use no marketplace actions today, so the
-# github-actions entry is there for the day one is added.
+# Keeps the supply chains SUDS has under watch. There are no runtime npm dependencies (Node built-ins only,
+# see CLAUDE.md); the npm entry covers the build-time devDependencies that go into the browser kernel.
+#
+# esbuild and sql.js are ignored here. They produce the committed kernel (public/local/kernel.js and
+# sql-wasm.wasm), and CI's drift check fails any change to them that does not also rebuild and commit that
+# kernel, which a Dependabot PR never does. They are updated by hand: bump the version in package.json,
+# `npm install`, `npm run build:local`, run the browser suite, and commit package.json, package-lock.json
+# and public/local/ together (docs/RELEASE.md, "Updating the kernel's build tools").
+#
+# The remaining npm devDependencies (@noble/*, fflate, buffer) are grouped into one monthly PR. They are
+# bundled into the kernel too, so that PR also needs `npm run build:local` committed on its branch before
+# CI goes green; one PR a month keeps that to a single rebuild.
 version: 2
 updates:
   - package-ecosystem: npm
     directory: /
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 3
     labels: [dependencies]
+    ignore:
+      - dependency-name: esbuild
+      - dependency-name: sql.js
+    groups:
+      kernel-devdependencies:
+        dependency-type: development
+        patterns: ['*']
+  # The workflows use no marketplace actions today; this is there for the day one is added.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     labels: [dependencies]
+  # The Dockerfile's Node base image.
   - package-ecosystem: docker
     directory: /
     schedule:

@@ -1,13 +1,25 @@
 name: Web app
 # Publishes the standalone, browser-only build (scripts/build-static-site.js) to GitHub Pages: a public
 # URL that needs no office server, no Node process and no database — everything runs in the visitor's own
-# browser, the same as the phone apps. Uses no marketplace actions: the site is pushed to a gh-pages
-# branch with plain git and Pages is enabled with `gh api`, both already on the hosted runner.
+# browser. Uses no marketplace actions: the site is pushed to a gh-pages branch with plain git and Pages
+# is enabled with `gh api`, both already on the hosted runner.
+#
+# Published on releases only, never on a push to main: the demo is a public URL, and unreleased code does
+# not belong on one (docs/WEB_APP.md, "When it is published"). It runs when a v* tag is pushed, when a
+# release is published by a person, and when release.yml starts it with `gh workflow run` — a release that
+# workflow creates with GITHUB_TOKEN fires no `release` event for other workflows, so it has to be asked.
+# workflow_dispatch also lets the product owner republish a given tag by hand (Run workflow → pick the tag).
 on:
   push:
-    branches: [main]
-    paths: ['public/**', 'server/**', 'local/**', 'scripts/build-static-site.js', 'scripts/build-local.js', '.github/workflows/web-app.yml']
+    tags: ['v*']
+  release:
+    types: [published]
   workflow_dispatch: {}
+# A tag push, a release and release.yml's dispatch can all arrive for the same version; publish them one
+# at a time rather than racing two force-pushes to gh-pages.
+concurrency:
+  group: web-app-pages
+  cancel-in-progress: false
 permissions:
   contents: write
   # The dedicated scope for standing Pages up and deploying to it; contents: write alone was not enough
@@ -25,6 +37,19 @@ jobs:
       - name: Build the standalone site
         working-directory: src
         run: npm ci --no-audit --no-fund && node scripts/build-static-site.js _site
+      # The demo is QA'd by the version it shows on screen (docs/RELEASE.md), so say which one this is and
+      # refuse to publish a tag whose package.json disagrees with it.
+      - name: Version being published
+        working-directory: src
+        run: |
+          ver="$(node -p "require('./package.json').version")"
+          echo "Publishing SUDS $ver (ref ${GITHUB_REF_NAME}, commit ${GITHUB_SHA})"
+          case "${GITHUB_REF_NAME}" in v*) [ "${GITHUB_REF_NAME}" = "v$ver" ] || { echo "::error::Tag ${GITHUB_REF_NAME} does not match package.json $ver"; exit 1; };; esac
+          if [ -f _site/version.json ]; then
+            grep -q "\"$ver\"" _site/version.json || { echo "::error::_site/version.json does not carry $ver"; cat _site/version.json; exit 1; }
+          fi
+          echo "### Demo site: SUDS $ver" >> "$GITHUB_STEP_SUMMARY"
+          echo "Check that the on-screen version reads $ver before signing off the release QA." >> "$GITHUB_STEP_SUMMARY"
       - name: Verify it actually boots with no backend
         working-directory: src
         run: |

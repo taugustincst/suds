@@ -2,11 +2,16 @@
 // phone-width viewport, using nothing but a plain static file server — the same as GitHub Pages, S3, or
 // a county web server would provide. This is the thing docs/WEB_APP.md tells someone to open on their
 // phone, so it gets the same end-to-end proof the office app and the phone apps get.
-import { chromium, devices } from 'playwright';
+import * as pw from 'playwright';
+const { devices } = pw;
 import { makeChecks, until } from './assert.mjs';
+// SUDS_BROWSER=webkit (or firefox) runs this script in that engine instead of Chromium; CI's WebKit smoke
+// job uses it as the nearest thing to iPhone Safari a Linux runner has.
+const browserType = pw[process.env.SUDS_BROWSER || 'chromium'];
+if (!browserType || !browserType.launch) throw new Error(`SUDS_BROWSER=${process.env.SUDS_BROWSER} is not a Playwright browser (chromium, webkit, firefox)`);
 const base = process.env.SUDS_STATIC_URL || 'http://127.0.0.1:8877';
 const { ok, eq, finish } = makeChecks('static-site');
-const browser = await chromium.launch();
+const browser = await browserType.launch();
 const ctx = await browser.newContext({ ...devices['iPhone 13'], isMobile: true, hasTouch: true });
 const page = await ctx.newPage();
 const errors = [];
