@@ -74,3 +74,28 @@ if (!/'get-app\.html'/.test(sw)) throw new Error('build-static-site: sw.js must 
 fs.writeFileSync(swPath, sw.replace(shellMarker, "const SHELL = ['./', 'index.html', 'local-boot.js',"));
 
 console.log(`[suds] static site written to ${path.relative(root, outDir)}/ (${count + 1} files, always-local)`);
+
+// Provider pictures for the starter directories. A browser cannot fetch them from the providers' own
+// websites (those sites send no CORS headers), so "Download provider pictures" on this build reads copies
+// published with the site, from region-pictures/<region>/ (server/region.js, bundledPicture). Best effort:
+// a site that fails is left out, and a build with no network still succeeds, just without pictures.
+//   SUDS_REGION_PICTURES unset or "fetch" — download them now (scripts/fetch-region-pictures.js)
+//   SUDS_REGION_PICTURES=off              — leave them out (the browser suite's builds in CI)
+//   SUDS_REGION_PICTURES=<folder>         — copy a folder written earlier by `npm run fetch-region-pictures`
+(async () => {
+  const mode = process.env.SUDS_REGION_PICTURES || 'fetch';
+  const dest = path.join(outDir, 'region-pictures');
+  try {
+    if (mode === 'off') { console.log('[suds] provider pictures left out (SUDS_REGION_PICTURES=off)'); return; }
+    if (mode !== 'fetch') {
+      const src = path.resolve(root, mode);
+      if (!fs.existsSync(src)) { console.warn(`[suds] warning: SUDS_REGION_PICTURES folder ${src} does not exist; this build has no provider pictures`); return; }
+      console.log(`[suds] provider pictures copied from ${src} (${copyDir(src, dest)} files)`);
+      return;
+    }
+    const { bundled, tried } = await require('./fetch-region-pictures.js').fetchAll({ outDir: dest });
+    if (!bundled) console.warn(`[suds] warning: none of the ${tried} provider pictures could be downloaded (no network?). The site is complete without them; "Download provider pictures" says they are not available on this build.`);
+  } catch (e) {
+    console.warn(`[suds] warning: provider pictures skipped: ${e.message}`);
+  }
+})();

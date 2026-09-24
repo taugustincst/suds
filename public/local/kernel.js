@@ -20884,6 +20884,132 @@ var require_sacramento_metro = __commonJS({
   }
 });
 
+// server/regions/index.js
+var require_regions = __commonJS({
+  "server/regions/index.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    module.exports = { "sacramento-metro": require_sacramento_metro() };
+  }
+});
+
+// server/region-pictures.js
+var require_region_pictures = __commonJS({
+  "server/region-pictures.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var REGIONS = require_regions();
+    var MAX_PICTURE_BYTES = 2 * 1024 * 1024;
+    var MAX_PAGE_BYTES = 2 * 1024 * 1024;
+    var fetchImpl = (...args) => globalThis.fetch(...args);
+    function _setFetchForTests(fn) {
+      fetchImpl = fn || ((...args) => globalThis.fetch(...args));
+    }
+    var soft = (message, extra = {}) => Object.assign(new Error(message), { soft: true }, extra);
+    var sniff = (buf) => buf.length > 3 && buf[0] === 255 && buf[1] === 216 && buf[2] === 255 ? "image/jpeg" : buf.length > 8 && buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71 ? "image/png" : buf.length > 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP" ? "image/webp" : null;
+    var EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+    function pickImageUrl(html, baseUrl) {
+      const head = String(html).slice(0, 512 * 1024);
+      const meta = (prop) => {
+        const m = new RegExp(`<meta[^>]+(?:property|name)=["']${prop}["'][^>]*>`, "i").exec(head);
+        if (!m) return null;
+        const c = /content=["']([^"']+)["']/i.exec(m[0]);
+        return c ? c[1] : null;
+      };
+      const link = (rel) => {
+        const m = new RegExp(`<link[^>]+rel=["'][^"']*${rel}[^"']*["'][^>]*>`, "i").exec(head);
+        if (!m) return null;
+        const c = /href=["']([^"']+)["']/i.exec(m[0]);
+        return c ? c[1] : null;
+      };
+      const candidate = meta("og:image") || meta("og:image:secure_url") || meta("twitter:image") || link("apple-touch-icon") || link("icon");
+      if (!candidate) return null;
+      try {
+        const u = new URL(candidate.replace(/&amp;/g, "&"), baseUrl);
+        return u.protocol === "https:" ? u.href : null;
+      } catch {
+        return null;
+      }
+    }
+    var PRIVATE_HOST = /^(localhost|.*\.local|.*\.internal|.*\.localhost)$/i;
+    function assertPublicHttps(u) {
+      const url = new URL(u);
+      if (url.protocol !== "https:") throw soft("not an https address");
+      const host = url.hostname.replace(/^\[|\]$/g, "");
+      if (PRIVATE_HOST.test(host)) throw soft("that address is not on the public internet");
+      if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+        const [a, b] = host.split(".").map(Number);
+        if (a === 127 || a === 0 || a === 10 || a === 169 && b === 254 || a === 172 && b >= 16 && b <= 31 || a === 192 && b === 168 || a === 100 && b >= 64 && b <= 127 || a >= 224) {
+          throw soft("that address is not on the public internet");
+        }
+      }
+      if (host.includes(":") || /^::/.test(host)) throw soft("that address is not on the public internet");
+      return url.href;
+    }
+    var NETWORK_CODES = /^(ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET)$/;
+    var CERT_CODES = /CERT|SELF_SIGNED|UNABLE_TO_(GET|VERIFY)/;
+    function describeNetworkError(e) {
+      const code = e && e.cause && (e.cause.code || e.cause.name) || e && e.code || "";
+      const proxyHint = proc.env.HTTPS_PROXY || proc.env.https_proxy ? proc.env.NODE_USE_ENV_PROXY === "1" ? " HTTPS_PROXY is set; check the proxy allows these sites." : ' HTTPS_PROXY is set but Node only uses it when NODE_USE_ENV_PROXY=1 is set too (docs/DEPLOYMENT.md, "Outbound internet").' : ' If the office network only reaches the internet through a proxy, set HTTPS_PROXY and NODE_USE_ENV_PROXY=1 (docs/DEPLOYMENT.md, "Outbound internet").';
+      if (CERT_CODES.test(String(code))) return soft(`the connection's certificate was not trusted (${code}). A proxy that inspects HTTPS needs its certificate given to Node with NODE_EXTRA_CA_CERTS.`, { network: true });
+      if (NETWORK_CODES.test(String(code)) || /fetch failed/i.test(e && e.message)) return soft(`the computer running SUDS could not reach the internet${code ? ` (${code})` : ""}.${proxyHint}`, { network: true });
+      return null;
+    }
+    async function get(url, { timeoutMs, maxBytes, hops = 4 }) {
+      let target = assertPublicHttps(url);
+      let res;
+      for (let i = 0; i <= hops; i++) {
+        try {
+          res = await fetchImpl(target, { signal: AbortSignal.timeout(timeoutMs), redirect: "manual", headers: { "User-Agent": "SUDS resource directory", Accept: "*/*" } });
+        } catch (e) {
+          if (e && (e.name === "TimeoutError" || e.name === "AbortError")) throw soft("timed out");
+          throw describeNetworkError(e) || e;
+        }
+        if (res.status < 300 || res.status >= 400) break;
+        const location = res.headers.get("location");
+        if (!location) break;
+        if (i === hops) throw soft("too many redirects");
+        target = assertPublicHttps(new URL(location, target).href);
+      }
+      if (!res.ok) throw soft(`site returned ${res.status}`);
+      if (Number(res.headers.get("content-length") || 0) > maxBytes) throw soft("file is too large");
+      const buf = import_buffer.Buffer.from(await res.arrayBuffer());
+      if (buf.length > maxBytes) throw soft("file is too large");
+      return buf;
+    }
+    async function downloadPicture(target, { timeoutMs = 12e3, deadline = 0 } = {}) {
+      let url = target.url;
+      const budget = () => deadline ? Math.min(timeoutMs, deadline - Date.now()) : timeoutMs;
+      const late = { ok: false, error: "ran out of time \u2014 try this one again" };
+      try {
+        if (budget() <= 0) return late;
+        if (!url) {
+          if (!/^https:\/\//i.test(target.website || "")) return { ok: false, error: "no website on file" };
+          const html = await get(target.website, { timeoutMs: budget(), maxBytes: MAX_PAGE_BYTES });
+          url = pickImageUrl(html.toString("utf8"), target.website);
+          if (!url) return { ok: false, error: "their website does not advertise a picture" };
+        }
+        if (!/^https:\/\//i.test(url)) return { ok: false, error: "not an https address" };
+        if (budget() <= 0) return late;
+        const buf = await get(url, { timeoutMs: budget(), maxBytes: MAX_PICTURE_BYTES });
+        const type = sniff(buf);
+        if (!type) return { ok: false, error: "not a JPEG, PNG or WebP picture" };
+        return { ok: true, buf, type, url };
+      } catch (e) {
+        if (e && e.soft) return { ok: false, error: e.message, ...e.network ? { network: true } : {} };
+        if (e && e.name === "TimeoutError") return { ok: false, error: "timed out" };
+        return { ok: false, error: e && e.message || "could not connect" };
+      }
+    }
+    function regionTargets(regionId) {
+      const region = REGIONS[regionId];
+      if (!region) throw new Error("Unknown region");
+      return region.providers.filter((p) => p.image_url || p.website).map((p) => ({ key: p.key, name: p.name, category: p.category, url: p.image_url || null, website: p.website || null }));
+    }
+    module.exports = { REGIONS, MAX_PICTURE_BYTES, EXT, sniff, pickImageUrl, assertPublicHttps, get, downloadPicture, regionTargets, describeNetworkError, _setFetchForTests };
+  }
+});
+
 // server/region.js
 var require_region = __commonJS({
   "server/region.js"(exports, module) {
@@ -20894,8 +21020,9 @@ var require_region = __commonJS({
     var audit3 = require_audit();
     var png = require_png();
     var { uuid: uuid2 } = require_crypto();
-    var REGIONS = { "sacramento-metro": require_sacramento_metro() };
-    var MAX_PICTURE_BYTES = 2 * 1024 * 1024;
+    var config = require_config();
+    var pictures = require_region_pictures();
+    var REGIONS = pictures.REGIONS;
     var norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     var tagList = (list2, allowed) => (Array.isArray(list2) ? list2 : String(list2 || "").split(",")).map((x) => String(x).trim().toLowerCase().replace(/[\s-]+/g, "_")).filter((x) => allowed.includes(x)).filter((x, i, a) => a.indexOf(x) === i).join(",");
     var stateKey = (id) => `region_loaded:${id}`;
@@ -20935,7 +21062,7 @@ var require_region = __commonJS({
       const note = provenance(region).replace("{DATE}", today);
       const prev = readState(regionId);
       const ids = prev ? { ...prev.ids } : {};
-      let added = 0, enriched = 0, unchanged = 0, pictures = 0;
+      let added = 0, enriched = 0, unchanged = 0, pictures2 = 0;
       const existingByName = /* @__PURE__ */ new Map();
       db3.transaction(() => {
         for (const r of db3.all(`SELECT id, name, city FROM resources`)) existingByName.set(`${norm(r.name)}|${norm(r.city)}`, r.id);
@@ -21013,117 +21140,117 @@ var require_region = __commonJS({
               thumb.toString("base64"),
               actor || null
             );
-            pictures++;
+            pictures2++;
           }
         }
         db3.setSetting(stateKey(regionId), JSON.stringify({ at: db3.now(), ids }));
-        audit3.log({ user: actor ? { id: actor, username: "region-import" } : { id: null, username: "region-import" }, action: "region.load", details: { region: regionId, added, enriched, unchanged, pictures } });
+        audit3.log({ user: actor ? { id: actor, username: "region-import" } : { id: null, username: "region-import" }, action: "region.load", details: { region: regionId, added, enriched, unchanged, pictures: pictures2 } });
       });
-      return { added, enriched, unchanged, pictures, total: region.providers.length };
+      return { added, enriched, unchanged, pictures: pictures2, total: region.providers.length };
     }
     function pictureTargets(regionId) {
-      const region = REGIONS[regionId];
-      if (!region) throw new Error("Unknown region");
+      if (!REGIONS[regionId]) throw new Error("Unknown region");
       const st = readState(regionId);
       if (!st) return [];
-      return region.providers.filter((p) => (p.image_url || p.website) && st.ids[p.key]).map((p) => ({ key: p.key, id: st.ids[p.key], name: p.name, category: p.category, url: p.image_url || null, website: p.website })).map((t) => {
+      return pictures.regionTargets(regionId).filter((t) => st.ids[t.key]).map((t) => ({ ...t, id: st.ids[t.key], region: regionId })).map((t) => {
         const r = db3.one(`SELECT id, category FROM resources WHERE id=?`, t.id);
         return r ? { ...t, category: t.category || r.category } : null;
       }).filter(Boolean);
     }
-    var sniff = (buf) => buf.length > 3 && buf[0] === 255 && buf[1] === 216 && buf[2] === 255 ? "image/jpeg" : buf.length > 8 && buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71 ? "image/png" : buf.length > 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP" ? "image/webp" : null;
-    function pickImageUrl(html, baseUrl) {
-      const head = String(html).slice(0, 512 * 1024);
-      const meta = (prop) => {
-        const m = new RegExp(`<meta[^>]+(?:property|name)=["']${prop}["'][^>]*>`, "i").exec(head);
-        if (!m) return null;
-        const c = /content=["']([^"']+)["']/i.exec(m[0]);
-        return c ? c[1] : null;
-      };
-      const link = (rel) => {
-        const m = new RegExp(`<link[^>]+rel=["'][^"']*${rel}[^"']*["'][^>]*>`, "i").exec(head);
-        if (!m) return null;
-        const c = /href=["']([^"']+)["']/i.exec(m[0]);
-        return c ? c[1] : null;
-      };
-      const candidate = meta("og:image") || meta("og:image:secure_url") || meta("twitter:image") || link("apple-touch-icon") || link("icon");
-      if (!candidate) return null;
-      try {
-        const u = new URL(candidate, baseUrl);
-        return u.protocol === "https:" ? u.href : null;
-      } catch {
-        return null;
-      }
+    function picturesNeedingThumbnails(regionId) {
+      const ids = pictureTargets(regionId).map((t) => t.id);
+      if (!ids.length) return [];
+      return db3.all(`SELECT p.id AS photo_id, p.resource_id FROM resource_photos p WHERE p.resource_id IN (${ids.map(() => "?").join(",")}) AND p.caption LIKE 'From %'
+    AND (p.thumb_b64 IS NULL OR p.thumb_b64 IN (SELECT q.thumb_b64 FROM resource_photos q WHERE q.resource_id=p.resource_id AND q.caption LIKE '%(placeholder%'))`, ...ids);
     }
-    var PRIVATE_HOST = /^(localhost|.*\.local|.*\.internal|.*\.localhost)$/i;
-    function assertPublicHttps(u) {
-      const url = new URL(u);
-      if (url.protocol !== "https:") throw Object.assign(new Error("not an https address"), { soft: true });
-      const host = url.hostname.replace(/^\[|\]$/g, "");
-      if (PRIVATE_HOST.test(host)) throw Object.assign(new Error("that address is not on the public internet"), { soft: true });
-      if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
-        const [a, b] = host.split(".").map(Number);
-        if (a === 127 || a === 0 || a === 10 || a === 169 && b === 254 || a === 172 && b >= 16 && b <= 31 || a === 192 && b === 168 || a >= 224) {
-          throw Object.assign(new Error("that address is not on the public internet"), { soft: true });
-        }
-      }
-      if (host.includes(":") || /^::/.test(host)) throw Object.assign(new Error("that address is not on the public internet"), { soft: true });
-      return url.href;
+    var manifests = /* @__PURE__ */ new Map();
+    function bundleBase(regionId) {
+      return new URL(`region-pictures/${encodeURIComponent(regionId)}/`, globalThis.location.href);
     }
-    async function get(url, { timeoutMs, maxBytes, hops = 4 }) {
-      let target = assertPublicHttps(url);
-      let res;
-      for (let i = 0; i <= hops; i++) {
-        res = await fetch(target, { signal: AbortSignal.timeout(timeoutMs), redirect: "manual", headers: { "User-Agent": "SUDS resource directory", Accept: "*/*" } });
-        if (res.status < 300 || res.status >= 400) break;
-        const location = res.headers.get("location");
-        if (!location) break;
-        if (i === hops) throw Object.assign(new Error("too many redirects"), { soft: true });
-        target = assertPublicHttps(new URL(location, target).href);
-      }
-      if (!res.ok) throw Object.assign(new Error(`site returned ${res.status}`), { soft: true });
-      if (Number(res.headers.get("content-length") || 0) > maxBytes) throw Object.assign(new Error("file is too large"), { soft: true });
-      const buf = import_buffer.Buffer.from(await res.arrayBuffer());
-      if (buf.length > maxBytes) throw Object.assign(new Error("file is too large"), { soft: true });
-      return buf;
-    }
-    async function fetchPicture(target, { actor, timeoutMs = 12e3, deadline = 0 } = {}) {
-      let url = target.url;
-      const budget = () => deadline ? Math.min(timeoutMs, deadline - Date.now()) : timeoutMs;
-      try {
-        if (budget() <= 0) return { key: target.key, ok: false, error: "ran out of time \u2014 try this one again" };
-        if (!url) {
-          if (!/^https:\/\//i.test(target.website || "")) return { key: target.key, ok: false, error: "no website on file" };
-          const html = await get(target.website, { timeoutMs: budget(), maxBytes: 2 * 1024 * 1024 });
-          url = pickImageUrl(html.toString("utf8"), target.website);
-          if (!url) return { key: target.key, ok: false, error: "their website does not advertise a picture" };
-        }
-        if (!/^https:\/\//i.test(url)) return { key: target.key, ok: false, error: "not an https address" };
-        if (budget() <= 0) return { key: target.key, ok: false, error: "ran out of time \u2014 try this one again" };
-        const buf = await get(url, { timeoutMs: budget(), maxBytes: MAX_PICTURE_BYTES });
-        const type = sniff(buf);
-        if (!type) return { key: target.key, ok: false, error: "not a JPEG, PNG or WebP picture" };
-        db3.transaction(() => {
-          db3.run(`UPDATE resource_photos SET sort_order = sort_order + 1, updated_at=? WHERE resource_id=?`, db3.now(), target.id);
-          const placeholder = png.initialsCard(target.name || "Provider", target.category || "other", 320, 180).toString("base64");
-          db3.run(
-            `INSERT INTO resource_photos(id,resource_id,caption,content_type,bytes,data_b64,thumb_b64,sort_order,uploaded_by) VALUES(?,?,?,?,?,?,?,0,?)`,
-            uuid2(),
-            target.id,
-            `From ${new URL(url).hostname}`,
-            type,
-            buf.length,
-            buf.toString("base64"),
-            placeholder,
-            actor || null
-          );
-          db3.run(`UPDATE resources SET updated_at=? WHERE id=?`, db3.now(), target.id);
+    function bundledManifest(regionId) {
+      if (!manifests.has(regionId)) {
+        const p = (async () => {
+          let res;
+          try {
+            res = await fetch(new URL("manifest.json", bundleBase(regionId)).href, { cache: "no-cache" });
+          } catch {
+            res = null;
+          }
+          if (!res || !res.ok) return null;
+          try {
+            const m = await res.json();
+            return m && m.pictures && typeof m.pictures === "object" ? m : null;
+          } catch {
+            return null;
+          }
+        })();
+        manifests.set(regionId, p);
+        p.then((m) => {
+          if (!m) manifests.delete(regionId);
         });
-        audit3.log({ user: { id: actor, username: "region-import" }, action: "region.picture", entity: "resource", entityId: target.id, details: { url, bytes: buf.length, type } });
-        return { key: target.key, ok: true, bytes: buf.length, type, url };
-      } catch (e) {
-        return { key: target.key, ok: false, error: e.soft ? e.message : e.name === "TimeoutError" ? "timed out" : e.message || "could not connect" };
       }
+      return manifests.get(regionId);
+    }
+    var NOT_IN_BUILD = "not available on this device build (it was published without a picture for this program)";
+    async function bundledPicture(target) {
+      const manifest = await bundledManifest(target.region);
+      if (!manifest) return { ok: false, error: "provider pictures are not available on this device build (none were included when it was published)", bundle: "missing" };
+      const entry = manifest.pictures[target.key];
+      if (!entry || typeof entry.file !== "string") return { ok: false, error: NOT_IN_BUILD };
+      const base = bundleBase(target.region);
+      const file = new URL(entry.file, base);
+      if (file.origin !== base.origin || !file.pathname.startsWith(base.pathname)) return { ok: false, error: NOT_IN_BUILD };
+      let res;
+      try {
+        res = await fetch(file.href);
+      } catch {
+        return { ok: false, error: "this device could not load the picture from the SUDS site; check the connection and try again" };
+      }
+      if (!res.ok) return { ok: false, error: NOT_IN_BUILD };
+      const buf = import_buffer.Buffer.from(await res.arrayBuffer());
+      if (buf.length > pictures.MAX_PICTURE_BYTES) return { ok: false, error: "file is too large" };
+      const type = pictures.sniff(buf);
+      if (!type) return { ok: false, error: "not a JPEG, PNG or WebP picture" };
+      return { ok: true, buf, type, url: /^https:\/\//.test(entry.source_url || "") ? entry.source_url : file.href };
+    }
+    var isStaticBuild = () => {
+      try {
+        return globalThis.SUDS_STATIC_HOST === true;
+      } catch {
+        return false;
+      }
+    };
+    var MAX_THUMB_BYTES = 96 * 1024;
+    async function fetchPicture(target, { actor, timeoutMs = 12e3, deadline = 0 } = {}) {
+      let got;
+      if (config.local) {
+        got = isStaticBuild() ? await bundledPicture(target) : { ok: false, error: "download provider pictures on the office server; they reach this device at its next sync" };
+      } else {
+        got = await pictures.downloadPicture(target, { timeoutMs, deadline });
+      }
+      if (!got.ok) {
+        const { buf: _unused, ...rest } = got;
+        return { key: target.key, ...rest };
+      }
+      const { buf, type, url } = got;
+      const photoId = uuid2();
+      db3.transaction(() => {
+        db3.run(`UPDATE resource_photos SET sort_order = sort_order + 1, updated_at=? WHERE resource_id=?`, db3.now(), target.id);
+        db3.run(
+          `INSERT INTO resource_photos(id,resource_id,caption,content_type,bytes,data_b64,thumb_b64,sort_order,uploaded_by) VALUES(?,?,?,?,?,?,?,0,?)`,
+          photoId,
+          target.id,
+          `From ${new URL(url).hostname}`,
+          type,
+          buf.length,
+          buf.toString("base64"),
+          buf.length <= MAX_THUMB_BYTES ? buf.toString("base64") : null,
+          actor || null
+        );
+        db3.run(`UPDATE resources SET updated_at=? WHERE id=?`, db3.now(), target.id);
+      });
+      audit3.log({ user: { id: actor, username: "region-import" }, action: "region.picture", entity: "resource", entityId: target.id, details: { url, bytes: buf.length, type } });
+      return { key: target.key, ok: true, bytes: buf.length, type, url, photo_id: photoId, resource_id: target.id };
     }
     function remove({ regionId, actor }) {
       const st = readState(regionId);
@@ -21149,12 +21276,12 @@ var require_region = __commonJS({
       });
       return { removed, kept };
     }
-    module.exports = { REGIONS, list, load, remove, pictureTargets, fetchPicture, pickImageUrl };
+    module.exports = { REGIONS, list, load, remove, pictureTargets, picturesNeedingThumbnails, fetchPicture, pickImageUrl: pictures.pickImageUrl };
   }
 });
 
 // server/routes/regions.js
-var require_regions = __commonJS({
+var require_regions2 = __commonJS({
   "server/routes/regions.js"(exports, module) {
     "use strict";
     init_globals_inject();
@@ -21181,7 +21308,7 @@ var require_regions = __commonJS({
       r.get("/api/regions/:id/pictures", auth3.requireAuth, auth3.requirePerm("resources:write"), (ctx) => {
         if (!region.REGIONS[ctx.params.id]) throw notFound("Unknown region");
         const pending = region.pictureTargets(ctx.params.id).filter((t) => !db3.one(`SELECT COUNT(*) n FROM resource_photos WHERE resource_id=? AND caption NOT LIKE '%(placeholder%'`, t.id).n);
-        return { pending: pending.map((t) => ({ key: t.key, name: t.name, url: t.url })), total: region.pictureTargets(ctx.params.id).length };
+        return { pending: pending.map((t) => ({ key: t.key, name: t.name, url: t.url })), total: region.pictureTargets(ctx.params.id).length, thumbs: region.picturesNeedingThumbnails(ctx.params.id) };
       });
       r.post("/api/regions/:id/pictures", auth3.requireAuth, auth3.requirePerm("resources:write"), async (ctx) => {
         if (!region.REGIONS[ctx.params.id]) throw notFound("Unknown region");
@@ -21190,8 +21317,11 @@ var require_regions = __commonJS({
         const targets = region.pictureTargets(ctx.params.id).filter((t) => keys.includes(t.key));
         const results = [];
         const deadline = Date.now() + BATCH_BUDGET_MS;
+        let unreachable = 0;
         for (const t of targets) {
-          results.push({ name: t.name, ...await region.fetchPicture(t, { actor: ctx.user.id, deadline }) });
+          const out2 = unreachable >= 2 ? { key: t.key, ok: false, error: results[results.length - 1].error, network: true, skipped: true } : await region.fetchPicture(t, { actor: ctx.user.id, deadline });
+          unreachable = out2.network ? unreachable + 1 : 0;
+          results.push({ name: t.name, ...out2 });
         }
         audit3.log({ user: ctx.user, action: "region.pictures.request", ip: ctx.ip, details: { region: ctx.params.id, tried: results.length, ok: results.filter((x) => x.ok).length } });
         return { results };
@@ -21768,7 +21898,10 @@ var require_resources = __commonJS({
         }
         if (ctx.query.get("active") !== "0") where.push("is_active=1");
         const w = where.length ? "WHERE " + where.join(" AND ") : "";
-        const rows = db3.all(`SELECT r.*, (SELECT COUNT(*) FROM referrals x WHERE x.resource_id=r.id) AS referral_count, (SELECT COUNT(*) FROM resource_photos p WHERE p.resource_id=r.id) AS photo_count, (SELECT p.id FROM resource_photos p WHERE p.resource_id=r.id AND p.thumb_b64 IS NOT NULL ORDER BY p.sort_order, p.created_at LIMIT 1) AS cover_photo_id FROM resources r ${w} ORDER BY category, name LIMIT ? OFFSET ?`, ...params, limit2, offset).map((r2) => ({ ...r2, cover_url: r2.cover_photo_id ? `/api/resources/${r2.id}/photos/${r2.cover_photo_id}/thumb` : null }));
+        const rows = db3.all(`SELECT r.*, (SELECT COUNT(*) FROM referrals x WHERE x.resource_id=r.id) AS referral_count, (SELECT COUNT(*) FROM resource_photos p WHERE p.resource_id=r.id) AS photo_count, (SELECT p.id || ':' || (p.thumb_b64 IS NOT NULL) FROM resource_photos p WHERE p.resource_id=r.id AND (p.thumb_b64 IS NOT NULL OR p.data_b64 IS NOT NULL) ORDER BY p.sort_order, p.created_at LIMIT 1) AS cover_photo FROM resources r ${w} ORDER BY category, name LIMIT ? OFFSET ?`, ...params, limit2, offset).map(({ cover_photo, ...r2 }) => {
+          const [pid, thumbed] = String(cover_photo || "").split(":");
+          return { ...r2, cover_url: pid ? `/api/resources/${r2.id}/photos/${pid}/${thumbed === "1" ? "thumb" : "image"}` : null };
+        });
         return { rows, total: db3.one(`SELECT COUNT(*) n FROM resources r ${w}`, ...params).n };
       });
       r.get("/api/resources/:id", auth3.requireAuth, auth3.requirePerm("resources:read", "resources:write"), (ctx) => {
@@ -21830,7 +21963,14 @@ var require_resources = __commonJS({
           others.forEach((id, i) => db3.run(`UPDATE resource_photos SET sort_order=?, updated_at=? WHERE id=?`, i, db3.now(), id));
         }
         if (v.caption !== void 0) db3.run(`UPDATE resource_photos SET caption=?, updated_at=? WHERE id=?`, v.caption, db3.now(), p.id);
-        audit3.log({ user: ctx.user, action: "resource.photo.update", entity: "resource", entityId: p.resource_id, ip: ctx.ip, details: { photo_id: p.id, fields: Object.keys(v) } });
+        const fields = Object.keys(v);
+        if (ctx.body.thumb_url !== void 0) {
+          const thumb = fromDataUrl(ctx.body.thumb_url, MAX_THUMB_BYTES, "Thumbnail");
+          db3.run(`UPDATE resource_photos SET thumb_b64=?, updated_at=? WHERE id=?`, thumb.b64, db3.now(), p.id);
+          db3.run(`UPDATE resources SET updated_at=? WHERE id=?`, db3.now(), p.resource_id);
+          fields.push("thumb");
+        }
+        audit3.log({ user: ctx.user, action: "resource.photo.update", entity: "resource", entityId: p.resource_id, ip: ctx.ip, details: { photo_id: p.id, fields } });
         return { ok: true };
       });
       r.delete("/api/resources/:id/photos/:pid", auth3.requireAuth, auth3.requirePerm("resources:write"), (ctx) => {
@@ -22927,7 +23067,7 @@ var init_ = __esm({
       "./routes/overdose.js": () => require_overdose(),
       "./routes/patient-requests.js": () => require_patient_requests(),
       "./routes/referrals.js": () => require_referrals(),
-      "./routes/regions.js": () => require_regions(),
+      "./routes/regions.js": () => require_regions2(),
       "./routes/reports.js": () => require_reports(),
       "./routes/resources.js": () => require_resources(),
       "./routes/setup.js": () => require_setup(),
@@ -23754,7 +23894,7 @@ var routeLoaders = {
   "patient-requests": () => Promise.resolve().then(() => __toESM(require_patient_requests())),
   forms: () => Promise.resolve().then(() => __toESM(require_forms())),
   documents: () => Promise.resolve().then(() => __toESM(require_documents())),
-  regions: () => Promise.resolve().then(() => __toESM(require_regions())),
+  regions: () => Promise.resolve().then(() => __toESM(require_regions2())),
   imports: () => Promise.resolve().then(() => __toESM(require_imports())),
   dataimport: () => Promise.resolve().then(() => __toESM(require_dataimport2())),
   reports: () => Promise.resolve().then(() => __toESM(require_reports())),

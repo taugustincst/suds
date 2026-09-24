@@ -44,12 +44,29 @@ const stale = x => !x.last_verified_at || Date.now() - Date.parse(x.last_verifie
 const siteHref = w => w ? (w.startsWith('http') ? w : 'https://' + w) : null;
 
 // Starter directory for a whole region: load real programs in one click instead of typing the directory.
+const pictureOutcome = new Map();
+// A picture's bytes, from the office server or from the kernel running in this page.
+async function imageBlob(path) {
+  if (state.local && window.SUDS_LOCAL) {
+    const r = await window.SUDS_LOCAL.handle('GET', path, undefined, {});
+    if (!r || r.status >= 400 || !r.body) throw new Error('picture not found');
+    return new Blob([r.body], { type: r.headers['content-type'] || 'image/jpeg' });
+  }
+  const res = await fetch(path, { credentials: 'same-origin', headers: { 'X-Requested-With': 'suds' } });
+  if (!res.ok) throw new Error('picture not found');
+  return res.blob();
+}
+async function saveThumbnail(resourceId, photoId) {
+  const th = await shrinkImage(await imageBlob(`/api/resources/${resourceId}/photos/${photoId}/image`), 320, 0.75, true);
+  await put(`/api/resources/${resourceId}/photos/${photoId}`, { thumb_url: th.dataUrl }, { quiet: true });
+}
 async function regionCard(refresh) {
   if (!can('resources:write')) return null;
   let data; try { data = await get('/api/regions', { quiet: true }); } catch { return null; }
   const box = h('div', {});
   const draw = (regions) => {
     clear(box);
+    const officeDevice = state.local && !window.SUDS_STATIC_HOST;
     for (const rg of regions) {
       const busy = h('div', { class: 'small muted' });
       const load = async () => {
@@ -58,20 +75,63 @@ async function regionCard(refresh) {
         toast(`${out.added} programs added, ${out.enriched} filled in`, 'ok');
         busy.textContent = ''; refresh();
       };
-      const downloadPictures = async () => {
-        const { pending } = await get(`/api/regions/${rg.id}/pictures`);
-        if (!pending.length) { toast('Every program already has a picture from its own website', 'ok'); return; }
-        let done = 0, ok = 0; const failures = [];
-        for (let i = 0; i < pending.length; i += 5) {
-          const batch = pending.slice(i, i + 5);
-          busy.textContent = `Downloading pictures from provider websites… ${done} of ${pending.length}`;
-          try { const res = await post(`/api/regions/${rg.id}/pictures`, { keys: batch.map(p => p.key) });
-            for (const x of res.results) { if (x.ok) ok++; else failures.push(`${x.name}: ${x.error}`); }
-          } catch (e) { failures.push(e.message); }
-          done += batch.length;
-        }
-        busy.textContent = ok ? `${ok} picture${ok === 1 ? '' : 's'} downloaded.${failures.length ? ` ${failures.length} could not be fetched (the generated card stays).` : ''}` : `No pictures could be downloaded. ${failures[0] || ''} Programs keep their generated cards.`;
-        if (ok) { toast(`${ok} provider pictures downloaded`, 'ok'); refresh(); }
+      // The outcome of the last download, kept across the refresh that shows the new pictures: it used to be
+      // written next to the buttons and wiped by that very refresh, so on a phone nothing seemed to happen.
+      const status = h('div', { class: 'small', 'data-picture-status': '', role: 'status' });
+      const showOutcome = (o) => {
+        clear(status); if (!o) return;
+        status.append(h('div', { class: `banner small ${o.kind}` }, h('b', {}, o.title), o.detail ? [' ', o.detail] : null,
+          o.reasons.length ? h('details', { class: 'mt' }, h('summary', {}, 'Why some had no picture'), h('ul', {}, o.reasons.map(([why, names]) => h('li', {}, `${why} (${names.length}): ${names.slice(0, 6).join('; ')}${names.length > 6 ? '; …' : ''}`)))) : null));
+      };
+      showOutcome(pictureOutcome.get(rg.id));
+      const downloadPictures = async (ev) => {
+        const btn = ev && ev.currentTarget; if (btn) btn.disabled = true;
+        const progress = (text) => { clear(status); status.append(h('div', { class: 'muted' }, text)); };
+        try {
+          progress('Looking for provider pictures…');
+          const { pending, thumbs = [] } = await get(`/api/regions/${rg.id}/pictures`);
+          const fromWhere = window.SUDS_STATIC_HOST ? 'the pictures included with SUDS on this device' : 'provider websites';
+          let done = 0, ok = 0; const failures = []; const toThumb = [...thumbs];
+          let stopped = '';
+          for (let i = 0; i < pending.length && !stopped; i += 5) {
+            const batch = pending.slice(i, i + 5);
+            progress(`Downloading pictures from ${fromWhere}… ${done} of ${pending.length}`);
+            try {
+              const res = await post(`/api/regions/${rg.id}/pictures`, { keys: batch.map(p => p.key) });
+              for (const x of res.results) { if (x.ok) { ok++; if (x.photo_id) toThumb.push({ photo_id: x.photo_id, resource_id: x.resource_id }); } else failures.push([x.error, x.name]); }
+              // Nothing more is going to work: the server has no way out to the internet, or this build of
+              // SUDS on this device was published without pictures. Say that once instead of 80 times.
+              const bad = res.results.filter(x => !x.ok);
+              if (!ok && res.results.length && bad.length === res.results.length && bad.every(x => x.network || x.bundle === 'missing')) stopped = bad[0].error;
+            } catch (e) { failures.push([e.message, batch.map(p => p.name).join(', ')]); if (e.offline || e.status === 401 || e.status === 403) stopped = e.message; }
+            done += batch.length;
+          }
+          // The directory card shows a picture's thumbnail. The server cannot shrink a JPEG, so this page makes
+          // the thumbnail the way it does for a photo someone adds by hand, and saves it on that picture.
+          let thumbed = 0;
+          for (let i = 0; i < toThumb.length; i++) {
+            progress(`Making card pictures… ${i + 1} of ${toThumb.length}`);
+            try { await saveThumbnail(toThumb[i].resource_id, toThumb[i].photo_id); thumbed++; } catch { /* the card shows the full picture instead */ }
+          }
+          const byReason = new Map(); for (const [why, name] of failures) byReason.set(why, [...(byReason.get(why) || []), name]);
+          const reasons = [...byReason.entries()].sort((a, b) => b[1].length - a[1].length);
+          let o;
+          if (!pending.length && !toThumb.length) o = { kind: 'ok', title: 'Every program already has its provider picture.', detail: '', reasons: [] };
+          else if (!pending.length) o = { kind: 'ok', title: `${thumbed} card picture${thumbed === 1 ? '' : 's'} updated.`, detail: '', reasons: [] };
+          else if (ok) o = { kind: failures.length ? 'warn' : 'ok', title: `${ok} of ${pending.length} provider pictures downloaded.`, detail: failures.length ? `${failures.length} programs keep their generated card for now.` : '', reasons };
+          else {
+            // One reason for all of them (no internet, or nothing in this build) is said once, in full.
+            const why = stopped || (reasons.length === 1 ? reasons[0][0] : '');
+            const sentence = why ? `${why.charAt(0).toUpperCase()}${why.slice(1)}${/[.)]$/.test(why) ? '' : '.'}` : '';
+            o = { kind: 'error', title: 'No provider pictures could be downloaded.', detail: why ? `${stopped ? '' : `${failures.length} programs: `}${sentence} Programs keep their generated cards.` : 'Programs keep their generated cards.', reasons: why ? [] : reasons };
+          }
+          pictureOutcome.set(rg.id, o); showOutcome(o);
+          toast(o.kind === 'error' ? `${o.title} ${o.detail}` : o.title, o.kind === 'error' ? 'error' : 'ok');
+          if (ok || thumbed) refresh();
+        } catch (e) {
+          const o = { kind: 'error', title: 'Provider pictures could not be downloaded.', detail: e.message || '', reasons: [] };
+          pictureOutcome.set(rg.id, o); showOutcome(o); toast(`${o.title} ${o.detail}`, 'error');
+        } finally { if (btn) btn.disabled = false; }
       };
       const remove = async () => {
         if (!await confirmDialog('Remove starter directory', `Remove the ${rg.name} programs that nobody has used or verified? Programs with referrals, or ones you marked verified, are kept and simply hidden from the pickers.`, { danger: true, okText: 'Remove' })) return;
@@ -83,7 +143,11 @@ async function regionCard(refresh) {
         h('p', { class: 'small' }, rg.description),
         rg.loaded ? [
           rg.unverified ? h('div', { class: 'banner warn small' }, h('b', {}, `${rg.unverified} of these still need checking. `), 'Open each program, call to confirm the address, phone number and intake, then press "Verified today".') : h('div', { class: 'banner small' }, 'Every imported program has been verified by your staff.'),
-          h('div', { class: 'btn-row' }, h('button', { class: 'btn', onClick: load }, 'Check for updates'), h('button', { class: 'btn', onClick: downloadPictures }, 'Download provider pictures'), h('button', { class: 'btn danger ghost sm', onClick: remove }, 'Remove starter directory'), busy)]
+          h('div', { class: 'btn-row' }, h('button', { class: 'btn', onClick: load }, 'Check for updates'),
+            // An offline copy that syncs with an office server cannot reach provider websites; it receives the
+            // office's pictures at its next sync. SUDS on this device reads the pictures it was published with.
+            officeDevice ? null : h('button', { class: 'btn', onClick: downloadPictures }, 'Download provider pictures'), h('button', { class: 'btn danger ghost sm', onClick: remove }, 'Remove starter directory'), busy),
+          officeDevice ? h('p', { class: 'small muted' }, 'Provider pictures are downloaded on the office server and reach this device when it syncs.') : null, status]
         : [h('p', { class: 'small muted' }, rg.sources_note),
           h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', onClick: load }, `Add ${rg.provider_count} programs`), busy)]));
     }

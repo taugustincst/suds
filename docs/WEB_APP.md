@@ -39,6 +39,12 @@ Open the published address on any phone, tablet or computer. There is nothing to
    offered on an empty device, and sample data is never mixed in with real records.
 6. **Offline**: the build registers the same service worker as the office app, with the kernel in its shell,
    so a copy added to the home screen opens with no connection at all.
+7. **Provider pictures** for the starter resource directory come with the site. A browser cannot download a
+   picture from a provider's own website (those sites do not allow it: no CORS headers), so the site is
+   published with a copy of each provider's picture, fetched when it was built. **Resource directory → Download
+   provider pictures** copies them into the device's directory, makes a small card picture from each, and says
+   how many it got; a program the build has no picture for keeps its generated card and is listed under "Why
+   some had no picture" ("not available on this device build").
 
 ## Where your records live
 
@@ -149,6 +155,19 @@ one small script that switches the app straight into local mode before anything 
 that differ on this build (no office sync, sign-ups on the device, the first-run storage confirmation, the
 backup reminder). Nothing is drawn on screen because of it, and nothing about the office server changes — it
 still decides its own mode.
+
+**Provider pictures.** The build also downloads each starter-directory provider's picture (its website's
+social preview image or touch icon: the same choice, address checks and file-type check as the office
+server's own download, `server/region-pictures.js`) into `region-pictures/<region>/` with a `manifest.json`
+(key → file, content type, source address, when it was fetched). This is best effort: a site that fails is
+left out and listed in the manifest's `failures`, and a build with no network still succeeds, just without
+pictures. `SUDS_REGION_PICTURES=off` leaves them out (CI's browser suite does, so it does not hit 80 websites
+on every push); `SUDS_REGION_PICTURES=<folder>` copies a folder written earlier by `npm run
+fetch-region-pictures [folder]` (default `_region-pictures/`). The published Pages build fetches them afresh
+on the release runner and puts the count in the workflow's summary. They are not committed to the repository:
+they are other organisations' logos and photos, they change, and a copy in git history would only grow.
+Behind a proxy, run the build with `NODE_USE_ENV_PROXY=1` as well as `HTTPS_PROXY` (below, and
+DEPLOYMENT.md, "Outbound internet").
 
 `scripts/ui/static-site.mjs` (first run with no query string, the storage confirmation, a client recorded
 fully offline, a reload, installability) and `scripts/ui/signup.mjs` (Sign up and Log in on both builds, a

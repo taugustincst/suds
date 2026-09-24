@@ -121,6 +121,76 @@ test('a picture batch stops at its deadline instead of outliving the request', a
   } finally { globalThis.fetch = realFetch; }
 });
 
+test('a downloaded picture becomes the card picture: the POST names the photo, and the browser saves its thumbnail', async () => {
+  const pictures = require('../server/region-pictures');
+  const png = require('../server/png');
+  // Too big to be its own thumbnail (the route's 96 KB limit): random bytes do not compress.
+  const px = require('node:crypto').randomBytes(240 * 160 * 3); const big = png.encode(240, 160, px);
+  assert.ok(big.length > 96 * 1024);
+  const small = png.initialsCard('Small', 'residential', 60, 40);
+  const at = (t) => t.url || t.website;
+  // Programs of one organisation can share a website; each of these has its own.
+  const sites = new Set();
+  const [t1, t2, t3, t4, t5] = region.pictureTargets('sacramento-metro').filter(t => !db.one(`SELECT COUNT(*) n FROM resource_photos WHERE resource_id=? AND caption LIKE 'From %'`, t.id).n)
+    .filter(t => !sites.has(at(t)) && sites.add(at(t)));
+  const ab = (b) => b.buffer.slice(b.byteOffset, b.byteOffset + b.length);
+  const img = (b) => ({ ok: true, status: 200, headers: { get: (k) => (k === 'content-length' ? String(b.length) : 'image/png') }, arrayBuffer: async () => ab(b) });
+  const page = (u) => ({ ok: true, status: 200, headers: { get: () => null }, arrayBuffer: async () => ab(Buffer.from(`<meta property="og:image" content="${u}">`)) });
+  const routes = { 'https://pics.example.org/big.png': img(big), 'https://pics.example.org/small.png': img(small) };
+  routes[at(t1)] = t1.url ? img(big) : page('https://pics.example.org/big.png');
+  routes[at(t2)] = t2.url ? img(small) : page('https://pics.example.org/small.png');
+  pictures._setFetchForTests(async (u) => routes[String(u)] || { ok: false, status: 404, headers: { get: () => null }, arrayBuffer: async () => new ArrayBuffer(0) });
+  try {
+    assert.equal((await ro.post('/api/regions/sacramento-metro/pictures', { keys: [t1.key] })).status, 403);
+    const res = await nav.post('/api/regions/sacramento-metro/pictures', { keys: [t1.key, t2.key] });
+    assert.equal(res.status, 200);
+    const [r1, r2] = res.data.results;
+    assert.equal(r1.ok, true, JSON.stringify(r1)); assert.equal(r2.ok, true, JSON.stringify(r2));
+    assert.ok(r1.photo_id && r1.resource_id === t1.id, 'the result names the new photo, so the browser can make its thumbnail');
+    const cover = async (id) => (await nav.get('/api/resources?limit=1000')).data.rows.find(r => r.id === id).cover_url;
+    // Before: the big picture is the card picture itself (not the generated card it replaces), the small one is its own thumbnail.
+    assert.equal(await cover(t1.id), `/api/resources/${t1.id}/photos/${r1.photo_id}/image`);
+    assert.equal(await cover(t2.id), `/api/resources/${t2.id}/photos/${r2.photo_id}/thumb`);
+    assert.equal(db.one(`SELECT thumb_b64 FROM resource_photos WHERE id=?`, r2.photo_id).thumb_b64, small.toString('base64'));
+    // It is listed as needing a thumbnail; the small one is not.
+    let pending = (await nav.get('/api/regions/sacramento-metro/pictures')).data;
+    assert.ok(pending.thumbs.some(x => x.photo_id === r1.photo_id && x.resource_id === t1.id), JSON.stringify(pending.thumbs));
+    assert.ok(!pending.thumbs.some(x => x.photo_id === r2.photo_id));
+    assert.ok(!pending.pending.some(p => p.key === t1.key), 'a program with a downloaded picture is not offered again');
+
+    // The thumbnail the browser made: checked like an upload's.
+    const url = `/api/resources/${t1.id}/photos/${r1.photo_id}`;
+    const thumb = `data:image/jpeg;base64,${Buffer.concat([Buffer.from([0xFF, 0xD8, 0xFF, 0xE0]), Buffer.alloc(500)]).toString('base64')}`;
+    assert.equal((await ro.put(url, { thumb_url: thumb })).status, 403);
+    assert.equal((await nav.put(url, { thumb_url: 'data:image/png;base64,' + Buffer.from('<svg onload=alert(1)>').toString('base64') })).status, 400, 'not a picture');
+    assert.equal((await nav.put(url, { thumb_url: 'data:image/png;base64,' + big.toString('base64') })).status, 400, 'too big for a thumbnail');
+    assert.equal((await nav.put(url, { thumb_url: 42 })).status, 400);
+    assert.equal((await nav.put(`/api/resources/${t2.id}/photos/${r1.photo_id}`, { thumb_url: thumb })).status, 404, 'the photo must belong to that resource');
+    const saved = await nav.put(url, { thumb_url: thumb });
+    assert.equal(saved.status, 200, JSON.stringify(saved.data));
+    assert.equal(await cover(t1.id), `/api/resources/${t1.id}/photos/${r1.photo_id}/thumb`, 'the card now shows the thumbnail');
+    assert.equal(db.one(`SELECT thumb_b64 FROM resource_photos WHERE id=?`, r1.photo_id).thumb_b64, thumb.split(',')[1]);
+    assert.ok(db.one(`SELECT COUNT(*) n FROM audit_log WHERE action='resource.photo.update' AND entity_id=? AND details LIKE '%thumb%'`, t1.id).n >= 1, 'audited');
+    pending = (await nav.get('/api/regions/sacramento-metro/pictures')).data;
+    assert.ok(!pending.thumbs.some(x => x.photo_id === r1.photo_id), 'and it no longer needs one');
+
+    // A picture downloaded before this fix carried the generated card as its thumbnail: it is offered for a real one.
+    const placeholderThumb = db.one(`SELECT thumb_b64 FROM resource_photos WHERE resource_id=? AND caption LIKE '%(placeholder%'`, t3.id).thumb_b64;
+    const legacy = require('../server/crypto').uuid();
+    db.run(`INSERT INTO resource_photos(id,resource_id,caption,content_type,bytes,data_b64,thumb_b64,sort_order) VALUES(?,?,?,?,?,?,?,0)`, legacy, t3.id, 'From old.example.org', 'image/png', big.length, big.toString('base64'), placeholderThumb);
+    assert.ok((await nav.get('/api/regions/sacramento-metro/pictures')).data.thumbs.some(x => x.photo_id === legacy));
+
+    // Two providers in a row the server cannot reach at all: the rest of the batch is not waited out.
+    let calls = 0;
+    pictures._setFetchForTests(async () => { calls++; throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } }); });
+    const down = (await nav.post('/api/regions/sacramento-metro/pictures', { keys: [t4.key, t5.key, ...region.pictureTargets('sacramento-metro').slice(-3).map(t => t.key)] })).data.results;
+    assert.equal(down.length, 5);
+    assert.ok(down.every(x => !x.ok && x.network && /could not reach the internet/.test(x.error)), JSON.stringify(down[0]));
+    assert.equal(calls, 2, 'stopped trying after two unreachable sites');
+    assert.equal(down.filter(x => x.skipped).length, 3);
+  } finally { pictures._setFetchForTests(null); }
+});
+
 test('removing a starter directory keeps anything used or verified', async () => {
   const rows = (await nav.get('/api/resources?limit=1000')).data.rows;
   const verified = rows[0], referred = rows[1];

@@ -18,6 +18,20 @@ SUDS is pinned to Node 22 (`.nvmrc`, the Dockerfile, CI). Node 22 leaves mainten
 
 If `node:sqlite` changes shape in a way SUDS cannot absorb, the fallback is to pin the last Node 22 patch until the code is adapted — never to add an npm SQLite binding (CLAUDE.md: zero runtime dependencies).
 
+### Outbound internet
+
+SUDS needs no outbound connection to run. The one everyday feature that uses one is **Resource directory →
+Download provider pictures**, which fetches each starter-directory program's picture from the program's own
+website over HTTPS (public addresses only; redirects to this machine or a private network are refused). Allow
+the server outbound HTTPS (port 443) to the providers' websites if you want it; without it the button reports
+"the computer running SUDS could not reach the internet" and every program keeps its generated card.
+
+Behind a county web proxy, Node's built-in `fetch` ignores `HTTPS_PROXY` unless told to use it: set **both**
+`HTTPS_PROXY=http://proxy.example.gov:8080` and `NODE_USE_ENV_PROXY=1` in the service's environment (Node 22.21
+or newer; `NO_PROXY` is honoured too). A proxy that inspects HTTPS presents its own certificate, which Node
+does not trust by default: give it the proxy's CA with `NODE_EXTRA_CA_CERTS=/path/to/county-proxy-ca.pem`.
+The download says which of these it ran into.
+
 ### Single instance only
 
 SUDS is one process, one SQLite database file: there is no clustering, no shared session store, and no distributed rate limiter — sessions, login lockout counters and the API rate limiter all live in that one process's memory. This is a deliberate scope, not a temporary gap: a second process against the same data directory does not add capacity, it risks corrupting the database, so it is refused outright (`server/instance-lock.js`, a pidfile at `data/.suds.lock`) rather than merely discouraged in a document nobody reads before scaling a container to more replicas. A process that exits cleanly releases the lock; a lock left behind by one that crashed is detected as stale (its pid is no longer running) and taken over automatically, so a crash never leaves a data directory permanently unable to start.

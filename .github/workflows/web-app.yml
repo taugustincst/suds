@@ -34,9 +34,16 @@ jobs:
     steps:
       - name: Check out
         run: git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
+      # The build also downloads each starter-directory provider's picture into _site/region-pictures/ (the
+      # runner has internet access; a phone's browser cannot fetch them from the providers' sites itself).
+      # Best effort: a provider site that fails is left out, and the step summary says how many made it.
       - name: Build the standalone site
         working-directory: src
-        run: npm ci --no-audit --no-fund && node scripts/build-static-site.js _site
+        env:
+          SUDS_REGION_PICTURES: fetch
+        run: |
+          npm ci --no-audit --no-fund && node scripts/build-static-site.js _site | tee /tmp/build.log
+          grep '^\[suds\] region pictures' /tmp/build.log >> "$GITHUB_STEP_SUMMARY" || echo "No provider pictures were bundled." >> "$GITHUB_STEP_SUMMARY"
       # The demo is QA'd by the version it shows on screen (docs/RELEASE.md), so say which one this is and
       # refuse to publish a tag whose package.json disagrees with it.
       - name: Version being published
