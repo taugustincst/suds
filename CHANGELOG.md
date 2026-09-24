@@ -55,6 +55,31 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   - Supervision hides the note sections from roles that cannot countersign.
   - Imports: a staged item can only be discarded by the person who imported it, or a manager.
   - Docs: `API.md` regenerated; user guide updated.
+- **Load-review fixes (2,000 clients, 64,000 records).**
+  - Retention: the purge clock now runs from the last activity on a record (visits, calls, notes, referrals,
+    to-dos, consents, disclosures, forms, overdose events, patient requests, time, expenditures, episodes,
+    intake/discharge), not from the discharge date alone — a client discharged in 2018 but visited in 2024 is
+    no longer purged in 2025. Records left inactive are now purged on the same clock (an unclosed episode does
+    not exempt them); active and waitlisted records never are.
+  - Search and duplicate detection work for names in any script and ignore accents: Arabic and Cyrillic names
+    are searchable and flagged as duplicates, "Oster" finds "Øster", "Lecki" finds "Łecki". Migration 26
+    rebuilds existing clients' name indexes.
+  - Funder report: "people served" is one set per filter (visit or call in the period, deleted clients
+    excluded, and only visits charged to the fund when a funding source is chosen), and every demographic
+    breakdown and per-person count uses it.
+  - Reports, the dashboard and exports treat from/to as calendar days in `ORG_TIMEZONE`: an evening visit on
+    the last day of a fiscal year is in that year. A malformed date is refused.
+  - With local mode off, device sync (pull, push, attachments) is refused with 403.
+  - The daily audit-chain check is incremental and runs in batches that no longer freeze the server; the whole
+    chain is still checked weekly and by the Verify button.
+  - Outreach and community naloxone distribution can be recorded without a client; other types still require
+    one, and the server enforces the same rule. Logging time on a visit with no client no longer fails.
+  - Deactivating a user says how many clients and open to-dos are still assigned to them, and anyone who can
+    manage assignments can move them to an active worker in the same step (audited as `caseload.transfer`).
+    Move a caseload lists deactivated staff who still hold clients, marked "(inactive)", and Home warns
+    supervisors when clients are assigned to inactive staff. New `GET /api/users/:id/caseload` and
+    `GET /api/users/caseloads` (counts only). Moving a whole caseload also moves to-dos that name no client.
+  - Creating a user, resetting a password and the setup wizard no longer hash passwords on the event loop.
 
 ## 1.9.4 — 2026-09-24
 
