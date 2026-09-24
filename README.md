@@ -2,10 +2,10 @@
 
 A HIPAA-oriented, zero-dependency web application for county **substance use disorder (SUD) navigation programs**. It tracks clients, interventions, calls, staff time, referrals and community resources, tasks and timelines, budget and expenditures, and clinical / administrative documentation — and imports field notes from **Pocket AI** and **Microsoft OneNote**.
 
-* **Platform:** the web application served by the office SUDS server is the only supported client and the system of record. The native phone apps and the desktop launchers are deprecated and will be removed — see [docs/PLATFORM.md](docs/PLATFORM.md).
+* **Platform:** the web application served by the office SUDS server is the only supported client and the system of record. The native phone apps and the desktop launchers were removed in 1.9.3 (their source remains in git history) — see [docs/PLATFORM.md](docs/PLATFORM.md).
 * **Runtime:** Node.js ≥ 22.13 only (built-in SQLite, crypto, HTTP). No npm packages to install or audit on the office server. (The browser's local-mode kernel is a separate, committed bundle that does vendor a few pinned libraries in place of Node's built-ins — see [docs/WEB_APP.md](docs/WEB_APP.md#what-the-browser-kernel-is-built-from).)
 * **Data protection:** AES-256-GCM field-level encryption of PHI, blind-index search, scrypt password hashing, TOTP MFA, role-based access with caseload scoping, 42 CFR Part 2 consent and disclosure accounting, and a hash-chained audit log.
-* **Documentation:** [Platform policy](docs/PLATFORM.md) · [Deployment](docs/DEPLOYMENT.md) · [Browser-only web app](docs/WEB_APP.md) · [API reference](docs/API.md) · [HIPAA & security controls](docs/HIPAA.md) · [Importing notes (Pocket AI / OneNote)](docs/IMPORTS.md) · [User guide](docs/USER_GUIDE.md)
+* **Documentation:** [Platform policy](docs/PLATFORM.md) · [Adopting SUDS (for a county CIO)](docs/ADOPTION.md) · [Deployment](docs/DEPLOYMENT.md) · [Browser-only web app](docs/WEB_APP.md) · [API reference](docs/API.md) · [HIPAA & security controls](docs/HIPAA.md) · [Importing notes (Pocket AI / OneNote)](docs/IMPORTS.md) · [User guide](docs/USER_GUIDE.md)
 
 ## Get SUDS
 
@@ -22,15 +22,15 @@ Current release: see [CHANGELOG.md](CHANGELOG.md). Release process: [docs/RELEAS
 
 1. Install Node.js 22 LTS from https://nodejs.org.
 2. Unzip SUDS somewhere permanent and start the server: `npm start` for a first look, or as a service (systemd / NSSM) or with Docker for anything staff depend on.
-3. Open the address the server prints in a browser: the **setup wizard** asks you to name the program, create your administrator account, and choose whether phones, tablets and other computers on the office network may connect. SUDS generates its encryption keys and an HTTPS certificate for you and shows a QR code for the office address.
+3. Open the address the server prints in a browser: the **setup wizard** asks you to name the program, create your administrator account, choose whether phones, tablets and other computers on the office network may connect, and whether staff may keep an offline copy on their devices (recommended: No). SUDS generates its encryption keys and an HTTPS certificate for you and shows a QR code for the office address.
 
 Full walkthrough: [docs/INSTALL.md](docs/INSTALL.md); service and reverse-proxy settings: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Everything the wizard sets can later be changed under **Administration → Network & devices / Settings / System & backups**.
 
 **Phones, tablets and other computers:** nothing to install or configure. SUDS announces itself on the office network as **https://suds.local** (built-in mDNS responder) and uses the standard HTTPS port when available. Staff open that address in the browser, add it to the home screen (the `/app` page on the server walks them through it), and their workspace — clients, reminders, note drafts saved while typing, preferences — is the same everywhere because every device talks to the same server.
 
-**Working offline (local mode):** the server can also hand out a copy of SUDS that runs inside the browser (`/?local=1`) and syncs with the office on command. It is governed by the rules in [docs/PLATFORM.md](docs/PLATFORM.md) — the office server is authoritative — and counties are advised to leave it off (`LOCAL_MODE_ENABLED=false`) unless there is a documented field-work need.
+**Working offline (local mode):** the server can also hand out a copy of SUDS that runs inside the browser (`/?local=1`) and syncs with the office on command. It is **off by default**: it is turned on by answering *Yes* in the setup wizard or with `LOCAL_MODE_ENABLED=true`, and counties are advised to do so only for a documented field-work need. It is governed by the rules in [docs/PLATFORM.md](docs/PLATFORM.md) — the office server is authoritative.
 
-**Demo in a browser, nothing to install:** a standalone build of the same web app runs on GitHub Pages with no server at all, for trying SUDS out with sample data only. Details: [docs/WEB_APP.md](docs/WEB_APP.md).
+**Demo in a browser, nothing to install:** a standalone build of the same web app runs on GitHub Pages with no server at all, for trying SUDS out with sample data only. It is republished only when a release is cut, so it always shows a released version. Details: [docs/WEB_APP.md](docs/WEB_APP.md).
 
 ## Quick start (development)
 
@@ -91,7 +91,7 @@ npm test
 
 Runs unit tests (crypto, TOTP, importers) and API integration tests (auth, lockout, MFA, RBAC, caseload scoping, encryption at rest, note signing, consents, budget, imports, intake, audit chain).
 
-The browser regression suite (`scripts/ui/run-all.sh`) seeds a throwaway server and drives Chromium through the desktop screens, the navigator workflow, browser local mode, two-way sync, spreadsheet import/export and sample data. CI runs it on every push; locally it needs `npm i --no-save playwright && npx playwright install chromium`.
+The browser regression suite (`scripts/ui/run-all.sh`) seeds a throwaway server and drives Chromium through the desktop screens, the navigator workflow, browser local mode, two-way sync, spreadsheet import/export and sample data. CI runs it on every push; locally it needs `npm i --no-save playwright && npx playwright install chromium`. CI also runs two advisory jobs: `npm test` on Node 24, and a WebKit smoke subset (`SUDS_BROWSER=webkit SCRIPTS="static-site qa-retest" scripts/ui/run-all.sh`, after `npx playwright install --with-deps webkit`). Neither replaces the real-device checklist in [docs/ADOPTION.md](docs/ADOPTION.md).
 
 ## License
 

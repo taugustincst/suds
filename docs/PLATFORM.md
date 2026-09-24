@@ -1,8 +1,8 @@
 # Web-first platform and data integrity policy
 
 **Effective from SUDS 1.9.0.** Direction from the product owner: SUDS is managed and documented against the
-web version, to maintain data integrity. The native phone apps and the desktop launchers are being phased
-out.
+web version, to maintain data integrity. The native phone apps and the desktop launchers were deprecated in
+1.9.0 and **removed in 1.9.3**.
 
 ## The policy
 
@@ -13,17 +13,22 @@ out.
 2. **All changes are made, managed and documented against the web application.** Features, fixes, tests,
    release notes and user documentation describe the web app served by the office server. Nothing is
    built, tested or documented for a native app or a launcher any more.
-3. **The native Android and iOS apps and the desktop launchers are deprecated as of 1.9.0** and will be
-   removed in a later release (roadmap below). Their source stays in git under `mobile/` and `launchers/`
-   so the decision is reversible, but nothing builds them, ships them or advertises them: the release
-   workflow attaches only the server zip, the office server no longer hosts or serves an APK, and the
-   Settings page no longer offers an upload.
+3. **The native Android and iOS apps and the desktop launchers were deprecated in 1.9.0 and removed in
+   1.9.3** (roadmap below). `mobile/`, `launchers/`, their workflows and `scripts/android-keystore.sh` are
+   gone from the tree; the code stays in git history (any tag up to `v1.9.2`), so the decision is
+   reversible. Nothing builds, ships or advertises them: the release workflow attaches only the server zip,
+   the office server does not host or serve an APK, and the Settings page offers no upload. (Earlier
+   editions of this page said the directories were deleted in 1.9.0; they were not, until 1.9.3.)
 4. **Browser "local mode" remains** as the web app's offline capability, under the rules in the next
    section. It is the same code the web app runs, held in a browser profile, and it syncs with the office
-   server on command.
+   server on command. **From 1.9.3 it is off by default** on the office server: the setup wizard asks
+   *Allow staff to keep an offline copy on their devices? (Recommended: No)* and stores the answer in
+   `data/server.json`; `LOCAL_MODE_ENABLED` overrides it either way.
 5. **The GitHub Pages build is a demonstration only** (`docs/WEB_APP.md`). It carries a permanent
    demo/evaluation banner, never holds real client information, and does not sync with an office server:
-   its Sync screen says so and sends nothing. (`ALLOW_STATIC_SYNC` is a no-op kept for compatibility.)
+   its Sync screen says so and sends nothing. (`ALLOW_STATIC_SYNC` is a no-op kept for compatibility.) It
+   is always local (it has no server whose setting could apply), and from 1.9.3 it is republished only
+   when a release is cut, never from an unreleased push to `main`.
 
 ## Retiring an existing phone-app install
 
@@ -66,8 +71,9 @@ by these rules, all of which the server enforces:
 | **Minimum necessary applies on the device.** | Only the syncing account's caseload (all clients for a supervisor) is downloaded; clinical notes only for clinical roles; nobody else's credentials. What is on a device is listed below. |
 | **Devices are tracked.** | Every local-mode browser that syncs registers a device id. Settings → Synced devices shows them; an administrator can revoke or wipe any of them, and deactivating an account wipes its devices. |
 
-**Recommendation for counties.** Keep `LOCAL_MODE_ENABLED=false` unless there is a documented field-work
-need (navigators who record visits where there is no signal). A plain browser has no protected key store:
+**Recommendation for counties.** Leave local mode off — the default from 1.9.3, and the wizard's
+recommended answer — unless there is a documented field-work need (navigators who record visits where
+there is no signal). A plain browser has no protected key store:
 the offline copy's encryption keys live in the browser profile beside the data, so anyone who can use that
 profile can read it. Where the need exists, restrict local mode to county-managed devices with a device
 passcode, disk encryption and MDM remote wipe, record which devices are approved, and review Synced devices
@@ -137,20 +143,22 @@ not a question a programme handling Part 2 records should have to ask.
 
 From 1.9.0 there is one system of record. The web application on the office server is where records live
 and where every change is made; the browser's home-screen shortcut replaces the app icon; local mode
-remains for genuine field work, under the rules above, and is off by default in the deployment guidance.
-The native apps and the launchers are deprecated now and removed later so that counties have a release to
-retire devices on before the code goes.
+remains for genuine field work, under the rules above, and is off by default (from 1.9.3 in the server's
+own configuration, not only in the guidance). The native apps and the launchers were deprecated in 1.9.0
+and removed in 1.9.3, so that counties had releases to retire devices on before the code went.
 
 ## Removal roadmap
 
-| What | Deprecated now (1.9.0) | Removed when |
+| What | Deprecated (1.9.0) | Removed |
 | --- | --- | --- |
-| Android app (`mobile/android`) | Not built on tags or releases; no APK attached to releases; no APK hosting or upload on the server; `mobile/DEPRECATED.md` | Next minor release after 1.8 (1.9.0): directory, `scripts/android-keystore.sh` and the workflow deleted |
-| iOS project (`mobile/ios`) | Workflow dispatch-only; nothing published | Same release as the Android app |
-| Version stamping of `build.gradle.kts` / `Info.plist` | Removed from `scripts/gen-schema-text.js`, CI and tests | Already removed (files left stale) |
-| Desktop launchers (`launchers/`) | Documented as deprecated, evaluation-only; not in the install path | 1.9.0: directory deleted; `scripts/print-url.js` reviewed |
+| Android app (`mobile/android`) | Not built on tags or releases; no APK attached to releases; no APK hosting or upload on the server | **Removed in 1.9.3**: directory, `mobile/DEPRECATED.md`, `scripts/android-keystore.sh` and `mobile-android.yml` deleted |
+| iOS project (`mobile/ios`) | Workflow dispatch-only; nothing published | **Removed in 1.9.3** with `mobile-ios.yml` |
+| Runner probe workflow (`probe.yml`) | Checked the runner's JDK/Gradle/Android SDK for the APK build | **Removed in 1.9.3** (served only the Android build) |
+| Version stamping of `build.gradle.kts` / `Info.plist` | Removed from `scripts/gen-schema-text.js`, CI and tests | Removed in 1.9.0 |
+| Desktop launchers (`launchers/`) | Documented as deprecated, evaluation-only; not in the install path | **Removed in 1.9.3**, with `scripts/print-url.js`, which only they used |
+| Native key-store lookups in the kernel's config (`SudsNative.getSecret`, `__sudsSecrets`) | — | **Removed in 1.9.3** from `local/shims/config.js`. Detection branches that remain in `public/views/local.js` (`window.SudsNative` for discovery/QR scanning and the "protected keys" wording) are inert in a browser and go in a later release |
 | `/app` page (`public/get-app.html`) | Repurposed: browser/home-screen instructions and certificate download, no APK | Stays |
-| `GET /api/app/info` `android` field, `GET /api/app/android.apk`, `POST/DELETE /api/admin/app/android` | Removed | Already removed |
-| Browser local mode (`/?local=1`, `LOCAL_MODE_ENABLED`) | Stays, governed by this policy; recommended off unless needed | Not planned |
-| GitHub Pages demo build (`web-app.yml`) | Stays, demo only | Not planned |
+| `GET /api/app/info` `android` field, `GET /api/app/android.apk`, `POST/DELETE /api/admin/app/android` | Removed | Removed in 1.9.0 |
+| Browser local mode (`/?local=1`, `LOCAL_MODE_ENABLED`) | Stays, governed by this policy | Not planned. **Off by default from 1.9.3**; the setup wizard asks |
+| GitHub Pages demo build (`web-app.yml`) | Stays, demo only | Not planned. Published on releases only from 1.9.3 |
 | Device management (Synced devices, revoke, wipe) | Stays — local-mode browsers register devices | Not planned |

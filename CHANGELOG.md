@@ -2,6 +2,34 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+- **Local mode is off by default on the office server.** `/?local=1` serves a short explanation unless the
+  setup wizard's new question — *Allow staff to keep an offline copy on their devices? Recommended: No* —
+  is answered Yes (stored in `data/server.json` as `localModeEnabled`) or `LOCAL_MODE_ENABLED=true` is set;
+  the variable overrides the wizard either way. **Upgrading counties that rely on local mode must set
+  `LOCAL_MODE_ENABLED=true`** (or add `"localModeEnabled": true` to `server.json`). The GitHub Pages demo
+  is unaffected. `server/config.js`, `server/routes/setup.js`, `public/views/setup.js`;
+  `test/local-mode-default.test.js`, `scripts/ui/setup.mjs`.
+- **To-do details are encrypted.** `tasks.description` moves into `description_enc` (migration 24; the
+  migration-19 rebuild now encrypts it first so a 1.6.x upgrade keeps it). The API field is still
+  `description`; de-identified exports never include it, identified exports decrypt it; sync declares it.
+  A 1.9.2 device that pushes a to-do's details before reloading the new kernel has the details dropped
+  (the column no longer exists); the title and the rest of the row apply. `test/task-description.test.js`.
+- **The native apps and launchers are removed** (`mobile/`, `launchers/`, `mobile-android.yml`,
+  `mobile-ios.yml`, `probe.yml`, `scripts/android-keystore.sh`, `scripts/print-url.js`) and the native
+  key-store lookups in `local/shims/config.js`; the code stays in git history. PLATFORM.md's roadmap had
+  said they were deleted in 1.9.0; it now records 1.9.3.
+- **The public demo is published on releases only** (`v*` tags, published releases, and `release.yml`'s
+  explicit `gh workflow run web-app.yml --ref <tag>`), never on a push to `main`. Each run names the version
+  it publishes; release QA checks the on-screen version (RELEASE.md, WEB_APP.md).
+- **CI:** advisory `node24` job (`npm test` on Node 24 from the official tarball) and advisory `webkit` job
+  (static-site and qa-retest in Playwright WebKit via the new `SUDS_BROWSER` variable). Dependabot ignores
+  esbuild and sql.js (updated by hand with `npm run build:local`) and groups the other devDependencies monthly.
+- **Docs:** new `docs/ADOPTION.md` (code owner, pilot, staged releases, real-device checklist, drills,
+  independent review, staffing); HIPAA.md *Risk register notes* (blind-index leakage, index key also keying
+  the audit chain, single instance, local-mode keys beside the data); Node 24 migration plan in DEPLOYMENT.md.
+
 ## 1.9.2 — 2026-09-23
 
 - **No more "SUDS is already open in another window" dead end on a phone.** The single-writer lock stays

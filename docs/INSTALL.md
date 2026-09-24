@@ -25,7 +25,7 @@ SUDS_ENV=production npm start        # Windows PowerShell: $env:SUDS_ENV='produc
 
 Leave that window open (closing it stops SUDS) and open the address it prints — normally **http://127.0.0.1:8080** — in your browser: the **setup wizard** appears.
 
-For anything other staff depend on, run SUDS as a service instead so it survives a closed window and a reboot: systemd on Linux, NSSM on Windows, or Docker, as [DEPLOYMENT.md](DEPLOYMENT.md) describes. The data folder and the wizard's settings carry over unchanged. (The double-click launchers in `launchers/` are deprecated and will be removed; they remain for evaluation on one computer only.)
+For anything other staff depend on, run SUDS as a service instead so it survives a closed window and a reboot: systemd on Linux, NSSM on Windows, or Docker, as [DEPLOYMENT.md](DEPLOYMENT.md) describes. The data folder and the wizard's settings carry over unchanged. (The double-click launchers that older versions shipped were removed in 1.9.3.)
 
 ## Step 4 — Setup wizard (first run only)
 The wizard asks for:
@@ -34,7 +34,8 @@ The wizard asks for:
 3. **Who can reach SUDS**:
    * *Only this computer* — safest; staff use SUDS on this machine only.
    * *Phones, tablets and other computers on the office network* — staff use SUDS in the browser on their own devices. SUDS creates its own HTTPS certificate so traffic is encrypted.
-4. Click **Finish**. SUDS moves to its final address — normally **https://suds.local** — and shows a QR code a phone can scan to open it.
+4. **Allow staff to keep an offline copy on their devices?** *Recommended: No.* With *No*, staff use SUDS only while connected to this server, which keeps every record in one place. Answer *Yes* only if navigators have a documented need to record visits where there is no signal, on county-managed devices (see *Working offline* below). The answer is saved in `data/server.json`; IT can override it later with `LOCAL_MODE_ENABLED`.
+5. Click **Finish**. SUDS moves to its final address — normally **https://suds.local** — and shows a QR code a phone can scan to open it.
 
 Encryption keys are generated for you and stored in `data/keys.json`. **Immediately download the key backup** offered at the end of the wizard (also available later under Administration → System) and store it somewhere separate from the computer — for example the county password manager. Without the keys, a backup of the database cannot be read.
 
@@ -62,7 +63,7 @@ That narrowness has a cost. **When the certificate is renewed** (Administration 
 **For a county deployment, use the county's PKI instead.** IT gives the SUDS computer a name in the county DNS, issues a certificate from the county CA (which every county-managed device already trusts) and either sets `TLS_CERT_PATH` / `TLS_KEY_PATH` or, better, puts SUDS behind the county's reverse proxy (IIS, nginx, Caddy) that terminates HTTPS with that certificate and forwards to SUDS on `127.0.0.1` with `TRUST_PROXY=1`. Then renewals happen where IT already renews everything else, nothing has to be installed on phones, and the self-signed path above is never needed. `docs/DEPLOYMENT.md` has the settings.
 
 ## Working offline (local mode)
-SUDS needs a connection to the office server. For navigators who record visits where there is no signal, the server can hand out an offline copy that runs inside the browser (`https://suds.local/?local=1`) and syncs later. Counties are advised to leave it off unless there is a documented need — set `LOCAL_MODE_ENABLED=false` — and the rules it runs under (the office server is authoritative; permanent rejections are final; purged records do not come back) are in [PLATFORM.md](PLATFORM.md). The former Android and iOS apps are deprecated: a phone that still has one should sync once more, erase its copy and uninstall it, and the administrator retires it under Settings → Synced devices (steps in PLATFORM.md).
+SUDS needs a connection to the office server. For navigators who record visits where there is no signal, the server can hand out an offline copy that runs inside the browser (`https://suds.local/?local=1`) and syncs later. **It is off unless you turn it on**: answer *Yes* to the wizard's offline-copy question, or have IT set `LOCAL_MODE_ENABLED=true`. Leave it off unless there is a documented need; while it is off, `?local=1` shows a short explanation instead of the app. The rules it runs under (the office server is authoritative; permanent rejections are final; purged records do not come back) are in [PLATFORM.md](PLATFORM.md). The former Android and iOS apps were removed in 1.9.3: a phone that still has one should sync once more, erase its copy and uninstall it, and the administrator retires it under Settings → Synced devices (steps in PLATFORM.md).
 
 ## Backups
 Administration → **System & backups → Download encrypted backup** weekly, or turn on scheduled backups under Settings (each one is read back and opened after it is written, and the result shows under System & backups). If IT backs up the `data` folder with its own tools, **exclude `data/keys.json`** from that job and keep the key file somewhere else on its own — a backup that sits next to its key is not encrypted in any useful sense.

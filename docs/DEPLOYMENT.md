@@ -1,12 +1,22 @@
 # Deployment guide
 
-> **First install?** See [INSTALL.md](INSTALL.md): start the server and finish setup in the browser wizard. The platform policy — web app on the office server as the system of record, native apps and launchers deprecated — is [PLATFORM.md](PLATFORM.md). This document covers the environment-variable / service deployment that IT departments typically prefer. Both can be mixed: environment variables override anything the wizard wrote to `data/server.json` and `data/keys.json`.
+> **First install?** See [INSTALL.md](INSTALL.md): start the server and finish setup in the browser wizard. The platform policy — web app on the office server as the system of record; the native apps and launchers were removed in 1.9.3 — is [PLATFORM.md](PLATFORM.md). For the governance side of adopting SUDS (code owner, pilot, release cadence, drills, staffing), see [ADOPTION.md](ADOPTION.md). This document covers the environment-variable / service deployment that IT departments typically prefer. Both can be mixed: environment variables override anything the wizard wrote to `data/server.json` and `data/keys.json`.
 
 ## Requirements
 
 * Node.js 22.13 or newer (uses the built-in `node:sqlite` module). No other runtime dependencies.
 * A host with an **encrypted disk** for the data directory (BitLocker, LUKS, or a cloud disk with KMS-backed encryption).
 * TLS: either a certificate/key pair for the app itself, or a TLS-terminating reverse proxy (Caddy, nginx, IIS ARR, a cloud load balancer). Never expose plain HTTP beyond localhost.
+
+### Node.js support and the move to 24
+
+SUDS is pinned to Node 22 (`.nvmrc`, the Dockerfile, CI). Node 22 leaves maintenance at the end of April 2027, and `node:sqlite` is still marked experimental in both 22 and 24, so its API can change between releases. The plan:
+
+1. **Now:** CI runs the full `npm test` suite on Node 24 in an advisory job (`node24` in `.github/workflows/ci.yml`, `continue-on-error`). A failure there is a warning to fix, not a blocked release. `.nvmrc` stays at 22.
+2. **When the Node 24 job has been green for a full release cycle, and no later than January 2027:** move `.nvmrc`, the Dockerfile base image and `package.json` `engines` to 24 in one release; the Node-22 job becomes the advisory one for a release, then is dropped. The browser suite and a real-device check (ADOPTION.md) run on the release candidate as usual.
+3. **Before April 2027:** every county install is on that release. Upgrading Node is a host change: install Node 24 LTS, restart the service; the database and `data/` are untouched.
+
+If `node:sqlite` changes shape in a way SUDS cannot absorb, the fallback is to pin the last Node 22 patch until the code is adapted — never to add an npm SQLite binding (CLAUDE.md: zero runtime dependencies).
 
 ### Single instance only
 
@@ -35,7 +45,7 @@ Copy `.env.example` to `.env` and set:
 | `SESSION_IDLE_MINUTES` | no | Default 15 (auto sign-out). |
 | `SESSION_ABSOLUTE_HOURS` | no | Default 12. |
 | `MFA_REQUIRED_ROLES` | no | Default: every role (`admin,supervisor,clinician,navigator,finance,readonly`). Narrow it only with a documented reason; a navigator's caseload is as much PHI as an administrator's console. |
-| `LOCAL_MODE_ENABLED` | no | Default `true`. Set to `false` to stop this server handing out the in-browser copy of SUDS (`/?local=1` and `/local/kernel.js`); the page then explains that local mode is off and `/app` does not mention it. **Recommended `false`** unless the county has a documented field-work need — see PLATFORM.md for the rules local mode runs under. |
+| `LOCAL_MODE_ENABLED` | no | **Default off.** Whether this server hands out the in-browser offline copy of SUDS (`/?local=1` and `/local/kernel.js`). The setup wizard asks (*Allow staff to keep an offline copy on their devices? Recommended: No*) and stores the answer in `data/server.json` as `localModeEnabled`; this variable, when set, overrides that answer either way (`true`/`1`/`yes`/`on` turn it on, anything else off). While off, `/?local=1` serves a short explanation instead of the app and `/app` does not mention it. Turn it on only for a documented field-work need — see PLATFORM.md for the rules local mode runs under. (Until 1.9.2 the default was on.) |
 | `ORG_TIMEZONE` | no | IANA zone the programme runs on, e.g. `America/Los_Angeles`. Defaults to the server's own zone. Decides the calendar date of a visit for fiscal-period checks and auto-posted expenditures (a 9pm visit on June 30th stays on June 30th), and "today" for reminders and overdue to-dos. Can also be set as `orgTimezone` in `server.json`. |
 | `CLIENT_RETENTION_YEARS` | no | Default `7`. Discharged client records older than this (every episode closed, no legal hold) are hard-deleted from every table once a day. Overridable in Administration → Settings; never below 6. |
 | `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, `MS_ONENOTE_USER` | optional | For direct OneNote import via Microsoft Graph. See IMPORTS.md. |
@@ -98,13 +108,13 @@ Release downloads carry a checksum beside them (`suds-v<version>.zip.sha256`); c
 
 Run under a service wrapper (NSSM or `sc.exe`) with the same environment variables, and terminate TLS with IIS (ARR reverse proxy to `127.0.0.1:8080`). Set `X-Forwarded-For` (ARR appends the client address, which is what SUDS reads) so audit logs record client IPs.
 
-The double-click launchers in `launchers/` are deprecated and will be removed (PLATFORM.md); they remain for evaluation on one computer only. A county deployment runs under systemd (above) or NSSM.
+The double-click launchers that used to live in `launchers/` were removed in 1.9.3 (PLATFORM.md). A county deployment runs under systemd (above), NSSM or Docker.
 
 ### Files written by the setup wizard
 
 | File | Contents |
 | --- | --- |
-| `data/server.json` | host (`127.0.0.1` or `0.0.0.0`), port, `tls` (`none` / `selfsigned`), `trustProxy`, `setupComplete` |
+| `data/server.json` | host (`127.0.0.1` or `0.0.0.0`), port, `tls` (`none` / `selfsigned`), `trustProxy`, `setupComplete`, `localModeEnabled` (the wizard's offline-copy answer; `LOCAL_MODE_ENABLED` overrides it) |
 | `data/keys.json` | encryption and index keys (only when not supplied by the environment) |
 | `data/certs/suds.crt`, `suds.key`, `suds-ca.crt` | self-signed ECDSA P-256 certificate covering localhost, the hostname and LAN IPs (825 days), and the private CA that signed it. The CA is name-constrained to exactly those hosts and expires 30 days after the certificate, so a phone that installs it trusts it for this server alone and for no longer than the certificate it was made for. |
 
@@ -136,7 +146,7 @@ SUDS has three keys, each rotatable on its own. Rotate on the schedule your poli
 | Key | Protects | Rotated by |
 | --- | --- | --- |
 | `SUDS_ENCRYPTION_KEY` | every PHI column (`*_enc`); backups, unless `SUDS_BACKUP_KEY` is set | `npm run rotate-key` |
-| `SUDS_INDEX_KEY` | the searchable blind indexes (`*_idx`) and the audit chain's HMAC | `npm run rotate-index-key` |
+| `SUDS_INDEX_KEY` | the searchable blind indexes (`*_idx`) and the audit chain's HMAC (one key, two uses — see HIPAA.md, "Risk register notes") | `npm run rotate-index-key` |
 | `SUDS_BACKUP_KEY` | backups only (optional; recommended so the two above can rotate without touching the backup set) | change the variable; the next backup uses it |
 
 **1. The PHI encryption key**
@@ -209,6 +219,7 @@ Schema migrations run automatically at startup (`server/db.js`), each inside a t
 - [ ] TLS 1.2+ only; HSTS enabled (automatic when the app serves TLS; `Caddyfile` sets it when the proxy does).
 - [ ] Behind a proxy: `TRUST_PROXY=1` only if the proxy appends to `X-Forwarded-For`; verify a sign-in failure is audited with the real client address.
 - [ ] Request body caps left at their defaults (64 KB without a session, 1 MB for signed-in JSON, the 60 MB upload cap only on file routes behind a session — `server/app.js`).
+- [ ] Local mode left off (`LOCAL_MODE_ENABLED` unset or `false`, wizard answer *No*) unless a field-work need is documented; if on, only county-managed devices with a passcode, disk encryption and MDM remote wipe.
 - [ ] `PUBLIC_APP_INFO` and `ALLOW_STATIC_SYNC` left off unless there is a reason; `/api/setup/status` and `/api/health` give their detail only to a session or the metrics token.
 - [ ] Data directory permissions `0700`, database `0600`, owned by the service user.
 - [ ] Host firewall allows only 443 from the county network / VPN.

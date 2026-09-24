@@ -1,8 +1,9 @@
-# Native mobile apps — deprecated
+# Native mobile apps — removed
 
-The SUDS Android app and the iOS project are **deprecated as of 1.9.0** and will be removed in a later
-release. The web application served by the office SUDS server is the only supported client and the
-system of record. Everything that used to be here has moved:
+The SUDS Android app and the iOS project were deprecated in 1.9.0 and **removed in 1.9.3**, together with
+their workflows, `scripts/android-keystore.sh` and the desktop launchers. The code stays in git history
+(any tag up to `v1.9.2`) so the decision is reversible, but nothing builds, ships or documents it. The web
+application served by the office SUDS server is the only supported client and the system of record.
 
 - **The policy, why it changed, and the removal roadmap:** [PLATFORM.md](PLATFORM.md).
 - **Retiring a phone that still has the app** (final sync, erase, uninstall, administrator revoke/wipe):
@@ -14,5 +15,3 @@ system of record. Everything that used to be here has moved:
   page on any SUDS server.
 - **What the browser kernel is built from** (the vendored libraries in `public/local/kernel.js`):
   [WEB_APP.md](WEB_APP.md#what-the-browser-kernel-is-built-from).
-
-The source stays under `mobile/` for now (`mobile/DEPRECATED.md`); nothing builds, ships or documents it.

@@ -36,13 +36,31 @@ Open the deployed address on any phone, tablet or computer. There is nothing to 
 
 ## Where it lives
 
-`.github/workflows/web-app.yml` builds it (`node scripts/build-static-site.js`) and publishes it to the
-repository's `gh-pages` branch on every push to `main` that touches the app, plus on demand from the
-Actions tab. GitHub Pages then serves it at:
+`.github/workflows/web-app.yml` builds it (`node scripts/build-static-site.js`), checks that it boots with
+no backend, and publishes it to the repository's `gh-pages` branch. GitHub Pages then serves it at:
 
 ```
 https://<github-username>.github.io/<repository-name>/
 ```
+
+### When it is published
+
+**Only on a release.** The demo is a public URL, so it shows released code and nothing else — a push to
+`main` no longer republishes it. The workflow runs when:
+
+- a `v*` tag is pushed;
+- a GitHub Release is published by a person (`release: published`);
+- `release.yml` finishes a release: it runs `gh workflow run web-app.yml --ref v<version>` as its last
+  step, because a release or tag that a workflow creates with `GITHUB_TOKEN` does not start other
+  workflows (hence `actions: write` in `release.yml`);
+- someone starts it by hand (Actions → *Web app* → *Run workflow*, choosing the release tag as the ref) —
+  for example the product owner republishing the current release for QA.
+
+The runs share a concurrency group, so a tag push and the release workflow's dispatch for the same version
+publish one after the other, never racing. Each run prints the version it publishes (and fails if a `v*`
+tag disagrees with `package.json`) and puts it in the run summary. **When QA'ing a release on the demo,
+check that the version shown on screen matches the release** before signing off; a browser still showing
+the previous version needs a reload (the service worker picks up the new build on the next load).
 
 The first time, someone with repository admin needs to turn GitHub Pages on once — the workflow tries to
 do this itself (`gh api ... /pages`) and only asks if that call is not permitted: **Settings → Pages →
@@ -76,6 +94,11 @@ and this demo build use:
 | `@noble/ciphers`, `@noble/hashes` | `node:crypto` | AES-256-GCM, HMAC, SHA-256, scrypt |
 | `fflate` | `node:zlib` | ZIP for Excel import/export |
 | `buffer` (+ `base64-js`, `ieee754`) | `node:buffer` | `Buffer` in the browser |
+
+esbuild (the bundler) and sql.js are ignored by Dependabot (`.github/dependabot.yml`) and updated by hand
+(docs/RELEASE.md, "Updating the kernel's build tools"), because a change to either changes the committed
+kernel and CI's drift check fails any PR that does not rebuild it. The other libraries arrive as one
+grouped monthly Dependabot PR, which also needs `npm run build:local` committed on its branch.
 
 They are development dependencies of this repository (`package.json`), not of the office server: installing
 and running SUDS on the office computer still pulls nothing at runtime. But they *are* code that runs in a
