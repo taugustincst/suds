@@ -2,6 +2,13 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+- **Signing out no longer draws the sign-in page twice.** The second draw blanked the screen for a moment (or,
+  on a slow device, showed two sign-in forms); it is also what made the local-mode browser check fail
+  intermittently in CI, where the click landed on the screen-reader status region during the blank. Full-screen
+  pages (sign-in, set-up, MFA) are now built first and swapped in whole, and only the latest render wins.
+
 ## 1.10.0 — 2026-09-24
 
 - **The GitHub Pages build is now SUDS on this device, a production web app — not a demo.** The
