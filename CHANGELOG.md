@@ -2,7 +2,7 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.9.4 — 2026-09-24
 
 - **The paused screen tells the truth in every event order.** A displaced tab says its work was "saved first"
   exactly when nothing is left unsaved (a save refused by the fence leaves it unsaved), on every path that
