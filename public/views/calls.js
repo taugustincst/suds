@@ -1,4 +1,4 @@
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, contactLinks, kv } from '../app.js';
+import { h, route, get, pagedList, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, contactLinks, kv } from '../app.js';
 
 // prefill: starting values for a new record (the number just dialled from a client's page) -- unlike
 // `values`, it does not make this an edit.
@@ -22,7 +22,7 @@ export function openCallForm(values, { clientId, clientDisplay, method, onDone, 
     isNew ? { name: 'log_time', label: 'Also log as time entry', type: 'checkbox', value: true } : null,
   ].filter(Boolean), { values: values || prefill || {}, submitText: isNew ? (isText ? 'Log text' : 'Log call') : 'Save', draftKey: values ? `call:${values.id}` : `call:new:${isText ? 'text' : 'phone'}`, onCancel: () => m.close(), onSubmit: async (d) => {
     d.method = isText ? 'text' : 'phone';
-    if (isNew) await post('/api/calls', d); else await put(`/api/calls/${values.id}`, d);
+    if (isNew) await post('/api/calls', d); else await put(`/api/calls/${values.id}`, { ...d, if_updated_at: values.updated_at });
     toast(isNew ? (isText ? 'Text logged' : 'Call logged') : 'Saved', 'ok'); m.close(); onDone && onDone();
   } });
   const m = modal(isNew ? (isText ? 'Log text message' : 'Log call') : `Edit ${noun}`, f, { wide: true });
@@ -49,14 +49,14 @@ export function callTable(rows, { showClient = true, onChange } = {}) {
 route('calls', async (r) => {
   const crisis = r.query.get('crisis') === '1', fu = r.query.get('follow_up') === '1', mine = r.query.get('mine') === '1';
   const method = ['phone', 'text'].includes(r.query.get('method')) ? r.query.get('method') : '';
-  const qs = `limit=300${crisis ? '&crisis=1' : ''}${fu ? '&follow_up=1' : ''}${mine ? '&mine=1' : ''}${method ? `&method=${method}` : ''}`;
-  const data = await get(`/api/calls?${qs}`);
+  const qs = `${crisis ? '&crisis=1' : ''}${fu ? '&follow_up=1' : ''}${mine ? '&mine=1' : ''}${method ? `&method=${method}` : ''}`.replace(/^&/, '');
+  const PAGE = 200;
+  const data = await get(`/api/calls?limit=${PAGE}${qs ? '&' + qs : ''}`);
   const refresh = () => nav(`calls?${qs}&_=${Date.now()}`);
   const link = (over = {}) => {
     const q = { crisis: crisis ? '1' : '', follow_up: fu ? '1' : '', mine: mine ? '1' : '', method, ...over };
     return 'calls?' + Object.entries(q).filter(([, v]) => v).map(([k, v]) => `${k}=${v}`).join('&');
   };
-  const texts = data.rows.filter(x => x.method === 'text').length;
   return h('div', {},
     pageHead('Calls & texts',
       can('calls:write') ? h('button', { class: 'btn primary', onClick: () => openCallForm(null, { onDone: refresh }) }, '+ Log call') : null,
@@ -68,6 +68,6 @@ route('calls', async (r) => {
       h('button', { class: `btn sm ${mine ? 'primary' : ''}`, onClick: () => nav(link({ mine: mine ? '' : '1' })) }, 'Mine'),
       h('button', { class: `btn sm ${method === 'phone' ? 'primary' : ''}`, onClick: () => nav(link({ method: method === 'phone' ? '' : 'phone' })) }, 'Calls'),
       h('button', { class: `btn sm ${method === 'text' ? 'primary' : ''}`, onClick: () => nav(link({ method: method === 'text' ? '' : 'text' })) }, 'Texts')),
-    h('div', { class: 'muted small mb' }, `${data.total} contact${data.total === 1 ? '' : 's'}${method ? '' : ` (${data.rows.length - texts} calls, ${texts} texts on this page)`} · ${fmt.mins(data.rows.reduce((s, x) => s + x.duration_minutes, 0))}`),
-    callTable(data.rows, { onChange: refresh }));
+    pagedList({ first: data, url: `/api/calls${qs ? '?' + qs : ''}`, limit: PAGE, render: (rows) => callTable(rows, { onChange: refresh }),
+      summary: (rows, total) => { const texts = rows.filter(x => x.method === 'text').length; return h('div', { class: 'muted small mb' }, `${total} contact${total === 1 ? '' : 's'}${method ? '' : ` (${rows.length - texts} calls, ${texts} texts shown)`} · ${fmt.mins(rows.reduce((s, x) => s + (x.duration_minutes || 0), 0))}`); } }));
 });

@@ -8,7 +8,7 @@ export function openTaskForm(values, { clientId, clientDisplay, onDone } = {}) {
     { name: 'priority', label: 'Priority', type: 'select', options: ['low', 'normal', 'high', 'urgent'], value: 'normal', noBlank: true, required: true }, { name: 'status', label: 'Status', type: 'select', options: ['open', 'in_progress', 'done', 'cancelled'], value: 'open', noBlank: true, required: true },
     { name: 'is_milestone', label: 'Milestone (shows on client timeline)', type: 'checkbox' }, { name: 'description', label: 'Details', type: 'textarea', span: true },
   ], { values: values || {}, submitText: isNew ? 'Create task' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => {
-    if (isNew) await post('/api/tasks', d); else await put(`/api/tasks/${values.id}`, d);
+    if (isNew) await post('/api/tasks', d); else await put(`/api/tasks/${values.id}`, { ...d, if_updated_at: values.updated_at });
     toast('Task saved', 'ok'); m.close(); onDone && onDone();
   } });
   const m = modal(isNew ? 'New task' : 'Edit task', f);

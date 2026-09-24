@@ -1,4 +1,4 @@
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav } from '../app.js';
+import { h, route, get, pagedList, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav } from '../app.js';
 
 export async function openReferralForm(values, { clientId, clientDisplay, resourceId, onDone } = {}) {
   const C = state.constants; const isNew = !values;
@@ -56,7 +56,7 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
     { name: 'outcome', label: 'Outcome', span: true }, { name: 'notes', label: 'Notes', type: 'textarea', span: true },
   ], { values: values || {}, submitText: isNew ? 'Create referral' : 'Save', draftKey: isNew ? 'referral:new' : `referral:${values.id}`, onCancel: () => m.close(), onSubmit: async (d) => {
     try {
-      if (isNew) await post('/api/referrals', d); else await put(`/api/referrals/${values.id}`, d);
+      if (isNew) await post('/api/referrals', d); else await put(`/api/referrals/${values.id}`, { ...d, if_updated_at: values.updated_at });
     } catch (e) {
       // The commonest failure by far is sharing without a consent; say what to do about it, once (the
       // server's message already ends in its own advice, and appending ours repeated it).
@@ -152,12 +152,13 @@ export function referralTable(rows, { showClient = true, onChange } = {}) {
 }
 route('referrals', async (r) => {
   const status = r.query.get('status') || 'open';
-  const qs = `limit=300${status === 'open' ? '&open=1' : status !== 'all' ? '&status=' + status : ''}`;
-  const data = await get(`/api/referrals?${qs}`);
+  const qs = status === 'open' ? 'open=1' : status !== 'all' ? 'status=' + status : '';
+  const PAGE = 200;
+  const data = await get(`/api/referrals?limit=${PAGE}${qs ? '&' + qs : ''}`);
   const refresh = () => nav(`referrals?status=${status}&_=${Date.now()}`);
   const sel = h('select', { onChange: () => nav(`referrals?status=${sel.value}`) }, [['open', 'Open (pending → scheduled)'], ['all', 'All'], ...state.constants.REFERRAL_STATUSES.map(s => [s, fmt.label(s)])].map(([v, l]) => h('option', { value: v, selected: v === status }, l)));
   return h('div', {},
     pageHead('Referrals', can('referrals:write') ? h('button', { class: 'btn primary', onClick: () => openReferralForm(null, { onDone: refresh }) }, '+ New referral') : null, can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv('/api/reports/export/referrals?from=2000-01-01&format=xlsx') }, 'Export to Excel') : null),
     h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'Status'), sel)),
-    h('div', { class: 'muted small mb' }, `${data.total} referrals`), referralTable(data.rows, { onChange: refresh }));
+    pagedList({ first: data, url: `/api/referrals${qs ? '?' + qs : ''}`, limit: PAGE, render: (rows) => referralTable(rows, { onChange: refresh }), summary: (rows, total) => h('div', { class: 'muted small mb' }, `${total} referrals`) }));
 });

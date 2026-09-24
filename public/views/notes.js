@@ -1,4 +1,4 @@
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, kv } from '../app.js';
+import { h, route, get, pagedList, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, kv } from '../app.js';
 
 const SECTIONS = { SOAP: [['S', 'Subjective'], ['O', 'Objective'], ['A', 'Assessment'], ['P', 'Plan']], DAP: [['D', 'Data'], ['A', 'Assessment'], ['P', 'Plan']], BIRP: [['B', 'Behavior'], ['I', 'Intervention'], ['R', 'Response'], ['P', 'Plan']], GIRP: [['G', 'Goal'], ['I', 'Intervention'], ['R', 'Response'], ['P', 'Plan']],
   // Stanley-Brown style safety plan, as a structured note so it prints and reads the same for everyone.
@@ -23,6 +23,9 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
   } });
   // ---- autosave: after a pause in typing the draft is saved to the server, so it can be finished on any device
   let noteId = values?.id || null; let saving = false; let dirty = false; let asTimer;
+  // The version this editor last saved or loaded. Every autosave sends it, so two people with the same draft
+  // open cannot keep overwriting each other in turn: the one whose copy is out of date is told to reload.
+  let version = values?.updated_at || null; let stale = false;
   const status = h('span', { class: 'autosave' }, isNew ? 'Not saved yet' : 'Saved');
   async function save(d, explicit = false) {
     let data;
@@ -38,12 +41,18 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
     if (structured) { data.structured = structured; if (!data.content || data.content === autoText) data.content = Object.entries(structured).map(([k, v]) => `${sectionLabel(fmtSel.value, k)}: ${v}`).join('\n\n'); }
     if (!data.client_id || !data.content) { if (explicit) throw new Error('Choose a client and write something first'); return; }
     if (saving) { dirty = true; return; }
+    if (stale && !explicit) return;
     saving = true; status.textContent = 'Saving…';
     try {
-      if (!noteId) { const r = await post('/api/notes', data, { quiet: !explicit }); noteId = r.id; }
-      else await put(`/api/notes/${noteId}`, data, { quiet: !explicit });
+      if (!noteId) { const r = await post('/api/notes', data, { quiet: !explicit }); noteId = r.id; version = r.updated_at || null; }
+      else { const r = await put(`/api/notes/${noteId}`, { ...data, if_updated_at: version || undefined }, { quiet: !explicit }); if (r && r.updated_at) version = r.updated_at; }
       status.textContent = `Saved ${new Date().toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })} · continue on any device`;
-    } catch (e) { status.textContent = explicit ? '' : 'Not saved yet — will retry'; if (explicit) throw e; }
+    } catch (e) {
+      // Changed elsewhere since this editor loaded it: retrying would never succeed, so stop autosaving and
+      // say why (the explicit Save shows the same message with a Reload button).
+      if (e.status === 409 && e.data && e.data.stale) { stale = true; status.textContent = e.message; if (explicit) throw e; return; }
+      status.textContent = explicit ? '' : 'Not saved yet — will retry'; if (explicit) throw e;
+    }
     finally { saving = false; if (dirty) { dirty = false; save(); } }
   }
   const scheduleSave = () => { clearTimeout(asTimer); status.textContent = 'Unsaved changes'; asTimer = setTimeout(() => save(), 2500); };
@@ -141,8 +150,9 @@ export function noteTable(rows, { showClient = true, onChange } = {}) {
 }
 route('notes', async (r) => {
   const status = r.query.get('status') || '', kind = r.query.get('kind') || '', mine = r.query.get('mine') === '1';
-  const qs = `limit=300${status ? '&status=' + status : ''}${kind ? '&kind=' + kind : ''}${mine ? '&mine=1' : ''}`;
-  const data = await get(`/api/notes?${qs}`);
+  const qs = `${status ? '&status=' + status : ''}${kind ? '&kind=' + kind : ''}${mine ? '&mine=1' : ''}`.replace(/^&/, '');
+  const PAGE = 200;
+  const data = await get(`/api/notes?limit=${PAGE}${qs ? '&' + qs : ''}`);
   const refresh = () => nav(`notes?status=${status}&kind=${kind}${mine ? '&mine=1' : ''}&_=${Date.now()}`);
   // #/notes/<id> (the supervision queue's rows link here) opens that note over the list instead of
   // silently showing the unfiltered list and leaving the reader to hunt for it.
@@ -153,5 +163,5 @@ route('notes', async (r) => {
     pageHead('Notes', (can('notes:admin:write') || can('notes:clinical:write')) ? h('button', { class: 'btn primary', onClick: () => openNoteForm(null, { onDone: refresh }) }, '+ New note') : null, can('imports:write') ? h('a', { class: 'btn', href: '#/imports' }, 'Import from Pocket AI / OneNote') : null),
     h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'Status'), sSel), h('div', { class: 'field' }, h('label', {}, 'Type'), kSel), h('button', { class: `btn sm ${mine ? 'primary' : ''}`, onClick: () => nav(`notes?status=${status}&kind=${kind}${mine ? '' : '&mine=1'}`) }, 'My notes')),
     !can('notes:clinical:read') ? h('div', { class: 'banner small' }, 'Clinical notes are visible only to clinical roles and supervisors.') : null,
-    h('div', { class: 'muted small mb' }, `${data.total} notes`), noteTable(data.rows, { onChange: refresh }));
+    pagedList({ first: data, url: `/api/notes${qs ? '?' + qs : ''}`, limit: PAGE, render: (rows) => noteTable(rows, { onChange: refresh }), summary: (rows, total) => h('div', { class: 'muted small mb' }, `${total} notes`) }));
 });

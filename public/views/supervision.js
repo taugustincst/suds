@@ -19,7 +19,7 @@ route('supervision', async (r) => {
   const glassCount = q.breakglass_unacknowledged || 0;
   const tabs = can('audit:read') ? h('div', { class: 'tabs' },
     h('button', { class: tab === 'queue' ? 'active' : '', onClick: () => nav('supervision') }, 'Queue'),
-    h('button', { class: tab === 'breakglass' ? 'active' : '', 'data-tab-breakglass': '1', onClick: () => nav('supervision?tab=breakglass') }, `Break-glass access${glassCount ? ` (${glassCount})` : ''}`)) : null;
+    h('button', { class: tab === 'breakglass' ? 'active' : '', 'data-tab-breakglass': '1', onClick: () => nav('supervision?tab=breakglass') }, `Access to review${glassCount ? ` (${glassCount})` : ''}`)) : null;
   if (tab === 'breakglass') {
     const g = await get('/api/supervision/breakglass');
     const ack = async (row) => {
@@ -27,17 +27,17 @@ route('supervision', async (r) => {
       catch (e) { toast(e.message, 'error'); }
     };
     page.append(h('section', { class: 'card' },
-      h('div', { class: 'card-head' }, h('h2', {}, 'Emergency access to clinical notes awaiting review'), badge(String(g.rows.length), g.rows.length ? 'danger' : 'ok')),
-      h('p', { class: 'small muted' }, 'Someone outside the treating roles opened a clinical note with a break-glass reason. Confirm each one was appropriate (the reason, the person, the client) and acknowledge it. Every access and every acknowledgement is in the audit log.'),
+      h('div', { class: 'card-head' }, h('h2', {}, 'Access awaiting review'), badge(String(g.rows.length), g.rows.length ? 'danger' : 'ok')),
+      h('p', { class: 'small muted' }, 'Two kinds of exception land here: someone outside the treating roles opened a clinical note with a break-glass reason, or a worker re-admitted a discharged client who was not on their caseload (a returning client found by the intake duplicate check). Confirm each one was appropriate (the reason, the person, the client) and acknowledge it. Every access and every acknowledgement is in the audit log.'),
       g.rows.length ? table([
         { label: 'When', render: x => fmt.dt(x.at) },
         { label: 'Who', render: x => `${x.user_name} (${fmt.label(x.user_role)})` },
         { label: 'Client', render: x => x.client_code || '—' },
-        { label: 'What', render: x => x.note_id ? h('a', { href: `#/notes/${x.note_id}` }, 'One note') : 'Note list' },
+        { label: 'What', render: x => x.kind === 'readmission' ? h('span', { 'data-readmission': '1' }, badge('Re-admission', 'warn'), ' ', h('a', { href: `#/client/${x.client_id}` }, 'Took a discharged client onto their caseload')) : x.note_id ? h('a', { href: `#/notes/${x.note_id}` }, 'One note') : 'Note list' },
         { label: 'Reason given', render: x => h('div', { style: { whiteSpace: 'pre-wrap' } }, x.reason) },
         { label: '', render: x => h('button', { class: 'btn sm primary', 'data-ack-breakglass': x.id, onClick: (e) => { e.stopPropagation(); ack(x); } }, 'Acknowledge') },
       ], g.rows, { rowLabel: (x) => `Break-glass by ${x.user_name} for ${x.client_code || 'a client'}` })
-        : emptyState('Nothing waiting', 'Emergency accesses appear here until a supervisor or privacy officer acknowledges them.')));
+        : emptyState('Nothing waiting', 'Emergency accesses and re-admissions from outside a caseload appear here until a supervisor or privacy officer acknowledges them.')));
     return h('div', {}, pageHead('Supervision'), tabs, page);
   }
 
@@ -179,7 +179,7 @@ route('supervision', async (r) => {
   return h('div', {},
     pageHead('Supervision'),
     tabs,
-    glassCount ? h('div', { class: 'banner error', role: 'alert' }, `${plural(glassCount, 'emergency access', 'emergency accesses')} to clinical notes ${glassCount === 1 ? 'is' : 'are'} waiting for review. `, h('a', { href: '#/supervision?tab=breakglass' }, 'Review now')) : null,
+    glassCount ? h('div', { class: 'banner error', role: 'alert' }, `${plural(glassCount, 'emergency access or re-admission', 'emergency accesses and re-admissions')} ${glassCount === 1 ? 'is' : 'are'} waiting for review. `, h('a', { href: '#/supervision?tab=breakglass' }, 'Review now')) : null,
     h('p', { class: 'muted' }, can('notes:cosign') ? 'Work that is waiting on you: countersignatures, unsigned notes, staff time, and referrals that have not closed the loop.' : 'Work that is waiting on you: staff time to approve, and anything else your role reviews.'),
     page);
 });

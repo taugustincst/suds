@@ -121,7 +121,7 @@ export async function openDesigner(id, onDone, initialFile) {
   ].filter(Boolean), { values: t, submitText: id ? 'Save form' : 'Add to library', onCancel: () => m.close(), onSubmit: async (d) => {
     if (fields.some(x => !String(x.label || '').trim())) throw new Error('Every field needs a label');
     const body = { ...d, fields, file_url: fileData || undefined, filename: fileName || undefined, remove_file: removeFile || undefined };
-    let r; if (id) { await put(`/api/forms/templates/${id}`, body); r = { id }; } else r = await post('/api/forms/templates', body);
+    let r; if (id) { await put(`/api/forms/templates/${id}`, { ...body, if_updated_at: t.updated_at }); r = { id }; } else r = await post('/api/forms/templates', body);
     toast(r.detected ? `Form added; ${r.detected} fields detected in the PDF` : 'Form saved', 'ok'); m.close(); onDone && onDone(r.id);
   } });
   f.querySelector('.btn-row').before(
@@ -152,7 +152,14 @@ export async function openClientForm(id, { onChange } = {}) {
   const { form: f } = await get(`/api/forms/${id}`);
   const locked = f.status === 'completed' && !can('forms:manage'); const editable = can('forms:write') && !locked && f.status !== 'void';
   const values = { ...f.values }; const inputs = {}; let dirty = false, timer = null; const status = h('span', { class: 'small muted' });
-  const save = async (extra = {}) => { clearTimeout(timer); if (!editable) return; status.textContent = 'Saving…'; const r = await put(`/api/forms/${id}`, { values, ...extra }); dirty = false; status.textContent = 'Saved'; return r; };
+  // version: the updated_at this filler last saw. Each save sends it and takes the new one back, so a
+  // colleague's save to the same form in between is refused (409) instead of silently overwritten.
+  let version = f.updated_at;
+  const save = async (extra = {}) => {
+    clearTimeout(timer); if (!editable) return; status.textContent = 'Saving…';
+    try { const r = await put(`/api/forms/${id}`, { values, ...extra, if_updated_at: version }); if (r && r.updated_at) version = r.updated_at; dirty = false; status.textContent = 'Saved'; return r; }
+    catch (e) { if (e.data && e.data.updated_at && e.status !== 409) version = e.data.updated_at; throw e; }
+  };
   const queue = () => { dirty = true; status.textContent = 'Unsaved changes'; clearTimeout(timer); timer = setTimeout(() => save().catch(e => { status.textContent = e.message; }), 1200); };
   const field = (fd) => {
     if (fd.type === 'section') return h('h4', { class: 'ff-section' }, fd.label);
@@ -169,13 +176,13 @@ export async function openClientForm(id, { onChange } = {}) {
   };
   const body = h('div', { class: 'form-grid ff' }, f.fields.map(field));
   const files = h('div', {});
-  const drawFiles = () => { clear(files); if (!f.files.length) files.append(h('span', { class: 'muted small' }, 'No signed copy attached yet.')); f.files.forEach(x => files.append(h('div', { class: 'today-item' }, h('span', {}, x.content_type.startsWith('image/') ? '🖼 ' : '📄 ', h('a', { href: '#', onClick: (e) => { e.preventDefault(); openFile(`/api/forms/${id}/files/${x.id}`); } }, x.filename), h('span', { class: 'muted small' }, ` · ${Math.round(x.bytes / 1024)} KB · ${fmt.date(x.created_at)}`)), can('forms:write') ? h('button', { class: 'btn sm ghost', 'aria-label': `Remove ${x.filename}`, onClick: async () => { if (!await confirmDialog('Remove attachment', `Remove ${x.filename}?`, { danger: true, okText: 'Remove' })) return; await del(`/api/forms/${id}/files/${x.id}`); f.files = f.files.filter(y => y.id !== x.id); drawFiles(); } }, '✕') : null))); };
+  const drawFiles = () => { clear(files); if (!f.files.length) files.append(h('span', { class: 'muted small' }, 'No signed copy attached yet.')); f.files.forEach(x => files.append(h('div', { class: 'today-item' }, h('span', {}, x.content_type.startsWith('image/') ? '🖼 ' : '📄 ', h('a', { href: '#', onClick: (e) => { e.preventDefault(); openFile(`/api/forms/${id}/files/${x.id}`); } }, x.filename), h('span', { class: 'muted small' }, ` · ${Math.round(x.bytes / 1024)} KB · ${fmt.date(x.created_at)}`)), can('forms:write') ? h('button', { class: 'btn sm ghost', 'aria-label': `Remove ${x.filename}`, onClick: async () => { if (!await confirmDialog('Remove attachment', `Remove ${x.filename}?`, { danger: true, okText: 'Remove' })) return; const dr = await del(`/api/forms/${id}/files/${x.id}`); if (dr && dr.form_updated_at) version = dr.form_updated_at; f.files = f.files.filter(y => y.id !== x.id); drawFiles(); } }, '✕') : null))); };
   drawFiles();
   // .sr-only, not .hidden (display:none) — a good few mobile browsers/WebViews refuse to honor a
   // programmatic .click() on a file input that display:none has taken out of the render tree.
   const fileInput = h('input', { type: 'file', accept: 'image/*,application/pdf', class: 'sr-only', onChange: async () => {
     const file = fileInput.files[0]; fileInput.value = ''; if (!file) return;
-    try { status.textContent = `Attaching ${file.name}…`; const dataUrl = file.type.startsWith('image/') ? (await shrinkImage(file, 2000, 0.85)).dataUrl : await readFile(file); const r = await post(`/api/forms/${id}/files`, { file_url: dataUrl, filename: file.name }); f.files.push({ ...r, created_at: new Date().toISOString() }); drawFiles(); status.textContent = 'Signed copy attached'; toast('Attached', 'ok'); }
+    try { status.textContent = `Attaching ${file.name}…`; const dataUrl = file.type.startsWith('image/') ? (await shrinkImage(file, 2000, 0.85)).dataUrl : await readFile(file); const r = await post(`/api/forms/${id}/files`, { file_url: dataUrl, filename: file.name }); if (r.form_updated_at) version = r.form_updated_at; f.files.push({ ...r, created_at: new Date().toISOString() }); drawFiles(); status.textContent = 'Signed copy attached'; toast('Attached', 'ok'); }
     catch (e) { status.textContent = e.message; toast(e.message, 'error'); }
   } });
   const complete = async () => {

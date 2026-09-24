@@ -80,6 +80,21 @@ All notable changes to SUDS are documented here. The project follows semantic ve
     supervisors when clients are assigned to inactive staff. New `GET /api/users/:id/caseload` and
     `GET /api/users/caseloads` (counts only). Moving a whole caseload also moves to-dos that name no client.
   - Creating a user, resetting a password and the setup wizard no longer hash passwords on the event loop.
+  - Client list: the risk, no-contact-in-30-days, substance, MAT, consent-expiring and open-patient-request
+    filters run on the server (`server/client-filters.js`, shared with the Home tiles), so a tile and the list
+    it opens count the same people and every match is reachable. Client, visit, note, referral, call and
+    waitlist lists have "Load more"; the waitlist is no longer capped at 500. The consent alert on Home counts
+    clients, like the list it opens.
+  - Saving a record someone else changed since you opened it is refused with "This record was changed by
+    someone else since you opened it. Reload to see their changes." (409, `if_updated_at`) instead of silently
+    overwriting their changes. The client form sends only the fields you changed.
+  - A save retried after a dropped connection no longer creates duplicates (`Idempotency-Key`, remembered for
+    24 hours, answers stored encrypted and never synchronised): one referral, one disclosure record, one
+    follow-up, one visit and time entry.
+  - Returning clients: when intake finds a discharged record outside your caseload (surname and date of birth,
+    or phone), you can re-admit it yourself with a reason. It is assigned to you, opens a new episode, is
+    audited, and goes to supervisors for review alongside emergency accesses.
+  - Migration 27 adds `idempotency_keys` and `breakglass_events.kind`.
 
 ## 1.9.4 — 2026-09-24
 

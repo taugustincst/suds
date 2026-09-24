@@ -56,7 +56,7 @@ export function openOverdoseForm(row, { clientId = null, onDone } = {}) {
         const ok = await confirmDialog('No longer a fatal overdose?', 'The client will no longer be recorded as deceased: their status goes back to what it was before this event, and the episode it closed is reopened.', { okText: 'Save and restore the client' });
         if (!ok) return;
       }
-      if (row) await put(`/api/overdose-events/${row.id}`, d); else await post('/api/overdose-events', d);
+      if (row) await put(`/api/overdose-events/${row.id}`, { ...d, if_updated_at: row.updated_at }); else await post('/api/overdose-events', d);
       toast(row ? 'Event updated' : 'Event recorded', 'ok'); m.close(); onDone && onDone();
     },
   });

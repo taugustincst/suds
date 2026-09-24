@@ -87,9 +87,29 @@ export async function api(method, path, body, opts = {}) {
   busy(1);
   try { return await apiCall(method, path, body, opts); } finally { busy(-1); }
 }
+// ---- Idempotency-Key ----
+// Every POST carries a key, so the server can answer a repeat of the same request from what it already did
+// instead of doing it twice (server/idempotency.js): a referral resent after a dropped connection used to
+// create two referrals, two disclosure records and two follow-up to-dos. A form's submission holds one key
+// for as long as its contents are unchanged, so pressing Save again after "you appear to be offline" is
+// recognised as the same submission; editing the form, or a successful save, starts a new one. Each POST
+// the submission makes gets its own key derived from it (path and sequence), stable across retries.
+// crypto.getRandomValues, not randomUUID: the latter only exists on https, and a LAN install may be http.
+export function newIdempotencyKey() { const b = new Uint8Array(16); crypto.getRandomValues(b); return Array.from(b, x => x.toString(16).padStart(2, '0')).join(''); }
+let submitScope = null;
+function idempotencyKey(method, path, opts) {
+  if (method !== 'POST') return null;
+  if (opts.idempotencyKey) return opts.idempotencyKey;
+  if (submitScope && !opts.quiet && !opts.background) {
+    const p = String(path).split('?')[0]; const n = (submitScope.seq.get(p) || 0) + 1; submitScope.seq.set(p, n);
+    return `${submitScope.key}:${n}:${p}`.slice(0, 255);
+  }
+  return newIdempotencyKey();
+}
 async function apiCall(method, path, body, opts) {
   const background = isBackground(opts);
-  const headers = { 'X-Requested-With': 'suds', ...(background ? { 'X-Background': '1' } : {}), ...(opts.headers || {}) };
+  const idem = idempotencyKey(method, path, opts);
+  const headers = { 'X-Requested-With': 'suds', ...(background ? { 'X-Background': '1' } : {}), ...(idem ? { 'Idempotency-Key': idem } : {}), ...(opts.headers || {}) };
   if (state.local && window.SUDS_LOCAL) {
     let payload = body; if (body instanceof Blob) payload = await body.arrayBuffer();
     // Writes in flight (a sync above all) hold off an update reload; see newVersionReady().
@@ -483,12 +503,19 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
       f.help ? h('div', { class: 'help', id: helpId }, f.help) : null, errEl);
     target.append(wrap);
   }
+  // What each control showed when the form opened (before any restored draft), so an edit form can send
+  // only what the person actually changed (el.changedKeys) instead of every field it happens to display.
+  const rawValue = (f) => { const i = inputs[f.name]; if (!i) return undefined; return f.type === 'checkbox' ? !!i.checked : String(i.value ?? ''); };
+  const initial = Object.fromEntries(fields.filter(f => f.type !== 'section').map(f => [f.name, rawValue(f)]));
   // A draft kept from an earlier attempt at this same form wins over the defaults.
   const restored = draftKey && drafts.get(draftKey);
   if (restored) for (const [k, v] of Object.entries(restored)) { const i = inputs[k]; if (!i) continue; if (i.type === 'checkbox') i.checked = !!v; else i.value = v ?? ''; }
   const errBox = h('div', { class: 'banner danger hidden', role: 'alert', tabindex: '-1' });
   const submitBtn = h('button', { class: 'btn primary', type: 'submit' }, submitText);
   let submitted = false; let saveTimer;
+  // This submission's Idempotency-Key base (see idempotencyKey above): kept while the contents are
+  // unchanged, so a retry is the same submission; replaced when anything is edited or after a save.
+  let submitKey = newIdempotencyKey();
   // noValidate: the browser's own constraint validation can silently refuse to even dispatch the submit
   // event for a field it considers invalid — including, on some mobile browsers/WebViews, a non-required
   // datetime-local field stuck in a broken partial state that never fires our onSubmit at all, so nothing
@@ -506,7 +533,10 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     // the dialog sitting there looking like nothing happened.
     try {
       el.querySelectorAll('.field').forEach(x => { x.classList.remove('error'); const errSlot = x.querySelector('.err'); if (errSlot) errSlot.textContent = ''; const c = x.querySelector('input,select,textarea'); if (c) c.removeAttribute('aria-invalid'); });
-      const data = read(); await onSubmit(data, el);
+      const data = read();
+      submitScope = { key: submitKey, seq: new Map() };
+      try { await onSubmit(data, el); } finally { submitScope = null; }
+      submitKey = newIdempotencyKey();
       // Saved: the draft is finished with, and no autosave still queued behind this submit may put it back
       // — the debounced savers below used to fire after the delete, so the next "+ New client" opened
       // prefilled with the person just created.
@@ -531,6 +561,12 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
       // does ("Client"), never by column ("client_id").
       const text = err.labelled ? err.message : err.message + (fieldsErr ? ': ' + Object.entries(fieldsErr).map(([k, m]) => `${labelOf(k)} ${m}`).join('; ') : '');
       errBox.textContent = text; errBox.classList.remove('hidden');
+      // Someone else saved this record after it was opened (409 from if_updated_at). Saving again would
+      // overwrite their changes, so the way forward is to reload and see them. The draft goes too: restoring
+      // it over the fresh record would put back the very values the other person just changed.
+      if (err.status === 409 && err.data && err.data.stale) {
+        errBox.append(' ', h('button', { class: 'btn sm', type: 'button', 'data-reload-stale': '1', onClick: () => { submitted = true; clearTimeout(saveTimer); if (draftKey) drafts.delete(draftKey); render(); } }, 'Reload'));
+      }
       // Say it out loud and put the cursor on the first thing that needs fixing, rather than leaving a
       // keyboard user to hunt for a red outline they cannot see.
       announce(text);
@@ -542,6 +578,9 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     h('button', { class: 'btn ghost sm', type: 'button', onClick: (e) => { drafts.delete(draftKey); e.target.closest('.banner').remove(); for (const f of fields) { const i = inputs[f.name]; if (!i) continue; if (i.type === 'checkbox') i.checked = false; else i.value = ''; } } }, 'Start over')) : null,
     errBox, grid, extra || null, h('div', { class: 'btn-row' }, onCancel ? h('button', { class: 'btn', type: 'button', onClick: onCancel }, cancelText) : null, submitBtn));
 
+  // Changed contents are a different submission, with a different Idempotency-Key.
+  const newSubmission = () => { submitKey = newIdempotencyKey(); };
+  el.addEventListener('input', newSubmission); el.addEventListener('change', newSubmission);
   // Keep what has been typed so a dialog closed by accident, a route change, or an idle sign-out does not
   // throw it away.
   if (draftKey) {
@@ -593,6 +632,8 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     return data;
   }
   el.read = read; el.inputs = inputs;
+  // Names of the fields whose control differs from what the form opened with.
+  el.changedKeys = () => fields.filter(f => f.type !== 'section' && inputs[f.name] && rawValue(f) !== initial[f.name]).map(f => f.name);
   return el;
 }
 
@@ -705,6 +746,46 @@ export function table(columns, rows, { onRow, empty = 'No records', wrap = true,
     return h('div', { class: 'table-wrap has-compact' }, t, list);
   }
   return wrap ? h('div', { class: 'table-wrap' }, t) : t;
+}
+
+/**
+ * A list that shows its first page and a "Load more" button while there are more rows on the server.
+ * The list pages used to ask for 300 (the client list 200) and stop there, with nothing to say so.
+ *   first: the first page's response ({ rows|clients, total }); url: the same request without limit/offset;
+ *   key: the array in the response; limit: rows per further page; render(rows): the table (or anything)
+ *   for everything loaded so far; summary(rows, total): optional line above it that updates as rows arrive.
+ * Rows already shown are not repeated if something was added in between (offset paging shifts by one).
+ */
+export function pagedList({ first, url, key = 'rows', limit = 200, render, summary }) {
+  let rows = (first[key] || []).slice(); let total = Number(first.total ?? rows.length); let offset = rows.length;
+  const box = h('div', { 'data-paged-list': '1' });
+  const draw = (focusFrom) => {
+    clear(box);
+    if (summary) box.append(summary(rows, total));
+    box.append(render(rows));
+    if (rows.length < total) {
+      const btn = h('button', { class: 'btn', type: 'button', 'data-load-more': '1', onClick: () => more(btn) }, `Load more (${fmt.num(Math.min(limit, total - rows.length))} of ${fmt.num(total - rows.length)} remaining)`);
+      box.append(h('div', { class: 'row mt load-more' }, h('span', { class: 'muted small', 'data-shown': String(rows.length) }, `Showing ${fmt.num(rows.length)} of ${fmt.num(total)}`), btn));
+    }
+    // Keep a keyboard user where they were: on the first row that just arrived.
+    if (focusFrom !== undefined) { const r = box.querySelectorAll('tbody tr')[focusFrom]; if (r) { if (!r.hasAttribute('tabindex')) r.setAttribute('tabindex', '-1'); r.focus({ preventScroll: true }); } }
+  };
+  const more = async (btn) => {
+    btn.disabled = true; btn.textContent = 'Loading…';
+    try {
+      const d = await get(`${url}${url.includes('?') ? '&' : '?'}limit=${limit}&offset=${offset}`);
+      offset += (d[key] || []).length;
+      const seen = new Set(rows.map(r => r.id));
+      const from = rows.length;
+      rows = rows.concat((d[key] || []).filter(r => !r.id || !seen.has(r.id)));
+      total = Number(d.total ?? total);
+      // Nothing new came back (rows were deleted meanwhile): stop offering more rather than loop.
+      if (!(d[key] || []).length || offset >= total) total = rows.length;
+      draw(from);
+    } catch (e) { btn.disabled = false; btn.textContent = 'Load more'; toast(e.message || 'Could not load more', 'error'); }
+  };
+  draw();
+  return box;
 }
 
 // A tab strip that folds the tabs that do not fit into a "More ▾" menu instead of scrolling them off the

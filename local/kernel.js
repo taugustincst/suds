@@ -5,6 +5,7 @@ import db from '../server/db.js';
 import { Router, HttpError } from '../server/http.js';
 import auth from '../server/auth.js';
 import audit from '../server/audit.js';
+import idempotency from '../server/idempotency.js';
 import * as sync from './sync.js';
 import * as backup from './backup.js';
 
@@ -269,8 +270,8 @@ async function handle(method, path, body, headers = {}) {
     if (body instanceof ArrayBuffer || body instanceof Uint8Array) { ctx.rawBody = Buffer.from(body); ctx.body = {}; }
     else if (typeof body === 'string') { ctx.rawBody = Buffer.from(body); ctx.body = {}; }
     else ctx.body = body || {};
-    let result;
-    for (const h of m.handlers) result = await h(ctx);
+    // Same as the office server (server/app.js): a retried POST with the same Idempotency-Key runs once.
+    const result = await idempotency.run(ctx, async () => { let out; for (const h of m.handlers) out = await h(ctx); return out; });
     // Not saved here: exporting the whole database on every write cost 40-130 ms a request on a large
     // caseload (1.9.1). The shim saves on a short coalescing timer, the page saves on its way out
     // (pagehide / hidden / freeze), and the next document of this tab waits for this one's lock before it

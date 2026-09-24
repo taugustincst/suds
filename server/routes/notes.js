@@ -118,7 +118,8 @@ module.exports = (r) => {
       id, v.client_id, ctx.user.id, v.kind, v.format || 'narrative', v.title ? encrypt(v.title) : null, encrypt(v.content), v.structured ? encrypt(JSON.stringify(v.structured)) : null, v.occurred_at,
       v.intervention_id || null, v.call_id || null, v.part2_protected ?? 1, v.source || 'manual', v.source_ref || null, author?.requires_cosign ? 1 : 0, v.cosign_requested ? 1 : 0);
     audit.log({ user: ctx.user, action: 'note.create', entity: 'note', entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format, cosign_requested: v.cosign_requested ? true : undefined } });
-    ctx.status = 201; return { id };
+    // updated_at: the version the editor's next autosave sends as if_updated_at.
+    ctx.status = 201; return { id, updated_at: db.one(`SELECT updated_at FROM notes WHERE id=?`, id).updated_at };
   });
 
   r.get('/api/notes/:id', auth.requireAuth, (ctx) => {
@@ -136,15 +137,17 @@ module.exports = (r) => {
     if (!auth.hasPerm(ctx.user, kindPerm(n.kind, 'write'))) throw forbidden();
     if (n.status !== 'draft') throw badRequest('Signed notes cannot be edited; add an addendum instead');
     if (n.author_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'clients:all')) throw forbidden('Only the author can edit a draft');
+    require('../crud').assertFresh(ctx, n, 'note');
     const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, cosign_requested: shape.cosign_requested }, { partial: true });
     const sets = []; const params = [];
     for (const k of ['format', 'occurred_at', 'intervention_id', 'call_id', 'part2_protected', 'cosign_requested']) if (v[k] !== undefined) { sets.push(`${k}=?`); params.push(v[k]); }
     if (v.title !== undefined) { sets.push('title_enc=?'); params.push(v.title ? encrypt(v.title) : null); }
     if (v.content !== undefined) { sets.push('content_enc=?'); params.push(encrypt(v.content)); }
     if (v.structured !== undefined) { sets.push('structured_enc=?'); params.push(v.structured ? encrypt(JSON.stringify(v.structured)) : null); }
-    if (sets.length) db.run(`UPDATE notes SET ${sets.join(', ')}, updated_at=? WHERE id=?`, ...params, db.now(), n.id);
+    const stamp = sets.length ? db.now() : n.updated_at;
+    if (sets.length) db.run(`UPDATE notes SET ${sets.join(', ')}, updated_at=? WHERE id=?`, ...params, stamp, n.id);
     audit.log({ user: ctx.user, action: 'note.update', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { fields: Object.keys(v) } });
-    return { ok: true };
+    return { ok: true, updated_at: stamp };
   });
 
   // "Send to supervisor": the author flags a note (draft or already signed) for review/co-signature. A signed

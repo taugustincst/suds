@@ -10,7 +10,7 @@ export function openTimeForm(values, { clientId, clientDisplay, onDone } = {}) {
     { name: 'description', label: 'Description', span: true },
     can('time:all') ? { name: 'user_id', label: 'Worker', type: 'user', value: values?.user_id || state.user.id } : null,
   ].filter(Boolean), { values: values || {}, submitText: isNew ? 'Log time' : 'Save', draftKey: isNew ? 'time:new' : `time:${values.id}`, onCancel: () => m.close(), onSubmit: async (d) => {
-    if (isNew) await post('/api/time', d); else await put(`/api/time/${values.id}`, d);
+    if (isNew) await post('/api/time', d); else await put(`/api/time/${values.id}`, { ...d, if_updated_at: values.updated_at });
     toast('Time saved', 'ok'); m.close(); onDone && onDone();
   } });
   const m = modal(isNew ? 'Log time' : 'Edit time entry', f);

@@ -1,6 +1,6 @@
 // Episodes of care: admitting someone, discharging them, and the waitlist. Before this a client entered
 // once stayed "active" forever, because there was no step that ended anything.
-import { h, route, get, post, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog, kv } from '../app.js';
+import { h, route, get, pagedList, post, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog, kv } from '../app.js';
 
 const REASONS = [
   ['completed', 'Completed the program'],
@@ -110,11 +110,12 @@ export async function episodesPanel(clientId, { onChange } = {}) {
 
 // ---- the waitlist ----
 route('waitlist', async () => {
-  const { rows } = await get('/api/waitlist');
+  const PAGE = 200;
+  const first = await get(`/api/waitlist?limit=${PAGE}`);
   return h('div', {},
     pageHead('Waitlist'),
     h('p', { class: 'muted' }, 'Everyone waiting for a place, longest and highest risk first. This is the list to work through each morning.'),
-    rows.length ? table([
+    first.rows.length ? pagedList({ first, url: '/api/waitlist', limit: PAGE, summary: (rows, total) => h('div', { class: 'muted small mb' }, `${total} waiting`), render: (rows) => table([
       { label: 'Client', render: r => r.display_name },
       { label: 'Code', key: 'client_code' },
       { label: 'Waiting', render: r => h('span', { style: r.days_waiting > 30 ? { color: 'var(--danger)' } : {} }, `${r.days_waiting} day${r.days_waiting === 1 ? '' : 's'}`), num: true },
@@ -122,6 +123,6 @@ route('waitlist', async () => {
       { label: 'Substance', render: r => fmt.label(r.primary_substance || 'unknown') },
       { label: 'Level of care', render: r => r.asam_level || '—' },
       { label: 'Last contact', render: r => (r.last_contact ? fmt.date(r.last_contact) : h('span', { style: { color: 'var(--danger)' } }, 'never')) },
-    ], rows, { onRow: (r) => nav(`client/${r.id}`), rowLabel: (r) => `${r.display_name}, waiting ${r.days_waiting} days` })
+    ], rows, { onRow: (r) => nav(`client/${r.id}`), rowLabel: (r) => `${r.display_name}, waiting ${r.days_waiting} days` }) })
       : emptyState('Nobody is waiting', 'Clients with the status "waitlist" appear here, ordered by how long they have waited.'));
 });

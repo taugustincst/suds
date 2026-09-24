@@ -139,16 +139,18 @@ module.exports = (r) => {
     ctx.status = 201; return { id, fields, detected };
   });
   r.put('/api/forms/templates/:id', auth.requireAuth, auth.requirePerm('forms:manage'), (ctx) => {
-    const t = db.one(`SELECT id FROM form_templates WHERE id=?`, ctx.params.id); if (!t) throw notFound();
+    const t = db.one(`SELECT id, updated_at FROM form_templates WHERE id=?`, ctx.params.id); if (!t) throw notFound();
+    require('../crud').assertFresh(ctx, t, 'form_template');
     const v = validate(ctx.body, { name: { type: 'string', maxLen: 200 }, description: { type: 'string', maxLen: 1000 }, category: { type: 'string', enum: C.FORM_CATEGORIES }, version: { type: 'string', maxLen: 40 }, filename: { type: 'string', maxLen: 200 }, instructions: { type: 'string', maxLen: 3000 }, is_active: { type: 'boolean' } }, { partial: true });
     const sets = Object.keys(v).map(k => `${k}=?`); const params = Object.keys(v).map(k => v[k]);
     if (ctx.body.fields !== undefined) { sets.push('fields_json=?'); params.push(JSON.stringify(cleanFields(ctx.body.fields))); }
     if (ctx.body.file_url || ctx.body.file) { const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_TEMPLATE_BYTES, 'Form file'); sets.push('file_b64=?', 'content_type=?', 'bytes=?', 'filename=?'); params.push(file.b64, file.type, file.buf.length, v.filename || ctx.body.filename || `form.${FILE_TYPES[file.type]}`); }
     if (ctx.body.remove_file) { sets.push('file_b64=NULL', 'content_type=NULL', 'bytes=0', 'filename=NULL'); }
-    if (!sets.length) return { ok: true };
-    db.run(`UPDATE form_templates SET ${sets.join(', ')}, updated_at=? WHERE id=?`, ...params, db.now(), t.id);
+    if (!sets.length) return { ok: true, updated_at: t.updated_at };
+    const stamp = db.now();
+    db.run(`UPDATE form_templates SET ${sets.join(', ')}, updated_at=? WHERE id=?`, ...params, stamp, t.id);
     audit.log({ user: ctx.user, action: 'form_template.update', entity: 'form_template', entityId: t.id, ip: ctx.ip, details: { fields: Object.keys(v).concat(ctx.body.fields !== undefined ? ['fields'] : [], ctx.body.file_url || ctx.body.file ? ['file'] : []) } });
-    return { ok: true };
+    return { ok: true, updated_at: stamp };
   });
   r.delete('/api/forms/templates/:id', auth.requireAuth, auth.requirePerm('forms:manage'), (ctx) => {
     const t = db.one(`SELECT id FROM form_templates WHERE id=?`, ctx.params.id); if (!t) throw notFound();
@@ -196,19 +198,21 @@ module.exports = (r) => {
   r.put('/api/forms/:id', auth.requireAuth, auth.requirePerm('forms:write'), (ctx) => {
     const f = loadForm(ctx, ctx.params.id);
     if (f.status === 'completed' && !auth.hasPerm(ctx.user, 'forms:manage')) throw badRequest('This form is completed. Ask a supervisor to reopen it.');
+    require('../crud').assertFresh(ctx, f, 'client_form');
     const fields = parseJson(f.fields_json, []);
     const v = validate(ctx.body, { status: { type: 'string', enum: ['draft', 'completed', 'void'] }, notes: { type: 'string', maxLen: 2000 } }, { partial: true });
     let values = parseJson(decrypt(f.values_enc), {});
     if (ctx.body.values !== undefined) values = { ...values, ...cleanValues(fields, ctx.body.values) };
-    const sets = ['values_enc=?', 'updated_at=?']; const params = [encrypt(JSON.stringify(values)), db.now()];
+    const stamp = db.now();
+    const sets = ['values_enc=?', 'updated_at=?']; const params = [encrypt(JSON.stringify(values)), stamp];
     if (v.notes !== undefined) { sets.push('notes=?'); params.push(v.notes); }
     if (v.status) {
-      if (v.status === 'completed') { const miss = missingRequired(fields, values); if (miss.length) { db.run(`UPDATE client_forms SET values_enc=?, updated_at=? WHERE id=?`, params[0], params[1], f.id); throw badRequest(`Please fill in: ${miss.join(', ')}`); } sets.push('status=?', 'completed_at=?', 'completed_by=?'); params.push('completed', db.now(), ctx.user.id); }
+      if (v.status === 'completed') { const miss = missingRequired(fields, values); if (miss.length) { db.run(`UPDATE client_forms SET values_enc=?, updated_at=? WHERE id=?`, params[0], params[1], f.id); throw badRequest(`Please fill in: ${miss.join(', ')}`, { updated_at: stamp }); } sets.push('status=?', 'completed_at=?', 'completed_by=?'); params.push('completed', db.now(), ctx.user.id); }
       else { sets.push('status=?', 'completed_at=NULL', 'completed_by=NULL'); params.push(v.status); }
     }
     db.run(`UPDATE client_forms SET ${sets.join(', ')} WHERE id=?`, ...params, f.id);
     audit.log({ user: ctx.user, action: v.status === 'completed' ? 'client_form.complete' : 'client_form.update', entity: 'client_form', entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { status: v.status, fields_changed: ctx.body.values ? Object.keys(ctx.body.values).length : 0 } });
-    return { ok: true, missing: missingRequired(fields, values) };
+    return { ok: true, missing: missingRequired(fields, values), updated_at: stamp };
   });
   r.delete('/api/forms/:id', auth.requireAuth, auth.requirePerm('forms:write'), (ctx) => {
     const f = loadForm(ctx, ctx.params.id);
@@ -233,9 +237,11 @@ module.exports = (r) => {
     const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_ATTACH_BYTES, 'Attachment'); if (!file) throw badRequest('Attachment is required');
     const id = uuid(); const name = (v.filename || `signed.${FILE_TYPES[file.type]}`).replace(/[\r\n"]/g, '');
     db.run(`INSERT INTO client_form_files(id,client_form_id,client_id,filename,content_type,bytes,data_enc,uploaded_by) VALUES(?,?,?,?,?,?,?,?)`, id, f.id, f.client_id, name, file.type, file.buf.length, encrypt(file.b64), ctx.user.id);
-    db.run(`UPDATE client_forms SET updated_at=? WHERE id=?`, db.now(), f.id);
+    const stamp = db.now();
+    db.run(`UPDATE client_forms SET updated_at=? WHERE id=?`, stamp, f.id);
     audit.log({ user: ctx.user, action: 'client_form.attach', entity: 'client_form', entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { file_id: id, bytes: file.buf.length, type: file.type } });
-    ctx.status = 201; return { id, filename: name, content_type: file.type, bytes: file.buf.length };
+    // form_updated_at: the form's new version, so the open filler's next autosave is not refused as stale.
+    ctx.status = 201; return { id, filename: name, content_type: file.type, bytes: file.buf.length, form_updated_at: stamp };
   });
   r.get('/api/forms/:id/files/:fid', auth.requireAuth, auth.requirePerm('forms:read', 'forms:write'), (ctx) => {
     const f = loadForm(ctx, ctx.params.id); const x = db.one(`SELECT * FROM client_form_files WHERE id=? AND client_form_id=?`, ctx.params.fid, f.id); if (!x) throw notFound();
@@ -244,8 +250,9 @@ module.exports = (r) => {
   });
   r.delete('/api/forms/:id/files/:fid', auth.requireAuth, auth.requirePerm('forms:write'), (ctx) => {
     const f = loadForm(ctx, ctx.params.id); const x = db.one(`SELECT id FROM client_form_files WHERE id=? AND client_form_id=?`, ctx.params.fid, f.id); if (!x) throw notFound();
-    db.run(`DELETE FROM client_form_files WHERE id=?`, x.id); db.tombstone('client_form_files', x.id); db.run(`UPDATE client_forms SET updated_at=? WHERE id=?`, db.now(), f.id);
+    const stamp = db.now();
+    db.run(`DELETE FROM client_form_files WHERE id=?`, x.id); db.tombstone('client_form_files', x.id); db.run(`UPDATE client_forms SET updated_at=? WHERE id=?`, stamp, f.id);
     audit.log({ user: ctx.user, action: 'client_form.file.remove', entity: 'client_form', entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { file_id: x.id } });
-    return { ok: true };
+    return { ok: true, form_updated_at: stamp };
   });
 };

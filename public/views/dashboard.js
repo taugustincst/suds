@@ -18,8 +18,9 @@ route('dashboard', async () => {
   if (d.notes.unsigned) alerts.push([d.notes.unsigned_overdue ? 'danger' : 'warn', `${d.notes.unsigned} unsigned note${d.notes.unsigned > 1 ? 's' : ''}${d.notes.team ? ' across your team' : ''}`, d.notes.team ? '#/supervision' : '#/notes?status=draft&mine=1']);
   if (cont.staged_imports) alerts.push(['info', `${cont.staged_imports} imported note${cont.staged_imports > 1 ? 's' : ''} to review`, '#/imports']);
   if (c.no_contact_30d) alerts.push(['warn', `${c.no_contact_30d} client${c.no_contact_30d > 1 ? 's' : ''} not contacted in 30 days`, '#/clients?stale=1']);
-  if (d.consents_expiring.length) alerts.push(['warn', `${d.consents_expiring.length} consent${d.consents_expiring.length > 1 ? 's' : ''} expiring soon`, '#/clients?consent_expiring=1']);
-  if (d.breakglass_pending) alerts.push(['danger', `${d.breakglass_pending} emergency access${d.breakglass_pending > 1 ? 'es' : ''} to clinical notes to review`, '#/supervision?tab=breakglass']);
+  { const n = d.consents_expiring_clients ?? d.consents_expiring.length; if (n) alerts.push(['warn', `${n} client${n > 1 ? 's have' : ' has'} a consent expiring soon`, '#/clients?consent_expiring=1']); }
+  // Break-glass reads of clinical notes and re-admissions of a discharged client from outside a caseload.
+  if (d.breakglass_pending) alerts.push(['danger', `${d.breakglass_pending} emergency access${d.breakglass_pending > 1 ? 'es' : ''} / re-admission${d.breakglass_pending > 1 ? 's' : ''} to review`, '#/supervision?tab=breakglass']);
   // Patient-rights requests run a 30-day clock: an overdue one is a compliance failure, not a to-do.
   const pr = d.patient_requests;
   if (pr && pr.n) alerts.push([pr.overdue ? 'danger' : 'warn', `${pr.n} open patient request${pr.n > 1 ? 's' : ''}${pr.overdue ? ` (${pr.overdue} overdue)` : ''}`, '#/clients?status=all&patient_requests=1']);

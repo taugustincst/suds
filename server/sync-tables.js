@@ -65,6 +65,10 @@ module.exports = {
   // Server-side only, never synchronised: breakglass_events is the office supervisor's review queue for
   // emergency access, and a device has no supervisor to review it.
   server_only: ['breakglass_events'],
+  // Kept by each database for itself and never synchronised in either direction: idempotency_keys holds
+  // the answers to retried POSTs made against that database (server/idempotency.js). A device's retry is
+  // answered by the device; the office never sees the key, only the rows the request created.
+  per_database: ['idempotency_keys'],
   // Rows a device may create but never change once they exist (a consent may only be revoked). The legal
   // record of what was agreed to and what was shared cannot be rewritten by whichever phone syncs last.
   immutable: ['consents', 'disclosures', 'note_addenda'],

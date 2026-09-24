@@ -162,12 +162,14 @@ module.exports = (r) => {
   });
   r.put('/api/budget/funds/:id', auth.requireAuth, auth.requirePerm('budget:manage'), (ctx) => {
     const f = db.one(`SELECT * FROM funding_sources WHERE id=?`, ctx.params.id); if (!f) throw notFound();
+    require('../crud').assertFresh(ctx, f, 'fund');
     const v = validate(ctx.body, Object.fromEntries(Object.entries(fundShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
-    const keys = Object.keys(v); if (!keys.length) return { ok: true };
+    const keys = Object.keys(v); if (!keys.length) return { ok: true, updated_at: f.updated_at };
     assertPeriodOrder(v.fiscal_year_start ?? f.fiscal_year_start, v.fiscal_year_end ?? f.fiscal_year_end);
-    db.run(`UPDATE funding_sources SET ${keys.map(k => `${k}=?`).join(', ')}, updated_at=? WHERE id=?`, ...keys.map(k => v[k]), db.now(), f.id);
+    const stamp = db.now();
+    db.run(`UPDATE funding_sources SET ${keys.map(k => `${k}=?`).join(', ')}, updated_at=? WHERE id=?`, ...keys.map(k => v[k]), stamp, f.id);
     audit.log({ user: ctx.user, action: 'fund.update', entity: 'funding_source', entityId: f.id, ip: ctx.ip, details: { fields: keys } });
-    return { ok: true };
+    return { ok: true, updated_at: stamp };
   });
   r.post('/api/budget/funds/:id/lines', auth.requireAuth, auth.requirePerm('budget:manage'), (ctx) => {
     const f = db.one(`SELECT id FROM funding_sources WHERE id=?`, ctx.params.id); if (!f) throw notFound();
@@ -180,6 +182,7 @@ module.exports = (r) => {
   });
   r.put('/api/budget/lines/:id', auth.requireAuth, auth.requirePerm('budget:manage'), (ctx) => {
     const l = db.one(`SELECT * FROM budget_lines WHERE id=?`, ctx.params.id); if (!l) throw notFound();
+    require('../crud').assertFresh(ctx, l, 'budget_line');
     const v = validate(ctx.body, Object.fromEntries(Object.entries(lineShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
     if ('parent_id' in v && v.parent_id) {
       if (v.parent_id === l.id) throw badRequest('A budget line cannot be its own parent');
@@ -195,9 +198,10 @@ module.exports = (r) => {
       const handedDown = db.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE parent_id=?`, l.id).n;
       if (cents(amount) < cents(handedDown)) throw badRequest(`Its sub-allocations already total ${money(handedDown)}; reduce those first`);
     }
-    const keys = Object.keys(v); if (keys.length) db.run(`UPDATE budget_lines SET ${keys.map(k => `${k}=?`).join(', ')}, updated_at=? WHERE id=?`, ...keys.map(k => v[k]), db.now(), l.id);
+    const keys = Object.keys(v); const stamp = keys.length ? db.now() : l.updated_at;
+    if (keys.length) db.run(`UPDATE budget_lines SET ${keys.map(k => `${k}=?`).join(', ')}, updated_at=? WHERE id=?`, ...keys.map(k => v[k]), stamp, l.id);
     audit.log({ user: ctx.user, action: 'budget_line.update', entity: 'budget_line', entityId: l.id, ip: ctx.ip, details: { fields: keys } });
-    return { ok: true };
+    return { ok: true, updated_at: stamp };
   });
   r.delete('/api/budget/lines/:id', auth.requireAuth, auth.requirePerm('budget:manage'), (ctx) => {
     // budget_lines.parent_id is ON DELETE CASCADE, so deleting a line with sub-allocations removes them at

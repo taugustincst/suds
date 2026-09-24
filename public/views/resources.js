@@ -28,7 +28,7 @@ export function openResourceForm(values, onDone) {
     { name: 'last_verified_at', label: 'Last verified', type: 'date' }, { name: 'is_active', label: 'Active', type: 'checkbox', value: values ? values.is_active : true }, { name: 'notes', label: 'Internal notes', type: 'textarea', span: true, rows: 2 },
   ], { values: values || {}, submitText: isNew ? 'Add resource' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => {
     d.service_tags = tags.getValue(); d.populations = pops.getValue();
-    let id = values?.id; if (isNew) id = (await post('/api/resources', d)).id; else await put(`/api/resources/${id}`, d);
+    let id = values?.id; if (isNew) id = (await post('/api/resources', d)).id; else await put(`/api/resources/${id}`, { ...d, if_updated_at: values.updated_at });
     toast('Resource saved', 'ok'); m.close(); onDone && onDone(id);
   } });
   // tag pickers live inside the "Services & admission" section

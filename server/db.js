@@ -359,6 +359,17 @@ const migrations = [
       upd.run(...cols.map(k => idx[k]), c.id);
     }
   },
+  // 27:
+  //     idempotency_keys, so a retried POST is answered once instead of creating everything twice; and
+  //     breakglass_events.kind, because the supervisors' review queue now also receives re-admissions of
+  //     discharged clients by a worker whose caseload they were not on (POST /api/clients/:id/readmit).
+  (d) => {
+    addColumn(d, 'breakglass_events', 'kind', "TEXT NOT NULL DEFAULT 'clinical_note'");
+    const schemaText = safeSchema();
+    const m = schemaText.match(/CREATE TABLE IF NOT EXISTS idempotency_keys \([\s\S]*?\n\);/);
+    if (m) d.exec(m[0]);
+    for (const line of schemaText.split('\n')) if (/^CREATE INDEX IF NOT EXISTS idx_idempotency/.test(line.trim())) d.exec(line.trim());
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's
