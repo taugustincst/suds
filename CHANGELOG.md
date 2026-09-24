@@ -2,7 +2,7 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.10.0 — 2026-09-24
 
 - **The GitHub Pages build is now SUDS on this device, a production web app — not a demo.** The
   "Demo/evaluation build" banner and its `--demo-banner-h` layout machinery are gone, and no screen calls it a
