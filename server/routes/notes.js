@@ -8,7 +8,7 @@ const { validate, paging } = require('../validate');
 const { encrypt, decrypt, sha256, uuid } = require('../crypto');
 
 const shape = {
-  client_id: { type: 'string', required: true }, kind: { type: 'string', required: true, enum: ['clinical', 'admin'] }, format: { type: 'string', enum: C.NOTE_FORMATS },
+  client_id: { type: 'string', required: true }, kind: { type: 'string', required: true, enum: ['clinical', 'admin'] }, format: { type: 'string', list: 'NOTE_FORMATS' },
   title: { type: 'string', maxLen: 200 }, content: { type: 'string', required: true, maxLen: 50000 }, structured: { type: 'object' }, occurred_at: { type: 'datetime', required: true },
   intervention_id: { type: 'string' }, call_id: { type: 'string' }, part2_protected: { type: 'boolean' }, cosign_requested: { type: 'boolean' }, source: { type: 'string', enum: ['manual', 'pocket_ai', 'onenote', 'import', 'api'] }, source_ref: { type: 'string', maxLen: 300 },
 };
@@ -138,7 +138,7 @@ module.exports = (r) => {
     if (n.status !== 'draft') throw badRequest('Signed notes cannot be edited; add an addendum instead');
     if (n.author_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'clients:all')) throw forbidden('Only the author can edit a draft');
     require('../crud').assertFresh(ctx, n, 'note');
-    const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, cosign_requested: shape.cosign_requested }, { partial: true });
+    const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, cosign_requested: shape.cosign_requested }, { partial: true, existing: n });
     const sets = []; const params = [];
     for (const k of ['format', 'occurred_at', 'intervention_id', 'call_id', 'part2_protected', 'cosign_requested']) if (v[k] !== undefined) { sets.push(`${k}=?`); params.push(v[k]); }
     if (v.title !== undefined) { sets.push('title_enc=?'); params.push(v.title ? encrypt(v.title) : null); }

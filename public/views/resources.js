@@ -187,7 +187,7 @@ route('resource', async (r) => {
     x.service_tags ? h('div', { class: 'mb' }, tagBadges(x.service_tags, 'purple')) : null,
     kv([['Levels of care', x.levels_of_care], ['MAT / medications', x.mat_offered], ['Populations served', x.populations ? String(x.populations).split(',').map(fmt.label).join(', ') : null], ['Services (details)', x.services], ['Eligibility', x.eligibility], ['How to refer', x.intake_process], ['Cost / payment', x.cost_notes], ['Capacity / waitlist', x.capacity_notes]].filter(([, v]) => v)),
     !x.service_tags && !x.services && !x.eligibility ? h('p', { class: 'muted small' }, 'No service details yet.') : null);
-  const outcomes = x.referral_stats.length ? h('div', {}, x.referral_stats.map(s => [badge(`${fmt.label(s.status)}: ${s.n}`), ' '])) : h('p', { class: 'muted small' }, 'No referrals yet.');
+  const outcomes = x.referral_stats.length ? h('div', {}, x.referral_stats.map(s => [badge(`${fmt.label(s.status, 'REFERRAL_STATUSES')}: ${s.n}`), ' '])) : h('p', { class: 'muted small' }, 'No referrals yet.');
   const recent = (x.recent_referrals || []).length ? table([{ label: 'Client', render: y => h('a', { href: `#/client/${y.client_id}/referrals` }, y.client_code) }, { label: 'Referred', render: y => fmt.date(y.referred_at) }, { label: 'Status', render: y => badge(fmt.label(y.status)) }], x.recent_referrals) : null;
   // The phone's top bar names the page; a provider's page is not in the menu, so it said "SUDS".
   const barTitle = document.querySelector('.mobilebar-title > b'); if (barTitle) { barTitle.textContent = x.name; barTitle.title = x.name; }

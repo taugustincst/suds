@@ -256,7 +256,7 @@ module.exports = (r) => {
     // left exactly as stored.
     const RAW = new Set(['client_code', 'receipt_ref', 'grant_number', 'email', 'website', 'phone', 'fax', 'zip', 'username', 'document_ref', 'medicaid_id', 'address', 'first_name', 'last_name', 'contact_name', 'name', 'organization', 'vendor', 'title', 'template_name', 'fund', 'line', 'resource', 'worker', 'approver', 'assignee', 'completed_by', 'created_by', 'disclosed_by', 'recipient', 'summary', 'description', 'notes', 'purpose', 'what', 'goals', 'flags', 'hours', 'eligibility', 'services', 'languages', 'capacity_notes', 'contact_person', 'intake_process', 'cost_notes', 'restrictions', 'label', 'city']);
     const humanize = (v) => String(v).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).replace(/\bSbirt\b/, 'SBIRT').replace(/\bMat\b/g, 'MAT').replace(/\bOtp\b/, 'OTP').replace(/\bObot\b/, 'OBOT').replace(/\bEd\b/, 'ED').replace(/\bMh\b/, 'MH').replace(/\bIds\b/, 'IDs').replace(/\bRoi\b/, 'ROI');
-    const pretty = (rows) => rows.map(r => { const o = {}; for (const [k, v] of Object.entries(r)) o[k] = (typeof v === 'string' && !RAW.has(k) && /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(v) && v.length <= 40) ? humanize(v) : v; return o; });
+    const pretty = (rows, kind) => rows.map(r => { const listed = X.LIST_COLUMNS[kind] || {}; const o = {}; for (const [k, v] of Object.entries(r)) o[k] = (typeof v === 'string' && !RAW.has(k) && !(k in listed) && /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(v) && v.length <= 40) ? humanize(v) : v; return o; });
     // The classification travels in a response header and the filename (and, for Excel, the About sheet).
     // It used to be a "# …" comment line ahead of the CSV header, which put the label in row 1 of every
     // spreadsheet and broke re-import; CSV has no comment syntax.
@@ -273,13 +273,13 @@ module.exports = (r) => {
         if (kind === 'disclosures') { disclosuresSlot = sheets.length; sheets.push(null); continue; }
         const rows = d.rows();
         for (const id of X.clientIdsOf(rows)) clientIds.add(id);
-        sheets.push({ name: d.label, columns: d.columns.map(label), rows: pretty(X.publicRows(rows)) });
+        sheets.push({ name: d.label, columns: d.columns.map(label), rows: pretty(X.publicRows(rows), kind) });
         await new Promise((resolve) => defer(resolve));
       }
       const written = new Set(accountFor('workbook', [...clientIds]));
       if (disclosuresSlot >= 0) {
         const rows = D.disclosures.rows().filter(r => !written.has(r.id));
-        sheets[disclosuresSlot] = { name: D.disclosures.label, columns: D.disclosures.columns.map(label), rows: pretty(X.publicRows(rows)) };
+        sheets[disclosuresSlot] = { name: D.disclosures.label, columns: D.disclosures.columns.map(label), rows: pretty(X.publicRows(rows), 'disclosures') };
       }
       audit.log({ user: ctx.user, action: 'report.export', ip: ctx.ip, details: { kind: 'workbook', sheets: sheets.map(s => [s.name, s.rows.length]), identified, from, to, clients_disclosed: identified ? clientIds.size : undefined } });
       body = await S.writeWorkbookAsync(sheets); filename = `suds-export-${from}_${to}-${identified ? 'identified' : 'deidentified'}.xlsx`; type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -287,7 +287,7 @@ module.exports = (r) => {
       const d = D[ctx.params.kind === 'clients' ? 'clients' : ctx.params.kind]; if (!d) throw require('../http').notFound('Unknown export');
       const raw = d.rows();
       const clientsDisclosed = accountFor(ctx.params.kind, X.clientIdsOf(raw)).length;
-      const rows = pretty(X.publicRows(raw));
+      const rows = pretty(X.publicRows(raw), ctx.params.kind);
       audit.log({ user: ctx.user, action: 'report.export', ip: ctx.ip, details: { kind: ctx.params.kind, rows: rows.length, identified, from, to, format, clients_disclosed: identified ? clientsDisclosed : undefined } });
       const suffix = identified ? 'identified' : 'deidentified';
       if (format === 'xlsx') { body = S.writeWorkbook([{ name: d.label, columns: d.columns.map(label), rows }, aboutSheet]); filename = `suds-${ctx.params.kind}-${from}_${to}-${suffix}.xlsx`; type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'; }

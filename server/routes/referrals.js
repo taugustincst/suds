@@ -60,7 +60,7 @@ module.exports = (r) => {
     select: 'referrals.*, u.display_name AS worker, c.client_code, res.name AS resource_name, res.category AS resource_category, res.phone AS resource_phone',
     shape: {
       client_id: { type: 'string', required: true }, resource_id: { type: 'string', required: true }, user_id: { type: 'string' }, referred_at: { type: 'datetime', required: true },
-      status: { type: 'string', enum: C.REFERRAL_STATUSES }, urgency: { type: 'string', enum: ['routine', 'urgent', 'emergent'] }, appointment_at: { type: 'datetime' }, admitted_at: { type: 'datetime' },
+      status: { type: 'string', list: 'REFERRAL_STATUSES' }, urgency: { type: 'string', enum: ['routine', 'urgent', 'emergent'] }, appointment_at: { type: 'datetime' }, admitted_at: { type: 'datetime' },
       closed_at: { type: 'datetime' }, outcome: { type: 'string', maxLen: 500 }, barrier: { type: 'string', maxLen: 300 }, warm_handoff: { type: 'boolean' }, consent_id: { type: 'string' },
       follow_up_due: { type: 'date' }, notes: { type: 'string', maxLen: 2000 }, episode_id: { type: 'string' },
       // Not columns: how this disclosure is justified, and what was actually sent.
@@ -113,10 +113,10 @@ module.exports = (r) => {
     require('../auth').assertClientAccess(ctx, row.client_id);
     const { validate } = require('../validate');
     const v = validate(ctx.body, {
-      status: { type: 'string', required: true, enum: C.REFERRAL_STATUSES },
+      status: { type: 'string', required: true, list: 'REFERRAL_STATUSES' },
       outcome: { type: 'string', maxLen: 500 }, barrier: { type: 'string', maxLen: 300 }, admitted_at: { type: 'datetime' },
       consent_id: { type: 'string' }, _disclosure_basis: { type: 'string', enum: BASES }, _disclosure_what: { type: 'string', maxLen: 1000 }, _disclosure_justification: { type: 'string', maxLen: 2000 },
-    });
+    }, { existing: row });
     if (v.consent_id && !db.one(`SELECT 1 FROM consents WHERE id=? AND client_id=?`, v.consent_id, row.client_id)) throw badRequest('That consent belongs to a different client');
     const admitted = v.status === 'admitted' || !!v.admitted_at;
     db.transaction(() => {

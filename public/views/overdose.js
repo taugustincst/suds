@@ -2,23 +2,9 @@
 // by an outreach worker — with nobody identified — is exactly the kind a program most needs to record.
 import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog, discardDraft } from '../app.js';
 
-// The lists themselves come from GET /api/meta/overdose-options, so a kind added on the server shows up
-// here; these are the plain-language labels for the known values, and the fallback if the list cannot load.
-const KIND_LABELS = { overdose: 'Overdose (no naloxone given)', reversal: 'Overdose reversed with naloxone', fatal: 'Fatal overdose' };
-const BY_LABELS = { bystander: 'A bystander', first_responder: 'A first responder', staff: 'Our staff', self: 'The person themselves', family: 'Family member', unknown: 'Unknown' };
-const toOptions = (values, labels) => values.map(value => ({ value, label: labels[value] || fmt.label(value) }));
-let KINDS = toOptions(Object.keys(KIND_LABELS), KIND_LABELS);
-let BY = toOptions(Object.keys(BY_LABELS), BY_LABELS);
-let optionsLoaded = false;
-async function loadOptions() {
-  if (optionsLoaded) return;
-  try {
-    const m = await get('/api/meta/overdose-options');
-    if (Array.isArray(m.kinds) && m.kinds.length) KINDS = toOptions(m.kinds, KIND_LABELS);
-    if (Array.isArray(m.administered_by) && m.administered_by.length) BY = toOptions(m.administered_by, BY_LABELS);
-    optionsLoaded = true;
-  } catch { /* keep the built-in lists */ }
-}
+// "What happened" and "Given by" are documentation lists (Settings → Lists): the choices and their wording
+// come from the office's setup with the rest of the lists (GET /api/meta/constants; the same lists are on
+// GET /api/meta/overdose-options for other callers).
 
 export function openOverdoseForm(row, { clientId = null, onDone } = {}) {
   const f = form([
@@ -27,11 +13,11 @@ export function openOverdoseForm(row, { clientId = null, onDone } = {}) {
     { name: 'occurred_at', label: 'When', type: 'datetime', required: true },
     // Chosen, not pre-filled: with 'reversal' and '1 dose' already in the form, saving it untouched used to
     // record a countable naloxone reversal that never happened.
-    { name: 'kind', label: 'What happened', type: 'select', required: true, placeholder: '— choose —', options: KINDS },
+    { name: 'kind', label: 'What happened', type: 'select', required: true, placeholder: '— choose —', list: 'OVERDOSE_KINDS' },
     { name: 'substances', label: 'Substances involved', placeholder: 'e.g. fentanyl, benzodiazepines' },
     { name: 'naloxone_used', label: 'Naloxone was given', type: 'checkbox' },
     { name: 'naloxone_doses', label: 'Doses given', type: 'number', min: 0, max: 20 },
-    { name: 'administered_by', label: 'Given by', type: 'select', options: BY },
+    { name: 'administered_by', label: 'Given by', type: 'select', list: 'ADMINISTERED_BY' },
     { name: 'ems_called', label: 'EMS was called', type: 'checkbox' },
     { name: 'hospitalized', label: 'Taken to hospital', type: 'checkbox' },
     { name: 'survived', label: 'The person survived', type: 'checkbox', value: row ? row.survived : 1 },
@@ -75,7 +61,6 @@ export function openOverdoseForm(row, { clientId = null, onDone } = {}) {
 }
 
 route('overdose', async () => {
-  await loadOptions();
   const params = new URLSearchParams((location.hash.split('?')[1] || ''));
   const kind = params.get('kind') || 'all';
   const { rows, total } = await get(`/api/overdose-events?limit=200${kind !== 'all' ? `&kind=${kind}` : ''}`);
@@ -86,19 +71,19 @@ route('overdose', async () => {
       can('overdose:write') ? h('button', { class: 'btn primary', onClick: () => openOverdoseForm(null, { onDone: refresh }) }, '+ Record an event') : null),
     h('p', { class: 'muted' }, 'Overdoses and naloxone reversals, including ones involving people who are not clients. These are the numbers funders ask for and the only place they can be counted.'),
     h('div', { class: 'row mb' }, ['all', 'reversal', 'overdose', 'fatal'].map(k =>
-      h('button', { class: `btn sm ${k === kind ? 'primary' : ''}`, onClick: () => nav(`overdose?kind=${k}`) }, k === 'all' ? 'All' : fmt.label(k)))),
+      h('button', { class: `btn sm ${k === kind ? 'primary' : ''}`, onClick: () => nav(`overdose?kind=${k}`) }, k === 'all' ? 'All' : fmt.label(k, 'OVERDOSE_KINDS')))),
     rows.length ? table([
       { label: 'When', render: r => fmt.dt(r.occurred_at) },
       { label: 'Who', render: r => r.client_code || h('span', { class: 'muted' }, 'community report') },
-      { label: 'What', render: r => badge(fmt.label(r.kind), r.kind === 'fatal' || !r.survived ? 'danger' : r.kind === 'reversal' ? 'ok' : 'warn') },
+      { label: 'What', render: r => badge(fmt.label(r.kind, 'OVERDOSE_KINDS'), r.kind === 'fatal' || !r.survived ? 'danger' : r.kind === 'reversal' ? 'ok' : 'warn') },
       { label: 'Naloxone', render: r => (r.naloxone_used ? `${r.naloxone_doses || 1} dose${(r.naloxone_doses || 1) === 1 ? '' : 's'}` : 'none') },
-      { label: 'Given by', render: r => (r.administered_by ? fmt.label(r.administered_by) : '—') },
+      { label: 'Given by', render: r => (r.administered_by ? fmt.label(r.administered_by, 'ADMINISTERED_BY') : '—') },
       { label: 'EMS', render: r => (r.ems_called ? 'yes' : 'no') },
       { label: 'Where', render: r => [r.location_type, r.city].filter(Boolean).join(', ') || '—' },
       { label: 'Reported by', render: r => r.reporter || '—' },
     ], rows, {
       onRow: can('overdose:write') ? (r) => openOverdoseForm(r, { onDone: refresh }) : null,
-      rowLabel: (r) => `${fmt.label(r.kind)} on ${fmt.date(r.occurred_at)}${r.client_code ? ` for ${r.client_code}` : ''}`,
+      rowLabel: (r) => `${fmt.label(r.kind, 'OVERDOSE_KINDS')} on ${fmt.date(r.occurred_at)}${r.client_code ? ` for ${r.client_code}` : ''}`,
     }) : emptyState('No events recorded', 'Record an overdose or a naloxone reversal here — including ones involving people who are not clients.',
       can('overdose:write') ? h('button', { class: 'btn primary', onClick: () => openOverdoseForm(null, { onDone: refresh }) }, 'Record an event') : null),
     total > rows.length ? h('p', { class: 'small muted' }, `Showing ${rows.length} of ${total}.`) : null);

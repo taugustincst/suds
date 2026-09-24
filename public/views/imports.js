@@ -58,11 +58,11 @@ async function importDetail(id) {
   const cards = staged.map(it => {
     const picker = clientPicker('client_id', it.suggested_client_id || '', { display: it.suggested_client_name ? `${it.suggested_client_name} (${it.suggested_client_code})` : undefined, required: true });
     const kindSel = h('select', {}, kinds.map(k => h('option', { value: k }, k === 'clinical' ? 'Clinical note' : 'Administrative / contact note')));
-    const fmtSel = h('select', {}, C.NOTE_FORMATS.map(f => h('option', { value: f, selected: f === 'contact' }, fmt.label(f))));
+    const fmtSel = h('select', {}, C.NOTE_FORMATS.map(f => h('option', { value: f, selected: f === 'contact' }, fmt.label(f, 'NOTE_FORMATS'))));
     const title = h('input', { value: it.title || '' });
     const when = h('input', { type: 'datetime-local', value: it.captured_at ? fmt.isoLocal(new Date(it.captured_at)) : fmt.isoLocal() });
     const content = h('textarea', { rows: 8 }, it.content);
-    const mkInt = h('input', { type: 'checkbox' }); const intType = h('select', {}, C.INTERVENTION_TYPES.map(t => h('option', { value: t, selected: t === 'case_management' }, fmt.label(t)))); const dur = h('input', { type: 'number', min: 0, step: 1, value: it.metadata?.duration ? Math.round(Number(it.metadata.duration) / 60) : 15, style: { width: '90px' } });
+    const mkInt = h('input', { type: 'checkbox' }); const intType = h('select', {}, C.INTERVENTION_TYPES.map(t => h('option', { value: t, selected: t === 'case_management' }, fmt.label(t, 'INTERVENTION_TYPES')))); const dur = h('input', { type: 'number', min: 0, step: 1, value: it.metadata?.duration ? Math.round(Number(it.metadata.duration) / 60) : 15, style: { width: '90px' } });
     const err = h('div', { class: 'banner danger hidden' });
     return h('div', { class: 'card mb' },
       h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, it.title || '(untitled)'), h('div', { class: 'small muted' }, it.captured_at ? `Captured ${fmt.dt(it.captured_at)}` : 'No date detected', it.external_id ? ` · ref ${it.external_id}` : '', it.metadata?.section ? ` · ${it.metadata.section}` : '', it.metadata?.tags?.length ? ` · ${it.metadata.tags.join(', ')}` : '')),

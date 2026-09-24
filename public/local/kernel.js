@@ -7422,6 +7422,26 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_idempotency_created ON idempotency_keys(created_at);
+
+-- The wording, order and availability of the choices on documentation forms ("What did you do?", "What
+-- happened", "Outcome"\u2026), set by an administrator under Settings \u2192 Lists. The built-in choices live in code
+-- (server/options.js); a row here only records what differs: a new label, a position, a retired (hidden)
+-- choice, or a programme's own addition (is_custom). The stored code never changes, so old records and
+-- reports keep their meaning. Not PHI. Synchronised to devices pull-only: the office's lists are the lists.
+CREATE TABLE IF NOT EXISTS option_overrides (
+  id TEXT PRIMARY KEY,
+  list_key TEXT NOT NULL,
+  code TEXT NOT NULL,
+  label TEXT,
+  sort_order INTEGER,
+  hidden INTEGER NOT NULL DEFAULT 0,
+  is_custom INTEGER NOT NULL DEFAULT 0,
+  updated_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (list_key, code)
+);
+CREATE INDEX IF NOT EXISTS idx_option_overrides_updated ON option_overrides(updated_at);
 `;
   }
 });
@@ -8185,6 +8205,15 @@ var require_db = __commonJS({
         const m = schemaText.match(/CREATE TABLE IF NOT EXISTS idempotency_keys \([\s\S]*?\n\);/);
         if (m) d.exec(m[0]);
         for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_idempotency/.test(line.trim())) d.exec(line.trim());
+      },
+      // 28: Settings → Lists. An administrator's changes to the choices on documentation forms (a renamed,
+      //     reordered or retired choice, or a programme's own addition) are kept in option_overrides; the
+      //     built-in choices stay in code (server/options.js). An existing database starts with none.
+      (d) => {
+        const schemaText = safeSchema();
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS option_overrides \([\s\S]*?\n\);/);
+        if (m) d.exec(m[0]);
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_option_overrides/.test(line.trim())) d.exec(line.trim());
       }
     ];
     function initialise(d, schemaText, dbPath) {
@@ -9404,7 +9433,11 @@ var require_sync_tables = __commonJS({
         // one shelf count, drawn down there when a pushed visit lands (server/routes/sync.js calls the same
         // draw-down the REST route does). A device's absolute count is never accepted — two phones each
         // subtracting from their own stale copy would otherwise leave whichever synced last as the truth.
-        { name: "supply_stock", enc: [], scope: "all", writePerm: "interventions:write", serverOwned: true }
+        { name: "supply_stock", enc: [], scope: "all", writePerm: "interventions:write", serverOwned: true },
+        // Settings → Lists (the wording and order of documentation choices): the office's configuration,
+        // pull-only like supply counts. A device needs it to offer the same choices and show the same labels
+        // offline; it can never change it (server/routes/options.js refuses writes in the local kernel).
+        { name: "option_overrides", enc: [], scope: "all", writePerm: "settings:manage", serverOwned: true }
       ],
       // Push rejection reasons that will never succeed on a retry: the office has ruled, and the device must
       // mark the row as exchanged (office wins) rather than resend it every sync forever. Anything else
@@ -9480,7 +9513,8 @@ var require_sync_tables = __commonJS({
         ["api_keys", "created_by"],
         ["users", "supervisor_id"],
         ["devices", "user_id"],
-        ["supply_stock", "updated_by"]
+        ["supply_stock", "updated_by"],
+        ["option_overrides", "updated_by"]
       ]
     };
     module.exports.user_ref_cols = [...new Set(module.exports.user_refs.map(([, c]) => c))];
@@ -9596,6 +9630,14 @@ var require_constants = __commonJS({
       DOCUMENT_CATEGORIES: ["policy", "procedure", "contract"],
       FORM_FIELD_TYPES: ["text", "textarea", "date", "number", "checkbox", "select", "signature", "section", "note"],
       FORM_AUTOFILL: ["client.full_name", "client.first_name", "client.last_name", "client.preferred_name", "client.dob", "client.phone", "client.email", "client.address", "client.city", "client.zip", "client.client_code", "client.gender", "client.pronouns", "client.insurance", "client.medicaid_id", "client.emergency_contact", "client.primary_substance", "client.mat_status", "client.intake_date", "worker.name", "worker.title", "org.name", "org.county", "today"],
+      // The overdose form's "What happened" and "Given by". The kinds are fixed by a CHECK constraint on
+      // overdose_events.kind and each drives a count, so Settings → Lists can reword them but not add to them.
+      OVERDOSE_KINDS: ["overdose", "reversal", "fatal"],
+      ADMINISTERED_BY: ["bystander", "first_responder", "staff", "self", "family", "unknown"],
+      // Why an episode of care ended ('deceased' also marks the client deceased: server/routes/episodes.js).
+      DISCHARGE_REASONS: ["completed", "transferred", "incarcerated", "moved", "lost_contact", "declined", "deceased", "administrative", "other"],
+      // A referral outcome's "If it did not happen, why" (stored encrypted in referrals.barrier_enc).
+      REFERRAL_BARRIERS: ["none", "transportation", "insurance", "waitlist", "no_beds", "client_declined", "childcare", "documentation", "legal", "phone_access", "other"],
       ASAM: ["0.5", "1.0", "2.1", "2.5", "3.1", "3.3", "3.5", "3.7", "4.0", "OTP", "unknown"]
     };
   }
@@ -11477,13 +11519,250 @@ P: ${P2} (Sample data)`), encrypt3(JSON.stringify(i % 4 === 0 ? { S, O, A, P: P2
   }
 });
 
+// server/options.js
+var require_options = __commonJS({
+  "server/options.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var C = require_constants();
+    function humanize(s) {
+      if (!s) return "";
+      return String(s).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).replace(/\bSbirt\b/, "SBIRT").replace(/\bMat\b/g, "MAT").replace(/\bOtp\b/, "OTP").replace(/\bObot\b/, "OBOT").replace(/\bEd\b/, "ED").replace(/\bMh\b/, "MH").replace(/\bRx\b/, "Rx").replace(/\bIds\b/, "IDs").replace(/\bRoi\b/, "ROI").replace(/\bPart2 Disclosure\b/, "Part 2 disclosure").replace(/\bPart2\b/g, "Part 2");
+    }
+    var OPEN_SHARED = "the provider has been told who the client is (consent check), and the referral counts as open";
+    var LISTS = [
+      {
+        key: "INTERVENTION_TYPES",
+        group: "Visits & services",
+        name: "What did you do?",
+        codes: C.INTERVENTION_TYPES,
+        protect: { outreach: "can be recorded without a client", naloxone_distribution: "can be recorded without a client" }
+      },
+      { key: "LOCATIONS", group: "Visits & services", name: "Location", codes: C.LOCATIONS },
+      { key: "MODALITIES", group: "Visits & services", name: "Modality", codes: C.MODALITIES },
+      { key: "OUTCOMES", group: "Visits & services", name: "Outcome", codes: C.OUTCOMES },
+      { key: "CALL_CONTACT_TYPES", group: "Calls & texts", name: "Who", codes: C.CALL_CONTACT_TYPES },
+      {
+        key: "CALL_OUTCOMES",
+        group: "Calls & texts",
+        name: "Outcome (phone call)",
+        codes: C.CALL_OUTCOMES,
+        protect: { reached: 'counts as contact with the client (last contact, "no contact in 30 days")', crisis_escalated: "marks the call as a crisis" }
+      },
+      {
+        key: "TEXT_OUTCOMES",
+        group: "Calls & texts",
+        name: "Outcome (text message)",
+        codes: C.TEXT_OUTCOMES,
+        protect: { replied: 'counts as contact with the client (last contact, "no contact in 30 days")', sent: "what a text with no outcome is recorded as" }
+      },
+      // No additions: every status means something to the consent check, loop closure and the open/closed
+      // counts (server/routes/referrals.js SHARED_STATUSES / CLOSED_STATUSES, reports.js), and a new one would
+      // silently mean none of them.
+      {
+        key: "REFERRAL_STATUSES",
+        group: "Referrals",
+        name: "Status / What happened",
+        codes: C.REFERRAL_STATUSES,
+        custom: false,
+        protect: {
+          pending: "a new referral starts here and counts as open",
+          contacted: OPEN_SHARED,
+          accepted: OPEN_SHARED,
+          waitlisted: OPEN_SHARED,
+          scheduled: OPEN_SHARED,
+          admitted: "records an admission (funder report, loop closure)",
+          completed: "counts as a successful referral and closes it",
+          closed: "closes the referral",
+          declined_by_client: "closes the referral",
+          declined_by_provider: "closes the referral"
+        },
+        why: "Statuses can be reworded, but not added to: each one tells SUDS whether the provider has been told who the client is, and whether the referral is open, closed or successful."
+      },
+      { key: "REFERRAL_BARRIERS", group: "Referrals", name: "If it did not happen, why", codes: C.REFERRAL_BARRIERS },
+      // No additions: overdose_events.kind has a CHECK constraint, and each kind is a different count.
+      {
+        key: "OVERDOSE_KINDS",
+        group: "Overdose & reversals",
+        name: "What happened",
+        codes: C.OVERDOSE_KINDS,
+        custom: false,
+        labels: { overdose: "Overdose (no naloxone given)", reversal: "Overdose reversed with naloxone", fatal: "Fatal overdose" },
+        protect: { overdose: "counted as an overdose in reports", reversal: "counted as a naloxone reversal in reports", fatal: "marks the client deceased and closes their episode" },
+        why: "These can be reworded, but not added to: each is a separate count in the overdose and funder reports."
+      },
+      {
+        key: "ADMINISTERED_BY",
+        group: "Overdose & reversals",
+        name: "Given by",
+        codes: C.ADMINISTERED_BY,
+        labels: { bystander: "A bystander", first_responder: "A first responder", staff: "Our staff", self: "The person themselves", family: "Family member", unknown: "Unknown" },
+        protect: { unknown: "a blank answer is counted as Unknown in reports" }
+      },
+      {
+        key: "TIME_CATEGORIES",
+        group: "Time",
+        name: "Category",
+        codes: C.TIME_CATEGORIES,
+        protect: { direct_service: "time logged automatically from visits and calls" }
+      },
+      {
+        key: "NOTE_FORMATS",
+        group: "Notes",
+        name: "Format",
+        codes: C.NOTE_FORMATS,
+        labels: { handoff: "Shift hand-off (for the next worker on)", safety_plan: "Safety plan (structured)" },
+        protect: {
+          narrative: "the default format, and what imported notes are saved as",
+          SOAP: "has its own structured sections",
+          DAP: "has its own structured sections",
+          BIRP: "has its own structured sections",
+          GIRP: "has its own structured sections",
+          handoff: "listed in shift hand-offs",
+          safety_plan: "shown as the client's safety plan"
+        }
+      },
+      {
+        key: "SUBSTANCES",
+        group: "Clients",
+        name: "Primary substance",
+        codes: C.SUBSTANCES,
+        protect: { unknown: "a blank answer is counted as Unknown in reports and filters" }
+      },
+      {
+        key: "DISCHARGE_REASONS",
+        group: "Episodes of care",
+        name: "Reason for discharge",
+        codes: C.DISCHARGE_REASONS,
+        labels: {
+          completed: "Completed the program",
+          transferred: "Transferred to another provider",
+          incarcerated: "Incarcerated",
+          moved: "Moved out of the area",
+          lost_contact: "Lost contact",
+          declined: "Declined further services",
+          deceased: "Deceased",
+          administrative: "Administrative closure",
+          other: "Other"
+        },
+        protect: { deceased: "marks the client deceased" }
+      }
+    ];
+    var BY_KEY = new Map(LISTS.map((l) => [l.key, l]));
+    var EXCLUDED = [
+      { name: "Race and ethnicity", why: "Federal (OMB) reporting categories that funder reports count as they are." },
+      { name: "ASAM level of care", why: "The ASAM criteria levels: a national standard, not a programme choice." },
+      { name: "Stage of change", why: "The stages of the transtheoretical model: a clinical standard." },
+      { name: "Consent type", why: "Each type is a different legal authority under 42 CFR Part 2 and HIPAA." },
+      { name: "Patient-rights request", why: "The four HIPAA rights (access, amendment, restriction, accounting), each with its own legal deadline." },
+      { name: "Funding type", why: "Grouped by funder in reports; add funding sources themselves under Funding sources below." },
+      { name: "Phone call or text", why: "Fixed by the database: each has its own outcomes list above." }
+    ];
+    var MAX_LABEL = 80;
+    var RESERVED = /* @__PURE__ */ new Set(["all", "open", "none_selected"]);
+    function has(key) {
+      return BY_KEY.has(key);
+    }
+    function def(key) {
+      const l = BY_KEY.get(key);
+      if (!l) throw new Error(`Unknown option list ${key}`);
+      return l;
+    }
+    function overrideRows(key) {
+      try {
+        return db3.all(`SELECT * FROM option_overrides WHERE list_key=?`, key);
+      } catch {
+        return [];
+      }
+    }
+    function entries(key) {
+      const l = def(key);
+      const rows = new Map(overrideRows(key).map((r) => [r.code, r]));
+      const out2 = l.codes.map((code, i) => {
+        const r = rows.get(code);
+        const dflt2 = l.labels && l.labels[code] || humanize(code);
+        return {
+          code,
+          label: r && r.label || dflt2,
+          default_label: dflt2,
+          hidden: !!(r && r.hidden) && !(l.protect && l.protect[code]),
+          custom: false,
+          protected: l.protect && l.protect[code] || null,
+          _order: r && r.sort_order !== null && r.sort_order !== void 0 ? r.sort_order : 1e3 + i
+        };
+      });
+      const builtin = new Set(l.codes);
+      let n = 0;
+      for (const r of rows.values()) {
+        if (builtin.has(r.code) || !r.is_custom) continue;
+        out2.push({
+          code: r.code,
+          label: r.label || humanize(r.code),
+          default_label: null,
+          hidden: !!r.hidden,
+          custom: true,
+          protected: null,
+          _order: r.sort_order !== null && r.sort_order !== void 0 ? r.sort_order : 2e3 + n++
+        });
+      }
+      out2.sort((a, b) => a._order - b._order);
+      return out2.map(({ _order, ...e }) => e);
+    }
+    function visible(key) {
+      return entries(key).filter((e) => !e.hidden).map((e) => e.code);
+    }
+    function known(key) {
+      return entries(key).map((e) => e.code);
+    }
+    function accepts(key, value, existing) {
+      if (value === null || value === void 0 || value === "") return true;
+      if (existing !== void 0 && existing !== null && value === existing) return true;
+      return visible(key).includes(value);
+    }
+    function labelMap(key) {
+      return Object.fromEntries(entries(key).map((e) => [e.code, e.label]));
+    }
+    function labelOf(key, code) {
+      if (code === null || code === void 0 || code === "") return code;
+      if (!has(key)) return humanize(code);
+      return labelMap(key)[code] || humanize(code);
+    }
+    function meta() {
+      const option_lists = {};
+      const visibleLists = {};
+      for (const l of LISTS) {
+        const es = entries(l.key);
+        option_lists[l.key] = es;
+        visibleLists[l.key] = es.filter((e) => !e.hidden).map((e) => e.code);
+      }
+      return { visible: visibleLists, option_lists };
+    }
+    function describe2() {
+      return {
+        lists: LISTS.map((l) => ({ key: l.key, group: l.group, name: l.name, custom_allowed: l.custom !== false, note: l.why || null, entries: entries(l.key) })),
+        excluded: EXCLUDED
+      };
+    }
+    function slug(label, taken) {
+      let base = String(label).normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40).replace(/_+$/, "");
+      if (!base || RESERVED.has(base)) base = base ? `${base}_custom` : "custom";
+      let code = base;
+      let i = 2;
+      while (taken.has(code)) code = `${base}_${i++}`;
+      return code;
+    }
+    module.exports = { LISTS, EXCLUDED, MAX_LABEL, has, def, entries, visible, known, accepts, labelMap, labelOf, meta, describe: describe2, slug, humanize };
+  }
+});
+
 // server/validate.js
 var require_validate = __commonJS({
   "server/validate.js"(exports, module) {
     "use strict";
     init_globals_inject();
     var { badRequest } = require_http();
-    function validate(body, shape, { partial = false } = {}) {
+    function validate(body, shape, { partial = false, existing = null } = {}) {
       if (!body || typeof body !== "object" || Array.isArray(body)) throw badRequest("JSON object body required");
       const out2 = {};
       const errors = {};
@@ -11517,6 +11796,13 @@ var require_validate = __commonJS({
             if (rule.enum && !rule.enum.includes(v)) {
               errors[k] = `must be one of ${rule.enum.join(", ")}`;
               continue;
+            }
+            if (rule.list && v) {
+              const O = require_options();
+              if (!O.accepts(rule.list, v, existing ? existing[k] : void 0)) {
+                errors[k] = `must be one of ${O.visible(rule.list).join(", ")}`;
+                continue;
+              }
             }
             if (!v && rule.required) {
               errors[k] = "required";
@@ -12668,7 +12954,7 @@ var require_crud = __commonJS({
         if (row.client_id) auth3.assertClientAccess(ctx, row.client_id);
         if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden("You cannot edit this record");
         if (!opts.noUpdatedAt) assertFresh(ctx, row, entity);
-        const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
+        const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true, existing: row });
         if (v.client_id && v.client_id !== row.client_id) checkClient(ctx, v.client_id);
         if (opts.restrictOwner && v[ownerCol] !== void 0 && !auth3.hasPerm(ctx.user, "clients:all")) delete v[ownerCol];
         if (opts.beforeUpdate) opts.beforeUpdate(ctx, v, row);
@@ -13074,6 +13360,7 @@ var require_calls = __commonJS({
     var db3 = require_db();
     var crud = require_crud();
     var C = require_constants();
+    var O = require_options();
     var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
     var { badRequest } = require_http();
     var { withClientName, SELECT: NAME_COLS } = require_client_name();
@@ -13094,11 +13381,11 @@ var require_calls = __commonJS({
           method: { type: "string", enum: C.CONTACT_METHODS },
           started_at: { type: "datetime", required: true },
           duration_minutes: { type: "number", integer: true, min: 0, max: 1440 },
-          contact_type: { type: "string", enum: C.CALL_CONTACT_TYPES },
+          contact_type: { type: "string", list: "CALL_CONTACT_TYPES" },
           contact_name: { type: "string", maxLen: 120 },
           phone: { type: "string", maxLen: 40 },
           purpose: { type: "string", maxLen: 300 },
-          outcome: { type: "string", enum: [...C.CALL_OUTCOMES, ...C.TEXT_OUTCOMES] },
+          outcome: { type: "string", maxLen: 60 },
           crisis: { type: "boolean" },
           follow_up_needed: { type: "boolean" },
           follow_up_due: { type: "date" },
@@ -13122,7 +13409,7 @@ var require_calls = __commonJS({
           encAll(v);
         },
         beforeUpdate: (ctx, v, row) => {
-          checkOutcome(v, v.method || row.method || "phone");
+          checkOutcome(v, v.method || row.method || "phone", row);
           deriveCrisis(v);
           encAll(v);
         },
@@ -13153,10 +13440,11 @@ var require_calls = __commonJS({
         afterLoad: (ctx, x) => ({ ...withClientName(ctx, x), contact_name: x.contact_name_enc ? decrypt3(x.contact_name_enc) : null, phone: x.phone_enc ? decrypt3(x.phone_enc) : null, summary: x.summary_enc ? decrypt3(x.summary_enc) : null, purpose: x.purpose_enc ? decrypt3(x.purpose_enc) : null, contact_name_enc: void 0, phone_enc: void 0, summary_enc: void 0, purpose_enc: void 0 }),
         canEdit: crud.ownerOrManager()
       });
-      function checkOutcome(v, method) {
+      function checkOutcome(v, method, row) {
         if (v.outcome === void 0 || v.outcome === null) return;
-        const allowed = method === "text" ? C.TEXT_OUTCOMES : C.CALL_OUTCOMES;
-        if (!allowed.includes(v.outcome)) throw badRequest(`"${v.outcome}" is not an outcome for a ${method === "text" ? "text message" : "phone call"}. Choose one of: ${allowed.join(", ")}`);
+        const list = method === "text" ? "TEXT_OUTCOMES" : "CALL_OUTCOMES";
+        const kept = row && (row.method || "phone") === method ? row.outcome : void 0;
+        if (!O.accepts(list, v.outcome, kept)) throw badRequest(`"${v.outcome}" is not an outcome for a ${method === "text" ? "text message" : "phone call"}. Choose one of: ${O.visible(list).join(", ")}`, { fields: { outcome: "not an outcome for this kind of contact" } });
       }
       function deriveCrisis(v) {
         if (v.outcome === "crisis_escalated") v.crisis = 1;
@@ -13260,6 +13548,7 @@ var require_clients = __commonJS({
     var { blindIndex: blindIndex2, uuid: uuid2, decrypt: decrypt3, encrypt: encrypt3 } = require_crypto();
     var M = require_clients_model();
     var F = require_client_filters();
+    var O = require_options();
     var shape = {
       first_name: { type: "string", required: true, maxLen: 100 },
       last_name: { type: "string", required: true, maxLen: 100 },
@@ -13287,7 +13576,7 @@ var require_clients = __commonJS({
       referral_source: { type: "string", maxLen: 120 },
       referral_date: { type: "date" },
       engagement_date: { type: "date" },
-      primary_substance: { type: "string", maxLen: 60 },
+      primary_substance: { type: "string", maxLen: 60, list: "SUBSTANCES" },
       secondary_substances: { type: "string", maxLen: 200 },
       route_of_use: { type: "string", maxLen: 60 },
       asam_level: { type: "string", maxLen: 20 },
@@ -13630,7 +13919,7 @@ var require_clients = __commonJS({
       r.put("/api/clients/:id", auth3.requireAuth, auth3.requirePerm("clients:write"), (ctx) => {
         const row = loadClient(ctx, ctx.params.id);
         require_crud().assertFresh(ctx, row, "client");
-        const v = validate(ctx.body, { ...shape, first_name: { ...shape.first_name, required: false }, last_name: { ...shape.last_name, required: false } }, { partial: true });
+        const v = validate(ctx.body, { ...shape, first_name: { ...shape.first_name, required: false }, last_name: { ...shape.last_name, required: false } }, { partial: true, existing: row });
         checkContactFields(v);
         if ((v.status === "closed" || v.status === "deceased") && v.status !== row.status && db3.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, row.id)) {
           throw badRequest(`This client has an open episode of care. To ${v.status === "deceased" ? "record a death" : "close the record"}, discharge them on the Episodes tab \u2014 that closes the episode and sets the status.`, { fields: { status: "discharge on the Episodes tab instead" }, open_episode: true });
@@ -13677,11 +13966,11 @@ var require_clients = __commonJS({
         const cutP = before ? [before] : [];
         const events = [];
         for (const x of db3.all(`SELECT i.*, u.display_name AS worker FROM interventions i JOIN users u ON u.id=i.user_id WHERE client_id=? ${cut("i.occurred_at")} ORDER BY i.occurred_at DESC LIMIT ?`, id, ...cutP, per))
-          events.push({ kind: "intervention", id: x.id, at: x.occurred_at, title: x.type.replace(/_/g, " "), detail: x.summary_enc ? decrypt3(x.summary_enc) : null, worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, location: x.location } });
+          events.push({ kind: "intervention", id: x.id, at: x.occurred_at, title: O.labelOf("INTERVENTION_TYPES", x.type), detail: x.summary_enc ? decrypt3(x.summary_enc) : null, worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, outcome_label: x.outcome ? O.labelOf("OUTCOMES", x.outcome) : null, location: x.location } });
         for (const x of db3.all(`SELECT c.*, u.display_name AS worker FROM calls c JOIN users u ON u.id=c.user_id WHERE client_id=? ${cut("c.started_at")} ORDER BY c.started_at DESC LIMIT ?`, id, ...cutP, per))
-          events.push({ kind: "call", id: x.id, at: x.started_at, title: `${x.direction} ${x.method === "text" ? "text message" : "call"} (${x.contact_type})`, detail: x.summary_enc ? decrypt3(x.summary_enc) : x.purpose_enc ? decrypt3(x.purpose_enc) : null, worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, crisis: !!x.crisis } });
+          events.push({ kind: "call", id: x.id, at: x.started_at, title: `${x.direction} ${x.method === "text" ? "text message" : "call"} (${O.labelOf("CALL_CONTACT_TYPES", x.contact_type)})`, detail: x.summary_enc ? decrypt3(x.summary_enc) : x.purpose_enc ? decrypt3(x.purpose_enc) : null, worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, outcome_label: x.outcome ? O.labelOf(x.method === "text" ? "TEXT_OUTCOMES" : "CALL_OUTCOMES", x.outcome) : null, crisis: !!x.crisis } });
         for (const x of db3.all(`SELECT n.id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.source,u.display_name AS worker FROM notes n JOIN users u ON u.id=n.author_id WHERE client_id=? AND deleted_at IS NULL ${cut("n.occurred_at")} ORDER BY n.occurred_at DESC LIMIT ?`, id, ...cutP, per))
-          if (x.kind === "admin" || canClinical) events.push({ kind: "note", id: x.id, at: x.occurred_at, title: `${x.kind} note: ${x.title_enc ? decrypt3(x.title_enc) : x.format}`, detail: null, worker: x.worker, meta: { status: x.status, note_kind: x.kind, source: x.source } });
+          if (x.kind === "admin" || canClinical) events.push({ kind: "note", id: x.id, at: x.occurred_at, title: `${x.kind} note: ${x.title_enc ? decrypt3(x.title_enc) : O.labelOf("NOTE_FORMATS", x.format)}`, detail: null, worker: x.worker, meta: { status: x.status, note_kind: x.kind, source: x.source } });
         for (const x of db3.all(`SELECT r.*, res.name AS resource_name, u.display_name AS worker FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN users u ON u.id=r.user_id WHERE client_id=? ${cut("r.referred_at")} ORDER BY r.referred_at DESC LIMIT ?`, id, ...cutP, per))
           events.push({ kind: "referral", id: x.id, at: x.referred_at, title: `Referral: ${x.resource_name}`, detail: x.notes_enc ? decrypt3(x.notes_enc) : null, worker: x.worker, meta: { status: x.status, outcome: x.outcome_enc ? decrypt3(x.outcome_enc) : null } });
         for (const x of db3.all(`SELECT t.*, u.display_name AS worker FROM tasks t LEFT JOIN users u ON u.id=t.assigned_to WHERE client_id=? ORDER BY COALESCE(t.completed_at, t.due_at, t.created_at) DESC LIMIT ?`, id, per))
@@ -13694,7 +13983,7 @@ var require_clients = __commonJS({
         events.push({ kind: "milestone", id: "intake", at: row.intake_date, title: "Program intake", meta: {} });
         if (row.referral_date) events.push({ kind: "milestone", id: "referral", at: row.referral_date, title: "Referred in", meta: {} });
         if (row.engagement_date) events.push({ kind: "milestone", id: "engagement", at: row.engagement_date, title: "Engaged with services", meta: {} });
-        if (row.discharge_date) events.push({ kind: "milestone", id: "discharge", at: row.discharge_date, title: `Discharge: ${row.discharge_reason || ""}`, meta: {} });
+        if (row.discharge_date) events.push({ kind: "milestone", id: "discharge", at: row.discharge_date, title: `Discharge: ${row.discharge_reason ? /^[a-z_]+$/.test(row.discharge_reason) ? O.labelOf("DISCHARGE_REASONS", row.discharge_reason) : row.discharge_reason : ""}`, meta: {} });
         events.sort((a, b) => (b.at || "").localeCompare(a.at || ""));
         const page = events.slice(offset, offset + limit2);
         audit3.log({ user: ctx.user, action: "client.timeline", entity: "client", entityId: id, clientId: id, ip: ctx.ip, details: { events: page.length } });
@@ -14358,6 +14647,14 @@ var require_dataimport = __commonJS({
     };
     var enumOf = (list) => (v) => {
       if (v === null || v === void 0 || v === "") return null;
+      if (typeof list === "string") {
+        const O = require_options();
+        const es = O.entries(list).filter((e) => !e.hidden);
+        const t = String(v).trim().toLowerCase();
+        const byLabel = es.find((e) => e.label.toLowerCase() === t);
+        if (byLabel) return byLabel.code;
+        return enumOf(es.map((e) => e.code))(v);
+      }
       const k = String(v).trim().toLowerCase().replace(/[\s-]+/g, "_");
       let hit = list.find((x) => x.toLowerCase() === k) || list.find((x) => x.toLowerCase().replace(/_/g, "") === k.replace(/_/g, ""));
       if (hit === void 0) {
@@ -14390,7 +14687,7 @@ var require_dataimport = __commonJS({
         F("status", "Status", ["program status"], enumOf(["waitlist", "active", "inactive", "closed", "deceased"])),
         F("intake_date", "Intake date", ["intake", "enrolled", "enrollment date", "start date"], dateOf),
         F("referral_source", "Referral source", ["referred by", "source"], str(120)),
-        F("primary_substance", "Primary substance", ["substance", "drug of choice", "doc"], enumOf(C.SUBSTANCES)),
+        F("primary_substance", "Primary substance", ["substance", "drug of choice", "doc"], enumOf("SUBSTANCES")),
         F("asam_level", "ASAM level", ["asam", "level of care"], str(20)),
         F("mat_status", "MAT status", ["mat", "moud"], enumOf(["none", "interested", "referred", "active", "discontinued", "unknown"])),
         F("risk_level", "Risk level", ["risk"], enumOf(["low", "moderate", "high", "critical"])),
@@ -14431,11 +14728,11 @@ var require_dataimport = __commonJS({
       interventions: { label: "Visits & services", table: "interventions", fields: [
         clientRef,
         F("occurred_at", "Date", ["date of service", "service date", "when", "occurred"], datetimeOf, { required: true }),
-        F("type", "Type", ["service", "intervention", "service type", "intervention type"], enumOf(C.INTERVENTION_TYPES), { required: true, help: C.INTERVENTION_TYPES.join(", ") }),
+        F("type", "Type", ["service", "intervention", "service type", "intervention type"], enumOf("INTERVENTION_TYPES"), { required: true, help: C.INTERVENTION_TYPES.join(", ") }),
         F("duration_minutes", "Minutes", ["duration", "duration minutes", "time"], num),
-        F("location", "Location", ["where", "setting"], enumOf(C.LOCATIONS)),
-        F("modality", "Modality", ["mode"], enumOf(C.MODALITIES)),
-        F("outcome", "Outcome", ["result"], enumOf(C.OUTCOMES)),
+        F("location", "Location", ["where", "setting"], enumOf("LOCATIONS")),
+        F("modality", "Modality", ["mode"], enumOf("MODALITIES")),
+        F("outcome", "Outcome", ["result"], enumOf("OUTCOMES")),
         F("naloxone_kits", "Naloxone kits", ["naloxone", "narcan kits"], num),
         F("fentanyl_strips", "Fentanyl test strips", ["fts", "test strips"], num),
         F("summary", "Summary", ["notes", "comment", "description"], str(2e3))
@@ -14444,11 +14741,11 @@ var require_dataimport = __commonJS({
         F("client_ref", "Client", ["client code", "client", "code", "client name", "name"], str(120), { help: "Optional for non-client calls" }),
         F("started_at", "Date", ["when", "date/time", "call date", "time"], datetimeOf, { required: true }),
         F("direction", "Direction", ["in/out", "inbound/outbound"], enumOf(["inbound", "outbound"]), { required: true }),
-        F("contact_type", "Who", ["contact type", "with", "caller"], enumOf(C.CALL_CONTACT_TYPES)),
+        F("contact_type", "Who", ["contact type", "with", "caller"], enumOf("CALL_CONTACT_TYPES")),
         F("contact_name", "Contact name", ["contact"], str(120)),
         F("phone", "Phone", ["number"], str(40)),
         F("duration_minutes", "Minutes", ["duration", "length"], num),
-        F("outcome", "Outcome", ["result"], enumOf(C.CALL_OUTCOMES)),
+        F("outcome", "Outcome", ["result"], enumOf("CALL_OUTCOMES")),
         F("purpose", "Purpose", ["reason", "subject"], str(300)),
         F("summary", "Summary", ["notes", "comment"], str(4e3)),
         F("crisis", "Crisis", ["crisis call"], yes)
@@ -14456,7 +14753,7 @@ var require_dataimport = __commonJS({
       time_entries: { label: "Time", table: "time_entries", fields: [
         F("work_date", "Date", ["work date", "day"], dateOf, { required: true }),
         F("minutes", "Minutes", ["duration", "time", "mins"], num, { required: true }),
-        F("category", "Category", ["activity", "type"], enumOf(C.TIME_CATEGORIES)),
+        F("category", "Category", ["activity", "type"], enumOf("TIME_CATEGORIES")),
         F("client_ref", "Client", ["client code", "client", "code", "client name"], str(120)),
         F("billable", "Billable", [], yes),
         F("description", "Description", ["notes", "comment"], str(500))
@@ -15034,7 +15331,7 @@ var require_episodes = __commonJS({
     var { badRequest, notFound, forbidden } = require_http();
     var { validate, paging } = require_validate();
     var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
-    var DISCHARGE_REASONS = ["completed", "transferred", "incarcerated", "moved", "lost_contact", "declined", "deceased", "administrative", "other"];
+    var O = require_options();
     function present(e) {
       const o = { ...e };
       o.presenting_problem = e.presenting_problem_enc ? decrypt3(e.presenting_problem_enc) : null;
@@ -15086,7 +15383,7 @@ var require_episodes = __commonJS({
         auth3.assertClientAccess(ctx, e.client_id);
         if (e.status === "closed") throw badRequest("This episode is already closed");
         const v = validate(ctx.body, {
-          discharge_reason: { type: "string", required: true, enum: DISCHARGE_REASONS },
+          discharge_reason: { type: "string", required: true, list: "DISCHARGE_REASONS" },
           discharge_disposition: { type: "string", maxLen: 200 },
           discharge_summary: { type: "string", maxLen: 8e3 },
           closed_at: { type: "date" },
@@ -15266,7 +15563,7 @@ var require_episodes = __commonJS({
         audit3.log({ user: ctx.user, action: "caseload.transfer", entity: "user", entityId: from.id, ip: ctx.ip, details: { to: to.id, clients: moved, tasks, skipped: skipped.length, effective_date: when } });
         return { ok: true, transferred: moved, tasks_reassigned: tasks, skipped, from: from.display_name, to: to.display_name };
       });
-      r.get("/api/meta/discharge-reasons", auth3.requireAuth, () => ({ discharge_reasons: DISCHARGE_REASONS }));
+      r.get("/api/meta/discharge-reasons", auth3.requireAuth, () => ({ discharge_reasons: O.visible("DISCHARGE_REASONS"), options: O.entries("DISCHARGE_REASONS") }));
     };
   }
 });
@@ -15579,7 +15876,7 @@ var require_forms = __commonJS({
         "client.insurance": c.insurance,
         "client.medicaid_id": c.medicaid_id,
         "client.emergency_contact": c.emergency_contact,
-        "client.primary_substance": c.primary_substance ? c.primary_substance.replace(/_/g, " ") : null,
+        "client.primary_substance": c.primary_substance ? require_options().labelOf("SUBSTANCES", c.primary_substance) : null,
         "client.mat_status": c.mat_status,
         "client.intake_date": c.intake_date,
         "worker.name": user.display_name,
@@ -16163,12 +16460,12 @@ var require_imports = __commonJS({
         const v = validate(ctx.body, {
           client_id: { type: "string", required: true },
           kind: { type: "string", required: true, enum: ["clinical", "admin"] },
-          format: { type: "string" },
+          format: { type: "string", list: "NOTE_FORMATS" },
           title: { type: "string", maxLen: 200 },
           content: { type: "string", maxLen: 5e4 },
           occurred_at: { type: "datetime" },
           create_intervention: { type: "boolean" },
-          intervention_type: { type: "string" },
+          intervention_type: { type: "string", list: "INTERVENTION_TYPES" },
           duration_minutes: { type: "number", integer: true, min: 0 }
         });
         if (!auth3.hasPerm(ctx.user, `notes:${v.kind}:write`)) throw forbidden(`You cannot author ${v.kind} notes`);
@@ -16398,6 +16695,7 @@ var require_interventions = __commonJS({
     var auth3 = require_auth();
     var crud = require_crud();
     var C = require_constants();
+    var O = require_options();
     var { badRequest, forbidden } = require_http();
     var { uuid: uuid2 } = require_crypto();
     var supplies = require_supplies();
@@ -16504,12 +16802,12 @@ var require_interventions = __commonJS({
           // Optional: community naloxone distribution and street outreach are services with no identified client.
           client_id: { type: "string" },
           user_id: { type: "string" },
-          type: { type: "string", required: true, enum: C.INTERVENTION_TYPES },
+          type: { type: "string", required: true, list: "INTERVENTION_TYPES" },
           occurred_at: { type: "datetime", required: true },
           duration_minutes: { type: "number", integer: true, min: 0, max: 1440 },
-          location: { type: "string", enum: C.LOCATIONS },
-          modality: { type: "string", enum: C.MODALITIES },
-          outcome: { type: "string", enum: C.OUTCOMES },
+          location: { type: "string", list: "LOCATIONS" },
+          modality: { type: "string", list: "MODALITIES" },
+          outcome: { type: "string", list: "OUTCOMES" },
           stage_of_change: { type: "string", enum: C.STAGES },
           naloxone_kits: { type: "number", integer: true, min: 0 },
           fentanyl_strips: { type: "number", integer: true, min: 0 },
@@ -16519,7 +16817,7 @@ var require_interventions = __commonJS({
           summary: { type: "string", maxLen: 2e3 },
           follow_up_due: { type: "date" },
           log_time: { type: "boolean" },
-          time_category: { type: "string", enum: C.TIME_CATEGORIES },
+          time_category: { type: "string", list: "TIME_CATEGORIES" },
           // Optional: the calendar date the service belongs to, when it is not the org-timezone date of occurred_at.
           service_date: { type: "date" }
         },
@@ -16565,7 +16863,7 @@ var require_interventions = __commonJS({
               row._time_category || "direct_service",
               row.funding_source_id || null,
               row.id,
-              row.type.replace(/_/g, " ")
+              O.labelOf("INTERVENTION_TYPES", row.type)
             );
           }
           if (row.naloxone_kits > 0 && row.client_id) db3.run(`UPDATE clients SET naloxone_provided=1, naloxone_last_date=?, updated_at=? WHERE id=?`, serviceDate(row), db3.now(), row.client_id);
@@ -16575,7 +16873,7 @@ var require_interventions = __commonJS({
             row.client_id,
             row.user_id,
             ctx.user.id,
-            require_crypto().encrypt(`Follow up: ${row.type.replace(/_/g, " ")}`),
+            require_crypto().encrypt(`Follow up: ${O.labelOf("INTERVENTION_TYPES", row.type)}`),
             row.follow_up_due,
             "normal"
           );
@@ -16606,7 +16904,10 @@ var require_interventions = __commonJS({
         canEdit: crud.ownerOrManager()
       });
       supplies(r);
-      r.get("/api/meta/constants", auth3.requireAuth, () => C);
+      r.get("/api/meta/constants", auth3.requireAuth, () => {
+        const m = O.meta();
+        return { ...C, ...m.visible, option_lists: m.option_lists };
+      });
     };
   }
 });
@@ -16804,7 +17105,7 @@ var require_notes = __commonJS({
     var shape = {
       client_id: { type: "string", required: true },
       kind: { type: "string", required: true, enum: ["clinical", "admin"] },
-      format: { type: "string", enum: C.NOTE_FORMATS },
+      format: { type: "string", list: "NOTE_FORMATS" },
       title: { type: "string", maxLen: 200 },
       content: { type: "string", required: true, maxLen: 5e4 },
       structured: { type: "object" },
@@ -16966,7 +17267,7 @@ var require_notes = __commonJS({
         if (n.status !== "draft") throw badRequest("Signed notes cannot be edited; add an addendum instead");
         if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden("Only the author can edit a draft");
         require_crud().assertFresh(ctx, n, "note");
-        const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, cosign_requested: shape.cosign_requested }, { partial: true });
+        const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, cosign_requested: shape.cosign_requested }, { partial: true, existing: n });
         const sets = [];
         const params = [];
         for (const k of ["format", "occurred_at", "intervention_id", "call_id", "part2_protected", "cosign_requested"]) if (v[k] !== void 0) {
@@ -17269,6 +17570,138 @@ var require_oidc2 = __commonJS({
   }
 });
 
+// server/routes/options.js
+var require_options2 = __commonJS({
+  "server/routes/options.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var config = require_config();
+    var O = require_options();
+    var { badRequest, notFound, forbidden } = require_http();
+    var { validate } = require_validate();
+    var { uuid: uuid2 } = require_crypto();
+    function assertEditable() {
+      const staticHost = typeof window !== "undefined" && window.SUDS_STATIC_HOST === true;
+      if (config.local && !staticHost) throw forbidden("Lists are managed on the office SUDS. Changes made there reach this device when it syncs.");
+    }
+    function listOr404(key) {
+      if (!O.has(key)) throw notFound("No such list");
+      return O.def(key);
+    }
+    function row(key, code) {
+      return db3.one(`SELECT * FROM option_overrides WHERE list_key=? AND code=?`, key, code);
+    }
+    function upsert(ctx, key, code, fields) {
+      const existing = row(key, code);
+      const stamp2 = db3.now();
+      if (existing) {
+        const keys = Object.keys(fields);
+        db3.run(`UPDATE option_overrides SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_by=?, updated_at=? WHERE id=?`, ...keys.map((k) => fields[k]), ctx.user.id, stamp2, existing.id);
+        return existing.id;
+      }
+      const id = uuid2();
+      const cols2 = { id, list_key: key, code, hidden: 0, is_custom: 0, ...fields, updated_by: ctx.user.id, created_at: stamp2, updated_at: stamp2 };
+      db3.run(`INSERT INTO option_overrides(${Object.keys(cols2).join(",")}) VALUES(${Object.keys(cols2).map(() => "?").join(",")})`, ...Object.values(cols2));
+      return id;
+    }
+    function cleanLabel(raw) {
+      const label = String(raw || "").replace(/\s+/g, " ").trim();
+      if (!label) throw badRequest("Enter the wording for this choice", { fields: { label: "required" } });
+      if (label.length > O.MAX_LABEL) throw badRequest(`Keep it to ${O.MAX_LABEL} characters`, { fields: { label: `max length ${O.MAX_LABEL}` } });
+      return label;
+    }
+    function assertUniqueLabel(key, label, exceptCode) {
+      const clash = O.entries(key).find((e) => e.code !== exceptCode && e.label.toLowerCase() === label.toLowerCase());
+      if (clash) throw badRequest(`"${clash.label}" is already a choice in this list${clash.hidden ? " (hidden)" : ""}`, { fields: { label: "already in this list" } });
+    }
+    module.exports = (r) => {
+      const manage = [auth3.requireAuth, auth3.requirePerm("settings:manage")];
+      r.get("/api/admin/lists", ...manage, () => {
+        const staticHost = typeof window !== "undefined" && window.SUDS_STATIC_HOST === true;
+        return { ...O.describe(), editable: !config.local || staticHost };
+      });
+      r.put("/api/admin/lists/:key/entries/:code", ...manage, (ctx) => {
+        assertEditable();
+        const l = listOr404(ctx.params.key);
+        const code = ctx.params.code;
+        const entry = O.entries(l.key).find((e) => e.code === code);
+        if (!entry) throw notFound("That choice is not in this list");
+        const v = validate(ctx.body, { label: { type: "string", maxLen: 200 }, hidden: { type: "boolean" } }, { partial: true });
+        const fields = {};
+        const details = { list: l.key, code };
+        if (v.label !== void 0) {
+          if ((v.label === null || v.label === "") && !entry.custom) {
+            fields.label = null;
+            details.label = entry.default_label;
+          } else {
+            const label = cleanLabel(v.label);
+            assertUniqueLabel(l.key, label, code);
+            fields.label = entry.custom || label !== entry.default_label ? label : null;
+            details.label = label;
+            details.was = entry.label;
+          }
+        }
+        if (v.hidden !== void 0) {
+          if (v.hidden && entry.protected) throw badRequest(`"${entry.label}" is used by SUDS (${entry.protected}), so it cannot be hidden. It can be reworded.`);
+          if (v.hidden && O.visible(l.key).length <= 1 && !entry.hidden) throw badRequest("A list needs at least one choice people can pick");
+          fields.hidden = v.hidden ? 1 : 0;
+          details.hidden = !!v.hidden;
+        }
+        if (!Object.keys(fields).length) throw badRequest("Nothing to change");
+        upsert(ctx, l.key, code, fields);
+        audit3.log({ user: ctx.user, action: "options.update", entity: "option_list", entityId: l.key, ip: ctx.ip, details });
+        return { ok: true, entries: O.entries(l.key) };
+      });
+      r.post("/api/admin/lists/:key/entries", ...manage, (ctx) => {
+        assertEditable();
+        const l = listOr404(ctx.params.key);
+        if (l.custom === false) throw badRequest(l.why || "Choices cannot be added to this list");
+        const v = validate(ctx.body, { label: { type: "string", required: true, maxLen: 200 } });
+        const label = cleanLabel(v.label);
+        assertUniqueLabel(l.key, label);
+        const all = O.entries(l.key);
+        const taken = /* @__PURE__ */ new Set([...l.codes, ...all.map((e) => e.code), ...db3.all(`SELECT code FROM option_overrides WHERE list_key=?`, l.key).map((x) => x.code)]);
+        const code = O.slug(label, taken);
+        const orders = db3.all(`SELECT sort_order FROM option_overrides WHERE list_key=? AND sort_order IS NOT NULL`, l.key).map((x) => x.sort_order);
+        const sort = Math.max(1e3 + l.codes.length, ...orders.map((n) => n + 1), 2e3 + all.filter((e) => e.custom).length);
+        upsert(ctx, l.key, code, { label, is_custom: 1, hidden: 0, sort_order: sort });
+        audit3.log({ user: ctx.user, action: "options.add", entity: "option_list", entityId: l.key, ip: ctx.ip, details: { list: l.key, code, label } });
+        ctx.status = 201;
+        return { code, entries: O.entries(l.key) };
+      });
+      r.put("/api/admin/lists/:key/order", ...manage, (ctx) => {
+        assertEditable();
+        const l = listOr404(ctx.params.key);
+        const v = validate(ctx.body, { codes: { type: "array", required: true, of: "string", maxLen: 500 } });
+        const current2 = O.entries(l.key).map((e) => e.code);
+        const given = v.codes;
+        if (new Set(given).size !== given.length || given.length !== current2.length || !given.every((c) => current2.includes(c))) throw badRequest("Send every choice in the list, each once, in the new order");
+        db3.transaction(() => {
+          given.forEach((code, i) => upsert(ctx, l.key, code, { sort_order: i }));
+        });
+        audit3.log({ user: ctx.user, action: "options.reorder", entity: "option_list", entityId: l.key, ip: ctx.ip, details: { list: l.key, order: given } });
+        return { ok: true, entries: O.entries(l.key) };
+      });
+      r.post("/api/admin/lists/:key/reset", ...manage, (ctx) => {
+        assertEditable();
+        const l = listOr404(ctx.params.key);
+        const rows = db3.all(`SELECT * FROM option_overrides WHERE list_key=?`, l.key);
+        db3.transaction(() => {
+          for (const x of rows) {
+            if (x.is_custom) upsert(ctx, l.key, x.code, { hidden: 1, sort_order: null });
+            else upsert(ctx, l.key, x.code, { label: null, sort_order: null, hidden: 0 });
+          }
+        });
+        audit3.log({ user: ctx.user, action: "options.reset", entity: "option_list", entityId: l.key, ip: ctx.ip, details: { list: l.key, changed: rows.length } });
+        return { ok: true, entries: O.entries(l.key) };
+      });
+    };
+  }
+});
+
 // server/routes/overdose.js
 var require_overdose = __commonJS({
   "server/routes/overdose.js"(exports, module) {
@@ -17279,7 +17712,9 @@ var require_overdose = __commonJS({
     var audit3 = require_audit();
     var crud = require_crud();
     var { decrypt: decrypt3, encrypt: encrypt3 } = require_crypto();
-    var KINDS = ["overdose", "reversal", "fatal"];
+    var C = require_constants();
+    var O = require_options();
+    var KINDS = C.OVERDOSE_KINDS;
     var FATAL_APPLIED = "overdose_event.fatal_outcome";
     var FATAL_REVERTED = "overdose_event.fatal_reverted";
     function applyFatal(ctx, event) {
@@ -17331,7 +17766,6 @@ var require_overdose = __commonJS({
       });
       audit3.log({ user: ctx.user, action: FATAL_REVERTED, entity: "overdose_event", entityId: event.id, clientId: c.id, ip: ctx.ip, details: { restored_status: applied.prior_status || "active", reopened_episode: reopened } });
     }
-    var ADMINISTERED_BY = ["bystander", "first_responder", "staff", "self", "family", "unknown"];
     module.exports = (r) => {
       crud.build(r, {
         table: "overdose_events",
@@ -17349,11 +17783,11 @@ var require_overdose = __commonJS({
           client_id: { type: "string" },
           occurred_at: { type: "datetime", required: true },
           // Required: an empty form saved by accident used to become a countable reversal.
-          kind: { type: "string", enum: KINDS, required: true },
+          kind: { type: "string", enum: KINDS, list: "OVERDOSE_KINDS", required: true },
           substances: { type: "string", maxLen: 200 },
           naloxone_used: { type: "boolean" },
           naloxone_doses: { type: "number", integer: true, min: 0, max: 20 },
-          administered_by: { type: "string", enum: ADMINISTERED_BY },
+          administered_by: { type: "string", list: "ADMINISTERED_BY" },
           ems_called: { type: "boolean" },
           hospitalized: { type: "boolean" },
           survived: { type: "boolean" },
@@ -17417,7 +17851,7 @@ var require_overdose = __commonJS({
         },
         canEdit: crud.ownerOrManager("reported_by")
       });
-      r.get("/api/meta/overdose-options", auth3.requireAuth, () => ({ kinds: KINDS, administered_by: ADMINISTERED_BY }));
+      r.get("/api/meta/overdose-options", auth3.requireAuth, () => ({ kinds: O.visible("OVERDOSE_KINDS"), administered_by: O.visible("ADMINISTERED_BY"), kind_options: O.entries("OVERDOSE_KINDS"), administered_by_options: O.entries("ADMINISTERED_BY") }));
     };
   }
 });
@@ -17569,7 +18003,7 @@ var require_referrals = __commonJS({
           resource_id: { type: "string", required: true },
           user_id: { type: "string" },
           referred_at: { type: "datetime", required: true },
-          status: { type: "string", enum: C.REFERRAL_STATUSES },
+          status: { type: "string", list: "REFERRAL_STATUSES" },
           urgency: { type: "string", enum: ["routine", "urgent", "emergent"] },
           appointment_at: { type: "datetime" },
           admitted_at: { type: "datetime" },
@@ -17642,7 +18076,7 @@ var require_referrals = __commonJS({
         require_auth().assertClientAccess(ctx, row.client_id);
         const { validate } = require_validate();
         const v = validate(ctx.body, {
-          status: { type: "string", required: true, enum: C.REFERRAL_STATUSES },
+          status: { type: "string", required: true, list: "REFERRAL_STATUSES" },
           outcome: { type: "string", maxLen: 500 },
           barrier: { type: "string", maxLen: 300 },
           admitted_at: { type: "datetime" },
@@ -17650,7 +18084,7 @@ var require_referrals = __commonJS({
           _disclosure_basis: { type: "string", enum: BASES },
           _disclosure_what: { type: "string", maxLen: 1e3 },
           _disclosure_justification: { type: "string", maxLen: 2e3 }
-        });
+        }, { existing: row });
         if (v.consent_id && !db3.one(`SELECT 1 FROM consents WHERE id=? AND client_id=?`, v.consent_id, row.client_id)) throw badRequest("That consent belongs to a different client");
         const admitted = v.status === "admitted" || !!v.admitted_at;
         db3.transaction(() => {
@@ -21251,6 +21685,32 @@ var require_exports = __commonJS({
       overdose_events: ["occurred_at", "client_code", "kind", "naloxone_used", "naloxone_doses", "administered_by", "ems_called", "hospitalized", "survived", "location_type"],
       expenditures: ["spent_at", "fund", "line", "category", "amount", "status", "client_code", "worker", "approver"]
     };
+    var LIST_COLUMNS = {
+      interventions: { type: "INTERVENTION_TYPES", location: "LOCATIONS", modality: "MODALITIES", outcome: "OUTCOMES" },
+      calls: { contact_type: "CALL_CONTACT_TYPES", outcome: (r) => r.method === "text" ? "TEXT_OUTCOMES" : "CALL_OUTCOMES" },
+      time: { category: "TIME_CATEGORIES" },
+      referrals: { status: "REFERRAL_STATUSES", barrier: "REFERRAL_BARRIERS" },
+      episodes: { discharge_reason: "DISCHARGE_REASONS" },
+      overdose_events: { kind: "OVERDOSE_KINDS", administered_by: "ADMINISTERED_BY" },
+      clients: { primary_substance: "SUBSTANCES", discharge_reason: "DISCHARGE_REASONS" }
+    };
+    function labelRows(kind, rows) {
+      const cols2 = LIST_COLUMNS[kind];
+      if (!cols2) return rows;
+      const O = require_options();
+      const maps = {};
+      const mapFor = (key) => maps[key] = maps[key] || O.labelMap(key);
+      return rows.map((r) => {
+        const o = { ...r };
+        for (const [col, list] of Object.entries(cols2)) {
+          const v = o[col];
+          if (typeof v !== "string" || !v) continue;
+          const key = typeof list === "function" ? list(r) : list;
+          o[col] = mapFor(key)[v] || (/^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(v) ? O.humanize(v) : v);
+        }
+        return o;
+      });
+    }
     function projectRow(r, cols2) {
       const o = {};
       for (const c of cols2) if (c in r) o[c] = r[c];
@@ -21337,7 +21797,8 @@ var require_exports = __commonJS({
         };
       }
       for (const [kind, d] of Object.entries(D)) {
-        const raw = d.rows;
+        const coded = d.rows;
+        const raw = () => labelRows(kind, coded());
         if (identified || d.noClients) {
           d.rows = raw;
           continue;
@@ -21359,7 +21820,7 @@ var require_exports = __commonJS({
         return o;
       });
     }
-    module.exports = { datasets, ageBand, deidentifyRow, clientIdsOf, publicRows, DEID_LABEL, DEID_COLUMNS, cents };
+    module.exports = { LIST_COLUMNS, labelRows, datasets, ageBand, deidentifyRow, clientIdsOf, publicRows, DEID_LABEL, DEID_COLUMNS, cents };
   }
 });
 
@@ -21625,9 +22086,10 @@ var require_reports = __commonJS({
         const label = (k) => ({ key: k, label: k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) });
         const RAW = /* @__PURE__ */ new Set(["client_code", "receipt_ref", "grant_number", "email", "website", "phone", "fax", "zip", "username", "document_ref", "medicaid_id", "address", "first_name", "last_name", "contact_name", "name", "organization", "vendor", "title", "template_name", "fund", "line", "resource", "worker", "approver", "assignee", "completed_by", "created_by", "disclosed_by", "recipient", "summary", "description", "notes", "purpose", "what", "goals", "flags", "hours", "eligibility", "services", "languages", "capacity_notes", "contact_person", "intake_process", "cost_notes", "restrictions", "label", "city"]);
         const humanize = (v) => String(v).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).replace(/\bSbirt\b/, "SBIRT").replace(/\bMat\b/g, "MAT").replace(/\bOtp\b/, "OTP").replace(/\bObot\b/, "OBOT").replace(/\bEd\b/, "ED").replace(/\bMh\b/, "MH").replace(/\bIds\b/, "IDs").replace(/\bRoi\b/, "ROI");
-        const pretty = (rows) => rows.map((r2) => {
+        const pretty = (rows, kind) => rows.map((r2) => {
+          const listed = X.LIST_COLUMNS[kind] || {};
           const o = {};
-          for (const [k, v] of Object.entries(r2)) o[k] = typeof v === "string" && !RAW.has(k) && /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(v) && v.length <= 40 ? humanize(v) : v;
+          for (const [k, v] of Object.entries(r2)) o[k] = typeof v === "string" && !RAW.has(k) && !(k in listed) && /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(v) && v.length <= 40 ? humanize(v) : v;
           return o;
         });
         const classification = identified ? `Identified export - PHI. Disclosed to: ${recipient}. Purpose: ${purpose}. Generated ${db3.now()}.` : `${X.DEID_LABEL} Generated ${db3.now()}.`;
@@ -21645,13 +22107,13 @@ var require_reports = __commonJS({
             }
             const rows = d.rows();
             for (const id of X.clientIdsOf(rows)) clientIds.add(id);
-            sheets.push({ name: d.label, columns: d.columns.map(label), rows: pretty(X.publicRows(rows)) });
+            sheets.push({ name: d.label, columns: d.columns.map(label), rows: pretty(X.publicRows(rows), kind) });
             await new Promise((resolve2) => defer(resolve2));
           }
           const written = new Set(accountFor("workbook", [...clientIds]));
           if (disclosuresSlot >= 0) {
             const rows = D.disclosures.rows().filter((r2) => !written.has(r2.id));
-            sheets[disclosuresSlot] = { name: D.disclosures.label, columns: D.disclosures.columns.map(label), rows: pretty(X.publicRows(rows)) };
+            sheets[disclosuresSlot] = { name: D.disclosures.label, columns: D.disclosures.columns.map(label), rows: pretty(X.publicRows(rows), "disclosures") };
           }
           audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: "workbook", sheets: sheets.map((s) => [s.name, s.rows.length]), identified, from, to, clients_disclosed: identified ? clientIds.size : void 0 } });
           body = await S.writeWorkbookAsync(sheets);
@@ -21662,7 +22124,7 @@ var require_reports = __commonJS({
           if (!d) throw require_http().notFound("Unknown export");
           const raw = d.rows();
           const clientsDisclosed = accountFor(ctx.params.kind, X.clientIdsOf(raw)).length;
-          const rows = pretty(X.publicRows(raw));
+          const rows = pretty(X.publicRows(raw), ctx.params.kind);
           audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: ctx.params.kind, rows: rows.length, identified, from, to, format, clients_disclosed: identified ? clientsDisclosed : void 0 } });
           const suffix = identified ? "identified" : "deidentified";
           if (format === "xlsx") {
@@ -22680,7 +23142,7 @@ var require_time = __commonJS({
           user_id: { type: "string" },
           work_date: { type: "date", required: true },
           minutes: { type: "number", required: true, integer: true, min: 1, max: 1440 },
-          category: { type: "string", enum: C.TIME_CATEGORIES },
+          category: { type: "string", list: "TIME_CATEGORIES" },
           billable: { type: "boolean" },
           funding_source_id: { type: "string" },
           description: { type: "string", maxLen: 500 },
@@ -22924,6 +23386,7 @@ var init_ = __esm({
       "./routes/me.js": () => require_me(),
       "./routes/notes.js": () => require_notes(),
       "./routes/oidc.js": () => require_oidc2(),
+      "./routes/options.js": () => require_options2(),
       "./routes/overdose.js": () => require_overdose(),
       "./routes/patient-requests.js": () => require_patient_requests(),
       "./routes/referrals.js": () => require_referrals(),
@@ -23004,6 +23467,7 @@ var require_app2 = __commonJS({
       "imports",
       "reports",
       "admin",
+      "options",
       "regions",
       "intake",
       "client-errors"
@@ -23758,7 +24222,8 @@ var routeLoaders = {
   imports: () => Promise.resolve().then(() => __toESM(require_imports())),
   dataimport: () => Promise.resolve().then(() => __toESM(require_dataimport2())),
   reports: () => Promise.resolve().then(() => __toESM(require_reports())),
-  admin: () => Promise.resolve().then(() => __toESM(require_admin()))
+  admin: () => Promise.resolve().then(() => __toESM(require_admin())),
+  options: () => Promise.resolve().then(() => __toESM(require_options2()))
 };
 var router;
 var token = localStorage.getItem("suds.local.session") || "";

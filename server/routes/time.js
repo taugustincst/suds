@@ -21,7 +21,7 @@ module.exports = (r) => {
     afterLoad: withClientName,
     shape: {
       client_id: { type: 'string' }, user_id: { type: 'string' }, work_date: { type: 'date', required: true }, minutes: { type: 'number', required: true, integer: true, min: 1, max: 1440 },
-      category: { type: 'string', enum: C.TIME_CATEGORIES }, billable: { type: 'boolean' }, funding_source_id: { type: 'string' }, description: { type: 'string', maxLen: 500 },
+      category: { type: 'string', list: 'TIME_CATEGORIES' }, billable: { type: 'boolean' }, funding_source_id: { type: 'string' }, description: { type: 'string', maxLen: 500 },
       intervention_id: { type: 'string' }, call_id: { type: 'string' },
     },
     filters: (ctx, where, params) => {

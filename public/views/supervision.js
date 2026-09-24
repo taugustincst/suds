@@ -124,7 +124,7 @@ route('supervision', async (r) => {
           { label: 'Worker', key: 'worker' },
           { label: 'Date', render: r => fmt.date(r.work_date) },
           { label: 'Minutes', key: 'minutes', num: true },
-          { label: 'Activity', render: r => fmt.label(r.category) },
+          { label: 'Activity', render: r => fmt.label(r.category, 'TIME_CATEGORIES') },
           { label: 'Client', render: r => r.client_code || '—' },
           { label: 'Fund', render: r => r.funding_source || '—' },
           { label: '', render: r => h('div', { class: 'row' },
@@ -172,7 +172,7 @@ route('supervision', async (r) => {
       open.length ? h('div', {}, h('h3', { class: 'mt' }, 'No outcome recorded yet'),
         table([
           { label: 'Client', key: 'client_code' }, { label: 'Referred to', key: 'resource' },
-          { label: 'Sent', render: r => fmt.date(r.referred_at) }, { label: 'Status', render: r => badge(fmt.label(r.status)) },
+          { label: 'Sent', render: r => fmt.date(r.referred_at) }, { label: 'Status', render: r => badge(fmt.label(r.status, 'REFERRAL_STATUSES')) },
         ], open, { onRow: (r) => nav(`referrals?client_id=${r.client_id}`), rowLabel: (r) => `Referral for ${r.client_code} to ${r.resource}` })) : null));
   }
 

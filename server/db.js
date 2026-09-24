@@ -370,6 +370,15 @@ const migrations = [
     if (m) d.exec(m[0]);
     for (const line of schemaText.split('\n')) if (/^CREATE INDEX IF NOT EXISTS idx_idempotency/.test(line.trim())) d.exec(line.trim());
   },
+  // 28: Settings → Lists. An administrator's changes to the choices on documentation forms (a renamed,
+  //     reordered or retired choice, or a programme's own addition) are kept in option_overrides; the
+  //     built-in choices stay in code (server/options.js). An existing database starts with none.
+  (d) => {
+    const schemaText = safeSchema();
+    const m = schemaText.match(/CREATE TABLE IF NOT EXISTS option_overrides \([\s\S]*?\n\);/);
+    if (m) d.exec(m[0]);
+    for (const line of schemaText.split('\n')) if (/^CREATE INDEX IF NOT EXISTS idx_option_overrides/.test(line.trim())) d.exec(line.trim());
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

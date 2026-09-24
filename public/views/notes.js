@@ -3,7 +3,7 @@ import { h, route, get, pagedList, post, put, del, state, form, modal, toast, ta
 const SECTIONS = { SOAP: [['S', 'Subjective'], ['O', 'Objective'], ['A', 'Assessment'], ['P', 'Plan']], DAP: [['D', 'Data'], ['A', 'Assessment'], ['P', 'Plan']], BIRP: [['B', 'Behavior'], ['I', 'Intervention'], ['R', 'Response'], ['P', 'Plan']], GIRP: [['G', 'Goal'], ['I', 'Intervention'], ['R', 'Response'], ['P', 'Plan']],
   // Stanley-Brown style safety plan, as a structured note so it prints and reads the same for everyone.
   safety_plan: [['warning_signs', 'Warning signs (thoughts, moods, situations)'], ['coping', 'Coping strategies I can use on my own'], ['distraction', 'People and places that take my mind off things'], ['people_to_ask', 'People I can ask for help'], ['professionals', 'Professionals / agencies I can contact, with phone numbers'], ['environment', 'Making the environment safe (naloxone on hand, not using alone…)'], ['reasons_for_living', 'Reasons for living']] };
-const FORMAT_LABELS = { handoff: 'Shift hand-off (for the next worker on)', safety_plan: 'Safety plan (structured)' };
+// Formats and their wording are a documentation list (Settings → Lists; server/options.js has the built-in wording).
 const sectionLabel = (format, key) => (SECTIONS[format] || []).find(([k]) => k === key)?.[1] || key;
 
 export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, prefill } = {}) {
@@ -13,7 +13,7 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
   const f = form([
     { name: 'client_id', label: 'Client', type: 'client', required: true, value: clientId || values?.client_id, display: clientDisplay },
     { name: 'kind', label: 'Note type', type: 'select', options: kinds.map(k => ({ value: k, label: k === 'clinical' ? 'Clinical (restricted to clinical roles)' : 'Administrative / contact' })), value: kind || values?.kind || kinds[0], noBlank: true, required: true },
-    { name: 'format', label: 'Format', type: 'select', options: C.NOTE_FORMATS.map(f => ({ value: f, label: FORMAT_LABELS[f] || fmt.label(f) })), value: prefill?.format || 'narrative', noBlank: true }, { name: 'occurred_at', label: 'Date of service', type: 'datetime', required: true, value: values?.occurred_at || new Date().toISOString() },
+    { name: 'format', label: 'Format', type: 'select', list: 'NOTE_FORMATS', value: prefill?.format || 'narrative', noBlank: true }, { name: 'occurred_at', label: 'Date of service', type: 'datetime', required: true, value: values?.occurred_at || new Date().toISOString() },
     { name: 'title', label: 'Title', span: true, value: prefill?.title }, { name: 'content', label: 'Narrative', type: 'textarea', span: true, rows: 10, required: true, value: prefill?.content },
     { name: 'part2_protected', label: 'Contains 42 CFR Part 2 protected SUD information', type: 'checkbox', value: values ? values.part2_protected : true },
     { name: 'cosign_requested', label: 'Request supervisor co-sign / review', type: 'checkbox', help: 'Puts this note in the supervisor queue once it is signed — for a difficult contact, a safety concern, or anything you want a second pair of eyes on.' },
@@ -106,7 +106,7 @@ export async function openNote(id, { onChange } = {}) {
   const mine = n.author_id === state.user.id;
   const writable = can(`notes:${n.kind}:write`);
   const body = h('div', {},
-    h('div', { class: 'row mb' }, badge(n.kind === 'clinical' ? 'Clinical' : 'Administrative', n.kind === 'clinical' ? 'purple' : 'info'), badge(fmt.label(n.status), statusKind(n.status)), badge(fmt.label(n.format)), n.source !== 'manual' ? badge(`Imported: ${fmt.label(n.source)}`, 'warn') : null, n.part2_protected ? badge('42 CFR Part 2', 'danger') : null,
+    h('div', { class: 'row mb' }, badge(n.kind === 'clinical' ? 'Clinical' : 'Administrative', n.kind === 'clinical' ? 'purple' : 'info'), badge(fmt.label(n.status), statusKind(n.status)), badge(fmt.label(n.format, 'NOTE_FORMATS')), n.source !== 'manual' ? badge(`Imported: ${fmt.label(n.source)}`, 'warn') : null, n.part2_protected ? badge('42 CFR Part 2', 'danger') : null,
       n.cosigned_at ? badge(`Countersigned by ${n.cosigner}`, 'ok') : n.cosign_requested ? badge('Review requested', 'warn') : n.cosign_required ? badge('Needs countersignature', 'warn') : null),
     kv([['Client', h('a', { href: `#/client/${n.client_id}` }, n.client_code || 'view')], ['Date of service', fmt.dt(n.occurred_at)], ['Author', n.author], n.signed_at ? ['Signed', `${fmt.dt(n.signed_at)} by ${n.signer}`] : null, n.signature_hash ? ['Signature hash', h('details', { class: 'sig-hash' }, h('summary', {}, h('code', {}, n.signature_hash.slice(0, 16) + '…'), ' ', h('span', { class: 'small muted' }, 'show full')), h('code', { class: 'sig-hash-full', style: { wordBreak: 'break-all' } }, n.signature_hash))] : null, ['Created', fmt.dt(n.created_at)]]),
     n.signature_hash ? verifyPanel(n, breakGlass) : null,
@@ -125,7 +125,7 @@ export async function openNote(id, { onChange } = {}) {
         catch (e) { toast(e.message, 'error'); }
       } }, 'Send to supervisor') : null,
       h('button', { class: 'btn ghost', onClick: () => window.print() }, 'Print')));
-  const m = modal(n.title || `${fmt.label(n.format)} note`, body, { wide: true });
+  const m = modal(n.title || `${fmt.label(n.format, 'NOTE_FORMATS')} note`, body, { wide: true });
 }
 
 function signNote(n, done) {
@@ -144,7 +144,7 @@ export function noteTable(rows, { showClient = true, onChange } = {}) {
   // nesting, so here the client code is a plain (mouse-only) shortcut rather than its own control.
   return table([
     { label: 'Date of service', render: n => h('span', { class: 'nowrap' }, fmt.dt(n.occurred_at)) }, showClient ? { label: 'Client', render: n => h('span', { class: 'link-like', onClick: (e) => { e.stopPropagation(); nav(`client/${n.client_id}`); } }, n.client_code) } : null,
-    { label: 'Type', render: n => badge(n.kind === 'clinical' ? 'Clinical' : 'Admin', n.kind === 'clinical' ? 'purple' : 'info') }, { label: 'Format', render: n => fmt.label(n.format) }, { label: 'Title', render: n => n.title || h('span', { class: 'muted' }, '(untitled)') },
+    { label: 'Type', render: n => badge(n.kind === 'clinical' ? 'Clinical' : 'Admin', n.kind === 'clinical' ? 'purple' : 'info') }, { label: 'Format', render: n => fmt.label(n.format, 'NOTE_FORMATS') }, { label: 'Title', render: n => n.title || h('span', { class: 'muted' }, '(untitled)') },
     { label: 'Status', render: n => [badge(fmt.label(n.status), statusKind(n.status)), n.addenda ? [' ', badge(`${n.addenda} addend.`)] : null, n.cosigned_at ? [' ', badge('Countersigned', 'ok')] : n.awaiting_cosign ? [' ', badge('Awaiting review', 'warn')] : n.cosign_requested ? [' ', badge('Review requested', 'warn')] : null] }, { label: 'Source', render: n => n.source === 'manual' ? '' : badge(fmt.label(n.source), 'warn') }, { label: 'Author', key: 'author' },
   ].filter(Boolean), rows, { onRow: n => openNote(n.id, { onChange }), empty: 'No notes yet. Notes save as drafts automatically while you type, and you sign them when they are complete.' });
 }

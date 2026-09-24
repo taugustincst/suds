@@ -324,6 +324,97 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   await ctx.close();
 }
 
+// ---- Settings → Lists: an administrator changes the choices on documentation forms ----
+{
+  const page = admin.page; const api = admin.api;
+  const entries = async (key) => (await api('GET', '/api/admin/lists')).data.lists.find(l => l.key === key).entries;
+  const card = (key) => `details[data-list="${key}"]`;
+  const openCard = async (key) => { await page.$eval(card(key), d => { d.open = true; }); };
+  // A visit recorded at a location that is about to be retired, to edit afterwards.
+  const cl = (await api('GET', '/api/clients?limit=1')).data.clients[0];
+  const oldVisit = (await api('POST', '/api/interventions', { client_id: cl.id, type: 'outreach', location: 'jail', occurred_at: new Date().toISOString() })).data.id;
+  await go(page, 'admin?tab=lists');
+  ok(await page.$('.tabs button:has-text("Lists")'), 'Settings has a Lists tab');
+  const groups = await page.$$eval('[data-lists] > h3', hs => hs.map(x => x.textContent));
+  for (const g of ['Visits & services', 'Calls & texts', 'Referrals', 'Overdose & reversals', 'Time', 'Notes', 'Clients', 'Episodes of care', 'Funding']) ok(groups.includes(g), `the lists are grouped by form: ${g}`, groups);
+  // Reword the overdose form's "What happened" choice.
+  await openCard('OVERDOSE_KINDS');
+  await page.fill(`${card('OVERDOSE_KINDS')} [data-entry-label="reversal"]`, 'Reversed with Narcan');
+  await page.click(`${card('OVERDOSE_KINDS')} [data-rename="reversal"]`); await settle(page);
+  eq((await entries('OVERDOSE_KINDS')).find(e => e.code === 'reversal').label, 'Reversed with Narcan', 'a choice is reworded from the page');
+  ok(!(await page.$(`${card('OVERDOSE_KINDS')} [data-add-entry]`)), 'the overdose kinds take no additions');
+  ok(!(await page.$(`${card('OVERDOSE_KINDS')} [data-toggle="fatal"]`)) && await page.$(`${card('OVERDOSE_KINDS')} [data-used-by="fatal"]`), 'a choice SUDS relies on has no Hide button and says why');
+  // Add a location of the programme's own, and retire one.
+  await openCard('LOCATIONS');
+  ok(!/\bnull\b/.test(await page.textContent(card('LOCATIONS'))), 'a list with no note prints nothing in its place');
+  await page.fill(`${card('LOCATIONS')} input[name=new_label]`, 'Mobile van');
+  await page.click(`${card('LOCATIONS')} [data-add-entry]`); await settle(page);
+  ok(await until(() => page.$(`${card('LOCATIONS')} tr[data-entry="mobile_van"]`)), 'a new choice is added to the list');
+  await page.click(`${card('LOCATIONS')} [data-toggle="jail"]`); await settle(page);
+  ok((await entries('LOCATIONS')).find(e => e.code === 'jail').hidden, 'a choice is hidden from new records');
+  eq(await page.textContent(`${card('LOCATIONS')} [data-toggle="jail"]`), 'Show', 'and can be shown again');
+  // Reorder.
+  await openCard('MODALITIES');
+  const before = (await entries('MODALITIES')).map(e => e.code);
+  await page.click(`${card('MODALITIES')} [data-move-down="${before[0]}"]`); await settle(page);
+  eq((await entries('MODALITIES')).map(e => e.code).slice(0, 2).join(','), `${before[1]},${before[0]}`, 'the ↓ button moves a choice down');
+  // The visit form offers what the office set up, with an "Edit this list" link for the administrator.
+  await page.reload(); await page.waitForSelector('.layout'); await settle(page);
+  await go(page, 'interventions');
+  await page.click('text=+ Log a visit or service'); await page.waitForSelector('.modal select[name=location]');
+  const locs = await page.$$eval('.modal select[name=location] option', o => o.map(x => [x.value, x.textContent]));
+  ok(locs.some(([v, t]) => v === 'mobile_van' && t === 'Mobile van'), 'the new location is offered on the visit form', locs);
+  ok(!locs.some(([v]) => v === 'jail'), 'the retired one is not');
+  ok(await page.$('.modal [data-edit-list="INTERVENTION_TYPES"]'), '"What did you do?" has an Edit this list link');
+  ok(await page.$('.modal [data-manage-funds]'), 'and Funding source a Manage link');
+  await page.click('.modal [data-field="location"] [data-edit-list="LOCATIONS"]'); await settle(page);
+  ok(/tab=lists&list=LOCATIONS/.test(page.url()), 'Edit this list opens that list', page.url());
+  ok(await page.$eval(card('LOCATIONS'), d => d.open), 'already open');
+  // Editing an old record keeps its retired value.
+  await page.evaluate(async (id) => { const r = await (await fetch(`/api/interventions/${id}`)).json(); (await import('./views/interventions.js')).openInterventionForm(r.row, {}); }, oldVisit);
+  await page.waitForSelector('.modal select[name=location]');
+  const kept = await page.$eval('.modal select[name=location]', s => [s.value, s.selectedOptions[0]?.textContent || '']);
+  eq(kept[0], 'jail', 'an old visit at a retired location still shows it when edited');
+  ok(/no longer offered/.test(kept[1]), 'marked as no longer offered', kept[1]);
+  await page.keyboard.press('Escape'); await settle(page);
+  // Restore defaults.
+  await go(page, 'admin?tab=lists&list=LOCATIONS');
+  await page.click(`${card('LOCATIONS')} [data-reset-list]`); await page.waitForSelector('.modal button:has-text("Restore defaults")');
+  await page.click('.modal button:has-text("Restore defaults")'); await settle(page);
+  const reset = await entries('LOCATIONS');
+  ok(!reset.find(e => e.code === 'jail').hidden && reset.find(e => e.code === 'mobile_van').hidden, 'restore defaults offers every built-in again and hides the added one');
+  // Funding sources: quick add, rename, deactivate.
+  await openCard('funds');
+  await page.click('[data-fund-add]'); await page.waitForSelector('.modal input[name=name]');
+  await page.fill('.modal input[name=name]', 'Lists Test Grant'); await page.selectOption('.modal select[name=source_type]', 'county_general');
+  await page.click('.modal button[type=submit]'); await settle(page);
+  const fund = await until(async () => (await api('GET', '/api/budget/funds?all=1')).data.funds.find(f => f.name === 'Lists Test Grant'));
+  ok(fund, 'a funding source is added from the Lists tab');
+  await until(() => page.$(`[data-fund-name="${fund.id}"]`));
+  await page.fill(`[data-fund-name="${fund.id}"]`, 'Lists Test Grant (renamed)'); await page.click(`[data-fund-rename="${fund.id}"]`); await settle(page);
+  await until(() => page.$(`[data-fund-toggle="${fund.id}"]`));
+  await page.click(`[data-fund-toggle="${fund.id}"]`); await settle(page);
+  const after = await until(async () => { const f = (await api('GET', '/api/budget/funds?all=1')).data.funds.find(x => x.id === fund.id); return f && !f.is_active ? f : null; });
+  eq(after && after.name, 'Lists Test Grant (renamed)', 'renamed');
+  ok(after && !after.is_active, 'and deactivated');
+
+  // A navigator sees the new wording and no admin links.
+  const navS = await session('mrivera', 'Navigator2026!!');
+  await go(navS.page, 'overdose');
+  await navS.page.click('text=+ Record an event'); await navS.page.waitForSelector('.modal select[name=kind]');
+  const kinds = await navS.page.$$eval('.modal select[name=kind] option', o => o.map(x => x.textContent));
+  ok(kinds.includes('Reversed with Narcan'), '"What happened" on the overdose form shows the new wording', kinds);
+  ok(!(await navS.page.$('.modal [data-edit-list]')) && !(await navS.page.$('.modal [data-manage-funds]')), 'a navigator gets no Edit this list or Manage links');
+  await navS.close();
+  // A supervisor manages funding sources from the same tab, but not the documentation lists.
+  const supS = await session('jwalker', 'Navigator2026!!');
+  await go(supS.page, 'admin?tab=lists');
+  ok(await supS.page.$('details[data-list="funds"]'), 'a supervisor (budget:manage) gets the funding sources');
+  ok(!(await supS.page.$('details[data-list="LOCATIONS"]')), 'but not the documentation lists (settings:manage)');
+  await supS.close();
+  await page.screenshot({ path: '/tmp/suds-shots/lists.png', fullPage: true }).catch(() => {});
+}
+
 await admin.close();
 await browser.close();
 if (errors.length) { console.log('ERRORS:'); errors.forEach(e => console.log('  ' + e)); } else console.log('NO ERRORS');

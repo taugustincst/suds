@@ -61,6 +61,35 @@ const DEID_COLUMNS = {
   overdose_events: ['occurred_at', 'client_code', 'kind', 'naloxone_used', 'naloxone_doses', 'administered_by', 'ems_called', 'hospitalized', 'survived', 'location_type'],
   expenditures: ['spent_at', 'fund', 'line', 'category', 'amount', 'status', 'client_code', 'worker', 'approver'],
 };
+// ---- Documentation choices, in words ----
+// A coded column that comes from a documentation list goes out with the label the programme gave it under
+// Settings → Lists ("Warm handoff", or whatever it was renamed to), and a programme's own choice — which
+// has no built-in wording at all — with its own. Applied to the full row, before de-identification cuts it
+// down, because which outcomes list a call's outcome belongs to depends on its method.
+const LIST_COLUMNS = {
+  interventions: { type: 'INTERVENTION_TYPES', location: 'LOCATIONS', modality: 'MODALITIES', outcome: 'OUTCOMES' },
+  calls: { contact_type: 'CALL_CONTACT_TYPES', outcome: (r) => (r.method === 'text' ? 'TEXT_OUTCOMES' : 'CALL_OUTCOMES') },
+  time: { category: 'TIME_CATEGORIES' },
+  referrals: { status: 'REFERRAL_STATUSES', barrier: 'REFERRAL_BARRIERS' },
+  episodes: { discharge_reason: 'DISCHARGE_REASONS' },
+  overdose_events: { kind: 'OVERDOSE_KINDS', administered_by: 'ADMINISTERED_BY' },
+  clients: { primary_substance: 'SUBSTANCES', discharge_reason: 'DISCHARGE_REASONS' },
+};
+function labelRows(kind, rows) {
+  const cols = LIST_COLUMNS[kind]; if (!cols) return rows;
+  const O = require('./options'); const maps = {};
+  const mapFor = (key) => (maps[key] = maps[key] || O.labelMap(key));
+  return rows.map(r => {
+    const o = { ...r };
+    for (const [col, list] of Object.entries(cols)) {
+      const v = o[col]; if (typeof v !== 'string' || !v) continue;
+      const key = typeof list === 'function' ? list(r) : list;
+      o[col] = mapFor(key)[v] || (/^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(v) ? O.humanize(v) : v);
+    }
+    return o;
+  });
+}
+
 /** Keep only the allow-listed columns (plus the hidden _client_id used for accounting). */
 function projectRow(r, cols) { const o = {}; for (const c of cols) if (c in r) o[c] = r[c]; if (r._client_id !== undefined) o._client_id = r._client_id; return o; }
 /** Money is stored as REAL; round to cents so 25.009999 never reaches a spreadsheet. */
@@ -113,7 +142,8 @@ function datasets(ctx, { from, to, ts, tsP, identified }) {
   // each query, where one new date column would quietly slip through. A de-identified dataset is also cut
   // down to its allow-listed columns (DEID_COLUMNS), both in the column list and in the row objects.
   for (const [kind, d] of Object.entries(D)) {
-    const raw = d.rows;
+    const coded = d.rows;
+    const raw = () => labelRows(kind, coded());
     if (identified || d.noClients) { d.rows = raw; continue; }
     const allowed = DEID_COLUMNS[kind];
     if (!allowed) throw new Error(`No de-identified column list is defined for the ${kind} dataset`);
@@ -127,4 +157,4 @@ function clientIdsOf(rows) { return [...new Set(rows.map(r => r._client_id).filt
 /** Drop the internal columns before anything is written to a file. */
 function publicRows(rows) { return rows.map(r => { const o = { ...r }; delete o._client_id; return o; }); }
 
-module.exports = { datasets, ageBand, deidentifyRow, clientIdsOf, publicRows, DEID_LABEL, DEID_COLUMNS, cents };
+module.exports = { LIST_COLUMNS, labelRows, datasets, ageBand, deidentifyRow, clientIdsOf, publicRows, DEID_LABEL, DEID_COLUMNS, cents };

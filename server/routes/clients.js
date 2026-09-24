@@ -7,6 +7,7 @@ const { validate, paging } = require('../validate');
 const { blindIndex, uuid, decrypt, encrypt } = require('../crypto');
 const M = require('../clients-model');
 const F = require('../client-filters');
+const O = require('../options');
 
 const shape = {
   first_name: { type: 'string', required: true, maxLen: 100 }, last_name: { type: 'string', required: true, maxLen: 100 },
@@ -16,7 +17,7 @@ const shape = {
   veteran: { type: 'boolean' }, housing_status: { type: 'string', maxLen: 60 }, insurance: { type: 'string', maxLen: 100 }, medicaid_id: { type: 'string', maxLen: 40 },
   emergency_contact: { type: 'string', maxLen: 300 },
   status: { type: 'string', enum: ['waitlist', 'active', 'inactive', 'closed', 'deceased'] }, intake_date: { type: 'date' }, discharge_date: { type: 'date' }, discharge_reason: { type: 'string', maxLen: 200 },
-  referral_source: { type: 'string', maxLen: 120 }, referral_date: { type: 'date' }, engagement_date: { type: 'date' }, primary_substance: { type: 'string', maxLen: 60 }, secondary_substances: { type: 'string', maxLen: 200 }, route_of_use: { type: 'string', maxLen: 60 },
+  referral_source: { type: 'string', maxLen: 120 }, referral_date: { type: 'date' }, engagement_date: { type: 'date' }, primary_substance: { type: 'string', maxLen: 60, list: 'SUBSTANCES' }, secondary_substances: { type: 'string', maxLen: 200 }, route_of_use: { type: 'string', maxLen: 60 },
   asam_level: { type: 'string', maxLen: 20 }, mat_status: { type: 'string', enum: ['none', 'interested', 'referred', 'active', 'discontinued', 'unknown'] }, mat_medication: { type: 'string', maxLen: 60 },
   overdose_history: { type: 'boolean' }, last_overdose_date: { type: 'date' }, naloxone_provided: { type: 'boolean' }, naloxone_last_date: { type: 'date' },
   risk_level: { type: 'string', enum: ['low', 'moderate', 'high', 'critical'] }, justice_involved: { type: 'boolean' }, pregnant_or_parenting: { type: 'boolean' }, co_occurring_mh: { type: 'boolean' },
@@ -377,7 +378,7 @@ module.exports = (r) => {
   r.put('/api/clients/:id', auth.requireAuth, auth.requirePerm('clients:write'), (ctx) => {
     const row = loadClient(ctx, ctx.params.id);
     require('../crud').assertFresh(ctx, row, 'client');
-    const v = validate(ctx.body, { ...shape, first_name: { ...shape.first_name, required: false }, last_name: { ...shape.last_name, required: false } }, { partial: true });
+    const v = validate(ctx.body, { ...shape, first_name: { ...shape.first_name, required: false }, last_name: { ...shape.last_name, required: false } }, { partial: true, existing: row });
     checkContactFields(v);
     // Closing a client is a discharge, and a discharge is what closes the episode, ends the care team and
     // clears the open to-dos. Setting the status by hand while an episode is open would leave all of that
@@ -435,11 +436,11 @@ module.exports = (r) => {
     const cutP = before ? [before] : [];
     const events = [];
     for (const x of db.all(`SELECT i.*, u.display_name AS worker FROM interventions i JOIN users u ON u.id=i.user_id WHERE client_id=? ${cut('i.occurred_at')} ORDER BY i.occurred_at DESC LIMIT ?`, id, ...cutP, per))
-      events.push({ kind: 'intervention', id: x.id, at: x.occurred_at, title: x.type.replace(/_/g, ' '), detail: x.summary_enc ? decrypt(x.summary_enc) : null, worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, location: x.location } });
+      events.push({ kind: 'intervention', id: x.id, at: x.occurred_at, title: O.labelOf('INTERVENTION_TYPES', x.type), detail: x.summary_enc ? decrypt(x.summary_enc) : null, worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, outcome_label: x.outcome ? O.labelOf('OUTCOMES', x.outcome) : null, location: x.location } });
     for (const x of db.all(`SELECT c.*, u.display_name AS worker FROM calls c JOIN users u ON u.id=c.user_id WHERE client_id=? ${cut('c.started_at')} ORDER BY c.started_at DESC LIMIT ?`, id, ...cutP, per))
-      events.push({ kind: 'call', id: x.id, at: x.started_at, title: `${x.direction} ${x.method === 'text' ? 'text message' : 'call'} (${x.contact_type})`, detail: x.summary_enc ? decrypt(x.summary_enc) : (x.purpose_enc ? decrypt(x.purpose_enc) : null), worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, crisis: !!x.crisis } });
+      events.push({ kind: 'call', id: x.id, at: x.started_at, title: `${x.direction} ${x.method === 'text' ? 'text message' : 'call'} (${O.labelOf('CALL_CONTACT_TYPES', x.contact_type)})`, detail: x.summary_enc ? decrypt(x.summary_enc) : (x.purpose_enc ? decrypt(x.purpose_enc) : null), worker: x.worker, meta: { duration: x.duration_minutes, outcome: x.outcome, outcome_label: x.outcome ? O.labelOf(x.method === 'text' ? 'TEXT_OUTCOMES' : 'CALL_OUTCOMES', x.outcome) : null, crisis: !!x.crisis } });
     for (const x of db.all(`SELECT n.id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.source,u.display_name AS worker FROM notes n JOIN users u ON u.id=n.author_id WHERE client_id=? AND deleted_at IS NULL ${cut('n.occurred_at')} ORDER BY n.occurred_at DESC LIMIT ?`, id, ...cutP, per))
-      if (x.kind === 'admin' || canClinical) events.push({ kind: 'note', id: x.id, at: x.occurred_at, title: `${x.kind} note: ${x.title_enc ? decrypt(x.title_enc) : x.format}`, detail: null, worker: x.worker, meta: { status: x.status, note_kind: x.kind, source: x.source } });
+      if (x.kind === 'admin' || canClinical) events.push({ kind: 'note', id: x.id, at: x.occurred_at, title: `${x.kind} note: ${x.title_enc ? decrypt(x.title_enc) : O.labelOf('NOTE_FORMATS', x.format)}`, detail: null, worker: x.worker, meta: { status: x.status, note_kind: x.kind, source: x.source } });
     for (const x of db.all(`SELECT r.*, res.name AS resource_name, u.display_name AS worker FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN users u ON u.id=r.user_id WHERE client_id=? ${cut('r.referred_at')} ORDER BY r.referred_at DESC LIMIT ?`, id, ...cutP, per))
       events.push({ kind: 'referral', id: x.id, at: x.referred_at, title: `Referral: ${x.resource_name}`, detail: x.notes_enc ? decrypt(x.notes_enc) : null, worker: x.worker, meta: { status: x.status, outcome: x.outcome_enc ? decrypt(x.outcome_enc) : null } });
     for (const x of db.all(`SELECT t.*, u.display_name AS worker FROM tasks t LEFT JOIN users u ON u.id=t.assigned_to WHERE client_id=? ORDER BY COALESCE(t.completed_at, t.due_at, t.created_at) DESC LIMIT ?`, id, per))
@@ -452,7 +453,7 @@ module.exports = (r) => {
     events.push({ kind: 'milestone', id: 'intake', at: row.intake_date, title: 'Program intake', meta: {} });
     if (row.referral_date) events.push({ kind: 'milestone', id: 'referral', at: row.referral_date, title: 'Referred in', meta: {} });
     if (row.engagement_date) events.push({ kind: 'milestone', id: 'engagement', at: row.engagement_date, title: 'Engaged with services', meta: {} });
-    if (row.discharge_date) events.push({ kind: 'milestone', id: 'discharge', at: row.discharge_date, title: `Discharge: ${row.discharge_reason || ''}`, meta: {} });
+    if (row.discharge_date) events.push({ kind: 'milestone', id: 'discharge', at: row.discharge_date, title: `Discharge: ${row.discharge_reason ? (/^[a-z_]+$/.test(row.discharge_reason) ? O.labelOf('DISCHARGE_REASONS', row.discharge_reason) : row.discharge_reason) : ''}`, meta: {} });
     events.sort((a, b) => (b.at || '').localeCompare(a.at || ''));
     const page = events.slice(offset, offset + limit);
     audit.log({ user: ctx.user, action: 'client.timeline', entity: 'client', entityId: id, clientId: id, ip: ctx.ip, details: { events: page.length } });

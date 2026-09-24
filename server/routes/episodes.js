@@ -13,7 +13,7 @@ const { badRequest, notFound, forbidden } = require('../http');
 const { validate, paging } = require('../validate');
 const { encrypt, decrypt, uuid } = require('../crypto');
 
-const DISCHARGE_REASONS = ['completed', 'transferred', 'incarcerated', 'moved', 'lost_contact', 'declined', 'deceased', 'administrative', 'other'];
+const O = require('../options');
 
 function present(e) {
   const o = { ...e };
@@ -64,7 +64,7 @@ module.exports = (r) => {
     auth.assertClientAccess(ctx, e.client_id);
     if (e.status === 'closed') throw badRequest('This episode is already closed');
     const v = validate(ctx.body, {
-      discharge_reason: { type: 'string', required: true, enum: DISCHARGE_REASONS },
+      discharge_reason: { type: 'string', required: true, list: 'DISCHARGE_REASONS' },
       discharge_disposition: { type: 'string', maxLen: 200 }, discharge_summary: { type: 'string', maxLen: 8000 },
       closed_at: { type: 'date' }, keep_client_active: { type: 'boolean' },
     });
@@ -214,5 +214,6 @@ module.exports = (r) => {
     return { ok: true, transferred: moved, tasks_reassigned: tasks, skipped, from: from.display_name, to: to.display_name };
   });
 
-  r.get('/api/meta/discharge-reasons', auth.requireAuth, () => ({ discharge_reasons: DISCHARGE_REASONS }));
+  // The reasons a discharge may give now, in the programme's order, and their wording (Settings → Lists).
+  r.get('/api/meta/discharge-reasons', auth.requireAuth, () => ({ discharge_reasons: O.visible('DISCHARGE_REASONS'), options: O.entries('DISCHARGE_REASONS') }));
 };

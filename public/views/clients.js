@@ -28,7 +28,7 @@ export function clientFields(C, { isNew = true, hasEpisodes = false, openEpisode
     { name: 'risk_level', label: 'Risk level', type: 'select', options: ['low', 'moderate', 'high', 'critical'], value: 'moderate', noBlank: true, required: true },
     ...(!isNew && !hasEpisodes ? [{ name: 'discharge_date', label: 'Discharge date', type: 'date' }, { name: 'discharge_reason', label: 'Discharge reason' }] : []),
     { type: 'section', label: 'Substance use & health details', collapsible: true, hint: 'fill in what you know; you can come back later' },
-    { name: 'primary_substance', label: 'Primary substance', type: 'select', options: C.SUBSTANCES }, { name: 'secondary_substances', label: 'Secondary substances' }, { name: 'route_of_use', label: 'Route of use', type: 'select', options: ['oral', 'smoked', 'snorted', 'injected', 'multiple', 'unknown'] },
+    { name: 'primary_substance', label: 'Primary substance', type: 'select', list: 'SUBSTANCES' }, { name: 'secondary_substances', label: 'Secondary substances' }, { name: 'route_of_use', label: 'Route of use', type: 'select', options: ['oral', 'smoked', 'snorted', 'injected', 'multiple', 'unknown'] },
     { name: 'asam_level', label: 'ASAM level of care', type: 'select', options: C.ASAM }, { name: 'mat_status', label: 'MAT status', type: 'select', options: ['none', 'interested', 'referred', 'active', 'discontinued', 'unknown'] }, { name: 'mat_medication', label: 'MAT medication', type: 'select', options: ['buprenorphine', 'buprenorphine_xr', 'methadone', 'naltrexone_xr', 'naltrexone_oral', 'other'] },
     { name: 'overdose_history', label: 'History of overdose', type: 'checkbox' }, { name: 'last_overdose_date', label: 'Last overdose date', type: 'date' },
     { name: 'naloxone_provided', label: 'Naloxone provided', type: 'checkbox' }, { name: 'naloxone_last_date', label: 'Naloxone last given', type: 'date' },
@@ -72,7 +72,7 @@ export function openClientForm(values, onDone) {
     h('div', {},
       h('b', {}, offers.length === 1 ? 'An earlier record exists for this person, and they were discharged.' : 'Earlier records exist for this person, and they were discharged.'),
       h('ul', { class: 'tight' }, offers.map(x => h('li', {},
-        h('span', { class: 'mono' }, x.client_code), ' ', h('span', { class: 'muted small' }, x.discharge_date ? `discharged ${fmt.date(x.discharge_date)}${x.discharge_reason ? ` (${fmt.label(x.discharge_reason)})` : ''}` : fmt.label(x.status)),
+        h('span', { class: 'mono' }, x.client_code), ' ', h('span', { class: 'muted small' }, x.discharge_date ? `discharged ${fmt.date(x.discharge_date)}${x.discharge_reason ? ` (${fmt.label(x.discharge_reason, 'DISCHARGE_REASONS')})` : ''}` : fmt.label(x.status)),
         h('div', { class: 'small muted' }, `Matched on ${x.reasons.join(' and ')}.`),
         h('button', { class: 'btn sm primary', type: 'button', 'data-readmit': x.id, onClick: (e) => readmit(x, e.currentTarget) }, 'Re-admit this person')))),
       h('p', { class: 'small' }, 'It is not on your caseload, so you cannot open it — but re-admitting carries on their record instead of starting a second one. It is logged and a supervisor reviews it.'))) : null;
@@ -162,7 +162,7 @@ route('clients', async (r) => {
     const rq = await get('/api/patient-requests?status=open&limit=1000');
     requests = new Map(); for (const x of rq.rows) requests.set(x.client_id, [...(requests.get(x.client_id) || []), x]);
   }
-  const activeFilters = [requests ? 'open patient request' : null, stale ? 'no contact in 30 days' : null, risk ? `risk: ${risk === 'high' ? 'high or critical' : risk}` : null, substance ? `substance: ${fmt.label(substance)}` : null, mat ? `MAT: ${fmt.label(mat)}` : null, expiring ? 'consent expiring soon' : null].filter(Boolean);
+  const activeFilters = [requests ? 'open patient request' : null, stale ? 'no contact in 30 days' : null, risk ? `risk: ${risk === 'high' ? 'high or critical' : risk}` : null, substance ? `substance: ${fmt.label(substance, 'SUBSTANCES')}` : null, mat ? `MAT: ${fmt.label(mat)}` : null, expiring ? 'consent expiring soon' : null].filter(Boolean);
   const deid = !can('clients:read');
   const search = h('input', { type: 'search', value: q, placeholder: 'Name or preferred name (partial or misspelled OK), "Last, First", client code, DOB (YYYY-MM-DD) or exact phone', onKeydown: (e) => { if (e.key === 'Enter') nav(link({ q: search.value.trim() })); } });
   const statusSel = h('select', { onChange: () => nav(link({ status: statusSel.value })) }, ['active', 'waitlist', 'inactive', 'closed', 'deceased', 'all'].map(s => h('option', { value: s, selected: s === status }, fmt.label(s))));
@@ -177,7 +177,7 @@ route('clients', async (r) => {
       { label: 'Client', render: c => h('div', {}, h('b', {}, c.display_name), h('div', { class: 'muted small' }, c.client_code, c.dob && !deid ? ` · DOB ${fmt.date(c.dob)}` : '')) },
       { label: 'Status', render: c => badge(fmt.label(clientStatus(c)), statusKind(clientStatus(c))) },
       { label: 'Risk', render: c => badge(fmt.label(c.risk_level), statusKind(c.risk_level)) },
-      { label: 'Primary substance', render: c => fmt.label(c.primary_substance) },
+      { label: 'Primary substance', render: c => fmt.label(c.primary_substance, 'SUBSTANCES') },
       { label: 'MAT', render: c => fmt.label(c.mat_status) },
       { label: 'Assigned', key: 'assigned_workers' },
       { label: 'Intake', render: c => fmt.date(c.intake_date) },

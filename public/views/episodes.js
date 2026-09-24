@@ -2,33 +2,12 @@
 // once stayed "active" forever, because there was no step that ended anything.
 import { h, route, get, pagedList, post, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog, kv } from '../app.js';
 
-const REASONS = [
-  ['completed', 'Completed the program'],
-  ['transferred', 'Transferred to another provider'],
-  ['incarcerated', 'Incarcerated'],
-  ['moved', 'Moved out of the area'],
-  ['lost_contact', 'Lost contact'],
-  ['declined', 'Declined further services'],
-  ['deceased', 'Deceased'],
-  ['administrative', 'Administrative closure'],
-  ['other', 'Other'],
-];
-const REASON_LABELS = Object.fromEntries(REASONS);
-// The list itself comes from GET /api/meta/discharge-reasons, so a reason added on the server is offered
-// here; the built-in list above supplies the wording, and is used as is if the request fails.
-let reasonOptions = null;
-async function dischargeReasons() {
-  if (reasonOptions) return reasonOptions;
-  try {
-    const { discharge_reasons: list } = await get('/api/meta/discharge-reasons');
-    if (Array.isArray(list) && list.length) { reasonOptions = list.map(value => ({ value, label: REASON_LABELS[value] || fmt.label(value) })); return reasonOptions; }
-  } catch { /* fall back */ }
-  return REASONS.map(([value, label]) => ({ value, label }));
-}
+// The discharge reasons are a documentation list (Settings → Lists): offered and worded as the office set
+// them up, with a reason retired since an episode was closed still shown on that episode.
 
 /** The episodes panel shown on a client's page. */
 export async function episodesPanel(clientId, { onChange } = {}) {
-  const [{ episodes }, reasons] = await Promise.all([get(`/api/clients/${clientId}/episodes`), dischargeReasons()]);
+  const { episodes } = await get(`/api/clients/${clientId}/episodes`);
   const open = episodes.find(e => e.status === 'open');
   const box = h('section', { class: 'card' });
 
@@ -46,7 +25,7 @@ export async function episodesPanel(clientId, { onChange } = {}) {
     const f = form([
       // No default: "Completed the program" is a claim the funder report counts, not something a worker
       // should be able to record by clicking straight through.
-      { name: 'discharge_reason', label: 'Reason for discharge', type: 'select', required: true, placeholder: 'Choose a reason…', options: reasons },
+      { name: 'discharge_reason', label: 'Reason for discharge', type: 'select', required: true, placeholder: 'Choose a reason…', list: 'DISCHARGE_REASONS' },
       { name: 'discharge_disposition', label: 'Where are they going?', placeholder: 'e.g. outpatient at County OTP, residential, unknown' },
       { name: 'closed_at', label: 'Discharge date', type: 'date', value: new Date().toISOString().slice(0, 10) },
       { name: 'discharge_summary', label: 'Discharge summary', type: 'textarea', rows: 5, span: true },
@@ -88,7 +67,7 @@ export async function episodesPanel(clientId, { onChange } = {}) {
       { label: 'Opened', render: e => fmt.date(e.opened_at) },
       { label: 'Closed', render: e => (e.closed_at ? fmt.date(e.closed_at) : badge('Open', 'ok')) },
       { label: 'Referred by', render: e => e.referral_source ? fmt.label(e.referral_source) : '—' },
-      { label: 'Discharge', render: e => (e.discharge_reason ? fmt.label(e.discharge_reason) : '—') },
+      { label: 'Discharge', render: e => (e.discharge_reason ? fmt.label(e.discharge_reason, 'DISCHARGE_REASONS') : '—') },
       { label: 'Going to', render: e => e.discharge_disposition || '—' },
       { label: 'Fund', render: e => e.funding_source || '—' },
       { label: '', render: e => e.status === 'closed' && !open && can('episodes:write') ? h('button', { class: 'btn sm', 'data-reopen': e.id, onClick: (ev) => { ev.stopPropagation(); reopenEpisode(e); } }, 'Reopen / re-admit') : null },
@@ -98,7 +77,7 @@ export async function episodesPanel(clientId, { onChange } = {}) {
         ['Referred by', e.referral_source ? fmt.label(e.referral_source) : '—'],
         ['What brought them in', e.presenting_problem || '—'],
         ['Closed', e.closed_at ? `${fmt.date(e.closed_at)} by ${e.closed_by_name || '—'}` : 'Still open'],
-        ['Reason', e.discharge_reason ? fmt.label(e.discharge_reason) : '—'],
+        ['Reason', e.discharge_reason ? fmt.label(e.discharge_reason, 'DISCHARGE_REASONS') : '—'],
         ['Going to', e.discharge_disposition || '—'],
         ['Discharge summary', e.discharge_summary || '—'],
       ]))),
@@ -120,7 +99,7 @@ route('waitlist', async () => {
       { label: 'Code', key: 'client_code' },
       { label: 'Waiting', render: r => h('span', { style: r.days_waiting > 30 ? { color: 'var(--danger)' } : {} }, `${r.days_waiting} day${r.days_waiting === 1 ? '' : 's'}`), num: true },
       { label: 'Risk', render: r => badge(fmt.label(r.risk_level || 'unknown'), r.risk_level === 'critical' || r.risk_level === 'high' ? 'danger' : '') },
-      { label: 'Substance', render: r => fmt.label(r.primary_substance || 'unknown') },
+      { label: 'Substance', render: r => fmt.label(r.primary_substance || 'unknown', 'SUBSTANCES') },
       { label: 'Level of care', render: r => r.asam_level || '—' },
       { label: 'Last contact', render: r => (r.last_contact ? fmt.date(r.last_contact) : h('span', { style: { color: 'var(--danger)' } }, 'never')) },
     ], rows, { onRow: (r) => nav(`client/${r.id}`), rowLabel: (r) => `${r.display_name}, waiting ${r.days_waiting} days` }) })

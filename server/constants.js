@@ -52,5 +52,13 @@ module.exports = {
   DOCUMENT_CATEGORIES: ['policy', 'procedure', 'contract'],
   FORM_FIELD_TYPES: ['text', 'textarea', 'date', 'number', 'checkbox', 'select', 'signature', 'section', 'note'],
   FORM_AUTOFILL: ['client.full_name', 'client.first_name', 'client.last_name', 'client.preferred_name', 'client.dob', 'client.phone', 'client.email', 'client.address', 'client.city', 'client.zip', 'client.client_code', 'client.gender', 'client.pronouns', 'client.insurance', 'client.medicaid_id', 'client.emergency_contact', 'client.primary_substance', 'client.mat_status', 'client.intake_date', 'worker.name', 'worker.title', 'org.name', 'org.county', 'today'],
+  // The overdose form's "What happened" and "Given by". The kinds are fixed by a CHECK constraint on
+  // overdose_events.kind and each drives a count, so Settings → Lists can reword them but not add to them.
+  OVERDOSE_KINDS: ['overdose', 'reversal', 'fatal'],
+  ADMINISTERED_BY: ['bystander', 'first_responder', 'staff', 'self', 'family', 'unknown'],
+  // Why an episode of care ended ('deceased' also marks the client deceased: server/routes/episodes.js).
+  DISCHARGE_REASONS: ['completed', 'transferred', 'incarcerated', 'moved', 'lost_contact', 'declined', 'deceased', 'administrative', 'other'],
+  // A referral outcome's "If it did not happen, why" (stored encrypted in referrals.barrier_enc).
+  REFERRAL_BARRIERS: ['none', 'transportation', 'insurance', 'waitlist', 'no_beds', 'client_declined', 'childcare', 'documentation', 'legal', 'phone_access', 'other'],
   ASAM: ['0.5', '1.0', '2.1', '2.5', '3.1', '3.3', '3.5', '3.7', '4.0', 'OTP', 'unknown'],
 };

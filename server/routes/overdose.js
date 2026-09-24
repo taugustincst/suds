@@ -8,7 +8,10 @@ const audit = require('../audit');
 const crud = require('../crud');
 const { decrypt, encrypt } = require('../crypto');
 
-const KINDS = ['overdose', 'reversal', 'fatal'];
+const C = require('../constants');
+const O = require('../options');
+// The built-in lists are in server/constants.js; the choices offered and their wording are Settings → Lists.
+const KINDS = C.OVERDOSE_KINDS;
 const FATAL_APPLIED = 'overdose_event.fatal_outcome';
 const FATAL_REVERTED = 'overdose_event.fatal_reverted';
 
@@ -68,7 +71,6 @@ function revertFatal(ctx, event) {
   });
   audit.log({ user: ctx.user, action: FATAL_REVERTED, entity: 'overdose_event', entityId: event.id, clientId: c.id, ip: ctx.ip, details: { restored_status: applied.prior_status || 'active', reopened_episode: reopened } });
 }
-const ADMINISTERED_BY = ['bystander', 'first_responder', 'staff', 'self', 'family', 'unknown'];
 
 module.exports = (r) => {
   crud.build(r, {
@@ -80,9 +82,9 @@ module.exports = (r) => {
       // client_id stays optional: a bystander reversal reported by an outreach worker has no client.
       client_id: { type: 'string' }, occurred_at: { type: 'datetime', required: true },
       // Required: an empty form saved by accident used to become a countable reversal.
-      kind: { type: 'string', enum: KINDS, required: true }, substances: { type: 'string', maxLen: 200 },
+      kind: { type: 'string', enum: KINDS, list: 'OVERDOSE_KINDS', required: true }, substances: { type: 'string', maxLen: 200 },
       naloxone_used: { type: 'boolean' }, naloxone_doses: { type: 'number', integer: true, min: 0, max: 20 },
-      administered_by: { type: 'string', enum: ADMINISTERED_BY }, ems_called: { type: 'boolean' },
+      administered_by: { type: 'string', list: 'ADMINISTERED_BY' }, ems_called: { type: 'boolean' },
       hospitalized: { type: 'boolean' }, survived: { type: 'boolean' },
       location_type: { type: 'string', maxLen: 60 }, city: { type: 'string', maxLen: 100 },
       funding_source_id: { type: 'string' }, notes: { type: 'string', maxLen: 4000 },
@@ -127,5 +129,7 @@ module.exports = (r) => {
     canEdit: crud.ownerOrManager('reported_by'),
   });
 
-  r.get('/api/meta/overdose-options', auth.requireAuth, () => ({ kinds: KINDS, administered_by: ADMINISTERED_BY }));
+  // kinds / administered_by: the choices a new event may use, in the programme's order (Settings → Lists);
+  // the *_options lists carry the wording, retired choices included (flagged hidden) for old events.
+  r.get('/api/meta/overdose-options', auth.requireAuth, () => ({ kinds: O.visible('OVERDOSE_KINDS'), administered_by: O.visible('ADMINISTERED_BY'), kind_options: O.entries('OVERDOSE_KINDS'), administered_by_options: O.entries('ADMINISTERED_BY') }));
 };

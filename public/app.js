@@ -409,11 +409,49 @@ export const fmt = {
   bytes: (n) => { n = Number(n || 0); const u = ['B', 'KB', 'MB', 'GB']; let i = 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return `${n < 10 && i ? n.toFixed(1) : Math.round(n)} ${u[i]}`; },
   num: (n) => Number(n || 0).toLocaleString(),
   mins: (m) => { m = Number(m || 0); const hh = Math.floor(m / 60), mm = m % 60; return hh ? `${hh}h ${mm}m` : `${mm}m`; },
-  label: (s) => s ? String(s).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).replace(/\bSbirt\b/, 'SBIRT').replace(/\bMat\b/g, 'MAT').replace(/\bOtp\b/, 'OTP').replace(/\bObot\b/, 'OBOT').replace(/\bEd\b/, 'ED').replace(/\bMh\b/, 'MH').replace(/\bRx\b/, 'Rx').replace(/\bIds\b/, 'IDs').replace(/\bRoi\b/, 'ROI').replace(/\bPart2 Disclosure\b/, 'Part 2 disclosure').replace(/\bPart2\b/g, 'Part 2') : '—',
+  // A code in words. With `list` (a documentation list: 'INTERVENTION_TYPES', 'CALL_OUTCOMES'…) it is the
+  // wording the programme set under Settings → Lists, which is the only wording a programme's own choice
+  // has. Without one it is the code tidied up: the same code ('admin', 'closed', 'other') means different
+  // things in different places, so a list's wording is never applied to a value from somewhere else.
+  // `list` may be several (a call's outcome is in the phone or the text list): the first that has it.
+  label: (s, list) => { if (!s) return '—'; const L = (state.constants || {}).option_lists; if (list && L) for (const k of [].concat(list)) { const e = (L[k] || []).find(x => x.code === s); if (e) return e.label; } return fmt.code(s); },
+  code: (s) => s ? String(s).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).replace(/\bSbirt\b/, 'SBIRT').replace(/\bMat\b/g, 'MAT').replace(/\bOtp\b/, 'OTP').replace(/\bObot\b/, 'OBOT').replace(/\bEd\b/, 'ED').replace(/\bMh\b/, 'MH').replace(/\bRx\b/, 'Rx').replace(/\bIds\b/, 'IDs').replace(/\bRoi\b/, 'ROI').replace(/\bPart2 Disclosure\b/, 'Part 2 disclosure').replace(/\bPart2\b/g, 'Part 2') : '—',
   ago: (s) => { const p = fmt.parse(s); if (!p) return 'never'; const d = (Date.now() - p.getTime()) / 86400000; if (d < 1) return 'today'; if (d < 2) return 'yesterday'; return `${Math.floor(d)}d ago`; },
   isoLocal: (d = new Date()) => { const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; },
   today: () => { const d = new Date(); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; },
 };
+// ---- documentation lists (Settings → Lists) ----
+// The small link beside a list-driven select: "Edit this list" for an administrator, "Manage" beside a
+// Funding source for whoever may add, rename or retire funding sources.
+function fieldLink(f) {
+  if (f.type === 'select' && f.list && canEditLists()) return h('a', { class: 'field-link small', href: `#/admin?tab=lists&list=${f.list}`, 'data-edit-list': f.list, title: 'Change the choices offered here (Settings → Lists)' }, 'Edit this list');
+  if (f.type === 'fund' && can('budget:manage')) return h('a', { class: 'field-link small', href: fundsManageHref(), 'data-manage-funds': '1', title: 'Add, rename or retire funding sources' }, 'Manage');
+  return null;
+}
+/** The entries of one documentation list, as the office set it up: [{ code, label, hidden, custom, protected }]. */
+export function listEntries(list) { const C = state.constants || {}; return (C.option_lists && C.option_lists[list]) || (C[list] || []).map(code => ({ code, label: fmt.label(code), hidden: false })); }
+/**
+ * Select options for a documentation list: the choices a new record may use, in order — plus, when editing
+ * a record whose value has since been retired (or is unknown here), that value, so saving the record does
+ * not silently change it.
+ */
+export function listOptions(list, current) {
+  const es = listEntries(list);
+  const out = es.filter(e => !e.hidden).map(e => ({ value: e.code, label: e.label }));
+  if (current && !out.some(o => o.value === current)) { const e = es.find(x => x.code === current); out.push({ value: current, label: `${e ? e.label : fmt.label(current, list)} (no longer offered)` }); }
+  return out;
+}
+/** Every value a filter should offer (retired ones too: old records still carry them). */
+export function listFilterOptions(list) { return listEntries(list).map(e => ({ value: e.code, label: e.hidden ? `${e.label} (retired)` : e.label })); }
+// The lists belong to the office: a device that syncs with one shows them but cannot change them; SUDS on
+// this device (no office) keeps its own.
+export const canEditLists = () => can('settings:manage') && (!state.local || !!window.SUDS_STATIC_HOST);
+// Funding sources are managed from Settings → Lists by whoever can open Settings, and from Funding &
+// spending by anyone else who holds budget:manage (finance cannot open Settings).
+export const fundsManageHref = () => (can('users:manage') || can('assignments:manage') ? '#/admin?tab=lists&list=funds' : '#/budget');
+/** Fetch the lists again (after an administrator changed one, or funding sources changed). */
+export async function reloadRefData() { state.constants = null; state.funds = null; await loadRefData(); }
+
 export function badge(text, kind = '') { return h('span', { class: `badge ${kind}` }, text); }
 // A client's programme status as shown on screen. Rows from before the status column was enforced can
 // carry NULL or "" (server/db.js migration 19 backfills them); a blank badge in the header looked like
@@ -425,7 +463,11 @@ export const statusKind = (s) => ({ active: 'ok', admitted: 'ok', completed: 'ok
 export const can = (perm) => { const u = state.user; if (!u) return false; const p = u.permissions || []; if (p.includes(perm)) return true; const [ns] = perm.split(':'); if (p.includes(`${ns}:*`)) return true; if (perm.endsWith(':read') && p.includes(perm.replace(/:read$/, ':write'))) return true; return false; };
 
 // ---------- forms ----------
-// fields: [{name,label,type:'text|number|date|datetime|select|textarea|checkbox|client|user|resource|fund', options, required, value, span, help, min, max, step}]
+// fields: [{name,label,type:'text|number|date|datetime|select|textarea|checkbox|client|user|resource|fund', options, list, required, value, span, help, min, max, step}]
+// `list` (with type 'select'): a documentation list from Settings → Lists instead of fixed options — the
+// choices come from the office's setup, a retired value on the record being edited stays selectable, and an
+// administrator gets an "Edit this list" link beside the label. `current`: the record's value when the
+// form is not given the record as `values`, so a retired value it has is still offered.
 // Unsaved form contents, kept in memory only. Deliberately not localStorage: a half-typed intake form is
 // PHI, and this app's whole design keeps PHI out of browser storage. Memory survives a closed dialog, a
 // route change and an idle sign-out within the same tab, which is what was actually being lost.
@@ -468,7 +510,7 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
       continue;
     }
     let input; const v = values[f.name] ?? f.value ?? '';
-    const opts = (f.options || []).map(o => typeof o === 'string' ? { value: o, label: fmt.label(o) } : o);
+    const opts = f.list ? listOptions(f.list, values[f.name] ?? f.current) : (f.options || []).map(o => typeof o === 'string' ? { value: o, label: fmt.label(o) } : o);
     switch (f.type) {
       case 'select': input = h('select', { name: f.name, required: !!f.required }, f.noBlank ? null : h('option', { value: '' }, f.placeholder || '—'), opts.map(o => h('option', { value: o.value, selected: String(o.value) === String(v), disabled: !!o.disabled, title: o.title || null }, o.label))); break;
       case 'textarea': input = h('textarea', { name: f.name, required: !!f.required, rows: f.rows || 4, placeholder: f.placeholder || '' }, v || ''); break;
@@ -478,7 +520,7 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
       case 'number': input = h('input', { type: 'number', name: f.name, required: !!f.required, value: v ?? '', min: f.min, max: f.max, step: f.step ?? 'any', placeholder: f.placeholder || '' }); break;
       case 'client': input = clientPicker(f.name, v, f); break;
       case 'user': input = h('select', { name: f.name, required: !!f.required }, h('option', { value: '' }, f.placeholder || '—'), state.users.filter(u => u.is_active !== 0).map(u => h('option', { value: u.id, selected: u.id === v }, `${u.display_name} (${fmt.label(u.role)})`))); break;
-      case 'fund': input = h('select', { name: f.name, required: !!f.required }, h('option', { value: '' }, '—'), state.funds.map(x => h('option', { value: x.id, selected: x.id === v }, x.name))); break;
+      case 'fund': { const inactive = v && !state.funds.some(x => x.id === v) ? (state.allFunds || []).find(x => x.id === v) : null; input = h('select', { name: f.name, required: !!f.required }, h('option', { value: '' }, '—'), state.funds.map(x => h('option', { value: x.id, selected: x.id === v }, x.name)), inactive ? h('option', { value: inactive.id, selected: true }, `${inactive.name} (inactive)`) : null); break; }
       case 'password': input = h('input', { type: 'password', name: f.name, required: !!f.required, autocomplete: f.autocomplete || 'current-password' }); break;
       // A phone number field brings up the dial pad on a phone, not the full keyboard.
       case 'tel': input = h('input', { type: 'tel', inputmode: 'tel', autocomplete: 'off', name: f.name, required: !!f.required, value: v ?? '', placeholder: f.placeholder || '' }); break;
@@ -499,7 +541,7 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     }
     const errEl = h('div', { class: 'err', id: errId, role: 'alert' });
     const wrap = h('div', { class: `field ${f.span ? 'span' : ''}`, 'data-field': f.name },
-      f.type === 'checkbox' ? h('label', { class: 'check', for: fieldId }, input, f.label) : [h('label', { for: fieldId }, f.label, f.required ? ' *' : ''), input],
+      f.type === 'checkbox' ? h('label', { class: 'check', for: fieldId }, input, f.label) : [h('label', { for: fieldId }, f.label, f.required ? ' *' : ''), fieldLink(f), input],
       f.help ? h('div', { class: 'help', id: helpId }, f.help) : null, errEl);
     target.append(wrap);
   }
@@ -832,14 +874,14 @@ export function tabStrip(tabs, active, onPick) {
   strip.relayout = layout;
   return strip;
 }
-export function bars(items, { max, valueKey = 'n', labelKey = 'k', format = fmt.num, link = null } = {}) {
+export function bars(items, { max, valueKey = 'n', labelKey = 'k', format = fmt.num, link = null, list = null } = {}) {
   // A value can be a string such as "<11" (a suppressed small cell in the funder report): it draws no bar and
   // is printed as sent.
   const numOf = (i) => { const n = Number(i[valueKey]); return Number.isFinite(n) ? n : 0; };
   const show = (v) => (Number.isFinite(Number(v)) ? format(v) : String(v ?? ''));
   const m = max || Math.max(1, ...items.map(numOf));
   if (!items.length) return h('div', { class: 'muted small' }, 'No data');
-  return h('div', {}, items.map(i => { const href = link ? link(i) : null; const row = [h('div', { class: 'lbl', title: fmt.label(i[labelKey]) }, fmt.label(i[labelKey])), h('div', { class: 'trk' }, h('div', { class: 'fil', style: { width: `${(numOf(i) / m) * 100}%` } })), h('div', { class: 'n' }, show(i[valueKey]))];
+  return h('div', {}, items.map(i => { const href = link ? link(i) : null; const row = [h('div', { class: 'lbl', title: fmt.label(i[labelKey], list) }, fmt.label(i[labelKey], list)), h('div', { class: 'trk' }, h('div', { class: 'fil', style: { width: `${(numOf(i) / m) * 100}%` } })), h('div', { class: 'n' }, show(i[valueKey]))];
     return href ? h('a', { class: 'bar link', href: href.startsWith('#') ? href : '#/' + href, title: 'Show these' }, row) : h('div', { class: 'bar' }, row); }));
 }
 export function sparkline(values) { const m = Math.max(1, ...values); return h('div', { class: 'spark' }, values.map(v => h('div', { style: { height: `${(v / m) * 100}%` }, title: String(v) }))); }
@@ -1189,7 +1231,9 @@ export async function loadRefData() {
   // page it may use has to render regardless.
   if (!state.constants) { try { state.constants = await get('/api/meta/constants', { quiet: true }); } catch { state.constants = state.constants || {}; } }
   try { state.users = (await get('/api/users', { quiet: true })).users; } catch { state.users = []; }
-  if (can('budget:read')) { try { state.funds = (await get('/api/budget/funds', { quiet: true })).funds; } catch { state.funds = []; } }
+  // Every funding source, inactive ones too (allFunds), so a record charged to one that has since been
+  // deactivated still shows it; state.funds is what new records are offered.
+  if (can('budget:read')) { try { state.allFunds = (await get('/api/budget/funds?all=1', { quiet: true })).funds; state.funds = state.allFunds.filter(x => x.is_active); } catch { state.funds = []; state.allFunds = []; } }
 }
 
 // ---------- boot (called from main.js after all views are registered) ----------

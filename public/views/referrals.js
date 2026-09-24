@@ -1,4 +1,4 @@
-import { h, route, get, pagedList, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav } from '../app.js';
+import { h, route, get, pagedList, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, listFilterOptions } from '../app.js';
 
 export async function openReferralForm(values, { clientId, clientDisplay, resourceId, onDone } = {}) {
   const C = state.constants; const isNew = !values;
@@ -43,7 +43,7 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
         : canAdd ? 'Your directory is empty — on a phone it fills up when you sync with the office. Choose "Add a provider" to enter this one now; it will sync back.'
         : 'Your directory is empty. Sync with the office to download it, or ask someone who can edit the directory to add this provider.' },
     { name: 'referred_at', label: 'Referral date', type: 'datetime', required: true, value: values?.referred_at || new Date().toISOString() },
-    { name: 'status', label: 'Status', type: 'select', options: C.REFERRAL_STATUSES, value: 'pending', noBlank: true, required: true }, { name: 'urgency', label: 'Urgency', type: 'select', options: ['routine', 'urgent', 'emergent'], value: 'routine', noBlank: true },
+    { name: 'status', label: 'Status', type: 'select', list: 'REFERRAL_STATUSES', value: 'pending', noBlank: true, required: true }, { name: 'urgency', label: 'Urgency', type: 'select', options: ['routine', 'urgent', 'emergent'], value: 'routine', noBlank: true },
     { name: 'warm_handoff', label: 'Warm handoff', type: 'checkbox' }, { name: 'appointment_at', label: 'Appointment', type: 'datetime' }, { name: 'admitted_at', label: 'Admitted / started', type: 'datetime' },
     { name: 'consent_id', label: 'Consent / ROI on file (42 CFR Part 2)', type: 'select', placeholder: expiredOnly ? '(expired)' : undefined, options: consents.map(consentOption),
       help: consentHelp },
@@ -52,7 +52,7 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
       help: 'Leave empty unless you are relying on something other than the client\'s written consent. Whatever you choose is recorded in the accounting of disclosures.' },
     { name: '_disclosure_justification', label: 'Why sharing without consent is lawful', type: 'textarea', rows: 2, span: true, help: 'Required (at least 20 characters) for a medical emergency, and for "other" — which only a supervisor or administrator may use. Kept, encrypted, with the disclosure record.' },
     { name: '_disclosure_what', label: 'What is being shared', placeholder: 'Referral information (name, contact details and presenting need)', span: true },
-    { name: 'follow_up_due', label: 'Follow-up due', type: 'date', help: 'A follow-up to-do is created either way; leave this empty and one is set for you based on urgency.' }, { name: 'barrier', label: 'Barrier (if any)', type: 'select', options: ['none', 'transportation', 'insurance', 'waitlist', 'no_beds', 'client_declined', 'childcare', 'documentation', 'legal', 'phone_access', 'other'] },
+    { name: 'follow_up_due', label: 'Follow-up due', type: 'date', help: 'A follow-up to-do is created either way; leave this empty and one is set for you based on urgency.' }, { name: 'barrier', label: 'Barrier (if any)', type: 'select', list: 'REFERRAL_BARRIERS' },
     { name: 'outcome', label: 'Outcome', span: true }, { name: 'notes', label: 'Notes', type: 'textarea', span: true },
   ], { values: values || {}, submitText: isNew ? 'Create referral' : 'Save', draftKey: isNew ? 'referral:new' : `referral:${values.id}`, onCancel: () => m.close(), onSubmit: async (d) => {
     try {
@@ -119,14 +119,14 @@ export async function openOutcomeForm(r, onDone) {
   let consents = [];
   if (!r.consent_id) { try { consents = ((await get(`/api/clients/${r.client_id}/consents`)).consents || []).filter(c => !c.revoked_at); } catch { consents = []; } }
   const f = form([
-    { name: 'status', label: 'What happened', type: 'select', noBlank: true, required: true, value: r.status, options: C.REFERRAL_STATUSES },
+    { name: 'status', label: 'What happened', type: 'select', noBlank: true, required: true, value: r.status, current: r.status, list: 'REFERRAL_STATUSES' },
     { name: 'admitted_at', label: 'Admitted / started on', type: 'datetime', value: r.admitted_at || '' },
     ...(r.consent_id ? [] : [
       { name: 'consent_id', label: 'Consent / ROI on file (42 CFR Part 2)', type: 'select', options: consents.map(c => ({ value: c.id, label: `${fmt.label(c.type)} → ${c.recipient || '—'} (signed ${fmt.date(c.signed_at)})` })), help: 'Needed once the provider has been told who this client is (contacted, scheduled, admitted…).' },
       { name: '_disclosure_basis', label: 'If there is no consent, the lawful basis', type: 'select', options: [{ value: 'medical_emergency', label: 'Medical emergency' }, { value: 'court_order', label: 'Court order' }, { value: 'qsoa', label: 'Qualified service organisation agreement' }, { value: 'child_abuse_report', label: 'Mandated child abuse report' }, { value: 'crime_on_premises', label: 'Crime on program premises' }, { value: 'audit_evaluation', label: 'Audit or evaluation' }, { value: 'research', label: 'Research' }, { value: 'other', label: 'Other (supervisor override, must be justified)' }] },
       { name: '_disclosure_justification', label: 'Why sharing without consent is lawful', type: 'textarea', rows: 2, span: true },
     ]),
-    { name: 'barrier', label: 'If it did not happen, why', type: 'select', options: ['none', 'transportation', 'insurance', 'waitlist', 'no_beds', 'client_declined', 'childcare', 'documentation', 'legal', 'phone_access', 'other'], value: r.barrier || '' },
+    { name: 'barrier', label: 'If it did not happen, why', type: 'select', list: 'REFERRAL_BARRIERS', value: r.barrier || '', current: r.barrier || undefined },
     { name: 'outcome', label: 'Outcome in your words', type: 'textarea', span: true, value: r.outcome || '' },
   ], { submitText: 'Record outcome', onCancel: () => m.close(), onSubmit: async (d) => {
     const res = await post(`/api/referrals/${r.id}/outcome`, d);
@@ -142,7 +142,7 @@ export function referralTable(rows, { showClient = true, onChange } = {}) {
   return table([
     { label: 'Date', render: r => fmt.date(r.referred_at) }, showClient ? { label: 'Client', render: r => h('a', { href: `#/client/${r.client_id}` }, r.client_code) } : null,
     { label: 'Resource', render: r => h('div', {}, r.resource_name, h('div', { class: 'small muted' }, fmt.label(r.resource_category), r.resource_phone ? ` · ${r.resource_phone}` : '')) },
-    { label: 'Status', render: r => badge(fmt.label(r.status), statusKind(r.status)) }, { label: 'Urgency', render: r => r.urgency !== 'routine' ? badge(fmt.label(r.urgency), 'danger') : '' },
+    { label: 'Status', render: r => badge(fmt.label(r.status, 'REFERRAL_STATUSES'), statusKind(r.status)) }, { label: 'Urgency', render: r => r.urgency !== 'routine' ? badge(fmt.label(r.urgency), 'danger') : '' },
     { label: 'Appt', render: r => r.appointment_at ? fmt.dt(r.appointment_at) : '—' }, { label: 'Consent', render: r => r.consent_revoked ? badge('Consent revoked', 'danger') : r.consent_id ? badge('ROI ✓', 'ok') : badge('No ROI', 'warn') }, { label: 'Barrier', render: r => r.barrier && r.barrier !== 'none' ? fmt.label(r.barrier) : '' }, { label: 'Worker', key: 'worker' },
     { label: 'Outcome', render: r => (r.outcome_recorded_at ? badge('Recorded', 'ok') : badge('Not yet', 'warn')) },
     { label: '', render: r => can('referrals:write') ? h('div', { class: 'row nowrap' },
@@ -156,7 +156,7 @@ route('referrals', async (r) => {
   const PAGE = 200;
   const data = await get(`/api/referrals?limit=${PAGE}${qs ? '&' + qs : ''}`);
   const refresh = () => nav(`referrals?status=${status}&_=${Date.now()}`);
-  const sel = h('select', { onChange: () => nav(`referrals?status=${sel.value}`) }, [['open', 'Open (pending → scheduled)'], ['all', 'All'], ...state.constants.REFERRAL_STATUSES.map(s => [s, fmt.label(s)])].map(([v, l]) => h('option', { value: v, selected: v === status }, l)));
+  const sel = h('select', { onChange: () => nav(`referrals?status=${sel.value}`) }, [['open', 'Open (pending → scheduled)'], ['all', 'All'], ...listFilterOptions('REFERRAL_STATUSES').map(o => [o.value, o.label])].map(([v, l]) => h('option', { value: v, selected: v === status }, l)));
   return h('div', {},
     pageHead('Referrals', can('referrals:write') ? h('button', { class: 'btn primary', onClick: () => openReferralForm(null, { onDone: refresh }) }, '+ New referral') : null, can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv('/api/reports/export/referrals?from=2000-01-01&format=xlsx') }, 'Export to Excel') : null),
     h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'Status'), sel)),

@@ -2,6 +2,7 @@
 const db = require('../db');
 const crud = require('../crud');
 const C = require('../constants');
+const O = require('../options');
 const { encrypt, decrypt, uuid } = require('../crypto');
 const { badRequest } = require('../http');
 const { withClientName, SELECT: NAME_COLS } = require('../client-name');
@@ -15,8 +16,8 @@ module.exports = (r) => {
       client_id: { type: 'string' }, user_id: { type: 'string' }, direction: { type: 'string', required: true, enum: ['inbound', 'outbound'] },
       method: { type: 'string', enum: C.CONTACT_METHODS },
       started_at: { type: 'datetime', required: true }, duration_minutes: { type: 'number', integer: true, min: 0, max: 1440 },
-      contact_type: { type: 'string', enum: C.CALL_CONTACT_TYPES }, contact_name: { type: 'string', maxLen: 120 }, phone: { type: 'string', maxLen: 40 },
-      purpose: { type: 'string', maxLen: 300 }, outcome: { type: 'string', enum: [...C.CALL_OUTCOMES, ...C.TEXT_OUTCOMES] }, crisis: { type: 'boolean' },
+      contact_type: { type: 'string', list: 'CALL_CONTACT_TYPES' }, contact_name: { type: 'string', maxLen: 120 }, phone: { type: 'string', maxLen: 40 },
+      purpose: { type: 'string', maxLen: 300 }, outcome: { type: 'string', maxLen: 60 }, crisis: { type: 'boolean' },
       follow_up_needed: { type: 'boolean' }, follow_up_due: { type: 'date' }, summary: { type: 'string', maxLen: 4000 }, log_time: { type: 'boolean' },
     },
     filters: (ctx, where, params) => {
@@ -30,7 +31,7 @@ module.exports = (r) => {
       if (method === 'text' && !v.outcome) v.outcome = 'sent';
       checkOutcome(v, method); deriveCrisis(v); encAll(v);
     },
-    beforeUpdate: (ctx, v, row) => { checkOutcome(v, v.method || row.method || 'phone'); deriveCrisis(v); encAll(v); },
+    beforeUpdate: (ctx, v, row) => { checkOutcome(v, v.method || row.method || 'phone', row); deriveCrisis(v); encAll(v); },
     afterInsert: (ctx, row) => {
       const what = row.method === 'text' ? 'text message' : 'call';
       if (row._log_time && row.duration_minutes > 0) db.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,call_id,description) VALUES(?,?,?,?,?,?,?,?)`,
@@ -42,11 +43,13 @@ module.exports = (r) => {
     canEdit: crud.ownerOrManager(),
   });
   // A call's outcomes and a text's outcomes do not overlap, and picking one from the wrong list would
-  // quietly break the reports that count who was actually reached.
-  function checkOutcome(v, method) {
+  // quietly break the reports that count who was actually reached. Each list is the one set under Settings
+  // → Lists; editing an old record keeps the outcome it has even if that choice has since been retired.
+  function checkOutcome(v, method, row) {
     if (v.outcome === undefined || v.outcome === null) return;
-    const allowed = method === 'text' ? C.TEXT_OUTCOMES : C.CALL_OUTCOMES;
-    if (!allowed.includes(v.outcome)) throw badRequest(`"${v.outcome}" is not an outcome for a ${method === 'text' ? 'text message' : 'phone call'}. Choose one of: ${allowed.join(', ')}`);
+    const list = method === 'text' ? 'TEXT_OUTCOMES' : 'CALL_OUTCOMES';
+    const kept = row && (row.method || 'phone') === method ? row.outcome : undefined;
+    if (!O.accepts(list, v.outcome, kept)) throw badRequest(`"${v.outcome}" is not an outcome for a ${method === 'text' ? 'text message' : 'phone call'}. Choose one of: ${O.visible(list).join(', ')}`, { fields: { outcome: 'not an outcome for this kind of contact' } });
   }
   // "Crisis escalated" is a crisis whether or not the box was ticked; the crisis flag is what the reports
   // and the follow-up priority read, so it follows from the outcome rather than depending on a second click.

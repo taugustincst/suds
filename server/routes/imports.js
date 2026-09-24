@@ -98,8 +98,8 @@ module.exports = (r) => {
   r.post('/api/imports/items/:id/commit', auth.requireAuth, auth.requirePerm('imports:write'), (ctx) => {
     const it = db.one(`SELECT * FROM import_items WHERE id=?`, ctx.params.id); if (!it) throw notFound();
     if (it.status !== 'staged') throw badRequest('Item already processed');
-    const v = validate(ctx.body, { client_id: { type: 'string', required: true }, kind: { type: 'string', required: true, enum: ['clinical', 'admin'] }, format: { type: 'string' }, title: { type: 'string', maxLen: 200 },
-      content: { type: 'string', maxLen: 50000 }, occurred_at: { type: 'datetime' }, create_intervention: { type: 'boolean' }, intervention_type: { type: 'string' }, duration_minutes: { type: 'number', integer: true, min: 0 } });
+    const v = validate(ctx.body, { client_id: { type: 'string', required: true }, kind: { type: 'string', required: true, enum: ['clinical', 'admin'] }, format: { type: 'string', list: 'NOTE_FORMATS' }, title: { type: 'string', maxLen: 200 },
+      content: { type: 'string', maxLen: 50000 }, occurred_at: { type: 'datetime' }, create_intervention: { type: 'boolean' }, intervention_type: { type: 'string', list: 'INTERVENTION_TYPES' }, duration_minutes: { type: 'number', integer: true, min: 0 } });
     if (!auth.hasPerm(ctx.user, `notes:${v.kind}:write`)) throw forbidden(`You cannot author ${v.kind} notes`);
     if (!db.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, v.client_id)) throw notFound('Client not found');
     auth.assertClientAccess(ctx, v.client_id);

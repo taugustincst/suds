@@ -55,6 +55,21 @@ Finance staff see client codes on Budget and Time but not client records; the co
 
 Record client assistance (bus passes, IDs, motel nights, phone minutes…) against the correct funding source and budget line; attach the client so per-client spending is visible. A supervisor or finance staff approves; you cannot approve your own entries.
 
+## Changing the choices on forms (administrators)
+**Settings → Lists** holds the drop-down choices on documentation forms, grouped by form and named the way the forms name them: *What did you do?*, Location, Modality and Outcome on visits; *Who* and the call and text outcomes; referral *Status / What happened* and *If it did not happen, why*; the overdose form's *What happened* and *Given by*; time categories; note formats; primary substance; reasons for discharge. An administrator (the `settings:manage` permission) can, for each list:
+
+* **Reword a choice.** Type the new wording and press Save (or Enter). Forms, lists, filters, reports and Excel/CSV exports all use it. Only the wording changes: records keep the same stored value, so old records and reports mean what they always did. Clear the box and save to go back to the built-in wording.
+* **Reorder** with the ↑ and ↓ buttons.
+* **Hide (retire) a choice** the programme does not use. It is no longer offered on new records; records that already have it still show it, and editing one keeps it (shown as *no longer offered*). **Show** brings it back.
+* **Add a choice** of your own. SUDS makes its stored value from the wording, and never one that a built-in choice already uses. A choice you added can be reworded or hidden like any other.
+* **Restore defaults**: the built-in wording and order, with every built-in choice offered again. Choices you added are hidden, not deleted, because records may use them.
+
+Choices marked **Used by SUDS** drive a count or an automatic step — for example a call *reached* or a text *replied* counts as contact with the client, a *fatal* overdose or a *deceased* discharge marks the client deceased, outreach and naloxone distribution can be recorded without a client — so they can be reworded but not hidden. Referral statuses and the overdose *What happened* choices can be reworded and reordered but not added to, because each one means something to the consent check and the counts. Race and ethnicity, ASAM level, stage of change, consent types, patient-rights requests and funding types are national or legal code sets and are not editable; the page lists them and says why.
+
+An administrator sees a small **Edit this list** link beside each of these drop-downs on the forms themselves, which opens that list. Staff see changes the next time they sign in or reload. The lists belong to the office SUDS: a device that syncs with it receives them and cannot change them; SUDS on this device (with no office) keeps its own.
+
+**Funding sources** are at the bottom of the same tab for anyone who manages the budget (`budget:manage`: administrators, supervisors, finance — finance uses **Funding & spending**, which has the same controls): add one quickly (name, type, period and total award; budget lines and the rest are on Funding & spending), rename it, or deactivate it so it is no longer offered on new records (records already charged to it keep it). A **Manage** link beside every *Funding source* drop-down opens it.
+
 ## Importing notes
 Use **Import** in the sidebar and see [docs/IMPORTS.md](IMPORTS.md).
 

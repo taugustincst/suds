@@ -1,5 +1,6 @@
 import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, stat, kv, loadRefData, downloadCsv, clear } from '../app.js';
 import { qrSvg } from '../qr.js';
+import { listsTab } from './lists.js';
 
 let oidcStatusPromise;
 function oidcStatusCached() {
@@ -235,6 +236,7 @@ route('admin', async (r) => {
           h('div', { class: 'row mt' }, h('button', { class: 'btn sm', onClick: checkForUpdate }, 'Check for updates'), updateStatus)));
     },
     async caseload() { return transferCard(r.query.get('from')); },
+    async lists() { return listsTab(r.query.get('list')); },
     async devices() {
       const { devices } = await get('/api/admin/devices');
       const act = async (id, action) => { await post(`/api/admin/devices/${id}/${action}`, {}); refresh(); };
@@ -264,6 +266,9 @@ route('admin', async (r) => {
   // Moving a caseload needs assignments:manage; a role that manages users without it does not get a tab
   // whose form it could not submit (the deactivate dialog tells it a supervisor must move the clients).
   if (!can('assignments:manage')) tabs = tabs.filter(([k]) => k !== 'caseload');
+  // Lists: the choices on documentation forms (settings:manage, administrators) and funding sources
+  // (budget:manage — which is how a supervisor gets this tab, with only the funding sources on it).
+  if (can('settings:manage') || can('budget:manage')) tabs.splice(full ? 2 : tabs.length, 0, ['lists', 'Lists']);
   const allowed = tabs.some(([k]) => k === tab) ? tab : tabs[0][0];
   body.append(await (T[allowed] || T[tabs[0][0]])());
   return h('div', {}, pageHead(full ? 'Settings' : 'Supervision tools'), state.local ? h('div', { class: 'banner small' }, window.SUDS_STATIC_HOST ? 'This is SUDS on this device. Backups, and who may sign up here, are on the This device page.' : 'This is the copy of SUDS on this device. Network, API keys and backups are managed on the office SUDS; use Sync to exchange data.') : null, h('div', { class: 'tabs' }, tabs.map(([k, l]) => h('button', { class: k === tab ? 'active' : '', onClick: () => nav(`admin?tab=${k}`) }, l))), body);

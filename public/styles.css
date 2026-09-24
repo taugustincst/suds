@@ -349,6 +349,8 @@ tr.click:focus-visible,
 .form-grid > *, .field, .row > *, .filters > *, .card, .grid > * { min-width: 0; }
 input, select, textarea { max-width: 100%; }
 .field label { overflow-wrap: anywhere; }
+/* "Edit this list" / "Manage" beside a list-driven field's label (Settings → Lists). */
+.field > .field-link { float: right; font-weight: normal; margin-left: .5rem; }
 @media (max-width: 900px) {
   /* 1fr alone lets the widest thing on the page (a card grid, the search bar) set the column's minimum. */
   .layout { grid-template-columns: minmax(0, 1fr); }

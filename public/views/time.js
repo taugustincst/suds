@@ -4,7 +4,7 @@ export function openTimeForm(values, { clientId, clientDisplay, onDone } = {}) {
   const C = state.constants; const isNew = !values;
   const f = form([
     { name: 'work_date', label: 'Date', type: 'date', required: true, value: values?.work_date || fmt.today() }, { name: 'minutes', label: 'Minutes', type: 'number', min: 1, max: 1440, step: 1, required: true },
-    { name: 'category', label: 'Category', type: 'select', options: C.TIME_CATEGORIES, value: 'direct_service', noBlank: true, required: true },
+    { name: 'category', label: 'Category', type: 'select', list: 'TIME_CATEGORIES', value: 'direct_service', noBlank: true, required: true },
     { name: 'client_id', label: 'Client (optional)', type: 'client', value: clientId || values?.client_id, display: clientDisplay },
     can('budget:read') ? { name: 'funding_source_id', label: 'Charge to fund', type: 'fund' } : null, { name: 'billable', label: 'Billable', type: 'checkbox' },
     { name: 'description', label: 'Description', span: true },
@@ -27,7 +27,7 @@ const statusBadge = (r) => {
 export function timeTable(rows, { showClient = true, onChange } = {}) {
   return table([
     { label: 'Date', render: r => fmt.date(r.work_date) }, { label: 'Worker', key: 'worker' }, showClient ? { label: 'Client', render: r => r.client_id ? h(can('clients:read') ? 'a' : 'span', can('clients:read') ? { href: `#/client/${r.client_id}` } : { class: 'client-plain' }, r.client_name || r.client_code, r.client_name ? h('div', { class: 'muted small mono' }, r.client_code) : null) : '—' } : null,
-    { label: 'Category', render: r => fmt.label(r.category) }, { label: 'Minutes', key: 'minutes', num: true }, { label: 'Billable', render: r => r.billable ? badge('Yes', 'ok') : '' }, { label: 'Fund', render: r => r.funding_source || '—' },
+    { label: 'Category', render: r => fmt.label(r.category, 'TIME_CATEGORIES') }, { label: 'Minutes', key: 'minutes', num: true }, { label: 'Billable', render: r => r.billable ? badge('Yes', 'ok') : '' }, { label: 'Fund', render: r => r.funding_source || '—' },
     { label: 'Description', render: r => h('span', { class: 'small' }, r.description || '', r.intervention_id ? h('span', { class: 'muted' }, ' (from intervention)') : r.call_id ? h('span', { class: 'muted' }, ' (from call)') : null) },
     { label: 'Status', render: r => statusBadge(r) },
     { label: '', render: r => {
@@ -69,7 +69,7 @@ route('time', async (r) => {
       h('button', { class: 'btn ghost sm', onClick: () => { const d = new Date(); const day = d.getDay(); const mon = new Date(d); mon.setDate(d.getDate() - ((day + 6) % 7)); nav(`time?from=${mon.toISOString().slice(0, 10)}&to=${fmt.today()}`); } }, 'This week'),
       h('button', { class: 'btn ghost sm', onClick: () => nav(`time?from=${to.slice(0, 8)}01&to=${to}`) }, 'This month')),
     h('div', { class: 'grid cols-4 mb' }, stat('Total', fmt.mins(total)), stat('Entries', fmt.num(data.total)), stat('Workers', fmt.num(sum.by_worker.length)), stat('Avg / day', fmt.mins(sum.by_day.length ? Math.round(total / sum.by_day.length) : 0))),
-    h('div', { class: 'grid cols-3 mb' }, h('div', { class: 'card' }, h('h3', {}, 'By category'), bars(sum.by_category, { valueKey: 'minutes', labelKey: 'category', format: fmt.mins })),
+    h('div', { class: 'grid cols-3 mb' }, h('div', { class: 'card' }, h('h3', {}, 'By category'), bars(sum.by_category, { valueKey: 'minutes', labelKey: 'category', format: fmt.mins, list: 'TIME_CATEGORIES' })),
       h('div', { class: 'card' }, h('h3', {}, 'By worker'), bars(sum.by_worker, { valueKey: 'minutes', labelKey: 'worker', format: fmt.mins })),
       h('div', { class: 'card' }, h('h3', {}, 'By funding source'), bars(sum.by_fund, { valueKey: 'minutes', labelKey: 'fund', format: fmt.mins }))),
     timeTable(data.rows, { onChange: refresh }));

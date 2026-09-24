@@ -69,7 +69,7 @@ route('funder', async (r) => {
         stat('— of those, community distribution', num(d.naloxone_distribution.community_kits)),
         stat('Fentanyl test strips', num(d.naloxone_distribution.strips))),
       d.overdose.by_administered_by.length ? h('div', { class: 'grid cols-2 mt' },
-        h('div', {}, h('h3', {}, 'Who gave the naloxone'), bars(d.overdose.by_administered_by, { valueKey: 'n', labelKey: 'k' })),
+        h('div', {}, h('h3', {}, 'Who gave the naloxone'), bars(d.overdose.by_administered_by, { valueKey: 'n', labelKey: 'k', list: 'ADMINISTERED_BY' })),
         h('div', {}, h('h3', {}, 'By month'), bars(d.overdose.by_month.map(x => ({ k: x.month, n: x.n })), { valueKey: 'n', labelKey: 'k' }))) : null),
 
     h('section', { class: 'card' },
@@ -89,7 +89,7 @@ route('funder', async (r) => {
         ? h('p', {}, `Median length of stay: ${d.episodes.median_length_of_stay_days} days.`)
         : h('p', { class: 'muted' }, 'No episodes were closed in this period.'),
       d.episodes.by_discharge_reason.length
-        ? bars(d.episodes.by_discharge_reason, { valueKey: 'n', labelKey: 'k' })
+        ? bars(d.episodes.by_discharge_reason, { valueKey: 'n', labelKey: 'k', list: 'DISCHARGE_REASONS' })
         : emptyState('Nothing to show', 'Discharge reasons appear here once episodes are closed. Close an episode from a client\'s Episodes tab.')),
 
     h('section', { class: 'card' },

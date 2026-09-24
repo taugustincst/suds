@@ -1,8 +1,11 @@
 'use strict';
 const { badRequest } = require('./http');
 
-// Tiny schema validator: shape = { field: { type, required, enum, min, max, maxLen, pattern } }
-function validate(body, shape, { partial = false } = {}) {
+// Tiny schema validator: shape = { field: { type, required, enum, list, min, max, maxLen, pattern } }
+// `list` names a documentation list (server/options.js, Settings → Lists): the value must be one the list
+// offers now — a programme's own choice included — or, when `existing` (the stored row) is given, the
+// value that record already has, so a choice retired since it was recorded does not block editing it.
+function validate(body, shape, { partial = false, existing = null } = {}) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw badRequest('JSON object body required');
   const out = {}; const errors = {};
   for (const [k, rule] of Object.entries(shape)) {
@@ -17,6 +20,10 @@ function validate(body, shape, { partial = false } = {}) {
         if (rule.maxLen && v.length > rule.maxLen) { errors[k] = `max length ${rule.maxLen}`; continue; }
         if (rule.pattern && !rule.pattern.test(v)) { errors[k] = 'invalid format'; continue; }
         if (rule.enum && !rule.enum.includes(v)) { errors[k] = `must be one of ${rule.enum.join(', ')}`; continue; }
+        if (rule.list && v) {
+          const O = require('./options');
+          if (!O.accepts(rule.list, v, existing ? existing[k] : undefined)) { errors[k] = `must be one of ${O.visible(rule.list).join(', ')}`; continue; }
+        }
         if (!v && rule.required) { errors[k] = 'required'; continue; }
         break;
       case 'number':

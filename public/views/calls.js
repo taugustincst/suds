@@ -13,9 +13,9 @@ export function openCallForm(values, { clientId, clientDisplay, method, onDone, 
     { name: 'direction', label: 'Direction', type: 'select', options: isText ? [{ value: 'outbound', label: 'Sent' }, { value: 'inbound', label: 'Received' }] : ['outbound', 'inbound'], required: true, noBlank: true, value: 'outbound' },
     { name: 'started_at', label: 'Date & time', type: 'datetime', required: true, value: values?.started_at || new Date().toISOString() },
     { name: 'duration_minutes', label: isText ? 'Time spent (minutes)' : 'Duration (minutes)', type: 'number', min: 0, step: 1, value: values?.duration_minutes ?? (isText ? 1 : 5) },
-    { name: 'contact_type', label: 'Who', type: 'select', options: C.CALL_CONTACT_TYPES, value: 'client', noBlank: true, required: true }, { name: 'contact_name', label: 'Contact name (if not client)' }, { name: 'phone', label: isText ? 'Mobile number' : 'Phone number', type: 'tel' },
+    { name: 'contact_type', label: 'Who', type: 'select', list: 'CALL_CONTACT_TYPES', value: 'client', noBlank: true, required: true }, { name: 'contact_name', label: 'Contact name (if not client)' }, { name: 'phone', label: isText ? 'Mobile number' : 'Phone number', type: 'tel' },
     { name: 'purpose', label: 'Purpose', span: true },
-    { name: 'outcome', label: 'Outcome', type: 'select', options: isText ? C.TEXT_OUTCOMES : C.CALL_OUTCOMES, value: isText ? 'sent' : 'reached', noBlank: true, required: true },
+    { name: 'outcome', label: 'Outcome', type: 'select', list: isText ? 'TEXT_OUTCOMES' : 'CALL_OUTCOMES', value: isText ? 'sent' : 'reached', noBlank: true, required: true },
     { name: 'crisis', label: `Crisis ${noun}`, type: 'checkbox' }, { name: 'follow_up_needed', label: 'Follow-up needed', type: 'checkbox' }, { name: 'follow_up_due', label: isText ? 'Remind me to follow up on' : 'Remind me to call back on', type: 'date' },
     { name: 'summary', label: isText ? 'What was said (encrypted)' : 'Summary (encrypted)', type: 'textarea', span: true,
       help: isText ? 'Record what was exchanged, not a screenshot. Texting a client about treatment is a disclosure if anyone else can read their phone — keep it to arranging contact unless they have agreed otherwise.' : null },
@@ -32,18 +32,18 @@ export function callTable(rows, { showClient = true, onChange } = {}) {
     { label: 'When', render: r => h('span', { class: 'nowrap' }, fmt.dt(r.started_at)) },
     showClient ? { label: 'Client', render: r => r.client_id ? h('a', { href: `#/client/${r.client_id}` }, r.client_name || r.client_code, r.client_name ? h('div', { class: 'muted small mono' }, r.client_code) : null) : h('span', { class: 'muted' }, r.contact_name || '—') } : null,
     { label: 'How', render: r => r.method === 'text' ? badge('💬 Text', 'purple') : badge('☎ Call', 'info') },
-    { label: 'Dir', render: r => r.direction === 'inbound' ? '⇦ In' : '⇨ Out' }, { label: 'Who', render: r => [fmt.label(r.contact_type), r.contact_name ? h('div', { class: 'small muted' }, r.contact_name) : null, r.phone ? h('div', { class: 'small' }, contactLinks(r.phone)) : null] },
-    { label: 'Min', render: r => r.duration_minutes, num: true }, { label: 'Outcome', render: r => badge(fmt.label(r.outcome), statusKind(r.outcome)) },
+    { label: 'Dir', render: r => r.direction === 'inbound' ? '⇦ In' : '⇨ Out' }, { label: 'Who', render: r => [fmt.label(r.contact_type, 'CALL_CONTACT_TYPES'), r.contact_name ? h('div', { class: 'small muted' }, r.contact_name) : null, r.phone ? h('div', { class: 'small' }, contactLinks(r.phone)) : null] },
+    { label: 'Min', render: r => r.duration_minutes, num: true }, { label: 'Outcome', render: r => badge(fmt.label(r.outcome, r.method === 'text' ? 'TEXT_OUTCOMES' : 'CALL_OUTCOMES'), statusKind(r.outcome)) },
     { label: 'Flags', render: r => [r.crisis ? badge('Crisis', 'danger') : null, r.follow_up_needed ? [' ', badge('Follow-up', 'warn')] : null] },
     { label: 'Purpose / summary', render: r => h('span', { class: 'small' }, r.purpose || '', r.summary ? h('div', { class: 'muted' }, r.summary.slice(0, 140)) : null) }, { label: 'Worker', key: 'worker' },
     { label: '', render: r => (r.user_id === state.user.id || can('clients:all')) && can('calls:write') ? h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm', onClick: () => openCallForm(r, { onDone: onChange }) }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': r.method === 'text' ? 'Delete this text' : 'Delete this call', onClick: async () => { if (await confirmDialog(r.method === 'text' ? 'Delete text' : 'Delete call', 'Delete this contact record?', { danger: true, okText: 'Delete' })) { await del(`/api/calls/${r.id}`); onChange && onChange(); } } }, '✕')) : null },
   ].filter(Boolean), rows, { empty: 'No calls yet. Use + Log → Phone call after each call, even if it went to voicemail.',
     rowLabel: r => `${r.method === 'text' ? 'Text' : 'Call'} ${fmt.dt(r.started_at)}${r.client_name ? ', ' + r.client_name : ''}`,
-    compact: { primary: r => [h('span', {}, showClient && r.client_id ? (r.client_name || r.client_code) : (r.contact_name || fmt.label(r.contact_type))), r.method === 'text' ? badge('💬 Text', 'purple') : badge('☎ Call', 'info')],
-      secondary: r => [h('span', {}, fmt.dt(r.started_at)), badge(fmt.label(r.outcome), statusKind(r.outcome)), r.crisis ? badge('Crisis', 'danger') : null, r.follow_up_needed ? badge('Follow-up', 'warn') : null],
+    compact: { primary: r => [h('span', {}, showClient && r.client_id ? (r.client_name || r.client_code) : (r.contact_name || fmt.label(r.contact_type, 'CALL_CONTACT_TYPES'))), r.method === 'text' ? badge('💬 Text', 'purple') : badge('☎ Call', 'info')],
+      secondary: r => [h('span', {}, fmt.dt(r.started_at)), badge(fmt.label(r.outcome, r.method === 'text' ? 'TEXT_OUTCOMES' : 'CALL_OUTCOMES'), statusKind(r.outcome)), r.crisis ? badge('Crisis', 'danger') : null, r.follow_up_needed ? badge('Follow-up', 'warn') : null],
       onTap: r => {
         if ((r.user_id === state.user.id || can('clients:all')) && can('calls:write')) { openCallForm(r, { onDone: onChange }); return; }
-        modal(r.method === 'text' ? 'Text message' : 'Phone call', kv([['When', fmt.dt(r.started_at)], ['Client', r.client_name || r.client_code || '—'], ['Who', [fmt.label(r.contact_type), r.contact_name].filter(Boolean).join(' · ')], ['Phone', contactLinks(r.phone)], ['Outcome', fmt.label(r.outcome)], ['Purpose', r.purpose], ['Summary', r.summary], ['Worker', r.worker]]));
+        modal(r.method === 'text' ? 'Text message' : 'Phone call', kv([['When', fmt.dt(r.started_at)], ['Client', r.client_name || r.client_code || '—'], ['Who', [fmt.label(r.contact_type, 'CALL_CONTACT_TYPES'), r.contact_name].filter(Boolean).join(' · ')], ['Phone', contactLinks(r.phone)], ['Outcome', fmt.label(r.outcome, r.method === 'text' ? 'TEXT_OUTCOMES' : 'CALL_OUTCOMES')], ['Purpose', r.purpose], ['Summary', r.summary], ['Worker', r.worker]]));
       } } });
 }
 route('calls', async (r) => {

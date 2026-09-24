@@ -804,3 +804,23 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_idempotency_created ON idempotency_keys(created_at);
+
+-- The wording, order and availability of the choices on documentation forms ("What did you do?", "What
+-- happened", "Outcome"…), set by an administrator under Settings → Lists. The built-in choices live in code
+-- (server/options.js); a row here only records what differs: a new label, a position, a retired (hidden)
+-- choice, or a programme's own addition (is_custom). The stored code never changes, so old records and
+-- reports keep their meaning. Not PHI. Synchronised to devices pull-only: the office's lists are the lists.
+CREATE TABLE IF NOT EXISTS option_overrides (
+  id TEXT PRIMARY KEY,
+  list_key TEXT NOT NULL,
+  code TEXT NOT NULL,
+  label TEXT,
+  sort_order INTEGER,
+  hidden INTEGER NOT NULL DEFAULT 0,
+  is_custom INTEGER NOT NULL DEFAULT 0,
+  updated_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (list_key, code)
+);
+CREATE INDEX IF NOT EXISTS idx_option_overrides_updated ON option_overrides(updated_at);

@@ -71,7 +71,7 @@ function autofillValues(fields, clientRow, user) {
   const src = {
     'client.full_name': [c.first_name, c.last_name].filter(Boolean).join(' '), 'client.first_name': c.first_name, 'client.last_name': c.last_name, 'client.preferred_name': c.preferred_name, 'client.dob': c.dob, 'client.phone': c.phone, 'client.email': c.email,
     'client.address': [c.address, [c.city, c.zip].filter(Boolean).join(' ')].filter(Boolean).join(', '), 'client.city': c.city, 'client.zip': c.zip, 'client.client_code': c.client_code, 'client.gender': c.gender, 'client.pronouns': c.pronouns, 'client.insurance': c.insurance, 'client.medicaid_id': c.medicaid_id,
-    'client.emergency_contact': c.emergency_contact, 'client.primary_substance': c.primary_substance ? c.primary_substance.replace(/_/g, ' ') : null, 'client.mat_status': c.mat_status, 'client.intake_date': c.intake_date,
+    'client.emergency_contact': c.emergency_contact, 'client.primary_substance': c.primary_substance ? require('../options').labelOf('SUBSTANCES', c.primary_substance) : null, 'client.mat_status': c.mat_status, 'client.intake_date': c.intake_date,
     'worker.name': user.display_name, 'worker.title': user.title || '', 'org.name': db.getSetting('org_name', 'SUDS'), 'org.county': db.getSetting('county_name', ''), today,
   };
   const values = {};

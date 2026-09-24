@@ -3,6 +3,7 @@ const db = require('../db');
 const auth = require('../auth');
 const crud = require('../crud');
 const C = require('../constants');
+const O = require('../options');
 const { badRequest, forbidden } = require('../http');
 const { uuid } = require('../crypto');
 const supplies = require('./supplies');
@@ -92,11 +93,11 @@ module.exports = (r) => {
     shape: {
       // Optional: community naloxone distribution and street outreach are services with no identified client.
       client_id: { type: 'string' }, user_id: { type: 'string' },
-      type: { type: 'string', required: true, enum: C.INTERVENTION_TYPES }, occurred_at: { type: 'datetime', required: true },
-      duration_minutes: { type: 'number', integer: true, min: 0, max: 1440 }, location: { type: 'string', enum: C.LOCATIONS }, modality: { type: 'string', enum: C.MODALITIES },
-      outcome: { type: 'string', enum: C.OUTCOMES }, stage_of_change: { type: 'string', enum: C.STAGES }, naloxone_kits: { type: 'number', integer: true, min: 0 },
+      type: { type: 'string', required: true, list: 'INTERVENTION_TYPES' }, occurred_at: { type: 'datetime', required: true },
+      duration_minutes: { type: 'number', integer: true, min: 0, max: 1440 }, location: { type: 'string', list: 'LOCATIONS' }, modality: { type: 'string', list: 'MODALITIES' },
+      outcome: { type: 'string', list: 'OUTCOMES' }, stage_of_change: { type: 'string', enum: C.STAGES }, naloxone_kits: { type: 'number', integer: true, min: 0 },
       fentanyl_strips: { type: 'number', integer: true, min: 0 }, funding_source_id: { type: 'string' }, budget_line_id: { type: 'string' }, cost: { type: 'number', min: 0 },
-      summary: { type: 'string', maxLen: 2000 }, follow_up_due: { type: 'date' }, log_time: { type: 'boolean' }, time_category: { type: 'string', enum: C.TIME_CATEGORIES },
+      summary: { type: 'string', maxLen: 2000 }, follow_up_due: { type: 'date' }, log_time: { type: 'boolean' }, time_category: { type: 'string', list: 'TIME_CATEGORIES' },
       // Optional: the calendar date the service belongs to, when it is not the org-timezone date of occurred_at.
       service_date: { type: 'date' },
     },
@@ -114,12 +115,12 @@ module.exports = (r) => {
       // Optional automatic time entry + naloxone tracking on client
       if (row._log_time && row.duration_minutes > 0) {
         db.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,funding_source_id,intervention_id,description) VALUES(?,?,?,?,?,?,?,?,?)`,
-          uuid(), row.user_id, row.client_id ?? null, serviceDate(row), row.duration_minutes, row._time_category || 'direct_service', row.funding_source_id || null, row.id, row.type.replace(/_/g, ' '));
+          uuid(), row.user_id, row.client_id ?? null, serviceDate(row), row.duration_minutes, row._time_category || 'direct_service', row.funding_source_id || null, row.id, O.labelOf('INTERVENTION_TYPES', row.type));
       }
       // Community distribution has no client record to update, and no client to follow up with.
       if (row.naloxone_kits > 0 && row.client_id) db.run(`UPDATE clients SET naloxone_provided=1, naloxone_last_date=?, updated_at=? WHERE id=?`, serviceDate(row), db.now(), row.client_id);
       if (row.follow_up_due && row.client_id) db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority) VALUES(?,?,?,?,?,?,?)`,
-        uuid(), row.client_id, row.user_id, ctx.user.id, require('../crypto').encrypt(`Follow up: ${row.type.replace(/_/g, ' ')}`), row.follow_up_due, 'normal');
+        uuid(), row.client_id, row.user_id, ctx.user.id, require('../crypto').encrypt(`Follow up: ${O.labelOf('INTERVENTION_TYPES', row.type)}`), row.follow_up_due, 'normal');
       syncExpenditure(row);
       supplies.drawDown(ctx, row);
     },
@@ -144,5 +145,8 @@ module.exports = (r) => {
   // Only ever called post-login (public/app.js's loadRefData(), itself only reached after /api/auth/me
   // succeeds) — no reason for this to be the one route in the app reachable without a session.
   supplies(r);
-  r.get('/api/meta/constants', auth.requireAuth, () => C);
+  // The lists as this programme has set them up (Settings → Lists): each managed list is the choices a new
+  // record may use, in order, and option_lists carries the wording, including for retired choices an old
+  // record still shows.
+  r.get('/api/meta/constants', auth.requireAuth, () => { const m = O.meta(); return { ...C, ...m.visible, option_lists: m.option_lists }; });
 };

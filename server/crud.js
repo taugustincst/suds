@@ -102,7 +102,7 @@ function build(r, opts) {
     if (row.client_id) auth.assertClientAccess(ctx, row.client_id);
     if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden('You cannot edit this record');
     if (!opts.noUpdatedAt) assertFresh(ctx, row, entity);
-    const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
+    const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true, existing: row });
     if (v.client_id && v.client_id !== row.client_id) checkClient(ctx, v.client_id);
     if (opts.restrictOwner && v[ownerCol] !== undefined && !auth.hasPerm(ctx.user, 'clients:all')) delete v[ownerCol];
     if (opts.beforeUpdate) opts.beforeUpdate(ctx, v, row);

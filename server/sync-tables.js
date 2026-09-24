@@ -52,6 +52,10 @@ module.exports = {
     // draw-down the REST route does). A device's absolute count is never accepted — two phones each
     // subtracting from their own stale copy would otherwise leave whichever synced last as the truth.
     { name: 'supply_stock', enc: [], scope: 'all', writePerm: 'interventions:write', serverOwned: true },
+    // Settings → Lists (the wording and order of documentation choices): the office's configuration,
+    // pull-only like supply counts. A device needs it to offer the same choices and show the same labels
+    // offline; it can never change it (server/routes/options.js refuses writes in the local kernel).
+    { name: 'option_overrides', enc: [], scope: 'all', writePerm: 'settings:manage', serverOwned: true },
   ],
   // Push rejection reasons that will never succeed on a retry: the office has ruled, and the device must
   // mark the row as exchanged (office wins) rather than resend it every sync forever. Anything else
@@ -85,7 +89,7 @@ module.exports = {
     ['resource_photos', 'uploaded_by'], ['form_templates', 'uploaded_by'], ['policy_documents', 'uploaded_by'],
     ['breakglass_events', 'user_id'], ['breakglass_events', 'acknowledged_by'], ['patient_requests', 'handled_by'], ['patient_requests', 'created_by'],
     ['audit_log', 'user_id'], ['sessions', 'user_id'], ['user_prefs', 'user_id'], ['api_keys', 'created_by'], ['users', 'supervisor_id'], ['devices', 'user_id'],
-    ['supply_stock', 'updated_by'],
+    ['supply_stock', 'updated_by'], ['option_overrides', 'updated_by'],
   ],
 };
 // Every column name above that points at users(id), for remapping a single pushed row.
