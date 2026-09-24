@@ -1,8 +1,0 @@
-name: Probe
-on: { workflow_dispatch: {} }
-jobs:
-  probe:
-    runs-on: ubuntu-latest
-    steps:
-      - run: |
-          echo "runner works"; java -version 2>&1 | head -1; gradle --version | grep Gradle; echo "ANDROID_HOME=$ANDROID_HOME"; ls "$ANDROID_HOME/platforms" 2>/dev/null | tail -3; gh --version | head -1
