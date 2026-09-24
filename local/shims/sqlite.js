@@ -269,7 +269,50 @@ export async function wipe() {
 /** True once this page has wiped (or found wiped) the device database; nothing is saved after that. */
 export function isWiped() { return wiped; }
 
-let current = null; let saveTimer = null; let dirty = false; let saving = null; let wiped = false;
+/**
+ * Replace the device database with `bytes` (restoring a device backup), under the fence like everything
+ * else: in one readwrite transaction this checks the store's epoch is still this page's, claims the next
+ * one, writes the restored bytes under it and deletes every other copy. From then on this page saves
+ * nothing (the copy in memory is dropped, so neither the coalescing timer nor the unload flush can write
+ * the old database back over the restored one) and the page must reload, which claims the next epoch and
+ * reads the restored bytes like any start. Rejects, changing nothing, when another window owns the store.
+ */
+export async function replaceWith(bytes) {
+  if (wiped || frozen || myEpoch === null) throw new Error('This window no longer holds the on-device database. Reload and try again.');
+  clearTimeout(saveTimer); saveTimer = null;
+  if (saving) { try { await saving; } catch {} }
+  const d = await idb();
+  const epoch = await new Promise((res, rej) => {
+    const t = d.transaction('kv', 'readwrite'); const s = t.objectStore('kv');
+    let next = null; let fenced = false;
+    const g = s.get(EPOCH_KEY);
+    g.onsuccess = () => {
+      if (g.result !== myEpoch) { fenced = true; try { t.abort(); } catch {} return; }
+      next = Math.max(myEpoch + 1, Date.now());
+      s.put(next, EPOCH_KEY); s.put(bytes, dbKey(next));
+      const keys = s.getAllKeys(IDBKeyRange.bound(DB_PREFIX, DB_PREFIX + '\uffff'));
+      keys.onsuccess = () => { for (const k of keys.result) if (k !== dbKey(next)) s.delete(k); };
+    };
+    t.oncomplete = () => res(next);
+    t.onabort = () => rej(fenced ? new Error('SUDS is open in another window on this device; restore from that window.') : (t.error || new Error('The restore could not be written')));
+    t.onerror = () => rej(t.error);
+  });
+  myEpoch = epoch; replaced = true; dirty = false;
+  if (current) { const c = current; current = null; try { c.close(); } catch {} }
+}
+/** The database as it is in memory right now (a device backup). */
+export function exportCurrent() { if (!current) throw new Error('The on-device database is not open'); return current.export(); }
+/** True once this page has put a restored database in place; it must reload before doing anything else. */
+export function isReplaced() { return replaced; }
+/** Open a copy of `bytes` read-only, off to the side, for `fn(db)` to inspect (a backup's contents). */
+export function inspect(bytes, fn) {
+  if (!SQL) throw new Error('sqlite shim not initialised');
+  const d = new SQL.Database(bytes);
+  try { return fn({ one: (sql, ...p) => { const st = d.prepare(sql); try { st.bind(p); return st.step() ? st.getAsObject() : undefined; } finally { st.free(); } } }); }
+  finally { d.close(); }
+}
+
+let current = null; let saveTimer = null; let dirty = false; let saving = null; let wiped = false; let replaced = false;
 // Nesting depth of the transaction server/db.js has open, tracked by DatabaseSync.exec(): a save in the
 // middle of one would end it (sql.js's export() closes and reopens the database), so writes made inside a
 // transaction are saved after its COMMIT lands, not before.
@@ -285,7 +328,7 @@ export function setSaveErrorHandler(fn) { onSaveError = fn; }
  * A failure reaches onSaveError (the "stopped saving" banner) and rejects; it is never swallowed.
  */
 export function flush({ urgent = false } = {}) {
-  if (wiped || frozen || !current || myEpoch === null) return Promise.resolve();
+  if (wiped || frozen || replaced || !current || myEpoch === null) return Promise.resolve();
   if (urgent && inflight && typeof inflight.commit === 'function') { try { inflight.commit(); } catch {} }
   if (!dirty) return saving || Promise.resolve();
   if (saving && !urgent) return saving.then(() => flush()); // a save is in flight; queue behind it
@@ -314,7 +357,7 @@ export function isDirty() { return dirty; }
 const COALESCE_MS = 250;
 let writeSeq = 0;
 function markDirty() {
-  if (wiped || frozen) return;
+  if (wiped || frozen || replaced) return;
   dirty = true; writeSeq++;
   if (inTransaction) return; // scheduled when the COMMIT lands
   if (!saveTimer) saveTimer = setTimeout(() => { saveTimer = null; flush().catch(() => { /* reported by onSaveError */ }); }, COALESCE_MS);
@@ -366,4 +409,4 @@ export class DatabaseSync {
   close() { if (current === this.db) { current = null; dirty = false; clearTimeout(saveTimer); saveTimer = null; } try { this.db.close(); } catch {} }
   export() { return this.db.export(); }
 }
-export default { DatabaseSync, init, loadBytes, saveBytes, wipe, isWiped, flush, isDirty, acquireLock, lockIsStale, forceAcquireLock, hasLock, epoch, isFrozen, onLockLost, setSaveErrorHandler };
+export default { DatabaseSync, init, loadBytes, saveBytes, wipe, isWiped, replaceWith, isReplaced, inspect, exportCurrent, flush, isDirty, acquireLock, lockIsStale, forceAcquireLock, hasLock, epoch, isFrozen, onLockLost, setSaveErrorHandler };

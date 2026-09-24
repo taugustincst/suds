@@ -33,7 +33,7 @@ module.exports = (r) => {
   r.get('/api/users', auth.requireAuth, auth.requirePerm('users:read', 'users:manage'), (ctx) => {
     const full = auth.hasPerm(ctx.user, 'users:manage');
     const rows = db.all(full
-      ? `SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,last_login_at,locked_until,hourly_cost,created_at,oidc_subject,requires_cosign,supervisor_id FROM users ORDER BY display_name`
+      ? `SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,last_login_at,locked_until,hourly_cost,created_at,oidc_subject,requires_cosign,supervisor_id,access_status FROM users WHERE access_status<>'pending' ORDER BY display_name`
       : `SELECT id,display_name,title,role,is_active FROM users WHERE is_active=1 ORDER BY display_name`);
     return { users: rows };
   });
@@ -69,6 +69,8 @@ module.exports = (r) => {
       auth.revokeAllForUser(u.id);
     }
     if (ctx.body.unlock) { sets.push('locked_until=NULL', 'failed_attempts=0'); }
+    // Re-activating an account whose access request was declined is the administrator changing their mind.
+    if (v.is_active === 1 && u.access_status !== 'active') sets.push(`access_status='active'`);
     if (ctx.body.reset_mfa) { sets.push('mfa_enabled=0', 'mfa_secret_enc=NULL'); }
     if (v.is_active === 0) auth.revokeAllForUser(u.id);
     // Deactivating someone, or resetting their password from here, ends their hold on client records on
@@ -83,6 +85,35 @@ module.exports = (r) => {
     db.run(`UPDATE users SET ${sets.join(', ')} WHERE id=?`, ...params);
     audit.log({ user: ctx.user, action: 'user.update', entity: 'user', entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter(k => k !== 'password'), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa, devices_wiped: wiped.length, wipe_devices: wipeDevices } });
     return { ok: true, devices_wiped: wiped.length };
+  });
+
+  // ---- Access requests (self sign-up, POST /api/auth/signup) ----
+  // Waiting requests, oldest first. The reason is the requester's own words about their job, shown only here.
+  r.get('/api/users/access-requests', auth.requireAuth, auth.requirePerm('users:manage'), () =>
+    ({ requests: db.all(`SELECT id,username,display_name,email,access_note AS reason,requested_at FROM users WHERE access_status='pending' ORDER BY requested_at, username`) }));
+  function pendingRequest(ctx) {
+    const u = db.one(`SELECT * FROM users WHERE id=?`, ctx.params.id);
+    if (!u) throw notFound();
+    if (u.access_status !== 'pending') throw badRequest('This request has already been answered');
+    return u;
+  }
+  // Approving chooses the role (and optionally a supervisor) and lets the account sign in with the password
+  // the person chose. Two-step verification then applies exactly as for any new account: its grace period
+  // runs from approval (created_at is reset to it), not from when the request was sent.
+  r.post('/api/users/:id/approve', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
+    const u = pendingRequest(ctx);
+    const v = validate(ctx.body, { role: shape.role, supervisor_id: shape.supervisor_id, title: shape.title });
+    if (v.supervisor_id && !db.one(`SELECT 1 FROM users WHERE id=? AND id<>? AND is_active=1 AND role IN ('supervisor','admin')`, v.supervisor_id, u.id)) throw badRequest('The supervisor must be an active supervisor or administrator account');
+    db.run(`UPDATE users SET role=?, supervisor_id=?, title=COALESCE(?, title), is_active=1, access_status='active', failed_attempts=0, locked_until=NULL, created_at=?, updated_at=? WHERE id=?`,
+      v.role, v.supervisor_id || null, v.title || null, db.now(), db.now(), u.id);
+    audit.log({ user: ctx.user, action: 'user.signup.approved', entity: 'user', entityId: u.id, ip: ctx.ip, details: { username: u.username, role: v.role } });
+    return { ok: true };
+  });
+  r.post('/api/users/:id/decline', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
+    const u = pendingRequest(ctx);
+    db.run(`UPDATE users SET access_status='declined', is_active=0, updated_at=? WHERE id=?`, db.now(), u.id);
+    audit.log({ user: ctx.user, action: 'user.signup.declined', entity: 'user', entityId: u.id, ip: ctx.ip, details: { username: u.username } });
+    return { ok: true };
   });
 
   // A device that received a wipe instruction (a deviceWipeRequired login response) reports that it has

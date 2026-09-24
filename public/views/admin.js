@@ -55,7 +55,7 @@ async function openUserForm(values, onDone) {
 
 // There is no native app (removed in 1.9.3, docs/PLATFORM.md); staff use the web app in a browser. /app is the
 // step-by-step page for adding it to a home screen — on the office server, which rewrites that path. A
-// static host (the published demo build) has no rewrite, so there the page is linked by its file name.
+// static host (the published on-device app) has no rewrite, so there the page is linked by its file name.
 function useOnDevicesCard(primary) {
   const appUrl = window.SUDS_STATIC_HOST || state.local ? 'get-app.html' : primary.replace(/\/$/, '') + '/app';
   return h('div', { class: 'card' }, h('h3', {}, 'Use SUDS on phones and tablets'),
@@ -83,8 +83,8 @@ export async function sampleDataCard(onChange) {
       h('p', { class: 'small muted' }, state.local ? 'Sample data is removed automatically before this device syncs with the office, so it never mixes with real records.' : 'Remove it before entering real clients.'),
       h('div', { class: 'btn-row' }, h('button', { class: 'btn danger', onClick: remove }, 'Remove sample data'), busy)]
     // can_load comes from the server (or the in-browser kernel), which decides: an office server, or a
-    // browser copy it hands out, offers sample data only to an empty program; the static demo build adds it
-    // alongside whatever someone typed in while trying SUDS out (server/demo.js loadRefusal).
+    // browser copy it hands out, and the on-device app all offer sample data only to an empty program
+    // (server/demo.js loadRefusal); the "alongside" branch below is for a server that says otherwise.
     : !(st.can_load ?? st.clients_total === 0) ? h('p', { class: 'small muted', 'data-sample-refused': '1' }, 'Sample data can only be added while there are no clients yet, so it never mixes with real records.')
     : st.clients_total > 0 ? [h('p', { class: 'small muted', 'data-sample-alongside': '1' }, `Add a set of fictional clients, visits, notes, referrals and funding beside the ${st.clients_total === 1 ? 'client' : `${st.clients_total} clients`} you entered yourself. Sample client codes start with DEMO-, and "Remove sample data" takes away only those, leaving yours.`),
       h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', onClick: load }, 'Load sample data'), busy)]
@@ -99,8 +99,8 @@ route('admin', async (r) => {
   const T = {
     async users() {
       const { users } = await get('/api/users');
-      return h('div', {}, h('div', { class: 'row mb' }, h('button', { class: 'btn primary', onClick: () => openUserForm(null, refresh) }, '+ New user')),
-        table([{ label: 'Name', render: u => h('div', {}, h('b', {}, u.display_name), h('div', { class: 'small muted' }, u.username, u.title ? ` · ${u.title}` : '')) }, { label: 'Role', render: u => badge(fmt.label(u.role), u.role === 'admin' ? 'purple' : 'info') }, { label: 'Email', key: 'email' }, { label: 'MFA', render: u => u.mfa_enabled ? badge('On', 'ok') : badge('Off', 'warn') }, { label: 'Status', render: u => [u.is_active ? badge('Active', 'ok') : badge('Inactive'), u.locked_until && Date.parse(u.locked_until) > Date.now() ? [' ', badge('Locked', 'danger')] : null] }, { label: 'Last login', render: u => u.last_login_at ? fmt.dt(u.last_login_at) : 'never' }, { label: '', render: u => h('button', { class: 'btn sm', onClick: () => openUserForm(u, refresh) }, 'Edit') }], users));
+      return h('div', {}, state.local ? null : await accessRequestsCard(refresh), h('div', { class: 'row mb' }, h('button', { class: 'btn primary', onClick: () => openUserForm(null, refresh) }, '+ New user')),
+        table([{ label: 'Name', render: u => h('div', {}, h('b', {}, u.display_name), h('div', { class: 'small muted' }, u.username, u.title ? ` · ${u.title}` : '')) }, { label: 'Role', render: u => badge(fmt.label(u.role), u.role === 'admin' ? 'purple' : 'info') }, { label: 'Email', key: 'email' }, { label: 'MFA', render: u => u.mfa_enabled ? badge('On', 'ok') : badge('Off', 'warn') }, { label: 'Status', render: u => [u.is_active ? badge('Active', 'ok') : u.access_status === 'declined' ? badge('Request declined') : badge('Inactive'), u.locked_until && Date.parse(u.locked_until) > Date.now() ? [' ', badge('Locked', 'danger')] : null] }, { label: 'Last login', render: u => u.last_login_at ? fmt.dt(u.last_login_at) : 'never' }, { label: '', render: u => h('button', { class: 'btn sm', onClick: () => openUserForm(u, refresh) }, 'Edit') }], users));
     },
     async settings() {
       const s = await get('/api/admin/settings');
@@ -111,6 +111,8 @@ route('admin', async (r) => {
         { name: 'session_idle_minutes', label: 'Auto sign-out after inactivity (minutes, max 60)', type: 'number', min: 1, max: 60, step: 1, value: s.policy.idleMinutes }, { name: 'session_absolute_hours', label: 'Maximum session length (hours)', type: 'number', min: 1, max: 24, step: 1, value: s.policy.absoluteHours },
         { name: 'password_max_age_days', label: 'Password expires after (days)', type: 'number', min: 1, step: 1, value: s.policy.passwordMaxAgeDays },
         { name: 'mfa_required_roles', label: 'Roles that must use MFA (comma separated)', value: s.policy.mfaRequiredRoles.join(','), help: 'admin, supervisor, clinician, navigator, finance, readonly — recommended: all', span: true },
+        { name: 'mfa_grace_days', label: 'Days a new account has to set up MFA', type: 'number', min: 0, step: 1, value: s.policy.mfaGraceDays, help: 'Counted from when the account is created (or its access request approved). 0 = at first sign-in.' },
+        { name: 'self_signup', label: 'Sign up on the sign-in page', type: 'select', noBlank: true, value: s.self_signup === '0' ? '0' : '1', options: [{ value: '1', label: 'On — people can request an account; an administrator approves each one' }, { value: '0', label: 'Off — the sign-in page says to ask an administrator' }], span: true },
         { type: 'section', label: 'Record retention' },
         { name: 'client_retention_years', label: 'Keep discharged client records for (years, minimum 6)', type: 'number', min: 6, step: 1, value: s.client_retention_years || '7', help: 'Once every episode is closed and this many years have passed since discharge, the record is permanently deleted from every table — unless an administrator has placed it on legal hold from the client\'s Care team tab.' },
         { type: 'section', label: 'Scheduled backups' },
@@ -210,13 +212,46 @@ route('admin', async (r) => {
   };
   // Someone without users:manage (a supervisor) reaches this page for one thing: moving a caseload.
   const full = can('users:manage');
+  // Waiting account requests are counted on the tab itself, so they are seen from any tab of this page.
+  const pending = full && !state.local ? await get('/api/users/access-requests', { quiet: true }).then(x => x.requests.length).catch(() => 0) : 0;
   const tabs = !full ? [['caseload', 'Move a caseload'], ...(can('audit:read') ? [['audit', 'Audit log']] : [])]
     : state.local ? [['users', 'Users & roles'], ['settings', 'Settings'], ['caseload', 'Move a caseload'], ['audit', 'Audit log']]
-    : [['users', 'Users & roles'], ['settings', 'Settings'], ['network', 'Network & devices'], ['devices', 'Synced devices'], ['caseload', 'Move a caseload'], ['audit', 'Audit log'], ['apikeys', 'API keys (intake)'], ['system', 'System & backups']];
+    : [['users', pending ? `Users & roles (${pending})` : 'Users & roles'], ['settings', 'Settings'], ['network', 'Network & devices'], ['devices', 'Synced devices'], ['caseload', 'Move a caseload'], ['audit', 'Audit log'], ['apikeys', 'API keys (intake)'], ['system', 'System & backups']];
   const allowed = tabs.some(([k]) => k === tab) ? tab : tabs[0][0];
   body.append(await (T[allowed] || T[tabs[0][0]])());
-  return h('div', {}, pageHead(full ? 'Settings' : 'Supervision tools'), state.local ? h('div', { class: 'banner small' }, 'This is the copy of SUDS on this device. Network, API keys and backups are managed on the office SUDS; use Sync to exchange data.') : null, h('div', { class: 'tabs' }, tabs.map(([k, l]) => h('button', { class: k === tab ? 'active' : '', onClick: () => nav(`admin?tab=${k}`) }, l))), body);
+  return h('div', {}, pageHead(full ? 'Settings' : 'Supervision tools'), state.local ? h('div', { class: 'banner small' }, window.SUDS_STATIC_HOST ? 'This is SUDS on this device. Backups, and who may sign up here, are on the This device page.' : 'This is the copy of SUDS on this device. Network, API keys and backups are managed on the office SUDS; use Sync to exchange data.') : null, h('div', { class: 'tabs' }, tabs.map(([k, l]) => h('button', { class: k === tab ? 'active' : '', onClick: () => nav(`admin?tab=${k}`) }, l))), body);
 });
+
+// ---------------------------------------------------------------------------
+// Access requests: what the sign-in page's "Sign up" sends (POST /api/auth/signup). Each waits here until an
+// administrator approves it — choosing the role, and a supervisor if wanted — or declines it.
+// ---------------------------------------------------------------------------
+async function accessRequestsCard(onDone) {
+  const { requests } = await get('/api/users/access-requests', { quiet: true }).catch(() => ({ requests: [] }));
+  const approve = (q) => {
+    const f = form([
+      { name: 'role', label: 'Role', type: 'select', required: true, options: [['navigator', 'Navigator'], ['clinician', 'Clinician'], ['supervisor', 'Supervisor'], ['finance', 'Finance'], ['readonly', 'Read-only'], ['admin', 'Administrator']].map(([value, label]) => ({ value, label })) },
+      { name: 'supervisor_id', label: 'Supervisor (optional)', type: 'select', placeholder: '— none —', options: state.users.filter(u => u.is_active !== 0 && ['supervisor', 'admin'].includes(u.role)).map(u => ({ value: u.id, label: u.display_name })) },
+      { name: 'title', label: 'Job title (optional)' },
+    ], { submitText: 'Approve', onCancel: () => m.close(), onSubmit: async (d) => {
+      await post(`/api/users/${q.id}/approve`, d); m.close(); toast(`${q.display_name} can now sign in`, 'ok'); await loadRefData(); onDone();
+    } });
+    const m = modal(`Approve ${q.display_name}`, h('div', {}, h('p', { class: 'small muted' }, `${q.username}${q.email ? ` · ${q.email}` : ''}. They sign in with the password they chose; two-step verification applies as for any new account.`), f));
+  };
+  const decline = async (q) => {
+    if (!await confirmDialog('Decline this request', `${q.display_name} (${q.username}) will not be able to sign in. They are told the request was not approved when they next try.`, { danger: true, okText: 'Decline' })) return;
+    await post(`/api/users/${q.id}/decline`, {}); toast('Request declined', 'ok'); onDone();
+  };
+  return h('div', { class: 'card mb', 'data-access-requests': String(requests.length) }, h('h3', {}, `Access requests (${requests.length})`),
+    requests.length
+      ? table([
+        { label: 'Name', render: q => h('div', {}, h('b', {}, q.display_name), h('div', { class: 'small muted' }, q.username, q.email ? ` · ${q.email}` : '')) },
+        { label: 'Reason given', render: q => h('span', { class: 'small' }, q.reason || '—') },
+        { label: 'Requested', render: q => fmt.dt(q.requested_at) },
+        { label: '', render: q => h('div', { class: 'row' }, h('button', { class: 'btn sm primary', 'data-approve': q.username, onClick: () => approve(q) }, 'Approve'), h('button', { class: 'btn sm danger', 'data-decline': q.username, onClick: () => decline(q) }, 'Decline')) },
+      ], requests)
+      : h('p', { class: 'small muted' }, 'No requests waiting. People can ask for an account from the sign-in page’s Sign up option (Settings → Program settings turns it off).'));
+}
 
 // ---------------------------------------------------------------------------
 // Restoring from a backup, without a terminal. INSTALL.md is written for an

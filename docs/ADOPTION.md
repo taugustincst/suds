@@ -18,7 +18,7 @@ the *Risk register notes* to copy into the county's register), [RELEASE.md](RELE
   it (staff, contractor, automated tooling), is reviewed and approved by a person other than its author
   before it merges. Protect the release branch: pull requests only, one approving review, CI green.
 - **The county deploys releases, not branches.** Install from a tagged release (`suds-v<version>.zip` and
-  its `.sha256`), never from `main`. The public demo is also published only from releases (WEB_APP.md).
+  its `.sha256`), never from `main`. The on-device web app on GitHub Pages is also published only from releases (WEB_APP.md).
 - **Keep a change log of what was deployed where and when**, beside the key-custodian log.
 
 ## 2. Pilot (60 days)

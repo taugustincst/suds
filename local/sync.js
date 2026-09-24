@@ -69,6 +69,8 @@ function mergeUser(localId, serverId) {
     db.run(`UPDATE ${t} SET ${c}=? WHERE ${c}=?`, serverId, localId);
   }
   db.run(`DELETE FROM users WHERE id=?`, localId);
+  // The device's own administrator (local/kernel.js) is the same person under their office id now.
+  if (db.getSetting('device_admin_user_id', null) === localId) db.setSetting('device_admin_user_id', serverId);
 }
 
 /**
@@ -306,17 +308,14 @@ function officeError(status, data) {
 }
 
 /**
- * A copy of the app served from a static host (the GitHub Pages demo build, scripts/build-static-site.js)
- * carries window.SUDS_STATIC_HOST. Such a copy is for evaluation: nobody in the county controls the host
- * that served its code, so it may sync with an office server only when that server says so
- * (ALLOW_STATIC_SYNC=1, reported as allow_static_sync by /api/app/info). Checked before the credentials
- * are ever sent, so a refused server never sees them.
+ * The on-device web app published on a static host (GitHub Pages; scripts/build-static-site.js) carries
+ * window.SUDS_STATIC_HOST. It never syncs: a page served from one origin cannot call another origin's API
+ * (the office server sends no CORS headers and its connect-src forbids it), so a sync attempted from it
+ * could only fail. It is refused before anything is sent, credentials included. Staff whose records
+ * belong on an office server use SUDS at the office address instead (docs/PLATFORM.md).
  */
 export function isStaticHost() { try { return typeof window !== 'undefined' && window.SUDS_STATIC_HOST === true; } catch { return false; } }
-export const STATIC_HOST_MESSAGE = 'Sync is not available from the demo site. Open SUDS at the office address instead; this copy is for trying SUDS out and never talks to an office server.';
-/** A demo copy never syncs: a browser on another origin cannot reach the office API (no CORS, and the
- *  office's connect-src forbids it), so promising a sync that then fails was worse than saying so. Nothing
- *  is sent — not even the credentials. */
+export const STATIC_HOST_MESSAGE = 'SUDS on this device does not sync with an office server: your records stay in this browser. Keep them safe with "Download a backup" on this page. If your programme runs an office SUDS server, use SUDS at its address instead.';
 function assertNotStaticHost() {
   if (isStaticHost()) throw new HttpError(403, STATIC_HOST_MESSAGE, { staticSyncRefused: true });
 }

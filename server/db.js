@@ -332,6 +332,13 @@ const migrations = [
     encryptColumn(d, 'tasks', 'description', 'description_enc');
     rebuildTable(d, safeSchema(), 'tasks');
   },
+  // 25: self sign-up. A request for an account is a users row that cannot sign in until an administrator
+  //     approves it (access_status 'pending'); every existing account is 'active'.
+  (d) => {
+    addColumn(d, 'users', 'access_status', `TEXT NOT NULL DEFAULT 'active' CHECK (access_status IN ('active','pending','declined'))`);
+    addColumn(d, 'users', 'access_note', 'TEXT');
+    addColumn(d, 'users', 'requested_at', 'TEXT');
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

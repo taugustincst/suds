@@ -53,6 +53,8 @@ for (const [label, base] of surfaces) {
   // The tester's own account: a one-word, all-capitals display name, administrator.
   await page.fill('input[name=display_name]', 'QATEST'); await page.selectOption('select[name=role]', 'admin');
   await page.fill('input[name=username]', 'qatest'); await page.fill('input[name=password]', 'Navigator2026!!'); await page.fill('input[name=confirm]', 'Navigator2026!!');
+  // The on-device app asks the person to confirm where their records are kept (not the office's local mode).
+  if (await page.$('input[name=storage_ack]')) await page.check('input[name=storage_ack]');
   await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 10000 }); await settle(page);
   for (let i = 0; i < 5; i++) { const b = await page.$('.modal button.primary'); if (!b) break; await b.click(); await settle(page); }
 
@@ -130,7 +132,7 @@ for (const [label, base] of surfaces) {
   eq(await pickerHit(), 'input', `${label}: with the client list open, the picker region is still the date input (the list does not float over it)`);
   // the dialog scrolled so the field sits at the top of the screen, where the sticky banners are
   await page.evaluate(() => { const bg = document.querySelector('.modal-bg'); const el = document.querySelector('.modal input[name=due_at]'); bg.scrollTop += el.getBoundingClientRect().top - 2; });
-  eq(await pickerHit(), 'input', `${label}: scrolled up under the top banners, the picker region is still the date input (the demo banner does not intercept)`);
+  eq(await pickerHit(), 'input', `${label}: scrolled up under the top banners, the picker region is still the date input (nothing pinned above intercepts it)`);
   const due = await page.$('.modal input[name=due_at]'); const box = await due.boundingBox();
   let clickable = false;
   try { await page.click('.modal input[name=due_at]', { position: { x: box.width - 10, y: box.height / 2 }, timeout: 4000 }); clickable = true; } catch (e) { fail(`${label}: the due date's picker button is still obscured: ${e.message.split('\n')[0]}`); }
@@ -272,7 +274,7 @@ else if (buildOldSite()) {
     await page.click('.modal input[role=combobox]'); await until(async () => page.$('.modal [role=listbox]:not(.hidden)'), { timeout: 5000 });
     eq(await hit(), 'input', `${label}: the date picker region is the date input (client list open)`);
     await page.evaluate(() => { const bg = document.querySelector('.modal-bg'); const el = document.querySelector('.modal input[name=due_at]'); bg.scrollTop += el.getBoundingClientRect().top - 2; });
-    eq(await hit(), 'input', `${label}: the date picker region is the date input when scrolled up under the demo banner`);
+    eq(await hit(), 'input', `${label}: the date picker region is the date input when scrolled up to the top of the screen`);
     let clicked = true; await page.click('.modal input[name=due_at]', { position: { x: 150, y: 20 }, timeout: 4000 }).catch(e => { clicked = false; fail(`${label}: the date input's picker region cannot be clicked: ${e.message.split('\n')[0]}`); });
     ok(clicked, `${label}: a real click on the picker region succeeds`);
     await page.keyboard.press('Escape');

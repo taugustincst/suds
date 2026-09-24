@@ -1,12 +1,29 @@
 # Web-first platform and data integrity policy
 
-**Effective from SUDS 1.9.0.** Direction from the product owner: SUDS is managed and documented against the
-web version, to maintain data integrity. The native phone apps and the desktop launchers were deprecated in
-1.9.0 and **removed in 1.9.3**.
+**Effective from SUDS 1.9.0; updated for the on-device web app in 1.9.5.** Direction from the product owner:
+SUDS is managed and documented against the web version, to maintain data integrity. The native phone apps
+and the desktop launchers were deprecated in 1.9.0 and **removed in 1.9.3**. From 1.9.5 the GitHub Pages
+build is no longer a demonstration: it is **SUDS on this device**, a production way to run SUDS.
+
+## Two ways to run SUDS
+
+Both are the same web application, and both are production:
+
+| | **Office server** | **SUDS on this device** (GitHub Pages) |
+| --- | --- | --- |
+| For | A programme whose staff share records | A person (or a few people sharing one device) with no office server |
+| System of record | The office server's database | That browser on that device (`WEB_APP.md`, *Where your records live*) |
+| Accounts | **Sign up** requests an account; an administrator approves it with a role (or creates it) | **Sign up** creates an account on the device; the first one manages it |
+| Protection against loss | Scheduled server backups | Device backups the person downloads, with a reminder on Home |
+| Sync between devices | Every device sees the same server | None; records never leave the device |
+
+A record lives in exactly one of the two. There is no sync between an on-device copy and an office server,
+so the "which copy is right?" question below never arises between them. A programme that starts on the
+on-device app and later installs an office server re-enters (or imports, `IMPORTS.md`) its records there.
 
 ## The policy
 
-1. **The web application served by the office SUDS server is the only supported client and the system of
+1. **On an office server, the web application it serves is the only supported client and the system of
    record.** Every client record, note, consent, disclosure and audit entry lives in the office server's
    database. Staff use SUDS in a browser at the office address, on a computer, phone or tablet, and may add
    it to the home screen (see `/app` on any SUDS server, or *Using SUDS on a phone or tablet* below).
@@ -24,11 +41,13 @@ web version, to maintain data integrity. The native phone apps and the desktop l
    server on command. **From 1.9.3 it is off by default** on the office server: the setup wizard asks
    *Allow staff to keep an offline copy on their devices? (Recommended: No)* and stores the answer in
    `data/server.json`; `LOCAL_MODE_ENABLED` overrides it either way.
-5. **The GitHub Pages build is a demonstration only** (`docs/WEB_APP.md`). It carries a permanent
-   demo/evaluation banner, never holds real client information, and does not sync with an office server:
-   its Sync screen says so and sends nothing. (`ALLOW_STATIC_SYNC` is a no-op kept for compatibility.) It
-   is always local (it has no server whose setting could apply), and from 1.9.3 it is republished only
-   when a release is cut, never from an unreleased push to `main`.
+5. **The GitHub Pages build is SUDS on this device** (`docs/WEB_APP.md`), the production web app for people
+   without an office server. Its records live only in the browser that holds them, encrypted, and are
+   protected by the device backups its users download; the first-run Sign up states this once and asks the
+   person to confirm it. It never syncs with an office server: its **This device** page says so and sends
+   nothing. (`ALLOW_STATIC_SYNC` is a no-op kept for compatibility.) It is always local (it has no server
+   whose setting could apply), and it is republished only when a release is cut, never from an unreleased
+   push to `main`. Until 1.9.4 it was a demonstration with a permanent banner; the banner is gone.
 
 ## Retiring an existing phone-app install
 
@@ -141,7 +160,7 @@ to test and document, and — the reason for this policy — three places for th
 A phone app with its own database is only as consistent as its last sync, and "which copy is right?" is
 not a question a programme handling Part 2 records should have to ask.
 
-From 1.9.0 there is one system of record. The web application on the office server is where records live
+From 1.9.0 there is one system of record per programme. On an office server, the web application it serves is where records live
 and where every change is made; the browser's home-screen shortcut replaces the app icon; local mode
 remains for genuine field work, under the rules above, and is off by default (from 1.9.3 in the server's
 own configuration, not only in the guidance). The native apps and the launchers were deprecated in 1.9.0
@@ -160,5 +179,5 @@ and removed in 1.9.3, so that counties had releases to retire devices on before 
 | `/app` page (`public/get-app.html`) | Repurposed: browser/home-screen instructions and certificate download, no APK | Stays |
 | `GET /api/app/info` `android` field, `GET /api/app/android.apk`, `POST/DELETE /api/admin/app/android` | Removed | Removed in 1.9.0 |
 | Browser local mode (`/?local=1`, `LOCAL_MODE_ENABLED`) | Stays, governed by this policy | Not planned. **Off by default from 1.9.3**; the setup wizard asks |
-| GitHub Pages demo build (`web-app.yml`) | Stays, demo only | Not planned. Published on releases only from 1.9.3 |
+| GitHub Pages build (`web-app.yml`) | Stays. A demonstration until 1.9.4; **SUDS on this device, a production web app, from 1.9.5** | Not planned. Published on releases only from 1.9.3 |
 | Device management (Synced devices, revoke, wipe) | Stays — local-mode browsers register devices | Not planned |

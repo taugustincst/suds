@@ -18,7 +18,7 @@ const config = {
   lockout: { maxAttempts: 5, minutes: 15 },
   // One person, one device: there is no address to rate-limit, and the office server's per-address cap
   // must not turn into a lockout here.
-  loginRateLimit: 100000,
+  loginRateLimit: 100000, signupRateLimit: 100000,
   msGraph: { tenantId: '', clientId: '', clientSecret: '', user: '' },
   auditRetentionDays: 2555, maxBodyBytes: 60 * 1024 * 1024, maxRestoreBodyBytes: 60 * 1024 * 1024, maxJsonBodyBytes: 1024 * 1024, maxUnauthBodyBytes: 64 * 1024, trustProxy: false,
   publicAppInfo: false, allowStaticSync: false, backupKey: null,
