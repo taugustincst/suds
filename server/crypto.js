@@ -28,10 +28,32 @@ function decrypt(payload, key = config.encryptionKey) {
   return Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8');
 }
 
+// Letters that Unicode does not decompose into a base letter plus an accent, so NFKD alone leaves them as
+// they are: "Øster" has to find "Oster" and "Łecki" has to find "Lecki", the way a worker types them.
+const TRANSLIT = { 'ø': 'o', 'ł': 'l', 'ß': 'ss', 'æ': 'ae', 'œ': 'oe', 'đ': 'd', 'ð': 'd', 'þ': 'th', 'ı': 'i', 'ħ': 'h', 'ŀ': 'l', 'ŧ': 't', 'ĸ': 'k', 'ŋ': 'ng', 'ſ': 's', 'ƒ': 'f', 'ǥ': 'g', 'ɨ': 'i', 'ʉ': 'u' };
+const TRANSLIT_RE = new RegExp(`[${Object.keys(TRANSLIT).join('')}]`, 'g');
+// The accents and vowel points that are dropped: Latin/Greek/Cyrillic combining diacritics, Hebrew points,
+// Arabic harakat (and the tatweel used to stretch a word). Only these ranges — a Devanagari vowel sign or
+// a kana voicing mark is part of the letter, not an accent, and removing it would merge different names.
+const DIACRITICS_RE = /[\u0300-\u036f\u0591-\u05c7\u0610-\u061a\u0640\u064b-\u065f\u0670\u06d6-\u06ed\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]/g;
+/**
+ * The one normalisation every blind index and name index is computed from, so a name matches however it
+ * was typed: compatibility-decomposed (NFKD: full-width and ligature forms become plain letters), accents
+ * removed, lower-cased, the letters above transliterated, then recomposed (NFC, so Hangul and kana come
+ * back whole) and reduced to Unicode letters, marks and digits. "José" → "jose", "Øster" → "oster",
+ * "حَسَن" → "حسن", "Иван" → "иван". Before 1.9.5 anything outside a-z was thrown away, so an Arabic or
+ * Cyrillic name indexed as nothing and could not be searched for or matched as a duplicate.
+ */
+function foldText(value) {
+  if (value === null || value === undefined) return '';
+  return String(value).normalize('NFKD').replace(DIACRITICS_RE, '').toLowerCase()
+    .replace(TRANSLIT_RE, (c) => TRANSLIT[c]).normalize('NFC').replace(/[^\p{L}\p{M}\p{N}]/gu, '');
+}
+
 // Deterministic blind index for equality/prefix-free search on encrypted fields.
 function blindIndex(value, key = config.indexKey) {
   if (value === null || value === undefined) return null;
-  const norm = String(value).toLowerCase().replace(/[^a-z0-9]/g, '');
+  const norm = foldText(value);
   if (!norm) return null;
   return crypto.createHmac('sha256', key).update(norm).digest('hex');
 }
@@ -144,5 +166,5 @@ function otpauthUrl(secret, account, issuer = 'SUDS') {
  */
 function keyFingerprint() { return sha256('suds-key-check:' + config.encryptionKey.toString('hex')).slice(0, 32); }
 
-module.exports = { encrypt, decrypt, blindIndex, keyFingerprint, hashPassword, verifyPassword, hashPasswordAsync, verifyPasswordAsync, randomToken, sha256, uuid,
+module.exports = { encrypt, decrypt, blindIndex, foldText, keyFingerprint, hashPassword, verifyPassword, hashPasswordAsync, verifyPasswordAsync, randomToken, sha256, uuid,
   generateTotpSecret, totp, verifyTotp, otpauthUrl, base32Encode, base32Decode };

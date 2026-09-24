@@ -1,6 +1,6 @@
 'use strict';
 const db = require('./db');
-const { encrypt, decrypt, blindIndex, uuid } = require('./crypto');
+const { encrypt, decrypt, blindIndex, foldText, uuid } = require('./crypto');
 
 // goals and flags are clinical narrative about a named person: encrypted like every other PHI field.
 const ENC_FIELDS = ['first_name', 'last_name', 'preferred_name', 'dob', 'phone', 'alt_phone', 'email', 'address', 'medicaid_id', 'emergency_contact', 'goals', 'flags'];
@@ -63,15 +63,47 @@ function soundex(name) {
   return (out + '000').slice(0, 4);
 }
 
-const normaliseName = (n) => String(n || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z]/g, '');
-/** HMAC of the first three letters of a surname — lets "Ngu" find "Nguyen" without storing either. */
-function namePrefixIndex(lastName) { const n = normaliseName(lastName); return n.length >= 2 ? blindIndex('pfx:' + n.slice(0, 3)) : null; }
-/** HMAC of a surname's Soundex code — lets a misspelling still find the person. */
-function namePhoneticIndex(lastName) { const c = soundex(normaliseName(lastName)); return c ? blindIndex('snd:' + c) : null; }
+// The same folding blind indexes use (server/crypto.js foldText), so every name index agrees with the exact
+// ones: accents gone, Ø/Ł/ß transliterated, and any script kept — an Arabic or Cyrillic name is indexed
+// as itself instead of as nothing.
+const normaliseName = (n) => foldText(n);
+const isLatin = (n) => /^[a-z0-9]*$/.test(n);
+/** HMAC of the first three letters of a surname — lets "Ngu" find "Nguyen" without storing either. Letters,
+ *  not UTF-16 code units, so a name outside the Basic Multilingual Plane is not cut through a character. */
+function namePrefixIndex(lastName) { const n = [...normaliseName(lastName)]; return n.length >= 2 ? blindIndex('pfx:' + n.slice(0, 3).join('')) : null; }
+/** HMAC of a surname's Soundex code — lets a misspelling still find the person. Soundex only means anything
+ *  for the Latin alphabet; a name in any other script gets an exact, normalised index here instead (so the
+ *  column is never empty for it) rather than a code computed from nothing. */
+function namePhoneticIndex(lastName) {
+  const n = normaliseName(lastName);
+  if (!n) return null;
+  if (!isLatin(n)) return blindIndex('nrm:' + n);
+  const c = soundex(n); return c ? blindIndex('snd:' + c) : null;
+}
 
 /** Blind index of a preferred name / alias, normalised the same way first_name_idx is; null when blank.
  *  Also the one place a sync push should recompute clients.preferred_name_idx from (see sync-tables importRow). */
 function preferredNameIndex(name) { const n = String(name || '').trim().toLowerCase(); return n ? blindIndex(n) : null; }
+
+/**
+ * Every name/identity blind index of a client, from the decrypted values. The single derivation that key
+ * rotation (scripts/rotate-index-key.js) and the index rebuild in migration 26 share with each other — the
+ * write paths above compute the same values field by field.
+ */
+function clientIndexes({ first_name, last_name, preferred_name, dob, phone } = {}) {
+  const first = first_name || '', last = last_name || '';
+  return {
+    last_name_idx: blindIndex(last),
+    full_name_idx: blindIndex(last + first),
+    name_prefix_idx: namePrefixIndex(last),
+    name_phonetic_idx: namePhoneticIndex(last),
+    first_name_idx: blindIndex(String(first).trim().toLowerCase()),
+    first_name_prefix_idx: namePrefixIndex(first),
+    preferred_name_idx: preferredNameIndex(preferred_name || ''),
+    dob_idx: blindIndex(dob || ''),
+    phone_idx: blindIndex(String(phone || '').replace(/\D/g, '')),
+  };
+}
 
 /** The numeric part of a client code, or 0 when it has none. `C26-0009-D2` (a code the office renamed after a
  *  device collision) is 9, not NaN. */
@@ -106,4 +138,4 @@ function summary(row, opts) {
   return o;
 }
 
-module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, codeNumber, summary, daysToEngagement, uuid, soundex, namePrefixIndex, namePhoneticIndex, preferredNameIndex, normaliseName };
+module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, codeNumber, summary, daysToEngagement, uuid, soundex, namePrefixIndex, namePhoneticIndex, preferredNameIndex, normaliseName, clientIndexes };
