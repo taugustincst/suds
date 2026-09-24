@@ -10,8 +10,13 @@ export function openInterventionForm(values, { clientId, clientDisplay, onDone, 
   // default, so the parts of the template we do NOT want carried over — when it happened, how long it
   // took, what was written up — have to be scrubbed from the seed itself, not overridden per-field below.
   const seed = values || (template ? { ...template, occurred_at: new Date().toISOString(), duration_minutes: 30, summary: '', follow_up_due: '', user_id: undefined } : {});
+  // Outreach and community naloxone distribution can be recorded with no client (a kit handed to someone who
+  // gives no name); every other service needs one. The server enforces the same list.
+  const clientless = (type) => (C.CLIENTLESS_INTERVENTION_TYPES || ['outreach', 'naloxone_distribution']).includes(type);
+  const clientField = { name: 'client_id', label: 'Client', type: 'client', required: !clientless(seed.type), value: clientId || values?.client_id, display: clientDisplay,
+    help: 'Optional for outreach and community naloxone distribution; required for everything else.' };
   const f = form([
-    { name: 'client_id', label: 'Client', type: 'client', required: true, value: clientId || values?.client_id, display: clientDisplay },
+    clientField,
     { name: 'type', label: 'What did you do?', type: 'select', options: C.INTERVENTION_TYPES, required: true },
     { name: 'occurred_at', label: 'Date & time', type: 'datetime', required: true, value: new Date().toISOString() },
     { name: 'duration_minutes', label: 'Duration (minutes)', type: 'number', min: 0, max: 1440, step: 1, value: 30 },
@@ -32,6 +37,20 @@ export function openInterventionForm(values, { clientId, clientDisplay, onDone, 
     if (isNew) await post('/api/interventions', d); else await put(`/api/interventions/${values.id}`, d);
     toast(isNew ? 'Visit logged' : 'Saved', 'ok'); m.close(); onDone && onDone();
   } });
+  // Whether Client is required follows the type chosen: the field's own flag is what form().read() checks,
+  // and the label's asterisk and the control's required/aria-required say the same thing on screen.
+  const syncClientRequired = () => {
+    const req = !clientless(f.inputs.type.value);
+    clientField.required = req;
+    const wrap = f.querySelector('[data-field="client_id"]');
+    const label = wrap && wrap.querySelector(':scope > label');
+    if (label) label.textContent = req ? 'Client *' : 'Client (optional)';
+    const text = wrap && wrap.querySelector('input[type="text"]');
+    if (text) { text.required = req; if (req) text.setAttribute('aria-required', 'true'); else text.removeAttribute('aria-required'); }
+    if (!req && wrap) { wrap.classList.remove('error'); const err = wrap.querySelector('.err'); if (err) err.textContent = ''; }
+  };
+  f.inputs.type.addEventListener('change', syncClientRequired);
+  syncClientRequired();
   if (can('budget:read')) {
     const fundSel = f.inputs.funding_source_id, lineSel = f.inputs.budget_line_id;
     const fillLines = () => { const fund = state.funds.find(x => x.id === fundSel.value); lineSel.replaceChildren(h('option', { value: '' }, '— none —'), ...flattenLines(fund ? fund.lines : []).map(l => h('option', { value: l.id, selected: l.id === seed.budget_line_id }, `${'— '.repeat(l._depth)}${l.label || fmt.label(l.category)} (${fmt.money(l.allocated_amount - l.subtree_spent)} left)`))); };

@@ -19,6 +19,26 @@ function localDate(when = new Date(), tz = config.orgTimezone) {
   catch { return d.toISOString().slice(0, 10); }
 }
 
+/**
+ * The instant (ISO, UTC) at which calendar day `date` (YYYY-MM-DD) begins in the organisation's time zone.
+ * A report "for June 30" runs from local midnight to local midnight: with the day's bounds taken in UTC
+ * instead, a 5:30pm visit on June 30th in Los Angeles (00:30 UTC on July 1st) fell out of the fiscal year.
+ * DST-safe: the offset is measured at the answer, not at the guess.
+ */
+function localMidnight(date, tz = config.orgTimezone) {
+  const guess = Date.parse(`${date}T00:00:00Z`);
+  if (!Number.isFinite(guess)) return null;
+  const offset = (ms) => {
+    try {
+      const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        .formatToParts(new Date(ms)).map(x => [x.type, x.value]));
+      return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - (ms - (ms % 1000));
+    } catch { return 0; }
+  };
+  const first = guess - offset(guess);
+  return new Date(guess - offset(first)).toISOString();
+}
+
 const fundShape = {
   name: { type: 'string', required: true, maxLen: 200 }, source_type: { type: 'string', enum: C.FUNDING_TYPES }, grant_number: { type: 'string', maxLen: 100 },
   fiscal_year_start: { type: 'date', required: true }, fiscal_year_end: { type: 'date', required: true }, total_amount: { type: 'number', required: true, min: 0 },
@@ -292,5 +312,6 @@ module.exports = (r) => {
 module.exports.wouldCycle = wouldCycle;
 module.exports.assertInPeriod = assertInPeriod;
 module.exports.localDate = localDate;
+module.exports.localMidnight = localMidnight;
 module.exports.cents = cents;
 module.exports.lineAvailable = lineAvailable;

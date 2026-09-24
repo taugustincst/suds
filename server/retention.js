@@ -1,9 +1,10 @@
 'use strict';
-// Record retention. A discharged client's record is kept for the retention period the county sets
-// (client_retention_years, default seven — HIPAA's documentation floor, and longer than most state SUD
-// rules) and then hard-deleted, every table at once, so a record that should be gone is actually gone
-// rather than soft-deleted and still readable by anyone with the database. A legal hold, or an episode
-// that is still open, exempts the record until someone lifts it.
+// Record retention. A discharged (or long-inactive) client's record is kept for the retention period the
+// county sets (client_retention_years, default seven — HIPAA's documentation floor, and longer than most
+// state SUD rules), counted from the last activity on it, and then hard-deleted, every table at once, so a
+// record that should be gone is actually gone rather than soft-deleted and still readable by anyone with
+// the database. A legal hold, or an episode that is still open on a closed record, exempts it until
+// someone lifts it.
 const db = require('./db');
 const config = require('./config');
 const audit = require('./audit');
@@ -19,23 +20,65 @@ function retentionYears() {
   return Number.isFinite(v) && v > 0 ? v : config.clientRetentionYears;
 }
 
-/** Clients whose record has passed the retention period and carries no hold. */
+// Every dated thing that can happen on a client's record, as `SELECT <date>` rows for client ?c. The
+// retention clock runs from the latest of them — not from the discharge date alone: a visit logged in 2024
+// against a client discharged in 2018 (outreach to a former client is real work) is the record's last
+// activity, and purging it in 2025 would destroy a live record. When a new client-linked table is added,
+// it belongs here too (test/load-review.test.js checks every client_id table is either listed here or in
+// NOT_ACTIVITY).
+const ACTIVITY = {
+  clients: ['intake_date', 'discharge_date'],
+  episodes: ['opened_at', 'closed_at'],
+  interventions: ['occurred_at'],
+  calls: ['started_at'],
+  notes: ['occurred_at', 'signed_at', 'cosigned_at'],
+  note_addenda: ['created_at'],
+  referrals: ['referred_at', 'appointment_at', 'admitted_at', 'closed_at', 'outcome_recorded_at'],
+  tasks: ['due_at', 'completed_at'],
+  consents: ['signed_at', 'revoked_at'],
+  disclosures: ['disclosed_at'],
+  client_forms: ['completed_at'],
+  client_form_files: ['created_at'],
+  overdose_events: ['occurred_at'],
+  patient_requests: ['received_at', 'closed_at'],
+  time_entries: ['work_date'],
+  expenditures: ['spent_at'],
+};
+// Client-linked tables that are not activity on the record: who was assigned, and emergency reads of it.
+const NOT_ACTIVITY = ['assignments', 'breakglass_events'];
+
+function lastActivitySql() {
+  const parts = [];
+  for (const [t, cols] of Object.entries(ACTIVITY)) {
+    for (const col of cols) {
+      if (t === 'clients') parts.push(`SELECT substr(c.${col},1,10) d`);
+      // Neither table has an index on a client column of its own; both are reached through their parent's.
+      else if (t === 'note_addenda') parts.push(`SELECT MAX(substr(a.${col},1,10)) FROM note_addenda a JOIN notes n ON n.id=a.note_id WHERE n.client_id=c.id`);
+      else if (t === 'client_form_files') parts.push(`SELECT MAX(substr(x.${col},1,10)) FROM client_form_files x JOIN client_forms f ON f.id=x.client_form_id WHERE f.client_id=c.id`);
+      else parts.push(`SELECT MAX(substr(${col},1,10)) FROM ${t} WHERE client_id=c.id`);
+    }
+  }
+  return `(SELECT MAX(d) FROM (${parts.join(' UNION ALL ')}))`;
+}
+
+/**
+ * Clients whose record has passed the retention period and carries no hold. The clock starts at the last
+ * activity of any kind on the record (ACTIVITY above). Closed and deceased records are due once that is
+ * older than the period and every episode is closed. A record left "inactive" — a person who drifted
+ * away and was never formally discharged — is due on the same clock: inactive is not a discharge, but
+ * seven years with nothing at all recorded is the same record a discharge would have left, and an
+ * episode nobody ever closed does not keep it forever. Active and waitlisted records are never due. A
+ * record merged into another is purged with that record (same person), never on its own clock.
+ */
 function expiredClients(years = retentionYears(), now = new Date()) {
   const cutoff = new Date(now.getTime() - years * 365.25 * 86400000).toISOString().slice(0, 10);
-  // The clock starts at the end of the last service: the discharge date on the record, or the close of
-  // the last episode, whichever is later. A client with no such date has not been discharged. "inactive"
-  // is not a discharge — it is a person who has drifted, and may drift back — so only closed and deceased
-  // records are ever due. A record merged into another is purged with that record (same person), never
-  // on its own clock.
   return db.all(`SELECT * FROM (
-      SELECT c.id, c.client_code, c.legal_hold,
-        MAX(COALESCE(c.discharge_date, ''), COALESCE((SELECT MAX(e.closed_at) FROM episodes e WHERE e.client_id=c.id), '')) AS ended
+      SELECT c.id, c.client_code, c.legal_hold, c.status, ${lastActivitySql()} AS ended
       FROM clients c
       WHERE c.legal_hold=0
         AND c.merged_into IS NULL
-        AND c.status IN ('closed','deceased')
-        AND NOT EXISTS (SELECT 1 FROM episodes e WHERE e.client_id=c.id AND e.status='open')
-    ) WHERE ended <> '' AND substr(ended, 1, 10) < ?`, cutoff);
+        AND (c.status='inactive' OR (c.status IN ('closed','deceased') AND NOT EXISTS (SELECT 1 FROM episodes e WHERE e.client_id=c.id AND e.status='open')))
+    ) WHERE ended IS NOT NULL AND ended <> '' AND ended < ?`, cutoff);
 }
 
 /**
@@ -116,4 +159,4 @@ function runIfDue() {
   return purgeExpiredClients();
 }
 
-module.exports = { retentionYears, expiredClients, purgeBlockers, purgeClient, purgeExpiredClients, runIfDue, DELETE_TABLES, UNLINK_TABLES };
+module.exports = { ACTIVITY, NOT_ACTIVITY, retentionYears, expiredClients, purgeBlockers, purgeClient, purgeExpiredClients, runIfDue, DELETE_TABLES, UNLINK_TABLES };

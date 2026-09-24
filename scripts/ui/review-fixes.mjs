@@ -209,6 +209,28 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   await page.click('.modal button[type=submit]');
   const msg = await until(async () => { const el = await page.$('.modal .banner, .modal .err:not(:empty)'); return el ? el.textContent() : null; });
   ok(msg && !/client_id|_id\b/.test(msg), 'a missing required field is named in plain words, not as a column name', msg);
+  // Community naloxone distribution needs no client: the label says so, and it saves (with its time entry)
+  // without one. Switching back to a service for a person makes Client required again.
+  const clientLabel = () => page.textContent('.modal [data-field="client_id"] > label');
+  ok(/\*/.test(await clientLabel()), 'Client is required before a type is chosen', await clientLabel());
+  await page.selectOption('.modal select[name=type]', 'case_management');
+  ok(/\*/.test(await clientLabel()), 'and for case management', await clientLabel());
+  await page.selectOption('.modal select[name=type]', 'naloxone_distribution');
+  ok(/optional/i.test(await clientLabel()), 'but optional for naloxone distribution', await clientLabel());
+  const kitsBefore = (await navS.api('GET', '/api/interventions?type=naloxone_distribution&limit=200')).data.rows.filter(r => !r.client_id).length;
+  await page.fill('.modal input[name=naloxone_kits]', '3');
+  await page.click('.modal button[type=submit]');
+  ok(await until(async () => !(await page.$('.modal-bg'))), 'a naloxone handout with no client saves');
+  const kitsAfter = (await navS.api('GET', '/api/interventions?type=naloxone_distribution&limit=200')).data.rows.filter(r => !r.client_id).length;
+  eq(kitsAfter, kitsBefore + 1, 'and is recorded with no client');
+  await page.click('text=+ Log');
+  await page.click('.modal button:has-text("Visit or service")');
+  await page.waitForSelector('.modal select[name=type]');
+  await page.selectOption('.modal select[name=type]', 'outreach');
+  await page.selectOption('.modal select[name=type]', 'assessment');
+  await page.click('.modal button[type=submit]');
+  const msg2 = await until(async () => { const el = await page.$('.modal .banner:not(.hidden)'); const t = el ? await el.textContent() : ''; return /Client/.test(t) ? t : null; });
+  ok(msg2, 'an assessment with no client is refused, naming Client', msg2);
   await page.keyboard.press('Escape'); await until(async () => !(await page.$('.modal-bg')));
   await navS.close();
 

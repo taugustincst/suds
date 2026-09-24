@@ -6,6 +6,8 @@ const H = require('./helpers');
 let admin, nav, nav2, clin, fin, clientId, clientId2, noteId, referralConsentId;
 before(async () => {
   await H.start();
+  // These tests sync like a device does, which needs local mode on (it is off by default on a server).
+  require('../server/config').localModeEnabled = true;
   H.makeUser('nav1', 'navigator'); H.makeUser('nav2', 'navigator'); H.makeUser('clin1', 'clinician'); H.makeUser('fin1', 'finance'); H.makeUser('sup1', 'supervisor');
   admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
   nav = H.client(); await nav.login('nav1', 'StaffPassw0rd!x');

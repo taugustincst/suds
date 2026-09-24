@@ -13,6 +13,8 @@ async function push(client, body, headers) { return client.post('/api/sync/push'
 
 before(async () => {
   await H.start();
+  // These tests sync like a device does, which needs local mode on (it is off by default on a server).
+  require('../server/config').localModeEnabled = true;
   H.makeUser('snav', 'navigator'); H.makeUser('snav2', 'navigator'); H.makeUser('ssup', 'supervisor'); H.makeUser('sclin', 'clinician');
   admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
   nav = H.client(); await nav.login('snav', 'StaffPassw0rd!x');
@@ -695,13 +697,15 @@ test('a device may name another worker only when its user could over REST', asyn
   assert.equal(H.db.one(`SELECT user_id FROM interventions WHERE id=?`, own.id).user_id, navId);
 });
 
-test('retention: inactive is not a discharge, open work blocks a purge, and merged records go together', async () => {
+test('retention: inactive is due only from its last activity, open work blocks a purge, and merged records go together', async () => {
   const R = require('../server/retention');
+  // Inactive is not a discharge, and is not due by its dates alone: the retention clock runs from the last
+  // activity on the record (test/load-review.test.js covers the rest of that rule).
   const inactive = (await nav.post('/api/clients', { first_name: 'Drifted', last_name: 'Away', status: 'inactive', discharge_date: '2010-01-01' })).data.id;
   H.db.run(`UPDATE episodes SET status='closed', closed_at='2010-01-01' WHERE client_id=?`, inactive);
-  assert.ok(!R.expiredClients().some(x => x.id === inactive), 'an inactive record is never due');
+  assert.ok(!R.expiredClients().some(x => x.id === inactive), 'an inactive record taken in this year is not due');
 
-  const blocked = (await nav.post('/api/clients', { first_name: 'Still', last_name: 'Waiting', status: 'closed', discharge_date: '2010-01-01' })).data.id;
+  const blocked = (await nav.post('/api/clients', { first_name: 'Still', last_name: 'Waiting', status: 'closed', intake_date: '2009-01-01', discharge_date: '2010-01-01' })).data.id;
   const res = (await admin.post('/api/resources', { name: 'Retention test agency', category: 'other' })).data;
   H.db.run(`INSERT INTO referrals(id,client_id,resource_id,user_id,referred_at,status) VALUES(?,?,?,?,?,?)`, randomUUID(), blocked, res.id, navId, '2010-01-01T00:00:00.000Z', 'pending');
   assert.ok(R.expiredClients().some(x => x.id === blocked), 'due by date');
@@ -711,8 +715,8 @@ test('retention: inactive is not a discharge, open work blocks a purge, and merg
   const sk = H.db.one(`SELECT details FROM audit_log WHERE action='client.purge.skipped' AND entity_id=?`, blocked);
   assert.ok(sk && JSON.parse(sk.details).open_referrals === 1, 'with the reason on record');
 
-  const keeper = (await nav.post('/api/clients', { first_name: 'Same', last_name: 'Person', status: 'closed', discharge_date: '2010-01-01' })).data.id;
-  const dup = (await nav.post('/api/clients', { first_name: 'Same', last_name: 'Person', confirm_duplicate: true })).data.id;
+  const keeper = (await nav.post('/api/clients', { first_name: 'Same', last_name: 'Person', status: 'closed', intake_date: '2009-01-01', discharge_date: '2010-01-01' })).data.id;
+  const dup = (await nav.post('/api/clients', { first_name: 'Same', last_name: 'Person', intake_date: '2009-06-01', confirm_duplicate: true })).data.id;
   assert.equal((await admin.post(`/api/clients/${keeper}/merge`, { source_id: dup })).status, 200);
   H.db.run(`UPDATE episodes SET status='closed', closed_at='2010-01-01' WHERE client_id=?`, keeper);
   H.db.run(`UPDATE tasks SET status='cancelled' WHERE client_id=?`, keeper);

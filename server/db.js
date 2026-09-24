@@ -339,6 +339,26 @@ const migrations = [
     addColumn(d, 'users', 'access_note', 'TEXT');
     addColumn(d, 'users', 'requested_at', 'TEXT');
   },
+  // 26: name search and duplicate detection work in every script. Blind indexes used to keep only a-z and
+  //     0-9, so an Arabic or Cyrillic name indexed as nothing (unsearchable, never flagged as a duplicate)
+  //     and "Øster"/"Łecki" lost a letter; they now fold accents, transliterate Ø/Ł/ß/Æ… and keep every
+  //     Unicode letter (server/crypto.js foldText). Every client's indexes are re-derived from the decrypted
+  //     values with the same function key rotation uses (clients-model clientIndexes). A migration can
+  //     decrypt: the keys are loaded (config) before the database is opened, here and in the local kernel.
+  //     A row that cannot be decrypted keeps the indexes it had. No schema change.
+  (d) => {
+    const { decrypt } = require('./crypto');
+    const M = require('./clients-model');
+    const cols = ['last_name_idx', 'full_name_idx', 'name_prefix_idx', 'name_phonetic_idx', 'first_name_idx', 'first_name_prefix_idx', 'preferred_name_idx', 'dob_idx', 'phone_idx'];
+    const upd = d.prepare(`UPDATE clients SET ${cols.map(c => `${c}=?`).join(', ')} WHERE id=?`);
+    for (const c of d.prepare(`SELECT id, first_name_enc, last_name_enc, preferred_name_enc, dob_enc, phone_enc FROM clients`).all()) {
+      let plain;
+      try { plain = { first_name: decrypt(c.first_name_enc), last_name: decrypt(c.last_name_enc), preferred_name: decrypt(c.preferred_name_enc), dob: decrypt(c.dob_enc), phone: decrypt(c.phone_enc) }; }
+      catch { continue; }
+      const idx = M.clientIndexes(plain);
+      upd.run(...cols.map(k => idx[k]), c.id);
+    }
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

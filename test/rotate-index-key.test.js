@@ -81,7 +81,7 @@ test('rotation succeeds once the audit head has been checkpointed, and re-seals 
   assert.equal(v.truncated, false);
   assert.notEqual(H.db.getSetting('audit_head'), headBefore, 'the head was re-sealed under the new key');
   assert.equal(audit.verifyChain({ key: oldKey }).ok, false);
-  const sv = audit.scheduledVerify();
+  const sv = await audit.scheduledVerify();
   assert.equal(sv.ok, true);
   assert.equal(H.db.one(`SELECT COUNT(*) n FROM audit_log WHERE action='audit.verify.failed'`).n, 0, 'the scheduled verification after a rotation is clean');
   assert.equal((await admin.get('/api/admin/audit/verify')).data.ok, true);

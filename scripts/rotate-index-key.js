@@ -14,7 +14,7 @@ const path = require('node:path');
 const config = require('../server/config');
 const db = require('../server/db');
 const audit = require('../server/audit');
-const { decrypt, blindIndex } = require('../server/crypto');
+const { decrypt } = require('../server/crypto');
 
 /** Every `*_idx` column in the database, with the table it belongs to. */
 function indexedColumns(d) {
@@ -33,20 +33,9 @@ function indexedColumns(d) {
 const DERIVATIONS = {
   clients: {
     source: ['first_name_enc', 'last_name_enc', 'dob_enc', 'phone_enc', 'preferred_name_enc'],
+    // The same derivation migration 26 uses to rebuild these after a normalisation change.
     derive(p) {
-      const M = require('../server/clients-model');
-      const first = p.first_name_enc || '', last = p.last_name_enc || '';
-      return {
-        last_name_idx: blindIndex(last),
-        full_name_idx: blindIndex(last + first),
-        name_prefix_idx: M.namePrefixIndex(last),
-        name_phonetic_idx: M.namePhoneticIndex(last),
-        first_name_idx: blindIndex(String(first).trim().toLowerCase()),
-        first_name_prefix_idx: M.namePrefixIndex(first),
-        preferred_name_idx: M.preferredNameIndex(p.preferred_name_enc || ''),
-        dob_idx: blindIndex(p.dob_enc || ''),
-        phone_idx: blindIndex(String(p.phone_enc || '').replace(/\D/g, '')),
-      };
+      return require('../server/clients-model').clientIndexes({ first_name: p.first_name_enc, last_name: p.last_name_enc, preferred_name: p.preferred_name_enc, dob: p.dob_enc, phone: p.phone_enc });
     },
   },
 };

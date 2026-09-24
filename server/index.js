@@ -39,6 +39,7 @@ process.on('uncaughtException', (err) => {
 });
 
 // Housekeeping: expired sessions, audit retention, tombstone retention.
+let verifying = false;
 function housekeeping() {
   try {
     db.run(`DELETE FROM sessions WHERE expires_at < ? OR (revoked_at IS NOT NULL AND revoked_at < ?)`, db.now(), new Date(Date.now() - 86400000).toISOString());
@@ -49,8 +50,13 @@ function housekeeping() {
     // table at once, unless the record is on legal hold (server/retention.js). Once a day.
     require('./retention').runIfDue();
     // Verify the audit chain once a day. Tamper-evidence that nobody checks is not evidence of anything.
+    // Incremental from the last verified entry (the whole chain weekly), in batches that yield to other
+    // requests — it runs on after this pass returns, and never twice at once.
     const lastVerify = db.getSetting('audit_verified_at', null);
-    if (!lastVerify || Date.now() - Date.parse(lastVerify) > 86400000) require('./audit').scheduledVerify();
+    if (!verifying && (!lastVerify || Date.now() - Date.parse(lastVerify) > 86400000)) {
+      verifying = true;
+      require('./audit').scheduledVerify().catch((e) => console.error('[suds] audit verification', e && e.message || e)).finally(() => { verifying = false; });
+    }
     // Scheduled backup, if an administrator has turned it on under Settings → System & backups. A failure
     // here (disk full, unreachable offsite share) must not stop the rest of housekeeping.
     require('./scheduled-backup').runIfDue();

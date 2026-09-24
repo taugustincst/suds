@@ -15,6 +15,8 @@ async function push(client, body) { return client.post('/api/sync/push', { devic
 
 before(async () => {
   await H.start();
+  // These tests sync like a device does, which needs local mode on (it is off by default on a server).
+  require('../server/config').localModeEnabled = true;
   H.makeUser('cnav', 'navigator'); H.makeUser('csup', 'supervisor'); H.makeUser('cfin', 'finance'); H.makeUser('cro', 'readonly'); H.makeUser('cclin', 'clinician');
   admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
   sup = H.client(); await sup.login('csup', 'StaffPassw0rd!x');
@@ -364,7 +366,7 @@ test('deleting the newest audit rows after a checkpoint is detected as truncatio
   assert.equal(v.ok, false); assert.equal(v.truncated, true); assert.match(v.reason, /gone/);
   assert.equal((await admin.get('/api/admin/audit/verify')).data.truncated, true, 'and the admin verify says so');
   // Re-checkpointing (what the scheduled verify does on success) re-seals at the new head.
-  const again = audit.scheduledVerify();
+  const again = await audit.scheduledVerify();
   assert.equal(again.ok, false, 'a failed verify does not move the checkpoint');
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='audit.verify.failed'`));
   audit.checkpoint();
@@ -380,7 +382,7 @@ test('deleting the newest audit rows after a checkpoint is detected as truncatio
 
 // ---- 10. legal hold, patient requests, retention ----
 test('legal hold: administrators only; blocks deletion and the retention purge', async () => {
-  const c = (await nav.post('/api/clients', { first_name: 'Held', last_name: 'Record', status: 'closed', discharge_date: '2010-01-01' })).data.id;
+  const c = (await nav.post('/api/clients', { first_name: 'Held', last_name: 'Record', status: 'closed', intake_date: '2009-01-01', discharge_date: '2010-01-01' })).data.id;
   assert.equal((await sup.post(`/api/clients/${c}/legal-hold`, { hold: true, reason: 'Litigation 26-CV-1' })).status, 403, 'supervisors cannot place a hold');
   assert.equal((await admin.post(`/api/clients/${c}/legal-hold`, { hold: true })).status, 400, 'a hold needs a reason');
   assert.equal((await admin.post(`/api/clients/${c}/legal-hold`, { hold: true, reason: 'Litigation 26-CV-1' })).status, 200);
