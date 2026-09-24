@@ -1048,7 +1048,8 @@ function mobileBar(r, side) {
   if (mobileBar.onChange) phone.removeEventListener('change', mobileBar.onChange);
   mobileBar.onChange = syncInert; phone.addEventListener('change', syncInert);
   syncInert();
-  return h('div', { class: 'mobilebar' }, menuBtn, h('b', {}, item.label), h('a', { href: '#/clients', class: 'btn ghost', 'aria-label': 'Clients' }, '👤'));
+  // The build stamp sits under the page title on a phone: the sidebar foot is below the fold with the menu open.
+  return h('div', { class: 'mobilebar' }, menuBtn, h('div', { class: 'mobilebar-title' }, h('b', {}, item.label), h('span', { class: 'mobilebar-stamp', 'data-build-stamp': '1' }, `SUDS ${SUDS_VERSION}`)), h('a', { href: '#/clients', class: 'btn ghost', 'aria-label': 'Clients' }, '👤'));
 }
 function toggleTheme() { const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); const next = cur === 'dark' ? 'light' : 'dark'; prefs.set('theme', next); applyTheme(); }
 try { const cached = JSON.parse(localStorage.getItem('suds.prefs') || '{}'); if (cached.theme) document.documentElement.dataset.theme = cached.theme; } catch {}
@@ -1107,7 +1108,7 @@ window.__suds = { downloadCsv: (...a) => downloadCsv(...a) };
 // Stamped by scripts/build-local.js from package.json. The two kernel assets are requested with it as a
 // version query so the browser may keep them for good (server/http.js serves `?v=` as immutable) while a
 // new release, with a new version, is a new URL. public/sw.js caches the same URLs for offline starts.
-const SUDS_VERSION = '1.9.2';
+const SUDS_VERSION = '1.9.3';
 
 // ---------- build stamp ----------
 // Which build is this? A tester reporting "still broken" after a release needs to be able to say, and so
@@ -1333,7 +1334,9 @@ export async function boot(force = false) {
       // typed — but offered, and reloaded only at a moment nothing can be lost (newVersionReady). Only when
       // a worker was in control before: the very first registration is not an update.
       const hadController = !!navigator.serviceWorker.controller;
-      navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) newVersionReady(`worker:${Date.now()}`); });
+      // A new worker is only news if it brings a different release than the one this page is running: the
+      // first open after a deploy already runs the new files, and offering to reload into them again was noise.
+      navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) checkVersion(); });
       navigator.serviceWorker.register('sw.js').then(r => r && r.update && r.update()).catch(() => {});
     } catch {}
   }

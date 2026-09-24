@@ -2,7 +2,12 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.9.3 — 2026-09-24
+
+Fixes from the critical review of 1.9.2, re-checked by an independent verifier with its own multi-tab, frozen-tab, old-tab-upgrade and phone scripts before release (no data loss in any scenario). **Upgrade note:** local mode is now off by default on the office server; a county that relies on it sets `LOCAL_MODE_ENABLED=true` (or answers Yes in the setup wizard). Schema 24 (`tasks.description` encrypted).
+
+- The update banner appears only when the release running in the page differs from the published one (no banner right after an update); the build stamp is shown under the page title on phones; Home's overdue badge and due date wrap at 200% text instead of running off the screen.
+
 
 - **The demo build loads sample data beside clients you already entered.** On the static (GitHub Pages)
   build, "Load sample data" no longer refuses once a client exists; the sample rows are tagged and "Remove

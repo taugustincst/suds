@@ -116,6 +116,18 @@ await page.tap('.modal button[aria-label=Close]'); await settle(page);
 await page.goBack(); await settle(page);
 ok(!/#\/clients/.test(page.url()), 'after closing a dialog with ✕, Back goes to the previous page (no dead press)', page.url().split('#')[1]);
 
+// ---------------- Independent verification round: build stamp on a phone, overdue rows at 200% text ----------------
+{
+  // An overdue reminder for today's list, so the row with the badge and the date exists.
+  const y = new Date(Date.now() - 86400000); const ymd = y.toISOString().slice(0, 10);
+  await kernel(page, 'POST', '/api/tasks', { title: 'Overdue check for the phone layout', due_at: ymd });
+  await go(page, 'dashboard');
+  const stamp = await page.evaluate(() => { const e = document.querySelector('.mobilebar [data-build-stamp]'); if (!e) return null; const r = e.getBoundingClientRect(); return { text: e.textContent, onScreen: r.width > 0 && r.top >= 0 && r.bottom <= innerHeight && r.left >= 0 && r.right <= innerWidth }; });
+  ok(stamp && /^SUDS \d+\.\d+\.\d+$/.test(stamp.text) && stamp.onScreen, 'signed in on a phone, the build stamp is on screen in the top bar without opening anything', stamp);
+  await bigText(page); await settle(page);
+  const cut = await page.evaluate(() => [...document.querySelectorAll('.today-item .today-due')].map(e => e.getBoundingClientRect()).filter(r => r.right > innerWidth + 0.5).length);
+  eq(cut, 0, "at 200% text, Home's overdue badge and due date wrap inside the card instead of running off the screen");
+}
 // ---------------- M6: 200% text on the main screens ----------------
 const cid = clients.data.clients[0].id;
 for (const hash of ['dashboard', 'clients', `client/${cid}`, 'tasks', 'referrals', 'sync', 'resources']) {
@@ -177,7 +189,7 @@ ok(fab <= 64, 'M5: the + Log button stays compact at 200% text', fab);
 // ---------------- provider page ----------------
 const res = (await kernel(page, 'GET', '/api/resources?limit=5')).data.rows[0];
 await go(page, `resource/${res.id}`);
-eq((await page.textContent('.mobilebar > b')).trim(), res.name, 'the phone top bar names the provider, not "SUDS"');
+eq((await page.textContent('.mobilebar-title > b')).trim(), res.name, 'the phone top bar names the provider, not "SUDS"');
 await kernel(page, 'PUT', `/api/resources/${res.id}`, { summary: '' });
 await go(page, `resource/${res.id}`);
 ok(/Tap or click Edit/.test(await page.textContent('.main')), 'the empty summary says "Tap or click Edit"');

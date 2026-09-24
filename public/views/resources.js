@@ -190,7 +190,7 @@ route('resource', async (r) => {
   const outcomes = x.referral_stats.length ? h('div', {}, x.referral_stats.map(s => [badge(`${fmt.label(s.status)}: ${s.n}`), ' '])) : h('p', { class: 'muted small' }, 'No referrals yet.');
   const recent = (x.recent_referrals || []).length ? table([{ label: 'Client', render: y => h('a', { href: `#/client/${y.client_id}/referrals` }, y.client_code) }, { label: 'Referred', render: y => fmt.date(y.referred_at) }, { label: 'Status', render: y => badge(fmt.label(y.status)) }], x.recent_referrals) : null;
   // The phone's top bar names the page; a provider's page is not in the menu, so it said "SUDS".
-  const barTitle = document.querySelector('.mobilebar > b'); if (barTitle) { barTitle.textContent = x.name; barTitle.title = x.name; }
+  const barTitle = document.querySelector('.mobilebar-title > b'); if (barTitle) { barTitle.textContent = x.name; barTitle.title = x.name; }
   return h('div', {},
     pageHead(x.name, h('a', { class: 'btn', href: '#/resources' }, '← Directory'),
       can('referrals:write') ? h('button', { class: 'btn', onClick: async () => (await import('./referrals.js')).openReferralForm(null, { resourceId: x.id, onDone: refresh }) }, '+ Refer a client') : null,
