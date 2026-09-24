@@ -19,7 +19,7 @@ Use your individual username. After 5 wrong passwords the account locks for 15 m
 Shows alerts (overdue tasks, unsigned notes, imported notes waiting for review, clients with no intervention in 30 days, consents expiring, open patient-rights requests and how many are past their 30-day deadline), your caseload sorted by risk and last contact, and 90-day activity charts. The same open-requests count appears on the Supervision page.
 
 ## Clients
-* **Search** matches exact last name, "Last, First", phone number, date of birth (YYYY-MM-DD) or client code. Names are encrypted, so partial-name search is not available.
+* **Search** matches exact last name, "Last, First", phone number, date of birth (YYYY-MM-DD) or client code, plus the first few letters of a surname and (for names in the Latin alphabet) close misspellings. Names in any script work — Arabic, Cyrillic, Chinese and so on — and accents do not matter: *Oster* finds *Øster*, *Lecki* finds *Łecki*, *Jose* finds *José*.
 * **New client** — enter what you know; only first and last name are required. Set status *waitlist* if not yet enrolled.
 * The client page has tabs: Overview, Timeline (everything in date order), Interventions, Calls, Notes, Referrals, Tasks, Consents & ROI, Time, Assistance $ and Care team.
 * **Safety flags** (e.g. "no home visits alone") appear as a red badge on every page for that client.
@@ -30,7 +30,7 @@ Shows alerts (overdue tasks, unsigned notes, imported notes waiting for review, 
 * **Contact details** are checked when saved: a date of birth cannot be in the future or before 1900, an email must look like one, and a phone number needs at least seven digits.
 
 ## Logging work
-* **+ Intervention** — the core service record. Pick the type (outreach, SBIRT screening, warm handoff, naloxone distribution, post-overdose follow-up…), duration, location, outcome. Enter naloxone kits / fentanyl strips given — they roll up into reports and update the client's naloxone status. Set a follow-up date to create a task automatically. Leave *Also log as time entry* checked so your time sheet fills itself.
+* **+ Intervention** — the core service record. Pick the type (outreach, SBIRT screening, warm handoff, naloxone distribution, post-overdose follow-up…), duration, location, outcome. Enter naloxone kits / fentanyl strips given — they roll up into reports and update the client's naloxone status. Set a follow-up date to create a task automatically. *Client* is optional for **outreach** and **naloxone distribution** (a kit handed to someone who gives no name counts in the funder report's community distribution); every other type needs the client. Leave *Also log as time entry* checked so your time sheet fills itself.
 * **+ Call** — inbound/outbound, who, duration, outcome (reached, voicemail…), crisis flag, encrypted summary, follow-up.
 * **Time tracking** — non-client time (documentation, travel, meetings, training) is logged here; choose the funding source when the grant requires effort reporting.
 * **Tasks & follow-ups** — your to-do list; mark milestones (★) to show them on the client timeline.
@@ -54,7 +54,7 @@ Record client assistance (bus passes, IDs, motel nights, phone minutes…) again
 See *Import Notes* in the sidebar and [docs/IMPORTS.md](IMPORTS.md).
 
 ## Reports and Excel
-Choose a date range for program summaries and monthly trends. **Export to Excel** (or CSV) is available on Reports (every table, or everything as one workbook) and on the Clients, Resources, Visits, Calls, Time, Referrals and Budget pages. Exports use client codes rather than names; supervisors can produce an identified workbook, which is recorded in the audit log.
+Choose a date range for program summaries and monthly trends. The dates are calendar days where the programme is (the server's `ORG_TIMEZONE`), so an evening visit on the last day of a quarter is in that quarter. In the funder report, *people served* is everyone with a visit or a call in the period (only visits charged to it, when a funding source is chosen), and every per-person count and breakdown on the page is counted within that same group. **Export to Excel** (or CSV) is available on Reports (every table, or everything as one workbook) and on the Clients, Resources, Visits, Calls, Time, Referrals and Budget pages. Exports use client codes rather than names; supervisors can produce an identified workbook, which is recorded in the audit log.
 
 ## Importing spreadsheets
 Import → *Import from Excel or CSV*. Choose what you are importing (clients, resources, visits, calls, time, to-dos, expenditures), download the template or upload the spreadsheet you already keep. SUDS matches your column names automatically (you can adjust them), checks every row, tells you exactly what is wrong with any row, flags people who already exist, and only saves when you click Import. For visits, calls and other client records, refer to the client by code (C26-0012) or "Last, First".

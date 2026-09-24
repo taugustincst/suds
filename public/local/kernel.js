@@ -7347,9 +7347,16 @@ var require_crypto = __commonJS({
       decipher.setAuthTag(tag);
       return import_buffer.Buffer.concat([decipher.update(data), decipher.final()]).toString("utf8");
     }
+    var TRANSLIT = { "\xF8": "o", "\u0142": "l", "\xDF": "ss", "\xE6": "ae", "\u0153": "oe", "\u0111": "d", "\xF0": "d", "\xFE": "th", "\u0131": "i", "\u0127": "h", "\u0140": "l", "\u0167": "t", "\u0138": "k", "\u014B": "ng", "\u017F": "s", "\u0192": "f", "\u01E5": "g", "\u0268": "i", "\u0289": "u" };
+    var TRANSLIT_RE = new RegExp(`[${Object.keys(TRANSLIT).join("")}]`, "g");
+    var DIACRITICS_RE = /[\u0300-\u036f\u0591-\u05c7\u0610-\u061a\u0640\u064b-\u065f\u0670\u06d6-\u06ed\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]/g;
+    function foldText(value) {
+      if (value === null || value === void 0) return "";
+      return String(value).normalize("NFKD").replace(DIACRITICS_RE, "").toLowerCase().replace(TRANSLIT_RE, (c) => TRANSLIT[c]).normalize("NFC").replace(/[^\p{L}\p{M}\p{N}]/gu, "");
+    }
     function blindIndex2(value, key = config.indexKey) {
       if (value === null || value === void 0) return null;
-      const norm = String(value).toLowerCase().replace(/[^a-z0-9]/g, "");
+      const norm = foldText(value);
       if (!norm) return null;
       return crypto3.createHmac("sha256", key).update(norm).digest("hex");
     }
@@ -7479,6 +7486,7 @@ var require_crypto = __commonJS({
       encrypt: encrypt3,
       decrypt: decrypt3,
       blindIndex: blindIndex2,
+      foldText,
       keyFingerprint,
       hashPassword,
       verifyPassword,
@@ -7503,7 +7511,7 @@ var require_clients_model = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var { encrypt: encrypt3, decrypt: decrypt3, blindIndex: blindIndex2, uuid: uuid2 } = require_crypto();
+    var { encrypt: encrypt3, decrypt: decrypt3, blindIndex: blindIndex2, foldText, uuid: uuid2 } = require_crypto();
     var ENC_FIELDS = ["first_name", "last_name", "preferred_name", "dob", "phone", "alt_phone", "email", "address", "medicaid_id", "emergency_contact", "goals", "flags"];
     var PLAIN_FIELDS = [
       "city",
@@ -7593,18 +7601,36 @@ var require_clients_model = __commonJS({
       }
       return (out2 + "000").slice(0, 4);
     }
-    var normaliseName = (n) => String(n || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z]/g, "");
+    var normaliseName = (n) => foldText(n);
+    var isLatin = (n) => /^[a-z0-9]*$/.test(n);
     function namePrefixIndex(lastName) {
-      const n = normaliseName(lastName);
-      return n.length >= 2 ? blindIndex2("pfx:" + n.slice(0, 3)) : null;
+      const n = [...normaliseName(lastName)];
+      return n.length >= 2 ? blindIndex2("pfx:" + n.slice(0, 3).join("")) : null;
     }
     function namePhoneticIndex(lastName) {
-      const c = soundex(normaliseName(lastName));
+      const n = normaliseName(lastName);
+      if (!n) return null;
+      if (!isLatin(n)) return blindIndex2("nrm:" + n);
+      const c = soundex(n);
       return c ? blindIndex2("snd:" + c) : null;
     }
     function preferredNameIndex(name) {
       const n = String(name || "").trim().toLowerCase();
       return n ? blindIndex2(n) : null;
+    }
+    function clientIndexes({ first_name, last_name, preferred_name, dob, phone } = {}) {
+      const first = first_name || "", last = last_name || "";
+      return {
+        last_name_idx: blindIndex2(last),
+        full_name_idx: blindIndex2(last + first),
+        name_prefix_idx: namePrefixIndex(last),
+        name_phonetic_idx: namePhoneticIndex(last),
+        first_name_idx: blindIndex2(String(first).trim().toLowerCase()),
+        first_name_prefix_idx: namePrefixIndex(first),
+        preferred_name_idx: preferredNameIndex(preferred_name || ""),
+        dob_idx: blindIndex2(dob || ""),
+        phone_idx: blindIndex2(String(phone || "").replace(/\D/g, ""))
+      };
     }
     function codeNumber(code, prefix) {
       const m = /^(\d+)/.exec(String(code || "").slice(prefix.length));
@@ -7634,7 +7660,7 @@ var require_clients_model = __commonJS({
       o.days_to_engagement = daysToEngagement(d);
       return o;
     }
-    module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, codeNumber, summary, daysToEngagement, uuid: uuid2, soundex, namePrefixIndex, namePhoneticIndex, preferredNameIndex, normaliseName };
+    module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, codeNumber, summary, daysToEngagement, uuid: uuid2, soundex, namePrefixIndex, namePhoneticIndex, preferredNameIndex, normaliseName, clientIndexes };
   }
 });
 
@@ -8011,6 +8037,32 @@ var require_db = __commonJS({
         if (!tableExists(d, "tasks") || !tableCols(d, "tasks").includes("description")) return;
         encryptColumn(d, "tasks", "description", "description_enc");
         rebuildTable(d, safeSchema(), "tasks");
+      },
+      // 25: reserved — taken by a change developed in parallel; renumbered when the two are merged.
+      () => {
+      },
+      // 26: name search and duplicate detection work in every script. Blind indexes used to keep only a-z and
+      //     0-9, so an Arabic or Cyrillic name indexed as nothing (unsearchable, never flagged as a duplicate)
+      //     and "Øster"/"Łecki" lost a letter; they now fold accents, transliterate Ø/Ł/ß/Æ… and keep every
+      //     Unicode letter (server/crypto.js foldText). Every client's indexes are re-derived from the decrypted
+      //     values with the same function key rotation uses (clients-model clientIndexes). A migration can
+      //     decrypt: the keys are loaded (config) before the database is opened, here and in the local kernel.
+      //     A row that cannot be decrypted keeps the indexes it had. No schema change.
+      (d) => {
+        const { decrypt: decrypt3 } = require_crypto();
+        const M = require_clients_model();
+        const cols2 = ["last_name_idx", "full_name_idx", "name_prefix_idx", "name_phonetic_idx", "first_name_idx", "first_name_prefix_idx", "preferred_name_idx", "dob_idx", "phone_idx"];
+        const upd = d.prepare(`UPDATE clients SET ${cols2.map((c) => `${c}=?`).join(", ")} WHERE id=?`);
+        for (const c of d.prepare(`SELECT id, first_name_enc, last_name_enc, preferred_name_enc, dob_enc, phone_enc FROM clients`).all()) {
+          let plain;
+          try {
+            plain = { first_name: decrypt3(c.first_name_enc), last_name: decrypt3(c.last_name_enc), preferred_name: decrypt3(c.preferred_name_enc), dob: decrypt3(c.dob_enc), phone: decrypt3(c.phone_enc) };
+          } catch {
+            continue;
+          }
+          const idx = M.clientIndexes(plain);
+          upd.run(...cols2.map((k) => idx[k]), c.id);
+        }
       }
     ];
     function initialise(d, schemaText, dbPath) {
@@ -8463,30 +8515,76 @@ var require_audit = __commonJS({
       return { ...out2, truncated: false };
     }
     var VERIFY_BATCH = 5e3;
-    function verifyChain({ key = config.indexKey, skipHead = false } = {}) {
-      let prevHash = null;
+    function* walk({ key, afterId = 0, prevHash = null, batch = VERIFY_BATCH }) {
       let anchoredAt = null;
       let checked = 0;
-      let afterId = 0;
       for (; ; ) {
-        const rows = db3.all(`SELECT * FROM audit_log WHERE id > ? ORDER BY id ASC LIMIT ?`, afterId, VERIFY_BATCH);
+        const rows = db3.all(`SELECT * FROM audit_log WHERE id > ? ORDER BY id ASC LIMIT ?`, afterId, batch);
         if (!rows.length) break;
-        if (prevHash === null) {
-          prevHash = rows[0].prev_hash;
-          anchoredAt = rows[0].id;
-        }
+        if (prevHash === null) prevHash = rows[0].prev_hash;
+        if (anchoredAt === null) anchoredAt = rows[0].id;
         for (const r of rows) {
           checked++;
-          if (r.prev_hash !== prevHash || !matches(r.hash, payloadOf(r), key)) return { ok: false, checked, firstBadId: r.id, anchoredAt, ...skipHead ? {} : checkHead({ key }) };
+          if (r.prev_hash !== prevHash || !matches(r.hash, payloadOf(r), key)) return { ok: false, checked, firstBadId: r.id, anchoredAt };
           prevHash = r.hash;
         }
         afterId = rows[rows.length - 1].id;
-        if (rows.length < VERIFY_BATCH) break;
+        if (rows.length < batch) break;
+        yield;
       }
+      return { ok: true, checked, anchoredAt, lastId: afterId || null, lastHash: prevHash };
+    }
+    function verdict(res, { key, skipHead }) {
+      const { lastHash, ...out2 } = res;
+      if (!out2.ok) return { ...out2, ...skipHead ? {} : checkHead({ key }) };
       const head = skipHead ? { checkpointed: false } : checkHead({ key });
-      if (head.truncated) return { ok: false, checked, anchoredAt, ...head };
-      if (!checked) return { ok: true, checked: 0, ...head };
-      return { ok: true, checked, anchoredAt, ...head };
+      if (head.truncated) return { ...out2, ok: false, ...head };
+      if (!out2.checked) return { ok: true, checked: 0, ...head, lastId: out2.lastId };
+      return { ...out2, ...head };
+    }
+    function verifyChain({ key = config.indexKey, skipHead = false, batch } = {}) {
+      const it = walk({ key, batch });
+      let step = it.next();
+      while (!step.done) step = it.next();
+      return verdict(step.value, { key, skipHead });
+    }
+    var breathe = () => new Promise((resolve2) => typeof setImmediate === "function" ? setImmediate(resolve2) : setTimeout(resolve2, 0));
+    var FULL_EVERY_DAYS = 7;
+    function sealVerified(id, hash2, key = config.indexKey) {
+      return crypto3.createHmac("sha256", key).update(`verified|${id}|${hash2}`).digest("hex");
+    }
+    function setVerifiedMarker(id, hash2) {
+      if (!id) return;
+      db3.setSetting("audit_verified_id", String(id));
+      db3.setSetting("audit_verified_seal", sealVerified(id, hash2));
+    }
+    function clearVerifiedMarker() {
+      db3.run(`DELETE FROM settings WHERE key IN ('audit_verified_id','audit_verified_seal')`);
+    }
+    function verifiedMarker({ key = config.indexKey } = {}) {
+      const id = Number(db3.getSetting("audit_verified_id", 0));
+      const seal = db3.getSetting("audit_verified_seal", null);
+      if (!id || !seal) return null;
+      const row = db3.one(`SELECT id, hash FROM audit_log WHERE id=?`, id);
+      if (!row) return null;
+      const expected = sealVerified(row.id, row.hash, key);
+      if (expected.length !== seal.length || !crypto3.timingSafeEqual(import_buffer.Buffer.from(expected), import_buffer.Buffer.from(seal))) return null;
+      return { id: row.id, hash: row.hash };
+    }
+    async function verifyChainAsync({ key = config.indexKey, skipHead = false, incremental = false, batch } = {}) {
+      const marker = incremental ? verifiedMarker({ key }) : null;
+      const it = walk({ key, batch, ...marker ? { afterId: marker.id, prevHash: marker.hash } : {} });
+      let step = it.next();
+      while (!step.done) {
+        await breathe();
+        step = it.next();
+      }
+      const res = verdict(step.value, { key, skipHead });
+      if (res.ok) {
+        const last = step.value.lastId ? { id: step.value.lastId, hash: step.value.lastHash } : marker;
+        if (last) setVerifiedMarker(last.id, last.hash);
+      }
+      return { ...res, mode: marker ? "incremental" : "full", ...marker ? { from: marker.id } : {} };
     }
     function resignChain(newKey) {
       const before = verifyChain();
@@ -8515,6 +8613,7 @@ var require_audit = __commonJS({
       if (!after.ok) throw new Error(`The audit chain does not verify under the new key after re-signing (first bad entry ${after.firstBadId})`);
       const hadHead = db3.getSetting("audit_head", null);
       if (hadHead) checkpoint({ key: newKey });
+      clearVerifiedMarker();
       const pinned = verifyChain({ key: newKey });
       if (!pinned.ok) throw new Error(`The audit head does not verify under the new key after re-sealing (${pinned.reason || `first bad entry ${pinned.firstBadId}`})`);
       return { resigned, checked: after.checked };
@@ -8538,19 +8637,22 @@ var require_audit = __commonJS({
       checkpoint();
       return n;
     }
-    function scheduledVerify() {
-      const r = verifyChain();
+    async function scheduledVerify({ full = false, batch } = {}) {
+      const lastFull = db3.getSetting("audit_full_verified_at", null);
+      const fullDue = full || !lastFull || Date.now() - Date.parse(lastFull) > FULL_EVERY_DAYS * 864e5;
+      const r = await verifyChainAsync({ incremental: !fullDue, batch });
       if (r.ok) {
         db3.setSetting("audit_verified_at", db3.now());
+        if (r.mode === "full") db3.setSetting("audit_full_verified_at", db3.now());
         checkpoint();
         return r;
       }
       console.error(`[suds] AUDIT CHAIN BROKEN ${r.truncated ? `(truncated: ${r.reason})` : `at entry ${r.firstBadId}`} \u2014 investigate immediately`);
-      log({ user: { username: "system" }, action: "audit.verify.failed", success: false, details: { first_bad_id: r.firstBadId, checked: r.checked, truncated: r.truncated || void 0, reason: r.reason } });
+      log({ user: { username: "system" }, action: "audit.verify.failed", success: false, details: { first_bad_id: r.firstBadId, checked: r.checked, truncated: r.truncated || void 0, reason: r.reason, mode: r.mode } });
       db3.setSetting("audit_verify_failed_at", db3.now());
       return r;
     }
-    module.exports = { log, verifyChain, resignChain, scheduledVerify, purge, purgeTombstones, checkpoint, checkHead };
+    module.exports = { log, verifyChain, verifyChainAsync, verifiedMarker, resignChain, scheduledVerify, purge, purgeTombstones, checkpoint, checkHead };
   }
 });
 
@@ -9236,6 +9338,10 @@ var require_constants = __commonJS({
       RACE_CODES,
       ETHNICITY_CODES,
       INTERVENTION_TYPES: ["outreach", "screening_sbirt", "assessment", "intake", "care_coordination", "warm_handoff", "referral", "case_management", "harm_reduction", "naloxone_distribution", "peer_support", "crisis_response", "post_overdose_follow_up", "transport", "housing_assistance", "benefits_enrollment", "employment_support", "family_support", "education", "court_or_probation", "hospital_or_ed_visit", "jail_in_reach", "recovery_check_in", "discharge_planning", "other"],
+      // The services that can be recorded with no identified client: street outreach and community naloxone
+      // distribution (a kit handed to a stranger). Every other type is work with a person on the caseload, and
+      // needs the client (server/routes/interventions.js and the visit form enforce the same list).
+      CLIENTLESS_INTERVENTION_TYPES: ["outreach", "naloxone_distribution"],
       LOCATIONS: ["office", "field", "home", "phone", "telehealth", "hospital", "emergency_dept", "jail", "court", "shelter", "treatment_facility", "community", "other"],
       MODALITIES: ["in_person", "phone", "video", "text", "email", "collateral"],
       OUTCOMES: ["completed", "partial", "client_declined", "no_show", "unable_to_locate", "rescheduled", "crisis_resolved", "transported", "admitted", "other"],
@@ -11690,8 +11796,8 @@ var require_admin = __commonJS({
         audit3.log({ user: ctx.user, action: "audit.read", ip: ctx.ip, details: { filters: Object.fromEntries(ctx.query) } });
         return { rows: rows.map((x) => ({ ...x, details: x.details ? JSON.parse(x.details) : null })), total, limit: limit2, offset };
       });
-      r.get("/api/admin/audit/verify", auth3.requireAuth, auth3.requirePerm("audit:read"), (ctx) => {
-        const res = audit3.verifyChain();
+      r.get("/api/admin/audit/verify", auth3.requireAuth, auth3.requirePerm("audit:read"), async (ctx) => {
+        const res = await audit3.verifyChainAsync();
         audit3.log({ user: ctx.user, action: "audit.verify", ip: ctx.ip, details: res });
         return res;
       });
@@ -12338,6 +12444,20 @@ var require_budget = __commonJS({
         return d.toISOString().slice(0, 10);
       }
     }
+    function localMidnight(date, tz = config.orgTimezone) {
+      const guess = Date.parse(`${date}T00:00:00Z`);
+      if (!Number.isFinite(guess)) return null;
+      const offset = (ms) => {
+        try {
+          const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+          return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - (ms - ms % 1e3);
+        } catch {
+          return 0;
+        }
+      };
+      const first = guess - offset(guess);
+      return new Date(guess - offset(first)).toISOString();
+    }
     var fundShape = {
       name: { type: "string", required: true, maxLen: 200 },
       source_type: { type: "string", enum: C.FUNDING_TYPES },
@@ -12630,6 +12750,7 @@ var require_budget = __commonJS({
     module.exports.wouldCycle = wouldCycle;
     module.exports.assertInPeriod = assertInPeriod;
     module.exports.localDate = localDate;
+    module.exports.localMidnight = localMidnight;
     module.exports.cents = cents;
     module.exports.lineAvailable = lineAvailable;
   }
@@ -15910,6 +16031,9 @@ var require_interventions = __commonJS({
       }
       db3.run(`UPDATE time_entries SET minutes=?, work_date=?, updated_at=? WHERE id=?`, row.duration_minutes, serviceDate(row), db3.now(), te.id);
     }
+    function checkClient(type, clientId) {
+      if (!clientId && !C.CLIENTLESS_INTERVENTION_TYPES.includes(type)) throw badRequest("Choose the client this service was for. Only outreach and community naloxone distribution can be recorded without one.", { fields: { client_id: "Client is required for this type of service" } });
+    }
     function encodeSummary(v) {
       if (v.summary !== void 0) {
         v.summary_enc = v.summary ? require_crypto().encrypt(v.summary) : null;
@@ -15969,6 +16093,7 @@ var require_interventions = __commonJS({
         },
         afterLoad: (ctx, row) => decodeSummary(row),
         beforeInsert: (ctx, v) => {
+          checkClient(v.type, v.client_id);
           v._log_time = v.log_time;
           delete v.log_time;
           v._time_category = v.time_category;
@@ -15980,6 +16105,7 @@ var require_interventions = __commonJS({
           checkCost(ctx, v);
         },
         beforeUpdate: (ctx, v, row) => {
+          if ("type" in v || "client_id" in v) checkClient(v.type ?? row.type, "client_id" in v ? v.client_id : row.client_id);
           delete v.log_time;
           delete v.time_category;
           v._service_date = v.service_date || null;
@@ -15994,7 +16120,7 @@ var require_interventions = __commonJS({
               `INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,funding_source_id,intervention_id,description) VALUES(?,?,?,?,?,?,?,?,?)`,
               uuid2(),
               row.user_id,
-              row.client_id,
+              row.client_id ?? null,
               serviceDate(row),
               row.duration_minutes,
               row._time_category || "direct_service",
@@ -20626,7 +20752,7 @@ var require_exports = __commonJS({
       return o;
     }
     var cents = (v) => typeof v === "number" && Number.isFinite(v) ? Math.round(v * 100) / 100 : v;
-    function datasets(ctx, { from, to, toEnd, identified }) {
+    function datasets(ctx, { from, to, ts, tsP, identified }) {
       const cf = auth3.caseloadFilter(ctx.user, "c.id");
       const all = auth3.hasPerm(ctx.user, "time:all") ? 1 : 0;
       const phi = (v) => identified && v ? decrypt3(v) : v ? "[redacted]" : "";
@@ -20641,12 +20767,12 @@ var require_exports = __commonJS({
         interventions: {
           label: "Visits & services",
           columns: ["occurred_at", "client_code", "type", "duration_minutes", "location", "modality", "outcome", "stage_of_change", "naloxone_kits", "fentanyl_strips", "worker", "funding_source", "cost", "summary", "follow_up_due"],
-          rows: () => db3.all(`SELECT i.*, c.client_code, i.client_id AS _client_id, u.display_name worker, f.name funding_source FROM interventions i LEFT JOIN clients c ON c.id=i.client_id JOIN users u ON u.id=i.user_id LEFT JOIN funding_sources f ON f.id=i.funding_source_id WHERE i.occurred_at BETWEEN ? AND ? AND (i.client_id IS NULL OR ${cf.sql}) ORDER BY i.occurred_at LIMIT ?`, from, toEnd, ...cf.params, MAX_ROWS).map((r) => ({ ...r, summary: phi(r.summary_enc) }))
+          rows: () => db3.all(`SELECT i.*, c.client_code, i.client_id AS _client_id, u.display_name worker, f.name funding_source FROM interventions i LEFT JOIN clients c ON c.id=i.client_id JOIN users u ON u.id=i.user_id LEFT JOIN funding_sources f ON f.id=i.funding_source_id WHERE ${ts("i.occurred_at")} AND (i.client_id IS NULL OR ${cf.sql}) ORDER BY i.occurred_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, summary: phi(r.summary_enc) }))
         },
         calls: {
           label: "Calls",
           columns: ["started_at", "client_code", "direction", "contact_type", "contact_name", "duration_minutes", "outcome", "crisis", "purpose", "summary", "follow_up_needed", "follow_up_due", "worker"],
-          rows: () => db3.all(`SELECT ca.*, c.client_code, ca.client_id AS _client_id, u.display_name worker FROM calls ca LEFT JOIN clients c ON c.id=ca.client_id JOIN users u ON u.id=ca.user_id WHERE ca.started_at BETWEEN ? AND ? AND (ca.client_id IS NULL OR ${cf.sql}) ORDER BY ca.started_at LIMIT ?`, from, toEnd, ...cf.params, MAX_ROWS).map((r) => ({ ...r, contact_name: phi(r.contact_name_enc), summary: phi(r.summary_enc), purpose: phi(r.purpose_enc) }))
+          rows: () => db3.all(`SELECT ca.*, c.client_code, ca.client_id AS _client_id, u.display_name worker FROM calls ca LEFT JOIN clients c ON c.id=ca.client_id JOIN users u ON u.id=ca.user_id WHERE ${ts("ca.started_at")} AND (ca.client_id IS NULL OR ${cf.sql}) ORDER BY ca.started_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, contact_name: phi(r.contact_name_enc), summary: phi(r.summary_enc), purpose: phi(r.purpose_enc) }))
         },
         time: {
           label: "Time",
@@ -20656,17 +20782,17 @@ var require_exports = __commonJS({
         referrals: {
           label: "Referrals",
           columns: ["referred_at", "client_code", "resource", "category", "status", "urgency", "warm_handoff", "appointment_at", "admitted_at", "closed_at", "outcome", "barrier", "worker", "notes"],
-          rows: () => db3.all(`SELECT r.*, c.client_code, r.client_id AS _client_id, res.name resource, res.category, u.display_name worker FROM referrals r JOIN clients c ON c.id=r.client_id JOIN resources res ON res.id=r.resource_id JOIN users u ON u.id=r.user_id WHERE r.referred_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY r.referred_at LIMIT ?`, from, toEnd, ...cf.params, MAX_ROWS).map((r) => ({ ...r, outcome: phi(r.outcome_enc), barrier: phi(r.barrier_enc), notes: phi(r.notes_enc) }))
+          rows: () => db3.all(`SELECT r.*, c.client_code, r.client_id AS _client_id, res.name resource, res.category, u.display_name worker FROM referrals r JOIN clients c ON c.id=r.client_id JOIN resources res ON res.id=r.resource_id JOIN users u ON u.id=r.user_id WHERE ${ts("r.referred_at")} AND ${cf.sql} ORDER BY r.referred_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, outcome: phi(r.outcome_enc), barrier: phi(r.barrier_enc), notes: phi(r.notes_enc) }))
         },
         tasks: {
           label: "To-dos",
           columns: ["title", "client_code", "assignee", "due_at", "priority", "status", "is_milestone", "completed_at", "description"],
-          rows: () => db3.all(`SELECT t.*, c.client_code, t.client_id AS _client_id, u.display_name assignee FROM tasks t LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN users u ON u.id=t.assigned_to WHERE t.created_at BETWEEN ? AND ? AND (t.client_id IS NULL OR ${cf.sql}) ORDER BY t.due_at LIMIT ?`, from, toEnd, ...cf.params, MAX_ROWS).map((r) => ({ ...r, title: phi(r.title_enc), description: phi(r.description_enc) }))
+          rows: () => db3.all(`SELECT t.*, c.client_code, t.client_id AS _client_id, u.display_name assignee FROM tasks t LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN users u ON u.id=t.assigned_to WHERE ${ts("t.created_at")} AND (t.client_id IS NULL OR ${cf.sql}) ORDER BY t.due_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, title: phi(r.title_enc), description: phi(r.description_enc) }))
         },
         forms: {
           label: "Client forms",
           columns: ["created_at", "client_code", "template_name", "status", "completed_at", "completed_by", "created_by", "attachments"],
-          rows: () => db3.all(`SELECT f.created_at, c.client_code, f.client_id AS _client_id, f.template_name, f.status, f.completed_at, cu.display_name completed_by, cr.display_name created_by, (SELECT COUNT(*) FROM client_form_files x WHERE x.client_form_id=f.id) attachments FROM client_forms f JOIN clients c ON c.id=f.client_id LEFT JOIN users cu ON cu.id=f.completed_by JOIN users cr ON cr.id=f.created_by WHERE f.deleted_at IS NULL AND f.created_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY f.created_at DESC LIMIT ?`, from, toEnd, ...cf.params, MAX_ROWS)
+          rows: () => db3.all(`SELECT f.created_at, c.client_code, f.client_id AS _client_id, f.template_name, f.status, f.completed_at, cu.display_name completed_by, cr.display_name created_by, (SELECT COUNT(*) FROM client_form_files x WHERE x.client_form_id=f.id) attachments FROM client_forms f JOIN clients c ON c.id=f.client_id LEFT JOIN users cu ON cu.id=f.completed_by JOIN users cr ON cr.id=f.created_by WHERE f.deleted_at IS NULL AND ${ts("f.created_at")} AND ${cf.sql} ORDER BY f.created_at DESC LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS)
         },
         resources: {
           label: "Resource directory",
@@ -20682,7 +20808,7 @@ var require_exports = __commonJS({
         disclosures: {
           label: "Accounting of disclosures",
           columns: ["client_code", "disclosed_at", "recipient", "purpose", "what", "method", "basis", "justification", "source", "disclosed_by"],
-          rows: () => db3.all(`SELECT d.*, c.client_code, d.client_id AS _client_id, u.display_name disclosed_by FROM disclosures d JOIN clients c ON c.id=d.client_id JOIN users u ON u.id=d.disclosed_by WHERE d.disclosed_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY d.disclosed_at LIMIT ?`, from, toEnd, ...cf.params, MAX_ROWS).map((r) => ({ ...r, recipient: phi(r.recipient_enc), purpose: phi(r.purpose_enc), what: phi(r.what_enc), justification: phi(r.justification_enc) }))
+          rows: () => db3.all(`SELECT d.*, c.client_code, d.client_id AS _client_id, u.display_name disclosed_by FROM disclosures d JOIN clients c ON c.id=d.client_id JOIN users u ON u.id=d.disclosed_by WHERE ${ts("d.disclosed_at")} AND ${cf.sql} ORDER BY d.disclosed_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, recipient: phi(r.recipient_enc), purpose: phi(r.purpose_enc), what: phi(r.what_enc), justification: phi(r.justification_enc) }))
         },
         episodes: {
           label: "Episodes of care",
@@ -20692,7 +20818,7 @@ var require_exports = __commonJS({
         overdose_events: {
           label: "Overdose & reversal events",
           columns: strip(["occurred_at", "client_code", "kind", "substances", "naloxone_used", "naloxone_doses", "administered_by", "ems_called", "hospitalized", "survived", "location_type", "city"]),
-          rows: () => db3.all(`SELECT o.*, c.client_code, o.client_id AS _client_id FROM overdose_events o LEFT JOIN clients c ON c.id=o.client_id WHERE o.occurred_at BETWEEN ? AND ? AND (o.client_id IS NULL OR ${cf.sql}) ORDER BY o.occurred_at LIMIT ?`, from, toEnd, ...cf.params, MAX_ROWS).map((r) => ({ ...r, substances: phi(r.substances_enc) }))
+          rows: () => db3.all(`SELECT o.*, c.client_code, o.client_id AS _client_id FROM overdose_events o LEFT JOIN clients c ON c.id=o.client_id WHERE ${ts("o.occurred_at")} AND (o.client_id IS NULL OR ${cf.sql}) ORDER BY o.occurred_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, substances: phi(r.substances_enc) }))
         }
       };
       if (auth3.hasPerm(ctx.user, "budget:read")) {
@@ -20739,16 +20865,23 @@ var require_reports = __commonJS({
     var db3 = require_db();
     var auth3 = require_auth();
     var audit3 = require_audit();
-    var { sendJson } = require_http();
+    var { sendJson, badRequest } = require_http();
     var M = require_clients_model();
+    var DAY = /^\d{4}-\d{2}-\d{2}$/;
+    var addDays = (date, n) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
     function range(ctx) {
-      const to = ctx.query.get("to") || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-      const from = ctx.query.get("from") || new Date(Date.parse(to) - 89 * 864e5).toISOString().slice(0, 10);
-      return { from, to, toEnd: to + "T23:59:59.999Z" };
+      const { localDate, localMidnight } = require_budget();
+      const to = ctx.query.get("to") || localDate();
+      const from = ctx.query.get("from") || addDays(to, -89);
+      if (!DAY.test(to) || !DAY.test(from) || !Number.isFinite(Date.parse(to)) || !Number.isFinite(Date.parse(from))) throw badRequest("from and to must be dates (YYYY-MM-DD)");
+      const fromTs = localMidnight(from);
+      const toEnd = new Date(Date.parse(localMidnight(addDays(to, 1))) - 1).toISOString();
+      const ts = (col) => `((length(${col})>10 AND ${col} BETWEEN ? AND ?) OR (length(${col})=10 AND ${col} BETWEEN ? AND ?))`;
+      return { from, to, fromTs, toEnd, ts, tsP: [fromTs, toEnd, from, to] };
     }
     module.exports = (r) => {
       r.get("/api/reports/dashboard", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
-        const { from, to, toEnd } = range(ctx);
+        const { from, to, ts, tsP } = range(ctx);
         const cf = auth3.caseloadFilter(ctx.user, "c.id");
         const expand = (sql, p) => {
           const before = sql.slice(0, sql.indexOf("{CF}"));
@@ -20778,30 +20911,30 @@ var require_reports = __commonJS({
             mat: scoped(`SELECT COALESCE(mat_status,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k`)
           },
           interventions: {
-            total: scoped1(`SELECT COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.occurred_at BETWEEN ? AND ? AND {CF}`, from, toEnd).n,
-            minutes: scoped1(`SELECT COALESCE(SUM(duration_minutes),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.occurred_at BETWEEN ? AND ? AND {CF}`, from, toEnd).n,
-            by_type: db3.all(`SELECT i.type k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.occurred_at BETWEEN ? AND ? AND ${cf.sql} GROUP BY i.type ORDER BY n DESC`, from, toEnd, ...cf.params),
-            by_week: db3.all(`SELECT strftime('%Y-%W', i.occurred_at) k, COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.occurred_at BETWEEN ? AND ? AND ${cf.sql} GROUP BY k ORDER BY k`, from, toEnd, ...cf.params),
-            naloxone_kits: scoped1(`SELECT COALESCE(SUM(naloxone_kits),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.occurred_at BETWEEN ? AND ? AND {CF}`, from, toEnd).n,
-            fentanyl_strips: scoped1(`SELECT COALESCE(SUM(fentanyl_strips),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.occurred_at BETWEEN ? AND ? AND {CF}`, from, toEnd).n,
-            by_worker: db3.all(`SELECT u.display_name k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN users u ON u.id=i.user_id JOIN clients c ON c.id=i.client_id WHERE i.occurred_at BETWEEN ? AND ? AND ${cf.sql} GROUP BY u.id ORDER BY n DESC`, from, toEnd, ...cf.params)
+            total: scoped1(`SELECT COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP).n,
+            minutes: scoped1(`SELECT COALESCE(SUM(duration_minutes),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP).n,
+            by_type: db3.all(`SELECT i.type k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${cf.sql} GROUP BY i.type ORDER BY n DESC`, ...tsP, ...cf.params),
+            by_week: db3.all(`SELECT strftime('%Y-%W', i.occurred_at) k, COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${cf.sql} GROUP BY k ORDER BY k`, ...tsP, ...cf.params),
+            naloxone_kits: scoped1(`SELECT COALESCE(SUM(naloxone_kits),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP).n,
+            fentanyl_strips: scoped1(`SELECT COALESCE(SUM(fentanyl_strips),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP).n,
+            by_worker: db3.all(`SELECT u.display_name k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN users u ON u.id=i.user_id JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${cf.sql} GROUP BY u.id ORDER BY n DESC`, ...tsP, ...cf.params)
           },
           calls: {
-            total: db3.one(`SELECT COUNT(*) n FROM calls WHERE started_at BETWEEN ? AND ?`, from, toEnd).n,
-            minutes: db3.one(`SELECT COALESCE(SUM(duration_minutes),0) n FROM calls WHERE started_at BETWEEN ? AND ?`, from, toEnd).n,
-            crisis: db3.one(`SELECT COUNT(*) n FROM calls WHERE crisis=1 AND started_at BETWEEN ? AND ?`, from, toEnd).n,
-            by_outcome: db3.all(`SELECT outcome k, COUNT(*) n FROM calls WHERE started_at BETWEEN ? AND ? GROUP BY outcome ORDER BY n DESC`, from, toEnd),
-            by_direction: db3.all(`SELECT direction k, COUNT(*) n FROM calls WHERE started_at BETWEEN ? AND ? GROUP BY direction`, from, toEnd),
+            total: db3.one(`SELECT COUNT(*) n FROM calls WHERE ${ts("started_at")}`, ...tsP).n,
+            minutes: db3.one(`SELECT COALESCE(SUM(duration_minutes),0) n FROM calls WHERE ${ts("started_at")}`, ...tsP).n,
+            crisis: db3.one(`SELECT COUNT(*) n FROM calls WHERE crisis=1 AND ${ts("started_at")}`, ...tsP).n,
+            by_outcome: db3.all(`SELECT outcome k, COUNT(*) n FROM calls WHERE ${ts("started_at")} GROUP BY outcome ORDER BY n DESC`, ...tsP),
+            by_direction: db3.all(`SELECT direction k, COUNT(*) n FROM calls WHERE ${ts("started_at")} GROUP BY direction`, ...tsP),
             // Texts are logged alongside calls, so say how the total splits rather than reporting them as calls.
-            texts: db3.one(`SELECT COUNT(*) n FROM calls WHERE method='text' AND started_at BETWEEN ? AND ?`, from, toEnd).n
+            texts: db3.one(`SELECT COUNT(*) n FROM calls WHERE method='text' AND ${ts("started_at")}`, ...tsP).n
           },
           referrals: {
-            total: db3.one(`SELECT COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE r.referred_at BETWEEN ? AND ? AND ${cf.sql}`, from, toEnd, ...cf.params).n,
-            by_status: db3.all(`SELECT r.status k, COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE r.referred_at BETWEEN ? AND ? AND ${cf.sql} GROUP BY r.status ORDER BY n DESC`, from, toEnd, ...cf.params),
-            by_category: db3.all(`SELECT res.category k, COUNT(*) n, SUM(CASE WHEN r.status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id WHERE r.referred_at BETWEEN ? AND ? AND ${cf.sql} GROUP BY res.category ORDER BY n DESC`, from, toEnd, ...cf.params),
+            total: db3.one(`SELECT COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${ts("r.referred_at")} AND ${cf.sql}`, ...tsP, ...cf.params).n,
+            by_status: db3.all(`SELECT r.status k, COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${ts("r.referred_at")} AND ${cf.sql} GROUP BY r.status ORDER BY n DESC`, ...tsP, ...cf.params),
+            by_category: db3.all(`SELECT res.category k, COUNT(*) n, SUM(CASE WHEN r.status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id WHERE ${ts("r.referred_at")} AND ${cf.sql} GROUP BY res.category ORDER BY n DESC`, ...tsP, ...cf.params),
             open: db3.one(`SELECT COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE r.status IN ('pending','contacted','accepted','waitlisted','scheduled') AND ${cf.sql}`, ...cf.params).n,
             median_days_to_admit: (() => {
-              const d = db3.all(`SELECT (julianday(admitted_at)-julianday(referred_at)) d FROM referrals WHERE admitted_at IS NOT NULL AND referred_at BETWEEN ? AND ? ORDER BY d`, from, toEnd).map((x) => x.d);
+              const d = db3.all(`SELECT (julianday(admitted_at)-julianday(referred_at)) d FROM referrals WHERE admitted_at IS NOT NULL AND ${ts("referred_at")} ORDER BY d`, ...tsP).map((x) => x.d);
               return d.length ? d[Math.floor(d.length / 2)] : null;
             })()
           },
@@ -20864,20 +20997,26 @@ var require_reports = __commonJS({
         };
       });
       r.get("/api/reports/funder", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
-        const { from, to, toEnd } = range(ctx);
+        const { from, to, ts, tsP } = range(ctx);
         const cf = auth3.caseloadFilter(ctx.user, "c.id");
         const fund = ctx.query.get("funding_source_id") || null;
         const fundJoin = fund ? "AND i.funding_source_id=?" : "";
         const fundP = fund ? [fund] : [];
-        const served = db3.one(`SELECT COUNT(DISTINCT x.client_id) n FROM (
-        SELECT i.client_id FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.occurred_at BETWEEN ? AND ? AND ${cf.sql} ${fundJoin}
-        UNION SELECT ca.client_id FROM calls ca JOIN clients c ON c.id=ca.client_id WHERE ca.started_at BETWEEN ? AND ? AND ca.client_id IS NOT NULL AND ${cf.sql}
-      ) x`, from, toEnd, ...cf.params, ...fundP, from, toEnd, ...cf.params).n;
-        const demographics = (col, label) => db3.all(`SELECT COALESCE(NULLIF(c.${col},''),'unknown') k, COUNT(DISTINCT c.id) n
-      FROM clients c WHERE c.deleted_at IS NULL AND ${cf.sql} AND EXISTS (SELECT 1 FROM interventions i WHERE i.client_id=c.id AND i.occurred_at BETWEEN ? AND ?)
-      GROUP BY k ORDER BY n DESC`, ...cf.params, from, toEnd).map((x) => ({ ...x, dimension: label }));
-        const raceRows = db3.all(`SELECT c.race_codes FROM clients c WHERE c.deleted_at IS NULL AND ${cf.sql}
-      AND EXISTS (SELECT 1 FROM interventions i WHERE i.client_id=c.id AND i.occurred_at BETWEEN ? AND ?)`, ...cf.params, from, toEnd);
+        const servedSql = `SELECT DISTINCT i.client_id AS id FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND c.deleted_at IS NULL AND ${cf.sql} ${fundJoin}` + (fund ? "" : ` UNION SELECT ca.client_id FROM calls ca JOIN clients c ON c.id=ca.client_id WHERE ${ts("ca.started_at")} AND c.deleted_at IS NULL AND ${cf.sql}`);
+        const servedP = fund ? [...tsP, ...cf.params, ...fundP] : [...tsP, ...cf.params, ...tsP, ...cf.params];
+        const inServed = (sql, ...p) => [`WITH served(id) AS (${servedSql}) ${sql}`, ...servedP, ...p];
+        const one = (sql, ...p) => {
+          const [q, ...a] = inServed(sql, ...p);
+          return db3.one(q, ...a);
+        };
+        const all = (sql, ...p) => {
+          const [q, ...a] = inServed(sql, ...p);
+          return db3.all(q, ...a);
+        };
+        const served = one(`SELECT COUNT(*) n FROM served`).n;
+        const demographics = (col, label) => all(`SELECT COALESCE(NULLIF(c.${col},''),'unknown') k, COUNT(*) n
+      FROM clients c JOIN served s ON s.id=c.id GROUP BY k ORDER BY n DESC`).map((x) => ({ ...x, dimension: label }));
+        const raceRows = all(`SELECT c.race_codes FROM clients c JOIN served s ON s.id=c.id`);
         const byRace = {};
         for (const row of raceRows) {
           const codes = String(row.race_codes || "").split(",").map((x) => x.trim()).filter(Boolean);
@@ -20894,17 +21033,17 @@ var require_reports = __commonJS({
           })()
         };
         const overdose = {
-          events: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE o.occurred_at BETWEEN ? AND ?`, from, toEnd).n,
-          reversals: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE o.occurred_at BETWEEN ? AND ? AND o.naloxone_used=1 AND o.survived=1`, from, toEnd).n,
-          fatal: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE o.occurred_at BETWEEN ? AND ? AND (o.kind='fatal' OR o.survived=0)`, from, toEnd).n,
-          community_reported: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE o.occurred_at BETWEEN ? AND ? AND o.client_id IS NULL`, from, toEnd).n,
-          naloxone_doses: db3.one(`SELECT COALESCE(SUM(o.naloxone_doses),0) n FROM overdose_events o WHERE o.occurred_at BETWEEN ? AND ?`, from, toEnd).n,
-          by_month: db3.all(`SELECT substr(o.occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN o.naloxone_used=1 AND o.survived=1 THEN 1 ELSE 0 END) reversals FROM overdose_events o WHERE o.occurred_at BETWEEN ? AND ? GROUP BY month ORDER BY month`, from, toEnd),
-          by_administered_by: db3.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE o.occurred_at BETWEEN ? AND ? AND o.naloxone_used=1 GROUP BY k ORDER BY n DESC`, from, toEnd)
+          events: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")}`, ...tsP).n,
+          reversals: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND o.naloxone_used=1 AND o.survived=1`, ...tsP).n,
+          fatal: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND (o.kind='fatal' OR o.survived=0)`, ...tsP).n,
+          community_reported: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND o.client_id IS NULL`, ...tsP).n,
+          naloxone_doses: db3.one(`SELECT COALESCE(SUM(o.naloxone_doses),0) n FROM overdose_events o WHERE ${ts("o.occurred_at")}`, ...tsP).n,
+          by_month: db3.all(`SELECT substr(o.occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN o.naloxone_used=1 AND o.survived=1 THEN 1 ELSE 0 END) reversals FROM overdose_events o WHERE ${ts("o.occurred_at")} GROUP BY month ORDER BY month`, ...tsP),
+          by_administered_by: db3.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND o.naloxone_used=1 GROUP BY k ORDER BY n DESC`, ...tsP)
         };
         const distribution = db3.one(`SELECT COALESCE(SUM(i.naloxone_kits),0) kits, COALESCE(SUM(i.fentanyl_strips),0) strips,
       COALESCE(SUM(CASE WHEN i.client_id IS NULL THEN i.naloxone_kits ELSE 0 END),0) community_kits
-      FROM interventions i WHERE i.occurred_at BETWEEN ? AND ? ${fundJoin}`, from, toEnd, ...fundP);
+      FROM interventions i WHERE ${ts("i.occurred_at")} ${fundJoin}`, ...tsP, ...fundP);
         const SMALL_CELL = 11;
         const suppress = (rows) => rows.map((x) => typeof x.n === "number" && x.n > 0 && x.n < SMALL_CELL ? { ...x, n: "<11", suppressed: true } : x);
         const out2 = {
@@ -20915,9 +21054,10 @@ var require_reports = __commonJS({
           unduplicated: {
             served,
             new_admissions: db3.one(`SELECT COUNT(DISTINCT c.id) n FROM clients c WHERE c.deleted_at IS NULL AND c.intake_date BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
-            with_a_referral: db3.one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE r.referred_at BETWEEN ? AND ? AND ${cf.sql}`, from, toEnd, ...cf.params).n,
-            admitted_after_referral: db3.one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE r.admitted_at BETWEEN ? AND ? AND ${cf.sql}`, from, toEnd, ...cf.params).n,
-            on_mat: db3.one(`SELECT COUNT(DISTINCT c.id) n FROM clients c WHERE c.deleted_at IS NULL AND c.mat_status='active' AND ${cf.sql}`, ...cf.params).n
+            // Of the people served: how many were referred on, admitted somewhere, and are on MAT.
+            with_a_referral: one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN served s ON s.id=r.client_id WHERE ${ts("r.referred_at")}`, ...tsP).n,
+            admitted_after_referral: one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN served s ON s.id=r.client_id WHERE ${ts("r.admitted_at")}`, ...tsP).n,
+            on_mat: one(`SELECT COUNT(*) n FROM clients c JOIN served s ON s.id=c.id WHERE c.mat_status='active'`).n
           },
           demographics: {
             by_gender: suppress(demographics("gender", "gender")),
@@ -20931,23 +21071,24 @@ var require_reports = __commonJS({
           overdose: { ...overdose, by_administered_by: suppress(overdose.by_administered_by) },
           naloxone_distribution: distribution,
           by_funding_source: db3.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end,
-          (SELECT COUNT(DISTINCT i.client_id) FROM interventions i WHERE i.funding_source_id=f.id AND i.occurred_at BETWEEN ? AND ?) AS clients_served,
-          (SELECT COUNT(*) FROM interventions i WHERE i.funding_source_id=f.id AND i.occurred_at BETWEEN ? AND ?) AS services,
+          (SELECT COUNT(DISTINCT i.client_id) FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.funding_source_id=f.id AND c.deleted_at IS NULL AND ${ts("i.occurred_at")}) AS clients_served,
+          (SELECT COUNT(*) FROM interventions i WHERE i.funding_source_id=f.id AND ${ts("i.occurred_at")}) AS services,
           (SELECT COALESCE(SUM(t.minutes),0) FROM time_entries t WHERE t.funding_source_id=f.id AND t.work_date BETWEEN ? AND ? AND t.status='approved') AS approved_minutes
-        FROM funding_sources f WHERE f.is_active=1 ORDER BY f.name`, from, toEnd, from, toEnd, from, to)
+        FROM funding_sources f WHERE f.is_active=1 ORDER BY f.name`, ...tsP, ...tsP, from, to)
         };
         audit3.log({ user: ctx.user, action: "report.funder", ip: ctx.ip, details: { from, to, funding_source_id: fund || void 0, served } });
         return out2;
       });
       r.get("/api/reports/export/:kind", auth3.requireAuth, auth3.requirePerm("export:read"), async (ctx) => {
-        const { from, to, toEnd } = range(ctx);
+        const period = range(ctx);
+        const { from, to } = period;
         const identified = ctx.query.get("identified") === "1" && auth3.hasPerm(ctx.user, "export:identified");
         const recipient = (ctx.query.get("recipient") || "").trim();
         const purpose = (ctx.query.get("purpose") || "").trim();
         if (identified && (!recipient || !purpose)) throw require_http().badRequest("An identified export must name its recipient and purpose (recipient= and purpose=); they are written to the accounting of disclosures for every client it contains");
         const format = ctx.query.get("format") === "xlsx" || ctx.params.kind === "workbook" ? "xlsx" : "csv";
         const X = require_exports();
-        const D = X.datasets(ctx, { from, to, toEnd, identified });
+        const D = X.datasets(ctx, { ...period, identified });
         const S = require_spreadsheet();
         const disclosure = require_disclosure();
         const accountFor = (kind, ids) => {
@@ -21930,8 +22071,12 @@ var require_sync = __commonJS({
       }
       return out2;
     }
+    function requireLocalMode() {
+      const config = require_config();
+      if (!config.localModeEnabled && !config.local) throw forbidden("Local mode (offline copies on devices) is turned off on this server, so devices cannot sync. An administrator can turn it on in the server settings (LOCAL_MODE_ENABLED, or the setup answer saved in server.json).");
+    }
     module.exports = (r) => {
-      r.get("/api/sync/pull", auth3.requireAuth, (ctx) => {
+      r.get("/api/sync/pull", requireLocalMode, auth3.requireAuth, (ctx) => {
         if (!auth3.hasPerm(ctx.user, "clients:read")) throw forbidden("Your role cannot sync client data");
         const since = ctx.query.get("since") || NEVER2;
         const limit2 = Math.min(Number(ctx.query.get("limit")) || PULL_LIMIT, PULL_LIMIT);
@@ -21939,14 +22084,14 @@ var require_sync = __commonJS({
         audit3.log({ user: ctx.user, action: "sync.pull", ip: ctx.ip, details: { since, complete: out2.complete, rows: Object.fromEntries(Object.entries(out2.tables).map(([k, v]) => [k, v.length]).filter(([, n]) => n)) } });
         return out2;
       });
-      r.post("/api/sync/push", auth3.requireAuth, (ctx) => {
+      r.post("/api/sync/push", requireLocalMode, auth3.requireAuth, (ctx) => {
         if (!auth3.hasPerm(ctx.user, "clients:write")) throw forbidden("Your role cannot sync client data");
         if (!ctx.body || typeof ctx.body !== "object") throw badRequest("JSON body required");
         const res = push(ctx.user, ctx.body);
         audit3.log({ user: ctx.user, action: "sync.push", ip: ctx.ip, details: { applied: res.applied, rejected: res.rejected.length } });
         return res;
       });
-      r.get("/api/sync/blob/:table/:id/:column", auth3.requireAuth, (ctx) => {
+      r.get("/api/sync/blob/:table/:id/:column", requireLocalMode, auth3.requireAuth, (ctx) => {
         const t = SYNC2.tables.find((x) => x.name === ctx.params.table && (x.blob || []).includes(ctx.params.column));
         if (!t) throw badRequest("Not a synchronised attachment");
         if (t.writePerm && !auth3.hasPerm(ctx.user, t.writePerm.replace(/:(write|manage)$/, ":read")) && !auth3.hasPerm(ctx.user, t.writePerm)) throw forbidden("You cannot read this attachment");
@@ -21958,7 +22103,7 @@ var require_sync = __commonJS({
         audit3.log({ user: ctx.user, action: "sync.blob", entity: t.name, entityId: row.id, clientId: t.clientCol ? row[t.clientCol] : null, ip: ctx.ip });
         return { table: t.name, id: row.id, column: ctx.params.column, value: out2, updated_at: row.updated_at };
       });
-      r.post("/api/sync/blob/:table/:id/:column", auth3.requireAuth, (ctx) => {
+      r.post("/api/sync/blob/:table/:id/:column", requireLocalMode, auth3.requireAuth, (ctx) => {
         const t = SYNC2.tables.find((x) => x.name === ctx.params.table && (x.blob || []).includes(ctx.params.column));
         if (!t) throw badRequest("Not a synchronised attachment");
         if (t.writePerm && !auth3.hasPerm(ctx.user, t.writePerm)) throw forbidden("You cannot upload this attachment");
