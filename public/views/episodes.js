@@ -13,10 +13,22 @@ const REASONS = [
   ['administrative', 'Administrative closure'],
   ['other', 'Other'],
 ];
+const REASON_LABELS = Object.fromEntries(REASONS);
+// The list itself comes from GET /api/meta/discharge-reasons, so a reason added on the server is offered
+// here; the built-in list above supplies the wording, and is used as is if the request fails.
+let reasonOptions = null;
+async function dischargeReasons() {
+  if (reasonOptions) return reasonOptions;
+  try {
+    const { discharge_reasons: list } = await get('/api/meta/discharge-reasons');
+    if (Array.isArray(list) && list.length) { reasonOptions = list.map(value => ({ value, label: REASON_LABELS[value] || fmt.label(value) })); return reasonOptions; }
+  } catch { /* fall back */ }
+  return REASONS.map(([value, label]) => ({ value, label }));
+}
 
 /** The episodes panel shown on a client's page. */
 export async function episodesPanel(clientId, { onChange } = {}) {
-  const { episodes } = await get(`/api/clients/${clientId}/episodes`);
+  const [{ episodes }, reasons] = await Promise.all([get(`/api/clients/${clientId}/episodes`), dischargeReasons()]);
   const open = episodes.find(e => e.status === 'open');
   const box = h('section', { class: 'card' });
 
@@ -34,7 +46,7 @@ export async function episodesPanel(clientId, { onChange } = {}) {
     const f = form([
       // No default: "Completed the program" is a claim the funder report counts, not something a worker
       // should be able to record by clicking straight through.
-      { name: 'discharge_reason', label: 'Reason for discharge', type: 'select', required: true, placeholder: 'Choose a reason…', options: REASONS.map(([value, label]) => ({ value, label })) },
+      { name: 'discharge_reason', label: 'Reason for discharge', type: 'select', required: true, placeholder: 'Choose a reason…', options: reasons },
       { name: 'discharge_disposition', label: 'Where are they going?', placeholder: 'e.g. outpatient at County OTP, residential, unknown' },
       { name: 'closed_at', label: 'Discharge date', type: 'date', value: new Date().toISOString().slice(0, 10) },
       { name: 'discharge_summary', label: 'Discharge summary', type: 'textarea', rows: 5, span: true },

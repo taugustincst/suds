@@ -14649,8 +14649,26 @@ var require_episodes = __commonJS({
         const w = "WHERE " + where.join(" AND ");
         const rows = db3.all(`SELECT e.id, e.client_id, e.opened_at, e.closed_at, e.status, e.discharge_reason, e.discharge_disposition, c.client_code, c.status AS client_status, f.name AS funding_source
       FROM episodes e JOIN clients c ON c.id=e.client_id LEFT JOIN funding_sources f ON f.id=e.funding_source_id ${w} ORDER BY e.opened_at DESC LIMIT ? OFFSET ?`, ...params, limit2, offset);
+        const opened = db3.one(`SELECT COUNT(*) n, SUM(e.status='open') open, SUM(e.status='closed') closed FROM episodes e JOIN clients c ON c.id=e.client_id ${w}`, ...params);
+        const dWhere = [cf.sql, `e.status='closed'`];
+        const dParams = [...cf.params];
+        if (ctx.query.get("from")) {
+          dWhere.push("e.closed_at >= ?");
+          dParams.push(ctx.query.get("from"));
+        }
+        if (ctx.query.get("to")) {
+          dWhere.push("e.closed_at <= ?");
+          dParams.push(ctx.query.get("to"));
+        }
+        const byReason = db3.all(`SELECT COALESCE(e.discharge_reason,'not_recorded') k, COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE ${dWhere.join(" AND ")} GROUP BY 1 ORDER BY n DESC, k`, ...dParams);
         audit3.log({ user: ctx.user, action: "episode.list", ip: ctx.ip, details: { count: rows.length } });
-        return { rows, total: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id ${w}`, ...params).n, limit: limit2, offset };
+        return {
+          rows,
+          total: opened.n,
+          limit: limit2,
+          offset,
+          summary: { opened: opened.n, still_open: opened.open || 0, since_closed: opened.closed || 0, discharged: byReason.reduce((s, x) => s + x.n, 0), discharges_by_reason: byReason }
+        };
       });
       r.get("/api/waitlist", auth3.requireAuth, auth3.requirePerm("clients:read"), (ctx) => {
         const cf = auth3.caseloadFilter(ctx.user, "c.id");
@@ -15654,6 +15672,8 @@ var require_imports = __commonJS({
       r.post("/api/imports/items/:id/discard", auth3.requireAuth, auth3.requirePerm("imports:write"), (ctx) => {
         const it = db3.one(`SELECT * FROM import_items WHERE id=?`, ctx.params.id);
         if (!it) throw notFound();
+        const imp = db3.one(`SELECT imported_by FROM imports WHERE id=?`, it.import_id);
+        if (imp && imp.imported_by && imp.imported_by !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden();
         if (it.status !== "staged") throw badRequest("Item already processed");
         db3.run(`UPDATE import_items SET status='discarded' WHERE id=?`, it.id);
         audit3.log({ user: ctx.user, action: "import.discard", entity: "import_item", entityId: it.id, ip: ctx.ip });
@@ -16714,6 +16734,57 @@ var require_overdose = __commonJS({
     var crud = require_crud();
     var { decrypt: decrypt3, encrypt: encrypt3 } = require_crypto();
     var KINDS = ["overdose", "reversal", "fatal"];
+    var FATAL_APPLIED = "overdose_event.fatal_outcome";
+    var FATAL_REVERTED = "overdose_event.fatal_reverted";
+    function applyFatal(ctx, event) {
+      if (!event.client_id) return;
+      const c = db3.one(`SELECT id, status, discharge_date, discharge_reason FROM clients WHERE id=?`, event.client_id);
+      if (!c || c.status === "deceased") return;
+      const when = String(event.occurred_at).slice(0, 10);
+      const details = { prior_status: c.status, prior_discharge_date: c.discharge_date || null, prior_discharge_reason: c.discharge_reason || null, episode_id: null, assignment_ids: [], task_ids: [] };
+      db3.transaction(() => {
+        const ep = db3.one(`SELECT id FROM episodes WHERE client_id=? AND status='open' ORDER BY opened_at DESC LIMIT 1`, c.id);
+        if (ep) {
+          db3.run(`UPDATE episodes SET status='closed', closed_at=?, closed_by=?, discharge_reason='deceased', discharge_disposition=?, updated_at=? WHERE id=?`, when, ctx.user.id, "Fatal overdose recorded", db3.now(), ep.id);
+          details.episode_id = ep.id;
+        }
+        db3.run(`UPDATE clients SET status='deceased', discharge_date=?, discharge_reason='deceased', updated_at=? WHERE id=?`, when, db3.now(), c.id);
+        details.assignment_ids = db3.all(`SELECT id, end_date FROM assignments WHERE client_id=? AND (end_date IS NULL OR end_date > ?)`, c.id, when).map((a) => [a.id, a.end_date || null]);
+        for (const [id] of details.assignment_ids) db3.run(`UPDATE assignments SET end_date=?, updated_at=? WHERE id=?`, when, db3.now(), id);
+        details.task_ids = db3.all(`SELECT id, status FROM tasks WHERE client_id=? AND status IN ('open','in_progress')`, c.id).map((t) => [t.id, t.status]);
+        for (const [id] of details.task_ids) db3.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE id=?`, db3.now(), id);
+      });
+      audit3.log({ user: ctx.user, action: FATAL_APPLIED, entity: "overdose_event", entityId: event.id, clientId: c.id, ip: ctx.ip, details });
+    }
+    function appliedFatal(eventId) {
+      const last = db3.one(`SELECT action, details FROM audit_log WHERE entity='overdose_event' AND entity_id=? AND action IN (?,?) ORDER BY id DESC LIMIT 1`, eventId, FATAL_APPLIED, FATAL_REVERTED);
+      if (!last || last.action !== FATAL_APPLIED) return null;
+      try {
+        return JSON.parse(last.details);
+      } catch {
+        return null;
+      }
+    }
+    function revertFatal(ctx, event) {
+      if (!event.client_id) return;
+      const applied = appliedFatal(event.id);
+      if (!applied) return;
+      if (db3.one(`SELECT 1 FROM overdose_events WHERE client_id=? AND kind='fatal' AND id<>?`, event.client_id, event.id)) return;
+      const c = db3.one(`SELECT id, status FROM clients WHERE id=?`, event.client_id);
+      if (!c || c.status !== "deceased") return;
+      let reopened = null;
+      db3.transaction(() => {
+        db3.run(`UPDATE clients SET status=?, discharge_date=?, discharge_reason=?, updated_at=? WHERE id=?`, applied.prior_status || "active", applied.prior_discharge_date || null, applied.prior_discharge_reason || null, db3.now(), c.id);
+        const ep = applied.episode_id && db3.one(`SELECT id, status FROM episodes WHERE id=?`, applied.episode_id);
+        if (ep && ep.status === "closed" && !db3.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, c.id)) {
+          db3.run(`UPDATE episodes SET status='open', closed_at=NULL, closed_by=NULL, discharge_reason=NULL, discharge_disposition=NULL, discharge_summary_enc=NULL, updated_at=? WHERE id=?`, db3.now(), ep.id);
+          reopened = ep.id;
+        }
+        for (const [id, endDate] of applied.assignment_ids || []) db3.run(`UPDATE assignments SET end_date=?, updated_at=? WHERE id=? AND ended_at IS NULL`, endDate, db3.now(), id);
+        for (const [id, status] of applied.task_ids || []) db3.run(`UPDATE tasks SET status=?, updated_at=? WHERE id=? AND status='cancelled'`, status, db3.now(), id);
+      });
+      audit3.log({ user: ctx.user, action: FATAL_REVERTED, entity: "overdose_event", entityId: event.id, clientId: c.id, ip: ctx.ip, details: { restored_status: applied.prior_status || "active", reopened_episode: reopened } });
+    }
     var ADMINISTERED_BY = ["bystander", "first_responder", "staff", "self", "family", "unknown"];
     module.exports = (r) => {
       crud.build(r, {
@@ -16782,7 +16853,21 @@ var require_overdose = __commonJS({
           if (!row.client_id) return;
           const day = String(row.occurred_at).slice(0, 10);
           db3.run(`UPDATE clients SET overdose_history=1, last_overdose_date=CASE WHEN last_overdose_date IS NULL OR last_overdose_date < ? THEN ? ELSE last_overdose_date END, updated_at=? WHERE id=?`, day, day, db3.now(), row.client_id);
-          if (row.kind === "fatal") db3.run(`UPDATE clients SET status='deceased', updated_at=? WHERE id=?`, db3.now(), row.client_id);
+          if (row.kind === "fatal") applyFatal(ctx, row);
+        },
+        afterUpdate: (ctx, row, prev) => {
+          const wasFatal = prev.kind === "fatal" && prev.client_id;
+          const isFatal = row.kind === "fatal" && row.client_id;
+          const sameClient = prev.client_id === row.client_id;
+          if (wasFatal && (!isFatal || !sameClient)) revertFatal(ctx, prev);
+          if (isFatal && (!wasFatal || !sameClient)) {
+            const day = String(row.occurred_at).slice(0, 10);
+            db3.run(`UPDATE clients SET overdose_history=1, last_overdose_date=CASE WHEN last_overdose_date IS NULL OR last_overdose_date < ? THEN ? ELSE last_overdose_date END, updated_at=? WHERE id=?`, day, day, db3.now(), row.client_id);
+            applyFatal(ctx, row);
+          }
+        },
+        beforeDelete: (ctx, row) => {
+          if (row.kind === "fatal") revertFatal(ctx, row);
         },
         canEdit: crud.ownerOrManager("reported_by")
       });

@@ -237,6 +237,137 @@ const phone = await session('mrivera', 'Navigator2026!!', { width: 390, height: 
   }
 }
 
+// ---------------- completeness audit (1.9.4): the gaps closed after it ----------------
+{
+  const { page, api } = sup;
+  // A fatal overdose is a discharge, confirmed first; deleting the event puts the client back.
+  const c = (await api('POST', '/api/clients', { first_name: 'Fatal', last_name: 'Browser' + stamp, confirm_duplicate: true })).data;
+  const ev = (await api('POST', '/api/overdose-events', { client_id: c.id, occurred_at: new Date().toISOString(), kind: 'overdose' })).data;
+  await go(page, 'overdose');
+  const row = await until(async () => { for (const tr of await page.$$('tbody tr')) if ((await tr.textContent()).includes(c.client_code)) return tr; return null; });
+  ok(row, 'the event is listed');
+  if (row) {
+    await row.click(); await page.waitForSelector('.modal select[name=kind]');
+    ok(await page.$('.modal button:has-text("Delete event")'), 'the event dialog offers Delete');
+    await page.selectOption('.modal select[name=kind]', 'fatal');
+    await page.click('.modal button[type=submit]');
+    const confirm = await until(() => page.$('.modal button:has-text("Record as fatal")'));
+    ok(confirm, 'recording a fatal outcome asks first');
+    const text = await page.$$eval('.modal p', ps => ps.map(p => p.textContent).join(' '));
+    ok(/deceased/.test(text) && /episode/.test(text), 'and says the client is discharged as deceased', text.slice(0, 120));
+    if (confirm) await confirm.click();
+    await settle(page);
+    eq((await api('GET', `/api/clients/${c.id}`)).data.client.status, 'deceased', 'the client is recorded as deceased');
+    eq((await api('GET', `/api/clients/${c.id}/episodes`)).data.episodes[0].discharge_reason, 'deceased', 'and their episode closed with that reason');
+    await go(page, 'overdose');
+    const again = await until(async () => { for (const tr of await page.$$('tbody tr')) if ((await tr.textContent()).includes(c.client_code)) return tr; return null; });
+    if (again) {
+      await again.click(); await (await until(() => page.$('.modal button:has-text("Delete event")'))).click();
+      const dels = page.locator('.modal button:has-text("Delete event")');
+      ok(await until(async () => (await dels.count()) === 2), 'Delete asks for confirmation');
+      const warn = await page.$$eval('.modal p', ps => ps.map(p => p.textContent).join(' '));
+      ok(/no longer recorded as deceased/.test(warn), 'deleting a fatal event says the client will be restored', warn.slice(0, 120));
+      await dels.last().click(); await settle(page);
+    }
+    eq((await api('GET', `/api/overdose-events/${ev.id}`)).status, 404, 'the event is gone');
+    eq((await api('GET', `/api/clients/${c.id}`)).data.client.status, 'active', 'and the client is active again');
+    eq((await api('GET', `/api/clients/${c.id}/episodes`)).data.episodes[0].status, 'open', 'with the episode reopened');
+  }
+
+  // A signed note says whether it is still what was signed.
+  // (The sample data's notes are marked signed without a signature, so sign one here.)
+  const draft = (await api('POST', '/api/notes', { client_id: c.id, kind: 'admin', format: 'narrative', content: 'Met at the drop-in; plan for housing.', occurred_at: new Date().toISOString() })).data;
+  const signRes = await api('POST', `/api/notes/${draft.id}/sign`, { password: 'Navigator2026!!' });
+  eq(signRes.status, 200, 'a note signed for the check');
+  const signed = signRes.status === 200 ? { id: draft.id } : null;
+  if (signed) {
+    await go(page, `notes/${signed.id}`);
+    const btn = await until(() => page.$('.modal [data-verify-signature]'));
+    ok(btn, 'the signed note has a Verify signature button');
+    if (btn) {
+      await btn.click();
+      ok(await until(async () => /Signature intact/.test(await page.$eval('.modal .sig-verify-result', e => e.textContent))), 'and it reports "Signature intact"');
+      await page.click('.modal .sig-hash summary');
+      const full = await page.$eval('.modal .sig-hash-full', e => e.textContent);
+      ok(full.length >= 64 && await page.$eval('.modal .sig-hash-full', e => e.offsetParent !== null), 'the full hash shows on demand', full.length);
+      await closeModal(page);
+      // Alter the stored note behind the signature (as a database edit would), then check again.
+      const { DatabaseSync } = await import('node:sqlite');
+      const dbFile = (process.env.SUDS_DATA_DIR || '/tmp/suds-ui-data') + '/suds.db';
+      const raw = new DatabaseSync(dbFile);
+      const other = raw.prepare(`SELECT content_enc FROM notes WHERE id<>? AND content_enc IS NOT NULL LIMIT 1`).get(signed.id);
+      const orig = raw.prepare(`SELECT content_enc FROM notes WHERE id=?`).get(signed.id);
+      raw.prepare(`UPDATE notes SET content_enc=? WHERE id=?`).run(other.content_enc, signed.id);
+      try {
+        await go(page, `notes/${signed.id}`);
+        await (await until(() => page.$('.modal [data-verify-signature]'))).click();
+        ok(await until(async () => /Changed after signing/.test(await page.$eval('.modal .sig-verify-result', e => e.textContent))), 'a note altered after signing reports "Changed after signing"');
+        await closeModal(page);
+      } finally { raw.prepare(`UPDATE notes SET content_enc=? WHERE id=?`).run(orig.content_enc, signed.id); raw.close(); }
+    }
+  }
+
+  // Patient-rights requests: edit and delete on the client's Requests tab.
+  const pr = (await api('POST', '/api/patient-requests', { client_id: c.id, kind: 'access', received_at: day(0), notes: 'Asked at the front desk' })).data;
+  await go(page, `client/${c.id}/requests`);
+  const edit = await until(() => page.$(`[data-edit-request="${pr.id}"]`));
+  ok(edit, 'a request has an Edit action');
+  if (edit) {
+    await edit.click(); await page.waitForSelector('.modal select[name=kind]');
+    await page.selectOption('.modal select[name=kind]', 'amendment');
+    await page.fill('.modal input[name=due_at]', day(45));
+    await page.click('.modal button[type=submit]'); await settle(page);
+    const after = (await api('GET', `/api/patient-requests/${pr.id}`)).data.row;
+    eq(after.kind, 'amendment', 'Edit changes the kind'); eq(after.due_at, day(45), 'and the due date');
+    await (await until(() => page.$(`[data-delete-request="${pr.id}"]`))).click();
+    await (await until(() => page.$('.modal button:has-text("Delete request")'))).click(); await settle(page);
+    eq((await api('GET', `/api/patient-requests/${pr.id}`)).status, 404, 'Delete removes it');
+    ok(!(await page.$(`[data-edit-request="${pr.id}"]`)), 'and the tab no longer lists it');
+  }
+
+  // The discharge reasons come from the server's list.
+  const reasons = (await api('GET', '/api/meta/discharge-reasons')).data.discharge_reasons;
+  await go(page, `client/${c.id}/episodes`);
+  const discharge = await until(() => page.$('.card-head button:has-text("Discharge")'));
+  if (discharge) {
+    await discharge.click(); await page.waitForSelector('.modal select[name=discharge_reason]');
+    const opts = await page.$$eval('.modal select[name=discharge_reason] option', os => os.map(o => o.value).filter(Boolean));
+    eq(opts.join(','), reasons.join(','), 'the discharge dialog offers the server\'s reasons');
+    await closeModal(page);
+  } else ok(false, 'the client has a Discharge button');
+
+  // Reports: episodes of care, and the single-table exports.
+  await go(page, 'reports');
+  ok(await until(() => page.$('[data-episodes-report]')), 'Reports has an Episodes of care card');
+  const epText = await page.$eval('[data-episodes-report]', e => e.textContent).catch(() => '');
+  ok(/Admissions/.test(epText) && /Discharges by reason/.test(epText), 'with admissions and discharges by reason', epText.slice(0, 120));
+  for (const label of ['Episodes (Excel)', 'Overdose events (Excel)', 'Client forms (Excel)', 'Disclosures (Excel)']) ok(await page.$(`button:has-text("${label}")`), `an export button for ${label}`);
+}
+{
+  // Finance: client codes are plain text where it cannot open the client, and a direct link says why.
+  const fin = await session('afinance', 'Navigator2026!!');
+  const { page, api } = fin;
+  await go(page, 'time');
+  await until(() => page.$('tbody tr'));
+  eq((await page.$$('.main a[href^="#/client/"]')).length, 0, 'finance sees no client links on Time');
+  await go(page, 'budget');
+  await until(() => page.$('.main'));
+  eq((await page.$$('.main a[href^="#/client/"]')).length, 0, 'or on Budget');
+  const someClient = (await sup.api('GET', '/api/clients?limit=1')).data.clients[0];
+  await go(page, `client/${someClient.id}`);
+  ok(await until(() => page.$('[data-client-forbidden="role"]')), 'a client link opened by finance says it is not available for the role');
+  ok(/Not available for your role/.test(await page.$eval('.main', e => e.textContent)), 'in those words');
+  await go(page, 'supervision');
+  const supText = await page.$eval('.main', e => e.textContent);
+  const headings = await page.$$eval('.main h2', hs => hs.map(x => x.textContent).join(' | '));
+  ok(!/countersignature|Unsigned notes/i.test(headings) && !(await page.$('[data-section=cosign]')) && !(await page.$('[data-section=unsigned]')), 'finance\'s Supervision page has no note sections', headings);
+  ok(/Staff time/i.test(supText), 'but still has the staff time it approves');
+  await go(page, 'reports');
+  ok(!(await page.$('[data-episodes-report]')), 'and Reports shows finance no episode list');
+  ok(await page.$('button:has-text("Episodes (Excel)")'), 'though the de-identified Episodes export is there');
+  await fin.close();
+}
+
 await phone.close(); await adm.close(); await sup.close(); await nav.close();
 await browser.close();
 if (errors.length) { console.log('ERRORS:'); errors.forEach(e => console.log('  ' + e)); } else console.log('NO ERRORS');

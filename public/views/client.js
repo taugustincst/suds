@@ -1,4 +1,4 @@
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, parseHash, kv, stat, clientPicker, clear, contactLinks, mapLink, openHref, tabStrip, clientStatus } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, parseHash, kv, stat, clientPicker, clear, contactLinks, mapLink, openHref, tabStrip, clientStatus, emptyState } from '../app.js';
 import { openClientForm } from './clients.js';
 import { openInterventionForm, openRepeatInterventionForm, interventionTable } from './interventions.js';
 import { openCallForm, callTable } from './calls.js';
@@ -16,6 +16,14 @@ route('client', async (r) => {
     // A duplicate that was merged away: the old link (a bookmark, a synced phone) goes on to the record
     // that replaced it, and says so.
     if (e.data && e.data.merged_into) { toast('This record was merged into another client — showing the record it was merged into.', 'ok'); nav(`client/${e.data.merged_into}${r.sub ? '/' + r.sub : ''}`); return h('div', { class: 'boot', 'data-merged-redirect': e.data.merged_into }, 'Redirecting…'); }
+    // A role that never sees who clients are (finance, read-only oversight) reaches here from a link that
+    // should not have been one; a worker reaches it for a client outside their caseload. Say which.
+    if (e.status === 403) {
+      const back = h('button', { class: 'btn', onClick: () => (history.length > 1 ? history.back() : nav('dashboard')) }, 'Go back');
+      return h('div', { 'data-client-forbidden': can('clients:read') ? 'caseload' : 'role' }, !can('clients:read')
+        ? emptyState('Not available for your role', 'Your account sees client codes on budget, time and reports, but not client records themselves. Ask your supervisor or administrator if you need to see this client.', back)
+        : emptyState('Not on your caseload', `${e.message && !/^forbidden$/i.test(e.message) ? e.message + '. ' : ''}You can open clients you are assigned to. Ask your supervisor to add you to this client's care team if you need to work with them.`, back));
+    }
     throw e;
   }
   const disp = `${c.display_name} (${c.client_code})`;
@@ -136,13 +144,27 @@ route('client', async (r) => {
     // Patient-rights requests: access, amendment, restriction, accounting — each on a 30-day clock.
     async requests() {
       const d = await get(`/api/patient-requests?client_id=${id}&status=all&limit=200`);
-      const KINDS = [{ value: 'access', label: 'Access to their record (§164.524)' }, { value: 'amendment', label: 'Amendment of their record (§164.526)' }, { value: 'restriction', label: 'Restriction on use or disclosure (§164.522)' }, { value: 'accounting', label: 'Accounting of disclosures (§164.528)' }];
-      const add = () => { const f = form([{ name: 'kind', label: 'Request', type: 'select', options: KINDS, required: true, noBlank: true }, { name: 'received_at', label: 'Received on', type: 'date', required: true, value: fmt.today() }, { name: 'notes', label: 'What was asked for, and how', type: 'textarea', span: true, rows: 3, help: 'Stored encrypted.' }], { submitText: 'Record request', onCancel: () => m.close(), onSubmit: async (v) => { await post('/api/patient-requests', { ...v, client_id: id }); toast('Request recorded — due in 30 days', 'ok'); m.close(); refresh(); } }); const m = modal('Record a patient request', f); };
+      // The kinds, statuses and deadline come from GET /api/meta/patient-request-options; these labels (and
+      // the lists, should that request fail) are what the view falls back on.
+      const LABELS = { access: 'Access to their record (§164.524)', amendment: 'Amendment of their record (§164.526)', restriction: 'Restriction on use or disclosure (§164.522)', accounting: 'Accounting of disclosures (§164.528)' };
+      let kinds = Object.keys(LABELS); let statuses = ['open', 'fulfilled', 'denied']; let days = 30;
+      try { const m = await get('/api/meta/patient-request-options'); if (Array.isArray(m.kinds) && m.kinds.length) kinds = m.kinds; if (Array.isArray(m.statuses) && m.statuses.length) statuses = m.statuses; if (m.days_to_respond) days = m.days_to_respond; } catch { /* built-in lists */ }
+      const KINDS = kinds.map(value => ({ value, label: LABELS[value] || fmt.label(value) }));
+      const add = () => { const f = form([{ name: 'kind', label: 'Request', type: 'select', options: KINDS, required: true, noBlank: true }, { name: 'received_at', label: 'Received on', type: 'date', required: true, value: fmt.today() }, { name: 'notes', label: 'What was asked for, and how', type: 'textarea', span: true, rows: 3, help: 'Stored encrypted.' }], { submitText: 'Record request', onCancel: () => m.close(), onSubmit: async (v) => { await post('/api/patient-requests', { ...v, client_id: id }); toast(`Request recorded — due in ${days} days`, 'ok'); m.close(); refresh(); } }); const m = modal('Record a patient request', f); };
       const close = async (x, status) => { const note = await confirmDialog(status === 'fulfilled' ? 'Mark fulfilled' : 'Mark denied', status === 'fulfilled' ? 'Record how the request was fulfilled.' : 'Record the reason for denial (the client is entitled to it in writing).', { okText: status === 'fulfilled' ? 'Fulfilled' : 'Denied', danger: status === 'denied', requireReason: true }); if (!note) return; await put(`/api/patient-requests/${x.id}`, { status, notes: [x.notes, `${status === 'fulfilled' ? 'Fulfilled' : 'Denied'} ${fmt.today()}: ${note}`].filter(Boolean).join('\n') }); refresh(); };
+      // Correct a request recorded with the wrong kind or date, extend its due date, or reopen it.
+      const edit = (x) => { const f = form([{ name: 'kind', label: 'Request', type: 'select', options: KINDS, required: true, noBlank: true }, { name: 'received_at', label: 'Received on', type: 'date', required: true }, { name: 'due_at', label: 'Due by', type: 'date', help: `${days} days from receipt unless extended.` }, { name: 'status', label: 'Status', type: 'select', options: statuses, noBlank: true }, { name: 'notes', label: 'Notes', type: 'textarea', span: true, rows: 4, help: 'Stored encrypted.' }], { values: { kind: x.kind, received_at: x.received_at, due_at: x.due_at, status: x.status, notes: x.notes || '' }, submitText: 'Save', onCancel: () => m.close(), onSubmit: async (v) => { await put(`/api/patient-requests/${x.id}`, v); toast('Request updated', 'ok'); m.close(); refresh(); } }); const m = modal('Edit patient request', f); };
+      // For a request recorded in error (the wrong client, a duplicate). A real request that is not being
+      // granted is "Denied", which keeps it on file; this removes it, and the removal is in the audit log.
+      const remove = async (x) => { if (!(await confirmDialog('Delete this request?', `Delete the ${fmt.label(x.kind)} request received ${fmt.date(x.received_at)}? Use this only for a request recorded in error — a request that is being refused should be marked Denied instead, so it stays on file. The deletion is recorded in the audit log.`, { danger: true, okText: 'Delete request' }))) return; await del(`/api/patient-requests/${x.id}`); toast('Request deleted', 'ok'); refresh(); };
+      const mayChange = (x) => can('patient-requests:write') && (x.handled_by === state.user.id || x.created_by === state.user.id || can('clients:all'));
       return h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Patient-rights requests'), can('patient-requests:write') ? h('button', { class: 'btn sm primary', 'data-add-request': '1', onClick: add }, '+ Request') : null),
-        h('p', { class: 'small muted' }, 'A client may ask to see their record, have it corrected, restrict how it is shared, or receive the accounting of disclosures. Each must be answered within 30 days of receipt.'),
+        h('p', { class: 'small muted' }, `A client may ask to see their record, have it corrected, restrict how it is shared, or receive the accounting of disclosures. Each must be answered within ${days} days of receipt.`),
         table([{ label: 'Request', render: x => fmt.label(x.kind) }, { label: 'Received', render: x => fmt.date(x.received_at) }, { label: 'Due', render: x => h('span', { style: x.overdue ? { color: 'var(--danger)', fontWeight: 600 } : {} }, fmt.date(x.due_at), x.overdue ? ' — overdue' : '') }, { label: 'Status', render: x => badge(fmt.label(x.status), x.status === 'open' ? (x.overdue ? 'danger' : 'warn') : x.status === 'fulfilled' ? 'ok' : '') }, { label: 'Notes', render: x => h('div', { style: { whiteSpace: 'pre-wrap' } }, x.notes || '') }, { label: 'Handled by', key: 'handler' },
-          { label: '', render: x => x.status === 'open' && can('patient-requests:write') ? h('div', { class: 'row' }, h('button', { class: 'btn sm primary', onClick: () => close(x, 'fulfilled') }, 'Fulfilled'), h('button', { class: 'btn sm', onClick: () => close(x, 'denied') }, 'Denied')) : null }], d.rows, { empty: 'No requests recorded for this client.' }));
+          { label: '', render: x => h('div', { class: 'row nowrap' },
+            x.status === 'open' && can('patient-requests:write') ? [h('button', { class: 'btn sm primary', onClick: () => close(x, 'fulfilled') }, 'Fulfilled'), h('button', { class: 'btn sm', onClick: () => close(x, 'denied') }, 'Denied')] : null,
+            mayChange(x) ? h('button', { class: 'btn sm ghost', 'data-edit-request': x.id, onClick: () => edit(x) }, 'Edit') : null,
+            mayChange(x) ? h('button', { class: 'btn sm ghost danger', 'data-delete-request': x.id, onClick: () => remove(x) }, 'Delete') : null) }], d.rows, { empty: 'No requests recorded for this client.' }));
     },
     async team() {
       // A client has one primary: assigning a new one ends the current one's assignment (and, for a

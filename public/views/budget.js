@@ -50,7 +50,7 @@ export function expenditureTable(rows, { showClient = true, onChange } = {}) {
   };
   return table([
     { label: 'Date', render: r => fmt.date(r.spent_at) }, { label: 'Fund', render: r => h('div', {}, r.fund, r.line_label || r.line_category ? h('div', { class: 'small muted' }, r.line_label || fmt.label(r.line_category)) : null) }, { label: 'Category', render: r => fmt.label(r.category) },
-    showClient ? { label: 'Client', render: r => r.client_id ? h('a', { href: `#/client/${r.client_id}` }, r.client_code) : '—' } : null, { label: 'Amount', render: r => fmt.money(r.amount), num: true },
+    showClient ? { label: 'Client', render: r => r.client_id ? (can('clients:read') ? h('a', { href: `#/client/${r.client_id}` }, r.client_code) : h('span', { class: 'mono' }, r.client_code)) : '—' } : null, { label: 'Amount', render: r => fmt.money(r.amount), num: true },
     { label: 'Vendor / description', render: r => h('span', { class: 'small' }, r.vendor ? h('b', {}, r.vendor, ' ') : null, r.description || '', r.receipt_ref ? h('span', { class: 'muted' }, ` #${r.receipt_ref}`) : null) },
     { label: 'Status', render: r => [badge(fmt.label(r.status), statusKind(r.status)), r.approver ? h('div', { class: 'small muted' }, r.approver) : null, r.approval_note ? h('div', { class: 'small', title: 'Reviewer\'s note' }, `“${r.approval_note}”`) : null] }, { label: 'By', key: 'worker' },
     { label: '', render: r => h('div', { class: 'row nowrap' }, r.status === 'pending' && can('budget:approve') && r.user_id !== state.user.id ? [h('button', { class: 'btn sm primary', onClick: () => approve(r, 'approved') }, 'Approve'), h('button', { class: 'btn sm', onClick: () => approve(r, 'rejected') }, 'Reject')] : null,

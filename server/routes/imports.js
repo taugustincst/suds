@@ -127,6 +127,9 @@ module.exports = (r) => {
 
   r.post('/api/imports/items/:id/discard', auth.requireAuth, auth.requirePerm('imports:write'), (ctx) => {
     const it = db.one(`SELECT * FROM import_items WHERE id=?`, ctx.params.id); if (!it) throw notFound();
+    // The same rule as viewing the batch (GET /api/imports/:id): someone else's import is theirs to sort.
+    const imp = db.one(`SELECT imported_by FROM imports WHERE id=?`, it.import_id);
+    if (imp && imp.imported_by && imp.imported_by !== ctx.user.id && !auth.hasPerm(ctx.user, 'clients:all')) throw forbidden();
     if (it.status !== 'staged') throw badRequest('Item already processed');
     db.run(`UPDATE import_items SET status='discarded' WHERE id=?`, it.id);
     audit.log({ user: ctx.user, action: 'import.discard', entity: 'import_item', entityId: it.id, ip: ctx.ip });

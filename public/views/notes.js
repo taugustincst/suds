@@ -67,13 +67,31 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
   const origClose = m.close; m.close = () => { clearTimeout(asTimer); if (noteId && onDone) onDone(); origClose(); };
 }
 
+// Re-computes the signature over the note as it is stored now (GET /api/notes/:id/verify) and says in plain
+// words whether it still matches what was signed. The hash is evidence; this is the answer to "was it changed?".
+function verifyPanel(n, breakGlass) {
+  const out = h('div', { class: 'sig-verify-result', role: 'status', 'aria-live': 'polite' });
+  const line = (good, text) => h('div', { class: 'row', style: { gap: '.4rem', alignItems: 'center' } }, badge(good ? 'Signature intact' : 'Changed after signing', good ? 'ok' : 'danger'), h('span', { class: 'small muted' }, text));
+  const btn = h('button', { class: 'btn sm', 'data-verify-signature': '1', onClick: async () => {
+    btn.disabled = true; out.replaceChildren(h('span', { class: 'small muted' }, 'Checking…'));
+    try {
+      const v = await get(`/api/notes/${n.id}/verify`, breakGlass ? { headers: { 'X-Break-Glass-Reason': breakGlass } } : undefined);
+      out.replaceChildren(
+        line(v.intact, v.intact ? `The note is exactly as ${v.signer || 'the signer'} signed it${v.signed_at ? ` on ${fmt.dt(v.signed_at)}` : ''}.` : 'The stored note no longer matches its signature. Report this to your privacy officer.'),
+        v.cosignature_intact === undefined ? null : line(v.cosignature_intact, v.cosignature_intact ? `Countersignature by ${v.cosigner || 'the supervisor'} also matches.` : 'The countersignature no longer matches.'));
+    } catch (e) { out.replaceChildren(h('span', { class: 'err' }, e.message || 'Could not check the signature')); }
+    finally { btn.disabled = false; }
+  } }, 'Verify signature');
+  return h('div', { class: 'mt row', style: { gap: '.6rem', alignItems: 'center', flexWrap: 'wrap' } }, btn, out);
+}
+
 export async function openNote(id, { onChange } = {}) {
-  let n;
+  let n; let breakGlass = null;
   try { n = (await get(`/api/notes/${id}`)).note; }
   catch (e) {
     if (e.status === 403 && can('notes:clinical:breakglass')) {
       const reason = await confirmDialog('Break-glass access', 'This is a clinical note outside your normal role. Emergency access is permitted only with a documented reason and will be reported to the privacy officer.', { danger: true, okText: 'Access with reason', requireReason: true });
-      if (!reason) return; n = (await get(`/api/notes/${id}`, { headers: { 'X-Break-Glass-Reason': reason } })).note;
+      if (!reason) return; breakGlass = reason; n = (await get(`/api/notes/${id}`, { headers: { 'X-Break-Glass-Reason': reason } })).note;
     } else { toast(e.message, 'error'); return; }
   }
   const mine = n.author_id === state.user.id;
@@ -81,7 +99,8 @@ export async function openNote(id, { onChange } = {}) {
   const body = h('div', {},
     h('div', { class: 'row mb' }, badge(n.kind === 'clinical' ? 'Clinical' : 'Administrative', n.kind === 'clinical' ? 'purple' : 'info'), badge(fmt.label(n.status), statusKind(n.status)), badge(fmt.label(n.format)), n.source !== 'manual' ? badge(`Imported: ${fmt.label(n.source)}`, 'warn') : null, n.part2_protected ? badge('42 CFR Part 2', 'danger') : null,
       n.cosigned_at ? badge(`Countersigned by ${n.cosigner}`, 'ok') : n.cosign_requested ? badge('Review requested', 'warn') : n.cosign_required ? badge('Needs countersignature', 'warn') : null),
-    kv([['Client', h('a', { href: `#/client/${n.client_id}` }, n.client_code || 'view')], ['Date of service', fmt.dt(n.occurred_at)], ['Author', n.author], n.signed_at ? ['Signed', `${fmt.dt(n.signed_at)} by ${n.signer}`] : null, n.signature_hash ? ['Signature hash', h('code', {}, n.signature_hash.slice(0, 16) + '…')] : null, ['Created', fmt.dt(n.created_at)]]),
+    kv([['Client', h('a', { href: `#/client/${n.client_id}` }, n.client_code || 'view')], ['Date of service', fmt.dt(n.occurred_at)], ['Author', n.author], n.signed_at ? ['Signed', `${fmt.dt(n.signed_at)} by ${n.signer}`] : null, n.signature_hash ? ['Signature hash', h('details', { class: 'sig-hash' }, h('summary', {}, h('code', {}, n.signature_hash.slice(0, 16) + '…'), ' ', h('span', { class: 'small muted' }, 'show full')), h('code', { class: 'sig-hash-full', style: { wordBreak: 'break-all' } }, n.signature_hash))] : null, ['Created', fmt.dt(n.created_at)]]),
+    n.signature_hash ? verifyPanel(n, breakGlass) : null,
     n.structured ? h('div', { class: 'mt' }, Object.entries(n.structured).map(([k, v]) => v ? h('div', { class: 'mb' }, h('b', {}, sectionLabel(n.format, k)), h('div', { style: { whiteSpace: 'pre-wrap' } }, v)) : null)) : h('pre', { class: 'note mt' }, n.content),
     n.structured && n.content ? h('details', { class: 'mt' }, h('summary', { class: 'muted small' }, 'Narrative text'), h('pre', { class: 'note' }, n.content)) : null,
     n.addenda.length ? h('div', { class: 'mt' }, h('h4', {}, 'Addenda'), n.addenda.map(a => h('div', { class: 'list-item' }, h('div', { class: 'small muted' }, `${fmt.dt(a.created_at)} · ${a.author}${a.reason ? ' · ' + a.reason : ''}`), h('div', { style: { whiteSpace: 'pre-wrap' } }, a.content)))) : null,

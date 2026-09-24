@@ -3,7 +3,25 @@ import { h, route, get, state, fmt, can, pageHead, bars, stat, table, downloadCs
 route('reports', async (r) => {
   const to = r.query.get('to') || fmt.today(); const from = r.query.get('from') || new Date(Date.parse(to) - 89 * 86400000).toISOString().slice(0, 10);
   const months = Number(r.query.get('months') || 12);
-  const [d, m] = await Promise.all([get(`/api/reports/dashboard?from=${from}&to=${to}`), get(`/api/reports/monthly?months=${months}`)]);
+  const seesEpisodes = can('episodes:read') || can('episodes:write');
+  const [d, m, eps] = await Promise.all([get(`/api/reports/dashboard?from=${from}&to=${to}`), get(`/api/reports/monthly?months=${months}`),
+    seesEpisodes ? get(`/api/episodes?from=${from}&to=${to}&status=all&limit=500`).catch(() => null) : null]);
+  // Admissions and discharges in the period (GET /api/episodes). A client code opens the client only for a
+  // role that can open client records.
+  const clientCell = (x) => (can('clients:read') ? h('a', { href: `#/client/${x.client_id}/episodes` }, x.client_code) : h('span', { class: 'mono' }, x.client_code));
+  const episodesCard = () => {
+    const s = eps.summary || { opened: eps.total, still_open: eps.rows.filter(x => x.status === 'open').length, since_closed: eps.rows.filter(x => x.status === 'closed').length, discharged: 0, discharges_by_reason: [] };
+    return h('div', { class: 'card mb', 'data-episodes-report': '1' },
+      h('div', { class: 'card-head' }, h('h3', {}, 'Episodes of care')),
+      h('p', { class: 'small muted' }, 'Admissions are episodes opened in the period; discharges are episodes closed in the period, whenever they were opened.'),
+      h('div', { class: 'grid cols-4 mb' }, stat('Admissions', s.opened), stat('Still open', s.still_open), stat('Since discharged', s.since_closed), stat('Discharges in period', s.discharged)),
+      h('div', { class: 'grid cols-2' },
+        h('div', {}, h('h4', {}, 'Discharges by reason'), bars(s.discharges_by_reason)),
+        h('div', {}, h('h4', {}, 'Admissions in the period'),
+          table([{ label: 'Client', render: clientCell }, { label: 'Opened', render: x => fmt.date(x.opened_at) }, { label: 'Closed', render: x => (x.closed_at ? fmt.date(x.closed_at) : '—') }, { label: 'Reason', render: x => (x.discharge_reason ? fmt.label(x.discharge_reason) : '') }, { label: 'Funding', render: x => x.funding_source || '' }],
+            eps.rows.slice(0, 50), { empty: 'No episodes opened in this period.' }),
+          eps.total > Math.min(50, eps.rows.length) ? h('p', { class: 'small muted' }, `Showing ${Math.min(50, eps.rows.length)} of ${eps.total}. The Episodes export below has them all.`) : null)));
+  };
   const fromI = h('input', { type: 'date', value: from }), toI = h('input', { type: 'date', value: to });
   const monthTable = () => {
     const keys = [...new Set([...m.intakes, ...m.interventions, ...m.calls, ...m.referrals, ...m.time, ...m.spend].map(x => x.month))].sort();
@@ -22,10 +40,11 @@ route('reports', async (r) => {
       h('div', { class: 'card' }, h('h3', {}, 'Referral outcomes by category'), table([{ label: 'Category', render: x => fmt.label(x.k) }, { label: 'Referred', key: 'n', num: true }, { label: 'Admitted', key: 'successful', num: true }, { label: 'Rate', render: x => x.n ? `${Math.round(100 * x.successful / x.n)}%` : '—', num: true }], d.referrals.by_category, { wrap: false })),
       h('div', { class: 'card' }, h('h3', {}, 'Clients by status'), bars(d.clients.by_status, { labelKey: 'status', link: x => `clients?status=${x.status}` })), h('div', { class: 'card' }, h('h3', {}, 'Primary substance (active)'), bars(d.clients.by_substance, { link: x => `clients?status=active&substance=${x.k}` })), h('div', { class: 'card' }, h('h3', {}, 'MAT status'), bars(d.clients.mat, { link: x => `clients?status=active&mat=${x.k}` })),
       d.time ? h('div', { class: 'card' }, h('h3', {}, 'Staff time by category'), bars(d.time.by_category, { format: fmt.mins })) : null, h('div', { class: 'card' }, h('h3', {}, 'Calls and texts by outcome'), bars(d.calls.by_outcome, { link: () => 'calls' })), h('div', { class: 'card' }, h('h3', {}, 'Weekly interventions'), sparkline(d.interventions.by_week.map(w => w.n)))),
+    eps ? episodesCard() : null,
     h('div', { class: 'card mb' }, h('div', { class: 'card-head' }, h('h3', {}, `Monthly trend (last ${months} months)`), h('div', { class: 'row' }, [6, 12, 24].map(n => h('button', { class: `btn sm ${n === months ? 'primary' : ''}`, onClick: () => nav(`reports?from=${from}&to=${to}&months=${n}`) }, `${n}m`)))), monthTable()),
     can('export:read') ? h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Export to Excel or CSV'), h('button', { class: 'btn primary', onClick: () => downloadCsv(`/api/reports/export/workbook?from=${from}&to=${to}`) }, 'Everything as one Excel workbook')),
       h('p', { class: 'small muted' }, 'Exports use client codes instead of names and carry only the columns a de-identified file may hold. Dates follow the range above (clients, resources and to-dos are complete lists).'),
-      h('div', { class: 'row' }, exportRow('clients', 'Clients'), exportRow('interventions', 'Visits & services'), exportRow('calls', 'Calls'), exportRow('referrals', 'Referrals'), exportRow('time', 'Time'), exportRow('tasks', 'To-dos'), exportRow('resources', 'Resources'), exportRow('consents', 'Consents'), can('budget:read') ? [exportRow('expenditures', 'Expenditures'), exportRow('funds', 'Funding'), exportRow('budget_lines', 'Budget lines')] : null),
+      h('div', { class: 'row' }, exportRow('clients', 'Clients'), exportRow('interventions', 'Visits & services'), exportRow('calls', 'Calls'), exportRow('referrals', 'Referrals'), exportRow('time', 'Time'), exportRow('tasks', 'To-dos'), exportRow('resources', 'Resources'), exportRow('consents', 'Consents'), exportRow('episodes', 'Episodes'), exportRow('overdose_events', 'Overdose events'), exportRow('forms', 'Client forms'), exportRow('disclosures', 'Disclosures'), can('budget:read') ? [exportRow('expenditures', 'Expenditures'), exportRow('funds', 'Funding'), exportRow('budget_lines', 'Budget lines')] : null),
       can('export:identified') ? h('div', { class: 'mt' }, h('button', { class: 'btn sm danger', onClick: async () => {
         if (!await confirmDialog('Identified export', 'This export includes client names, dates of birth and contact details. It is a disclosure: it is recorded in the audit log and in the accounting of disclosures of every client it contains. Continue?', { danger: true, okText: 'Continue' })) return;
         const recipient = (window.prompt('Who receives this file? (recipient, written to each client\'s accounting of disclosures)') || '').trim(); if (!recipient) return;

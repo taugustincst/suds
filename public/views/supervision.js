@@ -67,8 +67,10 @@ route('supervision', async (r) => {
         } }, 'Countersign'))), { wide: true });
   };
 
+  // Countersignature and the team's unsigned drafts are for someone who can countersign (notes:cosign). A
+  // role that only approves time (finance) used to see both, permanently empty, with nothing it could do.
   const cosignRows = q.awaiting_cosignature || [];
-  page.append(h('section', { class: 'card' },
+  if (can('notes:cosign')) page.append(h('section', { class: 'card', 'data-section': 'cosign' },
     h('div', { class: 'card-head' }, h('h2', {}, 'Notes waiting for your countersignature'), badge(String(cosignRows.length), cosignRows.length ? 'warn' : 'ok')),
     cosignRows.length ? table([
       { label: 'Client', key: 'client_code' },
@@ -82,7 +84,7 @@ route('supervision', async (r) => {
   // ---- unsigned drafts across the team ----
   const drafts = q.unsigned_notes || [];
   const overdue = drafts.filter(d => d.overdue).length;
-  page.append(h('section', { class: 'card' },
+  if (can('notes:cosign')) page.append(h('section', { class: 'card', 'data-section': 'unsigned' },
     h('div', { class: 'card-head' }, h('h2', {}, 'Unsigned notes across your team'),
       badge(overdue ? `${overdue} overdue` : String(drafts.length), overdue ? 'danger' : drafts.length ? 'warn' : 'ok')),
     drafts.length ? table([
@@ -178,6 +180,6 @@ route('supervision', async (r) => {
     pageHead('Supervision'),
     tabs,
     glassCount ? h('div', { class: 'banner error', role: 'alert' }, `${plural(glassCount, 'emergency access', 'emergency accesses')} to clinical notes ${glassCount === 1 ? 'is' : 'are'} waiting for review. `, h('a', { href: '#/supervision?tab=breakglass' }, 'Review now')) : null,
-    h('p', { class: 'muted' }, 'Work that is waiting on you: countersignatures, unsigned notes, staff time, and referrals that have not closed the loop.'),
+    h('p', { class: 'muted' }, can('notes:cosign') ? 'Work that is waiting on you: countersignatures, unsigned notes, staff time, and referrals that have not closed the loop.' : 'Work that is waiting on you: staff time to approve, and anything else your role reviews.'),
     page);
 });

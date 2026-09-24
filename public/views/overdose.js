@@ -1,17 +1,24 @@
 // Overdose and reversal events. Every SUD funder asks for these counts, and a community reversal reported
 // by an outreach worker — with nobody identified — is exactly the kind a program most needs to record.
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog, discardDraft } from '../app.js';
 
-const KINDS = [
-  { value: 'overdose', label: 'Overdose (no naloxone given)' },
-  { value: 'reversal', label: 'Overdose reversed with naloxone' },
-  { value: 'fatal', label: 'Fatal overdose' },
-];
-const BY = [
-  { value: 'bystander', label: 'A bystander' }, { value: 'first_responder', label: 'A first responder' },
-  { value: 'staff', label: 'Our staff' }, { value: 'self', label: 'The person themselves' },
-  { value: 'family', label: 'Family member' }, { value: 'unknown', label: 'Unknown' },
-];
+// The lists themselves come from GET /api/meta/overdose-options, so a kind added on the server shows up
+// here; these are the plain-language labels for the known values, and the fallback if the list cannot load.
+const KIND_LABELS = { overdose: 'Overdose (no naloxone given)', reversal: 'Overdose reversed with naloxone', fatal: 'Fatal overdose' };
+const BY_LABELS = { bystander: 'A bystander', first_responder: 'A first responder', staff: 'Our staff', self: 'The person themselves', family: 'Family member', unknown: 'Unknown' };
+const toOptions = (values, labels) => values.map(value => ({ value, label: labels[value] || fmt.label(value) }));
+let KINDS = toOptions(Object.keys(KIND_LABELS), KIND_LABELS);
+let BY = toOptions(Object.keys(BY_LABELS), BY_LABELS);
+let optionsLoaded = false;
+async function loadOptions() {
+  if (optionsLoaded) return;
+  try {
+    const m = await get('/api/meta/overdose-options');
+    if (Array.isArray(m.kinds) && m.kinds.length) KINDS = toOptions(m.kinds, KIND_LABELS);
+    if (Array.isArray(m.administered_by) && m.administered_by.length) BY = toOptions(m.administered_by, BY_LABELS);
+    optionsLoaded = true;
+  } catch { /* keep the built-in lists */ }
+}
 
 export function openOverdoseForm(row, { clientId = null, onDone } = {}) {
   const f = form([
@@ -38,15 +45,37 @@ export function openOverdoseForm(row, { clientId = null, onDone } = {}) {
     draftKey: row ? `overdose:${row.id}` : 'overdose:new',
     onSubmit: async (d) => {
       if (!d.client_id) delete d.client_id;
+      const wasFatal = !!(row && row.kind === 'fatal' && row.client_id);
+      const isFatal = d.kind === 'fatal' && !!d.client_id;
+      const sameClient = !row || (row.client_id || '') === (d.client_id || '');
+      // A fatal overdose discharges the client (server/routes/overdose.js), so say so before it happens.
+      if (isFatal && (!wasFatal || !sameClient)) {
+        const ok = await confirmDialog('Record a fatal overdose?', 'This records the client as deceased and discharges them: their open episode is closed with the reason "deceased", their care team assignments end and their open to-dos are cancelled. If this is corrected later, changing the outcome or deleting the event puts the client back as they were.', { danger: true, okText: 'Record as fatal' });
+        if (!ok) return;
+      } else if (wasFatal && (!isFatal || !sameClient)) {
+        const ok = await confirmDialog('No longer a fatal overdose?', 'The client will no longer be recorded as deceased: their status goes back to what it was before this event, and the episode it closed is reopened.', { okText: 'Save and restore the client' });
+        if (!ok) return;
+      }
       if (row) await put(`/api/overdose-events/${row.id}`, d); else await post('/api/overdose-events', d);
       toast(row ? 'Event updated' : 'Event recorded', 'ok'); m.close(); onDone && onDone();
     },
   });
-  const m = modal(row ? 'Edit overdose event' : 'Record an overdose or reversal', f, { wide: true });
+  const remove = row ? h('div', { class: 'btn-row', style: { justifyContent: 'flex-start', marginTop: '.5rem' } },
+    h('button', { type: 'button', class: 'btn danger', onClick: async () => {
+      const fatal = row.kind === 'fatal' && row.client_id;
+      const ok = await confirmDialog('Delete this event?', fatal
+        ? 'The event is removed from the counts, and the client is no longer recorded as deceased: their status goes back to what it was before this event and the episode it closed is reopened.'
+        : 'The event is removed from the overdose and reversal counts. This cannot be undone.', { danger: true, okText: 'Delete event' });
+      if (!ok) return;
+      await del(`/api/overdose-events/${row.id}`); discardDraft(`overdose:${row.id}`);
+      toast('Event deleted', 'ok'); m.close(); onDone && onDone();
+    } }, 'Delete event')) : null;
+  const m = modal(row ? 'Edit overdose event' : 'Record an overdose or reversal', h('div', {}, f, remove), { wide: true });
   return m;
 }
 
 route('overdose', async () => {
+  await loadOptions();
   const params = new URLSearchParams((location.hash.split('?')[1] || ''));
   const kind = params.get('kind') || 'all';
   const { rows, total } = await get(`/api/overdose-events?limit=200${kind !== 'all' ? `&kind=${kind}` : ''}`);

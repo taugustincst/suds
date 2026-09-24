@@ -128,8 +128,16 @@ module.exports = (r) => {
     const w = 'WHERE ' + where.join(' AND ');
     const rows = db.all(`SELECT e.id, e.client_id, e.opened_at, e.closed_at, e.status, e.discharge_reason, e.discharge_disposition, c.client_code, c.status AS client_status, f.name AS funding_source
       FROM episodes e JOIN clients c ON c.id=e.client_id LEFT JOIN funding_sources f ON f.id=e.funding_source_id ${w} ORDER BY e.opened_at DESC LIMIT ? OFFSET ?`, ...params, limit, offset);
+    // Counts for the whole period, not just the page: admissions (opened in the period) by where they stand
+    // now, and discharges (closed in the period, whenever opened) by reason — what a funder asks for.
+    const opened = db.one(`SELECT COUNT(*) n, SUM(e.status='open') open, SUM(e.status='closed') closed FROM episodes e JOIN clients c ON c.id=e.client_id ${w}`, ...params);
+    const dWhere = [cf.sql, `e.status='closed'`]; const dParams = [...cf.params];
+    if (ctx.query.get('from')) { dWhere.push('e.closed_at >= ?'); dParams.push(ctx.query.get('from')); }
+    if (ctx.query.get('to')) { dWhere.push('e.closed_at <= ?'); dParams.push(ctx.query.get('to')); }
+    const byReason = db.all(`SELECT COALESCE(e.discharge_reason,'not_recorded') k, COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE ${dWhere.join(' AND ')} GROUP BY 1 ORDER BY n DESC, k`, ...dParams);
     audit.log({ user: ctx.user, action: 'episode.list', ip: ctx.ip, details: { count: rows.length } });
-    return { rows, total: db.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id ${w}`, ...params).n, limit, offset };
+    return { rows, total: opened.n, limit, offset,
+      summary: { opened: opened.n, still_open: opened.open || 0, since_closed: opened.closed || 0, discharged: byReason.reduce((s, x) => s + x.n, 0), discharges_by_reason: byReason } };
   });
 
   // The waitlist, ordered by how long people have been waiting — the question a program asks every morning.
