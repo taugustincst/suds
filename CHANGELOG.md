@@ -95,6 +95,21 @@ All notable changes to SUDS are documented here. The project follows semantic ve
     or phone), you can re-admit it yourself with a reason. It is assigned to you, opens a new episode, is
     audited, and goes to supervisors for review alongside emergency accesses.
   - Migration 27 adds `idempotency_keys` and `breakglass_events.kind`.
+- **Settings → Lists: change the choices on documentation forms without a code change.** Administrators can
+  reword, reorder, hide and add to the choices for visit type, location, modality and outcome, call and text
+  outcomes and who was called, referral status ("What happened") and barrier, overdose "What happened" and
+  "Given by", time category, note format, primary substance and discharge reason, or restore the defaults.
+  Stored codes never change, so history and reports stay consistent; the wording is used on forms, lists,
+  reports and Excel/CSV exports, and imports accept either. Choices SUDS acts on (a fatal overdose, a reached
+  call, the visit types that need no client…) can be reworded but not hidden. A hidden choice is no longer
+  offered on new records; editing a record that already has it keeps it. Referral statuses and overdose
+  outcomes take no additions (each drives a rule or a count); reporting code sets (race, ethnicity, ASAM,
+  consent types, patient-rights requests) are not editable and the page says why. Every change is audited.
+- **Funding sources** can be added, renamed and deactivated from Settings → Lists; a **Manage** link sits
+  beside every Funding source field for budget managers, and **Edit this list** beside list-driven fields for
+  administrators. Editing a record charged to a deactivated funding source now keeps that source instead of
+  clearing it.
+- Migration 28 adds `option_overrides`, which devices receive from the office and cannot change.
 
 ## 1.9.4 — 2026-09-24
 
