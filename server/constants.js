@@ -22,6 +22,10 @@ const ETHNICITY_CODES = [
 module.exports = {
   RACE_CODES, ETHNICITY_CODES,
   INTERVENTION_TYPES: ['outreach', 'screening_sbirt', 'assessment', 'intake', 'care_coordination', 'warm_handoff', 'referral', 'case_management', 'harm_reduction', 'naloxone_distribution', 'peer_support', 'crisis_response', 'post_overdose_follow_up', 'transport', 'housing_assistance', 'benefits_enrollment', 'employment_support', 'family_support', 'education', 'court_or_probation', 'hospital_or_ed_visit', 'jail_in_reach', 'recovery_check_in', 'discharge_planning', 'other'],
+  // The services that can be recorded with no identified client: street outreach and community naloxone
+  // distribution (a kit handed to a stranger). Every other type is work with a person on the caseload, and
+  // needs the client (server/routes/interventions.js and the visit form enforce the same list).
+  CLIENTLESS_INTERVENTION_TYPES: ['outreach', 'naloxone_distribution'],
   LOCATIONS: ['office', 'field', 'home', 'phone', 'telehealth', 'hospital', 'emergency_dept', 'jail', 'court', 'shelter', 'treatment_facility', 'community', 'other'],
   MODALITIES: ['in_person', 'phone', 'video', 'text', 'email', 'collateral'],
   OUTCOMES: ['completed', 'partial', 'client_declined', 'no_show', 'unable_to_locate', 'rescheduled', 'crisis_resolved', 'transported', 'admitted', 'other'],

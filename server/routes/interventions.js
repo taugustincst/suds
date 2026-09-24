@@ -67,6 +67,12 @@ function syncTimeEntry(row, prev) {
   db.run(`UPDATE time_entries SET minutes=?, work_date=?, updated_at=? WHERE id=?`, row.duration_minutes, serviceDate(row), db.now(), te.id);
 }
 
+// A client is optional only for the services that genuinely have none (C.CLIENTLESS_INTERVENTION_TYPES):
+// anything else logged with no client is a visit nobody can find again on anyone's record.
+function checkClient(type, clientId) {
+  if (!clientId && !C.CLIENTLESS_INTERVENTION_TYPES.includes(type)) throw badRequest('Choose the client this service was for. Only outreach and community naloxone distribution can be recorded without one.', { fields: { client_id: 'Client is required for this type of service' } });
+}
+
 // The visit summary is clinical narrative about a named person, so it is stored encrypted like any other
 // PHI field and decrypted on the way out.
 function encodeSummary(v) { if (v.summary !== undefined) { v.summary_enc = v.summary ? require('../crypto').encrypt(v.summary) : null; delete v.summary; } }
@@ -96,8 +102,9 @@ module.exports = (r) => {
     },
     filters: (ctx, where, params) => { const t = ctx.query.get('type'); if (t) { where.push('interventions.type=?'); params.push(t); } },
     afterLoad: (ctx, row) => decodeSummary(row),
-    beforeInsert: (ctx, v) => { v._log_time = v.log_time; delete v.log_time; v._time_category = v.time_category; delete v.time_category; v._service_date = v.service_date || null; delete v.service_date; if (v.cost !== undefined && v.cost !== null) v.cost = cents(v.cost); encodeSummary(v); checkCost(ctx, v); },
+    beforeInsert: (ctx, v) => { checkClient(v.type, v.client_id); v._log_time = v.log_time; delete v.log_time; v._time_category = v.time_category; delete v.time_category; v._service_date = v.service_date || null; delete v.service_date; if (v.cost !== undefined && v.cost !== null) v.cost = cents(v.cost); encodeSummary(v); checkCost(ctx, v); },
     beforeUpdate: (ctx, v, row) => {
+      if ('type' in v || 'client_id' in v) checkClient(v.type ?? row.type, 'client_id' in v ? v.client_id : row.client_id);
       delete v.log_time; delete v.time_category; v._service_date = v.service_date || null; delete v.service_date; if (v.cost !== undefined && v.cost !== null) v.cost = cents(v.cost); encodeSummary(v);
       // Only validated when this edit actually touches cost/fund/line/date — an unrelated edit to a record from
       // before budget_line_id existed must not suddenly demand one just because cost happens to be nonzero.
@@ -107,7 +114,7 @@ module.exports = (r) => {
       // Optional automatic time entry + naloxone tracking on client
       if (row._log_time && row.duration_minutes > 0) {
         db.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,funding_source_id,intervention_id,description) VALUES(?,?,?,?,?,?,?,?,?)`,
-          uuid(), row.user_id, row.client_id, serviceDate(row), row.duration_minutes, row._time_category || 'direct_service', row.funding_source_id || null, row.id, row.type.replace(/_/g, ' '));
+          uuid(), row.user_id, row.client_id ?? null, serviceDate(row), row.duration_minutes, row._time_category || 'direct_service', row.funding_source_id || null, row.id, row.type.replace(/_/g, ' '));
       }
       // Community distribution has no client record to update, and no client to follow up with.
       if (row.naloxone_kits > 0 && row.client_id) db.run(`UPDATE clients SET naloxone_provided=1, naloxone_last_date=?, updated_at=? WHERE id=?`, serviceDate(row), db.now(), row.client_id);
