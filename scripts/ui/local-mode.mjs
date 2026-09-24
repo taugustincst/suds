@@ -91,7 +91,8 @@ ok(await page.$('input[name=username]'), 'the local kernel booted and offered fi
   ok(await page.$('button:has-text("Use SUDS here instead")'), 'and can take it back');
   const refused = await page.evaluate(() => window.SUDS_LOCAL.handle('GET', '/api/local/status', undefined, {}).then(r => r.status));
   eq(refused, 409, 'the paused tab refuses every request (nothing there can be written again)');
-  // A reload of the tab that holds the lock is not "another window": it takes over on its own, silently.
+  // A reload of the tab that holds the lock is not "another window": it waits for its previous document to
+  // let go of the lock (never steals it) and boots with no screen. scripts/ui/multitab.mjs has the rest.
   await page2.reload();
   await page2.waitForSelector('input[name=username], input[name=display_name], .layout', { timeout: 15000 });
   ok(!(await page2.$('.boot.error')), 'reloading the tab that holds the lock boots straight back in, with no already-open screen');
@@ -128,6 +129,62 @@ ok(await page.$('input[name=username]'), 'the local kernel booted and offered fi
   await failPage.click('.modal button.danger'); await failPage.waitForSelector('input[name=display_name]', { timeout: 10000 });
   ok(!!(await failPage.$('input[name=display_name]')), 'resetting from the boot-error screen wipes the corrupted database and boots into first-run setup', (await failPage.textContent('#app')).slice(0, 120));
   await failCtx.close();
+}
+// Which build is running, what went wrong on this device, and a release published while the page is open.
+// A page of its own, not watched for page errors: it throws one on purpose.
+{
+  const c = await browser.newContext({ viewport: { width: 1200, height: 900 }, serviceWorkers: 'block' });
+  const p = await c.newPage();
+  await p.goto(base + '/?local=1#/'); await p.waitForSelector('input[name=display_name]', { timeout: 15000 });
+  const version = JSON.parse(await (await fetch(base + '/version.json')).text()).version;
+  eq((await p.textContent('[data-build-stamp]') || '').trim(), `SUDS ${version}`, 'the start screen shows which build is running');
+  await p.fill('input[name=display_name]', 'Stamp Nav'); await p.fill('input[name=username]', 'stamp'); await p.fill('input[name=password]', 'Navigator2026!!'); await p.fill('input[name=confirm]', 'Navigator2026!!');
+  await p.click('button[type=submit]'); await p.waitForSelector('.layout', { timeout: 10000 });
+  for (let i = 0; i < 5; i++) { const b = await p.$('.modal button.primary'); if (!b) break; await b.click(); await p.waitForTimeout(150); }
+  ok(/SUDS \d+\.\d+\.\d+/.test(await p.textContent('.sidebar .foot')), 'and so does the sidebar once signed in');
+  // An uncaught error is kept on the device, without long digit runs, and listed on the Sync page.
+  await p.evaluate(() => { setTimeout(() => { throw new Error('Exploded near record 12345678'); }, 0); });
+  await p.waitForTimeout(200);
+  await p.goto(base + '/?local=1#/sync'); await p.waitForSelector('[data-device-errors]', { timeout: 10000 });
+  const errText = await p.textContent('[data-device-errors]');
+  ok(/Errors on this device/.test(errText) && /Exploded near record #{8}/.test(errText), 'the Sync page lists the error under "Errors on this device"', errText.slice(0, 200));
+  ok(!/12345678/.test(errText), 'with the digit run masked');
+  // A new release: version.json names another version. With a form half-filled the page is not reloaded
+  // under the person (not even when hidden); it offers a Reload, and reloads at the next navigation.
+  await p.route('**/version.json', r => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ version: '99.0.0' }) }));
+  await p.evaluate(() => { window.__sameDocument = true; });
+  await p.click('text=+ Log'); await p.waitForSelector('.quick-list button:has-text("New client")'); await p.click('.quick-list button:has-text("New client")');
+  await p.waitForSelector('.modal input[name=first_name]'); await p.fill('.modal input[name=first_name]', 'Halfway');
+  await p.evaluate(() => document.dispatchEvent(new Event('visibilitychange'))); // visible again: checks version.json
+  ok(await p.waitForSelector('[data-banner="update-ready"] [data-update-reload]', { timeout: 10000 }).catch(() => null), 'a new version on the server shows "A new version of SUDS is ready — Reload"');
+  await p.evaluate(() => { Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); delete document.visibilityState; });
+  await p.waitForTimeout(800);
+  ok(await p.evaluate(() => window.__sameDocument === true) && (await p.inputValue('.modal input[name=first_name]')) === 'Halfway', 'going to the background mid-form does not reload the page or lose the typing');
+  await p.click('.modal button:has-text("Cancel")').catch(() => p.keyboard.press('Escape'));
+  await p.evaluate(() => { location.hash = '#/clients'; });
+  await until(() => p.evaluate(() => window.__sameDocument !== true).catch(() => false), { timeout: 10000 });
+  ok(await p.evaluate(() => window.__sameDocument !== true), 'the next move to another page picks the new version up (the page reloads)');
+  // Still the "old" build after that one reload (here: version.json keeps disagreeing): the banner stays,
+  // and the page does not reload again on every move.
+  await p.waitForSelector('.layout', { timeout: 15000 });
+  await p.evaluate(() => { window.__sameDocument = true; location.hash = '#/dashboard'; });
+  await p.waitForTimeout(1200);
+  ok(await p.evaluate(() => window.__sameDocument === true), 'one automatic reload per release, not one per page');
+  ok(await p.$('[data-banner="update-ready"]'), 'the Reload banner is still offered');
+  await c.close();
+  // The office app sends the same report to the server (server/routes/client-errors.js), not to storage.
+  const oc = await browser.newContext({ viewport: { width: 1200, height: 900 } }); const op = await oc.newPage();
+  await op.goto(base + '/#/'); await op.waitForSelector('input[name=username]', { timeout: 15000 });
+  await op.fill('input[name=username]', 'admin'); await op.fill('input[name=password]', 'AdminPassw0rd!x'); await op.click('button[type=submit]');
+  await op.waitForSelector('.layout, input[name=code]', { timeout: 15000 });
+  const beacon = op.waitForRequest(r => /\/api\/client-errors$/.test(r.url()) && r.method() === 'POST', { timeout: 10000 }).catch(() => null);
+  await op.evaluate(() => { setTimeout(() => { throw new Error('Office page broke at 98765432'); }, 0); });
+  const sent = await beacon;
+  const payload = sent ? JSON.parse(sent.postData() || '{}') : {};
+  ok(sent && /Office page broke at #{8}/.test(payload.message) && payload.version && !('at' in payload), 'the office app reports an uncaught error to the server, digits masked', payload);
+  eq(sent ? (await sent.response()).status() : 0, 200, 'and the server accepts it');
+  eq(await op.evaluate(() => localStorage.getItem('suds.errors')), null, 'nothing is kept in the office browser');
+  await oc.close();
 }
 finish(errors.slice(0, 8));
 await browser.close();

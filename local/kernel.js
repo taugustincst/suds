@@ -30,18 +30,17 @@ class FakeRes {
 export async function start({ wasmUrl, onSaveError, onLockLost, force } = {}) {
   await sqlite.init(wasmUrl);
 
-  // Only one page may write this device's database. Two tabs would each keep their own copy in memory and
-  // persist by overwriting the whole thing, so the last one to save would silently erase the other's work.
-  // A page that cannot get the lock is told so, unless the holder is plainly not a live competitor: the
-  // previous document of this same tab (a reload), or a holder whose heartbeat has gone quiet — those take
-  // over without asking. `force` is the person's own "use SUDS in this window": the holder is asked to
-  // write out and step aside, then displaced.
+  // Only one page may write this device's database: every save writes the whole of it, so two pages would
+  // erase each other's work. A page that cannot get the lock is told so and the person chooses; the one
+  // exception, the same tab loading again, waits for its previous document to let go instead of stealing.
+  // `force` is the person's own "use SUDS in this window": the holder is asked to write out and step aside,
+  // then displaced, and the fence (local/shims/sqlite.js) keeps anything it still saves from landing.
   if (onLockLost) sqlite.onLockLost(onLockLost);
-  let locked = force ? await sqlite.acquireLock({ steal: true }) : await sqlite.acquireLock();
-  if (!locked && (sqlite.lockHeldBySelf() || sqlite.lockIsStale())) locked = await sqlite.acquireLock({ steal: true });
+  const locked = await sqlite.acquireLock({ force: !!force });
   if (!locked) {
     const e = new Error('SUDS is open in another window on this device.');
     e.code = 'SUDS_ALREADY_OPEN';
+    e.stale = sqlite.lockIsStale();
     throw e;
   }
   if (onSaveError) sqlite.setSaveErrorHandler(onSaveError);
@@ -96,7 +95,7 @@ export async function start({ wasmUrl, onSaveError, onLockLost, force } = {}) {
     return demo.seed({ actor: ctx.user.id, workers: [ctx.user.id], clinician: null, supervisor: ctx.user.id });
   });
   router.delete('/api/local/demo', (ctx) => { if (!ctx.user) throw new HttpError(401, 'Sign in first'); return demo.remove({ actor: ctx.user.id }); });
-  window.SUDS_LOCAL = { handle, flush: (opts) => sqlite.flush(opts), wipe: wipeDevice, sync: (opts) => sync.run(opts), isWiped: () => sqlite.isWiped() };
+  window.SUDS_LOCAL = { handle, flush: (opts) => sqlite.flush(opts), isDirty: () => sqlite.isDirty(), epoch: () => sqlite.epoch(), wipe: wipeDevice, sync: (opts) => sync.run(opts), isWiped: () => sqlite.isWiped(), isFrozen: () => sqlite.isFrozen() };
   return window.SUDS_LOCAL;
 }
 
@@ -139,11 +138,10 @@ async function handle(method, path, body, headers = {}) {
     else ctx.body = body || {};
     let result;
     for (const h of m.handlers) result = await h(ctx);
-    // A write is on disk before its caller hears back. The coalescing timer alone lost anything written in
-    // the instant before the page went away once the service worker started answering navigations from
-    // its cache (the next document arrives before the pagehide write is committed); persisting at the end
-    // of every write request means the response itself is the guarantee.
-    if (method !== 'GET' && method !== 'HEAD' && !sqlite.isWiped()) { try { await sqlite.flush(); } catch {} }
+    // Not saved here: exporting the whole database on every write cost 40-130 ms a request on a large
+    // caseload (1.9.1). The shim saves on a short coalescing timer, the page saves on its way out
+    // (pagehide / hidden / freeze), and the next document of this tab waits for this one's lock before it
+    // reads, so a write made just before leaving is still there. A failed save is reported by onSaveError.
     // login/logout manage the bearer token that replaces the cookie
     const setCookie = res.headers['set-cookie'];
     if (setCookie) { const mm = /suds_session=([^;]*)/.exec(setCookie); token = mm && mm[1] ? mm[1] : ''; if (token) localStorage.setItem('suds.local.session', token); else localStorage.removeItem('suds.local.session'); }

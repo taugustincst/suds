@@ -46,6 +46,9 @@ for (const f of ['kernel.js', 'sql-wasm.wasm']) {
   const before = fs.readFileSync(appJs, 'utf8');
   const after = before.replace(/(const SUDS_VERSION = ')[^']*(')/, `$1${version}$2`);
   if (after !== before) { fs.writeFileSync(appJs, after); console.log(`[suds] stamped public/app.js with version ${version}`); }
+  // What an open page compares its own SUDS_VERSION with (app.js checkVersion, fetched with no-store and
+  // never cached by public/sw.js) to learn that a release has been published since it loaded.
+  writeIfChanged(path.join(root, 'public', 'version.json'), Buffer.from(JSON.stringify({ version }) + '\n'));
 }
 const kb = (f) => (fs.statSync(path.join(out, f)).size / 1024).toFixed(0) + ' KB';
 console.log(`local kernel written to public/local/ (kernel.js ${kb('kernel.js')}, gzip ${kb('kernel.js.gz')}, brotli ${kb('kernel.js.br')}; sql-wasm.wasm ${kb('sql-wasm.wasm')}, gzip ${kb('sql-wasm.wasm.gz')}, brotli ${kb('sql-wasm.wasm.br')})`);

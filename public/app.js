@@ -79,7 +79,11 @@ export async function api(method, path, body, opts = {}) {
   const headers = { 'X-Requested-With': 'suds', ...(background ? { 'X-Background': '1' } : {}), ...(opts.headers || {}) };
   if (state.local && window.SUDS_LOCAL) {
     let payload = body; if (body instanceof Blob) payload = await body.arrayBuffer();
-    const r = await window.SUDS_LOCAL.handle(method, path, payload, headers);
+    // Writes in flight (a sync above all) hold off an update reload; see newVersionReady().
+    const writing = method !== 'GET' && method !== 'HEAD'; if (writing) localWritesInFlight++;
+    let r;
+    try { r = await window.SUDS_LOCAL.handle(method, path, payload, headers); } finally { if (writing) localWritesInFlight--; }
+    if (r.status >= 500) reportClientError({ kind: 'api', status: r.status, message: `${method} ${String(path).split('?')[0]} answered ${r.status}` });
     if (!background) touch();
     const data = r.json !== undefined ? r.json : (r.body ? (String(r.headers['content-type'] || '').includes('json') ? JSON.parse(r.body.toString()) : r.body.toString()) : null);
     if (r.status === 401 && state.user && !opts.quiet) { if (data && data.mfaRequired) location.hash = '#/mfa'; else { state.user = null; render(); } }
@@ -100,6 +104,7 @@ export async function api(method, path, body, opts = {}) {
     const err = new Error(OFFLINE_MESSAGE); err.offline = true; err.cause = e; throw err;
   }
   setOffline(false);
+  if (res.status >= 500) reportClientError({ kind: 'api', status: res.status, message: `${method} ${String(path).split('?')[0]} answered ${res.status}` });
   if (!background) touch();
   const ct = res.headers.get('content-type') || '';
   const data = ct.includes('json') ? await res.json() : await res.text();
@@ -320,7 +325,8 @@ function wipeLocalDatabase() {
     req.onerror = () => reject(req.error);
     req.onsuccess = () => {
       const t = req.result.transaction('kv', 'readwrite');
-      t.objectStore('kv').delete('db');
+      // The whole store: the database (under an epoch key since 1.9.3), its epoch, and a pre-1.9.3 copy.
+      t.objectStore('kv').clear();
       t.oncomplete = resolve;
       t.onerror = () => reject(t.error);
     };
@@ -539,6 +545,8 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     el.addEventListener('input', () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => save(true), 400); });
     el.addEventListener('change', () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => save(false), 400); });
   }
+  // Keep what is typed right now as a draft (the paused screen closes every dialog; see showPausedScreen).
+  el.saveDraft = () => { if (draftKey && !submitted) { clearTimeout(saveTimer); try { const d = read(); if (Object.values(d).some(v => v !== '' && v !== null && v !== undefined && v !== 0)) drafts.set(draftKey, d); } catch {} } };
   // For a dialog that closes this form after a save of its own (not through onSubmit): stop drafting.
   el.finished = () => { submitted = true; clearTimeout(saveTimer); if (draftKey) drafts.delete(draftKey); };
   function read() {
@@ -844,7 +852,7 @@ function maybeNotify(rows) {
 // Welcome tour shown once per user (stored in synced preferences)
 let tourOpen = false;
 export function maybeTour() {
-  if (prefs.get('tour_done') || tourOpen || document.querySelector('.modal-bg')) return;
+  if (paused || prefs.get('tour_done') || tourOpen || document.querySelector('.modal-bg')) return;
   tourOpen = true;
   const steps = [
     ['Welcome to SUDS', `Hi ${greetingName(state.user.display_name, state.user.username)}. SUDS helps you track services, referrals and follow-ups for people in substance-use-disorder care, all in one place. ${window.SUDS_STATIC_HOST
@@ -953,6 +961,10 @@ let current = null;
 export async function render() {
   const app = document.getElementById('app');
   app.removeAttribute('aria-busy'); // was set on the static pre-hydration shell in index.html
+  // A paused window stays paused: a hash change or a view's own refresh must not draw the app back over it.
+  if (paused) return;
+  showBuildStamp(!state.user);
+  if (updateArmed && !updateBlocked({ navigating: true })) { reloadForUpdate(); return; }
   clear(document.getElementById('modal-root'));
   const r = parseHash();
   if (state.localSetupNeeded) { if (r.name !== 'localsetup') { nav('localsetup'); return; } clear(app).append(await routes.localsetup(r)); return; }
@@ -976,7 +988,7 @@ export async function render() {
   // reader part-way down it, with the new page's header and alerts scrolled off the top.
   if (!current || current.name !== r.name || current.id !== r.id) window.scrollTo(0, 0);
   if (r.name === 'dashboard') setTimeout(() => { if (parseHash().name === 'dashboard') maybeTour(); }, 400);
-  try { const view = await loader(r); clear(main).append(view); }
+  try { const view = await loader(r); clear(main).append(view); if (state.local && r.name === 'sync') main.append(deviceErrorsCard()); }
   catch (e) { clear(main).append(h('div', { class: 'banner danger' }, e.message)); }
   current = r;
 }
@@ -992,7 +1004,8 @@ function sidebar(r) {
       return (!n.perm || canAny(n.perm)) ? h('a', { href: '#/' + n.name, class: r.name === n.name ? 'active' : '' }, h('span', { class: 'ico' }, n.ico), n.label) : null;
     })),
     h('div', { class: 'foot' }, state.local ? h('a', { href: '#/sync', class: 'badge info', style: { display: 'block', textAlign: 'center', marginBottom: '.5rem' } }, '📱 On this device · Sync') : null, h('div', {}, h('b', {}, state.user.display_name)), h('div', { class: 'muted' }, fmt.label(state.user.role)),
-      h('div', { class: 'row', style: { marginTop: '.5rem' } }, h('a', { href: '#/profile' }, 'Profile'), h('a', { href: '#', onClick: (e) => { e.preventDefault(); logout(); } }, 'Sign out'), h('a', { href: '#', title: 'Light / dark', onClick: (e) => { e.preventDefault(); toggleTheme(); } }, 'Light/dark'))));
+      h('div', { class: 'row', style: { marginTop: '.5rem' } }, h('a', { href: '#/profile' }, 'Profile'), h('a', { href: '#', onClick: (e) => { e.preventDefault(); logout(); } }, 'Sign out'), h('a', { href: '#', title: 'Light / dark', onClick: (e) => { e.preventDefault(); toggleTheme(); } }, 'Light/dark')),
+      h('div', { class: 'small muted', 'data-build-stamp': '1', style: { marginTop: '.4rem' } }, `SUDS ${SUDS_VERSION}`)));
 }
 function mobileBar(r, side) {
   const item = NAV.find(n => n.name === r.name) || (r.name === 'client' ? { label: 'Client' } : { label: 'SUDS' });
@@ -1072,6 +1085,122 @@ window.__suds = { downloadCsv: (...a) => downloadCsv(...a) };
 // version query so the browser may keep them for good (server/http.js serves `?v=` as immutable) while a
 // new release, with a new version, is a new URL. public/sw.js caches the same URLs for offline starts.
 const SUDS_VERSION = '1.9.2';
+
+// ---------- build stamp ----------
+// Which build is this? A tester reporting "still broken" after a release needs to be able to say, and so
+// does whoever reads their report. Shown on the sign-in and start-up screens (fixed, small) and at the foot
+// of the sidebar once signed in.
+let stampEl = null;
+function showBuildStamp(visible) {
+  if (!stampEl) {
+    stampEl = h('div', { class: 'small muted', 'data-build-stamp': '1', 'aria-label': `SUDS version ${SUDS_VERSION}`, style: { position: 'fixed', left: '.5rem', bottom: '.35rem', fontSize: '11px', opacity: '.7', pointerEvents: 'none', zIndex: '1' } }, `SUDS ${SUDS_VERSION}`);
+    document.body.append(stampEl);
+  }
+  stampEl.hidden = !visible;
+}
+
+// ---------- error beacon ----------
+// A script error on someone's phone was invisible to everyone but them. Uncaught errors, unhandled
+// rejections and 5xx answers are reported without PHI: the message cut to 300 characters with long digit
+// runs masked, the stack reduced to its top five file:line frames, the route without its query, the build
+// and the browser family. Office mode sends them to the server's application log
+// (server/routes/client-errors.js); a device keeps the last 50 here, listed on its Sync page.
+const DEVICE_ERRORS_KEY = 'suds.errors';
+let errorWindow = { start: 0, n: 0 };
+const maskDigits = (s) => String(s == null ? '' : s).replace(/\d{5,}/g, (m) => '#'.repeat(Math.min(m.length, 8)));
+function browserFamily() {
+  const ua = navigator.userAgent || '';
+  const m = /(Edg|OPR|SamsungBrowser|CriOS|FxiOS|Firefox|Chrome|Version)\/(\d+)/.exec(ua);
+  const name = m ? `${({ Edg: 'Edge', OPR: 'Opera', CriOS: 'Chrome', FxiOS: 'Firefox', Version: 'Safari' })[m[1]] || m[1]} ${m[2]}` : 'unknown';
+  const os = /Android/.test(ua) ? 'Android' : /iPhone|iPad|iPod/.test(ua) ? 'iOS' : /Windows/.test(ua) ? 'Windows' : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : 'other';
+  return `${name} / ${os}`;
+}
+function stackFrames(stack) {
+  const out = [];
+  for (const line of String(stack || '').split('\n')) {
+    const m = /([\w.-]+\.m?js)(?:\?[^:)\s]*)?:(\d+)(?::\d+)?/.exec(line);
+    if (m) out.push(`${m[1]}:${m[2]}`);
+    if (out.length >= 5) break;
+  }
+  return out;
+}
+export function reportClientError({ kind = 'error', message = '', stack = '', status } = {}) {
+  try {
+    const now = Date.now();
+    if (now - errorWindow.start > 60_000) errorWindow = { start: now, n: 0 };
+    if (++errorWindow.n > 10) return; // a loop throwing on every frame is one report, not thousands
+    const entry = { kind, message: maskDigits(message).slice(0, 300), stack: stackFrames(stack), route: maskDigits(location.hash.split('?')[0]).slice(0, 80), version: SUDS_VERSION, browser: browserFamily(), ...(status ? { status } : {}) };
+    if (state.local || isLocalMode()) {
+      let list = []; try { list = JSON.parse(localStorage.getItem(DEVICE_ERRORS_KEY) || '[]'); if (!Array.isArray(list)) list = []; } catch {}
+      list.push({ ...entry, at: new Date().toISOString() });
+      try { localStorage.setItem(DEVICE_ERRORS_KEY, JSON.stringify(list.slice(-50))); } catch {}
+      return;
+    }
+    if (!state.user) return; // the office only takes reports from a signed-in session
+    fetch('/api/client-errors', { method: 'POST', credentials: 'same-origin', keepalive: true, headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'suds', 'X-Background': '1' }, body: JSON.stringify(entry) }).catch(() => {});
+  } catch { /* reporting an error must never cause one */ }
+}
+window.addEventListener('error', (e) => { if (e && e.message && !/ResizeObserver loop/.test(e.message)) reportClientError({ kind: 'error', message: e.message, stack: e.error && e.error.stack }); });
+// A request that failed and was not caught carries the server's own words, which can name what was being
+// saved: only its status is reported.
+window.addEventListener('unhandledrejection', (e) => { const r = e && e.reason; const fromApi = r && (r.status || r.offline); reportClientError({ kind: 'rejection', message: fromApi ? `request failed (${r.offline ? 'offline' : r.status})` : (r && r.message ? r.message : String(r)), stack: r && r.stack }); });
+/** The Sync page's "Errors on this device" card: what went wrong here, readable out loud to whoever supports it. */
+function deviceErrorsCard() {
+  let list = []; try { list = JSON.parse(localStorage.getItem(DEVICE_ERRORS_KEY) || '[]'); if (!Array.isArray(list)) list = []; } catch {}
+  const card = h('div', { class: 'card mt', 'data-device-errors': String(list.length) }, h('h3', {}, 'Errors on this device'));
+  if (!list.length) { card.append(h('p', { class: 'small muted' }, `None recorded. (SUDS ${SUDS_VERSION})`)); return card; }
+  card.append(
+    h('p', { class: 'small muted' }, 'The most recent problems SUDS ran into on this device, newest first. They hold no client information; if someone supporting SUDS asks, read them out.'),
+    h('ol', { class: 'small' }, list.slice().reverse().map(e => h('li', {}, `${fmt.dt(e.at)} — ${e.message}${e.stack && e.stack.length ? ` (${e.stack.join(', ')})` : ''}${e.route ? ` · ${e.route}` : ''} · SUDS ${e.version} · ${e.browser}`))),
+    h('div', { class: 'btn-row' }, h('button', { class: 'btn sm', type: 'button', onClick: () => { try { localStorage.removeItem(DEVICE_ERRORS_KEY); } catch {} card.replaceWith(deviceErrorsCard()); } }, 'Clear this list')));
+  return card;
+}
+
+// ---------- a new version is ready ----------
+// A release reaches an open page two ways: a new service worker takes control (controllerchange), or
+// version.json — fetched past every cache on start and whenever the page comes back into view — names a
+// different version (workers installed by 1.9.0 still fill their shell from the HTTP cache, so a page can
+// start on old files for a while after a deploy). Either way the page is never reloaded under someone:
+// with a dialog open, a form half-filled or a write (a sync) in flight it says so and waits for them;
+// otherwise it reloads the next time the page is hidden or the person moves to another page.
+let localWritesInFlight = 0;
+let updateArmed = false;
+document.addEventListener('input', (e) => { const f = e.target && e.target.closest && e.target.closest('form'); if (f) f.dataset.dirty = '1'; }, true);
+function updateBlocked({ navigating = false } = {}) {
+  if (localWritesInFlight > 0) return true;
+  if (navigating) return false; // leaving the page discards its dialogs and forms anyway (drafts are kept)
+  return !!(document.querySelector('.modal-bg') || document.querySelector('form[data-dirty]'));
+}
+function updateBanner() {
+  const el = banner('A new version of SUDS is ready.', 'info', { id: 'update-ready' });
+  if (el) el.firstChild.append(' ', h('button', { class: 'btn sm primary', type: 'button', 'data-update-reload': '1', onClick: () => location.reload() }, 'Reload'));
+}
+// One automatic reload per release: if the page comes back still on the old files (a 1.9.0 worker serving
+// its HTTP-cached copy for a few minutes), it says so with the banner instead of reloading on every move.
+const UPDATE_TRIED = 'suds-update-tried';
+let updateTarget = '';
+function reloadForUpdate() { try { sessionStorage.setItem(UPDATE_TRIED, updateTarget); } catch {} location.reload(); }
+function newVersionReady(target) {
+  updateBanner();
+  if (updateArmed || paused) return;
+  try { if (sessionStorage.getItem(UPDATE_TRIED) === target) return; } catch {}
+  updateArmed = true; updateTarget = target;
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && updateArmed && !paused && !updateBlocked()) reloadForUpdate(); });
+}
+async function checkVersion() {
+  if (navigator.onLine === false) return; // nothing to learn, and a failed fetch is noise in the console
+  try {
+    const r = await fetch(new URL('version.json', location.href), { cache: 'no-store' });
+    if (!r.ok) return;
+    const v = (await r.json()).version;
+    if (v && v !== SUDS_VERSION) newVersionReady(`version:${v}`);
+  } catch { /* offline, or a server without the file: nothing to say */ }
+}
+
+// ---------- local mode: the kernel, and the window that owns it ----------
+// "Use SUDS here instead" reloads the page with this set, so taking the database back always starts from a
+// fresh document: nothing from the copy this page held before it was paused can survive to be saved.
+const TAKEOVER_FLAG = 'suds-local-takeover';
 async function startLocalKernel(force) {
   const k = await import(`./local/kernel.js?v=${SUDS_VERSION}`);
   await k.start({
@@ -1082,30 +1211,41 @@ async function startLocalKernel(force) {
     // to know before they type anything else in.
     onSaveError: (err) => {
       const full = String(err && err.name) === 'QuotaExceededError';
+      reportClientError({ kind: 'error', message: `save failed: ${err && err.name}` });
       banner(full
         ? 'This device is out of storage space, so nothing is being saved. Sync with the office, then remove sample data or attachments to free space.'
         : 'This device has stopped saving your work. Sync with the office as soon as you can.', 'error');
     },
   });
 }
-// Another window on this device took the database over (see local/shims/sqlite.js). This page has stepped
-// aside: it shows why, and offers to take it back rather than failing request by request.
-let pausedShown = false;
-function showPausedScreen() {
-  if (pausedShown) return; pausedShown = true;
+// Another window on this device took the database over (local/shims/sqlite.js). This page has stopped: it
+// says why — truthfully about whether its last changes were written out first — and offers to take it
+// back. Dialogs are closed first (what was typed in a form that keeps drafts is kept as one, in this
+// window), and `paused` keeps any later render — a hash change, the dashboard's refresh — from drawing
+// the app back over this screen.
+let paused = false;
+function showPausedScreen(info) {
+  if (paused) return; paused = true;
+  const savedFirst = !!(info && info.savedFirst);
+  document.querySelectorAll('form').forEach(f => { try { f.saveDraft && f.saveDraft(); } catch {} });
+  clear(document.getElementById('modal-root'));
+  document.body.classList.remove('nav-open');
   const app = document.getElementById('app');
   clear(app);
   app.append(
-    h('div', { class: 'boot error' }, 'SUDS is now open in another window on this device, so this one has been paused. Your work here was saved first.'),
+    h('div', { class: 'boot error', 'data-paused': savedFirst ? 'saved' : 'unsaved' }, 'SUDS is now open in another window on this device, so this one has been paused. ',
+      savedFirst ? 'Your work here was saved first.' : 'Changes made here in the last moment before that may need to be re-entered.'),
     h('div', { class: 'btn-row center mt' },
-      h('button', { class: 'btn primary', type: 'button', onClick: () => { pausedShown = false; boot(true); } }, 'Use SUDS here instead'),
+      h('button', { class: 'btn primary', type: 'button', onClick: () => { try { sessionStorage.setItem(TAKEOVER_FLAG, '1'); } catch {} location.reload(); } }, 'Use SUDS here instead'),
     ),
   );
 }
 export async function boot(force = false) {
   state.local = isLocalMode();
+  showBuildStamp(true);
   if (state.local) {
     document.getElementById('app').innerHTML = '<div class="boot">Starting SUDS on this device…</div>';
+    try { if (sessionStorage.getItem(TAKEOVER_FLAG)) { sessionStorage.removeItem(TAKEOVER_FLAG); force = true; } } catch {}
     try {
       await startLocalKernel(force);
     } catch (e) {
@@ -1116,20 +1256,22 @@ export async function boot(force = false) {
         : e && e.code === 'SUDS_KEY_LOST'
           ? e.message
           : 'Could not start SUDS on this device: ' + (e && e.message);
-      console.error(e);
+      if (!alreadyOpen) { console.error(e); reportClientError({ kind: 'error', message: msg, stack: e && e.stack }); }
       const app = document.getElementById('app');
       app.removeAttribute('aria-busy');
       clear(app);
       // This is the one screen a locked-out or broken device can reach without a kernel — reset has to work
       // here directly. SUDS_ALREADY_OPEN gets its own recovery instead: that device and its data are fine,
-      // just open elsewhere, so wiping it would be the wrong tool. Only a genuinely live other window lands
-      // here (a reload of this tab, or a holder that stopped answering, takes over on its own in the
-      // kernel). The person decides: use SUDS here, which asks the other window to write out and step
-      // aside, or go back to it. Nobody is left hunting for a tab on a phone.
+      // just open elsewhere, so wiping it would be the wrong tool. Every other window lands here, including
+      // one that has gone quiet (a phone freezes background tabs; they wake up) and a duplicated tab; only
+      // a reload of the holding tab itself gets in without asking. The person decides: use SUDS here,
+      // which asks the other window to write out and step aside, or go back to it.
       app.append(
         h('div', { class: 'boot error' }, msg),
         alreadyOpen ? h('div', {},
-          h('p', { class: 'muted center' }, 'You can use it here instead — the other window will be paused so nothing is written twice.'),
+          h('p', { class: 'muted center' }, e.stale
+            ? 'The other window has not responded for a while (a phone pauses tabs in the background). You can use SUDS here instead — the other window will be stopped so nothing is written twice.'
+            : 'You can use it here instead — the other window will be paused so nothing is written twice.'),
           h('div', { class: 'btn-row center mt' },
             h('button', { class: 'btn primary', type: 'button', onClick: () => boot(true) }, 'Use SUDS in this window'),
             h('button', { class: 'btn', type: 'button', onClick: () => boot() }, 'Try again'),
@@ -1138,14 +1280,15 @@ export async function boot(force = false) {
       );
       return;
     }
-    // Anything written in the last moments before the page goes away is persisted on the way out: pagehide
-    // for a close or navigation, visibilitychange for a phone switching apps (where pagehide may never
-    // come). An urgent flush issues the IndexedDB write synchronously and commits it without waiting for
-    // any callback, so the browser finishes it even as the page unloads; nothing is awaited here because
-    // nothing after unload would run.
-    const flushNow = () => { try { window.SUDS_LOCAL && window.SUDS_LOCAL.flush({ urgent: true }); } catch {} };
+    // Anything written and not yet saved is saved on the way out: pagehide for a close or navigation,
+    // visibilitychange for a phone switching apps (where pagehide may never come), freeze for a background
+    // tab the browser is about to suspend. An urgent flush issues the IndexedDB write synchronously and
+    // commits it without waiting for any callback, so the browser finishes it even as the page goes; the
+    // next document of this tab waits for this one's lock before reading (local/shims/sqlite.js).
+    const flushNow = () => { try { window.SUDS_LOCAL && window.SUDS_LOCAL.flush({ urgent: true }).catch(() => {}); } catch {} };
     window.addEventListener('pagehide', flushNow);
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushNow(); });
+    document.addEventListener('freeze', flushNow);
     // Redeploying the site (new files at the same origin) never touches this device's IndexedDB/localStorage
     // — the sign-in session, the account, and every client record already survive that on their own. What
     // does not survive on its own is the browser treating this storage as "best-effort": under disk pressure
@@ -1162,16 +1305,17 @@ export async function boot(force = false) {
   // mode (or the demo build installed to a home screen) starts with no connection at all (H4).
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     try {
-      // When a newer worker takes over (a release was published while this page was open, or this is the
-      // first load after one), reload once so the page runs the files that worker now serves, rather than
-      // the previous build's modules the browser already had. Only when a worker was in control before:
-      // the very first registration must not reload the page someone has just started using.
+      // A newer worker taking control means a release was published while this page was open (or this is
+      // the first load after one). The page is not reloaded on the spot — that dropped whatever was being
+      // typed — but offered, and reloaded only at a moment nothing can be lost (newVersionReady). Only when
+      // a worker was in control before: the very first registration is not an update.
       const hadController = !!navigator.serviceWorker.controller;
-      let reloaded = false;
-      navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloaded && !document.querySelector('.modal-bg')) { reloaded = true; location.reload(); } });
+      navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) newVersionReady(`worker:${Date.now()}`); });
       navigator.serviceWorker.register('sw.js').then(r => r && r.update && r.update()).catch(() => {});
     } catch {}
   }
+  checkVersion();
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkVersion(); });
   await loadSession();
   startIdleWatch();
   window.addEventListener('hashchange', render);

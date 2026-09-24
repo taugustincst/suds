@@ -1,15 +1,17 @@
 // Browser replacement for node:sqlite's DatabaseSync, backed by sql.js (SQLite compiled to WebAssembly).
 // The database is persisted to IndexedDB after writes and loaded before the kernel starts.
 //
-// Three hazards this file has to handle, because a phone is not a server:
+// Four hazards this file has to handle, because a phone is not a server:
 //  * Two tabs. Each would hold its own copy in memory and persist by overwriting the whole database, so
-//    whichever flushed last would silently erase the other's work. One tab holds a lock; the others refuse.
-//  * A crash inside the debounce window. Writes are persisted eagerly after a transaction commits, not only
-//    on a timer, so a killed WebView loses nothing that was actually committed.
+//    whichever saved last would silently erase the other's work. One page holds a lock, and every save is
+//    fenced by an epoch in IndexedDB so a page that has lost the database cannot write over it (below).
+//  * A page going away with writes not yet saved. Writes are coalesced for a moment and then saved; the
+//    unload path (pagehide, hidden, freeze) saves at once with an explicit commit.
 //  * A failed write. The dirty flag is cleared only after IndexedDB confirms the save, and a failure is
 //    surfaced to the user instead of going to the console where nobody will see it.
+//  * An erased store. A store cleared under a running page ("Reset this device") is never written back.
 let SQL = null;
-const STORE = 'suds-local'; const KEY = 'db';
+const STORE = 'suds-local';
 export async function init(wasmUrl) {
   if (SQL) return SQL;
   const initSqlJs = (await import('sql.js')).default;
@@ -17,117 +19,187 @@ export async function init(wasmUrl) {
   return SQL;
 }
 
+// ---- fencing: where the database lives in IndexedDB ----
+// Every save writes the WHOLE database, so two pages that each hold a copy in memory erase each other's work:
+// whichever saves last wins. The Web Lock below keeps a second page from starting, but a lock alone cannot
+// stop a page that has *already* loaded its copy — one frozen in the background and woken later, one whose
+// lock was stolen while it was not looking, or one running an older release that never heard of the
+// handover. So the store itself is fenced:
+//
+//  * `epoch` is a number kept in the same object store. Taking the lock (any path) claims the next epoch in
+//    one readwrite transaction (claimEpoch), and the page remembers it as `myEpoch`.
+//  * The database bytes live under `db2:<epoch>`, and a page only ever writes the key of ITS epoch. Claiming
+//    reads the previous holder's key and copies it to the new one in that same transaction, and deletes every
+//    other `db2:*` key. Nothing reads an old key again.
+//  * An ordinary save reads `epoch` first, in the same readwrite transaction as its put, and issues the put
+//    only from that read's callback, only while the epoch is still its own; otherwise it aborts the
+//    transaction and the page stops (the paused screen).
+//  * The unload save (pagehide / hidden / freeze) cannot wait for a callback: it commit()s at once, after
+//    which nothing can abort it. It needs no check — it writes `db2:<myEpoch>`, which after a takeover is a
+//    key nobody reads; at worst it leaves a dead copy that the next claim deletes. IndexedDB runs readwrite
+//    transactions on one store strictly in the order they were created, so a claim either sees such a
+//    save (created before it: it is carried over) or makes it harmless (created after: it lands on a dead
+//    key). There is no ordering in which a stale page's save replaces the current holder's bytes.
+//  * 1.9.0–1.9.2 kept the database under `db` and know nothing of epochs. The first claim on a store with no
+//    `epoch` migrates `db` to `db2:<epoch>` and `db` is never read again, so a tab still running one of those
+//    releases after a deploy writes only to a dead key: its late saves cannot erase anything. What is typed
+//    into such a tab after a new one took over is not carried across (that tab cannot know it was displaced).
+//  * A store without `epoch` after this page claimed one has been cleared ("Reset this device" clears the
+//    whole store): nothing is written back. Epochs are at least Date.now(), so a claim after such a clear is
+//    still above any epoch an older page could remember.
+const LEGACY_KEY = 'db';
+const EPOCH_KEY = 'epoch';
+const DB_PREFIX = 'db2:';
+const dbKey = (e) => DB_PREFIX + e;
+let myEpoch = null;
+let claimedBytes = null;
+
 // ---- single-writer lock ----
-// Web Locks are held for as long as the page lives and released automatically when it goes away, which is
-// exactly the lifetime we want in the ordinary case. But that guarantee is about the *browser*, not the
-// *device*: a browser process that gets killed outright (not just the one tab closing), or that simply never
-// tears the lock down cleanly, can leave it held with nobody left to release it — and there is no way to ask
-// Web Locks "is the holder still alive?". So whoever holds the lock also stamps a heartbeat in localStorage
-// every few seconds. A failed acquire only offers a way past it once that heartbeat has gone quiet long
-// enough that a live tab could not plausibly have missed several beats — at which point continuing anyway
-// cannot race an actual second writer, only a truly abandoned lock.
+// The Web Lock is held for as long as the page lives and released when it goes away. A page that cannot get
+// it is never given the database without the person saying so ("Use SUDS in this window"): a holder that
+// looks dead — a quiet heartbeat, no answer on the channel — is, on a phone, usually a background tab the
+// browser has throttled or frozen, and it wakes up again. The one exception is this same tab loading again
+// (a reload, or a navigation within it): the previous document holds the lock only until it is torn down,
+// so the new one waits for it briefly instead of stealing. A duplicated tab carries this tab's
+// sessionStorage and so waits too — but the original is alive, the wait runs out, and the person is asked.
+const LOCK_NAME = 'suds-local-db';
 const HEARTBEAT_KEY = 'suds-local-lock-heartbeat';
-const HOLDER_KEY = 'suds-local-lock-holder';
-const TAB_KEY = 'suds-local-tab';
+const HELD_KEY = 'suds-local-held'; // sessionStorage: a document of this tab held the lock
 const CHANNEL = 'suds-local-lock';
 const HEARTBEAT_MS = 4000;
 const STALE_MS = 20000;
+const ACK_WAIT_MS = 3000; // how long "Use SUDS in this window" waits for the holder to write out and answer
+const SAME_TAB_WAIT_MS = 3000; // how long a reload waits for its own previous document to let go
+// Per document, not per tab: sessionStorage is copied into a duplicated tab, so an id kept there could not
+// tell the two apart (1.9.2 did, and a duplicated tab took the database over silently).
+const docId = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now();
 let haveLock = false;
-let frozen = false; // this page gave the database up to another window: nothing here may save again
+let frozen = false; // this page gave the database up: nothing here may save again
+let steppingAside = false; // writing out for a takeover: requests are refused, the final save still runs
 let heartbeatTimer = null;
 let channel = null;
 let lostHandler = null;
-// One id per tab, kept across reloads of that tab (sessionStorage) but never shared with another tab: the
-// lock holder records it, so a reload can tell "the previous document of this very tab" from "another tab".
-function tabId() {
-  try {
-    let id = sessionStorage.getItem(TAB_KEY);
-    if (!id) { id = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)); sessionStorage.setItem(TAB_KEY, id); }
-    return id;
-  } catch { return 'no-session-storage'; }
-}
+let lostNotified = false;
 function beat() { try { localStorage.setItem(HEARTBEAT_KEY, String(Date.now())); } catch { /* no localStorage: nothing to fall back to either */ } }
 function stopHolding() { haveLock = false; clearInterval(heartbeatTimer); heartbeatTimer = null; }
+/** This page no longer owns the database: stop, save nothing more, and let the page say so (once). */
+function lose(info) {
+  stopHolding(); frozen = true; steppingAside = false;
+  clearTimeout(saveTimer); saveTimer = null;
+  try { sessionStorage.removeItem(HELD_KEY); } catch {}
+  if (lostNotified) return; lostNotified = true;
+  if (lostHandler) { try { lostHandler(info); } catch {} }
+}
 function openChannel() {
   if (channel || typeof BroadcastChannel !== 'function') return;
   channel = new BroadcastChannel(CHANNEL);
   channel.onmessage = async (ev) => {
     const m = ev.data || {};
-    if (m.type !== 'takeover' || !haveLock || m.from === tabId()) return;
-    // Another window is taking the database over. Write out what this page has, then step aside: from here
-    // on every request is refused (frozen) so two copies can never both be saved. The ack tells the other
-    // window it is safe to load.
-    stopHolding();
-    try { await flush(); } catch {}
-    frozen = true;
-    try { channel.postMessage({ type: 'takeover-ack', to: m.from }); } catch {}
-    if (lostHandler) { try { lostHandler(); } catch {} }
+    if (m.type !== 'takeover' || m.from === docId || !haveLock || frozen || steppingAside) return;
+    // Another window asked for the database. Write out what this page has now — safe, because that window
+    // claims a new epoch only after this answers (or it gives up waiting), and a save that finds the epoch
+    // already moved is refused by the fence anyway — then answer, and stop for good.
+    steppingAside = true; clearInterval(heartbeatTimer); heartbeatTimer = null;
+    clearTimeout(saveTimer); saveTimer = null;
+    let savedFirst = false;
+    try { await flush(); savedFirst = !dirty && !frozen && !wiped; } catch {}
+    try { channel.postMessage({ type: 'takeover-ack', to: m.from, saved: savedFirst }); } catch {}
+    lose({ savedFirst });
   };
 }
-async function acquireWebLock({ steal = false } = {}) {
-  if (!navigator.locks || !navigator.locks.request) return true;
+function timeoutSignal(ms) {
+  if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) return AbortSignal.timeout(ms);
+  const c = new AbortController(); setTimeout(() => c.abort(), ms); return c.signal;
+}
+function requestWebLock(opts) {
+  if (!navigator.locks || !navigator.locks.request) return Promise.resolve(true);
   return new Promise((resolve) => {
-    navigator.locks.request('suds-local-db', { mode: 'exclusive', ...(steal ? { steal: true } : { ifAvailable: true }) }, (lock) => {
+    let granted = false;
+    navigator.locks.request(LOCK_NAME, { mode: 'exclusive', ...opts }, (lock) => {
       if (!lock) { resolve(false); return; }
-      resolve(true);
-      // Hold it until the page is gone.
-      return new Promise(() => {});
+      granted = true; resolve(true);
+      return new Promise(() => {}); // held until the page is gone
     }).catch(() => {
-      // The request settling while we hold the lock means it was stolen without the courtesy message (a
-      // window that never got to load this code). Freeze without flushing: the thief has already loaded
-      // its copy, and a late write from here would overwrite it.
-      if (haveLock) { stopHolding(); frozen = true; if (lostHandler) { try { lostHandler(); } catch {} } }
-      else resolve(true);
+      // Settling after it was granted means another page stole it. That page's claim has moved (or is about
+      // to move) the epoch, so nothing here could be saved anyway: stop now, not at the next refused save.
+      if (granted) { if (haveLock || steppingAside) lose({ savedFirst: false }); }
+      else resolve(false); // a wait that timed out
     });
   });
 }
-/** Is the lock recorded as held by this very tab (a previous document of it, e.g. before a reload)? */
-export function lockHeldBySelf() { try { return localStorage.getItem(HOLDER_KEY) === tabId(); } catch { return false; } }
+function askHolderToStepAside() {
+  if (!channel) return Promise.resolve(false);
+  return new Promise((res) => {
+    const onAck = (ev) => { const d = ev.data || {}; if (d.type === 'takeover-ack' && d.to === docId) { clearTimeout(timer); channel.removeEventListener('message', onAck); res(true); } };
+    const timer = setTimeout(() => { channel.removeEventListener('message', onAck); res(false); }, ACK_WAIT_MS);
+    channel.addEventListener('message', onAck);
+    try { channel.postMessage({ type: 'takeover', from: docId }); } catch { clearTimeout(timer); channel.removeEventListener('message', onAck); res(false); }
+  });
+}
+function previousDocumentOfThisTab() {
+  try { if (sessionStorage.getItem(HELD_KEY) === '1') return true; } catch {}
+  try { const nav = performance.getEntriesByType('navigation')[0]; return !!nav && nav.type === 'reload'; } catch { return false; }
+}
 /**
- * Take the single-writer lock. With `steal`, the current holder (another window on this device) is asked to
- * write out and step aside first, and is then displaced: this is the "Use SUDS in this window" path, and
- * also what a reload of the holding tab itself does silently.
+ * Take the single-writer lock and claim the next epoch. Without `force`, only a lock nobody holds is taken —
+ * or, for this same tab loading again, one its previous document is about to let go of. With `force` (the
+ * person chose "Use SUDS in this window") the holder is asked to write out and answer; after the answer or
+ * ACK_WAIT_MS, whichever comes first, the lock is stolen and the epoch moved, which fences the old holder
+ * off whether or not it ever answered. Resolves false when the lock is held elsewhere.
  */
-export async function acquireLock({ steal = false } = {}) {
+export async function acquireLock({ force = false } = {}) {
   openChannel();
-  if (steal) {
-    if (channel) {
-      // Give the holder a moment to flush and acknowledge; a holder that never answers (crashed, killed)
-      // is simply displaced after the wait.
-      await new Promise((res) => {
-        const timer = setTimeout(res, 700);
-        const onAck = (ev) => { if (ev.data && ev.data.type === 'takeover-ack' && ev.data.to === tabId()) { clearTimeout(timer); res(); } };
-        channel.addEventListener('message', onAck, { once: true });
-        try { channel.postMessage({ type: 'takeover', from: tabId() }); } catch { clearTimeout(timer); res(); }
-      });
-    }
-  }
-  const got = await acquireWebLock({ steal });
+  let got = await requestWebLock({ ifAvailable: true });
+  if (!got && force) { await askHolderToStepAside(); got = await requestWebLock({ steal: true }); }
+  else if (!got && previousDocumentOfThisTab()) got = await requestWebLock({ signal: timeoutSignal(SAME_TAB_WAIT_MS) });
   if (!got) return false;
-  haveLock = true; frozen = false;
+  haveLock = true; frozen = false; steppingAside = false; lostNotified = false;
+  const claim = await claimEpoch();
+  myEpoch = claim.epoch; claimedBytes = claim.bytes;
+  try { sessionStorage.setItem(HELD_KEY, '1'); } catch {}
   beat();
-  try { localStorage.setItem(HOLDER_KEY, tabId()); } catch {}
   clearInterval(heartbeatTimer);
   heartbeatTimer = setInterval(beat, HEARTBEAT_MS);
   return true;
 }
-/** True once whoever holds the lock has gone quiet for long enough that they cannot still be an active tab. */
+function claimEpoch() {
+  return idb().then((d) => new Promise((res, rej) => {
+    const t = d.transaction('kv', 'readwrite'); const s = t.objectStore('kv');
+    let epoch = null; let bytes = null; let migrated = false;
+    const g = s.get(EPOCH_KEY);
+    g.onsuccess = () => {
+      const prev = typeof g.result === 'number' ? g.result : null;
+      epoch = Math.max((prev || 0) + 1, Date.now());
+      const src = s.get(prev === null ? LEGACY_KEY : dbKey(prev));
+      src.onsuccess = () => {
+        bytes = src.result || null; migrated = prev === null && !!bytes;
+        s.put(epoch, EPOCH_KEY);
+        if (bytes) s.put(bytes, dbKey(epoch));
+        const keys = s.getAllKeys(IDBKeyRange.bound(DB_PREFIX, DB_PREFIX + '￿'));
+        keys.onsuccess = () => { for (const k of keys.result) if (k !== dbKey(epoch)) s.delete(k); };
+      };
+    };
+    t.oncomplete = () => res({ epoch, bytes, migrated });
+    t.onerror = () => rej(t.error);
+    t.onabort = () => rej(t.error || new Error('could not claim the on-device database'));
+  }));
+}
+/** True once whoever holds the lock has not stamped a heartbeat for a while (it may be frozen, not gone). */
 export function lockIsStale() {
   try {
     const last = Number(localStorage.getItem(HEARTBEAT_KEY) || 0);
     return last > 0 && (Date.now() - last) > STALE_MS;
   } catch { return false; }
 }
-/** Displace whoever holds the lock (see acquireLock with steal). Kept for callers of the old name. */
-export function forceAcquireLock() { return acquireLock({ steal: true }); }
+/** "Use SUDS in this window" (see acquireLock). Kept for callers of the old name. */
+export function forceAcquireLock() { return acquireLock({ force: true }); }
 export function hasLock() { return haveLock; }
-/** True once this page has handed the database to another window; every request is refused after that. */
-export function isFrozen() { return frozen; }
-/** Called when another window takes the database over, so the page can say so instead of failing quietly. */
+/** The fence token this page claimed (tests and diagnostics). */
+export function epoch() { return myEpoch; }
+/** True once this page has handed the database over (or is doing so); every request is refused. */
+export function isFrozen() { return frozen || steppingAside; }
+/** Called once when this page stops owning the database, with { savedFirst }: was its last work written out? */
 export function onLockLost(fn) { lostHandler = fn; }
-// Releasing on the way out lets a reload of this same tab, or the next tab, start without waiting on the
-// heartbeat to go stale. The Web Lock itself goes with the document; the holder record is ours to clear.
-try { window.addEventListener('pagehide', () => { if (haveLock) { try { if (localStorage.getItem(HOLDER_KEY) === tabId()) localStorage.removeItem(HOLDER_KEY); } catch {} } }); } catch {}
 
 // One open connection, kept for the life of the page: a save must be able to start its transaction
 // synchronously (see saveBytes), which an open() that resolves on a later task cannot offer.
@@ -141,32 +213,35 @@ function idb() {
     r.onerror = () => rej(r.error);
   });
 }
-export async function loadBytes() { try { const d = await idb(); const bytes = await new Promise((res, rej) => { const t = d.transaction('kv', 'readonly').objectStore('kv').get(KEY); t.onsuccess = () => res(t.result || null); t.onerror = () => rej(t.error); }); if (bytes) hadPersisted = true; return bytes; } catch { return null; } }
-// Whether a database has ever been written to this store by this page. Once it has, a store that turns
-// out to be empty at save time means someone deleted it from under us (the "Reset this device" dialog in
-// public/app.js, which talks to IndexedDB directly) — and a deleted database is never written back.
-let hadPersisted = false;
-// Resolves true when the bytes were stored, false when the store had been emptied and the save was withheld.
-// With the connection already open, the transaction and its put are issued before this returns — so a
-// save started from pagehide is committed by the browser even though the page is going away. The probe
-// runs first in the same transaction; if it finds the store emptied, the transaction is aborted and the
-// put with it.
+/** The bytes read when this page claimed its epoch (acquireLock runs first); null on a new device. */
+export async function loadBytes() { return claimedBytes; }
+/**
+ * Resolves true when the bytes were stored; false when the save was withheld because the store had been
+ * cleared (wiped) or another page had claimed the database since (fenced). See "fencing" above. With the
+ * connection already open, the transaction is created before this returns, so a save started from pagehide
+ * is ordered before anything the next document does.
+ */
 export function saveBytes(bytes, { urgent = false } = {}) {
   const write = (d) => new Promise((res, rej) => {
+    if (myEpoch === null) { rej(new Error('the on-device database was never claimed')); return; }
     const t = d.transaction('kv', 'readwrite'); const store = t.objectStore('kv');
-    let withheld = false;
-    const probe = store.get(KEY);
-    store.put(bytes, KEY);
-    probe.onsuccess = () => { if (hadPersisted && probe.result === undefined) { withheld = true; wiped = true; try { t.abort(); } catch {} } };
-    t.oncomplete = () => { if (inflight === t) inflight = null; hadPersisted = true; res(true); };
-    t.onabort = () => { if (inflight === t) inflight = null; if (withheld) res(false); else rej(t.error || new Error('save aborted')); };
-    t.onerror = () => { if (!withheld) rej(t.error); };
+    const key = dbKey(myEpoch);
+    let outcome = null; // 'wiped' | 'fenced'
+    const probe = store.get(EPOCH_KEY);
+    const judge = () => { const e = probe.result; if (e === undefined) outcome = 'wiped'; else if (e !== myEpoch) outcome = 'fenced'; };
+    if (urgent) {
+      // On the way out no callback is guaranteed to run again, and a transaction that waits for one is
+      // aborted with the document: commit() finishes it without. The probe can then no longer stop the
+      // put, and need not — it goes to this page's own epoch key, which is dead if the page was displaced.
+      store.put(bytes, key);
+      probe.onsuccess = () => { judge(); };
+    } else {
+      probe.onsuccess = () => { judge(); if (outcome) { try { t.abort(); } catch {} } else store.put(bytes, key); };
+    }
+    const settle = () => { if (outcome === 'wiped') { wiped = true; dirty = false; } else if (outcome === 'fenced') lose({ savedFirst: false }); };
+    t.oncomplete = () => { if (inflight === t) inflight = null; if (outcome) { settle(); res(false); } else res(true); };
+    t.onabort = () => { if (inflight === t) inflight = null; if (outcome) { settle(); res(false); } else rej(t.error || new Error('save aborted')); };
     inflight = t;
-    // On the way out of the page (pagehide) no JavaScript callback is guaranteed to run again, and a
-    // transaction that waits for its request callbacks before auto-committing is aborted with the
-    // document. An explicit commit() tells the browser to commit as soon as the requests are done, with no
-    // callback needed — at the cost of the probe above not being able to withhold the write, which is why
-    // it is only asked for from the unload path, where nothing can have been erased in the meantime.
     if (urgent && typeof t.commit === 'function') { try { t.commit(); } catch {} }
   });
   if (conn) { try { return write(conn); } catch (e) { conn = null; } }
@@ -178,16 +253,15 @@ let inflight = null;
  * Erase the on-device database. Deleting the IndexedDB key alone was not a wipe: the copy still in memory
  * was written straight back by the next debounced save or by the pagehide flush, before the page reloaded.
  * So the timer is cancelled, the in-memory copy dropped, and every later save refused (`wiped`) until the
- * page goes away. Resolves only once the delete transaction has completed, so a reload that waits on it
- * finds the store empty.
+ * page goes away. The whole store is cleared: the current copy, the epoch, and a pre-1.9.3 `db` key.
+ * Resolves only once the clear has been committed, so a reload that waits on it finds the store empty.
  */
 export async function wipe() {
   wiped = true; dirty = false; clearTimeout(saveTimer); saveTimer = null;
   if (saving) { try { await saving; } catch {} }
-  if (current) { try { current.close(); } catch {} current = null; }
+  if (current) { const c = current; current = null; try { c.close(); } catch {} }
   const d = await idb();
-  await new Promise((res, rej) => { const t = d.transaction('kv', 'readwrite'); t.objectStore('kv').delete(KEY); t.oncomplete = res; t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); });
-  hadPersisted = false;
+  await new Promise((res, rej) => { const t = d.transaction('kv', 'readwrite'); t.objectStore('kv').clear(); t.oncomplete = res; t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); });
 }
 /** True once this page has wiped (or found wiped) the device database; nothing is saved after that. */
 export function isWiped() { return wiped; }
@@ -195,23 +269,24 @@ export function isWiped() { return wiped; }
 let current = null; let saveTimer = null; let dirty = false; let saving = null; let wiped = false;
 // Nesting depth of the transaction server/db.js has open, tracked by DatabaseSync.exec(): a save in the
 // middle of one would end it (sql.js's export() closes and reopens the database), so writes made inside a
-// transaction are persisted when its COMMIT lands, not before.
+// transaction are saved after its COMMIT lands, not before.
 let inTransaction = false;
 /** Called when a save fails, so the UI can tell the user their device has stopped saving. */
 let onSaveError = (e) => console.error('[suds-local] save failed', e);
 export function setSaveErrorHandler(fn) { onSaveError = fn; }
 
 /**
- * Persist the in-memory database. `urgent` is the unload path (pagehide, visibilitychange→hidden): the
- * write is issued synchronously, before this returns, with an explicit commit, and a save already in
+ * Persist the in-memory database. `urgent` is the unload path (pagehide, visibilitychange→hidden, freeze):
+ * the write is issued synchronously, before this returns, with an explicit commit, and a save already in
  * flight is told to commit too rather than waited for, because nothing can be waited for after unload.
+ * A failure reaches onSaveError (the "stopped saving" banner) and rejects; it is never swallowed.
  */
 export function flush({ urgent = false } = {}) {
-  if (wiped || frozen || !current) return Promise.resolve();
+  if (wiped || frozen || !current || myEpoch === null) return Promise.resolve();
   if (urgent && inflight && typeof inflight.commit === 'function') { try { inflight.commit(); } catch {} }
   if (!dirty) return saving || Promise.resolve();
   if (saving && !urgent) return saving.then(() => flush()); // a save is in flight; queue behind it
-  if (inTransaction) return Promise.resolve(); // the COMMIT will persist; exporting now would abort it
+  if (inTransaction) return Promise.resolve(); // saved after the COMMIT; exporting now would end it
   clearTimeout(saveTimer); saveTimer = null;
   const seq = writeSeq;
   const bytes = current.export();
@@ -225,19 +300,22 @@ export function flush({ urgent = false } = {}) {
   saving = p;
   return p;
 }
-// How long consecutive writes are coalesced before they are persisted. Short, because anything written
-// and not yet saved is lost if the page goes away first; the pagehide/visibilitychange flush catches the
-// tail, but a navigation that skips those (a document opened in the same tab) cannot be relied on.
-const COALESCE_MS = 100;
+/** Is there anything written in memory and not yet saved? */
+export function isDirty() { return dirty; }
+// How long consecutive writes are coalesced before they are saved. Every save exports and writes the whole
+// database (tens of milliseconds, growing with its size), so it is not done per request — 1.9.1 did, and a
+// write took 40–130 ms on a large caseload. What is unsaved when the page goes away is written by the
+// unload flush (pagehide / visibilitychange→hidden / freeze, in public/app.js); the next document of the
+// same tab waits for this one's lock, held until it is torn down, before it reads anything (acquireLock),
+// and IndexedDB orders its claim after the unload save.
+const COALESCE_MS = 250;
 let writeSeq = 0;
 function markDirty() {
   if (wiped || frozen) return;
   dirty = true; writeSeq++;
-  if (inTransaction) return; // persisted at COMMIT
-  if (!saveTimer) saveTimer = setTimeout(() => { saveTimer = null; flush().catch(() => {}); }, COALESCE_MS);
+  if (inTransaction) return; // scheduled when the COMMIT lands
+  if (!saveTimer) saveTimer = setTimeout(() => { saveTimer = null; flush().catch(() => { /* reported by onSaveError */ }); }, COALESCE_MS);
 }
-/** Persist now rather than on the timer — used at the end of a write transaction. */
-function persistSoon() { if (wiped || frozen) return; clearTimeout(saveTimer); saveTimer = null; flush().catch(() => {}); }
 
 class Statement {
   constructor(db, sql) { this.db = db; this.sql = sql; }
@@ -259,15 +337,13 @@ export class DatabaseSync {
   prepare(sql) { return new Statement(this.db, sql); }
   exec(sql) {
     this.db.exec(sql);
-    // A committed transaction is work the user believes is saved. Write it out now instead of waiting for
-    // the debounce, so an OS kill of the WebView cannot lose it. Only when the OUTERMOST transaction ends,
-    // though: sql.js's export() closes and reopens the database, which silently ends any transaction still
-    // open -- so persisting on a savepoint released inside a BEGIN (a per-row savepoint during a sync pull)
-    // left the enclosing COMMIT with nothing to commit and failed every sync.
-    const ended = this._transactionEnded(sql);
+    // Saved on the coalescing timer like any other write, but only once the OUTERMOST transaction has ended:
+    // sql.js's export() closes and reopens the database, which silently ends any transaction still open --
+    // so saving on a savepoint released inside a BEGIN (a per-row savepoint during a sync pull) left the
+    // enclosing COMMIT with nothing to commit and failed every sync.
+    this._transactionEnded(sql);
     inTransaction = !!this._began || (this._spDepth || 0) > 0;
     markDirty();
-    if (ended) persistSoon();
   }
   // server/db.js issues exactly BEGIN / COMMIT / ROLLBACK, SAVEPOINT x / RELEASE x and ROLLBACK TO x (with
   // or without a trailing RELEASE x); the depth is tracked from those, and only from statements that start
@@ -282,7 +358,9 @@ export class DatabaseSync {
     if (/^RELEASE\b/.test(head)) { this._spDepth = Math.max(0, (this._spDepth || 0) - 1); return !this._began && this._spDepth === 0; }
     return false;
   }
-  close() { return flush(); }
+  // Closing drops this copy without saving it: server/db.js closes the open database before opening another
+  // (openWith), and a copy being replaced must never be written over the one replacing it.
+  close() { if (current === this.db) { current = null; dirty = false; clearTimeout(saveTimer); saveTimer = null; } try { this.db.close(); } catch {} }
   export() { return this.db.export(); }
 }
-export default { DatabaseSync, init, loadBytes, saveBytes, wipe, isWiped, flush, acquireLock, lockIsStale, lockHeldBySelf, forceAcquireLock, hasLock, isFrozen, onLockLost, setSaveErrorHandler };
+export default { DatabaseSync, init, loadBytes, saveBytes, wipe, isWiped, flush, isDirty, acquireLock, lockIsStale, forceAcquireLock, hasLock, epoch, isFrozen, onLockLost, setSaveErrorHandler };
