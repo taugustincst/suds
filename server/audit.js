@@ -76,27 +76,94 @@ function checkHead({ key = config.indexKey } = {}) {
 // Read in batches: at seven years of retention this table is millions of rows, and loading it whole to
 // answer an admin's "verify" click would stall the whole server.
 const VERIFY_BATCH = 5000;
-// `skipHead` leaves the sealed head out of the verdict: key rotation re-signs the rows under the new key
-// before the head is re-sealed, so between those two steps the head (sealed under the old key) would
-// read as "truncated" although nothing is missing.
-function verifyChain({ key = config.indexKey, skipHead = false } = {}) {
-  let prevHash = null; let anchoredAt = null; let checked = 0; let afterId = 0;
+/**
+ * The walk itself, as a generator that yields after every batch: verifyChain runs it straight through,
+ * verifyChainAsync gives the event loop a turn at each yield. `afterId`/`prevHash` start the walk part-way
+ * along the chain (an incremental check from the last verified entry); the default is the whole chain.
+ */
+function* walk({ key, afterId = 0, prevHash = null, batch = VERIFY_BATCH }) {
+  let anchoredAt = null; let checked = 0;
   for (;;) {
-    const rows = db.all(`SELECT * FROM audit_log WHERE id > ? ORDER BY id ASC LIMIT ?`, afterId, VERIFY_BATCH);
+    const rows = db.all(`SELECT * FROM audit_log WHERE id > ? ORDER BY id ASC LIMIT ?`, afterId, batch);
     if (!rows.length) break;
-    if (prevHash === null) { prevHash = rows[0].prev_hash; anchoredAt = rows[0].id; }
+    if (prevHash === null) prevHash = rows[0].prev_hash;
+    if (anchoredAt === null) anchoredAt = rows[0].id;
     for (const r of rows) {
       checked++;
-      if (r.prev_hash !== prevHash || !matches(r.hash, payloadOf(r), key)) return { ok: false, checked, firstBadId: r.id, anchoredAt, ...(skipHead ? {} : checkHead({ key })) };
+      if (r.prev_hash !== prevHash || !matches(r.hash, payloadOf(r), key)) return { ok: false, checked, firstBadId: r.id, anchoredAt };
       prevHash = r.hash;
     }
     afterId = rows[rows.length - 1].id;
-    if (rows.length < VERIFY_BATCH) break;
+    if (rows.length < batch) break;
+    yield;
   }
+  return { ok: true, checked, anchoredAt, lastId: afterId || null, lastHash: prevHash };
+}
+function verdict(res, { key, skipHead }) {
+  const { lastHash, ...out } = res;
+  if (!out.ok) return { ...out, ...(skipHead ? {} : checkHead({ key })) };
   const head = skipHead ? { checkpointed: false } : checkHead({ key });
-  if (head.truncated) return { ok: false, checked, anchoredAt, ...head };
-  if (!checked) return { ok: true, checked: 0, ...head };
-  return { ok: true, checked, anchoredAt, ...head };
+  if (head.truncated) return { ...out, ok: false, ...head };
+  if (!out.checked) return { ok: true, checked: 0, ...head, lastId: out.lastId };
+  return { ...out, ...head };
+}
+// `skipHead` leaves the sealed head out of the verdict: key rotation re-signs the rows under the new key
+// before the head is re-sealed, so between those two steps the head (sealed under the old key) would
+// read as "truncated" although nothing is missing.
+/** The whole chain, synchronously — for the CLI, key rotation and tests. The server uses verifyChainAsync. */
+function verifyChain({ key = config.indexKey, skipHead = false, batch } = {}) {
+  const it = walk({ key, batch });
+  let step = it.next();
+  while (!step.done) step = it.next();
+  return verdict(step.value, { key, skipHead });
+}
+
+// The event loop turn between batches. The local-mode kernel runs in a browser, which has no setImmediate.
+const breathe = () => new Promise((resolve) => (typeof setImmediate === 'function' ? setImmediate(resolve) : setTimeout(resolve, 0)));
+
+// ---- incremental verification ----
+// The daily check used to walk every row synchronously — nine seconds with the server frozen at a million
+// rows. It now resumes from the last entry it verified: that entry's id and hash, sealed with the index key
+// (like the head checkpoint) so the marker cannot be moved forward by someone editing settings. A row
+// altered *before* the marker is not re-read by an incremental check; it is caught by the full walk, which
+// still runs weekly (FULL_EVERY_DAYS), on the Verify button, and whenever the marker is missing or does
+// not check out.
+const FULL_EVERY_DAYS = 7;
+function sealVerified(id, hash, key = config.indexKey) { return crypto.createHmac('sha256', key).update(`verified|${id}|${hash}`).digest('hex'); }
+function setVerifiedMarker(id, hash) {
+  if (!id) return;
+  db.setSetting('audit_verified_id', String(id));
+  db.setSetting('audit_verified_seal', sealVerified(id, hash));
+}
+function clearVerifiedMarker() { db.run(`DELETE FROM settings WHERE key IN ('audit_verified_id','audit_verified_seal')`); }
+/** Where an incremental check can resume, or null when only a full walk will do. */
+function verifiedMarker({ key = config.indexKey } = {}) {
+  const id = Number(db.getSetting('audit_verified_id', 0)); const seal = db.getSetting('audit_verified_seal', null);
+  if (!id || !seal) return null;
+  const row = db.one(`SELECT id, hash FROM audit_log WHERE id=?`, id);
+  if (!row) return null;
+  const expected = sealVerified(row.id, row.hash, key);
+  if (expected.length !== seal.length || !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(seal))) return null;
+  return { id: row.id, hash: row.hash };
+}
+
+/**
+ * Verify without holding the event loop: `batch` rows at a time with a yield in between. With
+ * `incremental`, resume from the sealed last-verified marker when there is one (falling back to the whole
+ * chain when there is not). Resolves to the same shape as verifyChain, plus `mode` ('full'|'incremental')
+ * and, for an incremental check, `from` (the id it resumed after).
+ */
+async function verifyChainAsync({ key = config.indexKey, skipHead = false, incremental = false, batch } = {}) {
+  const marker = incremental ? verifiedMarker({ key }) : null;
+  const it = walk({ key, batch, ...(marker ? { afterId: marker.id, prevHash: marker.hash } : {}) });
+  let step = it.next();
+  while (!step.done) { await breathe(); step = it.next(); }
+  const res = verdict(step.value, { key, skipHead });
+  if (res.ok) {
+    const last = step.value.lastId ? { id: step.value.lastId, hash: step.value.lastHash } : marker;
+    if (last) setVerifiedMarker(last.id, last.hash);
+  }
+  return { ...res, mode: marker ? 'incremental' : 'full', ...(marker ? { from: marker.id } : {}) };
 }
 
 /**
@@ -137,6 +204,8 @@ function resignChain(newKey) {
   if (!after.ok) throw new Error(`The audit chain does not verify under the new key after re-signing (first bad entry ${after.firstBadId})`);
   const hadHead = db.getSetting('audit_head', null);
   if (hadHead) checkpoint({ key: newKey });
+  // Every hash changed, and the verified marker was sealed under the old key: the next check walks it all.
+  clearVerifiedMarker();
   const pinned = verifyChain({ key: newKey });
   if (!pinned.ok) throw new Error(`The audit head does not verify under the new key after re-sealing (${pinned.reason || `first bad entry ${pinned.firstBadId}`})`);
   return { resigned, checked: after.checked };
@@ -171,16 +240,24 @@ function purge(days) {
 
 /**
  * Verify the chain on a schedule and record the result. "Tamper-evident" means nothing if nobody ever
- * looks: this was only ever checked when an administrator happened to click the button.
+ * looks: this was only ever checked when an administrator happened to click the button. Incremental
+ * (from the last verified entry) on most days, the whole chain once every FULL_EVERY_DAYS or when asked
+ * (`full`), and in both cases in batches that let other requests run in between. Returns a promise.
  */
-function scheduledVerify() {
-  const r = verifyChain();
-  if (r.ok) { db.setSetting('audit_verified_at', db.now()); checkpoint(); return r; }
+async function scheduledVerify({ full = false, batch } = {}) {
+  const lastFull = db.getSetting('audit_full_verified_at', null);
+  const fullDue = full || !lastFull || Date.now() - Date.parse(lastFull) > FULL_EVERY_DAYS * 86400000;
+  const r = await verifyChainAsync({ incremental: !fullDue, batch });
+  if (r.ok) {
+    db.setSetting('audit_verified_at', db.now());
+    if (r.mode === 'full') db.setSetting('audit_full_verified_at', db.now());
+    checkpoint(); return r;
+  }
   // Recorded rather than thrown: the entry itself is evidence, and the server must keep serving.
   console.error(`[suds] AUDIT CHAIN BROKEN ${r.truncated ? `(truncated: ${r.reason})` : `at entry ${r.firstBadId}`} — investigate immediately`);
-  log({ user: { username: 'system' }, action: 'audit.verify.failed', success: false, details: { first_bad_id: r.firstBadId, checked: r.checked, truncated: r.truncated || undefined, reason: r.reason } });
+  log({ user: { username: 'system' }, action: 'audit.verify.failed', success: false, details: { first_bad_id: r.firstBadId, checked: r.checked, truncated: r.truncated || undefined, reason: r.reason, mode: r.mode } });
   db.setSetting('audit_verify_failed_at', db.now());
   return r;
 }
 
-module.exports = { log, verifyChain, resignChain, scheduledVerify, purge, purgeTombstones, checkpoint, checkHead };
+module.exports = { log, verifyChain, verifyChainAsync, verifiedMarker, resignChain, scheduledVerify, purge, purgeTombstones, checkpoint, checkHead };

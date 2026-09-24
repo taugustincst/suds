@@ -68,8 +68,10 @@ module.exports = (r) => {
     audit.log({ user: ctx.user, action: 'audit.read', ip: ctx.ip, details: { filters: Object.fromEntries(ctx.query) } });
     return { rows: rows.map(x => ({ ...x, details: x.details ? JSON.parse(x.details) : null })), total, limit, offset };
   });
-  r.get('/api/admin/audit/verify', auth.requireAuth, auth.requirePerm('audit:read'), (ctx) => {
-    const res = audit.verifyChain();
+  // The whole chain, but in batches with the event loop free in between, so one administrator's click on a
+  // million-row log does not stall every other request for seconds.
+  r.get('/api/admin/audit/verify', auth.requireAuth, auth.requirePerm('audit:read'), async (ctx) => {
+    const res = await audit.verifyChainAsync();
     audit.log({ user: ctx.user, action: 'audit.verify', ip: ctx.ip, details: res });
     return res;
   });
