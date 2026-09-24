@@ -1,6 +1,6 @@
 name: Release
 # Uses no marketplace actions. Creates the tag + GitHub Release with the source zip, then asks web-app.yml to
-# publish the demo site for that tag. The native apps and desktop launchers were removed in 1.9.3
+# publish the web app for that tag. The native apps and desktop launchers were removed in 1.9.3
 # (docs/PLATFORM.md): nothing else is built or attached.
 on:
   push:
@@ -14,7 +14,7 @@ on:
 permissions:
   contents: write
   # `gh workflow run web-app.yml` below: a release this workflow creates with GITHUB_TOKEN does not fire the
-  # `release` event for other workflows, so the demo site is started explicitly.
+  # `release` event for other workflows, so the web app publish is started explicitly.
   actions: write
 jobs:
   release:
@@ -60,17 +60,17 @@ jobs:
             gh release create "$ver" "suds-$ver.zip" "suds-$ver.zip.sha256" --target "$(git rev-parse HEAD)" --title "SUDS $ver" --notes "${notes:-See CHANGELOG.md}"; fi
           echo "Published https://github.com/${GITHUB_REPOSITORY}/releases/tag/$ver"
       # Only after the tests passed and the release exists. A release (or tag) this workflow creates with
-      # GITHUB_TOKEN starts no other workflow, so the demo is asked for explicitly. A tag a person pushed
+      # GITHUB_TOKEN starts no other workflow, so the web app publish is asked for explicitly. A tag a person pushed
       # also starts web-app.yml directly; its concurrency group runs the two one after the other, and the
       # second simply republishes the same tag.
-      - name: Publish the demo site for this release
+      - name: Publish the web app for this release
         working-directory: src
         run: |
           ver="v$(node -p "require('./package.json').version")"
           gh workflow run web-app.yml --ref "$ver"
-          echo "Started the demo-site publish for $ver. QA: open the demo and check the on-screen version reads ${ver#v}."
+          echo "Started the web app publish for $ver. QA: open it and check the on-screen version reads ${ver#v}."
       - name: Release QA reminder
         run: |
           echo "### Release QA" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Check the on-screen version (footer / version.json) on the demo site and on a pilot server after deploy." >> "$GITHUB_STEP_SUMMARY"
+          echo "- Check the on-screen version (footer / version.json) on the web app and on a pilot server after deploy." >> "$GITHUB_STEP_SUMMARY"
           echo "- Run the real-device checklist in docs/ADOPTION.md (2 iPhones, 2 Androids) before the wider rollout." >> "$GITHUB_STEP_SUMMARY"
