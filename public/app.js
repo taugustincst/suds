@@ -95,7 +95,15 @@ async function apiCall(method, path, body, opts) {
     // Writes in flight (a sync above all) hold off an update reload; see newVersionReady().
     const writing = method !== 'GET' && method !== 'HEAD'; if (writing) localWritesInFlight++;
     let r;
-    try { r = await window.SUDS_LOCAL.handle(method, path, payload, headers); } finally { if (writing) localWritesInFlight--; }
+    try {
+      r = await window.SUDS_LOCAL.handle(method, path, payload, headers);
+      // Something the person saved is on disk before the page says it is. The kernel batches its saves
+      // (every 250 ms) and writes the rest on the way out, but Safari's engine drops that last unload write:
+      // a client saved and the page reloaded straight away was gone. So an explicit write waits for the
+      // on-device save; background writes (autosave, preferences, polls) stay batched. A failed save still
+      // raises the "stopped saving" banner through the kernel's own error handler.
+      if (writing && !background && r.status < 400 && window.SUDS_LOCAL.flush) { try { await window.SUDS_LOCAL.flush(); } catch {} }
+    } finally { if (writing) localWritesInFlight--; }
     if (r.status >= 500) reportClientError({ kind: 'api', status: r.status, message: `${method} ${String(path).split('?')[0]} answered ${r.status}` });
     if (!background) touch();
     const data = r.json !== undefined ? r.json : (r.body ? (String(r.headers['content-type'] || '').includes('json') ? JSON.parse(r.body.toString()) : r.body.toString()) : null);

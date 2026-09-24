@@ -9,6 +9,14 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   pauses it; before, a frozen tab that had saved on its `freeze` event said "may need to be re-entered" or
   "saved first" depending on which of its queued callbacks ran first on waking (seen once in three CI runs).
   `scripts/ui/multitab.mjs` now expects the truthful answer for both variants and fails on the old code.
+- **Safari: a record saved and the page reloaded straight away was lost.** The new WebKit CI job caught it:
+  Safari's engine drops the last write made while a page unloads, and 1.9.3 batches saves every 250 ms. An
+  explicit save from the interface now waits for the on-device write before the page says it is saved;
+  background writes (note autosave, preferences, polls) stay batched. On a very large on-device caseload an
+  explicit save takes a few tens of milliseconds longer.
+- Safari's engine could leave the offline shell empty after an update and miss a cached page offline: the
+  worker now falls back to a plain fetch-and-store when its reload-mode precache is refused, never skips its
+  handler if building a request throws, and ignores `Vary` when looking up the shell offline.
 - WebKit smoke checks report what the shell cache holds instead of crashing, and wait for the worker to finish
   filling it.
 

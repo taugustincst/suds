@@ -12,7 +12,13 @@ const SHELL = ['./', 'index.html', 'styles.css', 'main.js', 'app.js', 'qr.js', '
 // `cache: 'reload'` fills the shell from the network, never from the browser's HTTP cache: a static host
 // (GitHub Pages sends max-age=600) can otherwise hand a *new* worker the *previous* build's app.js, and the
 // device then runs the old code from the new cache until the next release.
-self.addEventListener('install', (e) => { e.waitUntil(caches.open(VERSION).then(c => Promise.all(SHELL.map(u => c.add(new Request(u, { cache: 'reload' })).catch(() => {})))).then(() => self.skipWaiting())); });
+// Safari's engine has been seen to fill nothing this way (an empty shell cache after an upgrade), so a file
+// that the reload-mode add() cannot store is fetched plainly (revalidated, not taken from the HTTP cache on
+// trust) and put in by hand.
+const precache = (c, u) => c.add(new Request(u, { cache: 'reload' }))
+  .catch(() => fetch(u, { cache: 'no-cache' }).then(r => (r.ok ? c.put(u, r) : undefined)))
+  .catch(() => {});
+self.addEventListener('install', (e) => { e.waitUntil(caches.open(VERSION).then(c => Promise.all(SHELL.map(u => precache(c, u)))).then(() => self.skipWaiting())); });
 // A new VERSION drops every older cache and takes over the open pages at once; app.js reloads them once it
 // sees the controller change, so nobody keeps running a build the server no longer serves.
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
@@ -43,6 +49,14 @@ self.addEventListener('fetch', (e) => {
     headers.set('Cache-Control', 'no-cache'); headers.delete('Content-Encoding'); headers.delete('Content-Length');
     return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
   };
-  e.respondWith(fetch(versioned ? e.request : new Request(e.request, { cache: 'no-cache' })).then(res => { if (res.ok) { const copy = res.clone(); caches.open(VERSION).then(c => c.put(e.request, copy)); } return fresh(res); })
-    .catch(() => caches.match(e.request, { ignoreSearch: true }).then(r => r || (e.request.mode === 'navigate' ? caches.match('index.html') : Response.error()))));
+  // Building the revalidating request can throw in some engines; if it did here, respondWith would never be
+  // called and an offline request would fail outright instead of reaching the cache below.
+  let netReq = e.request;
+  if (!versioned) { try { netReq = new Request(e.request, { cache: 'no-cache' }); } catch { netReq = e.request; } }
+  // ignoreVary: the shell is one copy per URL; a Vary on the stored response must not make it unfindable offline.
+  const fromCache = () => caches.match(e.request, { ignoreSearch: true, ignoreVary: true })
+    .then(r => r || caches.match(e.request.url, { ignoreSearch: true, ignoreVary: true }))
+    .then(r => r || (e.request.mode === 'navigate' ? caches.match('index.html', { ignoreVary: true }) : Response.error()));
+  e.respondWith(fetch(netReq).then(res => { if (res.ok) { const copy = res.clone(); caches.open(VERSION).then(c => c.put(e.request, copy)); } return fresh(res); })
+    .catch(fromCache));
 });
