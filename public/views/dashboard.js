@@ -29,6 +29,16 @@ route('dashboard', async () => {
     const n = reqs ? reqs.requests.length : 0;
     if (n) alerts.push(['warn', `${n} access request${n > 1 ? 's' : ''} waiting`, '#/admin?tab=users']);
   }
+  // Clients still assigned to someone whose account was deactivated: nobody is working them until a
+  // supervisor moves them (GET /api/users/caseloads, counts only).
+  if (can('assignments:manage')) {
+    const cl = await get('/api/users/caseloads', { quiet: true }).catch(() => null);
+    if (cl && (cl.inactive_clients || cl.inactive_tasks)) {
+      const gone = cl.users.filter(u => !u.is_active);
+      const what = cl.inactive_clients ? `${cl.inactive_clients} client${cl.inactive_clients > 1 ? 's are' : ' is'}` : `${cl.inactive_tasks} open to-do${cl.inactive_tasks > 1 ? 's are' : ' is'}`;
+      alerts.push(['warn', `${what} assigned to inactive staff`, gone.length === 1 ? `#/admin?tab=caseload&from=${gone[0].id}` : '#/admin?tab=caseload']);
+    }
+  }
   // The on-device app keeps its records nowhere else: a week without a backup is worth a word on Home.
   const backupReminder = await backupReminderCard();
   // Empty program: offer sample data (office admins, or anyone on a phone-only copy)

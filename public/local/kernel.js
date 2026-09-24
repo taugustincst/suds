@@ -14986,9 +14986,10 @@ var require_episodes = __commonJS({
             );
             moved++;
           }
-          if (v.reassign_open_tasks !== 0 && moved) {
-            const ids = open2.map((a) => a.client_id);
+          if (v.reassign_open_tasks !== 0) {
+            const ids = [...new Set(open2.map((a) => a.client_id))];
             if (ids.length) tasks = db3.run(`UPDATE tasks SET assigned_to=?, updated_at=? WHERE assigned_to=? AND status IN ('open','in_progress') AND client_id IN (${ids.map(() => "?").join(",")})`, to.id, db3.now(), from.id, ...ids).changes;
+            if (!v.client_ids || !v.client_ids.length) tasks += db3.run(`UPDATE tasks SET assigned_to=?, updated_at=? WHERE assigned_to=? AND status IN ('open','in_progress') AND client_id IS NULL`, to.id, db3.now(), from.id).changes;
           }
         });
         audit3.log({ user: ctx.user, action: "caseload.transfer", entity: "user", entityId: from.id, ip: ctx.ip, details: { to: to.id, clients: moved, tasks, skipped: skipped.length, effective_date: when } });
@@ -21597,7 +21598,7 @@ var require_setup = __commonJS({
     var listener = (init_listener(), __toCommonJS(listener_exports));
     var { badRequest, HttpError: HttpError3 } = require_http();
     var { validate } = require_validate();
-    var { hashPassword, uuid: uuid2 } = require_crypto();
+    var { hashPasswordAsync, uuid: uuid2 } = require_crypto();
     var selfsigned = (init_empty(), __toCommonJS(empty_exports));
     function setupNeeded() {
       return !config.setupComplete && !config.isTest && config.keySource !== "env" && !proc.env.SUDS_SKIP_SETUP;
@@ -21639,10 +21640,12 @@ var require_setup = __commonJS({
           const keys = { SUDS_ENCRYPTION_KEY: config.encryptionKey.toString("hex"), SUDS_INDEX_KEY: config.indexKey.toString("hex"), created_at: (/* @__PURE__ */ new Date()).toISOString() };
           fs.writeFileSync(config.keysJsonPath, JSON.stringify(keys, null, 2), { mode: 384 });
         }
+        const adminHash = await hashPasswordAsync(v.admin_password);
+        if (!(setupNeeded() && onlyBootstrapAdmin())) throw new HttpError3(403, "Setup has already been completed");
         (init_empty(), __toCommonJS(empty_exports)).discardPasswordFile();
         db3.transaction(() => {
           db3.run(`DELETE FROM users WHERE username='admin' AND must_change_password=1 AND last_login_at IS NULL`);
-          db3.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,0,?)`, uuid2(), v.admin_username, hashPassword(v.admin_password), v.admin_display_name, "admin", db3.now());
+          db3.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,0,?)`, uuid2(), v.admin_username, adminHash, v.admin_display_name, "admin", db3.now());
           db3.setSetting("org_name", v.org_name);
           if (v.county_name) db3.setSetting("county_name", v.county_name);
           if (v.program_contact) db3.setSetting("program_contact", v.program_contact);
@@ -22443,7 +22446,7 @@ var require_users = __commonJS({
     var devices = require_devices();
     var { badRequest, notFound, HttpError: HttpError3 } = require_http();
     var { validate } = require_validate();
-    var { hashPassword, uuid: uuid2, randomToken } = require_crypto();
+    var { hashPasswordAsync, uuid: uuid2, randomToken } = require_crypto();
     var ROLES = ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"];
     var shape = {
       username: { type: "string", required: true, maxLen: 60, pattern: /^[a-zA-Z0-9._@-]+$/ },
@@ -22470,7 +22473,29 @@ var require_users = __commonJS({
         const rows = db3.all(full ? `SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,last_login_at,locked_until,hourly_cost,created_at,oidc_subject,requires_cosign,supervisor_id,access_status FROM users WHERE access_status<>'pending' ORDER BY display_name` : `SELECT id,display_name,title,role,is_active FROM users WHERE is_active=1 ORDER BY display_name`);
         return { users: rows };
       });
-      r.post("/api/users", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
+      const caseloadCounts = (userId) => {
+        const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        const where = userId ? "AND u.id=?" : "";
+        const args = userId ? [userId] : [];
+        return db3.all(`SELECT u.id, u.display_name, u.role, u.is_active,
+        (SELECT COUNT(DISTINCT a.client_id) FROM assignments a JOIN clients c ON c.id=a.client_id
+          WHERE a.user_id=u.id AND (a.end_date IS NULL OR a.end_date >= ?) AND a.ended_at IS NULL AND c.deleted_at IS NULL) AS clients,
+        (SELECT COUNT(*) FROM tasks t LEFT JOIN clients c ON c.id=t.client_id
+          WHERE t.assigned_to=u.id AND t.status IN ('open','in_progress') AND (t.client_id IS NULL OR c.deleted_at IS NULL)) AS open_tasks
+      FROM users u WHERE 1=1 ${where} ORDER BY u.display_name`, today, ...args);
+      };
+      const canSeeCaseloads = auth3.requirePerm("users:manage", "assignments:manage");
+      r.get("/api/users/caseloads", auth3.requireAuth, canSeeCaseloads, () => {
+        const users = caseloadCounts().filter((u) => u.clients || u.open_tasks);
+        const inactive = users.filter((u) => !u.is_active);
+        return { users, inactive_clients: inactive.reduce((n, u) => n + u.clients, 0), inactive_tasks: inactive.reduce((n, u) => n + u.open_tasks, 0) };
+      });
+      r.get("/api/users/:id/caseload", auth3.requireAuth, canSeeCaseloads, (ctx) => {
+        const [u] = caseloadCounts(ctx.params.id);
+        if (!u) throw notFound();
+        return u;
+      });
+      r.post("/api/users", auth3.requireAuth, auth3.requirePerm("users:manage"), async (ctx) => {
         const v = validate(ctx.body, shape);
         if (db3.one(`SELECT 1 FROM users WHERE username=?`, v.username)) throw badRequest("Username already exists");
         const temp = v.password || randomToken(10) + "Aa1!";
@@ -22478,11 +22503,13 @@ var require_users = __commonJS({
         if (errs.length) throw badRequest("Password must contain " + errs.join(", "));
         const id = uuid2();
         if (v.supervisor_id && !db3.one(`SELECT 1 FROM users WHERE id=? AND role IN ('supervisor','admin')`, v.supervisor_id)) throw badRequest("The supervisor must be a supervisor or administrator account");
+        const hash2 = await hashPasswordAsync(temp);
+        if (db3.one(`SELECT 1 FROM users WHERE username=?`, v.username)) throw badRequest("Username already exists");
         db3.run(
           `INSERT INTO users(id,username,password_hash,display_name,email,title,role,is_active,hourly_cost,requires_cosign,supervisor_id,must_change_password,password_changed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,1,?)`,
           id,
           v.username,
-          hashPassword(temp),
+          hash2,
           v.display_name,
           v.email || null,
           v.title || null,
@@ -22497,7 +22524,7 @@ var require_users = __commonJS({
         ctx.status = 201;
         return { id, temporary_password: v.password ? void 0 : temp };
       });
-      r.put("/api/users/:id", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
+      r.put("/api/users/:id", auth3.requireAuth, auth3.requirePerm("users:manage"), async (ctx) => {
         const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.params.id);
         if (!u) throw notFound();
         const v = validate(ctx.body, { ...shape, username: { ...shape.username, required: false }, role: { ...shape.role, required: false }, display_name: { ...shape.display_name, required: false } }, { partial: true });
@@ -22514,7 +22541,7 @@ var require_users = __commonJS({
           const errs = auth3.passwordPolicy(v.password);
           if (errs.length) throw badRequest("Password must contain " + errs.join(", "));
           sets.push("password_hash=?", "must_change_password=1", "password_changed_at=?");
-          params.push(hashPassword(v.password), db3.now());
+          params.push(await hashPasswordAsync(v.password), db3.now());
           auth3.revokeAllForUser(u.id);
         }
         if (ctx.body.unlock) {
