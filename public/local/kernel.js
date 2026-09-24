@@ -7315,6 +7315,23 @@ CREATE TABLE IF NOT EXISTS patient_requests (
 );
 CREATE INDEX IF NOT EXISTS idx_patient_requests_client ON patient_requests(client_id);
 CREATE INDEX IF NOT EXISTS idx_patient_requests_updated ON patient_requests(updated_at);
+
+-- A retried POST (a double tap, a save resent after the connection dropped, a phone that lost signal
+-- between sending and hearing back) is answered from here instead of being executed a second time.
+-- One row per (user, Idempotency-Key): id is sha256 of both, so the key the browser chose is not kept.
+-- The stored answer can name a client, so it is encrypted. Rows older than 24 hours are purged by the
+-- hourly housekeeping (server/idempotency.js). Never synchronised: each database answers its own retries.
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  method TEXT NOT NULL,
+  path TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  status INTEGER NOT NULL,
+  response_enc TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_idempotency_created ON idempotency_keys(created_at);
 `;
   }
 });
@@ -8011,6 +8028,14 @@ var require_db = __commonJS({
         if (!tableExists(d, "tasks") || !tableCols(d, "tasks").includes("description")) return;
         encryptColumn(d, "tasks", "description", "description_enc");
         rebuildTable(d, safeSchema(), "tasks");
+      },
+      // 27 (numbered 27 in the release: 25 and 26 land from parallel work — renumber this comment at merge):
+      //     idempotency_keys, so a retried POST is answered once instead of creating everything twice.
+      (d) => {
+        const schemaText = safeSchema();
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS idempotency_keys \([\s\S]*?\n\);/);
+        if (m) d.exec(m[0]);
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_idempotency/.test(line.trim())) d.exec(line.trim());
       }
     ];
     function initialise(d, schemaText, dbPath) {
@@ -9036,6 +9061,100 @@ var require_auth = __commonJS({
   }
 });
 
+// server/idempotency.js
+var require_idempotency = __commonJS({
+  "server/idempotency.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var { HttpError: HttpError3 } = require_http();
+    var { sha256: sha2562, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
+    var TTL_MS = 24 * 3600 * 1e3;
+    var MAX_STORED_BYTES = 512 * 1024;
+    var EXEMPT = [/^\/api\/auth\//, /^\/api\/sync\//, /^\/api\/setup(\/|$)/, /^\/api\/users(\/|$)/, /^\/api\/admin\/(api-keys|restore|keys-backup)/, /^\/api\/me\/(password|mfa)/];
+    var inflight2 = /* @__PURE__ */ new Map();
+    var lastPurge = 0;
+    function applies(ctx) {
+      if (ctx.method !== "POST" || !ctx.user) return false;
+      if (!ctx.headers || ctx.headers["idempotency-key"] === void 0) return false;
+      return !EXEMPT.some((re) => re.test(ctx.path));
+    }
+    function requestHash(ctx) {
+      const body = ctx.rawBody && ctx.rawBody.length ? sha2562(ctx.rawBody) : JSON.stringify(ctx.body ?? null);
+      return sha2562(`${ctx.method} ${ctx.path}?${ctx.query ? ctx.query.toString() : ""}
+${body}`);
+    }
+    async function run2(ctx, exec) {
+      if (!applies(ctx)) return exec();
+      const key = String(ctx.headers["idempotency-key"]);
+      if (!key || key.length > 255 || !/^[\x21-\x7e]+$/.test(key)) throw new HttpError3(400, "Idempotency-Key must be 1-255 printable characters");
+      maybePurge();
+      const id = sha2562(`${ctx.user.id}|${key}`);
+      const hash2 = requestHash(ctx);
+      while (inflight2.has(id)) {
+        try {
+          await inflight2.get(id);
+        } catch {
+        }
+      }
+      const prior = db3.one(`SELECT * FROM idempotency_keys WHERE id=? AND created_at > ?`, id, new Date(Date.now() - TTL_MS).toISOString());
+      if (prior) {
+        if (prior.request_hash !== hash2 || prior.user_id !== ctx.user.id) {
+          audit3.log({ user: ctx.user, action: "idempotency.mismatch", ip: ctx.ip, success: false, details: { path: ctx.path } });
+          throw new HttpError3(422, "This request was already sent with the same Idempotency-Key and different content. Reload the form and try again.");
+        }
+        audit3.log({ user: ctx.user, action: "idempotency.replay", ip: ctx.ip, details: { path: ctx.path, status: prior.status, first_at: prior.created_at } });
+        ctx.status = prior.status;
+        ctx.idempotentReplay = true;
+        return prior.response_enc ? JSON.parse(decrypt3(prior.response_enc)) : void 0;
+      }
+      let done;
+      const gate = new Promise((resolve2) => {
+        done = resolve2;
+      });
+      inflight2.set(id, gate);
+      try {
+        const result = await exec();
+        const status = result === void 0 ? 204 : ctx.status || 200;
+        if (!(ctx.res && ctx.res.headersSent) && status >= 200 && status < 300) {
+          const json = result === void 0 ? null : JSON.stringify(result);
+          if (json === null || json.length <= MAX_STORED_BYTES) {
+            db3.run(
+              `INSERT OR REPLACE INTO idempotency_keys(id,user_id,method,path,request_hash,status,response_enc,created_at) VALUES(?,?,?,?,?,?,?,?)`,
+              id,
+              ctx.user.id,
+              ctx.method,
+              ctx.path,
+              hash2,
+              status,
+              json === null ? null : encrypt3(json),
+              db3.now()
+            );
+          }
+        }
+        return result;
+      } finally {
+        inflight2.delete(id);
+        done();
+      }
+    }
+    function purge(now = Date.now()) {
+      lastPurge = now;
+      return db3.run(`DELETE FROM idempotency_keys WHERE created_at <= ?`, new Date(now - TTL_MS).toISOString()).changes;
+    }
+    function maybePurge() {
+      if (Date.now() - lastPurge > 3600 * 1e3) {
+        try {
+          purge();
+        } catch {
+        }
+      }
+    }
+    module.exports = { run: run2, purge, TTL_MS };
+  }
+});
+
 // server/sync-tables.js
 var require_sync_tables = __commonJS({
   "server/sync-tables.js"(exports, module) {
@@ -9106,6 +9225,10 @@ var require_sync_tables = __commonJS({
       // Server-side only, never synchronised: breakglass_events is the office supervisor's review queue for
       // emergency access, and a device has no supervisor to review it.
       server_only: ["breakglass_events"],
+      // Kept by each database for itself and never synchronised in either direction: idempotency_keys holds
+      // the answers to retried POSTs made against that database (server/idempotency.js). A device's retry is
+      // answered by the device; the office never sees the key, only the rows the request created.
+      per_database: ["idempotency_keys"],
       // Rows a device may create but never change once they exist (a consent may only be revoked). The legal
       // record of what was agreed to and what was shared cannot be rewritten by whichever phone syncs last.
       immutable: ["consents", "disclosures", "note_addenda"],
@@ -12191,11 +12314,19 @@ var require_crud = __commonJS({
     var db3 = require_db();
     var auth3 = require_auth();
     var audit3 = require_audit();
-    var { notFound, forbidden } = require_http();
+    var { notFound, forbidden, HttpError: HttpError3 } = require_http();
     var { validate, paging } = require_validate();
     var { uuid: uuid2 } = require_crypto();
     function clientExists(id) {
       return !!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, id);
+    }
+    var STALE_MESSAGE = "This record was changed by someone else since you opened it. Reload to see their changes.";
+    function assertFresh(ctx, row, entity) {
+      const token2 = ctx.body && typeof ctx.body === "object" ? ctx.body.if_updated_at : void 0;
+      if (token2 === void 0 || token2 === null || token2 === "") return;
+      if (row.updated_at && String(token2) === String(row.updated_at)) return;
+      audit3.log({ user: ctx.user, action: `${entity}.update.conflict`, entity, entityId: row.id, clientId: row.client_id || (entity === "client" ? row.id : null), ip: ctx.ip, success: false });
+      throw new HttpError3(409, STALE_MESSAGE, { stale: true, updated_at: row.updated_at || null });
     }
     function build(r, opts) {
       const { table, entity, perm, shape, dateCol = "created_at", ownerCol = "user_id", joins = "", select = `${table}.*`, clientRequired = true } = opts;
@@ -12284,15 +12415,17 @@ var require_crud = __commonJS({
         if (!row) throw notFound();
         if (row.client_id) auth3.assertClientAccess(ctx, row.client_id);
         if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden("You cannot edit this record");
+        if (!opts.noUpdatedAt) assertFresh(ctx, row, entity);
         const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
         if (v.client_id && v.client_id !== row.client_id) checkClient(ctx, v.client_id);
         if (opts.restrictOwner && v[ownerCol] !== void 0 && !auth3.hasPerm(ctx.user, "clients:all")) delete v[ownerCol];
         if (opts.beforeUpdate) opts.beforeUpdate(ctx, v, row);
         const keys = Object.keys(v).filter((k) => v[k] !== void 0 && !k.startsWith("_"));
-        if (keys.length) db3.run(`UPDATE ${table} SET ${keys.map((k) => `${k}=?`).join(", ")}${opts.noUpdatedAt ? "" : ", updated_at=?"} WHERE id=?`, ...keys.map((k) => v[k]), ...opts.noUpdatedAt ? [] : [db3.now()], row.id);
+        const stamp2 = db3.now();
+        if (keys.length) db3.run(`UPDATE ${table} SET ${keys.map((k) => `${k}=?`).join(", ")}${opts.noUpdatedAt ? "" : ", updated_at=?"} WHERE id=?`, ...keys.map((k) => v[k]), ...opts.noUpdatedAt ? [] : [stamp2], row.id);
         if (opts.afterUpdate) opts.afterUpdate(ctx, { ...row, ...v }, row);
         audit3.log({ user: ctx.user, action: `${entity}.update`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip, details: { fields: keys } });
-        return { ok: true };
+        return { ok: true, updated_at: opts.noUpdatedAt ? void 0 : (db3.one(`SELECT updated_at FROM ${table} WHERE id=?`, row.id) || {}).updated_at };
       });
       r.delete(`${base}/:id`, auth3.requireAuth, auth3.requirePerm(writePerm), (ctx) => {
         const row = db3.one(`SELECT * FROM ${table} WHERE id=?`, ctx.params.id);
@@ -12310,7 +12443,7 @@ var require_crud = __commonJS({
     function ownerOrManager(col = "user_id") {
       return (ctx, row) => row[col] === ctx.user.id || auth3.hasPerm(ctx.user, "clients:all");
     }
-    module.exports = { build, ownerOrManager, clientExists };
+    module.exports = { build, ownerOrManager, clientExists, assertFresh, STALE_MESSAGE };
   }
 });
 
@@ -12458,13 +12591,15 @@ var require_budget = __commonJS({
       r.put("/api/budget/funds/:id", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
         const f = db3.one(`SELECT * FROM funding_sources WHERE id=?`, ctx.params.id);
         if (!f) throw notFound();
+        require_crud().assertFresh(ctx, f, "fund");
         const v = validate(ctx.body, Object.fromEntries(Object.entries(fundShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
         const keys = Object.keys(v);
-        if (!keys.length) return { ok: true };
+        if (!keys.length) return { ok: true, updated_at: f.updated_at };
         assertPeriodOrder(v.fiscal_year_start ?? f.fiscal_year_start, v.fiscal_year_end ?? f.fiscal_year_end);
-        db3.run(`UPDATE funding_sources SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), db3.now(), f.id);
+        const stamp2 = db3.now();
+        db3.run(`UPDATE funding_sources SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), stamp2, f.id);
         audit3.log({ user: ctx.user, action: "fund.update", entity: "funding_source", entityId: f.id, ip: ctx.ip, details: { fields: keys } });
-        return { ok: true };
+        return { ok: true, updated_at: stamp2 };
       });
       r.post("/api/budget/funds/:id/lines", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
         const f = db3.one(`SELECT id FROM funding_sources WHERE id=?`, ctx.params.id);
@@ -12484,6 +12619,7 @@ var require_budget = __commonJS({
       r.put("/api/budget/lines/:id", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
         const l = db3.one(`SELECT * FROM budget_lines WHERE id=?`, ctx.params.id);
         if (!l) throw notFound();
+        require_crud().assertFresh(ctx, l, "budget_line");
         const v = validate(ctx.body, Object.fromEntries(Object.entries(lineShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
         if ("parent_id" in v && v.parent_id) {
           if (v.parent_id === l.id) throw badRequest("A budget line cannot be its own parent");
@@ -12499,9 +12635,10 @@ var require_budget = __commonJS({
           if (cents(amount) < cents(handedDown)) throw badRequest(`Its sub-allocations already total ${money(handedDown)}; reduce those first`);
         }
         const keys = Object.keys(v);
-        if (keys.length) db3.run(`UPDATE budget_lines SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), db3.now(), l.id);
+        const stamp2 = keys.length ? db3.now() : l.updated_at;
+        if (keys.length) db3.run(`UPDATE budget_lines SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), stamp2, l.id);
         audit3.log({ user: ctx.user, action: "budget_line.update", entity: "budget_line", entityId: l.id, ip: ctx.ip, details: { fields: keys } });
-        return { ok: true };
+        return { ok: true, updated_at: stamp2 };
       });
       r.delete("/api/budget/lines/:id", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
         const ids = db3.all(`WITH RECURSIVE sub(id) AS (SELECT id FROM budget_lines WHERE id=? UNION ALL SELECT b.id FROM budget_lines b JOIN sub ON b.parent_id=sub.id) SELECT id FROM sub`, ctx.params.id).map((row) => row.id);
@@ -12807,6 +12944,42 @@ var require_client_errors = __commonJS({
   }
 });
 
+// server/client-filters.js
+var require_client_filters = __commonJS({
+  "server/client-filters.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var DAY = 864e5;
+    function risk(level) {
+      if (level === "high") return { sql: `c.risk_level IN ('high','critical')`, params: [] };
+      return { sql: "c.risk_level=?", params: [level] };
+    }
+    function noContactSince(since = new Date(Date.now() - 30 * DAY).toISOString()) {
+      return {
+        sql: `NOT EXISTS (SELECT 1 FROM interventions i WHERE i.client_id=c.id AND i.occurred_at >= ?) AND NOT EXISTS (SELECT 1 FROM calls ca WHERE ca.client_id=c.id AND ca.outcome IN ('reached','replied') AND ca.started_at >= ?)`,
+        params: [since, since]
+      };
+    }
+    function substance(value) {
+      return { sql: `COALESCE(c.primary_substance,'unknown')=?`, params: [value] };
+    }
+    function mat(value) {
+      return { sql: `COALESCE(c.mat_status,'unknown')=?`, params: [value] };
+    }
+    function consentWindow() {
+      const today = require_budget().localDate();
+      return { from: today, to: new Date(Date.now() + 30 * DAY).toISOString().slice(0, 10) };
+    }
+    function consentExpiring({ from, to } = consentWindow()) {
+      return { sql: `EXISTS (SELECT 1 FROM consents co WHERE co.client_id=c.id AND co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ?)`, params: [from, to] };
+    }
+    function openPatientRequest() {
+      return { sql: `EXISTS (SELECT 1 FROM patient_requests p WHERE p.client_id=c.id AND p.status='open')`, params: [] };
+    }
+    module.exports = { risk, noContactSince, substance, mat, consentWindow, consentExpiring, openPatientRequest };
+  }
+});
+
 // server/routes/clients.js
 var require_clients = __commonJS({
   "server/routes/clients.js"(exports, module) {
@@ -12819,6 +12992,7 @@ var require_clients = __commonJS({
     var { validate, paging } = require_validate();
     var { blindIndex: blindIndex2, uuid: uuid2, decrypt: decrypt3 } = require_crypto();
     var M = require_clients_model();
+    var F = require_client_filters();
     var shape = {
       first_name: { type: "string", required: true, maxLen: 100 },
       last_name: { type: "string", required: true, maxLen: 100 },
@@ -12964,6 +13138,22 @@ var require_clients = __commonJS({
           where.push(`c.id IN (SELECT client_id FROM assignments WHERE user_id=? AND ${auth3.activeAssignment()})`);
           params.push(assigned);
         }
+        const filters = [];
+        const addFilter = (name, f) => {
+          where.push(f.sql);
+          params.push(...f.params);
+          filters.push(name);
+        };
+        const risk = ctx.query.get("risk");
+        if (risk && ["high", "low", "moderate", "critical"].includes(risk)) addFilter("risk", F.risk(risk));
+        if (ctx.query.get("stale") === "1") addFilter("stale", F.noContactSince());
+        const substance = (ctx.query.get("substance") || "").slice(0, 60);
+        if (substance) addFilter("substance", F.substance(substance));
+        const mat = (ctx.query.get("mat") || "").slice(0, 60);
+        if (mat) addFilter("mat", F.mat(mat));
+        const consentWindow = ctx.query.get("consent_expiring") === "1" ? F.consentWindow() : null;
+        if (consentWindow) addFilter("consent_expiring", F.consentExpiring(consentWindow));
+        if (ctx.query.get("patient_requests") === "1" && (auth3.hasPerm(ctx.user, "patient-requests:read") || auth3.hasPerm(ctx.user, "patient-requests:write"))) addFilter("patient_requests", F.openPatientRequest());
         const w = "WHERE " + where.join(" AND ");
         const sort = ctx.query.get("sort") || "";
         const order = {
@@ -12974,10 +13164,11 @@ var require_clients = __commonJS({
         const rows = db3.all(`SELECT c.*, (SELECT GROUP_CONCAT(u.display_name, ', ') FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=c.id AND ${auth3.activeAssignment("a.")}) AS assigned_workers,
       (SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome IN ('reached','replied'))) AS last_contact,
       (SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.status IN ('open','in_progress') AND (CASE WHEN length(t.due_at)=10 THEN t.due_at < date('now','localtime') ELSE t.due_at < ? END)) AS overdue_tasks
-      FROM clients c ${w} ORDER BY ${order} LIMIT ? OFFSET ?`, db3.now(), ...params, limit2, offset);
+      ${consentWindow ? `, (SELECT MIN(co.expires_at) FROM consents co WHERE co.client_id=c.id AND co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ?) AS consent_expires_at` : ""}
+      FROM clients c ${w} ORDER BY ${order}, c.id LIMIT ? OFFSET ?`, db3.now(), ...consentWindow ? [consentWindow.from, consentWindow.to] : [], ...params, limit2, offset);
         const total = db3.one(`SELECT COUNT(*) n FROM clients c ${w}`, ...params).n;
-        audit3.log({ user: ctx.user, action: "client.list", ip: ctx.ip, details: { q: q ? "[redacted]" : "", status, sort: sort || void 0, count: rows.length, deidentified: deidentify } });
-        return { clients: rows.map((x) => ({ ...M.summary(x, { deidentify }), assigned_workers: x.assigned_workers, last_contact: x.last_contact, overdue_tasks: x.overdue_tasks })), total, limit: limit2, offset };
+        audit3.log({ user: ctx.user, action: "client.list", ip: ctx.ip, details: { q: q ? "[redacted]" : "", status, sort: sort || void 0, filters: filters.length ? filters : void 0, offset: offset || void 0, count: rows.length, deidentified: deidentify } });
+        return { clients: rows.map((x) => ({ ...M.summary(x, { deidentify }), assigned_workers: x.assigned_workers, last_contact: x.last_contact, overdue_tasks: x.overdue_tasks, ...consentWindow ? { consent_expires_at: x.consent_expires_at } : {} })), total, limit: limit2, offset };
       });
       r.post("/api/clients/check-duplicates", auth3.requireAuth, auth3.requirePerm("clients:write"), (ctx) => {
         const v = validate(ctx.body, { first_name: { type: "string", maxLen: 100 }, last_name: { type: "string", maxLen: 100 }, dob: { type: "date" }, phone: { type: "string", maxLen: 40 }, exclude_id: { type: "string" } });
@@ -13116,6 +13307,7 @@ var require_clients = __commonJS({
       });
       r.put("/api/clients/:id", auth3.requireAuth, auth3.requirePerm("clients:write"), (ctx) => {
         const row = loadClient(ctx, ctx.params.id);
+        require_crud().assertFresh(ctx, row, "client");
         const v = validate(ctx.body, { ...shape, first_name: { ...shape.first_name, required: false }, last_name: { ...shape.last_name, required: false } }, { partial: true });
         checkContactFields(v);
         if ((v.status === "closed" || v.status === "deceased") && v.status !== row.status && db3.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, row.id)) {
@@ -13129,10 +13321,11 @@ var require_clients = __commonJS({
         const cols2 = { ...enc };
         for (const f of M.PLAIN_FIELDS) if (v[f] !== void 0) cols2[f] = v[f];
         const keys = Object.keys(cols2).filter((k) => cols2[k] !== void 0);
-        if (!keys.length) return { ok: true };
-        db3.run(`UPDATE clients SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => cols2[k]), db3.now(), row.id);
+        if (!keys.length) return { ok: true, updated_at: row.updated_at };
+        const stamp2 = db3.now();
+        db3.run(`UPDATE clients SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => cols2[k]), stamp2, row.id);
         audit3.log({ user: ctx.user, action: "client.update", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip, details: { fields: Object.keys(v) } });
-        return { ok: true };
+        return { ok: true, updated_at: stamp2 };
       });
       r.post("/api/clients/:id/legal-hold", auth3.requireAuth, auth3.requirePerm("clients:legal-hold"), (ctx) => {
         const row = loadClient(ctx, ctx.params.id);
@@ -14465,8 +14658,9 @@ var require_documents = __commonJS({
         return { id };
       });
       r.put("/api/documents/:id", auth3.requireAuth, auth3.requirePerm("documents:write"), (ctx) => {
-        const d = db3.one(`SELECT id FROM policy_documents WHERE id=?`, ctx.params.id);
+        const d = db3.one(`SELECT id, updated_at FROM policy_documents WHERE id=?`, ctx.params.id);
         if (!d) throw notFound();
+        require_crud().assertFresh(ctx, d, "document");
         const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
         const v2 = validate({ is_active: ctx.body.is_active }, { is_active: { type: "boolean" } }, { partial: true });
         const sets = Object.keys(v).map((k) => `${k}=?`);
@@ -14480,10 +14674,11 @@ var require_documents = __commonJS({
           sets.push("file_b64=?", "content_type=?", "bytes=?", "filename=?", "search_text=?");
           params.push(file.b64, file.type, file.buf.length, v.filename || ctx.body.filename || `document.${FILE_TYPES[file.type]}`, extractText(file.buf, file.type) || null);
         }
-        if (!sets.length) return { ok: true };
-        db3.run(`UPDATE policy_documents SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, db3.now(), d.id);
+        if (!sets.length) return { ok: true, updated_at: d.updated_at };
+        const stamp2 = db3.now();
+        db3.run(`UPDATE policy_documents SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, stamp2, d.id);
         audit3.log({ user: ctx.user, action: "document.update", entity: "policy_document", entityId: d.id, ip: ctx.ip, details: { fields: Object.keys(v).concat(Object.keys(v2)) } });
-        return { ok: true };
+        return { ok: true, updated_at: stamp2 };
       });
       r.delete("/api/documents/:id", auth3.requireAuth, auth3.requirePerm("documents:write"), (ctx) => {
         const d = db3.one(`SELECT id FROM policy_documents WHERE id=?`, ctx.params.id);
@@ -14653,15 +14848,30 @@ var require_episodes = __commonJS({
       });
       r.get("/api/waitlist", auth3.requireAuth, auth3.requirePerm("clients:read"), (ctx) => {
         const cf = auth3.caseloadFilter(ctx.user, "c.id");
-        const rows = db3.all(`SELECT c.id, c.client_code, c.intake_date, c.risk_level, c.primary_substance, c.asam_level, c.referral_source,
+        const { limit: limit2, offset } = paging(ctx.query, { limit: 200, max: 500 });
+        const where = `c.deleted_at IS NULL AND c.status='waitlist' AND ${cf.sql}`;
+        const rows = db3.all(`SELECT c.*,
         CAST(julianday('now') - julianday(COALESCE(c.intake_date, date(c.created_at))) AS INTEGER) AS days_waiting,
         (SELECT MAX(occurred_at) FROM interventions i WHERE i.client_id=c.id) AS last_contact
-      FROM clients c WHERE c.deleted_at IS NULL AND c.status='waitlist' AND ${cf.sql}
-      ORDER BY c.risk_level='critical' DESC, c.risk_level='high' DESC, days_waiting DESC LIMIT 500`, ...cf.params);
+      FROM clients c WHERE ${where}
+      ORDER BY c.risk_level='critical' DESC, c.risk_level='high' DESC, days_waiting DESC, c.id LIMIT ? OFFSET ?`, ...cf.params, limit2, offset);
+        const total = db3.one(`SELECT COUNT(*) n FROM clients c WHERE ${where}`, ...cf.params).n;
         const M = require_clients_model();
-        const full = rows.map((x) => ({ ...x, ...M.summary(db3.one(`SELECT * FROM clients WHERE id=?`, x.id), { deidentify: !auth3.hasPerm(ctx.user, "clients:read") }) }));
-        audit3.log({ user: ctx.user, action: "waitlist.view", ip: ctx.ip, details: { count: rows.length } });
-        return { rows: full, total: rows.length };
+        const deidentify = !auth3.hasPerm(ctx.user, "clients:read");
+        const full = rows.map((x) => ({
+          id: x.id,
+          client_code: x.client_code,
+          intake_date: x.intake_date,
+          risk_level: x.risk_level,
+          primary_substance: x.primary_substance,
+          asam_level: x.asam_level,
+          referral_source: x.referral_source,
+          days_waiting: x.days_waiting,
+          last_contact: x.last_contact,
+          ...M.summary(x, { deidentify })
+        }));
+        audit3.log({ user: ctx.user, action: "waitlist.view", ip: ctx.ip, details: { count: rows.length, offset: offset || void 0 } });
+        return { rows: full, total, limit: limit2, offset };
       });
       r.post("/api/caseload/transfer", auth3.requireAuth, auth3.requirePerm("assignments:manage"), (ctx) => {
         const v = validate(ctx.body, {
@@ -15122,8 +15332,9 @@ var require_forms = __commonJS({
         return { id, fields, detected };
       });
       r.put("/api/forms/templates/:id", auth3.requireAuth, auth3.requirePerm("forms:manage"), (ctx) => {
-        const t = db3.one(`SELECT id FROM form_templates WHERE id=?`, ctx.params.id);
+        const t = db3.one(`SELECT id, updated_at FROM form_templates WHERE id=?`, ctx.params.id);
         if (!t) throw notFound();
+        require_crud().assertFresh(ctx, t, "form_template");
         const v = validate(ctx.body, { name: { type: "string", maxLen: 200 }, description: { type: "string", maxLen: 1e3 }, category: { type: "string", enum: C.FORM_CATEGORIES }, version: { type: "string", maxLen: 40 }, filename: { type: "string", maxLen: 200 }, instructions: { type: "string", maxLen: 3e3 }, is_active: { type: "boolean" } }, { partial: true });
         const sets = Object.keys(v).map((k) => `${k}=?`);
         const params = Object.keys(v).map((k) => v[k]);
@@ -15139,10 +15350,11 @@ var require_forms = __commonJS({
         if (ctx.body.remove_file) {
           sets.push("file_b64=NULL", "content_type=NULL", "bytes=0", "filename=NULL");
         }
-        if (!sets.length) return { ok: true };
-        db3.run(`UPDATE form_templates SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, db3.now(), t.id);
+        if (!sets.length) return { ok: true, updated_at: t.updated_at };
+        const stamp2 = db3.now();
+        db3.run(`UPDATE form_templates SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, stamp2, t.id);
         audit3.log({ user: ctx.user, action: "form_template.update", entity: "form_template", entityId: t.id, ip: ctx.ip, details: { fields: Object.keys(v).concat(ctx.body.fields !== void 0 ? ["fields"] : [], ctx.body.file_url || ctx.body.file ? ["file"] : []) } });
-        return { ok: true };
+        return { ok: true, updated_at: stamp2 };
       });
       r.delete("/api/forms/templates/:id", auth3.requireAuth, auth3.requirePerm("forms:manage"), (ctx) => {
         const t = db3.one(`SELECT id FROM form_templates WHERE id=?`, ctx.params.id);
@@ -15196,12 +15408,14 @@ var require_forms = __commonJS({
       r.put("/api/forms/:id", auth3.requireAuth, auth3.requirePerm("forms:write"), (ctx) => {
         const f = loadForm(ctx, ctx.params.id);
         if (f.status === "completed" && !auth3.hasPerm(ctx.user, "forms:manage")) throw badRequest("This form is completed. Ask a supervisor to reopen it.");
+        require_crud().assertFresh(ctx, f, "client_form");
         const fields = parseJson(f.fields_json, []);
         const v = validate(ctx.body, { status: { type: "string", enum: ["draft", "completed", "void"] }, notes: { type: "string", maxLen: 2e3 } }, { partial: true });
         let values = parseJson(decrypt3(f.values_enc), {});
         if (ctx.body.values !== void 0) values = { ...values, ...cleanValues(fields, ctx.body.values) };
+        const stamp2 = db3.now();
         const sets = ["values_enc=?", "updated_at=?"];
-        const params = [encrypt3(JSON.stringify(values)), db3.now()];
+        const params = [encrypt3(JSON.stringify(values)), stamp2];
         if (v.notes !== void 0) {
           sets.push("notes=?");
           params.push(v.notes);
@@ -15211,7 +15425,7 @@ var require_forms = __commonJS({
             const miss = missingRequired(fields, values);
             if (miss.length) {
               db3.run(`UPDATE client_forms SET values_enc=?, updated_at=? WHERE id=?`, params[0], params[1], f.id);
-              throw badRequest(`Please fill in: ${miss.join(", ")}`);
+              throw badRequest(`Please fill in: ${miss.join(", ")}`, { updated_at: stamp2 });
             }
             sets.push("status=?", "completed_at=?", "completed_by=?");
             params.push("completed", db3.now(), ctx.user.id);
@@ -15222,7 +15436,7 @@ var require_forms = __commonJS({
         }
         db3.run(`UPDATE client_forms SET ${sets.join(", ")} WHERE id=?`, ...params, f.id);
         audit3.log({ user: ctx.user, action: v.status === "completed" ? "client_form.complete" : "client_form.update", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { status: v.status, fields_changed: ctx.body.values ? Object.keys(ctx.body.values).length : 0 } });
-        return { ok: true, missing: missingRequired(fields, values) };
+        return { ok: true, missing: missingRequired(fields, values), updated_at: stamp2 };
       });
       r.delete("/api/forms/:id", auth3.requireAuth, auth3.requirePerm("forms:write"), (ctx) => {
         const f = loadForm(ctx, ctx.params.id);
@@ -15251,10 +15465,11 @@ var require_forms = __commonJS({
         const id = uuid2();
         const name = (v.filename || `signed.${FILE_TYPES[file.type]}`).replace(/[\r\n"]/g, "");
         db3.run(`INSERT INTO client_form_files(id,client_form_id,client_id,filename,content_type,bytes,data_enc,uploaded_by) VALUES(?,?,?,?,?,?,?,?)`, id, f.id, f.client_id, name, file.type, file.buf.length, encrypt3(file.b64), ctx.user.id);
-        db3.run(`UPDATE client_forms SET updated_at=? WHERE id=?`, db3.now(), f.id);
+        const stamp2 = db3.now();
+        db3.run(`UPDATE client_forms SET updated_at=? WHERE id=?`, stamp2, f.id);
         audit3.log({ user: ctx.user, action: "client_form.attach", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { file_id: id, bytes: file.buf.length, type: file.type } });
         ctx.status = 201;
-        return { id, filename: name, content_type: file.type, bytes: file.buf.length };
+        return { id, filename: name, content_type: file.type, bytes: file.buf.length, form_updated_at: stamp2 };
       });
       r.get("/api/forms/:id/files/:fid", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write"), (ctx) => {
         const f = loadForm(ctx, ctx.params.id);
@@ -15269,11 +15484,12 @@ var require_forms = __commonJS({
         const f = loadForm(ctx, ctx.params.id);
         const x = db3.one(`SELECT id FROM client_form_files WHERE id=? AND client_form_id=?`, ctx.params.fid, f.id);
         if (!x) throw notFound();
+        const stamp2 = db3.now();
         db3.run(`DELETE FROM client_form_files WHERE id=?`, x.id);
         db3.tombstone("client_form_files", x.id);
-        db3.run(`UPDATE client_forms SET updated_at=? WHERE id=?`, db3.now(), f.id);
+        db3.run(`UPDATE client_forms SET updated_at=? WHERE id=?`, stamp2, f.id);
         audit3.log({ user: ctx.user, action: "client_form.file.remove", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { file_id: x.id } });
-        return { ok: true };
+        return { ok: true, form_updated_at: stamp2 };
       });
     };
   }
@@ -16381,7 +16597,7 @@ var require_notes = __commonJS({
         );
         audit3.log({ user: ctx.user, action: "note.create", entity: "note", entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format, cosign_requested: v.cosign_requested ? true : void 0 } });
         ctx.status = 201;
-        return { id };
+        return { id, updated_at: db3.one(`SELECT updated_at FROM notes WHERE id=?`, id).updated_at };
       });
       r.get("/api/notes/:id", auth3.requireAuth, (ctx) => {
         const n = load(ctx, ctx.params.id);
@@ -16400,6 +16616,7 @@ var require_notes = __commonJS({
         if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
         if (n.status !== "draft") throw badRequest("Signed notes cannot be edited; add an addendum instead");
         if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden("Only the author can edit a draft");
+        require_crud().assertFresh(ctx, n, "note");
         const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, cosign_requested: shape.cosign_requested }, { partial: true });
         const sets = [];
         const params = [];
@@ -16419,9 +16636,10 @@ var require_notes = __commonJS({
           sets.push("structured_enc=?");
           params.push(v.structured ? encrypt3(JSON.stringify(v.structured)) : null);
         }
-        if (sets.length) db3.run(`UPDATE notes SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, db3.now(), n.id);
+        const stamp2 = sets.length ? db3.now() : n.updated_at;
+        if (sets.length) db3.run(`UPDATE notes SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, stamp2, n.id);
         audit3.log({ user: ctx.user, action: "note.update", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { fields: Object.keys(v) } });
-        return { ok: true };
+        return { ok: true, updated_at: stamp2 };
       });
       r.post("/api/notes/:id/request-cosign", auth3.requireAuth, (ctx) => {
         const n = load(ctx, ctx.params.id);
@@ -21192,16 +21410,18 @@ var require_resources = __commonJS({
         return { id };
       });
       r.put("/api/resources/:id", auth3.requireAuth, auth3.requirePerm("resources:write"), (ctx) => {
-        const row = db3.one(`SELECT id FROM resources WHERE id=?`, ctx.params.id);
+        const row = db3.one(`SELECT id, updated_at FROM resources WHERE id=?`, ctx.params.id);
         if (!row) throw notFound();
+        require_crud().assertFresh(ctx, row, "resource");
         const v = validate(ctx.body, { ...shape, name: { ...shape.name, required: false }, category: { ...shape.category, required: false } }, { partial: true });
         if ("service_tags" in v) v.service_tags = tagList(v.service_tags, C.SERVICE_TAGS);
         if ("populations" in v) v.populations = tagList(v.populations, C.POPULATIONS);
         const keys = Object.keys(v);
-        if (!keys.length) return { ok: true };
-        db3.run(`UPDATE resources SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), db3.now(), row.id);
+        if (!keys.length) return { ok: true, updated_at: row.updated_at };
+        const stamp2 = db3.now();
+        db3.run(`UPDATE resources SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), stamp2, row.id);
         audit3.log({ user: ctx.user, action: "resource.update", entity: "resource", entityId: row.id, ip: ctx.ip, details: { fields: keys } });
-        return { ok: true };
+        return { ok: true, updated_at: stamp2 };
       });
       r.delete("/api/resources/:id", auth3.requireAuth, auth3.requirePerm("resources:write"), (ctx) => {
         const row = db3.one(`SELECT id FROM resources WHERE id=?`, ctx.params.id);
@@ -22228,6 +22448,7 @@ var require_app2 = __commonJS({
     var db3 = require_db();
     var audit3 = require_audit();
     var auth3 = require_auth();
+    var idempotency2 = require_idempotency();
     var { Router: Router2, HttpError: HttpError3, parseCookies, parseRequestUrl, readBody, securityHeaders, sendJson, serveStatic } = require_http();
     var buckets = /* @__PURE__ */ new Map();
     function rateLimit(key, max2, windowMs) {
@@ -22392,10 +22613,14 @@ var require_app2 = __commonJS({
               ctx.body = {};
             }
           }
-          let result;
-          for (const h of m.handlers) {
-            result = await h(ctx);
-          }
+          const result = await idempotency2.run(ctx, async () => {
+            let out2;
+            for (const h of m.handlers) {
+              out2 = await h(ctx);
+            }
+            return out2;
+          });
+          if (ctx.idempotentReplay && !res.headersSent) res.setHeader("Idempotent-Replayed", "true");
           if (!res.headersSent) sendJson(res, result === void 0 ? 204 : ctx.status || 200, result === void 0 ? null : result);
         } catch (err2) {
           if (err2 instanceof HttpError3) {
@@ -22429,6 +22654,7 @@ var import_db2 = __toESM(require_db());
 var import_http2 = __toESM(require_http());
 var import_auth2 = __toESM(require_auth());
 var import_audit2 = __toESM(require_audit());
+var import_idempotency = __toESM(require_idempotency());
 
 // local/sync.js
 init_globals_inject();
@@ -23057,8 +23283,11 @@ async function handle(method, path, body, headers = {}) {
       ctx.rawBody = import_buffer.Buffer.from(body);
       ctx.body = {};
     } else ctx.body = body || {};
-    let result;
-    for (const h of m.handlers) result = await h(ctx);
+    const result = await import_idempotency.default.run(ctx, async () => {
+      let out2;
+      for (const h of m.handlers) out2 = await h(ctx);
+      return out2;
+    });
     const setCookie = res.headers["set-cookie"];
     if (setCookie) {
       const mm = /suds_session=([^;]*)/.exec(setCookie);

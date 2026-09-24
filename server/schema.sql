@@ -777,3 +777,20 @@ CREATE TABLE IF NOT EXISTS patient_requests (
 );
 CREATE INDEX IF NOT EXISTS idx_patient_requests_client ON patient_requests(client_id);
 CREATE INDEX IF NOT EXISTS idx_patient_requests_updated ON patient_requests(updated_at);
+
+-- A retried POST (a double tap, a save resent after the connection dropped, a phone that lost signal
+-- between sending and hearing back) is answered from here instead of being executed a second time.
+-- One row per (user, Idempotency-Key): id is sha256 of both, so the key the browser chose is not kept.
+-- The stored answer can name a client, so it is encrypted. Rows older than 24 hours are purged by the
+-- hourly housekeeping (server/idempotency.js). Never synchronised: each database answers its own retries.
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  method TEXT NOT NULL,
+  path TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  status INTEGER NOT NULL,
+  response_enc TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_idempotency_created ON idempotency_keys(created_at);

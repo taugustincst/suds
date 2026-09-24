@@ -5,6 +5,7 @@ const config = require('./config');
 const db = require('./db');
 const audit = require('./audit');
 const auth = require('./auth');
+const idempotency = require('./idempotency');
 const { Router, HttpError, parseCookies, parseRequestUrl, readBody, securityHeaders, sendJson, serveStatic } = require('./http');
 
 // Simple in-memory rate limiter (per IP + bucket). Deliberately process-local, not shared across
@@ -144,8 +145,9 @@ function createHandler() {
           try { ctx.body = raw.length ? JSON.parse(raw.toString('utf8')) : {}; } catch { throw new HttpError(400, 'Invalid JSON'); }
         } else { ctx.rawBody = raw; ctx.body = {}; }
       }
-      let result;
-      for (const h of m.handlers) { result = await h(ctx); }
+      // A POST with an Idempotency-Key runs once per (user, key); a retry gets the stored answer (idempotency.js).
+      const result = await idempotency.run(ctx, async () => { let out; for (const h of m.handlers) { out = await h(ctx); } return out; });
+      if (ctx.idempotentReplay && !res.headersSent) res.setHeader('Idempotent-Replayed', 'true');
       if (!res.headersSent) sendJson(res, result === undefined ? 204 : (ctx.status || 200), result === undefined ? null : result);
     } catch (err) {
       // Routes that stream (exports, PDFs, backups, certificates) may already have written a header. A

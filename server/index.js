@@ -45,6 +45,8 @@ function housekeeping() {
     require('./audit').purge(config.auditRetentionDays);
     require('./audit').purgeTombstones(config.tombstoneRetentionDays);
     require('./log').purge();
+    // Retry answers (Idempotency-Key) are kept for 24 hours only.
+    require('./idempotency').purge();
     // Record retention: discharged clients past the county's retention period are hard-deleted, every
     // table at once, unless the record is on legal hold (server/retention.js). Once a day.
     require('./retention').runIfDue();

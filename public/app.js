@@ -87,9 +87,29 @@ export async function api(method, path, body, opts = {}) {
   busy(1);
   try { return await apiCall(method, path, body, opts); } finally { busy(-1); }
 }
+// ---- Idempotency-Key ----
+// Every POST carries a key, so the server can answer a repeat of the same request from what it already did
+// instead of doing it twice (server/idempotency.js): a referral resent after a dropped connection used to
+// create two referrals, two disclosure records and two follow-up to-dos. A form's submission holds one key
+// for as long as its contents are unchanged, so pressing Save again after "you appear to be offline" is
+// recognised as the same submission; editing the form, or a successful save, starts a new one. Each POST
+// the submission makes gets its own key derived from it (path and sequence), stable across retries.
+// crypto.getRandomValues, not randomUUID: the latter only exists on https, and a LAN install may be http.
+export function newIdempotencyKey() { const b = new Uint8Array(16); crypto.getRandomValues(b); return Array.from(b, x => x.toString(16).padStart(2, '0')).join(''); }
+let submitScope = null;
+function idempotencyKey(method, path, opts) {
+  if (method !== 'POST') return null;
+  if (opts.idempotencyKey) return opts.idempotencyKey;
+  if (submitScope && !opts.quiet && !opts.background) {
+    const p = String(path).split('?')[0]; const n = (submitScope.seq.get(p) || 0) + 1; submitScope.seq.set(p, n);
+    return `${submitScope.key}:${n}:${p}`.slice(0, 255);
+  }
+  return newIdempotencyKey();
+}
 async function apiCall(method, path, body, opts) {
   const background = isBackground(opts);
-  const headers = { 'X-Requested-With': 'suds', ...(background ? { 'X-Background': '1' } : {}), ...(opts.headers || {}) };
+  const idem = idempotencyKey(method, path, opts);
+  const headers = { 'X-Requested-With': 'suds', ...(background ? { 'X-Background': '1' } : {}), ...(idem ? { 'Idempotency-Key': idem } : {}), ...(opts.headers || {}) };
   if (state.local && window.SUDS_LOCAL) {
     let payload = body; if (body instanceof Blob) payload = await body.arrayBuffer();
     // Writes in flight (a sync above all) hold off an update reload; see newVersionReady().
@@ -507,6 +527,9 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
   const errBox = h('div', { class: 'banner danger hidden', role: 'alert', tabindex: '-1' });
   const submitBtn = h('button', { class: 'btn primary', type: 'submit' }, submitText);
   let submitted = false; let saveTimer;
+  // This submission's Idempotency-Key base (see idempotencyKey above): kept while the contents are
+  // unchanged, so a retry is the same submission; replaced when anything is edited or after a save.
+  let submitKey = newIdempotencyKey();
   // noValidate: the browser's own constraint validation can silently refuse to even dispatch the submit
   // event for a field it considers invalid — including, on some mobile browsers/WebViews, a non-required
   // datetime-local field stuck in a broken partial state that never fires our onSubmit at all, so nothing
@@ -524,7 +547,10 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     // the dialog sitting there looking like nothing happened.
     try {
       el.querySelectorAll('.field').forEach(x => { x.classList.remove('error'); const errSlot = x.querySelector('.err'); if (errSlot) errSlot.textContent = ''; const c = x.querySelector('input,select,textarea'); if (c) c.removeAttribute('aria-invalid'); });
-      const data = read(); await onSubmit(data, el);
+      const data = read();
+      submitScope = { key: submitKey, seq: new Map() };
+      try { await onSubmit(data, el); } finally { submitScope = null; }
+      submitKey = newIdempotencyKey();
       // Saved: the draft is finished with, and no autosave still queued behind this submit may put it back
       // — the debounced savers below used to fire after the delete, so the next "+ New client" opened
       // prefilled with the person just created.
@@ -566,6 +592,9 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     h('button', { class: 'btn ghost sm', type: 'button', onClick: (e) => { drafts.delete(draftKey); e.target.closest('.banner').remove(); for (const f of fields) { const i = inputs[f.name]; if (!i) continue; if (i.type === 'checkbox') i.checked = false; else i.value = ''; } } }, 'Start over')) : null,
     errBox, grid, extra || null, h('div', { class: 'btn-row' }, onCancel ? h('button', { class: 'btn', type: 'button', onClick: onCancel }, cancelText) : null, submitBtn));
 
+  // Changed contents are a different submission, with a different Idempotency-Key.
+  const newSubmission = () => { submitKey = newIdempotencyKey(); };
+  el.addEventListener('input', newSubmission); el.addEventListener('change', newSubmission);
   // Keep what has been typed so a dialog closed by accident, a route change, or an idle sign-out does not
   // throw it away.
   if (draftKey) {
