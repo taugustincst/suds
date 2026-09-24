@@ -24,7 +24,7 @@ function dueTasks(ctx, within) {
       AND (tasks.client_id IS NULL OR ${cf.sql})
     ORDER BY tasks.due_at LIMIT 50`, ctx.user.id, horizonDay, horizon, ...cf.params);
   const now = db.now(); const today = localDate();
-  return rows.map(x => withClientName(ctx, x)).map(x => ({ ...x, title: x.title_enc ? decrypt(x.title_enc) : '', title_enc: undefined, overdue: x.due_at.length === 10 ? x.due_at < today : x.due_at < now }));
+  return rows.map(x => withClientName(ctx, x)).map(x => ({ ...presentTask(x), overdue: x.due_at.length === 10 ? x.due_at < today : x.due_at < now }));
 }
 
 // The due-reminder poll is a count the app shell repeats all day; auditing every poll wrote thousands of
@@ -59,13 +59,23 @@ module.exports = (r) => {
       if (ctx.query.get('overdue') === '1') { where.push(`tasks.status IN ('open','in_progress') AND (CASE WHEN length(tasks.due_at)=10 THEN tasks.due_at < ? ELSE tasks.due_at < ? END)`); params.push(localDate(), db.now()); }
       if (ctx.query.get('milestones') === '1') where.push('tasks.is_milestone=1');
     },
-    // A task title ("Call about detox bed") says what a named person is being treated for: encrypted.
-    beforeInsert: (ctx, v) => { if (!v.assigned_to) v.assigned_to = ctx.user.id; if (v.status === 'done' && !v.completed_at) v.completed_at = db.now(); encTitle(v); },
-    beforeUpdate: (ctx, v, row) => { if (v.status === 'done' && !row.completed_at && !v.completed_at) v.completed_at = db.now(); if (v.status && v.status !== 'done') v.completed_at = null; encTitle(v); },
-    afterLoad: (ctx, x) => ({ ...withClientName(ctx, x), title: x.title_enc ? decrypt(x.title_enc) : '', title_enc: undefined }),
+    // A task title ("Call about detox bed") says what a named person is being treated for, and its details
+    // say more: both are encrypted. The API keeps the plain field names `title` and `description`.
+    beforeInsert: (ctx, v) => { if (!v.assigned_to) v.assigned_to = ctx.user.id; if (v.status === 'done' && !v.completed_at) v.completed_at = db.now(); encFields(v); },
+    beforeUpdate: (ctx, v, row) => { if (v.status === 'done' && !row.completed_at && !v.completed_at) v.completed_at = db.now(); if (v.status && v.status !== 'done') v.completed_at = null; encFields(v); },
+    afterLoad: (ctx, x) => presentTask(withClientName(ctx, x)),
     canEdit: (ctx, row) => row.assigned_to === ctx.user.id || row.created_by === ctx.user.id || auth.hasPerm(ctx.user, 'clients:all'),
   });
-  function encTitle(v) { if (v.title !== undefined) { v.title_enc = encrypt(String(v.title ?? '')); delete v.title; } }
+  function encFields(v) {
+    if (v.title !== undefined) { v.title_enc = encrypt(String(v.title ?? '')); delete v.title; }
+    if (v.description !== undefined) { v.description_enc = v.description ? encrypt(String(v.description)) : null; delete v.description; }
+  }
 };
-/** Decrypt a task row's title in place, for the places that read tasks outside the route. */
-module.exports.presentTask = (t) => (t ? { ...t, title: t.title_enc ? decrypt(t.title_enc) : '', title_enc: undefined } : t);
+/** Decrypt a task row's title and details, for the route and the places that read tasks outside it. */
+function presentTask(t) {
+  if (!t) return t;
+  const o = { ...t, title: t.title_enc ? decrypt(t.title_enc) : '', title_enc: undefined };
+  if ('description_enc' in t) { o.description = t.description_enc ? decrypt(t.description_enc) : null; o.description_enc = undefined; }
+  return o;
+}
+module.exports.presentTask = presentTask;

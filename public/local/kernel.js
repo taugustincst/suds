@@ -6873,7 +6873,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   assigned_to TEXT REFERENCES users(id),
   created_by TEXT NOT NULL REFERENCES users(id),
   title_enc TEXT NOT NULL,             -- "Call about detox bed" reveals a diagnosis: encrypted
-  description TEXT,
+  description_enc TEXT,                -- the details say even more than the title: encrypted too
   due_at TEXT,
   priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('low','normal','high','urgent')),
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','in_progress','done','cancelled')),
@@ -7868,6 +7868,7 @@ var require_db = __commonJS({
           ["referrals", "notes", "notes_enc"],
           ["overdose_events", "substances", "substances_enc"]
         ]) encryptColumn(d, t, from, to);
+        encryptColumn(d, "tasks", "description", "description_enc");
         if (tableExists(d, "tasks") && tableCols(d, "tasks").includes("title")) {
           const { encrypt: encrypt3 } = require_crypto();
           addColumn(d, "tasks", "title_enc", "TEXT");
@@ -7929,6 +7930,14 @@ var require_db = __commonJS({
       //     outcome used to close every "Follow up on referral…" to-do on the client, by title prefix.
       (d) => {
         addColumn(d, "tasks", "referral_id", "TEXT REFERENCES referrals(id) ON DELETE SET NULL");
+      },
+      // 24: a to-do's details ("detox bed at Granite on Tuesday; bring the MAT letter") reveal as much as its
+      //     title, which has been encrypted since 19. tasks.description moves into description_enc and the
+      //     plaintext column goes; the table is rebuilt from schema.sql so it matches a fresh install.
+      (d) => {
+        if (!tableExists(d, "tasks") || !tableCols(d, "tasks").includes("description")) return;
+        encryptColumn(d, "tasks", "description", "description_enc");
+        rebuildTable(d, safeSchema(), "tasks");
       }
     ];
     function initialise(d, schemaText, dbPath) {
@@ -8981,7 +8990,7 @@ var require_sync_tables = __commonJS({
         // A referral may cite the consent it was made under, so consents come first.
         { name: "consents", enc: ["recipient_enc", "purpose_enc", "scope_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
         { name: "referrals", enc: ["outcome_enc", "barrier_enc", "notes_enc"], scope: "client", clientCol: "client_id", writePerm: "referrals:write", parent: ["clients", "client_id"] },
-        { name: "tasks", enc: ["title_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "tasks:write", parent: ["clients", "client_id"] },
+        { name: "tasks", enc: ["title_enc", "description_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "tasks:write", parent: ["clients", "client_id"] },
         { name: "expenditures", enc: [], scope: "client-or-null", clientCol: "client_id", writePerm: "budget:write", parent: ["clients", "client_id"] },
         { name: "notes", enc: ["content_enc", "structured_enc", "title_enc"], scope: "client", clientCol: "client_id", writePerm: "notes:admin:write", parent: ["clients", "client_id"] },
         { name: "note_addenda", enc: ["content_enc"], scope: "via-note", writePerm: "notes:admin:write", parent: ["notes", "note_id"] },
@@ -10868,7 +10877,7 @@ var require_demo = __commonJS({
           for (let k = 0; k < nt; k++) {
             const [title, pri, dueOff] = TASKS[(i + k * 2) % TASKS.length];
             const done = c.cstatus === "closed" || rand() < 0.3;
-            db3.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description,due_at,priority,status,is_milestone,completed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, track("tasks", uuid2()), c.id, c.worker, k === 0 ? supervisor : c.worker, encrypt3(title), null, d(-dueOff), pri, done ? "done" : "open", title.includes("intake") ? 1 : 0, done ? d(1) : null);
+            db3.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority,status,is_milestone,completed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, track("tasks", uuid2()), c.id, c.worker, k === 0 ? supervisor : c.worker, encrypt3(title), null, d(-dueOff), pri, done ? "done" : "open", title.includes("intake") ? 1 : 0, done ? d(1) : null);
           }
           const nn = c.cstatus === "waitlist" ? 1 : 2 + Math.floor(rand() * 3);
           for (let k = 0; k < nn; k++) {
@@ -13033,7 +13042,7 @@ var require_clients = __commonJS({
         for (const x of db3.all(`SELECT r.*, res.name AS resource_name, u.display_name AS worker FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN users u ON u.id=r.user_id WHERE client_id=? ${cut("r.referred_at")} ORDER BY r.referred_at DESC LIMIT ?`, id, ...cutP, per))
           events.push({ kind: "referral", id: x.id, at: x.referred_at, title: `Referral: ${x.resource_name}`, detail: x.notes_enc ? decrypt3(x.notes_enc) : null, worker: x.worker, meta: { status: x.status, outcome: x.outcome_enc ? decrypt3(x.outcome_enc) : null } });
         for (const x of db3.all(`SELECT t.*, u.display_name AS worker FROM tasks t LEFT JOIN users u ON u.id=t.assigned_to WHERE client_id=? ORDER BY COALESCE(t.completed_at, t.due_at, t.created_at) DESC LIMIT ?`, id, per))
-          events.push({ kind: x.is_milestone ? "milestone" : "task", id: x.id, at: x.completed_at || x.due_at || x.created_at, title: x.title_enc ? decrypt3(x.title_enc) : "", detail: x.description, worker: x.worker, meta: { status: x.status, priority: x.priority, due_at: x.due_at } });
+          events.push({ kind: x.is_milestone ? "milestone" : "task", id: x.id, at: x.completed_at || x.due_at || x.created_at, title: x.title_enc ? decrypt3(x.title_enc) : "", detail: x.description_enc ? decrypt3(x.description_enc) : null, worker: x.worker, meta: { status: x.status, priority: x.priority, due_at: x.due_at } });
         for (const x of db3.all(`SELECT * FROM consents WHERE client_id=? ORDER BY signed_at DESC LIMIT ?`, id, per))
           events.push({ kind: "consent", id: x.id, at: x.signed_at, title: `Consent: ${x.type.replace(/_/g, " ")}${x.recipient_enc ? " \u2192 " + decrypt3(x.recipient_enc) : ""}`, detail: x.purpose_enc ? decrypt3(x.purpose_enc) : null, meta: { expires_at: x.expires_at, revoked_at: x.revoked_at } });
         if (auth3.hasPerm(ctx.user, "budget:read"))
@@ -14024,7 +14033,7 @@ var require_dataimport2 = __commonJS({
                 }
                 case "tasks": {
                   if (!rec.title) throw new Error("title is required");
-                  db3.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description,due_at,priority) VALUES(?,?,?,?,?,?,?,?)`, id, rec.client_id || null, ctx.user.id, ctx.user.id, encrypt3(String(rec.title)), rec.description || null, rec.due_at || null, rec.priority || "normal");
+                  db3.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority) VALUES(?,?,?,?,?,?,?,?)`, id, rec.client_id || null, ctx.user.id, ctx.user.id, encrypt3(String(rec.title)), rec.description ? encrypt3(String(rec.description)) : null, rec.due_at || null, rec.priority || "normal");
                   break;
                 }
                 case "expenditures": {
@@ -15933,7 +15942,7 @@ var require_tasks = __commonJS({
     ORDER BY tasks.due_at LIMIT 50`, ctx.user.id, horizonDay, horizon, ...cf.params);
       const now = db3.now();
       const today = localDate();
-      return rows.map((x) => withClientName(ctx, x)).map((x) => ({ ...x, title: x.title_enc ? decrypt3(x.title_enc) : "", title_enc: void 0, overdue: x.due_at.length === 10 ? x.due_at < today : x.due_at < now }));
+      return rows.map((x) => withClientName(ctx, x)).map((x) => ({ ...presentTask(x), overdue: x.due_at.length === 10 ? x.due_at < today : x.due_at < now }));
     }
     var lastDue = /* @__PURE__ */ new Map();
     module.exports = (r) => {
@@ -15982,28 +15991,42 @@ var require_tasks = __commonJS({
           }
           if (ctx.query.get("milestones") === "1") where.push("tasks.is_milestone=1");
         },
-        // A task title ("Call about detox bed") says what a named person is being treated for: encrypted.
+        // A task title ("Call about detox bed") says what a named person is being treated for, and its details
+        // say more: both are encrypted. The API keeps the plain field names `title` and `description`.
         beforeInsert: (ctx, v) => {
           if (!v.assigned_to) v.assigned_to = ctx.user.id;
           if (v.status === "done" && !v.completed_at) v.completed_at = db3.now();
-          encTitle(v);
+          encFields(v);
         },
         beforeUpdate: (ctx, v, row) => {
           if (v.status === "done" && !row.completed_at && !v.completed_at) v.completed_at = db3.now();
           if (v.status && v.status !== "done") v.completed_at = null;
-          encTitle(v);
+          encFields(v);
         },
-        afterLoad: (ctx, x) => ({ ...withClientName(ctx, x), title: x.title_enc ? decrypt3(x.title_enc) : "", title_enc: void 0 }),
+        afterLoad: (ctx, x) => presentTask(withClientName(ctx, x)),
         canEdit: (ctx, row) => row.assigned_to === ctx.user.id || row.created_by === ctx.user.id || auth3.hasPerm(ctx.user, "clients:all")
       });
-      function encTitle(v) {
+      function encFields(v) {
         if (v.title !== void 0) {
           v.title_enc = encrypt3(String(v.title ?? ""));
           delete v.title;
         }
+        if (v.description !== void 0) {
+          v.description_enc = v.description ? encrypt3(String(v.description)) : null;
+          delete v.description;
+        }
       }
     };
-    module.exports.presentTask = (t) => t ? { ...t, title: t.title_enc ? decrypt3(t.title_enc) : "", title_enc: void 0 } : t;
+    function presentTask(t) {
+      if (!t) return t;
+      const o = { ...t, title: t.title_enc ? decrypt3(t.title_enc) : "", title_enc: void 0 };
+      if ("description_enc" in t) {
+        o.description = t.description_enc ? decrypt3(t.description_enc) : null;
+        o.description_enc = void 0;
+      }
+      return o;
+    }
+    module.exports.presentTask = presentTask;
   }
 });
 
@@ -20510,7 +20533,7 @@ var require_exports = __commonJS({
         tasks: {
           label: "To-dos",
           columns: ["title", "client_code", "assignee", "due_at", "priority", "status", "is_milestone", "completed_at", "description"],
-          rows: () => db3.all(`SELECT t.*, c.client_code, t.client_id AS _client_id, u.display_name assignee FROM tasks t LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN users u ON u.id=t.assigned_to WHERE t.created_at BETWEEN ? AND ? AND (t.client_id IS NULL OR ${cf.sql}) ORDER BY t.due_at LIMIT ?`, from, toEnd, ...cf.params, MAX_ROWS).map((r) => ({ ...r, title: phi(r.title_enc) }))
+          rows: () => db3.all(`SELECT t.*, c.client_code, t.client_id AS _client_id, u.display_name assignee FROM tasks t LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN users u ON u.id=t.assigned_to WHERE t.created_at BETWEEN ? AND ? AND (t.client_id IS NULL OR ${cf.sql}) ORDER BY t.due_at LIMIT ?`, from, toEnd, ...cf.params, MAX_ROWS).map((r) => ({ ...r, title: phi(r.title_enc), description: phi(r.description_enc) }))
         },
         forms: {
           label: "Client forms",
@@ -21093,7 +21116,7 @@ var require_setup = __commonJS({
       r.get("/api/setup/status", (ctx) => {
         const needed = setupNeeded() && onlyBootstrapAdmin();
         if (!needed && !ctx.user) return { needed: false, setupComplete: true };
-        return { needed, setupComplete: !needed, listener: listener.describe(), hostname: (init_os(), __toCommonJS(os_exports)).hostname(), keySource: config.keySource, env: config.env, version: config.version, port_env: !!proc.env.PORT };
+        return { needed, setupComplete: !needed, listener: listener.describe(), hostname: (init_os(), __toCommonJS(os_exports)).hostname(), keySource: config.keySource, env: config.env, version: config.version, port_env: !!proc.env.PORT, local_mode_env: config.localModeFromEnv, local_mode: config.localModeEnabled };
       });
       r.post("/api/setup/complete", async (ctx) => {
         if (!(setupNeeded() && onlyBootstrapAdmin())) throw new HttpError3(403, "Setup has already been completed");
@@ -21109,7 +21132,9 @@ var require_setup = __commonJS({
           network: { type: "string", required: true, enum: ["local", "lan"] },
           port: { type: "number", integer: true, min: 1, max: 65535 },
           https: { type: "boolean" },
-          extra_hosts: { type: "string", maxLen: 300 }
+          extra_hosts: { type: "string", maxLen: 300 },
+          // "Allow staff to keep an offline copy on their devices?" — omitted means No, the recommended answer.
+          local_mode: { type: "boolean" }
           // port omitted → 'auto' (standard port with fallback)
         });
         const errs = auth3.passwordPolicy(v.admin_password);
@@ -21141,16 +21166,18 @@ var require_setup = __commonJS({
           fs.writeFileSync(path.join(dir, "suds-ca.crt"), c.ca, { mode: 420 });
           tls = "selfsigned";
         } else if (proc.env.TLS_CERT_PATH) tls = "custom";
-        audit3.log({ user: { username: v.admin_username }, action: "setup.complete", ip: ctx.ip, details: { network: v.network, port, tls } });
+        const localMode = v.local_mode === true;
+        if (!config.localModeFromEnv) config.localModeEnabled = localMode;
+        audit3.log({ user: { username: v.admin_username }, action: "setup.complete", ip: ctx.ip, details: { network: v.network, port, tls, local_mode: config.localModeEnabled } });
         let desc;
         try {
           desc = await listener.relisten({ host, port, certPath: tls === "selfsigned" ? path.join(config.dataDir, "certs", "suds.crt") : config.tls.cert || "", keyPath: tls === "selfsigned" ? path.join(config.dataDir, "certs", "suds.key") : config.tls.key || "" });
-          config.saveServerJson({ setupComplete: true, host, port: desc.port, tls, completedAt: (/* @__PURE__ */ new Date()).toISOString() });
+          config.saveServerJson({ setupComplete: true, host, port: desc.port, tls, localModeEnabled: localMode, completedAt: (/* @__PURE__ */ new Date()).toISOString() });
         } catch (e) {
-          config.saveServerJson({ setupComplete: true, host: "127.0.0.1", port: config.port, tls: "none", completedAt: (/* @__PURE__ */ new Date()).toISOString() });
+          config.saveServerJson({ setupComplete: true, host: "127.0.0.1", port: config.port, tls: "none", localModeEnabled: localMode, completedAt: (/* @__PURE__ */ new Date()).toISOString() });
           throw new HttpError3(500, `Could not start on the network: ${e.message}. Setup saved with local-only access; change this later in Settings \u2192 Network & devices.`);
         }
-        return { ok: true, listener: desc, keys_file: config.keySource === "env" ? null : config.keysJsonPath };
+        return { ok: true, listener: desc, keys_file: config.keySource === "env" ? null : config.keysJsonPath, local_mode: config.localModeEnabled };
       });
     };
     module.exports.isNeeded = isNeeded;

@@ -402,7 +402,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   assigned_to TEXT REFERENCES users(id),
   created_by TEXT NOT NULL REFERENCES users(id),
   title_enc TEXT NOT NULL,             -- "Call about detox bed" reveals a diagnosis: encrypted
-  description TEXT,
+  description_enc TEXT,                -- the details say even more than the title: encrypted too
   due_at TEXT,
   priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('low','normal','high','urgent')),
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','in_progress','done','cancelled')),

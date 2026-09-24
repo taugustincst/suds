@@ -263,6 +263,10 @@ const migrations = [
     ]) encryptColumn(d, t, from, to);
     // tasks.title is NOT NULL, and stays so: every row (even a blank title) is encrypted before the
     // plaintext goes, then the table is rebuilt so the new column carries the constraint.
+    // The rebuild takes today's schema.sql, which no longer has the plaintext tasks.description (migration
+    // 24), and copies only the columns both share — so the details are encrypted here first, or a database
+    // older than 19 would lose them in this step before 24 could move them.
+    encryptColumn(d, 'tasks', 'description', 'description_enc');
     if (tableExists(d, 'tasks') && tableCols(d, 'tasks').includes('title')) {
       const { encrypt } = require('./crypto');
       addColumn(d, 'tasks', 'title_enc', 'TEXT');
@@ -317,6 +321,14 @@ const migrations = [
   // 23: a referral's follow-up to-do remembers which referral it belongs to. Recording one referral's
   //     outcome used to close every "Follow up on referral…" to-do on the client, by title prefix.
   (d) => { addColumn(d, 'tasks', 'referral_id', 'TEXT REFERENCES referrals(id) ON DELETE SET NULL'); },
+  // 24: a to-do's details ("detox bed at Granite on Tuesday; bring the MAT letter") reveal as much as its
+  //     title, which has been encrypted since 19. tasks.description moves into description_enc and the
+  //     plaintext column goes; the table is rebuilt from schema.sql so it matches a fresh install.
+  (d) => {
+    if (!tableExists(d, 'tasks') || !tableCols(d, 'tasks').includes('description')) return;
+    encryptColumn(d, 'tasks', 'description', 'description_enc');
+    rebuildTable(d, safeSchema(), 'tasks');
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's
