@@ -2,19 +2,33 @@
 const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
-const { sendJson } = require('../http');
+const { sendJson, badRequest } = require('../http');
 const M = require('../clients-model');
 
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const addDays = (date, n) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
+/**
+ * A report period, as calendar days in the organisation's time zone. `from`/`to` bound date columns
+ * (intake_date, work_date…) as they are; timestamp columns (occurred_at, started_at…) are bounded by the
+ * instants those local days begin and end — `fromTs` and `toEnd` — through `ts(col)`, whose parameters are
+ * `tsP`. A timestamp column can also hold a bare calendar day (validate.js keeps "2026-09-26" as it was
+ * given), which is compared as a day. Taking the day's bounds in UTC dropped an evening visit on the last
+ * day of a fiscal year out of it (and pulled the first evening of the next one in).
+ */
 function range(ctx) {
-  const to = ctx.query.get('to') || new Date().toISOString().slice(0, 10);
-  const from = ctx.query.get('from') || new Date(Date.parse(to) - 89 * 86400000).toISOString().slice(0, 10);
-  return { from, to, toEnd: to + 'T23:59:59.999Z' };
+  const { localDate, localMidnight } = require('./budget');
+  const to = ctx.query.get('to') || localDate();
+  const from = ctx.query.get('from') || addDays(to, -89);
+  if (!DAY.test(to) || !DAY.test(from) || !Number.isFinite(Date.parse(to)) || !Number.isFinite(Date.parse(from))) throw badRequest('from and to must be dates (YYYY-MM-DD)');
+  const fromTs = localMidnight(from);
+  const toEnd = new Date(Date.parse(localMidnight(addDays(to, 1))) - 1).toISOString();
+  const ts = (col) => `((length(${col})>10 AND ${col} BETWEEN ? AND ?) OR (length(${col})=10 AND ${col} BETWEEN ? AND ?))`;
+  return { from, to, fromTs, toEnd, ts, tsP: [fromTs, toEnd, from, to] };
 }
-
 
 module.exports = (r) => {
   r.get('/api/reports/dashboard', auth.requireAuth, auth.requirePerm('reports:read'), (ctx) => {
-    const { from, to, toEnd } = range(ctx);
+    const { from, to, ts, tsP } = range(ctx);
     const cf = auth.caseloadFilter(ctx.user, 'c.id');
     // {CF} is expanded to the caseload filter; its bound params are spliced in at the position of the placeholder
     const expand = (sql, p) => { const before = sql.slice(0, sql.indexOf('{CF}')); const n = (before.match(/\?/g) || []).length; return [sql.replace('{CF}', cf.sql), [...p.slice(0, n), ...cf.params, ...p.slice(n)]]; };
@@ -31,24 +45,24 @@ module.exports = (r) => {
         by_substance: scoped(`SELECT COALESCE(primary_substance,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k ORDER BY n DESC`),
         mat: scoped(`SELECT COALESCE(mat_status,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k`),
       },
-      interventions: { total: scoped1(`SELECT COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.occurred_at BETWEEN ? AND ? AND {CF}`, from, toEnd).n,
-        minutes: scoped1(`SELECT COALESCE(SUM(duration_minutes),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.occurred_at BETWEEN ? AND ? AND {CF}`, from, toEnd).n,
-        by_type: db.all(`SELECT i.type k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.occurred_at BETWEEN ? AND ? AND ${cf.sql} GROUP BY i.type ORDER BY n DESC`, from, toEnd, ...cf.params),
-        by_week: db.all(`SELECT strftime('%Y-%W', i.occurred_at) k, COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.occurred_at BETWEEN ? AND ? AND ${cf.sql} GROUP BY k ORDER BY k`, from, toEnd, ...cf.params),
-        naloxone_kits: scoped1(`SELECT COALESCE(SUM(naloxone_kits),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.occurred_at BETWEEN ? AND ? AND {CF}`, from, toEnd).n,
-        fentanyl_strips: scoped1(`SELECT COALESCE(SUM(fentanyl_strips),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.occurred_at BETWEEN ? AND ? AND {CF}`, from, toEnd).n,
-        by_worker: db.all(`SELECT u.display_name k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN users u ON u.id=i.user_id JOIN clients c ON c.id=i.client_id WHERE i.occurred_at BETWEEN ? AND ? AND ${cf.sql} GROUP BY u.id ORDER BY n DESC`, from, toEnd, ...cf.params),
+      interventions: { total: scoped1(`SELECT COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND {CF}`, ...tsP).n,
+        minutes: scoped1(`SELECT COALESCE(SUM(duration_minutes),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND {CF}`, ...tsP).n,
+        by_type: db.all(`SELECT i.type k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND ${cf.sql} GROUP BY i.type ORDER BY n DESC`, ...tsP, ...cf.params),
+        by_week: db.all(`SELECT strftime('%Y-%W', i.occurred_at) k, COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND ${cf.sql} GROUP BY k ORDER BY k`, ...tsP, ...cf.params),
+        naloxone_kits: scoped1(`SELECT COALESCE(SUM(naloxone_kits),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND {CF}`, ...tsP).n,
+        fentanyl_strips: scoped1(`SELECT COALESCE(SUM(fentanyl_strips),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND {CF}`, ...tsP).n,
+        by_worker: db.all(`SELECT u.display_name k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN users u ON u.id=i.user_id JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND ${cf.sql} GROUP BY u.id ORDER BY n DESC`, ...tsP, ...cf.params),
       },
-      calls: { total: db.one(`SELECT COUNT(*) n FROM calls WHERE started_at BETWEEN ? AND ?`, from, toEnd).n, minutes: db.one(`SELECT COALESCE(SUM(duration_minutes),0) n FROM calls WHERE started_at BETWEEN ? AND ?`, from, toEnd).n,
-        crisis: db.one(`SELECT COUNT(*) n FROM calls WHERE crisis=1 AND started_at BETWEEN ? AND ?`, from, toEnd).n, by_outcome: db.all(`SELECT outcome k, COUNT(*) n FROM calls WHERE started_at BETWEEN ? AND ? GROUP BY outcome ORDER BY n DESC`, from, toEnd),
-        by_direction: db.all(`SELECT direction k, COUNT(*) n FROM calls WHERE started_at BETWEEN ? AND ? GROUP BY direction`, from, toEnd),
+      calls: { total: db.one(`SELECT COUNT(*) n FROM calls WHERE ${ts('started_at')}`, ...tsP).n, minutes: db.one(`SELECT COALESCE(SUM(duration_minutes),0) n FROM calls WHERE ${ts('started_at')}`, ...tsP).n,
+        crisis: db.one(`SELECT COUNT(*) n FROM calls WHERE crisis=1 AND ${ts('started_at')}`, ...tsP).n, by_outcome: db.all(`SELECT outcome k, COUNT(*) n FROM calls WHERE ${ts('started_at')} GROUP BY outcome ORDER BY n DESC`, ...tsP),
+        by_direction: db.all(`SELECT direction k, COUNT(*) n FROM calls WHERE ${ts('started_at')} GROUP BY direction`, ...tsP),
         // Texts are logged alongside calls, so say how the total splits rather than reporting them as calls.
-        texts: db.one(`SELECT COUNT(*) n FROM calls WHERE method='text' AND started_at BETWEEN ? AND ?`, from, toEnd).n },
-      referrals: { total: db.one(`SELECT COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE r.referred_at BETWEEN ? AND ? AND ${cf.sql}`, from, toEnd, ...cf.params).n,
-        by_status: db.all(`SELECT r.status k, COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE r.referred_at BETWEEN ? AND ? AND ${cf.sql} GROUP BY r.status ORDER BY n DESC`, from, toEnd, ...cf.params),
-        by_category: db.all(`SELECT res.category k, COUNT(*) n, SUM(CASE WHEN r.status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id WHERE r.referred_at BETWEEN ? AND ? AND ${cf.sql} GROUP BY res.category ORDER BY n DESC`, from, toEnd, ...cf.params),
+        texts: db.one(`SELECT COUNT(*) n FROM calls WHERE method='text' AND ${ts('started_at')}`, ...tsP).n },
+      referrals: { total: db.one(`SELECT COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${ts('r.referred_at')} AND ${cf.sql}`, ...tsP, ...cf.params).n,
+        by_status: db.all(`SELECT r.status k, COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${ts('r.referred_at')} AND ${cf.sql} GROUP BY r.status ORDER BY n DESC`, ...tsP, ...cf.params),
+        by_category: db.all(`SELECT res.category k, COUNT(*) n, SUM(CASE WHEN r.status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id WHERE ${ts('r.referred_at')} AND ${cf.sql} GROUP BY res.category ORDER BY n DESC`, ...tsP, ...cf.params),
         open: db.one(`SELECT COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE r.status IN ('pending','contacted','accepted','waitlisted','scheduled') AND ${cf.sql}`, ...cf.params).n,
-        median_days_to_admit: (() => { const d = db.all(`SELECT (julianday(admitted_at)-julianday(referred_at)) d FROM referrals WHERE admitted_at IS NOT NULL AND referred_at BETWEEN ? AND ? ORDER BY d`, from, toEnd).map(x => x.d); return d.length ? d[Math.floor(d.length / 2)] : null; })() },
+        median_days_to_admit: (() => { const d = db.all(`SELECT (julianday(admitted_at)-julianday(referred_at)) d FROM referrals WHERE admitted_at IS NOT NULL AND ${ts('referred_at')} ORDER BY d`, ...tsP).map(x => x.d); return d.length ? d[Math.floor(d.length / 2)] : null; })() },
       tasks: { open: db.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (assigned_to=? OR ?)`, ctx.user.id, auth.hasPerm(ctx.user, 'clients:all') ? 1 : 0).n,
         overdue: db.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (CASE WHEN length(due_at)=10 THEN due_at < ? ELSE due_at < ? END) AND (assigned_to=? OR ?)`, today, db.now(), ctx.user.id, auth.hasPerm(ctx.user, 'clients:all') ? 1 : 0).n,
         due_today: db.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND substr(due_at,1,10)=? AND (assigned_to=? OR ?)`, today, ctx.user.id, auth.hasPerm(ctx.user, 'clients:all') ? 1 : 0).n },
@@ -108,26 +122,35 @@ module.exports = (r) => {
   // COUNT(DISTINCT client_id) — because "1,400 services" and "310 people" are different questions and the
   // platform could previously only answer the first.
   r.get('/api/reports/funder', auth.requireAuth, auth.requirePerm('reports:read'), (ctx) => {
-    const { from, to, toEnd } = range(ctx);
+    const { from, to, ts, tsP } = range(ctx);
     const cf = auth.caseloadFilter(ctx.user, 'c.id');
     const fund = ctx.query.get('funding_source_id') || null;
     // Restricting to a funding source means counting only the work charged to it.
     const fundJoin = fund ? 'AND i.funding_source_id=?' : '';
     const fundP = fund ? [fund] : [];
 
-    const served = db.one(`SELECT COUNT(DISTINCT x.client_id) n FROM (
-        SELECT i.client_id FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.occurred_at BETWEEN ? AND ? AND ${cf.sql} ${fundJoin}
-        UNION SELECT ca.client_id FROM calls ca JOIN clients c ON c.id=ca.client_id WHERE ca.started_at BETWEEN ? AND ? AND ca.client_id IS NOT NULL AND ${cf.sql}
-      ) x`, from, toEnd, ...cf.params, ...fundP, from, toEnd, ...cf.params).n;
+    // One set of people served per report, and every per-person metric below is counted within it: a
+    // service (visit) or a contact (call) in the period, by a client still on the books (not deleted), in
+    // the caller's caseload — and, when a funding source is chosen, only work charged to that source. A
+    // call carries no funding source, so under a fund filter it cannot make someone "served by" that fund.
+    // (Before this, the fund filter reached the visits half only, the demographics counted anyone with a
+    // visit whatever it was charged to, and deleted records were counted as served.)
+    const servedSql = `SELECT DISTINCT i.client_id AS id FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND c.deleted_at IS NULL AND ${cf.sql} ${fundJoin}`
+      + (fund ? '' : ` UNION SELECT ca.client_id FROM calls ca JOIN clients c ON c.id=ca.client_id WHERE ${ts('ca.started_at')} AND c.deleted_at IS NULL AND ${cf.sql}`);
+    const servedP = fund ? [...tsP, ...cf.params, ...fundP] : [...tsP, ...cf.params, ...tsP, ...cf.params];
+    // `WITH served(id)` goes in front of each query that counts within the set.
+    const inServed = (sql, ...p) => [`WITH served(id) AS (${servedSql}) ${sql}`, ...servedP, ...p];
+    const one = (sql, ...p) => { const [q, ...a] = inServed(sql, ...p); return db.one(q, ...a); };
+    const all = (sql, ...p) => { const [q, ...a] = inServed(sql, ...p); return db.all(q, ...a); };
 
-    const demographics = (col, label) => db.all(`SELECT COALESCE(NULLIF(c.${col},''),'unknown') k, COUNT(DISTINCT c.id) n
-      FROM clients c WHERE c.deleted_at IS NULL AND ${cf.sql} AND EXISTS (SELECT 1 FROM interventions i WHERE i.client_id=c.id AND i.occurred_at BETWEEN ? AND ?)
-      GROUP BY k ORDER BY n DESC`, ...cf.params, from, toEnd).map(x => ({ ...x, dimension: label }));
+    const served = one(`SELECT COUNT(*) n FROM served`).n;
+
+    const demographics = (col, label) => all(`SELECT COALESCE(NULLIF(c.${col},''),'unknown') k, COUNT(*) n
+      FROM clients c JOIN served s ON s.id=c.id GROUP BY k ORDER BY n DESC`).map(x => ({ ...x, dimension: label }));
 
     // race_codes is comma separated because a person may report more than one, so each is counted
     // separately and the total will exceed the number of people served. That is how funders want it.
-    const raceRows = db.all(`SELECT c.race_codes FROM clients c WHERE c.deleted_at IS NULL AND ${cf.sql}
-      AND EXISTS (SELECT 1 FROM interventions i WHERE i.client_id=c.id AND i.occurred_at BETWEEN ? AND ?)`, ...cf.params, from, toEnd);
+    const raceRows = all(`SELECT c.race_codes FROM clients c JOIN served s ON s.id=c.id`);
     const byRace = {};
     for (const row of raceRows) {
       const codes = String(row.race_codes || '').split(',').map(x => x.trim()).filter(Boolean);
@@ -146,19 +169,19 @@ module.exports = (r) => {
     };
 
     const overdose = {
-      events: db.one(`SELECT COUNT(*) n FROM overdose_events o WHERE o.occurred_at BETWEEN ? AND ?`, from, toEnd).n,
-      reversals: db.one(`SELECT COUNT(*) n FROM overdose_events o WHERE o.occurred_at BETWEEN ? AND ? AND o.naloxone_used=1 AND o.survived=1`, from, toEnd).n,
-      fatal: db.one(`SELECT COUNT(*) n FROM overdose_events o WHERE o.occurred_at BETWEEN ? AND ? AND (o.kind='fatal' OR o.survived=0)`, from, toEnd).n,
-      community_reported: db.one(`SELECT COUNT(*) n FROM overdose_events o WHERE o.occurred_at BETWEEN ? AND ? AND o.client_id IS NULL`, from, toEnd).n,
-      naloxone_doses: db.one(`SELECT COALESCE(SUM(o.naloxone_doses),0) n FROM overdose_events o WHERE o.occurred_at BETWEEN ? AND ?`, from, toEnd).n,
-      by_month: db.all(`SELECT substr(o.occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN o.naloxone_used=1 AND o.survived=1 THEN 1 ELSE 0 END) reversals FROM overdose_events o WHERE o.occurred_at BETWEEN ? AND ? GROUP BY month ORDER BY month`, from, toEnd),
-      by_administered_by: db.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE o.occurred_at BETWEEN ? AND ? AND o.naloxone_used=1 GROUP BY k ORDER BY n DESC`, from, toEnd),
+      events: db.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts('o.occurred_at')}`, ...tsP).n,
+      reversals: db.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts('o.occurred_at')} AND o.naloxone_used=1 AND o.survived=1`, ...tsP).n,
+      fatal: db.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts('o.occurred_at')} AND (o.kind='fatal' OR o.survived=0)`, ...tsP).n,
+      community_reported: db.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts('o.occurred_at')} AND o.client_id IS NULL`, ...tsP).n,
+      naloxone_doses: db.one(`SELECT COALESCE(SUM(o.naloxone_doses),0) n FROM overdose_events o WHERE ${ts('o.occurred_at')}`, ...tsP).n,
+      by_month: db.all(`SELECT substr(o.occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN o.naloxone_used=1 AND o.survived=1 THEN 1 ELSE 0 END) reversals FROM overdose_events o WHERE ${ts('o.occurred_at')} GROUP BY month ORDER BY month`, ...tsP),
+      by_administered_by: db.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE ${ts('o.occurred_at')} AND o.naloxone_used=1 GROUP BY k ORDER BY n DESC`, ...tsP),
     };
 
     // Naloxone that went out the door, including community distribution with no identified client.
     const distribution = db.one(`SELECT COALESCE(SUM(i.naloxone_kits),0) kits, COALESCE(SUM(i.fentanyl_strips),0) strips,
       COALESCE(SUM(CASE WHEN i.client_id IS NULL THEN i.naloxone_kits ELSE 0 END),0) community_kits
-      FROM interventions i WHERE i.occurred_at BETWEEN ? AND ? ${fundJoin}`, from, toEnd, ...fundP);
+      FROM interventions i WHERE ${ts('i.occurred_at')} ${fundJoin}`, ...tsP, ...fundP);
 
     // Small-cell suppression: a breakdown row counting fewer than eleven people can identify them once it is
     // crossed with another table (the one Vietnamese-speaking veteran in a small county). Totals stay exact;
@@ -172,9 +195,10 @@ module.exports = (r) => {
       unduplicated: {
         served,
         new_admissions: db.one(`SELECT COUNT(DISTINCT c.id) n FROM clients c WHERE c.deleted_at IS NULL AND c.intake_date BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
-        with_a_referral: db.one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE r.referred_at BETWEEN ? AND ? AND ${cf.sql}`, from, toEnd, ...cf.params).n,
-        admitted_after_referral: db.one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE r.admitted_at BETWEEN ? AND ? AND ${cf.sql}`, from, toEnd, ...cf.params).n,
-        on_mat: db.one(`SELECT COUNT(DISTINCT c.id) n FROM clients c WHERE c.deleted_at IS NULL AND c.mat_status='active' AND ${cf.sql}`, ...cf.params).n,
+        // Of the people served: how many were referred on, admitted somewhere, and are on MAT.
+        with_a_referral: one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN served s ON s.id=r.client_id WHERE ${ts('r.referred_at')}`, ...tsP).n,
+        admitted_after_referral: one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN served s ON s.id=r.client_id WHERE ${ts('r.admitted_at')}`, ...tsP).n,
+        on_mat: one(`SELECT COUNT(*) n FROM clients c JOIN served s ON s.id=c.id WHERE c.mat_status='active'`).n,
       },
       demographics: {
         by_gender: suppress(demographics('gender', 'gender')),
@@ -188,10 +212,10 @@ module.exports = (r) => {
       overdose: { ...overdose, by_administered_by: suppress(overdose.by_administered_by) },
       naloxone_distribution: distribution,
       by_funding_source: db.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end,
-          (SELECT COUNT(DISTINCT i.client_id) FROM interventions i WHERE i.funding_source_id=f.id AND i.occurred_at BETWEEN ? AND ?) AS clients_served,
-          (SELECT COUNT(*) FROM interventions i WHERE i.funding_source_id=f.id AND i.occurred_at BETWEEN ? AND ?) AS services,
+          (SELECT COUNT(DISTINCT i.client_id) FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.funding_source_id=f.id AND c.deleted_at IS NULL AND ${ts('i.occurred_at')}) AS clients_served,
+          (SELECT COUNT(*) FROM interventions i WHERE i.funding_source_id=f.id AND ${ts('i.occurred_at')}) AS services,
           (SELECT COALESCE(SUM(t.minutes),0) FROM time_entries t WHERE t.funding_source_id=f.id AND t.work_date BETWEEN ? AND ? AND t.status='approved') AS approved_minutes
-        FROM funding_sources f WHERE f.is_active=1 ORDER BY f.name`, from, toEnd, from, toEnd, from, to),
+        FROM funding_sources f WHERE f.is_active=1 ORDER BY f.name`, ...tsP, ...tsP, from, to),
     };
     audit.log({ user: ctx.user, action: 'report.funder', ip: ctx.ip, details: { from, to, funding_source_id: fund || undefined, served } });
     return out;
@@ -201,13 +225,13 @@ module.exports = (r) => {
   // (HIPAA Safe Harbor) unless identified=1 and the user holds export:identified — and an identified export
   // is a disclosure: it must say to whom and why, and it writes one accounting row per client it contains.
   r.get('/api/reports/export/:kind', auth.requireAuth, auth.requirePerm('export:read'), async (ctx) => {
-    const { from, to, toEnd } = range(ctx);
+    const period = range(ctx); const { from, to } = period;
     const identified = ctx.query.get('identified') === '1' && auth.hasPerm(ctx.user, 'export:identified');
     const recipient = (ctx.query.get('recipient') || '').trim(); const purpose = (ctx.query.get('purpose') || '').trim();
     if (identified && (!recipient || !purpose)) throw require('../http').badRequest('An identified export must name its recipient and purpose (recipient= and purpose=); they are written to the accounting of disclosures for every client it contains');
     const format = ctx.query.get('format') === 'xlsx' || ctx.params.kind === 'workbook' ? 'xlsx' : 'csv';
     const X = require('../exports');
-    const D = X.datasets(ctx, { from, to, toEnd, identified });
+    const D = X.datasets(ctx, { ...period, identified });
     const S = require('../spreadsheet');
     const disclosure = require('../disclosure');
     // One accounting row per client per export file: the workbook is one disclosure of everything it
