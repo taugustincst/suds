@@ -21,7 +21,8 @@ Shows alerts (overdue tasks, unsigned notes, imported notes waiting for review, 
 ## Clients
 * **Search** matches exact last name, "Last, First", phone number, date of birth (YYYY-MM-DD) or client code. Names are encrypted, so partial-name search is not available.
 * **New client** — enter what you know; only first and last name are required. Set status *waitlist* if not yet enrolled.
-* The client page has tabs: Overview, Timeline (everything in date order), Interventions, Calls, Notes, Referrals, Tasks, Consents & ROI, Time, Assistance $ and Care team.
+* The client page has tabs: Overview, Timeline (everything in date order), Interventions, Calls, Notes, Referrals, Forms, Tasks, Episodes, Consents & ROI, Requests, Time, Assistance $ (for roles that see the budget) and Care team.
+* **Requests** records patient-rights requests (access, amendment, restriction, accounting of disclosures), each due 30 days after it was received. Mark one *Fulfilled* or *Denied* when answered; **Edit** corrects its kind, dates or notes (or reopens it); **Delete** is only for a request recorded in error — a request you are refusing is marked *Denied* so it stays on file. Edits and deletions are in the audit log.
 * **Safety flags** (e.g. "no home visits alone") appear as a red badge on every page for that client.
 * **Status and episodes.** Starting an episode of care makes the client *active* (including someone taken off the waitlist). While an episode is open, *Closed* and *Deceased* cannot be chosen on the Edit form: discharge on the Episodes tab instead — that closes the episode, ends the care team and clears open to-dos. The discharge dialog has no default reason; choose one.
 * **After a discharge**, a navigator whose only link to the client was their assignment loses access to the record the next day (the discharge ends every assignment). If you need to look back at a discharged client — to answer a records request, or when they return — ask a supervisor to assign you again, or to look it up for you. Supervisors and administrators see every record.
@@ -32,6 +33,7 @@ Shows alerts (overdue tasks, unsigned notes, imported notes waiting for review, 
 ## Logging work
 * **+ Intervention** — the core service record. Pick the type (outreach, SBIRT screening, warm handoff, naloxone distribution, post-overdose follow-up…), duration, location, outcome. Enter naloxone kits / fentanyl strips given — they roll up into reports and update the client's naloxone status. Set a follow-up date to create a task automatically. Leave *Also log as time entry* checked so your time sheet fills itself.
 * **+ Call** — inbound/outbound, who, duration, outcome (reached, voicemail…), crisis flag, encrypted summary, follow-up.
+* **Overdose & reversals** (sidebar) — record every overdose and naloxone reversal, including community ones with no client. Recording a **fatal** overdose for a client discharges them as deceased: after you confirm, their open episode is closed with the reason *deceased*, the care team ends and open to-dos are cancelled. If that was a mistake, change the outcome or **Delete** the event (in the event's dialog): the client goes back to the status they had, the episode is reopened, and the care team and to-dos are restored.
 * **Time tracking** — non-client time (documentation, travel, meetings, training) is logged here; choose the funding source when the grant requires effort reporting.
 * **Tasks & follow-ups** — your to-do list; mark milestones (★) to show them on the client timeline.
 
@@ -42,19 +44,22 @@ The **Resource Directory** holds treatment providers, MAT clinics, shelters, har
 * **Administrative / contact notes** — visible to the whole care team; use for contacts, coordination, logistics.
 * **Clinical notes** — only clinicians and supervisors can write or read them; use SOAP/DAP/BIRP/GIRP formats (sections auto-build the narrative).
 * Notes are saved as **drafts**. **Sign & lock** (re-enter your password) when complete. Signed notes cannot be edited or deleted; add an **addendum** for corrections or late entries.
+* **Verify signature** on a signed note checks the note as it is stored now against what was signed: *Signature intact* means it is exactly as signed; *Changed after signing* means the stored note no longer matches — report it to your privacy officer. Click the signature hash to see it in full.
 * Do not put names or other identifiers in intervention *summary* fields — they are not encrypted. Use notes for anything sensitive.
 
 ## Consents & ROI (42 CFR Part 2)
 Before sharing SUD information with a provider, family member or agency, record a **consent** naming the recipient, purpose, information covered and expiration. Every time information is shared, record a **disclosure** (who, what, why, how, on what basis). Revoke consents when the client withdraws them.
 
 ## Budget
+Finance staff see client codes on Budget and Time but not client records; the codes are not links for them, and opening a client link says *Not available for your role*.
+
 Record client assistance (bus passes, IDs, motel nights, phone minutes…) against the correct funding source and budget line; attach the client so per-client spending is visible. A supervisor or finance staff approves; you cannot approve your own entries.
 
 ## Importing notes
-See *Import Notes* in the sidebar and [docs/IMPORTS.md](IMPORTS.md).
+Use **Import** in the sidebar and see [docs/IMPORTS.md](IMPORTS.md).
 
 ## Reports and Excel
-Choose a date range for program summaries and monthly trends. **Export to Excel** (or CSV) is available on Reports (every table, or everything as one workbook) and on the Clients, Resources, Visits, Calls, Time, Referrals and Budget pages. Exports use client codes rather than names; supervisors can produce an identified workbook, which is recorded in the audit log.
+Choose a date range for program summaries and monthly trends. **Episodes of care** shows admissions in the period (and how many are still open), discharges in the period by reason, and the list of admissions; a client code opens the client only for roles that can see client records. **Export to Excel** (or CSV) is available on Reports (every table — including episodes, overdose events, client forms and disclosures — or everything as one workbook, which also works in local mode) and on the Clients, Resources, Visits, Calls, Time, Referrals and Budget pages. Exports use client codes rather than names; supervisors can produce an identified workbook, which is recorded in the audit log.
 
 ## Importing spreadsheets
 Import → *Import from Excel or CSV*. Choose what you are importing (clients, resources, visits, calls, time, to-dos, expenditures), download the template or upload the spreadsheet you already keep. SUDS matches your column names automatically (you can adjust them), checks every row, tells you exactly what is wrong with any row, flags people who already exist, and only saves when you click Import. For visits, calls and other client records, refer to the client by code (C26-0012) or "Last, First".
