@@ -2,7 +2,7 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.10.2 — 2026-09-25
 
 - **Pictures without the file window.** A resource's Pictures card has **Add from a web address** (an https
   address of a picture, or of a web page whose preview picture is used), and picture files can be dragged onto
