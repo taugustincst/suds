@@ -7162,7 +7162,7 @@ CREATE TABLE IF NOT EXISTS consents (
   revoked_at TEXT,
   revoked_reason_enc TEXT,             -- why the client revoked it (free text): encrypted
   document_ref TEXT,
-  witness TEXT,
+  witness_enc TEXT,                    -- who witnessed the signature: often a family member's name (migration 39)
   signed_on_paper INTEGER NOT NULL DEFAULT 0,
   -- The client was told that what is disclosed under this consent may not be redisclosed (\xA72.32).
   redisclosure_notice_given INTEGER NOT NULL DEFAULT 0,
@@ -7318,7 +7318,7 @@ CREATE TABLE IF NOT EXISTS import_items (
   title_enc TEXT,
   content_enc TEXT NOT NULL,
   captured_at TEXT,
-  metadata TEXT,
+  metadata_enc TEXT,                   -- JSON: source details and the client-name hints sniffed from the text (migration 39)
   suggested_client_id TEXT,
   status TEXT NOT NULL DEFAULT 'staged' CHECK (status IN ('staged','committed','discarded')),
   note_id TEXT,
@@ -9033,14 +9033,24 @@ var require_http = __commonJS({
         req.on("error", reject);
       });
     }
-    function securityHeaders(res) {
+    function behindTls(req) {
+      if (!req || !config.trustProxy) return false;
+      return String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim().toLowerCase() === "https";
+    }
+    function securityHeaders(res, req) {
       res.setHeader("X-Content-Type-Options", "nosniff");
       res.setHeader("X-Frame-Options", "DENY");
       res.setHeader("Referrer-Policy", "no-referrer");
       res.setHeader("Cache-Control", "no-store");
       res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
       res.setHeader("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
-      if (config.tls.cert) res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+      if (config.tls.cert || behindTls(req)) res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    }
+    function contentDisposition(type, filename, fallback = "download") {
+      const name = String(filename ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 200) || fallback;
+      const ascii = name.normalize("NFKD").replace(/[^\x20-\x7e]/g, "").replace(/["\\;%/]/g, "_").trim() || fallback;
+      const star = encodeURIComponent(name).replace(/['()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+      return `${type === "inline" ? "inline" : "attachment"}; filename="${ascii}"${ascii !== name ? `; filename*=UTF-8''${star}` : ""}`;
     }
     function sendJson(res, status, obj) {
       const body = JSON.stringify(obj ?? null);
@@ -9097,7 +9107,7 @@ var require_http = __commonJS({
         return true;
       };
     }
-    module.exports = { Router: Router2, HttpError: HttpError3, badRequest, unauthorized, forbidden, notFound, conflict, parseCookies, parseRequestUrl, readBody, securityHeaders, sendJson, sendFile, serveStatic };
+    module.exports = { Router: Router2, HttpError: HttpError3, badRequest, unauthorized, forbidden, notFound, conflict, parseCookies, parseRequestUrl, readBody, securityHeaders, contentDisposition, sendJson, sendFile, serveStatic };
   }
 });
 
@@ -9707,7 +9717,7 @@ var require_disclosure = __commonJS({
         expires_event: row.expires_event,
         document_ref: row.document_ref,
         signed_on_paper: row.signed_on_paper,
-        witness: row.witness,
+        witness: dec2(row.witness_enc),
         signer_relationship: row.signer_relationship,
         signer_name: dec2(row.signer_name_enc),
         revocation_right_given: row.revocation_right_given,
@@ -10693,6 +10703,17 @@ var require_db = __commonJS({
           ["client_forms", "notes", "notes_enc"],
           ["clients", "contact_preferences", "contact_preferences_enc"]
         ]) encryptColumn(d, t, from, to);
+      },
+      // 38: PLACEHOLDER for another change stream's migration 38 (funding attribution); replace this no-op with
+      //     it when the branches are merged. It exists only so migration 39 keeps its number on this branch.
+      () => {
+      },
+      // 39: the last free text about a person held in plaintext. A consent's witness is usually someone the
+      //     client knows (a parent, a partner), and an imported note's metadata carries the client-name hints
+      //     sniffed from its text ("Met with J. Smith").
+      (d) => {
+        encryptColumn(d, "consents", "witness", "witness_enc");
+        encryptColumn(d, "import_items", "metadata", "metadata_enc");
       }
     ];
     function initialise(d, schemaText, dbPath) {
@@ -10981,11 +11002,12 @@ var require_sync_tables = __commonJS({
         { name: "calls", enc: ["contact_name_enc", "phone_enc", "summary_enc", "purpose_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "calls:write", parent: ["clients", "client_id"] },
         { name: "time_entries", enc: ["description_enc", "approval_note_enc"], legacy: { description: "description_enc", approval_note: "approval_note_enc" }, scope: "client-or-null", clientCol: "client_id", writePerm: "time:write", parent: ["clients", "client_id"] },
         // A referral may cite the consent it was made under, so consents come first.
-        { name: "consents", enc: ["recipient_enc", "purpose_enc", "scope_enc", "signer_name_enc", "revoked_reason_enc"], legacy: { revoked_reason: "revoked_reason_enc" }, scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
+        { name: "consents", enc: ["recipient_enc", "purpose_enc", "scope_enc", "signer_name_enc", "revoked_reason_enc", "witness_enc"], legacy: { revoked_reason: "revoked_reason_enc", witness: "witness_enc" }, scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
         // A disclosure made under a subpart E court order cites it, so orders travel before disclosures.
         { name: "court_orders", enc: ["court_enc", "case_ref_enc", "recipient_enc", "purpose_enc", "scope_enc", "vacated_reason_enc"], legacy: { vacated_reason: "vacated_reason_enc" }, scope: "client", clientCol: "client_id", writePerm: "court-orders:write", parent: ["clients", "client_id"] },
         { name: "part2_notices", enc: ["notes_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
         { name: "referrals", enc: ["outcome_enc", "barrier_enc", "notes_enc"], scope: "client", clientCol: "client_id", writePerm: "referrals:write", parent: ["clients", "client_id"] },
+        // Migration 39 moved consents.witness and import_items.metadata into witness_enc and metadata_enc.
         // Migration 37 moved the free text on assignments, time entries, consents (revocation), expenditures, notes
         // (countersignature), addenda, client forms and clients (contact preferences) into _enc columns likewise.
         // Migration 24 moved tasks.description into description_enc; kernels before 1.9.3 still push `description`.
@@ -10994,8 +11016,10 @@ var require_sync_tables = __commonJS({
         { name: "notes", enc: ["content_enc", "structured_enc", "title_enc", "cosign_note_enc"], legacy: { cosign_note: "cosign_note_enc" }, scope: "client", clientCol: "client_id", writePerm: "notes:admin:write", parent: ["clients", "client_id"] },
         { name: "note_addenda", enc: ["content_enc", "reason_enc"], legacy: { reason: "reason_enc" }, scope: "via-note", writePerm: "notes:admin:write", parent: ["notes", "note_id"] },
         { name: "disclosures", enc: ["recipient_enc", "purpose_enc", "what_enc", "justification_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
-        { name: "imports", enc: [], scope: "all", writePerm: "imports:write" },
-        { name: "import_items", enc: ["content_enc", "title_enc"], scope: "all", writePerm: "imports:write", parent: ["imports", "import_id"] },
+        // An import (a OneNote page, a Pocket AI transcript) is its importer's until it is filed against a client:
+        // the REST routes show it only to them (or to clients:all), and a device gets the same -- scope 'importer'.
+        { name: "imports", enc: [], scope: "importer", writePerm: "imports:write" },
+        { name: "import_items", enc: ["content_enc", "title_enc", "metadata_enc"], legacy: { metadata: "metadata_enc" }, scope: "via-import", writePerm: "imports:write", parent: ["imports", "import_id"] },
         { name: "form_templates", enc: [], scope: "all", writePerm: "forms:manage", blob: ["file_b64"] },
         { name: "client_forms", enc: ["values_enc", "notes_enc"], legacy: { notes: "notes_enc" }, scope: "client", clientCol: "client_id", writePerm: "forms:write", parent: ["clients", "client_id"] },
         { name: "client_form_files", enc: ["data_enc"], scope: "client", clientCol: "client_id", writePerm: "forms:write", parent: ["client_forms", "client_form_id"], blob: ["data_enc"] },
@@ -11174,10 +11198,33 @@ var require_sync_tables = __commonJS({
       }
       return r;
     }
+    function purgeClient(d, clientId, depth = 0) {
+      let n = 0;
+      const has = (t) => !!d.one(`SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name=?`, t);
+      const seenTable = has("sync_seen");
+      const drop = (table, id) => {
+        const r = d.run(`DELETE FROM ${table} WHERE id=?`, id);
+        n += Number(r && r.changes || 0);
+        if (seenTable) d.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, table, id);
+      };
+      if (depth < 25) for (const m of d.all(`SELECT id FROM clients WHERE merged_into=?`, clientId)) n += purgeClient(d, m.id, depth + 1);
+      for (const t of [...module.exports.tables].reverse()) {
+        if (!has(t.name)) continue;
+        if (t.scope === "via-note") {
+          for (const r of d.all(`SELECT id FROM ${t.name} WHERE note_id IN (SELECT id FROM notes WHERE client_id=?)`, clientId)) drop(t.name, r.id);
+          continue;
+        }
+        if (!t.clientCol || t.name === "clients") continue;
+        for (const r of d.all(`SELECT id FROM ${t.name} WHERE ${t.clientCol}=?`, clientId)) drop(t.name, r.id);
+      }
+      drop("clients", clientId);
+      return n;
+    }
     module.exports.isPermanentReason = (reason) => module.exports.permanent_reasons.some((p) => String(reason || "").startsWith(p));
     module.exports.exportRow = exportRow2;
     module.exports.importRow = importRow2;
     module.exports.upgradeLegacyRow = upgradeLegacyRow;
+    module.exports.purgeClient = purgeClient;
   }
 });
 
@@ -19502,6 +19549,7 @@ var require_consents = __commonJS({
         scope: c.scope_enc ? decrypt3(c.scope_enc) : null,
         signer_name: c.signer_name_enc ? decrypt3(c.signer_name_enc) : null,
         revoked_reason: c.revoked_reason_enc ? decrypt3(c.revoked_reason_enc) : null,
+        witness: c.witness_enc ? decrypt3(c.witness_enc) : null,
         // The coded categories it covers, as a list ([] when none were recorded: it covers nothing automated).
         info_categories: [...disclosure.parseCategories(c.info_categories)],
         recipient_enc: void 0,
@@ -19509,6 +19557,7 @@ var require_consents = __commonJS({
         scope_enc: void 0,
         signer_name_enc: void 0,
         revoked_reason_enc: void 0,
+        witness_enc: void 0,
         // A consent that lacks the §2.31 elements (one that arrived by sync or by hand, or a legacy one) is shown,
         // but cannot be chosen to authorise a disclosure: incomplete says why.
         active,
@@ -19583,7 +19632,7 @@ var require_consents = __commonJS({
         }
         const id = uuid2();
         db3.run(
-          `INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,expires_event,document_ref,witness,signed_on_paper,redisclosure_notice_given,
+          `INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,expires_event,document_ref,witness_enc,signed_on_paper,redisclosure_notice_given,
         discloser,signer_relationship,signer_name_enc,revocation_right_given,refusal_consequences_given,rule_version,created_by,info_categories) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           id,
           ctx.params.id,
@@ -19595,7 +19644,7 @@ var require_consents = __commonJS({
           v.expires_at || null,
           v.expires_event || null,
           v.document_ref || null,
-          v.witness || null,
+          v.witness ? encrypt3(v.witness) : null,
           v.signed_on_paper ? 1 : 0,
           v.redisclosure_notice_given ? 1 : 0,
           v.discloser || null,
@@ -19674,7 +19723,7 @@ var require_consents = __commonJS({
           values,
           footer: disclosure.part2Program() ? `${n.short} NOTICE TO RECIPIENT (42 CFR \xA72.32): ${n.text}` : "Contains protected health information; handle per HIPAA."
         });
-        ctx.res.writeHead(200, { "Content-Type": "application/pdf", "Content-Disposition": `inline; filename="${client.client_code}-consent-${c.id.slice(0, 8)}.pdf"` });
+        ctx.res.writeHead(200, { "Content-Type": "application/pdf", "Content-Disposition": require_http().contentDisposition("inline", `${client.client_code}-consent-${c.id.slice(0, 8)}.pdf`) });
         ctx.res.end(body);
         return null;
       });
@@ -21311,7 +21360,7 @@ var require_documents = __commonJS({
     var auth3 = require_auth();
     var audit3 = require_audit();
     var C = require_constants();
-    var { badRequest, notFound } = require_http();
+    var { badRequest, notFound, contentDisposition } = require_http();
     var { validate } = require_validate();
     var { uuid: uuid2 } = require_crypto();
     var { extractText } = require_doc_text();
@@ -21450,7 +21499,7 @@ var require_documents = __commonJS({
         const d = loadVisible(ctx, ctx.params.id);
         if (!d.file_b64) throw notFound("No file for this document");
         audit3.log({ user: ctx.user, action: "document.download", entity: "policy_document", entityId: d.id, ip: ctx.ip });
-        ctx.res.writeHead(200, { "Content-Type": safeContentType(d.content_type), "Content-Disposition": `${ctx.query.get("inline") === "1" ? "inline" : "attachment"}; filename="${(d.filename || "document").replace(/["\r\n]/g, "")}"` });
+        ctx.res.writeHead(200, { "Content-Type": safeContentType(d.content_type), "Content-Disposition": contentDisposition(ctx.query.get("inline") === "1" ? "inline" : "attachment", d.filename, "document") });
         ctx.res.end(import_buffer.Buffer.from(d.file_b64, "base64"));
         return null;
       });
@@ -21852,6 +21901,5210 @@ var require_common = __commonJS({
       throw new FhirError(400, `"${raw}" is not a ${type} reference`, { code: "invalid" });
     }
     module.exports = { FHIR_JSON, FHIR_NDJSON, FHIR_VERSION, SYS, PART2_SECURITY, FhirError, outcome, send, sendError, baseUrl, dateClause, refId };
+  }
+});
+
+// server/outbound.js
+var require_outbound = __commonJS({
+  "server/outbound.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var fetchImpl = (...args) => globalThis.fetch(...args);
+    var lookupImpl = null;
+    var fetchOverridden = false;
+    function _setFetchForTests(fn) {
+      fetchImpl = fn || ((...args) => globalThis.fetch(...args));
+      fetchOverridden = !!fn;
+    }
+    function _setLookupForTests(fn) {
+      lookupImpl = fn;
+    }
+    var soft = (message, extra = {}) => Object.assign(new Error(message), { soft: true }, extra);
+    function privateV4(a) {
+      const [x, y] = a.split(".").map(Number);
+      return x === 0 || x === 10 || x === 127 || x === 100 && y >= 64 && y <= 127 || x === 169 && y === 254 || x === 172 && y >= 16 && y <= 31 || x === 192 && y === 168 || x === 192 && y === 0 || x === 198 && (y === 18 || y === 19) || x >= 224;
+    }
+    function v6groups(a) {
+      let s = a;
+      const quad = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(s);
+      if (quad) {
+        const [p, q, r, t] = quad.slice(1).map(Number);
+        s = s.slice(0, quad.index) + (p << 8 | q).toString(16) + ":" + (r << 8 | t).toString(16);
+      }
+      const halves = s.split("::");
+      if (halves.length > 2) return null;
+      const head = halves[0] ? halves[0].split(":") : [];
+      const tail = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+      const fill = halves.length === 2 ? 8 - head.length - tail.length : 0;
+      if (fill < 0) return null;
+      const g = [...head, ...Array(fill).fill("0"), ...tail].map((h) => parseInt(h, 16));
+      return g.length === 8 && g.every((n) => Number.isInteger(n) && n >= 0 && n <= 65535) ? g : null;
+    }
+    function isPrivateAddress(ip) {
+      const a = String(ip).toLowerCase().replace(/^\[|\]$/g, "").replace(/%.*$/, "");
+      if (/^\d+\.\d+\.\d+\.\d+$/.test(a)) return privateV4(a);
+      const g = v6groups(a);
+      if (!g) return true;
+      const v4of = (hi, lo) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+      if (g.slice(0, 5).every((n) => n === 0) && (g[5] === 65535 || g[5] === 0)) return g[5] === 0 && g[6] === 0 && g[7] <= 1 ? true : privateV4(v4of(g[6], g[7]));
+      if (g[0] === 100 && g[1] === 65435) return true;
+      if (g[0] === 8194) return privateV4(v4of(g[1], g[2]));
+      return (g[0] & 65024) === 64512 || (g[0] & 65472) === 65152 || (g[0] & 65472) === 65216 || (g[0] & 65280) === 65280 || g[0] === 8193 && g[1] === 3512 || g[0] === 8193 && g[1] === 0;
+    }
+    var PRIVATE_HOST = /^(localhost|.*\.local|.*\.internal|.*\.localhost|.*\.home\.arpa|metadata\.google\.internal)$/i;
+    function assertPublicHttps(u) {
+      let url;
+      try {
+        url = new URL(u);
+      } catch {
+        throw soft("not a web address");
+      }
+      if (url.protocol !== "https:") throw soft("not an https address");
+      if (url.username || url.password) throw soft("an address with a user name or password in it is not allowed");
+      const host = url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "");
+      if (!host || PRIVATE_HOST.test(host)) throw soft("that address is not on the public internet");
+      if (/^\d+\.\d+\.\d+\.\d+$/.test(host) && privateV4(host)) throw soft("that address is not on the public internet");
+      if (host.includes(":")) throw soft("that address is not on the public internet");
+      return url.href;
+    }
+    async function assertResolvesPublic(url) {
+      const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
+      let lookup = lookupImpl;
+      if (!lookup) {
+        if (fetchOverridden) return;
+        let dns;
+        try {
+          dns = __require("node:dns").promises;
+        } catch {
+          return;
+        }
+        lookup = (h) => dns.lookup(h, { all: true, verbatim: true });
+      }
+      let addrs;
+      try {
+        addrs = await lookup(host);
+      } catch (e) {
+        if (proc.env.HTTPS_PROXY || proc.env.https_proxy) return;
+        throw describeNetworkError({ cause: e }) || soft("could not find that address");
+      }
+      if (!addrs.length || addrs.some((x) => isPrivateAddress(x.address || x))) throw soft("that address is not on the public internet");
+    }
+    var NETWORK_CODES = /^(ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET)$/;
+    var CERT_CODES = /CERT|SELF_SIGNED|UNABLE_TO_(GET|VERIFY)/;
+    function describeNetworkError(e) {
+      const code = e && e.cause && (e.cause.code || e.cause.name) || e && e.code || "";
+      const proxyHint = proc.env.HTTPS_PROXY || proc.env.https_proxy ? proc.env.NODE_USE_ENV_PROXY === "1" ? " HTTPS_PROXY is set; check the proxy allows these sites." : ' HTTPS_PROXY is set but Node only uses it when NODE_USE_ENV_PROXY=1 is set too (docs/DEPLOYMENT.md, "Outbound internet").' : ' If the office network only reaches the internet through a proxy, set HTTPS_PROXY and NODE_USE_ENV_PROXY=1 (docs/DEPLOYMENT.md, "Outbound internet").';
+      if (CERT_CODES.test(String(code))) return soft(`the connection's certificate was not trusted (${code}). A proxy that inspects HTTPS needs its certificate given to Node with NODE_EXTRA_CA_CERTS.`, { network: true });
+      if (NETWORK_CODES.test(String(code)) || /fetch failed/i.test(e && e.message)) return soft(`the computer running SUDS could not reach the internet${code ? ` (${code})` : ""}.${proxyHint}`, { network: true });
+      return null;
+    }
+    async function fetchChecked(url, { timeoutMs = 1e4, maxBytes = 2 * 1024 * 1024, hops = 4, method = "GET", body, headers = {}, check } = {}) {
+      const guard = check || (async (u) => {
+        const href = assertPublicHttps(u);
+        await assertResolvesPublic(href);
+        return href;
+      });
+      let target = await guard(url);
+      let res;
+      for (let i = 0; i <= hops; i++) {
+        try {
+          res = await fetchImpl(target, { method, body, signal: AbortSignal.timeout(timeoutMs), redirect: "manual", headers: { "User-Agent": "SUDS", Accept: "*/*", ...headers } });
+        } catch (e) {
+          if (e && (e.name === "TimeoutError" || e.name === "AbortError")) throw soft("timed out");
+          throw describeNetworkError(e) || e;
+        }
+        if (res.status < 300 || res.status >= 400) break;
+        const location = res.headers.get("location");
+        if (!location) break;
+        if (i === hops) throw soft("too many redirects");
+        if (method !== "GET") throw soft(`the server answered ${res.status} with a redirect`);
+        target = await guard(new URL(location, target).href);
+      }
+      if (!res.ok) throw soft(`site returned ${res.status}`);
+      if (Number(res.headers.get("content-length") || 0) > maxBytes) throw soft("file is too large");
+      const buf = import_buffer.Buffer.from(await res.arrayBuffer());
+      if (buf.length > maxBytes) throw soft("file is too large");
+      return { buf, url: target, res };
+    }
+    module.exports = { isPrivateAddress, assertPublicHttps, assertResolvesPublic, fetchChecked, describeNetworkError, soft, _setFetchForTests, _setLookupForTests };
+  }
+});
+
+// server/fhir/jwt.js
+var require_jwt = __commonJS({
+  "server/fhir/jwt.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var nodeCrypto = (init_crypto2(), __toCommonJS(crypto_exports));
+    var db3 = require_db();
+    var { sha256: sha2562 } = require_crypto();
+    var ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
+    var ALGS = { RS384: { kty: "RSA", hash: "sha384" }, ES384: { kty: "EC", crv: "P-384", hash: "sha384" } };
+    var MAX_LIFETIME_S = 300;
+    var CLOCK_SKEW_S = 60;
+    var MAX_KEYS = 10;
+    var MAX_ASSERTION_BYTES = 8 * 1024;
+    var JWKS_TTL_MS = 60 * 6e4;
+    var JWKS_REFETCH_MS = 6e4;
+    var JWKS_MAX_BYTES = 64 * 1024;
+    var PRIVATE_MEMBERS = ["d", "p", "q", "dp", "dq", "qi", "oth", "k"];
+    var JwtError = class extends Error {
+      constructor(message) {
+        super(message);
+        this.jwt = true;
+      }
+    };
+    function parseJwks(input) {
+      let v = input;
+      if (typeof v === "string") {
+        try {
+          v = JSON.parse(v);
+        } catch {
+          throw new JwtError("The key set is not valid JSON");
+        }
+      }
+      if (!v || typeof v !== "object") throw new JwtError('The key set must be a JSON Web Key Set ({"keys": [...]})');
+      const list = Array.isArray(v.keys) ? v.keys : v.kty ? [v] : null;
+      if (!list || !list.length) throw new JwtError("The key set has no keys");
+      if (list.length > MAX_KEYS) throw new JwtError(`At most ${MAX_KEYS} keys may be registered`);
+      const keys = [];
+      for (const [i, k] of list.entries()) {
+        const n = `Key ${i + 1}${k && k.kid ? ` ("${String(k.kid).slice(0, 40)}")` : ""}`;
+        if (!k || typeof k !== "object") throw new JwtError(`${n} is not a JSON Web Key`);
+        if (PRIVATE_MEMBERS.some((m) => m in k)) throw new JwtError(`${n} contains private key material. Register only the public key; the private key never leaves the other system.`);
+        if (k.use !== void 0 && k.use !== "sig") throw new JwtError(`${n} is not a signing key (use must be "sig")`);
+        if (k.key_ops !== void 0 && !(Array.isArray(k.key_ops) && k.key_ops.includes("verify"))) throw new JwtError(`${n} does not allow "verify"`);
+        if (k.alg !== void 0 && !ALGS[k.alg]) throw new JwtError(`${n} is for ${String(k.alg).slice(0, 20)}; SUDS accepts RS384 or ES384`);
+        let pub;
+        if (k.kty === "RSA") pub = { kty: "RSA", n: String(k.n || ""), e: String(k.e || "") };
+        else if (k.kty === "EC" && k.crv === "P-384") pub = { kty: "EC", crv: "P-384", x: String(k.x || ""), y: String(k.y || "") };
+        else throw new JwtError(`${n} must be an RSA key (RS384) or an EC P-384 key (ES384)`);
+        if (k.alg && ALGS[k.alg].kty !== pub.kty) throw new JwtError(`${n}: alg ${k.alg} does not match key type ${pub.kty}`);
+        let obj;
+        try {
+          obj = nodeCrypto.createPublicKey({ key: pub, format: "jwk" });
+        } catch {
+          throw new JwtError(`${n} is not a valid public key`);
+        }
+        if (pub.kty === "RSA" && (obj.asymmetricKeyDetails?.modulusLength || 0) < 2048) throw new JwtError(`${n} is shorter than 2048 bits`);
+        if (k.kid !== void 0) pub.kid = String(k.kid).slice(0, 200);
+        if (k.alg !== void 0) pub.alg = k.alg;
+        keys.push(pub);
+      }
+      return { keys };
+    }
+    function checkJwksUrl(u) {
+      const { assertPublicHttps } = require_outbound();
+      try {
+        return assertPublicHttps(String(u || "").trim());
+      } catch (e) {
+        throw new JwtError(`The key set URL is not allowed: ${e.message}`);
+      }
+    }
+    var jwksCache = /* @__PURE__ */ new Map();
+    async function fetchJwks(url, { force = false } = {}) {
+      const hit = jwksCache.get(url);
+      const now = Date.now();
+      if (hit && !force && now - hit.at < JWKS_TTL_MS) return hit.keys;
+      if (hit && force && now - hit.tried < JWKS_REFETCH_MS) return hit.keys;
+      if (hit) hit.tried = now;
+      const { fetchChecked } = require_outbound();
+      let set;
+      try {
+        set = parseJwks((await fetchChecked(url, { timeoutMs: 8e3, maxBytes: JWKS_MAX_BYTES, headers: { Accept: "application/json" } })).buf.toString("utf8"));
+      } catch (e) {
+        if (hit) return hit.keys;
+        throw new JwtError(`The client's key set could not be fetched: ${e.message}`);
+      }
+      if (jwksCache.size > 200) jwksCache.clear();
+      jwksCache.set(url, { keys: set.keys, at: now, tried: now });
+      return set.keys;
+    }
+    var b64json = (part, what) => {
+      if (!/^[A-Za-z0-9_-]*$/.test(part)) throw new JwtError(`The assertion's ${what} is not base64url`);
+      try {
+        const v = JSON.parse(import_buffer.Buffer.from(part, "base64url").toString("utf8"));
+        if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error();
+        return v;
+      } catch {
+        throw new JwtError(`The assertion's ${what} is not a JSON object`);
+      }
+    };
+    function decode(assertion) {
+      const s = String(assertion || "");
+      if (!s || s.length > MAX_ASSERTION_BYTES) throw new JwtError("The client assertion is missing or too long");
+      const parts = s.split(".");
+      if (parts.length !== 3) throw new JwtError("The client assertion is not a signed JWT (header.payload.signature)");
+      const header = b64json(parts[0], "header");
+      const claims = b64json(parts[1], "payload");
+      if (!/^[A-Za-z0-9_-]*$/.test(parts[2])) throw new JwtError("The assertion's signature is not base64url");
+      return { header, claims, signingInput: `${parts[0]}.${parts[1]}`, signature: import_buffer.Buffer.from(parts[2], "base64url") };
+    }
+    function verifySignature({ header, signingInput, signature }, keys) {
+      const alg = ALGS[header.alg];
+      if (!alg) throw new JwtError(`alg ${String(header.alg).slice(0, 20)} is not accepted (RS384 or ES384)`);
+      if (header.crit !== void 0) throw new JwtError("The assertion has critical header parameters SUDS does not understand");
+      if (header.jku !== void 0 || header.x5u !== void 0 || header.jwk !== void 0) throw new JwtError("Keys named inside the assertion (jku, x5u, jwk) are not used; register the key set with SUDS");
+      const fits = keys.filter((k) => k.kty === alg.kty && (!alg.crv || k.crv === alg.crv) && (!k.alg || k.alg === header.alg));
+      let candidates;
+      if (header.kid !== void 0) candidates = fits.filter((k) => k.kid === String(header.kid));
+      else candidates = fits.length === 1 ? fits : [];
+      if (!candidates.length) return false;
+      for (const k of candidates) {
+        const key = nodeCrypto.createPublicKey({ key: { kty: k.kty, n: k.n, e: k.e, crv: k.crv, x: k.x, y: k.y }, format: "jwk" });
+        const ok = alg.kty === "EC" ? nodeCrypto.verify(alg.hash, import_buffer.Buffer.from(signingInput), { key, dsaEncoding: "ieee-p1363" }, signature) : nodeCrypto.verify(alg.hash, import_buffer.Buffer.from(signingInput), { key, padding: nodeCrypto.constants.RSA_PKCS1_PADDING }, signature);
+        if (ok) return true;
+      }
+      throw new JwtError("The assertion's signature does not verify with the registered key");
+    }
+    function checkClaims(claims, { clientId, tokenUrl, now = Date.now() }) {
+      const t = Math.floor(now / 1e3);
+      if (claims.iss !== clientId || claims.sub !== clientId) throw new JwtError("iss and sub must both be the client_id");
+      const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+      if (!aud.includes(tokenUrl)) throw new JwtError(`aud must be the token URL, ${tokenUrl}`);
+      if (typeof claims.exp !== "number" || !Number.isFinite(claims.exp)) throw new JwtError("exp is required");
+      if (claims.exp <= t - CLOCK_SKEW_S) throw new JwtError("The assertion has expired");
+      if (claims.exp > t + MAX_LIFETIME_S + CLOCK_SKEW_S) throw new JwtError("exp must be no more than five minutes in the future");
+      if (claims.nbf !== void 0 && (typeof claims.nbf !== "number" || claims.nbf > t + CLOCK_SKEW_S)) throw new JwtError("The assertion is not valid yet (nbf)");
+      if (claims.iat !== void 0 && (typeof claims.iat !== "number" || claims.iat > t + CLOCK_SKEW_S)) throw new JwtError("iat is in the future");
+      if (typeof claims.jti !== "string" || !claims.jti || claims.jti.length > 256) throw new JwtError("jti is required (a unique id for this assertion)");
+      return claims.exp;
+    }
+    function claimJti(keyId, jti, exp) {
+      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+      db3.run(`DELETE FROM fhir_jwt_assertions WHERE expires_at < ?`, nowIso);
+      const until = new Date((exp + CLOCK_SKEW_S) * 1e3).toISOString();
+      const r = db3.run(`INSERT OR IGNORE INTO fhir_jwt_assertions(api_key_id, jti_hash, expires_at) VALUES(?,?,?)`, keyId, sha2562(`${keyId}
+${jti}`), until);
+      return r.changes === 1;
+    }
+    async function verifyClientAssertion(assertion, { keyId, reg, tokenUrl }) {
+      const parsed = decode(assertion);
+      if (parsed.header.typ !== void 0 && !/^(JWT|jwt|application\/jwt)$/.test(String(parsed.header.typ))) throw new JwtError("typ must be JWT");
+      checkClaims(parsed.claims, { clientId: keyId, tokenUrl });
+      let keys = reg.jwks?.keys || [];
+      let verified = keys.length ? verifySignature(parsed, keys) : false;
+      if (!verified && reg.jwks_url) {
+        keys = await fetchJwks(reg.jwks_url);
+        verified = verifySignature(parsed, keys);
+        if (!verified) verified = verifySignature(parsed, await fetchJwks(reg.jwks_url, { force: true }));
+      }
+      if (!verified) throw new JwtError("No registered key matches the assertion (check kid and alg)");
+      if (!claimJti(keyId, parsed.claims.jti, parsed.claims.exp)) throw new JwtError("This assertion (jti) has already been used");
+      return parsed.claims;
+    }
+    function unverifiedIssuer(assertion) {
+      const { claims } = decode(assertion);
+      if (typeof claims.iss !== "string" || !claims.iss) throw new JwtError("iss is required");
+      return claims.iss;
+    }
+    module.exports = { ASSERTION_TYPE, ALGS, MAX_LIFETIME_S, JwtError, parseJwks, checkJwksUrl, fetchJwks, verifyClientAssertion, unverifiedIssuer, _jwksCache: jwksCache };
+  }
+});
+
+// server/fhir/clients.js
+var require_clients2 = __commonJS({
+  "server/fhir/clients.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var { sha256: sha2562, randomToken } = require_crypto();
+    var { FhirError } = require_common();
+    var RESOURCE_TYPES = {
+      Patient: true,
+      EpisodeOfCare: true,
+      Encounter: true,
+      Consent: true,
+      ServiceRequest: true,
+      Task: true,
+      Observation: true,
+      DocumentReference: true,
+      Organization: false,
+      Location: false,
+      HealthcareService: false
+    };
+    var TOKEN_TTL_SECONDS = 900;
+    var DEFAULT_RATE_LIMIT = 120;
+    var KEY_PREFIX = "sudsfhir_";
+    var MAX_ALIASES = 20;
+    var SCOPE_RE = /^system\/(\*|[A-Za-z]+)\.(read|rs|r|s|\*)$/;
+    function parseScopes(list2) {
+      const out2 = [];
+      for (const raw of (Array.isArray(list2) ? list2 : String(list2 || "").split(/[\s,]+/)).map((s) => String(s).trim()).filter(Boolean)) {
+        const m = raw.match(SCOPE_RE);
+        if (!m || m[1] !== "*" && !(m[1] in RESOURCE_TYPES)) throw new FhirError(400, `"${raw}" is not a scope this server grants (system/<ResourceType>.read or system/*.read)`, { code: "invalid" });
+        const norm = `system/${m[1]}.read`;
+        if (!out2.includes(norm)) out2.push(norm);
+      }
+      return out2;
+    }
+    var scopesOfKey = (k) => String(k.scopes || "").split(/\s+/).filter((s) => s.startsWith("system/"));
+    function hasScope(scopes, type) {
+      return scopes.includes("system/*.read") || scopes.includes(`system/${type}.read`);
+    }
+    var FILLER_WORDS = /* @__PURE__ */ new Set(["a", "an", "the", "of", "and", "for", "at", "in", "on", "to", "by", "my", "our", "its", "or", "with"]);
+    var GENERIC_WORDS = new Set("county counties city state states region regional district national federal public community communities local area health healthcare wellness medical medicine hospital hospitals clinic clinics clinical center centre centers centres care services service department dept division office offices agency agencies bureau board program programs programme programmes system systems network networks behavioral behavioural mental substance use disorder disorders sud aod alcohol drug drugs addiction recovery treatment treating provider providers plan plans insurer insurance payer payers managed human social family families child children youth adult adults integrated primary group groups partners association foundation trust inc llc corp corporation co company organization organisation organizations organisations other others all any team teams unit staff".split(" "));
+    var normalise = (s) => String(s || "").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    var wordsOf = (s) => normalise(s).split(" ").filter(Boolean);
+    function directoryNames() {
+      const out2 = /* @__PURE__ */ new Set();
+      for (const r of db3.all(`SELECT name, organization FROM resources`)) {
+        if (r.name) out2.add(normalise(r.name));
+        if (r.organization) out2.add(normalise(r.organization));
+      }
+      return out2;
+    }
+    function aliasProblem(alias, dir) {
+      const meaningful = wordsOf(alias).filter((w) => !FILLER_WORDS.has(w));
+      const specific = meaningful.filter((w) => !GENERIC_WORDS.has(w));
+      const quoted = `"${String(alias).slice(0, 80)}"`;
+      if (!meaningful.length) return "is empty";
+      if (!specific.length) return `${quoted} is made only of generic words (such as county, health, services), so it would match almost any consent that describes a class of recipients`;
+      if (specific.length >= 2 || specific.length === 1 && meaningful.length >= 3) return null;
+      if ((dir || directoryNames()).has(normalise(alias))) return null;
+      return `${quoted} is too short to name one organisation; use its full name (for example "Sacramento County Behavioral Health", not "Sacramento County"), or a name that exactly matches an organisation in the resource directory`;
+    }
+    function splitAliases(v) {
+      return (Array.isArray(v) ? v : String(v || "").split(/[;\n]/)).map((x) => String(x).trim()).filter(Boolean);
+    }
+    function namingProblems(aliases) {
+      const fields = {};
+      if (aliases.length > MAX_ALIASES) fields.aliases = `at most ${MAX_ALIASES} aliases`;
+      else if (aliases.length) {
+        const dir = directoryNames();
+        const bad = aliases.map((a) => aliasProblem(a, dir)).filter(Boolean);
+        if (bad.length) fields.aliases = bad.join("; ");
+      }
+      return Object.keys(fields).length ? fields : null;
+    }
+    function effectiveNames(reg, fallback) {
+      const recipient = reg.recipient || fallback;
+      const aliases = reg.aliases || [];
+      if (!aliases.length) return { recipient, aliases: [], ignored: [] };
+      const dir = directoryNames();
+      const ok = [], ignored = [];
+      for (const a of aliases) {
+        const p = aliasProblem(a, dir);
+        if (p) ignored.push({ alias: a, problem: p });
+        else ok.push(a);
+      }
+      return { recipient, aliases: ok, ignored };
+    }
+    var fieldError = (fields) => {
+      const e = new FhirError(400, Object.values(fields).join("; "), { code: "invalid" });
+      e.fields = fields;
+      return e;
+    };
+    function registration(keyId) {
+      try {
+        return JSON.parse(db3.getSetting(`fhir_client:${keyId}`, "null")) || null;
+      } catch {
+        return null;
+      }
+    }
+    function present(k) {
+      const reg = registration(k.id) || {};
+      const names = effectiveNames(reg, k.name);
+      return {
+        id: k.id,
+        name: k.name,
+        prefix: k.prefix,
+        scopes: scopesOfKey(k),
+        recipient: names.recipient,
+        aliases: reg.aliases || [],
+        aliases_ignored: names.ignored,
+        purpose: reg.purpose || "TREAT",
+        rate_limit: reg.rate_limit || DEFAULT_RATE_LIMIT,
+        // How it may authenticate at the token endpoint. Public keys and the URL are not secrets; they are shown.
+        auth: {
+          client_secret: !reg.jwt_only,
+          private_key_jwt: !!(reg.jwks || reg.jwks_url),
+          jwt_only: !!reg.jwt_only,
+          jwks_url: reg.jwks_url || null,
+          jwks_keys: (reg.jwks?.keys || []).map((x) => ({ kid: x.kid || null, kty: x.kty, alg: x.alg || (x.kty === "EC" ? "ES384" : "RS384") }))
+        },
+        created_at: k.created_at,
+        created_by: k.created_by,
+        created_by_name: k.created_by_name,
+        last_used_at: k.last_used_at,
+        revoked_at: k.revoked_at
+      };
+    }
+    function list() {
+      return db3.all(`SELECT k.*, u.display_name AS created_by_name FROM api_keys k LEFT JOIN users u ON u.id=k.created_by WHERE k.scopes LIKE 'fhir%' ORDER BY k.created_at DESC`).map(present);
+    }
+    function keyRegistration({ jwks, jwks_url, jwt_only }, current2 = {}) {
+      const J = require_jwt();
+      const out2 = { jwks: current2.jwks || null, jwks_url: current2.jwks_url || null, jwt_only: !!current2.jwt_only };
+      if (jwks !== void 0) {
+        if (jwks === null || jwks === "") out2.jwks = null;
+        else {
+          try {
+            out2.jwks = J.parseJwks(jwks);
+          } catch (e) {
+            if (e.jwt) throw fieldError({ jwks: e.message });
+            throw e;
+          }
+        }
+      }
+      if (jwks_url !== void 0) {
+        if (jwks_url === null || jwks_url === "") out2.jwks_url = null;
+        else {
+          try {
+            out2.jwks_url = J.checkJwksUrl(jwks_url);
+          } catch (e) {
+            if (e.jwt) throw fieldError({ jwks_url: e.message });
+            throw e;
+          }
+        }
+      }
+      if (jwt_only !== void 0) out2.jwt_only = !!jwt_only;
+      if (out2.jwt_only && !out2.jwks && !out2.jwks_url) throw fieldError({ jwt_only: "A JWT-only client needs a public key set (JWKS) or a JWKS URL" });
+      return out2;
+    }
+    function create2({ name, recipient, aliases = [], purpose = "TREAT", scopes, rate_limit, jwks, jwks_url, jwt_only }, user) {
+      const granted = parseScopes(scopes);
+      if (!granted.length) throw new FhirError(400, "Grant at least one scope", { code: "invalid" });
+      const list2 = splitAliases(aliases);
+      const problems = namingProblems(list2);
+      if (problems) throw fieldError(problems);
+      const keys = keyRegistration({ jwks, jwks_url, jwt_only });
+      const raw = KEY_PREFIX + randomToken(32);
+      const id = require_crypto().uuid();
+      db3.transaction(() => {
+        db3.run(`INSERT INTO api_keys(id,name,key_hash,prefix,scopes,created_by) VALUES(?,?,?,?,?,?)`, id, name, sha2562(raw), raw.slice(0, 14), ["fhir", ...granted].join(" "), user.id);
+        db3.setSetting(`fhir_client:${id}`, JSON.stringify({ recipient, aliases: list2, purpose, rate_limit: rate_limit || DEFAULT_RATE_LIMIT, ...keys }));
+      });
+      return { id, key: keys.jwt_only ? null : raw, scopes: granted, jwt_only: keys.jwt_only };
+    }
+    function update(id, { aliases, jwks, jwks_url, jwt_only }) {
+      const k = db3.one(`SELECT * FROM api_keys WHERE id=? AND scopes LIKE 'fhir%' AND revoked_at IS NULL`, id);
+      if (!k) return null;
+      const reg = registration(id) || { recipient: k.name };
+      const next = { ...reg, ...keyRegistration({ jwks, jwks_url, jwt_only }, reg) };
+      if (aliases !== void 0) {
+        const list2 = splitAliases(aliases);
+        const problems = namingProblems(list2);
+        if (problems && problems.aliases) throw fieldError({ aliases: problems.aliases });
+        next.aliases = list2;
+      }
+      db3.setSetting(`fhir_client:${id}`, JSON.stringify(next));
+      return present(k);
+    }
+    function revoke(id) {
+      const k = db3.one(`SELECT id FROM api_keys WHERE id=? AND scopes LIKE 'fhir%'`, id);
+      if (!k) return false;
+      db3.run(`UPDATE api_keys SET revoked_at=COALESCE(revoked_at, ?) WHERE id=?`, db3.now(), id);
+      for (const [t, v] of tokens) if (v.keyId === id) tokens.delete(t);
+      return true;
+    }
+    var tokens = /* @__PURE__ */ new Map();
+    function sweepTokens() {
+      const now = Date.now();
+      for (const [t, v] of tokens) if (v.exp < now) tokens.delete(t);
+    }
+    function load(k, scopes) {
+      const reg = registration(k.id) || {};
+      const { recipient, aliases } = effectiveNames(reg, k.name);
+      return {
+        id: k.id,
+        name: k.name,
+        prefix: k.prefix,
+        createdBy: k.created_by,
+        scopes: scopes || scopesOfKey(k),
+        recipient,
+        recipients: [recipient, ...aliases],
+        purpose: reg.purpose || "TREAT",
+        rateLimit: reg.rate_limit || DEFAULT_RATE_LIMIT,
+        // Who the audit trail and the accounting of disclosures name: the administrator who registered the
+        // client answers for it (disclosures.disclosed_by must be a user), labelled with the client itself.
+        actor: { id: k.created_by, username: `fhir:${k.name}`.slice(0, 120) }
+      };
+    }
+    var activeKey = (where, ...params) => db3.one(`SELECT * FROM api_keys WHERE ${where} AND revoked_at IS NULL AND scopes LIKE 'fhir%'`, ...params);
+    var oauthError = (status, error, description) => {
+      const e = new FhirError(status, error);
+      e.oauth = { error, error_description: description };
+      return e;
+    };
+    async function issueToken({ clientId, clientSecret, assertionType, assertion, scope, tokenUrl }, ctx) {
+      let k = null, method = null, reason = "unknown or revoked client credentials";
+      if (assertionType || assertion) {
+        const J = require_jwt();
+        if (assertionType !== J.ASSERTION_TYPE) throw oauthError(400, "invalid_request", `client_assertion_type must be ${J.ASSERTION_TYPE}`);
+        if (clientSecret) throw oauthError(400, "invalid_request", "Use one client authentication method, not both");
+        let id = clientId;
+        if (!id) {
+          try {
+            id = J.unverifiedIssuer(assertion);
+          } catch (e) {
+            if (!e.jwt) throw e;
+            reason = e.message;
+          }
+        }
+        const cand = id ? activeKey("id=?", String(id)) : null;
+        const reg = cand ? registration(cand.id) || {} : {};
+        if (cand && (reg.jwks || reg.jwks_url)) {
+          try {
+            await J.verifyClientAssertion(assertion, { keyId: cand.id, reg, tokenUrl });
+            k = cand;
+            method = "private_key_jwt";
+          } catch (e) {
+            if (!e.jwt) throw e;
+            reason = e.message;
+          }
+        } else if (cand) reason = "no public key is registered for this client";
+      } else if (clientSecret) {
+        const cand = activeKey("key_hash=?", sha2562(String(clientSecret)));
+        if (cand && clientId && clientId !== cand.id) reason = "client_id does not match the secret";
+        else if (cand && (registration(cand.id) || {}).jwt_only) reason = "this client must authenticate with a signed JWT (private_key_jwt)";
+        else if (cand) {
+          k = cand;
+          method = "client_secret";
+        }
+      }
+      if (!k) {
+        audit3.log({ user: null, action: "fhir.token.denied", ip: ctx.ip, success: false, details: { reason: String(reason).slice(0, 200) } });
+        throw oauthError(401, "invalid_client", "Client authentication failed");
+      }
+      const allowed = scopesOfKey(k);
+      let granted = allowed;
+      if (scope) {
+        let asked;
+        try {
+          asked = parseScopes(scope);
+        } catch {
+          throw oauthError(400, "invalid_scope", "Scopes must be system/<ResourceType>.read or system/*.read");
+        }
+        granted = asked.filter((s) => allowed.includes(s) || allowed.includes("system/*.read"));
+        if (!granted.length) throw oauthError(400, "invalid_scope", "None of the requested scopes were granted to this client");
+      }
+      sweepTokens();
+      const token2 = randomToken(32);
+      tokens.set(sha2562(token2), { keyId: k.id, scopes: granted, exp: Date.now() + TOKEN_TTL_SECONDS * 1e3 });
+      db3.run(`UPDATE api_keys SET last_used_at=? WHERE id=?`, db3.now(), k.id);
+      audit3.log({ user: load(k).actor, action: "fhir.token.issued", entity: "api_key", entityId: k.id, ip: ctx.ip, details: { scopes: granted, method } });
+      return { access_token: token2, token_type: "bearer", expires_in: TOKEN_TTL_SECONDS, scope: granted.join(" ") };
+    }
+    function authenticate(ctx) {
+      const h = String(ctx.headers["authorization"] || "");
+      const bearer = h.startsWith("Bearer ") ? h.slice(7).trim() : "";
+      if (!bearer) throw new FhirError(401, "A bearer token is required (see /fhir/R4/metadata)", { code: "login" });
+      const hash2 = sha2562(bearer);
+      const t = tokens.get(hash2);
+      let k = null;
+      if (t && t.exp > Date.now()) k = activeKey("id=?", t.keyId);
+      else if (t) tokens.delete(hash2);
+      if (!k) {
+        const legacy = !t && bearer.startsWith(KEY_PREFIX) ? activeKey("key_hash=?", hash2) : null;
+        audit3.log({
+          user: legacy ? load(legacy).actor : null,
+          action: "fhir.denied",
+          entity: legacy ? "api_key" : null,
+          entityId: legacy ? legacy.id : null,
+          ip: ctx.ip,
+          success: false,
+          details: { reason: legacy ? "client secret used as a bearer token" : "invalid token", path: ctx.path.slice(0, 120) }
+        });
+        if (legacy) throw new FhirError(401, "The client secret is not a bearer token. Exchange it for an access token at POST /fhir/R4/auth/token (grant_type=client_credentials) and send that token instead.", { code: "login" });
+        throw new FhirError(401, "The bearer token is not valid, has expired, or was revoked", { code: "login" });
+      }
+      if (!k.last_used_at || Date.now() - Date.parse(k.last_used_at) > 6e4) db3.run(`UPDATE api_keys SET last_used_at=? WHERE id=?`, db3.now(), k.id);
+      return load(k, t.scopes);
+    }
+    function requireScope(ctx, client, type) {
+      if (hasScope(client.scopes, type)) return;
+      audit3.log({ user: client.actor, action: "fhir.denied", entity: type, ip: ctx.ip, success: false, details: { reason: "scope", needed: `system/${type}.read` } });
+      throw new FhirError(403, `This client has not been granted system/${type}.read`, { code: "forbidden" });
+    }
+    module.exports = {
+      RESOURCE_TYPES,
+      TOKEN_TTL_SECONDS,
+      DEFAULT_RATE_LIMIT,
+      KEY_PREFIX,
+      GENERIC_WORDS,
+      parseScopes,
+      hasScope,
+      list,
+      create: create2,
+      update,
+      revoke,
+      issueToken,
+      authenticate,
+      requireScope,
+      present,
+      splitAliases,
+      aliasProblem,
+      namingProblems,
+      directoryNames,
+      registration
+    };
+  }
+});
+
+// server/fhir/resources.js
+var require_resources = __commonJS({
+  "server/fhir/resources.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var options = require_options();
+    var disclosure = require_disclosure();
+    var { decrypt: decrypt3, blindIndex: blindIndex2 } = require_crypto();
+    var { SYS, PART2_SECURITY, FhirError, dateClause, refId } = require_common();
+    var US_CORE = "http://hl7.org/fhir/us/core/StructureDefinition/";
+    var PROGRAM_ORG = "suds-program";
+    var programRef = () => ({ reference: `Organization/${PROGRAM_ORG}`, display: db3.getSetting("org_name", "SUDS program") || "SUDS program" });
+    var patientRef = (id) => ({ reference: `Patient/${id}` });
+    var dec2 = (v) => {
+      if (!v) return null;
+      try {
+        return decrypt3(v);
+      } catch {
+        return null;
+      }
+    };
+    var dt = (v) => {
+      if (!v) return void 0;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+      const t = Date.parse(v);
+      return Number.isNaN(t) ? void 0 : new Date(t).toISOString();
+    };
+    var instant = (v) => {
+      const t = Date.parse(v || "");
+      return Number.isNaN(t) ? void 0 : new Date(t).toISOString();
+    };
+    var label = (list, code) => code ? options.labelOf(list, code) : void 0;
+    var humanize = options.humanize;
+    function meta(updated, { profile, part2 = true } = {}) {
+      const m = { lastUpdated: instant(updated) };
+      if (profile) m.profile = [US_CORE + profile];
+      if (part2) m.security = PART2_SECURITY;
+      return m;
+    }
+    function prune(o) {
+      if (Array.isArray(o)) return o.map(prune).filter((v) => v !== void 0);
+      if (o && typeof o === "object") {
+        const out2 = {};
+        for (const [k, v] of Object.entries(o)) {
+          const p = prune(v);
+          if (p === void 0 || p === null || p === "" || Array.isArray(p) && !p.length || typeof p === "object" && !Array.isArray(p) && !Object.keys(p).length) continue;
+          out2[k] = p;
+        }
+        return out2;
+      }
+      return o;
+    }
+    var cc = (system, code, display, text) => code ? { coding: [{ system, code, display }], text: text || display } : void 0;
+    var telecom = (system, value, use) => value ? { system, value: String(value), use } : void 0;
+    var address = (line, city, zip) => line || city || zip ? { use: "home", line: line ? [String(line)] : void 0, city: city || void 0, postalCode: zip || void 0, text: [line, city, zip].filter(Boolean).join(", ") } : void 0;
+    var OMB = "urn:oid:2.16.840.1.113883.6.238";
+    var RACE = { american_indian_alaska_native: ["1002-5", "American Indian or Alaska Native"], asian: ["2028-9", "Asian"], black_african_american: ["2054-5", "Black or African American"], native_hawaiian_pacific_islander: ["2076-8", "Native Hawaiian or Other Pacific Islander"], white: ["2106-3", "White"] };
+    var ETHNICITY = { hispanic_latino: ["2135-2", "Hispanic or Latino"], not_hispanic_latino: ["2186-5", "Not Hispanic or Latino"] };
+    function raceEthnicity(codesText) {
+      const codes = String(codesText || "").split(",").map((s) => s.trim()).filter(Boolean);
+      const ext = [];
+      const race = codes.filter((c) => RACE[c]);
+      const eth = codes.filter((c) => ETHNICITY[c]);
+      const raceNull = !race.length && (codes.includes("declined") ? ["ASKU", "Asked but no answer"] : codes.includes("unknown") ? ["UNK", "Unknown"] : null);
+      if (race.length || raceNull || codes.includes("other")) {
+        const parts = race.map((c) => ({ url: "ombCategory", valueCoding: { system: OMB, code: RACE[c][0], display: RACE[c][1] } }));
+        parts.push({ url: "text", valueString: [...race.map((c) => RACE[c][1]), ...codes.includes("other") ? ["Other"] : [], ...raceNull ? [raceNull[1]] : []].join(", ") });
+        ext.push({ url: "http://hl7.org/fhir/us/core/StructureDefinition/us-core-race", extension: parts });
+      }
+      if (eth.length) {
+        ext.push({ url: "http://hl7.org/fhir/us/core/StructureDefinition/us-core-ethnicity", extension: [
+          ...eth.map((c) => ({ url: "ombCategory", valueCoding: { system: OMB, code: ETHNICITY[c][0], display: ETHNICITY[c][1] } })),
+          { url: "text", valueString: eth.map((c) => ETHNICITY[c][1]).join(", ") }
+        ] });
+      }
+      return ext;
+    }
+    var LANGUAGES = {
+      english: "en",
+      spanish: "es",
+      "espa\xF1ol": "es",
+      espanol: "es",
+      chinese: "zh",
+      mandarin: "zh",
+      cantonese: "yue",
+      vietnamese: "vi",
+      tagalog: "tl",
+      filipino: "fil",
+      korean: "ko",
+      russian: "ru",
+      arabic: "ar",
+      armenian: "hy",
+      farsi: "fa",
+      persian: "fa",
+      dari: "prs",
+      pashto: "ps",
+      punjabi: "pa",
+      hindi: "hi",
+      urdu: "ur",
+      hmong: "hmn",
+      khmer: "km",
+      lao: "lo",
+      japanese: "ja",
+      portuguese: "pt",
+      french: "fr",
+      ukrainian: "uk",
+      somali: "so",
+      amharic: "am",
+      tigrinya: "ti",
+      mien: "ium",
+      "american sign language": "ase",
+      asl: "ase"
+    };
+    function language(text) {
+      const code = LANGUAGES[String(text || "").trim().toLowerCase()];
+      return { coding: code ? [{ system: "urn:ietf:bcp:47", code }] : void 0, text };
+    }
+    var GENDER = { female: "female", male: "male", transgender_female: "female", transgender_male: "male", non_binary: "other", other: "other" };
+    function mapPatient(c) {
+      const first = dec2(c.first_name_enc), last = dec2(c.last_name_enc), preferred = dec2(c.preferred_name_enc), dob = dec2(c.dob_enc), medicaid = dec2(c.medicaid_id_enc);
+      return prune({
+        resourceType: "Patient",
+        id: c.id,
+        meta: meta(c.updated_at, { profile: "us-core-patient" }),
+        extension: raceEthnicity(c.race_codes),
+        identifier: [
+          { use: "usual", type: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/v2-0203", code: "MR", display: "Medical record number" }], text: "SUDS client code" }, system: SYS.clientCode, value: c.client_code },
+          medicaid ? { use: "secondary", type: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/v2-0203", code: "MA", display: "Patient Medicaid number" }] }, system: SYS.medicaid, value: medicaid } : void 0
+        ],
+        active: !["closed", "inactive", "deceased"].includes(c.status),
+        name: [{ use: "official", family: last || void 0, given: first ? [first] : void 0 }, preferred ? { use: "usual", given: [preferred] } : void 0],
+        telecom: [telecom("phone", dec2(c.phone_enc), "mobile"), telecom("phone", dec2(c.alt_phone_enc), "home"), telecom("email", dec2(c.email_enc), "home")],
+        gender: GENDER[c.gender] || "unknown",
+        birthDate: /^\d{4}-\d{2}-\d{2}$/.test(dob || "") ? dob : void 0,
+        deceasedBoolean: c.status === "deceased" ? true : void 0,
+        address: [address(dec2(c.address_enc), c.city, c.zip)],
+        communication: c.preferred_language ? [{ language: language(c.preferred_language), preferred: true }] : void 0,
+        managingOrganization: programRef()
+      });
+    }
+    function mapEpisode(e) {
+      return prune({
+        resourceType: "EpisodeOfCare",
+        id: e.id,
+        meta: meta(e.updated_at),
+        status: e.status === "closed" ? "finished" : "active",
+        type: [cc(SYS.episode, "sud-navigation", "SUD navigation services")],
+        patient: patientRef(e.client_id),
+        managingOrganization: programRef(),
+        period: { start: dt(e.opened_at), end: dt(e.closed_at) }
+      });
+    }
+    var V3 = SYS.actCode;
+    var VIRTUAL_MODALITIES = ["phone", "video", "text", "email"];
+    var FIELD_LOCATIONS = ["field", "community", "shelter", "jail", "court", "hospital", "emergency_dept", "treatment_facility"];
+    function encounterClass(modality, location) {
+      if (VIRTUAL_MODALITIES.includes(modality) || location === "telehealth" || location === "phone") return { system: V3, code: "VR", display: "virtual" };
+      if (location === "home") return { system: V3, code: "HH", display: "home health" };
+      if (FIELD_LOCATIONS.includes(location)) return { system: V3, code: "FLD", display: "field" };
+      return { system: V3, code: "AMB", display: "ambulatory" };
+    }
+    var NOT_HELD = ["client_declined", "no_show", "unable_to_locate", "rescheduled"];
+    function end(start2, minutes) {
+      const t = Date.parse(start2 || "");
+      return Number.isNaN(t) || !minutes ? void 0 : new Date(t + minutes * 6e4).toISOString();
+    }
+    function mapIntervention(i) {
+      const typeLabel = label("INTERVENTION_TYPES", i.type);
+      return prune({
+        resourceType: "Encounter",
+        id: `iv-${i.id}`,
+        meta: meta(i.updated_at, { profile: "us-core-encounter" }),
+        identifier: [{ system: "urn:suds:intervention", value: i.id }],
+        status: NOT_HELD.includes(i.outcome) ? "cancelled" : "finished",
+        class: encounterClass(i.modality, i.location),
+        type: [cc(SYS.interventionType, i.type, typeLabel)],
+        serviceType: i.location ? { text: `Location: ${label("LOCATIONS", i.location)}` } : void 0,
+        subject: patientRef(i.client_id),
+        period: { start: dt(i.occurred_at), end: end(i.occurred_at, i.duration_minutes) },
+        length: i.duration_minutes ? { value: i.duration_minutes, unit: "min", system: "http://unitsofmeasure.org", code: "min" } : void 0,
+        serviceProvider: programRef()
+      });
+    }
+    var CALL_HELD = ["reached", "callback_scheduled", "crisis_escalated", "replied", "sent"];
+    function mapCall(c) {
+      const text = c.method === "text";
+      return prune({
+        resourceType: "Encounter",
+        id: `call-${c.id}`,
+        meta: meta(c.updated_at, { profile: "us-core-encounter" }),
+        identifier: [{ system: "urn:suds:call", value: c.id }],
+        status: CALL_HELD.includes(c.outcome) ? "finished" : "cancelled",
+        class: { system: V3, code: "VR", display: "virtual" },
+        type: [cc(SYS.callPurpose, text ? "text-message" : "phone-call", text ? "Text message" : "Phone call")],
+        serviceType: c.contact_type ? { text: `Contact: ${humanize(c.contact_type)} (${c.direction})` } : void 0,
+        priority: c.crisis ? cc("http://terminology.hl7.org/CodeSystem/v3-ActPriority", "EM", "emergency") : void 0,
+        subject: patientRef(c.client_id),
+        period: { start: dt(c.started_at), end: end(c.started_at, c.duration_minutes) },
+        length: c.duration_minutes ? { value: c.duration_minutes, unit: "min", system: "http://unitsofmeasure.org", code: "min" } : void 0,
+        serviceProvider: programRef()
+      });
+    }
+    var today = () => (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+    function consentPurposes(type, purposeText) {
+      return disclosure.consentPurposeCodes({ type, purpose: purposeText }).map((code) => ({ system: SYS.actReason, code, display: disclosure.FHIR_PURPOSES[code].display }));
+    }
+    function mapConsent(k) {
+      const recipient = dec2(k.recipient_enc), purpose = dec2(k.purpose_enc);
+      const active = !k.revoked_at && (!k.expires_at || k.expires_at >= today());
+      const part2 = k.type.startsWith("part2_");
+      return prune({
+        resourceType: "Consent",
+        id: k.id,
+        meta: meta(k.updated_at),
+        status: active ? "active" : "inactive",
+        scope: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/consentscope", code: "patient-privacy", display: "Privacy Consent" }] },
+        category: [{ coding: [{ system: "http://loinc.org", code: "59284-0", display: "Patient Consent" }] }, cc(SYS.consentType, k.type, humanize(k.type))],
+        patient: patientRef(k.client_id),
+        dateTime: dt(k.signed_at),
+        organization: [programRef()],
+        policy: part2 ? [{ authority: "https://www.ecfr.gov", uri: "https://www.ecfr.gov/current/title-42/chapter-I/subchapter-A/part-2" }] : void 0,
+        policyRule: part2 ? cc(SYS.actCode, "42CFRPart2", "42 CFR Part2") : cc("http://terminology.hl7.org/CodeSystem/consentpolicycodes", "hipaa-auth", "HIPAA Authorization"),
+        provision: {
+          type: "permit",
+          period: { start: dt(k.signed_at), end: k.revoked_at ? dt(k.revoked_at) : dt(k.expires_at) },
+          actor: recipient ? [{ role: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/v3-ParticipationType", code: "IRCP", display: "information recipient" }] }, reference: { display: recipient } }] : void 0,
+          purpose: consentPurposes(k.type, purpose)
+        }
+      });
+    }
+    var SR_STATUS = { pending: "active", contacted: "active", accepted: "active", waitlisted: "on-hold", scheduled: "active", admitted: "completed", completed: "completed", declined_by_client: "revoked", declined_by_provider: "revoked", no_show: "revoked", closed: "completed" };
+    var SR_PRIORITY = { routine: "routine", urgent: "urgent", emergent: "stat" };
+    function mapReferral(r) {
+      const res = db3.one(`SELECT name, category FROM resources WHERE id=?`, r.resource_id) || {};
+      return prune({
+        resourceType: "ServiceRequest",
+        id: r.id,
+        meta: meta(r.updated_at),
+        status: SR_STATUS[r.status] || "unknown",
+        intent: "order",
+        category: [{ coding: [{ system: "http://snomed.info/sct", code: "3457005", display: "Patient referral" }] }],
+        priority: SR_PRIORITY[r.urgency] || void 0,
+        code: { coding: res.category ? [{ system: SYS.resourceCategory, code: res.category, display: label("RESOURCE_CATEGORIES", res.category) }] : void 0, text: res.name ? `Referral to ${res.name}` : "Referral" },
+        subject: patientRef(r.client_id),
+        authoredOn: dt(r.referred_at),
+        occurrenceDateTime: dt(r.appointment_at),
+        requester: programRef(),
+        performer: [{ reference: `Organization/${r.resource_id}`, display: res.name }, { reference: `HealthcareService/${r.resource_id}`, display: res.name }]
+      });
+    }
+    var TASK_STATUS = { open: "requested", in_progress: "in-progress", done: "completed", cancelled: "cancelled" };
+    var TASK_PRIORITY = { low: "routine", normal: "routine", high: "urgent", urgent: "asap" };
+    function mapTask(t) {
+      return prune({
+        resourceType: "Task",
+        id: t.id,
+        meta: meta(t.updated_at),
+        status: TASK_STATUS[t.status] || "requested",
+        intent: "order",
+        priority: TASK_PRIORITY[t.priority],
+        code: t.is_milestone ? { text: "Milestone" } : void 0,
+        description: dec2(t.title_enc) || void 0,
+        focus: t.referral_id ? { reference: `ServiceRequest/${t.referral_id}` } : void 0,
+        for: patientRef(t.client_id),
+        authoredOn: dt(t.created_at),
+        lastModified: dt(t.updated_at),
+        requester: programRef(),
+        executionPeriod: t.completed_at ? { end: dt(t.completed_at) } : void 0,
+        restriction: t.due_at ? { period: { end: dt(t.due_at) } } : void 0
+      });
+    }
+    function mapRisk(c) {
+      return prune({
+        resourceType: "Observation",
+        id: `risk-${c.id}`,
+        meta: meta(c.updated_at),
+        status: "final",
+        category: [{ coding: [{ system: "http://terminology.hl7.org/CodeSystem/observation-category", code: "survey", display: "Survey" }] }],
+        code: cc(SYS.observation, "overdose-risk-level", "Overdose risk level (navigator assessment)"),
+        subject: patientRef(c.id),
+        issued: instant(c.updated_at),
+        valueCodeableConcept: cc(SYS.observation, c.risk_level, humanize(c.risk_level))
+      });
+    }
+    function mapOverdose(o) {
+      const comp = (code, display, v) => ({ code: cc(SYS.observation, code, display), ...v });
+      return prune({
+        resourceType: "Observation",
+        id: `od-${o.id}`,
+        meta: meta(o.updated_at),
+        status: "final",
+        category: [cc(SYS.observation, "overdose-event", "Overdose event")],
+        code: cc(SYS.observation, "overdose-event", "Overdose event"),
+        subject: patientRef(o.client_id),
+        effectiveDateTime: dt(o.occurred_at),
+        issued: instant(o.created_at),
+        valueCodeableConcept: cc(SYS.observation, o.kind, label("OVERDOSE_KINDS", o.kind)),
+        component: [
+          comp("naloxone-used", "Naloxone used", { valueBoolean: !!o.naloxone_used }),
+          o.naloxone_doses ? comp("naloxone-doses", "Naloxone doses", { valueInteger: o.naloxone_doses }) : void 0,
+          comp("ems-called", "EMS called", { valueBoolean: !!o.ems_called }),
+          comp("hospitalized", "Hospitalized", { valueBoolean: !!o.hospitalized }),
+          comp("survived", "Survived", { valueBoolean: !!o.survived })
+        ]
+      });
+    }
+    var NOTE_LOINC = { discharge: ["18842-5", "Discharge summary"] };
+    function mapNote(n) {
+      const loinc = NOTE_LOINC[n.format] || ["11506-3", "Progress note"];
+      const encounter = n.intervention_id ? `Encounter/iv-${n.intervention_id}` : n.call_id ? `Encounter/call-${n.call_id}` : null;
+      const encounterOk = encounter && (n.intervention_id ? db3.one(`SELECT 1 FROM interventions WHERE id=? AND client_id=?`, n.intervention_id, n.client_id) : db3.one(`SELECT 1 FROM calls WHERE id=? AND client_id=?`, n.call_id, n.client_id));
+      return prune({
+        resourceType: "DocumentReference",
+        id: n.id,
+        meta: meta(n.updated_at),
+        status: "current",
+        docStatus: n.status === "amended" ? "amended" : "final",
+        type: { coding: [{ system: "http://loinc.org", code: loinc[0], display: loinc[1] }, { system: SYS.noteFormat, code: n.format, display: label("NOTE_FORMATS", n.format) }], text: label("NOTE_FORMATS", n.format) },
+        category: [{ coding: [{ system: "http://hl7.org/fhir/us/core/CodeSystem/us-core-documentreference-category", code: "clinical-note", display: "Clinical Note" }] }, cc(SYS.noteFormat, `kind-${n.kind}`, n.kind === "clinical" ? "Clinical note" : "Case management note")],
+        subject: patientRef(n.client_id),
+        date: instant(n.signed_at || n.updated_at),
+        securityLabel: PART2_SECURITY.map((s) => ({ coding: [s] })),
+        content: [{ attachment: { contentType: "text/plain", title: "Note text is not shared over FHIR (42 CFR Part 2). Request it from the program under a consent that covers it." } }],
+        context: { period: { start: dt(n.occurred_at) }, encounter: encounterOk ? [{ reference: encounter }] : void 0 }
+      });
+    }
+    function directoryTelecom(r) {
+      return [telecom("phone", r.phone, "work"), telecom("fax", r.fax, "work"), telecom("email", r.email, "work"), telecom("url", r.website, "work")];
+    }
+    function mapOrganization(r) {
+      if (r._program) {
+        return prune({
+          resourceType: "Organization",
+          id: PROGRAM_ORG,
+          meta: meta(r.updated_at, { profile: "us-core-organization", part2: false }),
+          active: true,
+          type: [{ coding: [{ system: "http://terminology.hl7.org/CodeSystem/organization-type", code: "prov", display: "Healthcare Provider" }] }],
+          name: db3.getSetting("org_name", "SUDS program") || "SUDS program",
+          telecom: [telecom("phone", db3.getSetting("program_contact", "") || void 0, "work")]
+        });
+      }
+      return prune({
+        resourceType: "Organization",
+        id: r.id,
+        meta: meta(r.updated_at, { profile: "us-core-organization", part2: false }),
+        active: !!r.is_active,
+        type: [{ coding: [{ system: "http://terminology.hl7.org/CodeSystem/organization-type", code: "prov", display: "Healthcare Provider" }] }],
+        name: r.organization || r.name,
+        alias: r.organization && r.organization !== r.name ? [r.name] : void 0,
+        telecom: directoryTelecom(r),
+        address: [address(r.address, r.city, r.zip) && { ...address(r.address, r.city, r.zip), use: "work" }]
+      });
+    }
+    function mapLocation(r) {
+      return prune({
+        resourceType: "Location",
+        id: r.id,
+        meta: meta(r.updated_at, { profile: "us-core-location", part2: false }),
+        status: r.is_active ? "active" : "inactive",
+        name: r.name,
+        telecom: directoryTelecom(r),
+        address: address(r.address, r.city, r.zip) && { ...address(r.address, r.city, r.zip), use: "work" },
+        managingOrganization: { reference: `Organization/${r.id}`, display: r.organization || r.name }
+      });
+    }
+    var split = (s) => String(s || "").split(",").map((x) => x.trim()).filter(Boolean);
+    function mapHealthcareService(r) {
+      return prune({
+        resourceType: "HealthcareService",
+        id: r.id,
+        meta: meta(r.updated_at, { part2: false }),
+        active: !!r.is_active,
+        providedBy: { reference: `Organization/${r.id}`, display: r.organization || r.name },
+        category: [cc(SYS.resourceCategory, r.category, label("RESOURCE_CATEGORIES", r.category))],
+        type: split(r.service_tags).map((t) => cc(SYS.serviceTag, t, humanize(t))),
+        location: [{ reference: `Location/${r.id}` }],
+        name: r.name,
+        comment: r.summary || void 0,
+        extraDetails: [r.services, r.levels_of_care ? `Levels of care: ${r.levels_of_care}` : null, r.mat_offered ? `MAT offered: ${r.mat_offered}` : null, r.intake_process ? `Intake: ${r.intake_process}` : null, r.cost_notes ? `Cost: ${r.cost_notes}` : null].filter(Boolean).join("\n") || void 0,
+        telecom: directoryTelecom(r),
+        eligibility: r.eligibility || r.populations ? [{ code: r.populations ? { text: split(r.populations).map(humanize).join(", ") } : void 0, comment: r.eligibility || void 0 }] : void 0,
+        characteristic: [r.accepts_medicaid ? { text: "Accepts Medicaid" } : void 0, r.accepts_uninsured ? { text: "Accepts uninsured clients" } : void 0],
+        communication: split(r.languages).map((l) => ({ text: l })),
+        availabilityExceptions: r.hours || void 0
+      });
+    }
+    var LIVE_CLIENT = `c.deleted_at IS NULL AND c.merged_into IS NULL`;
+    var eqParam = (col, xform = (v) => v) => (values) => orClause(values, (v) => ({ sql: `${col} = ?`, params: [xform(v)] }));
+    function orClause(values, one) {
+      const parts = [];
+      const params = [];
+      for (const raw of values) {
+        const alts = String(raw).split(",").map((s) => s.trim()).filter(Boolean);
+        if (!alts.length) throw new FhirError(400, "Empty search value", { code: "invalid" });
+        const sub = alts.map(one);
+        parts.push(`(${sub.map((s) => s.sql).join(" OR ")})`);
+        for (const s of sub) params.push(...s.params);
+      }
+      return { sql: parts.join(" AND "), params };
+    }
+    var statusParam = (map) => (values) => orClause(values, (v) => {
+      const raw = Object.entries(map).filter(([, f]) => f === v).map(([k]) => k);
+      if (!raw.length) return { sql: "0", params: [] };
+      return { sql: `_st IN (${raw.map(() => "?").join(",")})`, params: raw };
+    });
+    var nameParam = (values, mod) => orClause(values, (v) => mod === "exact" ? { sql: `_name = ?`, params: [v] } : { sql: `LOWER(_name) LIKE ? ESCAPE '\\'`, params: [(mod === "contains" ? "%" : "") + v.toLowerCase().replace(/[\\%_]/g, (m) => "\\" + m) + "%"] });
+    var DEFS = {
+      Patient: {
+        src: `SELECT c.id _fid, 'client' _kind, c.id _rid, c.id _cid, c.updated_at _upd, c.intake_date _date, c.status _st, c.client_code _code, c.dob_idx _dob, c.last_name_idx _fam, c.first_name_idx _giv FROM clients c WHERE ${LIVE_CLIENT}`,
+        load: (kind, id) => db3.one(`SELECT * FROM clients WHERE id=?`, id),
+        map: mapPatient,
+        params: {
+          identifier: (values) => orClause(values, (v) => {
+            const [sys, val] = v.includes("|") ? [v.slice(0, v.indexOf("|")), v.slice(v.indexOf("|") + 1)] : [null, v];
+            if (sys && sys !== SYS.clientCode) return { sql: "0", params: [] };
+            return { sql: `_code = ?`, params: [val] };
+          }),
+          family: (values) => orClause(values, (v) => ({ sql: `_fam = ?`, params: [blindIndex2(v)] })),
+          given: (values) => orClause(values, (v) => ({ sql: `_giv = ?`, params: [blindIndex2(String(v).trim().toLowerCase())] })),
+          birthdate: (values) => orClause(values, (v) => {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new FhirError(400, "birthdate is searchable by exact date (YYYY-MM-DD) only; dates of birth are stored encrypted", { code: "invalid" });
+            return { sql: `_dob = ?`, params: [blindIndex2(v)] };
+          })
+        },
+        identifying: ["_id", "identifier", "family", "given", "birthdate"]
+      },
+      EpisodeOfCare: {
+        src: `SELECT e.id _fid, 'episode' _kind, e.id _rid, e.client_id _cid, e.updated_at _upd, e.opened_at _date, e.status _st FROM episodes e JOIN clients c ON c.id=e.client_id WHERE ${LIVE_CLIENT}`,
+        load: (kind, id) => db3.one(`SELECT * FROM episodes WHERE id=?`, id),
+        map: mapEpisode,
+        date: true,
+        params: { status: statusParam({ open: "active", closed: "finished" }) }
+      },
+      Encounter: {
+        src: `SELECT 'iv-' || i.id _fid, 'intervention' _kind, i.id _rid, i.client_id _cid, i.updated_at _upd, i.occurred_at _date FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${LIVE_CLIENT}
+      UNION ALL SELECT 'call-' || k.id, 'call', k.id, k.client_id, k.updated_at, k.started_at FROM calls k JOIN clients c ON c.id=k.client_id WHERE ${LIVE_CLIENT}`,
+        load: (kind, id) => db3.one(`SELECT * FROM ${kind === "call" ? "calls" : "interventions"} WHERE id=?`, id),
+        map: (row, kind) => kind === "call" ? mapCall(row) : mapIntervention(row),
+        date: true,
+        params: {}
+      },
+      Consent: {
+        src: `SELECT k.id _fid, 'consent' _kind, k.id _rid, k.client_id _cid, k.updated_at _upd, k.signed_at _date, CASE WHEN k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= date('now')) THEN 'active' ELSE 'inactive' END _st
+      FROM consents k JOIN clients c ON c.id=k.client_id WHERE ${LIVE_CLIENT} AND k.type IN (${disclosure.FHIR_CONSENT_TYPES.map((t) => `'${t}'`).join(",")})`,
+        load: (kind, id) => db3.one(`SELECT * FROM consents WHERE id=?`, id),
+        map: mapConsent,
+        date: true,
+        params: { status: statusParam({ active: "active", inactive: "inactive" }) },
+        // Only the consents that cover this recipient for this purpose, of a type that may cover it now (a
+        // general release is listed only outside a Part 2 programme): which other organisations a client has
+        // agreed to share with is none of this recipient's business.
+        keep: (row, client) => disclosure.consentCovers({ type: row.type, recipient: dec2(row.recipient_enc), purpose: dec2(row.purpose_enc), categories: row.info_categories }, { recipients: client.recipients, purposeOfUse: client.purpose, category: "*" })
+      },
+      ServiceRequest: {
+        src: `SELECT r.id _fid, 'referral' _kind, r.id _rid, r.client_id _cid, r.updated_at _upd, r.referred_at _date, r.status _st FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${LIVE_CLIENT}`,
+        load: (kind, id) => db3.one(`SELECT * FROM referrals WHERE id=?`, id),
+        map: mapReferral,
+        date: "authored",
+        params: { status: statusParam(SR_STATUS) }
+      },
+      Task: {
+        src: `SELECT t.id _fid, 'task' _kind, t.id _rid, t.client_id _cid, t.updated_at _upd, t.created_at _date, t.status _st FROM tasks t JOIN clients c ON c.id=t.client_id WHERE ${LIVE_CLIENT}`,
+        load: (kind, id) => db3.one(`SELECT * FROM tasks WHERE id=?`, id),
+        map: mapTask,
+        date: "authored-on",
+        params: { status: statusParam(TASK_STATUS) }
+      },
+      Observation: {
+        src: `SELECT 'risk-' || c.id _fid, 'risk' _kind, c.id _rid, c.id _cid, c.updated_at _upd, c.updated_at _date, 'survey' _cat FROM clients c WHERE ${LIVE_CLIENT} AND c.risk_level IS NOT NULL AND c.risk_level <> ''
+      UNION ALL SELECT 'od-' || o.id, 'overdose', o.id, o.client_id, o.updated_at, o.occurred_at, 'overdose-event' FROM overdose_events o JOIN clients c ON c.id=o.client_id WHERE ${LIVE_CLIENT}`,
+        load: (kind, id) => db3.one(`SELECT * FROM ${kind === "risk" ? "clients" : "overdose_events"} WHERE id=?`, id),
+        map: (row, kind) => kind === "risk" ? mapRisk(row) : mapOverdose(row),
+        date: true,
+        params: { category: (values) => orClause(values, (v) => ({ sql: `_cat = ?`, params: [v.includes("|") ? v.slice(v.indexOf("|") + 1) : v] })) }
+      },
+      DocumentReference: {
+        src: `SELECT n.id _fid, 'note' _kind, n.id _rid, n.client_id _cid, n.updated_at _upd, COALESCE(n.signed_at, n.occurred_at) _date FROM notes n JOIN clients c ON c.id=n.client_id
+      WHERE ${LIVE_CLIENT} AND n.deleted_at IS NULL AND n.status IN ('signed','amended') AND n.format <> 'supervision' AND n.counseling_note = 0`,
+        load: (kind, id) => db3.one(`SELECT * FROM notes WHERE id=?`, id),
+        map: mapNote,
+        date: true,
+        params: {}
+      },
+      Organization: {
+        directory: true,
+        src: `SELECT '${PROGRAM_ORG}' _fid, 'program' _kind, '${PROGRAM_ORG}' _rid, NULL _cid, COALESCE((SELECT updated_at FROM settings WHERE key='org_name'), '2020-01-01T00:00:00.000Z') _upd, NULL _date, 1 _active, COALESCE((SELECT value FROM settings WHERE key='org_name'), 'SUDS program') _name
+      UNION ALL SELECT r.id, 'resource', r.id, NULL, r.updated_at, NULL, r.is_active, COALESCE(NULLIF(r.organization, ''), r.name) FROM resources r`,
+        load: (kind, id) => kind === "program" ? { _program: true, updated_at: db3.one(`SELECT updated_at FROM settings WHERE key='org_name'`)?.updated_at || "2020-01-01T00:00:00.000Z" } : db3.one(`SELECT * FROM resources WHERE id=?`, id),
+        map: mapOrganization,
+        params: { name: nameParam, active: (values) => orClause(values, (v) => ({ sql: `_active = ?`, params: [v === "true" ? 1 : 0] })) }
+      },
+      Location: {
+        directory: true,
+        src: `SELECT r.id _fid, 'resource' _kind, r.id _rid, NULL _cid, r.updated_at _upd, NULL _date, r.is_active _active, r.name _name, r.city _city, r.zip _zip FROM resources r`,
+        load: (kind, id) => db3.one(`SELECT * FROM resources WHERE id=?`, id),
+        map: mapLocation,
+        params: { name: nameParam, "address-city": eqParam("_city"), "address-postalcode": eqParam("_zip"), status: (values) => orClause(values, (v) => ({ sql: `_active = ?`, params: [v === "active" ? 1 : 0] })) }
+      },
+      HealthcareService: {
+        directory: true,
+        src: `SELECT r.id _fid, 'resource' _kind, r.id _rid, NULL _cid, r.updated_at _upd, NULL _date, r.is_active _active, r.name _name, r.category _cat FROM resources r`,
+        load: (kind, id) => db3.one(`SELECT * FROM resources WHERE id=?`, id),
+        map: mapHealthcareService,
+        params: { name: nameParam, active: (values) => orClause(values, (v) => ({ sql: `_active = ?`, params: [v === "true" ? 1 : 0] })), "service-category": (values) => orClause(values, (v) => ({ sql: `_cat = ?`, params: [v.includes("|") ? v.slice(v.indexOf("|") + 1) : v] })) }
+      }
+    };
+    for (const [type, d] of Object.entries(DEFS)) {
+      d.type = type;
+      d.phi = !d.directory;
+    }
+    var CONTROL = ["_count", "_offset", "_format", "_pretty", "_summary", "_elements"];
+    var MAX_COUNT = 200;
+    var DEFAULT_COUNT = 50;
+    function searchParams(type) {
+      const d = DEFS[type];
+      const out2 = ["_id", "_lastUpdated"];
+      if (d.phi && type !== "Patient") out2.push("patient");
+      if (d.date) out2.push(d.date === true ? "date" : d.date);
+      out2.push(...Object.keys(d.params));
+      if (d.params.name) out2.push("name:contains", "name:exact");
+      return out2;
+    }
+    function where(type, query, { since } = {}) {
+      const d = DEFS[type];
+      const clauses = [];
+      const params = [];
+      const names = [.../* @__PURE__ */ new Set([...query.keys()])];
+      const allowed = searchParams(type);
+      for (const name of names) {
+        if (CONTROL.includes(name)) continue;
+        if (!allowed.includes(name)) throw new FhirError(400, `Search parameter "${name}" is not supported for ${type}. Supported: ${allowed.join(", ")}`, { code: "not-supported" });
+        const values = query.getAll(name);
+        const [base, mod] = name.split(":");
+        let c;
+        if (base === "_id") c = orClause(values, (v) => ({ sql: `_fid = ?`, params: [v] }));
+        else if (base === "_lastUpdated") c = andDates("_upd", values);
+        else if (base === "patient") c = orClause(values, (v) => ({ sql: `_cid = ?`, params: [refId(v, "Patient")] }));
+        else if (d.date && base === (d.date === true ? "date" : d.date)) c = andDates("_date", values);
+        else c = d.params[base](values, mod);
+        clauses.push(c.sql);
+        params.push(...c.params);
+      }
+      if (since) {
+        clauses.push("_upd > ?");
+        params.push(since);
+      }
+      return { sql: clauses.length ? clauses.join(" AND ") : "1=1", params };
+    }
+    function andDates(col, values) {
+      const parts = values.map((v) => dateClause(col, v));
+      return { sql: parts.map((p) => p.sql).join(" AND "), params: parts.flatMap((p) => p.params) };
+    }
+    function page(type, filter, { count, offset }) {
+      const d = DEFS[type];
+      return db3.all(`SELECT * FROM (${d.src}) s WHERE ${filter.sql} ORDER BY _upd, _fid LIMIT ? OFFSET ?`, ...filter.params, count, offset);
+    }
+    function toResource(type, row) {
+      const d = DEFS[type];
+      const full = d.load(row._kind, row._rid);
+      if (!full) return null;
+      return { full, resource: d.map(full, row._kind) };
+    }
+    function identifying(type, query) {
+      const d = DEFS[type];
+      const keys = [...query.keys()].map((k) => k.split(":")[0]);
+      return keys.includes("patient") || keys.includes("_id") || (d.identifying || []).some((k) => keys.includes(k));
+    }
+    module.exports = { DEFS, PROGRAM_ORG, MAX_COUNT, DEFAULT_COUNT, searchParams, where, page, toResource, identifying, US_CORE };
+  }
+});
+
+// server/fhir/bulk.js
+var require_bulk = __commonJS({
+  "server/fhir/bulk.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var path = (init_path(), __toCommonJS(path_exports));
+    var config = require_config();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var disclosure = require_disclosure();
+    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
+    var R = require_resources();
+    var C = require_clients2();
+    var { FhirError, FHIR_NDJSON, PART2_SECURITY, outcome, send, baseUrl } = require_common();
+    var TTL_MS = Math.max(1, Number(proc.env.FHIR_EXPORT_TTL_MINUTES) || 60) * 6e4;
+    var MAX_ACTIVE_PER_CLIENT = 2;
+    var PAGE = 500;
+    var OUTPUT_FORMATS = ["application/fhir+ndjson", "application/ndjson", "ndjson"];
+    var STATE = "job.json.enc";
+    var dir = () => path.join(config.dataDir, "fhir-export");
+    var jobs = /* @__PURE__ */ new Map();
+    function save(job) {
+      try {
+        fs.mkdirSync(path.join(dir(), job.id), { recursive: true, mode: 448 });
+        fs.writeFileSync(path.join(dir(), job.id, STATE), encrypt3(JSON.stringify(job)), { mode: 384 });
+      } catch (e) {
+        console.error(`[suds] FHIR export ${job.id}: could not save its state:`, e.message);
+      }
+    }
+    var restored = false;
+    function restore() {
+      if (restored) return;
+      restored = true;
+      let entries = [];
+      try {
+        entries = fs.readdirSync(dir());
+      } catch {
+        return;
+      }
+      const now = Date.now();
+      for (const e of entries) {
+        if (jobs.has(e)) continue;
+        const p = path.join(dir(), e);
+        let job = null;
+        try {
+          job = JSON.parse(decrypt3(fs.readFileSync(path.join(p, STATE), "utf8")));
+        } catch {
+        }
+        if (!job || job.id !== e || job.expiresAt && job.expiresAt < now) {
+          try {
+            fs.rmSync(p, { recursive: true, force: true });
+          } catch {
+          }
+          continue;
+        }
+        if (job.status === "in-progress") {
+          job.status = "error";
+          job.message = "The server restarted while this export was being built; start a new export";
+          job.expiresAt = now + TTL_MS;
+          job.outputs = [];
+          job.errors = [];
+          try {
+            for (const f of fs.readdirSync(p)) if (f !== STATE) fs.rmSync(path.join(p, f), { force: true });
+          } catch {
+          }
+          save(job);
+        }
+        jobs.set(job.id, job);
+      }
+    }
+    function sweep() {
+      const now = Date.now();
+      for (const [id, j] of jobs) if (j.expiresAt && j.expiresAt < now) removeJob(id);
+      let entries = [];
+      try {
+        entries = fs.readdirSync(dir());
+      } catch {
+        return;
+      }
+      for (const e of entries) {
+        if (jobs.has(e)) continue;
+        const p = path.join(dir(), e);
+        try {
+          if (now - fs.statSync(p).mtimeMs > TTL_MS) fs.rmSync(p, { recursive: true, force: true });
+        } catch {
+        }
+      }
+    }
+    var later = (fn) => (globalThis.setImmediate || setTimeout)(fn);
+    var sweeper = setInterval(sweep, 5 * 6e4);
+    if (sweeper && sweeper.unref) sweeper.unref();
+    function removeJob(id) {
+      jobs.delete(id);
+      try {
+        fs.rmSync(path.join(dir(), id), { recursive: true, force: true });
+      } catch {
+      }
+    }
+    function exportTypes(ctx, client, level) {
+      const all = Object.keys(R.DEFS).filter((t) => level === "system" || R.DEFS[t].phi);
+      const asked = ctx.query.get("_type");
+      if (!asked) {
+        const types2 = all.filter((t) => C.hasScope(client.scopes, t));
+        if (!types2.length) throw new FhirError(403, "This client has no read scope for any exportable resource type", { code: "forbidden" });
+        return types2;
+      }
+      const types = [...new Set(asked.split(",").map((s) => s.trim()).filter(Boolean))];
+      for (const t of types) {
+        if (!R.DEFS[t]) throw new FhirError(400, `"${t}" is not a resource type this server exports`, { code: "not-supported" });
+        if (!all.includes(t)) throw new FhirError(400, `${t} is not in the Patient compartment; use the system-level $export for it`, { code: "invalid" });
+        C.requireScope(ctx, client, t);
+      }
+      return types;
+    }
+    function kickoff(ctx, client, level) {
+      sweep();
+      if (!/respond-async/i.test(String(ctx.headers.prefer || ""))) throw new FhirError(400, 'Bulk export requires the header "Prefer: respond-async"', { code: "required" });
+      const accept = String(ctx.headers.accept || "");
+      if (accept && !/json|\*\/\*/i.test(accept)) throw new FhirError(406, "Accept must be application/fhir+json", { code: "not-supported" });
+      for (const k of ctx.query.keys()) if (!["_type", "_since", "_outputFormat"].includes(k)) throw new FhirError(400, `Export parameter "${k}" is not supported (supported: _type, _since, _outputFormat)`, { code: "not-supported" });
+      const fmt = ctx.query.get("_outputFormat");
+      if (fmt && !OUTPUT_FORMATS.includes(fmt)) throw new FhirError(400, `_outputFormat must be application/fhir+ndjson`, { code: "not-supported" });
+      let since = null;
+      if (ctx.query.get("_since")) {
+        const t = Date.parse(ctx.query.get("_since"));
+        if (Number.isNaN(t) || !/^\d{4}-\d{2}-\d{2}T/.test(ctx.query.get("_since"))) throw new FhirError(400, "_since must be a FHIR instant (e.g. 2026-01-01T00:00:00Z)", { code: "invalid" });
+        since = new Date(t).toISOString();
+      }
+      const types = exportTypes(ctx, client, level);
+      const running = [...jobs.values()].filter((j) => j.keyId === client.id && j.status === "in-progress").length;
+      if (running >= MAX_ACTIVE_PER_CLIENT) throw new FhirError(429, `This client already has ${running} exports running; wait for one to finish`, { code: "throttled", headers: { "Retry-After": "30" } });
+      const base = baseUrl(ctx);
+      const job = {
+        id: uuid2(),
+        keyId: client.id,
+        level,
+        types,
+        since,
+        request: `${base}${level === "patient" ? "/Patient" : ""}/$export${ctx.query.toString() ? "?" + ctx.query.toString() : ""}`,
+        transactionTime: db3.now(),
+        status: "in-progress",
+        progress: "queued",
+        outputs: [],
+        errors: [],
+        expiresAt: null,
+        base,
+        downloaded: {},
+        massChecked: false
+      };
+      jobs.set(job.id, job);
+      save(job);
+      audit3.log({ user: client.actor, action: "fhir.export.kickoff", entity: "fhir_export", entityId: job.id, ip: ctx.ip, details: { client: client.prefix, level, types, since: !!since } });
+      later(() => {
+        run2(job, client, ctx.ip).catch(() => {
+        });
+      });
+      send(ctx.res, 202, outcome([{ severity: "information", code: "informational", diagnostics: `Export ${job.id} accepted; poll the Content-Location URL for its status.` }]), { "Content-Location": `${base}/$export-status/${job.id}` });
+    }
+    async function run2(job, client, ip) {
+      const jobDir = path.join(dir(), job.id);
+      try {
+        fs.mkdirSync(jobDir, { recursive: true, mode: 448 });
+        const patients = /* @__PURE__ */ new Set();
+        const omitted = /* @__PURE__ */ new Set();
+        let total = 0;
+        for (const type of job.types) {
+          if (!jobs.has(job.id)) return;
+          job.progress = `exporting ${type}`;
+          const d = R.DEFS[type];
+          const coverage = disclosure.fhirCoverage({ cacheKey: client.id, recipients: client.recipients, purposeOfUse: client.purpose, resourceType: type });
+          const filter = R.where(type, new URLSearchParams(), { since: job.since });
+          const lines = [];
+          const inFile = {};
+          for (let offset = 0; ; offset += PAGE) {
+            const rows = R.page(type, filter, { count: PAGE, offset });
+            for (const row of rows) {
+              if (d.phi && !coverage.has(row._cid)) {
+                omitted.add(row._cid);
+                continue;
+              }
+              const r = R.toResource(type, row);
+              if (!r || d.keep && !d.keep(r.full, client)) continue;
+              lines.push(JSON.stringify(r.resource));
+              if (d.phi) {
+                inFile[row._cid] = (inFile[row._cid] || 0) + 1;
+                patients.add(row._cid);
+              }
+            }
+            if (rows.length < PAGE) break;
+            await new Promise((res) => later(res));
+          }
+          if (lines.length) {
+            const file2 = `${type}.ndjson`;
+            fs.writeFileSync(path.join(jobDir, file2 + ".enc"), encrypt3(lines.join("\n") + "\n"), { mode: 384 });
+            job.outputs.push({ type, file: file2, count: lines.length, patients: d.phi ? inFile : null });
+            total += lines.length;
+          }
+        }
+        if (!jobs.has(job.id)) return;
+        const phi = job.types.some((t) => R.DEFS[t].phi);
+        if (phi) {
+          const issues = [{ severity: "information", code: "informational", diagnostics: `42 CFR \xA72.32 notice: ${disclosure.notice().text}` }];
+          if (omitted.size) issues.push({ severity: "warning", code: "suppressed", diagnostics: `${omitted.size} patient(s) were left out of this export: no active consent covers ${client.recipient} for this purpose of use, or the patient has an agreed restriction.` });
+          const oo = { ...outcome(issues), meta: { security: PART2_SECURITY } };
+          fs.writeFileSync(path.join(jobDir, "OperationOutcome.ndjson.enc"), encrypt3(JSON.stringify(oo) + "\n"), { mode: 384 });
+          job.errors.push({ type: "OperationOutcome", file: "OperationOutcome.ndjson", count: 1 });
+        }
+        audit3.log({ user: client.actor, action: "fhir.export.complete", entity: "fhir_export", entityId: job.id, ip, details: { client: client.prefix, types: job.types, resources: total, patients: patients.size, omitted_patients: omitted.size } });
+        job.status = "complete";
+        job.progress = "complete";
+        job.expiresAt = Date.now() + TTL_MS;
+        save(job);
+      } catch (e) {
+        job.status = "error";
+        job.message = "The export failed on the server";
+        job.expiresAt = Date.now() + TTL_MS;
+        job.outputs = [];
+        job.errors = [];
+        try {
+          fs.rmSync(jobDir, { recursive: true, force: true });
+        } catch {
+        }
+        if (jobs.has(job.id)) save(job);
+        console.error(`[suds] FHIR export ${job.id} failed:`, e.message);
+        audit3.log({ user: client.actor, action: "fhir.export.failed", entity: "fhir_export", entityId: job.id, ip, success: false, details: { message: String(e.message).slice(0, 200) } });
+      }
+    }
+    function ownJob(ctx, client) {
+      sweep();
+      const j = jobs.get(ctx.params.id);
+      if (!j || j.keyId !== client.id) throw new FhirError(404, "No such export (it may have expired or been deleted)", { code: "not-found" });
+      return j;
+    }
+    function status(ctx, client) {
+      const j = ownJob(ctx, client);
+      if (j.status === "in-progress") {
+        ctx.res.writeHead(202, { "X-Progress": j.progress, "Retry-After": "2", "Content-Length": 0 });
+        ctx.res.end();
+        return;
+      }
+      if (j.status === "error") throw new FhirError(500, j.message, { code: "exception" });
+      const url = (f) => `${j.base}/$export-file/${j.id}/${f.file}`;
+      const manifest = {
+        transactionTime: j.transactionTime,
+        request: j.request,
+        requiresAccessToken: true,
+        output: j.outputs.map((f) => ({ type: f.type, url: url(f), count: f.count })),
+        error: j.errors.map((f) => ({ type: f.type, url: url(f) })),
+        extension: { "urn:suds:part2": {
+          security: j.types.some((t) => R.DEFS[t].phi) ? PART2_SECURITY : [],
+          notice: j.types.some((t) => R.DEFS[t].phi) ? disclosure.notice().text : void 0,
+          expires: new Date(j.expiresAt).toISOString(),
+          consent_checked_at: "download"
+        } }
+      };
+      const body = JSON.stringify(manifest);
+      ctx.res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Content-Length": import_buffer.Buffer.byteLength(body), Expires: new Date(j.expiresAt).toUTCString() });
+      ctx.res.end(body);
+    }
+    function cancel(ctx, client) {
+      const j = ownJob(ctx, client);
+      removeJob(j.id);
+      audit3.log({ user: client.actor, action: "fhir.export.delete", entity: "fhir_export", entityId: j.id, ip: ctx.ip, details: { client: client.prefix, status: j.status } });
+      send(ctx.res, 202, outcome([{ severity: "information", code: "informational", diagnostics: `Export ${j.id} deleted` }]));
+    }
+    function file(ctx, client) {
+      const j = ownJob(ctx, client);
+      const f = [...j.outputs, ...j.errors].find((x) => x.file === ctx.params.file);
+      if (j.status !== "complete" || !f) throw new FhirError(404, "No such export file", { code: "not-found" });
+      const who = f.patients ? Object.keys(f.patients) : [];
+      let perClient = null;
+      if (who.length) {
+        const coverage = disclosure.fhirCoverage({ cacheKey: client.id, recipients: client.recipients, purposeOfUse: client.purpose, resourceType: f.type });
+        const lapsed = who.filter((cid) => !coverage.has(cid));
+        if (lapsed.length) {
+          audit3.log({ user: client.actor, action: "fhir.export.download.refused", entity: "fhir_export", entityId: j.id, ip: ctx.ip, success: false, details: { client: client.prefix, type: f.type, lapsed_patients: lapsed.length } });
+          throw new FhirError(410, "Since this export was built, a patient in this file is no longer covered by a consent to this recipient (revoked, expired, or a restriction was agreed). The file will not be released; start a new export.", { code: "business-rule" });
+        }
+        if (!j.downloaded[f.file]) perClient = new Map(who.map((cid) => [cid, { consentId: coverage.get(cid), what: `FHIR bulk export ${j.id}: ${f.type} (${f.patients[cid]})` }]));
+      }
+      let body;
+      try {
+        body = decrypt3(fs.readFileSync(path.join(dir(), j.id, f.file + ".enc"), "utf8"));
+      } catch {
+        throw new FhirError(410, "This export file can no longer be read (expired, or the server key changed); start a new export", { code: "not-found" });
+      }
+      if (perClient) {
+        disclosure.recordFhir({ perClient, recipient: client.recipient, purposeOfUse: client.purpose, sourceRef: `fhir-export:${j.id}`, user: client.actor, ip: ctx.ip });
+        if (!j.massChecked) {
+          j.massChecked = true;
+          const everyone = new Set(j.outputs.flatMap((o) => o.patients ? Object.keys(o.patients) : []));
+          require_incidents().maybeMassExport({ clients: everyone.size, kind: "fhir-bulk", user: client.actor });
+        }
+      }
+      if (!j.downloaded[f.file]) {
+        j.downloaded[f.file] = (/* @__PURE__ */ new Date()).toISOString();
+        save(j);
+      }
+      audit3.log({ user: client.actor, action: "fhir.export.download", entity: "fhir_export", entityId: j.id, ip: ctx.ip, details: { client: client.prefix, type: f.type, count: f.count, patients: who.length, accounted: !!perClient } });
+      ctx.res.writeHead(200, { "Content-Type": FHIR_NDJSON, "Content-Length": import_buffer.Buffer.byteLength(body) });
+      ctx.res.end(body);
+    }
+    module.exports = { kickoff, status, cancel, file, sweep, restore, TTL_MS, _jobs: jobs, _resetForTests: () => {
+      jobs.clear();
+      restored = false;
+    } };
+  }
+});
+
+// server/routes/fhir.js
+var require_fhir = __commonJS({
+  "server/routes/fhir.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var config = require_config();
+    var disclosure = require_disclosure();
+    var { rateLimit } = require_app2();
+    var { HttpError: HttpError3, badRequest, notFound } = require_http();
+    var { validate } = require_validate();
+    var { uuid: uuid2 } = require_crypto();
+    var C = require_clients2();
+    var R = require_resources();
+    var bulk = require_bulk();
+    var { FhirError, FHIR_VERSION, PART2_SECURITY, outcome, send, sendError, baseUrl } = require_common();
+    function fhir(fn, { open: open2 = false } = {}) {
+      return async (ctx) => {
+        try {
+          let client = null;
+          if (!open2) {
+            client = C.authenticate(ctx);
+            if (!rateLimit(`fhirclient:${client.id}`, client.rateLimit, 6e4)) throw new FhirError(429, `Rate limit of ${client.rateLimit} requests a minute exceeded`, { code: "throttled", headers: { "Retry-After": "60" } });
+          }
+          await fn(ctx, client);
+        } catch (e) {
+          if (e instanceof FhirError || e instanceof HttpError3) sendError(ctx.res, e.status, e.message, { code: e.code, headers: e.headers || {} });
+          else {
+            console.error(`[suds] ${ctx.method} ${ctx.path}:`, e);
+            try {
+              audit3.log({ user: null, action: "server.error", ip: ctx.ip, success: false, details: { path: ctx.path.slice(0, 120), message: String(e.message).slice(0, 300) } });
+            } catch {
+            }
+            sendError(ctx.res, 500, "Internal server error");
+          }
+        }
+      };
+    }
+    var count = (ctx) => {
+      const raw = ctx.query.get("_count");
+      if (raw === null) return R.DEFAULT_COUNT;
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n < 0) throw new FhirError(400, "_count must be a whole number", { code: "invalid" });
+      return Math.min(n, R.MAX_COUNT);
+    };
+    var offsetOf = (ctx) => {
+      const n = Number(ctx.query.get("_offset") || 0);
+      if (!Number.isInteger(n) || n < 0) throw new FhirError(400, "_offset must be a whole number", { code: "invalid" });
+      return n;
+    };
+    var typeOf = (ctx) => {
+      const t = ctx.params.type;
+      if (!R.DEFS[t]) throw new FhirError(404, `Resource type "${String(t).slice(0, 60)}" is not served here`, { code: "not-supported" });
+      return t;
+    };
+    var coverageFor = (client, type) => disclosure.fhirCoverage({ cacheKey: client.id, recipients: client.recipients, purposeOfUse: client.purpose, resourceType: type });
+    var requestId = () => uuid2();
+    function account({ ctx, client, type, interaction, perClient, returned, omittedPatients, reqId }) {
+      const what = (n) => `FHIR ${interaction} ${type}: ${n} resource${n === 1 ? "" : "s"}`;
+      for (const e of perClient.values()) e.what = what(e.n);
+      disclosure.recordFhir({ perClient, recipient: client.recipient, purposeOfUse: client.purpose, sourceRef: `fhir:${reqId}`, user: client.actor, ip: ctx.ip });
+      audit3.log({
+        user: client.actor,
+        action: `fhir.${interaction}`,
+        entity: type,
+        entityId: interaction === "read" ? ctx.params.id : null,
+        clientId: interaction === "read" && perClient.size === 1 ? [...perClient.keys()][0] : null,
+        ip: ctx.ip,
+        details: { client: client.prefix, request: reqId, params: [...new Set(ctx.query.keys())], returned, patients: perClient.size, omitted_patients: omittedPatients }
+      });
+    }
+    function search(ctx, client) {
+      const type = typeOf(ctx);
+      C.requireScope(ctx, client, type);
+      const d = R.DEFS[type];
+      const n = count(ctx), offset = offsetOf(ctx);
+      const filter = R.where(type, ctx.query);
+      const rows = R.page(type, filter, { count: n + 1, offset });
+      const hasNext = rows.length > n;
+      if (hasNext) rows.length = n;
+      const coverage = d.phi ? coverageFor(client, type) : null;
+      const base = baseUrl(ctx);
+      const entries = [];
+      const perClient = /* @__PURE__ */ new Map();
+      const omitted = /* @__PURE__ */ new Set();
+      let omittedRows = 0;
+      for (const row of rows) {
+        if (d.phi && !coverage.has(row._cid)) {
+          omittedRows++;
+          omitted.add(row._cid);
+          continue;
+        }
+        const r = R.toResource(type, row);
+        if (!r || d.keep && !d.keep(r.full, client)) continue;
+        entries.push({ fullUrl: `${base}/${type}/${r.resource.id}`, resource: r.resource, search: { mode: "match" } });
+        if (d.phi) {
+          const e = perClient.get(row._cid) || { consentId: coverage.get(row._cid), n: 0 };
+          e.n++;
+          perClient.set(row._cid, e);
+        }
+      }
+      const link = (off) => {
+        const q = new URLSearchParams(ctx.query);
+        q.set("_count", String(n));
+        if (off) q.set("_offset", String(off));
+        else q.delete("_offset");
+        return `${base}/${type}?${q}`;
+      };
+      const links = [{ relation: "self", url: link(offset) }];
+      if (hasNext) links.push({ relation: "next", url: link(offset + n) });
+      if (offset > 0) links.push({ relation: "previous", url: link(Math.max(0, offset - n)) });
+      const bundle = { resourceType: "Bundle", id: uuid2(), meta: { lastUpdated: (/* @__PURE__ */ new Date()).toISOString() }, type: "searchset", link: links, entry: entries };
+      if (d.phi) {
+        bundle.meta.security = PART2_SECURITY;
+        const issues = [{ severity: "information", code: "informational", diagnostics: `42 CFR \xA72.32 notice: ${disclosure.notice().text}` }];
+        if (R.identifying(type, ctx.query)) issues.push({ severity: "information", code: "suppressed", diagnostics: `Results include only patients whose active consent covers ${client.recipient} for this purpose of use.` });
+        else if (omitted.size) issues.push({ severity: "warning", code: "suppressed", diagnostics: `${omitted.size} patient(s) (${omittedRows} ${type} resource(s)) on this page were withheld: no active consent covers ${client.recipient} for this purpose of use, or the patient has an agreed restriction.` });
+        bundle.entry.push({ resource: { ...outcome(issues), id: uuid2() }, search: { mode: "outcome" } });
+        const reqId = requestId();
+        account({ ctx, client, type, interaction: "search", perClient, returned: entries.length, omittedPatients: R.identifying(type, ctx.query) ? void 0 : omitted.size, reqId });
+      } else {
+        audit3.log({ user: client.actor, action: "fhir.search", entity: type, ip: ctx.ip, details: { client: client.prefix, params: [...new Set(ctx.query.keys())], returned: entries.length } });
+      }
+      send(ctx.res, 200, bundle);
+    }
+    function read(ctx, client) {
+      const type = typeOf(ctx);
+      C.requireScope(ctx, client, type);
+      const d = R.DEFS[type];
+      const id = String(ctx.params.id || "");
+      if (!/^[A-Za-z0-9\-.]{1,64}$/.test(id)) throw new FhirError(404, "Not found", { code: "not-found" });
+      const [row] = R.page(type, { sql: "_fid = ?", params: [id] }, { count: 1, offset: 0 });
+      const withheld = row && d.phi && !coverageFor(client, type).has(row._cid);
+      const r = row && !withheld ? R.toResource(type, row) : null;
+      if (!r || d.keep && !d.keep(r.full, client)) {
+        if (withheld) audit3.log({ user: client.actor, action: "fhir.read.withheld", entity: type, entityId: id, clientId: row._cid, ip: ctx.ip, success: false, details: { client: client.prefix, reason: "no covering consent" } });
+        throw new FhirError(404, `${type}/${id} is not available`, { code: "not-found" });
+      }
+      if (d.phi) {
+        const perClient = /* @__PURE__ */ new Map([[row._cid, { consentId: coverageFor(client, type).get(row._cid), n: 1 }]]);
+        account({ ctx, client, type, interaction: "read", perClient, returned: 1, omittedPatients: void 0, reqId: requestId() });
+      } else {
+        audit3.log({ user: client.actor, action: "fhir.read", entity: type, entityId: id, ip: ctx.ip, details: { client: client.prefix } });
+      }
+      send(ctx.res, 200, r.resource, { ETag: `W/"${Date.parse(r.resource.meta?.lastUpdated || 0) || 0}"` });
+    }
+    var PARAM_TYPES = {
+      _id: "token",
+      _lastUpdated: "date",
+      patient: "reference",
+      date: "date",
+      authored: "date",
+      "authored-on": "date",
+      identifier: "token",
+      family: "string",
+      given: "string",
+      birthdate: "date",
+      status: "token",
+      category: "token",
+      name: "string",
+      active: "token",
+      "address-city": "string",
+      "address-postalcode": "string",
+      "service-category": "token"
+    };
+    var PROFILES = { Patient: "us-core-patient", Encounter: "us-core-encounter", Organization: "us-core-organization", Location: "us-core-location" };
+    function capability(ctx) {
+      const base = baseUrl(ctx);
+      return {
+        resourceType: "CapabilityStatement",
+        id: "suds",
+        status: "active",
+        date: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+        publisher: "SUDS",
+        kind: "instance",
+        instantiates: ["http://hl7.org/fhir/uv/bulkdata/CapabilityStatement/bulk-data"],
+        software: { name: "SUDS", version: config.version },
+        implementation: { description: "SUDS read-only FHIR R4 API (42 CFR Part 2: consent-gated)", url: base },
+        fhirVersion: FHIR_VERSION,
+        format: ["json"],
+        implementationGuide: ["http://hl7.org/fhir/us/core/ImplementationGuide/hl7.fhir.us.core", "http://hl7.org/fhir/uv/bulkdata/ImplementationGuide/hl7.fhir.uv.bulkdata"],
+        rest: [{
+          mode: "server",
+          documentation: "Read-only. Resources about a patient are returned only while the patient has an active consent naming the calling client's organisation for its purpose of use (42 CFR Part 2); other patients are omitted and counted in an OperationOutcome entry. Unknown search parameters are rejected.",
+          security: {
+            cors: false,
+            service: [{ coding: [{ system: "http://terminology.hl7.org/CodeSystem/restful-security-service", code: "SMART-on-FHIR", display: "SMART-on-FHIR" }], text: "OAuth2 client credentials (SMART Backend Services): private_key_jwt with RS384 or ES384, or client_secret_post / client_secret_basic where the client allows it. Data requests take the access token only." }],
+            extension: [{ url: "http://fhir-registry.smarthealthit.org/StructureDefinition/oauth-uris", extension: [{ url: "token", valueUri: `${base}/auth/token` }] }]
+          },
+          resource: Object.keys(R.DEFS).map((type) => ({
+            type,
+            ...PROFILES[type] ? { supportedProfile: [R.US_CORE + PROFILES[type]] } : {},
+            interaction: [{ code: "read" }, { code: "search-type" }],
+            searchParam: R.searchParams(type).filter((p) => !p.includes(":")).map((name) => ({ name, type: PARAM_TYPES[name] || "token" })),
+            ...type === "Patient" ? { operation: [{ name: "export", definition: "http://hl7.org/fhir/uv/bulkdata/OperationDefinition/patient-export" }] } : {}
+          })),
+          operation: [{ name: "export", definition: "http://hl7.org/fhir/uv/bulkdata/OperationDefinition/export" }]
+        }]
+      };
+    }
+    async function tokenRequest(ctx) {
+      const ip = ctx.ip;
+      const reply = (status, body) => {
+        const s = JSON.stringify(body);
+        ctx.res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": import_buffer.Buffer.byteLength(s), "Cache-Control": "no-store", Pragma: "no-cache" });
+        ctx.res.end(s);
+      };
+      if (!rateLimit(`fhirtoken:${ip}`, 30, 6e4)) return reply(429, { error: "slow_down", error_description: "Too many token requests" });
+      const ct = String(ctx.headers["content-type"] || "");
+      const form = ct.includes("application/json") ? new URLSearchParams(Object.entries(ctx.body || {}).map(([k, v]) => [k, String(v)])) : new URLSearchParams((ctx.rawBody || import_buffer.Buffer.alloc(0)).toString("utf8"));
+      let clientId = form.get("client_id");
+      let clientSecret = form.get("client_secret");
+      const basic = String(ctx.headers.authorization || "");
+      if (basic.startsWith("Basic ")) {
+        const [id, ...rest] = import_buffer.Buffer.from(basic.slice(6), "base64").toString("utf8").split(":");
+        clientId = decodeURIComponent(id || "");
+        clientSecret = decodeURIComponent(rest.join(":"));
+      }
+      if (form.get("grant_type") !== "client_credentials") return reply(400, { error: "unsupported_grant_type", error_description: "Only grant_type=client_credentials is supported" });
+      try {
+        return reply(200, await C.issueToken({ clientId, clientSecret, assertionType: form.get("client_assertion_type"), assertion: form.get("client_assertion"), scope: form.get("scope"), tokenUrl: `${baseUrl(ctx)}/auth/token` }, ctx));
+      } catch (e) {
+        if (e.oauth) return reply(e.status, e.oauth);
+        throw e;
+      }
+    }
+    var KEY_FIELDS = { jwks: { type: "string", maxLen: 4e4 }, jwks_url: { type: "string", maxLen: 500 }, jwt_only: { type: "boolean" } };
+    var asBad = (e) => e instanceof FhirError ? badRequest(e.message, e.fields ? { fields: e.fields } : void 0) : e;
+    var jwksOf = (body) => body && body.jwks && typeof body.jwks === "object" ? JSON.stringify(body.jwks) : body?.jwks;
+    function adminCreate(ctx) {
+      const v = validate({ ...ctx.body, jwks: jwksOf(ctx.body) }, {
+        name: { type: "string", required: true, maxLen: 100 },
+        recipient: { type: "string", required: true, maxLen: 200 },
+        aliases: { type: "string", maxLen: 2e3 },
+        purpose: { type: "string", enum: Object.keys(disclosure.FHIR_PURPOSES) },
+        scopes: { type: "array", required: true, maxLen: 20 },
+        rate_limit: { type: "number", integer: true, min: 1, max: 6e3 },
+        ...KEY_FIELDS
+      });
+      let created;
+      try {
+        created = C.create({ name: v.name, recipient: v.recipient, aliases: v.aliases || "", purpose: v.purpose || "TREAT", scopes: v.scopes, rate_limit: v.rate_limit, jwks: v.jwks || void 0, jwks_url: v.jwks_url || void 0, jwt_only: v.jwt_only }, ctx.user);
+      } catch (e) {
+        throw asBad(e);
+      }
+      audit3.log({ user: ctx.user, action: "fhir_client.create", entity: "api_key", entityId: created.id, ip: ctx.ip, details: { name: v.name, purpose: v.purpose || "TREAT", scopes: created.scopes, rate_limit: v.rate_limit || C.DEFAULT_RATE_LIMIT, jwt: !!(v.jwks || v.jwks_url), jwt_only: !!created.jwt_only } });
+      ctx.status = 201;
+      return {
+        id: created.id,
+        key: created.key,
+        scopes: created.scopes,
+        jwt_only: created.jwt_only,
+        note: created.key ? "Store this key now; it will not be shown again. Use it as client_secret (client_id is the id above) at the token URL to get an access token; it is not itself a bearer token." : "This client authenticates only with a JWT signed by its registered key (private_key_jwt); client_id is the id above."
+      };
+    }
+    function adminUpdate(ctx) {
+      const v = validate({ ...ctx.body, jwks: jwksOf(ctx.body) }, { aliases: { type: "string", maxLen: 2e3 }, ...KEY_FIELDS });
+      const patch = {};
+      for (const k of ["aliases", "jwks", "jwks_url", "jwt_only"]) if (ctx.body && k in ctx.body) patch[k] = ctx.body[k] === null ? null : v[k] ?? "";
+      let out2;
+      try {
+        out2 = C.update(ctx.params.id, patch);
+      } catch (e) {
+        throw asBad(e);
+      }
+      if (!out2) throw notFound();
+      audit3.log({ user: ctx.user, action: "fhir_client.update", entity: "api_key", entityId: ctx.params.id, ip: ctx.ip, details: { changed: Object.keys(patch), jwt_only: out2.auth.jwt_only, keys: out2.auth.jwks_keys.length, jwks_url: !!out2.auth.jwks_url } });
+      return out2;
+    }
+    function adminAliasPreview(ctx) {
+      const v = validate(ctx.body, { recipient: { type: "string", maxLen: 200 }, aliases: { type: "string", maxLen: 2e3 }, purpose: { type: "string", enum: Object.keys(disclosure.FHIR_PURPOSES) } });
+      const purpose = v.purpose || "TREAT";
+      const aliases = C.splitAliases(v.aliases || "").slice(0, 20);
+      const dir = C.directoryNames();
+      const covered = (names) => disclosure.fhirCoverage({ cacheKey: "alias-preview", recipients: names, purposeOfUse: purpose }).size;
+      const recipient = String(v.recipient || "").trim();
+      const rows = aliases.map((alias) => {
+        const problem = C.aliasProblem(alias, dir);
+        return { alias, ok: !problem, problem, clients: covered([alias]) };
+      });
+      const valid = aliases.filter((a, i) => rows[i].ok);
+      const out2 = {
+        purpose,
+        recipient: recipient ? { name: recipient, clients: covered([recipient]) } : null,
+        aliases: rows,
+        total: recipient || valid.length ? covered([recipient, ...valid].filter(Boolean)) : 0
+      };
+      audit3.log({ user: ctx.user, action: "fhir_client.alias_preview", ip: ctx.ip, details: { purpose, aliases: aliases.length, rejected: rows.filter((r) => !r.ok).length, total: out2.total } });
+      return out2;
+    }
+    module.exports = (r) => {
+      r.get("/fhir/R4/metadata", fhir((ctx) => send(ctx.res, 200, capability(ctx)), { open: true }));
+      r.get("/fhir/R4/.well-known/smart-configuration", fhir((ctx) => {
+        const base = baseUrl(ctx);
+        const body = {
+          token_endpoint: `${base}/auth/token`,
+          grant_types_supported: ["client_credentials"],
+          token_endpoint_auth_methods_supported: ["private_key_jwt", "client_secret_post", "client_secret_basic"],
+          token_endpoint_auth_signing_alg_values_supported: Object.keys(require_jwt().ALGS),
+          scopes_supported: ["system/*.read", ...Object.keys(R.DEFS).map((t) => `system/${t}.read`)],
+          capabilities: ["client-confidential-asymmetric", "client-confidential-symmetric"]
+        };
+        const s = JSON.stringify(body);
+        ctx.res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Content-Length": import_buffer.Buffer.byteLength(s) });
+        ctx.res.end(s);
+      }, { open: true }));
+      r.post("/fhir/R4/auth/token", fhir(tokenRequest, { open: true }));
+      r.get("/fhir/R4/\\$export", fhir((ctx, client) => bulk.kickoff(ctx, client, "system")));
+      r.get("/fhir/R4/Patient/\\$export", fhir((ctx, client) => bulk.kickoff(ctx, client, "patient")));
+      r.get("/fhir/R4/\\$export-status/:id", fhir((ctx, client) => bulk.status(ctx, client)));
+      r.delete("/fhir/R4/\\$export-status/:id", fhir((ctx, client) => bulk.cancel(ctx, client)));
+      r.get("/fhir/R4/\\$export-file/:id/:file", fhir((ctx, client) => bulk.file(ctx, client)));
+      r.get("/fhir/R4/:type", fhir(search));
+      r.get("/fhir/R4/:type/:id", fhir(read));
+      r.get("/api/admin/fhir-clients", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), () => ({
+        clients: C.list(),
+        purposes: Object.entries(disclosure.FHIR_PURPOSES).map(([code, p]) => ({ code, label: p.display })),
+        resource_types: Object.entries(C.RESOURCE_TYPES).map(([type, phi]) => ({ type, phi })),
+        token_path: "/fhir/R4/auth/token",
+        base_path: "/fhir/R4"
+      }));
+      r.post("/api/admin/fhir-clients", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), adminCreate);
+      r.post("/api/admin/fhir-clients/alias-preview", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), adminAliasPreview);
+      r.patch("/api/admin/fhir-clients/:id", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), adminUpdate);
+      r.delete("/api/admin/fhir-clients/:id", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), (ctx) => {
+        if (!C.revoke(ctx.params.id)) throw notFound();
+        audit3.log({ user: ctx.user, action: "fhir_client.revoke", entity: "api_key", entityId: ctx.params.id, ip: ctx.ip });
+        return { ok: true };
+      });
+    };
+  }
+});
+
+// server/form-starters.js
+var require_form_starters = __commonJS({
+  "server/form-starters.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var { uuid: uuid2 } = require_crypto();
+    var text = (key, label, opts = {}) => ({ key, label, type: "text", ...opts });
+    var area = (key, label, opts = {}) => ({ key, label, type: "textarea", ...opts });
+    var date = (key, label, opts = {}) => ({ key, label, type: "date", ...opts });
+    var check = (key, label, opts = {}) => ({ key, label, type: "checkbox", ...opts });
+    var section = (key, label) => ({ key, label, type: "section" });
+    var TEMPLATES = [
+      {
+        key: "part2_consent",
+        name: "Consent to release information (42 CFR Part 2)",
+        category: "consent",
+        description: "Written consent before any substance use disorder record is shared. Required elements per 42 CFR \xA72.31.",
+        instructions: "Complete with the client, read the redisclosure notice aloud, and record the signed copy against the client. Have your county counsel review the wording before first use.",
+        fields: [
+          section("sec_client", "Client"),
+          text("client_name", "Client name", { required: true }),
+          date("client_dob", "Date of birth"),
+          section("sec_release", "What may be released, to whom, and why"),
+          text("discloser", "Who may make the disclosure (this program, or the named program or person)", { required: true }),
+          text("recipient", 'Information may be released to (name and agency, or a class \u2014 for a treatment, payment and operations consent: "my treating providers, health plans, third-party payers, and people helping to operate this program")', { required: true }),
+          area("purpose", "Purpose of the disclosure", { required: true, help: 'Be specific \u2014 "for treatment coordination", "at the request of the patient", or for a single TPO consent "for treatment, payment, and health care operations"; "for any purpose" is not. SUD counseling notes, and use in a legal proceeding, each need a separate consent of their own.' }),
+          {
+            key: "info",
+            label: "Information to be released",
+            type: "select",
+            required: true,
+            options: ["Referral summary only", "Diagnosis and medication-assisted treatment status", "Attendance and progress", "Assessment and treatment plan", "Full record"]
+          },
+          area("info_other", "If other, describe exactly what will be released"),
+          section("sec_limits", "Limits"),
+          date("expires", "This consent expires on", { required: true, help: "Part 2 requires an expiry date, event or condition." }),
+          area("expires_event", "Or, the event or condition that ends it"),
+          check("redisclosure", "The redisclosure notice below was explained to the client", { required: true }),
+          section("sec_rights", "Client rights"),
+          check("may_revoke", "This consent states that the client may revoke it at any time in writing, and how, except to the extent the program or another lawful holder has already acted in reliance on it", { required: true }),
+          check("no_condition", "This consent states the consequences of refusing to sign (including that treatment, payment and eligibility do not depend on signing, where that is so)", { required: true }),
+          check("redisclosure_hipaa", "This consent states that records disclosed to a HIPAA covered entity or business associate may be redisclosed as HIPAA permits, except for use in proceedings against the client"),
+          section("sec_sign", "Signatures"),
+          text("client_sig", "Client signature", { required: true }),
+          date("client_sig_date", "Date", { required: true }),
+          text("rep_sig", "Personal representative (if applicable)"),
+          text("rep_relationship", "Relationship and authority"),
+          text("witness_sig", "Witness / staff signature"),
+          date("witness_date", "Date")
+        ],
+        footer: `NOTICE TO RECIPIENT (42 CFR \xA72.32): ${require_constants().PART2_REDISCLOSURE_NOTICE}`
+      },
+      {
+        key: "consent_revocation",
+        name: "Revocation of consent",
+        category: "consent",
+        description: "Records that a client has withdrawn a release of information, and when.",
+        instructions: "Complete as soon as the client tells you, then revoke the consent in SUDS so any open referrals relying on it are flagged.",
+        fields: [
+          text("client_name", "Client name", { required: true }),
+          text("consent_description", "Consent being revoked (recipient and date signed)", { required: true }),
+          date("effective", "Revoked with effect from", { required: true }),
+          area("reason", "Reason (optional \u2014 the client does not have to give one)"),
+          check("told_already_shared", "The client was told that information already shared in reliance on the consent cannot be recalled"),
+          text("client_sig", "Client signature"),
+          date("client_sig_date", "Date"),
+          text("staff_sig", "Staff signature", { required: true }),
+          date("staff_date", "Date", { required: true })
+        ]
+      },
+      {
+        key: "intake_face_sheet",
+        name: "Intake face sheet",
+        category: "intake",
+        description: "The first page of a client file: who they are, how to reach them, and what brought them in.",
+        instructions: "Most of this is pre-filled from the client record. Print it for a paper file, or fill it in on a phone during an outreach contact and enter it afterwards.",
+        fields: [
+          section("sec_who", "Client"),
+          text("client_name", "Name", { required: true }),
+          text("preferred_name", "Preferred name"),
+          date("client_dob", "Date of birth"),
+          text("pronouns", "Pronouns"),
+          text("phone", "Phone"),
+          check("ok_to_text", "OK to text"),
+          check("ok_to_voicemail", "OK to leave a voicemail"),
+          text("address", "Address"),
+          text("emergency_contact", "Emergency contact"),
+          section("sec_need", "Presenting need"),
+          area("presenting", "What brought them in today", { required: true }),
+          text("primary_substance", "Primary substance"),
+          text("housing_status", "Housing situation"),
+          text("insurance", "Insurance"),
+          check("overdose_history", "History of overdose"),
+          check("naloxone_given", "Naloxone provided today"),
+          section("sec_next", "Next steps"),
+          area("plan", "Immediate plan"),
+          date("follow_up", "Follow-up date"),
+          text("worker", "Navigator")
+        ]
+      },
+      {
+        key: "assistance_request",
+        name: "Client assistance request",
+        category: "assistance",
+        description: "Request for flexible funds \u2014 bus passes, identification documents, work clothes, a deposit.",
+        instructions: "Complete with the client, attach receipts to the completed form, and record the spending against the funding source in Funding & spending.",
+        fields: [
+          text("client_name", "Client name", { required: true }),
+          text("client_code", "Client code"),
+          { key: "category", label: "What is needed", type: "select", required: true, options: ["Transport (bus pass, fuel, fare)", "Identification documents", "Housing deposit or rent", "Clothing", "Phone or phone credit", "Medication or medical", "Food", "Other"] },
+          area("justification", "How this supports their recovery plan", { required: true }),
+          text("amount", "Amount requested", { required: true }),
+          text("vendor", "Vendor or provider"),
+          check("alternatives", "Other sources were checked first (Medicaid, CalFresh, housing programmes)"),
+          text("requested_by", "Requested by", { required: true }),
+          date("requested_on", "Date", { required: true }),
+          section("sec_approval", "Approval"),
+          text("approved_by", "Approved by"),
+          date("approved_on", "Date"),
+          area("approval_notes", "Notes")
+        ]
+      },
+      {
+        key: "naloxone_log",
+        name: "Naloxone distribution log",
+        category: "harm_reduction",
+        description: "A single distribution event, including community distribution with no identified client.",
+        instructions: "Use this for outreach and community events. Enter the totals in SUDS as a visit or service afterwards so they reach the funder report.",
+        fields: [
+          date("event_date", "Date", { required: true }),
+          text("location", "Location"),
+          text("event_name", "Event or outreach activity"),
+          text("kits", "Naloxone kits distributed", { required: true }),
+          text("strips", "Fentanyl test strips distributed"),
+          text("people", "People who received training"),
+          check("training_given", "Overdose recognition and response training was given"),
+          check("anonymous", "Recipients were anonymous (community distribution)"),
+          area("notes", "Notes"),
+          text("staff", "Staff", { required: true })
+        ]
+      }
+    ];
+    function installedKeys() {
+      try {
+        return JSON.parse(db3.getSetting("form_starters_installed", "[]"));
+      } catch {
+        return [];
+      }
+    }
+    function list() {
+      const installed = new Set(installedKeys());
+      return TEMPLATES.map((t) => ({ key: t.key, name: t.name, category: t.category, description: t.description, fields: t.fields.length, installed: installed.has(t.key) }));
+    }
+    function install({ keys = null, actor = null } = {}) {
+      const wanted = TEMPLATES.filter((t) => !keys || keys.includes(t.key));
+      const already = new Set(installedKeys());
+      const added = [];
+      db3.transaction(() => {
+        for (const t of wanted) {
+          if (already.has(t.key)) continue;
+          if (db3.one(`SELECT 1 FROM form_templates WHERE name=?`, t.name)) {
+            already.add(t.key);
+            continue;
+          }
+          const id = uuid2();
+          db3.run(
+            `INSERT INTO form_templates(id,name,description,category,version,fields_json,instructions,is_active,uploaded_by) VALUES(?,?,?,?,?,?,?,1,?)`,
+            id,
+            t.name,
+            t.description,
+            t.category,
+            "starter",
+            JSON.stringify(t.fields),
+            [t.instructions, t.footer].filter(Boolean).join("\n\n"),
+            actor
+          );
+          added.push({ key: t.key, id, name: t.name });
+          already.add(t.key);
+        }
+        db3.setSetting("form_starters_installed", JSON.stringify([...already]));
+      });
+      if (added.length) audit3.log({ user: actor ? { id: actor, username: "form-starters" } : { username: "form-starters" }, action: "forms.starters.install", details: { added: added.map((a) => a.key) } });
+      return { added, total: TEMPLATES.length };
+    }
+    module.exports = { TEMPLATES, list, install };
+  }
+});
+
+// server/routes/forms.js
+var require_forms = __commonJS({
+  "server/routes/forms.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var C = require_constants();
+    var { badRequest, notFound, contentDisposition } = require_http();
+    var { validate, paging } = require_validate();
+    var { uuid: uuid2, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
+    var M = require_clients_model();
+    var pdf = require_pdf();
+    var MAX_TEMPLATE_BYTES = 12 * 1024 * 1024;
+    var MAX_ATTACH_BYTES = 10 * 1024 * 1024;
+    var MAX_FIELDS = 150;
+    var FILE_TYPES = { "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx", "application/msword": "doc", "text/plain": "txt" };
+    function sniff(buf) {
+      if (buf.length > 4 && buf.toString("ascii", 0, 4) === "%PDF") return "application/pdf";
+      if (buf.length > 3 && buf[0] === 255 && buf[1] === 216 && buf[2] === 255) return "image/jpeg";
+      if (buf.length > 8 && buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71) return "image/png";
+      if (buf.length > 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return "image/webp";
+      if (buf.length > 4 && buf[0] === 80 && buf[1] === 75 && buf[2] === 3 && buf[3] === 4) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+      if (buf.length > 8 && buf[0] === 208 && buf[1] === 207 && buf[2] === 17 && buf[3] === 224) return "application/msword";
+      return null;
+    }
+    function fromDataUrl(v, maxBytes, label) {
+      if (typeof v !== "string" || !v) return null;
+      const m = /^data:([\w.+/-]+);base64,([A-Za-z0-9+/=\s]+)$/.exec(v);
+      const b642 = (m ? m[2] : v).replace(/\s+/g, "");
+      if (!/^[A-Za-z0-9+/=]+$/.test(b642)) throw badRequest(`${label} must be base64`);
+      const buf = import_buffer.Buffer.from(b642, "base64");
+      if (!buf.length) throw badRequest(`${label} is empty`);
+      if (buf.length > maxBytes) throw badRequest(`${label} is too large (max ${Math.round(maxBytes / 1024 / 1024)} MB)`);
+      const type = sniff(buf) || (m && m[1] === "text/plain" ? "text/plain" : null);
+      if (!type || !FILE_TYPES[type]) throw badRequest(`${label} must be a PDF, Word document, picture or text file`);
+      return { b64: b642, buf, type };
+    }
+    function cleanFields(list) {
+      if (!Array.isArray(list)) throw badRequest("fields must be a list");
+      if (list.length > MAX_FIELDS) throw badRequest(`At most ${MAX_FIELDS} fields`);
+      const keys = /* @__PURE__ */ new Set();
+      const out2 = [];
+      list.forEach((f, i) => {
+        if (!f || typeof f !== "object") throw badRequest(`field ${i + 1} is invalid`);
+        const type = C.FORM_FIELD_TYPES.includes(f.type) ? f.type : "text";
+        const label = String(f.label || "").trim().slice(0, 200);
+        if (!label) throw badRequest(`field ${i + 1} needs a label`);
+        let key = String(f.key || label).trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60) || `field_${i + 1}`;
+        if (type !== "section" && type !== "note") {
+          let k = key, n = 2;
+          while (keys.has(k)) k = `${key}_${n++}`;
+          key = k;
+          keys.add(key);
+        }
+        const o = { key, label, type };
+        if (f.required && !["section", "note", "checkbox"].includes(type)) o.required = true;
+        if (type === "select") o.options = String(Array.isArray(f.options) ? f.options.join(",") : f.options || "").split(/[,\n]/).map((x) => x.trim()).filter(Boolean).slice(0, 50);
+        if (f.autofill && C.FORM_AUTOFILL.includes(f.autofill)) o.autofill = f.autofill;
+        if (f.help) o.help = String(f.help).slice(0, 300);
+        out2.push(o);
+      });
+      return out2;
+    }
+    function detectPdfFields(buf) {
+      const s = buf.toString("latin1");
+      const out2 = [];
+      const seen2 = /* @__PURE__ */ new Set();
+      for (const chunk of s.split("endobj")) {
+        if (out2.length >= MAX_FIELDS) break;
+        const t = /\/T\s*\(([^)]{1,80})\)/.exec(chunk);
+        const ft = /\/FT\s*\/(Tx|Btn|Ch)/.exec(chunk);
+        if (!t || !ft) continue;
+        const name = t[1].replace(/\\(.)/g, "$1").trim();
+        if (!name || seen2.has(name)) continue;
+        seen2.add(name);
+        const type = ft[1] === "Btn" ? "checkbox" : ft[1] === "Ch" ? "select" : /\/Ff\s+(4096|\d*[4-9]\d{3,})/.test(chunk) ? "textarea" : "text";
+        out2.push({ key: name, label: name.replace(/[_.]+/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/\b\w/g, (c) => c.toUpperCase()), type });
+      }
+      return out2;
+    }
+    var guessAutofill = (label) => {
+      const l = label.toLowerCase();
+      if (/\b(full|client|participant|patient)?\s*name\b/.test(l) && !/worker|staff|navigator|witness|contact|parent|guardian/.test(l)) return "client.full_name";
+      if (/first name/.test(l)) return "client.first_name";
+      if (/last name/.test(l)) return "client.last_name";
+      if (/\b(dob|birth)/.test(l)) return "client.dob";
+      if (/phone|telephone/.test(l)) return "client.phone";
+      if (/e-?mail/.test(l)) return "client.email";
+      if (/address|street/.test(l)) return "client.address";
+      if (/\bcity\b/.test(l)) return "client.city";
+      if (/\bzip/.test(l)) return "client.zip";
+      if (/medicaid/.test(l)) return "client.medicaid_id";
+      if (/insurance/.test(l)) return "client.insurance";
+      if (/client (id|code|number)|case (id|number)/.test(l)) return "client.client_code";
+      if (/\b(today|date)\b/.test(l) && !/birth|dob/.test(l)) return "today";
+      if (/navigator|worker|staff|case manager|counselor/.test(l)) return "worker.name";
+      return void 0;
+    };
+    function autofillValues(fields, clientRow, user) {
+      const c = M.decryptRow(clientRow);
+      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const src = {
+        "client.full_name": [c.first_name, c.last_name].filter(Boolean).join(" "),
+        "client.first_name": c.first_name,
+        "client.last_name": c.last_name,
+        "client.preferred_name": c.preferred_name,
+        "client.dob": c.dob,
+        "client.phone": c.phone,
+        "client.email": c.email,
+        "client.address": [c.address, [c.city, c.zip].filter(Boolean).join(" ")].filter(Boolean).join(", "),
+        "client.city": c.city,
+        "client.zip": c.zip,
+        "client.client_code": c.client_code,
+        "client.gender": c.gender,
+        "client.pronouns": c.pronouns,
+        "client.insurance": c.insurance,
+        "client.medicaid_id": c.medicaid_id,
+        "client.emergency_contact": c.emergency_contact,
+        "client.primary_substance": c.primary_substance ? require_options().labelOf("SUBSTANCES", c.primary_substance) : null,
+        "client.mat_status": c.mat_status,
+        "client.intake_date": c.intake_date,
+        "worker.name": user.display_name,
+        "worker.title": user.title || "",
+        "org.name": db3.getSetting("org_name", "SUDS"),
+        "org.county": db3.getSetting("county_name", ""),
+        today
+      };
+      const values = {};
+      for (const f of fields) {
+        if (f.autofill && src[f.autofill] != null && src[f.autofill] !== "") values[f.key] = src[f.autofill];
+        else if (f.type === "date" && f.autofill === "today") values[f.key] = today;
+      }
+      return values;
+    }
+    function cleanValues(fields, values) {
+      if (!values || typeof values !== "object" || Array.isArray(values)) throw badRequest("values must be an object");
+      const out2 = {};
+      for (const f of fields) {
+        if (f.type === "section" || f.type === "note") continue;
+        let v = values[f.key];
+        if (v === void 0) continue;
+        if (f.type === "checkbox") v = v === true || v === 1 || v === "1" || v === "true";
+        else if (v === null) v = null;
+        else v = String(v).slice(0, f.type === "textarea" ? 5e3 : 500);
+        out2[f.key] = v;
+      }
+      return out2;
+    }
+    var missingRequired = (fields, values) => fields.filter((f) => f.required && (values[f.key] === void 0 || values[f.key] === null || values[f.key] === "")).map((f) => f.label);
+    var parseJson = (s, d) => {
+      try {
+        return JSON.parse(s);
+      } catch {
+        return d;
+      }
+    };
+    var tpl = (row, withFile = false) => row && { ...row, fields: parseJson(row.fields_json, []), fields_json: void 0, file_url: withFile && row.file_b64 ? `data:${row.content_type};base64,${row.file_b64}` : void 0, has_file: !!row.file_b64, file_b64: void 0 };
+    function loadForm(ctx, id) {
+      const f = db3.one(`SELECT * FROM client_forms WHERE id=? AND deleted_at IS NULL`, id);
+      if (!f) throw notFound();
+      auth3.assertClientAccess(ctx, f.client_id);
+      return f;
+    }
+    var formNotes = (f) => f.notes_enc ? decrypt3(f.notes_enc) : null;
+    var formOut = (f, { values = true } = {}) => ({ ...f, fields: parseJson(f.fields_json, []), fields_json: void 0, values: values ? parseJson(decrypt3(f.values_enc), {}) : void 0, values_enc: void 0, notes: formNotes(f), notes_enc: void 0 });
+    var SERVABLE_TYPES = /* @__PURE__ */ new Set([
+      "application/pdf",
+      "image/png",
+      "image/jpeg",
+      "image/gif",
+      "image/webp",
+      "text/plain",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.ms-excel",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    ]);
+    function safeContentType(t) {
+      return SERVABLE_TYPES.has(String(t || "").toLowerCase().split(";")[0].trim()) ? String(t).split(";")[0].trim() : "application/octet-stream";
+    }
+    function printFooter() {
+      const disclosure = require_disclosure();
+      const n = disclosure.notice();
+      const printed = `Printed from SUDS ${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.`;
+      return disclosure.part2Program() ? `${printed} PROTECTED BY 42 CFR PART 2. ${n.short} If this record is disclosed, this notice must accompany it (42 CFR \xA72.32): ${n.text}` : `${printed} Contains protected health information; handle per HIPAA.`;
+    }
+    module.exports = (r) => {
+      r.get("/api/forms/starters", auth3.requireAuth, auth3.requirePerm("forms:manage"), () => ({ starters: require_form_starters().list() }));
+      r.post("/api/forms/starters", auth3.requireAuth, auth3.requirePerm("forms:manage"), (ctx) => {
+        const keys = Array.isArray(ctx.body && ctx.body.keys) ? ctx.body.keys.filter((k) => typeof k === "string") : null;
+        const out2 = require_form_starters().install({ keys: keys && keys.length ? keys : null, actor: ctx.user.id });
+        audit3.log({ user: ctx.user, action: "forms.starters.request", ip: ctx.ip, details: { added: out2.added.length } });
+        return out2;
+      });
+      r.get("/api/forms/templates", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write", "forms:manage"), (ctx) => {
+        const all = ctx.query.get("active") === "0" && auth3.hasPerm(ctx.user, "forms:manage");
+        const rows = db3.all(`SELECT t.id, t.name, t.description, t.category, t.version, t.filename, t.content_type, t.bytes, t.fields_json, t.instructions, t.is_active, t.updated_at, t.created_at, (t.file_b64 IS NOT NULL) has_file, (SELECT COUNT(*) FROM client_forms f WHERE f.template_id=t.id AND f.deleted_at IS NULL) use_count FROM form_templates t ${all ? "" : "WHERE t.is_active=1"} ORDER BY t.category, t.name`);
+        return { templates: rows.map((t) => ({ ...t, fields: parseJson(t.fields_json, []), fields_json: void 0, field_count: parseJson(t.fields_json, []).filter((f) => !["section", "note"].includes(f.type)).length })), categories: C.FORM_CATEGORIES, field_types: C.FORM_FIELD_TYPES, autofill: C.FORM_AUTOFILL };
+      });
+      r.get("/api/forms/templates/:id", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write", "forms:manage"), (ctx) => {
+        const t = db3.one(`SELECT * FROM form_templates WHERE id=?`, ctx.params.id);
+        if (!t) throw notFound();
+        return { template: tpl(t, ctx.query.get("file") === "1") };
+      });
+      r.post("/api/forms/templates", auth3.requireAuth, auth3.requirePerm("forms:manage"), (ctx) => {
+        const v = validate(ctx.body, { name: { type: "string", required: true, maxLen: 200 }, description: { type: "string", maxLen: 1e3 }, category: { type: "string", enum: C.FORM_CATEGORIES }, version: { type: "string", maxLen: 40 }, filename: { type: "string", maxLen: 200 }, instructions: { type: "string", maxLen: 3e3 } });
+        const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_TEMPLATE_BYTES, "Form file");
+        let fields = Array.isArray(ctx.body.fields) && ctx.body.fields.length ? cleanFields(ctx.body.fields) : [];
+        let detected = 0;
+        if (!fields.length && file && file.type === "application/pdf") {
+          fields = cleanFields(detectPdfFields(file.buf).map((f) => ({ ...f, autofill: guessAutofill(f.label) })));
+          detected = fields.length;
+        }
+        const id = uuid2();
+        db3.run(`INSERT INTO form_templates(id,name,description,category,version,filename,content_type,bytes,file_b64,fields_json,instructions,uploaded_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, id, v.name, v.description || null, v.category || "other", v.version || null, file ? v.filename || `${v.name}.${FILE_TYPES[file.type]}` : null, file ? file.type : null, file ? file.buf.length : 0, file ? file.b64 : null, JSON.stringify(fields), v.instructions || null, ctx.user.id);
+        audit3.log({ user: ctx.user, action: "form_template.create", entity: "form_template", entityId: id, ip: ctx.ip, details: { name: v.name, fields: fields.length, detected, bytes: file ? file.buf.length : 0 } });
+        ctx.status = 201;
+        return { id, fields, detected };
+      });
+      r.put("/api/forms/templates/:id", auth3.requireAuth, auth3.requirePerm("forms:manage"), (ctx) => {
+        const t = db3.one(`SELECT id, updated_at FROM form_templates WHERE id=?`, ctx.params.id);
+        if (!t) throw notFound();
+        require_crud().assertFresh(ctx, t, "form_template");
+        const v = validate(ctx.body, { name: { type: "string", maxLen: 200 }, description: { type: "string", maxLen: 1e3 }, category: { type: "string", enum: C.FORM_CATEGORIES }, version: { type: "string", maxLen: 40 }, filename: { type: "string", maxLen: 200 }, instructions: { type: "string", maxLen: 3e3 }, is_active: { type: "boolean" } }, { partial: true });
+        const sets = Object.keys(v).map((k) => `${k}=?`);
+        const params = Object.keys(v).map((k) => v[k]);
+        if (ctx.body.fields !== void 0) {
+          sets.push("fields_json=?");
+          params.push(JSON.stringify(cleanFields(ctx.body.fields)));
+        }
+        if (ctx.body.file_url || ctx.body.file) {
+          const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_TEMPLATE_BYTES, "Form file");
+          sets.push("file_b64=?", "content_type=?", "bytes=?", "filename=?");
+          params.push(file.b64, file.type, file.buf.length, v.filename || ctx.body.filename || `form.${FILE_TYPES[file.type]}`);
+        }
+        if (ctx.body.remove_file) {
+          sets.push("file_b64=NULL", "content_type=NULL", "bytes=0", "filename=NULL");
+        }
+        if (!sets.length) return { ok: true, updated_at: t.updated_at };
+        const stamp2 = db3.now();
+        db3.run(`UPDATE form_templates SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, stamp2, t.id);
+        audit3.log({ user: ctx.user, action: "form_template.update", entity: "form_template", entityId: t.id, ip: ctx.ip, details: { fields: Object.keys(v).concat(ctx.body.fields !== void 0 ? ["fields"] : [], ctx.body.file_url || ctx.body.file ? ["file"] : []) } });
+        return { ok: true, updated_at: stamp2 };
+      });
+      r.delete("/api/forms/templates/:id", auth3.requireAuth, auth3.requirePerm("forms:manage"), (ctx) => {
+        const t = db3.one(`SELECT id FROM form_templates WHERE id=?`, ctx.params.id);
+        if (!t) throw notFound();
+        db3.run(`UPDATE form_templates SET is_active=0, updated_at=? WHERE id=?`, db3.now(), t.id);
+        audit3.log({ user: ctx.user, action: "form_template.retire", entity: "form_template", entityId: t.id, ip: ctx.ip });
+        return { ok: true };
+      });
+      r.get("/api/forms/templates/:id/file", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write", "forms:manage"), (ctx) => {
+        const t = db3.one(`SELECT * FROM form_templates WHERE id=?`, ctx.params.id);
+        if (!t || !t.file_b64) throw notFound("No file for this form");
+        ctx.res.writeHead(200, { "Content-Type": safeContentType(t.content_type), "Content-Disposition": contentDisposition(ctx.query.get("inline") === "1" ? "inline" : "attachment", t.filename, "form") });
+        ctx.res.end(import_buffer.Buffer.from(t.file_b64, "base64"));
+        return null;
+      });
+      r.get("/api/forms/templates/:id/blank.pdf", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write", "forms:manage"), (ctx) => {
+        const t = db3.one(`SELECT * FROM form_templates WHERE id=?`, ctx.params.id);
+        if (!t) throw notFound();
+        const body = pdf.renderForm({ title: t.name, subtitle: t.description, org: db3.getSetting("org_name", "SUDS"), meta: [t.version ? `Version ${t.version}` : null], fields: parseJson(t.fields_json, []), values: {}, footer: "Blank form printed from SUDS" });
+        ctx.res.writeHead(200, { "Content-Type": "application/pdf", "Content-Disposition": contentDisposition("inline", `${t.name}-blank.pdf`) });
+        ctx.res.end(body);
+        return null;
+      });
+      r.get("/api/clients/:id/forms", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write"), (ctx) => {
+        auth3.assertClientAccess(ctx, ctx.params.id);
+        const rows = db3.all(`SELECT f.id, f.template_id, f.template_name, f.status, f.completed_at, f.created_at, f.updated_at, f.notes_enc, cu.display_name completed_by_name, cr.display_name created_by_name, (SELECT COUNT(*) FROM client_form_files x WHERE x.client_form_id=f.id) attachments FROM client_forms f LEFT JOIN users cu ON cu.id=f.completed_by JOIN users cr ON cr.id=f.created_by WHERE f.client_id=? AND f.deleted_at IS NULL ORDER BY f.updated_at DESC`, ctx.params.id).map((f) => ({ ...f, notes: formNotes(f), notes_enc: void 0 }));
+        audit3.log({ user: ctx.user, action: "client_form.list", entity: "client", entityId: ctx.params.id, clientId: ctx.params.id, ip: ctx.ip, details: { count: rows.length } });
+        return { forms: rows };
+      });
+      r.post("/api/clients/:id/forms", auth3.requireAuth, auth3.requirePerm("forms:write"), (ctx) => {
+        const client = db3.one(`SELECT * FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id);
+        if (!client) throw notFound();
+        auth3.assertClientAccess(ctx, client.id);
+        const { template_id } = validate(ctx.body, { template_id: { type: "string", required: true } });
+        const t = db3.one(`SELECT * FROM form_templates WHERE id=? AND is_active=1`, template_id);
+        if (!t) throw notFound("Form not found");
+        const fields = parseJson(t.fields_json, []);
+        const values = { ...autofillValues(fields, client, ctx.user), ...ctx.body.values ? cleanValues(fields, ctx.body.values) : {} };
+        const id = uuid2();
+        db3.run(`INSERT INTO client_forms(id,client_id,template_id,template_name,fields_json,values_enc,status,created_by) VALUES(?,?,?,?,?,?,'draft',?)`, id, client.id, t.id, t.name + (t.version ? ` (v${t.version})` : ""), JSON.stringify(fields), encrypt3(JSON.stringify(values)), ctx.user.id);
+        audit3.log({ user: ctx.user, action: "client_form.create", entity: "client_form", entityId: id, clientId: client.id, ip: ctx.ip, details: { template: t.name } });
+        ctx.status = 201;
+        return { id, fields, values };
+      });
+      r.get("/api/forms/:id", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write"), (ctx) => {
+        const f = loadForm(ctx, ctx.params.id);
+        audit3.log({ user: ctx.user, action: "client_form.view", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip });
+        const files = db3.all(`SELECT id, filename, content_type, bytes, created_at, uploaded_by FROM client_form_files WHERE client_form_id=? ORDER BY created_at`, f.id);
+        const t = f.template_id ? db3.one(`SELECT id, name, instructions, (file_b64 IS NOT NULL) has_file, content_type FROM form_templates WHERE id=?`, f.template_id) : null;
+        return { form: { ...formOut(f), files, template: t } };
+      });
+      r.put("/api/forms/:id", auth3.requireAuth, auth3.requirePerm("forms:write"), (ctx) => {
+        const f = loadForm(ctx, ctx.params.id);
+        if (f.status === "completed" && !auth3.hasPerm(ctx.user, "forms:manage")) throw badRequest("This form is completed. Ask a supervisor to reopen it.");
+        require_crud().assertFresh(ctx, f, "client_form");
+        const fields = parseJson(f.fields_json, []);
+        const v = validate(ctx.body, { status: { type: "string", enum: ["draft", "completed", "void"] }, notes: { type: "string", maxLen: 2e3 } }, { partial: true });
+        let values = parseJson(decrypt3(f.values_enc), {});
+        if (ctx.body.values !== void 0) values = { ...values, ...cleanValues(fields, ctx.body.values) };
+        const stamp2 = db3.now();
+        const sets = ["values_enc=?", "updated_at=?"];
+        const params = [encrypt3(JSON.stringify(values)), stamp2];
+        if (v.notes !== void 0) {
+          sets.push("notes_enc=?");
+          params.push(v.notes ? encrypt3(v.notes) : null);
+        }
+        if (v.status) {
+          if (v.status === "completed") {
+            const miss = missingRequired(fields, values);
+            if (miss.length) {
+              db3.run(`UPDATE client_forms SET values_enc=?, updated_at=? WHERE id=?`, params[0], params[1], f.id);
+              throw badRequest(`Please fill in: ${miss.join(", ")}`, { updated_at: stamp2 });
+            }
+            sets.push("status=?", "completed_at=?", "completed_by=?");
+            params.push("completed", db3.now(), ctx.user.id);
+          } else {
+            sets.push("status=?", "completed_at=NULL", "completed_by=NULL");
+            params.push(v.status);
+          }
+        }
+        db3.run(`UPDATE client_forms SET ${sets.join(", ")} WHERE id=?`, ...params, f.id);
+        audit3.log({ user: ctx.user, action: v.status === "completed" ? "client_form.complete" : "client_form.update", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { status: v.status, fields_changed: ctx.body.values ? Object.keys(ctx.body.values).length : 0 } });
+        return { ok: true, missing: missingRequired(fields, values), updated_at: stamp2 };
+      });
+      r.delete("/api/forms/:id", auth3.requireAuth, auth3.requirePerm("forms:write"), (ctx) => {
+        const f = loadForm(ctx, ctx.params.id);
+        if (f.status === "completed" && !auth3.hasPerm(ctx.user, "forms:manage")) throw badRequest("Completed forms can only be removed by a supervisor");
+        db3.run(`UPDATE client_forms SET deleted_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), f.id);
+        audit3.log({ user: ctx.user, action: "client_form.delete", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip });
+        return { ok: true };
+      });
+      r.get("/api/forms/:id/pdf", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write"), (ctx) => {
+        const f = loadForm(ctx, ctx.params.id);
+        const client = M.decryptRow(db3.one(`SELECT * FROM clients WHERE id=?`, f.client_id));
+        const values = parseJson(decrypt3(f.values_enc), {});
+        const by = f.completed_by ? db3.one(`SELECT display_name FROM users WHERE id=?`, f.completed_by) : null;
+        audit3.log({ user: ctx.user, action: "client_form.print", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip });
+        const body = pdf.renderForm({ title: f.template_name, org: db3.getSetting("org_name", "SUDS"), meta: [`Client: ${client.first_name} ${client.last_name} (${client.client_code})`, f.status === "completed" ? `Completed ${f.completed_at.slice(0, 10)}${by ? " by " + by.display_name : ""}` : "DRAFT"], fields: parseJson(f.fields_json, []), values, footer: printFooter() });
+        ctx.res.writeHead(200, { "Content-Type": "application/pdf", "Content-Disposition": contentDisposition(ctx.query.get("download") === "1" ? "attachment" : "inline", `${client.client_code}-${f.template_name}.pdf`) });
+        ctx.res.end(body);
+        return null;
+      });
+      r.post("/api/forms/:id/files", auth3.requireAuth, auth3.requirePerm("forms:write"), (ctx) => {
+        const f = loadForm(ctx, ctx.params.id);
+        if (db3.one(`SELECT COUNT(*) n FROM client_form_files WHERE client_form_id=?`, f.id).n >= 10) throw badRequest("At most 10 attachments per form");
+        const v = validate(ctx.body, { filename: { type: "string", maxLen: 200 } });
+        const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_ATTACH_BYTES, "Attachment");
+        if (!file) throw badRequest("Attachment is required");
+        const id = uuid2();
+        const name = (v.filename || `signed.${FILE_TYPES[file.type]}`).replace(/[\r\n"]/g, "");
+        db3.run(`INSERT INTO client_form_files(id,client_form_id,client_id,filename,content_type,bytes,data_enc,uploaded_by) VALUES(?,?,?,?,?,?,?,?)`, id, f.id, f.client_id, name, file.type, file.buf.length, encrypt3(file.b64), ctx.user.id);
+        const stamp2 = db3.now();
+        db3.run(`UPDATE client_forms SET updated_at=? WHERE id=?`, stamp2, f.id);
+        audit3.log({ user: ctx.user, action: "client_form.attach", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { file_id: id, bytes: file.buf.length, type: file.type } });
+        ctx.status = 201;
+        return { id, filename: name, content_type: file.type, bytes: file.buf.length, form_updated_at: stamp2 };
+      });
+      r.get("/api/forms/:id/files/:fid", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write"), (ctx) => {
+        const f = loadForm(ctx, ctx.params.id);
+        const x = db3.one(`SELECT * FROM client_form_files WHERE id=? AND client_form_id=?`, ctx.params.fid, f.id);
+        if (!x) throw notFound();
+        audit3.log({ user: ctx.user, action: "client_form.file.view", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { file_id: x.id } });
+        ctx.res.writeHead(200, { "Content-Type": safeContentType(x.content_type), "Content-Disposition": contentDisposition(ctx.query.get("download") === "1" ? "attachment" : "inline", x.filename, "attachment"), "X-Content-Type-Options": "nosniff" });
+        ctx.res.end(import_buffer.Buffer.from(decrypt3(x.data_enc), "base64"));
+        return null;
+      });
+      r.delete("/api/forms/:id/files/:fid", auth3.requireAuth, auth3.requirePerm("forms:write"), (ctx) => {
+        const f = loadForm(ctx, ctx.params.id);
+        const x = db3.one(`SELECT id FROM client_form_files WHERE id=? AND client_form_id=?`, ctx.params.fid, f.id);
+        if (!x) throw notFound();
+        const stamp2 = db3.now();
+        db3.run(`DELETE FROM client_form_files WHERE id=?`, x.id);
+        db3.tombstone("client_form_files", x.id);
+        db3.run(`UPDATE client_forms SET updated_at=? WHERE id=?`, stamp2, f.id);
+        audit3.log({ user: ctx.user, action: "client_form.file.remove", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { file_id: x.id } });
+        return { ok: true, form_updated_at: stamp2 };
+      });
+    };
+  }
+});
+
+// server/routes/reports.js
+var require_reports = __commonJS({
+  "server/routes/reports.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var { sendJson, badRequest } = require_http();
+    var M = require_clients_model();
+    var CFX = require_client_filters();
+    var { defer } = require_spreadsheet();
+    var DAY = /^\d{4}-\d{2}-\d{2}$/;
+    var addDays = (date, n) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
+    function range(ctx) {
+      const { localDate, localMidnight } = require_budget();
+      const to = ctx.query.get("to") || localDate();
+      const from = ctx.query.get("from") || addDays(to, -89);
+      if (!DAY.test(to) || !DAY.test(from) || !Number.isFinite(Date.parse(to)) || !Number.isFinite(Date.parse(from))) throw badRequest("from and to must be dates (YYYY-MM-DD)");
+      const fromTs = localMidnight(from);
+      const toEnd = new Date(Date.parse(localMidnight(addDays(to, 1))) - 1).toISOString();
+      const ts = (col) => `((length(${col})>10 AND ${col} BETWEEN ? AND ?) OR (length(${col})=10 AND ${col} BETWEEN ? AND ?))`;
+      return { from, to, fromTs, toEnd, ts, tsP: [fromTs, toEnd, from, to] };
+    }
+    module.exports = (r) => {
+      r.get("/api/reports/dashboard", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
+        const { from, to, ts, tsP } = range(ctx);
+        const cf = auth3.caseloadFilter(ctx.user, "c.id");
+        const expand = (sql, p) => {
+          const before = sql.slice(0, sql.indexOf("{CF}"));
+          const n = (before.match(/\?/g) || []).length;
+          return [sql.replace("{CF}", cf.sql), [...p.slice(0, n), ...cf.params, ...p.slice(n)]];
+        };
+        const scoped = (sql, ...p) => {
+          const [q, a] = expand(sql, p);
+          return db3.all(q, ...a);
+        };
+        const scoped1 = (sql, ...p) => {
+          const [q, a] = expand(sql, p);
+          return db3.one(q, ...a);
+        };
+        const today = require_budget().localDate();
+        const out2 = {
+          from,
+          to,
+          clients: {
+            active: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF}`).n,
+            waitlist: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='waitlist' AND {CF}`).n,
+            new_in_range: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND intake_date BETWEEN ? AND ? AND {CF}`, from, to).n,
+            // The tiles use the client list's own predicates (server/client-filters.js), so a tile and the list it
+            // opens count the same people.
+            high_risk: (() => {
+              const f = CFX.risk("high");
+              return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND ${f.sql} AND {CF}`, ...f.params).n;
+            })(),
+            no_contact_30d: (() => {
+              const f = CFX.noContactSince();
+              return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} AND ${f.sql}`, ...f.params).n;
+            })(),
+            by_status: scoped(`SELECT status, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND {CF} GROUP BY status`),
+            by_substance: scoped(`SELECT COALESCE(primary_substance,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k ORDER BY n DESC`),
+            mat: scoped(`SELECT COALESCE(mat_status,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k`)
+          },
+          interventions: {
+            total: scoped1(`SELECT COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP).n,
+            minutes: scoped1(`SELECT COALESCE(SUM(duration_minutes),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP).n,
+            by_type: db3.all(`SELECT i.type k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${cf.sql} GROUP BY i.type ORDER BY n DESC`, ...tsP, ...cf.params),
+            by_week: db3.all(`SELECT strftime('%Y-%W', i.occurred_at) k, COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${cf.sql} GROUP BY k ORDER BY k`, ...tsP, ...cf.params),
+            naloxone_kits: scoped1(`SELECT COALESCE(SUM(naloxone_kits),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP).n,
+            fentanyl_strips: scoped1(`SELECT COALESCE(SUM(fentanyl_strips),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP).n,
+            by_worker: db3.all(`SELECT u.display_name k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN users u ON u.id=i.user_id JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${cf.sql} GROUP BY u.id ORDER BY n DESC`, ...tsP, ...cf.params)
+          },
+          calls: {
+            total: db3.one(`SELECT COUNT(*) n FROM calls WHERE ${ts("started_at")}`, ...tsP).n,
+            minutes: db3.one(`SELECT COALESCE(SUM(duration_minutes),0) n FROM calls WHERE ${ts("started_at")}`, ...tsP).n,
+            crisis: db3.one(`SELECT COUNT(*) n FROM calls WHERE crisis=1 AND ${ts("started_at")}`, ...tsP).n,
+            by_outcome: db3.all(`SELECT outcome k, COUNT(*) n FROM calls WHERE ${ts("started_at")} GROUP BY outcome ORDER BY n DESC`, ...tsP),
+            by_direction: db3.all(`SELECT direction k, COUNT(*) n FROM calls WHERE ${ts("started_at")} GROUP BY direction`, ...tsP),
+            // Texts are logged alongside calls, so say how the total splits rather than reporting them as calls.
+            texts: db3.one(`SELECT COUNT(*) n FROM calls WHERE method='text' AND ${ts("started_at")}`, ...tsP).n
+          },
+          referrals: {
+            total: db3.one(`SELECT COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${ts("r.referred_at")} AND ${cf.sql}`, ...tsP, ...cf.params).n,
+            by_status: db3.all(`SELECT r.status k, COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${ts("r.referred_at")} AND ${cf.sql} GROUP BY r.status ORDER BY n DESC`, ...tsP, ...cf.params),
+            by_category: db3.all(`SELECT res.category k, COUNT(*) n, SUM(CASE WHEN r.status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id WHERE ${ts("r.referred_at")} AND ${cf.sql} GROUP BY res.category ORDER BY n DESC`, ...tsP, ...cf.params),
+            open: db3.one(`SELECT COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE r.status IN ('pending','contacted','accepted','waitlisted','scheduled') AND ${cf.sql}`, ...cf.params).n,
+            median_days_to_admit: (() => {
+              const d = db3.all(`SELECT (julianday(admitted_at)-julianday(referred_at)) d FROM referrals WHERE admitted_at IS NOT NULL AND ${ts("referred_at")} ORDER BY d`, ...tsP).map((x) => x.d);
+              return d.length ? d[Math.floor(d.length / 2)] : null;
+            })()
+          },
+          tasks: {
+            open: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (assigned_to=? OR ?)`, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n,
+            overdue: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (CASE WHEN length(due_at)=10 THEN due_at < ? ELSE due_at < ? END) AND (assigned_to=? OR ?)`, today, db3.now(), ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n,
+            due_today: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND substr(due_at,1,10)=? AND (assigned_to=? OR ?)`, today, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n
+          },
+          time: auth3.hasPerm(ctx.user, "time:read") || auth3.hasPerm(ctx.user, "time:write") ? {
+            minutes: db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE work_date BETWEEN ? AND ? AND (user_id=? OR ?)`, from, to, ctx.user.id, auth3.hasPerm(ctx.user, "time:all") ? 1 : 0).n,
+            by_category: db3.all(`SELECT category k, SUM(minutes) n FROM time_entries WHERE work_date BETWEEN ? AND ? AND (user_id=? OR ?) GROUP BY category ORDER BY n DESC`, from, to, ctx.user.id, auth3.hasPerm(ctx.user, "time:all") ? 1 : 0)
+          } : null,
+          // A supervisor's unsigned-notes alert covers the team's drafts, the same way the overdue-tasks alert
+          // above already covers the team's to-dos -- a program manager rarely writes routine notes themselves,
+          // so an alert scoped to their own drafts was dead for exactly the role it matters most to.
+          notes: (() => {
+            const team = auth3.hasPerm(ctx.user, "notes:cosign") && auth3.hasPerm(ctx.user, "clients:all");
+            const scope = team ? "1=1" : "author_id=?";
+            const p = team ? [] : [ctx.user.id];
+            return {
+              team,
+              unsigned: db3.one(`SELECT COUNT(*) n FROM notes WHERE status='draft' AND deleted_at IS NULL AND ${scope}`, ...p).n,
+              unsigned_overdue: db3.one(`SELECT COUNT(*) n FROM notes WHERE status='draft' AND deleted_at IS NULL AND ${scope} AND created_at < ?`, ...p, new Date(Date.now() - Number(db3.getSetting("note_lock_days", "3")) * 864e5).toISOString()).n,
+              staged_imports: db3.one(`SELECT COUNT(*) n FROM import_items x JOIN imports i ON i.id=x.import_id WHERE x.status='staged' AND (i.imported_by=? OR i.imported_by IS NULL OR ?)`, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n
+            };
+          })(),
+          budget: auth3.hasPerm(ctx.user, "budget:read") ? db3.one(`SELECT ROUND((SELECT COALESCE(SUM(total_amount),0) FROM funding_sources WHERE is_active=1),2) total, ROUND((SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status IN ('approved','reimbursed')),2) spent, ROUND((SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status='pending'),2) pending`) : null,
+          // Scoped to active clients so this count matches what #/clients?consent_expiring=1 shows by default —
+          // otherwise the badge counts a closed or inactive client's consent that the deep-linked list, filtered
+          // to active, never displays.
+          // Emergency accesses nobody has reviewed yet — the count a supervisor sees on their home page.
+          breakglass_pending: auth3.hasPerm(ctx.user, "audit:read") ? db3.one(`SELECT COUNT(*) n FROM breakglass_events WHERE acknowledged_at IS NULL`).n : null,
+          // Patient-rights requests (access, amendment, restriction, accounting) each run a 30-day clock; the
+          // count of open ones, and how many have run out, so a deadline is not first noticed when it is missed.
+          patient_requests: auth3.hasPerm(ctx.user, "patient-requests:read") || auth3.hasPerm(ctx.user, "patient-requests:write") ? scoped1(`SELECT COUNT(*) n, COALESCE(SUM(CASE WHEN p.due_at < ? THEN 1 ELSE 0 END),0) overdue FROM patient_requests p JOIN clients c ON c.id=p.client_id WHERE p.status='open' AND c.deleted_at IS NULL AND {CF}`, today) : null,
+          // 42 CFR §2.22: active clients on this person's caseload with no record of being given the notice.
+          part2_notice_missing: (auth3.hasPerm(ctx.user, "consents:read") || auth3.hasPerm(ctx.user, "consents:write")) && require_disclosure().part2Program() ? scoped1(`SELECT COUNT(*) n FROM clients c WHERE ${require_part2().MISSING_NOTICE} AND {CF}`).n : null,
+          // The privacy officer's registers: open complaints, and incidents whose breach-notification clock
+          // needs attention (a determination not made, or a notice owed) — how many are due within two weeks or late.
+          // The programme's Part 2 protections switched off (routes/part2.js): who did it and when, for administrators.
+          part2_program_off: auth3.hasPerm(ctx.user, "settings:manage") && !require_disclosure().part2Program() ? (() => {
+            try {
+              return JSON.parse(db3.getSetting("part2_program_off", "") || "null") || { since: null };
+            } catch {
+              return { since: null };
+            }
+          })() : null,
+          complaints_open: auth3.hasPerm(ctx.user, "complaints:read") ? db3.one(`SELECT COUNT(*) n FROM complaints WHERE status IN ('open','investigating')`).n : null,
+          incidents: auth3.hasPerm(ctx.user, "incidents:read") ? (() => {
+            const ob = db3.all(`SELECT * FROM privacy_incidents WHERE status='open'`).map((i) => require_incidents().obligations(i));
+            return { open: ob.length, attention: ob.filter((o) => o.attention).length, due_soon: ob.filter((o) => o.warn && !o.overdue).length, overdue: ob.filter((o) => o.overdue).length };
+          })() : null,
+          // The number of clients the "consent expiring" list shows (the card below lists the first 20 consents).
+          consents_expiring_clients: (() => {
+            const f = CFX.consentExpiring();
+            return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND ${f.sql} AND {CF}`, ...f.params).n;
+          })(),
+          consents_expiring: db3.all(`SELECT co.id, co.client_id, co.type, co.recipient_enc, co.expires_at, c.client_code FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ? AND c.status='active' AND ${cf.sql} ORDER BY co.expires_at LIMIT 20`, today, new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10), ...cf.params).map((x) => ({ ...x, recipient: x.recipient_enc ? require_crypto().decrypt(x.recipient_enc) : null, recipient_enc: void 0 }))
+        };
+        audit3.log({ user: ctx.user, action: "report.dashboard", ip: ctx.ip, details: { from, to } });
+        return out2;
+      });
+      r.get("/api/reports/monthly", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
+        const months = Math.min(24, Math.max(1, Number(ctx.query.get("months") || 12)));
+        const start2 = /* @__PURE__ */ new Date();
+        start2.setUTCDate(1);
+        start2.setUTCMonth(start2.getUTCMonth() - months + 1);
+        const s = start2.toISOString().slice(0, 10);
+        return {
+          intakes: db3.all(`SELECT substr(intake_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND intake_date >= ? GROUP BY month ORDER BY month`, s),
+          discharges: db3.all(`SELECT substr(discharge_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND discharge_date >= ? GROUP BY month ORDER BY month`, s),
+          interventions: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
+          calls: db3.all(`SELECT substr(started_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes FROM calls WHERE started_at >= ? GROUP BY month ORDER BY month`, s),
+          referrals: db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals WHERE referred_at >= ? GROUP BY month ORDER BY month`, s),
+          naloxone: db3.all(`SELECT substr(occurred_at,1,7) month, SUM(naloxone_kits) kits, SUM(fentanyl_strips) strips FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
+          overdose_events: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN naloxone_used=1 AND survived=1 THEN 1 ELSE 0 END) reversals, SUM(CASE WHEN kind='fatal' OR survived=0 THEN 1 ELSE 0 END) fatal FROM overdose_events WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
+          episodes: db3.all(`SELECT substr(opened_at,1,7) month, COUNT(*) admissions, (SELECT COUNT(*) FROM episodes x WHERE substr(x.closed_at,1,7)=substr(e.opened_at,1,7)) discharges FROM episodes e WHERE opened_at >= ? GROUP BY month ORDER BY month`, s),
+          unduplicated_clients: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? AND client_id IS NOT NULL GROUP BY month ORDER BY month`, s),
+          mat_linkage: db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n FROM referrals r JOIN resources res ON res.id=r.resource_id WHERE res.category IN ('mat_otp','mat_obot') AND r.status IN ('admitted','completed') AND referred_at >= ? GROUP BY month ORDER BY month`, s),
+          spend: auth3.hasPerm(ctx.user, "budget:read") ? db3.all(`SELECT substr(spent_at,1,7) month, ROUND(SUM(amount),2) amount FROM expenditures WHERE status IN ('approved','reimbursed') AND spent_at >= ? GROUP BY month ORDER BY month`, s) : [],
+          time: db3.all(`SELECT substr(work_date,1,7) month, SUM(minutes) minutes FROM time_entries WHERE work_date >= ? GROUP BY month ORDER BY month`, s)
+        };
+      });
+      r.get("/api/reports/funder", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
+        const { from, to, ts, tsP } = range(ctx);
+        const cf = auth3.caseloadFilter(ctx.user, "c.id");
+        const fund = ctx.query.get("funding_source_id") || null;
+        const fundJoin = fund ? "AND i.funding_source_id=?" : "";
+        const fundP = fund ? [fund] : [];
+        const servedSql = `SELECT DISTINCT i.client_id AS id FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND c.deleted_at IS NULL AND ${cf.sql} ${fundJoin}` + (fund ? "" : ` UNION SELECT ca.client_id FROM calls ca JOIN clients c ON c.id=ca.client_id WHERE ${ts("ca.started_at")} AND c.deleted_at IS NULL AND ${cf.sql}`);
+        const servedP = fund ? [...tsP, ...cf.params, ...fundP] : [...tsP, ...cf.params, ...tsP, ...cf.params];
+        const inServed = (sql, ...p) => [`WITH served(id) AS (${servedSql}) ${sql}`, ...servedP, ...p];
+        const one = (sql, ...p) => {
+          const [q, ...a] = inServed(sql, ...p);
+          return db3.one(q, ...a);
+        };
+        const all = (sql, ...p) => {
+          const [q, ...a] = inServed(sql, ...p);
+          return db3.all(q, ...a);
+        };
+        const served = one(`SELECT COUNT(*) n FROM served`).n;
+        const demographics = (col, label) => all(`SELECT COALESCE(NULLIF(c.${col},''),'unknown') k, COUNT(*) n
+      FROM clients c JOIN served s ON s.id=c.id GROUP BY k ORDER BY n DESC`).map((x) => ({ ...x, dimension: label }));
+        const raceRows = all(`SELECT c.race_codes FROM clients c JOIN served s ON s.id=c.id`);
+        const byRace = {};
+        for (const row of raceRows) {
+          const codes = String(row.race_codes || "").split(",").map((x) => x.trim()).filter(Boolean);
+          for (const code of codes.length ? codes : ["unknown"]) byRace[code] = (byRace[code] || 0) + 1;
+        }
+        const episodes = {
+          admissions: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.opened_at BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
+          discharges: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
+          open_at_end: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.opened_at <= ? AND (e.closed_at IS NULL OR e.closed_at > ?) AND ${cf.sql}`, to, to, ...cf.params).n,
+          by_discharge_reason: db3.all(`SELECT COALESCE(e.discharge_reason,'unknown') k, COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql} GROUP BY k ORDER BY n DESC`, from, to, ...cf.params),
+          median_length_of_stay_days: (() => {
+            const d = db3.all(`SELECT (julianday(e.closed_at)-julianday(e.opened_at)) d FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY d`, from, to, ...cf.params).map((x) => x.d);
+            return d.length ? Math.round(d[Math.floor(d.length / 2)]) : null;
+          })()
+        };
+        const overdose = {
+          events: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")}`, ...tsP).n,
+          reversals: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND o.naloxone_used=1 AND o.survived=1`, ...tsP).n,
+          fatal: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND (o.kind='fatal' OR o.survived=0)`, ...tsP).n,
+          community_reported: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND o.client_id IS NULL`, ...tsP).n,
+          naloxone_doses: db3.one(`SELECT COALESCE(SUM(o.naloxone_doses),0) n FROM overdose_events o WHERE ${ts("o.occurred_at")}`, ...tsP).n,
+          by_month: db3.all(`SELECT substr(o.occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN o.naloxone_used=1 AND o.survived=1 THEN 1 ELSE 0 END) reversals FROM overdose_events o WHERE ${ts("o.occurred_at")} GROUP BY month ORDER BY month`, ...tsP),
+          by_administered_by: db3.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND o.naloxone_used=1 GROUP BY k ORDER BY n DESC`, ...tsP)
+        };
+        const distribution = db3.one(`SELECT COALESCE(SUM(i.naloxone_kits),0) kits, COALESCE(SUM(i.fentanyl_strips),0) strips,
+      COALESCE(SUM(CASE WHEN i.client_id IS NULL THEN i.naloxone_kits ELSE 0 END),0) community_kits
+      FROM interventions i WHERE ${ts("i.occurred_at")} ${fundJoin}`, ...tsP, ...fundP);
+        const SMALL_CELL = 11;
+        const suppress = (rows) => rows.map((x) => typeof x.n === "number" && x.n > 0 && x.n < SMALL_CELL ? { ...x, n: "<11", suppressed: true } : x);
+        const out2 = {
+          from,
+          to,
+          funding_source_id: fund,
+          small_cell_threshold: SMALL_CELL,
+          unduplicated: {
+            served,
+            new_admissions: db3.one(`SELECT COUNT(DISTINCT c.id) n FROM clients c WHERE c.deleted_at IS NULL AND c.intake_date BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
+            // Of the people served: how many were referred on, admitted somewhere, and are on MAT.
+            with_a_referral: one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN served s ON s.id=r.client_id WHERE ${ts("r.referred_at")}`, ...tsP).n,
+            admitted_after_referral: one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN served s ON s.id=r.client_id WHERE ${ts("r.admitted_at")}`, ...tsP).n,
+            on_mat: one(`SELECT COUNT(*) n FROM clients c JOIN served s ON s.id=c.id WHERE c.mat_status='active'`).n
+          },
+          demographics: {
+            by_gender: suppress(demographics("gender", "gender")),
+            by_language: suppress(demographics("preferred_language", "language")),
+            by_housing: suppress(demographics("housing_status", "housing")),
+            by_insurance: suppress(demographics("insurance", "insurance")),
+            by_race_code: suppress(Object.entries(byRace).map(([k, n]) => ({ k, n })).sort((a, b) => b.n - a.n)),
+            by_ethnicity: suppress(demographics("race_ethnicity", "ethnicity"))
+          },
+          episodes: { ...episodes, by_discharge_reason: suppress(episodes.by_discharge_reason) },
+          overdose: { ...overdose, by_administered_by: suppress(overdose.by_administered_by) },
+          naloxone_distribution: distribution,
+          by_funding_source: db3.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end,
+          (SELECT COUNT(DISTINCT i.client_id) FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.funding_source_id=f.id AND c.deleted_at IS NULL AND ${ts("i.occurred_at")}) AS clients_served,
+          (SELECT COUNT(*) FROM interventions i WHERE i.funding_source_id=f.id AND ${ts("i.occurred_at")}) AS services,
+          (SELECT COALESCE(SUM(t.minutes),0) FROM time_entries t WHERE t.funding_source_id=f.id AND t.work_date BETWEEN ? AND ? AND t.status='approved') AS approved_minutes
+        FROM funding_sources f WHERE f.is_active=1 ORDER BY f.name`, ...tsP, ...tsP, from, to)
+        };
+        audit3.log({ user: ctx.user, action: "report.funder", ip: ctx.ip, details: { from, to, funding_source_id: fund || void 0, served } });
+        return out2;
+      });
+      r.get("/api/reports/export/:kind", auth3.requireAuth, auth3.requirePerm("export:read"), async (ctx) => {
+        const period = range(ctx);
+        const { from, to } = period;
+        const identified = ctx.query.get("identified") === "1" && auth3.hasPerm(ctx.user, "export:identified");
+        const recipient = (ctx.query.get("recipient") || "").trim();
+        const purpose = (ctx.query.get("purpose") || "").trim();
+        if (identified && (!recipient || !purpose)) throw require_http().badRequest("An identified export must name its recipient and purpose (recipient= and purpose=); they are written to the accounting of disclosures for every client it contains");
+        const disclosure = require_disclosure();
+        const gate = {
+          basis: ctx.query.get("basis") || "",
+          restriction_reviewed: ctx.query.get("restriction_reviewed") === "1",
+          legal_proceeding: ctx.query.get("legal_proceeding") === "1",
+          recipient,
+          agreement_id: ctx.query.get("agreement_id") || void 0,
+          user: ctx.user
+        };
+        if (identified) disclosure.requireExportBasis([], gate);
+        const part2 = identified && disclosure.part2Program();
+        const notice = disclosure.notice();
+        const format = ctx.query.get("format") === "xlsx" || ctx.params.kind === "workbook" ? "xlsx" : "csv";
+        const X = require_exports();
+        const D = X.datasets(ctx, { ...period, identified });
+        const S = require_spreadsheet();
+        let excludedCodes = [];
+        const admit = (kind, ids) => {
+          if (!identified) return { consentOf: /* @__PURE__ */ new Map(), excluded: [], agreement: null };
+          let g;
+          try {
+            g = disclosure.requireExportBasis(ids, gate);
+          } catch (e) {
+            audit3.log({ user: ctx.user, action: "report.export.refused", ip: ctx.ip, success: false, details: { kind, basis: gate.basis, clients: ids.length, reason: String(e.message).slice(0, 200) } });
+            throw e;
+          }
+          if (g.excluded.length) {
+            excludedCodes = db3.all(`SELECT client_code FROM clients WHERE id IN (${g.excluded.map(() => "?").join(",")})`, ...g.excluded).map((r2) => r2.client_code).sort();
+            aboutSheet.rows.push({ k: "Left out (no consent on file naming this recipient)", v: excludedCodes.join(", ") });
+          }
+          return g;
+        };
+        const accountFor = (kind, ids, g) => {
+          if (!identified) return [];
+          const written = ids.map((clientId) => disclosure.record({ clientId, consentId: g.consentOf.get(clientId) || null, agreementId: g.agreement?.id || null, recipient, purpose, what: `Identified export: ${kind} (${from} to ${to})`, method: "export", basis: gate.basis, source: "export", sourceRef: kind, user: ctx.user, ip: ctx.ip }));
+          require_incidents().maybeMassExport({ clients: ids.length, kind, user: ctx.user });
+          return written;
+        };
+        const aboutSheet = { name: "About", columns: [{ key: "k", label: "Field" }, { key: "v", label: "Value" }], rows: [
+          { k: "Classification", v: identified ? `Identified export \u2014 PHI. Disclosed to: ${recipient}. Purpose: ${purpose}. Lawful basis: ${gate.basis}.` : X.DEID_LABEL },
+          { k: "Period", v: `${from} to ${to}` },
+          { k: "Generated", v: db3.now() },
+          { k: "Generated by", v: ctx.user.display_name || ctx.user.username },
+          ...part2 ? [{ k: "Protected by 42 CFR Part 2", v: notice.short }, { k: "Notice to recipient (42 CFR \xA72.32)", v: notice.text }] : []
+        ] };
+        const label = (k) => ({ key: k, label: k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) });
+        const RAW = /* @__PURE__ */ new Set(["client_code", "record_id", "receipt_ref", "grant_number", "email", "website", "phone", "fax", "zip", "username", "document_ref", "medicaid_id", "address", "first_name", "last_name", "contact_name", "name", "organization", "vendor", "title", "template_name", "fund", "line", "resource", "worker", "approver", "assignee", "completed_by", "created_by", "disclosed_by", "recipient", "summary", "description", "notes", "purpose", "what", "goals", "flags", "hours", "eligibility", "services", "languages", "capacity_notes", "contact_person", "intake_process", "cost_notes", "restrictions", "label", "city"]);
+        const humanize = (v) => String(v).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).replace(/\bSbirt\b/, "SBIRT").replace(/\bMat\b/g, "MAT").replace(/\bOtp\b/, "OTP").replace(/\bObot\b/, "OBOT").replace(/\bEd\b/, "ED").replace(/\bMh\b/, "MH").replace(/\bIds\b/, "IDs").replace(/\bRoi\b/, "ROI");
+        const pretty = (rows, kind) => rows.map((r2) => {
+          const listed = X.LIST_COLUMNS[kind] || {};
+          const o = {};
+          for (const [k, v] of Object.entries(r2)) o[k] = typeof v === "string" && !RAW.has(k) && !(k in listed) && /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(v) && v.length <= 40 ? humanize(v) : v;
+          return o;
+        });
+        const classification = identified ? `Identified export - PHI. Disclosed to: ${recipient}. Purpose: ${purpose}. Basis: ${gate.basis}.${part2 ? ` ${notice.short}` : ""} Generated ${db3.now()}.` : `${X.DEID_LABEL} Generated ${db3.now()}.`;
+        const headerSafe = (s) => String(s).replace(/[^\x20-\x7e]/g, "?").slice(0, 900);
+        let body, filename, type;
+        if (ctx.params.kind === "workbook") {
+          const read = [];
+          const clientIds = /* @__PURE__ */ new Set();
+          for (const [kind, d] of Object.entries(D)) {
+            if (kind === "disclosures") {
+              read.push([kind, d, null]);
+              continue;
+            }
+            const rows = d.rows();
+            for (const id of X.clientIdsOf(rows)) clientIds.add(id);
+            read.push([kind, d, rows]);
+            await new Promise((resolve2) => defer(resolve2));
+          }
+          const g = admit("workbook", [...clientIds]);
+          const out2 = new Set(g.excluded);
+          const sheets = [aboutSheet];
+          let disclosuresSlot = -1;
+          for (const [kind, d, rows] of read) {
+            if (kind === "disclosures") {
+              disclosuresSlot = sheets.length;
+              sheets.push(null);
+              continue;
+            }
+            sheets.push({ name: d.label, columns: d.columns.map(label), rows: pretty(X.publicRows(rows.filter((r2) => !out2.has(r2._client_id))), kind) });
+          }
+          const written = new Set(accountFor("workbook", [...clientIds].filter((id) => !out2.has(id)), g));
+          if (disclosuresSlot >= 0) {
+            const rows = D.disclosures.rows().filter((r2) => !written.has(r2.id) && !out2.has(r2._client_id));
+            sheets[disclosuresSlot] = { name: D.disclosures.label, columns: D.disclosures.columns.map(label), rows: pretty(X.publicRows(rows), "disclosures") };
+          }
+          audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: "workbook", sheets: sheets.map((s) => [s.name, s.rows.length]), identified, from, to, clients_disclosed: identified ? clientIds.size : void 0 } });
+          body = await S.writeWorkbookAsync(sheets);
+          filename = `suds-export-${from}_${to}-${identified ? "identified" : "deidentified"}.xlsx`;
+          type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        } else {
+          const d = D[ctx.params.kind === "clients" ? "clients" : ctx.params.kind];
+          if (!d) throw require_http().notFound("Unknown export");
+          const all = d.rows();
+          const ids = X.clientIdsOf(all);
+          const g = admit(ctx.params.kind, ids);
+          const out2 = new Set(g.excluded);
+          const raw = out2.size ? all.filter((r2) => !out2.has(r2._client_id)) : all;
+          const clientsDisclosed = accountFor(ctx.params.kind, ids.filter((id) => !out2.has(id)), g).length;
+          const rows = pretty(X.publicRows(raw), ctx.params.kind);
+          audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: ctx.params.kind, rows: rows.length, identified, from, to, format, clients_disclosed: identified ? clientsDisclosed : void 0 } });
+          const suffix = identified ? "identified" : "deidentified";
+          if (format === "xlsx") {
+            body = S.writeWorkbook([{ name: d.label, columns: d.columns.map(label), rows }, aboutSheet]);
+            filename = `suds-${ctx.params.kind}-${from}_${to}-${suffix}.xlsx`;
+            type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+          } else {
+            body = S.toCsv(rows, d.columns.map(label));
+            if (part2) body += "\r\n\r\n" + S.toCsv([{ n: disclosure.fileNotice() }], [{ key: "n", label: "" }]).split("\r\n")[1];
+            filename = `suds-${ctx.params.kind}-${from}_${to}-${suffix}.csv`;
+            type = "text/csv; charset=utf-8";
+          }
+        }
+        ctx.res.writeHead(200, {
+          "Content-Type": type,
+          "Content-Disposition": `attachment; filename="${filename}"`,
+          "X-SUDS-Export": headerSafe(classification),
+          ...identified && gate.basis === "consent" ? { "X-SUDS-Export-Excluded": excludedCodes.join(",").slice(0, 900) } : {}
+        });
+        ctx.res.end(body);
+      });
+    };
+    module.exports.range = range;
+  }
+});
+
+// server/routes/handoff.js
+var require_handoff = __commonJS({
+  "server/routes/handoff.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var { badRequest } = require_http();
+    var { decrypt: decrypt3 } = require_crypto();
+    var NOT_A_CLAIM = "Encounter hand-off for entry into the county EHR / billing system. This is not a claim: SUDS does not submit Drug Medi-Cal (837 / Short-Doyle) claims. Minutes are the total of the services recorded; the county EHR decides what is billable.";
+    var BASES = require_disclosure().EXPORT_BASES;
+    var COLUMNS = [
+      ["service_date", "Service Date"],
+      ["client_code", "Client Code"],
+      ["last_name", "Last Name"],
+      ["first_name", "First Name"],
+      ["dob", "Date Of Birth"],
+      ["medi_cal_id", "Medi-Cal ID"],
+      ["insurance", "Insurance"],
+      ["service_type", "Service Type"],
+      ["service_type_code", "Service Type Code"],
+      ["contacts", "Contacts"],
+      ["minutes", "Minutes"],
+      ["location", "Location"],
+      ["modality", "Modality"],
+      ["staff", "Staff"],
+      ["staff_title", "Staff Title"],
+      ["funding_source", "Funding Source"]
+    ].map(([key, label]) => ({ key, label }));
+    function encounters(ctx, { tsP, ts }) {
+      const cf = auth3.caseloadFilter(ctx.user, "c.id");
+      const rows = db3.all(`SELECT i.client_id, i.type, i.occurred_at, i.duration_minutes, i.location, i.modality, i.user_id, i.funding_source_id, c.client_code, c.first_name_enc, c.last_name_enc, c.dob_enc, c.medicaid_id_enc, c.insurance,
+      u.display_name staff, u.title staff_title, f.name funding_source
+    FROM interventions i JOIN clients c ON c.id=i.client_id JOIN users u ON u.id=i.user_id LEFT JOIN funding_sources f ON f.id=i.funding_source_id
+    WHERE i.client_id IS NOT NULL AND c.deleted_at IS NULL AND ${ts("i.occurred_at")} AND ${cf.sql} ORDER BY i.occurred_at LIMIT 50000`, ...tsP, ...cf.params);
+      const { localDate } = require_budget();
+      const O = require_options();
+      const types = O.labelMap("INTERVENTION_TYPES"), locs = O.labelMap("LOCATIONS"), mods = O.labelMap("MODALITIES");
+      const d = (v) => {
+        try {
+          return v ? decrypt3(v) : "";
+        } catch {
+          return "";
+        }
+      };
+      const groups = /* @__PURE__ */ new Map();
+      for (const r of rows) {
+        const day = String(r.occurred_at).length === 10 ? r.occurred_at : localDate(r.occurred_at);
+        const key = [r.client_id, day, r.type, r.user_id, r.location || "", r.modality || "", r.funding_source_id || ""].join("|");
+        let g = groups.get(key);
+        if (!g) {
+          g = {
+            _client_id: r.client_id,
+            service_date: day,
+            client_code: r.client_code,
+            _enc: r,
+            insurance: r.insurance || "",
+            service_type: types[r.type] || O.humanize(r.type),
+            service_type_code: r.type,
+            contacts: 0,
+            minutes: 0,
+            location: locs[r.location] || (r.location ? O.humanize(r.location) : ""),
+            modality: mods[r.modality] || (r.modality ? O.humanize(r.modality) : ""),
+            staff: r.staff,
+            staff_title: r.staff_title || "",
+            funding_source: r.funding_source || ""
+          };
+          groups.set(key, g);
+        }
+        g.contacts++;
+        g.minutes += Number(r.duration_minutes) || 0;
+      }
+      const names = /* @__PURE__ */ new Map();
+      return [...groups.values()].map((g) => {
+        if (!names.has(g._client_id)) names.set(g._client_id, { last_name: d(g._enc.last_name_enc), first_name: d(g._enc.first_name_enc), dob: d(g._enc.dob_enc), medi_cal_id: d(g._enc.medicaid_id_enc) });
+        const o = { ...g, ...names.get(g._client_id) };
+        delete o._enc;
+        return o;
+      }).sort((a, b) => a.service_date.localeCompare(b.service_date) || a.client_code.localeCompare(b.client_code));
+    }
+    function consentFor(clientId, recipient) {
+      const D = require_disclosure();
+      if (recipient) return D.fileConsentFor(clientId, D.recipientNames(recipient));
+      const types = D.fileConsentTypes();
+      return db3.all(`SELECT * FROM consents WHERE client_id=? AND type IN (${types.map(() => "?").join(",")}) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, clientId, ...types).find((c) => !D.consentElementProblems(c).length) || null;
+    }
+    module.exports = (r) => {
+      r.get("/api/handoff/summary", auth3.requireAuth, auth3.requirePerm("export:identified"), (ctx) => {
+        const p = require_reports().range(ctx);
+        const rows = encounters(ctx, p);
+        const clients = [...new Map(rows.map((x) => [x._client_id, x.client_code])).entries()];
+        const recipient = (ctx.query.get("recipient") || "").trim().slice(0, 200);
+        const without = clients.filter(([id]) => !consentFor(id, recipient)).map(([, code]) => code).sort();
+        const restricted = new Set(db3.all(`SELECT DISTINCT client_id FROM patient_requests WHERE kind='restriction' AND status='fulfilled'`).map((x) => x.client_id));
+        audit3.log({ user: ctx.user, action: "handoff.preview", ip: ctx.ip, details: { from: p.from, to: p.to, rows: rows.length, clients: clients.length } });
+        return {
+          from: p.from,
+          to: p.to,
+          rows: rows.length,
+          clients: clients.length,
+          minutes: rows.reduce((s, x) => s + x.minutes, 0),
+          without_consent: without,
+          restricted: clients.filter(([id]) => restricted.has(id)).length,
+          not_a_claim: NOT_A_CLAIM,
+          consent_types: require_disclosure().fileConsentTypes()
+        };
+      });
+      r.get("/api/handoff/export", auth3.requireAuth, auth3.requirePerm("export:identified"), async (ctx) => {
+        const p = require_reports().range(ctx);
+        const recipient = (ctx.query.get("recipient") || "").trim().slice(0, 200);
+        const purpose = (ctx.query.get("purpose") || "").trim().slice(0, 500);
+        if (!recipient || !purpose) throw badRequest("The hand-off names clients: say who receives it and why (recipient= and purpose=); both go into each client's accounting of disclosures");
+        const basis = ctx.query.get("basis") || "consent";
+        if (!BASES.includes(basis)) throw badRequest(`"${String(basis).slice(0, 40)}" is not a basis the hand-off can be made under (${BASES.join(", ")})`);
+        const disclosure = require_disclosure();
+        if (ctx.query.get("legal_proceeding") === "1") disclosure.requireExportBasis([], { basis: "internal", legal_proceeding: true });
+        const fileBasis = basis === "consent" ? null : disclosure.requireExportBasis([], { basis, agreement_id: ctx.query.get("agreement_id") || void 0, recipient, user: ctx.user, restriction_reviewed: true });
+        const all = encounters(ctx, p);
+        const consentOf = /* @__PURE__ */ new Map();
+        const excluded = /* @__PURE__ */ new Set();
+        if (basis === "consent") for (const id of new Set(all.map((x) => x._client_id))) {
+          const c = consentFor(id, recipient);
+          if (c) consentOf.set(id, c.id);
+          else excluded.add(id);
+        }
+        const rows = all.filter((x) => !excluded.has(x._client_id));
+        const excludedCodes = [...new Set(all.filter((x) => excluded.has(x._client_id)).map((x) => x.client_code))].sort();
+        const clientIds = [...new Set(rows.map((x) => x._client_id))];
+        try {
+          disclosure.requireRestrictionReview(clientIds, ctx.query.get("restriction_reviewed") === "1");
+        } catch (e) {
+          audit3.log({ user: ctx.user, action: "handoff.export.refused", ip: ctx.ip, success: false, details: { basis, clients: clientIds.length, reason: "restriction_review" } });
+          throw e;
+        }
+        db3.transaction(() => {
+          for (const clientId of clientIds) disclosure.record({ clientId, consentId: consentOf.get(clientId) || null, agreementId: fileBasis?.agreement?.id || null, recipient, purpose, what: `County EHR encounter hand-off (${p.from} to ${p.to}): service dates, types, minutes, staff and funding; name, date of birth, Medi-Cal ID`, method: "export", basis, justification: null, source: "ehr_handoff", sourceRef: `handoff:${p.from}_${p.to}`, user: ctx.user, ip: ctx.ip });
+        });
+        require_incidents().maybeMassExport({ clients: clientIds.length, kind: "ehr-handoff", user: ctx.user });
+        audit3.log({ user: ctx.user, action: "handoff.export", ip: ctx.ip, details: { from: p.from, to: p.to, rows: rows.length, basis, clients_disclosed: clientIds.length, excluded_no_consent: excludedCodes.length || void 0 } });
+        const notice = disclosure.notice();
+        const part2 = disclosure.part2Program();
+        const out2 = rows.map((x) => {
+          const o = { ...x };
+          delete o._client_id;
+          return o;
+        });
+        const S = require_spreadsheet();
+        const xlsx = ctx.query.get("format") === "xlsx";
+        const name = `suds-ehr-handoff-${p.from}_${p.to}-identified.${xlsx ? "xlsx" : "csv"}`;
+        const body = xlsx ? await S.writeWorkbookAsync([{ name: "Encounters", columns: COLUMNS, rows: out2 }, { name: "About", columns: [{ key: "k", label: "Field" }, { key: "v", label: "Value" }], rows: [
+          { k: "Not a claim", v: NOT_A_CLAIM },
+          { k: "Classification", v: `Identified \u2014 PHI. Disclosed to: ${recipient}. Purpose: ${purpose}. Basis: ${basis}.` },
+          { k: "Period", v: `${p.from} to ${p.to}` },
+          { k: "Generated", v: db3.now() },
+          { k: "Generated by", v: ctx.user.display_name || ctx.user.username },
+          { k: "Left out (no consent on file naming this recipient)", v: excludedCodes.join(", ") || "none" },
+          ...part2 ? [{ k: "Protected by 42 CFR Part 2", v: notice.short }, { k: "Notice to recipient (42 CFR \xA72.32)", v: notice.text }] : []
+        ] }]) : S.toCsv(out2, COLUMNS) + (part2 ? "\r\n\r\n" + S.toCsv([{ n: disclosure.fileNotice() }], [{ key: "n", label: "" }]).split("\r\n")[1] : "");
+        ctx.res.writeHead(200, {
+          "Content-Type": xlsx ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "text/csv; charset=utf-8",
+          "Content-Disposition": `attachment; filename="${name}"`,
+          "X-SUDS-Export": `Identified export - PHI. Disclosed to: ${recipient}. Purpose: ${purpose}. Basis: ${basis}.${part2 ? ` ${notice.short}` : ""} Not a claim.`.replace(/[^\x20-\x7e]/g, "?").slice(0, 900),
+          "X-SUDS-Handoff-Excluded": excludedCodes.join(",").slice(0, 900)
+        });
+        ctx.res.end(body);
+      });
+    };
+    module.exports.NOT_A_CLAIM = NOT_A_CLAIM;
+  }
+});
+
+// server/importers/pocketai.js
+var require_pocketai = __commonJS({
+  "server/importers/pocketai.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var { sniffDate, sniffClientHints } = require_text();
+    function pick(o, keys) {
+      for (const k of keys) if (o[k] !== void 0 && o[k] !== null && o[k] !== "") return o[k];
+      return void 0;
+    }
+    function normalizeItem(o, i) {
+      if (typeof o === "string") return normalizeTextNote(o, i);
+      const title = pick(o, ["title", "name", "subject", "heading"]) || `Pocket AI note ${i + 1}`;
+      const transcript = pick(o, ["transcript", "transcription", "text", "content", "body", "raw_text"]);
+      const summary = pick(o, ["summary", "ai_summary", "aiSummary", "abstract"]);
+      const notes = pick(o, ["notes", "note", "key_points", "keyPoints", "highlights"]);
+      const actions = pick(o, ["action_items", "actionItems", "actions", "todos", "tasks"]);
+      const parts = [];
+      if (summary) parts.push("## Summary\n" + str(summary));
+      if (notes) parts.push("## Notes\n" + str(notes));
+      if (actions) parts.push("## Action items\n" + (Array.isArray(actions) ? actions.map((a) => "- " + str(a)).join("\n") : str(actions)));
+      if (transcript) parts.push("## Transcript\n" + str(transcript));
+      const content = parts.join("\n\n").trim() || str(o);
+      const rawDate = pick(o, ["created_at", "createdAt", "date", "timestamp", "recorded_at", "recordedAt", "start_time", "updated_at"]);
+      let captured_at = null;
+      if (rawDate !== void 0) {
+        const d = typeof rawDate === "number" ? new Date(rawDate < 1e12 ? rawDate * 1e3 : rawDate) : new Date(rawDate);
+        if (!isNaN(d)) captured_at = d.toISOString();
+      }
+      if (!captured_at) captured_at = sniffDate(title) || sniffDate(content);
+      const tags = pick(o, ["tags", "labels", "categories"]);
+      const hints = sniffClientHints(`${title}
+${content}`);
+      return {
+        external_id: pick(o, ["id", "uuid", "note_id", "recording_id"]) ? String(pick(o, ["id", "uuid", "note_id", "recording_id"])) : null,
+        title: String(title).slice(0, 200),
+        content,
+        captured_at,
+        metadata: { source: "pocket_ai", tags: Array.isArray(tags) ? tags : tags ? [String(tags)] : [], duration: pick(o, ["duration", "duration_seconds", "length"]), hints, has_transcript: !!transcript, has_summary: !!summary }
+      };
+    }
+    function str(v) {
+      if (v === null || v === void 0) return "";
+      if (typeof v === "string") return v;
+      if (Array.isArray(v)) return v.map(str).join("\n");
+      if (typeof v === "object") {
+        if (v.text) return str(v.text);
+        if (v.content) return str(v.content);
+        return JSON.stringify(v, null, 2);
+      }
+      return String(v);
+    }
+    function normalizeTextNote(text, i) {
+      const lines = text.trim().split("\n");
+      let title = lines[0].replace(/^#+\s*/, "").trim().slice(0, 200) || `Pocket AI note ${i + 1}`;
+      const body = lines.slice(1).join("\n").trim();
+      const dateLine = /^(?:date|created|recorded)\s*[:\-]\s*(.+)$/im.exec(text);
+      const captured_at = dateLine && sniffDate(dateLine[1]) || sniffDate(title) || sniffDate(body.slice(0, 300));
+      return { external_id: null, title, content: body || text.trim(), captured_at, metadata: { source: "pocket_ai", hints: sniffClientHints(text) } };
+    }
+    function splitText(text) {
+      const t = String(text).replace(/\r\n/g, "\n").trim();
+      let chunks = t.split(/\n\s*(?:-{3,}|\*{3,}|_{3,}|={3,})\s*\n/).map((s) => s.trim()).filter(Boolean);
+      if (chunks.length === 1 && /^#\s/m.test(t)) chunks = t.split(/\n(?=#\s)/).map((s) => s.trim()).filter(Boolean);
+      return chunks;
+    }
+    function parse(input, { filename = "" } = {}) {
+      const text = import_buffer.Buffer.isBuffer(input) ? input.toString("utf8") : String(input);
+      const trimmed = text.trim();
+      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        let data;
+        try {
+          data = JSON.parse(trimmed);
+        } catch (e) {
+          throw new Error("Invalid JSON: " + e.message);
+        }
+        let arr = Array.isArray(data) ? data : data.notes || data.recordings || data.items || data.data || data.results;
+        if (!Array.isArray(arr)) arr = [data];
+        return arr.map(normalizeItem);
+      }
+      return splitText(text).map(normalizeTextNote);
+    }
+    module.exports = { parse, normalizeItem };
+  }
+});
+
+// server/importers/onenote.js
+var require_onenote = __commonJS({
+  "server/importers/onenote.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var T = require_text();
+    var config = require_config();
+    function pageFromHtml(html, { filename = "" } = {}) {
+      const title = T.extractTitle(html) || filename.replace(/\.[^.]+$/, "");
+      const meta = /<meta[^>]+name="?(?:created|creation-date|date)"?[^>]+content="([^"]+)"/i.exec(html);
+      const text = T.htmlToText(html);
+      const captured_at = meta && T.sniffDate(meta[1]) || T.sniffDate(text.split("\n").slice(0, 4).join(" ")) || null;
+      return { external_id: null, title: title.slice(0, 200), content: text, captured_at, metadata: { source: "onenote", filename, hints: T.sniffClientHints(`${title}
+${text}`) } };
+    }
+    function splitTextPages(text) {
+      const lines = String(text).replace(/\r\n/g, "\n").split("\n");
+      const pages = [];
+      let cur = null;
+      for (let i = 0; i < lines.length; i++) {
+        const l = lines[i];
+        const isHeader = l.trim() && lines[i + 1] !== void 0 && lines[i + 1].trim() === "" && lines[i + 2] && /^\s*(\w+day, )?\w+ \d{1,2}, \d{4}\s*$/.test(lines[i + 2]);
+        if (isHeader) {
+          if (cur) pages.push(cur);
+          cur = { title: l.trim(), lines: [], date: lines[i + 2].trim() + " " + (lines[i + 3] || "").trim() };
+          i += 3;
+          continue;
+        }
+        if (!cur) cur = { title: "", lines: [], date: "" };
+        cur.lines.push(l);
+      }
+      if (cur) pages.push(cur);
+      return pages.map((p, i) => {
+        const content = p.lines.join("\n").trim();
+        return { external_id: null, title: (p.title || `OneNote page ${i + 1}`).slice(0, 200), content, captured_at: T.sniffDate(p.date) || T.sniffDate(content.slice(0, 300)), metadata: { source: "onenote", hints: T.sniffClientHints(`${p.title}
+${content}`) } };
+      }).filter((p) => p.content || p.title);
+    }
+    function parseFile(buf, filename = "") {
+      const ext = (filename.split(".").pop() || "").toLowerCase();
+      if (ext === "mht" || ext === "mhtml" || /^(From|MIME-Version|Content-Type):/i.test(buf.toString("latin1", 0, 64))) {
+        const parts = T.parseMime(buf);
+        const htmlParts = parts.filter((p) => p.contentType.includes("text/html"));
+        if (!htmlParts.length) throw new Error("MHT file contains no HTML pages");
+        return htmlParts.map((p, i) => pageFromHtml(typeof p.body === "string" ? p.body : p.body.toString("utf8"), { filename: p.location || `${filename}#${i + 1}` }));
+      }
+      if (ext === "html" || ext === "htm" || /^\s*<(!doctype|html)/i.test(buf.toString("utf8", 0, 200))) {
+        const html = buf.toString("utf8");
+        const chunks = html.split(/<div[^>]+page-break-before:\s*always[^>]*>/i);
+        return chunks.length > 1 ? chunks.map((c, i) => pageFromHtml(c, { filename: `${filename}#${i + 1}` })).filter((p) => p.content) : [pageFromHtml(html, { filename })];
+      }
+      if (ext === "docx" || buf[0] === 80 && buf[1] === 75) {
+        const text2 = T.docxToText(buf);
+        const pages2 = splitTextPages(text2);
+        return pages2.length ? pages2 : [{ external_id: null, title: filename.replace(/\.[^.]+$/, ""), content: text2, captured_at: T.sniffDate(text2.slice(0, 300)), metadata: { source: "onenote", filename, hints: T.sniffClientHints(text2) } }];
+      }
+      if (ext === "pdf" || buf.toString("latin1", 0, 5) === "%PDF-") throw new Error("PDF export is not supported. In OneNote use File \u2192 Export \u2192 Single File Web Page (.mht) or Word (.docx).");
+      const text = buf.toString("utf8");
+      const pages = splitTextPages(text);
+      return pages.length > 1 ? pages : [{ external_id: null, title: (text.split("\n")[0] || filename).trim().slice(0, 200), content: text.trim(), captured_at: T.sniffDate(text.slice(0, 300)), metadata: { source: "onenote", filename, hints: T.sniffClientHints(text) } }];
+    }
+    async function graphToken() {
+      const { tenantId, clientId, clientSecret } = config.msGraph;
+      if (!tenantId || !clientId || !clientSecret) throw new Error("Microsoft Graph is not configured (MS_TENANT_ID, MS_CLIENT_ID, MS_CLIENT_SECRET)");
+      const res = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(tenantId)}/oauth2/v2.0/token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, scope: "https://graph.microsoft.com/.default", grant_type: "client_credentials" })
+      });
+      if (!res.ok) throw new Error(`Graph token request failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
+      return (await res.json()).access_token;
+    }
+    function graphBase(user) {
+      return `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(user || config.msGraph.user)}/onenote`;
+    }
+    async function graphGet(url, token2, accept = "application/json") {
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token2}`, Accept: accept } });
+      if (!res.ok) throw new Error(`Graph request failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
+      return accept === "application/json" ? res.json() : res.text();
+    }
+    async function listNotebooks({ token: token2, user } = {}) {
+      token2 = token2 || await graphToken();
+      const nb = await graphGet(`${graphBase(user)}/notebooks?$expand=sections($select=id,displayName)`, token2);
+      return (nb.value || []).map((n) => ({ id: n.id, name: n.displayName, lastModified: n.lastModifiedDateTime, sections: (n.sections || []).map((s) => ({ id: s.id, name: s.displayName })) }));
+    }
+    async function listPages(sectionId, { token: token2, user, since } = {}) {
+      token2 = token2 || await graphToken();
+      let url = `${graphBase(user)}/sections/${encodeURIComponent(sectionId)}/pages?$select=id,title,createdDateTime,lastModifiedDateTime&$top=100${since ? `&$filter=lastModifiedDateTime ge ${since}` : ""}`;
+      const out2 = [];
+      while (url) {
+        const j = await graphGet(url, token2);
+        out2.push(...j.value || []);
+        url = j["@odata.nextLink"];
+      }
+      return out2.map((p) => ({ id: p.id, title: p.title, created: p.createdDateTime, modified: p.lastModifiedDateTime }));
+    }
+    async function fetchPages(pageIds, { token: token2, user } = {}) {
+      token2 = token2 || await graphToken();
+      const items = [];
+      for (const id of pageIds) {
+        const meta = await graphGet(`${graphBase(user)}/pages/${encodeURIComponent(id)}?$select=id,title,createdDateTime,lastModifiedDateTime,parentSection`, token2);
+        const html = await graphGet(`${graphBase(user)}/pages/${encodeURIComponent(id)}/content?includeIDs=false`, token2, "text/html");
+        const page = pageFromHtml(html, { filename: meta.title });
+        page.external_id = id;
+        page.title = (meta.title || page.title || "Untitled").slice(0, 200);
+        page.captured_at = meta.createdDateTime || page.captured_at;
+        page.metadata.modified = meta.lastModifiedDateTime;
+        page.metadata.section = meta.parentSection?.displayName;
+        items.push(page);
+      }
+      return items;
+    }
+    module.exports = { parseFile, pageFromHtml, splitTextPages, listNotebooks, listPages, fetchPages, graphToken };
+  }
+});
+
+// server/routes/imports.js
+var require_imports = __commonJS({
+  "server/routes/imports.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var config = require_config();
+    var { badRequest, notFound, forbidden, HttpError: HttpError3 } = require_http();
+    var { validate, paging } = require_validate();
+    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2, blindIndex: blindIndex2 } = require_crypto();
+    var pocket = require_pocketai();
+    var onenote = require_onenote();
+    var M = require_clients_model();
+    function suggestClient(ctx, hints) {
+      if (!hints) return null;
+      for (const code of hints.codes || []) {
+        const c = db3.one(`SELECT id FROM clients WHERE client_code=? AND deleted_at IS NULL`, code);
+        if (c && auth3.canAccessClient(ctx.user, c.id)) return c.id;
+      }
+      for (const name of hints.names || []) {
+        const parts = name.split(/[,\s]+/).filter(Boolean);
+        if (parts.length < 2) continue;
+        const a = blindIndex2(parts.join("")), b = blindIndex2([...parts].reverse().join(""));
+        const c = db3.one(`SELECT id FROM clients WHERE full_name_idx IN (?,?) AND deleted_at IS NULL`, a, b);
+        if (c && auth3.canAccessClient(ctx.user, c.id)) return c.id;
+      }
+      return null;
+    }
+    function stage(ctx, { source, filename, items, importedBy, metadata }) {
+      if (!items.length) throw badRequest("No notes were found in the input");
+      if (items.length > 500) throw badRequest("Too many items in one import (max 500)");
+      const id = uuid2();
+      db3.transaction(() => {
+        db3.run(`INSERT INTO imports(id,source,filename,imported_by,item_count,metadata) VALUES(?,?,?,?,?,?)`, id, source, filename || null, importedBy || null, items.length, metadata ? JSON.stringify(metadata) : null);
+        for (const it of items) {
+          const suggested = ctx ? suggestClient(ctx, it.metadata?.hints) : null;
+          db3.run(
+            `INSERT INTO import_items(id,import_id,external_id,title_enc,content_enc,captured_at,metadata_enc,suggested_client_id) VALUES(?,?,?,?,?,?,?,?)`,
+            uuid2(),
+            id,
+            it.external_id || null,
+            it.title ? encrypt3(it.title) : null,
+            encrypt3(it.content || ""),
+            it.captured_at || null,
+            encrypt3(JSON.stringify(it.metadata || {})),
+            suggested
+          );
+        }
+      });
+      return id;
+    }
+    function itemTitle(x) {
+      return x.title_enc ? decrypt3(x.title_enc) : null;
+    }
+    function itemView(x, { withContent = true } = {}) {
+      let metadata = {};
+      try {
+        metadata = x.metadata_enc ? JSON.parse(decrypt3(x.metadata_enc)) : {};
+      } catch {
+        metadata = {};
+      }
+      const o = { ...x, metadata, title: itemTitle(x) };
+      delete o.content_enc;
+      delete o.title_enc;
+      delete o.metadata_enc;
+      if (withContent) o.content = decrypt3(x.content_enc);
+      if (o.metadata?.hints) {
+        o.hints = o.metadata.hints;
+      }
+      return o;
+    }
+    module.exports = (r) => {
+      r.post("/api/imports/upload", auth3.requireAuth, auth3.requirePerm("imports:write"), (ctx) => {
+        let source, filename, buf;
+        if (ctx.body && ctx.body.text !== void 0) {
+          const v = validate(ctx.body, { source: { type: "string", required: true, enum: ["pocket_ai", "onenote", "generic"] }, filename: { type: "string", maxLen: 200 }, text: { type: "string", required: true, maxLen: 2e7 } });
+          source = v.source;
+          filename = v.filename || "pasted.txt";
+          buf = import_buffer.Buffer.from(v.text, "utf8");
+        } else {
+          source = String(ctx.query.get("source") || ctx.headers["x-import-source"] || "generic");
+          filename = String(ctx.headers["x-filename"] || ctx.query.get("filename") || "upload");
+          buf = ctx.rawBody || import_buffer.Buffer.alloc(0);
+          if (ctx.headers["content-transfer-encoding"] === "base64") buf = import_buffer.Buffer.from(buf.toString("latin1"), "base64");
+        }
+        if (!buf.length) throw badRequest("Empty upload");
+        let items;
+        try {
+          if (source === "pocket_ai") items = pocket.parse(buf, { filename });
+          else if (source === "onenote") items = onenote.parseFile(buf, filename);
+          else {
+            const ext = filename.split(".").pop().toLowerCase();
+            items = ["json"].includes(ext) ? pocket.parse(buf, { filename }) : onenote.parseFile(buf, filename);
+          }
+        } catch (e) {
+          throw badRequest("Could not parse file: " + e.message);
+        }
+        const id = stage(ctx, { source: source === "onenote" ? "onenote_file" : source, filename, items, importedBy: ctx.user.id });
+        audit3.log({ user: ctx.user, action: "import.upload", entity: "import", entityId: id, ip: ctx.ip, details: { source, extension: (/\.([A-Za-z0-9]{1,8})$/.exec(filename) || [])[1] || null, bytes: buf.length, count: items.length } });
+        ctx.status = 201;
+        return { id, count: items.length };
+      });
+      r.get("/api/imports", auth3.requireAuth, auth3.requirePerm("imports:read", "imports:write"), (ctx) => {
+        const rows = db3.all(`SELECT i.*, u.display_name AS imported_by_name,
+      (SELECT COUNT(*) FROM import_items x WHERE x.import_id=i.id AND x.status='staged') AS staged,
+      (SELECT COUNT(*) FROM import_items x WHERE x.import_id=i.id AND x.status='committed') AS committed,
+      (SELECT COUNT(*) FROM import_items x WHERE x.import_id=i.id AND x.status='discarded') AS discarded
+      FROM imports i LEFT JOIN users u ON u.id=i.imported_by ${auth3.hasPerm(ctx.user, "clients:all") ? "" : "WHERE i.imported_by=? OR i.imported_by IS NULL"} ORDER BY i.created_at DESC LIMIT 200`, ...auth3.hasPerm(ctx.user, "clients:all") ? [] : [ctx.user.id]);
+        return { imports: rows };
+      });
+      r.get("/api/imports/:id", auth3.requireAuth, auth3.requirePerm("imports:read", "imports:write"), (ctx) => {
+        const imp = db3.one(`SELECT * FROM imports WHERE id=?`, ctx.params.id);
+        if (!imp) throw notFound();
+        if (imp.imported_by && imp.imported_by !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden();
+        const items = db3.all(`SELECT x.*, c.client_code AS suggested_client_code FROM import_items x LEFT JOIN clients c ON c.id=x.suggested_client_id WHERE import_id=? ORDER BY captured_at, created_at`, imp.id).map((x) => itemView(x));
+        for (const it of items) if (it.suggested_client_id) {
+          const c = db3.one(`SELECT * FROM clients WHERE id=?`, it.suggested_client_id);
+          it.suggested_client_name = c ? M.summary(c).display_name : null;
+        }
+        audit3.log({ user: ctx.user, action: "import.view", entity: "import", entityId: imp.id, ip: ctx.ip });
+        return { import: imp, items };
+      });
+      r.post("/api/imports/items/:id/commit", auth3.requireAuth, auth3.requirePerm("imports:write"), (ctx) => {
+        const it = db3.one(`SELECT * FROM import_items WHERE id=?`, ctx.params.id);
+        if (!it) throw notFound();
+        if (it.status !== "staged") throw badRequest("Item already processed");
+        const v = validate(ctx.body, {
+          client_id: { type: "string", required: true },
+          kind: { type: "string", required: true, enum: ["clinical", "admin"] },
+          format: { type: "string", list: "NOTE_FORMATS" },
+          title: { type: "string", maxLen: 200 },
+          content: { type: "string", maxLen: 5e4 },
+          occurred_at: { type: "datetime" },
+          create_intervention: { type: "boolean" },
+          intervention_type: { type: "string", list: "INTERVENTION_TYPES" },
+          duration_minutes: { type: "number", integer: true, min: 0 }
+        });
+        if (!auth3.hasPerm(ctx.user, `notes:${v.kind}:write`)) throw forbidden(`You cannot author ${v.kind} notes`);
+        if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, v.client_id)) throw notFound("Client not found");
+        auth3.assertClientAccess(ctx, v.client_id);
+        const imp = db3.one(`SELECT source FROM imports WHERE id=?`, it.import_id);
+        const source = imp.source.startsWith("onenote") ? "onenote" : imp.source === "pocket_ai" || imp.source === "api" ? "pocket_ai" : "import";
+        const content = v.content ?? decrypt3(it.content_enc);
+        const occurred = v.occurred_at || it.captured_at || db3.now();
+        const noteId = uuid2();
+        let interventionId = null;
+        db3.transaction(() => {
+          if (v.create_intervention) {
+            interventionId = uuid2();
+            db3.run(`INSERT INTO interventions(id,client_id,user_id,type,occurred_at,duration_minutes,location,summary_enc) VALUES(?,?,?,?,?,?,?,?)`, interventionId, v.client_id, ctx.user.id, v.intervention_type || "case_management", occurred, v.duration_minutes || 0, "other", encrypt3((v.title || itemTitle(it) || "").slice(0, 300)));
+          }
+          const noteTitle = v.title || itemTitle(it) || null;
+          db3.run(
+            `INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,occurred_at,source,source_ref,import_item_id,intervention_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+            noteId,
+            v.client_id,
+            ctx.user.id,
+            v.kind,
+            v.format || "narrative",
+            noteTitle ? encrypt3(noteTitle) : null,
+            encrypt3(content),
+            occurred,
+            source,
+            it.external_id || null,
+            it.id,
+            interventionId
+          );
+          db3.run(`UPDATE import_items SET status='committed', note_id=? WHERE id=?`, noteId, it.id);
+          const left = db3.one(`SELECT COUNT(*) n FROM import_items WHERE import_id=? AND status='staged'`, it.import_id).n;
+          if (left === 0) db3.run(`UPDATE imports SET status='completed' WHERE id=?`, it.import_id);
+        });
+        audit3.log({ user: ctx.user, action: "import.commit", entity: "note", entityId: noteId, clientId: v.client_id, ip: ctx.ip, details: { import_item: it.id, kind: v.kind, intervention: interventionId } });
+        return { note_id: noteId, intervention_id: interventionId };
+      });
+      r.post("/api/imports/items/:id/discard", auth3.requireAuth, auth3.requirePerm("imports:write"), (ctx) => {
+        const it = db3.one(`SELECT * FROM import_items WHERE id=?`, ctx.params.id);
+        if (!it) throw notFound();
+        const imp = db3.one(`SELECT imported_by FROM imports WHERE id=?`, it.import_id);
+        if (imp && imp.imported_by && imp.imported_by !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden();
+        if (it.status !== "staged") throw badRequest("Item already processed");
+        db3.run(`UPDATE import_items SET status='discarded' WHERE id=?`, it.id);
+        audit3.log({ user: ctx.user, action: "import.discard", entity: "import_item", entityId: it.id, ip: ctx.ip });
+        return { ok: true };
+      });
+      r.delete("/api/imports/:id", auth3.requireAuth, auth3.requirePerm("imports:write"), (ctx) => {
+        const imp = db3.one(`SELECT * FROM imports WHERE id=?`, ctx.params.id);
+        if (!imp) throw notFound();
+        if (imp.imported_by !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden();
+        db3.run(`DELETE FROM import_items WHERE import_id=? AND status<>'committed'`, imp.id);
+        db3.run(`UPDATE imports SET status='purged' WHERE id=?`, imp.id);
+        audit3.log({ user: ctx.user, action: "import.purge", entity: "import", entityId: imp.id, ip: ctx.ip });
+        return { ok: true };
+      });
+      r.get("/api/imports/onenote/status", auth3.requireAuth, auth3.requirePerm("imports:write"), () => ({ configured: !!(config.msGraph.tenantId && config.msGraph.clientId && config.msGraph.clientSecret && config.msGraph.user), user: config.msGraph.user ? config.msGraph.user.replace(/(.{2}).+(@.+)/, "$1***$2") : null }));
+      r.get("/api/imports/onenote/notebooks", auth3.requireAuth, auth3.requirePerm("imports:write"), async (ctx) => {
+        try {
+          return { notebooks: await onenote.listNotebooks({ token: ctx.headers["x-ms-access-token"] }) };
+        } catch (e) {
+          throw new HttpError3(502, e.message);
+        }
+      });
+      r.get("/api/imports/onenote/sections/:id/pages", auth3.requireAuth, auth3.requirePerm("imports:write"), async (ctx) => {
+        try {
+          return { pages: await onenote.listPages(ctx.params.id, { token: ctx.headers["x-ms-access-token"], since: ctx.query.get("since") || void 0 }) };
+        } catch (e) {
+          throw new HttpError3(502, e.message);
+        }
+      });
+      r.post("/api/imports/onenote/fetch", auth3.requireAuth, auth3.requirePerm("imports:write"), async (ctx) => {
+        const { page_ids } = validate(ctx.body, { page_ids: { type: "array", required: true } });
+        if (!page_ids.length || page_ids.length > 200) throw badRequest("Select 1\u2013200 pages");
+        let items;
+        try {
+          items = await onenote.fetchPages(page_ids.map(String), { token: ctx.headers["x-ms-access-token"] });
+        } catch (e) {
+          throw new HttpError3(502, e.message);
+        }
+        const id = stage(ctx, { source: "onenote_graph", filename: null, items, importedBy: ctx.user.id, metadata: { pages: page_ids.length } });
+        audit3.log({ user: ctx.user, action: "import.onenote_graph", entity: "import", entityId: id, ip: ctx.ip, details: { count: items.length } });
+        ctx.status = 201;
+        return { id, count: items.length };
+      });
+      module.exports.stage = stage;
+    };
+    module.exports.stageFn = (args) => stage(null, args);
+  }
+});
+
+// server/routes/intake.js
+var require_intake = __commonJS({
+  "server/routes/intake.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var { rateLimit } = require_app2();
+    var { HttpError: HttpError3, unauthorized, badRequest } = require_http();
+    var { sha256: sha2562 } = require_crypto();
+    var pocket = require_pocketai();
+    var importsRoutes = require_imports();
+    function apiKeyAuth(ctx) {
+      if (!rateLimit(`intake:${ctx.ip}`, 60, 6e4)) throw new HttpError3(429, "Too many requests");
+      const h = ctx.headers["authorization"] || "";
+      const key = h.startsWith("Bearer ") ? h.slice(7).trim() : ctx.headers["x-api-key"] || "";
+      if (!key) throw unauthorized("API key required");
+      let k = db3.one(`SELECT * FROM api_keys WHERE key_hash=? AND revoked_at IS NULL`, sha2562(key));
+      if (k && !String(k.scopes || "").split(/[\s,]+/).includes("intake")) k = null;
+      if (!k) {
+        audit3.log({ user: null, action: "intake.denied", ip: ctx.ip, success: false });
+        throw unauthorized("Invalid API key");
+      }
+      db3.run(`UPDATE api_keys SET last_used_at=? WHERE id=?`, db3.now(), k.id);
+      return k;
+    }
+    module.exports = (r) => {
+      r.post("/api/intake/notes", (ctx) => {
+        const k = apiKeyAuth(ctx);
+        let payload = ctx.body;
+        if (ctx.rawBody && (!payload || !Object.keys(payload).length)) payload = ctx.rawBody.toString("utf8");
+        if (!payload || typeof payload === "object" && !Object.keys(payload).length) throw badRequest("Empty payload");
+        let items;
+        try {
+          items = typeof payload === "string" ? pocket.parse(payload) : (Array.isArray(payload) ? payload : payload.notes || payload.items || payload.recordings || [payload]).map(pocket.normalizeItem);
+        } catch (e) {
+          throw badRequest("Could not parse payload: " + e.message);
+        }
+        const id = importsRoutes.stageFn({ source: "api", filename: `api:${k.name}`, items, importedBy: k.created_by, metadata: { api_key: k.prefix } });
+        audit3.log({ user: { id: k.created_by, username: `apikey:${k.name}` }, action: "intake.received", entity: "import", entityId: id, ip: ctx.ip, details: { count: items.length } });
+        ctx.status = 202;
+        return { import_id: id, staged: items.length, message: "Notes staged for review in SUDS \u2192 Imports" };
+      });
+      r.get("/api/intake/ping", (ctx) => {
+        const k = apiKeyAuth(ctx);
+        return { ok: true, key: k.name };
+      });
+    };
+  }
+});
+
+// server/routes/supplies.js
+var require_supplies = __commonJS({
+  "server/routes/supplies.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var { badRequest, notFound } = require_http();
+    var { validate } = require_validate();
+    var { uuid: uuid2 } = require_crypto();
+    var DRAWDOWN = { naloxone_kits: "Naloxone kit", fentanyl_strips: "Fentanyl test strips" };
+    var list = () => db3.all(`SELECT s.*, u.display_name AS updated_by_name FROM supply_stock s LEFT JOIN users u ON u.id=s.updated_by ORDER BY s.item COLLATE NOCASE`);
+    function applyDelta(ctx, deltas, { intervention = null, action = "supply.drawdown" } = {}) {
+      for (const [col, item] of Object.entries(DRAWDOWN)) {
+        const delta = Number(deltas[col] || 0);
+        if (!delta) continue;
+        const s = db3.one(`SELECT * FROM supply_stock WHERE item=? COLLATE NOCASE`, item);
+        if (!s) continue;
+        const q = Math.max(0, s.quantity + delta);
+        db3.run(`UPDATE supply_stock SET quantity=?, updated_by=?, updated_at=? WHERE id=?`, q, ctx.user.id, db3.now(), s.id);
+        audit3.log({ user: ctx.user, action, entity: "supply_stock", entityId: s.id, ip: ctx.ip, details: { item, delta, quantity: q, intervention } });
+      }
+    }
+    function drawDown(ctx, row, prev = null) {
+      const deltas = {};
+      for (const col of Object.keys(DRAWDOWN)) deltas[col] = -(Number(row[col] || 0) - Number(prev ? prev[col] || 0 : 0));
+      applyDelta(ctx, deltas, { intervention: row.id });
+    }
+    function restore(ctx, row) {
+      const deltas = {};
+      for (const col of Object.keys(DRAWDOWN)) deltas[col] = Number(row[col] || 0);
+      applyDelta(ctx, deltas, { intervention: row.id, action: "supply.restore" });
+    }
+    module.exports = (r) => {
+      r.get("/api/supplies", auth3.requireAuth, auth3.requirePerm("interventions:read"), () => ({ rows: list(), drawdown: DRAWDOWN }));
+      r.post("/api/supplies", auth3.requireAuth, auth3.requirePerm("interventions:write"), (ctx) => {
+        const v = validate(ctx.body, { item: { type: "string", required: true, maxLen: 80 }, quantity: { type: "number", required: true, integer: true, min: 0, max: 1e6 } });
+        const item = v.item.trim();
+        if (!item) throw badRequest("Item name is required");
+        const existing = db3.one(`SELECT id FROM supply_stock WHERE item=? COLLATE NOCASE`, item);
+        let id = existing ? existing.id : null;
+        if (existing) db3.run(`UPDATE supply_stock SET quantity=?, updated_by=?, updated_at=? WHERE id=?`, v.quantity, ctx.user.id, db3.now(), id);
+        else {
+          id = uuid2();
+          db3.run(`INSERT INTO supply_stock(id,item,quantity,updated_by) VALUES(?,?,?,?)`, id, item, v.quantity, ctx.user.id);
+        }
+        audit3.log({ user: ctx.user, action: existing ? "supply.update" : "supply.create", entity: "supply_stock", entityId: id, ip: ctx.ip, details: { item, quantity: v.quantity } });
+        ctx.status = existing ? 200 : 201;
+        return { id, item, quantity: v.quantity };
+      });
+      r.put("/api/supplies/:id", auth3.requireAuth, auth3.requirePerm("interventions:write"), (ctx) => {
+        const s = db3.one(`SELECT * FROM supply_stock WHERE id=?`, ctx.params.id);
+        if (!s) throw notFound("Supply item not found");
+        const v = validate(ctx.body, { item: { type: "string", maxLen: 80 }, quantity: { type: "number", integer: true, min: 0, max: 1e6 }, adjust: { type: "number", integer: true, min: -1e6, max: 1e6 } }, { partial: true });
+        const quantity = v.quantity !== void 0 && v.quantity !== null ? v.quantity : Math.max(0, s.quantity + Number(v.adjust || 0));
+        const item = v.item ? v.item.trim() : s.item;
+        db3.run(`UPDATE supply_stock SET item=?, quantity=?, updated_by=?, updated_at=? WHERE id=?`, item, quantity, ctx.user.id, db3.now(), s.id);
+        audit3.log({ user: ctx.user, action: "supply.update", entity: "supply_stock", entityId: s.id, ip: ctx.ip, details: { item, quantity, was: s.quantity } });
+        return { ok: true, quantity };
+      });
+      r.delete("/api/supplies/:id", auth3.requireAuth, auth3.requirePerm("interventions:write"), (ctx) => {
+        const s = db3.one(`SELECT * FROM supply_stock WHERE id=?`, ctx.params.id);
+        if (!s) throw notFound("Supply item not found");
+        db3.run(`DELETE FROM supply_stock WHERE id=?`, s.id);
+        db3.tombstone("supply_stock", s.id);
+        audit3.log({ user: ctx.user, action: "supply.delete", entity: "supply_stock", entityId: s.id, ip: ctx.ip, details: { item: s.item } });
+        return { ok: true };
+      });
+    };
+    module.exports.drawDown = drawDown;
+    module.exports.restore = restore;
+    module.exports.applyDelta = applyDelta;
+    module.exports.DRAWDOWN = DRAWDOWN;
+  }
+});
+
+// server/routes/interventions.js
+var require_interventions = __commonJS({
+  "server/routes/interventions.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var crud = require_crud();
+    var C = require_constants();
+    var O = require_options();
+    var { badRequest, forbidden } = require_http();
+    var { uuid: uuid2, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
+    var supplies = require_supplies();
+    var { localDate, cents } = require_budget();
+    function serviceDate(v) {
+      return v._service_date || localDate(v.occurred_at);
+    }
+    function checkCost(ctx, v) {
+      if (("cost" in v || "funding_source_id" in v || "budget_line_id" in v) && !auth3.hasPerm(ctx.user, "budget:write")) throw forbidden("You do not have permission to attach a cost to a funding source");
+      if (v.cost && v.cost > 0) {
+        if (!v.funding_source_id) throw badRequest("A funding source is required when a cost is entered");
+        if (!v.budget_line_id) throw badRequest("A budget line is required when a cost is entered, so it is deducted from the right allocation");
+        const line = db3.one(`SELECT * FROM budget_lines WHERE id=? AND funding_source_id=?`, v.budget_line_id, v.funding_source_id);
+        if (!line) throw badRequest("Budget line does not belong to the selected funding source");
+        if (v.occurred_at) require_budget().assertInPeriod(db3.one(`SELECT * FROM funding_sources WHERE id=?`, v.funding_source_id), serviceDate(v), "Date of service");
+        return line;
+      }
+      if (v.budget_line_id && !v.funding_source_id) throw badRequest("A funding source is required when a budget line is selected");
+      return null;
+    }
+    function syncExpenditure(row) {
+      const existing = db3.one(`SELECT * FROM expenditures WHERE intervention_id=?`, row.id);
+      if (existing && existing.status !== "pending") return;
+      const wantsCost = row.cost > 0 && row.funding_source_id && row.budget_line_id;
+      if (!wantsCost) {
+        if (existing) {
+          db3.run(`DELETE FROM expenditures WHERE id=?`, existing.id);
+          db3.tombstone("expenditures", existing.id);
+        }
+        return;
+      }
+      const line = db3.one(`SELECT * FROM budget_lines WHERE id=? AND funding_source_id=?`, row.budget_line_id, row.funding_source_id);
+      if (!line) return;
+      const desc = `Auto-recorded from ${row.type.replace(/_/g, " ")}`;
+      const spentAt = serviceDate(row);
+      if (existing) db3.run(
+        `UPDATE expenditures SET funding_source_id=?, budget_line_id=?, client_id=?, spent_at=?, amount=?, category=?, description_enc=?, updated_at=? WHERE id=?`,
+        row.funding_source_id,
+        row.budget_line_id,
+        row.client_id || null,
+        spentAt,
+        cents(row.cost),
+        line.category,
+        encrypt3(desc),
+        db3.now(),
+        existing.id
+      );
+      else db3.run(
+        `INSERT INTO expenditures(id,funding_source_id,budget_line_id,client_id,user_id,intervention_id,spent_at,amount,category,description_enc) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+        uuid2(),
+        row.funding_source_id,
+        row.budget_line_id,
+        row.client_id || null,
+        row.user_id,
+        row.id,
+        spentAt,
+        cents(row.cost),
+        line.category,
+        encrypt3(desc)
+      );
+    }
+    function syncTimeEntry(row, prev) {
+      if (row.duration_minutes === prev.duration_minutes && row.occurred_at === prev.occurred_at && !row._service_date) return;
+      const te = db3.one(`SELECT * FROM time_entries WHERE intervention_id=?`, row.id);
+      if (!te || te.status !== "draft" && te.status !== "submitted") return;
+      if (!(row.duration_minutes > 0)) {
+        db3.run(`DELETE FROM time_entries WHERE id=?`, te.id);
+        db3.tombstone("time_entries", te.id);
+        return;
+      }
+      db3.run(`UPDATE time_entries SET minutes=?, work_date=?, updated_at=? WHERE id=?`, row.duration_minutes, serviceDate(row), db3.now(), te.id);
+    }
+    function checkClient(type, clientId) {
+      if (!clientId && !C.CLIENTLESS_INTERVENTION_TYPES.includes(type)) throw badRequest("Choose the client this service was for. Only outreach and community naloxone distribution can be recorded without one.", { fields: { client_id: "Client is required for this type of service" } });
+    }
+    function encodeSummary(v) {
+      if (v.summary !== void 0) {
+        v.summary_enc = v.summary ? require_crypto().encrypt(v.summary) : null;
+        delete v.summary;
+      }
+    }
+    function decodeSummary(row) {
+      let summary = null;
+      if (row.summary_enc) {
+        try {
+          summary = require_crypto().decrypt(row.summary_enc);
+        } catch {
+          summary = "[could not be read]";
+        }
+      }
+      return { ...row, summary, summary_enc: void 0 };
+    }
+    module.exports = (r) => {
+      crud.build(r, {
+        table: "interventions",
+        entity: "intervention",
+        perm: "interventions",
+        clientRequired: false,
+        dateCol: "occurred_at",
+        restrictOwner: true,
+        joins: "JOIN users u ON u.id=interventions.user_id LEFT JOIN clients c ON c.id=interventions.client_id LEFT JOIN funding_sources f ON f.id=interventions.funding_source_id",
+        select: "interventions.*, u.display_name AS worker, c.client_code, f.name AS funding_source",
+        shape: {
+          // Optional: community naloxone distribution and street outreach are services with no identified client.
+          client_id: { type: "string" },
+          user_id: { type: "string" },
+          type: { type: "string", required: true, list: "INTERVENTION_TYPES" },
+          occurred_at: { type: "datetime", required: true },
+          duration_minutes: { type: "number", integer: true, min: 0, max: 1440 },
+          location: { type: "string", list: "LOCATIONS" },
+          modality: { type: "string", list: "MODALITIES" },
+          outcome: { type: "string", list: "OUTCOMES" },
+          stage_of_change: { type: "string", enum: C.STAGES },
+          naloxone_kits: { type: "number", integer: true, min: 0 },
+          fentanyl_strips: { type: "number", integer: true, min: 0 },
+          funding_source_id: { type: "string" },
+          budget_line_id: { type: "string" },
+          cost: { type: "number", min: 0 },
+          summary: { type: "string", maxLen: 2e3 },
+          follow_up_due: { type: "date" },
+          log_time: { type: "boolean" },
+          time_category: { type: "string", list: "TIME_CATEGORIES" },
+          // Optional: the calendar date the service belongs to, when it is not the org-timezone date of occurred_at.
+          service_date: { type: "date" }
+        },
+        filters: (ctx, where, params) => {
+          const t = ctx.query.get("type");
+          if (t) {
+            where.push("interventions.type=?");
+            params.push(t);
+          }
+        },
+        afterLoad: (ctx, row) => decodeSummary(row),
+        beforeInsert: (ctx, v) => {
+          checkClient(v.type, v.client_id);
+          v._log_time = v.log_time;
+          delete v.log_time;
+          v._time_category = v.time_category;
+          delete v.time_category;
+          v._service_date = v.service_date || null;
+          delete v.service_date;
+          if (v.cost !== void 0 && v.cost !== null) v.cost = cents(v.cost);
+          encodeSummary(v);
+          checkCost(ctx, v);
+        },
+        beforeUpdate: (ctx, v, row) => {
+          if ("type" in v || "client_id" in v) checkClient(v.type ?? row.type, "client_id" in v ? v.client_id : row.client_id);
+          delete v.log_time;
+          delete v.time_category;
+          v._service_date = v.service_date || null;
+          delete v.service_date;
+          if (v.cost !== void 0 && v.cost !== null) v.cost = cents(v.cost);
+          encodeSummary(v);
+          if ("cost" in v || "funding_source_id" in v || "budget_line_id" in v || "occurred_at" in v) checkCost(ctx, { funding_source_id: row.funding_source_id, budget_line_id: row.budget_line_id, cost: row.cost, occurred_at: row.occurred_at, ...v });
+        },
+        afterInsert: (ctx, row) => {
+          if (row._log_time && row.duration_minutes > 0) {
+            db3.run(
+              `INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,funding_source_id,intervention_id,description_enc) VALUES(?,?,?,?,?,?,?,?,?)`,
+              uuid2(),
+              row.user_id,
+              row.client_id ?? null,
+              serviceDate(row),
+              row.duration_minutes,
+              row._time_category || "direct_service",
+              row.funding_source_id || null,
+              row.id,
+              encrypt3(O.labelOf("INTERVENTION_TYPES", row.type))
+            );
+          }
+          if (row.naloxone_kits > 0 && row.client_id) db3.run(`UPDATE clients SET naloxone_provided=1, naloxone_last_date=?, updated_at=? WHERE id=?`, serviceDate(row), db3.now(), row.client_id);
+          if (row.follow_up_due && row.client_id) db3.run(
+            `INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority) VALUES(?,?,?,?,?,?,?)`,
+            uuid2(),
+            row.client_id,
+            row.user_id,
+            ctx.user.id,
+            require_crypto().encrypt(`Follow up: ${O.labelOf("INTERVENTION_TYPES", row.type)}`),
+            row.follow_up_due,
+            "normal"
+          );
+          syncExpenditure(row);
+          supplies.drawDown(ctx, row);
+        },
+        afterUpdate: (ctx, row, prev) => {
+          syncExpenditure(row);
+          syncTimeEntry(row, prev);
+          supplies.drawDown(ctx, row, prev);
+        },
+        // The FKs from expenditures.intervention_id and time_entries.intervention_id are ON DELETE SET NULL, so
+        // this has to run before the delete — after it, there is no longer any way to find the records this
+        // intervention created.
+        beforeDelete: (ctx, row) => {
+          const existing = db3.one(`SELECT * FROM expenditures WHERE intervention_id=?`, row.id);
+          if (existing && existing.status === "pending") {
+            db3.run(`DELETE FROM expenditures WHERE id=?`, existing.id);
+            db3.tombstone("expenditures", existing.id);
+          }
+          const te = db3.one(`SELECT * FROM time_entries WHERE intervention_id=?`, row.id);
+          if (te && (te.status === "draft" || te.status === "submitted")) {
+            db3.run(`DELETE FROM time_entries WHERE id=?`, te.id);
+            db3.tombstone("time_entries", te.id);
+          } else if (te) db3.run(`UPDATE time_entries SET intervention_id=NULL, description_enc=?, updated_at=? WHERE id=?`, encrypt3(`${te.description_enc ? decrypt3(te.description_enc) : ""} (the visit this was logged from was deleted)`.trim()), db3.now(), te.id);
+          supplies.restore(ctx, row);
+        },
+        canEdit: crud.ownerOrManager()
+      });
+      supplies(r);
+      r.get("/api/meta/constants", auth3.requireAuth, () => {
+        const m = O.meta();
+        return { ...C, ...m.visible, option_lists: m.option_lists };
+      });
+    };
+  }
+});
+
+// server/routes/tasks.js
+var require_tasks = __commonJS({
+  "server/routes/tasks.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var crud = require_crud();
+    var { encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
+    var audit3 = require_audit();
+    var { withClientName, SELECT: NAME_COLS } = require_client_name();
+    var { localDate } = require_budget();
+    function dueTasks(ctx, within) {
+      const cf = auth3.caseloadFilter(ctx.user, "tasks.client_id");
+      const horizonMs = Date.now() + within * 6e4;
+      const horizon = new Date(horizonMs).toISOString();
+      const horizonDay = localDate(new Date(horizonMs));
+      const rows = db3.all(`SELECT tasks.*, c.client_code, ${NAME_COLS} FROM tasks LEFT JOIN clients c ON c.id=tasks.client_id
+    WHERE tasks.assigned_to=? AND tasks.status IN ('open','in_progress') AND tasks.due_at IS NOT NULL
+      AND (CASE WHEN length(tasks.due_at)=10 THEN tasks.due_at <= ? ELSE tasks.due_at <= ? END)
+      AND (tasks.client_id IS NULL OR ${cf.sql})
+    ORDER BY tasks.due_at LIMIT 50`, ctx.user.id, horizonDay, horizon, ...cf.params);
+      const now = db3.now();
+      const today = localDate();
+      return rows.map((x) => withClientName(ctx, x)).map((x) => ({ ...presentTask(x), overdue: x.due_at.length === 10 ? x.due_at < today : x.due_at < now }));
+    }
+    var lastDue = /* @__PURE__ */ new Map();
+    module.exports = (r) => {
+      r.get("/api/tasks/due", auth3.requireAuth, auth3.requirePerm("tasks:read", "tasks:write"), (ctx) => {
+        const within = Math.min(24 * 60, Math.max(0, Number(ctx.query.get("within") || 60)));
+        const rows = dueTasks(ctx, within);
+        const signature = `${within}|${rows.map((x) => `${x.id}:${x.overdue ? 1 : 0}`).join(",")}`;
+        if (lastDue.get(ctx.user.id) !== signature) {
+          lastDue.set(ctx.user.id, signature);
+          audit3.log({ user: ctx.user, action: "task.due", ip: ctx.ip, details: { within, count: rows.length } });
+        }
+        return { rows, within, overdue: rows.filter((x) => x.overdue).length, due_soon: rows.filter((x) => !x.overdue).length };
+      });
+      crud.build(r, {
+        table: "tasks",
+        entity: "task",
+        perm: "tasks",
+        dateCol: "due_at",
+        ownerCol: "assigned_to",
+        creatorCol: "created_by",
+        clientRequired: false,
+        order: `CASE tasks.status WHEN 'open' THEN 0 WHEN 'in_progress' THEN 0 ELSE 1 END, tasks.due_at IS NULL, tasks.due_at ASC`,
+        joins: "LEFT JOIN users u ON u.id=tasks.assigned_to LEFT JOIN clients c ON c.id=tasks.client_id",
+        select: `tasks.*, u.display_name AS assignee, c.client_code, ${NAME_COLS}`,
+        shape: {
+          client_id: { type: "string" },
+          assigned_to: { type: "string" },
+          title: { type: "string", required: true, maxLen: 200 },
+          description: { type: "string", maxLen: 2e3 },
+          due_at: { type: "datetime" },
+          priority: { type: "string", enum: ["low", "normal", "high", "urgent"] },
+          status: { type: "string", enum: ["open", "in_progress", "done", "cancelled"] },
+          is_milestone: { type: "boolean" },
+          completed_at: { type: "datetime" }
+        },
+        filters: (ctx, where, params) => {
+          const s = ctx.query.get("status");
+          if (s === "open") where.push(`tasks.status IN ('open','in_progress')`);
+          else if (s && s !== "all") {
+            where.push("tasks.status=?");
+            params.push(s);
+          }
+          if (ctx.query.get("overdue") === "1") {
+            where.push(`tasks.status IN ('open','in_progress') AND (CASE WHEN length(tasks.due_at)=10 THEN tasks.due_at < ? ELSE tasks.due_at < ? END)`);
+            params.push(localDate(), db3.now());
+          }
+          if (ctx.query.get("milestones") === "1") where.push("tasks.is_milestone=1");
+        },
+        // A task title ("Call about detox bed") says what a named person is being treated for, and its details
+        // say more: both are encrypted. The API keeps the plain field names `title` and `description`.
+        beforeInsert: (ctx, v) => {
+          if (!v.assigned_to) v.assigned_to = ctx.user.id;
+          if (v.status === "done" && !v.completed_at) v.completed_at = db3.now();
+          encFields(v);
+        },
+        beforeUpdate: (ctx, v, row) => {
+          if (v.status === "done" && !row.completed_at && !v.completed_at) v.completed_at = db3.now();
+          if (v.status && v.status !== "done") v.completed_at = null;
+          encFields(v);
+        },
+        afterLoad: (ctx, x) => presentTask(withClientName(ctx, x)),
+        canEdit: (ctx, row) => row.assigned_to === ctx.user.id || row.created_by === ctx.user.id || auth3.hasPerm(ctx.user, "clients:all")
+      });
+      function encFields(v) {
+        if (v.title !== void 0) {
+          v.title_enc = encrypt3(String(v.title ?? ""));
+          delete v.title;
+        }
+        if (v.description !== void 0) {
+          v.description_enc = v.description ? encrypt3(String(v.description)) : null;
+          delete v.description;
+        }
+      }
+    };
+    function presentTask(t) {
+      if (!t) return t;
+      const o = { ...t, title: t.title_enc ? decrypt3(t.title_enc) : "", title_enc: void 0 };
+      if ("description_enc" in t) {
+        o.description = t.description_enc ? decrypt3(t.description_enc) : null;
+        o.description_enc = void 0;
+      }
+      return o;
+    }
+    module.exports.presentTask = presentTask;
+  }
+});
+
+// server/routes/me.js
+var require_me = __commonJS({
+  "server/routes/me.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var { badRequest } = require_http();
+    var M = require_clients_model();
+    var MAX_PREF_BYTES = 8e3;
+    module.exports = (r) => {
+      r.get("/api/me/prefs", auth3.requireAuth, (ctx) => {
+        const out2 = {};
+        for (const p of db3.all(`SELECT key, value FROM user_prefs WHERE user_id=?`, ctx.user.id)) {
+          try {
+            out2[p.key] = JSON.parse(p.value);
+          } catch {
+            out2[p.key] = p.value;
+          }
+        }
+        return { prefs: out2 };
+      });
+      r.put("/api/me/prefs", auth3.requireAuth, (ctx) => {
+        const body = ctx.body || {};
+        if (typeof body !== "object" || Array.isArray(body)) throw badRequest("Object expected");
+        const keys = Object.keys(body).slice(0, 50);
+        db3.transaction(() => {
+          for (const k of keys) {
+            if (!/^[a-zA-Z0-9_.-]{1,60}$/.test(k)) throw badRequest(`Invalid preference key ${k}`);
+            const v = JSON.stringify(body[k] ?? null);
+            if (v.length > MAX_PREF_BYTES) throw badRequest(`Preference ${k} is too large`);
+            if (body[k] === null) db3.run(`DELETE FROM user_prefs WHERE user_id=? AND key=?`, ctx.user.id, k);
+            else db3.run(`INSERT INTO user_prefs(user_id,key,value) VALUES(?,?,?) ON CONFLICT(user_id,key) DO UPDATE SET value=excluded.value, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, ctx.user.id, k, v);
+          }
+        });
+        return { ok: true };
+      });
+      r.get("/api/me/continue", auth3.requireAuth, (ctx) => {
+        const uid = ctx.user.id;
+        const recentIds = db3.all(`SELECT client_id, MAX(at) at FROM audit_log WHERE user_id=? AND client_id IS NOT NULL AND action IN ('client.view','client.create','client.update','intervention.create','call.create','note.create','note.update') GROUP BY client_id ORDER BY at DESC LIMIT 8`, uid);
+        const recent = [];
+        for (const x of recentIds) {
+          const c = db3.one(`SELECT * FROM clients WHERE id=? AND deleted_at IS NULL`, x.client_id);
+          if (c && auth3.canAccessClient(ctx.user, c.id)) recent.push({ ...M.summary(c), last_at: x.at });
+        }
+        const drafts = db3.all(`SELECT n.id, n.client_id, n.kind, n.format, n.title_enc, n.updated_at, c.client_code FROM notes n JOIN clients c ON c.id=n.client_id WHERE n.author_id=? AND n.status='draft' AND n.deleted_at IS NULL ORDER BY n.updated_at DESC LIMIT 8`, uid).map((n) => ({ ...n, title: n.title_enc ? require_crypto().decrypt(n.title_enc) : null, title_enc: void 0 }));
+        for (const d of drafts) {
+          const c = db3.one(`SELECT * FROM clients WHERE id=?`, d.client_id);
+          d.client_name = c ? M.summary(c).display_name : d.client_code;
+        }
+        const staged = db3.one(`SELECT COUNT(*) n FROM import_items x JOIN imports i ON i.id=x.import_id WHERE x.status='staged' AND (i.imported_by=? OR i.imported_by IS NULL)`, uid).n;
+        const dueToday = db3.all(`SELECT t.id, t.title_enc, t.due_at, t.priority, t.client_id, c.client_code FROM tasks t LEFT JOIN clients c ON c.id=t.client_id WHERE t.assigned_to=? AND t.status IN ('open','in_progress') AND substr(t.due_at,1,10) <= date('now','localtime') ORDER BY t.due_at LIMIT 10`, uid).map(require_tasks().presentTask);
+        for (const t of dueToday) {
+          if (t.client_id) {
+            const c = db3.one(`SELECT * FROM clients WHERE id=?`, t.client_id);
+            t.client_name = c ? M.summary(c).display_name : t.client_code;
+          }
+        }
+        const lastSeenElsewhere = db3.one(`SELECT last_seen_at, user_agent FROM sessions WHERE user_id=? AND revoked_at IS NULL AND id<>? ORDER BY last_seen_at DESC LIMIT 1`, uid, ctx.session.id);
+        require_audit().log({ user: ctx.user, action: "me.continue", ip: ctx.ip, details: { recent: recent.length, drafts: drafts.length, due_today: dueToday.length } });
+        return { recent, drafts, staged_imports: staged, due_today: dueToday, other_device: lastSeenElsewhere ? { last_seen_at: lastSeenElsewhere.last_seen_at, mobile: /Mobi|Android|iPhone|iPad/i.test(lastSeenElsewhere.user_agent || "") } : null };
+      });
+    };
+  }
+});
+
+// server/routes/notes.js
+var require_notes = __commonJS({
+  "server/routes/notes.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var C = require_constants();
+    var { badRequest, notFound, forbidden } = require_http();
+    var { validate, paging } = require_validate();
+    var { encrypt: encrypt3, decrypt: decrypt3, sha256: sha2562, uuid: uuid2 } = require_crypto();
+    var shape = {
+      client_id: { type: "string", required: true },
+      kind: { type: "string", required: true, enum: ["clinical", "admin"] },
+      format: { type: "string", list: "NOTE_FORMATS" },
+      title: { type: "string", maxLen: 200 },
+      content: { type: "string", required: true, maxLen: 5e4 },
+      structured: { type: "object" },
+      occurred_at: { type: "datetime", required: true },
+      intervention_id: { type: "string" },
+      call_id: { type: "string" },
+      part2_protected: { type: "boolean" },
+      counseling_note: { type: "boolean" },
+      cosign_requested: { type: "boolean" },
+      source: { type: "string", enum: ["manual", "pocket_ai", "onenote", "import", "api"] },
+      source_ref: { type: "string", maxLen: 300 },
+      // The problem-list entries this note addresses (CalAIM: a progress note ties the service to the problem list).
+      problem_ids: { type: "array", maxLen: 30, of: "string" }
+    };
+    function problemIds(ids, clientId) {
+      if (ids === void 0) return void 0;
+      if (ids === null || !ids.length) return null;
+      const uniq = [...new Set(ids)];
+      for (const id of uniq) {
+        const p = db3.one(`SELECT client_id FROM problems WHERE id=?`, id);
+        if (!p || p.client_id !== clientId) throw badRequest("Validation failed", { fields: { problem_ids: "names a problem that is not on this client's problem list" } });
+      }
+      return JSON.stringify(uniq);
+    }
+    function linkedProblems(ctx, n) {
+      let ids = [];
+      try {
+        ids = n.problem_ids ? JSON.parse(n.problem_ids) : [];
+      } catch {
+        ids = [];
+      }
+      if (!Array.isArray(ids) || !ids.length) return [];
+      if (!auth3.hasPerm(ctx.user, "careplan:read")) return ids.map((id) => ({ id }));
+      return ids.map((id) => {
+        const p = db3.one(`SELECT id, problem_enc, status FROM problems WHERE id=?`, id);
+        return p ? { id: p.id, problem: decrypt3(p.problem_enc), status: p.status } : { id };
+      });
+    }
+    function kindPerm(kind, rw) {
+      return `notes:${kind}:${rw}`;
+    }
+    function checkCounseling(kind, counseling) {
+      if (counseling && kind !== "clinical") throw badRequest("Only a clinical note can be a SUD counseling note");
+    }
+    async function verifyIdentity(ctx) {
+      const { password } = validate(ctx.body, { password: { type: "string", required: true, maxLen: 500 } }, { partial: true });
+      if (!password) throw badRequest("Your password is required to sign");
+      const u = db3.one(`SELECT password_hash FROM users WHERE id=?`, ctx.user.id);
+      if (!await require_crypto().verifyPasswordAsync(password, u.password_hash)) {
+        audit3.log({ user: ctx.user, action: "note.sign.failed", ip: ctx.ip, success: false });
+        throw forbidden("Password verification failed");
+      }
+    }
+    var BREAK_GLASS_MIN = 15;
+    function breakGlassReason(ctx) {
+      const raw = ctx.headers["x-break-glass-reason"];
+      if (raw === void 0 || raw === null || raw === "") return null;
+      const reason = String(raw).trim();
+      if (reason.length < BREAK_GLASS_MIN) throw badRequest(`A break-glass reason must be at least ${BREAK_GLASS_MIN} characters and say why emergency access is needed`);
+      return reason.slice(0, 300);
+    }
+    function recordBreakGlass(ctx, { clientId, noteId = null, reason }) {
+      const id = uuid2();
+      db3.run(`INSERT INTO breakglass_events(id,user_id,client_id,note_id,reason_enc,at) VALUES(?,?,?,?,?,?)`, id, ctx.user.id, clientId || null, noteId, encrypt3(reason), db3.now());
+      return id;
+    }
+    function canRead(ctx, note) {
+      if (auth3.hasPerm(ctx.user, kindPerm(note.kind, "read")) || auth3.hasPerm(ctx.user, kindPerm(note.kind, "write"))) return true;
+      if (note.kind === "clinical" && auth3.hasPerm(ctx.user, "notes:clinical:breakglass") && breakGlassReason(ctx)) return "breakglass";
+      return false;
+    }
+    function present(row, { withContent = true } = {}) {
+      const out2 = { ...row };
+      delete out2.content_enc;
+      delete out2.structured_enc;
+      delete out2.title_enc;
+      out2.title = row.title_enc ? decrypt3(row.title_enc) : null;
+      if ("cosign_note_enc" in row) {
+        out2.cosign_note = row.cosign_note_enc ? decrypt3(row.cosign_note_enc) : null;
+        delete out2.cosign_note_enc;
+      }
+      if (withContent) {
+        out2.content = decrypt3(row.content_enc);
+        out2.structured = row.structured_enc ? JSON.parse(decrypt3(row.structured_enc)) : null;
+      }
+      return out2;
+    }
+    function signatureState(n) {
+      const wanted = !!n.cosign_required || !!n.cosign_requested;
+      return { signed: n.status !== "draft", cosign_required: !!n.cosign_required, cosign_requested: !!n.cosign_requested, cosigned: !!n.cosigned_at, awaiting_cosign: wanted && n.status !== "draft" && !n.cosigned_at };
+    }
+    function load(ctx, id) {
+      const n = db3.one(`SELECT n.*, u.display_name AS author, s.display_name AS signer, cs.display_name AS cosigner
+    FROM notes n JOIN users u ON u.id=n.author_id LEFT JOIN users s ON s.id=n.signed_by LEFT JOIN users cs ON cs.id=n.cosigned_by
+    WHERE n.id=? AND n.deleted_at IS NULL`, id);
+      if (!n) throw notFound("Note not found");
+      auth3.assertClientAccess(ctx, n.client_id);
+      return n;
+    }
+    module.exports = (r) => {
+      r.get("/api/notes", auth3.requireAuth, auth3.requirePerm("notes:admin:read", "notes:clinical:read", "notes:admin:write", "notes:clinical:write"), (ctx) => {
+        const { limit: limit2, offset } = paging(ctx.query, { limit: 100, max: 500 });
+        const kinds = ["admin", "clinical"].filter((k) => auth3.hasPerm(ctx.user, kindPerm(k, "read")) || auth3.hasPerm(ctx.user, kindPerm(k, "write")));
+        const glassReason = !kinds.includes("clinical") && auth3.hasPerm(ctx.user, "notes:clinical:breakglass") && ctx.query.get("client_id") && ctx.query.get("kind") === "clinical" ? breakGlassReason(ctx) : null;
+        if (glassReason) {
+          kinds.push("clinical");
+          const event = recordBreakGlass(ctx, { clientId: ctx.query.get("client_id"), reason: glassReason });
+          audit3.log({ user: ctx.user, action: "note.list.breakglass", clientId: ctx.query.get("client_id"), ip: ctx.ip, details: { reason_recorded: true, breakglass_event: event } });
+        }
+        const where = ["n.deleted_at IS NULL", `n.kind IN (${kinds.map(() => "?").join(",") || "''"})`];
+        const params = [...kinds];
+        const cf = auth3.caseloadFilter(ctx.user, "n.client_id");
+        where.push(cf.sql);
+        params.push(...cf.params);
+        for (const [q, col] of [["client_id", "n.client_id"], ["kind", "n.kind"], ["status", "n.status"], ["author_id", "n.author_id"], ["source", "n.source"]]) {
+          const v = ctx.query.get(q);
+          if (v) {
+            where.push(`${col}=?`);
+            params.push(v);
+          }
+        }
+        if (ctx.query.get("mine") === "1") {
+          where.push("n.author_id=?");
+          params.push(ctx.user.id);
+        }
+        if (ctx.query.get("unsigned") === "1") where.push("n.status='draft'");
+        if (ctx.query.get("awaiting_cosign") === "1") {
+          where.push("(n.cosign_required=1 OR n.cosign_requested=1) AND n.status<>'draft' AND n.cosigned_at IS NULL");
+          if (!auth3.hasPerm(ctx.user, "notes:cosign")) {
+            where.push("1=0");
+          }
+        }
+        if (ctx.query.get("from")) {
+          where.push("n.occurred_at >= ?");
+          params.push(ctx.query.get("from"));
+        }
+        if (ctx.query.get("to")) {
+          where.push("n.occurred_at <= ?");
+          params.push(ctx.query.get("to") + "T23:59:59.999Z");
+        }
+        const w = "WHERE " + where.join(" AND ");
+        const rows = db3.all(`SELECT n.id,n.client_id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.signed_at,n.source,n.author_id,n.created_at,n.updated_at,
+      n.cosign_required,n.cosign_requested,n.cosigned_at,n.cosigned_by,n.counseling_note,u.display_name AS author,cs.display_name AS cosigner,c.client_code,
+      (SELECT COUNT(*) FROM note_addenda a WHERE a.note_id=n.id) AS addenda
+      FROM notes n JOIN users u ON u.id=n.author_id LEFT JOIN users cs ON cs.id=n.cosigned_by JOIN clients c ON c.id=n.client_id ${w} ORDER BY n.occurred_at DESC LIMIT ? OFFSET ?`, ...params, limit2, offset);
+        const out2 = rows.map((x) => ({ ...x, title: x.title_enc ? decrypt3(x.title_enc) : null, title_enc: void 0, ...signatureState(x) }));
+        audit3.log({ user: ctx.user, action: "note.list", ip: ctx.ip, clientId: ctx.query.get("client_id") || null, details: { count: out2.length, kinds, filter: ctx.query.get("awaiting_cosign") === "1" ? "awaiting_cosign" : void 0 } });
+        return { rows: out2, total: db3.one(`SELECT COUNT(*) n FROM notes n ${w}`, ...params).n };
+      });
+      r.post("/api/notes", auth3.requireAuth, (ctx) => {
+        const v = validate(ctx.body, shape);
+        if (!auth3.hasPerm(ctx.user, kindPerm(v.kind, "write"))) throw forbidden(`You cannot author ${v.kind} notes`);
+        if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, v.client_id)) throw notFound("Client not found");
+        auth3.assertClientAccess(ctx, v.client_id);
+        checkCounseling(v.kind, v.counseling_note);
+        const id = uuid2();
+        const linked = problemIds(v.problem_ids, v.client_id) ?? null;
+        const author = db3.one(`SELECT requires_cosign FROM users WHERE id=?`, ctx.user.id);
+        db3.run(
+          `INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,structured_enc,occurred_at,intervention_id,call_id,part2_protected,source,source_ref,cosign_required,cosign_requested,problem_ids,counseling_note) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          id,
+          v.client_id,
+          ctx.user.id,
+          v.kind,
+          v.format || "narrative",
+          v.title ? encrypt3(v.title) : null,
+          encrypt3(v.content),
+          v.structured ? encrypt3(JSON.stringify(v.structured)) : null,
+          v.occurred_at,
+          v.intervention_id || null,
+          v.call_id || null,
+          v.part2_protected ?? 1,
+          v.source || "manual",
+          v.source_ref || null,
+          author?.requires_cosign ? 1 : 0,
+          v.cosign_requested ? 1 : 0,
+          linked,
+          v.counseling_note ? 1 : 0
+        );
+        audit3.log({ user: ctx.user, action: "note.create", entity: "note", entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format, cosign_requested: v.cosign_requested ? true : void 0, counseling_note: v.counseling_note ? true : void 0 } });
+        ctx.status = 201;
+        return { id, updated_at: db3.one(`SELECT updated_at FROM notes WHERE id=?`, id).updated_at };
+      });
+      r.get("/api/notes/:id", auth3.requireAuth, (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        const access = canRead(ctx, n);
+        if (!access) {
+          audit3.log({ user: ctx.user, action: "note.view.denied", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, success: false });
+          throw forbidden("You do not have access to this note");
+        }
+        const addenda = db3.all(`SELECT a.id,a.reason_enc,a.created_at,a.content_enc,u.display_name AS author FROM note_addenda a JOIN users u ON u.id=a.author_id WHERE a.note_id=? ORDER BY a.created_at`, n.id).map((a) => ({ ...a, content: decrypt3(a.content_enc), reason: a.reason_enc ? decrypt3(a.reason_enc) : null, content_enc: void 0, reason_enc: void 0 }));
+        const event = access === "breakglass" ? recordBreakGlass(ctx, { clientId: n.client_id, noteId: n.id, reason: breakGlassReason(ctx) }) : null;
+        audit3.log({ user: ctx.user, action: access === "breakglass" ? "note.view.breakglass" : "note.view", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: access === "breakglass" ? { reason_recorded: true, breakglass_event: event } : { kind: n.kind } });
+        return { note: { ...present(n), ...signatureState(n), addenda, problems: linkedProblems(ctx, n) } };
+      });
+      r.put("/api/notes/:id", auth3.requireAuth, (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
+        if (n.status !== "draft") throw badRequest("Signed notes cannot be edited; add an addendum instead");
+        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden("Only the author can edit a draft");
+        require_crud().assertFresh(ctx, n, "note");
+        const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, counseling_note: shape.counseling_note, cosign_requested: shape.cosign_requested, problem_ids: shape.problem_ids }, { partial: true, existing: n });
+        checkCounseling(n.kind, v.counseling_note);
+        const sets = [];
+        const params = [];
+        for (const k of ["format", "occurred_at", "intervention_id", "call_id", "part2_protected", "counseling_note", "cosign_requested"]) if (v[k] !== void 0) {
+          sets.push(`${k}=?`);
+          params.push(v[k]);
+        }
+        if (v.title !== void 0) {
+          sets.push("title_enc=?");
+          params.push(v.title ? encrypt3(v.title) : null);
+        }
+        if (v.content !== void 0) {
+          sets.push("content_enc=?");
+          params.push(encrypt3(v.content));
+        }
+        const linked = problemIds(v.problem_ids, n.client_id);
+        if (linked !== void 0) {
+          sets.push("problem_ids=?");
+          params.push(linked);
+        }
+        if (v.structured !== void 0) {
+          sets.push("structured_enc=?");
+          params.push(v.structured ? encrypt3(JSON.stringify(v.structured)) : null);
+        }
+        const stamp2 = sets.length ? db3.now() : n.updated_at;
+        if (sets.length) db3.run(`UPDATE notes SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, stamp2, n.id);
+        audit3.log({ user: ctx.user, action: "note.update", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { fields: Object.keys(v) } });
+        return { ok: true, updated_at: stamp2 };
+      });
+      r.post("/api/notes/:id/request-cosign", auth3.requireAuth, (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
+        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden("Only the author can ask for a review of their note");
+        if (n.cosigned_at) throw badRequest("This note has already been countersigned");
+        const { cosign_requested } = validate(ctx.body || {}, { cosign_requested: { type: "boolean" } });
+        const flag = cosign_requested === false ? 0 : 1;
+        db3.run(`UPDATE notes SET cosign_requested=?, updated_at=? WHERE id=?`, flag, db3.now(), n.id);
+        audit3.log({ user: ctx.user, action: flag ? "note.cosign.requested" : "note.cosign.request_withdrawn", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip });
+        return { ok: true, cosign_requested: !!flag, awaiting_cosign: !!flag && n.status !== "draft" };
+      });
+      r.get("/api/notes/handoffs", auth3.requireAuth, auth3.requirePerm("notes:admin:read", "notes:admin:write"), (ctx) => {
+        const hours = Math.min(24 * 7, Math.max(1, Number(ctx.query.get("hours") || 24)));
+        const since = new Date(Date.now() - hours * 36e5).toISOString();
+        const cf = auth3.caseloadFilter(ctx.user, "n.client_id");
+        const { withClientName, SELECT: NAME_COLS } = require_client_name();
+        const rows = db3.all(`SELECT n.id, n.client_id, n.occurred_at, n.status, n.title_enc, n.content_enc, n.author_id, u.display_name AS author, c.client_code, ${NAME_COLS}
+      FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id
+      WHERE n.deleted_at IS NULL AND n.kind='admin' AND n.format='handoff' AND n.occurred_at >= ? AND ${cf.sql} ORDER BY n.occurred_at DESC LIMIT 50`, since, ...cf.params);
+        const out2 = rows.map((x) => {
+          const o = withClientName(ctx, x);
+          let content = "";
+          try {
+            content = decrypt3(x.content_enc);
+          } catch {
+            content = "";
+          }
+          return { ...o, title: x.title_enc ? decrypt3(x.title_enc) : null, excerpt: content.slice(0, 240), title_enc: void 0, content_enc: void 0 };
+        });
+        audit3.log({ user: ctx.user, action: "note.list", ip: ctx.ip, details: { count: out2.length, kinds: ["admin"], filter: "handoffs", hours } });
+        return { rows: out2, hours };
+      });
+      r.post("/api/notes/:id/sign", auth3.requireAuth, async (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
+        if (n.status !== "draft") throw badRequest("Note is already signed");
+        if (n.author_id !== ctx.user.id) throw forbidden("Only the author can sign a note. Supervisors countersign instead.");
+        await verifyIdentity(ctx);
+        const hash2 = sha2562(`${n.id}|${ctx.user.id}|${n.content_enc}|${n.structured_enc || ""}`);
+        db3.run(`UPDATE notes SET status='signed', signed_at=?, signed_by=?, signature_hash=?, updated_at=? WHERE id=?`, db3.now(), ctx.user.id, hash2, db3.now(), n.id);
+        audit3.log({ user: ctx.user, action: "note.sign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { hash: hash2, cosign_required: !!n.cosign_required } });
+        return { ok: true, signature_hash: hash2, awaiting_cosign: !!n.cosign_required };
+      });
+      r.post("/api/notes/:id/cosign", auth3.requireAuth, auth3.requirePerm("notes:cosign"), async (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "read")) && !auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden(`You cannot read ${n.kind} notes`);
+        if (n.status === "draft") throw badRequest("The author has not signed this note yet");
+        if (n.author_id === ctx.user.id) throw badRequest("A note cannot be countersigned by its own author");
+        if (n.cosigned_at) throw badRequest("This note has already been countersigned");
+        const { note } = validate(ctx.body, { password: { type: "string", required: true, maxLen: 500 }, note: { type: "string", maxLen: 1e3 } });
+        await verifyIdentity(ctx);
+        const hash2 = sha2562(`${n.id}|${ctx.user.id}|cosign|${n.content_enc}|${n.structured_enc || ""}`);
+        db3.run(`UPDATE notes SET cosigned_by=?, cosigned_at=?, cosignature_hash=?, cosign_note_enc=?, updated_at=? WHERE id=?`, ctx.user.id, db3.now(), hash2, note ? encrypt3(note) : null, db3.now(), n.id);
+        audit3.log({ user: ctx.user, action: "note.cosign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { author_id: n.author_id, hash: hash2, note_recorded: note ? true : void 0 } });
+        return { ok: true, cosignature_hash: hash2 };
+      });
+      r.post("/api/notes/:id/addenda", auth3.requireAuth, (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
+        const { content, reason } = validate(ctx.body, { content: { type: "string", required: true, maxLen: 2e4 }, reason: { type: "string", maxLen: 300 } });
+        const id = uuid2();
+        db3.run(`INSERT INTO note_addenda(id,note_id,author_id,content_enc,reason_enc) VALUES(?,?,?,?,?)`, id, n.id, ctx.user.id, encrypt3(content), reason ? encrypt3(reason) : null);
+        if (n.status === "signed") db3.run(`UPDATE notes SET status='amended', updated_at=? WHERE id=?`, db3.now(), n.id);
+        audit3.log({ user: ctx.user, action: "note.addendum", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: reason ? { reason_recorded: true } : void 0 });
+        ctx.status = 201;
+        return { id };
+      });
+      r.delete("/api/notes/:id", auth3.requireAuth, (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
+        if (n.status !== "draft") throw badRequest("Signed notes are part of the legal record and cannot be deleted");
+        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden();
+        db3.run(`UPDATE notes SET deleted_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), n.id);
+        audit3.log({ user: ctx.user, action: "note.delete", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip });
+        return { ok: true };
+      });
+      r.get("/api/notes/:id/verify", auth3.requireAuth, (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        if (!canRead(ctx, n)) throw forbidden();
+        if (!n.signature_hash) return { signed: false, ...signatureState(n) };
+        const hash2 = sha2562(`${n.id}|${n.signed_by}|${n.content_enc}|${n.structured_enc || ""}`);
+        const out2 = { signed: true, intact: hash2 === n.signature_hash, signed_at: n.signed_at, signer: n.signer, ...signatureState(n) };
+        if (n.cosignature_hash) {
+          out2.cosigner = n.cosigner;
+          out2.cosigned_at = n.cosigned_at;
+          out2.cosignature_intact = sha2562(`${n.id}|${n.cosigned_by}|cosign|${n.content_enc}|${n.structured_enc || ""}`) === n.cosignature_hash;
+        }
+        return out2;
+      });
+    };
+  }
+});
+
+// server/oidc.js
+var require_oidc = __commonJS({
+  "server/oidc.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    var config = require_config();
+    var b64url = (buf) => import_buffer.Buffer.from(buf).toString("base64url");
+    var fromB64url = (s) => import_buffer.Buffer.from(s, "base64url");
+    var CACHE_MS = 36e5;
+    var discoveryCache = null;
+    var jwksCache = null;
+    var outbound = require_outbound();
+    var LOOPBACK = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/i;
+    function checkIssuer() {
+      let iss;
+      try {
+        iss = new URL(config.oidc.issuer);
+      } catch {
+        throw new Error("OIDC_ISSUER is not a web address");
+      }
+      if (iss.protocol === "https:") return iss;
+      if (iss.protocol === "http:" && !config.isProd && LOOPBACK.test(iss.host.replace(/:\d+$/, ""))) return iss;
+      throw new Error("OIDC_ISSUER must be an https address");
+    }
+    async function checkEndpoint(u) {
+      const iss = checkIssuer();
+      let url;
+      try {
+        url = new URL(u);
+      } catch {
+        throw new Error("The identity provider named an endpoint that is not a web address");
+      }
+      if (url.origin === iss.origin) return url.href;
+      try {
+        const href = outbound.assertPublicHttps(url.href);
+        await outbound.assertResolvesPublic(href);
+        return href;
+      } catch (e) {
+        throw new Error(`The identity provider's discovery document names an endpoint SUDS will not contact (${url.host}): ${e.message}`);
+      }
+    }
+    async function idpFetch(u, opts = {}) {
+      return fetch(await checkEndpoint(u), { ...opts, redirect: "error" });
+    }
+    async function discover() {
+      if (discoveryCache && Date.now() - discoveryCache.at < CACHE_MS) return discoveryCache.doc;
+      const res = await idpFetch(`${config.oidc.issuer}/.well-known/openid-configuration`);
+      if (!res.ok) throw new Error(`Could not reach the identity provider's discovery document (HTTP ${res.status})`);
+      const doc = await res.json();
+      if (!doc.authorization_endpoint || !doc.token_endpoint) throw new Error("The identity provider's discovery document is missing required fields");
+      if (doc.issuer !== void 0 && String(doc.issuer).replace(/\/$/, "") !== config.oidc.issuer) throw new Error("The identity provider's discovery document names a different issuer");
+      for (const k of ["token_endpoint", "jwks_uri"]) if (doc[k]) await checkEndpoint(doc[k]);
+      discoveryCache = { at: Date.now(), doc };
+      return doc;
+    }
+    async function jwks() {
+      if (jwksCache && Date.now() - jwksCache.at < CACHE_MS) return jwksCache.keys;
+      const doc = await discover();
+      const res = await idpFetch(doc.jwks_uri);
+      if (!res.ok) throw new Error(`Could not fetch the identity provider's signing keys (HTTP ${res.status})`);
+      const { keys } = await res.json();
+      jwksCache = { at: Date.now(), keys };
+      return keys;
+    }
+    function pkcePair() {
+      const verifier = b64url(crypto3.randomBytes(32));
+      const challenge = b64url(crypto3.createHash("sha256").update(verifier).digest());
+      return { verifier, challenge };
+    }
+    var COOKIE = "suds_oidc";
+    function signState(payload) {
+      const body = b64url(JSON.stringify(payload));
+      const sig = b64url(crypto3.createHmac("sha256", config.indexKey).update(body).digest());
+      return `${body}.${sig}`;
+    }
+    function verifyState(token2) {
+      if (!token2 || typeof token2 !== "string" || !token2.includes(".")) return null;
+      const [body, sig] = token2.split(".");
+      const expected = b64url(crypto3.createHmac("sha256", config.indexKey).update(body).digest());
+      if (sig.length !== expected.length || !crypto3.timingSafeEqual(import_buffer.Buffer.from(sig), import_buffer.Buffer.from(expected))) return null;
+      let payload;
+      try {
+        payload = JSON.parse(fromB64url(body).toString("utf8"));
+      } catch {
+        return null;
+      }
+      if (!payload.exp || Date.now() > payload.exp) return null;
+      return payload;
+    }
+    function stateCookie(token2, { clear = false } = {}) {
+      const secure = config.tls.cert || config.isProd ? "; Secure" : "";
+      if (clear) return `${COOKIE}=; Path=/api/auth/oidc; HttpOnly; SameSite=Lax; Max-Age=0${secure}`;
+      return `${COOKIE}=${token2}; Path=/api/auth/oidc; HttpOnly; SameSite=Lax; Max-Age=600${secure}`;
+    }
+    async function startAuth({ acrValues = [] } = {}) {
+      const doc = await discover();
+      const { verifier, challenge } = pkcePair();
+      const state = crypto3.randomUUID();
+      const nonce = crypto3.randomUUID();
+      const url = new URL(doc.authorization_endpoint);
+      url.searchParams.set("response_type", "code");
+      url.searchParams.set("client_id", config.oidc.clientId);
+      url.searchParams.set("redirect_uri", config.oidc.redirectUri);
+      url.searchParams.set("scope", "openid profile email");
+      url.searchParams.set("state", state);
+      url.searchParams.set("nonce", nonce);
+      url.searchParams.set("code_challenge", challenge);
+      url.searchParams.set("code_challenge_method", "S256");
+      if (acrValues.length) url.searchParams.set("acr_values", acrValues.join(" "));
+      const cookie = stateCookie(signState({ state, nonce, verifier, exp: Date.now() + 6e5 }));
+      return { url: url.toString(), cookie };
+    }
+    async function completeAuth({ code, state, cookieToken }) {
+      const saved = verifyState(cookieToken);
+      if (!saved) throw new Error("The sign-in request expired or was tampered with. Try again.");
+      if (saved.state !== state) throw new Error("The sign-in request did not match. Try again.");
+      const doc = await discover();
+      const body = new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: config.oidc.redirectUri,
+        client_id: config.oidc.clientId,
+        client_secret: config.oidc.clientSecret,
+        code_verifier: saved.verifier
+      });
+      const res = await idpFetch(doc.token_endpoint, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: body.toString() });
+      const tok = await res.json().catch(() => ({}));
+      if (!res.ok || !tok.id_token) throw new Error(tok.error_description || tok.error || "The identity provider refused the sign-in");
+      const claims = await verifyIdToken(tok.id_token, doc);
+      if (claims.nonce !== saved.nonce) throw new Error("The identity provider's response did not match this sign-in attempt.");
+      return claims;
+    }
+    async function verifyIdToken(idToken, doc) {
+      const parts = idToken.split(".");
+      if (parts.length !== 3) throw new Error("The identity provider returned a malformed token");
+      const [headerB64, payloadB64, sigB64] = parts;
+      const header = JSON.parse(fromB64url(headerB64).toString("utf8"));
+      if (header.alg !== "RS256") throw new Error(`Unsupported token signing algorithm: ${header.alg}`);
+      const keys = await jwks();
+      const jwk = keys.find((k) => k.kid === header.kid && (k.use === void 0 || k.use === "sig"));
+      if (!jwk) throw new Error("The identity provider signed this token with a key SUDS does not recognise");
+      const publicKey = crypto3.createPublicKey({ key: jwk, format: "jwk" });
+      const ok = crypto3.verify("RSA-SHA256", import_buffer.Buffer.from(`${headerB64}.${payloadB64}`), publicKey, fromB64url(sigB64));
+      if (!ok) throw new Error("The identity provider's token signature did not verify");
+      const claims = JSON.parse(fromB64url(payloadB64).toString("utf8"));
+      if (claims.iss !== doc.issuer) throw new Error("The token was issued by an unexpected issuer");
+      const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+      if (!aud.includes(config.oidc.clientId)) throw new Error("The token was not issued for this application");
+      if (!claims.exp || Date.now() >= claims.exp * 1e3) throw new Error("The token has expired");
+      if (!claims.sub) throw new Error("The token has no subject");
+      return claims;
+    }
+    var MFA_AMR = ["mfa"];
+    var AMR_FACTOR_KIND = {
+      pwd: "knowledge",
+      pin: "knowledge",
+      kba: "knowledge",
+      otp: "possession",
+      sms: "possession",
+      tel: "possession",
+      hwk: "possession",
+      swk: "possession",
+      sc: "possession",
+      fpt: "inherence",
+      face: "inherence",
+      iris: "inherence",
+      retina: "inherence",
+      vbm: "inherence"
+    };
+    function idpMfa(claims, { acrValues = [] } = {}) {
+      const amr = Array.isArray(claims.amr) ? claims.amr.map(String) : typeof claims.amr === "string" ? [claims.amr] : [];
+      const acr = claims.acr === void 0 || claims.acr === null ? null : String(claims.acr);
+      const lower = amr.map((a) => a.toLowerCase());
+      const amrHit = lower.find((a) => MFA_AMR.includes(a));
+      if (amrHit) return { ok: true, via: `amr:${amrHit}`, amr, acr };
+      const byKind = /* @__PURE__ */ new Map();
+      for (const a of lower) {
+        const k = AMR_FACTOR_KIND[a];
+        if (k && !byKind.has(k)) byKind.set(k, a);
+      }
+      if (byKind.size >= 2) return { ok: true, via: `amr:${[...byKind.values()].slice(0, 2).join("+")}`, amr, acr };
+      if (acr && acrValues.includes(acr)) return { ok: true, via: `acr:${acr}`, amr, acr };
+      return { ok: false, via: null, amr, acr };
+    }
+    module.exports = { checkEndpoint, discover, startAuth, completeAuth, stateCookie, COOKIE, idpMfa, MFA_AMR, AMR_FACTOR_KIND, _resetCacheForTests: () => {
+      discoveryCache = null;
+      jwksCache = null;
+    } };
+  }
+});
+
+// server/routes/oidc.js
+var require_oidc2 = __commonJS({
+  "server/routes/oidc.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var config = require_config();
+    var oidc = require_oidc();
+    var { rateLimit } = require_app2();
+    var { HttpError: HttpError3, notFound } = require_http();
+    function redirect(res, location) {
+      res.writeHead(302, { Location: location });
+      res.end();
+    }
+    function mfaTrust() {
+      const acrValues = String(db3.getSetting("sso_mfa_acr_values", "") || "").split(/[\s,]+/).filter(Boolean);
+      return { trusted: db3.getSetting("sso_trust_idp_mfa", "0") === "1", acrValues };
+    }
+    function linkProvisioned(claims) {
+      const candidates = [];
+      if (claims.oid) candidates.push(db3.one(`SELECT * FROM users WHERE scim_external_id=? AND oidc_subject IS NULL`, String(claims.oid)));
+      for (const k of ["preferred_username", "upn", "email"]) if (claims[k] && !(k === "email" && claims.email_verified === false)) candidates.push(db3.one(`SELECT * FROM users WHERE username=? COLLATE NOCASE AND scim_external_id IS NOT NULL AND oidc_subject IS NULL`, String(claims[k])));
+      const user = candidates.find(Boolean);
+      if (!user) return null;
+      db3.run(`UPDATE users SET oidc_subject=?, updated_at=? WHERE id=?`, claims.sub, db3.now(), user.id);
+      audit3.log({ user: { username: "system" }, action: "user.oidc_linked", entity: "user", entityId: user.id, details: { username: user.username, via: claims.oid && user.scim_external_id === String(claims.oid) ? "scim externalId" : "scim userName" } });
+      return db3.one(`SELECT * FROM users WHERE id=?`, user.id);
+    }
+    module.exports = (r) => {
+      r.get("/api/auth/oidc/status", () => ({ enabled: config.oidc.enabled, label: config.oidc.label }));
+      r.get("/api/auth/oidc/start", async (ctx) => {
+        if (!config.oidc.enabled) throw notFound();
+        if (!rateLimit(`login:${ctx.ip}`, config.isTest ? 1e5 : 20, 15 * 6e4)) throw new HttpError3(429, "Too many sign-in attempts. Try again later.");
+        let started;
+        const t = mfaTrust();
+        try {
+          started = await oidc.startAuth({ acrValues: t.trusted ? t.acrValues : [] });
+        } catch (e) {
+          console.error("[suds] oidc start failed:", e.message);
+          throw new HttpError3(502, "Could not reach the identity provider. Try again shortly, or sign in with a username and password.");
+        }
+        ctx.res.setHeader("Set-Cookie", started.cookie);
+        redirect(ctx.res, started.url);
+      });
+      r.get("/api/auth/oidc/callback", async (ctx) => {
+        if (!config.oidc.enabled) throw notFound();
+        const fail = (reason, detail) => {
+          audit3.log({ user: { username: reason === "not_linked" ? detail && detail.sub || "" : "" }, action: "auth.oidc.failed", ip: ctx.ip, success: false, details: { reason } });
+          ctx.res.setHeader("Set-Cookie", oidc.stateCookie("", { clear: true }));
+          redirect(ctx.res, `/#/login?oidc_error=${encodeURIComponent(reason)}`);
+        };
+        if (ctx.query.get("error")) return fail("provider_denied");
+        if (!rateLimit(`login:${ctx.ip}`, config.isTest ? 1e5 : 20, 15 * 6e4)) throw new HttpError3(429, "Too many sign-in attempts. Try again later.");
+        let claims;
+        try {
+          claims = await oidc.completeAuth({ code: ctx.query.get("code") || "", state: ctx.query.get("state") || "", cookieToken: ctx.cookies[oidc.COOKIE] });
+        } catch (e) {
+          console.error("[suds] oidc callback failed:", e.message);
+          return fail("exchange_failed");
+        }
+        const user = db3.one(`SELECT * FROM users WHERE oidc_subject=?`, claims.sub) || linkProvisioned(claims);
+        if (!user) return fail("not_linked", { sub: claims.sub });
+        if (!user.is_active) return fail("inactive");
+        db3.run(`UPDATE users SET last_login_at=?, idp_seen_at=? WHERE id=?`, db3.now(), db3.now(), user.id);
+        const trust = mfaTrust();
+        const idp = trust.trusted ? oidc.idpMfa(claims, { acrValues: trust.acrValues }) : null;
+        const viaIdp = !!(idp && idp.ok);
+        const mfaPending = !viaIdp && !!user.mfa_enabled;
+        const token2 = auth3.createSession(user, ctx, { mfaPending, mfaSource: viaIdp ? "idp" : null });
+        audit3.log({
+          user,
+          action: mfaPending ? "auth.oidc.login.mfa_pending" : "auth.oidc.login",
+          ip: ctx.ip,
+          details: idp ? { mfa: viaIdp ? "idp" : "not asserted by the identity provider", via: idp.via || void 0, amr: idp.amr.slice(0, 10), acr: idp.acr || void 0 } : void 0
+        });
+        const cookies = [auth3.cookieHeader(token2), oidc.stateCookie("", { clear: true })];
+        ctx.res.setHeader("Set-Cookie", cookies);
+        redirect(ctx.res, mfaPending ? "/#/mfa" : "/#/dashboard");
+      });
+    };
+  }
+});
+
+// server/routes/options.js
+var require_options2 = __commonJS({
+  "server/routes/options.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var config = require_config();
+    var O = require_options();
+    var { badRequest, notFound, forbidden } = require_http();
+    var { validate } = require_validate();
+    var { uuid: uuid2 } = require_crypto();
+    function assertEditable() {
+      const staticHost = typeof window !== "undefined" && window.SUDS_STATIC_HOST === true;
+      if (config.local && !staticHost) throw forbidden("Lists are managed on the office SUDS. Changes made there reach this device when it syncs.");
+    }
+    function listOr404(key) {
+      if (!O.has(key)) throw notFound("No such list");
+      return O.def(key);
+    }
+    function row(key, code) {
+      return db3.one(`SELECT * FROM option_overrides WHERE list_key=? AND code=?`, key, code);
+    }
+    function upsert(ctx, key, code, fields) {
+      const existing = row(key, code);
+      const stamp2 = db3.now();
+      if (existing) {
+        const keys = Object.keys(fields);
+        db3.run(`UPDATE option_overrides SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_by=?, updated_at=? WHERE id=?`, ...keys.map((k) => fields[k]), ctx.user.id, stamp2, existing.id);
+        return existing.id;
+      }
+      const id = uuid2();
+      const cols2 = { id, list_key: key, code, hidden: 0, is_custom: 0, ...fields, updated_by: ctx.user.id, created_at: stamp2, updated_at: stamp2 };
+      db3.run(`INSERT INTO option_overrides(${Object.keys(cols2).join(",")}) VALUES(${Object.keys(cols2).map(() => "?").join(",")})`, ...Object.values(cols2));
+      return id;
+    }
+    function cleanLabel(raw) {
+      const label = String(raw || "").replace(/\s+/g, " ").trim();
+      if (!label) throw badRequest("Enter the wording for this choice", { fields: { label: "required" } });
+      if (label.length > O.MAX_LABEL) throw badRequest(`Keep it to ${O.MAX_LABEL} characters`, { fields: { label: `max length ${O.MAX_LABEL}` } });
+      return label;
+    }
+    function assertUniqueLabel(key, label, exceptCode) {
+      const clash = O.entries(key).find((e) => e.code !== exceptCode && e.label.toLowerCase() === label.toLowerCase());
+      if (clash) throw badRequest(`"${clash.label}" is already a choice in this list${clash.hidden ? " (hidden)" : ""}`, { fields: { label: "already in this list" } });
+    }
+    module.exports = (r) => {
+      const manage = [auth3.requireAuth, auth3.requirePerm("settings:manage")];
+      r.get("/api/admin/lists", ...manage, () => {
+        const staticHost = typeof window !== "undefined" && window.SUDS_STATIC_HOST === true;
+        return { ...O.describe(), editable: !config.local || staticHost };
+      });
+      r.put("/api/admin/lists/:key/entries/:code", ...manage, (ctx) => {
+        assertEditable();
+        const l = listOr404(ctx.params.key);
+        const code = ctx.params.code;
+        const entry = O.entries(l.key).find((e) => e.code === code);
+        if (!entry) throw notFound("That choice is not in this list");
+        const v = validate(ctx.body, { label: { type: "string", maxLen: 200 }, hidden: { type: "boolean" } }, { partial: true });
+        const fields = {};
+        const details = { list: l.key, code };
+        if (v.label !== void 0) {
+          if ((v.label === null || v.label === "") && !entry.custom) {
+            fields.label = null;
+            details.label = entry.default_label;
+          } else {
+            const label = cleanLabel(v.label);
+            assertUniqueLabel(l.key, label, code);
+            fields.label = entry.custom || label !== entry.default_label ? label : null;
+            details.label = label;
+            details.was = entry.label;
+          }
+        }
+        if (v.hidden !== void 0) {
+          if (v.hidden && entry.protected) throw badRequest(`"${entry.label}" is used by SUDS (${entry.protected}), so it cannot be hidden. It can be reworded.`);
+          if (v.hidden && O.visible(l.key).length <= 1 && !entry.hidden) throw badRequest("A list needs at least one choice people can pick");
+          fields.hidden = v.hidden ? 1 : 0;
+          details.hidden = !!v.hidden;
+        }
+        if (!Object.keys(fields).length) throw badRequest("Nothing to change");
+        upsert(ctx, l.key, code, fields);
+        audit3.log({ user: ctx.user, action: "options.update", entity: "option_list", entityId: l.key, ip: ctx.ip, details });
+        return { ok: true, entries: O.entries(l.key) };
+      });
+      r.post("/api/admin/lists/:key/entries", ...manage, (ctx) => {
+        assertEditable();
+        const l = listOr404(ctx.params.key);
+        if (l.custom === false) throw badRequest(l.why || "Choices cannot be added to this list");
+        const v = validate(ctx.body, { label: { type: "string", required: true, maxLen: 200 } });
+        const label = cleanLabel(v.label);
+        assertUniqueLabel(l.key, label);
+        const all = O.entries(l.key);
+        const taken = /* @__PURE__ */ new Set([...l.codes, ...all.map((e) => e.code), ...db3.all(`SELECT code FROM option_overrides WHERE list_key=?`, l.key).map((x) => x.code)]);
+        const code = O.slug(label, taken);
+        const orders = db3.all(`SELECT sort_order FROM option_overrides WHERE list_key=? AND sort_order IS NOT NULL`, l.key).map((x) => x.sort_order);
+        const sort = Math.max(1e3 + l.codes.length, ...orders.map((n) => n + 1), 2e3 + all.filter((e) => e.custom).length);
+        upsert(ctx, l.key, code, { label, is_custom: 1, hidden: 0, sort_order: sort });
+        audit3.log({ user: ctx.user, action: "options.add", entity: "option_list", entityId: l.key, ip: ctx.ip, details: { list: l.key, code, label } });
+        ctx.status = 201;
+        return { code, entries: O.entries(l.key) };
+      });
+      r.put("/api/admin/lists/:key/order", ...manage, (ctx) => {
+        assertEditable();
+        const l = listOr404(ctx.params.key);
+        const v = validate(ctx.body, { codes: { type: "array", required: true, of: "string", maxLen: 500 } });
+        const current2 = O.entries(l.key).map((e) => e.code);
+        const given = v.codes;
+        if (new Set(given).size !== given.length || given.length !== current2.length || !given.every((c) => current2.includes(c))) throw badRequest("Send every choice in the list, each once, in the new order");
+        db3.transaction(() => {
+          given.forEach((code, i) => upsert(ctx, l.key, code, { sort_order: i }));
+        });
+        audit3.log({ user: ctx.user, action: "options.reorder", entity: "option_list", entityId: l.key, ip: ctx.ip, details: { list: l.key, order: given } });
+        return { ok: true, entries: O.entries(l.key) };
+      });
+      r.post("/api/admin/lists/:key/reset", ...manage, (ctx) => {
+        assertEditable();
+        const l = listOr404(ctx.params.key);
+        const rows = db3.all(`SELECT * FROM option_overrides WHERE list_key=?`, l.key);
+        db3.transaction(() => {
+          for (const x of rows) {
+            if (x.is_custom) upsert(ctx, l.key, x.code, { hidden: 1, sort_order: null });
+            else upsert(ctx, l.key, x.code, { label: null, sort_order: null, hidden: 0 });
+          }
+        });
+        audit3.log({ user: ctx.user, action: "options.reset", entity: "option_list", entityId: l.key, ip: ctx.ip, details: { list: l.key, changed: rows.length } });
+        return { ok: true, entries: O.entries(l.key) };
+      });
+    };
+  }
+});
+
+// server/routes/overdose.js
+var require_overdose = __commonJS({
+  "server/routes/overdose.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var crud = require_crud();
+    var { decrypt: decrypt3, encrypt: encrypt3 } = require_crypto();
+    var C = require_constants();
+    var O = require_options();
+    var KINDS = C.OVERDOSE_KINDS;
+    var FATAL_APPLIED = "overdose_event.fatal_outcome";
+    var FATAL_REVERTED = "overdose_event.fatal_reverted";
+    function applyFatal(ctx, event) {
+      if (!event.client_id) return;
+      const c = db3.one(`SELECT id, status, discharge_date, discharge_reason FROM clients WHERE id=?`, event.client_id);
+      if (!c || c.status === "deceased") return;
+      const when = String(event.occurred_at).slice(0, 10);
+      const details = { prior_status: c.status, prior_discharge_date: c.discharge_date || null, prior_discharge_reason: c.discharge_reason || null, episode_id: null, assignment_ids: [], task_ids: [] };
+      db3.transaction(() => {
+        const ep = db3.one(`SELECT id FROM episodes WHERE client_id=? AND status='open' ORDER BY opened_at DESC LIMIT 1`, c.id);
+        if (ep) {
+          db3.run(`UPDATE episodes SET status='closed', closed_at=?, closed_by=?, discharge_reason='deceased', discharge_disposition=?, updated_at=? WHERE id=?`, when, ctx.user.id, "Fatal overdose recorded", db3.now(), ep.id);
+          details.episode_id = ep.id;
+        }
+        db3.run(`UPDATE clients SET status='deceased', discharge_date=?, discharge_reason='deceased', updated_at=? WHERE id=?`, when, db3.now(), c.id);
+        details.assignment_ids = db3.all(`SELECT id, end_date FROM assignments WHERE client_id=? AND (end_date IS NULL OR end_date > ?)`, c.id, when).map((a) => [a.id, a.end_date || null]);
+        for (const [id] of details.assignment_ids) db3.run(`UPDATE assignments SET end_date=?, updated_at=? WHERE id=?`, when, db3.now(), id);
+        details.task_ids = db3.all(`SELECT id, status FROM tasks WHERE client_id=? AND status IN ('open','in_progress')`, c.id).map((t) => [t.id, t.status]);
+        for (const [id] of details.task_ids) db3.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE id=?`, db3.now(), id);
+      });
+      audit3.log({ user: ctx.user, action: FATAL_APPLIED, entity: "overdose_event", entityId: event.id, clientId: c.id, ip: ctx.ip, details });
+    }
+    function appliedFatal(eventId) {
+      const last = db3.one(`SELECT action, details FROM audit_log WHERE entity='overdose_event' AND entity_id=? AND action IN (?,?) ORDER BY id DESC LIMIT 1`, eventId, FATAL_APPLIED, FATAL_REVERTED);
+      if (!last || last.action !== FATAL_APPLIED) return null;
+      try {
+        return JSON.parse(last.details);
+      } catch {
+        return null;
+      }
+    }
+    function revertFatal(ctx, event) {
+      if (!event.client_id) return;
+      const applied = appliedFatal(event.id);
+      if (!applied) return;
+      if (db3.one(`SELECT 1 FROM overdose_events WHERE client_id=? AND kind='fatal' AND id<>?`, event.client_id, event.id)) return;
+      const c = db3.one(`SELECT id, status FROM clients WHERE id=?`, event.client_id);
+      if (!c || c.status !== "deceased") return;
+      let reopened = null;
+      db3.transaction(() => {
+        db3.run(`UPDATE clients SET status=?, discharge_date=?, discharge_reason=?, updated_at=? WHERE id=?`, applied.prior_status || "active", applied.prior_discharge_date || null, applied.prior_discharge_reason || null, db3.now(), c.id);
+        const ep = applied.episode_id && db3.one(`SELECT id, status FROM episodes WHERE id=?`, applied.episode_id);
+        if (ep && ep.status === "closed" && !db3.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, c.id)) {
+          db3.run(`UPDATE episodes SET status='open', closed_at=NULL, closed_by=NULL, discharge_reason=NULL, discharge_disposition=NULL, discharge_summary_enc=NULL, updated_at=? WHERE id=?`, db3.now(), ep.id);
+          reopened = ep.id;
+        }
+        for (const [id, endDate] of applied.assignment_ids || []) db3.run(`UPDATE assignments SET end_date=?, updated_at=? WHERE id=? AND ended_at IS NULL`, endDate, db3.now(), id);
+        for (const [id, status] of applied.task_ids || []) db3.run(`UPDATE tasks SET status=?, updated_at=? WHERE id=? AND status='cancelled'`, status, db3.now(), id);
+      });
+      audit3.log({ user: ctx.user, action: FATAL_REVERTED, entity: "overdose_event", entityId: event.id, clientId: c.id, ip: ctx.ip, details: { restored_status: applied.prior_status || "active", reopened_episode: reopened } });
+    }
+    module.exports = (r) => {
+      crud.build(r, {
+        table: "overdose_events",
+        entity: "overdose_event",
+        base: "/api/overdose-events",
+        perm: "overdose",
+        dateCol: "occurred_at",
+        ownerCol: "reported_by",
+        clientRequired: false,
+        creatorCol: "reported_by",
+        joins: "LEFT JOIN clients c ON c.id=overdose_events.client_id LEFT JOIN users u ON u.id=overdose_events.reported_by LEFT JOIN funding_sources f ON f.id=overdose_events.funding_source_id",
+        select: "overdose_events.*, c.client_code, u.display_name AS reporter, f.name AS funding_source",
+        shape: {
+          // client_id stays optional: a bystander reversal reported by an outreach worker has no client.
+          client_id: { type: "string" },
+          occurred_at: { type: "datetime", required: true },
+          // Required: an empty form saved by accident used to become a countable reversal.
+          kind: { type: "string", enum: KINDS, list: "OVERDOSE_KINDS", required: true },
+          substances: { type: "string", maxLen: 200 },
+          naloxone_used: { type: "boolean" },
+          naloxone_doses: { type: "number", integer: true, min: 0, max: 20 },
+          administered_by: { type: "string", list: "ADMINISTERED_BY" },
+          ems_called: { type: "boolean" },
+          hospitalized: { type: "boolean" },
+          survived: { type: "boolean" },
+          location_type: { type: "string", maxLen: 60 },
+          city: { type: "string", maxLen: 100 },
+          funding_source_id: { type: "string" },
+          notes: { type: "string", maxLen: 4e3 }
+        },
+        filters: (ctx, where, params) => {
+          const kind = ctx.query.get("kind");
+          if (kind && kind !== "all") {
+            where.push("overdose_events.kind=?");
+            params.push(kind);
+          }
+          if (ctx.query.get("community") === "1") where.push("overdose_events.client_id IS NULL");
+          if (ctx.query.get("naloxone") === "1") where.push("overdose_events.naloxone_used=1");
+        },
+        beforeInsert: (ctx, v) => {
+          if (v.notes !== void 0) {
+            v.notes_enc = v.notes ? encrypt3(v.notes) : null;
+            delete v.notes;
+          }
+          if (v.substances !== void 0) {
+            v.substances_enc = v.substances ? encrypt3(v.substances) : null;
+            delete v.substances;
+          }
+          if (v.kind === "fatal") v.survived = 0;
+          if (v.naloxone_doses > 0) v.naloxone_used = 1;
+        },
+        beforeUpdate: (ctx, v) => {
+          if (v.notes !== void 0) {
+            v.notes_enc = v.notes ? encrypt3(v.notes) : null;
+            delete v.notes;
+          }
+          if (v.substances !== void 0) {
+            v.substances_enc = v.substances ? encrypt3(v.substances) : null;
+            delete v.substances;
+          }
+          if (v.kind === "fatal") v.survived = 0;
+        },
+        afterLoad: (ctx, row) => ({ ...row, notes: row.notes_enc ? decrypt3(row.notes_enc) : null, substances: row.substances_enc ? decrypt3(row.substances_enc) : null, notes_enc: void 0, substances_enc: void 0 }),
+        afterInsert: (ctx, row) => {
+          if (!row.client_id) return;
+          const day = String(row.occurred_at).slice(0, 10);
+          db3.run(`UPDATE clients SET overdose_history=1, last_overdose_date=CASE WHEN last_overdose_date IS NULL OR last_overdose_date < ? THEN ? ELSE last_overdose_date END, updated_at=? WHERE id=?`, day, day, db3.now(), row.client_id);
+          if (row.kind === "fatal") applyFatal(ctx, row);
+        },
+        afterUpdate: (ctx, row, prev) => {
+          const wasFatal = prev.kind === "fatal" && prev.client_id;
+          const isFatal = row.kind === "fatal" && row.client_id;
+          const sameClient = prev.client_id === row.client_id;
+          if (wasFatal && (!isFatal || !sameClient)) revertFatal(ctx, prev);
+          if (isFatal && (!wasFatal || !sameClient)) {
+            const day = String(row.occurred_at).slice(0, 10);
+            db3.run(`UPDATE clients SET overdose_history=1, last_overdose_date=CASE WHEN last_overdose_date IS NULL OR last_overdose_date < ? THEN ? ELSE last_overdose_date END, updated_at=? WHERE id=?`, day, day, db3.now(), row.client_id);
+            applyFatal(ctx, row);
+          }
+        },
+        beforeDelete: (ctx, row) => {
+          if (row.kind === "fatal") revertFatal(ctx, row);
+        },
+        canEdit: crud.ownerOrManager("reported_by")
+      });
+      r.get("/api/meta/overdose-options", auth3.requireAuth, () => ({ kinds: O.visible("OVERDOSE_KINDS"), administered_by: O.visible("ADMINISTERED_BY"), kind_options: O.entries("OVERDOSE_KINDS"), administered_by_options: O.entries("ADMINISTERED_BY") }));
+    };
+  }
+});
+
+// server/routes/patient-requests.js
+var require_patient_requests = __commonJS({
+  "server/routes/patient-requests.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var crud = require_crud();
+    var { encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
+    var KINDS = ["access", "amendment", "restriction", "accounting"];
+    var STATUSES = ["open", "fulfilled", "denied"];
+    var DAYS_TO_RESPOND = 30;
+    function encNotes(v) {
+      if (v.notes !== void 0) {
+        v.notes_enc = v.notes ? encrypt3(v.notes) : null;
+        delete v.notes;
+      }
+    }
+    var dueFrom = (received) => new Date(Date.parse(received) + DAYS_TO_RESPOND * 864e5).toISOString().slice(0, 10);
+    module.exports = (r) => {
+      crud.build(r, {
+        table: "patient_requests",
+        entity: "patient_request",
+        base: "/api/patient-requests",
+        perm: "patient-requests",
+        dateCol: "received_at",
+        ownerCol: "handled_by",
+        creatorCol: "created_by",
+        order: `CASE patient_requests.status WHEN 'open' THEN 0 ELSE 1 END, patient_requests.due_at ASC`,
+        joins: "JOIN clients c ON c.id=patient_requests.client_id LEFT JOIN users u ON u.id=patient_requests.handled_by",
+        select: "patient_requests.*, c.client_code, u.display_name AS handler",
+        shape: {
+          client_id: { type: "string", required: true },
+          kind: { type: "string", required: true, enum: KINDS },
+          received_at: { type: "date", required: true },
+          due_at: { type: "date" },
+          status: { type: "string", enum: STATUSES },
+          notes: { type: "string", maxLen: 4e3 },
+          handled_by: { type: "string" },
+          closed_at: { type: "datetime" }
+        },
+        filters: (ctx, where, params) => {
+          const s = ctx.query.get("status");
+          if (s && s !== "all") {
+            where.push("patient_requests.status=?");
+            params.push(s);
+          }
+          if (ctx.query.get("overdue") === "1") {
+            where.push(`patient_requests.status='open' AND patient_requests.due_at < ?`);
+            params.push((/* @__PURE__ */ new Date()).toISOString().slice(0, 10));
+          }
+        },
+        beforeInsert: (ctx, v) => {
+          if (!v.due_at) v.due_at = dueFrom(v.received_at);
+          if (!v.handled_by) v.handled_by = ctx.user.id;
+          if (v.status && v.status !== "open" && !v.closed_at) v.closed_at = db3.now();
+          encNotes(v);
+        },
+        beforeUpdate: (ctx, v, row) => {
+          if (v.received_at && !v.due_at && !row.due_at) v.due_at = dueFrom(v.received_at);
+          if (v.status && v.status !== "open" && !row.closed_at && !v.closed_at) v.closed_at = db3.now();
+          if (v.status === "open") v.closed_at = null;
+          encNotes(v);
+        },
+        afterLoad: (ctx, row) => ({ ...row, notes: row.notes_enc ? decrypt3(row.notes_enc) : null, notes_enc: void 0, overdue: row.status === "open" && row.due_at < (/* @__PURE__ */ new Date()).toISOString().slice(0, 10) }),
+        canEdit: (ctx, row) => row.handled_by === ctx.user.id || row.created_by === ctx.user.id || auth3.hasPerm(ctx.user, "clients:all")
+      });
+      r.get("/api/meta/patient-request-options", auth3.requireAuth, () => ({ kinds: KINDS, statuses: STATUSES, days_to_respond: DAYS_TO_RESPOND }));
+    };
+    module.exports.KINDS = KINDS;
+    module.exports.STATUSES = STATUSES;
+  }
+});
+
+// server/routes/referrals.js
+var require_referrals = __commonJS({
+  "server/routes/referrals.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var crud = require_crud();
+    var audit3 = require_audit();
+    var C = require_constants();
+    var disclosure = require_disclosure();
+    var { badRequest } = require_http();
+    var { uuid: uuid2, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
+    var SHARED_STATUSES = ["contacted", "accepted", "waitlisted", "scheduled", "admitted", "completed"];
+    var CLOSED_STATUSES = ["completed", "closed", "declined_by_client", "declined_by_provider"];
+    var BASES = disclosure.BASES;
+    var ENC = ["outcome", "barrier", "notes"];
+    function sharesInformation(v, row = {}) {
+      const status = v.status || row.status || "pending";
+      const warm = v.warm_handoff !== void 0 ? v.warm_handoff : row.warm_handoff;
+      return !!warm || SHARED_STATUSES.includes(status);
+    }
+    function existingDisclosure(referralId) {
+      return db3.one(`SELECT id FROM disclosures WHERE source='referral' AND source_ref=?`, referralId);
+    }
+    function resourceName(resourceId) {
+      return db3.one(`SELECT name FROM resources WHERE id=?`, resourceId)?.name || "referral recipient";
+    }
+    function resourceNames(resourceId) {
+      const r = db3.one(`SELECT name, organization FROM resources WHERE id=?`, resourceId);
+      return r ? [r.name, r.organization].filter(Boolean) : [];
+    }
+    function encFields(v) {
+      for (const f of ENC) if (v[f] !== void 0) {
+        v[`${f}_enc`] = v[f] === null || v[f] === "" ? null : encrypt3(String(v[f]));
+        delete v[f];
+      }
+    }
+    function present(row) {
+      if (!row) return row;
+      const out2 = { ...row };
+      for (const f of ENC) {
+        out2[f] = row[`${f}_enc`] ? decrypt3(row[`${f}_enc`]) : null;
+        delete out2[`${f}_enc`];
+      }
+      return out2;
+    }
+    function gate(ctx, v, row = {}) {
+      return {
+        consent_id: v.consent_id || row.consent_id,
+        basis: v._disclosure_basis,
+        justification: v._disclosure_justification,
+        court_order_id: v._court_order_id,
+        recipient: resourceNames(v.resource_id || row.resource_id),
+        recipient_override: v._recipient_override,
+        allowed: disclosure.REFERRAL_BASES,
+        restriction_reviewed: v._restriction_reviewed,
+        user: ctx.user
+      };
+    }
+    function recordDisclosure(ctx, row, v = {}) {
+      const basis = disclosure.requireBasis(row.client_id, gate(ctx, v, row));
+      disclosure.record({
+        clientId: row.client_id,
+        consentId: basis.consent?.id || null,
+        courtOrderId: basis.court_order?.id || null,
+        recipientOverride: basis.recipient_override,
+        recipient: resourceName(v.resource_id || row.resource_id),
+        purpose: "Referral for services",
+        what: v._disclosure_what || "Referral information (name, contact details and presenting need)",
+        method: v.warm_handoff ?? row.warm_handoff ? "warm handoff" : "referral",
+        basis: basis.basis,
+        justification: basis.justification,
+        source: "referral",
+        sourceRef: row.id,
+        user: ctx.user,
+        ip: ctx.ip
+      });
+    }
+    var OVERRIDE_PREFIX = /^Recipient override \(the consent names "[\s\S]*?"\): /;
+    function pushDisclosure(user, raw, existing, deviceRows = []) {
+      if (!sharesInformation(raw, existing || {})) return null;
+      const recipientChanged = !!existing && !!raw.resource_id && raw.resource_id !== existing.resource_id;
+      if (existing && !recipientChanged && existingDisclosure(raw.id)) return null;
+      const dev = deviceRows.length ? deviceRows[deviceRows.length - 1] : null;
+      const just = dev && dev.justification_enc ? String(dev.justification_enc) : "";
+      const resourceId = raw.resource_id || existing?.resource_id;
+      let basis;
+      try {
+        basis = disclosure.requireBasis(raw.client_id, {
+          consent_id: dev && dev.consent_id || raw.consent_id,
+          basis: dev && dev.basis || "consent",
+          justification: just.replace(OVERRIDE_PREFIX, "") || null,
+          court_order_id: dev && dev.court_order_id,
+          recipient: resourceNames(resourceId),
+          recipient_override: OVERRIDE_PREFIX.test(just),
+          allowed: disclosure.REFERRAL_BASES,
+          // The device's gate asked the worker to confirm an agreed restriction before it wrote its row.
+          restriction_reviewed: !!dev,
+          user
+        });
+      } catch (e) {
+        const x = e && e.extra || {};
+        const why = x.recipientNotCovered ? "the consent it cites does not name the agency it is sent to" : x.restrictionReview ? "the client has an agreed restriction on sharing, which has to be confirmed at the office" : x.consentIncomplete ? "the consent it cites does not carry every \xA72.31 element" : "it needs a live consent that names the agency, or another basis recorded at the office";
+        return { refused: `needs a lawful basis for disclosure the office accepts: ${why}`, code: x.recipientNotCovered ? "recipient_not_covered" : x.restrictionReview ? "restriction" : x.consentIncomplete ? "consent_incomplete" : "no_basis" };
+      }
+      return {
+        deviceIds: deviceRows.map((d) => d.id),
+        account(ip) {
+          return disclosure.record({
+            id: dev ? dev.id : void 0,
+            clientId: raw.client_id,
+            consentId: basis.consent?.id || null,
+            courtOrderId: basis.court_order?.id || null,
+            recipientOverride: basis.recipient_override,
+            recipient: resourceName(resourceId),
+            purpose: "Referral for services",
+            what: dev && dev.what_enc || "Referral information (name, contact details and presenting need)",
+            method: raw.warm_handoff ?? existing?.warm_handoff ? "warm handoff" : "referral",
+            basis: basis.basis,
+            justification: basis.justification,
+            source: "referral",
+            sourceRef: raw.id,
+            disclosedAt: dev && dev.disclosed_at || null,
+            user,
+            ip
+          });
+        }
+      };
+    }
+    module.exports = (r) => {
+      crud.build(r, {
+        table: "referrals",
+        entity: "referral",
+        perm: "referrals",
+        dateCol: "referred_at",
+        restrictOwner: true,
+        joins: "JOIN users u ON u.id=referrals.user_id JOIN clients c ON c.id=referrals.client_id JOIN resources res ON res.id=referrals.resource_id",
+        select: "referrals.*, u.display_name AS worker, c.client_code, res.name AS resource_name, res.category AS resource_category, res.phone AS resource_phone",
+        shape: {
+          client_id: { type: "string", required: true },
+          resource_id: { type: "string", required: true },
+          user_id: { type: "string" },
+          referred_at: { type: "datetime", required: true },
+          status: { type: "string", list: "REFERRAL_STATUSES" },
+          urgency: { type: "string", enum: ["routine", "urgent", "emergent"] },
+          appointment_at: { type: "datetime" },
+          admitted_at: { type: "datetime" },
+          closed_at: { type: "datetime" },
+          outcome: { type: "string", maxLen: 500 },
+          barrier: { type: "string", maxLen: 300 },
+          warm_handoff: { type: "boolean" },
+          consent_id: { type: "string" },
+          follow_up_due: { type: "date" },
+          notes: { type: "string", maxLen: 2e3 },
+          episode_id: { type: "string" },
+          // Not columns: how this disclosure is justified, and what was actually sent.
+          _disclosure_basis: { type: "string", enum: BASES },
+          _disclosure_what: { type: "string", maxLen: 1e3 },
+          _disclosure_justification: { type: "string", maxLen: 2e3 },
+          _court_order_id: { type: "string" },
+          _restriction_reviewed: { type: "boolean" },
+          _recipient_override: { type: "boolean" }
+        },
+        filters: (ctx, where, params) => {
+          const s = ctx.query.get("status");
+          if (s && s !== "all") {
+            where.push("referrals.status=?");
+            params.push(s);
+          }
+          if (ctx.query.get("open") === "1") where.push(`referrals.status IN ('pending','contacted','accepted','waitlisted','scheduled')`);
+          if (ctx.query.get("consent_revoked") === "1") where.push("referrals.consent_revoked=1");
+          if (ctx.query.get("awaiting_outcome") === "1") where.push(`referrals.status IN ('admitted','scheduled') AND referrals.outcome_recorded_at IS NULL`);
+          const res = ctx.query.get("resource_id");
+          if (res) {
+            where.push("referrals.resource_id=?");
+            params.push(res);
+          }
+        },
+        afterLoad: (ctx, row) => present(row),
+        beforeInsert: (ctx, v) => {
+          if (!db3.one(`SELECT 1 FROM resources WHERE id=?`, v.resource_id)) throw badRequest("Unknown resource");
+          if (v.consent_id && !db3.one(`SELECT 1 FROM consents WHERE id=? AND client_id=?`, v.consent_id, v.client_id)) throw badRequest("That consent belongs to a different client");
+          if (sharesInformation(v)) disclosure.requireBasis(v.client_id, gate(ctx, v));
+          if (!v.follow_up_due) {
+            const days = v.urgency === "emergent" ? 1 : v.urgency === "urgent" ? 3 : 14;
+            v.follow_up_due = new Date(Date.now() + days * 864e5).toISOString().slice(0, 10);
+          }
+          encFields(v);
+        },
+        beforeUpdate: (ctx, v, row) => {
+          if (v.consent_id && !db3.one(`SELECT 1 FROM consents WHERE id=? AND client_id=?`, v.consent_id, row.client_id)) throw badRequest("That consent belongs to a different client");
+          const recipientChanged = !!v.resource_id && v.resource_id !== row.resource_id;
+          if (recipientChanged && !db3.one(`SELECT 1 FROM resources WHERE id=?`, v.resource_id)) throw badRequest("Unknown resource");
+          if (sharesInformation(v, row) && (recipientChanged || !existingDisclosure(row.id))) recordDisclosure(ctx, row, v);
+          if (v.status && CLOSED_STATUSES.includes(v.status) && !v.closed_at && !row.closed_at) v.closed_at = db3.now();
+          if (v.status === "admitted" && !v.admitted_at && !row.admitted_at) v.admitted_at = db3.now();
+          if ((v.outcome !== void 0 || v.status === "admitted" || v.status && CLOSED_STATUSES.includes(v.status)) && !row.outcome_recorded_at) v.outcome_recorded_at = db3.now();
+          encFields(v);
+        },
+        afterInsert: (ctx, row) => {
+          if (sharesInformation(row)) recordDisclosure(ctx, row, row);
+          db3.run(
+            `INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority,referral_id) VALUES(?,?,?,?,?,?,?,?)`,
+            uuid2(),
+            row.client_id,
+            row.user_id,
+            ctx.user.id,
+            encrypt3(`Follow up on referral to ${resourceName(row.resource_id)}`),
+            row.follow_up_due,
+            row.urgency === "emergent" ? "urgent" : "normal",
+            row.id
+          );
+        },
+        canEdit: crud.ownerOrManager()
+      });
+      r.post("/api/referrals/:id/outcome", require_auth().requireAuth, require_auth().requirePerm("referrals:write"), (ctx) => {
+        const row = db3.one(`SELECT * FROM referrals WHERE id=?`, ctx.params.id);
+        if (!row) throw require_http().notFound("Referral not found");
+        require_auth().assertClientAccess(ctx, row.client_id);
+        const { validate } = require_validate();
+        const v = validate(ctx.body, {
+          status: { type: "string", required: true, list: "REFERRAL_STATUSES" },
+          outcome: { type: "string", maxLen: 500 },
+          barrier: { type: "string", maxLen: 300 },
+          admitted_at: { type: "datetime" },
+          consent_id: { type: "string" },
+          _disclosure_basis: { type: "string", enum: BASES },
+          _disclosure_what: { type: "string", maxLen: 1e3 },
+          _disclosure_justification: { type: "string", maxLen: 2e3 },
+          _court_order_id: { type: "string" },
+          _restriction_reviewed: { type: "boolean" },
+          _recipient_override: { type: "boolean" }
+        }, { existing: row });
+        if (v.consent_id && !db3.one(`SELECT 1 FROM consents WHERE id=? AND client_id=?`, v.consent_id, row.client_id)) throw badRequest("That consent belongs to a different client");
+        const admitted = v.status === "admitted" || !!v.admitted_at;
+        db3.transaction(() => {
+          if (sharesInformation(v, row) && !existingDisclosure(row.id)) recordDisclosure(ctx, row, v);
+          db3.run(
+            `UPDATE referrals SET status=?, outcome_enc=?, barrier_enc=?, admitted_at=?, closed_at=?, outcome_recorded_at=?, consent_id=COALESCE(?, consent_id), updated_at=? WHERE id=?`,
+            v.status,
+            v.outcome ? encrypt3(v.outcome) : row.outcome_enc,
+            v.barrier ? encrypt3(v.barrier) : row.barrier_enc,
+            admitted ? v.admitted_at || row.admitted_at || db3.now() : row.admitted_at,
+            CLOSED_STATUSES.includes(v.status) ? row.closed_at || db3.now() : row.closed_at,
+            db3.now(),
+            v.consent_id || null,
+            db3.now(),
+            row.id
+          );
+          const closed = db3.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE referral_id=? AND status IN ('open','in_progress')`, db3.now(), db3.now(), row.id).changes;
+          if (!closed) {
+            const legacyTitle = `Follow up on referral to ${resourceName(row.resource_id)}`;
+            for (const t of db3.all(`SELECT id, title_enc FROM tasks WHERE client_id=? AND referral_id IS NULL AND status IN ('open','in_progress')`, row.client_id)) {
+              let title = "";
+              try {
+                title = t.title_enc ? decrypt3(t.title_enc) : "";
+              } catch {
+                continue;
+              }
+              if (title === legacyTitle) db3.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), t.id);
+            }
+          }
+        });
+        audit3.log({ user: ctx.user, action: "referral.outcome", entity: "referral", entityId: row.id, clientId: row.client_id, ip: ctx.ip, details: { status: v.status, admitted } });
+        return { ok: true, admitted };
+      });
+    };
+    module.exports.present = present;
+    module.exports.pushDisclosure = pushDisclosure;
   }
 });
 
@@ -25067,49 +30320,8 @@ var require_region_pictures = __commonJS({
     var REGIONS = require_regions();
     var MAX_PICTURE_BYTES = 2 * 1024 * 1024;
     var MAX_PAGE_BYTES = 2 * 1024 * 1024;
-    var fetchImpl = (...args) => globalThis.fetch(...args);
-    var lookupImpl = null;
-    var fetchOverridden = false;
-    function _setFetchForTests(fn) {
-      fetchImpl = fn || ((...args) => globalThis.fetch(...args));
-      fetchOverridden = !!fn;
-    }
-    function _setLookupForTests(fn) {
-      lookupImpl = fn;
-    }
-    function isPrivateAddress(ip) {
-      let a = String(ip).toLowerCase();
-      const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(a);
-      if (mapped) a = mapped[1];
-      if (/^\d+\.\d+\.\d+\.\d+$/.test(a)) {
-        const [x, y] = a.split(".").map(Number);
-        return x === 0 || x === 10 || x === 127 || x === 100 && y >= 64 && y <= 127 || x === 169 && y === 254 || x === 172 && y >= 16 && y <= 31 || x === 192 && y === 168 || x === 192 && y === 0 || x === 198 && (y === 18 || y === 19) || x >= 224;
-      }
-      return a === "::" || a === "::1" || /^f[cd]/.test(a) || /^fe[89ab]/.test(a) || /^ff/.test(a) || /^64:ff9b:/.test(a) || /^2001:db8:/.test(a);
-    }
-    async function assertResolvesPublic(url) {
-      const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
-      let lookup = lookupImpl;
-      if (!lookup) {
-        if (fetchOverridden) return;
-        let dns;
-        try {
-          dns = __require("node:dns").promises;
-        } catch {
-          return;
-        }
-        lookup = (h) => dns.lookup(h, { all: true, verbatim: true });
-      }
-      let addrs;
-      try {
-        addrs = await lookup(host);
-      } catch (e) {
-        if (proc.env.HTTPS_PROXY || proc.env.https_proxy) return;
-        throw describeNetworkError({ cause: e }) || soft("could not find that address");
-      }
-      if (!addrs.length || addrs.some((x) => isPrivateAddress(x.address || x))) throw soft("that address is not on the public internet");
-    }
-    var soft = (message, extra = {}) => Object.assign(new Error(message), { soft: true }, extra);
+    var outbound = require_outbound();
+    var { soft, isPrivateAddress, assertPublicHttps, describeNetworkError, _setFetchForTests, _setLookupForTests } = outbound;
     var sniff = (buf) => buf.length > 3 && buf[0] === 255 && buf[1] === 216 && buf[2] === 255 ? "image/jpeg" : buf.length > 8 && buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71 ? "image/png" : buf.length > 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP" ? "image/webp" : null;
     var EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
     function pickImageUrl(html, baseUrl) {
@@ -25135,52 +30347,8 @@ var require_region_pictures = __commonJS({
         return null;
       }
     }
-    var PRIVATE_HOST = /^(localhost|.*\.local|.*\.internal|.*\.localhost)$/i;
-    function assertPublicHttps(u) {
-      const url = new URL(u);
-      if (url.protocol !== "https:") throw soft("not an https address");
-      const host = url.hostname.replace(/^\[|\]$/g, "");
-      if (PRIVATE_HOST.test(host)) throw soft("that address is not on the public internet");
-      if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
-        const [a, b] = host.split(".").map(Number);
-        if (a === 127 || a === 0 || a === 10 || a === 169 && b === 254 || a === 172 && b >= 16 && b <= 31 || a === 192 && b === 168 || a === 100 && b >= 64 && b <= 127 || a >= 224) {
-          throw soft("that address is not on the public internet");
-        }
-      }
-      if (host.includes(":") || /^::/.test(host)) throw soft("that address is not on the public internet");
-      return url.href;
-    }
-    var NETWORK_CODES = /^(ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET)$/;
-    var CERT_CODES = /CERT|SELF_SIGNED|UNABLE_TO_(GET|VERIFY)/;
-    function describeNetworkError(e) {
-      const code = e && e.cause && (e.cause.code || e.cause.name) || e && e.code || "";
-      const proxyHint = proc.env.HTTPS_PROXY || proc.env.https_proxy ? proc.env.NODE_USE_ENV_PROXY === "1" ? " HTTPS_PROXY is set; check the proxy allows these sites." : ' HTTPS_PROXY is set but Node only uses it when NODE_USE_ENV_PROXY=1 is set too (docs/DEPLOYMENT.md, "Outbound internet").' : ' If the office network only reaches the internet through a proxy, set HTTPS_PROXY and NODE_USE_ENV_PROXY=1 (docs/DEPLOYMENT.md, "Outbound internet").';
-      if (CERT_CODES.test(String(code))) return soft(`the connection's certificate was not trusted (${code}). A proxy that inspects HTTPS needs its certificate given to Node with NODE_EXTRA_CA_CERTS.`, { network: true });
-      if (NETWORK_CODES.test(String(code)) || /fetch failed/i.test(e && e.message)) return soft(`the computer running SUDS could not reach the internet${code ? ` (${code})` : ""}.${proxyHint}`, { network: true });
-      return null;
-    }
-    async function fetchChecked(url, { timeoutMs, maxBytes, hops = 4 }) {
-      let target = assertPublicHttps(url);
-      let res;
-      for (let i = 0; i <= hops; i++) {
-        await assertResolvesPublic(target);
-        try {
-          res = await fetchImpl(target, { signal: AbortSignal.timeout(timeoutMs), redirect: "manual", headers: { "User-Agent": "SUDS resource directory", Accept: "*/*" } });
-        } catch (e) {
-          if (e && (e.name === "TimeoutError" || e.name === "AbortError")) throw soft("timed out");
-          throw describeNetworkError(e) || e;
-        }
-        if (res.status < 300 || res.status >= 400) break;
-        const location = res.headers.get("location");
-        if (!location) break;
-        if (i === hops) throw soft("too many redirects");
-        target = assertPublicHttps(new URL(location, target).href);
-      }
-      if (!res.ok) throw soft(`site returned ${res.status}`);
-      if (Number(res.headers.get("content-length") || 0) > maxBytes) throw soft("file is too large");
-      const buf = import_buffer.Buffer.from(await res.arrayBuffer());
-      if (buf.length > maxBytes) throw soft("file is too large");
-      return { buf, url: target };
+    function fetchChecked(url, { timeoutMs, maxBytes, hops = 4 }) {
+      return outbound.fetchChecked(url, { timeoutMs, maxBytes, hops, headers: { "User-Agent": "SUDS resource directory" } });
     }
     async function get(url, opts) {
       return (await fetchChecked(url, opts)).buf;
@@ -25235,5042 +30403,6 @@ var require_region_pictures = __commonJS({
       return region.providers.filter((p) => p.image_url || p.website).map((p) => ({ key: p.key, name: p.name, category: p.category, url: p.image_url || null, website: p.website || null }));
     }
     module.exports = { REGIONS, MAX_PICTURE_BYTES, EXT, sniff, pickImageUrl, assertPublicHttps, get, downloadPicture, downloadFromAddress, regionTargets, describeNetworkError, isPrivateAddress, _setFetchForTests, _setLookupForTests };
-  }
-});
-
-// server/fhir/jwt.js
-var require_jwt = __commonJS({
-  "server/fhir/jwt.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var nodeCrypto = (init_crypto2(), __toCommonJS(crypto_exports));
-    var db3 = require_db();
-    var { sha256: sha2562 } = require_crypto();
-    var ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
-    var ALGS = { RS384: { kty: "RSA", hash: "sha384" }, ES384: { kty: "EC", crv: "P-384", hash: "sha384" } };
-    var MAX_LIFETIME_S = 300;
-    var CLOCK_SKEW_S = 60;
-    var MAX_KEYS = 10;
-    var MAX_ASSERTION_BYTES = 8 * 1024;
-    var JWKS_TTL_MS = 60 * 6e4;
-    var JWKS_REFETCH_MS = 6e4;
-    var JWKS_MAX_BYTES = 64 * 1024;
-    var PRIVATE_MEMBERS = ["d", "p", "q", "dp", "dq", "qi", "oth", "k"];
-    var JwtError = class extends Error {
-      constructor(message) {
-        super(message);
-        this.jwt = true;
-      }
-    };
-    function parseJwks(input) {
-      let v = input;
-      if (typeof v === "string") {
-        try {
-          v = JSON.parse(v);
-        } catch {
-          throw new JwtError("The key set is not valid JSON");
-        }
-      }
-      if (!v || typeof v !== "object") throw new JwtError('The key set must be a JSON Web Key Set ({"keys": [...]})');
-      const list = Array.isArray(v.keys) ? v.keys : v.kty ? [v] : null;
-      if (!list || !list.length) throw new JwtError("The key set has no keys");
-      if (list.length > MAX_KEYS) throw new JwtError(`At most ${MAX_KEYS} keys may be registered`);
-      const keys = [];
-      for (const [i, k] of list.entries()) {
-        const n = `Key ${i + 1}${k && k.kid ? ` ("${String(k.kid).slice(0, 40)}")` : ""}`;
-        if (!k || typeof k !== "object") throw new JwtError(`${n} is not a JSON Web Key`);
-        if (PRIVATE_MEMBERS.some((m) => m in k)) throw new JwtError(`${n} contains private key material. Register only the public key; the private key never leaves the other system.`);
-        if (k.use !== void 0 && k.use !== "sig") throw new JwtError(`${n} is not a signing key (use must be "sig")`);
-        if (k.key_ops !== void 0 && !(Array.isArray(k.key_ops) && k.key_ops.includes("verify"))) throw new JwtError(`${n} does not allow "verify"`);
-        if (k.alg !== void 0 && !ALGS[k.alg]) throw new JwtError(`${n} is for ${String(k.alg).slice(0, 20)}; SUDS accepts RS384 or ES384`);
-        let pub;
-        if (k.kty === "RSA") pub = { kty: "RSA", n: String(k.n || ""), e: String(k.e || "") };
-        else if (k.kty === "EC" && k.crv === "P-384") pub = { kty: "EC", crv: "P-384", x: String(k.x || ""), y: String(k.y || "") };
-        else throw new JwtError(`${n} must be an RSA key (RS384) or an EC P-384 key (ES384)`);
-        if (k.alg && ALGS[k.alg].kty !== pub.kty) throw new JwtError(`${n}: alg ${k.alg} does not match key type ${pub.kty}`);
-        let obj;
-        try {
-          obj = nodeCrypto.createPublicKey({ key: pub, format: "jwk" });
-        } catch {
-          throw new JwtError(`${n} is not a valid public key`);
-        }
-        if (pub.kty === "RSA" && (obj.asymmetricKeyDetails?.modulusLength || 0) < 2048) throw new JwtError(`${n} is shorter than 2048 bits`);
-        if (k.kid !== void 0) pub.kid = String(k.kid).slice(0, 200);
-        if (k.alg !== void 0) pub.alg = k.alg;
-        keys.push(pub);
-      }
-      return { keys };
-    }
-    function checkJwksUrl(u) {
-      const { assertPublicHttps } = require_region_pictures();
-      try {
-        return assertPublicHttps(String(u || "").trim());
-      } catch (e) {
-        throw new JwtError(`The key set URL is not allowed: ${e.message}`);
-      }
-    }
-    var jwksCache = /* @__PURE__ */ new Map();
-    async function fetchJwks(url, { force = false } = {}) {
-      const hit = jwksCache.get(url);
-      const now = Date.now();
-      if (hit && !force && now - hit.at < JWKS_TTL_MS) return hit.keys;
-      if (hit && force && now - hit.tried < JWKS_REFETCH_MS) return hit.keys;
-      if (hit) hit.tried = now;
-      const { get } = require_region_pictures();
-      let set;
-      try {
-        set = parseJwks((await get(url, { timeoutMs: 8e3, maxBytes: JWKS_MAX_BYTES })).toString("utf8"));
-      } catch (e) {
-        if (hit) return hit.keys;
-        throw new JwtError(`The client's key set could not be fetched: ${e.message}`);
-      }
-      if (jwksCache.size > 200) jwksCache.clear();
-      jwksCache.set(url, { keys: set.keys, at: now, tried: now });
-      return set.keys;
-    }
-    var b64json = (part, what) => {
-      if (!/^[A-Za-z0-9_-]*$/.test(part)) throw new JwtError(`The assertion's ${what} is not base64url`);
-      try {
-        const v = JSON.parse(import_buffer.Buffer.from(part, "base64url").toString("utf8"));
-        if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error();
-        return v;
-      } catch {
-        throw new JwtError(`The assertion's ${what} is not a JSON object`);
-      }
-    };
-    function decode(assertion) {
-      const s = String(assertion || "");
-      if (!s || s.length > MAX_ASSERTION_BYTES) throw new JwtError("The client assertion is missing or too long");
-      const parts = s.split(".");
-      if (parts.length !== 3) throw new JwtError("The client assertion is not a signed JWT (header.payload.signature)");
-      const header = b64json(parts[0], "header");
-      const claims = b64json(parts[1], "payload");
-      if (!/^[A-Za-z0-9_-]*$/.test(parts[2])) throw new JwtError("The assertion's signature is not base64url");
-      return { header, claims, signingInput: `${parts[0]}.${parts[1]}`, signature: import_buffer.Buffer.from(parts[2], "base64url") };
-    }
-    function verifySignature({ header, signingInput, signature }, keys) {
-      const alg = ALGS[header.alg];
-      if (!alg) throw new JwtError(`alg ${String(header.alg).slice(0, 20)} is not accepted (RS384 or ES384)`);
-      if (header.crit !== void 0) throw new JwtError("The assertion has critical header parameters SUDS does not understand");
-      if (header.jku !== void 0 || header.x5u !== void 0 || header.jwk !== void 0) throw new JwtError("Keys named inside the assertion (jku, x5u, jwk) are not used; register the key set with SUDS");
-      const fits = keys.filter((k) => k.kty === alg.kty && (!alg.crv || k.crv === alg.crv) && (!k.alg || k.alg === header.alg));
-      let candidates;
-      if (header.kid !== void 0) candidates = fits.filter((k) => k.kid === String(header.kid));
-      else candidates = fits.length === 1 ? fits : [];
-      if (!candidates.length) return false;
-      for (const k of candidates) {
-        const key = nodeCrypto.createPublicKey({ key: { kty: k.kty, n: k.n, e: k.e, crv: k.crv, x: k.x, y: k.y }, format: "jwk" });
-        const ok = alg.kty === "EC" ? nodeCrypto.verify(alg.hash, import_buffer.Buffer.from(signingInput), { key, dsaEncoding: "ieee-p1363" }, signature) : nodeCrypto.verify(alg.hash, import_buffer.Buffer.from(signingInput), { key, padding: nodeCrypto.constants.RSA_PKCS1_PADDING }, signature);
-        if (ok) return true;
-      }
-      throw new JwtError("The assertion's signature does not verify with the registered key");
-    }
-    function checkClaims(claims, { clientId, tokenUrl, now = Date.now() }) {
-      const t = Math.floor(now / 1e3);
-      if (claims.iss !== clientId || claims.sub !== clientId) throw new JwtError("iss and sub must both be the client_id");
-      const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
-      if (!aud.includes(tokenUrl)) throw new JwtError(`aud must be the token URL, ${tokenUrl}`);
-      if (typeof claims.exp !== "number" || !Number.isFinite(claims.exp)) throw new JwtError("exp is required");
-      if (claims.exp <= t - CLOCK_SKEW_S) throw new JwtError("The assertion has expired");
-      if (claims.exp > t + MAX_LIFETIME_S + CLOCK_SKEW_S) throw new JwtError("exp must be no more than five minutes in the future");
-      if (claims.nbf !== void 0 && (typeof claims.nbf !== "number" || claims.nbf > t + CLOCK_SKEW_S)) throw new JwtError("The assertion is not valid yet (nbf)");
-      if (claims.iat !== void 0 && (typeof claims.iat !== "number" || claims.iat > t + CLOCK_SKEW_S)) throw new JwtError("iat is in the future");
-      if (typeof claims.jti !== "string" || !claims.jti || claims.jti.length > 256) throw new JwtError("jti is required (a unique id for this assertion)");
-      return claims.exp;
-    }
-    function claimJti(keyId, jti, exp) {
-      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-      db3.run(`DELETE FROM fhir_jwt_assertions WHERE expires_at < ?`, nowIso);
-      const until = new Date((exp + CLOCK_SKEW_S) * 1e3).toISOString();
-      const r = db3.run(`INSERT OR IGNORE INTO fhir_jwt_assertions(api_key_id, jti_hash, expires_at) VALUES(?,?,?)`, keyId, sha2562(`${keyId}
-${jti}`), until);
-      return r.changes === 1;
-    }
-    async function verifyClientAssertion(assertion, { keyId, reg, tokenUrl }) {
-      const parsed = decode(assertion);
-      if (parsed.header.typ !== void 0 && !/^(JWT|jwt|application\/jwt)$/.test(String(parsed.header.typ))) throw new JwtError("typ must be JWT");
-      checkClaims(parsed.claims, { clientId: keyId, tokenUrl });
-      let keys = reg.jwks?.keys || [];
-      let verified = keys.length ? verifySignature(parsed, keys) : false;
-      if (!verified && reg.jwks_url) {
-        keys = await fetchJwks(reg.jwks_url);
-        verified = verifySignature(parsed, keys);
-        if (!verified) verified = verifySignature(parsed, await fetchJwks(reg.jwks_url, { force: true }));
-      }
-      if (!verified) throw new JwtError("No registered key matches the assertion (check kid and alg)");
-      if (!claimJti(keyId, parsed.claims.jti, parsed.claims.exp)) throw new JwtError("This assertion (jti) has already been used");
-      return parsed.claims;
-    }
-    function unverifiedIssuer(assertion) {
-      const { claims } = decode(assertion);
-      if (typeof claims.iss !== "string" || !claims.iss) throw new JwtError("iss is required");
-      return claims.iss;
-    }
-    module.exports = { ASSERTION_TYPE, ALGS, MAX_LIFETIME_S, JwtError, parseJwks, checkJwksUrl, fetchJwks, verifyClientAssertion, unverifiedIssuer, _jwksCache: jwksCache };
-  }
-});
-
-// server/fhir/clients.js
-var require_clients2 = __commonJS({
-  "server/fhir/clients.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var audit3 = require_audit();
-    var { sha256: sha2562, randomToken } = require_crypto();
-    var { FhirError } = require_common();
-    var RESOURCE_TYPES = {
-      Patient: true,
-      EpisodeOfCare: true,
-      Encounter: true,
-      Consent: true,
-      ServiceRequest: true,
-      Task: true,
-      Observation: true,
-      DocumentReference: true,
-      Organization: false,
-      Location: false,
-      HealthcareService: false
-    };
-    var TOKEN_TTL_SECONDS = 900;
-    var DEFAULT_RATE_LIMIT = 120;
-    var KEY_PREFIX = "sudsfhir_";
-    var MAX_ALIASES = 20;
-    var SCOPE_RE = /^system\/(\*|[A-Za-z]+)\.(read|rs|r|s|\*)$/;
-    function parseScopes(list2) {
-      const out2 = [];
-      for (const raw of (Array.isArray(list2) ? list2 : String(list2 || "").split(/[\s,]+/)).map((s) => String(s).trim()).filter(Boolean)) {
-        const m = raw.match(SCOPE_RE);
-        if (!m || m[1] !== "*" && !(m[1] in RESOURCE_TYPES)) throw new FhirError(400, `"${raw}" is not a scope this server grants (system/<ResourceType>.read or system/*.read)`, { code: "invalid" });
-        const norm = `system/${m[1]}.read`;
-        if (!out2.includes(norm)) out2.push(norm);
-      }
-      return out2;
-    }
-    var scopesOfKey = (k) => String(k.scopes || "").split(/\s+/).filter((s) => s.startsWith("system/"));
-    function hasScope(scopes, type) {
-      return scopes.includes("system/*.read") || scopes.includes(`system/${type}.read`);
-    }
-    var FILLER_WORDS = /* @__PURE__ */ new Set(["a", "an", "the", "of", "and", "for", "at", "in", "on", "to", "by", "my", "our", "its", "or", "with"]);
-    var GENERIC_WORDS = new Set("county counties city state states region regional district national federal public community communities local area health healthcare wellness medical medicine hospital hospitals clinic clinics clinical center centre centers centres care services service department dept division office offices agency agencies bureau board program programs programme programmes system systems network networks behavioral behavioural mental substance use disorder disorders sud aod alcohol drug drugs addiction recovery treatment treating provider providers plan plans insurer insurance payer payers managed human social family families child children youth adult adults integrated primary group groups partners association foundation trust inc llc corp corporation co company organization organisation organizations organisations other others all any team teams unit staff".split(" "));
-    var normalise = (s) => String(s || "").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
-    var wordsOf = (s) => normalise(s).split(" ").filter(Boolean);
-    function directoryNames() {
-      const out2 = /* @__PURE__ */ new Set();
-      for (const r of db3.all(`SELECT name, organization FROM resources`)) {
-        if (r.name) out2.add(normalise(r.name));
-        if (r.organization) out2.add(normalise(r.organization));
-      }
-      return out2;
-    }
-    function aliasProblem(alias, dir) {
-      const meaningful = wordsOf(alias).filter((w) => !FILLER_WORDS.has(w));
-      const specific = meaningful.filter((w) => !GENERIC_WORDS.has(w));
-      const quoted = `"${String(alias).slice(0, 80)}"`;
-      if (!meaningful.length) return "is empty";
-      if (!specific.length) return `${quoted} is made only of generic words (such as county, health, services), so it would match almost any consent that describes a class of recipients`;
-      if (specific.length >= 2 || specific.length === 1 && meaningful.length >= 3) return null;
-      if ((dir || directoryNames()).has(normalise(alias))) return null;
-      return `${quoted} is too short to name one organisation; use its full name (for example "Sacramento County Behavioral Health", not "Sacramento County"), or a name that exactly matches an organisation in the resource directory`;
-    }
-    function splitAliases(v) {
-      return (Array.isArray(v) ? v : String(v || "").split(/[;\n]/)).map((x) => String(x).trim()).filter(Boolean);
-    }
-    function namingProblems(aliases) {
-      const fields = {};
-      if (aliases.length > MAX_ALIASES) fields.aliases = `at most ${MAX_ALIASES} aliases`;
-      else if (aliases.length) {
-        const dir = directoryNames();
-        const bad = aliases.map((a) => aliasProblem(a, dir)).filter(Boolean);
-        if (bad.length) fields.aliases = bad.join("; ");
-      }
-      return Object.keys(fields).length ? fields : null;
-    }
-    function effectiveNames(reg, fallback) {
-      const recipient = reg.recipient || fallback;
-      const aliases = reg.aliases || [];
-      if (!aliases.length) return { recipient, aliases: [], ignored: [] };
-      const dir = directoryNames();
-      const ok = [], ignored = [];
-      for (const a of aliases) {
-        const p = aliasProblem(a, dir);
-        if (p) ignored.push({ alias: a, problem: p });
-        else ok.push(a);
-      }
-      return { recipient, aliases: ok, ignored };
-    }
-    var fieldError = (fields) => {
-      const e = new FhirError(400, Object.values(fields).join("; "), { code: "invalid" });
-      e.fields = fields;
-      return e;
-    };
-    function registration(keyId) {
-      try {
-        return JSON.parse(db3.getSetting(`fhir_client:${keyId}`, "null")) || null;
-      } catch {
-        return null;
-      }
-    }
-    function present(k) {
-      const reg = registration(k.id) || {};
-      const names = effectiveNames(reg, k.name);
-      return {
-        id: k.id,
-        name: k.name,
-        prefix: k.prefix,
-        scopes: scopesOfKey(k),
-        recipient: names.recipient,
-        aliases: reg.aliases || [],
-        aliases_ignored: names.ignored,
-        purpose: reg.purpose || "TREAT",
-        rate_limit: reg.rate_limit || DEFAULT_RATE_LIMIT,
-        // How it may authenticate at the token endpoint. Public keys and the URL are not secrets; they are shown.
-        auth: {
-          client_secret: !reg.jwt_only,
-          private_key_jwt: !!(reg.jwks || reg.jwks_url),
-          jwt_only: !!reg.jwt_only,
-          jwks_url: reg.jwks_url || null,
-          jwks_keys: (reg.jwks?.keys || []).map((x) => ({ kid: x.kid || null, kty: x.kty, alg: x.alg || (x.kty === "EC" ? "ES384" : "RS384") }))
-        },
-        created_at: k.created_at,
-        created_by: k.created_by,
-        created_by_name: k.created_by_name,
-        last_used_at: k.last_used_at,
-        revoked_at: k.revoked_at
-      };
-    }
-    function list() {
-      return db3.all(`SELECT k.*, u.display_name AS created_by_name FROM api_keys k LEFT JOIN users u ON u.id=k.created_by WHERE k.scopes LIKE 'fhir%' ORDER BY k.created_at DESC`).map(present);
-    }
-    function keyRegistration({ jwks, jwks_url, jwt_only }, current2 = {}) {
-      const J = require_jwt();
-      const out2 = { jwks: current2.jwks || null, jwks_url: current2.jwks_url || null, jwt_only: !!current2.jwt_only };
-      if (jwks !== void 0) {
-        if (jwks === null || jwks === "") out2.jwks = null;
-        else {
-          try {
-            out2.jwks = J.parseJwks(jwks);
-          } catch (e) {
-            if (e.jwt) throw fieldError({ jwks: e.message });
-            throw e;
-          }
-        }
-      }
-      if (jwks_url !== void 0) {
-        if (jwks_url === null || jwks_url === "") out2.jwks_url = null;
-        else {
-          try {
-            out2.jwks_url = J.checkJwksUrl(jwks_url);
-          } catch (e) {
-            if (e.jwt) throw fieldError({ jwks_url: e.message });
-            throw e;
-          }
-        }
-      }
-      if (jwt_only !== void 0) out2.jwt_only = !!jwt_only;
-      if (out2.jwt_only && !out2.jwks && !out2.jwks_url) throw fieldError({ jwt_only: "A JWT-only client needs a public key set (JWKS) or a JWKS URL" });
-      return out2;
-    }
-    function create2({ name, recipient, aliases = [], purpose = "TREAT", scopes, rate_limit, jwks, jwks_url, jwt_only }, user) {
-      const granted = parseScopes(scopes);
-      if (!granted.length) throw new FhirError(400, "Grant at least one scope", { code: "invalid" });
-      const list2 = splitAliases(aliases);
-      const problems = namingProblems(list2);
-      if (problems) throw fieldError(problems);
-      const keys = keyRegistration({ jwks, jwks_url, jwt_only });
-      const raw = KEY_PREFIX + randomToken(32);
-      const id = require_crypto().uuid();
-      db3.transaction(() => {
-        db3.run(`INSERT INTO api_keys(id,name,key_hash,prefix,scopes,created_by) VALUES(?,?,?,?,?,?)`, id, name, sha2562(raw), raw.slice(0, 14), ["fhir", ...granted].join(" "), user.id);
-        db3.setSetting(`fhir_client:${id}`, JSON.stringify({ recipient, aliases: list2, purpose, rate_limit: rate_limit || DEFAULT_RATE_LIMIT, ...keys }));
-      });
-      return { id, key: keys.jwt_only ? null : raw, scopes: granted, jwt_only: keys.jwt_only };
-    }
-    function update(id, { aliases, jwks, jwks_url, jwt_only }) {
-      const k = db3.one(`SELECT * FROM api_keys WHERE id=? AND scopes LIKE 'fhir%' AND revoked_at IS NULL`, id);
-      if (!k) return null;
-      const reg = registration(id) || { recipient: k.name };
-      const next = { ...reg, ...keyRegistration({ jwks, jwks_url, jwt_only }, reg) };
-      if (aliases !== void 0) {
-        const list2 = splitAliases(aliases);
-        const problems = namingProblems(list2);
-        if (problems && problems.aliases) throw fieldError({ aliases: problems.aliases });
-        next.aliases = list2;
-      }
-      db3.setSetting(`fhir_client:${id}`, JSON.stringify(next));
-      return present(k);
-    }
-    function revoke(id) {
-      const k = db3.one(`SELECT id FROM api_keys WHERE id=? AND scopes LIKE 'fhir%'`, id);
-      if (!k) return false;
-      db3.run(`UPDATE api_keys SET revoked_at=COALESCE(revoked_at, ?) WHERE id=?`, db3.now(), id);
-      for (const [t, v] of tokens) if (v.keyId === id) tokens.delete(t);
-      return true;
-    }
-    var tokens = /* @__PURE__ */ new Map();
-    function sweepTokens() {
-      const now = Date.now();
-      for (const [t, v] of tokens) if (v.exp < now) tokens.delete(t);
-    }
-    function load(k, scopes) {
-      const reg = registration(k.id) || {};
-      const { recipient, aliases } = effectiveNames(reg, k.name);
-      return {
-        id: k.id,
-        name: k.name,
-        prefix: k.prefix,
-        createdBy: k.created_by,
-        scopes: scopes || scopesOfKey(k),
-        recipient,
-        recipients: [recipient, ...aliases],
-        purpose: reg.purpose || "TREAT",
-        rateLimit: reg.rate_limit || DEFAULT_RATE_LIMIT,
-        // Who the audit trail and the accounting of disclosures name: the administrator who registered the
-        // client answers for it (disclosures.disclosed_by must be a user), labelled with the client itself.
-        actor: { id: k.created_by, username: `fhir:${k.name}`.slice(0, 120) }
-      };
-    }
-    var activeKey = (where, ...params) => db3.one(`SELECT * FROM api_keys WHERE ${where} AND revoked_at IS NULL AND scopes LIKE 'fhir%'`, ...params);
-    var oauthError = (status, error, description) => {
-      const e = new FhirError(status, error);
-      e.oauth = { error, error_description: description };
-      return e;
-    };
-    async function issueToken({ clientId, clientSecret, assertionType, assertion, scope, tokenUrl }, ctx) {
-      let k = null, method = null, reason = "unknown or revoked client credentials";
-      if (assertionType || assertion) {
-        const J = require_jwt();
-        if (assertionType !== J.ASSERTION_TYPE) throw oauthError(400, "invalid_request", `client_assertion_type must be ${J.ASSERTION_TYPE}`);
-        if (clientSecret) throw oauthError(400, "invalid_request", "Use one client authentication method, not both");
-        let id = clientId;
-        if (!id) {
-          try {
-            id = J.unverifiedIssuer(assertion);
-          } catch (e) {
-            if (!e.jwt) throw e;
-            reason = e.message;
-          }
-        }
-        const cand = id ? activeKey("id=?", String(id)) : null;
-        const reg = cand ? registration(cand.id) || {} : {};
-        if (cand && (reg.jwks || reg.jwks_url)) {
-          try {
-            await J.verifyClientAssertion(assertion, { keyId: cand.id, reg, tokenUrl });
-            k = cand;
-            method = "private_key_jwt";
-          } catch (e) {
-            if (!e.jwt) throw e;
-            reason = e.message;
-          }
-        } else if (cand) reason = "no public key is registered for this client";
-      } else if (clientSecret) {
-        const cand = activeKey("key_hash=?", sha2562(String(clientSecret)));
-        if (cand && clientId && clientId !== cand.id) reason = "client_id does not match the secret";
-        else if (cand && (registration(cand.id) || {}).jwt_only) reason = "this client must authenticate with a signed JWT (private_key_jwt)";
-        else if (cand) {
-          k = cand;
-          method = "client_secret";
-        }
-      }
-      if (!k) {
-        audit3.log({ user: null, action: "fhir.token.denied", ip: ctx.ip, success: false, details: { reason: String(reason).slice(0, 200) } });
-        throw oauthError(401, "invalid_client", "Client authentication failed");
-      }
-      const allowed = scopesOfKey(k);
-      let granted = allowed;
-      if (scope) {
-        let asked;
-        try {
-          asked = parseScopes(scope);
-        } catch {
-          throw oauthError(400, "invalid_scope", "Scopes must be system/<ResourceType>.read or system/*.read");
-        }
-        granted = asked.filter((s) => allowed.includes(s) || allowed.includes("system/*.read"));
-        if (!granted.length) throw oauthError(400, "invalid_scope", "None of the requested scopes were granted to this client");
-      }
-      sweepTokens();
-      const token2 = randomToken(32);
-      tokens.set(sha2562(token2), { keyId: k.id, scopes: granted, exp: Date.now() + TOKEN_TTL_SECONDS * 1e3 });
-      db3.run(`UPDATE api_keys SET last_used_at=? WHERE id=?`, db3.now(), k.id);
-      audit3.log({ user: load(k).actor, action: "fhir.token.issued", entity: "api_key", entityId: k.id, ip: ctx.ip, details: { scopes: granted, method } });
-      return { access_token: token2, token_type: "bearer", expires_in: TOKEN_TTL_SECONDS, scope: granted.join(" ") };
-    }
-    function authenticate(ctx) {
-      const h = String(ctx.headers["authorization"] || "");
-      const bearer = h.startsWith("Bearer ") ? h.slice(7).trim() : "";
-      if (!bearer) throw new FhirError(401, "A bearer token is required (see /fhir/R4/metadata)", { code: "login" });
-      const hash2 = sha2562(bearer);
-      const t = tokens.get(hash2);
-      let k = null;
-      if (t && t.exp > Date.now()) k = activeKey("id=?", t.keyId);
-      else if (t) tokens.delete(hash2);
-      if (!k) {
-        const legacy = !t && bearer.startsWith(KEY_PREFIX) ? activeKey("key_hash=?", hash2) : null;
-        audit3.log({
-          user: legacy ? load(legacy).actor : null,
-          action: "fhir.denied",
-          entity: legacy ? "api_key" : null,
-          entityId: legacy ? legacy.id : null,
-          ip: ctx.ip,
-          success: false,
-          details: { reason: legacy ? "client secret used as a bearer token" : "invalid token", path: ctx.path.slice(0, 120) }
-        });
-        if (legacy) throw new FhirError(401, "The client secret is not a bearer token. Exchange it for an access token at POST /fhir/R4/auth/token (grant_type=client_credentials) and send that token instead.", { code: "login" });
-        throw new FhirError(401, "The bearer token is not valid, has expired, or was revoked", { code: "login" });
-      }
-      if (!k.last_used_at || Date.now() - Date.parse(k.last_used_at) > 6e4) db3.run(`UPDATE api_keys SET last_used_at=? WHERE id=?`, db3.now(), k.id);
-      return load(k, t.scopes);
-    }
-    function requireScope(ctx, client, type) {
-      if (hasScope(client.scopes, type)) return;
-      audit3.log({ user: client.actor, action: "fhir.denied", entity: type, ip: ctx.ip, success: false, details: { reason: "scope", needed: `system/${type}.read` } });
-      throw new FhirError(403, `This client has not been granted system/${type}.read`, { code: "forbidden" });
-    }
-    module.exports = {
-      RESOURCE_TYPES,
-      TOKEN_TTL_SECONDS,
-      DEFAULT_RATE_LIMIT,
-      KEY_PREFIX,
-      GENERIC_WORDS,
-      parseScopes,
-      hasScope,
-      list,
-      create: create2,
-      update,
-      revoke,
-      issueToken,
-      authenticate,
-      requireScope,
-      present,
-      splitAliases,
-      aliasProblem,
-      namingProblems,
-      directoryNames,
-      registration
-    };
-  }
-});
-
-// server/fhir/resources.js
-var require_resources = __commonJS({
-  "server/fhir/resources.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var options = require_options();
-    var disclosure = require_disclosure();
-    var { decrypt: decrypt3, blindIndex: blindIndex2 } = require_crypto();
-    var { SYS, PART2_SECURITY, FhirError, dateClause, refId } = require_common();
-    var US_CORE = "http://hl7.org/fhir/us/core/StructureDefinition/";
-    var PROGRAM_ORG = "suds-program";
-    var programRef = () => ({ reference: `Organization/${PROGRAM_ORG}`, display: db3.getSetting("org_name", "SUDS program") || "SUDS program" });
-    var patientRef = (id) => ({ reference: `Patient/${id}` });
-    var dec2 = (v) => {
-      if (!v) return null;
-      try {
-        return decrypt3(v);
-      } catch {
-        return null;
-      }
-    };
-    var dt = (v) => {
-      if (!v) return void 0;
-      if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
-      const t = Date.parse(v);
-      return Number.isNaN(t) ? void 0 : new Date(t).toISOString();
-    };
-    var instant = (v) => {
-      const t = Date.parse(v || "");
-      return Number.isNaN(t) ? void 0 : new Date(t).toISOString();
-    };
-    var label = (list, code) => code ? options.labelOf(list, code) : void 0;
-    var humanize = options.humanize;
-    function meta(updated, { profile, part2 = true } = {}) {
-      const m = { lastUpdated: instant(updated) };
-      if (profile) m.profile = [US_CORE + profile];
-      if (part2) m.security = PART2_SECURITY;
-      return m;
-    }
-    function prune(o) {
-      if (Array.isArray(o)) return o.map(prune).filter((v) => v !== void 0);
-      if (o && typeof o === "object") {
-        const out2 = {};
-        for (const [k, v] of Object.entries(o)) {
-          const p = prune(v);
-          if (p === void 0 || p === null || p === "" || Array.isArray(p) && !p.length || typeof p === "object" && !Array.isArray(p) && !Object.keys(p).length) continue;
-          out2[k] = p;
-        }
-        return out2;
-      }
-      return o;
-    }
-    var cc = (system, code, display, text) => code ? { coding: [{ system, code, display }], text: text || display } : void 0;
-    var telecom = (system, value, use) => value ? { system, value: String(value), use } : void 0;
-    var address = (line, city, zip) => line || city || zip ? { use: "home", line: line ? [String(line)] : void 0, city: city || void 0, postalCode: zip || void 0, text: [line, city, zip].filter(Boolean).join(", ") } : void 0;
-    var OMB = "urn:oid:2.16.840.1.113883.6.238";
-    var RACE = { american_indian_alaska_native: ["1002-5", "American Indian or Alaska Native"], asian: ["2028-9", "Asian"], black_african_american: ["2054-5", "Black or African American"], native_hawaiian_pacific_islander: ["2076-8", "Native Hawaiian or Other Pacific Islander"], white: ["2106-3", "White"] };
-    var ETHNICITY = { hispanic_latino: ["2135-2", "Hispanic or Latino"], not_hispanic_latino: ["2186-5", "Not Hispanic or Latino"] };
-    function raceEthnicity(codesText) {
-      const codes = String(codesText || "").split(",").map((s) => s.trim()).filter(Boolean);
-      const ext = [];
-      const race = codes.filter((c) => RACE[c]);
-      const eth = codes.filter((c) => ETHNICITY[c]);
-      const raceNull = !race.length && (codes.includes("declined") ? ["ASKU", "Asked but no answer"] : codes.includes("unknown") ? ["UNK", "Unknown"] : null);
-      if (race.length || raceNull || codes.includes("other")) {
-        const parts = race.map((c) => ({ url: "ombCategory", valueCoding: { system: OMB, code: RACE[c][0], display: RACE[c][1] } }));
-        parts.push({ url: "text", valueString: [...race.map((c) => RACE[c][1]), ...codes.includes("other") ? ["Other"] : [], ...raceNull ? [raceNull[1]] : []].join(", ") });
-        ext.push({ url: "http://hl7.org/fhir/us/core/StructureDefinition/us-core-race", extension: parts });
-      }
-      if (eth.length) {
-        ext.push({ url: "http://hl7.org/fhir/us/core/StructureDefinition/us-core-ethnicity", extension: [
-          ...eth.map((c) => ({ url: "ombCategory", valueCoding: { system: OMB, code: ETHNICITY[c][0], display: ETHNICITY[c][1] } })),
-          { url: "text", valueString: eth.map((c) => ETHNICITY[c][1]).join(", ") }
-        ] });
-      }
-      return ext;
-    }
-    var LANGUAGES = {
-      english: "en",
-      spanish: "es",
-      "espa\xF1ol": "es",
-      espanol: "es",
-      chinese: "zh",
-      mandarin: "zh",
-      cantonese: "yue",
-      vietnamese: "vi",
-      tagalog: "tl",
-      filipino: "fil",
-      korean: "ko",
-      russian: "ru",
-      arabic: "ar",
-      armenian: "hy",
-      farsi: "fa",
-      persian: "fa",
-      dari: "prs",
-      pashto: "ps",
-      punjabi: "pa",
-      hindi: "hi",
-      urdu: "ur",
-      hmong: "hmn",
-      khmer: "km",
-      lao: "lo",
-      japanese: "ja",
-      portuguese: "pt",
-      french: "fr",
-      ukrainian: "uk",
-      somali: "so",
-      amharic: "am",
-      tigrinya: "ti",
-      mien: "ium",
-      "american sign language": "ase",
-      asl: "ase"
-    };
-    function language(text) {
-      const code = LANGUAGES[String(text || "").trim().toLowerCase()];
-      return { coding: code ? [{ system: "urn:ietf:bcp:47", code }] : void 0, text };
-    }
-    var GENDER = { female: "female", male: "male", transgender_female: "female", transgender_male: "male", non_binary: "other", other: "other" };
-    function mapPatient(c) {
-      const first = dec2(c.first_name_enc), last = dec2(c.last_name_enc), preferred = dec2(c.preferred_name_enc), dob = dec2(c.dob_enc), medicaid = dec2(c.medicaid_id_enc);
-      return prune({
-        resourceType: "Patient",
-        id: c.id,
-        meta: meta(c.updated_at, { profile: "us-core-patient" }),
-        extension: raceEthnicity(c.race_codes),
-        identifier: [
-          { use: "usual", type: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/v2-0203", code: "MR", display: "Medical record number" }], text: "SUDS client code" }, system: SYS.clientCode, value: c.client_code },
-          medicaid ? { use: "secondary", type: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/v2-0203", code: "MA", display: "Patient Medicaid number" }] }, system: SYS.medicaid, value: medicaid } : void 0
-        ],
-        active: !["closed", "inactive", "deceased"].includes(c.status),
-        name: [{ use: "official", family: last || void 0, given: first ? [first] : void 0 }, preferred ? { use: "usual", given: [preferred] } : void 0],
-        telecom: [telecom("phone", dec2(c.phone_enc), "mobile"), telecom("phone", dec2(c.alt_phone_enc), "home"), telecom("email", dec2(c.email_enc), "home")],
-        gender: GENDER[c.gender] || "unknown",
-        birthDate: /^\d{4}-\d{2}-\d{2}$/.test(dob || "") ? dob : void 0,
-        deceasedBoolean: c.status === "deceased" ? true : void 0,
-        address: [address(dec2(c.address_enc), c.city, c.zip)],
-        communication: c.preferred_language ? [{ language: language(c.preferred_language), preferred: true }] : void 0,
-        managingOrganization: programRef()
-      });
-    }
-    function mapEpisode(e) {
-      return prune({
-        resourceType: "EpisodeOfCare",
-        id: e.id,
-        meta: meta(e.updated_at),
-        status: e.status === "closed" ? "finished" : "active",
-        type: [cc(SYS.episode, "sud-navigation", "SUD navigation services")],
-        patient: patientRef(e.client_id),
-        managingOrganization: programRef(),
-        period: { start: dt(e.opened_at), end: dt(e.closed_at) }
-      });
-    }
-    var V3 = SYS.actCode;
-    var VIRTUAL_MODALITIES = ["phone", "video", "text", "email"];
-    var FIELD_LOCATIONS = ["field", "community", "shelter", "jail", "court", "hospital", "emergency_dept", "treatment_facility"];
-    function encounterClass(modality, location) {
-      if (VIRTUAL_MODALITIES.includes(modality) || location === "telehealth" || location === "phone") return { system: V3, code: "VR", display: "virtual" };
-      if (location === "home") return { system: V3, code: "HH", display: "home health" };
-      if (FIELD_LOCATIONS.includes(location)) return { system: V3, code: "FLD", display: "field" };
-      return { system: V3, code: "AMB", display: "ambulatory" };
-    }
-    var NOT_HELD = ["client_declined", "no_show", "unable_to_locate", "rescheduled"];
-    function end(start2, minutes) {
-      const t = Date.parse(start2 || "");
-      return Number.isNaN(t) || !minutes ? void 0 : new Date(t + minutes * 6e4).toISOString();
-    }
-    function mapIntervention(i) {
-      const typeLabel = label("INTERVENTION_TYPES", i.type);
-      return prune({
-        resourceType: "Encounter",
-        id: `iv-${i.id}`,
-        meta: meta(i.updated_at, { profile: "us-core-encounter" }),
-        identifier: [{ system: "urn:suds:intervention", value: i.id }],
-        status: NOT_HELD.includes(i.outcome) ? "cancelled" : "finished",
-        class: encounterClass(i.modality, i.location),
-        type: [cc(SYS.interventionType, i.type, typeLabel)],
-        serviceType: i.location ? { text: `Location: ${label("LOCATIONS", i.location)}` } : void 0,
-        subject: patientRef(i.client_id),
-        period: { start: dt(i.occurred_at), end: end(i.occurred_at, i.duration_minutes) },
-        length: i.duration_minutes ? { value: i.duration_minutes, unit: "min", system: "http://unitsofmeasure.org", code: "min" } : void 0,
-        serviceProvider: programRef()
-      });
-    }
-    var CALL_HELD = ["reached", "callback_scheduled", "crisis_escalated", "replied", "sent"];
-    function mapCall(c) {
-      const text = c.method === "text";
-      return prune({
-        resourceType: "Encounter",
-        id: `call-${c.id}`,
-        meta: meta(c.updated_at, { profile: "us-core-encounter" }),
-        identifier: [{ system: "urn:suds:call", value: c.id }],
-        status: CALL_HELD.includes(c.outcome) ? "finished" : "cancelled",
-        class: { system: V3, code: "VR", display: "virtual" },
-        type: [cc(SYS.callPurpose, text ? "text-message" : "phone-call", text ? "Text message" : "Phone call")],
-        serviceType: c.contact_type ? { text: `Contact: ${humanize(c.contact_type)} (${c.direction})` } : void 0,
-        priority: c.crisis ? cc("http://terminology.hl7.org/CodeSystem/v3-ActPriority", "EM", "emergency") : void 0,
-        subject: patientRef(c.client_id),
-        period: { start: dt(c.started_at), end: end(c.started_at, c.duration_minutes) },
-        length: c.duration_minutes ? { value: c.duration_minutes, unit: "min", system: "http://unitsofmeasure.org", code: "min" } : void 0,
-        serviceProvider: programRef()
-      });
-    }
-    var today = () => (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-    function consentPurposes(type, purposeText) {
-      return disclosure.consentPurposeCodes({ type, purpose: purposeText }).map((code) => ({ system: SYS.actReason, code, display: disclosure.FHIR_PURPOSES[code].display }));
-    }
-    function mapConsent(k) {
-      const recipient = dec2(k.recipient_enc), purpose = dec2(k.purpose_enc);
-      const active = !k.revoked_at && (!k.expires_at || k.expires_at >= today());
-      const part2 = k.type.startsWith("part2_");
-      return prune({
-        resourceType: "Consent",
-        id: k.id,
-        meta: meta(k.updated_at),
-        status: active ? "active" : "inactive",
-        scope: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/consentscope", code: "patient-privacy", display: "Privacy Consent" }] },
-        category: [{ coding: [{ system: "http://loinc.org", code: "59284-0", display: "Patient Consent" }] }, cc(SYS.consentType, k.type, humanize(k.type))],
-        patient: patientRef(k.client_id),
-        dateTime: dt(k.signed_at),
-        organization: [programRef()],
-        policy: part2 ? [{ authority: "https://www.ecfr.gov", uri: "https://www.ecfr.gov/current/title-42/chapter-I/subchapter-A/part-2" }] : void 0,
-        policyRule: part2 ? cc(SYS.actCode, "42CFRPart2", "42 CFR Part2") : cc("http://terminology.hl7.org/CodeSystem/consentpolicycodes", "hipaa-auth", "HIPAA Authorization"),
-        provision: {
-          type: "permit",
-          period: { start: dt(k.signed_at), end: k.revoked_at ? dt(k.revoked_at) : dt(k.expires_at) },
-          actor: recipient ? [{ role: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/v3-ParticipationType", code: "IRCP", display: "information recipient" }] }, reference: { display: recipient } }] : void 0,
-          purpose: consentPurposes(k.type, purpose)
-        }
-      });
-    }
-    var SR_STATUS = { pending: "active", contacted: "active", accepted: "active", waitlisted: "on-hold", scheduled: "active", admitted: "completed", completed: "completed", declined_by_client: "revoked", declined_by_provider: "revoked", no_show: "revoked", closed: "completed" };
-    var SR_PRIORITY = { routine: "routine", urgent: "urgent", emergent: "stat" };
-    function mapReferral(r) {
-      const res = db3.one(`SELECT name, category FROM resources WHERE id=?`, r.resource_id) || {};
-      return prune({
-        resourceType: "ServiceRequest",
-        id: r.id,
-        meta: meta(r.updated_at),
-        status: SR_STATUS[r.status] || "unknown",
-        intent: "order",
-        category: [{ coding: [{ system: "http://snomed.info/sct", code: "3457005", display: "Patient referral" }] }],
-        priority: SR_PRIORITY[r.urgency] || void 0,
-        code: { coding: res.category ? [{ system: SYS.resourceCategory, code: res.category, display: label("RESOURCE_CATEGORIES", res.category) }] : void 0, text: res.name ? `Referral to ${res.name}` : "Referral" },
-        subject: patientRef(r.client_id),
-        authoredOn: dt(r.referred_at),
-        occurrenceDateTime: dt(r.appointment_at),
-        requester: programRef(),
-        performer: [{ reference: `Organization/${r.resource_id}`, display: res.name }, { reference: `HealthcareService/${r.resource_id}`, display: res.name }]
-      });
-    }
-    var TASK_STATUS = { open: "requested", in_progress: "in-progress", done: "completed", cancelled: "cancelled" };
-    var TASK_PRIORITY = { low: "routine", normal: "routine", high: "urgent", urgent: "asap" };
-    function mapTask(t) {
-      return prune({
-        resourceType: "Task",
-        id: t.id,
-        meta: meta(t.updated_at),
-        status: TASK_STATUS[t.status] || "requested",
-        intent: "order",
-        priority: TASK_PRIORITY[t.priority],
-        code: t.is_milestone ? { text: "Milestone" } : void 0,
-        description: dec2(t.title_enc) || void 0,
-        focus: t.referral_id ? { reference: `ServiceRequest/${t.referral_id}` } : void 0,
-        for: patientRef(t.client_id),
-        authoredOn: dt(t.created_at),
-        lastModified: dt(t.updated_at),
-        requester: programRef(),
-        executionPeriod: t.completed_at ? { end: dt(t.completed_at) } : void 0,
-        restriction: t.due_at ? { period: { end: dt(t.due_at) } } : void 0
-      });
-    }
-    function mapRisk(c) {
-      return prune({
-        resourceType: "Observation",
-        id: `risk-${c.id}`,
-        meta: meta(c.updated_at),
-        status: "final",
-        category: [{ coding: [{ system: "http://terminology.hl7.org/CodeSystem/observation-category", code: "survey", display: "Survey" }] }],
-        code: cc(SYS.observation, "overdose-risk-level", "Overdose risk level (navigator assessment)"),
-        subject: patientRef(c.id),
-        issued: instant(c.updated_at),
-        valueCodeableConcept: cc(SYS.observation, c.risk_level, humanize(c.risk_level))
-      });
-    }
-    function mapOverdose(o) {
-      const comp = (code, display, v) => ({ code: cc(SYS.observation, code, display), ...v });
-      return prune({
-        resourceType: "Observation",
-        id: `od-${o.id}`,
-        meta: meta(o.updated_at),
-        status: "final",
-        category: [cc(SYS.observation, "overdose-event", "Overdose event")],
-        code: cc(SYS.observation, "overdose-event", "Overdose event"),
-        subject: patientRef(o.client_id),
-        effectiveDateTime: dt(o.occurred_at),
-        issued: instant(o.created_at),
-        valueCodeableConcept: cc(SYS.observation, o.kind, label("OVERDOSE_KINDS", o.kind)),
-        component: [
-          comp("naloxone-used", "Naloxone used", { valueBoolean: !!o.naloxone_used }),
-          o.naloxone_doses ? comp("naloxone-doses", "Naloxone doses", { valueInteger: o.naloxone_doses }) : void 0,
-          comp("ems-called", "EMS called", { valueBoolean: !!o.ems_called }),
-          comp("hospitalized", "Hospitalized", { valueBoolean: !!o.hospitalized }),
-          comp("survived", "Survived", { valueBoolean: !!o.survived })
-        ]
-      });
-    }
-    var NOTE_LOINC = { discharge: ["18842-5", "Discharge summary"] };
-    function mapNote(n) {
-      const loinc = NOTE_LOINC[n.format] || ["11506-3", "Progress note"];
-      const encounter = n.intervention_id ? `Encounter/iv-${n.intervention_id}` : n.call_id ? `Encounter/call-${n.call_id}` : null;
-      const encounterOk = encounter && (n.intervention_id ? db3.one(`SELECT 1 FROM interventions WHERE id=? AND client_id=?`, n.intervention_id, n.client_id) : db3.one(`SELECT 1 FROM calls WHERE id=? AND client_id=?`, n.call_id, n.client_id));
-      return prune({
-        resourceType: "DocumentReference",
-        id: n.id,
-        meta: meta(n.updated_at),
-        status: "current",
-        docStatus: n.status === "amended" ? "amended" : "final",
-        type: { coding: [{ system: "http://loinc.org", code: loinc[0], display: loinc[1] }, { system: SYS.noteFormat, code: n.format, display: label("NOTE_FORMATS", n.format) }], text: label("NOTE_FORMATS", n.format) },
-        category: [{ coding: [{ system: "http://hl7.org/fhir/us/core/CodeSystem/us-core-documentreference-category", code: "clinical-note", display: "Clinical Note" }] }, cc(SYS.noteFormat, `kind-${n.kind}`, n.kind === "clinical" ? "Clinical note" : "Case management note")],
-        subject: patientRef(n.client_id),
-        date: instant(n.signed_at || n.updated_at),
-        securityLabel: PART2_SECURITY.map((s) => ({ coding: [s] })),
-        content: [{ attachment: { contentType: "text/plain", title: "Note text is not shared over FHIR (42 CFR Part 2). Request it from the program under a consent that covers it." } }],
-        context: { period: { start: dt(n.occurred_at) }, encounter: encounterOk ? [{ reference: encounter }] : void 0 }
-      });
-    }
-    function directoryTelecom(r) {
-      return [telecom("phone", r.phone, "work"), telecom("fax", r.fax, "work"), telecom("email", r.email, "work"), telecom("url", r.website, "work")];
-    }
-    function mapOrganization(r) {
-      if (r._program) {
-        return prune({
-          resourceType: "Organization",
-          id: PROGRAM_ORG,
-          meta: meta(r.updated_at, { profile: "us-core-organization", part2: false }),
-          active: true,
-          type: [{ coding: [{ system: "http://terminology.hl7.org/CodeSystem/organization-type", code: "prov", display: "Healthcare Provider" }] }],
-          name: db3.getSetting("org_name", "SUDS program") || "SUDS program",
-          telecom: [telecom("phone", db3.getSetting("program_contact", "") || void 0, "work")]
-        });
-      }
-      return prune({
-        resourceType: "Organization",
-        id: r.id,
-        meta: meta(r.updated_at, { profile: "us-core-organization", part2: false }),
-        active: !!r.is_active,
-        type: [{ coding: [{ system: "http://terminology.hl7.org/CodeSystem/organization-type", code: "prov", display: "Healthcare Provider" }] }],
-        name: r.organization || r.name,
-        alias: r.organization && r.organization !== r.name ? [r.name] : void 0,
-        telecom: directoryTelecom(r),
-        address: [address(r.address, r.city, r.zip) && { ...address(r.address, r.city, r.zip), use: "work" }]
-      });
-    }
-    function mapLocation(r) {
-      return prune({
-        resourceType: "Location",
-        id: r.id,
-        meta: meta(r.updated_at, { profile: "us-core-location", part2: false }),
-        status: r.is_active ? "active" : "inactive",
-        name: r.name,
-        telecom: directoryTelecom(r),
-        address: address(r.address, r.city, r.zip) && { ...address(r.address, r.city, r.zip), use: "work" },
-        managingOrganization: { reference: `Organization/${r.id}`, display: r.organization || r.name }
-      });
-    }
-    var split = (s) => String(s || "").split(",").map((x) => x.trim()).filter(Boolean);
-    function mapHealthcareService(r) {
-      return prune({
-        resourceType: "HealthcareService",
-        id: r.id,
-        meta: meta(r.updated_at, { part2: false }),
-        active: !!r.is_active,
-        providedBy: { reference: `Organization/${r.id}`, display: r.organization || r.name },
-        category: [cc(SYS.resourceCategory, r.category, label("RESOURCE_CATEGORIES", r.category))],
-        type: split(r.service_tags).map((t) => cc(SYS.serviceTag, t, humanize(t))),
-        location: [{ reference: `Location/${r.id}` }],
-        name: r.name,
-        comment: r.summary || void 0,
-        extraDetails: [r.services, r.levels_of_care ? `Levels of care: ${r.levels_of_care}` : null, r.mat_offered ? `MAT offered: ${r.mat_offered}` : null, r.intake_process ? `Intake: ${r.intake_process}` : null, r.cost_notes ? `Cost: ${r.cost_notes}` : null].filter(Boolean).join("\n") || void 0,
-        telecom: directoryTelecom(r),
-        eligibility: r.eligibility || r.populations ? [{ code: r.populations ? { text: split(r.populations).map(humanize).join(", ") } : void 0, comment: r.eligibility || void 0 }] : void 0,
-        characteristic: [r.accepts_medicaid ? { text: "Accepts Medicaid" } : void 0, r.accepts_uninsured ? { text: "Accepts uninsured clients" } : void 0],
-        communication: split(r.languages).map((l) => ({ text: l })),
-        availabilityExceptions: r.hours || void 0
-      });
-    }
-    var LIVE_CLIENT = `c.deleted_at IS NULL AND c.merged_into IS NULL`;
-    var eqParam = (col, xform = (v) => v) => (values) => orClause(values, (v) => ({ sql: `${col} = ?`, params: [xform(v)] }));
-    function orClause(values, one) {
-      const parts = [];
-      const params = [];
-      for (const raw of values) {
-        const alts = String(raw).split(",").map((s) => s.trim()).filter(Boolean);
-        if (!alts.length) throw new FhirError(400, "Empty search value", { code: "invalid" });
-        const sub = alts.map(one);
-        parts.push(`(${sub.map((s) => s.sql).join(" OR ")})`);
-        for (const s of sub) params.push(...s.params);
-      }
-      return { sql: parts.join(" AND "), params };
-    }
-    var statusParam = (map) => (values) => orClause(values, (v) => {
-      const raw = Object.entries(map).filter(([, f]) => f === v).map(([k]) => k);
-      if (!raw.length) return { sql: "0", params: [] };
-      return { sql: `_st IN (${raw.map(() => "?").join(",")})`, params: raw };
-    });
-    var nameParam = (values, mod) => orClause(values, (v) => mod === "exact" ? { sql: `_name = ?`, params: [v] } : { sql: `LOWER(_name) LIKE ? ESCAPE '\\'`, params: [(mod === "contains" ? "%" : "") + v.toLowerCase().replace(/[\\%_]/g, (m) => "\\" + m) + "%"] });
-    var DEFS = {
-      Patient: {
-        src: `SELECT c.id _fid, 'client' _kind, c.id _rid, c.id _cid, c.updated_at _upd, c.intake_date _date, c.status _st, c.client_code _code, c.dob_idx _dob, c.last_name_idx _fam, c.first_name_idx _giv FROM clients c WHERE ${LIVE_CLIENT}`,
-        load: (kind, id) => db3.one(`SELECT * FROM clients WHERE id=?`, id),
-        map: mapPatient,
-        params: {
-          identifier: (values) => orClause(values, (v) => {
-            const [sys, val] = v.includes("|") ? [v.slice(0, v.indexOf("|")), v.slice(v.indexOf("|") + 1)] : [null, v];
-            if (sys && sys !== SYS.clientCode) return { sql: "0", params: [] };
-            return { sql: `_code = ?`, params: [val] };
-          }),
-          family: (values) => orClause(values, (v) => ({ sql: `_fam = ?`, params: [blindIndex2(v)] })),
-          given: (values) => orClause(values, (v) => ({ sql: `_giv = ?`, params: [blindIndex2(String(v).trim().toLowerCase())] })),
-          birthdate: (values) => orClause(values, (v) => {
-            if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new FhirError(400, "birthdate is searchable by exact date (YYYY-MM-DD) only; dates of birth are stored encrypted", { code: "invalid" });
-            return { sql: `_dob = ?`, params: [blindIndex2(v)] };
-          })
-        },
-        identifying: ["_id", "identifier", "family", "given", "birthdate"]
-      },
-      EpisodeOfCare: {
-        src: `SELECT e.id _fid, 'episode' _kind, e.id _rid, e.client_id _cid, e.updated_at _upd, e.opened_at _date, e.status _st FROM episodes e JOIN clients c ON c.id=e.client_id WHERE ${LIVE_CLIENT}`,
-        load: (kind, id) => db3.one(`SELECT * FROM episodes WHERE id=?`, id),
-        map: mapEpisode,
-        date: true,
-        params: { status: statusParam({ open: "active", closed: "finished" }) }
-      },
-      Encounter: {
-        src: `SELECT 'iv-' || i.id _fid, 'intervention' _kind, i.id _rid, i.client_id _cid, i.updated_at _upd, i.occurred_at _date FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${LIVE_CLIENT}
-      UNION ALL SELECT 'call-' || k.id, 'call', k.id, k.client_id, k.updated_at, k.started_at FROM calls k JOIN clients c ON c.id=k.client_id WHERE ${LIVE_CLIENT}`,
-        load: (kind, id) => db3.one(`SELECT * FROM ${kind === "call" ? "calls" : "interventions"} WHERE id=?`, id),
-        map: (row, kind) => kind === "call" ? mapCall(row) : mapIntervention(row),
-        date: true,
-        params: {}
-      },
-      Consent: {
-        src: `SELECT k.id _fid, 'consent' _kind, k.id _rid, k.client_id _cid, k.updated_at _upd, k.signed_at _date, CASE WHEN k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= date('now')) THEN 'active' ELSE 'inactive' END _st
-      FROM consents k JOIN clients c ON c.id=k.client_id WHERE ${LIVE_CLIENT} AND k.type IN (${disclosure.FHIR_CONSENT_TYPES.map((t) => `'${t}'`).join(",")})`,
-        load: (kind, id) => db3.one(`SELECT * FROM consents WHERE id=?`, id),
-        map: mapConsent,
-        date: true,
-        params: { status: statusParam({ active: "active", inactive: "inactive" }) },
-        // Only the consents that cover this recipient for this purpose, of a type that may cover it now (a
-        // general release is listed only outside a Part 2 programme): which other organisations a client has
-        // agreed to share with is none of this recipient's business.
-        keep: (row, client) => disclosure.consentCovers({ type: row.type, recipient: dec2(row.recipient_enc), purpose: dec2(row.purpose_enc), categories: row.info_categories }, { recipients: client.recipients, purposeOfUse: client.purpose, category: "*" })
-      },
-      ServiceRequest: {
-        src: `SELECT r.id _fid, 'referral' _kind, r.id _rid, r.client_id _cid, r.updated_at _upd, r.referred_at _date, r.status _st FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${LIVE_CLIENT}`,
-        load: (kind, id) => db3.one(`SELECT * FROM referrals WHERE id=?`, id),
-        map: mapReferral,
-        date: "authored",
-        params: { status: statusParam(SR_STATUS) }
-      },
-      Task: {
-        src: `SELECT t.id _fid, 'task' _kind, t.id _rid, t.client_id _cid, t.updated_at _upd, t.created_at _date, t.status _st FROM tasks t JOIN clients c ON c.id=t.client_id WHERE ${LIVE_CLIENT}`,
-        load: (kind, id) => db3.one(`SELECT * FROM tasks WHERE id=?`, id),
-        map: mapTask,
-        date: "authored-on",
-        params: { status: statusParam(TASK_STATUS) }
-      },
-      Observation: {
-        src: `SELECT 'risk-' || c.id _fid, 'risk' _kind, c.id _rid, c.id _cid, c.updated_at _upd, c.updated_at _date, 'survey' _cat FROM clients c WHERE ${LIVE_CLIENT} AND c.risk_level IS NOT NULL AND c.risk_level <> ''
-      UNION ALL SELECT 'od-' || o.id, 'overdose', o.id, o.client_id, o.updated_at, o.occurred_at, 'overdose-event' FROM overdose_events o JOIN clients c ON c.id=o.client_id WHERE ${LIVE_CLIENT}`,
-        load: (kind, id) => db3.one(`SELECT * FROM ${kind === "risk" ? "clients" : "overdose_events"} WHERE id=?`, id),
-        map: (row, kind) => kind === "risk" ? mapRisk(row) : mapOverdose(row),
-        date: true,
-        params: { category: (values) => orClause(values, (v) => ({ sql: `_cat = ?`, params: [v.includes("|") ? v.slice(v.indexOf("|") + 1) : v] })) }
-      },
-      DocumentReference: {
-        src: `SELECT n.id _fid, 'note' _kind, n.id _rid, n.client_id _cid, n.updated_at _upd, COALESCE(n.signed_at, n.occurred_at) _date FROM notes n JOIN clients c ON c.id=n.client_id
-      WHERE ${LIVE_CLIENT} AND n.deleted_at IS NULL AND n.status IN ('signed','amended') AND n.format <> 'supervision' AND n.counseling_note = 0`,
-        load: (kind, id) => db3.one(`SELECT * FROM notes WHERE id=?`, id),
-        map: mapNote,
-        date: true,
-        params: {}
-      },
-      Organization: {
-        directory: true,
-        src: `SELECT '${PROGRAM_ORG}' _fid, 'program' _kind, '${PROGRAM_ORG}' _rid, NULL _cid, COALESCE((SELECT updated_at FROM settings WHERE key='org_name'), '2020-01-01T00:00:00.000Z') _upd, NULL _date, 1 _active, COALESCE((SELECT value FROM settings WHERE key='org_name'), 'SUDS program') _name
-      UNION ALL SELECT r.id, 'resource', r.id, NULL, r.updated_at, NULL, r.is_active, COALESCE(NULLIF(r.organization, ''), r.name) FROM resources r`,
-        load: (kind, id) => kind === "program" ? { _program: true, updated_at: db3.one(`SELECT updated_at FROM settings WHERE key='org_name'`)?.updated_at || "2020-01-01T00:00:00.000Z" } : db3.one(`SELECT * FROM resources WHERE id=?`, id),
-        map: mapOrganization,
-        params: { name: nameParam, active: (values) => orClause(values, (v) => ({ sql: `_active = ?`, params: [v === "true" ? 1 : 0] })) }
-      },
-      Location: {
-        directory: true,
-        src: `SELECT r.id _fid, 'resource' _kind, r.id _rid, NULL _cid, r.updated_at _upd, NULL _date, r.is_active _active, r.name _name, r.city _city, r.zip _zip FROM resources r`,
-        load: (kind, id) => db3.one(`SELECT * FROM resources WHERE id=?`, id),
-        map: mapLocation,
-        params: { name: nameParam, "address-city": eqParam("_city"), "address-postalcode": eqParam("_zip"), status: (values) => orClause(values, (v) => ({ sql: `_active = ?`, params: [v === "active" ? 1 : 0] })) }
-      },
-      HealthcareService: {
-        directory: true,
-        src: `SELECT r.id _fid, 'resource' _kind, r.id _rid, NULL _cid, r.updated_at _upd, NULL _date, r.is_active _active, r.name _name, r.category _cat FROM resources r`,
-        load: (kind, id) => db3.one(`SELECT * FROM resources WHERE id=?`, id),
-        map: mapHealthcareService,
-        params: { name: nameParam, active: (values) => orClause(values, (v) => ({ sql: `_active = ?`, params: [v === "true" ? 1 : 0] })), "service-category": (values) => orClause(values, (v) => ({ sql: `_cat = ?`, params: [v.includes("|") ? v.slice(v.indexOf("|") + 1) : v] })) }
-      }
-    };
-    for (const [type, d] of Object.entries(DEFS)) {
-      d.type = type;
-      d.phi = !d.directory;
-    }
-    var CONTROL = ["_count", "_offset", "_format", "_pretty", "_summary", "_elements"];
-    var MAX_COUNT = 200;
-    var DEFAULT_COUNT = 50;
-    function searchParams(type) {
-      const d = DEFS[type];
-      const out2 = ["_id", "_lastUpdated"];
-      if (d.phi && type !== "Patient") out2.push("patient");
-      if (d.date) out2.push(d.date === true ? "date" : d.date);
-      out2.push(...Object.keys(d.params));
-      if (d.params.name) out2.push("name:contains", "name:exact");
-      return out2;
-    }
-    function where(type, query, { since } = {}) {
-      const d = DEFS[type];
-      const clauses = [];
-      const params = [];
-      const names = [.../* @__PURE__ */ new Set([...query.keys()])];
-      const allowed = searchParams(type);
-      for (const name of names) {
-        if (CONTROL.includes(name)) continue;
-        if (!allowed.includes(name)) throw new FhirError(400, `Search parameter "${name}" is not supported for ${type}. Supported: ${allowed.join(", ")}`, { code: "not-supported" });
-        const values = query.getAll(name);
-        const [base, mod] = name.split(":");
-        let c;
-        if (base === "_id") c = orClause(values, (v) => ({ sql: `_fid = ?`, params: [v] }));
-        else if (base === "_lastUpdated") c = andDates("_upd", values);
-        else if (base === "patient") c = orClause(values, (v) => ({ sql: `_cid = ?`, params: [refId(v, "Patient")] }));
-        else if (d.date && base === (d.date === true ? "date" : d.date)) c = andDates("_date", values);
-        else c = d.params[base](values, mod);
-        clauses.push(c.sql);
-        params.push(...c.params);
-      }
-      if (since) {
-        clauses.push("_upd > ?");
-        params.push(since);
-      }
-      return { sql: clauses.length ? clauses.join(" AND ") : "1=1", params };
-    }
-    function andDates(col, values) {
-      const parts = values.map((v) => dateClause(col, v));
-      return { sql: parts.map((p) => p.sql).join(" AND "), params: parts.flatMap((p) => p.params) };
-    }
-    function page(type, filter, { count, offset }) {
-      const d = DEFS[type];
-      return db3.all(`SELECT * FROM (${d.src}) s WHERE ${filter.sql} ORDER BY _upd, _fid LIMIT ? OFFSET ?`, ...filter.params, count, offset);
-    }
-    function toResource(type, row) {
-      const d = DEFS[type];
-      const full = d.load(row._kind, row._rid);
-      if (!full) return null;
-      return { full, resource: d.map(full, row._kind) };
-    }
-    function identifying(type, query) {
-      const d = DEFS[type];
-      const keys = [...query.keys()].map((k) => k.split(":")[0]);
-      return keys.includes("patient") || keys.includes("_id") || (d.identifying || []).some((k) => keys.includes(k));
-    }
-    module.exports = { DEFS, PROGRAM_ORG, MAX_COUNT, DEFAULT_COUNT, searchParams, where, page, toResource, identifying, US_CORE };
-  }
-});
-
-// server/fhir/bulk.js
-var require_bulk = __commonJS({
-  "server/fhir/bulk.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var fs = (init_fs(), __toCommonJS(fs_exports));
-    var path = (init_path(), __toCommonJS(path_exports));
-    var config = require_config();
-    var db3 = require_db();
-    var audit3 = require_audit();
-    var disclosure = require_disclosure();
-    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
-    var R = require_resources();
-    var C = require_clients2();
-    var { FhirError, FHIR_NDJSON, PART2_SECURITY, outcome, send, baseUrl } = require_common();
-    var TTL_MS = Math.max(1, Number(proc.env.FHIR_EXPORT_TTL_MINUTES) || 60) * 6e4;
-    var MAX_ACTIVE_PER_CLIENT = 2;
-    var PAGE = 500;
-    var OUTPUT_FORMATS = ["application/fhir+ndjson", "application/ndjson", "ndjson"];
-    var STATE = "job.json.enc";
-    var dir = () => path.join(config.dataDir, "fhir-export");
-    var jobs = /* @__PURE__ */ new Map();
-    function save(job) {
-      try {
-        fs.mkdirSync(path.join(dir(), job.id), { recursive: true, mode: 448 });
-        fs.writeFileSync(path.join(dir(), job.id, STATE), encrypt3(JSON.stringify(job)), { mode: 384 });
-      } catch (e) {
-        console.error(`[suds] FHIR export ${job.id}: could not save its state:`, e.message);
-      }
-    }
-    var restored = false;
-    function restore() {
-      if (restored) return;
-      restored = true;
-      let entries = [];
-      try {
-        entries = fs.readdirSync(dir());
-      } catch {
-        return;
-      }
-      const now = Date.now();
-      for (const e of entries) {
-        if (jobs.has(e)) continue;
-        const p = path.join(dir(), e);
-        let job = null;
-        try {
-          job = JSON.parse(decrypt3(fs.readFileSync(path.join(p, STATE), "utf8")));
-        } catch {
-        }
-        if (!job || job.id !== e || job.expiresAt && job.expiresAt < now) {
-          try {
-            fs.rmSync(p, { recursive: true, force: true });
-          } catch {
-          }
-          continue;
-        }
-        if (job.status === "in-progress") {
-          job.status = "error";
-          job.message = "The server restarted while this export was being built; start a new export";
-          job.expiresAt = now + TTL_MS;
-          job.outputs = [];
-          job.errors = [];
-          try {
-            for (const f of fs.readdirSync(p)) if (f !== STATE) fs.rmSync(path.join(p, f), { force: true });
-          } catch {
-          }
-          save(job);
-        }
-        jobs.set(job.id, job);
-      }
-    }
-    function sweep() {
-      const now = Date.now();
-      for (const [id, j] of jobs) if (j.expiresAt && j.expiresAt < now) removeJob(id);
-      let entries = [];
-      try {
-        entries = fs.readdirSync(dir());
-      } catch {
-        return;
-      }
-      for (const e of entries) {
-        if (jobs.has(e)) continue;
-        const p = path.join(dir(), e);
-        try {
-          if (now - fs.statSync(p).mtimeMs > TTL_MS) fs.rmSync(p, { recursive: true, force: true });
-        } catch {
-        }
-      }
-    }
-    var later = (fn) => (globalThis.setImmediate || setTimeout)(fn);
-    var sweeper = setInterval(sweep, 5 * 6e4);
-    if (sweeper && sweeper.unref) sweeper.unref();
-    function removeJob(id) {
-      jobs.delete(id);
-      try {
-        fs.rmSync(path.join(dir(), id), { recursive: true, force: true });
-      } catch {
-      }
-    }
-    function exportTypes(ctx, client, level) {
-      const all = Object.keys(R.DEFS).filter((t) => level === "system" || R.DEFS[t].phi);
-      const asked = ctx.query.get("_type");
-      if (!asked) {
-        const types2 = all.filter((t) => C.hasScope(client.scopes, t));
-        if (!types2.length) throw new FhirError(403, "This client has no read scope for any exportable resource type", { code: "forbidden" });
-        return types2;
-      }
-      const types = [...new Set(asked.split(",").map((s) => s.trim()).filter(Boolean))];
-      for (const t of types) {
-        if (!R.DEFS[t]) throw new FhirError(400, `"${t}" is not a resource type this server exports`, { code: "not-supported" });
-        if (!all.includes(t)) throw new FhirError(400, `${t} is not in the Patient compartment; use the system-level $export for it`, { code: "invalid" });
-        C.requireScope(ctx, client, t);
-      }
-      return types;
-    }
-    function kickoff(ctx, client, level) {
-      sweep();
-      if (!/respond-async/i.test(String(ctx.headers.prefer || ""))) throw new FhirError(400, 'Bulk export requires the header "Prefer: respond-async"', { code: "required" });
-      const accept = String(ctx.headers.accept || "");
-      if (accept && !/json|\*\/\*/i.test(accept)) throw new FhirError(406, "Accept must be application/fhir+json", { code: "not-supported" });
-      for (const k of ctx.query.keys()) if (!["_type", "_since", "_outputFormat"].includes(k)) throw new FhirError(400, `Export parameter "${k}" is not supported (supported: _type, _since, _outputFormat)`, { code: "not-supported" });
-      const fmt = ctx.query.get("_outputFormat");
-      if (fmt && !OUTPUT_FORMATS.includes(fmt)) throw new FhirError(400, `_outputFormat must be application/fhir+ndjson`, { code: "not-supported" });
-      let since = null;
-      if (ctx.query.get("_since")) {
-        const t = Date.parse(ctx.query.get("_since"));
-        if (Number.isNaN(t) || !/^\d{4}-\d{2}-\d{2}T/.test(ctx.query.get("_since"))) throw new FhirError(400, "_since must be a FHIR instant (e.g. 2026-01-01T00:00:00Z)", { code: "invalid" });
-        since = new Date(t).toISOString();
-      }
-      const types = exportTypes(ctx, client, level);
-      const running = [...jobs.values()].filter((j) => j.keyId === client.id && j.status === "in-progress").length;
-      if (running >= MAX_ACTIVE_PER_CLIENT) throw new FhirError(429, `This client already has ${running} exports running; wait for one to finish`, { code: "throttled", headers: { "Retry-After": "30" } });
-      const base = baseUrl(ctx);
-      const job = {
-        id: uuid2(),
-        keyId: client.id,
-        level,
-        types,
-        since,
-        request: `${base}${level === "patient" ? "/Patient" : ""}/$export${ctx.query.toString() ? "?" + ctx.query.toString() : ""}`,
-        transactionTime: db3.now(),
-        status: "in-progress",
-        progress: "queued",
-        outputs: [],
-        errors: [],
-        expiresAt: null,
-        base,
-        downloaded: {},
-        massChecked: false
-      };
-      jobs.set(job.id, job);
-      save(job);
-      audit3.log({ user: client.actor, action: "fhir.export.kickoff", entity: "fhir_export", entityId: job.id, ip: ctx.ip, details: { client: client.prefix, level, types, since: !!since } });
-      later(() => {
-        run2(job, client, ctx.ip).catch(() => {
-        });
-      });
-      send(ctx.res, 202, outcome([{ severity: "information", code: "informational", diagnostics: `Export ${job.id} accepted; poll the Content-Location URL for its status.` }]), { "Content-Location": `${base}/$export-status/${job.id}` });
-    }
-    async function run2(job, client, ip) {
-      const jobDir = path.join(dir(), job.id);
-      try {
-        fs.mkdirSync(jobDir, { recursive: true, mode: 448 });
-        const patients = /* @__PURE__ */ new Set();
-        const omitted = /* @__PURE__ */ new Set();
-        let total = 0;
-        for (const type of job.types) {
-          if (!jobs.has(job.id)) return;
-          job.progress = `exporting ${type}`;
-          const d = R.DEFS[type];
-          const coverage = disclosure.fhirCoverage({ cacheKey: client.id, recipients: client.recipients, purposeOfUse: client.purpose, resourceType: type });
-          const filter = R.where(type, new URLSearchParams(), { since: job.since });
-          const lines = [];
-          const inFile = {};
-          for (let offset = 0; ; offset += PAGE) {
-            const rows = R.page(type, filter, { count: PAGE, offset });
-            for (const row of rows) {
-              if (d.phi && !coverage.has(row._cid)) {
-                omitted.add(row._cid);
-                continue;
-              }
-              const r = R.toResource(type, row);
-              if (!r || d.keep && !d.keep(r.full, client)) continue;
-              lines.push(JSON.stringify(r.resource));
-              if (d.phi) {
-                inFile[row._cid] = (inFile[row._cid] || 0) + 1;
-                patients.add(row._cid);
-              }
-            }
-            if (rows.length < PAGE) break;
-            await new Promise((res) => later(res));
-          }
-          if (lines.length) {
-            const file2 = `${type}.ndjson`;
-            fs.writeFileSync(path.join(jobDir, file2 + ".enc"), encrypt3(lines.join("\n") + "\n"), { mode: 384 });
-            job.outputs.push({ type, file: file2, count: lines.length, patients: d.phi ? inFile : null });
-            total += lines.length;
-          }
-        }
-        if (!jobs.has(job.id)) return;
-        const phi = job.types.some((t) => R.DEFS[t].phi);
-        if (phi) {
-          const issues = [{ severity: "information", code: "informational", diagnostics: `42 CFR \xA72.32 notice: ${disclosure.notice().text}` }];
-          if (omitted.size) issues.push({ severity: "warning", code: "suppressed", diagnostics: `${omitted.size} patient(s) were left out of this export: no active consent covers ${client.recipient} for this purpose of use, or the patient has an agreed restriction.` });
-          const oo = { ...outcome(issues), meta: { security: PART2_SECURITY } };
-          fs.writeFileSync(path.join(jobDir, "OperationOutcome.ndjson.enc"), encrypt3(JSON.stringify(oo) + "\n"), { mode: 384 });
-          job.errors.push({ type: "OperationOutcome", file: "OperationOutcome.ndjson", count: 1 });
-        }
-        audit3.log({ user: client.actor, action: "fhir.export.complete", entity: "fhir_export", entityId: job.id, ip, details: { client: client.prefix, types: job.types, resources: total, patients: patients.size, omitted_patients: omitted.size } });
-        job.status = "complete";
-        job.progress = "complete";
-        job.expiresAt = Date.now() + TTL_MS;
-        save(job);
-      } catch (e) {
-        job.status = "error";
-        job.message = "The export failed on the server";
-        job.expiresAt = Date.now() + TTL_MS;
-        job.outputs = [];
-        job.errors = [];
-        try {
-          fs.rmSync(jobDir, { recursive: true, force: true });
-        } catch {
-        }
-        if (jobs.has(job.id)) save(job);
-        console.error(`[suds] FHIR export ${job.id} failed:`, e.message);
-        audit3.log({ user: client.actor, action: "fhir.export.failed", entity: "fhir_export", entityId: job.id, ip, success: false, details: { message: String(e.message).slice(0, 200) } });
-      }
-    }
-    function ownJob(ctx, client) {
-      sweep();
-      const j = jobs.get(ctx.params.id);
-      if (!j || j.keyId !== client.id) throw new FhirError(404, "No such export (it may have expired or been deleted)", { code: "not-found" });
-      return j;
-    }
-    function status(ctx, client) {
-      const j = ownJob(ctx, client);
-      if (j.status === "in-progress") {
-        ctx.res.writeHead(202, { "X-Progress": j.progress, "Retry-After": "2", "Content-Length": 0 });
-        ctx.res.end();
-        return;
-      }
-      if (j.status === "error") throw new FhirError(500, j.message, { code: "exception" });
-      const url = (f) => `${j.base}/$export-file/${j.id}/${f.file}`;
-      const manifest = {
-        transactionTime: j.transactionTime,
-        request: j.request,
-        requiresAccessToken: true,
-        output: j.outputs.map((f) => ({ type: f.type, url: url(f), count: f.count })),
-        error: j.errors.map((f) => ({ type: f.type, url: url(f) })),
-        extension: { "urn:suds:part2": {
-          security: j.types.some((t) => R.DEFS[t].phi) ? PART2_SECURITY : [],
-          notice: j.types.some((t) => R.DEFS[t].phi) ? disclosure.notice().text : void 0,
-          expires: new Date(j.expiresAt).toISOString(),
-          consent_checked_at: "download"
-        } }
-      };
-      const body = JSON.stringify(manifest);
-      ctx.res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Content-Length": import_buffer.Buffer.byteLength(body), Expires: new Date(j.expiresAt).toUTCString() });
-      ctx.res.end(body);
-    }
-    function cancel(ctx, client) {
-      const j = ownJob(ctx, client);
-      removeJob(j.id);
-      audit3.log({ user: client.actor, action: "fhir.export.delete", entity: "fhir_export", entityId: j.id, ip: ctx.ip, details: { client: client.prefix, status: j.status } });
-      send(ctx.res, 202, outcome([{ severity: "information", code: "informational", diagnostics: `Export ${j.id} deleted` }]));
-    }
-    function file(ctx, client) {
-      const j = ownJob(ctx, client);
-      const f = [...j.outputs, ...j.errors].find((x) => x.file === ctx.params.file);
-      if (j.status !== "complete" || !f) throw new FhirError(404, "No such export file", { code: "not-found" });
-      const who = f.patients ? Object.keys(f.patients) : [];
-      let perClient = null;
-      if (who.length) {
-        const coverage = disclosure.fhirCoverage({ cacheKey: client.id, recipients: client.recipients, purposeOfUse: client.purpose, resourceType: f.type });
-        const lapsed = who.filter((cid) => !coverage.has(cid));
-        if (lapsed.length) {
-          audit3.log({ user: client.actor, action: "fhir.export.download.refused", entity: "fhir_export", entityId: j.id, ip: ctx.ip, success: false, details: { client: client.prefix, type: f.type, lapsed_patients: lapsed.length } });
-          throw new FhirError(410, "Since this export was built, a patient in this file is no longer covered by a consent to this recipient (revoked, expired, or a restriction was agreed). The file will not be released; start a new export.", { code: "business-rule" });
-        }
-        if (!j.downloaded[f.file]) perClient = new Map(who.map((cid) => [cid, { consentId: coverage.get(cid), what: `FHIR bulk export ${j.id}: ${f.type} (${f.patients[cid]})` }]));
-      }
-      let body;
-      try {
-        body = decrypt3(fs.readFileSync(path.join(dir(), j.id, f.file + ".enc"), "utf8"));
-      } catch {
-        throw new FhirError(410, "This export file can no longer be read (expired, or the server key changed); start a new export", { code: "not-found" });
-      }
-      if (perClient) {
-        disclosure.recordFhir({ perClient, recipient: client.recipient, purposeOfUse: client.purpose, sourceRef: `fhir-export:${j.id}`, user: client.actor, ip: ctx.ip });
-        if (!j.massChecked) {
-          j.massChecked = true;
-          const everyone = new Set(j.outputs.flatMap((o) => o.patients ? Object.keys(o.patients) : []));
-          require_incidents().maybeMassExport({ clients: everyone.size, kind: "fhir-bulk", user: client.actor });
-        }
-      }
-      if (!j.downloaded[f.file]) {
-        j.downloaded[f.file] = (/* @__PURE__ */ new Date()).toISOString();
-        save(j);
-      }
-      audit3.log({ user: client.actor, action: "fhir.export.download", entity: "fhir_export", entityId: j.id, ip: ctx.ip, details: { client: client.prefix, type: f.type, count: f.count, patients: who.length, accounted: !!perClient } });
-      ctx.res.writeHead(200, { "Content-Type": FHIR_NDJSON, "Content-Length": import_buffer.Buffer.byteLength(body) });
-      ctx.res.end(body);
-    }
-    module.exports = { kickoff, status, cancel, file, sweep, restore, TTL_MS, _jobs: jobs, _resetForTests: () => {
-      jobs.clear();
-      restored = false;
-    } };
-  }
-});
-
-// server/routes/fhir.js
-var require_fhir = __commonJS({
-  "server/routes/fhir.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var auth3 = require_auth();
-    var audit3 = require_audit();
-    var config = require_config();
-    var disclosure = require_disclosure();
-    var { rateLimit } = require_app2();
-    var { HttpError: HttpError3, badRequest, notFound } = require_http();
-    var { validate } = require_validate();
-    var { uuid: uuid2 } = require_crypto();
-    var C = require_clients2();
-    var R = require_resources();
-    var bulk = require_bulk();
-    var { FhirError, FHIR_VERSION, PART2_SECURITY, outcome, send, sendError, baseUrl } = require_common();
-    function fhir(fn, { open: open2 = false } = {}) {
-      return async (ctx) => {
-        try {
-          let client = null;
-          if (!open2) {
-            client = C.authenticate(ctx);
-            if (!rateLimit(`fhirclient:${client.id}`, client.rateLimit, 6e4)) throw new FhirError(429, `Rate limit of ${client.rateLimit} requests a minute exceeded`, { code: "throttled", headers: { "Retry-After": "60" } });
-          }
-          await fn(ctx, client);
-        } catch (e) {
-          if (e instanceof FhirError || e instanceof HttpError3) sendError(ctx.res, e.status, e.message, { code: e.code, headers: e.headers || {} });
-          else {
-            console.error(`[suds] ${ctx.method} ${ctx.path}:`, e);
-            try {
-              audit3.log({ user: null, action: "server.error", ip: ctx.ip, success: false, details: { path: ctx.path.slice(0, 120), message: String(e.message).slice(0, 300) } });
-            } catch {
-            }
-            sendError(ctx.res, 500, "Internal server error");
-          }
-        }
-      };
-    }
-    var count = (ctx) => {
-      const raw = ctx.query.get("_count");
-      if (raw === null) return R.DEFAULT_COUNT;
-      const n = Number(raw);
-      if (!Number.isInteger(n) || n < 0) throw new FhirError(400, "_count must be a whole number", { code: "invalid" });
-      return Math.min(n, R.MAX_COUNT);
-    };
-    var offsetOf = (ctx) => {
-      const n = Number(ctx.query.get("_offset") || 0);
-      if (!Number.isInteger(n) || n < 0) throw new FhirError(400, "_offset must be a whole number", { code: "invalid" });
-      return n;
-    };
-    var typeOf = (ctx) => {
-      const t = ctx.params.type;
-      if (!R.DEFS[t]) throw new FhirError(404, `Resource type "${String(t).slice(0, 60)}" is not served here`, { code: "not-supported" });
-      return t;
-    };
-    var coverageFor = (client, type) => disclosure.fhirCoverage({ cacheKey: client.id, recipients: client.recipients, purposeOfUse: client.purpose, resourceType: type });
-    var requestId = () => uuid2();
-    function account({ ctx, client, type, interaction, perClient, returned, omittedPatients, reqId }) {
-      const what = (n) => `FHIR ${interaction} ${type}: ${n} resource${n === 1 ? "" : "s"}`;
-      for (const e of perClient.values()) e.what = what(e.n);
-      disclosure.recordFhir({ perClient, recipient: client.recipient, purposeOfUse: client.purpose, sourceRef: `fhir:${reqId}`, user: client.actor, ip: ctx.ip });
-      audit3.log({
-        user: client.actor,
-        action: `fhir.${interaction}`,
-        entity: type,
-        entityId: interaction === "read" ? ctx.params.id : null,
-        clientId: interaction === "read" && perClient.size === 1 ? [...perClient.keys()][0] : null,
-        ip: ctx.ip,
-        details: { client: client.prefix, request: reqId, params: [...new Set(ctx.query.keys())], returned, patients: perClient.size, omitted_patients: omittedPatients }
-      });
-    }
-    function search(ctx, client) {
-      const type = typeOf(ctx);
-      C.requireScope(ctx, client, type);
-      const d = R.DEFS[type];
-      const n = count(ctx), offset = offsetOf(ctx);
-      const filter = R.where(type, ctx.query);
-      const rows = R.page(type, filter, { count: n + 1, offset });
-      const hasNext = rows.length > n;
-      if (hasNext) rows.length = n;
-      const coverage = d.phi ? coverageFor(client, type) : null;
-      const base = baseUrl(ctx);
-      const entries = [];
-      const perClient = /* @__PURE__ */ new Map();
-      const omitted = /* @__PURE__ */ new Set();
-      let omittedRows = 0;
-      for (const row of rows) {
-        if (d.phi && !coverage.has(row._cid)) {
-          omittedRows++;
-          omitted.add(row._cid);
-          continue;
-        }
-        const r = R.toResource(type, row);
-        if (!r || d.keep && !d.keep(r.full, client)) continue;
-        entries.push({ fullUrl: `${base}/${type}/${r.resource.id}`, resource: r.resource, search: { mode: "match" } });
-        if (d.phi) {
-          const e = perClient.get(row._cid) || { consentId: coverage.get(row._cid), n: 0 };
-          e.n++;
-          perClient.set(row._cid, e);
-        }
-      }
-      const link = (off) => {
-        const q = new URLSearchParams(ctx.query);
-        q.set("_count", String(n));
-        if (off) q.set("_offset", String(off));
-        else q.delete("_offset");
-        return `${base}/${type}?${q}`;
-      };
-      const links = [{ relation: "self", url: link(offset) }];
-      if (hasNext) links.push({ relation: "next", url: link(offset + n) });
-      if (offset > 0) links.push({ relation: "previous", url: link(Math.max(0, offset - n)) });
-      const bundle = { resourceType: "Bundle", id: uuid2(), meta: { lastUpdated: (/* @__PURE__ */ new Date()).toISOString() }, type: "searchset", link: links, entry: entries };
-      if (d.phi) {
-        bundle.meta.security = PART2_SECURITY;
-        const issues = [{ severity: "information", code: "informational", diagnostics: `42 CFR \xA72.32 notice: ${disclosure.notice().text}` }];
-        if (R.identifying(type, ctx.query)) issues.push({ severity: "information", code: "suppressed", diagnostics: `Results include only patients whose active consent covers ${client.recipient} for this purpose of use.` });
-        else if (omitted.size) issues.push({ severity: "warning", code: "suppressed", diagnostics: `${omitted.size} patient(s) (${omittedRows} ${type} resource(s)) on this page were withheld: no active consent covers ${client.recipient} for this purpose of use, or the patient has an agreed restriction.` });
-        bundle.entry.push({ resource: { ...outcome(issues), id: uuid2() }, search: { mode: "outcome" } });
-        const reqId = requestId();
-        account({ ctx, client, type, interaction: "search", perClient, returned: entries.length, omittedPatients: R.identifying(type, ctx.query) ? void 0 : omitted.size, reqId });
-      } else {
-        audit3.log({ user: client.actor, action: "fhir.search", entity: type, ip: ctx.ip, details: { client: client.prefix, params: [...new Set(ctx.query.keys())], returned: entries.length } });
-      }
-      send(ctx.res, 200, bundle);
-    }
-    function read(ctx, client) {
-      const type = typeOf(ctx);
-      C.requireScope(ctx, client, type);
-      const d = R.DEFS[type];
-      const id = String(ctx.params.id || "");
-      if (!/^[A-Za-z0-9\-.]{1,64}$/.test(id)) throw new FhirError(404, "Not found", { code: "not-found" });
-      const [row] = R.page(type, { sql: "_fid = ?", params: [id] }, { count: 1, offset: 0 });
-      const withheld = row && d.phi && !coverageFor(client, type).has(row._cid);
-      const r = row && !withheld ? R.toResource(type, row) : null;
-      if (!r || d.keep && !d.keep(r.full, client)) {
-        if (withheld) audit3.log({ user: client.actor, action: "fhir.read.withheld", entity: type, entityId: id, clientId: row._cid, ip: ctx.ip, success: false, details: { client: client.prefix, reason: "no covering consent" } });
-        throw new FhirError(404, `${type}/${id} is not available`, { code: "not-found" });
-      }
-      if (d.phi) {
-        const perClient = /* @__PURE__ */ new Map([[row._cid, { consentId: coverageFor(client, type).get(row._cid), n: 1 }]]);
-        account({ ctx, client, type, interaction: "read", perClient, returned: 1, omittedPatients: void 0, reqId: requestId() });
-      } else {
-        audit3.log({ user: client.actor, action: "fhir.read", entity: type, entityId: id, ip: ctx.ip, details: { client: client.prefix } });
-      }
-      send(ctx.res, 200, r.resource, { ETag: `W/"${Date.parse(r.resource.meta?.lastUpdated || 0) || 0}"` });
-    }
-    var PARAM_TYPES = {
-      _id: "token",
-      _lastUpdated: "date",
-      patient: "reference",
-      date: "date",
-      authored: "date",
-      "authored-on": "date",
-      identifier: "token",
-      family: "string",
-      given: "string",
-      birthdate: "date",
-      status: "token",
-      category: "token",
-      name: "string",
-      active: "token",
-      "address-city": "string",
-      "address-postalcode": "string",
-      "service-category": "token"
-    };
-    var PROFILES = { Patient: "us-core-patient", Encounter: "us-core-encounter", Organization: "us-core-organization", Location: "us-core-location" };
-    function capability(ctx) {
-      const base = baseUrl(ctx);
-      return {
-        resourceType: "CapabilityStatement",
-        id: "suds",
-        status: "active",
-        date: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
-        publisher: "SUDS",
-        kind: "instance",
-        instantiates: ["http://hl7.org/fhir/uv/bulkdata/CapabilityStatement/bulk-data"],
-        software: { name: "SUDS", version: config.version },
-        implementation: { description: "SUDS read-only FHIR R4 API (42 CFR Part 2: consent-gated)", url: base },
-        fhirVersion: FHIR_VERSION,
-        format: ["json"],
-        implementationGuide: ["http://hl7.org/fhir/us/core/ImplementationGuide/hl7.fhir.us.core", "http://hl7.org/fhir/uv/bulkdata/ImplementationGuide/hl7.fhir.uv.bulkdata"],
-        rest: [{
-          mode: "server",
-          documentation: "Read-only. Resources about a patient are returned only while the patient has an active consent naming the calling client's organisation for its purpose of use (42 CFR Part 2); other patients are omitted and counted in an OperationOutcome entry. Unknown search parameters are rejected.",
-          security: {
-            cors: false,
-            service: [{ coding: [{ system: "http://terminology.hl7.org/CodeSystem/restful-security-service", code: "SMART-on-FHIR", display: "SMART-on-FHIR" }], text: "OAuth2 client credentials (SMART Backend Services): private_key_jwt with RS384 or ES384, or client_secret_post / client_secret_basic where the client allows it. Data requests take the access token only." }],
-            extension: [{ url: "http://fhir-registry.smarthealthit.org/StructureDefinition/oauth-uris", extension: [{ url: "token", valueUri: `${base}/auth/token` }] }]
-          },
-          resource: Object.keys(R.DEFS).map((type) => ({
-            type,
-            ...PROFILES[type] ? { supportedProfile: [R.US_CORE + PROFILES[type]] } : {},
-            interaction: [{ code: "read" }, { code: "search-type" }],
-            searchParam: R.searchParams(type).filter((p) => !p.includes(":")).map((name) => ({ name, type: PARAM_TYPES[name] || "token" })),
-            ...type === "Patient" ? { operation: [{ name: "export", definition: "http://hl7.org/fhir/uv/bulkdata/OperationDefinition/patient-export" }] } : {}
-          })),
-          operation: [{ name: "export", definition: "http://hl7.org/fhir/uv/bulkdata/OperationDefinition/export" }]
-        }]
-      };
-    }
-    async function tokenRequest(ctx) {
-      const ip = ctx.ip;
-      const reply = (status, body) => {
-        const s = JSON.stringify(body);
-        ctx.res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": import_buffer.Buffer.byteLength(s), "Cache-Control": "no-store", Pragma: "no-cache" });
-        ctx.res.end(s);
-      };
-      if (!rateLimit(`fhirtoken:${ip}`, 30, 6e4)) return reply(429, { error: "slow_down", error_description: "Too many token requests" });
-      const ct = String(ctx.headers["content-type"] || "");
-      const form = ct.includes("application/json") ? new URLSearchParams(Object.entries(ctx.body || {}).map(([k, v]) => [k, String(v)])) : new URLSearchParams((ctx.rawBody || import_buffer.Buffer.alloc(0)).toString("utf8"));
-      let clientId = form.get("client_id");
-      let clientSecret = form.get("client_secret");
-      const basic = String(ctx.headers.authorization || "");
-      if (basic.startsWith("Basic ")) {
-        const [id, ...rest] = import_buffer.Buffer.from(basic.slice(6), "base64").toString("utf8").split(":");
-        clientId = decodeURIComponent(id || "");
-        clientSecret = decodeURIComponent(rest.join(":"));
-      }
-      if (form.get("grant_type") !== "client_credentials") return reply(400, { error: "unsupported_grant_type", error_description: "Only grant_type=client_credentials is supported" });
-      try {
-        return reply(200, await C.issueToken({ clientId, clientSecret, assertionType: form.get("client_assertion_type"), assertion: form.get("client_assertion"), scope: form.get("scope"), tokenUrl: `${baseUrl(ctx)}/auth/token` }, ctx));
-      } catch (e) {
-        if (e.oauth) return reply(e.status, e.oauth);
-        throw e;
-      }
-    }
-    var KEY_FIELDS = { jwks: { type: "string", maxLen: 4e4 }, jwks_url: { type: "string", maxLen: 500 }, jwt_only: { type: "boolean" } };
-    var asBad = (e) => e instanceof FhirError ? badRequest(e.message, e.fields ? { fields: e.fields } : void 0) : e;
-    var jwksOf = (body) => body && body.jwks && typeof body.jwks === "object" ? JSON.stringify(body.jwks) : body?.jwks;
-    function adminCreate(ctx) {
-      const v = validate({ ...ctx.body, jwks: jwksOf(ctx.body) }, {
-        name: { type: "string", required: true, maxLen: 100 },
-        recipient: { type: "string", required: true, maxLen: 200 },
-        aliases: { type: "string", maxLen: 2e3 },
-        purpose: { type: "string", enum: Object.keys(disclosure.FHIR_PURPOSES) },
-        scopes: { type: "array", required: true, maxLen: 20 },
-        rate_limit: { type: "number", integer: true, min: 1, max: 6e3 },
-        ...KEY_FIELDS
-      });
-      let created;
-      try {
-        created = C.create({ name: v.name, recipient: v.recipient, aliases: v.aliases || "", purpose: v.purpose || "TREAT", scopes: v.scopes, rate_limit: v.rate_limit, jwks: v.jwks || void 0, jwks_url: v.jwks_url || void 0, jwt_only: v.jwt_only }, ctx.user);
-      } catch (e) {
-        throw asBad(e);
-      }
-      audit3.log({ user: ctx.user, action: "fhir_client.create", entity: "api_key", entityId: created.id, ip: ctx.ip, details: { name: v.name, purpose: v.purpose || "TREAT", scopes: created.scopes, rate_limit: v.rate_limit || C.DEFAULT_RATE_LIMIT, jwt: !!(v.jwks || v.jwks_url), jwt_only: !!created.jwt_only } });
-      ctx.status = 201;
-      return {
-        id: created.id,
-        key: created.key,
-        scopes: created.scopes,
-        jwt_only: created.jwt_only,
-        note: created.key ? "Store this key now; it will not be shown again. Use it as client_secret (client_id is the id above) at the token URL to get an access token; it is not itself a bearer token." : "This client authenticates only with a JWT signed by its registered key (private_key_jwt); client_id is the id above."
-      };
-    }
-    function adminUpdate(ctx) {
-      const v = validate({ ...ctx.body, jwks: jwksOf(ctx.body) }, { aliases: { type: "string", maxLen: 2e3 }, ...KEY_FIELDS });
-      const patch = {};
-      for (const k of ["aliases", "jwks", "jwks_url", "jwt_only"]) if (ctx.body && k in ctx.body) patch[k] = ctx.body[k] === null ? null : v[k] ?? "";
-      let out2;
-      try {
-        out2 = C.update(ctx.params.id, patch);
-      } catch (e) {
-        throw asBad(e);
-      }
-      if (!out2) throw notFound();
-      audit3.log({ user: ctx.user, action: "fhir_client.update", entity: "api_key", entityId: ctx.params.id, ip: ctx.ip, details: { changed: Object.keys(patch), jwt_only: out2.auth.jwt_only, keys: out2.auth.jwks_keys.length, jwks_url: !!out2.auth.jwks_url } });
-      return out2;
-    }
-    function adminAliasPreview(ctx) {
-      const v = validate(ctx.body, { recipient: { type: "string", maxLen: 200 }, aliases: { type: "string", maxLen: 2e3 }, purpose: { type: "string", enum: Object.keys(disclosure.FHIR_PURPOSES) } });
-      const purpose = v.purpose || "TREAT";
-      const aliases = C.splitAliases(v.aliases || "").slice(0, 20);
-      const dir = C.directoryNames();
-      const covered = (names) => disclosure.fhirCoverage({ cacheKey: "alias-preview", recipients: names, purposeOfUse: purpose }).size;
-      const recipient = String(v.recipient || "").trim();
-      const rows = aliases.map((alias) => {
-        const problem = C.aliasProblem(alias, dir);
-        return { alias, ok: !problem, problem, clients: covered([alias]) };
-      });
-      const valid = aliases.filter((a, i) => rows[i].ok);
-      const out2 = {
-        purpose,
-        recipient: recipient ? { name: recipient, clients: covered([recipient]) } : null,
-        aliases: rows,
-        total: recipient || valid.length ? covered([recipient, ...valid].filter(Boolean)) : 0
-      };
-      audit3.log({ user: ctx.user, action: "fhir_client.alias_preview", ip: ctx.ip, details: { purpose, aliases: aliases.length, rejected: rows.filter((r) => !r.ok).length, total: out2.total } });
-      return out2;
-    }
-    module.exports = (r) => {
-      r.get("/fhir/R4/metadata", fhir((ctx) => send(ctx.res, 200, capability(ctx)), { open: true }));
-      r.get("/fhir/R4/.well-known/smart-configuration", fhir((ctx) => {
-        const base = baseUrl(ctx);
-        const body = {
-          token_endpoint: `${base}/auth/token`,
-          grant_types_supported: ["client_credentials"],
-          token_endpoint_auth_methods_supported: ["private_key_jwt", "client_secret_post", "client_secret_basic"],
-          token_endpoint_auth_signing_alg_values_supported: Object.keys(require_jwt().ALGS),
-          scopes_supported: ["system/*.read", ...Object.keys(R.DEFS).map((t) => `system/${t}.read`)],
-          capabilities: ["client-confidential-asymmetric", "client-confidential-symmetric"]
-        };
-        const s = JSON.stringify(body);
-        ctx.res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Content-Length": import_buffer.Buffer.byteLength(s) });
-        ctx.res.end(s);
-      }, { open: true }));
-      r.post("/fhir/R4/auth/token", fhir(tokenRequest, { open: true }));
-      r.get("/fhir/R4/\\$export", fhir((ctx, client) => bulk.kickoff(ctx, client, "system")));
-      r.get("/fhir/R4/Patient/\\$export", fhir((ctx, client) => bulk.kickoff(ctx, client, "patient")));
-      r.get("/fhir/R4/\\$export-status/:id", fhir((ctx, client) => bulk.status(ctx, client)));
-      r.delete("/fhir/R4/\\$export-status/:id", fhir((ctx, client) => bulk.cancel(ctx, client)));
-      r.get("/fhir/R4/\\$export-file/:id/:file", fhir((ctx, client) => bulk.file(ctx, client)));
-      r.get("/fhir/R4/:type", fhir(search));
-      r.get("/fhir/R4/:type/:id", fhir(read));
-      r.get("/api/admin/fhir-clients", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), () => ({
-        clients: C.list(),
-        purposes: Object.entries(disclosure.FHIR_PURPOSES).map(([code, p]) => ({ code, label: p.display })),
-        resource_types: Object.entries(C.RESOURCE_TYPES).map(([type, phi]) => ({ type, phi })),
-        token_path: "/fhir/R4/auth/token",
-        base_path: "/fhir/R4"
-      }));
-      r.post("/api/admin/fhir-clients", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), adminCreate);
-      r.post("/api/admin/fhir-clients/alias-preview", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), adminAliasPreview);
-      r.patch("/api/admin/fhir-clients/:id", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), adminUpdate);
-      r.delete("/api/admin/fhir-clients/:id", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), (ctx) => {
-        if (!C.revoke(ctx.params.id)) throw notFound();
-        audit3.log({ user: ctx.user, action: "fhir_client.revoke", entity: "api_key", entityId: ctx.params.id, ip: ctx.ip });
-        return { ok: true };
-      });
-    };
-  }
-});
-
-// server/form-starters.js
-var require_form_starters = __commonJS({
-  "server/form-starters.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var audit3 = require_audit();
-    var { uuid: uuid2 } = require_crypto();
-    var text = (key, label, opts = {}) => ({ key, label, type: "text", ...opts });
-    var area = (key, label, opts = {}) => ({ key, label, type: "textarea", ...opts });
-    var date = (key, label, opts = {}) => ({ key, label, type: "date", ...opts });
-    var check = (key, label, opts = {}) => ({ key, label, type: "checkbox", ...opts });
-    var section = (key, label) => ({ key, label, type: "section" });
-    var TEMPLATES = [
-      {
-        key: "part2_consent",
-        name: "Consent to release information (42 CFR Part 2)",
-        category: "consent",
-        description: "Written consent before any substance use disorder record is shared. Required elements per 42 CFR \xA72.31.",
-        instructions: "Complete with the client, read the redisclosure notice aloud, and record the signed copy against the client. Have your county counsel review the wording before first use.",
-        fields: [
-          section("sec_client", "Client"),
-          text("client_name", "Client name", { required: true }),
-          date("client_dob", "Date of birth"),
-          section("sec_release", "What may be released, to whom, and why"),
-          text("discloser", "Who may make the disclosure (this program, or the named program or person)", { required: true }),
-          text("recipient", 'Information may be released to (name and agency, or a class \u2014 for a treatment, payment and operations consent: "my treating providers, health plans, third-party payers, and people helping to operate this program")', { required: true }),
-          area("purpose", "Purpose of the disclosure", { required: true, help: 'Be specific \u2014 "for treatment coordination", "at the request of the patient", or for a single TPO consent "for treatment, payment, and health care operations"; "for any purpose" is not. SUD counseling notes, and use in a legal proceeding, each need a separate consent of their own.' }),
-          {
-            key: "info",
-            label: "Information to be released",
-            type: "select",
-            required: true,
-            options: ["Referral summary only", "Diagnosis and medication-assisted treatment status", "Attendance and progress", "Assessment and treatment plan", "Full record"]
-          },
-          area("info_other", "If other, describe exactly what will be released"),
-          section("sec_limits", "Limits"),
-          date("expires", "This consent expires on", { required: true, help: "Part 2 requires an expiry date, event or condition." }),
-          area("expires_event", "Or, the event or condition that ends it"),
-          check("redisclosure", "The redisclosure notice below was explained to the client", { required: true }),
-          section("sec_rights", "Client rights"),
-          check("may_revoke", "This consent states that the client may revoke it at any time in writing, and how, except to the extent the program or another lawful holder has already acted in reliance on it", { required: true }),
-          check("no_condition", "This consent states the consequences of refusing to sign (including that treatment, payment and eligibility do not depend on signing, where that is so)", { required: true }),
-          check("redisclosure_hipaa", "This consent states that records disclosed to a HIPAA covered entity or business associate may be redisclosed as HIPAA permits, except for use in proceedings against the client"),
-          section("sec_sign", "Signatures"),
-          text("client_sig", "Client signature", { required: true }),
-          date("client_sig_date", "Date", { required: true }),
-          text("rep_sig", "Personal representative (if applicable)"),
-          text("rep_relationship", "Relationship and authority"),
-          text("witness_sig", "Witness / staff signature"),
-          date("witness_date", "Date")
-        ],
-        footer: `NOTICE TO RECIPIENT (42 CFR \xA72.32): ${require_constants().PART2_REDISCLOSURE_NOTICE}`
-      },
-      {
-        key: "consent_revocation",
-        name: "Revocation of consent",
-        category: "consent",
-        description: "Records that a client has withdrawn a release of information, and when.",
-        instructions: "Complete as soon as the client tells you, then revoke the consent in SUDS so any open referrals relying on it are flagged.",
-        fields: [
-          text("client_name", "Client name", { required: true }),
-          text("consent_description", "Consent being revoked (recipient and date signed)", { required: true }),
-          date("effective", "Revoked with effect from", { required: true }),
-          area("reason", "Reason (optional \u2014 the client does not have to give one)"),
-          check("told_already_shared", "The client was told that information already shared in reliance on the consent cannot be recalled"),
-          text("client_sig", "Client signature"),
-          date("client_sig_date", "Date"),
-          text("staff_sig", "Staff signature", { required: true }),
-          date("staff_date", "Date", { required: true })
-        ]
-      },
-      {
-        key: "intake_face_sheet",
-        name: "Intake face sheet",
-        category: "intake",
-        description: "The first page of a client file: who they are, how to reach them, and what brought them in.",
-        instructions: "Most of this is pre-filled from the client record. Print it for a paper file, or fill it in on a phone during an outreach contact and enter it afterwards.",
-        fields: [
-          section("sec_who", "Client"),
-          text("client_name", "Name", { required: true }),
-          text("preferred_name", "Preferred name"),
-          date("client_dob", "Date of birth"),
-          text("pronouns", "Pronouns"),
-          text("phone", "Phone"),
-          check("ok_to_text", "OK to text"),
-          check("ok_to_voicemail", "OK to leave a voicemail"),
-          text("address", "Address"),
-          text("emergency_contact", "Emergency contact"),
-          section("sec_need", "Presenting need"),
-          area("presenting", "What brought them in today", { required: true }),
-          text("primary_substance", "Primary substance"),
-          text("housing_status", "Housing situation"),
-          text("insurance", "Insurance"),
-          check("overdose_history", "History of overdose"),
-          check("naloxone_given", "Naloxone provided today"),
-          section("sec_next", "Next steps"),
-          area("plan", "Immediate plan"),
-          date("follow_up", "Follow-up date"),
-          text("worker", "Navigator")
-        ]
-      },
-      {
-        key: "assistance_request",
-        name: "Client assistance request",
-        category: "assistance",
-        description: "Request for flexible funds \u2014 bus passes, identification documents, work clothes, a deposit.",
-        instructions: "Complete with the client, attach receipts to the completed form, and record the spending against the funding source in Funding & spending.",
-        fields: [
-          text("client_name", "Client name", { required: true }),
-          text("client_code", "Client code"),
-          { key: "category", label: "What is needed", type: "select", required: true, options: ["Transport (bus pass, fuel, fare)", "Identification documents", "Housing deposit or rent", "Clothing", "Phone or phone credit", "Medication or medical", "Food", "Other"] },
-          area("justification", "How this supports their recovery plan", { required: true }),
-          text("amount", "Amount requested", { required: true }),
-          text("vendor", "Vendor or provider"),
-          check("alternatives", "Other sources were checked first (Medicaid, CalFresh, housing programmes)"),
-          text("requested_by", "Requested by", { required: true }),
-          date("requested_on", "Date", { required: true }),
-          section("sec_approval", "Approval"),
-          text("approved_by", "Approved by"),
-          date("approved_on", "Date"),
-          area("approval_notes", "Notes")
-        ]
-      },
-      {
-        key: "naloxone_log",
-        name: "Naloxone distribution log",
-        category: "harm_reduction",
-        description: "A single distribution event, including community distribution with no identified client.",
-        instructions: "Use this for outreach and community events. Enter the totals in SUDS as a visit or service afterwards so they reach the funder report.",
-        fields: [
-          date("event_date", "Date", { required: true }),
-          text("location", "Location"),
-          text("event_name", "Event or outreach activity"),
-          text("kits", "Naloxone kits distributed", { required: true }),
-          text("strips", "Fentanyl test strips distributed"),
-          text("people", "People who received training"),
-          check("training_given", "Overdose recognition and response training was given"),
-          check("anonymous", "Recipients were anonymous (community distribution)"),
-          area("notes", "Notes"),
-          text("staff", "Staff", { required: true })
-        ]
-      }
-    ];
-    function installedKeys() {
-      try {
-        return JSON.parse(db3.getSetting("form_starters_installed", "[]"));
-      } catch {
-        return [];
-      }
-    }
-    function list() {
-      const installed = new Set(installedKeys());
-      return TEMPLATES.map((t) => ({ key: t.key, name: t.name, category: t.category, description: t.description, fields: t.fields.length, installed: installed.has(t.key) }));
-    }
-    function install({ keys = null, actor = null } = {}) {
-      const wanted = TEMPLATES.filter((t) => !keys || keys.includes(t.key));
-      const already = new Set(installedKeys());
-      const added = [];
-      db3.transaction(() => {
-        for (const t of wanted) {
-          if (already.has(t.key)) continue;
-          if (db3.one(`SELECT 1 FROM form_templates WHERE name=?`, t.name)) {
-            already.add(t.key);
-            continue;
-          }
-          const id = uuid2();
-          db3.run(
-            `INSERT INTO form_templates(id,name,description,category,version,fields_json,instructions,is_active,uploaded_by) VALUES(?,?,?,?,?,?,?,1,?)`,
-            id,
-            t.name,
-            t.description,
-            t.category,
-            "starter",
-            JSON.stringify(t.fields),
-            [t.instructions, t.footer].filter(Boolean).join("\n\n"),
-            actor
-          );
-          added.push({ key: t.key, id, name: t.name });
-          already.add(t.key);
-        }
-        db3.setSetting("form_starters_installed", JSON.stringify([...already]));
-      });
-      if (added.length) audit3.log({ user: actor ? { id: actor, username: "form-starters" } : { username: "form-starters" }, action: "forms.starters.install", details: { added: added.map((a) => a.key) } });
-      return { added, total: TEMPLATES.length };
-    }
-    module.exports = { TEMPLATES, list, install };
-  }
-});
-
-// server/routes/forms.js
-var require_forms = __commonJS({
-  "server/routes/forms.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth();
-    var audit3 = require_audit();
-    var C = require_constants();
-    var { badRequest, notFound } = require_http();
-    var { validate, paging } = require_validate();
-    var { uuid: uuid2, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
-    var M = require_clients_model();
-    var pdf = require_pdf();
-    var MAX_TEMPLATE_BYTES = 12 * 1024 * 1024;
-    var MAX_ATTACH_BYTES = 10 * 1024 * 1024;
-    var MAX_FIELDS = 150;
-    var FILE_TYPES = { "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx", "application/msword": "doc", "text/plain": "txt" };
-    function sniff(buf) {
-      if (buf.length > 4 && buf.toString("ascii", 0, 4) === "%PDF") return "application/pdf";
-      if (buf.length > 3 && buf[0] === 255 && buf[1] === 216 && buf[2] === 255) return "image/jpeg";
-      if (buf.length > 8 && buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71) return "image/png";
-      if (buf.length > 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return "image/webp";
-      if (buf.length > 4 && buf[0] === 80 && buf[1] === 75 && buf[2] === 3 && buf[3] === 4) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-      if (buf.length > 8 && buf[0] === 208 && buf[1] === 207 && buf[2] === 17 && buf[3] === 224) return "application/msword";
-      return null;
-    }
-    function fromDataUrl(v, maxBytes, label) {
-      if (typeof v !== "string" || !v) return null;
-      const m = /^data:([\w.+/-]+);base64,([A-Za-z0-9+/=\s]+)$/.exec(v);
-      const b642 = (m ? m[2] : v).replace(/\s+/g, "");
-      if (!/^[A-Za-z0-9+/=]+$/.test(b642)) throw badRequest(`${label} must be base64`);
-      const buf = import_buffer.Buffer.from(b642, "base64");
-      if (!buf.length) throw badRequest(`${label} is empty`);
-      if (buf.length > maxBytes) throw badRequest(`${label} is too large (max ${Math.round(maxBytes / 1024 / 1024)} MB)`);
-      const type = sniff(buf) || (m && m[1] === "text/plain" ? "text/plain" : null);
-      if (!type || !FILE_TYPES[type]) throw badRequest(`${label} must be a PDF, Word document, picture or text file`);
-      return { b64: b642, buf, type };
-    }
-    function cleanFields(list) {
-      if (!Array.isArray(list)) throw badRequest("fields must be a list");
-      if (list.length > MAX_FIELDS) throw badRequest(`At most ${MAX_FIELDS} fields`);
-      const keys = /* @__PURE__ */ new Set();
-      const out2 = [];
-      list.forEach((f, i) => {
-        if (!f || typeof f !== "object") throw badRequest(`field ${i + 1} is invalid`);
-        const type = C.FORM_FIELD_TYPES.includes(f.type) ? f.type : "text";
-        const label = String(f.label || "").trim().slice(0, 200);
-        if (!label) throw badRequest(`field ${i + 1} needs a label`);
-        let key = String(f.key || label).trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60) || `field_${i + 1}`;
-        if (type !== "section" && type !== "note") {
-          let k = key, n = 2;
-          while (keys.has(k)) k = `${key}_${n++}`;
-          key = k;
-          keys.add(key);
-        }
-        const o = { key, label, type };
-        if (f.required && !["section", "note", "checkbox"].includes(type)) o.required = true;
-        if (type === "select") o.options = String(Array.isArray(f.options) ? f.options.join(",") : f.options || "").split(/[,\n]/).map((x) => x.trim()).filter(Boolean).slice(0, 50);
-        if (f.autofill && C.FORM_AUTOFILL.includes(f.autofill)) o.autofill = f.autofill;
-        if (f.help) o.help = String(f.help).slice(0, 300);
-        out2.push(o);
-      });
-      return out2;
-    }
-    function detectPdfFields(buf) {
-      const s = buf.toString("latin1");
-      const out2 = [];
-      const seen2 = /* @__PURE__ */ new Set();
-      for (const chunk of s.split("endobj")) {
-        if (out2.length >= MAX_FIELDS) break;
-        const t = /\/T\s*\(([^)]{1,80})\)/.exec(chunk);
-        const ft = /\/FT\s*\/(Tx|Btn|Ch)/.exec(chunk);
-        if (!t || !ft) continue;
-        const name = t[1].replace(/\\(.)/g, "$1").trim();
-        if (!name || seen2.has(name)) continue;
-        seen2.add(name);
-        const type = ft[1] === "Btn" ? "checkbox" : ft[1] === "Ch" ? "select" : /\/Ff\s+(4096|\d*[4-9]\d{3,})/.test(chunk) ? "textarea" : "text";
-        out2.push({ key: name, label: name.replace(/[_.]+/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/\b\w/g, (c) => c.toUpperCase()), type });
-      }
-      return out2;
-    }
-    var guessAutofill = (label) => {
-      const l = label.toLowerCase();
-      if (/\b(full|client|participant|patient)?\s*name\b/.test(l) && !/worker|staff|navigator|witness|contact|parent|guardian/.test(l)) return "client.full_name";
-      if (/first name/.test(l)) return "client.first_name";
-      if (/last name/.test(l)) return "client.last_name";
-      if (/\b(dob|birth)/.test(l)) return "client.dob";
-      if (/phone|telephone/.test(l)) return "client.phone";
-      if (/e-?mail/.test(l)) return "client.email";
-      if (/address|street/.test(l)) return "client.address";
-      if (/\bcity\b/.test(l)) return "client.city";
-      if (/\bzip/.test(l)) return "client.zip";
-      if (/medicaid/.test(l)) return "client.medicaid_id";
-      if (/insurance/.test(l)) return "client.insurance";
-      if (/client (id|code|number)|case (id|number)/.test(l)) return "client.client_code";
-      if (/\b(today|date)\b/.test(l) && !/birth|dob/.test(l)) return "today";
-      if (/navigator|worker|staff|case manager|counselor/.test(l)) return "worker.name";
-      return void 0;
-    };
-    function autofillValues(fields, clientRow, user) {
-      const c = M.decryptRow(clientRow);
-      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-      const src = {
-        "client.full_name": [c.first_name, c.last_name].filter(Boolean).join(" "),
-        "client.first_name": c.first_name,
-        "client.last_name": c.last_name,
-        "client.preferred_name": c.preferred_name,
-        "client.dob": c.dob,
-        "client.phone": c.phone,
-        "client.email": c.email,
-        "client.address": [c.address, [c.city, c.zip].filter(Boolean).join(" ")].filter(Boolean).join(", "),
-        "client.city": c.city,
-        "client.zip": c.zip,
-        "client.client_code": c.client_code,
-        "client.gender": c.gender,
-        "client.pronouns": c.pronouns,
-        "client.insurance": c.insurance,
-        "client.medicaid_id": c.medicaid_id,
-        "client.emergency_contact": c.emergency_contact,
-        "client.primary_substance": c.primary_substance ? require_options().labelOf("SUBSTANCES", c.primary_substance) : null,
-        "client.mat_status": c.mat_status,
-        "client.intake_date": c.intake_date,
-        "worker.name": user.display_name,
-        "worker.title": user.title || "",
-        "org.name": db3.getSetting("org_name", "SUDS"),
-        "org.county": db3.getSetting("county_name", ""),
-        today
-      };
-      const values = {};
-      for (const f of fields) {
-        if (f.autofill && src[f.autofill] != null && src[f.autofill] !== "") values[f.key] = src[f.autofill];
-        else if (f.type === "date" && f.autofill === "today") values[f.key] = today;
-      }
-      return values;
-    }
-    function cleanValues(fields, values) {
-      if (!values || typeof values !== "object" || Array.isArray(values)) throw badRequest("values must be an object");
-      const out2 = {};
-      for (const f of fields) {
-        if (f.type === "section" || f.type === "note") continue;
-        let v = values[f.key];
-        if (v === void 0) continue;
-        if (f.type === "checkbox") v = v === true || v === 1 || v === "1" || v === "true";
-        else if (v === null) v = null;
-        else v = String(v).slice(0, f.type === "textarea" ? 5e3 : 500);
-        out2[f.key] = v;
-      }
-      return out2;
-    }
-    var missingRequired = (fields, values) => fields.filter((f) => f.required && (values[f.key] === void 0 || values[f.key] === null || values[f.key] === "")).map((f) => f.label);
-    var parseJson = (s, d) => {
-      try {
-        return JSON.parse(s);
-      } catch {
-        return d;
-      }
-    };
-    var tpl = (row, withFile = false) => row && { ...row, fields: parseJson(row.fields_json, []), fields_json: void 0, file_url: withFile && row.file_b64 ? `data:${row.content_type};base64,${row.file_b64}` : void 0, has_file: !!row.file_b64, file_b64: void 0 };
-    function loadForm(ctx, id) {
-      const f = db3.one(`SELECT * FROM client_forms WHERE id=? AND deleted_at IS NULL`, id);
-      if (!f) throw notFound();
-      auth3.assertClientAccess(ctx, f.client_id);
-      return f;
-    }
-    var formNotes = (f) => f.notes_enc ? decrypt3(f.notes_enc) : null;
-    var formOut = (f, { values = true } = {}) => ({ ...f, fields: parseJson(f.fields_json, []), fields_json: void 0, values: values ? parseJson(decrypt3(f.values_enc), {}) : void 0, values_enc: void 0, notes: formNotes(f), notes_enc: void 0 });
-    var SERVABLE_TYPES = /* @__PURE__ */ new Set([
-      "application/pdf",
-      "image/png",
-      "image/jpeg",
-      "image/gif",
-      "image/webp",
-      "text/plain",
-      "application/msword",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "application/vnd.ms-excel",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    ]);
-    function safeContentType(t) {
-      return SERVABLE_TYPES.has(String(t || "").toLowerCase().split(";")[0].trim()) ? String(t).split(";")[0].trim() : "application/octet-stream";
-    }
-    function printFooter() {
-      const disclosure = require_disclosure();
-      const n = disclosure.notice();
-      const printed = `Printed from SUDS ${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.`;
-      return disclosure.part2Program() ? `${printed} PROTECTED BY 42 CFR PART 2. ${n.short} If this record is disclosed, this notice must accompany it (42 CFR \xA72.32): ${n.text}` : `${printed} Contains protected health information; handle per HIPAA.`;
-    }
-    module.exports = (r) => {
-      r.get("/api/forms/starters", auth3.requireAuth, auth3.requirePerm("forms:manage"), () => ({ starters: require_form_starters().list() }));
-      r.post("/api/forms/starters", auth3.requireAuth, auth3.requirePerm("forms:manage"), (ctx) => {
-        const keys = Array.isArray(ctx.body && ctx.body.keys) ? ctx.body.keys.filter((k) => typeof k === "string") : null;
-        const out2 = require_form_starters().install({ keys: keys && keys.length ? keys : null, actor: ctx.user.id });
-        audit3.log({ user: ctx.user, action: "forms.starters.request", ip: ctx.ip, details: { added: out2.added.length } });
-        return out2;
-      });
-      r.get("/api/forms/templates", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write", "forms:manage"), (ctx) => {
-        const all = ctx.query.get("active") === "0" && auth3.hasPerm(ctx.user, "forms:manage");
-        const rows = db3.all(`SELECT t.id, t.name, t.description, t.category, t.version, t.filename, t.content_type, t.bytes, t.fields_json, t.instructions, t.is_active, t.updated_at, t.created_at, (t.file_b64 IS NOT NULL) has_file, (SELECT COUNT(*) FROM client_forms f WHERE f.template_id=t.id AND f.deleted_at IS NULL) use_count FROM form_templates t ${all ? "" : "WHERE t.is_active=1"} ORDER BY t.category, t.name`);
-        return { templates: rows.map((t) => ({ ...t, fields: parseJson(t.fields_json, []), fields_json: void 0, field_count: parseJson(t.fields_json, []).filter((f) => !["section", "note"].includes(f.type)).length })), categories: C.FORM_CATEGORIES, field_types: C.FORM_FIELD_TYPES, autofill: C.FORM_AUTOFILL };
-      });
-      r.get("/api/forms/templates/:id", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write", "forms:manage"), (ctx) => {
-        const t = db3.one(`SELECT * FROM form_templates WHERE id=?`, ctx.params.id);
-        if (!t) throw notFound();
-        return { template: tpl(t, ctx.query.get("file") === "1") };
-      });
-      r.post("/api/forms/templates", auth3.requireAuth, auth3.requirePerm("forms:manage"), (ctx) => {
-        const v = validate(ctx.body, { name: { type: "string", required: true, maxLen: 200 }, description: { type: "string", maxLen: 1e3 }, category: { type: "string", enum: C.FORM_CATEGORIES }, version: { type: "string", maxLen: 40 }, filename: { type: "string", maxLen: 200 }, instructions: { type: "string", maxLen: 3e3 } });
-        const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_TEMPLATE_BYTES, "Form file");
-        let fields = Array.isArray(ctx.body.fields) && ctx.body.fields.length ? cleanFields(ctx.body.fields) : [];
-        let detected = 0;
-        if (!fields.length && file && file.type === "application/pdf") {
-          fields = cleanFields(detectPdfFields(file.buf).map((f) => ({ ...f, autofill: guessAutofill(f.label) })));
-          detected = fields.length;
-        }
-        const id = uuid2();
-        db3.run(`INSERT INTO form_templates(id,name,description,category,version,filename,content_type,bytes,file_b64,fields_json,instructions,uploaded_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, id, v.name, v.description || null, v.category || "other", v.version || null, file ? v.filename || `${v.name}.${FILE_TYPES[file.type]}` : null, file ? file.type : null, file ? file.buf.length : 0, file ? file.b64 : null, JSON.stringify(fields), v.instructions || null, ctx.user.id);
-        audit3.log({ user: ctx.user, action: "form_template.create", entity: "form_template", entityId: id, ip: ctx.ip, details: { name: v.name, fields: fields.length, detected, bytes: file ? file.buf.length : 0 } });
-        ctx.status = 201;
-        return { id, fields, detected };
-      });
-      r.put("/api/forms/templates/:id", auth3.requireAuth, auth3.requirePerm("forms:manage"), (ctx) => {
-        const t = db3.one(`SELECT id, updated_at FROM form_templates WHERE id=?`, ctx.params.id);
-        if (!t) throw notFound();
-        require_crud().assertFresh(ctx, t, "form_template");
-        const v = validate(ctx.body, { name: { type: "string", maxLen: 200 }, description: { type: "string", maxLen: 1e3 }, category: { type: "string", enum: C.FORM_CATEGORIES }, version: { type: "string", maxLen: 40 }, filename: { type: "string", maxLen: 200 }, instructions: { type: "string", maxLen: 3e3 }, is_active: { type: "boolean" } }, { partial: true });
-        const sets = Object.keys(v).map((k) => `${k}=?`);
-        const params = Object.keys(v).map((k) => v[k]);
-        if (ctx.body.fields !== void 0) {
-          sets.push("fields_json=?");
-          params.push(JSON.stringify(cleanFields(ctx.body.fields)));
-        }
-        if (ctx.body.file_url || ctx.body.file) {
-          const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_TEMPLATE_BYTES, "Form file");
-          sets.push("file_b64=?", "content_type=?", "bytes=?", "filename=?");
-          params.push(file.b64, file.type, file.buf.length, v.filename || ctx.body.filename || `form.${FILE_TYPES[file.type]}`);
-        }
-        if (ctx.body.remove_file) {
-          sets.push("file_b64=NULL", "content_type=NULL", "bytes=0", "filename=NULL");
-        }
-        if (!sets.length) return { ok: true, updated_at: t.updated_at };
-        const stamp2 = db3.now();
-        db3.run(`UPDATE form_templates SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, stamp2, t.id);
-        audit3.log({ user: ctx.user, action: "form_template.update", entity: "form_template", entityId: t.id, ip: ctx.ip, details: { fields: Object.keys(v).concat(ctx.body.fields !== void 0 ? ["fields"] : [], ctx.body.file_url || ctx.body.file ? ["file"] : []) } });
-        return { ok: true, updated_at: stamp2 };
-      });
-      r.delete("/api/forms/templates/:id", auth3.requireAuth, auth3.requirePerm("forms:manage"), (ctx) => {
-        const t = db3.one(`SELECT id FROM form_templates WHERE id=?`, ctx.params.id);
-        if (!t) throw notFound();
-        db3.run(`UPDATE form_templates SET is_active=0, updated_at=? WHERE id=?`, db3.now(), t.id);
-        audit3.log({ user: ctx.user, action: "form_template.retire", entity: "form_template", entityId: t.id, ip: ctx.ip });
-        return { ok: true };
-      });
-      r.get("/api/forms/templates/:id/file", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write", "forms:manage"), (ctx) => {
-        const t = db3.one(`SELECT * FROM form_templates WHERE id=?`, ctx.params.id);
-        if (!t || !t.file_b64) throw notFound("No file for this form");
-        ctx.res.writeHead(200, { "Content-Type": safeContentType(t.content_type), "Content-Disposition": `${ctx.query.get("inline") === "1" ? "inline" : "attachment"}; filename="${(t.filename || "form").replace(/["\r\n]/g, "")}"` });
-        ctx.res.end(import_buffer.Buffer.from(t.file_b64, "base64"));
-        return null;
-      });
-      r.get("/api/forms/templates/:id/blank.pdf", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write", "forms:manage"), (ctx) => {
-        const t = db3.one(`SELECT * FROM form_templates WHERE id=?`, ctx.params.id);
-        if (!t) throw notFound();
-        const body = pdf.renderForm({ title: t.name, subtitle: t.description, org: db3.getSetting("org_name", "SUDS"), meta: [t.version ? `Version ${t.version}` : null], fields: parseJson(t.fields_json, []), values: {}, footer: "Blank form printed from SUDS" });
-        ctx.res.writeHead(200, { "Content-Type": "application/pdf", "Content-Disposition": `inline; filename="${t.name.replace(/[^\w.-]+/g, "_")}-blank.pdf"` });
-        ctx.res.end(body);
-        return null;
-      });
-      r.get("/api/clients/:id/forms", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write"), (ctx) => {
-        auth3.assertClientAccess(ctx, ctx.params.id);
-        const rows = db3.all(`SELECT f.id, f.template_id, f.template_name, f.status, f.completed_at, f.created_at, f.updated_at, f.notes_enc, cu.display_name completed_by_name, cr.display_name created_by_name, (SELECT COUNT(*) FROM client_form_files x WHERE x.client_form_id=f.id) attachments FROM client_forms f LEFT JOIN users cu ON cu.id=f.completed_by JOIN users cr ON cr.id=f.created_by WHERE f.client_id=? AND f.deleted_at IS NULL ORDER BY f.updated_at DESC`, ctx.params.id).map((f) => ({ ...f, notes: formNotes(f), notes_enc: void 0 }));
-        audit3.log({ user: ctx.user, action: "client_form.list", entity: "client", entityId: ctx.params.id, clientId: ctx.params.id, ip: ctx.ip, details: { count: rows.length } });
-        return { forms: rows };
-      });
-      r.post("/api/clients/:id/forms", auth3.requireAuth, auth3.requirePerm("forms:write"), (ctx) => {
-        const client = db3.one(`SELECT * FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id);
-        if (!client) throw notFound();
-        auth3.assertClientAccess(ctx, client.id);
-        const { template_id } = validate(ctx.body, { template_id: { type: "string", required: true } });
-        const t = db3.one(`SELECT * FROM form_templates WHERE id=? AND is_active=1`, template_id);
-        if (!t) throw notFound("Form not found");
-        const fields = parseJson(t.fields_json, []);
-        const values = { ...autofillValues(fields, client, ctx.user), ...ctx.body.values ? cleanValues(fields, ctx.body.values) : {} };
-        const id = uuid2();
-        db3.run(`INSERT INTO client_forms(id,client_id,template_id,template_name,fields_json,values_enc,status,created_by) VALUES(?,?,?,?,?,?,'draft',?)`, id, client.id, t.id, t.name + (t.version ? ` (v${t.version})` : ""), JSON.stringify(fields), encrypt3(JSON.stringify(values)), ctx.user.id);
-        audit3.log({ user: ctx.user, action: "client_form.create", entity: "client_form", entityId: id, clientId: client.id, ip: ctx.ip, details: { template: t.name } });
-        ctx.status = 201;
-        return { id, fields, values };
-      });
-      r.get("/api/forms/:id", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write"), (ctx) => {
-        const f = loadForm(ctx, ctx.params.id);
-        audit3.log({ user: ctx.user, action: "client_form.view", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip });
-        const files = db3.all(`SELECT id, filename, content_type, bytes, created_at, uploaded_by FROM client_form_files WHERE client_form_id=? ORDER BY created_at`, f.id);
-        const t = f.template_id ? db3.one(`SELECT id, name, instructions, (file_b64 IS NOT NULL) has_file, content_type FROM form_templates WHERE id=?`, f.template_id) : null;
-        return { form: { ...formOut(f), files, template: t } };
-      });
-      r.put("/api/forms/:id", auth3.requireAuth, auth3.requirePerm("forms:write"), (ctx) => {
-        const f = loadForm(ctx, ctx.params.id);
-        if (f.status === "completed" && !auth3.hasPerm(ctx.user, "forms:manage")) throw badRequest("This form is completed. Ask a supervisor to reopen it.");
-        require_crud().assertFresh(ctx, f, "client_form");
-        const fields = parseJson(f.fields_json, []);
-        const v = validate(ctx.body, { status: { type: "string", enum: ["draft", "completed", "void"] }, notes: { type: "string", maxLen: 2e3 } }, { partial: true });
-        let values = parseJson(decrypt3(f.values_enc), {});
-        if (ctx.body.values !== void 0) values = { ...values, ...cleanValues(fields, ctx.body.values) };
-        const stamp2 = db3.now();
-        const sets = ["values_enc=?", "updated_at=?"];
-        const params = [encrypt3(JSON.stringify(values)), stamp2];
-        if (v.notes !== void 0) {
-          sets.push("notes_enc=?");
-          params.push(v.notes ? encrypt3(v.notes) : null);
-        }
-        if (v.status) {
-          if (v.status === "completed") {
-            const miss = missingRequired(fields, values);
-            if (miss.length) {
-              db3.run(`UPDATE client_forms SET values_enc=?, updated_at=? WHERE id=?`, params[0], params[1], f.id);
-              throw badRequest(`Please fill in: ${miss.join(", ")}`, { updated_at: stamp2 });
-            }
-            sets.push("status=?", "completed_at=?", "completed_by=?");
-            params.push("completed", db3.now(), ctx.user.id);
-          } else {
-            sets.push("status=?", "completed_at=NULL", "completed_by=NULL");
-            params.push(v.status);
-          }
-        }
-        db3.run(`UPDATE client_forms SET ${sets.join(", ")} WHERE id=?`, ...params, f.id);
-        audit3.log({ user: ctx.user, action: v.status === "completed" ? "client_form.complete" : "client_form.update", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { status: v.status, fields_changed: ctx.body.values ? Object.keys(ctx.body.values).length : 0 } });
-        return { ok: true, missing: missingRequired(fields, values), updated_at: stamp2 };
-      });
-      r.delete("/api/forms/:id", auth3.requireAuth, auth3.requirePerm("forms:write"), (ctx) => {
-        const f = loadForm(ctx, ctx.params.id);
-        if (f.status === "completed" && !auth3.hasPerm(ctx.user, "forms:manage")) throw badRequest("Completed forms can only be removed by a supervisor");
-        db3.run(`UPDATE client_forms SET deleted_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), f.id);
-        audit3.log({ user: ctx.user, action: "client_form.delete", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip });
-        return { ok: true };
-      });
-      r.get("/api/forms/:id/pdf", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write"), (ctx) => {
-        const f = loadForm(ctx, ctx.params.id);
-        const client = M.decryptRow(db3.one(`SELECT * FROM clients WHERE id=?`, f.client_id));
-        const values = parseJson(decrypt3(f.values_enc), {});
-        const by = f.completed_by ? db3.one(`SELECT display_name FROM users WHERE id=?`, f.completed_by) : null;
-        audit3.log({ user: ctx.user, action: "client_form.print", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip });
-        const body = pdf.renderForm({ title: f.template_name, org: db3.getSetting("org_name", "SUDS"), meta: [`Client: ${client.first_name} ${client.last_name} (${client.client_code})`, f.status === "completed" ? `Completed ${f.completed_at.slice(0, 10)}${by ? " by " + by.display_name : ""}` : "DRAFT"], fields: parseJson(f.fields_json, []), values, footer: printFooter() });
-        ctx.res.writeHead(200, { "Content-Type": "application/pdf", "Content-Disposition": `${ctx.query.get("download") === "1" ? "attachment" : "inline"}; filename="${client.client_code}-${f.template_name.replace(/[^\w.-]+/g, "_")}.pdf"` });
-        ctx.res.end(body);
-        return null;
-      });
-      r.post("/api/forms/:id/files", auth3.requireAuth, auth3.requirePerm("forms:write"), (ctx) => {
-        const f = loadForm(ctx, ctx.params.id);
-        if (db3.one(`SELECT COUNT(*) n FROM client_form_files WHERE client_form_id=?`, f.id).n >= 10) throw badRequest("At most 10 attachments per form");
-        const v = validate(ctx.body, { filename: { type: "string", maxLen: 200 } });
-        const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_ATTACH_BYTES, "Attachment");
-        if (!file) throw badRequest("Attachment is required");
-        const id = uuid2();
-        const name = (v.filename || `signed.${FILE_TYPES[file.type]}`).replace(/[\r\n"]/g, "");
-        db3.run(`INSERT INTO client_form_files(id,client_form_id,client_id,filename,content_type,bytes,data_enc,uploaded_by) VALUES(?,?,?,?,?,?,?,?)`, id, f.id, f.client_id, name, file.type, file.buf.length, encrypt3(file.b64), ctx.user.id);
-        const stamp2 = db3.now();
-        db3.run(`UPDATE client_forms SET updated_at=? WHERE id=?`, stamp2, f.id);
-        audit3.log({ user: ctx.user, action: "client_form.attach", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { file_id: id, bytes: file.buf.length, type: file.type } });
-        ctx.status = 201;
-        return { id, filename: name, content_type: file.type, bytes: file.buf.length, form_updated_at: stamp2 };
-      });
-      r.get("/api/forms/:id/files/:fid", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write"), (ctx) => {
-        const f = loadForm(ctx, ctx.params.id);
-        const x = db3.one(`SELECT * FROM client_form_files WHERE id=? AND client_form_id=?`, ctx.params.fid, f.id);
-        if (!x) throw notFound();
-        audit3.log({ user: ctx.user, action: "client_form.file.view", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { file_id: x.id } });
-        ctx.res.writeHead(200, { "Content-Type": safeContentType(x.content_type), "Content-Disposition": `${ctx.query.get("download") === "1" ? "attachment" : "inline"}; filename="${String(x.filename).replace(/["\r\n]/g, "")}"`, "X-Content-Type-Options": "nosniff" });
-        ctx.res.end(import_buffer.Buffer.from(decrypt3(x.data_enc), "base64"));
-        return null;
-      });
-      r.delete("/api/forms/:id/files/:fid", auth3.requireAuth, auth3.requirePerm("forms:write"), (ctx) => {
-        const f = loadForm(ctx, ctx.params.id);
-        const x = db3.one(`SELECT id FROM client_form_files WHERE id=? AND client_form_id=?`, ctx.params.fid, f.id);
-        if (!x) throw notFound();
-        const stamp2 = db3.now();
-        db3.run(`DELETE FROM client_form_files WHERE id=?`, x.id);
-        db3.tombstone("client_form_files", x.id);
-        db3.run(`UPDATE client_forms SET updated_at=? WHERE id=?`, stamp2, f.id);
-        audit3.log({ user: ctx.user, action: "client_form.file.remove", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { file_id: x.id } });
-        return { ok: true, form_updated_at: stamp2 };
-      });
-    };
-  }
-});
-
-// server/routes/reports.js
-var require_reports = __commonJS({
-  "server/routes/reports.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth();
-    var audit3 = require_audit();
-    var { sendJson, badRequest } = require_http();
-    var M = require_clients_model();
-    var CFX = require_client_filters();
-    var { defer } = require_spreadsheet();
-    var DAY = /^\d{4}-\d{2}-\d{2}$/;
-    var addDays = (date, n) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
-    function range(ctx) {
-      const { localDate, localMidnight } = require_budget();
-      const to = ctx.query.get("to") || localDate();
-      const from = ctx.query.get("from") || addDays(to, -89);
-      if (!DAY.test(to) || !DAY.test(from) || !Number.isFinite(Date.parse(to)) || !Number.isFinite(Date.parse(from))) throw badRequest("from and to must be dates (YYYY-MM-DD)");
-      const fromTs = localMidnight(from);
-      const toEnd = new Date(Date.parse(localMidnight(addDays(to, 1))) - 1).toISOString();
-      const ts = (col) => `((length(${col})>10 AND ${col} BETWEEN ? AND ?) OR (length(${col})=10 AND ${col} BETWEEN ? AND ?))`;
-      return { from, to, fromTs, toEnd, ts, tsP: [fromTs, toEnd, from, to] };
-    }
-    module.exports = (r) => {
-      r.get("/api/reports/dashboard", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
-        const { from, to, ts, tsP } = range(ctx);
-        const cf = auth3.caseloadFilter(ctx.user, "c.id");
-        const expand = (sql, p) => {
-          const before = sql.slice(0, sql.indexOf("{CF}"));
-          const n = (before.match(/\?/g) || []).length;
-          return [sql.replace("{CF}", cf.sql), [...p.slice(0, n), ...cf.params, ...p.slice(n)]];
-        };
-        const scoped = (sql, ...p) => {
-          const [q, a] = expand(sql, p);
-          return db3.all(q, ...a);
-        };
-        const scoped1 = (sql, ...p) => {
-          const [q, a] = expand(sql, p);
-          return db3.one(q, ...a);
-        };
-        const today = require_budget().localDate();
-        const out2 = {
-          from,
-          to,
-          clients: {
-            active: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF}`).n,
-            waitlist: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='waitlist' AND {CF}`).n,
-            new_in_range: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND intake_date BETWEEN ? AND ? AND {CF}`, from, to).n,
-            // The tiles use the client list's own predicates (server/client-filters.js), so a tile and the list it
-            // opens count the same people.
-            high_risk: (() => {
-              const f = CFX.risk("high");
-              return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND ${f.sql} AND {CF}`, ...f.params).n;
-            })(),
-            no_contact_30d: (() => {
-              const f = CFX.noContactSince();
-              return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} AND ${f.sql}`, ...f.params).n;
-            })(),
-            by_status: scoped(`SELECT status, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND {CF} GROUP BY status`),
-            by_substance: scoped(`SELECT COALESCE(primary_substance,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k ORDER BY n DESC`),
-            mat: scoped(`SELECT COALESCE(mat_status,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k`)
-          },
-          interventions: {
-            total: scoped1(`SELECT COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP).n,
-            minutes: scoped1(`SELECT COALESCE(SUM(duration_minutes),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP).n,
-            by_type: db3.all(`SELECT i.type k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${cf.sql} GROUP BY i.type ORDER BY n DESC`, ...tsP, ...cf.params),
-            by_week: db3.all(`SELECT strftime('%Y-%W', i.occurred_at) k, COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${cf.sql} GROUP BY k ORDER BY k`, ...tsP, ...cf.params),
-            naloxone_kits: scoped1(`SELECT COALESCE(SUM(naloxone_kits),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP).n,
-            fentanyl_strips: scoped1(`SELECT COALESCE(SUM(fentanyl_strips),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP).n,
-            by_worker: db3.all(`SELECT u.display_name k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN users u ON u.id=i.user_id JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${cf.sql} GROUP BY u.id ORDER BY n DESC`, ...tsP, ...cf.params)
-          },
-          calls: {
-            total: db3.one(`SELECT COUNT(*) n FROM calls WHERE ${ts("started_at")}`, ...tsP).n,
-            minutes: db3.one(`SELECT COALESCE(SUM(duration_minutes),0) n FROM calls WHERE ${ts("started_at")}`, ...tsP).n,
-            crisis: db3.one(`SELECT COUNT(*) n FROM calls WHERE crisis=1 AND ${ts("started_at")}`, ...tsP).n,
-            by_outcome: db3.all(`SELECT outcome k, COUNT(*) n FROM calls WHERE ${ts("started_at")} GROUP BY outcome ORDER BY n DESC`, ...tsP),
-            by_direction: db3.all(`SELECT direction k, COUNT(*) n FROM calls WHERE ${ts("started_at")} GROUP BY direction`, ...tsP),
-            // Texts are logged alongside calls, so say how the total splits rather than reporting them as calls.
-            texts: db3.one(`SELECT COUNT(*) n FROM calls WHERE method='text' AND ${ts("started_at")}`, ...tsP).n
-          },
-          referrals: {
-            total: db3.one(`SELECT COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${ts("r.referred_at")} AND ${cf.sql}`, ...tsP, ...cf.params).n,
-            by_status: db3.all(`SELECT r.status k, COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${ts("r.referred_at")} AND ${cf.sql} GROUP BY r.status ORDER BY n DESC`, ...tsP, ...cf.params),
-            by_category: db3.all(`SELECT res.category k, COUNT(*) n, SUM(CASE WHEN r.status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id WHERE ${ts("r.referred_at")} AND ${cf.sql} GROUP BY res.category ORDER BY n DESC`, ...tsP, ...cf.params),
-            open: db3.one(`SELECT COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE r.status IN ('pending','contacted','accepted','waitlisted','scheduled') AND ${cf.sql}`, ...cf.params).n,
-            median_days_to_admit: (() => {
-              const d = db3.all(`SELECT (julianday(admitted_at)-julianday(referred_at)) d FROM referrals WHERE admitted_at IS NOT NULL AND ${ts("referred_at")} ORDER BY d`, ...tsP).map((x) => x.d);
-              return d.length ? d[Math.floor(d.length / 2)] : null;
-            })()
-          },
-          tasks: {
-            open: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (assigned_to=? OR ?)`, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n,
-            overdue: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (CASE WHEN length(due_at)=10 THEN due_at < ? ELSE due_at < ? END) AND (assigned_to=? OR ?)`, today, db3.now(), ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n,
-            due_today: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND substr(due_at,1,10)=? AND (assigned_to=? OR ?)`, today, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n
-          },
-          time: auth3.hasPerm(ctx.user, "time:read") || auth3.hasPerm(ctx.user, "time:write") ? {
-            minutes: db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE work_date BETWEEN ? AND ? AND (user_id=? OR ?)`, from, to, ctx.user.id, auth3.hasPerm(ctx.user, "time:all") ? 1 : 0).n,
-            by_category: db3.all(`SELECT category k, SUM(minutes) n FROM time_entries WHERE work_date BETWEEN ? AND ? AND (user_id=? OR ?) GROUP BY category ORDER BY n DESC`, from, to, ctx.user.id, auth3.hasPerm(ctx.user, "time:all") ? 1 : 0)
-          } : null,
-          // A supervisor's unsigned-notes alert covers the team's drafts, the same way the overdue-tasks alert
-          // above already covers the team's to-dos -- a program manager rarely writes routine notes themselves,
-          // so an alert scoped to their own drafts was dead for exactly the role it matters most to.
-          notes: (() => {
-            const team = auth3.hasPerm(ctx.user, "notes:cosign") && auth3.hasPerm(ctx.user, "clients:all");
-            const scope = team ? "1=1" : "author_id=?";
-            const p = team ? [] : [ctx.user.id];
-            return {
-              team,
-              unsigned: db3.one(`SELECT COUNT(*) n FROM notes WHERE status='draft' AND deleted_at IS NULL AND ${scope}`, ...p).n,
-              unsigned_overdue: db3.one(`SELECT COUNT(*) n FROM notes WHERE status='draft' AND deleted_at IS NULL AND ${scope} AND created_at < ?`, ...p, new Date(Date.now() - Number(db3.getSetting("note_lock_days", "3")) * 864e5).toISOString()).n,
-              staged_imports: db3.one(`SELECT COUNT(*) n FROM import_items x JOIN imports i ON i.id=x.import_id WHERE x.status='staged' AND (i.imported_by=? OR i.imported_by IS NULL OR ?)`, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n
-            };
-          })(),
-          budget: auth3.hasPerm(ctx.user, "budget:read") ? db3.one(`SELECT ROUND((SELECT COALESCE(SUM(total_amount),0) FROM funding_sources WHERE is_active=1),2) total, ROUND((SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status IN ('approved','reimbursed')),2) spent, ROUND((SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status='pending'),2) pending`) : null,
-          // Scoped to active clients so this count matches what #/clients?consent_expiring=1 shows by default —
-          // otherwise the badge counts a closed or inactive client's consent that the deep-linked list, filtered
-          // to active, never displays.
-          // Emergency accesses nobody has reviewed yet — the count a supervisor sees on their home page.
-          breakglass_pending: auth3.hasPerm(ctx.user, "audit:read") ? db3.one(`SELECT COUNT(*) n FROM breakglass_events WHERE acknowledged_at IS NULL`).n : null,
-          // Patient-rights requests (access, amendment, restriction, accounting) each run a 30-day clock; the
-          // count of open ones, and how many have run out, so a deadline is not first noticed when it is missed.
-          patient_requests: auth3.hasPerm(ctx.user, "patient-requests:read") || auth3.hasPerm(ctx.user, "patient-requests:write") ? scoped1(`SELECT COUNT(*) n, COALESCE(SUM(CASE WHEN p.due_at < ? THEN 1 ELSE 0 END),0) overdue FROM patient_requests p JOIN clients c ON c.id=p.client_id WHERE p.status='open' AND c.deleted_at IS NULL AND {CF}`, today) : null,
-          // 42 CFR §2.22: active clients on this person's caseload with no record of being given the notice.
-          part2_notice_missing: (auth3.hasPerm(ctx.user, "consents:read") || auth3.hasPerm(ctx.user, "consents:write")) && require_disclosure().part2Program() ? scoped1(`SELECT COUNT(*) n FROM clients c WHERE ${require_part2().MISSING_NOTICE} AND {CF}`).n : null,
-          // The privacy officer's registers: open complaints, and incidents whose breach-notification clock
-          // needs attention (a determination not made, or a notice owed) — how many are due within two weeks or late.
-          // The programme's Part 2 protections switched off (routes/part2.js): who did it and when, for administrators.
-          part2_program_off: auth3.hasPerm(ctx.user, "settings:manage") && !require_disclosure().part2Program() ? (() => {
-            try {
-              return JSON.parse(db3.getSetting("part2_program_off", "") || "null") || { since: null };
-            } catch {
-              return { since: null };
-            }
-          })() : null,
-          complaints_open: auth3.hasPerm(ctx.user, "complaints:read") ? db3.one(`SELECT COUNT(*) n FROM complaints WHERE status IN ('open','investigating')`).n : null,
-          incidents: auth3.hasPerm(ctx.user, "incidents:read") ? (() => {
-            const ob = db3.all(`SELECT * FROM privacy_incidents WHERE status='open'`).map((i) => require_incidents().obligations(i));
-            return { open: ob.length, attention: ob.filter((o) => o.attention).length, due_soon: ob.filter((o) => o.warn && !o.overdue).length, overdue: ob.filter((o) => o.overdue).length };
-          })() : null,
-          // The number of clients the "consent expiring" list shows (the card below lists the first 20 consents).
-          consents_expiring_clients: (() => {
-            const f = CFX.consentExpiring();
-            return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND ${f.sql} AND {CF}`, ...f.params).n;
-          })(),
-          consents_expiring: db3.all(`SELECT co.id, co.client_id, co.type, co.recipient_enc, co.expires_at, c.client_code FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ? AND c.status='active' AND ${cf.sql} ORDER BY co.expires_at LIMIT 20`, today, new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10), ...cf.params).map((x) => ({ ...x, recipient: x.recipient_enc ? require_crypto().decrypt(x.recipient_enc) : null, recipient_enc: void 0 }))
-        };
-        audit3.log({ user: ctx.user, action: "report.dashboard", ip: ctx.ip, details: { from, to } });
-        return out2;
-      });
-      r.get("/api/reports/monthly", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
-        const months = Math.min(24, Math.max(1, Number(ctx.query.get("months") || 12)));
-        const start2 = /* @__PURE__ */ new Date();
-        start2.setUTCDate(1);
-        start2.setUTCMonth(start2.getUTCMonth() - months + 1);
-        const s = start2.toISOString().slice(0, 10);
-        return {
-          intakes: db3.all(`SELECT substr(intake_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND intake_date >= ? GROUP BY month ORDER BY month`, s),
-          discharges: db3.all(`SELECT substr(discharge_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND discharge_date >= ? GROUP BY month ORDER BY month`, s),
-          interventions: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
-          calls: db3.all(`SELECT substr(started_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes FROM calls WHERE started_at >= ? GROUP BY month ORDER BY month`, s),
-          referrals: db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals WHERE referred_at >= ? GROUP BY month ORDER BY month`, s),
-          naloxone: db3.all(`SELECT substr(occurred_at,1,7) month, SUM(naloxone_kits) kits, SUM(fentanyl_strips) strips FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
-          overdose_events: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN naloxone_used=1 AND survived=1 THEN 1 ELSE 0 END) reversals, SUM(CASE WHEN kind='fatal' OR survived=0 THEN 1 ELSE 0 END) fatal FROM overdose_events WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
-          episodes: db3.all(`SELECT substr(opened_at,1,7) month, COUNT(*) admissions, (SELECT COUNT(*) FROM episodes x WHERE substr(x.closed_at,1,7)=substr(e.opened_at,1,7)) discharges FROM episodes e WHERE opened_at >= ? GROUP BY month ORDER BY month`, s),
-          unduplicated_clients: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? AND client_id IS NOT NULL GROUP BY month ORDER BY month`, s),
-          mat_linkage: db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n FROM referrals r JOIN resources res ON res.id=r.resource_id WHERE res.category IN ('mat_otp','mat_obot') AND r.status IN ('admitted','completed') AND referred_at >= ? GROUP BY month ORDER BY month`, s),
-          spend: auth3.hasPerm(ctx.user, "budget:read") ? db3.all(`SELECT substr(spent_at,1,7) month, ROUND(SUM(amount),2) amount FROM expenditures WHERE status IN ('approved','reimbursed') AND spent_at >= ? GROUP BY month ORDER BY month`, s) : [],
-          time: db3.all(`SELECT substr(work_date,1,7) month, SUM(minutes) minutes FROM time_entries WHERE work_date >= ? GROUP BY month ORDER BY month`, s)
-        };
-      });
-      r.get("/api/reports/funder", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
-        const { from, to, ts, tsP } = range(ctx);
-        const cf = auth3.caseloadFilter(ctx.user, "c.id");
-        const fund = ctx.query.get("funding_source_id") || null;
-        const fundJoin = fund ? "AND i.funding_source_id=?" : "";
-        const fundP = fund ? [fund] : [];
-        const servedSql = `SELECT DISTINCT i.client_id AS id FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND c.deleted_at IS NULL AND ${cf.sql} ${fundJoin}` + (fund ? "" : ` UNION SELECT ca.client_id FROM calls ca JOIN clients c ON c.id=ca.client_id WHERE ${ts("ca.started_at")} AND c.deleted_at IS NULL AND ${cf.sql}`);
-        const servedP = fund ? [...tsP, ...cf.params, ...fundP] : [...tsP, ...cf.params, ...tsP, ...cf.params];
-        const inServed = (sql, ...p) => [`WITH served(id) AS (${servedSql}) ${sql}`, ...servedP, ...p];
-        const one = (sql, ...p) => {
-          const [q, ...a] = inServed(sql, ...p);
-          return db3.one(q, ...a);
-        };
-        const all = (sql, ...p) => {
-          const [q, ...a] = inServed(sql, ...p);
-          return db3.all(q, ...a);
-        };
-        const served = one(`SELECT COUNT(*) n FROM served`).n;
-        const demographics = (col, label) => all(`SELECT COALESCE(NULLIF(c.${col},''),'unknown') k, COUNT(*) n
-      FROM clients c JOIN served s ON s.id=c.id GROUP BY k ORDER BY n DESC`).map((x) => ({ ...x, dimension: label }));
-        const raceRows = all(`SELECT c.race_codes FROM clients c JOIN served s ON s.id=c.id`);
-        const byRace = {};
-        for (const row of raceRows) {
-          const codes = String(row.race_codes || "").split(",").map((x) => x.trim()).filter(Boolean);
-          for (const code of codes.length ? codes : ["unknown"]) byRace[code] = (byRace[code] || 0) + 1;
-        }
-        const episodes = {
-          admissions: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.opened_at BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
-          discharges: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
-          open_at_end: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.opened_at <= ? AND (e.closed_at IS NULL OR e.closed_at > ?) AND ${cf.sql}`, to, to, ...cf.params).n,
-          by_discharge_reason: db3.all(`SELECT COALESCE(e.discharge_reason,'unknown') k, COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql} GROUP BY k ORDER BY n DESC`, from, to, ...cf.params),
-          median_length_of_stay_days: (() => {
-            const d = db3.all(`SELECT (julianday(e.closed_at)-julianday(e.opened_at)) d FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY d`, from, to, ...cf.params).map((x) => x.d);
-            return d.length ? Math.round(d[Math.floor(d.length / 2)]) : null;
-          })()
-        };
-        const overdose = {
-          events: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")}`, ...tsP).n,
-          reversals: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND o.naloxone_used=1 AND o.survived=1`, ...tsP).n,
-          fatal: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND (o.kind='fatal' OR o.survived=0)`, ...tsP).n,
-          community_reported: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND o.client_id IS NULL`, ...tsP).n,
-          naloxone_doses: db3.one(`SELECT COALESCE(SUM(o.naloxone_doses),0) n FROM overdose_events o WHERE ${ts("o.occurred_at")}`, ...tsP).n,
-          by_month: db3.all(`SELECT substr(o.occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN o.naloxone_used=1 AND o.survived=1 THEN 1 ELSE 0 END) reversals FROM overdose_events o WHERE ${ts("o.occurred_at")} GROUP BY month ORDER BY month`, ...tsP),
-          by_administered_by: db3.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND o.naloxone_used=1 GROUP BY k ORDER BY n DESC`, ...tsP)
-        };
-        const distribution = db3.one(`SELECT COALESCE(SUM(i.naloxone_kits),0) kits, COALESCE(SUM(i.fentanyl_strips),0) strips,
-      COALESCE(SUM(CASE WHEN i.client_id IS NULL THEN i.naloxone_kits ELSE 0 END),0) community_kits
-      FROM interventions i WHERE ${ts("i.occurred_at")} ${fundJoin}`, ...tsP, ...fundP);
-        const SMALL_CELL = 11;
-        const suppress = (rows) => rows.map((x) => typeof x.n === "number" && x.n > 0 && x.n < SMALL_CELL ? { ...x, n: "<11", suppressed: true } : x);
-        const out2 = {
-          from,
-          to,
-          funding_source_id: fund,
-          small_cell_threshold: SMALL_CELL,
-          unduplicated: {
-            served,
-            new_admissions: db3.one(`SELECT COUNT(DISTINCT c.id) n FROM clients c WHERE c.deleted_at IS NULL AND c.intake_date BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
-            // Of the people served: how many were referred on, admitted somewhere, and are on MAT.
-            with_a_referral: one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN served s ON s.id=r.client_id WHERE ${ts("r.referred_at")}`, ...tsP).n,
-            admitted_after_referral: one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN served s ON s.id=r.client_id WHERE ${ts("r.admitted_at")}`, ...tsP).n,
-            on_mat: one(`SELECT COUNT(*) n FROM clients c JOIN served s ON s.id=c.id WHERE c.mat_status='active'`).n
-          },
-          demographics: {
-            by_gender: suppress(demographics("gender", "gender")),
-            by_language: suppress(demographics("preferred_language", "language")),
-            by_housing: suppress(demographics("housing_status", "housing")),
-            by_insurance: suppress(demographics("insurance", "insurance")),
-            by_race_code: suppress(Object.entries(byRace).map(([k, n]) => ({ k, n })).sort((a, b) => b.n - a.n)),
-            by_ethnicity: suppress(demographics("race_ethnicity", "ethnicity"))
-          },
-          episodes: { ...episodes, by_discharge_reason: suppress(episodes.by_discharge_reason) },
-          overdose: { ...overdose, by_administered_by: suppress(overdose.by_administered_by) },
-          naloxone_distribution: distribution,
-          by_funding_source: db3.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end,
-          (SELECT COUNT(DISTINCT i.client_id) FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.funding_source_id=f.id AND c.deleted_at IS NULL AND ${ts("i.occurred_at")}) AS clients_served,
-          (SELECT COUNT(*) FROM interventions i WHERE i.funding_source_id=f.id AND ${ts("i.occurred_at")}) AS services,
-          (SELECT COALESCE(SUM(t.minutes),0) FROM time_entries t WHERE t.funding_source_id=f.id AND t.work_date BETWEEN ? AND ? AND t.status='approved') AS approved_minutes
-        FROM funding_sources f WHERE f.is_active=1 ORDER BY f.name`, ...tsP, ...tsP, from, to)
-        };
-        audit3.log({ user: ctx.user, action: "report.funder", ip: ctx.ip, details: { from, to, funding_source_id: fund || void 0, served } });
-        return out2;
-      });
-      r.get("/api/reports/export/:kind", auth3.requireAuth, auth3.requirePerm("export:read"), async (ctx) => {
-        const period = range(ctx);
-        const { from, to } = period;
-        const identified = ctx.query.get("identified") === "1" && auth3.hasPerm(ctx.user, "export:identified");
-        const recipient = (ctx.query.get("recipient") || "").trim();
-        const purpose = (ctx.query.get("purpose") || "").trim();
-        if (identified && (!recipient || !purpose)) throw require_http().badRequest("An identified export must name its recipient and purpose (recipient= and purpose=); they are written to the accounting of disclosures for every client it contains");
-        const disclosure = require_disclosure();
-        const gate = {
-          basis: ctx.query.get("basis") || "",
-          restriction_reviewed: ctx.query.get("restriction_reviewed") === "1",
-          legal_proceeding: ctx.query.get("legal_proceeding") === "1",
-          recipient,
-          agreement_id: ctx.query.get("agreement_id") || void 0,
-          user: ctx.user
-        };
-        if (identified) disclosure.requireExportBasis([], gate);
-        const part2 = identified && disclosure.part2Program();
-        const notice = disclosure.notice();
-        const format = ctx.query.get("format") === "xlsx" || ctx.params.kind === "workbook" ? "xlsx" : "csv";
-        const X = require_exports();
-        const D = X.datasets(ctx, { ...period, identified });
-        const S = require_spreadsheet();
-        let excludedCodes = [];
-        const admit = (kind, ids) => {
-          if (!identified) return { consentOf: /* @__PURE__ */ new Map(), excluded: [], agreement: null };
-          let g;
-          try {
-            g = disclosure.requireExportBasis(ids, gate);
-          } catch (e) {
-            audit3.log({ user: ctx.user, action: "report.export.refused", ip: ctx.ip, success: false, details: { kind, basis: gate.basis, clients: ids.length, reason: String(e.message).slice(0, 200) } });
-            throw e;
-          }
-          if (g.excluded.length) {
-            excludedCodes = db3.all(`SELECT client_code FROM clients WHERE id IN (${g.excluded.map(() => "?").join(",")})`, ...g.excluded).map((r2) => r2.client_code).sort();
-            aboutSheet.rows.push({ k: "Left out (no consent on file naming this recipient)", v: excludedCodes.join(", ") });
-          }
-          return g;
-        };
-        const accountFor = (kind, ids, g) => {
-          if (!identified) return [];
-          const written = ids.map((clientId) => disclosure.record({ clientId, consentId: g.consentOf.get(clientId) || null, agreementId: g.agreement?.id || null, recipient, purpose, what: `Identified export: ${kind} (${from} to ${to})`, method: "export", basis: gate.basis, source: "export", sourceRef: kind, user: ctx.user, ip: ctx.ip }));
-          require_incidents().maybeMassExport({ clients: ids.length, kind, user: ctx.user });
-          return written;
-        };
-        const aboutSheet = { name: "About", columns: [{ key: "k", label: "Field" }, { key: "v", label: "Value" }], rows: [
-          { k: "Classification", v: identified ? `Identified export \u2014 PHI. Disclosed to: ${recipient}. Purpose: ${purpose}. Lawful basis: ${gate.basis}.` : X.DEID_LABEL },
-          { k: "Period", v: `${from} to ${to}` },
-          { k: "Generated", v: db3.now() },
-          { k: "Generated by", v: ctx.user.display_name || ctx.user.username },
-          ...part2 ? [{ k: "Protected by 42 CFR Part 2", v: notice.short }, { k: "Notice to recipient (42 CFR \xA72.32)", v: notice.text }] : []
-        ] };
-        const label = (k) => ({ key: k, label: k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) });
-        const RAW = /* @__PURE__ */ new Set(["client_code", "record_id", "receipt_ref", "grant_number", "email", "website", "phone", "fax", "zip", "username", "document_ref", "medicaid_id", "address", "first_name", "last_name", "contact_name", "name", "organization", "vendor", "title", "template_name", "fund", "line", "resource", "worker", "approver", "assignee", "completed_by", "created_by", "disclosed_by", "recipient", "summary", "description", "notes", "purpose", "what", "goals", "flags", "hours", "eligibility", "services", "languages", "capacity_notes", "contact_person", "intake_process", "cost_notes", "restrictions", "label", "city"]);
-        const humanize = (v) => String(v).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).replace(/\bSbirt\b/, "SBIRT").replace(/\bMat\b/g, "MAT").replace(/\bOtp\b/, "OTP").replace(/\bObot\b/, "OBOT").replace(/\bEd\b/, "ED").replace(/\bMh\b/, "MH").replace(/\bIds\b/, "IDs").replace(/\bRoi\b/, "ROI");
-        const pretty = (rows, kind) => rows.map((r2) => {
-          const listed = X.LIST_COLUMNS[kind] || {};
-          const o = {};
-          for (const [k, v] of Object.entries(r2)) o[k] = typeof v === "string" && !RAW.has(k) && !(k in listed) && /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(v) && v.length <= 40 ? humanize(v) : v;
-          return o;
-        });
-        const classification = identified ? `Identified export - PHI. Disclosed to: ${recipient}. Purpose: ${purpose}. Basis: ${gate.basis}.${part2 ? ` ${notice.short}` : ""} Generated ${db3.now()}.` : `${X.DEID_LABEL} Generated ${db3.now()}.`;
-        const headerSafe = (s) => String(s).replace(/[^\x20-\x7e]/g, "?").slice(0, 900);
-        let body, filename, type;
-        if (ctx.params.kind === "workbook") {
-          const read = [];
-          const clientIds = /* @__PURE__ */ new Set();
-          for (const [kind, d] of Object.entries(D)) {
-            if (kind === "disclosures") {
-              read.push([kind, d, null]);
-              continue;
-            }
-            const rows = d.rows();
-            for (const id of X.clientIdsOf(rows)) clientIds.add(id);
-            read.push([kind, d, rows]);
-            await new Promise((resolve2) => defer(resolve2));
-          }
-          const g = admit("workbook", [...clientIds]);
-          const out2 = new Set(g.excluded);
-          const sheets = [aboutSheet];
-          let disclosuresSlot = -1;
-          for (const [kind, d, rows] of read) {
-            if (kind === "disclosures") {
-              disclosuresSlot = sheets.length;
-              sheets.push(null);
-              continue;
-            }
-            sheets.push({ name: d.label, columns: d.columns.map(label), rows: pretty(X.publicRows(rows.filter((r2) => !out2.has(r2._client_id))), kind) });
-          }
-          const written = new Set(accountFor("workbook", [...clientIds].filter((id) => !out2.has(id)), g));
-          if (disclosuresSlot >= 0) {
-            const rows = D.disclosures.rows().filter((r2) => !written.has(r2.id) && !out2.has(r2._client_id));
-            sheets[disclosuresSlot] = { name: D.disclosures.label, columns: D.disclosures.columns.map(label), rows: pretty(X.publicRows(rows), "disclosures") };
-          }
-          audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: "workbook", sheets: sheets.map((s) => [s.name, s.rows.length]), identified, from, to, clients_disclosed: identified ? clientIds.size : void 0 } });
-          body = await S.writeWorkbookAsync(sheets);
-          filename = `suds-export-${from}_${to}-${identified ? "identified" : "deidentified"}.xlsx`;
-          type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-        } else {
-          const d = D[ctx.params.kind === "clients" ? "clients" : ctx.params.kind];
-          if (!d) throw require_http().notFound("Unknown export");
-          const all = d.rows();
-          const ids = X.clientIdsOf(all);
-          const g = admit(ctx.params.kind, ids);
-          const out2 = new Set(g.excluded);
-          const raw = out2.size ? all.filter((r2) => !out2.has(r2._client_id)) : all;
-          const clientsDisclosed = accountFor(ctx.params.kind, ids.filter((id) => !out2.has(id)), g).length;
-          const rows = pretty(X.publicRows(raw), ctx.params.kind);
-          audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: ctx.params.kind, rows: rows.length, identified, from, to, format, clients_disclosed: identified ? clientsDisclosed : void 0 } });
-          const suffix = identified ? "identified" : "deidentified";
-          if (format === "xlsx") {
-            body = S.writeWorkbook([{ name: d.label, columns: d.columns.map(label), rows }, aboutSheet]);
-            filename = `suds-${ctx.params.kind}-${from}_${to}-${suffix}.xlsx`;
-            type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-          } else {
-            body = S.toCsv(rows, d.columns.map(label));
-            if (part2) body += "\r\n\r\n" + S.toCsv([{ n: disclosure.fileNotice() }], [{ key: "n", label: "" }]).split("\r\n")[1];
-            filename = `suds-${ctx.params.kind}-${from}_${to}-${suffix}.csv`;
-            type = "text/csv; charset=utf-8";
-          }
-        }
-        ctx.res.writeHead(200, {
-          "Content-Type": type,
-          "Content-Disposition": `attachment; filename="${filename}"`,
-          "X-SUDS-Export": headerSafe(classification),
-          ...identified && gate.basis === "consent" ? { "X-SUDS-Export-Excluded": excludedCodes.join(",").slice(0, 900) } : {}
-        });
-        ctx.res.end(body);
-      });
-    };
-    module.exports.range = range;
-  }
-});
-
-// server/routes/handoff.js
-var require_handoff = __commonJS({
-  "server/routes/handoff.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth();
-    var audit3 = require_audit();
-    var { badRequest } = require_http();
-    var { decrypt: decrypt3 } = require_crypto();
-    var NOT_A_CLAIM = "Encounter hand-off for entry into the county EHR / billing system. This is not a claim: SUDS does not submit Drug Medi-Cal (837 / Short-Doyle) claims. Minutes are the total of the services recorded; the county EHR decides what is billable.";
-    var BASES = require_disclosure().EXPORT_BASES;
-    var COLUMNS = [
-      ["service_date", "Service Date"],
-      ["client_code", "Client Code"],
-      ["last_name", "Last Name"],
-      ["first_name", "First Name"],
-      ["dob", "Date Of Birth"],
-      ["medi_cal_id", "Medi-Cal ID"],
-      ["insurance", "Insurance"],
-      ["service_type", "Service Type"],
-      ["service_type_code", "Service Type Code"],
-      ["contacts", "Contacts"],
-      ["minutes", "Minutes"],
-      ["location", "Location"],
-      ["modality", "Modality"],
-      ["staff", "Staff"],
-      ["staff_title", "Staff Title"],
-      ["funding_source", "Funding Source"]
-    ].map(([key, label]) => ({ key, label }));
-    function encounters(ctx, { tsP, ts }) {
-      const cf = auth3.caseloadFilter(ctx.user, "c.id");
-      const rows = db3.all(`SELECT i.client_id, i.type, i.occurred_at, i.duration_minutes, i.location, i.modality, i.user_id, i.funding_source_id, c.client_code, c.first_name_enc, c.last_name_enc, c.dob_enc, c.medicaid_id_enc, c.insurance,
-      u.display_name staff, u.title staff_title, f.name funding_source
-    FROM interventions i JOIN clients c ON c.id=i.client_id JOIN users u ON u.id=i.user_id LEFT JOIN funding_sources f ON f.id=i.funding_source_id
-    WHERE i.client_id IS NOT NULL AND c.deleted_at IS NULL AND ${ts("i.occurred_at")} AND ${cf.sql} ORDER BY i.occurred_at LIMIT 50000`, ...tsP, ...cf.params);
-      const { localDate } = require_budget();
-      const O = require_options();
-      const types = O.labelMap("INTERVENTION_TYPES"), locs = O.labelMap("LOCATIONS"), mods = O.labelMap("MODALITIES");
-      const d = (v) => {
-        try {
-          return v ? decrypt3(v) : "";
-        } catch {
-          return "";
-        }
-      };
-      const groups = /* @__PURE__ */ new Map();
-      for (const r of rows) {
-        const day = String(r.occurred_at).length === 10 ? r.occurred_at : localDate(r.occurred_at);
-        const key = [r.client_id, day, r.type, r.user_id, r.location || "", r.modality || "", r.funding_source_id || ""].join("|");
-        let g = groups.get(key);
-        if (!g) {
-          g = {
-            _client_id: r.client_id,
-            service_date: day,
-            client_code: r.client_code,
-            _enc: r,
-            insurance: r.insurance || "",
-            service_type: types[r.type] || O.humanize(r.type),
-            service_type_code: r.type,
-            contacts: 0,
-            minutes: 0,
-            location: locs[r.location] || (r.location ? O.humanize(r.location) : ""),
-            modality: mods[r.modality] || (r.modality ? O.humanize(r.modality) : ""),
-            staff: r.staff,
-            staff_title: r.staff_title || "",
-            funding_source: r.funding_source || ""
-          };
-          groups.set(key, g);
-        }
-        g.contacts++;
-        g.minutes += Number(r.duration_minutes) || 0;
-      }
-      const names = /* @__PURE__ */ new Map();
-      return [...groups.values()].map((g) => {
-        if (!names.has(g._client_id)) names.set(g._client_id, { last_name: d(g._enc.last_name_enc), first_name: d(g._enc.first_name_enc), dob: d(g._enc.dob_enc), medi_cal_id: d(g._enc.medicaid_id_enc) });
-        const o = { ...g, ...names.get(g._client_id) };
-        delete o._enc;
-        return o;
-      }).sort((a, b) => a.service_date.localeCompare(b.service_date) || a.client_code.localeCompare(b.client_code));
-    }
-    function consentFor(clientId, recipient) {
-      const D = require_disclosure();
-      if (recipient) return D.fileConsentFor(clientId, D.recipientNames(recipient));
-      const types = D.fileConsentTypes();
-      return db3.all(`SELECT * FROM consents WHERE client_id=? AND type IN (${types.map(() => "?").join(",")}) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, clientId, ...types).find((c) => !D.consentElementProblems(c).length) || null;
-    }
-    module.exports = (r) => {
-      r.get("/api/handoff/summary", auth3.requireAuth, auth3.requirePerm("export:identified"), (ctx) => {
-        const p = require_reports().range(ctx);
-        const rows = encounters(ctx, p);
-        const clients = [...new Map(rows.map((x) => [x._client_id, x.client_code])).entries()];
-        const recipient = (ctx.query.get("recipient") || "").trim().slice(0, 200);
-        const without = clients.filter(([id]) => !consentFor(id, recipient)).map(([, code]) => code).sort();
-        const restricted = new Set(db3.all(`SELECT DISTINCT client_id FROM patient_requests WHERE kind='restriction' AND status='fulfilled'`).map((x) => x.client_id));
-        audit3.log({ user: ctx.user, action: "handoff.preview", ip: ctx.ip, details: { from: p.from, to: p.to, rows: rows.length, clients: clients.length } });
-        return {
-          from: p.from,
-          to: p.to,
-          rows: rows.length,
-          clients: clients.length,
-          minutes: rows.reduce((s, x) => s + x.minutes, 0),
-          without_consent: without,
-          restricted: clients.filter(([id]) => restricted.has(id)).length,
-          not_a_claim: NOT_A_CLAIM,
-          consent_types: require_disclosure().fileConsentTypes()
-        };
-      });
-      r.get("/api/handoff/export", auth3.requireAuth, auth3.requirePerm("export:identified"), async (ctx) => {
-        const p = require_reports().range(ctx);
-        const recipient = (ctx.query.get("recipient") || "").trim().slice(0, 200);
-        const purpose = (ctx.query.get("purpose") || "").trim().slice(0, 500);
-        if (!recipient || !purpose) throw badRequest("The hand-off names clients: say who receives it and why (recipient= and purpose=); both go into each client's accounting of disclosures");
-        const basis = ctx.query.get("basis") || "consent";
-        if (!BASES.includes(basis)) throw badRequest(`"${String(basis).slice(0, 40)}" is not a basis the hand-off can be made under (${BASES.join(", ")})`);
-        const disclosure = require_disclosure();
-        if (ctx.query.get("legal_proceeding") === "1") disclosure.requireExportBasis([], { basis: "internal", legal_proceeding: true });
-        const fileBasis = basis === "consent" ? null : disclosure.requireExportBasis([], { basis, agreement_id: ctx.query.get("agreement_id") || void 0, recipient, user: ctx.user, restriction_reviewed: true });
-        const all = encounters(ctx, p);
-        const consentOf = /* @__PURE__ */ new Map();
-        const excluded = /* @__PURE__ */ new Set();
-        if (basis === "consent") for (const id of new Set(all.map((x) => x._client_id))) {
-          const c = consentFor(id, recipient);
-          if (c) consentOf.set(id, c.id);
-          else excluded.add(id);
-        }
-        const rows = all.filter((x) => !excluded.has(x._client_id));
-        const excludedCodes = [...new Set(all.filter((x) => excluded.has(x._client_id)).map((x) => x.client_code))].sort();
-        const clientIds = [...new Set(rows.map((x) => x._client_id))];
-        try {
-          disclosure.requireRestrictionReview(clientIds, ctx.query.get("restriction_reviewed") === "1");
-        } catch (e) {
-          audit3.log({ user: ctx.user, action: "handoff.export.refused", ip: ctx.ip, success: false, details: { basis, clients: clientIds.length, reason: "restriction_review" } });
-          throw e;
-        }
-        db3.transaction(() => {
-          for (const clientId of clientIds) disclosure.record({ clientId, consentId: consentOf.get(clientId) || null, agreementId: fileBasis?.agreement?.id || null, recipient, purpose, what: `County EHR encounter hand-off (${p.from} to ${p.to}): service dates, types, minutes, staff and funding; name, date of birth, Medi-Cal ID`, method: "export", basis, justification: null, source: "ehr_handoff", sourceRef: `handoff:${p.from}_${p.to}`, user: ctx.user, ip: ctx.ip });
-        });
-        require_incidents().maybeMassExport({ clients: clientIds.length, kind: "ehr-handoff", user: ctx.user });
-        audit3.log({ user: ctx.user, action: "handoff.export", ip: ctx.ip, details: { from: p.from, to: p.to, rows: rows.length, basis, clients_disclosed: clientIds.length, excluded_no_consent: excludedCodes.length || void 0 } });
-        const notice = disclosure.notice();
-        const part2 = disclosure.part2Program();
-        const out2 = rows.map((x) => {
-          const o = { ...x };
-          delete o._client_id;
-          return o;
-        });
-        const S = require_spreadsheet();
-        const xlsx = ctx.query.get("format") === "xlsx";
-        const name = `suds-ehr-handoff-${p.from}_${p.to}-identified.${xlsx ? "xlsx" : "csv"}`;
-        const body = xlsx ? await S.writeWorkbookAsync([{ name: "Encounters", columns: COLUMNS, rows: out2 }, { name: "About", columns: [{ key: "k", label: "Field" }, { key: "v", label: "Value" }], rows: [
-          { k: "Not a claim", v: NOT_A_CLAIM },
-          { k: "Classification", v: `Identified \u2014 PHI. Disclosed to: ${recipient}. Purpose: ${purpose}. Basis: ${basis}.` },
-          { k: "Period", v: `${p.from} to ${p.to}` },
-          { k: "Generated", v: db3.now() },
-          { k: "Generated by", v: ctx.user.display_name || ctx.user.username },
-          { k: "Left out (no consent on file naming this recipient)", v: excludedCodes.join(", ") || "none" },
-          ...part2 ? [{ k: "Protected by 42 CFR Part 2", v: notice.short }, { k: "Notice to recipient (42 CFR \xA72.32)", v: notice.text }] : []
-        ] }]) : S.toCsv(out2, COLUMNS) + (part2 ? "\r\n\r\n" + S.toCsv([{ n: disclosure.fileNotice() }], [{ key: "n", label: "" }]).split("\r\n")[1] : "");
-        ctx.res.writeHead(200, {
-          "Content-Type": xlsx ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "text/csv; charset=utf-8",
-          "Content-Disposition": `attachment; filename="${name}"`,
-          "X-SUDS-Export": `Identified export - PHI. Disclosed to: ${recipient}. Purpose: ${purpose}. Basis: ${basis}.${part2 ? ` ${notice.short}` : ""} Not a claim.`.replace(/[^\x20-\x7e]/g, "?").slice(0, 900),
-          "X-SUDS-Handoff-Excluded": excludedCodes.join(",").slice(0, 900)
-        });
-        ctx.res.end(body);
-      });
-    };
-    module.exports.NOT_A_CLAIM = NOT_A_CLAIM;
-  }
-});
-
-// server/importers/pocketai.js
-var require_pocketai = __commonJS({
-  "server/importers/pocketai.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var { sniffDate, sniffClientHints } = require_text();
-    function pick(o, keys) {
-      for (const k of keys) if (o[k] !== void 0 && o[k] !== null && o[k] !== "") return o[k];
-      return void 0;
-    }
-    function normalizeItem(o, i) {
-      if (typeof o === "string") return normalizeTextNote(o, i);
-      const title = pick(o, ["title", "name", "subject", "heading"]) || `Pocket AI note ${i + 1}`;
-      const transcript = pick(o, ["transcript", "transcription", "text", "content", "body", "raw_text"]);
-      const summary = pick(o, ["summary", "ai_summary", "aiSummary", "abstract"]);
-      const notes = pick(o, ["notes", "note", "key_points", "keyPoints", "highlights"]);
-      const actions = pick(o, ["action_items", "actionItems", "actions", "todos", "tasks"]);
-      const parts = [];
-      if (summary) parts.push("## Summary\n" + str(summary));
-      if (notes) parts.push("## Notes\n" + str(notes));
-      if (actions) parts.push("## Action items\n" + (Array.isArray(actions) ? actions.map((a) => "- " + str(a)).join("\n") : str(actions)));
-      if (transcript) parts.push("## Transcript\n" + str(transcript));
-      const content = parts.join("\n\n").trim() || str(o);
-      const rawDate = pick(o, ["created_at", "createdAt", "date", "timestamp", "recorded_at", "recordedAt", "start_time", "updated_at"]);
-      let captured_at = null;
-      if (rawDate !== void 0) {
-        const d = typeof rawDate === "number" ? new Date(rawDate < 1e12 ? rawDate * 1e3 : rawDate) : new Date(rawDate);
-        if (!isNaN(d)) captured_at = d.toISOString();
-      }
-      if (!captured_at) captured_at = sniffDate(title) || sniffDate(content);
-      const tags = pick(o, ["tags", "labels", "categories"]);
-      const hints = sniffClientHints(`${title}
-${content}`);
-      return {
-        external_id: pick(o, ["id", "uuid", "note_id", "recording_id"]) ? String(pick(o, ["id", "uuid", "note_id", "recording_id"])) : null,
-        title: String(title).slice(0, 200),
-        content,
-        captured_at,
-        metadata: { source: "pocket_ai", tags: Array.isArray(tags) ? tags : tags ? [String(tags)] : [], duration: pick(o, ["duration", "duration_seconds", "length"]), hints, has_transcript: !!transcript, has_summary: !!summary }
-      };
-    }
-    function str(v) {
-      if (v === null || v === void 0) return "";
-      if (typeof v === "string") return v;
-      if (Array.isArray(v)) return v.map(str).join("\n");
-      if (typeof v === "object") {
-        if (v.text) return str(v.text);
-        if (v.content) return str(v.content);
-        return JSON.stringify(v, null, 2);
-      }
-      return String(v);
-    }
-    function normalizeTextNote(text, i) {
-      const lines = text.trim().split("\n");
-      let title = lines[0].replace(/^#+\s*/, "").trim().slice(0, 200) || `Pocket AI note ${i + 1}`;
-      const body = lines.slice(1).join("\n").trim();
-      const dateLine = /^(?:date|created|recorded)\s*[:\-]\s*(.+)$/im.exec(text);
-      const captured_at = dateLine && sniffDate(dateLine[1]) || sniffDate(title) || sniffDate(body.slice(0, 300));
-      return { external_id: null, title, content: body || text.trim(), captured_at, metadata: { source: "pocket_ai", hints: sniffClientHints(text) } };
-    }
-    function splitText(text) {
-      const t = String(text).replace(/\r\n/g, "\n").trim();
-      let chunks = t.split(/\n\s*(?:-{3,}|\*{3,}|_{3,}|={3,})\s*\n/).map((s) => s.trim()).filter(Boolean);
-      if (chunks.length === 1 && /^#\s/m.test(t)) chunks = t.split(/\n(?=#\s)/).map((s) => s.trim()).filter(Boolean);
-      return chunks;
-    }
-    function parse(input, { filename = "" } = {}) {
-      const text = import_buffer.Buffer.isBuffer(input) ? input.toString("utf8") : String(input);
-      const trimmed = text.trim();
-      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-        let data;
-        try {
-          data = JSON.parse(trimmed);
-        } catch (e) {
-          throw new Error("Invalid JSON: " + e.message);
-        }
-        let arr = Array.isArray(data) ? data : data.notes || data.recordings || data.items || data.data || data.results;
-        if (!Array.isArray(arr)) arr = [data];
-        return arr.map(normalizeItem);
-      }
-      return splitText(text).map(normalizeTextNote);
-    }
-    module.exports = { parse, normalizeItem };
-  }
-});
-
-// server/importers/onenote.js
-var require_onenote = __commonJS({
-  "server/importers/onenote.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var T = require_text();
-    var config = require_config();
-    function pageFromHtml(html, { filename = "" } = {}) {
-      const title = T.extractTitle(html) || filename.replace(/\.[^.]+$/, "");
-      const meta = /<meta[^>]+name="?(?:created|creation-date|date)"?[^>]+content="([^"]+)"/i.exec(html);
-      const text = T.htmlToText(html);
-      const captured_at = meta && T.sniffDate(meta[1]) || T.sniffDate(text.split("\n").slice(0, 4).join(" ")) || null;
-      return { external_id: null, title: title.slice(0, 200), content: text, captured_at, metadata: { source: "onenote", filename, hints: T.sniffClientHints(`${title}
-${text}`) } };
-    }
-    function splitTextPages(text) {
-      const lines = String(text).replace(/\r\n/g, "\n").split("\n");
-      const pages = [];
-      let cur = null;
-      for (let i = 0; i < lines.length; i++) {
-        const l = lines[i];
-        const isHeader = l.trim() && lines[i + 1] !== void 0 && lines[i + 1].trim() === "" && lines[i + 2] && /^\s*(\w+day, )?\w+ \d{1,2}, \d{4}\s*$/.test(lines[i + 2]);
-        if (isHeader) {
-          if (cur) pages.push(cur);
-          cur = { title: l.trim(), lines: [], date: lines[i + 2].trim() + " " + (lines[i + 3] || "").trim() };
-          i += 3;
-          continue;
-        }
-        if (!cur) cur = { title: "", lines: [], date: "" };
-        cur.lines.push(l);
-      }
-      if (cur) pages.push(cur);
-      return pages.map((p, i) => {
-        const content = p.lines.join("\n").trim();
-        return { external_id: null, title: (p.title || `OneNote page ${i + 1}`).slice(0, 200), content, captured_at: T.sniffDate(p.date) || T.sniffDate(content.slice(0, 300)), metadata: { source: "onenote", hints: T.sniffClientHints(`${p.title}
-${content}`) } };
-      }).filter((p) => p.content || p.title);
-    }
-    function parseFile(buf, filename = "") {
-      const ext = (filename.split(".").pop() || "").toLowerCase();
-      if (ext === "mht" || ext === "mhtml" || /^(From|MIME-Version|Content-Type):/i.test(buf.toString("latin1", 0, 64))) {
-        const parts = T.parseMime(buf);
-        const htmlParts = parts.filter((p) => p.contentType.includes("text/html"));
-        if (!htmlParts.length) throw new Error("MHT file contains no HTML pages");
-        return htmlParts.map((p, i) => pageFromHtml(typeof p.body === "string" ? p.body : p.body.toString("utf8"), { filename: p.location || `${filename}#${i + 1}` }));
-      }
-      if (ext === "html" || ext === "htm" || /^\s*<(!doctype|html)/i.test(buf.toString("utf8", 0, 200))) {
-        const html = buf.toString("utf8");
-        const chunks = html.split(/<div[^>]+page-break-before:\s*always[^>]*>/i);
-        return chunks.length > 1 ? chunks.map((c, i) => pageFromHtml(c, { filename: `${filename}#${i + 1}` })).filter((p) => p.content) : [pageFromHtml(html, { filename })];
-      }
-      if (ext === "docx" || buf[0] === 80 && buf[1] === 75) {
-        const text2 = T.docxToText(buf);
-        const pages2 = splitTextPages(text2);
-        return pages2.length ? pages2 : [{ external_id: null, title: filename.replace(/\.[^.]+$/, ""), content: text2, captured_at: T.sniffDate(text2.slice(0, 300)), metadata: { source: "onenote", filename, hints: T.sniffClientHints(text2) } }];
-      }
-      if (ext === "pdf" || buf.toString("latin1", 0, 5) === "%PDF-") throw new Error("PDF export is not supported. In OneNote use File \u2192 Export \u2192 Single File Web Page (.mht) or Word (.docx).");
-      const text = buf.toString("utf8");
-      const pages = splitTextPages(text);
-      return pages.length > 1 ? pages : [{ external_id: null, title: (text.split("\n")[0] || filename).trim().slice(0, 200), content: text.trim(), captured_at: T.sniffDate(text.slice(0, 300)), metadata: { source: "onenote", filename, hints: T.sniffClientHints(text) } }];
-    }
-    async function graphToken() {
-      const { tenantId, clientId, clientSecret } = config.msGraph;
-      if (!tenantId || !clientId || !clientSecret) throw new Error("Microsoft Graph is not configured (MS_TENANT_ID, MS_CLIENT_ID, MS_CLIENT_SECRET)");
-      const res = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(tenantId)}/oauth2/v2.0/token`, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, scope: "https://graph.microsoft.com/.default", grant_type: "client_credentials" })
-      });
-      if (!res.ok) throw new Error(`Graph token request failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
-      return (await res.json()).access_token;
-    }
-    function graphBase(user) {
-      return `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(user || config.msGraph.user)}/onenote`;
-    }
-    async function graphGet(url, token2, accept = "application/json") {
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${token2}`, Accept: accept } });
-      if (!res.ok) throw new Error(`Graph request failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
-      return accept === "application/json" ? res.json() : res.text();
-    }
-    async function listNotebooks({ token: token2, user } = {}) {
-      token2 = token2 || await graphToken();
-      const nb = await graphGet(`${graphBase(user)}/notebooks?$expand=sections($select=id,displayName)`, token2);
-      return (nb.value || []).map((n) => ({ id: n.id, name: n.displayName, lastModified: n.lastModifiedDateTime, sections: (n.sections || []).map((s) => ({ id: s.id, name: s.displayName })) }));
-    }
-    async function listPages(sectionId, { token: token2, user, since } = {}) {
-      token2 = token2 || await graphToken();
-      let url = `${graphBase(user)}/sections/${encodeURIComponent(sectionId)}/pages?$select=id,title,createdDateTime,lastModifiedDateTime&$top=100${since ? `&$filter=lastModifiedDateTime ge ${since}` : ""}`;
-      const out2 = [];
-      while (url) {
-        const j = await graphGet(url, token2);
-        out2.push(...j.value || []);
-        url = j["@odata.nextLink"];
-      }
-      return out2.map((p) => ({ id: p.id, title: p.title, created: p.createdDateTime, modified: p.lastModifiedDateTime }));
-    }
-    async function fetchPages(pageIds, { token: token2, user } = {}) {
-      token2 = token2 || await graphToken();
-      const items = [];
-      for (const id of pageIds) {
-        const meta = await graphGet(`${graphBase(user)}/pages/${encodeURIComponent(id)}?$select=id,title,createdDateTime,lastModifiedDateTime,parentSection`, token2);
-        const html = await graphGet(`${graphBase(user)}/pages/${encodeURIComponent(id)}/content?includeIDs=false`, token2, "text/html");
-        const page = pageFromHtml(html, { filename: meta.title });
-        page.external_id = id;
-        page.title = (meta.title || page.title || "Untitled").slice(0, 200);
-        page.captured_at = meta.createdDateTime || page.captured_at;
-        page.metadata.modified = meta.lastModifiedDateTime;
-        page.metadata.section = meta.parentSection?.displayName;
-        items.push(page);
-      }
-      return items;
-    }
-    module.exports = { parseFile, pageFromHtml, splitTextPages, listNotebooks, listPages, fetchPages, graphToken };
-  }
-});
-
-// server/routes/imports.js
-var require_imports = __commonJS({
-  "server/routes/imports.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth();
-    var audit3 = require_audit();
-    var config = require_config();
-    var { badRequest, notFound, forbidden, HttpError: HttpError3 } = require_http();
-    var { validate, paging } = require_validate();
-    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2, blindIndex: blindIndex2 } = require_crypto();
-    var pocket = require_pocketai();
-    var onenote = require_onenote();
-    var M = require_clients_model();
-    function suggestClient(ctx, hints) {
-      if (!hints) return null;
-      for (const code of hints.codes || []) {
-        const c = db3.one(`SELECT id FROM clients WHERE client_code=? AND deleted_at IS NULL`, code);
-        if (c && auth3.canAccessClient(ctx.user, c.id)) return c.id;
-      }
-      for (const name of hints.names || []) {
-        const parts = name.split(/[,\s]+/).filter(Boolean);
-        if (parts.length < 2) continue;
-        const a = blindIndex2(parts.join("")), b = blindIndex2([...parts].reverse().join(""));
-        const c = db3.one(`SELECT id FROM clients WHERE full_name_idx IN (?,?) AND deleted_at IS NULL`, a, b);
-        if (c && auth3.canAccessClient(ctx.user, c.id)) return c.id;
-      }
-      return null;
-    }
-    function stage(ctx, { source, filename, items, importedBy, metadata }) {
-      if (!items.length) throw badRequest("No notes were found in the input");
-      if (items.length > 500) throw badRequest("Too many items in one import (max 500)");
-      const id = uuid2();
-      db3.transaction(() => {
-        db3.run(`INSERT INTO imports(id,source,filename,imported_by,item_count,metadata) VALUES(?,?,?,?,?,?)`, id, source, filename || null, importedBy || null, items.length, metadata ? JSON.stringify(metadata) : null);
-        for (const it of items) {
-          const suggested = ctx ? suggestClient(ctx, it.metadata?.hints) : null;
-          db3.run(
-            `INSERT INTO import_items(id,import_id,external_id,title_enc,content_enc,captured_at,metadata,suggested_client_id) VALUES(?,?,?,?,?,?,?,?)`,
-            uuid2(),
-            id,
-            it.external_id || null,
-            it.title ? encrypt3(it.title) : null,
-            encrypt3(it.content || ""),
-            it.captured_at || null,
-            JSON.stringify(it.metadata || {}),
-            suggested
-          );
-        }
-      });
-      return id;
-    }
-    function itemTitle(x) {
-      return x.title_enc ? decrypt3(x.title_enc) : null;
-    }
-    function itemView(x, { withContent = true } = {}) {
-      const o = { ...x, metadata: x.metadata ? JSON.parse(x.metadata) : {}, title: itemTitle(x) };
-      delete o.content_enc;
-      delete o.title_enc;
-      if (withContent) o.content = decrypt3(x.content_enc);
-      if (o.metadata?.hints) {
-        o.hints = o.metadata.hints;
-      }
-      return o;
-    }
-    module.exports = (r) => {
-      r.post("/api/imports/upload", auth3.requireAuth, auth3.requirePerm("imports:write"), (ctx) => {
-        let source, filename, buf;
-        if (ctx.body && ctx.body.text !== void 0) {
-          const v = validate(ctx.body, { source: { type: "string", required: true, enum: ["pocket_ai", "onenote", "generic"] }, filename: { type: "string", maxLen: 200 }, text: { type: "string", required: true, maxLen: 2e7 } });
-          source = v.source;
-          filename = v.filename || "pasted.txt";
-          buf = import_buffer.Buffer.from(v.text, "utf8");
-        } else {
-          source = String(ctx.query.get("source") || ctx.headers["x-import-source"] || "generic");
-          filename = String(ctx.headers["x-filename"] || ctx.query.get("filename") || "upload");
-          buf = ctx.rawBody || import_buffer.Buffer.alloc(0);
-          if (ctx.headers["content-transfer-encoding"] === "base64") buf = import_buffer.Buffer.from(buf.toString("latin1"), "base64");
-        }
-        if (!buf.length) throw badRequest("Empty upload");
-        let items;
-        try {
-          if (source === "pocket_ai") items = pocket.parse(buf, { filename });
-          else if (source === "onenote") items = onenote.parseFile(buf, filename);
-          else {
-            const ext = filename.split(".").pop().toLowerCase();
-            items = ["json"].includes(ext) ? pocket.parse(buf, { filename }) : onenote.parseFile(buf, filename);
-          }
-        } catch (e) {
-          throw badRequest("Could not parse file: " + e.message);
-        }
-        const id = stage(ctx, { source: source === "onenote" ? "onenote_file" : source, filename, items, importedBy: ctx.user.id });
-        audit3.log({ user: ctx.user, action: "import.upload", entity: "import", entityId: id, ip: ctx.ip, details: { source, extension: (/\.([A-Za-z0-9]{1,8})$/.exec(filename) || [])[1] || null, bytes: buf.length, count: items.length } });
-        ctx.status = 201;
-        return { id, count: items.length };
-      });
-      r.get("/api/imports", auth3.requireAuth, auth3.requirePerm("imports:read", "imports:write"), (ctx) => {
-        const rows = db3.all(`SELECT i.*, u.display_name AS imported_by_name,
-      (SELECT COUNT(*) FROM import_items x WHERE x.import_id=i.id AND x.status='staged') AS staged,
-      (SELECT COUNT(*) FROM import_items x WHERE x.import_id=i.id AND x.status='committed') AS committed,
-      (SELECT COUNT(*) FROM import_items x WHERE x.import_id=i.id AND x.status='discarded') AS discarded
-      FROM imports i LEFT JOIN users u ON u.id=i.imported_by ${auth3.hasPerm(ctx.user, "clients:all") ? "" : "WHERE i.imported_by=? OR i.imported_by IS NULL"} ORDER BY i.created_at DESC LIMIT 200`, ...auth3.hasPerm(ctx.user, "clients:all") ? [] : [ctx.user.id]);
-        return { imports: rows };
-      });
-      r.get("/api/imports/:id", auth3.requireAuth, auth3.requirePerm("imports:read", "imports:write"), (ctx) => {
-        const imp = db3.one(`SELECT * FROM imports WHERE id=?`, ctx.params.id);
-        if (!imp) throw notFound();
-        if (imp.imported_by && imp.imported_by !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden();
-        const items = db3.all(`SELECT x.*, c.client_code AS suggested_client_code FROM import_items x LEFT JOIN clients c ON c.id=x.suggested_client_id WHERE import_id=? ORDER BY captured_at, created_at`, imp.id).map((x) => itemView(x));
-        for (const it of items) if (it.suggested_client_id) {
-          const c = db3.one(`SELECT * FROM clients WHERE id=?`, it.suggested_client_id);
-          it.suggested_client_name = c ? M.summary(c).display_name : null;
-        }
-        audit3.log({ user: ctx.user, action: "import.view", entity: "import", entityId: imp.id, ip: ctx.ip });
-        return { import: imp, items };
-      });
-      r.post("/api/imports/items/:id/commit", auth3.requireAuth, auth3.requirePerm("imports:write"), (ctx) => {
-        const it = db3.one(`SELECT * FROM import_items WHERE id=?`, ctx.params.id);
-        if (!it) throw notFound();
-        if (it.status !== "staged") throw badRequest("Item already processed");
-        const v = validate(ctx.body, {
-          client_id: { type: "string", required: true },
-          kind: { type: "string", required: true, enum: ["clinical", "admin"] },
-          format: { type: "string", list: "NOTE_FORMATS" },
-          title: { type: "string", maxLen: 200 },
-          content: { type: "string", maxLen: 5e4 },
-          occurred_at: { type: "datetime" },
-          create_intervention: { type: "boolean" },
-          intervention_type: { type: "string", list: "INTERVENTION_TYPES" },
-          duration_minutes: { type: "number", integer: true, min: 0 }
-        });
-        if (!auth3.hasPerm(ctx.user, `notes:${v.kind}:write`)) throw forbidden(`You cannot author ${v.kind} notes`);
-        if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, v.client_id)) throw notFound("Client not found");
-        auth3.assertClientAccess(ctx, v.client_id);
-        const imp = db3.one(`SELECT source FROM imports WHERE id=?`, it.import_id);
-        const source = imp.source.startsWith("onenote") ? "onenote" : imp.source === "pocket_ai" || imp.source === "api" ? "pocket_ai" : "import";
-        const content = v.content ?? decrypt3(it.content_enc);
-        const occurred = v.occurred_at || it.captured_at || db3.now();
-        const noteId = uuid2();
-        let interventionId = null;
-        db3.transaction(() => {
-          if (v.create_intervention) {
-            interventionId = uuid2();
-            db3.run(`INSERT INTO interventions(id,client_id,user_id,type,occurred_at,duration_minutes,location,summary_enc) VALUES(?,?,?,?,?,?,?,?)`, interventionId, v.client_id, ctx.user.id, v.intervention_type || "case_management", occurred, v.duration_minutes || 0, "other", encrypt3((v.title || itemTitle(it) || "").slice(0, 300)));
-          }
-          const noteTitle = v.title || itemTitle(it) || null;
-          db3.run(
-            `INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,occurred_at,source,source_ref,import_item_id,intervention_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-            noteId,
-            v.client_id,
-            ctx.user.id,
-            v.kind,
-            v.format || "narrative",
-            noteTitle ? encrypt3(noteTitle) : null,
-            encrypt3(content),
-            occurred,
-            source,
-            it.external_id || null,
-            it.id,
-            interventionId
-          );
-          db3.run(`UPDATE import_items SET status='committed', note_id=? WHERE id=?`, noteId, it.id);
-          const left = db3.one(`SELECT COUNT(*) n FROM import_items WHERE import_id=? AND status='staged'`, it.import_id).n;
-          if (left === 0) db3.run(`UPDATE imports SET status='completed' WHERE id=?`, it.import_id);
-        });
-        audit3.log({ user: ctx.user, action: "import.commit", entity: "note", entityId: noteId, clientId: v.client_id, ip: ctx.ip, details: { import_item: it.id, kind: v.kind, intervention: interventionId } });
-        return { note_id: noteId, intervention_id: interventionId };
-      });
-      r.post("/api/imports/items/:id/discard", auth3.requireAuth, auth3.requirePerm("imports:write"), (ctx) => {
-        const it = db3.one(`SELECT * FROM import_items WHERE id=?`, ctx.params.id);
-        if (!it) throw notFound();
-        const imp = db3.one(`SELECT imported_by FROM imports WHERE id=?`, it.import_id);
-        if (imp && imp.imported_by && imp.imported_by !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden();
-        if (it.status !== "staged") throw badRequest("Item already processed");
-        db3.run(`UPDATE import_items SET status='discarded' WHERE id=?`, it.id);
-        audit3.log({ user: ctx.user, action: "import.discard", entity: "import_item", entityId: it.id, ip: ctx.ip });
-        return { ok: true };
-      });
-      r.delete("/api/imports/:id", auth3.requireAuth, auth3.requirePerm("imports:write"), (ctx) => {
-        const imp = db3.one(`SELECT * FROM imports WHERE id=?`, ctx.params.id);
-        if (!imp) throw notFound();
-        if (imp.imported_by !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden();
-        db3.run(`DELETE FROM import_items WHERE import_id=? AND status<>'committed'`, imp.id);
-        db3.run(`UPDATE imports SET status='purged' WHERE id=?`, imp.id);
-        audit3.log({ user: ctx.user, action: "import.purge", entity: "import", entityId: imp.id, ip: ctx.ip });
-        return { ok: true };
-      });
-      r.get("/api/imports/onenote/status", auth3.requireAuth, auth3.requirePerm("imports:write"), () => ({ configured: !!(config.msGraph.tenantId && config.msGraph.clientId && config.msGraph.clientSecret && config.msGraph.user), user: config.msGraph.user ? config.msGraph.user.replace(/(.{2}).+(@.+)/, "$1***$2") : null }));
-      r.get("/api/imports/onenote/notebooks", auth3.requireAuth, auth3.requirePerm("imports:write"), async (ctx) => {
-        try {
-          return { notebooks: await onenote.listNotebooks({ token: ctx.headers["x-ms-access-token"] }) };
-        } catch (e) {
-          throw new HttpError3(502, e.message);
-        }
-      });
-      r.get("/api/imports/onenote/sections/:id/pages", auth3.requireAuth, auth3.requirePerm("imports:write"), async (ctx) => {
-        try {
-          return { pages: await onenote.listPages(ctx.params.id, { token: ctx.headers["x-ms-access-token"], since: ctx.query.get("since") || void 0 }) };
-        } catch (e) {
-          throw new HttpError3(502, e.message);
-        }
-      });
-      r.post("/api/imports/onenote/fetch", auth3.requireAuth, auth3.requirePerm("imports:write"), async (ctx) => {
-        const { page_ids } = validate(ctx.body, { page_ids: { type: "array", required: true } });
-        if (!page_ids.length || page_ids.length > 200) throw badRequest("Select 1\u2013200 pages");
-        let items;
-        try {
-          items = await onenote.fetchPages(page_ids.map(String), { token: ctx.headers["x-ms-access-token"] });
-        } catch (e) {
-          throw new HttpError3(502, e.message);
-        }
-        const id = stage(ctx, { source: "onenote_graph", filename: null, items, importedBy: ctx.user.id, metadata: { pages: page_ids.length } });
-        audit3.log({ user: ctx.user, action: "import.onenote_graph", entity: "import", entityId: id, ip: ctx.ip, details: { count: items.length } });
-        ctx.status = 201;
-        return { id, count: items.length };
-      });
-      module.exports.stage = stage;
-    };
-    module.exports.stageFn = (args) => stage(null, args);
-  }
-});
-
-// server/routes/intake.js
-var require_intake = __commonJS({
-  "server/routes/intake.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var audit3 = require_audit();
-    var { rateLimit } = require_app2();
-    var { HttpError: HttpError3, unauthorized, badRequest } = require_http();
-    var { sha256: sha2562 } = require_crypto();
-    var pocket = require_pocketai();
-    var importsRoutes = require_imports();
-    function apiKeyAuth(ctx) {
-      if (!rateLimit(`intake:${ctx.ip}`, 60, 6e4)) throw new HttpError3(429, "Too many requests");
-      const h = ctx.headers["authorization"] || "";
-      const key = h.startsWith("Bearer ") ? h.slice(7).trim() : ctx.headers["x-api-key"] || "";
-      if (!key) throw unauthorized("API key required");
-      let k = db3.one(`SELECT * FROM api_keys WHERE key_hash=? AND revoked_at IS NULL`, sha2562(key));
-      if (k && !String(k.scopes || "").split(/[\s,]+/).includes("intake")) k = null;
-      if (!k) {
-        audit3.log({ user: null, action: "intake.denied", ip: ctx.ip, success: false });
-        throw unauthorized("Invalid API key");
-      }
-      db3.run(`UPDATE api_keys SET last_used_at=? WHERE id=?`, db3.now(), k.id);
-      return k;
-    }
-    module.exports = (r) => {
-      r.post("/api/intake/notes", (ctx) => {
-        const k = apiKeyAuth(ctx);
-        let payload = ctx.body;
-        if (ctx.rawBody && (!payload || !Object.keys(payload).length)) payload = ctx.rawBody.toString("utf8");
-        if (!payload || typeof payload === "object" && !Object.keys(payload).length) throw badRequest("Empty payload");
-        let items;
-        try {
-          items = typeof payload === "string" ? pocket.parse(payload) : (Array.isArray(payload) ? payload : payload.notes || payload.items || payload.recordings || [payload]).map(pocket.normalizeItem);
-        } catch (e) {
-          throw badRequest("Could not parse payload: " + e.message);
-        }
-        const id = importsRoutes.stageFn({ source: "api", filename: `api:${k.name}`, items, importedBy: k.created_by, metadata: { api_key: k.prefix } });
-        audit3.log({ user: { id: k.created_by, username: `apikey:${k.name}` }, action: "intake.received", entity: "import", entityId: id, ip: ctx.ip, details: { count: items.length } });
-        ctx.status = 202;
-        return { import_id: id, staged: items.length, message: "Notes staged for review in SUDS \u2192 Imports" };
-      });
-      r.get("/api/intake/ping", (ctx) => {
-        const k = apiKeyAuth(ctx);
-        return { ok: true, key: k.name };
-      });
-    };
-  }
-});
-
-// server/routes/supplies.js
-var require_supplies = __commonJS({
-  "server/routes/supplies.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth();
-    var audit3 = require_audit();
-    var { badRequest, notFound } = require_http();
-    var { validate } = require_validate();
-    var { uuid: uuid2 } = require_crypto();
-    var DRAWDOWN = { naloxone_kits: "Naloxone kit", fentanyl_strips: "Fentanyl test strips" };
-    var list = () => db3.all(`SELECT s.*, u.display_name AS updated_by_name FROM supply_stock s LEFT JOIN users u ON u.id=s.updated_by ORDER BY s.item COLLATE NOCASE`);
-    function applyDelta(ctx, deltas, { intervention = null, action = "supply.drawdown" } = {}) {
-      for (const [col, item] of Object.entries(DRAWDOWN)) {
-        const delta = Number(deltas[col] || 0);
-        if (!delta) continue;
-        const s = db3.one(`SELECT * FROM supply_stock WHERE item=? COLLATE NOCASE`, item);
-        if (!s) continue;
-        const q = Math.max(0, s.quantity + delta);
-        db3.run(`UPDATE supply_stock SET quantity=?, updated_by=?, updated_at=? WHERE id=?`, q, ctx.user.id, db3.now(), s.id);
-        audit3.log({ user: ctx.user, action, entity: "supply_stock", entityId: s.id, ip: ctx.ip, details: { item, delta, quantity: q, intervention } });
-      }
-    }
-    function drawDown(ctx, row, prev = null) {
-      const deltas = {};
-      for (const col of Object.keys(DRAWDOWN)) deltas[col] = -(Number(row[col] || 0) - Number(prev ? prev[col] || 0 : 0));
-      applyDelta(ctx, deltas, { intervention: row.id });
-    }
-    function restore(ctx, row) {
-      const deltas = {};
-      for (const col of Object.keys(DRAWDOWN)) deltas[col] = Number(row[col] || 0);
-      applyDelta(ctx, deltas, { intervention: row.id, action: "supply.restore" });
-    }
-    module.exports = (r) => {
-      r.get("/api/supplies", auth3.requireAuth, auth3.requirePerm("interventions:read"), () => ({ rows: list(), drawdown: DRAWDOWN }));
-      r.post("/api/supplies", auth3.requireAuth, auth3.requirePerm("interventions:write"), (ctx) => {
-        const v = validate(ctx.body, { item: { type: "string", required: true, maxLen: 80 }, quantity: { type: "number", required: true, integer: true, min: 0, max: 1e6 } });
-        const item = v.item.trim();
-        if (!item) throw badRequest("Item name is required");
-        const existing = db3.one(`SELECT id FROM supply_stock WHERE item=? COLLATE NOCASE`, item);
-        let id = existing ? existing.id : null;
-        if (existing) db3.run(`UPDATE supply_stock SET quantity=?, updated_by=?, updated_at=? WHERE id=?`, v.quantity, ctx.user.id, db3.now(), id);
-        else {
-          id = uuid2();
-          db3.run(`INSERT INTO supply_stock(id,item,quantity,updated_by) VALUES(?,?,?,?)`, id, item, v.quantity, ctx.user.id);
-        }
-        audit3.log({ user: ctx.user, action: existing ? "supply.update" : "supply.create", entity: "supply_stock", entityId: id, ip: ctx.ip, details: { item, quantity: v.quantity } });
-        ctx.status = existing ? 200 : 201;
-        return { id, item, quantity: v.quantity };
-      });
-      r.put("/api/supplies/:id", auth3.requireAuth, auth3.requirePerm("interventions:write"), (ctx) => {
-        const s = db3.one(`SELECT * FROM supply_stock WHERE id=?`, ctx.params.id);
-        if (!s) throw notFound("Supply item not found");
-        const v = validate(ctx.body, { item: { type: "string", maxLen: 80 }, quantity: { type: "number", integer: true, min: 0, max: 1e6 }, adjust: { type: "number", integer: true, min: -1e6, max: 1e6 } }, { partial: true });
-        const quantity = v.quantity !== void 0 && v.quantity !== null ? v.quantity : Math.max(0, s.quantity + Number(v.adjust || 0));
-        const item = v.item ? v.item.trim() : s.item;
-        db3.run(`UPDATE supply_stock SET item=?, quantity=?, updated_by=?, updated_at=? WHERE id=?`, item, quantity, ctx.user.id, db3.now(), s.id);
-        audit3.log({ user: ctx.user, action: "supply.update", entity: "supply_stock", entityId: s.id, ip: ctx.ip, details: { item, quantity, was: s.quantity } });
-        return { ok: true, quantity };
-      });
-      r.delete("/api/supplies/:id", auth3.requireAuth, auth3.requirePerm("interventions:write"), (ctx) => {
-        const s = db3.one(`SELECT * FROM supply_stock WHERE id=?`, ctx.params.id);
-        if (!s) throw notFound("Supply item not found");
-        db3.run(`DELETE FROM supply_stock WHERE id=?`, s.id);
-        db3.tombstone("supply_stock", s.id);
-        audit3.log({ user: ctx.user, action: "supply.delete", entity: "supply_stock", entityId: s.id, ip: ctx.ip, details: { item: s.item } });
-        return { ok: true };
-      });
-    };
-    module.exports.drawDown = drawDown;
-    module.exports.restore = restore;
-    module.exports.applyDelta = applyDelta;
-    module.exports.DRAWDOWN = DRAWDOWN;
-  }
-});
-
-// server/routes/interventions.js
-var require_interventions = __commonJS({
-  "server/routes/interventions.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth();
-    var crud = require_crud();
-    var C = require_constants();
-    var O = require_options();
-    var { badRequest, forbidden } = require_http();
-    var { uuid: uuid2, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
-    var supplies = require_supplies();
-    var { localDate, cents } = require_budget();
-    function serviceDate(v) {
-      return v._service_date || localDate(v.occurred_at);
-    }
-    function checkCost(ctx, v) {
-      if (("cost" in v || "funding_source_id" in v || "budget_line_id" in v) && !auth3.hasPerm(ctx.user, "budget:write")) throw forbidden("You do not have permission to attach a cost to a funding source");
-      if (v.cost && v.cost > 0) {
-        if (!v.funding_source_id) throw badRequest("A funding source is required when a cost is entered");
-        if (!v.budget_line_id) throw badRequest("A budget line is required when a cost is entered, so it is deducted from the right allocation");
-        const line = db3.one(`SELECT * FROM budget_lines WHERE id=? AND funding_source_id=?`, v.budget_line_id, v.funding_source_id);
-        if (!line) throw badRequest("Budget line does not belong to the selected funding source");
-        if (v.occurred_at) require_budget().assertInPeriod(db3.one(`SELECT * FROM funding_sources WHERE id=?`, v.funding_source_id), serviceDate(v), "Date of service");
-        return line;
-      }
-      if (v.budget_line_id && !v.funding_source_id) throw badRequest("A funding source is required when a budget line is selected");
-      return null;
-    }
-    function syncExpenditure(row) {
-      const existing = db3.one(`SELECT * FROM expenditures WHERE intervention_id=?`, row.id);
-      if (existing && existing.status !== "pending") return;
-      const wantsCost = row.cost > 0 && row.funding_source_id && row.budget_line_id;
-      if (!wantsCost) {
-        if (existing) {
-          db3.run(`DELETE FROM expenditures WHERE id=?`, existing.id);
-          db3.tombstone("expenditures", existing.id);
-        }
-        return;
-      }
-      const line = db3.one(`SELECT * FROM budget_lines WHERE id=? AND funding_source_id=?`, row.budget_line_id, row.funding_source_id);
-      if (!line) return;
-      const desc = `Auto-recorded from ${row.type.replace(/_/g, " ")}`;
-      const spentAt = serviceDate(row);
-      if (existing) db3.run(
-        `UPDATE expenditures SET funding_source_id=?, budget_line_id=?, client_id=?, spent_at=?, amount=?, category=?, description_enc=?, updated_at=? WHERE id=?`,
-        row.funding_source_id,
-        row.budget_line_id,
-        row.client_id || null,
-        spentAt,
-        cents(row.cost),
-        line.category,
-        encrypt3(desc),
-        db3.now(),
-        existing.id
-      );
-      else db3.run(
-        `INSERT INTO expenditures(id,funding_source_id,budget_line_id,client_id,user_id,intervention_id,spent_at,amount,category,description_enc) VALUES(?,?,?,?,?,?,?,?,?,?)`,
-        uuid2(),
-        row.funding_source_id,
-        row.budget_line_id,
-        row.client_id || null,
-        row.user_id,
-        row.id,
-        spentAt,
-        cents(row.cost),
-        line.category,
-        encrypt3(desc)
-      );
-    }
-    function syncTimeEntry(row, prev) {
-      if (row.duration_minutes === prev.duration_minutes && row.occurred_at === prev.occurred_at && !row._service_date) return;
-      const te = db3.one(`SELECT * FROM time_entries WHERE intervention_id=?`, row.id);
-      if (!te || te.status !== "draft" && te.status !== "submitted") return;
-      if (!(row.duration_minutes > 0)) {
-        db3.run(`DELETE FROM time_entries WHERE id=?`, te.id);
-        db3.tombstone("time_entries", te.id);
-        return;
-      }
-      db3.run(`UPDATE time_entries SET minutes=?, work_date=?, updated_at=? WHERE id=?`, row.duration_minutes, serviceDate(row), db3.now(), te.id);
-    }
-    function checkClient(type, clientId) {
-      if (!clientId && !C.CLIENTLESS_INTERVENTION_TYPES.includes(type)) throw badRequest("Choose the client this service was for. Only outreach and community naloxone distribution can be recorded without one.", { fields: { client_id: "Client is required for this type of service" } });
-    }
-    function encodeSummary(v) {
-      if (v.summary !== void 0) {
-        v.summary_enc = v.summary ? require_crypto().encrypt(v.summary) : null;
-        delete v.summary;
-      }
-    }
-    function decodeSummary(row) {
-      let summary = null;
-      if (row.summary_enc) {
-        try {
-          summary = require_crypto().decrypt(row.summary_enc);
-        } catch {
-          summary = "[could not be read]";
-        }
-      }
-      return { ...row, summary, summary_enc: void 0 };
-    }
-    module.exports = (r) => {
-      crud.build(r, {
-        table: "interventions",
-        entity: "intervention",
-        perm: "interventions",
-        clientRequired: false,
-        dateCol: "occurred_at",
-        restrictOwner: true,
-        joins: "JOIN users u ON u.id=interventions.user_id LEFT JOIN clients c ON c.id=interventions.client_id LEFT JOIN funding_sources f ON f.id=interventions.funding_source_id",
-        select: "interventions.*, u.display_name AS worker, c.client_code, f.name AS funding_source",
-        shape: {
-          // Optional: community naloxone distribution and street outreach are services with no identified client.
-          client_id: { type: "string" },
-          user_id: { type: "string" },
-          type: { type: "string", required: true, list: "INTERVENTION_TYPES" },
-          occurred_at: { type: "datetime", required: true },
-          duration_minutes: { type: "number", integer: true, min: 0, max: 1440 },
-          location: { type: "string", list: "LOCATIONS" },
-          modality: { type: "string", list: "MODALITIES" },
-          outcome: { type: "string", list: "OUTCOMES" },
-          stage_of_change: { type: "string", enum: C.STAGES },
-          naloxone_kits: { type: "number", integer: true, min: 0 },
-          fentanyl_strips: { type: "number", integer: true, min: 0 },
-          funding_source_id: { type: "string" },
-          budget_line_id: { type: "string" },
-          cost: { type: "number", min: 0 },
-          summary: { type: "string", maxLen: 2e3 },
-          follow_up_due: { type: "date" },
-          log_time: { type: "boolean" },
-          time_category: { type: "string", list: "TIME_CATEGORIES" },
-          // Optional: the calendar date the service belongs to, when it is not the org-timezone date of occurred_at.
-          service_date: { type: "date" }
-        },
-        filters: (ctx, where, params) => {
-          const t = ctx.query.get("type");
-          if (t) {
-            where.push("interventions.type=?");
-            params.push(t);
-          }
-        },
-        afterLoad: (ctx, row) => decodeSummary(row),
-        beforeInsert: (ctx, v) => {
-          checkClient(v.type, v.client_id);
-          v._log_time = v.log_time;
-          delete v.log_time;
-          v._time_category = v.time_category;
-          delete v.time_category;
-          v._service_date = v.service_date || null;
-          delete v.service_date;
-          if (v.cost !== void 0 && v.cost !== null) v.cost = cents(v.cost);
-          encodeSummary(v);
-          checkCost(ctx, v);
-        },
-        beforeUpdate: (ctx, v, row) => {
-          if ("type" in v || "client_id" in v) checkClient(v.type ?? row.type, "client_id" in v ? v.client_id : row.client_id);
-          delete v.log_time;
-          delete v.time_category;
-          v._service_date = v.service_date || null;
-          delete v.service_date;
-          if (v.cost !== void 0 && v.cost !== null) v.cost = cents(v.cost);
-          encodeSummary(v);
-          if ("cost" in v || "funding_source_id" in v || "budget_line_id" in v || "occurred_at" in v) checkCost(ctx, { funding_source_id: row.funding_source_id, budget_line_id: row.budget_line_id, cost: row.cost, occurred_at: row.occurred_at, ...v });
-        },
-        afterInsert: (ctx, row) => {
-          if (row._log_time && row.duration_minutes > 0) {
-            db3.run(
-              `INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,funding_source_id,intervention_id,description_enc) VALUES(?,?,?,?,?,?,?,?,?)`,
-              uuid2(),
-              row.user_id,
-              row.client_id ?? null,
-              serviceDate(row),
-              row.duration_minutes,
-              row._time_category || "direct_service",
-              row.funding_source_id || null,
-              row.id,
-              encrypt3(O.labelOf("INTERVENTION_TYPES", row.type))
-            );
-          }
-          if (row.naloxone_kits > 0 && row.client_id) db3.run(`UPDATE clients SET naloxone_provided=1, naloxone_last_date=?, updated_at=? WHERE id=?`, serviceDate(row), db3.now(), row.client_id);
-          if (row.follow_up_due && row.client_id) db3.run(
-            `INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority) VALUES(?,?,?,?,?,?,?)`,
-            uuid2(),
-            row.client_id,
-            row.user_id,
-            ctx.user.id,
-            require_crypto().encrypt(`Follow up: ${O.labelOf("INTERVENTION_TYPES", row.type)}`),
-            row.follow_up_due,
-            "normal"
-          );
-          syncExpenditure(row);
-          supplies.drawDown(ctx, row);
-        },
-        afterUpdate: (ctx, row, prev) => {
-          syncExpenditure(row);
-          syncTimeEntry(row, prev);
-          supplies.drawDown(ctx, row, prev);
-        },
-        // The FKs from expenditures.intervention_id and time_entries.intervention_id are ON DELETE SET NULL, so
-        // this has to run before the delete — after it, there is no longer any way to find the records this
-        // intervention created.
-        beforeDelete: (ctx, row) => {
-          const existing = db3.one(`SELECT * FROM expenditures WHERE intervention_id=?`, row.id);
-          if (existing && existing.status === "pending") {
-            db3.run(`DELETE FROM expenditures WHERE id=?`, existing.id);
-            db3.tombstone("expenditures", existing.id);
-          }
-          const te = db3.one(`SELECT * FROM time_entries WHERE intervention_id=?`, row.id);
-          if (te && (te.status === "draft" || te.status === "submitted")) {
-            db3.run(`DELETE FROM time_entries WHERE id=?`, te.id);
-            db3.tombstone("time_entries", te.id);
-          } else if (te) db3.run(`UPDATE time_entries SET intervention_id=NULL, description_enc=?, updated_at=? WHERE id=?`, encrypt3(`${te.description_enc ? decrypt3(te.description_enc) : ""} (the visit this was logged from was deleted)`.trim()), db3.now(), te.id);
-          supplies.restore(ctx, row);
-        },
-        canEdit: crud.ownerOrManager()
-      });
-      supplies(r);
-      r.get("/api/meta/constants", auth3.requireAuth, () => {
-        const m = O.meta();
-        return { ...C, ...m.visible, option_lists: m.option_lists };
-      });
-    };
-  }
-});
-
-// server/routes/tasks.js
-var require_tasks = __commonJS({
-  "server/routes/tasks.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth();
-    var crud = require_crud();
-    var { encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
-    var audit3 = require_audit();
-    var { withClientName, SELECT: NAME_COLS } = require_client_name();
-    var { localDate } = require_budget();
-    function dueTasks(ctx, within) {
-      const cf = auth3.caseloadFilter(ctx.user, "tasks.client_id");
-      const horizonMs = Date.now() + within * 6e4;
-      const horizon = new Date(horizonMs).toISOString();
-      const horizonDay = localDate(new Date(horizonMs));
-      const rows = db3.all(`SELECT tasks.*, c.client_code, ${NAME_COLS} FROM tasks LEFT JOIN clients c ON c.id=tasks.client_id
-    WHERE tasks.assigned_to=? AND tasks.status IN ('open','in_progress') AND tasks.due_at IS NOT NULL
-      AND (CASE WHEN length(tasks.due_at)=10 THEN tasks.due_at <= ? ELSE tasks.due_at <= ? END)
-      AND (tasks.client_id IS NULL OR ${cf.sql})
-    ORDER BY tasks.due_at LIMIT 50`, ctx.user.id, horizonDay, horizon, ...cf.params);
-      const now = db3.now();
-      const today = localDate();
-      return rows.map((x) => withClientName(ctx, x)).map((x) => ({ ...presentTask(x), overdue: x.due_at.length === 10 ? x.due_at < today : x.due_at < now }));
-    }
-    var lastDue = /* @__PURE__ */ new Map();
-    module.exports = (r) => {
-      r.get("/api/tasks/due", auth3.requireAuth, auth3.requirePerm("tasks:read", "tasks:write"), (ctx) => {
-        const within = Math.min(24 * 60, Math.max(0, Number(ctx.query.get("within") || 60)));
-        const rows = dueTasks(ctx, within);
-        const signature = `${within}|${rows.map((x) => `${x.id}:${x.overdue ? 1 : 0}`).join(",")}`;
-        if (lastDue.get(ctx.user.id) !== signature) {
-          lastDue.set(ctx.user.id, signature);
-          audit3.log({ user: ctx.user, action: "task.due", ip: ctx.ip, details: { within, count: rows.length } });
-        }
-        return { rows, within, overdue: rows.filter((x) => x.overdue).length, due_soon: rows.filter((x) => !x.overdue).length };
-      });
-      crud.build(r, {
-        table: "tasks",
-        entity: "task",
-        perm: "tasks",
-        dateCol: "due_at",
-        ownerCol: "assigned_to",
-        creatorCol: "created_by",
-        clientRequired: false,
-        order: `CASE tasks.status WHEN 'open' THEN 0 WHEN 'in_progress' THEN 0 ELSE 1 END, tasks.due_at IS NULL, tasks.due_at ASC`,
-        joins: "LEFT JOIN users u ON u.id=tasks.assigned_to LEFT JOIN clients c ON c.id=tasks.client_id",
-        select: `tasks.*, u.display_name AS assignee, c.client_code, ${NAME_COLS}`,
-        shape: {
-          client_id: { type: "string" },
-          assigned_to: { type: "string" },
-          title: { type: "string", required: true, maxLen: 200 },
-          description: { type: "string", maxLen: 2e3 },
-          due_at: { type: "datetime" },
-          priority: { type: "string", enum: ["low", "normal", "high", "urgent"] },
-          status: { type: "string", enum: ["open", "in_progress", "done", "cancelled"] },
-          is_milestone: { type: "boolean" },
-          completed_at: { type: "datetime" }
-        },
-        filters: (ctx, where, params) => {
-          const s = ctx.query.get("status");
-          if (s === "open") where.push(`tasks.status IN ('open','in_progress')`);
-          else if (s && s !== "all") {
-            where.push("tasks.status=?");
-            params.push(s);
-          }
-          if (ctx.query.get("overdue") === "1") {
-            where.push(`tasks.status IN ('open','in_progress') AND (CASE WHEN length(tasks.due_at)=10 THEN tasks.due_at < ? ELSE tasks.due_at < ? END)`);
-            params.push(localDate(), db3.now());
-          }
-          if (ctx.query.get("milestones") === "1") where.push("tasks.is_milestone=1");
-        },
-        // A task title ("Call about detox bed") says what a named person is being treated for, and its details
-        // say more: both are encrypted. The API keeps the plain field names `title` and `description`.
-        beforeInsert: (ctx, v) => {
-          if (!v.assigned_to) v.assigned_to = ctx.user.id;
-          if (v.status === "done" && !v.completed_at) v.completed_at = db3.now();
-          encFields(v);
-        },
-        beforeUpdate: (ctx, v, row) => {
-          if (v.status === "done" && !row.completed_at && !v.completed_at) v.completed_at = db3.now();
-          if (v.status && v.status !== "done") v.completed_at = null;
-          encFields(v);
-        },
-        afterLoad: (ctx, x) => presentTask(withClientName(ctx, x)),
-        canEdit: (ctx, row) => row.assigned_to === ctx.user.id || row.created_by === ctx.user.id || auth3.hasPerm(ctx.user, "clients:all")
-      });
-      function encFields(v) {
-        if (v.title !== void 0) {
-          v.title_enc = encrypt3(String(v.title ?? ""));
-          delete v.title;
-        }
-        if (v.description !== void 0) {
-          v.description_enc = v.description ? encrypt3(String(v.description)) : null;
-          delete v.description;
-        }
-      }
-    };
-    function presentTask(t) {
-      if (!t) return t;
-      const o = { ...t, title: t.title_enc ? decrypt3(t.title_enc) : "", title_enc: void 0 };
-      if ("description_enc" in t) {
-        o.description = t.description_enc ? decrypt3(t.description_enc) : null;
-        o.description_enc = void 0;
-      }
-      return o;
-    }
-    module.exports.presentTask = presentTask;
-  }
-});
-
-// server/routes/me.js
-var require_me = __commonJS({
-  "server/routes/me.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth();
-    var { badRequest } = require_http();
-    var M = require_clients_model();
-    var MAX_PREF_BYTES = 8e3;
-    module.exports = (r) => {
-      r.get("/api/me/prefs", auth3.requireAuth, (ctx) => {
-        const out2 = {};
-        for (const p of db3.all(`SELECT key, value FROM user_prefs WHERE user_id=?`, ctx.user.id)) {
-          try {
-            out2[p.key] = JSON.parse(p.value);
-          } catch {
-            out2[p.key] = p.value;
-          }
-        }
-        return { prefs: out2 };
-      });
-      r.put("/api/me/prefs", auth3.requireAuth, (ctx) => {
-        const body = ctx.body || {};
-        if (typeof body !== "object" || Array.isArray(body)) throw badRequest("Object expected");
-        const keys = Object.keys(body).slice(0, 50);
-        db3.transaction(() => {
-          for (const k of keys) {
-            if (!/^[a-zA-Z0-9_.-]{1,60}$/.test(k)) throw badRequest(`Invalid preference key ${k}`);
-            const v = JSON.stringify(body[k] ?? null);
-            if (v.length > MAX_PREF_BYTES) throw badRequest(`Preference ${k} is too large`);
-            if (body[k] === null) db3.run(`DELETE FROM user_prefs WHERE user_id=? AND key=?`, ctx.user.id, k);
-            else db3.run(`INSERT INTO user_prefs(user_id,key,value) VALUES(?,?,?) ON CONFLICT(user_id,key) DO UPDATE SET value=excluded.value, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, ctx.user.id, k, v);
-          }
-        });
-        return { ok: true };
-      });
-      r.get("/api/me/continue", auth3.requireAuth, (ctx) => {
-        const uid = ctx.user.id;
-        const recentIds = db3.all(`SELECT client_id, MAX(at) at FROM audit_log WHERE user_id=? AND client_id IS NOT NULL AND action IN ('client.view','client.create','client.update','intervention.create','call.create','note.create','note.update') GROUP BY client_id ORDER BY at DESC LIMIT 8`, uid);
-        const recent = [];
-        for (const x of recentIds) {
-          const c = db3.one(`SELECT * FROM clients WHERE id=? AND deleted_at IS NULL`, x.client_id);
-          if (c && auth3.canAccessClient(ctx.user, c.id)) recent.push({ ...M.summary(c), last_at: x.at });
-        }
-        const drafts = db3.all(`SELECT n.id, n.client_id, n.kind, n.format, n.title_enc, n.updated_at, c.client_code FROM notes n JOIN clients c ON c.id=n.client_id WHERE n.author_id=? AND n.status='draft' AND n.deleted_at IS NULL ORDER BY n.updated_at DESC LIMIT 8`, uid).map((n) => ({ ...n, title: n.title_enc ? require_crypto().decrypt(n.title_enc) : null, title_enc: void 0 }));
-        for (const d of drafts) {
-          const c = db3.one(`SELECT * FROM clients WHERE id=?`, d.client_id);
-          d.client_name = c ? M.summary(c).display_name : d.client_code;
-        }
-        const staged = db3.one(`SELECT COUNT(*) n FROM import_items x JOIN imports i ON i.id=x.import_id WHERE x.status='staged' AND (i.imported_by=? OR i.imported_by IS NULL)`, uid).n;
-        const dueToday = db3.all(`SELECT t.id, t.title_enc, t.due_at, t.priority, t.client_id, c.client_code FROM tasks t LEFT JOIN clients c ON c.id=t.client_id WHERE t.assigned_to=? AND t.status IN ('open','in_progress') AND substr(t.due_at,1,10) <= date('now','localtime') ORDER BY t.due_at LIMIT 10`, uid).map(require_tasks().presentTask);
-        for (const t of dueToday) {
-          if (t.client_id) {
-            const c = db3.one(`SELECT * FROM clients WHERE id=?`, t.client_id);
-            t.client_name = c ? M.summary(c).display_name : t.client_code;
-          }
-        }
-        const lastSeenElsewhere = db3.one(`SELECT last_seen_at, user_agent FROM sessions WHERE user_id=? AND revoked_at IS NULL AND id<>? ORDER BY last_seen_at DESC LIMIT 1`, uid, ctx.session.id);
-        require_audit().log({ user: ctx.user, action: "me.continue", ip: ctx.ip, details: { recent: recent.length, drafts: drafts.length, due_today: dueToday.length } });
-        return { recent, drafts, staged_imports: staged, due_today: dueToday, other_device: lastSeenElsewhere ? { last_seen_at: lastSeenElsewhere.last_seen_at, mobile: /Mobi|Android|iPhone|iPad/i.test(lastSeenElsewhere.user_agent || "") } : null };
-      });
-    };
-  }
-});
-
-// server/routes/notes.js
-var require_notes = __commonJS({
-  "server/routes/notes.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth();
-    var audit3 = require_audit();
-    var C = require_constants();
-    var { badRequest, notFound, forbidden } = require_http();
-    var { validate, paging } = require_validate();
-    var { encrypt: encrypt3, decrypt: decrypt3, sha256: sha2562, uuid: uuid2 } = require_crypto();
-    var shape = {
-      client_id: { type: "string", required: true },
-      kind: { type: "string", required: true, enum: ["clinical", "admin"] },
-      format: { type: "string", list: "NOTE_FORMATS" },
-      title: { type: "string", maxLen: 200 },
-      content: { type: "string", required: true, maxLen: 5e4 },
-      structured: { type: "object" },
-      occurred_at: { type: "datetime", required: true },
-      intervention_id: { type: "string" },
-      call_id: { type: "string" },
-      part2_protected: { type: "boolean" },
-      counseling_note: { type: "boolean" },
-      cosign_requested: { type: "boolean" },
-      source: { type: "string", enum: ["manual", "pocket_ai", "onenote", "import", "api"] },
-      source_ref: { type: "string", maxLen: 300 },
-      // The problem-list entries this note addresses (CalAIM: a progress note ties the service to the problem list).
-      problem_ids: { type: "array", maxLen: 30, of: "string" }
-    };
-    function problemIds(ids, clientId) {
-      if (ids === void 0) return void 0;
-      if (ids === null || !ids.length) return null;
-      const uniq = [...new Set(ids)];
-      for (const id of uniq) {
-        const p = db3.one(`SELECT client_id FROM problems WHERE id=?`, id);
-        if (!p || p.client_id !== clientId) throw badRequest("Validation failed", { fields: { problem_ids: "names a problem that is not on this client's problem list" } });
-      }
-      return JSON.stringify(uniq);
-    }
-    function linkedProblems(ctx, n) {
-      let ids = [];
-      try {
-        ids = n.problem_ids ? JSON.parse(n.problem_ids) : [];
-      } catch {
-        ids = [];
-      }
-      if (!Array.isArray(ids) || !ids.length) return [];
-      if (!auth3.hasPerm(ctx.user, "careplan:read")) return ids.map((id) => ({ id }));
-      return ids.map((id) => {
-        const p = db3.one(`SELECT id, problem_enc, status FROM problems WHERE id=?`, id);
-        return p ? { id: p.id, problem: decrypt3(p.problem_enc), status: p.status } : { id };
-      });
-    }
-    function kindPerm(kind, rw) {
-      return `notes:${kind}:${rw}`;
-    }
-    function checkCounseling(kind, counseling) {
-      if (counseling && kind !== "clinical") throw badRequest("Only a clinical note can be a SUD counseling note");
-    }
-    async function verifyIdentity(ctx) {
-      const { password } = validate(ctx.body, { password: { type: "string", required: true, maxLen: 500 } }, { partial: true });
-      if (!password) throw badRequest("Your password is required to sign");
-      const u = db3.one(`SELECT password_hash FROM users WHERE id=?`, ctx.user.id);
-      if (!await require_crypto().verifyPasswordAsync(password, u.password_hash)) {
-        audit3.log({ user: ctx.user, action: "note.sign.failed", ip: ctx.ip, success: false });
-        throw forbidden("Password verification failed");
-      }
-    }
-    var BREAK_GLASS_MIN = 15;
-    function breakGlassReason(ctx) {
-      const raw = ctx.headers["x-break-glass-reason"];
-      if (raw === void 0 || raw === null || raw === "") return null;
-      const reason = String(raw).trim();
-      if (reason.length < BREAK_GLASS_MIN) throw badRequest(`A break-glass reason must be at least ${BREAK_GLASS_MIN} characters and say why emergency access is needed`);
-      return reason.slice(0, 300);
-    }
-    function recordBreakGlass(ctx, { clientId, noteId = null, reason }) {
-      const id = uuid2();
-      db3.run(`INSERT INTO breakglass_events(id,user_id,client_id,note_id,reason_enc,at) VALUES(?,?,?,?,?,?)`, id, ctx.user.id, clientId || null, noteId, encrypt3(reason), db3.now());
-      return id;
-    }
-    function canRead(ctx, note) {
-      if (auth3.hasPerm(ctx.user, kindPerm(note.kind, "read")) || auth3.hasPerm(ctx.user, kindPerm(note.kind, "write"))) return true;
-      if (note.kind === "clinical" && auth3.hasPerm(ctx.user, "notes:clinical:breakglass") && breakGlassReason(ctx)) return "breakglass";
-      return false;
-    }
-    function present(row, { withContent = true } = {}) {
-      const out2 = { ...row };
-      delete out2.content_enc;
-      delete out2.structured_enc;
-      delete out2.title_enc;
-      out2.title = row.title_enc ? decrypt3(row.title_enc) : null;
-      if ("cosign_note_enc" in row) {
-        out2.cosign_note = row.cosign_note_enc ? decrypt3(row.cosign_note_enc) : null;
-        delete out2.cosign_note_enc;
-      }
-      if (withContent) {
-        out2.content = decrypt3(row.content_enc);
-        out2.structured = row.structured_enc ? JSON.parse(decrypt3(row.structured_enc)) : null;
-      }
-      return out2;
-    }
-    function signatureState(n) {
-      const wanted = !!n.cosign_required || !!n.cosign_requested;
-      return { signed: n.status !== "draft", cosign_required: !!n.cosign_required, cosign_requested: !!n.cosign_requested, cosigned: !!n.cosigned_at, awaiting_cosign: wanted && n.status !== "draft" && !n.cosigned_at };
-    }
-    function load(ctx, id) {
-      const n = db3.one(`SELECT n.*, u.display_name AS author, s.display_name AS signer, cs.display_name AS cosigner
-    FROM notes n JOIN users u ON u.id=n.author_id LEFT JOIN users s ON s.id=n.signed_by LEFT JOIN users cs ON cs.id=n.cosigned_by
-    WHERE n.id=? AND n.deleted_at IS NULL`, id);
-      if (!n) throw notFound("Note not found");
-      auth3.assertClientAccess(ctx, n.client_id);
-      return n;
-    }
-    module.exports = (r) => {
-      r.get("/api/notes", auth3.requireAuth, auth3.requirePerm("notes:admin:read", "notes:clinical:read", "notes:admin:write", "notes:clinical:write"), (ctx) => {
-        const { limit: limit2, offset } = paging(ctx.query, { limit: 100, max: 500 });
-        const kinds = ["admin", "clinical"].filter((k) => auth3.hasPerm(ctx.user, kindPerm(k, "read")) || auth3.hasPerm(ctx.user, kindPerm(k, "write")));
-        const glassReason = !kinds.includes("clinical") && auth3.hasPerm(ctx.user, "notes:clinical:breakglass") && ctx.query.get("client_id") && ctx.query.get("kind") === "clinical" ? breakGlassReason(ctx) : null;
-        if (glassReason) {
-          kinds.push("clinical");
-          const event = recordBreakGlass(ctx, { clientId: ctx.query.get("client_id"), reason: glassReason });
-          audit3.log({ user: ctx.user, action: "note.list.breakglass", clientId: ctx.query.get("client_id"), ip: ctx.ip, details: { reason_recorded: true, breakglass_event: event } });
-        }
-        const where = ["n.deleted_at IS NULL", `n.kind IN (${kinds.map(() => "?").join(",") || "''"})`];
-        const params = [...kinds];
-        const cf = auth3.caseloadFilter(ctx.user, "n.client_id");
-        where.push(cf.sql);
-        params.push(...cf.params);
-        for (const [q, col] of [["client_id", "n.client_id"], ["kind", "n.kind"], ["status", "n.status"], ["author_id", "n.author_id"], ["source", "n.source"]]) {
-          const v = ctx.query.get(q);
-          if (v) {
-            where.push(`${col}=?`);
-            params.push(v);
-          }
-        }
-        if (ctx.query.get("mine") === "1") {
-          where.push("n.author_id=?");
-          params.push(ctx.user.id);
-        }
-        if (ctx.query.get("unsigned") === "1") where.push("n.status='draft'");
-        if (ctx.query.get("awaiting_cosign") === "1") {
-          where.push("(n.cosign_required=1 OR n.cosign_requested=1) AND n.status<>'draft' AND n.cosigned_at IS NULL");
-          if (!auth3.hasPerm(ctx.user, "notes:cosign")) {
-            where.push("1=0");
-          }
-        }
-        if (ctx.query.get("from")) {
-          where.push("n.occurred_at >= ?");
-          params.push(ctx.query.get("from"));
-        }
-        if (ctx.query.get("to")) {
-          where.push("n.occurred_at <= ?");
-          params.push(ctx.query.get("to") + "T23:59:59.999Z");
-        }
-        const w = "WHERE " + where.join(" AND ");
-        const rows = db3.all(`SELECT n.id,n.client_id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.signed_at,n.source,n.author_id,n.created_at,n.updated_at,
-      n.cosign_required,n.cosign_requested,n.cosigned_at,n.cosigned_by,n.counseling_note,u.display_name AS author,cs.display_name AS cosigner,c.client_code,
-      (SELECT COUNT(*) FROM note_addenda a WHERE a.note_id=n.id) AS addenda
-      FROM notes n JOIN users u ON u.id=n.author_id LEFT JOIN users cs ON cs.id=n.cosigned_by JOIN clients c ON c.id=n.client_id ${w} ORDER BY n.occurred_at DESC LIMIT ? OFFSET ?`, ...params, limit2, offset);
-        const out2 = rows.map((x) => ({ ...x, title: x.title_enc ? decrypt3(x.title_enc) : null, title_enc: void 0, ...signatureState(x) }));
-        audit3.log({ user: ctx.user, action: "note.list", ip: ctx.ip, clientId: ctx.query.get("client_id") || null, details: { count: out2.length, kinds, filter: ctx.query.get("awaiting_cosign") === "1" ? "awaiting_cosign" : void 0 } });
-        return { rows: out2, total: db3.one(`SELECT COUNT(*) n FROM notes n ${w}`, ...params).n };
-      });
-      r.post("/api/notes", auth3.requireAuth, (ctx) => {
-        const v = validate(ctx.body, shape);
-        if (!auth3.hasPerm(ctx.user, kindPerm(v.kind, "write"))) throw forbidden(`You cannot author ${v.kind} notes`);
-        if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, v.client_id)) throw notFound("Client not found");
-        auth3.assertClientAccess(ctx, v.client_id);
-        checkCounseling(v.kind, v.counseling_note);
-        const id = uuid2();
-        const linked = problemIds(v.problem_ids, v.client_id) ?? null;
-        const author = db3.one(`SELECT requires_cosign FROM users WHERE id=?`, ctx.user.id);
-        db3.run(
-          `INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,structured_enc,occurred_at,intervention_id,call_id,part2_protected,source,source_ref,cosign_required,cosign_requested,problem_ids,counseling_note) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-          id,
-          v.client_id,
-          ctx.user.id,
-          v.kind,
-          v.format || "narrative",
-          v.title ? encrypt3(v.title) : null,
-          encrypt3(v.content),
-          v.structured ? encrypt3(JSON.stringify(v.structured)) : null,
-          v.occurred_at,
-          v.intervention_id || null,
-          v.call_id || null,
-          v.part2_protected ?? 1,
-          v.source || "manual",
-          v.source_ref || null,
-          author?.requires_cosign ? 1 : 0,
-          v.cosign_requested ? 1 : 0,
-          linked,
-          v.counseling_note ? 1 : 0
-        );
-        audit3.log({ user: ctx.user, action: "note.create", entity: "note", entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format, cosign_requested: v.cosign_requested ? true : void 0, counseling_note: v.counseling_note ? true : void 0 } });
-        ctx.status = 201;
-        return { id, updated_at: db3.one(`SELECT updated_at FROM notes WHERE id=?`, id).updated_at };
-      });
-      r.get("/api/notes/:id", auth3.requireAuth, (ctx) => {
-        const n = load(ctx, ctx.params.id);
-        const access = canRead(ctx, n);
-        if (!access) {
-          audit3.log({ user: ctx.user, action: "note.view.denied", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, success: false });
-          throw forbidden("You do not have access to this note");
-        }
-        const addenda = db3.all(`SELECT a.id,a.reason_enc,a.created_at,a.content_enc,u.display_name AS author FROM note_addenda a JOIN users u ON u.id=a.author_id WHERE a.note_id=? ORDER BY a.created_at`, n.id).map((a) => ({ ...a, content: decrypt3(a.content_enc), reason: a.reason_enc ? decrypt3(a.reason_enc) : null, content_enc: void 0, reason_enc: void 0 }));
-        const event = access === "breakglass" ? recordBreakGlass(ctx, { clientId: n.client_id, noteId: n.id, reason: breakGlassReason(ctx) }) : null;
-        audit3.log({ user: ctx.user, action: access === "breakglass" ? "note.view.breakglass" : "note.view", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: access === "breakglass" ? { reason_recorded: true, breakglass_event: event } : { kind: n.kind } });
-        return { note: { ...present(n), ...signatureState(n), addenda, problems: linkedProblems(ctx, n) } };
-      });
-      r.put("/api/notes/:id", auth3.requireAuth, (ctx) => {
-        const n = load(ctx, ctx.params.id);
-        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
-        if (n.status !== "draft") throw badRequest("Signed notes cannot be edited; add an addendum instead");
-        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden("Only the author can edit a draft");
-        require_crud().assertFresh(ctx, n, "note");
-        const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, counseling_note: shape.counseling_note, cosign_requested: shape.cosign_requested, problem_ids: shape.problem_ids }, { partial: true, existing: n });
-        checkCounseling(n.kind, v.counseling_note);
-        const sets = [];
-        const params = [];
-        for (const k of ["format", "occurred_at", "intervention_id", "call_id", "part2_protected", "counseling_note", "cosign_requested"]) if (v[k] !== void 0) {
-          sets.push(`${k}=?`);
-          params.push(v[k]);
-        }
-        if (v.title !== void 0) {
-          sets.push("title_enc=?");
-          params.push(v.title ? encrypt3(v.title) : null);
-        }
-        if (v.content !== void 0) {
-          sets.push("content_enc=?");
-          params.push(encrypt3(v.content));
-        }
-        const linked = problemIds(v.problem_ids, n.client_id);
-        if (linked !== void 0) {
-          sets.push("problem_ids=?");
-          params.push(linked);
-        }
-        if (v.structured !== void 0) {
-          sets.push("structured_enc=?");
-          params.push(v.structured ? encrypt3(JSON.stringify(v.structured)) : null);
-        }
-        const stamp2 = sets.length ? db3.now() : n.updated_at;
-        if (sets.length) db3.run(`UPDATE notes SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, stamp2, n.id);
-        audit3.log({ user: ctx.user, action: "note.update", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { fields: Object.keys(v) } });
-        return { ok: true, updated_at: stamp2 };
-      });
-      r.post("/api/notes/:id/request-cosign", auth3.requireAuth, (ctx) => {
-        const n = load(ctx, ctx.params.id);
-        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
-        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden("Only the author can ask for a review of their note");
-        if (n.cosigned_at) throw badRequest("This note has already been countersigned");
-        const { cosign_requested } = validate(ctx.body || {}, { cosign_requested: { type: "boolean" } });
-        const flag = cosign_requested === false ? 0 : 1;
-        db3.run(`UPDATE notes SET cosign_requested=?, updated_at=? WHERE id=?`, flag, db3.now(), n.id);
-        audit3.log({ user: ctx.user, action: flag ? "note.cosign.requested" : "note.cosign.request_withdrawn", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip });
-        return { ok: true, cosign_requested: !!flag, awaiting_cosign: !!flag && n.status !== "draft" };
-      });
-      r.get("/api/notes/handoffs", auth3.requireAuth, auth3.requirePerm("notes:admin:read", "notes:admin:write"), (ctx) => {
-        const hours = Math.min(24 * 7, Math.max(1, Number(ctx.query.get("hours") || 24)));
-        const since = new Date(Date.now() - hours * 36e5).toISOString();
-        const cf = auth3.caseloadFilter(ctx.user, "n.client_id");
-        const { withClientName, SELECT: NAME_COLS } = require_client_name();
-        const rows = db3.all(`SELECT n.id, n.client_id, n.occurred_at, n.status, n.title_enc, n.content_enc, n.author_id, u.display_name AS author, c.client_code, ${NAME_COLS}
-      FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id
-      WHERE n.deleted_at IS NULL AND n.kind='admin' AND n.format='handoff' AND n.occurred_at >= ? AND ${cf.sql} ORDER BY n.occurred_at DESC LIMIT 50`, since, ...cf.params);
-        const out2 = rows.map((x) => {
-          const o = withClientName(ctx, x);
-          let content = "";
-          try {
-            content = decrypt3(x.content_enc);
-          } catch {
-            content = "";
-          }
-          return { ...o, title: x.title_enc ? decrypt3(x.title_enc) : null, excerpt: content.slice(0, 240), title_enc: void 0, content_enc: void 0 };
-        });
-        audit3.log({ user: ctx.user, action: "note.list", ip: ctx.ip, details: { count: out2.length, kinds: ["admin"], filter: "handoffs", hours } });
-        return { rows: out2, hours };
-      });
-      r.post("/api/notes/:id/sign", auth3.requireAuth, async (ctx) => {
-        const n = load(ctx, ctx.params.id);
-        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
-        if (n.status !== "draft") throw badRequest("Note is already signed");
-        if (n.author_id !== ctx.user.id) throw forbidden("Only the author can sign a note. Supervisors countersign instead.");
-        await verifyIdentity(ctx);
-        const hash2 = sha2562(`${n.id}|${ctx.user.id}|${n.content_enc}|${n.structured_enc || ""}`);
-        db3.run(`UPDATE notes SET status='signed', signed_at=?, signed_by=?, signature_hash=?, updated_at=? WHERE id=?`, db3.now(), ctx.user.id, hash2, db3.now(), n.id);
-        audit3.log({ user: ctx.user, action: "note.sign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { hash: hash2, cosign_required: !!n.cosign_required } });
-        return { ok: true, signature_hash: hash2, awaiting_cosign: !!n.cosign_required };
-      });
-      r.post("/api/notes/:id/cosign", auth3.requireAuth, auth3.requirePerm("notes:cosign"), async (ctx) => {
-        const n = load(ctx, ctx.params.id);
-        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "read")) && !auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden(`You cannot read ${n.kind} notes`);
-        if (n.status === "draft") throw badRequest("The author has not signed this note yet");
-        if (n.author_id === ctx.user.id) throw badRequest("A note cannot be countersigned by its own author");
-        if (n.cosigned_at) throw badRequest("This note has already been countersigned");
-        const { note } = validate(ctx.body, { password: { type: "string", required: true, maxLen: 500 }, note: { type: "string", maxLen: 1e3 } });
-        await verifyIdentity(ctx);
-        const hash2 = sha2562(`${n.id}|${ctx.user.id}|cosign|${n.content_enc}|${n.structured_enc || ""}`);
-        db3.run(`UPDATE notes SET cosigned_by=?, cosigned_at=?, cosignature_hash=?, cosign_note_enc=?, updated_at=? WHERE id=?`, ctx.user.id, db3.now(), hash2, note ? encrypt3(note) : null, db3.now(), n.id);
-        audit3.log({ user: ctx.user, action: "note.cosign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { author_id: n.author_id, hash: hash2, note_recorded: note ? true : void 0 } });
-        return { ok: true, cosignature_hash: hash2 };
-      });
-      r.post("/api/notes/:id/addenda", auth3.requireAuth, (ctx) => {
-        const n = load(ctx, ctx.params.id);
-        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
-        const { content, reason } = validate(ctx.body, { content: { type: "string", required: true, maxLen: 2e4 }, reason: { type: "string", maxLen: 300 } });
-        const id = uuid2();
-        db3.run(`INSERT INTO note_addenda(id,note_id,author_id,content_enc,reason_enc) VALUES(?,?,?,?,?)`, id, n.id, ctx.user.id, encrypt3(content), reason ? encrypt3(reason) : null);
-        if (n.status === "signed") db3.run(`UPDATE notes SET status='amended', updated_at=? WHERE id=?`, db3.now(), n.id);
-        audit3.log({ user: ctx.user, action: "note.addendum", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: reason ? { reason_recorded: true } : void 0 });
-        ctx.status = 201;
-        return { id };
-      });
-      r.delete("/api/notes/:id", auth3.requireAuth, (ctx) => {
-        const n = load(ctx, ctx.params.id);
-        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
-        if (n.status !== "draft") throw badRequest("Signed notes are part of the legal record and cannot be deleted");
-        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden();
-        db3.run(`UPDATE notes SET deleted_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), n.id);
-        audit3.log({ user: ctx.user, action: "note.delete", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip });
-        return { ok: true };
-      });
-      r.get("/api/notes/:id/verify", auth3.requireAuth, (ctx) => {
-        const n = load(ctx, ctx.params.id);
-        if (!canRead(ctx, n)) throw forbidden();
-        if (!n.signature_hash) return { signed: false, ...signatureState(n) };
-        const hash2 = sha2562(`${n.id}|${n.signed_by}|${n.content_enc}|${n.structured_enc || ""}`);
-        const out2 = { signed: true, intact: hash2 === n.signature_hash, signed_at: n.signed_at, signer: n.signer, ...signatureState(n) };
-        if (n.cosignature_hash) {
-          out2.cosigner = n.cosigner;
-          out2.cosigned_at = n.cosigned_at;
-          out2.cosignature_intact = sha2562(`${n.id}|${n.cosigned_by}|cosign|${n.content_enc}|${n.structured_enc || ""}`) === n.cosignature_hash;
-        }
-        return out2;
-      });
-    };
-  }
-});
-
-// server/oidc.js
-var require_oidc = __commonJS({
-  "server/oidc.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
-    var config = require_config();
-    var b64url = (buf) => import_buffer.Buffer.from(buf).toString("base64url");
-    var fromB64url = (s) => import_buffer.Buffer.from(s, "base64url");
-    var CACHE_MS = 36e5;
-    var discoveryCache = null;
-    var jwksCache = null;
-    async function discover() {
-      if (discoveryCache && Date.now() - discoveryCache.at < CACHE_MS) return discoveryCache.doc;
-      const res = await fetch(`${config.oidc.issuer}/.well-known/openid-configuration`);
-      if (!res.ok) throw new Error(`Could not reach the identity provider's discovery document (HTTP ${res.status})`);
-      const doc = await res.json();
-      if (!doc.authorization_endpoint || !doc.token_endpoint) throw new Error("The identity provider's discovery document is missing required fields");
-      discoveryCache = { at: Date.now(), doc };
-      return doc;
-    }
-    async function jwks() {
-      if (jwksCache && Date.now() - jwksCache.at < CACHE_MS) return jwksCache.keys;
-      const doc = await discover();
-      const res = await fetch(doc.jwks_uri);
-      if (!res.ok) throw new Error(`Could not fetch the identity provider's signing keys (HTTP ${res.status})`);
-      const { keys } = await res.json();
-      jwksCache = { at: Date.now(), keys };
-      return keys;
-    }
-    function pkcePair() {
-      const verifier = b64url(crypto3.randomBytes(32));
-      const challenge = b64url(crypto3.createHash("sha256").update(verifier).digest());
-      return { verifier, challenge };
-    }
-    var COOKIE = "suds_oidc";
-    function signState(payload) {
-      const body = b64url(JSON.stringify(payload));
-      const sig = b64url(crypto3.createHmac("sha256", config.indexKey).update(body).digest());
-      return `${body}.${sig}`;
-    }
-    function verifyState(token2) {
-      if (!token2 || typeof token2 !== "string" || !token2.includes(".")) return null;
-      const [body, sig] = token2.split(".");
-      const expected = b64url(crypto3.createHmac("sha256", config.indexKey).update(body).digest());
-      if (sig.length !== expected.length || !crypto3.timingSafeEqual(import_buffer.Buffer.from(sig), import_buffer.Buffer.from(expected))) return null;
-      let payload;
-      try {
-        payload = JSON.parse(fromB64url(body).toString("utf8"));
-      } catch {
-        return null;
-      }
-      if (!payload.exp || Date.now() > payload.exp) return null;
-      return payload;
-    }
-    function stateCookie(token2, { clear = false } = {}) {
-      const secure = config.tls.cert || config.isProd ? "; Secure" : "";
-      if (clear) return `${COOKIE}=; Path=/api/auth/oidc; HttpOnly; SameSite=Lax; Max-Age=0${secure}`;
-      return `${COOKIE}=${token2}; Path=/api/auth/oidc; HttpOnly; SameSite=Lax; Max-Age=600${secure}`;
-    }
-    async function startAuth({ acrValues = [] } = {}) {
-      const doc = await discover();
-      const { verifier, challenge } = pkcePair();
-      const state = crypto3.randomUUID();
-      const nonce = crypto3.randomUUID();
-      const url = new URL(doc.authorization_endpoint);
-      url.searchParams.set("response_type", "code");
-      url.searchParams.set("client_id", config.oidc.clientId);
-      url.searchParams.set("redirect_uri", config.oidc.redirectUri);
-      url.searchParams.set("scope", "openid profile email");
-      url.searchParams.set("state", state);
-      url.searchParams.set("nonce", nonce);
-      url.searchParams.set("code_challenge", challenge);
-      url.searchParams.set("code_challenge_method", "S256");
-      if (acrValues.length) url.searchParams.set("acr_values", acrValues.join(" "));
-      const cookie = stateCookie(signState({ state, nonce, verifier, exp: Date.now() + 6e5 }));
-      return { url: url.toString(), cookie };
-    }
-    async function completeAuth({ code, state, cookieToken }) {
-      const saved = verifyState(cookieToken);
-      if (!saved) throw new Error("The sign-in request expired or was tampered with. Try again.");
-      if (saved.state !== state) throw new Error("The sign-in request did not match. Try again.");
-      const doc = await discover();
-      const body = new URLSearchParams({
-        grant_type: "authorization_code",
-        code,
-        redirect_uri: config.oidc.redirectUri,
-        client_id: config.oidc.clientId,
-        client_secret: config.oidc.clientSecret,
-        code_verifier: saved.verifier
-      });
-      const res = await fetch(doc.token_endpoint, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: body.toString() });
-      const tok = await res.json().catch(() => ({}));
-      if (!res.ok || !tok.id_token) throw new Error(tok.error_description || tok.error || "The identity provider refused the sign-in");
-      const claims = await verifyIdToken(tok.id_token, doc);
-      if (claims.nonce !== saved.nonce) throw new Error("The identity provider's response did not match this sign-in attempt.");
-      return claims;
-    }
-    async function verifyIdToken(idToken, doc) {
-      const parts = idToken.split(".");
-      if (parts.length !== 3) throw new Error("The identity provider returned a malformed token");
-      const [headerB64, payloadB64, sigB64] = parts;
-      const header = JSON.parse(fromB64url(headerB64).toString("utf8"));
-      if (header.alg !== "RS256") throw new Error(`Unsupported token signing algorithm: ${header.alg}`);
-      const keys = await jwks();
-      const jwk = keys.find((k) => k.kid === header.kid && (k.use === void 0 || k.use === "sig"));
-      if (!jwk) throw new Error("The identity provider signed this token with a key SUDS does not recognise");
-      const publicKey = crypto3.createPublicKey({ key: jwk, format: "jwk" });
-      const ok = crypto3.verify("RSA-SHA256", import_buffer.Buffer.from(`${headerB64}.${payloadB64}`), publicKey, fromB64url(sigB64));
-      if (!ok) throw new Error("The identity provider's token signature did not verify");
-      const claims = JSON.parse(fromB64url(payloadB64).toString("utf8"));
-      if (claims.iss !== doc.issuer) throw new Error("The token was issued by an unexpected issuer");
-      const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
-      if (!aud.includes(config.oidc.clientId)) throw new Error("The token was not issued for this application");
-      if (!claims.exp || Date.now() >= claims.exp * 1e3) throw new Error("The token has expired");
-      if (!claims.sub) throw new Error("The token has no subject");
-      return claims;
-    }
-    var MFA_AMR = ["mfa"];
-    var AMR_FACTOR_KIND = {
-      pwd: "knowledge",
-      pin: "knowledge",
-      kba: "knowledge",
-      otp: "possession",
-      sms: "possession",
-      tel: "possession",
-      hwk: "possession",
-      swk: "possession",
-      sc: "possession",
-      fpt: "inherence",
-      face: "inherence",
-      iris: "inherence",
-      retina: "inherence",
-      vbm: "inherence"
-    };
-    function idpMfa(claims, { acrValues = [] } = {}) {
-      const amr = Array.isArray(claims.amr) ? claims.amr.map(String) : typeof claims.amr === "string" ? [claims.amr] : [];
-      const acr = claims.acr === void 0 || claims.acr === null ? null : String(claims.acr);
-      const lower = amr.map((a) => a.toLowerCase());
-      const amrHit = lower.find((a) => MFA_AMR.includes(a));
-      if (amrHit) return { ok: true, via: `amr:${amrHit}`, amr, acr };
-      const byKind = /* @__PURE__ */ new Map();
-      for (const a of lower) {
-        const k = AMR_FACTOR_KIND[a];
-        if (k && !byKind.has(k)) byKind.set(k, a);
-      }
-      if (byKind.size >= 2) return { ok: true, via: `amr:${[...byKind.values()].slice(0, 2).join("+")}`, amr, acr };
-      if (acr && acrValues.includes(acr)) return { ok: true, via: `acr:${acr}`, amr, acr };
-      return { ok: false, via: null, amr, acr };
-    }
-    module.exports = { startAuth, completeAuth, stateCookie, COOKIE, idpMfa, MFA_AMR, AMR_FACTOR_KIND, _resetCacheForTests: () => {
-      discoveryCache = null;
-      jwksCache = null;
-    } };
-  }
-});
-
-// server/routes/oidc.js
-var require_oidc2 = __commonJS({
-  "server/routes/oidc.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth();
-    var audit3 = require_audit();
-    var config = require_config();
-    var oidc = require_oidc();
-    var { rateLimit } = require_app2();
-    var { HttpError: HttpError3, notFound } = require_http();
-    function redirect(res, location) {
-      res.writeHead(302, { Location: location });
-      res.end();
-    }
-    function mfaTrust() {
-      const acrValues = String(db3.getSetting("sso_mfa_acr_values", "") || "").split(/[\s,]+/).filter(Boolean);
-      return { trusted: db3.getSetting("sso_trust_idp_mfa", "0") === "1", acrValues };
-    }
-    function linkProvisioned(claims) {
-      const candidates = [];
-      if (claims.oid) candidates.push(db3.one(`SELECT * FROM users WHERE scim_external_id=? AND oidc_subject IS NULL`, String(claims.oid)));
-      for (const k of ["preferred_username", "upn", "email"]) if (claims[k] && !(k === "email" && claims.email_verified === false)) candidates.push(db3.one(`SELECT * FROM users WHERE username=? COLLATE NOCASE AND scim_external_id IS NOT NULL AND oidc_subject IS NULL`, String(claims[k])));
-      const user = candidates.find(Boolean);
-      if (!user) return null;
-      db3.run(`UPDATE users SET oidc_subject=?, updated_at=? WHERE id=?`, claims.sub, db3.now(), user.id);
-      audit3.log({ user: { username: "system" }, action: "user.oidc_linked", entity: "user", entityId: user.id, details: { username: user.username, via: claims.oid && user.scim_external_id === String(claims.oid) ? "scim externalId" : "scim userName" } });
-      return db3.one(`SELECT * FROM users WHERE id=?`, user.id);
-    }
-    module.exports = (r) => {
-      r.get("/api/auth/oidc/status", () => ({ enabled: config.oidc.enabled, label: config.oidc.label }));
-      r.get("/api/auth/oidc/start", async (ctx) => {
-        if (!config.oidc.enabled) throw notFound();
-        if (!rateLimit(`login:${ctx.ip}`, config.isTest ? 1e5 : 20, 15 * 6e4)) throw new HttpError3(429, "Too many sign-in attempts. Try again later.");
-        let started;
-        const t = mfaTrust();
-        try {
-          started = await oidc.startAuth({ acrValues: t.trusted ? t.acrValues : [] });
-        } catch (e) {
-          console.error("[suds] oidc start failed:", e.message);
-          throw new HttpError3(502, "Could not reach the identity provider. Try again shortly, or sign in with a username and password.");
-        }
-        ctx.res.setHeader("Set-Cookie", started.cookie);
-        redirect(ctx.res, started.url);
-      });
-      r.get("/api/auth/oidc/callback", async (ctx) => {
-        if (!config.oidc.enabled) throw notFound();
-        const fail = (reason, detail) => {
-          audit3.log({ user: { username: reason === "not_linked" ? detail && detail.sub || "" : "" }, action: "auth.oidc.failed", ip: ctx.ip, success: false, details: { reason } });
-          ctx.res.setHeader("Set-Cookie", oidc.stateCookie("", { clear: true }));
-          redirect(ctx.res, `/#/login?oidc_error=${encodeURIComponent(reason)}`);
-        };
-        if (ctx.query.get("error")) return fail("provider_denied");
-        if (!rateLimit(`login:${ctx.ip}`, config.isTest ? 1e5 : 20, 15 * 6e4)) throw new HttpError3(429, "Too many sign-in attempts. Try again later.");
-        let claims;
-        try {
-          claims = await oidc.completeAuth({ code: ctx.query.get("code") || "", state: ctx.query.get("state") || "", cookieToken: ctx.cookies[oidc.COOKIE] });
-        } catch (e) {
-          console.error("[suds] oidc callback failed:", e.message);
-          return fail("exchange_failed");
-        }
-        const user = db3.one(`SELECT * FROM users WHERE oidc_subject=?`, claims.sub) || linkProvisioned(claims);
-        if (!user) return fail("not_linked", { sub: claims.sub });
-        if (!user.is_active) return fail("inactive");
-        db3.run(`UPDATE users SET last_login_at=?, idp_seen_at=? WHERE id=?`, db3.now(), db3.now(), user.id);
-        const trust = mfaTrust();
-        const idp = trust.trusted ? oidc.idpMfa(claims, { acrValues: trust.acrValues }) : null;
-        const viaIdp = !!(idp && idp.ok);
-        const mfaPending = !viaIdp && !!user.mfa_enabled;
-        const token2 = auth3.createSession(user, ctx, { mfaPending, mfaSource: viaIdp ? "idp" : null });
-        audit3.log({
-          user,
-          action: mfaPending ? "auth.oidc.login.mfa_pending" : "auth.oidc.login",
-          ip: ctx.ip,
-          details: idp ? { mfa: viaIdp ? "idp" : "not asserted by the identity provider", via: idp.via || void 0, amr: idp.amr.slice(0, 10), acr: idp.acr || void 0 } : void 0
-        });
-        const cookies = [auth3.cookieHeader(token2), oidc.stateCookie("", { clear: true })];
-        ctx.res.setHeader("Set-Cookie", cookies);
-        redirect(ctx.res, mfaPending ? "/#/mfa" : "/#/dashboard");
-      });
-    };
-  }
-});
-
-// server/routes/options.js
-var require_options2 = __commonJS({
-  "server/routes/options.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth();
-    var audit3 = require_audit();
-    var config = require_config();
-    var O = require_options();
-    var { badRequest, notFound, forbidden } = require_http();
-    var { validate } = require_validate();
-    var { uuid: uuid2 } = require_crypto();
-    function assertEditable() {
-      const staticHost = typeof window !== "undefined" && window.SUDS_STATIC_HOST === true;
-      if (config.local && !staticHost) throw forbidden("Lists are managed on the office SUDS. Changes made there reach this device when it syncs.");
-    }
-    function listOr404(key) {
-      if (!O.has(key)) throw notFound("No such list");
-      return O.def(key);
-    }
-    function row(key, code) {
-      return db3.one(`SELECT * FROM option_overrides WHERE list_key=? AND code=?`, key, code);
-    }
-    function upsert(ctx, key, code, fields) {
-      const existing = row(key, code);
-      const stamp2 = db3.now();
-      if (existing) {
-        const keys = Object.keys(fields);
-        db3.run(`UPDATE option_overrides SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_by=?, updated_at=? WHERE id=?`, ...keys.map((k) => fields[k]), ctx.user.id, stamp2, existing.id);
-        return existing.id;
-      }
-      const id = uuid2();
-      const cols2 = { id, list_key: key, code, hidden: 0, is_custom: 0, ...fields, updated_by: ctx.user.id, created_at: stamp2, updated_at: stamp2 };
-      db3.run(`INSERT INTO option_overrides(${Object.keys(cols2).join(",")}) VALUES(${Object.keys(cols2).map(() => "?").join(",")})`, ...Object.values(cols2));
-      return id;
-    }
-    function cleanLabel(raw) {
-      const label = String(raw || "").replace(/\s+/g, " ").trim();
-      if (!label) throw badRequest("Enter the wording for this choice", { fields: { label: "required" } });
-      if (label.length > O.MAX_LABEL) throw badRequest(`Keep it to ${O.MAX_LABEL} characters`, { fields: { label: `max length ${O.MAX_LABEL}` } });
-      return label;
-    }
-    function assertUniqueLabel(key, label, exceptCode) {
-      const clash = O.entries(key).find((e) => e.code !== exceptCode && e.label.toLowerCase() === label.toLowerCase());
-      if (clash) throw badRequest(`"${clash.label}" is already a choice in this list${clash.hidden ? " (hidden)" : ""}`, { fields: { label: "already in this list" } });
-    }
-    module.exports = (r) => {
-      const manage = [auth3.requireAuth, auth3.requirePerm("settings:manage")];
-      r.get("/api/admin/lists", ...manage, () => {
-        const staticHost = typeof window !== "undefined" && window.SUDS_STATIC_HOST === true;
-        return { ...O.describe(), editable: !config.local || staticHost };
-      });
-      r.put("/api/admin/lists/:key/entries/:code", ...manage, (ctx) => {
-        assertEditable();
-        const l = listOr404(ctx.params.key);
-        const code = ctx.params.code;
-        const entry = O.entries(l.key).find((e) => e.code === code);
-        if (!entry) throw notFound("That choice is not in this list");
-        const v = validate(ctx.body, { label: { type: "string", maxLen: 200 }, hidden: { type: "boolean" } }, { partial: true });
-        const fields = {};
-        const details = { list: l.key, code };
-        if (v.label !== void 0) {
-          if ((v.label === null || v.label === "") && !entry.custom) {
-            fields.label = null;
-            details.label = entry.default_label;
-          } else {
-            const label = cleanLabel(v.label);
-            assertUniqueLabel(l.key, label, code);
-            fields.label = entry.custom || label !== entry.default_label ? label : null;
-            details.label = label;
-            details.was = entry.label;
-          }
-        }
-        if (v.hidden !== void 0) {
-          if (v.hidden && entry.protected) throw badRequest(`"${entry.label}" is used by SUDS (${entry.protected}), so it cannot be hidden. It can be reworded.`);
-          if (v.hidden && O.visible(l.key).length <= 1 && !entry.hidden) throw badRequest("A list needs at least one choice people can pick");
-          fields.hidden = v.hidden ? 1 : 0;
-          details.hidden = !!v.hidden;
-        }
-        if (!Object.keys(fields).length) throw badRequest("Nothing to change");
-        upsert(ctx, l.key, code, fields);
-        audit3.log({ user: ctx.user, action: "options.update", entity: "option_list", entityId: l.key, ip: ctx.ip, details });
-        return { ok: true, entries: O.entries(l.key) };
-      });
-      r.post("/api/admin/lists/:key/entries", ...manage, (ctx) => {
-        assertEditable();
-        const l = listOr404(ctx.params.key);
-        if (l.custom === false) throw badRequest(l.why || "Choices cannot be added to this list");
-        const v = validate(ctx.body, { label: { type: "string", required: true, maxLen: 200 } });
-        const label = cleanLabel(v.label);
-        assertUniqueLabel(l.key, label);
-        const all = O.entries(l.key);
-        const taken = /* @__PURE__ */ new Set([...l.codes, ...all.map((e) => e.code), ...db3.all(`SELECT code FROM option_overrides WHERE list_key=?`, l.key).map((x) => x.code)]);
-        const code = O.slug(label, taken);
-        const orders = db3.all(`SELECT sort_order FROM option_overrides WHERE list_key=? AND sort_order IS NOT NULL`, l.key).map((x) => x.sort_order);
-        const sort = Math.max(1e3 + l.codes.length, ...orders.map((n) => n + 1), 2e3 + all.filter((e) => e.custom).length);
-        upsert(ctx, l.key, code, { label, is_custom: 1, hidden: 0, sort_order: sort });
-        audit3.log({ user: ctx.user, action: "options.add", entity: "option_list", entityId: l.key, ip: ctx.ip, details: { list: l.key, code, label } });
-        ctx.status = 201;
-        return { code, entries: O.entries(l.key) };
-      });
-      r.put("/api/admin/lists/:key/order", ...manage, (ctx) => {
-        assertEditable();
-        const l = listOr404(ctx.params.key);
-        const v = validate(ctx.body, { codes: { type: "array", required: true, of: "string", maxLen: 500 } });
-        const current2 = O.entries(l.key).map((e) => e.code);
-        const given = v.codes;
-        if (new Set(given).size !== given.length || given.length !== current2.length || !given.every((c) => current2.includes(c))) throw badRequest("Send every choice in the list, each once, in the new order");
-        db3.transaction(() => {
-          given.forEach((code, i) => upsert(ctx, l.key, code, { sort_order: i }));
-        });
-        audit3.log({ user: ctx.user, action: "options.reorder", entity: "option_list", entityId: l.key, ip: ctx.ip, details: { list: l.key, order: given } });
-        return { ok: true, entries: O.entries(l.key) };
-      });
-      r.post("/api/admin/lists/:key/reset", ...manage, (ctx) => {
-        assertEditable();
-        const l = listOr404(ctx.params.key);
-        const rows = db3.all(`SELECT * FROM option_overrides WHERE list_key=?`, l.key);
-        db3.transaction(() => {
-          for (const x of rows) {
-            if (x.is_custom) upsert(ctx, l.key, x.code, { hidden: 1, sort_order: null });
-            else upsert(ctx, l.key, x.code, { label: null, sort_order: null, hidden: 0 });
-          }
-        });
-        audit3.log({ user: ctx.user, action: "options.reset", entity: "option_list", entityId: l.key, ip: ctx.ip, details: { list: l.key, changed: rows.length } });
-        return { ok: true, entries: O.entries(l.key) };
-      });
-    };
-  }
-});
-
-// server/routes/overdose.js
-var require_overdose = __commonJS({
-  "server/routes/overdose.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth();
-    var audit3 = require_audit();
-    var crud = require_crud();
-    var { decrypt: decrypt3, encrypt: encrypt3 } = require_crypto();
-    var C = require_constants();
-    var O = require_options();
-    var KINDS = C.OVERDOSE_KINDS;
-    var FATAL_APPLIED = "overdose_event.fatal_outcome";
-    var FATAL_REVERTED = "overdose_event.fatal_reverted";
-    function applyFatal(ctx, event) {
-      if (!event.client_id) return;
-      const c = db3.one(`SELECT id, status, discharge_date, discharge_reason FROM clients WHERE id=?`, event.client_id);
-      if (!c || c.status === "deceased") return;
-      const when = String(event.occurred_at).slice(0, 10);
-      const details = { prior_status: c.status, prior_discharge_date: c.discharge_date || null, prior_discharge_reason: c.discharge_reason || null, episode_id: null, assignment_ids: [], task_ids: [] };
-      db3.transaction(() => {
-        const ep = db3.one(`SELECT id FROM episodes WHERE client_id=? AND status='open' ORDER BY opened_at DESC LIMIT 1`, c.id);
-        if (ep) {
-          db3.run(`UPDATE episodes SET status='closed', closed_at=?, closed_by=?, discharge_reason='deceased', discharge_disposition=?, updated_at=? WHERE id=?`, when, ctx.user.id, "Fatal overdose recorded", db3.now(), ep.id);
-          details.episode_id = ep.id;
-        }
-        db3.run(`UPDATE clients SET status='deceased', discharge_date=?, discharge_reason='deceased', updated_at=? WHERE id=?`, when, db3.now(), c.id);
-        details.assignment_ids = db3.all(`SELECT id, end_date FROM assignments WHERE client_id=? AND (end_date IS NULL OR end_date > ?)`, c.id, when).map((a) => [a.id, a.end_date || null]);
-        for (const [id] of details.assignment_ids) db3.run(`UPDATE assignments SET end_date=?, updated_at=? WHERE id=?`, when, db3.now(), id);
-        details.task_ids = db3.all(`SELECT id, status FROM tasks WHERE client_id=? AND status IN ('open','in_progress')`, c.id).map((t) => [t.id, t.status]);
-        for (const [id] of details.task_ids) db3.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE id=?`, db3.now(), id);
-      });
-      audit3.log({ user: ctx.user, action: FATAL_APPLIED, entity: "overdose_event", entityId: event.id, clientId: c.id, ip: ctx.ip, details });
-    }
-    function appliedFatal(eventId) {
-      const last = db3.one(`SELECT action, details FROM audit_log WHERE entity='overdose_event' AND entity_id=? AND action IN (?,?) ORDER BY id DESC LIMIT 1`, eventId, FATAL_APPLIED, FATAL_REVERTED);
-      if (!last || last.action !== FATAL_APPLIED) return null;
-      try {
-        return JSON.parse(last.details);
-      } catch {
-        return null;
-      }
-    }
-    function revertFatal(ctx, event) {
-      if (!event.client_id) return;
-      const applied = appliedFatal(event.id);
-      if (!applied) return;
-      if (db3.one(`SELECT 1 FROM overdose_events WHERE client_id=? AND kind='fatal' AND id<>?`, event.client_id, event.id)) return;
-      const c = db3.one(`SELECT id, status FROM clients WHERE id=?`, event.client_id);
-      if (!c || c.status !== "deceased") return;
-      let reopened = null;
-      db3.transaction(() => {
-        db3.run(`UPDATE clients SET status=?, discharge_date=?, discharge_reason=?, updated_at=? WHERE id=?`, applied.prior_status || "active", applied.prior_discharge_date || null, applied.prior_discharge_reason || null, db3.now(), c.id);
-        const ep = applied.episode_id && db3.one(`SELECT id, status FROM episodes WHERE id=?`, applied.episode_id);
-        if (ep && ep.status === "closed" && !db3.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, c.id)) {
-          db3.run(`UPDATE episodes SET status='open', closed_at=NULL, closed_by=NULL, discharge_reason=NULL, discharge_disposition=NULL, discharge_summary_enc=NULL, updated_at=? WHERE id=?`, db3.now(), ep.id);
-          reopened = ep.id;
-        }
-        for (const [id, endDate] of applied.assignment_ids || []) db3.run(`UPDATE assignments SET end_date=?, updated_at=? WHERE id=? AND ended_at IS NULL`, endDate, db3.now(), id);
-        for (const [id, status] of applied.task_ids || []) db3.run(`UPDATE tasks SET status=?, updated_at=? WHERE id=? AND status='cancelled'`, status, db3.now(), id);
-      });
-      audit3.log({ user: ctx.user, action: FATAL_REVERTED, entity: "overdose_event", entityId: event.id, clientId: c.id, ip: ctx.ip, details: { restored_status: applied.prior_status || "active", reopened_episode: reopened } });
-    }
-    module.exports = (r) => {
-      crud.build(r, {
-        table: "overdose_events",
-        entity: "overdose_event",
-        base: "/api/overdose-events",
-        perm: "overdose",
-        dateCol: "occurred_at",
-        ownerCol: "reported_by",
-        clientRequired: false,
-        creatorCol: "reported_by",
-        joins: "LEFT JOIN clients c ON c.id=overdose_events.client_id LEFT JOIN users u ON u.id=overdose_events.reported_by LEFT JOIN funding_sources f ON f.id=overdose_events.funding_source_id",
-        select: "overdose_events.*, c.client_code, u.display_name AS reporter, f.name AS funding_source",
-        shape: {
-          // client_id stays optional: a bystander reversal reported by an outreach worker has no client.
-          client_id: { type: "string" },
-          occurred_at: { type: "datetime", required: true },
-          // Required: an empty form saved by accident used to become a countable reversal.
-          kind: { type: "string", enum: KINDS, list: "OVERDOSE_KINDS", required: true },
-          substances: { type: "string", maxLen: 200 },
-          naloxone_used: { type: "boolean" },
-          naloxone_doses: { type: "number", integer: true, min: 0, max: 20 },
-          administered_by: { type: "string", list: "ADMINISTERED_BY" },
-          ems_called: { type: "boolean" },
-          hospitalized: { type: "boolean" },
-          survived: { type: "boolean" },
-          location_type: { type: "string", maxLen: 60 },
-          city: { type: "string", maxLen: 100 },
-          funding_source_id: { type: "string" },
-          notes: { type: "string", maxLen: 4e3 }
-        },
-        filters: (ctx, where, params) => {
-          const kind = ctx.query.get("kind");
-          if (kind && kind !== "all") {
-            where.push("overdose_events.kind=?");
-            params.push(kind);
-          }
-          if (ctx.query.get("community") === "1") where.push("overdose_events.client_id IS NULL");
-          if (ctx.query.get("naloxone") === "1") where.push("overdose_events.naloxone_used=1");
-        },
-        beforeInsert: (ctx, v) => {
-          if (v.notes !== void 0) {
-            v.notes_enc = v.notes ? encrypt3(v.notes) : null;
-            delete v.notes;
-          }
-          if (v.substances !== void 0) {
-            v.substances_enc = v.substances ? encrypt3(v.substances) : null;
-            delete v.substances;
-          }
-          if (v.kind === "fatal") v.survived = 0;
-          if (v.naloxone_doses > 0) v.naloxone_used = 1;
-        },
-        beforeUpdate: (ctx, v) => {
-          if (v.notes !== void 0) {
-            v.notes_enc = v.notes ? encrypt3(v.notes) : null;
-            delete v.notes;
-          }
-          if (v.substances !== void 0) {
-            v.substances_enc = v.substances ? encrypt3(v.substances) : null;
-            delete v.substances;
-          }
-          if (v.kind === "fatal") v.survived = 0;
-        },
-        afterLoad: (ctx, row) => ({ ...row, notes: row.notes_enc ? decrypt3(row.notes_enc) : null, substances: row.substances_enc ? decrypt3(row.substances_enc) : null, notes_enc: void 0, substances_enc: void 0 }),
-        afterInsert: (ctx, row) => {
-          if (!row.client_id) return;
-          const day = String(row.occurred_at).slice(0, 10);
-          db3.run(`UPDATE clients SET overdose_history=1, last_overdose_date=CASE WHEN last_overdose_date IS NULL OR last_overdose_date < ? THEN ? ELSE last_overdose_date END, updated_at=? WHERE id=?`, day, day, db3.now(), row.client_id);
-          if (row.kind === "fatal") applyFatal(ctx, row);
-        },
-        afterUpdate: (ctx, row, prev) => {
-          const wasFatal = prev.kind === "fatal" && prev.client_id;
-          const isFatal = row.kind === "fatal" && row.client_id;
-          const sameClient = prev.client_id === row.client_id;
-          if (wasFatal && (!isFatal || !sameClient)) revertFatal(ctx, prev);
-          if (isFatal && (!wasFatal || !sameClient)) {
-            const day = String(row.occurred_at).slice(0, 10);
-            db3.run(`UPDATE clients SET overdose_history=1, last_overdose_date=CASE WHEN last_overdose_date IS NULL OR last_overdose_date < ? THEN ? ELSE last_overdose_date END, updated_at=? WHERE id=?`, day, day, db3.now(), row.client_id);
-            applyFatal(ctx, row);
-          }
-        },
-        beforeDelete: (ctx, row) => {
-          if (row.kind === "fatal") revertFatal(ctx, row);
-        },
-        canEdit: crud.ownerOrManager("reported_by")
-      });
-      r.get("/api/meta/overdose-options", auth3.requireAuth, () => ({ kinds: O.visible("OVERDOSE_KINDS"), administered_by: O.visible("ADMINISTERED_BY"), kind_options: O.entries("OVERDOSE_KINDS"), administered_by_options: O.entries("ADMINISTERED_BY") }));
-    };
-  }
-});
-
-// server/routes/patient-requests.js
-var require_patient_requests = __commonJS({
-  "server/routes/patient-requests.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth();
-    var crud = require_crud();
-    var { encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
-    var KINDS = ["access", "amendment", "restriction", "accounting"];
-    var STATUSES = ["open", "fulfilled", "denied"];
-    var DAYS_TO_RESPOND = 30;
-    function encNotes(v) {
-      if (v.notes !== void 0) {
-        v.notes_enc = v.notes ? encrypt3(v.notes) : null;
-        delete v.notes;
-      }
-    }
-    var dueFrom = (received) => new Date(Date.parse(received) + DAYS_TO_RESPOND * 864e5).toISOString().slice(0, 10);
-    module.exports = (r) => {
-      crud.build(r, {
-        table: "patient_requests",
-        entity: "patient_request",
-        base: "/api/patient-requests",
-        perm: "patient-requests",
-        dateCol: "received_at",
-        ownerCol: "handled_by",
-        creatorCol: "created_by",
-        order: `CASE patient_requests.status WHEN 'open' THEN 0 ELSE 1 END, patient_requests.due_at ASC`,
-        joins: "JOIN clients c ON c.id=patient_requests.client_id LEFT JOIN users u ON u.id=patient_requests.handled_by",
-        select: "patient_requests.*, c.client_code, u.display_name AS handler",
-        shape: {
-          client_id: { type: "string", required: true },
-          kind: { type: "string", required: true, enum: KINDS },
-          received_at: { type: "date", required: true },
-          due_at: { type: "date" },
-          status: { type: "string", enum: STATUSES },
-          notes: { type: "string", maxLen: 4e3 },
-          handled_by: { type: "string" },
-          closed_at: { type: "datetime" }
-        },
-        filters: (ctx, where, params) => {
-          const s = ctx.query.get("status");
-          if (s && s !== "all") {
-            where.push("patient_requests.status=?");
-            params.push(s);
-          }
-          if (ctx.query.get("overdue") === "1") {
-            where.push(`patient_requests.status='open' AND patient_requests.due_at < ?`);
-            params.push((/* @__PURE__ */ new Date()).toISOString().slice(0, 10));
-          }
-        },
-        beforeInsert: (ctx, v) => {
-          if (!v.due_at) v.due_at = dueFrom(v.received_at);
-          if (!v.handled_by) v.handled_by = ctx.user.id;
-          if (v.status && v.status !== "open" && !v.closed_at) v.closed_at = db3.now();
-          encNotes(v);
-        },
-        beforeUpdate: (ctx, v, row) => {
-          if (v.received_at && !v.due_at && !row.due_at) v.due_at = dueFrom(v.received_at);
-          if (v.status && v.status !== "open" && !row.closed_at && !v.closed_at) v.closed_at = db3.now();
-          if (v.status === "open") v.closed_at = null;
-          encNotes(v);
-        },
-        afterLoad: (ctx, row) => ({ ...row, notes: row.notes_enc ? decrypt3(row.notes_enc) : null, notes_enc: void 0, overdue: row.status === "open" && row.due_at < (/* @__PURE__ */ new Date()).toISOString().slice(0, 10) }),
-        canEdit: (ctx, row) => row.handled_by === ctx.user.id || row.created_by === ctx.user.id || auth3.hasPerm(ctx.user, "clients:all")
-      });
-      r.get("/api/meta/patient-request-options", auth3.requireAuth, () => ({ kinds: KINDS, statuses: STATUSES, days_to_respond: DAYS_TO_RESPOND }));
-    };
-    module.exports.KINDS = KINDS;
-    module.exports.STATUSES = STATUSES;
-  }
-});
-
-// server/routes/referrals.js
-var require_referrals = __commonJS({
-  "server/routes/referrals.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var crud = require_crud();
-    var audit3 = require_audit();
-    var C = require_constants();
-    var disclosure = require_disclosure();
-    var { badRequest } = require_http();
-    var { uuid: uuid2, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
-    var SHARED_STATUSES = ["contacted", "accepted", "waitlisted", "scheduled", "admitted", "completed"];
-    var CLOSED_STATUSES = ["completed", "closed", "declined_by_client", "declined_by_provider"];
-    var BASES = disclosure.BASES;
-    var ENC = ["outcome", "barrier", "notes"];
-    function sharesInformation(v, row = {}) {
-      const status = v.status || row.status || "pending";
-      const warm = v.warm_handoff !== void 0 ? v.warm_handoff : row.warm_handoff;
-      return !!warm || SHARED_STATUSES.includes(status);
-    }
-    function existingDisclosure(referralId) {
-      return db3.one(`SELECT id FROM disclosures WHERE source='referral' AND source_ref=?`, referralId);
-    }
-    function resourceName(resourceId) {
-      return db3.one(`SELECT name FROM resources WHERE id=?`, resourceId)?.name || "referral recipient";
-    }
-    function resourceNames(resourceId) {
-      const r = db3.one(`SELECT name, organization FROM resources WHERE id=?`, resourceId);
-      return r ? [r.name, r.organization].filter(Boolean) : [];
-    }
-    function encFields(v) {
-      for (const f of ENC) if (v[f] !== void 0) {
-        v[`${f}_enc`] = v[f] === null || v[f] === "" ? null : encrypt3(String(v[f]));
-        delete v[f];
-      }
-    }
-    function present(row) {
-      if (!row) return row;
-      const out2 = { ...row };
-      for (const f of ENC) {
-        out2[f] = row[`${f}_enc`] ? decrypt3(row[`${f}_enc`]) : null;
-        delete out2[`${f}_enc`];
-      }
-      return out2;
-    }
-    function gate(ctx, v, row = {}) {
-      return {
-        consent_id: v.consent_id || row.consent_id,
-        basis: v._disclosure_basis,
-        justification: v._disclosure_justification,
-        court_order_id: v._court_order_id,
-        recipient: resourceNames(v.resource_id || row.resource_id),
-        recipient_override: v._recipient_override,
-        allowed: disclosure.REFERRAL_BASES,
-        restriction_reviewed: v._restriction_reviewed,
-        user: ctx.user
-      };
-    }
-    function recordDisclosure(ctx, row, v = {}) {
-      const basis = disclosure.requireBasis(row.client_id, gate(ctx, v, row));
-      disclosure.record({
-        clientId: row.client_id,
-        consentId: basis.consent?.id || null,
-        courtOrderId: basis.court_order?.id || null,
-        recipientOverride: basis.recipient_override,
-        recipient: resourceName(v.resource_id || row.resource_id),
-        purpose: "Referral for services",
-        what: v._disclosure_what || "Referral information (name, contact details and presenting need)",
-        method: v.warm_handoff ?? row.warm_handoff ? "warm handoff" : "referral",
-        basis: basis.basis,
-        justification: basis.justification,
-        source: "referral",
-        sourceRef: row.id,
-        user: ctx.user,
-        ip: ctx.ip
-      });
-    }
-    var OVERRIDE_PREFIX = /^Recipient override \(the consent names "[\s\S]*?"\): /;
-    function pushDisclosure(user, raw, existing, deviceRows = []) {
-      if (!sharesInformation(raw, existing || {})) return null;
-      const recipientChanged = !!existing && !!raw.resource_id && raw.resource_id !== existing.resource_id;
-      if (existing && !recipientChanged && existingDisclosure(raw.id)) return null;
-      const dev = deviceRows.length ? deviceRows[deviceRows.length - 1] : null;
-      const just = dev && dev.justification_enc ? String(dev.justification_enc) : "";
-      const resourceId = raw.resource_id || existing?.resource_id;
-      let basis;
-      try {
-        basis = disclosure.requireBasis(raw.client_id, {
-          consent_id: dev && dev.consent_id || raw.consent_id,
-          basis: dev && dev.basis || "consent",
-          justification: just.replace(OVERRIDE_PREFIX, "") || null,
-          court_order_id: dev && dev.court_order_id,
-          recipient: resourceNames(resourceId),
-          recipient_override: OVERRIDE_PREFIX.test(just),
-          allowed: disclosure.REFERRAL_BASES,
-          // The device's gate asked the worker to confirm an agreed restriction before it wrote its row.
-          restriction_reviewed: !!dev,
-          user
-        });
-      } catch (e) {
-        const x = e && e.extra || {};
-        const why = x.recipientNotCovered ? "the consent it cites does not name the agency it is sent to" : x.restrictionReview ? "the client has an agreed restriction on sharing, which has to be confirmed at the office" : x.consentIncomplete ? "the consent it cites does not carry every \xA72.31 element" : "it needs a live consent that names the agency, or another basis recorded at the office";
-        return { refused: `needs a lawful basis for disclosure the office accepts: ${why}`, code: x.recipientNotCovered ? "recipient_not_covered" : x.restrictionReview ? "restriction" : x.consentIncomplete ? "consent_incomplete" : "no_basis" };
-      }
-      return {
-        deviceIds: deviceRows.map((d) => d.id),
-        account(ip) {
-          return disclosure.record({
-            id: dev ? dev.id : void 0,
-            clientId: raw.client_id,
-            consentId: basis.consent?.id || null,
-            courtOrderId: basis.court_order?.id || null,
-            recipientOverride: basis.recipient_override,
-            recipient: resourceName(resourceId),
-            purpose: "Referral for services",
-            what: dev && dev.what_enc || "Referral information (name, contact details and presenting need)",
-            method: raw.warm_handoff ?? existing?.warm_handoff ? "warm handoff" : "referral",
-            basis: basis.basis,
-            justification: basis.justification,
-            source: "referral",
-            sourceRef: raw.id,
-            disclosedAt: dev && dev.disclosed_at || null,
-            user,
-            ip
-          });
-        }
-      };
-    }
-    module.exports = (r) => {
-      crud.build(r, {
-        table: "referrals",
-        entity: "referral",
-        perm: "referrals",
-        dateCol: "referred_at",
-        restrictOwner: true,
-        joins: "JOIN users u ON u.id=referrals.user_id JOIN clients c ON c.id=referrals.client_id JOIN resources res ON res.id=referrals.resource_id",
-        select: "referrals.*, u.display_name AS worker, c.client_code, res.name AS resource_name, res.category AS resource_category, res.phone AS resource_phone",
-        shape: {
-          client_id: { type: "string", required: true },
-          resource_id: { type: "string", required: true },
-          user_id: { type: "string" },
-          referred_at: { type: "datetime", required: true },
-          status: { type: "string", list: "REFERRAL_STATUSES" },
-          urgency: { type: "string", enum: ["routine", "urgent", "emergent"] },
-          appointment_at: { type: "datetime" },
-          admitted_at: { type: "datetime" },
-          closed_at: { type: "datetime" },
-          outcome: { type: "string", maxLen: 500 },
-          barrier: { type: "string", maxLen: 300 },
-          warm_handoff: { type: "boolean" },
-          consent_id: { type: "string" },
-          follow_up_due: { type: "date" },
-          notes: { type: "string", maxLen: 2e3 },
-          episode_id: { type: "string" },
-          // Not columns: how this disclosure is justified, and what was actually sent.
-          _disclosure_basis: { type: "string", enum: BASES },
-          _disclosure_what: { type: "string", maxLen: 1e3 },
-          _disclosure_justification: { type: "string", maxLen: 2e3 },
-          _court_order_id: { type: "string" },
-          _restriction_reviewed: { type: "boolean" },
-          _recipient_override: { type: "boolean" }
-        },
-        filters: (ctx, where, params) => {
-          const s = ctx.query.get("status");
-          if (s && s !== "all") {
-            where.push("referrals.status=?");
-            params.push(s);
-          }
-          if (ctx.query.get("open") === "1") where.push(`referrals.status IN ('pending','contacted','accepted','waitlisted','scheduled')`);
-          if (ctx.query.get("consent_revoked") === "1") where.push("referrals.consent_revoked=1");
-          if (ctx.query.get("awaiting_outcome") === "1") where.push(`referrals.status IN ('admitted','scheduled') AND referrals.outcome_recorded_at IS NULL`);
-          const res = ctx.query.get("resource_id");
-          if (res) {
-            where.push("referrals.resource_id=?");
-            params.push(res);
-          }
-        },
-        afterLoad: (ctx, row) => present(row),
-        beforeInsert: (ctx, v) => {
-          if (!db3.one(`SELECT 1 FROM resources WHERE id=?`, v.resource_id)) throw badRequest("Unknown resource");
-          if (v.consent_id && !db3.one(`SELECT 1 FROM consents WHERE id=? AND client_id=?`, v.consent_id, v.client_id)) throw badRequest("That consent belongs to a different client");
-          if (sharesInformation(v)) disclosure.requireBasis(v.client_id, gate(ctx, v));
-          if (!v.follow_up_due) {
-            const days = v.urgency === "emergent" ? 1 : v.urgency === "urgent" ? 3 : 14;
-            v.follow_up_due = new Date(Date.now() + days * 864e5).toISOString().slice(0, 10);
-          }
-          encFields(v);
-        },
-        beforeUpdate: (ctx, v, row) => {
-          if (v.consent_id && !db3.one(`SELECT 1 FROM consents WHERE id=? AND client_id=?`, v.consent_id, row.client_id)) throw badRequest("That consent belongs to a different client");
-          const recipientChanged = !!v.resource_id && v.resource_id !== row.resource_id;
-          if (recipientChanged && !db3.one(`SELECT 1 FROM resources WHERE id=?`, v.resource_id)) throw badRequest("Unknown resource");
-          if (sharesInformation(v, row) && (recipientChanged || !existingDisclosure(row.id))) recordDisclosure(ctx, row, v);
-          if (v.status && CLOSED_STATUSES.includes(v.status) && !v.closed_at && !row.closed_at) v.closed_at = db3.now();
-          if (v.status === "admitted" && !v.admitted_at && !row.admitted_at) v.admitted_at = db3.now();
-          if ((v.outcome !== void 0 || v.status === "admitted" || v.status && CLOSED_STATUSES.includes(v.status)) && !row.outcome_recorded_at) v.outcome_recorded_at = db3.now();
-          encFields(v);
-        },
-        afterInsert: (ctx, row) => {
-          if (sharesInformation(row)) recordDisclosure(ctx, row, row);
-          db3.run(
-            `INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority,referral_id) VALUES(?,?,?,?,?,?,?,?)`,
-            uuid2(),
-            row.client_id,
-            row.user_id,
-            ctx.user.id,
-            encrypt3(`Follow up on referral to ${resourceName(row.resource_id)}`),
-            row.follow_up_due,
-            row.urgency === "emergent" ? "urgent" : "normal",
-            row.id
-          );
-        },
-        canEdit: crud.ownerOrManager()
-      });
-      r.post("/api/referrals/:id/outcome", require_auth().requireAuth, require_auth().requirePerm("referrals:write"), (ctx) => {
-        const row = db3.one(`SELECT * FROM referrals WHERE id=?`, ctx.params.id);
-        if (!row) throw require_http().notFound("Referral not found");
-        require_auth().assertClientAccess(ctx, row.client_id);
-        const { validate } = require_validate();
-        const v = validate(ctx.body, {
-          status: { type: "string", required: true, list: "REFERRAL_STATUSES" },
-          outcome: { type: "string", maxLen: 500 },
-          barrier: { type: "string", maxLen: 300 },
-          admitted_at: { type: "datetime" },
-          consent_id: { type: "string" },
-          _disclosure_basis: { type: "string", enum: BASES },
-          _disclosure_what: { type: "string", maxLen: 1e3 },
-          _disclosure_justification: { type: "string", maxLen: 2e3 },
-          _court_order_id: { type: "string" },
-          _restriction_reviewed: { type: "boolean" },
-          _recipient_override: { type: "boolean" }
-        }, { existing: row });
-        if (v.consent_id && !db3.one(`SELECT 1 FROM consents WHERE id=? AND client_id=?`, v.consent_id, row.client_id)) throw badRequest("That consent belongs to a different client");
-        const admitted = v.status === "admitted" || !!v.admitted_at;
-        db3.transaction(() => {
-          if (sharesInformation(v, row) && !existingDisclosure(row.id)) recordDisclosure(ctx, row, v);
-          db3.run(
-            `UPDATE referrals SET status=?, outcome_enc=?, barrier_enc=?, admitted_at=?, closed_at=?, outcome_recorded_at=?, consent_id=COALESCE(?, consent_id), updated_at=? WHERE id=?`,
-            v.status,
-            v.outcome ? encrypt3(v.outcome) : row.outcome_enc,
-            v.barrier ? encrypt3(v.barrier) : row.barrier_enc,
-            admitted ? v.admitted_at || row.admitted_at || db3.now() : row.admitted_at,
-            CLOSED_STATUSES.includes(v.status) ? row.closed_at || db3.now() : row.closed_at,
-            db3.now(),
-            v.consent_id || null,
-            db3.now(),
-            row.id
-          );
-          const closed = db3.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE referral_id=? AND status IN ('open','in_progress')`, db3.now(), db3.now(), row.id).changes;
-          if (!closed) {
-            const legacyTitle = `Follow up on referral to ${resourceName(row.resource_id)}`;
-            for (const t of db3.all(`SELECT id, title_enc FROM tasks WHERE client_id=? AND referral_id IS NULL AND status IN ('open','in_progress')`, row.client_id)) {
-              let title = "";
-              try {
-                title = t.title_enc ? decrypt3(t.title_enc) : "";
-              } catch {
-                continue;
-              }
-              if (title === legacyTitle) db3.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), t.id);
-            }
-          }
-        });
-        audit3.log({ user: ctx.user, action: "referral.outcome", entity: "referral", entityId: row.id, clientId: row.client_id, ip: ctx.ip, details: { status: v.status, admitted } });
-        return { ok: true, admitted };
-      });
-    };
-    module.exports.present = present;
-    module.exports.pushDisclosure = pushDisclosure;
   }
 });
 
@@ -30931,6 +31063,13 @@ var require_startup_checks = __commonJS({
       if (s.hours > 0 || s.minutes > 0) return null;
       return "Scheduled backups are off (backup_schedule_hours = 0): nothing is backing this database up. Turn them on under Settings \u2192 Scheduled backups (every 4 hours is the production default; docs/security/BACKUP-AND-DR.md).";
     }
+    function keySeparationProblem(c = config) {
+      if (!c.isProd || c.local) return null;
+      const same = (a, b) => a && b && import_buffer.Buffer.isBuffer(a) && import_buffer.Buffer.isBuffer(b) && a.equals(b);
+      if (same(c.encryptionKey, c.indexKey)) return 'SUDS_ENCRYPTION_KEY and SUDS_INDEX_KEY are the same value. Anyone holding the index key can then decrypt every record. Generate a separate index key (npm run gen-key) and rotate to it: NEW_INDEX_KEY=\u2026 npm run rotate-index-key (docs/DEPLOYMENT.md, "Key rotation runbook").';
+      if (same(c.backupKey, c.encryptionKey) || same(c.backupKey, c.indexKey)) return "SUDS_BACKUP_KEY is the same value as another SUDS key; give backups a key of their own (npm run gen-key).";
+      return null;
+    }
     function problems() {
       const out2 = [];
       try {
@@ -30943,9 +31082,14 @@ var require_startup_checks = __commonJS({
         if (p) out2.push(p);
       } catch {
       }
+      try {
+        const p = keySeparationProblem();
+        if (p) out2.push(p);
+      } catch {
+      }
       return out2;
     }
-    module.exports = { problems, backupProblem };
+    module.exports = { problems, backupProblem, keySeparationProblem };
   }
 });
 
@@ -31531,6 +31675,11 @@ var require_sync = __commonJS({
     function scopeSql(t, user, alias) {
       const cf = auth3.caseloadFilter(user, `${alias}.${t.clientCol}`);
       if (t.scope === "all" || t.scope === "users") return { sql: "1=1", params: [] };
+      if (t.scope === "importer" || t.scope === "via-import") {
+        if (auth3.hasPerm(user, "clients:all")) return { sql: "1=1", params: [] };
+        if (t.scope === "importer") return { sql: `(${alias}.imported_by=? OR ${alias}.imported_by IS NULL)`, params: [user.id] };
+        return { sql: `${alias}.import_id IN (SELECT i.id FROM imports i WHERE i.imported_by=? OR i.imported_by IS NULL)`, params: [user.id] };
+      }
       if (t.name === "clients" && cf.sql !== "1=1") {
         const kf = auth3.caseloadFilter(user, `${alias}.merged_into`);
         return { sql: `(${cf.sql} OR (${alias}.merged_into IS NOT NULL AND ${kf.sql}))`, params: [...cf.params, ...kf.params] };
@@ -31541,6 +31690,13 @@ var require_sync = __commonJS({
       }
       if (t.scope === "client-or-null") return { sql: `(${alias}.${t.clientCol} IS NULL OR ${cf.sql})`, params: cf.params };
       return cf;
+    }
+    function droppedClients(user, since) {
+      if (!auth3.caseloadRestricted(user) || since === NEVER2) return [];
+      const ids = db3.all(`SELECT DISTINCT client_id FROM assignments WHERE user_id=? AND NOT ${auth3.activeAssignment()}
+    AND (ended_at > ? OR (ended_at IS NULL AND (updated_at > ? OR end_date >= date(?))))`, user.id, since, since, since).map((r) => r.client_id);
+      const sc = scopeSql(SYNC2.tables.find((t) => t.name === "clients"), user, "c");
+      return ids.filter((id) => !db3.one(`SELECT 1 FROM clients c WHERE c.id=? AND ${sc.sql}`, id, ...sc.params));
     }
     function pull(user, since, { limit: limit2 = PULL_LIMIT } = {}) {
       const serverNow = db3.now();
@@ -31580,6 +31736,7 @@ var require_sync = __commonJS({
         }
         out2.tables[t.name] = exported;
       }
+      out2.dropped_clients = droppedClients(user, since);
       out2.tombstones = db3.all(`SELECT table_name, id, deleted_at FROM tombstones WHERE deleted_at > ? AND deleted_at <= ? ORDER BY deleted_at`, since, cursor);
       const horizon = db3.getSetting("tombstone_purged_before", null);
       if (horizon && since !== NEVER2 && since < horizon) {
@@ -31644,7 +31801,7 @@ var require_sync = __commonJS({
         expires_event: raw.expires_event,
         document_ref: raw.document_ref,
         signed_on_paper: raw.signed_on_paper,
-        witness: raw.witness,
+        witness: raw.witness_enc ?? raw.witness,
         signer_relationship: raw.signer_relationship,
         signer_name: raw.signer_name_enc,
         revocation_right_given: raw.revocation_right_given,
@@ -32597,7 +32754,7 @@ var require_app2 = __commonJS({
       const router2 = buildRouter();
       const staticHandler = serveStatic(path.join("/", "..", "public"));
       return async function handle2(req, res) {
-        securityHeaders(res);
+        securityHeaders(res, req);
         let url;
         try {
           url = parseRequestUrl(req.url, "http://localhost");
@@ -32792,7 +32949,7 @@ function changedColumns(t, existing, raw, existingCols) {
   }
   return out2;
 }
-function applyPull(payload, conflicts = [], skipped = []) {
+function applyPull(payload, conflicts = [], skipped = [], officeUserId = null) {
   const counts = {};
   const offset = payload.server_now ? Date.parse(payload.server_now) - Date.now() : 0;
   const toServer = (ts) => {
@@ -32821,6 +32978,14 @@ function applyPull(payload, conflicts = [], skipped = []) {
       const t = import_sync_tables.default.tables.find((x) => x.name === ts.table_name);
       if (!t) continue;
       import_db.default.savepoint(() => applyTombstone(t, ts, toServer), (err2) => skipped.push({ table: t.name, id: ts.id, reason: String(err2 && err2.message || "could not be deleted").slice(0, 200) }));
+    }
+    for (const id of payload.dropped_clients || []) {
+      if (typeof id !== "string") continue;
+      if (officeUserId && import_db.default.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id<>? AND ${import_auth.default.activeAssignment()}`, id, officeUserId)) continue;
+      import_db.default.savepoint(() => {
+        const removed = import_sync_tables.default.purgeClient(import_db.default, id);
+        if (removed) import_audit.default.log({ user: { username: import_db.default.getSetting("sync_username", "device") }, action: "sync.caseload_removed", entity: "client", entityId: id, clientId: id, details: { rows: removed } });
+      }, (err2) => skipped.push({ table: "clients", id, reason: String(err2 && err2.message || "could not be removed").slice(0, 200) }));
     }
     for (const [k, v] of Object.entries(payload.settings || {})) if (v !== null && v !== void 0) import_db.default.setSetting(k, v);
   });
@@ -33117,7 +33282,7 @@ async function run({ server, username, password, code, onProgress = () => {
         pages++;
         continue;
       }
-      const counts = applyPull(pulled, pullConflicts, skipped);
+      const counts = applyPull(pulled, pullConflicts, skipped, officeUserId);
       for (const [k, v] of Object.entries(counts)) applied[k] = (applied[k] || 0) + v;
       serverNow = pulled.server_now;
       since = pulled.cursor;
