@@ -87,7 +87,7 @@ module.exports = (r) => {
 
   // API keys for automated intake (e.g. Pocket AI share/webhook)
   r.get('/api/admin/api-keys', auth.requireAuth, auth.requirePerm('apikeys:manage'), () =>
-    ({ keys: db.all(`SELECT k.id,k.name,k.prefix,k.scopes,k.created_at,k.last_used_at,k.revoked_at,u.display_name AS created_by_name FROM api_keys k LEFT JOIN users u ON u.id=k.created_by ORDER BY k.created_at DESC`) }));
+    ({ keys: db.all(`SELECT k.id,k.name,k.prefix,k.scopes,k.created_at,k.last_used_at,k.revoked_at,u.display_name AS created_by_name FROM api_keys k LEFT JOIN users u ON u.id=k.created_by WHERE k.scopes NOT LIKE 'fhir%' ORDER BY k.created_at DESC`) }));
   r.post('/api/admin/api-keys', auth.requireAuth, auth.requirePerm('apikeys:manage'), (ctx) => {
     const { name } = validate(ctx.body, { name: { type: 'string', required: true, maxLen: 100 } });
     const raw = 'suds_' + randomToken(32);

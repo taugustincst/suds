@@ -415,6 +415,36 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   await page.screenshot({ path: '/tmp/suds-shots/lists.png', fullPage: true }).catch(() => {});
 }
 
+// ---- administrator: a FHIR client for the county EHR is created, works, and is revoked ----
+{
+  const { page, api } = admin;
+  await go(page, 'admin?tab=fhir');
+  ok(await page.$('.tabs button.active:has-text("FHIR clients")'), 'Settings has a FHIR clients tab');
+  await page.click('text=+ New FHIR client');
+  await page.waitForSelector('.modal input[name=recipient]');
+  const name = 'County EHR ' + Date.now().toString().slice(-5);
+  await page.fill('.modal input[name=name]', name);
+  await page.fill('.modal input[name=recipient]', 'County Behavioral Health');
+  await page.check('.modal input[name=scope_Patient]'); await page.check('.modal input[name=scope_HealthcareService]');
+  await page.click('.modal button[type=submit]');
+  const secretEl = await until(() => page.$('[data-fhir-secret]'));
+  const secret = secretEl ? (await secretEl.textContent()).trim() : '';
+  ok(/^sudsfhir_/.test(secret), 'the secret is shown once after creating a FHIR client', secret.slice(0, 9));
+  const created = (await api('GET', '/api/admin/fhir-clients')).data.clients.find(c => c.name === name);
+  eq(created && created.scopes.join(' '), 'system/Patient.read system/HealthcareService.read', 'with the scopes that were ticked');
+  const hs = await fetch(`${base}/fhir/R4/HealthcareService?_count=1`, { headers: { Authorization: `Bearer ${secret}` } });
+  eq(hs.status, 200, 'the new client reads the resource directory over FHIR');
+  eq((await fetch(`${base}/fhir/R4/Encounter`, { headers: { Authorization: `Bearer ${secret}` } })).status, 403, 'but not a type it was not granted');
+  await page.click('.modal button:has-text("I have copied it")'); await settle(page);
+  await until(() => page.$(`tr:has-text("${name}") button:has-text("Revoke")`));
+  await page.click(`tr:has-text("${name}") button:has-text("Revoke")`);
+  await page.click('.modal button:has-text("Revoke")'); await settle(page);
+  const revoked = await until(async () => (await api('GET', '/api/admin/fhir-clients')).data.clients.find(c => c.name === name && c.revoked_at));
+  ok(revoked, 'revoking it from the list takes effect');
+  eq((await fetch(`${base}/fhir/R4/HealthcareService`, { headers: { Authorization: `Bearer ${secret}` } })).status, 401, 'and the secret stops working');
+  await page.screenshot({ path: '/tmp/suds-shots/fhir-clients.png', fullPage: true }).catch(() => {});
+}
+
 await admin.close();
 await browser.close();
 if (errors.length) { console.log('ERRORS:'); errors.forEach(e => console.log('  ' + e)); } else console.log('NO ERRORS');

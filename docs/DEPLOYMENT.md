@@ -56,6 +56,7 @@ Copy `.env.example` to `.env` and set:
 | `PUBLIC_APP_INFO=1` | no | Let `GET /api/app/info` (the addresses and certificate fingerprint the `/app` page shows) answer without a session. Off by default: a signed-in browser still gets it. |
 | `ALLOW_STATIC_SYNC=1` | no | No effect (kept so existing configurations still start): the on-device web app on GitHub Pages never syncs with an office server; see WEB_APP.md. |
 | `SIGNUP_RATE_LIMIT` | no | Account requests (the sign-in page's **Sign up**, `POST /api/auth/signup`) accepted per address per hour. Default 5. Sign up itself is switched on or off under Settings (`self_signup`, on by default). |
+| `FHIR_EXPORT_TTL_MINUTES` | no | How long a FHIR bulk export's encrypted output files are kept before they are deleted (default 60). See docs/integration/FHIR.md. |
 | `HOST`, `PORT` | no | Default `127.0.0.1:8080`. Use `HOST=0.0.0.0` only inside a container / behind a firewall. |
 | `SESSION_IDLE_MINUTES` | no | Default 15 (auto sign-out). |
 | `SESSION_ABSOLUTE_HOURS` | no | Default 12. |

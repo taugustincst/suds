@@ -81,4 +81,85 @@ function accounting(clientId) {
   return { client_id: client?.id, client_code: client?.client_code, generated_at: db.now(), disclosures, consents };
 }
 
-module.exports = { BASES, NEEDS_JUSTIFICATION, MIN_JUSTIFICATION, activeConsent, requireBasis, record, present, accounting };
+// ---- FHIR API (server/routes/fhir.js) ----
+// Every FHIR response that names a client is a disclosure to the organisation that registered the FHIR
+// client. It is allowed only while that client has a live consent naming the organisation for the purpose
+// the FHIR client was registered with; everyone else is left out of the answer. The rule lives here, next
+// to requireBasis, so there is one definition of "consent covers this".
+
+// Purposes of use a FHIR client can be registered for (HL7 v3 ActReason codes), and the words a consent's
+// purpose must contain to cover them. A consent for "treatment, payment and health care operations" (or
+// one that says "TPO") covers all three.
+const FHIR_PURPOSES = {
+  TREAT: { display: 'Treatment', words: ['treatment', 'care coordination', 'coordination of care', 'continuity of care'] },
+  HPAYMT: { display: 'Payment', words: ['payment', 'billing', 'claims'] },
+  HOPERAT: { display: 'Health care operations', words: ['operations'] },
+};
+// Consent types that authorise sharing with a named outside recipient. A 'treatment' consent is consent to
+// be treated here, not to have records sent elsewhere.
+const FHIR_CONSENT_TYPES = ['part2_disclosure', 'roi'];
+const normalise = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+function isTpo(purpose) {
+  const p = ` ${normalise(purpose)} `;
+  return / tpo /.test(p) || (p.includes('treatment') && p.includes('payment') && p.includes('operations'));
+}
+/** Does this (decrypted) consent name the recipient organisation and cover the purpose of use? */
+function consentCovers({ recipient, purpose }, { recipients, purposeOfUse }) {
+  const r = normalise(recipient);
+  if (!r || !recipients.map(normalise).filter(Boolean).includes(r)) return false;
+  if (isTpo(purpose)) return true;
+  const p = ` ${normalise(purpose)} `;
+  return (FHIR_PURPOSES[purposeOfUse]?.words || []).some(w => p.includes(` ${normalise(w)} `));
+}
+
+// The covering consents are worked out once per request from every live consent of a sharing type, and
+// cached until any consent changes (a revocation stamps updated_at) or the date turns (expiry).
+const coverageCache = new Map();
+/**
+ * Map of client id -> id of the consent that covers disclosure to this FHIR recipient for this purpose (the
+ * most recently signed one). Clients who were merged away or deleted are never covered.
+ */
+function fhirCoverage({ cacheKey, recipients, purposeOfUse }) {
+  const stamp = db.one(`SELECT COUNT(*) n, MAX(updated_at) u FROM consents`);
+  const today = new Date().toISOString().slice(0, 10);
+  const key = `${stamp.n}|${stamp.u}|${today}|${recipients.join('\u0001')}|${purposeOfUse}`;
+  const hit = coverageCache.get(cacheKey);
+  if (hit && hit.key === key) return hit.map;
+  const map = new Map();
+  const rows = db.all(`SELECT k.id, k.client_id, k.recipient_enc, k.purpose_enc FROM consents k JOIN clients c ON c.id=k.client_id
+    WHERE k.type IN (${FHIR_CONSENT_TYPES.map(() => '?').join(',')}) AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= date('now'))
+      AND c.deleted_at IS NULL AND c.merged_into IS NULL ORDER BY k.signed_at, k.created_at`, ...FHIR_CONSENT_TYPES);
+  for (const row of rows) {
+    let plain;
+    try { plain = { recipient: row.recipient_enc ? decrypt(row.recipient_enc) : '', purpose: row.purpose_enc ? decrypt(row.purpose_enc) : '' }; } catch { continue; }
+    if (consentCovers(plain, { recipients, purposeOfUse })) map.set(row.client_id, row.id);
+  }
+  if (coverageCache.size > 100) coverageCache.clear();
+  coverageCache.set(cacheKey, { key, map });
+  return map;
+}
+
+/**
+ * Record one accounting-of-disclosures row per client for one FHIR request (or one bulk export), in one
+ * transaction. `perClient` maps client id -> { consentId, what }. Returns the number of rows written.
+ */
+function recordFhir({ perClient, recipient, purposeOfUse, sourceRef, user, ip }) {
+  if (!perClient.size) return 0;
+  const purpose = `${FHIR_PURPOSES[purposeOfUse]?.display || purposeOfUse} (FHIR purpose of use ${purposeOfUse})`;
+  db.transaction(() => {
+    for (const [clientId, { consentId, what }] of perClient) {
+      record({ clientId, consentId, recipient, purpose, what, method: 'FHIR API', basis: 'consent', source: 'fhir', sourceRef, user, ip });
+    }
+  });
+  return perClient.size;
+}
+
+// 42 CFR §2.32(a)(1): the notice that must accompany each disclosure made with the patient's consent.
+const PART2_NOTICE = 'This record which has been disclosed to you is protected by Federal confidentiality rules (42 CFR part 2). '
+  + 'These rules prohibit you from using or disclosing this record, or testimony that describes the information contained in this record, in any civil, criminal, administrative, or legislative proceedings by any Federal, State, or local authority, against the patient, unless authorized by the consent of the patient, except as provided at 42 CFR 2.12(c)(5) or as authorized by a court in accordance with 42 CFR 2.64 or 2.65. '
+  + 'In addition, the Federal rules prohibit you from making any further disclosure of this record unless authorized by the written consent of the person to whom it pertains, or as otherwise permitted by 42 CFR part 2. '
+  + 'A general authorization for the release of medical or other information is not sufficient for this purpose (see 42 CFR 2.31). '
+  + 'The Federal rules restrict any use of the information to investigate or prosecute with regard to a crime any patient with a substance use disorder, except as provided at 42 CFR 2.12(c)(5) and 2.65.';
+
+module.exports = { BASES, NEEDS_JUSTIFICATION, MIN_JUSTIFICATION, activeConsent, requireBasis, record, present, accounting,
+  FHIR_PURPOSES, FHIR_CONSENT_TYPES, consentCovers, fhirCoverage, recordFhir, PART2_NOTICE };
