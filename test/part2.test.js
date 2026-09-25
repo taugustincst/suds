@@ -357,7 +357,7 @@ test('reviewing an emergency access as a concern, and a broken audit chain, each
   assert.equal(inc.source, 'breakglass'); assert.equal(inc.source_ref, ev);
   assert.ok(H.db.one(`SELECT 1 FROM privacy_incident_clients WHERE incident_id=? AND client_id=?`, inc.id, clientId), 'with the client linked');
   // A tampered audit log: the administrator's check fails and a draft incident appears (once).
-  H.db.run(`UPDATE audit_log SET details='{"tampered":true}' WHERE id=(SELECT MIN(id)+5 FROM audit_log)`);
+  H.asAttacker(() => H.db.run(`UPDATE audit_log SET details='{"tampered":true}' WHERE id=(SELECT MIN(id)+5 FROM audit_log)`));
   const v = await admin.get('/api/admin/audit/verify');
   assert.equal(v.data.ok, false);
   await admin.get('/api/admin/audit/verify');

@@ -11,7 +11,13 @@ const { uuid, randomToken, sha256 } = require('../crypto');
 const SETTING_KEYS = ['org_name', 'caseload_restriction', 'county_name', 'program_contact', 'self_signup', 'note_lock_days', 'session_idle_minutes', 'session_absolute_hours', 'password_max_age_days', 'mfa_required_roles', 'mfa_grace_days',
   'backup_schedule_hours', 'backup_retain_count', 'backup_offsite_dir', 'client_retention_years', 'org_timezone',
   // Identity and recovery controls (server/security-status.js validates them together).
-  'mfa_require_all', 'sso_required', 'sso_emergency_accounts', 'dr_drill_monthly', 'dr_rto_target_minutes', 'dr_rpo_target_hours'];
+  'mfa_require_all', 'sso_required', 'sso_emergency_accounts', 'dr_drill_monthly', 'dr_rto_target_minutes', 'dr_rpo_target_hours',
+  // Frequent online snapshots (server/scheduled-backup.js snapshot).
+  'backup_schedule_minutes', 'backup_snapshot_retain',
+  // Identity-provider trust and lifecycle: IdP MFA in place of SUDS TOTP (server/routes/oidc.js), disabling
+  // SSO accounts the provider no longer vouches for (server/deprovision.js), SCIM provisioning (server/routes/scim.js).
+  'sso_trust_idp_mfa', 'sso_mfa_acr_values', 'sso_deprovision_days', 'scim_group_roles', 'scim_default_role'];
+const ROLES = ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'];
 const listener = require('../listener');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -57,6 +63,14 @@ module.exports = (r) => {
         if (['dr_rto_target_minutes', 'dr_rpo_target_hours'].includes(k) && v !== '' && !(Number(v) > 0)) throw badRequest(`${k} must be a positive number`);
         if (k === 'mfa_required_roles') v = v.split(',').map(x => x.trim()).filter(x => ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'].includes(x)).join(',');
         if (k === 'session_idle_minutes' && v !== '' && Number(v) > 60) throw badRequest('Idle timeout may not exceed 60 minutes (HIPAA automatic logoff)');
+        // Snapshots every few minutes: 0 is off; under 5 would spend the server on copying itself.
+        if (k === 'backup_schedule_minutes' && v !== '' && !(Number.isInteger(Number(v)) && (Number(v) === 0 || (Number(v) >= 5 && Number(v) <= 1440)))) throw badRequest('backup_schedule_minutes must be 0 (off) or a whole number of minutes from 5 to 1440');
+        if (k === 'backup_snapshot_retain' && v !== '' && !(Number.isInteger(Number(v)) && Number(v) >= 1 && Number(v) <= 1000)) throw badRequest('backup_snapshot_retain must be a whole number from 1 to 1000');
+        if (k === 'sso_trust_idp_mfa' && v !== '' && !['0', '1'].includes(v)) throw badRequest('sso_trust_idp_mfa must be 1 (on) or 0 (off)');
+        if (k === 'sso_mfa_acr_values' && v !== '') { const vals = v.split(/[\s,]+/).filter(Boolean); if (vals.some((x) => !/^[\w:./#-]{1,200}$/.test(x))) throw badRequest('sso_mfa_acr_values must be acr values (URIs or names) separated by commas'); v = vals.join(','); }
+        if (k === 'sso_deprovision_days' && v !== '' && !(Number.isInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 3650)) throw badRequest('sso_deprovision_days must be 0 (off) or a whole number of days');
+        if (k === 'scim_default_role' && v !== '' && !ROLES.includes(v)) throw badRequest(`scim_default_role must be one of ${ROLES.join(', ')}`);
+        if (k === 'scim_group_roles' && v !== '') v = require('../scim').normaliseGroupRoles(v);
         // Blank means "back to the default", so the row goes rather than an empty string being stored:
         // policy() read '' in mfa_required_roles as "no role needs MFA". Nothing here ever stores ''.
         if (v === '') db.run(`DELETE FROM settings WHERE key=?`, k); else db.setSetting(k, v);
@@ -68,6 +82,9 @@ module.exports = (r) => {
       if (!config.local && [db.getSetting('sso_required', '0'), db.getSetting('sso_emergency_accounts', '')].join('|') !== ssoBefore) require('../security-status').validateSettings();
     });
     audit.log({ user: ctx.user, action: 'settings.update', ip: ctx.ip, details: { changed } });
+    // Trusting the identity provider's second factor changes who can reach records without SUDS's own: its
+    // own audit entry, so it stands out from routine settings changes.
+    if (changed.includes('sso_trust_idp_mfa') || changed.includes('sso_mfa_acr_values')) audit.log({ user: ctx.user, action: 'security.idp_mfa_trust', ip: ctx.ip, details: { trusted: db.getSetting('sso_trust_idp_mfa', '0') === '1', acr_values: db.getSetting('sso_mfa_acr_values', '') || null } });
     return { ok: true };
   });
 
@@ -100,7 +117,7 @@ module.exports = (r) => {
 
   // API keys for automated intake (e.g. Pocket AI share/webhook)
   r.get('/api/admin/api-keys', auth.requireAuth, auth.requirePerm('apikeys:manage'), () =>
-    ({ keys: db.all(`SELECT k.id,k.name,k.prefix,k.scopes,k.created_at,k.last_used_at,k.revoked_at,u.display_name AS created_by_name FROM api_keys k LEFT JOIN users u ON u.id=k.created_by WHERE k.scopes NOT LIKE 'fhir%' ORDER BY k.created_at DESC`) }));
+    ({ keys: db.all(`SELECT k.id,k.name,k.prefix,k.scopes,k.created_at,k.last_used_at,k.revoked_at,u.display_name AS created_by_name FROM api_keys k LEFT JOIN users u ON u.id=k.created_by WHERE k.scopes NOT LIKE 'fhir%' AND k.scopes <> 'scim' ORDER BY k.created_at DESC`) }));
   r.post('/api/admin/api-keys', auth.requireAuth, auth.requirePerm('apikeys:manage'), (ctx) => {
     const { name } = validate(ctx.body, { name: { type: 'string', required: true, maxLen: 100 } });
     const raw = 'suds_' + randomToken(32);

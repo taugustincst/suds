@@ -69,8 +69,9 @@ function stateCookie(token, { clear = false } = {}) {
   return `${COOKIE}=${token}; Path=/api/auth/oidc; HttpOnly; SameSite=Lax; Max-Age=600${secure}`;
 }
 
-/** Build the authorize redirect URL and the signed cookie that goes with it. */
-async function startAuth() {
+/** Build the authorize redirect URL and the signed cookie that goes with it. `acrValues`: ask the provider
+ *  for these authentication context classes (a step-up to multi-factor, where the administrator named one). */
+async function startAuth({ acrValues = [] } = {}) {
   const doc = await discover();
   const { verifier, challenge } = pkcePair();
   const state = crypto.randomUUID();
@@ -84,6 +85,7 @@ async function startAuth() {
   url.searchParams.set('nonce', nonce);
   url.searchParams.set('code_challenge', challenge);
   url.searchParams.set('code_challenge_method', 'S256');
+  if (acrValues.length) url.searchParams.set('acr_values', acrValues.join(' '));
   const cookie = stateCookie(signState({ state, nonce, verifier, exp: Date.now() + 600_000 }));
   return { url: url.toString(), cookie };
 }
@@ -135,4 +137,23 @@ async function verifyIdToken(idToken, doc) {
   return claims;
 }
 
-module.exports = { startAuth, completeAuth, stateCookie, COOKIE, _resetCacheForTests: () => { discoveryCache = null; jwksCache = null; } };
+// Authentication method references (RFC 8176) that mean a second factor was used at the provider: multiple
+// factors, a one-time password, a hardware- or software-secured key. Entra ID sends ["pwd","mfa"]; Okta
+// sends "mfa" and the factor ("otp", "hwk", "swk").
+const MFA_AMR = ['mfa', 'otp', 'hwk', 'swk'];
+/**
+ * Did the identity provider say this sign-in used multi-factor authentication? Only consulted when the
+ * administrator has chosen to trust it (sso_trust_idp_mfa). An `acr` equal to one of the configured values
+ * counts too, for providers that express MFA as an authentication context class rather than in amr.
+ * Returns { ok, via, amr, acr }.
+ */
+function idpMfa(claims, { acrValues = [] } = {}) {
+  const amr = Array.isArray(claims.amr) ? claims.amr.map(String) : typeof claims.amr === 'string' ? [claims.amr] : [];
+  const acr = claims.acr === undefined || claims.acr === null ? null : String(claims.acr);
+  const amrHit = amr.find((a) => MFA_AMR.includes(a.toLowerCase()));
+  if (amrHit) return { ok: true, via: `amr:${amrHit}`, amr, acr };
+  if (acr && acrValues.includes(acr)) return { ok: true, via: `acr:${acr}`, amr, acr };
+  return { ok: false, via: null, amr, acr };
+}
+
+module.exports = { startAuth, completeAuth, stateCookie, COOKIE, idpMfa, MFA_AMR, _resetCacheForTests: () => { discoveryCache = null; jwksCache = null; } };

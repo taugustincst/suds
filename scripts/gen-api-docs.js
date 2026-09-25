@@ -13,8 +13,8 @@ const rows = r.routes.map(x => {
   return { method: x.method, path };
 });
 const groups = {};
-// The FHIR API lives under /fhir/R4, not /api; it is listed as one group and described in docs/integration/FHIR.md.
-for (const x of rows) { const g = x.path.startsWith('/fhir/') ? 'fhir (FHIR R4, read-only — see docs/integration/FHIR.md)' : x.path.split('/')[2]; (groups[g] = groups[g] || []).push(x); }
+// The FHIR API lives under /fhir/R4, not /api; it is listed as one group and described in docs/integration/FHIR.md. SCIM likewise lives under /scim/v2.
+for (const x of rows) { const g = x.path.startsWith('/fhir/') ? 'fhir (FHIR R4, read-only — see docs/integration/FHIR.md)' : x.path.startsWith('/scim/') ? 'scim (SCIM 2.0 user provisioning — see docs/security/IDENTITY.md)' : x.path.split('/')[2]; (groups[g] = groups[g] || []).push(x); }
 let out = `# SUDS REST API
 
 All endpoints are under \`/api\`. Authentication is a session cookie set by \`POST /api/auth/login\` (browser) or an \`Authorization: Bearer <session token>\` header; state-changing requests from a cookie session must include \`X-Requested-With: suds\`. Intake endpoints use an API key. Responses are JSON; errors are \`{ error, fields? }\`. List endpoints accept \`limit\`, \`offset\`, \`client_id\`, \`from\`, \`to\`, \`mine=1\` and \`user_id\` where applicable. Every PHI access is audited.

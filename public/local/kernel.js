@@ -6671,9 +6671,16 @@ CREATE TABLE IF NOT EXISTS users (
   access_note TEXT,
   requested_at TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  -- Identity-provider lifecycle (server/deprovision.js, server/routes/scim.js). idp_seen_at: the last time the
+  -- county identity provider vouched for this account (an SSO sign-in, or a SCIM create/update that left it
+  -- active); an SSO-linked account not seen for sso_deprovision_days is disabled. scim_external_id: the
+  -- provider's own id for the person (Entra objectId / Okta user id), set when SCIM provisions the account.
+  idp_seen_at TEXT,
+  scim_external_id TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_subject ON users(oidc_subject) WHERE oidc_subject IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_scim_external_id ON users(scim_external_id) WHERE scim_external_id IS NOT NULL;
 
 -- One row per physical phone/tablet running local mode, identified by a UUID the device itself generates
 -- once and sends on every sync call (never by the short-lived sync session, which starts and ends within a
@@ -6703,7 +6710,10 @@ CREATE TABLE IF NOT EXISTS sessions (
   mfa_pending INTEGER NOT NULL DEFAULT 0,
   ip TEXT,
   user_agent TEXT,
-  revoked_at TEXT
+  revoked_at TEXT,
+  -- How this session's second factor was satisfied: NULL (none or SUDS's own TOTP) or 'idp' \u2014 the identity
+  -- provider asserted multi-factor sign-in (amr/acr) and the administrator chose to trust it (server/routes/oidc.js).
+  mfa_source TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
@@ -7335,6 +7345,22 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log(at);
 CREATE INDEX IF NOT EXISTS idx_audit_client ON audit_log(client_id);
 CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id);
+-- The audit log is append-only in the database itself. An UPDATE or DELETE of audit_log is refused unless
+-- a row in audit_maintenance says a sanctioned maintenance step is running \u2014 the retention purge and the
+-- index-key re-signing (server/audit.js maintenance()), which insert that row and delete it again inside
+-- the same transaction, so it is never committed and no other connection ever sees it. Anyone who can drop
+-- these triggers can also edit the file; the keyed hash chain and the anchors written outside the database
+-- (server/audit-anchor.js) are what catch that.
+CREATE TABLE IF NOT EXISTS audit_maintenance (
+  purpose TEXT NOT NULL,
+  started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TRIGGER IF NOT EXISTS audit_log_no_update BEFORE UPDATE ON audit_log
+  WHEN NOT EXISTS (SELECT 1 FROM audit_maintenance)
+  BEGIN SELECT RAISE(ABORT, 'audit_log is append-only: entries cannot be changed'); END;
+CREATE TRIGGER IF NOT EXISTS audit_log_no_delete BEFORE DELETE ON audit_log
+  WHEN NOT EXISTS (SELECT 1 FROM audit_maintenance)
+  BEGIN SELECT RAISE(ABORT, 'audit_log is append-only: entries are removed only by the retention purge'); END;
 
 CREATE TABLE IF NOT EXISTS user_prefs (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -8583,13 +8609,27 @@ var require_db = __commonJS({
       },
       // 32: FHIR SMART Backend Services (private_key_jwt). fhir_jwt_assertions remembers each client assertion's
       //     jti until it expires, so an assertion cannot be replayed (server/fhir/jwt.js). A new table only; an
-      //     existing database starts with it empty. (Entries 32 and 33 are other work merged beside this one.)
+      //     existing database starts with it empty.
       (d) => {
         const schemaText = safeSchema();
         const m = schemaText.match(/CREATE TABLE IF NOT EXISTS fhir_jwt_assertions \([\s\S]*?\n\);/);
-        if (!m) throw new Error("migration 34: no definition for fhir_jwt_assertions in schema");
+        if (!m) throw new Error("migration 32: no definition for fhir_jwt_assertions in schema");
         d.exec(m[0]);
         for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_fhir_jwt_assertions/.test(line.trim())) d.exec(line.trim());
+      },
+      // 33: the audit log becomes append-only in the database (triggers that refuse UPDATE
+      //     and DELETE outside the sanctioned maintenance window, server/audit.js maintenance()); accounts
+      //     remember when the identity provider last vouched for them and SCIM's id for them; a session records
+      //     whether its second factor came from the identity provider.
+      (d) => {
+        const schemaText = safeSchema();
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS audit_maintenance \([\s\S]*?\n\);/);
+        if (m) d.exec(m[0]);
+        for (const t of schemaText.match(/CREATE TRIGGER IF NOT EXISTS audit_log_no_\w+ [\s\S]*?END;/g) || []) d.exec(t);
+        addColumn(d, "users", "idp_seen_at", "TEXT");
+        addColumn(d, "users", "scim_external_id", "TEXT");
+        d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_scim_external_id ON users(scim_external_id) WHERE scim_external_id IS NOT NULL`);
+        addColumn(d, "sessions", "mfa_source", "TEXT");
       }
     ];
     function initialise(d, schemaText, dbPath) {
@@ -9201,6 +9241,9 @@ var require_audit = __commonJS({
     function resignChain(newKey) {
       const before = verifyChain();
       if (!before.ok) throw new Error(`The audit chain does not verify under the current key (first bad entry ${before.firstBadId}); it will not be re-signed`);
+      return maintenance("index key rotation: re-sign the audit chain", () => resignRows(newKey));
+    }
+    function resignRows(newKey) {
       const upd = db3.get().prepare(`UPDATE audit_log SET prev_hash=?, hash=? WHERE id=?`);
       let prevHash = null;
       let afterId = 0;
@@ -9240,11 +9283,22 @@ var require_audit = __commonJS({
       }
       return n;
     }
+    function maintenance(purpose, fn) {
+      if (!purpose || typeof purpose !== "string") throw new Error("audit maintenance needs a stated purpose");
+      return db3.transaction(() => {
+        db3.run(`INSERT INTO audit_maintenance(purpose) VALUES(?)`, purpose.slice(0, 200));
+        try {
+          return fn();
+        } finally {
+          db3.run(`DELETE FROM audit_maintenance`);
+        }
+      });
+    }
     function purge(days) {
       const cutoff = new Date(Date.now() - days * 864e5).toISOString();
       const last = db3.one(`SELECT id, hash FROM audit_log WHERE at < ? ORDER BY id DESC LIMIT 1`, cutoff);
       if (!last) return 0;
-      const n = db3.run(`DELETE FROM audit_log WHERE at < ?`, cutoff).changes;
+      const n = maintenance("audit retention purge", () => db3.run(`DELETE FROM audit_log WHERE at < ?`, cutoff).changes);
       log({ user: { username: "system" }, action: "audit.purge", details: { purged: n, before: cutoff, last_purged_id: last.id, last_purged_hash: last.hash } });
       checkpoint();
       return n;
@@ -9269,7 +9323,7 @@ var require_audit = __commonJS({
       }
       return r;
     }
-    module.exports = { log, verifyChain, verifyChainAsync, verifiedMarker, resignChain, scheduledVerify, purge, purgeTombstones, checkpoint, checkHead };
+    module.exports = { log, maintenance, verifyChain, verifyChainAsync, verifiedMarker, resignChain, scheduledVerify, purge, purgeTombstones, checkpoint, checkHead };
   }
 });
 
@@ -9571,12 +9625,12 @@ var require_auth = __commonJS({
       return { sql: `${col} IN (SELECT client_id FROM assignments WHERE user_id=? AND ${activeAssignment()})`, params: [user.id] };
     }
     var COOKIE = "suds_session";
-    function createSession(user, ctx, { mfaPending = false } = {}) {
+    function createSession(user, ctx, { mfaPending = false, mfaSource = null } = {}) {
       const token2 = randomToken(32);
       const now = /* @__PURE__ */ new Date();
       const expires = new Date(now.getTime() + policy().absoluteHours * 3600 * 1e3);
       db3.run(
-        `INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent) VALUES(?,?,?,?,?,?,?,?)`,
+        `INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,mfa_source) VALUES(?,?,?,?,?,?,?,?,?)`,
         sha2562(token2),
         user.id,
         now.toISOString(),
@@ -9584,7 +9638,8 @@ var require_auth = __commonJS({
         expires.toISOString(),
         mfaPending ? 1 : 0,
         ctx.ip,
-        (ctx.headers["user-agent"] || "").slice(0, 200)
+        (ctx.headers["user-agent"] || "").slice(0, 200),
+        mfaSource
       );
       return token2;
     }
@@ -9624,7 +9679,7 @@ var require_auth = __commonJS({
       if (!ctx.user) throw unauthorized();
       if (ctx.session?.mfa_pending) throw new HttpError3(401, "MFA verification required", { mfaRequired: true });
       if (!ctx.path.startsWith("/api/auth/")) {
-        const due = mfaDeadline(ctx.user);
+        const due = ctx.session?.mfa_source === "idp" ? null : mfaDeadline(ctx.user);
         if (due && Date.now() > Date.parse(due)) {
           throw new HttpError3(403, "Two-step verification must be set up for your role before you can continue", { mfaSetupRequired: true, mfaSetupDeadline: due });
         }
@@ -13209,16 +13264,359 @@ var require_budget = __commonJS({
   }
 });
 
-// local/shims/empty.js
-var empty_exports = {};
-__export(empty_exports, {
-  default: () => empty_default
-});
-var empty_default;
-var init_empty = __esm({
-  "local/shims/empty.js"() {
+// server/scim.js
+var require_scim = __commonJS({
+  "server/scim.js"(exports, module) {
+    "use strict";
     init_globals_inject();
-    empty_default = {};
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var { uuid: uuid2 } = require_crypto();
+    var USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User";
+    var LIST_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse";
+    var ERROR_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:Error";
+    var PATCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:PatchOp";
+    var ROLES = ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"];
+    var NO_PASSWORD = "!scim-provisioned-no-password";
+    var ScimError = class extends Error {
+      constructor(status, detail, scimType) {
+        super(detail);
+        this.status = status;
+        this.scimType = scimType;
+      }
+    };
+    var errorBody = (status, detail, scimType) => ({ schemas: [ERROR_SCHEMA], status: String(status), ...scimType ? { scimType } : {}, detail });
+    function parseGroupRoles(text) {
+      const out2 = [];
+      for (const part of String(text || "").split(/[;\n]+/)) {
+        const t = part.trim();
+        if (!t) continue;
+        const i = t.lastIndexOf("=");
+        if (i <= 0) throw Object.assign(new Error(`"${t}" is not Group=role`), { status: 400 });
+        const group = t.slice(0, i).trim();
+        const role = t.slice(i + 1).trim().toLowerCase();
+        if (!ROLES.includes(role)) throw Object.assign(new Error(`"${role}" is not a SUDS role (${ROLES.join(", ")})`), { status: 400 });
+        if (group.length > 200) throw Object.assign(new Error("A group name is too long"), { status: 400 });
+        out2.push([group, role]);
+      }
+      return out2;
+    }
+    function normaliseGroupRoles(text) {
+      try {
+        return parseGroupRoles(text).map(([g, r]) => `${g}=${r}`).join("; ");
+      } catch (e) {
+        const { badRequest } = require_http();
+        throw badRequest(`scim_group_roles: ${e.message}`);
+      }
+    }
+    function mappedRole(names) {
+      let map = [];
+      try {
+        map = parseGroupRoles(db3.getSetting("scim_group_roles", ""));
+      } catch {
+      }
+      const lower = new Set(names.filter(Boolean).map((n) => String(n).toLowerCase()));
+      const hits = map.filter(([g]) => lower.has(g.toLowerCase())).map(([, r]) => r);
+      return ROLES.find((r) => hits.includes(r)) || null;
+    }
+    function defaultRole() {
+      const r = db3.getSetting("scim_default_role", "readonly");
+      return ROLES.includes(r) ? r : "readonly";
+    }
+    function emergencyAccounts() {
+      return String(db3.getSetting("sso_emergency_accounts", "") || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+    }
+    function toResource(u, base = "") {
+      return {
+        schemas: [USER_SCHEMA],
+        id: u.id,
+        ...u.scim_external_id ? { externalId: u.scim_external_id } : {},
+        userName: u.username,
+        displayName: u.display_name,
+        name: { formatted: u.display_name },
+        ...u.title ? { title: u.title } : {},
+        emails: u.email ? [{ value: u.email, type: "work", primary: true }] : [],
+        active: !!u.is_active,
+        roles: [{ value: u.role, primary: true }],
+        meta: { resourceType: "User", created: u.created_at, lastModified: u.updated_at, location: `${base}/scim/v2/Users/${u.id}` }
+      };
+    }
+    var bool = (v) => typeof v === "boolean" ? v : typeof v === "string" && /^(true|false)$/i.test(v) ? v.toLowerCase() === "true" : void 0;
+    var USERNAME_RE = /^[\w.@+'-]{1,120}$/;
+    function attrsFrom(body, { partial = false } = {}) {
+      const a = {};
+      if (!body || typeof body !== "object") throw new ScimError(400, "The request body must be a SCIM User", "invalidSyntax");
+      if (body.userName !== void 0) {
+        if (typeof body.userName !== "string" || !USERNAME_RE.test(body.userName.trim())) throw new ScimError(400, "userName must be 1-120 letters, digits or . _ @ + ' -", "invalidValue");
+        a.username = body.userName.trim();
+      } else if (!partial) throw new ScimError(400, "userName is required", "invalidValue");
+      const n = body.name && typeof body.name === "object" ? body.name : {};
+      const display = [body.displayName, n.formatted, [n.givenName, n.familyName].filter(Boolean).join(" ")].find((x) => typeof x === "string" && x.trim());
+      if (display) a.display_name = display.trim().slice(0, 120);
+      else if (!partial) a.display_name = a.username;
+      if (body.title !== void 0) a.title = body.title === null ? null : String(body.title).slice(0, 120);
+      if (body.emails !== void 0) {
+        const list2 = Array.isArray(body.emails) ? body.emails : [];
+        const e = list2.find((x) => x && x.primary) || list2.find((x) => x && x.type === "work") || list2[0];
+        a.email = e && e.value ? String(e.value).slice(0, 200) : null;
+      }
+      if (body.externalId !== void 0) a.scim_external_id = body.externalId === null || body.externalId === "" ? null : String(body.externalId).slice(0, 200);
+      if (body.active !== void 0) {
+        const b = bool(body.active);
+        if (b === void 0) throw new ScimError(400, "active must be true or false", "invalidValue");
+        a.active = b;
+      }
+      const names = [];
+      for (const k of ["roles", "groups"]) if (Array.isArray(body[k])) {
+        for (const x of body[k]) if (x) names.push(typeof x === "string" ? x : x.display, typeof x === "string" ? null : x.value);
+      }
+      if (names.length) {
+        const r = mappedRole(names);
+        if (r) a.role = r;
+      }
+      return a;
+    }
+    function attrsFromPatch(body) {
+      if (!body || !Array.isArray(body.Operations)) throw new ScimError(400, "A PATCH needs Operations", "invalidSyntax");
+      const merged = {};
+      for (const op of body.Operations) {
+        const kind = String(op && op.op || "").toLowerCase();
+        if (!["add", "replace", "remove"].includes(kind)) throw new ScimError(400, `Unsupported PATCH op "${op && op.op}"`, "invalidSyntax");
+        const p = op.path ? String(op.path).trim() : "";
+        if (!p) {
+          if (kind === "remove") throw new ScimError(400, "remove needs a path", "noTarget");
+          Object.assign(merged, attrsFrom(op.value, { partial: true }));
+          continue;
+        }
+        const key = p.toLowerCase();
+        const v = kind === "remove" ? null : op.value;
+        const one = (attr) => Object.assign(merged, attrsFrom({ [attr]: v }, { partial: true }));
+        if (key === "active") {
+          if (kind === "remove") continue;
+          one("active");
+        } else if (key === "username") {
+          if (kind !== "remove") one("userName");
+        } else if (key === "displayname" || key === "name.formatted") {
+          if (kind !== "remove" && v) merged.display_name = String(v).trim().slice(0, 120);
+        } else if (key === "title") one("title");
+        else if (key === "externalid") one("externalId");
+        else if (key === "emails" || key.startsWith("emails[")) merged.email = kind === "remove" ? null : Array.isArray(v) ? attrsFrom({ emails: v }, { partial: true }).email : v && typeof v === "object" ? String(v.value || "") || null : v ? String(v).slice(0, 200) : null;
+        else if (key === "roles" || key === "groups") {
+          if (kind !== "remove") Object.assign(merged, attrsFrom({ [key]: Array.isArray(v) ? v : [v] }, { partial: true }));
+        }
+      }
+      return merged;
+    }
+    function parseFilter(filter) {
+      if (!filter) return null;
+      const m = String(filter).trim().match(/^(userName|externalId|id)\s+eq\s+"((?:[^"\\]|\\.)*)"$/i);
+      if (!m) throw new ScimError(400, 'Only userName eq "\u2026", externalId eq "\u2026" and id eq "\u2026" filters are supported', "invalidFilter");
+      const value = m[2].replace(/\\(.)/g, "$1");
+      const col = { username: "username", externalid: "scim_external_id", id: "id" }[m[1].toLowerCase()];
+      return { sql: col === "username" ? "username = ? COLLATE NOCASE" : `${col} = ?`, value };
+    }
+    var LISTED = `access_status NOT IN ('pending','declined')`;
+    function list({ filter, startIndex = 1, count = 100 } = {}, base = "") {
+      const f = parseFilter(filter);
+      const where = f ? `${LISTED} AND ${f.sql}` : LISTED;
+      const params = f ? [f.value] : [];
+      const total = db3.one(`SELECT COUNT(*) n FROM users WHERE ${where}`, ...params).n;
+      const start2 = Math.max(1, Number(startIndex) || 1);
+      const n = Math.min(200, Math.max(0, Number.isFinite(Number(count)) ? Number(count) : 100));
+      const rows = n ? db3.all(`SELECT * FROM users WHERE ${where} ORDER BY created_at, id LIMIT ? OFFSET ?`, ...params, n, start2 - 1) : [];
+      return { schemas: [LIST_SCHEMA], totalResults: total, startIndex: start2, itemsPerPage: rows.length, Resources: rows.map((u) => toResource(u, base)) };
+    }
+    function find(id) {
+      const u = db3.one(`SELECT * FROM users WHERE id=? AND ${LISTED}`, id);
+      if (!u) throw new ScimError(404, `User ${id} not found`);
+      return u;
+    }
+    function guard(u) {
+      if (emergencyAccounts().includes(String(u.username).toLowerCase())) throw new ScimError(403, `${u.username} is an emergency (break-glass) account and is managed in SUDS, not by provisioning`, "mutability");
+    }
+    function cutOff(userId) {
+      require_auth().revokeAllForUser(userId);
+      return db3.run(`UPDATE devices SET revoked_at=COALESCE(revoked_at, ?), wipe_requested_at=COALESCE(wipe_requested_at, ?) WHERE user_id=?`, db3.now(), db3.now(), userId).changes;
+    }
+    function create2(body, actor, base) {
+      const a = attrsFrom(body);
+      if (db3.one(`SELECT 1 FROM users WHERE username=? COLLATE NOCASE`, a.username)) throw new ScimError(409, `A user named ${a.username} already exists`, "uniqueness");
+      if (a.scim_external_id && db3.one(`SELECT 1 FROM users WHERE scim_external_id=?`, a.scim_external_id)) throw new ScimError(409, "A user with this externalId already exists", "uniqueness");
+      const id = uuid2();
+      const now = db3.now();
+      const active = a.active !== false;
+      const role = a.role || defaultRole();
+      db3.run(
+        `INSERT INTO users(id,username,password_hash,display_name,email,title,role,is_active,must_change_password,password_changed_at,scim_external_id,idp_seen_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,0,?,?,?,?,?)`,
+        id,
+        a.username,
+        NO_PASSWORD,
+        a.display_name,
+        a.email || null,
+        a.title || null,
+        role,
+        active ? 1 : 0,
+        now,
+        a.scim_external_id || null,
+        active ? now : null,
+        now,
+        now
+      );
+      audit3.log({ user: actor, action: "scim.user.create", entity: "user", entityId: id, details: { username: a.username, role, active, role_from: a.role ? "group mapping" : "default" } });
+      return toResource(find(id), base);
+    }
+    function apply(id, a, actor, base, action) {
+      const u = find(id);
+      guard(u);
+      if (a.username && a.username.toLowerCase() !== String(u.username).toLowerCase() && db3.one(`SELECT 1 FROM users WHERE username=? COLLATE NOCASE AND id<>?`, a.username, id)) throw new ScimError(409, `A user named ${a.username} already exists`, "uniqueness");
+      if (a.scim_external_id && db3.one(`SELECT 1 FROM users WHERE scim_external_id=? AND id<>?`, a.scim_external_id, id)) throw new ScimError(409, "Another user has this externalId", "uniqueness");
+      const sets = [];
+      const vals = [];
+      const changed = [];
+      const col = (c, v) => {
+        if (v !== void 0 && v !== u[c]) {
+          sets.push(`${c}=?`);
+          vals.push(v);
+          changed.push(c);
+        }
+      };
+      col("username", a.username);
+      col("display_name", a.display_name);
+      col("email", a.email);
+      col("title", a.title);
+      col("scim_external_id", a.scim_external_id);
+      col("role", a.role);
+      let deactivated = false;
+      let reactivated = false;
+      if (a.active === false && u.is_active) {
+        sets.push("is_active=0");
+        changed.push("active");
+        deactivated = true;
+      }
+      if (a.active === true && !u.is_active) {
+        sets.push(`is_active=1`, `access_status='active'`);
+        changed.push("active");
+        reactivated = true;
+      }
+      if (a.active !== false && (u.is_active || reactivated)) {
+        sets.push("idp_seen_at=?");
+        vals.push(db3.now());
+      }
+      sets.push("updated_at=?");
+      vals.push(db3.now());
+      db3.transaction(() => {
+        db3.run(`UPDATE users SET ${sets.join(", ")} WHERE id=?`, ...vals, id);
+        if (deactivated) cutOff(id);
+      });
+      if (changed.length) audit3.log({ user: actor, action: deactivated ? "scim.user.deactivate" : action, entity: "user", entityId: id, details: { username: a.username || u.username, changed, ...a.role && a.role !== u.role ? { role: { from: u.role, to: a.role } } : {}, ...reactivated ? { reactivated: true } : {} } });
+      return toResource(find(id), base);
+    }
+    function replace(id, body, actor, base) {
+      return apply(id, attrsFrom(body), actor, base, "scim.user.update");
+    }
+    function patch(id, body, actor, base) {
+      return apply(id, attrsFromPatch(body), actor, base, "scim.user.update");
+    }
+    function deactivate(id, actor) {
+      const u = find(id);
+      guard(u);
+      if (u.is_active) {
+        db3.transaction(() => {
+          db3.run(`UPDATE users SET is_active=0, updated_at=? WHERE id=?`, db3.now(), id);
+          cutOff(id);
+        });
+        audit3.log({ user: actor, action: "scim.user.deactivate", entity: "user", entityId: id, details: { username: u.username, via: "DELETE" } });
+      }
+    }
+    var serviceProviderConfig = () => ({
+      schemas: ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"],
+      documentationUri: "docs/security/IDENTITY.md",
+      patch: { supported: true },
+      bulk: { supported: false, maxOperations: 0, maxPayloadSize: 0 },
+      filter: { supported: true, maxResults: 200 },
+      changePassword: { supported: false },
+      sort: { supported: false },
+      etag: { supported: false },
+      authenticationSchemes: [{ type: "oauthbearertoken", name: "Bearer token", description: "A SCIM token created under Settings \u2192 Security status \u2192 Provisioning (SCIM)", primary: true }]
+    });
+    module.exports = { USER_SCHEMA, LIST_SCHEMA, ERROR_SCHEMA, PATCH_SCHEMA, ScimError, errorBody, parseGroupRoles, normaliseGroupRoles, mappedRole, toResource, attrsFrom, attrsFromPatch, parseFilter, list, find, create: create2, replace, patch, deactivate, cutOff, serviceProviderConfig, NO_PASSWORD };
+  }
+});
+
+// server/deprovision.js
+var require_deprovision = __commonJS({
+  "server/deprovision.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var config = require_config();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var DAY = 864e5;
+    function days() {
+      const v = Number(db3.getSetting("sso_deprovision_days", "0"));
+      return Number.isInteger(v) && v > 0 ? v : 0;
+    }
+    function emergency() {
+      return String(db3.getSetting("sso_emergency_accounts", "") || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+    }
+    function applicable() {
+      return !config.local && (!!(config.oidc && config.oidc.enabled) || !!db3.one(`SELECT 1 FROM api_keys WHERE scopes='scim' AND revoked_at IS NULL`));
+    }
+    var SEEN = `COALESCE(idp_seen_at, last_login_at, created_at)`;
+    function linked() {
+      const skip = emergency();
+      return db3.all(`SELECT id, username, display_name, role, ${SEEN} AS seen_at, oidc_subject IS NOT NULL AS sso, scim_external_id IS NOT NULL AS scim FROM users
+    WHERE is_active=1 AND (oidc_subject IS NOT NULL OR scim_external_id IS NOT NULL) ORDER BY ${SEEN}`).filter((u) => !skip.includes(String(u.username).toLowerCase()));
+    }
+    function disable(u, { by = { username: "system" }, n }) {
+      let devices = 0;
+      db3.transaction(() => {
+        db3.run(`UPDATE users SET is_active=0, updated_at=? WHERE id=? AND is_active=1`, db3.now(), u.id);
+        devices = require_scim().cutOff(u.id);
+      });
+      audit3.log({ user: by, action: "user.deprovisioned", entity: "user", entityId: u.id, details: { username: u.username, reason: `not seen at the identity provider for ${n} days`, last_seen_at: u.seen_at, devices_revoked: devices } });
+    }
+    function run2({ now = Date.now(), by } = {}) {
+      const n = days();
+      if (!n || !applicable()) return { days: n, disabled: [] };
+      const cutoff = now - n * DAY;
+      const disabled = [];
+      for (const u of linked()) {
+        if (Date.parse(u.seen_at) >= cutoff) continue;
+        disable(u, { by, n });
+        disabled.push({ id: u.id, username: u.username, last_seen_at: u.seen_at });
+      }
+      if (disabled.length) console.warn(`[suds] deprovisioned ${disabled.length} account(s) not seen at the identity provider for ${n} days`);
+      db3.setSetting("sso_deprovision_ran_at", db3.now());
+      return { days: n, disabled };
+    }
+    function runIfDue(now = Date.now()) {
+      const last = db3.getSetting("sso_deprovision_ran_at", null);
+      if (last && now - Date.parse(last) < DAY) return null;
+      return run2({ now });
+    }
+    function report(now = Date.now()) {
+      const n = days();
+      const rows = linked().map((u) => ({ ...u, sso: !!u.sso, scim: !!u.scim, days_unseen: Math.floor((now - Date.parse(u.seen_at)) / DAY) }));
+      const recent = db3.all(`SELECT at, entity_id, details, username AS by_username, action FROM audit_log WHERE action IN ('user.deprovisioned','scim.user.deactivate') AND at >= ? ORDER BY id DESC LIMIT 200`, new Date(now - 90 * DAY).toISOString()).map((r) => {
+        let d = {};
+        try {
+          d = JSON.parse(r.details || "{}");
+        } catch {
+        }
+        return { at: r.at, user_id: r.entity_id, username: d.username || null, reason: r.action === "user.deprovisioned" ? d.reason : "deactivated by the identity provider (SCIM)", by: r.by_username };
+      });
+      return {
+        days: n,
+        applicable: applicable(),
+        last_run_at: db3.getSetting("sso_deprovision_ran_at", null),
+        due: n ? rows.filter((u) => u.days_unseen >= n) : [],
+        soon: n ? rows.filter((u) => u.days_unseen < n && u.days_unseen >= n - 7) : [],
+        linked_active: rows.length,
+        recent
+      };
+    }
+    module.exports = { run: run2, runIfDue, report, days };
   }
 });
 
@@ -13240,6 +13638,19 @@ var init_os = __esm({
   "local/shims/os.js"() {
     init_globals_inject();
     os_default = { hostname, networkInterfaces };
+  }
+});
+
+// local/shims/empty.js
+var empty_exports = {};
+__export(empty_exports, {
+  default: () => empty_default
+});
+var empty_default;
+var init_empty = __esm({
+  "local/shims/empty.js"() {
+    init_globals_inject();
+    empty_default = {};
   }
 });
 
@@ -13289,6 +13700,14 @@ var require_audit_anchor = __commonJS({
         }
       });
     }
+    var real = (p) => {
+      try {
+        return fs.realpathSync(p);
+      } catch {
+        return path.resolve(p);
+      }
+    };
+    var within = (child, parent) => child === parent || child.startsWith(parent + path.sep);
     function dirStatus(d = dir()) {
       let exists3 = false;
       let writable = false;
@@ -13303,7 +13722,16 @@ var require_audit_anchor = __commonJS({
         } catch {
         }
       }
-      return { dir: d, configured: config.auditAnchorDirConfigured, exists: exists3, writable, inside_data_dir: path.resolve(d).startsWith(path.resolve(config.dataDir) + path.sep) };
+      const a = real(d);
+      const data = real(config.dataDir);
+      return { dir: d, configured: config.auditAnchorDirConfigured, exists: exists3, writable, inside_data_dir: within(a, data) || within(data, a) };
+    }
+    function placementProblem(d = dir()) {
+      if (!config.isProd) return null;
+      const st = dirStatus(d);
+      if (!st.configured) return `AUDIT_ANCHOR_DIR is not set, so audit anchors are written to ${d}, inside the data directory on the same disk as the database they are meant to check. Point AUDIT_ANCHOR_DIR at write-once (WORM) storage outside the data directory (docs/security/LOGGING-AND-AUDIT.md).`;
+      if (st.inside_data_dir) return `AUDIT_ANCHOR_DIR (${d}) is inside the data directory (or contains it), so a rewrite of the data directory rewrites the anchors too. Point it at write-once (WORM) storage outside the data directory (docs/security/LOGGING-AND-AUDIT.md).`;
+      return null;
     }
     function write(reason = "manual", { key = config.indexKey, d = dir(), prevGen = null } = {}) {
       const head = db3.one(`SELECT id, hash FROM audit_log ORDER BY id DESC LIMIT 1`);
@@ -13517,7 +13945,7 @@ var require_audit_anchor = __commonJS({
       }
       return r;
     }
-    module.exports = { write, safeWrite, runIfDue, verify, verifyAndRecord, list, dirStatus, keyId, macOf, macOk, canonical, FIELDS };
+    module.exports = { write, safeWrite, runIfDue, verify, verifyAndRecord, list, dirStatus, placementProblem, keyId, macOf, macOk, canonical, FIELDS };
   }
 });
 
@@ -13533,15 +13961,142 @@ var require_backup = __commonJS({
     var config = require_config();
     var db3 = require_db();
     function backupKey(encryptionKey) {
-      if (!encryptionKey && config.backupKey) return crypto3.createHash("sha256").update(import_buffer.Buffer.concat([config.backupKey, import_buffer.Buffer.from("suds-backup-key")])).digest();
+      if (!encryptionKey && config.backupKey) return fromBackupKey(config.backupKey);
       return crypto3.createHash("sha256").update(import_buffer.Buffer.concat([encryptionKey || config.encryptionKey, import_buffer.Buffer.from("suds-backup")])).digest();
     }
-    function candidateKeys(encryptionKey) {
+    var fromBackupKey = (raw) => crypto3.createHash("sha256").update(import_buffer.Buffer.concat([raw, import_buffer.Buffer.from("suds-backup-key")])).digest();
+    function candidateKeys(encryptionKey, escrow) {
+      if (escrow) {
+        const out3 = [];
+        if (escrow.backupKey) out3.push(fromBackupKey(escrow.backupKey));
+        if (escrow.encryptionKey) out3.push(backupKey(escrow.encryptionKey));
+        return out3;
+      }
       if (encryptionKey) return [backupKey(encryptionKey)];
       const out2 = [];
       if (config.backupKey) out2.push(backupKey());
       out2.push(crypto3.createHash("sha256").update(import_buffer.Buffer.concat([config.encryptionKey, import_buffer.Buffer.from("suds-backup")])).digest());
       return out2;
+    }
+    function encryptPlain(plain, { encryptionKey } = {}) {
+      const iv = crypto3.randomBytes(12);
+      const c = crypto3.createCipheriv("aes-256-gcm", backupKey(encryptionKey), iv);
+      const body = import_buffer.Buffer.concat([c.update(plain), c.final()]);
+      return import_buffer.Buffer.concat([iv, c.getAuthTag(), body]);
+    }
+    async function createAsync({ encryptionKey, rate = 256 } = {}) {
+      const sqlite = (init_sqlite(), __toCommonJS(sqlite_exports));
+      const tmp = path.join(config.dataDir, `.backup-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
+      let plain;
+      let method;
+      const t0 = Date.now();
+      let t1;
+      try {
+        fs.writeFileSync(tmp, "", { mode: 384 });
+        if (typeof sqlite.backup === "function" && config.dbPath !== ":memory:") {
+          method = "sqlite-online-backup";
+          await sqlite.backup(db3.get(), tmp, { rate });
+        } else {
+          method = "vacuum-into";
+          fs.unlinkSync(tmp);
+          db3.get().exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
+        }
+        try {
+          fs.chmodSync(tmp, 384);
+        } catch {
+        }
+        t1 = Date.now();
+        plain = await fs.promises.readFile(tmp);
+      } finally {
+        await secureUnlinkAsync(tmp);
+        for (const suffix of ["-wal", "-shm", "-journal"]) await secureUnlinkAsync(tmp + suffix);
+      }
+      const iv = crypto3.randomBytes(12);
+      const c = crypto3.createCipheriv("aes-256-gcm", backupKey(encryptionKey), iv);
+      const parts = [];
+      const SLICE = 4 << 20;
+      for (let off = 0; off < plain.length; off += SLICE) {
+        parts.push(c.update(plain.subarray(off, Math.min(off + SLICE, plain.length))));
+        await new Promise((resolve2) => globalThis.setImmediate ? globalThis.setImmediate(resolve2) : setTimeout(resolve2, 0));
+      }
+      parts.push(c.final());
+      const bytes3 = import_buffer.Buffer.concat([iv, c.getAuthTag(), ...parts]);
+      const plainBytes = plain.length;
+      plain.fill(0);
+      return { bytes: bytes3, method, copy_ms: t1 - t0, encrypt_ms: Date.now() - t1, plain_bytes: plainBytes };
+    }
+    async function secureUnlinkAsync(file) {
+      let st = null;
+      try {
+        st = await fs.promises.lstat(file);
+      } catch (e) {
+        if (e && e.code === "ENOENT") return false;
+      }
+      if (st && st.isFile() && st.size > 0) {
+        let fh = null;
+        try {
+          fh = await fs.promises.open(file, "r+");
+          const chunk = import_buffer.Buffer.alloc(Math.min(st.size, 4 << 20));
+          for (let off = 0; off < st.size; off += chunk.length) await fh.write(chunk, 0, Math.min(chunk.length, st.size - off), off);
+          await fh.sync();
+        } catch {
+        } finally {
+          if (fh) await fh.close().catch(() => {
+          });
+        }
+      }
+      try {
+        await fs.promises.unlink(file);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    function secureUnlink(file) {
+      let st = null;
+      try {
+        st = fs.lstatSync(file);
+      } catch (e) {
+        if (e && e.code === "ENOENT") return false;
+      }
+      if (st && st.isFile() && st.size > 0) {
+        try {
+          const fd2 = fs.openSync(file, "r+");
+          try {
+            const chunk = import_buffer.Buffer.alloc(Math.min(st.size, 1 << 20));
+            for (let off = 0; off < st.size; off += chunk.length) fs.writeSync(fd2, chunk, 0, Math.min(chunk.length, st.size - off), off);
+            fs.fsyncSync(fd2);
+          } finally {
+            fs.closeSync(fd2);
+          }
+        } catch {
+        }
+      }
+      try {
+        fs.unlinkSync(file);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    function secureRemoveDir(dir) {
+      let n = 0;
+      let entries = [];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return 0;
+      }
+      for (const e of entries) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) n += secureRemoveDir(p);
+        else if (secureUnlink(p)) n++;
+      }
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch {
+      }
+      return n;
     }
     function create2({ encryptionKey } = {}) {
       const tmp = path.join(config.dataDir, `.backup-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
@@ -13556,20 +14111,14 @@ var require_backup = __commonJS({
         }
         plain = fs.readFileSync(tmp);
       } finally {
-        try {
-          fs.unlinkSync(tmp);
-        } catch {
-        }
+        secureUnlink(tmp);
       }
-      const iv = crypto3.randomBytes(12);
-      const c = crypto3.createCipheriv("aes-256-gcm", backupKey(encryptionKey), iv);
-      const body = import_buffer.Buffer.concat([c.update(plain), c.final()]);
-      return import_buffer.Buffer.concat([iv, c.getAuthTag(), body]);
+      return encryptPlain(plain, { encryptionKey });
     }
-    function decrypt3(buf, { encryptionKey } = {}) {
+    function decrypt3(buf, { encryptionKey, escrow } = {}) {
       if (!import_buffer.Buffer.isBuffer(buf) || buf.length < 29) throw new Error("That does not look like a SUDS backup file");
       const iv = buf.subarray(0, 12), tag = buf.subarray(12, 28), data = buf.subarray(28);
-      for (const key of candidateKeys(encryptionKey)) {
+      for (const key of candidateKeys(encryptionKey, escrow)) {
         const d = crypto3.createDecipheriv("aes-256-gcm", key, iv);
         d.setAuthTag(tag);
         try {
@@ -13577,7 +14126,7 @@ var require_backup = __commonJS({
         } catch {
         }
       }
-      throw new Error("The backup could not be read. It is either damaged, or it was made with a different encryption key.");
+      throw new Error(escrow ? "The backup could not be read with the escrowed keys. Either the key file is not the one for this backup set, or the backup is damaged." : "The backup could not be read. It is either damaged, or it was made with a different encryption key.");
     }
     function inspect2(plainBytes) {
       const tmp = path.join(config.dataDir, `.inspect-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
@@ -13602,10 +14151,7 @@ var require_backup = __commonJS({
           d.close();
         }
       } finally {
-        try {
-          fs.unlinkSync(tmp);
-        } catch {
-        }
+        secureUnlink(tmp);
       }
     }
     function restore(plainBytes) {
@@ -13665,7 +14211,7 @@ var require_backup = __commonJS({
       if (!config.local) require_audit_anchor().safeWrite("restore", { prevGen: restoredGen });
       return { ...info, previous_database_kept_at: aside };
     }
-    module.exports = { create: create2, decrypt: decrypt3, inspect: inspect2, restore, backupKey };
+    module.exports = { create: create2, createAsync, encryptPlain, decrypt: decrypt3, inspect: inspect2, restore, backupKey, secureUnlink, secureUnlinkAsync, secureRemoveDir };
   }
 });
 
@@ -13680,13 +14226,23 @@ var require_scheduled_backup = __commonJS({
     var db3 = require_db();
     var audit3 = require_audit();
     var backup = require_backup();
-    var FILE_RE = /^suds-.*\.db\.enc$/;
+    var FILE_RE = /^suds-\d.*\.db\.enc$/;
+    var SNAP_RE = /^suds-snap-.*\.db\.enc$/;
     var OFFSITE_MISSING = "offsite directory does not exist (is the share mounted?)";
     function settings() {
       const hours = Number(db3.getSetting("backup_schedule_hours", "0")) || 0;
       const retain = Math.max(1, Number(db3.getSetting("backup_retain_count", "14")) || 14);
       const offsiteDir = db3.getSetting("backup_offsite_dir", "") || "";
-      return { hours, retain, offsiteDir };
+      const minutes = Number(db3.getSetting("backup_schedule_minutes", "0")) || 0;
+      const snapshotRetain = Math.max(1, Number(db3.getSetting("backup_snapshot_retain", "24")) || 24);
+      return { hours, retain, offsiteDir, minutes, snapshotRetain };
+    }
+    function rpo(s = settings()) {
+      const c = [];
+      if (s.hours > 0) c.push({ minutes: s.hours * 60, by: "scheduled backups" });
+      if (s.minutes > 0) c.push({ minutes: s.minutes, by: "online snapshots" });
+      if (!c.length) return null;
+      return c.sort((a, b) => a.minutes - b.minutes)[0];
     }
     function runIfDue(now = Date.now()) {
       const { hours, retain, offsiteDir } = settings();
@@ -13729,6 +14285,7 @@ var require_scheduled_backup = __commonJS({
       }
       let offsiteOk = null;
       let offsiteError = null;
+      let offsiteFile = null;
       if (offsiteDir) {
         try {
           let st = null;
@@ -13737,7 +14294,8 @@ var require_scheduled_backup = __commonJS({
           } catch {
           }
           if (!st || !st.isDirectory()) throw new Error(OFFSITE_MISSING);
-          fs.copyFileSync(file, path.join(offsiteDir, path.basename(file)));
+          offsiteFile = path.join(offsiteDir, path.basename(file));
+          fs.copyFileSync(file, offsiteFile);
           offsiteOk = true;
         } catch (e) {
           offsiteOk = false;
@@ -13750,7 +14308,70 @@ var require_scheduled_backup = __commonJS({
       db3.setSetting("last_scheduled_backup_at", db3.now());
       db3.setSetting("last_scheduled_backup_status", !verified ? `backup written but could not be read back \u2014 ${verifyError}` : offsiteDir && offsiteOk === false ? `ok (verified) \u2014 offsite copy failed: ${offsiteError}; local backup kept` : "ok (verified)");
       audit3.log({ user: { username: "system" }, action: "backup.scheduled", details: { bytes: bytes3.length, offsite: offsiteDir ? offsiteOk : null, offsite_error: offsiteError || void 0, kept, verified } });
-      return { file, bytes: bytes3.length, offsiteOk, offsiteError, verified, verifyError };
+      return { file, bytes: bytes3.length, offsiteOk, offsiteError, offsiteFile: offsiteOk ? offsiteFile : null, verified, verifyError };
+    }
+    var snapshotting = false;
+    async function snapshotIfDue(now = Date.now()) {
+      const s = settings();
+      if (!s.minutes || snapshotting) return null;
+      const last = db3.getSetting("last_snapshot_at", null);
+      if (last && now - Date.parse(last) < s.minutes * 6e4) return null;
+      return snapshot(s);
+    }
+    async function snapshot(s = settings()) {
+      if (snapshotting) return null;
+      snapshotting = true;
+      const localDir = path.join(config.dataDir, "backups");
+      let target = localDir;
+      let where = "local";
+      const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+      let file = null;
+      try {
+        if (s.offsiteDir) {
+          let st = null;
+          try {
+            st = fs.statSync(s.offsiteDir);
+          } catch {
+          }
+          if (!st || !st.isDirectory()) throw new Error(OFFSITE_MISSING);
+          target = s.offsiteDir;
+          where = "offsite";
+        } else fs.mkdirSync(localDir, { recursive: true, mode: 448 });
+        const made = await backup.createAsync();
+        file = path.join(target, `suds-snap-${stamp2}.db.enc`);
+        await fs.promises.writeFile(file, made.bytes, { mode: 384, flag: "wx" });
+        const kept = pruneMatching(target, SNAP_RE, s.snapshotRetain);
+        db3.setSetting("last_snapshot_at", db3.now());
+        db3.setSetting("last_snapshot_status", `ok (${where}; ${made.method}; ${Math.round(made.bytes.length / 1024)} KB in ${made.copy_ms + made.encrypt_ms} ms)`);
+        return { file, where, kept, bytes: made.bytes.length, method: made.method, copy_ms: made.copy_ms, encrypt_ms: made.encrypt_ms };
+      } catch (e) {
+        const reason = e && e.code === "ENOSPC" ? `no space left on the disk holding ${target}` : String(e && e.message || e);
+        if (file) {
+          try {
+            fs.unlinkSync(file);
+          } catch {
+          }
+        }
+        console.error("[suds] snapshot failed:", reason);
+        const prev = db3.getSetting("last_snapshot_status", "") || "";
+        db3.setSetting("last_snapshot_at", db3.now());
+        db3.setSetting("last_snapshot_status", `failed: ${reason}`);
+        if (!/^failed/.test(prev)) audit3.log({ user: { username: "system" }, action: "backup.snapshot.failed", success: false, details: { error: reason.slice(0, 300) } });
+        return { file: null, failed: true, error: reason };
+      } finally {
+        snapshotting = false;
+      }
+    }
+    function pruneMatching(dir, re, retain) {
+      const files = fs.readdirSync(dir).filter((f) => re.test(f)).sort();
+      const excess = files.length - retain;
+      if (excess > 0) for (const f of files.slice(0, excess)) {
+        try {
+          fs.unlinkSync(path.join(dir, f));
+        } catch {
+        }
+      }
+      return Math.min(files.length, retain);
     }
     function prune(dir, retain) {
       const files = fs.readdirSync(dir).filter((f) => FILE_RE.test(f)).sort();
@@ -13763,7 +14384,101 @@ var require_scheduled_backup = __commonJS({
       }
       return Math.min(files.length, retain);
     }
-    module.exports = { runIfDue, run: run2, settings };
+    module.exports = { runIfDue, run: run2, settings, rpo, snapshot, snapshotIfDue, FILE_RE, SNAP_RE };
+  }
+});
+
+// server/signing.js
+var require_signing = __commonJS({
+  "server/signing.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    var PKCS8_PREFIX = import_buffer.Buffer.from("302e020100300506032b657004220420", "hex");
+    var ALGORITHM = "Ed25519";
+    function privateKeyFrom(seed) {
+      if (!import_buffer.Buffer.isBuffer(seed) || seed.length !== 32) throw new Error("The signing key must be 32 bytes");
+      return crypto3.createPrivateKey({ key: import_buffer.Buffer.concat([PKCS8_PREFIX, seed]), format: "der", type: "pkcs8" });
+    }
+    var cached = null;
+    function keys(seed = require_config().signingKey) {
+      if (cached && cached.seed.equals(seed)) return cached;
+      const privateKey = privateKeyFrom(seed);
+      const publicKey = crypto3.createPublicKey(privateKey);
+      const pem = publicKey.export({ type: "spki", format: "pem" });
+      cached = { seed, privateKey, publicKey, pem, keyId: keyIdOf(pem) };
+      return cached;
+    }
+    function keyIdOf(publicKeyPem) {
+      const der = crypto3.createPublicKey(publicKeyPem).export({ type: "spki", format: "der" });
+      return crypto3.createHash("sha256").update(der).digest("hex").slice(0, 16);
+    }
+    function publicInfo(seed) {
+      const k = keys(seed);
+      const der = k.publicKey.export({ type: "spki", format: "der" });
+      return { algorithm: ALGORITHM, key_id: k.keyId, public_key_pem: k.pem, sha256_fingerprint: crypto3.createHash("sha256").update(der).digest("hex") };
+    }
+    function sign2(data, seed) {
+      return crypto3.sign(null, import_buffer.Buffer.from(data), keys(seed).privateKey).toString("base64");
+    }
+    function verify(data, signatureB64, publicKeyPem) {
+      try {
+        const key = crypto3.createPublicKey(publicKeyPem);
+        if (key.asymmetricKeyType !== "ed25519") return false;
+        return crypto3.verify(null, import_buffer.Buffer.from(data), key, import_buffer.Buffer.from(String(signatureB64), "base64"));
+      } catch {
+        return false;
+      }
+    }
+    module.exports = { ALGORITHM, sign: sign2, verify, publicInfo, keyIdOf, privateKeyFrom };
+  }
+});
+
+// server/dr-report.js
+var require_dr_report = __commonJS({
+  "server/dr-report.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    var signing = require_signing();
+    function canonical(v) {
+      if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+      if (v && typeof v === "object") return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(",")}}`;
+      return JSON.stringify(v === void 0 ? null : v);
+    }
+    function verifyDoc(doc, { publicKeyPem = null } = {}) {
+      const errors = [];
+      const warnings = [];
+      const out2 = { ok: false, errors, warnings, key_id: null, key_source: publicKeyPem ? "supplied" : "embedded" };
+      if (!doc || typeof doc !== "object" || !doc.report || !doc.integrity) {
+        errors.push("this is not a SUDS recovery-drill report ({ report, integrity })");
+        return out2;
+      }
+      const { report, integrity } = doc;
+      const body = canonical(report);
+      if (crypto3.createHash("sha256").update(body).digest("hex") !== integrity.sha256) errors.push("the SHA-256 of the report does not match its integrity block: the report was edited");
+      const key = publicKeyPem || integrity.public_key_pem;
+      if (!integrity.ed25519_signature) errors.push("the report is not signed (made by a SUDS version before Ed25519 signing); only its HMAC can be checked, with the index key");
+      else if (!key) errors.push("no public key: supply the one published by the server (--public-key)");
+      else {
+        let kid = null;
+        try {
+          kid = signing.keyIdOf(key);
+        } catch {
+          errors.push("the public key is not a valid PEM key");
+        }
+        out2.key_id = kid;
+        if (kid) {
+          if (!signing.verify(body, integrity.ed25519_signature, key)) errors.push("the Ed25519 signature does not verify with this public key: the report was altered, or was not signed by this server");
+          if (integrity.signing_key_id && integrity.signing_key_id !== kid) errors.push(`the report names signing key ${integrity.signing_key_id}, not the key supplied (${kid})`);
+          if (report.signed_by && report.signed_by.key_id && report.signed_by.key_id !== kid) errors.push(`the signed report names signing key ${report.signed_by.key_id}, not ${kid}`);
+        }
+        if (!publicKeyPem) warnings.push(`checked with the public key embedded in the report (key id ${kid}); compare that id with the one published by the server (Settings \u2192 Security status, or GET /api/admin/security/signing-key) before relying on it`);
+      }
+      out2.ok = errors.length === 0;
+      return out2;
+    }
+    module.exports = { canonical, verifyDoc };
   }
 });
 
@@ -13785,7 +14500,7 @@ var require_dr_drill = __commonJS({
       return path.join(config.dataDir, "backups");
     }
     function backupTime(file) {
-      const m = path.basename(file).match(/^suds-(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z/);
+      const m = path.basename(file).match(/^suds-(?:snap-)?(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z/);
       if (m) {
         const t = Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`);
         if (Number.isFinite(t)) return t;
@@ -13799,19 +14514,120 @@ var require_dr_drill = __commonJS({
     function latestBackup(dir = backupsDir()) {
       let names = [];
       try {
-        names = fs.readdirSync(dir).filter((f) => BACKUP_RE.test(f)).sort();
+        names = fs.readdirSync(dir).filter((f) => BACKUP_RE.test(f));
       } catch {
         return null;
       }
-      return names.length ? path.join(dir, names[names.length - 1]) : null;
+      let best = null;
+      let bestT = -Infinity;
+      for (const n of names) {
+        const f = path.join(dir, n);
+        const t = backupTime(f) ?? -Infinity;
+        if (t > bestT || t === bestT && n > path.basename(best)) {
+          best = f;
+          bestT = t;
+        }
+      }
+      return best;
+    }
+    function parseKeysFile(text) {
+      const t = String(text || "").trim();
+      let obj = null;
+      if (t.startsWith("{")) {
+        try {
+          obj = JSON.parse(t);
+        } catch {
+          throw new Error("The key file is not valid JSON");
+        }
+      } else {
+        obj = {};
+        for (const line of t.split(/\r?\n/)) {
+          const m = line.match(/^\s*(?:export\s+)?([A-Z_]+)\s*=\s*["']?([0-9a-fA-F]+)["']?\s*$/);
+          if (m) obj[m[1]] = m[2];
+        }
+      }
+      const hex2 = (k, required) => {
+        const v = obj[k];
+        if (v === void 0 || v === null || v === "") {
+          if (required) throw new Error(`The key file has no ${k}`);
+          return null;
+        }
+        if (!/^[0-9a-fA-F]{64}$/.test(String(v))) throw new Error(`${k} in the key file is not 64 hex characters`);
+        return import_buffer.Buffer.from(String(v), "hex");
+      };
+      return { encryptionKey: hex2("SUDS_ENCRYPTION_KEY", true), indexKey: hex2("SUDS_INDEX_KEY", true), backupKey: hex2("SUDS_BACKUP_KEY", false) };
+    }
+    var fingerprint = (buf) => crypto3.createHash("sha256").update(import_buffer.Buffer.concat([import_buffer.Buffer.from("suds-drill-key:"), buf])).digest("hex").slice(0, 12);
+    function pidAlive(pid) {
+      if (!pid) return false;
+      try {
+        proc.kill(pid, 0);
+        return true;
+      } catch (e) {
+        return !!e && e.code === "EPERM";
+      }
+    }
+    function sweepStale({ now = Date.now(), except = null } = {}) {
+      const backup = require_backup();
+      const root = path.join(config.dataDir, ".dr-drill");
+      const out2 = { removed: [], files: 0 };
+      let dirs = [];
+      try {
+        dirs = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => path.join(root, d.name));
+      } catch {
+      }
+      for (const d of dirs) {
+        if (except && path.resolve(d) === path.resolve(except)) continue;
+        let owner = null;
+        try {
+          owner = JSON.parse(fs.readFileSync(path.join(d, "owner.json"), "utf8"));
+        } catch {
+        }
+        let age = 0;
+        try {
+          age = now - fs.statSync(d).mtimeMs;
+        } catch {
+        }
+        const mineIdle = owner && owner.pid === proc.pid && !current2;
+        const orphaned = owner ? mineIdle || !pidAlive(owner.pid) || now - Date.parse(owner.started_at) > CHILD_TIMEOUT_MS * 2 : age > 6e4;
+        if (!orphaned) continue;
+        out2.files += backup.secureRemoveDir(d);
+        out2.removed.push(path.basename(d));
+      }
+      let loose = [];
+      try {
+        loose = fs.readdirSync(config.dataDir).filter((f) => /^\.(backup|inspect)-\d+-[0-9a-f]+\.db(-wal|-shm|-journal)?$/.test(f));
+      } catch {
+      }
+      for (const f of loose) {
+        const p = path.join(config.dataDir, f);
+        let age = 0;
+        try {
+          age = now - fs.statSync(p).mtimeMs;
+        } catch {
+          continue;
+        }
+        if (age > 36e5 && backup.secureUnlink(p)) {
+          out2.removed.push(f);
+          out2.files++;
+        }
+      }
+      if (out2.removed.length) {
+        console.warn(`[suds] removed ${out2.removed.length} stale decrypted copy(ies) left by an interrupted drill or backup: ${out2.removed.join(", ")}`);
+        try {
+          audit3.log({ user: { username: "system" }, action: "dr.drill.swept", details: { removed: out2.removed.slice(0, 20), files: out2.files } });
+        } catch {
+        }
+      }
+      return out2;
     }
     function targets() {
       const num = (k, d) => {
         const v = Number(db3.getSetting(k, ""));
         return Number.isFinite(v) && v > 0 ? v : d;
       };
-      const schedule = Number(db3.getSetting("backup_schedule_hours", "0")) || 0;
-      return { rto_minutes: num("dr_rto_target_minutes", 60), rpo_hours: num("dr_rpo_target_hours", schedule || 24) };
+      const r = require_scheduled_backup().rpo();
+      return { rto_minutes: num("dr_rto_target_minutes", 60), rpo_hours: num("dr_rpo_target_hours", r ? Math.round(r.minutes / 60 * 1e3) / 1e3 : 24) };
     }
     function lastDrill() {
       try {
@@ -13837,23 +14653,42 @@ var require_dr_drill = __commonJS({
         return [];
       }
     }
-    function canonical(v) {
-      if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
-      if (v && typeof v === "object") return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(",")}}`;
-      return JSON.stringify(v === void 0 ? null : v);
-    }
+    var { canonical } = require_dr_report();
     function seal(report, key = config.indexKey) {
       const body = canonical(report);
-      return { sha256: crypto3.createHash("sha256").update(body).digest("hex"), hmac_sha256: crypto3.createHmac("sha256", key).update(body).digest("hex"), algorithm: 'SHA-256 and HMAC-SHA256 (index key) over the canonical JSON of "report" (keys sorted)' };
+      const signing = require_signing();
+      const pub = signing.publicInfo();
+      return {
+        sha256: crypto3.createHash("sha256").update(body).digest("hex"),
+        hmac_sha256: crypto3.createHmac("sha256", key).update(body).digest("hex"),
+        ed25519_signature: signing.sign(body),
+        signing_key_id: pub.key_id,
+        public_key_pem: pub.public_key_pem,
+        algorithm: 'SHA-256, HMAC-SHA256 (index key) and an Ed25519 signature (signing key) over the canonical JSON of "report" (keys sorted)'
+      };
     }
     function verifyReport(doc, key = config.indexKey) {
+      if (!doc || !doc.integrity) return false;
       const s = seal(doc.report, key);
-      return !!doc.integrity && s.sha256 === doc.integrity.sha256 && s.hmac_sha256 === doc.integrity.hmac_sha256;
+      const signed = require_dr_report().verifyDoc(doc, { publicKeyPem: require_signing().publicInfo().public_key_pem });
+      return s.sha256 === doc.integrity.sha256 && s.hmac_sha256 === doc.integrity.hmac_sha256 && signed.ok;
     }
-    function runChild(tmp, dbFile, onStep) {
+    function runChild(tmp, dbFile, onStep, keys = { enc: config.encryptionKey, idx: config.indexKey }) {
       const { fork } = (init_empty(), __toCommonJS(empty_exports));
       return new Promise((resolve2) => {
-        const env = { PATH: proc.env.PATH || "", SUDS_ENV: config.isTest ? "test" : "production", SUDS_DATA_DIR: tmp, SUDS_DB_PATH: dbFile, SUDS_SKIP_SETUP: "1", TZ: proc.env.TZ || "", LOG_FORMAT: "text", LOGIN_RATE_LIMIT: "1000" };
+        const env = {
+          PATH: proc.env.PATH || "",
+          SUDS_ENV: config.isTest ? "test" : "production",
+          SUDS_DATA_DIR: tmp,
+          SUDS_DB_PATH: dbFile,
+          SUDS_SKIP_SETUP: "1",
+          TZ: proc.env.TZ || "",
+          LOG_FORMAT: "text",
+          LOGIN_RATE_LIMIT: "1000",
+          // The live server's anchor directory, read (never written) by the copy's anchor check. Named here so the
+          // copy's /api/health does not report the placement of its own (unused) default directory.
+          AUDIT_ANCHOR_DIR: config.auditAnchorDir
+        };
         if (!env.TZ) delete env.TZ;
         const child = fork(path.join("/", "dr-drill-child.js"), [], { cwd: tmp, env, execArgv: ["--no-warnings=ExperimentalWarning"], stdio: ["ignore", "pipe", "pipe", "ipc"] });
         let result = null;
@@ -13877,10 +14712,10 @@ var require_dr_drill = __commonJS({
           clearTimeout(timer);
           resolve2(result || { ok: false, error: signal === "SIGKILL" ? `the restored copy did not finish within ${Math.round(CHILD_TIMEOUT_MS / 6e4)} minutes` : `the drill process exited (${code ?? signal})${stderr ? ": " + stderr.trim().split("\n").slice(-3).join(" ") : ""}`, checks: [] });
         });
-        child.send({ keys: { enc: config.encryptionKey.toString("hex"), idx: config.indexKey.toString("hex") }, anchorDir: config.auditAnchorDir });
+        child.send({ keys: { enc: keys.enc.toString("hex"), idx: keys.idx.toString("hex"), sig: config.signingKey.toString("hex") }, anchorDir: config.auditAnchorDir });
       });
     }
-    async function run2({ backupFile = null, fresh = false, by = "system", trigger = "manual", record = true } = {}) {
+    async function run2({ backupFile = null, fresh = false, by = "system", trigger = "manual", record = true, keysFile = null, keysText = null, keysLabel = null, copy = "auto" } = {}) {
       if (current2) {
         const e = new Error("A recovery drill is already running");
         e.code = "EBUSY";
@@ -13899,39 +14734,92 @@ var require_dr_drill = __commonJS({
       let madeBackup = false;
       let restoreStarted = null;
       let restoreBytes = 0;
+      const sched = require_scheduled_backup().settings();
+      let source = { copy: backupFile ? "given" : null, dir: backupFile ? path.dirname(backupFile) : null, offsite_configured: !!sched.offsiteDir };
+      let keyInfo = { source: "server memory", note: "the keys this server process holds; run with an escrowed key file to prove the offline copy of the keys" };
+      let escrow = null;
       try {
-        if (!file) file = fresh ? null : latestBackup();
+        try {
+          sweepStale({ except: tmp });
+        } catch {
+        }
+        if (keysFile || keysText !== null && keysText !== void 0) {
+          const uploaded = keysText !== null && keysText !== void 0;
+          escrow = parseKeysFile(uploaded ? keysText : fs.readFileSync(keysFile, "utf8"));
+          keyInfo = {
+            source: uploaded ? "uploaded escrow file" : "escrow file",
+            file: keysLabel || (keysFile ? path.basename(keysFile) : null),
+            encryption_key_fingerprint: fingerprint(escrow.encryptionKey),
+            index_key_fingerprint: fingerprint(escrow.indexKey),
+            backup_key: !!escrow.backupKey,
+            same_as_running_server: escrow.encryptionKey.equals(config.encryptionKey) && escrow.indexKey.equals(config.indexKey)
+          };
+          step(`Using the escrowed keys from ${keyInfo.file || "the uploaded file"}, not the keys in this server's memory`);
+        }
+        if (!file && !fresh) {
+          if (copy === "offsite" || copy === "auto" && sched.offsiteDir) {
+            let st = null;
+            try {
+              st = sched.offsiteDir ? fs.statSync(sched.offsiteDir) : null;
+            } catch {
+            }
+            const off = st && st.isDirectory() ? latestBackup(sched.offsiteDir) : null;
+            if (off) {
+              file = off;
+              source = { ...source, copy: "offsite", dir: sched.offsiteDir };
+            } else {
+              failures.push(!sched.offsiteDir ? "an offsite copy was asked for but no offsite directory is configured" : !st ? `the offsite directory ${sched.offsiteDir} is not reachable (is the share mounted?), so the offsite copy could not be restored` : `the offsite directory ${sched.offsiteDir} holds no backup`);
+              step("The offsite copy is not available; restoring the local copy instead");
+            }
+          }
+          if (!file) {
+            file = latestBackup();
+            if (file) source = { ...source, copy: "local", dir: backupsDir() };
+          }
+        }
         if (!file) {
           step("No backup on disk; taking one first");
-          const s = require_scheduled_backup().settings();
-          const made = require_scheduled_backup().run({ retain: s.retain, offsiteDir: s.offsiteDir });
+          const made = require_scheduled_backup().run({ retain: sched.retain, offsiteDir: sched.offsiteDir });
           if (!made.file) throw new Error(`a backup could not be taken: ${made.error}`);
-          file = made.file;
           madeBackup = true;
+          if (made.offsiteFile && copy !== "local") {
+            file = made.offsiteFile;
+            source = { ...source, copy: "offsite", dir: sched.offsiteDir };
+          } else {
+            file = made.file;
+            source = { ...source, copy: "local", dir: backupsDir() };
+          }
         }
-        step(`Restoring ${path.basename(file)}`);
+        step(`Restoring ${path.basename(file)} (${source.copy} copy)`);
         restoreStarted = Date.now();
         const enc2 = fs.readFileSync(file);
-        const plain = require_backup().decrypt(enc2);
+        const plain = require_backup().decrypt(enc2, escrow ? { escrow } : {});
         restoreBytes = plain.length;
         fs.mkdirSync(tmp, { recursive: true, mode: 448 });
         try {
           fs.chmodSync(tmpRoot, 448);
         } catch {
         }
+        fs.writeFileSync(path.join(tmp, "owner.json"), JSON.stringify({ pid: proc.pid, started_at: new Date(started).toISOString() }), { mode: 384 });
         const dbFile = path.join(tmp, "suds.db");
         fs.writeFileSync(dbFile, plain, { mode: 384 });
-        result = await runChild(tmp, dbFile, step);
+        plain.fill(0);
+        result = await runChild(tmp, dbFile, step, escrow ? { enc: escrow.encryptionKey, idx: escrow.indexKey } : void 0);
         if (result.error) failures.push(result.error);
       } catch (e) {
         failures.push(String(e && e.message || e));
       } finally {
         try {
-          fs.rmSync(tmp, { recursive: true, force: true });
+          require_backup().secureRemoveDir(tmp);
+          if (fs.existsSync(tmp)) throw new Error("it is still there");
         } catch (e) {
           failures.push(`the drill copy could not be removed from ${tmp}: ${e.message}`);
         }
       }
+      const extraChecks = [];
+      if (escrow) extraChecks.push({ name: "The escrowed key file opens the backup", ok: restoreBytes > 0, detail: `${keyInfo.source}${keyInfo.file ? ` ${keyInfo.file}` : ""}; encryption key ${keyInfo.encryption_key_fingerprint}, index key ${keyInfo.index_key_fingerprint}` });
+      if (source.offsite_configured && copy !== "local") extraChecks.push({ name: "The offsite copy was restored", ok: source.copy === "offsite" || source.copy === "given", detail: source.copy === "offsite" ? source.dir : source.copy === "given" ? "a backup file was named explicitly" : "the local copy was restored instead" });
+      if (extraChecks.length) result.checks = [...extraChecks, ...result.checks || []];
       const finished = Date.now();
       const checks = result.checks || [];
       for (const c of checks) if (!c.ok) failures.push(`${c.name}${c.detail ? ` \u2014 ${c.detail}` : ""}`);
@@ -13949,13 +14837,15 @@ var require_dr_drill = __commonJS({
       const report = {
         kind: "suds-dr-drill",
         version: 1,
+        signed_by: { algorithm: "Ed25519", key_id: require_signing().publicInfo().key_id },
         ok: failures.length === 0 && checks.length > 0,
         started_at: new Date(started).toISOString(),
         finished_at: new Date(finished).toISOString(),
         trigger,
         by,
         server: { version: config.version, host: (init_os(), __toCommonJS(os_exports)).hostname(), schema_version: db3.LATEST_SCHEMA_VERSION },
-        backup: { file: file ? path.basename(file) : null, taken_at: taken ? new Date(taken).toISOString() : null, made_for_drill: madeBackup, decrypted_bytes: restoreBytes, latest_record_at: result.latest_audit_at || null },
+        backup: { file: file ? path.basename(file) : null, copy: source.copy, dir: source.dir, offsite_configured: source.offsite_configured, taken_at: taken ? new Date(taken).toISOString() : null, made_for_drill: madeBackup, decrypted_bytes: restoreBytes, latest_record_at: result.latest_audit_at || null },
+        keys: keyInfo,
         rto: { seconds: rtoSeconds, target_minutes: t.rto_minutes, met: rtoSeconds === null ? null : rtoSeconds <= t.rto_minutes * 60, measures: "from starting the restore (reading and decrypting the backup) to the restored copy answering /api/health" },
         rpo: { seconds: rpoSeconds, target_hours: t.rpo_hours, met: rpoSeconds === null ? null : rpoSeconds <= t.rpo_hours * 3600, measures: "age of the newest backup at the time of the drill: what a loss at that moment would have cost" },
         elapsed_seconds: Math.round((finished - started) / 100) / 10,
@@ -13982,9 +14872,9 @@ var require_dr_drill = __commonJS({
         report.failures.push(`the report could not be written: ${e.message}`);
       }
       if (record) {
-        const summary = { at: report.finished_at, ok: report.ok, rto_seconds: rtoSeconds, rpo_seconds: rpoSeconds, rto_target_minutes: t.rto_minutes, rpo_target_hours: t.rpo_hours, backup_file: report.backup.file, backup_taken_at: report.backup.taken_at, report_file: files.json || null, sha256: doc.integrity.sha256, failures: failures.slice(0, 5), checks_passed: checks.filter((c) => c.ok).length, checks_total: checks.length, trigger };
+        const summary = { at: report.finished_at, ok: report.ok, rto_seconds: rtoSeconds, rpo_seconds: rpoSeconds, rto_target_minutes: t.rto_minutes, rpo_target_hours: t.rpo_hours, backup_file: report.backup.file, backup_copy: source.copy, keys_source: keyInfo.source, backup_taken_at: report.backup.taken_at, report_file: files.json || null, sha256: doc.integrity.sha256, failures: failures.slice(0, 5), checks_passed: checks.filter((c) => c.ok).length, checks_total: checks.length, trigger };
         db3.setSetting("dr_last_drill", JSON.stringify(summary));
-        audit3.log({ user: typeof by === "object" ? by : { username: String(by) }, action: "dr.drill", success: report.ok, details: { trigger, backup: report.backup.file, rto_seconds: rtoSeconds, rpo_seconds: rpoSeconds, checks_passed: summary.checks_passed, checks_total: summary.checks_total, report: files.json || null, sha256: doc.integrity.sha256 } });
+        audit3.log({ user: typeof by === "object" ? by : { username: String(by) }, action: "dr.drill", success: report.ok, details: { trigger, backup: report.backup.file, copy: source.copy, keys: keyInfo.source, rto_seconds: rtoSeconds, rpo_seconds: rpoSeconds, checks_passed: summary.checks_passed, checks_total: summary.checks_total, report: files.json || null, sha256: doc.integrity.sha256 } });
       }
       if (current2 === job) current2 = null;
       return { ...doc, files };
@@ -14000,7 +14890,8 @@ var require_dr_drill = __commonJS({
       L.push(`SUDS disaster-recovery drill \u2014 ${r.ok ? "PASSED" : "FAILED"}`);
       L.push(`Started ${r.started_at}, finished ${r.finished_at} (${r.trigger}, by ${typeof r.by === "object" ? r.by.username : r.by}) on ${r.server.host}, SUDS ${r.server.version}`);
       L.push("");
-      L.push(`Backup restored: ${r.backup.file || "none"}${r.backup.taken_at ? ` (taken ${r.backup.taken_at})` : ""}${r.backup.made_for_drill ? " \u2014 made for this drill, no earlier backup was on disk" : ""}`);
+      L.push(`Backup restored: ${r.backup.file || "none"}${r.backup.copy ? ` \u2014 the ${r.backup.copy} copy${r.backup.dir ? ` in ${r.backup.dir}` : ""}` : ""}${r.backup.taken_at ? ` (taken ${r.backup.taken_at})` : ""}${r.backup.made_for_drill ? " \u2014 made for this drill, no earlier backup was on disk" : ""}`);
+      if (r.keys) L.push(`Keys used: ${r.keys.source}${r.keys.file ? ` (${r.keys.file})` : ""}${r.keys.source === "server memory" ? " \u2014 this does not prove the escrowed key backup works; run the drill with the key file (--keys-file)" : ""}`);
       L.push(`RTO (restore to serving): ${fmtDur(r.rto.seconds)} \u2014 target ${r.rto.target_minutes} min \u2014 ${r.rto.met === null ? "not measured" : r.rto.met ? "met" : "NOT MET"}`);
       L.push(`RPO (age of that backup): ${fmtDur(r.rpo.seconds)} \u2014 target ${r.rpo.target_hours} h \u2014 ${r.rpo.met === null ? "not measured" : r.rpo.met ? "met" : "NOT MET"}`);
       L.push("");
@@ -14019,6 +14910,11 @@ var require_dr_drill = __commonJS({
       L.push("The backup was restored into a temporary directory, checked by a separate process that was never given the live database's path, and deleted afterwards. The live database received only this result (a settings row and an audit entry).");
       L.push(`Integrity: SHA-256 ${integrity.sha256}`);
       L.push(`           HMAC-SHA256 ${integrity.hmac_sha256}`);
+      if (integrity.ed25519_signature) {
+        L.push(`           Ed25519 signature ${integrity.ed25519_signature}`);
+        L.push(`           signing key ${integrity.signing_key_id} (public key published at GET /api/admin/security/signing-key)`);
+        L.push("Verify with the public key only: npm run verify-dr-report -- <the .json report> --public-key <signing-key.pem>");
+      }
       L.push("The JSON report beside this file is the record of the drill; this text is a convenience copy.");
       return L.join("\n") + "\n";
     }
@@ -14039,7 +14935,7 @@ var require_dr_drill = __commonJS({
       if (last && last.at && now - Date.parse(last.at) < MONTH_MS) return null;
       return start2({ by: "system", trigger: "monthly" });
     }
-    module.exports = { run: run2, start: start2, runIfDue, status, lastDrill, latestBackup, backupTime, verifyReport, canonical, seal, textReport, targets };
+    module.exports = { run: run2, start: start2, runIfDue, status, lastDrill, latestBackup, backupTime, verifyReport, canonical, seal, textReport, targets, parseKeysFile, sweepStale };
   }
 });
 
@@ -14116,6 +15012,32 @@ var require_security_status = __commonJS({
         config.oidc.enabled ? "" : "Set OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET and OIDC_REDIRECT_URI to sign in through the county identity provider (docs/DEPLOYMENT.md).",
         "server/oidc.js, server/routes/oidc.js"
       );
+      if (config.oidc.enabled || db3.getSetting("sso_trust_idp_mfa", "0") === "1") {
+        const trusted = db3.getSetting("sso_trust_idp_mfa", "0") === "1";
+        const acr = db3.getSetting("sso_mfa_acr_values", "") || "";
+        const since = new Date(Date.now() - 30 * DAY).toISOString();
+        const viaIdp = trusted ? db3.one(`SELECT COUNT(*) n FROM audit_log WHERE action='auth.oidc.login' AND at >= ? AND details LIKE '%"mfa":"idp"%'`, since).n : 0;
+        add(
+          "Identity",
+          "Identity provider's multi-factor sign-in",
+          trusted ? "info" : "ok",
+          trusted ? `trusted in place of SUDS two-step verification (amr mfa/otp/hwk/swk${acr ? `, or acr ${acr}` : ""}); ${viaIdp} sign-in${viaIdp === 1 ? "" : "s"} in 30 days` : "not trusted: SSO sign-ins still need the SUDS second factor",
+          trusted ? 'A sign-in the provider does not mark as multi-factor still needs the SUDS code. Every trusted sign-in is audited (auth.oidc.login with mfa "idp"). Make sure the provider enforces MFA for this application (conditional access).' : `Settings \u2192 Security policy \u2192 "Trust the identity provider's multi-factor sign-in" (off by default).`,
+          "server/routes/oidc.js mfaTrust; server/oidc.js idpMfa"
+        );
+      }
+      {
+        const dp = require_deprovision().report();
+        const scimTokens = db3.one(`SELECT COUNT(*) n FROM api_keys WHERE scopes='scim' AND revoked_at IS NULL`).n;
+        add(
+          "Identity",
+          "Deprovisioning",
+          dp.days || scimTokens ? dp.due.length ? "warn" : "ok" : config.oidc.enabled ? "warn" : "info",
+          [scimTokens ? `SCIM provisioning on (${scimTokens} token${scimTokens === 1 ? "" : "s"})` : "no SCIM provisioning", dp.days ? `SSO accounts not seen for ${dp.days} days are disabled` : "accounts not seen at the identity provider are not disabled automatically"].join("; "),
+          `${dp.linked_active} active account${dp.linked_active === 1 ? "" : "s"} linked to the identity provider${dp.due.length ? `, ${dp.due.length} due to be disabled at the next daily run` : ""}${dp.recent.length ? `; ${dp.recent.length} disabled in the last 90 days` : ""}. ${dp.days || scimTokens ? "" : 'Create a SCIM token (Provisioning below) or set "Disable single sign-on accounts not seen for (days)".'}`.trim(),
+          "server/deprovision.js; server/routes/scim.js"
+        );
+      }
       add(
         "Identity",
         "Password sign-in",
@@ -14130,7 +15052,30 @@ var require_security_status = __commonJS({
       const lastBackup = db3.getSetting("last_scheduled_backup_at", null);
       const lastStatus = db3.getSetting("last_scheduled_backup_status", "") || "";
       const stale = hours && (!lastBackup || ageDays(lastBackup) * 24 > 2 * hours);
-      add("Backups and recovery", "Scheduled encrypted backups", !hours ? "bad" : stale || !/^ok/.test(lastStatus) ? "bad" : "ok", hours ? `every ${hours} h; last ${lastBackup || "never"}` : "off", hours ? lastStatus : "Turn on under Settings \u2192 Scheduled backups.", "server/scheduled-backup.js");
+      const sb = require_scheduled_backup();
+      const sched = sb.settings();
+      add("Backups and recovery", "Scheduled encrypted backups", !hours ? "bad" : stale || !/^ok/.test(lastStatus) ? "bad" : "ok", hours ? `every ${hours} h; last ${lastBackup || "never"}` : "off", hours ? lastStatus : `${config.isProd ? "This is a production server with nothing backing it up. " : ""}Turn on under Settings \u2192 Scheduled backups (every 4 hours is the production default).`, "server/scheduled-backup.js");
+      const lastSnap = db3.getSetting("last_snapshot_at", null);
+      const snapStatus = db3.getSetting("last_snapshot_status", "") || "";
+      const snapStale = sched.minutes && (!lastSnap || ageDays(lastSnap) * 1440 > 3 * sched.minutes);
+      add(
+        "Backups and recovery",
+        "Frequent online snapshots",
+        !sched.minutes ? "info" : snapStale || /^failed/.test(snapStatus) ? "bad" : "ok",
+        sched.minutes ? `every ${sched.minutes} min to ${sched.offsiteDir ? "the offsite directory" : "the local backups directory"}, newest ${sched.snapshotRetain} kept; last ${lastSnap || "never"}` : "off",
+        sched.minutes ? `${snapStatus}${!sched.offsiteDir ? " Snapshots stay on this disk until an offsite directory is set." : ""}` : "Turn on under Settings \u2192 Scheduled backups to bring the recovery point down to minutes (SQLite online backup; measured cost in docs/security/BACKUP-AND-DR.md).",
+        "server/scheduled-backup.js snapshot"
+      );
+      const rpo = sb.rpo(sched);
+      const rpoTarget = require_dr_drill().targets().rpo_hours;
+      add(
+        "Backups and recovery",
+        "Recovery point objective (worst case)",
+        !rpo ? "bad" : rpo.minutes > rpoTarget * 60 ? "warn" : "ok",
+        rpo ? `${rpo.minutes < 120 ? `${rpo.minutes} min` : `${Math.round(rpo.minutes / 6) / 10} h`} (${rpo.by}); target ${rpoTarget < 2 ? `${Math.round(rpoTarget * 60)} min` : `${rpoTarget} h`}` : "unbounded: nothing is scheduled",
+        rpo ? "A loss just before the next copy runs costs one whole interval. The last recovery drill measures the age of the copy it restored." : "With no schedule, everything since the last manual backup would be lost.",
+        "server/scheduled-backup.js rpo"
+      );
       const offsite = db3.getSetting("backup_offsite_dir", "") || "";
       add("Backups and recovery", "Offsite copy", !offsite ? "warn" : /offsite copy failed/.test(lastStatus) ? "bad" : "ok", offsite ? offsite : "not configured", offsite ? /offsite copy failed/.test(lastStatus) ? lastStatus : "Each scheduled backup is copied here after it is verified." : "Set an offsite directory (a mounted share on another host or site).", "server/scheduled-backup.js");
       const drill = require_dr_drill().lastDrill();
@@ -14140,7 +15085,7 @@ var require_security_status = __commonJS({
         "Last recovery drill",
         !drill ? "bad" : !drill.ok ? "bad" : drillAge > 95 ? "warn" : "ok",
         drill ? `${drill.ok ? "passed" : "FAILED"} ${drill.at.slice(0, 10)} \u2014 RTO ${drill.rto_seconds ?? "?"} s (target ${drill.rto_target_minutes} min), RPO ${drill.rpo_seconds != null ? Math.round(drill.rpo_seconds / 360) / 10 + " h" : "?"} (target ${drill.rpo_target_hours} h)` : "never run",
-        drill ? drill.ok ? `${drill.checks_passed}/${drill.checks_total} checks; report ${drill.report_file || "(not written)"}.` : (drill.failures || []).join("; ") : "Run one from System & backups, or npm run dr-drill.",
+        drill ? drill.ok ? `${drill.checks_passed}/${drill.checks_total} checks; restored the ${drill.backup_copy || "local"} copy with keys from ${drill.keys_source || "server memory"}; report ${drill.report_file || "(not written)"}.${drill.keys_source && drill.keys_source !== "server memory" ? "" : " Run one with the escrowed key file to prove it opens the backups."}` : (drill.failures || []).join("; ") : "Run one from System & backups, or npm run dr-drill.",
         "server/dr-drill.js; report in <data>/backups/dr-drill-*.json"
       );
       add("Backups and recovery", "Monthly recovery drill", db3.getSetting("dr_drill_monthly", "0") === "1" ? "ok" : "info", db3.getSetting("dr_drill_monthly", "0") === "1" ? "on" : "off", "Settings \u2192 Scheduled backups.", "server/dr-drill.js runIfDue");
@@ -14161,12 +15106,13 @@ var require_security_status = __commonJS({
       const lastAnchor = db3.getSetting("audit_anchor_last_at", null);
       const anchorWrite = db3.getSetting("audit_anchor_last_status", "") || "";
       const anchorVerify = db3.getSetting("audit_anchor_verify_status", "") || "";
+      const placement = require_audit_anchor().placementProblem();
       add(
         "Audit",
         "Audit anchors outside the database",
-        /^failed/.test(anchorWrite) || /^FAILED/.test(anchorVerify) ? "bad" : !ad.configured || ad.inside_data_dir ? "warn" : !anchors ? "warn" : "ok",
+        /^failed/.test(anchorWrite) || /^FAILED/.test(anchorVerify) || placement ? "bad" : !ad.configured || ad.inside_data_dir ? "warn" : !anchors ? "warn" : "ok",
         `${anchors} anchor${anchors === 1 ? "" : "s"} in ${ad.dir}${lastAnchor ? `; last ${lastAnchor}` : ""}${config.auditAnchorHours > 0 ? `; every ${config.auditAnchorHours} h and at each backup` : "; at each backup only"}`,
-        [anchorVerify ? `Last check: ${anchorVerify}.` : "Not yet checked (runs with the daily audit verification).", /^failed/.test(anchorWrite) ? `Last write ${anchorWrite}.` : "", !ad.configured || ad.inside_data_dir ? "Set AUDIT_ANCHOR_DIR to write-once storage outside the data directory (WORM/immutable share) so a rewrite of the whole data directory is also caught." : "", config.auditSyslog ? `Also sent to syslog ${config.auditSyslog}.` : ""].filter(Boolean).join(" "),
+        [placement || "", anchorVerify ? `Last check: ${anchorVerify}.` : "Not yet checked (runs with the daily audit verification).", /^failed/.test(anchorWrite) ? `Last write ${anchorWrite}.` : "", placement ? "" : !ad.configured || ad.inside_data_dir ? "Set AUDIT_ANCHOR_DIR to write-once storage outside the data directory (WORM/immutable share) so a rewrite of the whole data directory is also caught." : "", config.auditSyslog ? `Also sent to syslog ${config.auditSyslog}.` : ""].filter(Boolean).join(" "),
         "server/audit-anchor.js"
       );
       add("Audit", "Audit retention", "info", `${Math.round(config.auditRetentionDays / 365 * 10) / 10} years (${config.auditRetentionDays} days)`, (() => {
@@ -14185,6 +15131,19 @@ var require_security_status = __commonJS({
         `${rotated ? `Last rotated ${rotated.at}` : `In use since ${keyAt || "unknown"}`}${keyAge !== null ? ` (${Math.round(keyAge)} days)` : ""}. Rotate annually: npm run rotate-key.`,
         "server/crypto.js; scripts/rotate-key.js"
       );
+      try {
+        const sk = require_signing().publicInfo();
+        add(
+          "Encryption and keys",
+          "Evidence signing key (Ed25519)",
+          "ok",
+          `key id ${sk.key_id}; private key in ${config.signingKeySource === "env" ? "the environment (SUDS_SIGNING_KEY)" : config.signingKeySource === "file" ? "data/keys.json" : config.signingKeySource === "devfile" ? "a development key file in the data directory" : "the test configuration"}, never in the database`,
+          "Signs recovery-drill reports and audit-export manifests; anyone with the public key (GET /api/admin/security/signing-key) can verify them: npm run verify-dr-report, npm run verify-audit-export -- --public-key.",
+          "server/signing.js"
+        );
+      } catch (e) {
+        add("Encryption and keys", "Evidence signing key (Ed25519)", "bad", "unavailable", String(e.message || e), "server/signing.js");
+      }
       add("Encryption and keys", "Index key (blind indexes, audit chain)", "info", idxRotated ? `last rotated ${idxRotated.at}` : "not rotated since install", "npm run rotate-index-key re-derives the indexes and re-signs the audit chain.", "scripts/rotate-index-key.js");
       if (config.keySource === "file") {
         const kb = db3.getSetting("keys_backup_at", null);
@@ -14285,8 +15244,19 @@ var require_admin = __commonJS({
       "sso_emergency_accounts",
       "dr_drill_monthly",
       "dr_rto_target_minutes",
-      "dr_rpo_target_hours"
+      "dr_rpo_target_hours",
+      // Frequent online snapshots (server/scheduled-backup.js snapshot).
+      "backup_schedule_minutes",
+      "backup_snapshot_retain",
+      // Identity-provider trust and lifecycle: IdP MFA in place of SUDS TOTP (server/routes/oidc.js), disabling
+      // SSO accounts the provider no longer vouches for (server/deprovision.js), SCIM provisioning (server/routes/scim.js).
+      "sso_trust_idp_mfa",
+      "sso_mfa_acr_values",
+      "sso_deprovision_days",
+      "scim_group_roles",
+      "scim_default_role"
     ];
+    var ROLES = ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"];
     var listener = (init_listener(), __toCommonJS(listener_exports));
     var fs = (init_fs(), __toCommonJS(fs_exports));
     var path = (init_path(), __toCommonJS(path_exports));
@@ -14319,6 +15289,17 @@ var require_admin = __commonJS({
             if (["dr_rto_target_minutes", "dr_rpo_target_hours"].includes(k) && v !== "" && !(Number(v) > 0)) throw badRequest(`${k} must be a positive number`);
             if (k === "mfa_required_roles") v = v.split(",").map((x) => x.trim()).filter((x) => ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"].includes(x)).join(",");
             if (k === "session_idle_minutes" && v !== "" && Number(v) > 60) throw badRequest("Idle timeout may not exceed 60 minutes (HIPAA automatic logoff)");
+            if (k === "backup_schedule_minutes" && v !== "" && !(Number.isInteger(Number(v)) && (Number(v) === 0 || Number(v) >= 5 && Number(v) <= 1440))) throw badRequest("backup_schedule_minutes must be 0 (off) or a whole number of minutes from 5 to 1440");
+            if (k === "backup_snapshot_retain" && v !== "" && !(Number.isInteger(Number(v)) && Number(v) >= 1 && Number(v) <= 1e3)) throw badRequest("backup_snapshot_retain must be a whole number from 1 to 1000");
+            if (k === "sso_trust_idp_mfa" && v !== "" && !["0", "1"].includes(v)) throw badRequest("sso_trust_idp_mfa must be 1 (on) or 0 (off)");
+            if (k === "sso_mfa_acr_values" && v !== "") {
+              const vals = v.split(/[\s,]+/).filter(Boolean);
+              if (vals.some((x) => !/^[\w:./#-]{1,200}$/.test(x))) throw badRequest("sso_mfa_acr_values must be acr values (URIs or names) separated by commas");
+              v = vals.join(",");
+            }
+            if (k === "sso_deprovision_days" && v !== "" && !(Number.isInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 3650)) throw badRequest("sso_deprovision_days must be 0 (off) or a whole number of days");
+            if (k === "scim_default_role" && v !== "" && !ROLES.includes(v)) throw badRequest(`scim_default_role must be one of ${ROLES.join(", ")}`);
+            if (k === "scim_group_roles" && v !== "") v = require_scim().normaliseGroupRoles(v);
             if (v === "") db3.run(`DELETE FROM settings WHERE key=?`, k);
             else db3.setSetting(k, v);
             changed.push(k);
@@ -14326,6 +15307,7 @@ var require_admin = __commonJS({
           if (!config.local && [db3.getSetting("sso_required", "0"), db3.getSetting("sso_emergency_accounts", "")].join("|") !== ssoBefore) require_security_status().validateSettings();
         });
         audit3.log({ user: ctx.user, action: "settings.update", ip: ctx.ip, details: { changed } });
+        if (changed.includes("sso_trust_idp_mfa") || changed.includes("sso_mfa_acr_values")) audit3.log({ user: ctx.user, action: "security.idp_mfa_trust", ip: ctx.ip, details: { trusted: db3.getSetting("sso_trust_idp_mfa", "0") === "1", acr_values: db3.getSetting("sso_mfa_acr_values", "") || null } });
         return { ok: true };
       });
       r.get("/api/admin/audit", auth3.requireAuth, auth3.requirePerm("audit:read"), (ctx) => {
@@ -14364,7 +15346,7 @@ var require_admin = __commonJS({
         if (!res.ok) require_incidents().chainFailure(res, ctx.user);
         return res;
       });
-      r.get("/api/admin/api-keys", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), () => ({ keys: db3.all(`SELECT k.id,k.name,k.prefix,k.scopes,k.created_at,k.last_used_at,k.revoked_at,u.display_name AS created_by_name FROM api_keys k LEFT JOIN users u ON u.id=k.created_by WHERE k.scopes NOT LIKE 'fhir%' ORDER BY k.created_at DESC`) }));
+      r.get("/api/admin/api-keys", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), () => ({ keys: db3.all(`SELECT k.id,k.name,k.prefix,k.scopes,k.created_at,k.last_used_at,k.revoked_at,u.display_name AS created_by_name FROM api_keys k LEFT JOIN users u ON u.id=k.created_by WHERE k.scopes NOT LIKE 'fhir%' AND k.scopes <> 'scim' ORDER BY k.created_at DESC`) }));
       r.post("/api/admin/api-keys", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), (ctx) => {
         const { name } = validate(ctx.body, { name: { type: "string", required: true, maxLen: 100 } });
         const raw = "suds_" + randomToken(32);
@@ -14655,12 +15637,19 @@ var require_app = __commonJS({
         const warnings = [];
         try {
           if (db3.getSetting("audit_verify_failed_at", null)) warnings.push(`The audit log failed its integrity check at ${db3.getSetting("audit_verify_failed_at")}. Investigate before anything else.`);
+          const placement = config.local ? null : require_audit_anchor().placementProblem();
+          if (placement) warnings.push(placement);
           if (/^FAILED/.test(db3.getSetting("audit_anchor_verify_status", "") || "")) warnings.push(`The audit log no longer matches the anchors written outside the database (checked ${db3.getSetting("audit_anchor_verified_at")}). Investigate before anything else.`);
           const hours = Number(db3.getSetting("backup_schedule_hours", "0")) || 0;
           const last = db3.getSetting("last_scheduled_backup_at", null);
           const status = db3.getSetting("last_scheduled_backup_status", "") || "";
           if (hours && (!last || Date.now() - Date.parse(last) > 2 * hours * 36e5)) warnings.push(`Scheduled backups are set for every ${hours} hours but the last one ${last ? "ran " + last : "has never run"}.`);
           if (hours && status && !/^ok/.test(status)) warnings.push(`The last scheduled backup reported: ${status}`);
+          const minutes = Number(db3.getSetting("backup_schedule_minutes", "0")) || 0;
+          const lastSnap = db3.getSetting("last_snapshot_at", null);
+          const snap = db3.getSetting("last_snapshot_status", "") || "";
+          if (minutes && lastSnap && Date.now() - Date.parse(lastSnap) > 3 * minutes * 6e4) warnings.push(`Snapshots are set for every ${minutes} minutes but the last one ran ${lastSnap}.`);
+          if (minutes && /^failed/.test(snap)) warnings.push(`The last snapshot reported: ${snap}`);
           const crt = path.join(config.dataDir, "certs", "suds.crt");
           if (fs.existsSync(crt)) {
             const validTo = new (init_crypto2(), __toCommonJS(crypto_exports)).X509Certificate(fs.readFileSync(crt)).validTo;
@@ -27540,7 +28529,7 @@ var require_oidc = __commonJS({
       if (clear) return `${COOKIE}=; Path=/api/auth/oidc; HttpOnly; SameSite=Lax; Max-Age=0${secure}`;
       return `${COOKIE}=${token2}; Path=/api/auth/oidc; HttpOnly; SameSite=Lax; Max-Age=600${secure}`;
     }
-    async function startAuth() {
+    async function startAuth({ acrValues = [] } = {}) {
       const doc = await discover();
       const { verifier, challenge } = pkcePair();
       const state = crypto3.randomUUID();
@@ -27554,6 +28543,7 @@ var require_oidc = __commonJS({
       url.searchParams.set("nonce", nonce);
       url.searchParams.set("code_challenge", challenge);
       url.searchParams.set("code_challenge_method", "S256");
+      if (acrValues.length) url.searchParams.set("acr_values", acrValues.join(" "));
       const cookie = stateCookie(signState({ state, nonce, verifier, exp: Date.now() + 6e5 }));
       return { url: url.toString(), cookie };
     }
@@ -27597,7 +28587,16 @@ var require_oidc = __commonJS({
       if (!claims.sub) throw new Error("The token has no subject");
       return claims;
     }
-    module.exports = { startAuth, completeAuth, stateCookie, COOKIE, _resetCacheForTests: () => {
+    var MFA_AMR = ["mfa", "otp", "hwk", "swk"];
+    function idpMfa(claims, { acrValues = [] } = {}) {
+      const amr = Array.isArray(claims.amr) ? claims.amr.map(String) : typeof claims.amr === "string" ? [claims.amr] : [];
+      const acr = claims.acr === void 0 || claims.acr === null ? null : String(claims.acr);
+      const amrHit = amr.find((a) => MFA_AMR.includes(a.toLowerCase()));
+      if (amrHit) return { ok: true, via: `amr:${amrHit}`, amr, acr };
+      if (acr && acrValues.includes(acr)) return { ok: true, via: `acr:${acr}`, amr, acr };
+      return { ok: false, via: null, amr, acr };
+    }
+    module.exports = { startAuth, completeAuth, stateCookie, COOKIE, idpMfa, MFA_AMR, _resetCacheForTests: () => {
       discoveryCache = null;
       jwksCache = null;
     } };
@@ -27620,14 +28619,29 @@ var require_oidc2 = __commonJS({
       res.writeHead(302, { Location: location });
       res.end();
     }
+    function mfaTrust() {
+      const acrValues = String(db3.getSetting("sso_mfa_acr_values", "") || "").split(/[\s,]+/).filter(Boolean);
+      return { trusted: db3.getSetting("sso_trust_idp_mfa", "0") === "1", acrValues };
+    }
+    function linkProvisioned(claims) {
+      const candidates = [];
+      if (claims.oid) candidates.push(db3.one(`SELECT * FROM users WHERE scim_external_id=? AND oidc_subject IS NULL`, String(claims.oid)));
+      for (const k of ["preferred_username", "upn", "email"]) if (claims[k] && !(k === "email" && claims.email_verified === false)) candidates.push(db3.one(`SELECT * FROM users WHERE username=? COLLATE NOCASE AND scim_external_id IS NOT NULL AND oidc_subject IS NULL`, String(claims[k])));
+      const user = candidates.find(Boolean);
+      if (!user) return null;
+      db3.run(`UPDATE users SET oidc_subject=?, updated_at=? WHERE id=?`, claims.sub, db3.now(), user.id);
+      audit3.log({ user: { username: "system" }, action: "user.oidc_linked", entity: "user", entityId: user.id, details: { username: user.username, via: claims.oid && user.scim_external_id === String(claims.oid) ? "scim externalId" : "scim userName" } });
+      return db3.one(`SELECT * FROM users WHERE id=?`, user.id);
+    }
     module.exports = (r) => {
       r.get("/api/auth/oidc/status", () => ({ enabled: config.oidc.enabled, label: config.oidc.label }));
       r.get("/api/auth/oidc/start", async (ctx) => {
         if (!config.oidc.enabled) throw notFound();
         if (!rateLimit(`login:${ctx.ip}`, config.isTest ? 1e5 : 20, 15 * 6e4)) throw new HttpError3(429, "Too many sign-in attempts. Try again later.");
         let started;
+        const t = mfaTrust();
         try {
-          started = await oidc.startAuth();
+          started = await oidc.startAuth({ acrValues: t.trusted ? t.acrValues : [] });
         } catch (e) {
           console.error("[suds] oidc start failed:", e.message);
           throw new HttpError3(502, "Could not reach the identity provider. Try again shortly, or sign in with a username and password.");
@@ -27651,13 +28665,21 @@ var require_oidc2 = __commonJS({
           console.error("[suds] oidc callback failed:", e.message);
           return fail("exchange_failed");
         }
-        const user = db3.one(`SELECT * FROM users WHERE oidc_subject=?`, claims.sub);
+        const user = db3.one(`SELECT * FROM users WHERE oidc_subject=?`, claims.sub) || linkProvisioned(claims);
         if (!user) return fail("not_linked", { sub: claims.sub });
         if (!user.is_active) return fail("inactive");
-        db3.run(`UPDATE users SET last_login_at=? WHERE id=?`, db3.now(), user.id);
-        const mfaPending = !!user.mfa_enabled;
-        const token2 = auth3.createSession(user, ctx, { mfaPending });
-        audit3.log({ user, action: mfaPending ? "auth.oidc.login.mfa_pending" : "auth.oidc.login", ip: ctx.ip });
+        db3.run(`UPDATE users SET last_login_at=?, idp_seen_at=? WHERE id=?`, db3.now(), db3.now(), user.id);
+        const trust = mfaTrust();
+        const idp = trust.trusted ? oidc.idpMfa(claims, { acrValues: trust.acrValues }) : null;
+        const viaIdp = !!(idp && idp.ok);
+        const mfaPending = !viaIdp && !!user.mfa_enabled;
+        const token2 = auth3.createSession(user, ctx, { mfaPending, mfaSource: viaIdp ? "idp" : null });
+        audit3.log({
+          user,
+          action: mfaPending ? "auth.oidc.login.mfa_pending" : "auth.oidc.login",
+          ip: ctx.ip,
+          details: idp ? { mfa: viaIdp ? "idp" : "not asserted by the identity provider", via: idp.via || void 0, amr: idp.amr.slice(0, 10), acr: idp.acr || void 0 } : void 0
+        });
         const cookies = [auth3.cookieHeader(token2), oidc.stateCookie("", { clear: true })];
         ctx.res.setHeader("Set-Cookie", cookies);
         redirect(ctx.res, mfaPending ? "/#/mfa" : "/#/dashboard");
@@ -28802,12 +29824,120 @@ var require_resources2 = __commonJS({
   }
 });
 
+// server/routes/scim.js
+var require_scim2 = __commonJS({
+  "server/routes/scim.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var scim = require_scim();
+    var { rateLimit } = require_app2();
+    var { HttpError: HttpError3, notFound } = require_http();
+    var { validate } = require_validate();
+    var { sha256: sha2562, randomToken, uuid: uuid2 } = require_crypto();
+    function send(ctx, status, body) {
+      const text = body === null ? "" : JSON.stringify(body);
+      ctx.res.writeHead(status, { "Content-Type": "application/scim+json; charset=utf-8", "Cache-Control": "no-store", ...text ? { "Content-Length": import_buffer.Buffer.byteLength(text) } : {} });
+      ctx.res.end(text);
+    }
+    function fail(ctx, e) {
+      if (e instanceof scim.ScimError) return send(ctx, e.status, scim.errorBody(e.status, e.message, e.scimType));
+      if (e instanceof HttpError3) return send(ctx, e.status, scim.errorBody(e.status, e.message));
+      throw e;
+    }
+    var baseUrl = (ctx) => `${ctx.headers["x-forwarded-proto"] === "https" || ctx.req.socket.encrypted ? "https" : "http"}://${ctx.headers.host || "localhost"}`;
+    function tokenAuth(ctx) {
+      if (!rateLimit(`scim:${ctx.ip}`, 600, 6e4)) throw new HttpError3(429, "Too many requests");
+      const h = String(ctx.headers.authorization || "");
+      const token2 = h.startsWith("Bearer ") ? h.slice(7).trim() : "";
+      const k = token2 ? db3.one(`SELECT * FROM api_keys WHERE key_hash=? AND revoked_at IS NULL`, sha2562(token2)) : null;
+      if (!k || !String(k.scopes || "").split(/[\s,]+/).includes("scim")) {
+        audit3.log({ user: null, action: "scim.denied", ip: ctx.ip, success: false, details: { path: ctx.path } });
+        throw new scim.ScimError(401, "A valid SCIM bearer token is required");
+      }
+      if (!k.last_used_at || Date.now() - Date.parse(k.last_used_at) > 6e4) db3.run(`UPDATE api_keys SET last_used_at=? WHERE id=?`, db3.now(), k.id);
+      return { id: k.created_by, username: `scim:${k.name}` };
+    }
+    var handler = (fn) => async (ctx) => {
+      try {
+        const actor = tokenAuth(ctx);
+        const out2 = await fn(ctx, actor);
+        if (out2 !== void 0) send(ctx, out2.status || 200, out2.body);
+      } catch (e) {
+        fail(ctx, e);
+      }
+    };
+    module.exports = (r) => {
+      r.get("/scim/v2/ServiceProviderConfig", handler(() => ({ body: scim.serviceProviderConfig() })));
+      r.get("/scim/v2/Users", handler((ctx) => ({ body: scim.list({ filter: ctx.query.get("filter"), startIndex: ctx.query.get("startIndex"), count: ctx.query.get("count") ?? 100 }, baseUrl(ctx)) })));
+      r.post("/scim/v2/Users", handler((ctx, actor) => ({ status: 201, body: scim.create(ctx.body, actor, baseUrl(ctx)) })));
+      r.get("/scim/v2/Users/:id", handler((ctx) => ({ body: scim.toResource(scim.find(ctx.params.id), baseUrl(ctx)) })));
+      r.put("/scim/v2/Users/:id", handler((ctx, actor) => ({ body: scim.replace(ctx.params.id, ctx.body, actor, baseUrl(ctx)) })));
+      r.patch("/scim/v2/Users/:id", handler((ctx, actor) => ({ body: scim.patch(ctx.params.id, ctx.body, actor, baseUrl(ctx)) })));
+      r.delete("/scim/v2/Users/:id", handler((ctx, actor) => {
+        scim.deactivate(ctx.params.id, actor);
+        return { status: 204, body: null };
+      }));
+      r.get("/api/admin/scim/tokens", auth3.requireAuth, auth3.requirePerm("users:manage"), () => ({ tokens: db3.all(`SELECT k.id,k.name,k.prefix,k.created_at,k.last_used_at,k.revoked_at,u.display_name AS created_by_name FROM api_keys k LEFT JOIN users u ON u.id=k.created_by WHERE k.scopes='scim' ORDER BY k.created_at DESC`), endpoint: "/scim/v2" }));
+      r.post("/api/admin/scim/tokens", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
+        const { name } = validate(ctx.body, { name: { type: "string", required: true, maxLen: 100 } });
+        const raw = "suds_scim_" + randomToken(32);
+        const id = uuid2();
+        db3.run(`INSERT INTO api_keys(id,name,key_hash,prefix,scopes,created_by) VALUES(?,?,?,?,?,?)`, id, name, sha2562(raw), raw.slice(0, 16), "scim", ctx.user.id);
+        audit3.log({ user: ctx.user, action: "scim.token.create", entity: "api_key", entityId: id, ip: ctx.ip, details: { name } });
+        ctx.status = 201;
+        return { id, token: raw, endpoint: "/scim/v2", note: "Give this token and the SCIM endpoint to the identity provider now; it will not be shown again." };
+      });
+      r.delete("/api/admin/scim/tokens/:id", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
+        const k = db3.one(`SELECT id FROM api_keys WHERE id=? AND scopes='scim'`, ctx.params.id);
+        if (!k) throw notFound();
+        db3.run(`UPDATE api_keys SET revoked_at=COALESCE(revoked_at, ?) WHERE id=?`, db3.now(), k.id);
+        audit3.log({ user: ctx.user, action: "scim.token.revoke", entity: "api_key", entityId: k.id, ip: ctx.ip });
+        return { ok: true };
+      });
+    };
+  }
+});
+
+// server/startup-checks.js
+var require_startup_checks = __commonJS({
+  "server/startup-checks.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var config = require_config();
+    function backupProblem() {
+      if (!config.isProd || config.local) return null;
+      const s = require_scheduled_backup().settings();
+      if (s.hours > 0 || s.minutes > 0) return null;
+      return "Scheduled backups are off (backup_schedule_hours = 0): nothing is backing this database up. Turn them on under Settings \u2192 Scheduled backups (every 4 hours is the production default; docs/security/BACKUP-AND-DR.md).";
+    }
+    function problems() {
+      const out2 = [];
+      try {
+        const p = require_audit_anchor().placementProblem();
+        if (p) out2.push(p);
+      } catch {
+      }
+      try {
+        const p = backupProblem();
+        if (p) out2.push(p);
+      } catch {
+      }
+      return out2;
+    }
+    module.exports = { problems, backupProblem };
+  }
+});
+
 // server/audit-export.js
 var require_audit_export = __commonJS({
   "server/audit-export.js"(exports, module) {
     "use strict";
     init_globals_inject();
     var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    var signing = require_signing();
     var FORMAT2 = "suds-audit-export";
     var KEYED_PREFIX = "v2:";
     var payloadOf = (r) => [r.at, r.user_id || "", r.username || "", r.action, r.entity || "", r.entity_id || "", r.client_id || "", r.ip || "", r.success ? 1 : 0, r.details || "", r.prev_hash].join("|");
@@ -28819,9 +29949,19 @@ var require_audit_export = __commonJS({
     }
     var hmac2 = (key, s) => crypto3.createHmac("sha256", key).update(s).digest("hex");
     var safeEq = (a, b) => typeof a === "string" && typeof b === "string" && a.length === b.length && crypto3.timingSafeEqual(import_buffer.Buffer.from(a), import_buffer.Buffer.from(b));
+    function manifestPayload(m) {
+      const { mac, signature, ...rest } = m;
+      return JSON.stringify(rest);
+    }
     function manifestMac(m, key) {
-      const { mac, ...rest } = m;
-      return hmac2(key, JSON.stringify(rest));
+      return hmac2(key, manifestPayload(m));
+    }
+    function sealManifest(m, { indexKey, signingSeed } = {}) {
+      const pub = signing.publicInfo(signingSeed);
+      Object.assign(m, { signature_algorithm: signing.ALGORITHM, signing_key_id: pub.key_id, public_key_pem: pub.public_key_pem });
+      m.mac = manifestMac(m, indexKey);
+      m.signature = signing.sign(manifestPayload(m), signingSeed);
+      return m;
     }
     var ANCHOR_FIELDS = ["v", "kind", "at", "reason", "install", "gen", "prev_gen", "head_id", "head_hash", "first_id", "rows", "host", "key_id", "prev_mac"];
     function anchorMac(a, key) {
@@ -28830,12 +29970,12 @@ var require_audit_export = __commonJS({
       return hmac2(key, JSON.stringify(o));
     }
     var keyIdOf = (key) => hmac2(key, "suds-audit-anchor-key-id").slice(0, 16);
-    function verifyExport(text, { key = null, extraAnchors = [] } = {}) {
+    function verifyExport(text, { key = null, extraAnchors = [], publicKey = null } = {}) {
       const errors = [];
       const warn = [];
       const lines = String(text).split("\n");
       if (lines[lines.length - 1] === "") lines.pop();
-      const out2 = { ok: false, level: key ? "cryptographic (entries, manifest and anchors checked with the index key)" : "structural (linkage, digest and anchors; keyed entry hashes not checked without the index key)", entries: 0, keyed_checked: 0, keyed_unchecked: 0, legacy_checked: 0, anchors_checked: 0, anchors_matched: 0, anchors_outside_range: 0, errors, warnings: warn };
+      const out2 = { ok: false, level: key ? "cryptographic (entries, manifest and anchors checked with the index key)" : "structural (linkage, digest and anchors; keyed entry hashes not checked without the index key)", signature: null, entries: 0, keyed_checked: 0, keyed_unchecked: 0, legacy_checked: 0, anchors_checked: 0, anchors_matched: 0, anchors_outside_range: 0, errors, warnings: warn };
       if (!lines.length) {
         errors.push("the file is empty");
         return out2;
@@ -28862,6 +30002,23 @@ var require_audit_export = __commonJS({
       const body = lines.slice(0, -1).map((l) => l + "\n").join("");
       const digest = crypto3.createHash("sha256").update(body).digest("hex");
       if (digest !== manifest.sha256) errors.push("the SHA-256 of the file does not match its manifest: lines were changed, added or removed");
+      if (manifest.signature) {
+        const pem = publicKey || manifest.public_key_pem;
+        let kid = null;
+        try {
+          kid = pem ? signing.keyIdOf(pem) : null;
+        } catch {
+          errors.push("the public key is not a valid PEM key");
+        }
+        if (!pem) errors.push("the manifest is signed but no public key is available to check it");
+        else if (kid) {
+          if (!signing.verify(manifestPayload(manifest), manifest.signature, pem)) errors.push("the manifest's Ed25519 signature does not verify with this public key: the manifest was altered, or was not signed by this server");
+          else out2.signature = { ok: true, key_id: kid, key_source: publicKey ? "supplied" : "embedded" };
+          if (manifest.signing_key_id && manifest.signing_key_id !== kid) errors.push(`the manifest names signing key ${manifest.signing_key_id}, not the key supplied (${kid})`);
+          if (!publicKey) warn.push(`the signature was checked with the public key embedded in the export (key id ${kid}); compare that id with the one the server publishes (GET /api/admin/security/signing-key), or pass that key (--public-key)`);
+        }
+      } else if (publicKey) errors.push("a public key was supplied but the manifest carries no signature (an export from before Ed25519 signing, or one with its signature removed)");
+      else warn.push("the manifest is not signed (an export from before Ed25519 signing)");
       if (key) {
         if (!safeEq(manifestMac(manifest, key), manifest.mac)) errors.push("the manifest MAC does not verify with this index key (the manifest was altered, or the key is not the one this server used)");
         if (manifest.key_id && manifest.key_id !== keyIdOf(key)) warn.push("the manifest names a different index key than the one supplied");
@@ -28925,7 +30082,7 @@ var require_audit_export = __commonJS({
       out2.ok = errors.length === 0;
       return out2;
     }
-    module.exports = { FORMAT: FORMAT2, payloadOf, entryLine, manifestMac, anchorMac, keyIdOf, verifyExport, ENTRY_FIELDS };
+    module.exports = { FORMAT: FORMAT2, payloadOf, entryLine, manifestMac, manifestPayload, sealManifest, anchorMac, keyIdOf, verifyExport, ENTRY_FIELDS };
   }
 });
 
@@ -28941,17 +30098,58 @@ var require_security = __commonJS({
     var { badRequest, HttpError: HttpError3 } = require_http();
     module.exports = (r) => {
       r.get("/api/admin/security/status", auth3.requireAuth, auth3.requirePerm("settings:manage"), () => require_security_status().status());
+      r.get("/api/admin/security/signing-key", auth3.requireAuth, auth3.requirePerm("audit:read", "settings:manage"), (ctx) => {
+        const info = require_signing().publicInfo();
+        if (ctx.query.get("format") === "pem") {
+          ctx.res.writeHead(200, { "Content-Type": "application/x-pem-file", "Content-Disposition": `attachment; filename="suds-signing-key-${info.key_id}.pem"` });
+          ctx.res.end(info.public_key_pem);
+          return;
+        }
+        return { ...info, signs: ["recovery-drill reports (<data>/backups/dr-drill-*.json)", "audit-export manifests (GET /api/admin/audit/export)"], verify_with: ["npm run verify-dr-report -- <report.json> --public-key <this key>.pem", "npm run verify-audit-export -- <export.ndjson> --public-key <this key>.pem"] };
+      });
       r.get("/api/admin/security/mfa-report", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
         const rep = require_security_status().mfaReport();
         audit3.log({ user: ctx.user, action: "security.mfa_report", ip: ctx.ip, details: { without: rep.without.length } });
         return rep;
       });
+      r.get("/api/admin/security/alerts", auth3.requireAuth, auth3.requirePerm("settings:manage"), () => {
+        const sc = require_startup_checks();
+        const out2 = [];
+        const anchorProblem = require_audit_anchor().placementProblem();
+        if (anchorProblem) out2.push({ key: "audit_anchor_dir", label: "Audit anchors are on the database disk", detail: anchorProblem });
+        const backupProblem = sc.backupProblem();
+        if (backupProblem) out2.push({ key: "backups_off", label: "Scheduled backups are off", detail: backupProblem });
+        return { alerts: out2 };
+      });
+      r.get("/api/admin/security/deprovisioning", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
+        const rep = require_deprovision().report();
+        audit3.log({ user: ctx.user, action: "security.deprovision_report", ip: ctx.ip, details: { due: rep.due.length, soon: rep.soon.length } });
+        return rep;
+      });
+      r.post("/api/admin/security/deprovisioning/run", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
+        const d = require_deprovision();
+        if (!d.days()) throw badRequest('Set "Disable single sign-on accounts not seen for (days)" first (Settings \u2192 Security policy)');
+        const out2 = d.run({ by: ctx.user });
+        audit3.log({ user: ctx.user, action: "security.deprovision_run", ip: ctx.ip, details: { disabled: out2.disabled.length } });
+        return out2;
+      });
       r.get("/api/admin/dr-drill", auth3.requireAuth, auth3.requirePerm("settings:manage"), () => require_dr_drill().status());
       r.post("/api/admin/dr-drill", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
         const drill = require_dr_drill();
         if (drill.status().running) throw new HttpError3(409, "A recovery drill is already running");
-        audit3.log({ user: ctx.user, action: "dr.drill.start", ip: ctx.ip, details: { fresh: !!(ctx.body && ctx.body.fresh) } });
-        drill.start({ by: { id: ctx.user.id, username: ctx.user.username }, trigger: "manual", fresh: !!(ctx.body && ctx.body.fresh) });
+        const b = ctx.body || {};
+        const keysText = typeof b.keys_file === "string" && b.keys_file.trim() ? b.keys_file : null;
+        if (keysText) {
+          try {
+            drill.parseKeysFile(keysText);
+          } catch (e) {
+            throw badRequest(e.message);
+          }
+        }
+        const copy = ["auto", "local", "offsite"].includes(b.copy) ? b.copy : "auto";
+        const keysLabel = typeof b.keys_file_name === "string" ? b.keys_file_name.replace(/[^\w.\- ]/g, "").slice(0, 80) : null;
+        audit3.log({ user: ctx.user, action: "dr.drill.start", ip: ctx.ip, details: { fresh: !!b.fresh, keys: keysText ? "uploaded escrow file" : "server memory", copy } });
+        drill.start({ by: { id: ctx.user.id, username: ctx.user.username }, trigger: "manual", fresh: !!b.fresh, keysText, keysLabel, copy });
         ctx.status = 202;
         return { started: true };
       });
@@ -29027,8 +30225,8 @@ var require_security = __commonJS({
           after = rows[rows.length - 1].id;
           await new Promise((resolve2) => globalThis.setImmediate ? globalThis.setImmediate(resolve2) : setTimeout(resolve2, 0));
         }
-        const manifest = { type: "manifest", entries: n, first_id: n ? fromId : null, last_id: n ? after : null, first_prev_hash: firstPrev, last_hash: lastHash, sha256: hash2.digest("hex"), key_id: anchorMod.keyId(), anchors, head_checkpoint: head, verify_with: "npm run verify-audit-export -- <this file> [--key <SUDS_INDEX_KEY>] [--anchors <anchor dir>]" };
-        manifest.mac = ex.manifestMac(manifest, config.indexKey);
+        const manifest = { type: "manifest", entries: n, first_id: n ? fromId : null, last_id: n ? after : null, first_prev_hash: firstPrev, last_hash: lastHash, sha256: hash2.digest("hex"), key_id: anchorMod.keyId(), anchors, head_checkpoint: head, verify_with: "npm run verify-audit-export -- <this file> --public-key <signing-key.pem> [--key <SUDS_INDEX_KEY>] [--anchors <anchor dir>]" };
+        ex.sealManifest(manifest, { indexKey: config.indexKey });
         res.end(JSON.stringify(manifest) + "\n");
       });
     };
@@ -29057,6 +30255,16 @@ var require_setup = __commonJS({
     }
     function onlyBootstrapAdmin() {
       return db3.one(`SELECT COUNT(*) n FROM users WHERE NOT (username='admin' AND must_change_password=1 AND last_login_at IS NULL)`).n === 0;
+    }
+    var PRODUCTION_DEFAULTS = { backup_schedule_hours: "4" };
+    function applyProductionDefaults({ isProd = config.isProd } = {}) {
+      const set = [];
+      if (!isProd) return set;
+      for (const [k, v] of Object.entries(PRODUCTION_DEFAULTS)) if (db3.getSetting(k, null) === null) {
+        db3.setSetting(k, v);
+        set.push(k);
+      }
+      return set;
     }
     function isNeeded() {
       return setupNeeded() && onlyBootstrapAdmin();
@@ -29089,7 +30297,7 @@ var require_setup = __commonJS({
         const errs = auth3.passwordPolicy(v.admin_password);
         if (errs.length) throw badRequest("Password must contain " + errs.join(", "), { fields: { admin_password: errs.join(", ") } });
         if (config.keySource !== "env" && !fs.existsSync(config.keysJsonPath)) {
-          const keys = { SUDS_ENCRYPTION_KEY: config.encryptionKey.toString("hex"), SUDS_INDEX_KEY: config.indexKey.toString("hex"), created_at: (/* @__PURE__ */ new Date()).toISOString() };
+          const keys = { SUDS_ENCRYPTION_KEY: config.encryptionKey.toString("hex"), SUDS_INDEX_KEY: config.indexKey.toString("hex"), SUDS_SIGNING_KEY: config.signingKey.toString("hex"), created_at: (/* @__PURE__ */ new Date()).toISOString() };
           fs.writeFileSync(config.keysJsonPath, JSON.stringify(keys, null, 2), { mode: 384 });
         }
         const adminHash = await hashPasswordAsync(v.admin_password);
@@ -29103,6 +30311,7 @@ var require_setup = __commonJS({
           if (v.program_contact) db3.setSetting("program_contact", v.program_contact);
           db3.setSetting("caseload_restriction", "1");
         });
+        const defaults = applyProductionDefaults();
         const port = proc.env.PORT ? config.port : v.port || "auto";
         const host = v.network === "lan" ? "0.0.0.0" : "127.0.0.1";
         let tls = "none";
@@ -29119,7 +30328,7 @@ var require_setup = __commonJS({
         } else if (proc.env.TLS_CERT_PATH) tls = "custom";
         const localMode = v.local_mode === true;
         if (!config.localModeFromEnv) config.localModeEnabled = localMode;
-        audit3.log({ user: { username: v.admin_username }, action: "setup.complete", ip: ctx.ip, details: { network: v.network, port, tls, local_mode: config.localModeEnabled } });
+        audit3.log({ user: { username: v.admin_username }, action: "setup.complete", ip: ctx.ip, details: { network: v.network, port, tls, local_mode: config.localModeEnabled, defaults } });
         let desc;
         try {
           desc = await listener.relisten({ host, port, certPath: tls === "selfsigned" ? path.join(config.dataDir, "certs", "suds.crt") : config.tls.cert || "", keyPath: tls === "selfsigned" ? path.join(config.dataDir, "certs", "suds.key") : config.tls.key || "" });
@@ -29132,6 +30341,7 @@ var require_setup = __commonJS({
       });
     };
     module.exports.isNeeded = isNeeded;
+    module.exports.applyProductionDefaults = applyProductionDefaults;
   }
 });
 
@@ -30115,6 +31325,7 @@ var init_ = __esm({
       "./routes/regions.js": () => require_regions2(),
       "./routes/reports.js": () => require_reports(),
       "./routes/resources.js": () => require_resources2(),
+      "./routes/scim.js": () => require_scim2(),
       "./routes/security.js": () => require_security(),
       "./routes/setup.js": () => require_setup(),
       "./routes/supervision.js": () => require_supervision(),
@@ -30201,9 +31412,10 @@ var require_app2 = __commonJS({
       "regions",
       "intake",
       "client-errors",
-      "fhir"
+      "fhir",
+      "scim"
     ];
-    var LOCAL_ROUTE_MODULES2 = ROUTE_MODULES.filter((m) => !["setup", "app", "sync", "intake", "oidc", "client-errors", "fhir", "security"].includes(m));
+    var LOCAL_ROUTE_MODULES2 = ROUTE_MODULES.filter((m) => !["setup", "app", "sync", "intake", "oidc", "client-errors", "fhir", "security", "scim"].includes(m));
     var LOCAL_DISABLED_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SUDS \u2014 local mode is off</title>
 <style>body{font-family:system-ui,sans-serif;max-width:36rem;margin:4rem auto;padding:0 1rem;color:#222;line-height:1.5}h1{font-size:1.4rem}a{color:#0b5}</style></head>
 <body><h1>Local mode is turned off on this server</h1>
@@ -30231,7 +31443,7 @@ var require_app2 = __commonJS({
     ];
     function bodyLimit(ctx) {
       const authed = !!ctx.user && !ctx.session?.mfa_pending;
-      if (!authed) return ctx.path.startsWith("/api/intake/") ? config.maxJsonBodyBytes : config.maxUnauthBodyBytes;
+      if (!authed) return ctx.path.startsWith("/api/intake/") || ctx.path.startsWith("/scim/") ? config.maxJsonBodyBytes : config.maxUnauthBodyBytes;
       if (ctx.path.startsWith("/api/admin/restore")) return config.maxRestoreBodyBytes;
       if (LARGE_BODY_ROUTES.some((re) => re.test(ctx.path))) return config.maxBodyBytes;
       return config.maxJsonBodyBytes;
@@ -30276,7 +31488,7 @@ var require_app2 = __commonJS({
           body: null
         };
         try {
-          if (!url.pathname.startsWith("/api/") && !url.pathname.startsWith("/fhir/")) {
+          if (!url.pathname.startsWith("/api/") && !url.pathname.startsWith("/fhir/") && !url.pathname.startsWith("/scim/")) {
             if (!config.localModeEnabled && (url.searchParams.get("local") === "1" || url.pathname.startsWith("/local/"))) {
               if (url.pathname.startsWith("/local/")) {
                 sendJson(res, 404, { error: "Local mode is disabled on this server" });
@@ -30301,7 +31513,7 @@ var require_app2 = __commonJS({
           if (!["GET", "HEAD"].includes(req.method)) {
             const raw = await readBody(req, bodyLimit(ctx));
             const ct = req.headers["content-type"] || "";
-            if (ct.includes("application/json")) {
+            if (ct.includes("application/json") || /application\/[\w.-]+\+json/.test(ct)) {
               try {
                 ctx.body = raw.length ? JSON.parse(raw.toString("utf8")) : {};
               } catch {
@@ -30325,6 +31537,11 @@ var require_app2 = __commonJS({
           if (err2 instanceof HttpError3 && url.pathname.startsWith("/fhir/")) {
             if (err2.status === 413 && !res.headersSent) res.setHeader("Connection", "close");
             require_common().sendError(res, err2.status, err2.message);
+          } else if (err2 instanceof HttpError3 && url.pathname.startsWith("/scim/")) {
+            if (!res.headersSent) {
+              res.writeHead(err2.status, { "Content-Type": "application/scim+json; charset=utf-8" });
+              res.end(JSON.stringify(require_scim().errorBody(err2.status, err2.message)));
+            } else res.destroy();
           } else if (err2 instanceof HttpError3) {
             if (err2.status === 413 && !res.headersSent) res.setHeader("Connection", "close");
             if (!res.headersSent) sendJson(res, err2.status, { error: err2.message, ...err2.extra || {} });
@@ -30400,7 +31617,9 @@ function mergeUser(localId, serverId) {
   for (const [t, c] of import_sync_tables.default.user_refs) {
     if (!import_db.default.one(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`, t)) continue;
     if (!cols(t).includes(c)) continue;
-    import_db.default.run(`UPDATE ${t} SET ${c}=? WHERE ${c}=?`, serverId, localId);
+    const remap = () => import_db.default.run(`UPDATE ${t} SET ${c}=? WHERE ${c}=?`, serverId, localId);
+    if (t === "audit_log") import_audit.default.maintenance("sync: the device account becomes its office account", remap);
+    else remap();
   }
   import_db.default.run(`DELETE FROM users WHERE id=?`, localId);
   if (import_db.default.getSetting("device_admin_user_id", null) === localId) import_db.default.setSetting("device_admin_user_id", serverId);

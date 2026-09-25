@@ -39,25 +39,25 @@ Answers to the questions county IT typically sends (HECVAT-Lite and CSA CAIQ sty
 | 21 | Session timeout? | 15 min idle (max 60), 12 h absolute; configurable. |
 | 22 | RBAC / least privilege? | Six roles; caseload scoping; de-identified roles; break-glass for clinical notes. [IDENTITY.md](IDENTITY.md) |
 | 23 | Privileged access? | Administrators are separated from clinical content (break-glass with supervisor acknowledgement); all admin actions audited. |
-| 24 | User provisioning (SCIM/LDAP)? | No SCIM/LDAP; accounts created by admins or approved requests; SSO linking per account. |
+| 24 | User provisioning (SCIM/LDAP)? | Yes — SCIM 2.0 `/scim/v2/Users` for Entra ID / Okta (create, update, deactivate; `userName eq` filter; `active=false` ends sessions and wipes devices; groups mapped to roles by a setting; bearer token scoped `scim`). SSO accounts the IdP has not vouched for in N days can be disabled automatically. No LDAP; no SAML (OIDC covers Entra, Okta and ADFS 2016+). [IDENTITY.md](IDENTITY.md) |
 
 ## Logging and monitoring
 
 | # | Question | Answer |
 | --- | --- | --- |
 | 25 | Are access and changes logged? | Yes — every PHI read/write, auth event, denial, configuration change. [LOGGING-AND-AUDIT.md](LOGGING-AND-AUDIT.md) |
-| 26 | Are logs tamper-evident / immutable? | Tamper-evident: hash-chained (HMAC) audit log with sealed head and scheduled verification; chain head anchored every 6 h and at every backup to `AUDIT_ANCHOR_DIR` and optionally syslog. **When `AUDIT_ANCHOR_DIR` is configured to WORM storage**, even a rewrite by a DB administrator with the key is detected; otherwise the anchors sit on storage the administrator can rewrite. Immutability of the anchor store is the county's storage configuration. |
+| 26 | Are logs tamper-evident / immutable? | Tamper-evident and append-only in the database: hash-chained (HMAC) audit log with sealed head and scheduled verification, and SQLite triggers that refuse UPDATE/DELETE outside the retention purge and index-key re-signing; production reports anchors kept on the data disk as a failure; chain head anchored every 6 h and at every backup to `AUDIT_ANCHOR_DIR` and optionally syslog. **When `AUDIT_ANCHOR_DIR` is configured to WORM storage**, even a rewrite by a DB administrator with the key is detected; otherwise the anchors sit on storage the administrator can rewrite. Immutability of the anchor store is the county's storage configuration. |
 | 27 | Log retention? | Audit 7 years (configurable); operational logs 30 days (ship to SIEM for longer). |
 | 28 | SIEM integration? | JSON logs (`LOG_FORMAT=json`), syslog for anchors, Prometheus metrics, `/api/health`. |
-| 29 | Can an auditor get the logs? | Yes — NDJSON export with signed manifest, verifiable offline (`npm run verify-audit-export`). |
+| 29 | Can an auditor get the logs? | Yes — NDJSON export whose manifest is signed with Ed25519 (and MACed), verifiable offline with the published public key alone (`npm run verify-audit-export -- --public-key`). [LOGGING-AND-AUDIT.md](LOGGING-AND-AUDIT.md) |
 
 ## Resilience
 
 | # | Question | Answer |
 | --- | --- | --- |
-| 30 | Backups? | Encrypted, verified on write, retained N copies. Scheduling and the offsite copy must be configured by the county (production warns when they are not). [BACKUP-AND-DR.md](BACKUP-AND-DR.md) |
-| 31 | Tested recovery / RTO / RPO? | Yes — recovery drill (`npm run dr-drill` or Settings) restores the newest backup into a throwaway copy, verifies it end to end, measures RTO and RPO against configured targets and writes a signed report; optional monthly schedule. [BACKUP-AND-DR.md](BACKUP-AND-DR.md) |
-| 32 | High availability? | Single instance by design; documented warm-standby (active–passive) failover procedure; the recovery drill tests restore, not failover. No automatic failover. |
+| 30 | Backups? | Encrypted, verified on write, retained N copies, copied offsite when an offsite directory is set; optional frequent snapshots (`backup_schedule_minutes`) bring RPO to minutes. Scheduling and the offsite copy must be configured by the county (production warns when they are not; the setup wizard defaults production to every 4 hours). [BACKUP-AND-DR.md](BACKUP-AND-DR.md) |
+| 31 | Tested recovery / RTO / RPO? | Yes — recovery drill (`npm run dr-drill` or Settings) restores the newest backup (the offsite copy when configured) into a throwaway copy, optionally with the escrowed key file rather than the server's keys, verifies it end to end, measures RTO and RPO against configured targets and writes an Ed25519-signed report (`npm run verify-dr-report`); optional monthly schedule. RPO can be minutes with online snapshots. [BACKUP-AND-DR.md](BACKUP-AND-DR.md) |
+| 32 | High availability? | Single instance by design; documented warm-standby (active–passive) failover procedure — the recovery drill tests restore, not failover. RPO can be minutes with snapshots. No automatic failover. |
 | 33 | Business continuity plan? | County's plan; SUDS supplies drill evidence and the standby procedure. |
 
 ## Application security and SDLC

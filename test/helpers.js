@@ -50,4 +50,16 @@ function makeUser(username, role, password = 'StaffPassw0rd!x') {
   return { id, username, password };
 }
 
-module.exports = { start, stop, client, makeUser, db };
+// The audit log refuses UPDATE and DELETE (schema.sql triggers). A test that plays someone tampering with
+// it does what such a person would have to: drop the guard, edit, and put the guard back.
+function asAttacker(fn) {
+  const d = db.get();
+  d.exec('DROP TRIGGER IF EXISTS audit_log_no_update; DROP TRIGGER IF EXISTS audit_log_no_delete');
+  try { return fn(); }
+  finally {
+    const schema = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'server', 'schema.sql'), 'utf8');
+    for (const t of schema.match(/CREATE TRIGGER IF NOT EXISTS audit_log_no_\w+ [\s\S]*?END;/g)) d.exec(t);
+  }
+}
+
+module.exports = { start, stop, client, makeUser, db, asAttacker };

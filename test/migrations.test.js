@@ -140,6 +140,9 @@ test('a fresh install and an upgraded install end at the same schema', () => {
           .map(c => `${c.name} ${c.type} notnull=${c.notnull} default=${c.dflt_value ?? ''} pk=${c.pk}`).sort(),
         indexes: d.prepare(`SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL`).all(t.name)
           .map(i => i.sql.replace(/\s+/g, ' ').replace(/IF NOT EXISTS /gi, '').trim()).sort(),
+        // Triggers too: the audit log's append-only guard (schema.sql) must reach an upgraded county.
+        triggers: d.prepare(`SELECT sql FROM sqlite_master WHERE type='trigger' AND tbl_name=?`).all(t.name)
+          .map(i => i.sql.replace(/\s+/g, ' ').replace(/IF NOT EXISTS /gi, '').trim()).sort(),
       };
     }
     return out;
@@ -159,7 +162,9 @@ test('a fresh install and an upgraded install end at the same schema', () => {
   for (const t of Object.keys(fresh)) {
     assert.deepEqual(upgraded[t].columns, fresh[t].columns, `columns of ${t} differ between a fresh and an upgraded database`);
     assert.deepEqual(upgraded[t].indexes, fresh[t].indexes, `indexes of ${t} differ between a fresh and an upgraded database`);
+    assert.deepEqual(upgraded[t].triggers, fresh[t].triggers, `triggers of ${t} differ between a fresh and an upgraded database`);
   }
+  assert.equal(fresh.audit_log.triggers.length, 2, 'the audit log carries its UPDATE and DELETE guards');
 });
 
 test('the generated browser schema matches schema.sql', () => {

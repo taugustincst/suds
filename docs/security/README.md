@@ -31,7 +31,7 @@ Evidence an auditor can take away:
 
 | Evidence | How to produce it |
 | --- | --- |
-| Recovery drill report (signed JSON + text) | Settings → System & backups → *Run a recovery drill now*, or `npm run dr-drill`; written to `<data>/backups/dr-drill-<time>.json` |
+| Recovery drill report (Ed25519-signed JSON + text) | Settings → System & backups → *Run a recovery drill now*, or `npm run dr-drill` (`--keys-file` to prove the escrowed keys); written to `<data>/backups/dr-drill-<time>.json`; verify with `npm run verify-dr-report -- <file> --public-key <key>.pem` (public key: `GET /api/admin/security/signing-key`) |
 | Audit log, verifiable offline | Settings → Security status → *Download audit export*, or `GET /api/admin/audit/export`; verify with `npm run verify-audit-export -- <file> [--key …] [--anchors <dir>]` |
 | Audit anchors | The files in `AUDIT_ANCHOR_DIR` (write-once storage), and the syslog collector if `AUDIT_SYSLOG` is set |
 | Configuration and control status | Settings → Security status (print or save the page), `GET /api/admin/security/status` |

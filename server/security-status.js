@@ -56,6 +56,21 @@ function status() {
   const linked = db.one(`SELECT COUNT(*) n FROM users WHERE is_active=1 AND oidc_subject IS NOT NULL AND oidc_subject <> ''`).n;
   add('Identity', 'Single sign-on (OIDC)', config.oidc.enabled ? 'ok' : 'warn', config.oidc.enabled ? `configured (${config.oidc.issuer.replace(/^https?:\/\//, '')}); ${linked} account${linked === 1 ? '' : 's'} linked` : 'not configured',
     config.oidc.enabled ? '' : 'Set OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET and OIDC_REDIRECT_URI to sign in through the county identity provider (docs/DEPLOYMENT.md).', 'server/oidc.js, server/routes/oidc.js');
+  if (config.oidc.enabled || db.getSetting('sso_trust_idp_mfa', '0') === '1') {
+    const trusted = db.getSetting('sso_trust_idp_mfa', '0') === '1';
+    const acr = db.getSetting('sso_mfa_acr_values', '') || '';
+    const since = new Date(Date.now() - 30 * DAY).toISOString();
+    const viaIdp = trusted ? db.one(`SELECT COUNT(*) n FROM audit_log WHERE action='auth.oidc.login' AND at >= ? AND details LIKE '%"mfa":"idp"%'`, since).n : 0;
+    add('Identity', "Identity provider's multi-factor sign-in", trusted ? 'info' : 'ok', trusted ? `trusted in place of SUDS two-step verification (amr mfa/otp/hwk/swk${acr ? `, or acr ${acr}` : ''}); ${viaIdp} sign-in${viaIdp === 1 ? '' : 's'} in 30 days` : 'not trusted: SSO sign-ins still need the SUDS second factor',
+      trusted ? 'A sign-in the provider does not mark as multi-factor still needs the SUDS code. Every trusted sign-in is audited (auth.oidc.login with mfa "idp"). Make sure the provider enforces MFA for this application (conditional access).' : 'Settings → Security policy → "Trust the identity provider\'s multi-factor sign-in" (off by default).', 'server/routes/oidc.js mfaTrust; server/oidc.js idpMfa');
+  }
+  {
+    const dp = require('./deprovision').report();
+    const scimTokens = db.one(`SELECT COUNT(*) n FROM api_keys WHERE scopes='scim' AND revoked_at IS NULL`).n;
+    add('Identity', 'Deprovisioning', dp.days || scimTokens ? (dp.due.length ? 'warn' : 'ok') : config.oidc.enabled ? 'warn' : 'info',
+      [scimTokens ? `SCIM provisioning on (${scimTokens} token${scimTokens === 1 ? '' : 's'})` : 'no SCIM provisioning', dp.days ? `SSO accounts not seen for ${dp.days} days are disabled` : 'accounts not seen at the identity provider are not disabled automatically'].join('; '),
+      `${dp.linked_active} active account${dp.linked_active === 1 ? '' : 's'} linked to the identity provider${dp.due.length ? `, ${dp.due.length} due to be disabled at the next daily run` : ''}${dp.recent.length ? `; ${dp.recent.length} disabled in the last 90 days` : ''}. ${dp.days || scimTokens ? '' : 'Create a SCIM token (Provisioning below) or set "Disable single sign-on accounts not seen for (days)".'}`.trim(), 'server/deprovision.js; server/routes/scim.js');
+  }
   add('Identity', 'Password sign-in', pol.ssoRequired ? 'ok' : pol.ssoRequiredSetting ? 'bad' : 'info',
     pol.ssoRequired ? `disabled except for emergency account${pol.ssoEmergencyAccounts.length === 1 ? '' : 's'} ${pol.ssoEmergencyAccounts.join(', ')}` : pol.ssoRequiredSetting ? 'SSO is set as required, but OIDC is not configured, so passwords are still accepted' : 'allowed for every account',
     pol.ssoRequired ? 'Every emergency sign-in is audited (auth.login with emergency_account) and logged.' : 'Settings → Security policy → "Require single sign-on" turns password sign-in off for everyone but named break-glass administrators.', 'server/auth.js login()');
@@ -66,14 +81,26 @@ function status() {
   const hours = Number(db.getSetting('backup_schedule_hours', '0')) || 0;
   const lastBackup = db.getSetting('last_scheduled_backup_at', null); const lastStatus = db.getSetting('last_scheduled_backup_status', '') || '';
   const stale = hours && (!lastBackup || ageDays(lastBackup) * 24 > 2 * hours);
-  add('Backups and recovery', 'Scheduled encrypted backups', !hours ? 'bad' : stale || !/^ok/.test(lastStatus) ? 'bad' : 'ok', hours ? `every ${hours} h; last ${lastBackup || 'never'}` : 'off', hours ? lastStatus : 'Turn on under Settings → Scheduled backups.', 'server/scheduled-backup.js');
+  const sb = require('./scheduled-backup');
+  const sched = sb.settings();
+  add('Backups and recovery', 'Scheduled encrypted backups', !hours ? 'bad' : stale || !/^ok/.test(lastStatus) ? 'bad' : 'ok', hours ? `every ${hours} h; last ${lastBackup || 'never'}` : 'off', hours ? lastStatus : `${config.isProd ? 'This is a production server with nothing backing it up. ' : ''}Turn on under Settings → Scheduled backups (every 4 hours is the production default).`, 'server/scheduled-backup.js');
+  const lastSnap = db.getSetting('last_snapshot_at', null); const snapStatus = db.getSetting('last_snapshot_status', '') || '';
+  const snapStale = sched.minutes && (!lastSnap || ageDays(lastSnap) * 1440 > 3 * sched.minutes);
+  add('Backups and recovery', 'Frequent online snapshots', !sched.minutes ? 'info' : snapStale || /^failed/.test(snapStatus) ? 'bad' : 'ok',
+    sched.minutes ? `every ${sched.minutes} min to ${sched.offsiteDir ? 'the offsite directory' : 'the local backups directory'}, newest ${sched.snapshotRetain} kept; last ${lastSnap || 'never'}` : 'off',
+    sched.minutes ? `${snapStatus}${!sched.offsiteDir ? ' Snapshots stay on this disk until an offsite directory is set.' : ''}` : 'Turn on under Settings → Scheduled backups to bring the recovery point down to minutes (SQLite online backup; measured cost in docs/security/BACKUP-AND-DR.md).', 'server/scheduled-backup.js snapshot');
+  const rpo = sb.rpo(sched);
+  const rpoTarget = require('./dr-drill').targets().rpo_hours;
+  add('Backups and recovery', 'Recovery point objective (worst case)', !rpo ? 'bad' : rpo.minutes > rpoTarget * 60 ? 'warn' : 'ok',
+    rpo ? `${rpo.minutes < 120 ? `${rpo.minutes} min` : `${Math.round(rpo.minutes / 6) / 10} h`} (${rpo.by}); target ${rpoTarget < 2 ? `${Math.round(rpoTarget * 60)} min` : `${rpoTarget} h`}` : 'unbounded: nothing is scheduled',
+    rpo ? 'A loss just before the next copy runs costs one whole interval. The last recovery drill measures the age of the copy it restored.' : 'With no schedule, everything since the last manual backup would be lost.', 'server/scheduled-backup.js rpo');
   const offsite = db.getSetting('backup_offsite_dir', '') || '';
   add('Backups and recovery', 'Offsite copy', !offsite ? 'warn' : /offsite copy failed/.test(lastStatus) ? 'bad' : 'ok', offsite ? offsite : 'not configured', offsite ? (/offsite copy failed/.test(lastStatus) ? lastStatus : 'Each scheduled backup is copied here after it is verified.') : 'Set an offsite directory (a mounted share on another host or site).', 'server/scheduled-backup.js');
   const drill = require('./dr-drill').lastDrill();
   const drillAge = drill ? ageDays(drill.at) : null;
   add('Backups and recovery', 'Last recovery drill', !drill ? 'bad' : !drill.ok ? 'bad' : drillAge > 95 ? 'warn' : 'ok',
     drill ? `${drill.ok ? 'passed' : 'FAILED'} ${drill.at.slice(0, 10)} — RTO ${drill.rto_seconds ?? '?'} s (target ${drill.rto_target_minutes} min), RPO ${drill.rpo_seconds != null ? Math.round(drill.rpo_seconds / 360) / 10 + ' h' : '?'} (target ${drill.rpo_target_hours} h)` : 'never run',
-    drill ? (drill.ok ? `${drill.checks_passed}/${drill.checks_total} checks; report ${drill.report_file || '(not written)'}.` : (drill.failures || []).join('; ')) : 'Run one from System & backups, or npm run dr-drill.', 'server/dr-drill.js; report in <data>/backups/dr-drill-*.json');
+    drill ? (drill.ok ? `${drill.checks_passed}/${drill.checks_total} checks; restored the ${drill.backup_copy || 'local'} copy with keys from ${drill.keys_source || 'server memory'}; report ${drill.report_file || '(not written)'}.${drill.keys_source && drill.keys_source !== 'server memory' ? '' : ' Run one with the escrowed key file to prove it opens the backups.'}` : (drill.failures || []).join('; ')) : 'Run one from System & backups, or npm run dr-drill.', 'server/dr-drill.js; report in <data>/backups/dr-drill-*.json');
   add('Backups and recovery', 'Monthly recovery drill', db.getSetting('dr_drill_monthly', '0') === '1' ? 'ok' : 'info', db.getSetting('dr_drill_monthly', '0') === '1' ? 'on' : 'off', 'Settings → Scheduled backups.', 'server/dr-drill.js runIfDue');
   add('Backups and recovery', 'Backup encryption key', config.backupKey ? 'ok' : 'info', config.backupKey ? 'separate SUDS_BACKUP_KEY' : 'derived from the PHI encryption key', config.backupKey ? '' : 'Setting SUDS_BACKUP_KEY lets the PHI key rotate without re-keying the backup set.', 'server/backup.js');
 
@@ -85,9 +112,10 @@ function status() {
   const anchors = require('./audit-anchor').list().length;
   const lastAnchor = db.getSetting('audit_anchor_last_at', null); const anchorWrite = db.getSetting('audit_anchor_last_status', '') || '';
   const anchorVerify = db.getSetting('audit_anchor_verify_status', '') || '';
-  add('Audit', 'Audit anchors outside the database', /^failed/.test(anchorWrite) || /^FAILED/.test(anchorVerify) ? 'bad' : !ad.configured || ad.inside_data_dir ? 'warn' : !anchors ? 'warn' : 'ok',
+  const placement = require('./audit-anchor').placementProblem();
+  add('Audit', 'Audit anchors outside the database', /^failed/.test(anchorWrite) || /^FAILED/.test(anchorVerify) || placement ? 'bad' : !ad.configured || ad.inside_data_dir ? 'warn' : !anchors ? 'warn' : 'ok',
     `${anchors} anchor${anchors === 1 ? '' : 's'} in ${ad.dir}${lastAnchor ? `; last ${lastAnchor}` : ''}${config.auditAnchorHours > 0 ? `; every ${config.auditAnchorHours} h and at each backup` : '; at each backup only'}`,
-    [anchorVerify ? `Last check: ${anchorVerify}.` : 'Not yet checked (runs with the daily audit verification).', /^failed/.test(anchorWrite) ? `Last write ${anchorWrite}.` : '', !ad.configured || ad.inside_data_dir ? 'Set AUDIT_ANCHOR_DIR to write-once storage outside the data directory (WORM/immutable share) so a rewrite of the whole data directory is also caught.' : '', config.auditSyslog ? `Also sent to syslog ${config.auditSyslog}.` : ''].filter(Boolean).join(' '), 'server/audit-anchor.js');
+    [placement || '', anchorVerify ? `Last check: ${anchorVerify}.` : 'Not yet checked (runs with the daily audit verification).', /^failed/.test(anchorWrite) ? `Last write ${anchorWrite}.` : '', placement ? '' : !ad.configured || ad.inside_data_dir ? 'Set AUDIT_ANCHOR_DIR to write-once storage outside the data directory (WORM/immutable share) so a rewrite of the whole data directory is also caught.' : '', config.auditSyslog ? `Also sent to syslog ${config.auditSyslog}.` : ''].filter(Boolean).join(' '), 'server/audit-anchor.js');
   add('Audit', 'Audit retention', 'info', `${Math.round(config.auditRetentionDays / 365 * 10) / 10} years (${config.auditRetentionDays} days)`, (() => { const p = lastAudit('audit.purge'); return p ? `Last purge ${p.at}.` : 'No audit entries old enough to purge yet.'; })(), 'AUDIT_RETENTION_DAYS; server/audit.js purge');
 
   // ---- Encryption and keys ----
@@ -96,6 +124,11 @@ function status() {
   const keyAge = ageDays(rotated ? rotated.at : keyAt);
   add('Encryption and keys', 'PHI encryption key', keyAge !== null && keyAge > 400 ? 'warn' : 'ok', `AES-256-GCM; keys from ${config.keySource === 'env' ? 'the environment / secrets manager' : config.keySource === 'file' ? 'data/keys.json (0600)' : 'development key files in the data directory'}`,
     `${rotated ? `Last rotated ${rotated.at}` : `In use since ${keyAt || 'unknown'}`}${keyAge !== null ? ` (${Math.round(keyAge)} days)` : ''}. Rotate annually: npm run rotate-key.`, 'server/crypto.js; scripts/rotate-key.js');
+  try {
+    const sk = require('./signing').publicInfo();
+    add('Encryption and keys', 'Evidence signing key (Ed25519)', 'ok', `key id ${sk.key_id}; private key in ${config.signingKeySource === 'env' ? 'the environment (SUDS_SIGNING_KEY)' : config.signingKeySource === 'file' ? 'data/keys.json' : config.signingKeySource === 'devfile' ? 'a development key file in the data directory' : 'the test configuration'}, never in the database`,
+      'Signs recovery-drill reports and audit-export manifests; anyone with the public key (GET /api/admin/security/signing-key) can verify them: npm run verify-dr-report, npm run verify-audit-export -- --public-key.', 'server/signing.js');
+  } catch (e) { add('Encryption and keys', 'Evidence signing key (Ed25519)', 'bad', 'unavailable', String(e.message || e), 'server/signing.js'); }
   add('Encryption and keys', 'Index key (blind indexes, audit chain)', 'info', idxRotated ? `last rotated ${idxRotated.at}` : 'not rotated since install', 'npm run rotate-index-key re-derives the indexes and re-signs the audit chain.', 'scripts/rotate-index-key.js');
   if (config.keySource === 'file') { const kb = db.getSetting('keys_backup_at', null); add('Encryption and keys', 'Key backup', kb ? 'ok' : 'bad', kb ? `downloaded ${kb}` : 'never downloaded', 'Keep it apart from the database backups (a password manager or safe).', 'Settings → System & backups'); }
 

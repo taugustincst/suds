@@ -46,6 +46,12 @@ route('dashboard', async () => {
     const n = reqs ? reqs.requests.length : 0;
     if (n) alerts.push(['warn', `${n} access request${n > 1 ? 's' : ''} waiting`, '#/admin?tab=users']);
   }
+  // Production configuration that leaves the county exposed — backups off, audit anchors on the database's
+  // own disk (server/startup-checks.js). Only an administrator can fix these, so only they see them.
+  if (can('settings:manage') && !state.local) {
+    const sec = await get('/api/admin/security/alerts', { quiet: true }).catch(() => null);
+    for (const a of (sec && sec.alerts) || []) alerts.push(['danger', a.label, '#/admin?tab=security']);
+  }
   // Clients still assigned to someone whose account was deactivated: nobody is working them until a
   // supervisor moves them (GET /api/users/caseloads, counts only).
   if (can('assignments:manage')) {

@@ -50,12 +50,32 @@ function list(d = dir()) {
   });
 }
 
-/** Where the directory stands: exists / writable / configured. Never throws. */
+// Resolved through symlinks where the path exists, so a link from outside into the data directory (or the
+// other way round) is seen for what it is.
+const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+const within = (child, parent) => child === parent || child.startsWith(parent + path.sep);
+/** Where the directory stands: exists / writable / configured / inside the data directory. Never throws. */
 function dirStatus(d = dir()) {
   let exists = false; let writable = false;
   try { exists = fs.statSync(d).isDirectory(); } catch {}
   if (exists) { try { fs.accessSync(d, fs.constants.W_OK); writable = true; } catch {} }
-  return { dir: d, configured: config.auditAnchorDirConfigured, exists, writable, inside_data_dir: path.resolve(d).startsWith(path.resolve(config.dataDir) + path.sep) };
+  const a = real(d); const data = real(config.dataDir);
+  // Either way round is the same disk: anchors inside the data directory, or the data directory inside the anchor directory.
+  return { dir: d, configured: config.auditAnchorDirConfigured, exists, writable, inside_data_dir: within(a, data) || within(data, a) };
+}
+
+/**
+ * In production, anchors on the same disk as the database are no anchors at all: whoever can rewrite the
+ * data directory rewrites them with it. Returns the sentence to show (Security status, /api/health, the
+ * startup log) or null when the placement is acceptable. Outside production (a laptop, the test suite) the
+ * default directory is fine and this says nothing.
+ */
+function placementProblem(d = dir()) {
+  if (!config.isProd) return null;
+  const st = dirStatus(d);
+  if (!st.configured) return `AUDIT_ANCHOR_DIR is not set, so audit anchors are written to ${d}, inside the data directory on the same disk as the database they are meant to check. Point AUDIT_ANCHOR_DIR at write-once (WORM) storage outside the data directory (docs/security/LOGGING-AND-AUDIT.md).`;
+  if (st.inside_data_dir) return `AUDIT_ANCHOR_DIR (${d}) is inside the data directory (or contains it), so a rewrite of the data directory rewrites the anchors too. Point it at write-once (WORM) storage outside the data directory (docs/security/LOGGING-AND-AUDIT.md).`;
+  return null;
 }
 
 /**
@@ -226,4 +246,4 @@ function verifyAndRecord() {
   return r;
 }
 
-module.exports = { write, safeWrite, runIfDue, verify, verifyAndRecord, list, dirStatus, keyId, macOf, macOk, canonical, FIELDS };
+module.exports = { write, safeWrite, runIfDue, verify, verifyAndRecord, list, dirStatus, placementProblem, keyId, macOf, macOk, canonical, FIELDS };

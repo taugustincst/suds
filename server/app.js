@@ -31,15 +31,16 @@ function rateLimitReset(key) { buckets.delete(key); }
 // out of the local-mode kernel.
 const ROUTE_MODULES = ['setup', 'auth', 'oidc', 'me', 'app', 'sync', 'dataimport', 'users', 'clients', 'assignments', 'episodes',
   'interventions', 'overdose', 'calls', 'time', 'supervision', 'resources', 'referrals', 'tasks', 'budget', 'notes',
-  'consents', 'patient-requests', 'part2', 'compliance', 'careplan', 'assessments', 'forms', 'documents', 'imports', 'reports', 'caloms', 'handoff', 'admin', 'security', 'options', 'regions', 'intake', 'client-errors', 'fhir'];
+  'consents', 'patient-requests', 'part2', 'compliance', 'careplan', 'assessments', 'forms', 'documents', 'imports', 'reports', 'caloms', 'handoff', 'admin', 'security', 'options', 'regions', 'intake', 'client-errors', 'fhir', 'scim'];
 
 // Not on a device: setup and app are office-server concerns (first-run wizard, connection info), sync is the
 // device's own runner, intake is an inbound API for other systems to call, and oidc needs a live identity
 // provider to redirect to — meaningless (and always disabled) on a device with no office server behind it.
 // security is the office server's recovery drill, audit anchors and Security status (server/routes/security.js).
 // fhir is the office server's integration surface for the county EHR (docs/integration/FHIR.md): a device
-// is nobody's system of record and discloses to no one.
-const LOCAL_ROUTE_MODULES = ROUTE_MODULES.filter(m => !['setup', 'app', 'sync', 'intake', 'oidc', 'client-errors', 'fhir', 'security'].includes(m));
+// is nobody's system of record and discloses to no one. scim is provisioning from the county identity
+// provider (server/routes/scim.js), which a device does not have.
+const LOCAL_ROUTE_MODULES = ROUTE_MODULES.filter(m => !['setup', 'app', 'sync', 'intake', 'oidc', 'client-errors', 'fhir', 'security', 'scim'].includes(m));
 
 // Served in place of the app shell when local mode is off (the wizard's answer in server.json, or LOCAL_MODE_ENABLED). No scripts, nothing to configure.
 const LOCAL_DISABLED_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SUDS — local mode is off</title>
@@ -73,7 +74,7 @@ const LARGE_BODY_ROUTES = [
 ];
 function bodyLimit(ctx) {
   const authed = !!ctx.user && !ctx.session?.mfa_pending;
-  if (!authed) return ctx.path.startsWith('/api/intake/') ? config.maxJsonBodyBytes : config.maxUnauthBodyBytes;
+  if (!authed) return ctx.path.startsWith('/api/intake/') || ctx.path.startsWith('/scim/') ? config.maxJsonBodyBytes : config.maxUnauthBodyBytes;
   if (ctx.path.startsWith('/api/admin/restore')) return config.maxRestoreBodyBytes;
   if (LARGE_BODY_ROUTES.some(re => re.test(ctx.path))) return config.maxBodyBytes;
   return config.maxJsonBodyBytes;
@@ -116,7 +117,7 @@ function createHandler() {
       user: null, session: null, body: null,
     };
     try {
-      if (!url.pathname.startsWith('/api/') && !url.pathname.startsWith('/fhir/')) {
+      if (!url.pathname.startsWith('/api/') && !url.pathname.startsWith('/fhir/') && !url.pathname.startsWith('/scim/')) {
         // Local mode switched off: the shell page for /?local=1 and the kernel it would load are replaced by a
         // short explanation, so the browser copy of SUDS cannot start on this server.
         if (!config.localModeEnabled && (url.searchParams.get('local') === '1' || url.pathname.startsWith('/local/'))) {
@@ -144,7 +145,8 @@ function createHandler() {
       if (!['GET', 'HEAD'].includes(req.method)) {
         const raw = await readBody(req, bodyLimit(ctx));
         const ct = req.headers['content-type'] || '';
-        if (ct.includes('application/json')) {
+        // application/json, and the +json types other systems send (application/scim+json from an identity provider).
+        if (ct.includes('application/json') || /application\/[\w.-]+\+json/.test(ct)) {
           try { ctx.body = raw.length ? JSON.parse(raw.toString('utf8')) : {}; } catch { throw new HttpError(400, 'Invalid JSON'); }
         } else { ctx.rawBody = raw; ctx.body = {}; }
       }
@@ -160,6 +162,10 @@ function createHandler() {
         // The FHIR API answers every failure as an OperationOutcome (an unknown path, a 405, the global rate limit).
         if (err.status === 413 && !res.headersSent) res.setHeader('Connection', 'close');
         require('./fhir/common').sendError(res, err.status, err.message);
+      } else if (err instanceof HttpError && url.pathname.startsWith('/scim/')) {
+        // SCIM clients read errors in SCIM's own shape (RFC 7644 §3.12): an unknown path, a 405, the rate limit.
+        if (!res.headersSent) { res.writeHead(err.status, { 'Content-Type': 'application/scim+json; charset=utf-8' }); res.end(JSON.stringify(require('./scim').errorBody(err.status, err.message))); }
+        else res.destroy();
       } else if (err instanceof HttpError) {
         // An over-limit body is still arriving (readBody stopped keeping it, not reading it); close the
         // connection once the answer is out rather than keep draining a stream nobody wants.

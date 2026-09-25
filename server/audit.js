@@ -181,6 +181,9 @@ async function verifyChainAsync({ key = config.indexKey, skipHead = false, incre
 function resignChain(newKey) {
   const before = verifyChain();
   if (!before.ok) throw new Error(`The audit chain does not verify under the current key (first bad entry ${before.firstBadId}); it will not be re-signed`);
+  return maintenance('index key rotation: re-sign the audit chain', () => resignRows(newKey));
+}
+function resignRows(newKey) {
   const upd = db.get().prepare(`UPDATE audit_log SET prev_hash=?, hash=? WHERE id=?`);
   let prevHash = null; let afterId = 0; let resigned = 0;
   for (;;) {
@@ -226,12 +229,28 @@ function purgeTombstones(days) {
   return n;
 }
 
+/**
+ * The one sanctioned way to change or remove audit rows. schema.sql's triggers refuse UPDATE and DELETE on
+ * audit_log unless audit_maintenance holds a row; this inserts one, runs `fn`, and deletes it again, all in
+ * one transaction (a savepoint when the caller already has one), so the flag is never committed, never seen
+ * by another connection, and is rolled back with everything else if `fn` throws. Used by the retention
+ * purge and by index-key re-signing — nothing else has a reason to touch an audit row.
+ */
+function maintenance(purpose, fn) {
+  if (!purpose || typeof purpose !== 'string') throw new Error('audit maintenance needs a stated purpose');
+  return db.transaction(() => {
+    db.run(`INSERT INTO audit_maintenance(purpose) VALUES(?)`, purpose.slice(0, 200));
+    try { return fn(); }
+    finally { db.run(`DELETE FROM audit_maintenance`); }
+  });
+}
+
 // Retention purge: deletes entries older than `days`, then records the purge so the gap is explained.
 function purge(days) {
   const cutoff = new Date(Date.now() - days * 86400000).toISOString();
   const last = db.one(`SELECT id, hash FROM audit_log WHERE at < ? ORDER BY id DESC LIMIT 1`, cutoff);
   if (!last) return 0;
-  const n = db.run(`DELETE FROM audit_log WHERE at < ?`, cutoff).changes;
+  const n = maintenance('audit retention purge', () => db.run(`DELETE FROM audit_log WHERE at < ?`, cutoff).changes);
   log({ user: { username: 'system' }, action: 'audit.purge', details: { purged: n, before: cutoff, last_purged_id: last.id, last_purged_hash: last.hash } });
   // The purge legitimately changed the row count behind the sealed head; re-seal it or the next
   // verification would read the purge as truncation.
@@ -264,4 +283,4 @@ async function scheduledVerify({ full = false, batch } = {}) {
   return r;
 }
 
-module.exports = { log, verifyChain, verifyChainAsync, verifiedMarker, resignChain, scheduledVerify, purge, purgeTombstones, checkpoint, checkHead };
+module.exports = { log, maintenance, verifyChain, verifyChainAsync, verifiedMarker, resignChain, scheduledVerify, purge, purgeTombstones, checkpoint, checkHead };

@@ -425,13 +425,27 @@ const migrations = [
   },
   // 32: FHIR SMART Backend Services (private_key_jwt). fhir_jwt_assertions remembers each client assertion's
   //     jti until it expires, so an assertion cannot be replayed (server/fhir/jwt.js). A new table only; an
-  //     existing database starts with it empty. (Entries 32 and 33 are other work merged beside this one.)
+  //     existing database starts with it empty.
   (d) => {
     const schemaText = safeSchema();
     const m = schemaText.match(/CREATE TABLE IF NOT EXISTS fhir_jwt_assertions \([\s\S]*?\n\);/);
-    if (!m) throw new Error('migration 34: no definition for fhir_jwt_assertions in schema');
+    if (!m) throw new Error('migration 32: no definition for fhir_jwt_assertions in schema');
     d.exec(m[0]);
     for (const line of schemaText.split('\n')) if (/^CREATE INDEX IF NOT EXISTS idx_fhir_jwt_assertions/.test(line.trim())) d.exec(line.trim());
+  },
+  // 33: the audit log becomes append-only in the database (triggers that refuse UPDATE
+  //     and DELETE outside the sanctioned maintenance window, server/audit.js maintenance()); accounts
+  //     remember when the identity provider last vouched for them and SCIM's id for them; a session records
+  //     whether its second factor came from the identity provider.
+  (d) => {
+    const schemaText = safeSchema();
+    const m = schemaText.match(/CREATE TABLE IF NOT EXISTS audit_maintenance \([\s\S]*?\n\);/);
+    if (m) d.exec(m[0]);
+    for (const t of schemaText.match(/CREATE TRIGGER IF NOT EXISTS audit_log_no_\w+ [\s\S]*?END;/g) || []) d.exec(t);
+    addColumn(d, 'users', 'idp_seen_at', 'TEXT');
+    addColumn(d, 'users', 'scim_external_id', 'TEXT');
+    d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_scim_external_id ON users(scim_external_id) WHERE scim_external_id IS NOT NULL`);
+    addColumn(d, 'sessions', 'mfa_source', 'TEXT');
   },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.

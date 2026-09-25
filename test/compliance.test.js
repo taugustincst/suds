@@ -364,7 +364,7 @@ test('deleting the newest audit rows after a checkpoint is detected as truncatio
   let v = audit.verifyChain();
   assert.equal(v.ok, true); assert.equal(v.truncated, false, 'appending after the checkpoint is fine');
   // Now cut the newest rows back past the checkpoint: the chain itself is still perfect.
-  H.db.run(`DELETE FROM audit_log WHERE id >= ?`, cp.lastId);
+  H.asAttacker(() => H.db.run(`DELETE FROM audit_log WHERE id >= ?`, cp.lastId));
   v = audit.verifyChain();
   assert.equal(v.ok, false); assert.equal(v.truncated, true); assert.match(v.reason, /gone/);
   assert.equal((await admin.get('/api/admin/audit/verify')).data.truncated, true, 'and the admin verify says so');
@@ -376,7 +376,7 @@ test('deleting the newest audit rows after a checkpoint is detected as truncatio
   assert.equal(audit.verifyChain().ok, true);
   // Removing a row at or before the checkpoint (other than by purge) also fails the seal.
   const cp2 = audit.checkpoint();
-  H.db.run(`DELETE FROM audit_log WHERE id = (SELECT MIN(id) FROM audit_log)`);
+  H.asAttacker(() => H.db.run(`DELETE FROM audit_log WHERE id = (SELECT MIN(id) FROM audit_log)`));
   const v3 = audit.verifyChain();
   assert.equal(v3.ok, false); assert.equal(v3.truncated, true);
   assert.ok(cp2.rowCount > 0);

@@ -18,6 +18,7 @@ async function drill({ keys, anchorDir }) {
   if (keys) {
     process.env.SUDS_ENCRYPTION_KEY = keys.enc;
     process.env.SUDS_INDEX_KEY = keys.idx;
+    if (keys.sig) process.env.SUDS_SIGNING_KEY = keys.sig;
   }
   const checks = [];
   const check = (name, ok, detail) => { checks.push({ name, ok: !!ok, detail: detail === undefined ? null : detail }); };

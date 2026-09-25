@@ -24,6 +24,11 @@ if (config.dbPath !== ':memory:') {
 db.open();
 try { db.checkKeyFingerprint(); } catch (e) { console.error(`[suds] ${e.message}`); process.exit(1); }
 ensureBootstrap();
+// Production problems nobody would otherwise see until an auditor asks: said once, loudly, at every start.
+for (const problem of require('./startup-checks').problems()) console.error(`[suds] WARNING: ${problem}`);
+// A drill or backup interrupted by a crash leaves a decrypted copy of the database in the data directory:
+// overwrite and remove it before serving anything (server/dr-drill.js sweepStale).
+try { require('./dr-drill').sweepStale(); } catch (e) { console.error('[suds] could not sweep stale drill copies:', e.message); }
 // FHIR bulk exports a previous run left behind: finished ones carry on, half-built or unreadable ones go.
 try { require('./fhir/bulk').restore(); } catch (e) { console.error('[suds] FHIR export restore:', e.message); }
 const handler = createHandler();
@@ -53,6 +58,9 @@ function housekeeping() {
     // Record retention: discharged clients past the county's retention period are hard-deleted, every
     // table at once, unless the record is on legal hold (server/retention.js). Once a day.
     require('./retention').runIfDue();
+    // Accounts linked to the identity provider that it has not vouched for in sso_deprovision_days are
+    // disabled, their sessions and devices revoked (server/deprovision.js). Off unless set; once a day.
+    require('./deprovision').runIfDue();
     // Verify the audit chain once a day. Tamper-evidence that nobody checks is not evidence of anything.
     // Incremental from the last verified entry (the whole chain weekly), in batches that yield to other
     // requests — it runs on after this pass returns, and never twice at once.
@@ -74,6 +82,11 @@ function housekeeping() {
   } catch (e) { console.error('[suds] housekeeping', e && e.message || e); }
 }
 setInterval(housekeeping, 3600_000).unref();
+
+// Frequent online snapshots (Settings → Scheduled backups → "Also snapshot every … minutes"; off by default):
+// checked every minute, run in the background with SQLite's online backup API so requests keep flowing
+// (server/scheduled-backup.js snapshotIfDue). This is what brings the recovery point down to minutes.
+setInterval(() => { require('./scheduled-backup').snapshotIfDue().catch((e) => console.error('[suds] snapshot', e && e.message || e)); }, 60_000).unref();
 
 let stopping = false;
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => {

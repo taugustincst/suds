@@ -18,6 +18,19 @@ const selfsigned = require('../selfsigned');
 function setupNeeded() { return !config.setupComplete && !config.isTest && config.keySource !== 'env' && !process.env.SUDS_SKIP_SETUP; }
 function userCount() { return db.one(`SELECT COUNT(*) n FROM users`).n; }
 function onlyBootstrapAdmin() { return db.one(`SELECT COUNT(*) n FROM users WHERE NOT (username='admin' AND must_change_password=1 AND last_login_at IS NULL)`).n === 0; }
+/**
+ * Defaults a production install gets from the wizard rather than from someone remembering to set them:
+ * scheduled backups every 4 hours (a new install used to run with none until an administrator found the
+ * Settings tab). Only where nothing has been chosen yet; returns the keys it set.
+ */
+const PRODUCTION_DEFAULTS = { backup_schedule_hours: '4' };
+function applyProductionDefaults({ isProd = config.isProd } = {}) {
+  const set = [];
+  if (!isProd) return set;
+  for (const [k, v] of Object.entries(PRODUCTION_DEFAULTS)) if (db.getSetting(k, null) === null) { db.setSetting(k, v); set.push(k); }
+  return set;
+}
+
 /** Is the first-run wizard still the way in? The same answer /api/setup/status gives, for the startup banner. */
 function isNeeded() { return setupNeeded() && onlyBootstrapAdmin(); }
 
@@ -53,7 +66,7 @@ module.exports = (r) => {
 
     // 1. keys: if they came from dev key files rather than the environment, consolidate them into keys.json
     if (config.keySource !== 'env' && !fs.existsSync(config.keysJsonPath)) {
-      const keys = { SUDS_ENCRYPTION_KEY: config.encryptionKey.toString('hex'), SUDS_INDEX_KEY: config.indexKey.toString('hex'), created_at: new Date().toISOString() };
+      const keys = { SUDS_ENCRYPTION_KEY: config.encryptionKey.toString('hex'), SUDS_INDEX_KEY: config.indexKey.toString('hex'), SUDS_SIGNING_KEY: config.signingKey.toString('hex'), created_at: new Date().toISOString() };
       fs.writeFileSync(config.keysJsonPath, JSON.stringify(keys, null, 2), { mode: 0o600 });
     }
     // 2. admin account (replace bootstrap admin). Hashed off the event loop; a second submission that arrived
@@ -68,6 +81,7 @@ module.exports = (r) => {
       db.setSetting('org_name', v.org_name); if (v.county_name) db.setSetting('county_name', v.county_name); if (v.program_contact) db.setSetting('program_contact', v.program_contact);
       db.setSetting('caseload_restriction', '1');
     });
+    const defaults = applyProductionDefaults();
     // 3. network + TLS
     // With PORT set in the environment the port is IT's decision, not the wizard's: keep listening on it.
     const port = process.env.PORT ? config.port : (v.port || 'auto');
@@ -88,7 +102,7 @@ module.exports = (r) => {
     // in the environment decides it — then the environment keeps winning and the answer is only recorded.
     const localMode = v.local_mode === true;
     if (!config.localModeFromEnv) config.localModeEnabled = localMode;
-    audit.log({ user: { username: v.admin_username }, action: 'setup.complete', ip: ctx.ip, details: { network: v.network, port, tls, local_mode: config.localModeEnabled } });
+    audit.log({ user: { username: v.admin_username }, action: 'setup.complete', ip: ctx.ip, details: { network: v.network, port, tls, local_mode: config.localModeEnabled, defaults } });
     // (network switch below persists the final port)
     // 4. switch listener
     let desc;
@@ -103,3 +117,4 @@ module.exports = (r) => {
   });
 };
 module.exports.isNeeded = isNeeded;
+module.exports.applyProductionDefaults = applyProductionDefaults;

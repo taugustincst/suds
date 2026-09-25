@@ -16,17 +16,121 @@ const db = require('./db');
 // PHI key then leaves every existing backup readable, and a retired PHI key need not be kept just to open
 // old backup sets. An explicit encryptionKey argument (a restore under an old key) still wins.
 function backupKey(encryptionKey) {
-  if (!encryptionKey && config.backupKey) return crypto.createHash('sha256').update(Buffer.concat([config.backupKey, Buffer.from('suds-backup-key')])).digest();
+  if (!encryptionKey && config.backupKey) return fromBackupKey(config.backupKey);
   return crypto.createHash('sha256').update(Buffer.concat([encryptionKey || config.encryptionKey, Buffer.from('suds-backup')])).digest();
 }
+const fromBackupKey = (raw) => crypto.createHash('sha256').update(Buffer.concat([raw, Buffer.from('suds-backup-key')])).digest();
 // Every key a backup on this server might have been made with: the backup key if there is one, then the
-// PHI-derived key (backups from before SUDS_BACKUP_KEY was set). GCM says which one is right.
-function candidateKeys(encryptionKey) {
+// PHI-derived key (backups from before SUDS_BACKUP_KEY was set). GCM says which one is right. `escrow` is a
+// key set read from somewhere other than this process (the recovery drill's --keys-file): only those keys
+// are tried, so a success proves the escrowed copy opens the backup, not the keys this server holds.
+function candidateKeys(encryptionKey, escrow) {
+  if (escrow) {
+    const out = [];
+    if (escrow.backupKey) out.push(fromBackupKey(escrow.backupKey));
+    if (escrow.encryptionKey) out.push(backupKey(escrow.encryptionKey));
+    return out;
+  }
   if (encryptionKey) return [backupKey(encryptionKey)];
   const out = [];
   if (config.backupKey) out.push(backupKey());
   out.push(crypto.createHash('sha256').update(Buffer.concat([config.encryptionKey, Buffer.from('suds-backup')])).digest());
   return out;
+}
+
+/** Encrypt a plaintext database image in the backup frame. */
+function encryptPlain(plain, { encryptionKey } = {}) {
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv('aes-256-gcm', backupKey(encryptionKey), iv);
+  const body = Buffer.concat([c.update(plain), c.final()]);
+  return Buffer.concat([iv, c.getAuthTag(), body]);
+}
+
+/**
+ * The same encrypted snapshot as create(), without holding the event loop while it is made: SQLite's online
+ * backup API (node:sqlite backup(), which copies `rate` pages per step and yields between steps) where this
+ * Node has it, else VACUUM INTO; then the copy is read, encrypted in 4 MB slices with a turn of the event
+ * loop between them, and the plaintext copy overwritten and removed asynchronously. Used by the frequent
+ * snapshots (server/scheduled-backup.js), which run every few minutes while staff are working.
+ * Resolves to { bytes, method, copy_ms, encrypt_ms, plain_bytes }.
+ */
+async function createAsync({ encryptionKey, rate = 256 } = {}) {
+  const sqlite = require('node:sqlite');
+  const tmp = path.join(config.dataDir, `.backup-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.db`);
+  let plain; let method; const t0 = Date.now(); let t1;
+  try {
+    fs.writeFileSync(tmp, '', { mode: 0o600 });
+    if (typeof sqlite.backup === 'function' && config.dbPath !== ':memory:') {
+      method = 'sqlite-online-backup';
+      await sqlite.backup(db.get(), tmp, { rate });
+    } else {
+      method = 'vacuum-into';
+      fs.unlinkSync(tmp);
+      db.get().exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
+    }
+    try { fs.chmodSync(tmp, 0o600); } catch {}
+    t1 = Date.now();
+    plain = await fs.promises.readFile(tmp);
+  } finally { await secureUnlinkAsync(tmp); for (const suffix of ['-wal', '-shm', '-journal']) await secureUnlinkAsync(tmp + suffix); }
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv('aes-256-gcm', backupKey(encryptionKey), iv);
+  const parts = [];
+  const SLICE = 4 << 20;
+  for (let off = 0; off < plain.length; off += SLICE) {
+    parts.push(c.update(plain.subarray(off, Math.min(off + SLICE, plain.length))));
+    await new Promise((resolve) => (globalThis.setImmediate ? globalThis.setImmediate(resolve) : setTimeout(resolve, 0)));
+  }
+  parts.push(c.final());
+  const bytes = Buffer.concat([iv, c.getAuthTag(), ...parts]);
+  const plainBytes = plain.length;
+  plain.fill(0);
+  return { bytes, method, copy_ms: t1 - t0, encrypt_ms: Date.now() - t1, plain_bytes: plainBytes };
+}
+
+/** secureUnlink without blocking: the overwrite is written by the thread pool, a slice at a time. */
+async function secureUnlinkAsync(file) {
+  let st = null; try { st = await fs.promises.lstat(file); } catch (e) { if (e && e.code === 'ENOENT') return false; }
+  if (st && st.isFile() && st.size > 0) {
+    let fh = null;
+    try {
+      fh = await fs.promises.open(file, 'r+');
+      const chunk = Buffer.alloc(Math.min(st.size, 4 << 20));
+      for (let off = 0; off < st.size; off += chunk.length) await fh.write(chunk, 0, Math.min(chunk.length, st.size - off), off);
+      await fh.sync();
+    } catch { /* unlink it anyway */ } finally { if (fh) await fh.close().catch(() => {}); }
+  }
+  try { await fs.promises.unlink(file); return true; } catch { return false; }
+}
+
+/**
+ * Overwrite a plaintext file with zeros, flush it, then remove it. Best effort, and honest about its limits:
+ * on SSDs, copy-on-write and journaling filesystems the old blocks may survive an overwrite; full-disk
+ * encryption of the data volume is what actually protects them (docs/security/BACKUP-AND-DR.md).
+ */
+function secureUnlink(file) {
+  let st = null; try { st = fs.lstatSync(file); } catch (e) { if (e && e.code === 'ENOENT') return false; }
+  if (st && st.isFile() && st.size > 0) {
+    try {
+      const fd = fs.openSync(file, 'r+');
+      try {
+        const chunk = Buffer.alloc(Math.min(st.size, 1 << 20));
+        for (let off = 0; off < st.size; off += chunk.length) fs.writeSync(fd, chunk, 0, Math.min(chunk.length, st.size - off), off);
+        fs.fsyncSync(fd);
+      } finally { fs.closeSync(fd); }
+    } catch { /* unlink it anyway */ }
+  }
+  try { fs.unlinkSync(file); return true; } catch { return false; }
+}
+/** secureUnlink every file under a directory, then remove the directory. */
+function secureRemoveDir(dir) {
+  let n = 0;
+  let entries = []; try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return 0; }
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) n += secureRemoveDir(p); else if (secureUnlink(p)) n++;
+  }
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  return n;
 }
 
 /** A consistent snapshot of the live database, encrypted. Returns the bytes to write or send. */
@@ -41,23 +145,20 @@ function create({ encryptionKey } = {}) {
     db.get().exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
     try { fs.chmodSync(tmp, 0o600); } catch {}
     plain = fs.readFileSync(tmp);
-  } finally { try { fs.unlinkSync(tmp); } catch {} }
-  const iv = crypto.randomBytes(12);
-  const c = crypto.createCipheriv('aes-256-gcm', backupKey(encryptionKey), iv);
-  const body = Buffer.concat([c.update(plain), c.final()]);
-  return Buffer.concat([iv, c.getAuthTag(), body]);
+  } finally { secureUnlink(tmp); }
+  return encryptPlain(plain, { encryptionKey });
 }
 
 /** Decrypt a backup. Throws if the key is wrong or the file has been altered (GCM authenticates both). */
-function decrypt(buf, { encryptionKey } = {}) {
+function decrypt(buf, { encryptionKey, escrow } = {}) {
   if (!Buffer.isBuffer(buf) || buf.length < 29) throw new Error('That does not look like a SUDS backup file');
   const iv = buf.subarray(0, 12), tag = buf.subarray(12, 28), data = buf.subarray(28);
-  for (const key of candidateKeys(encryptionKey)) {
+  for (const key of candidateKeys(encryptionKey, escrow)) {
     const d = crypto.createDecipheriv('aes-256-gcm', key, iv);
     d.setAuthTag(tag);
     try { return Buffer.concat([d.update(data), d.final()]); } catch { /* not this key */ }
   }
-  throw new Error('The backup could not be read. It is either damaged, or it was made with a different encryption key.');
+  throw new Error(escrow ? 'The backup could not be read with the escrowed keys. Either the key file is not the one for this backup set, or the backup is damaged.' : 'The backup could not be read. It is either damaged, or it was made with a different encryption key.');
 }
 
 /** Open a decrypted backup read-only and describe what is inside, without touching the live database. */
@@ -83,7 +184,7 @@ function inspect(plainBytes) {
         bytes: plainBytes.length,
       };
     } finally { d.close(); }
-  } finally { try { fs.unlinkSync(tmp); } catch {} }
+  } finally { secureUnlink(tmp); }
 }
 
 /**
@@ -126,4 +227,4 @@ function restore(plainBytes) {
   return { ...info, previous_database_kept_at: aside };
 }
 
-module.exports = { create, decrypt, inspect, restore, backupKey };
+module.exports = { create, createAsync, encryptPlain, decrypt, inspect, restore, backupKey, secureUnlink, secureUnlinkAsync, secureRemoveDir };
