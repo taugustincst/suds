@@ -112,7 +112,7 @@ does not hold.
 
 8. BACKUP, RECOVERY AND AVAILABILITY
    Scheduled encrypted backups with off-host copy; restore from the UI; DR drill with measured
-   RTO/RPO (docs/security/). Single-instance architecture per programme (no clustering), stated as
+   RTO/RPO ([docs/security/BACKUP-AND-DR.md](../security/BACKUP-AND-DR.md)). Single-instance architecture per programme (no clustering), stated as
    a design choice. Uptime target for vendor-hosted: see templates/SUPPORT-SLA.md.
 
 9. SUPPORT AND IMPLEMENTATION

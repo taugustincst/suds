@@ -50,7 +50,7 @@ process and one SQLite database per programme; a second process is refused
   break-glass, reviewed by a supervisor.
 - **Account requests** (Sign up) wait for administrator approval and can be turned off.
 - **Sessions**: 15-minute idle timeout (configurable, max 60), 12-hour absolute limit.
-- Detail: [docs/HIPAA.md](../HIPAA.md) and the identity document in [docs/security/](../security/).
+- Detail: [docs/HIPAA.md](../HIPAA.md) and [docs/security/IDENTITY.md](../security/IDENTITY.md).
 
 ## Data flows
 
@@ -77,24 +77,24 @@ Staff browser ──HTTPS (TLS 1.2+)──> SUDS server (county or vendor host) 
 
 | Control | What SUDS does | Evidence |
 | --- | --- | --- |
-| Architecture | Single Node.js process, built-ins only, zero third-party runtime packages; CSP self-only, no inline scripts | [docs/security/](../security/) (architecture), [docs/DEPLOYMENT.md](../DEPLOYMENT.md) |
-| Encryption at rest | AES-256-GCM on every PHI field, keys outside the database; blind-index (HMAC) search; disk encryption required | [docs/HIPAA.md](../HIPAA.md), [docs/security/](../security/) (encryption) |
+| Architecture | Single Node.js process, built-ins only, zero third-party runtime packages; CSP self-only, no inline scripts | [docs/security/ARCHITECTURE.md](../security/ARCHITECTURE.md), [docs/DEPLOYMENT.md](../DEPLOYMENT.md) |
+| Encryption at rest | AES-256-GCM on every PHI field, keys outside the database; blind-index (HMAC) search; disk encryption required | [docs/HIPAA.md](../HIPAA.md), [docs/security/ENCRYPTION-AND-KEYS.md](../security/ENCRYPTION-AND-KEYS.md) |
 | Encryption in transit | TLS 1.2+, HSTS, secure/HttpOnly/SameSite=Strict cookies | [docs/HIPAA.md](../HIPAA.md) |
 | Key management | Three independently rotatable keys; rotation runbook; retired-key handling | [docs/DEPLOYMENT.md](../DEPLOYMENT.md), *Key rotation runbook* |
-| Audit | Every PHI read/write, sign-in, denial, export and config change; hash-chained, sealed daily, verified incrementally and weekly in full; 7-year retention | [docs/HIPAA.md](../HIPAA.md), [docs/security/](../security/) (audit anchoring) |
+| Audit | Every PHI read/write, sign-in, denial, export and config change; hash-chained, sealed daily, verified incrementally and weekly in full; 7-year retention | [docs/HIPAA.md](../HIPAA.md), [docs/security/LOGGING-AND-AUDIT.md](../security/LOGGING-AND-AUDIT.md) |
 | 42 CFR Part 2 | Consent elements enforced, referral gating, disclosure accounting, final-rule controls | [docs/HIPAA.md](../HIPAA.md), [docs/compliance/PART2.md](../compliance/PART2.md) |
 | De-identification | Safe Harbor exports by default; small-cell suppression in funder report | [docs/HIPAA.md](../HIPAA.md) |
-| Backup and recovery | Scheduled encrypted backups, off-host copy, restore from the UI, pre-migration snapshots; DR drill with measured RTO/RPO | [docs/DEPLOYMENT.md](../DEPLOYMENT.md), *Backups*; [docs/security/](../security/) (DR drill) |
+| Backup and recovery | Scheduled encrypted backups, off-host copy, restore from the UI, pre-migration snapshots; DR drill with measured RTO/RPO | [docs/DEPLOYMENT.md](../DEPLOYMENT.md), *Backups*; [docs/security/BACKUP-AND-DR.md](../security/BACKUP-AND-DR.md) |
 | Monitoring | `/api/health` readiness probe; Prometheus metrics; JSON logs; no PHI in logs | [docs/DEPLOYMENT.md](../DEPLOYMENT.md), *Monitoring and logs* |
 | Hardening | Checklist for host, TLS, proxy, permissions, firewall, MFA, keys | [docs/DEPLOYMENT.md](../DEPLOYMENT.md), *Hardening checklist* |
 | Supply chain | Release zips with SHA-256 checksums; Dependabot; human review of every change | [docs/ADOPTION.md](../ADOPTION.md), [docs/RELEASE.md](../RELEASE.md) |
 | Residual risks | Blind-index leakage, shared index/audit key, single instance, local-mode keys, experimental `node:sqlite` | [docs/HIPAA.md](../HIPAA.md), *Risk register notes* |
-| Attestation | **SOC 2: readiness self-assessment only; no audit report yet. No third-party pen test yet.** | [docs/security/](../security/) (SOC 2 readiness); timeline in [PROCUREMENT.md](PROCUREMENT.md) |
+| Attestation | **SOC 2: readiness self-assessment only; no audit report yet. No third-party pen test yet.** | [docs/security/README.md](../security/README.md) (SOC 2 readiness); timeline in [PROCUREMENT.md](PROCUREMENT.md) |
 
 ## Security questionnaire
 
 A completed security questionnaire (answers to the common county, CAIQ-lite and SIG-Lite style questions, each
-pointing to evidence) is kept in [docs/security/](../security/). Send us your county's own questionnaire as
+pointing to evidence) is kept in [docs/security/README.md](../security/README.md). Send us your county's own questionnaire as
 well; we answer it from the same evidence and will not answer "yes" to a control that is not in place.
 
 ## Accessibility

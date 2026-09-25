@@ -2,6 +2,81 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+Answers the California county marketability review: SUDS as the operations system for grant-funded,
+non-billing prevention, harm-reduction and outreach programmes, beside the county EHR. Market pack in
+`docs/market/README.md` (positioning, buyer guides, pilot kit, procurement, readiness scorecard, draft
+BAA/QSOA, DPA, SLA and pricing for counsel review).
+
+- **42 CFR Part 2 (2024 final rule)** — control matrix in `docs/compliance/PART2.md`.
+  - Consents record every §2.31 element (who may disclose, signer, right to revoke, consequences of refusing)
+    and print as a PDF; a single consent for treatment, payment and operations; separate consents for SUD
+    counseling notes and for legal proceedings. A general ROI is no longer accepted as Part 2 consent in a Part 2
+    programme (`part2_program`, on by default).
+  - Disclosures under a court order need a recorded, qualifying subpart E order; information for a proceeding
+    against the client needs one (or a proceedings-only consent); counseling notes need their own consent;
+    agreed restrictions must be confirmed before sharing. Identified exports state their lawful basis.
+  - One 2024 §2.32 notice travels with every disclosure: referrals, exports (Excel About sheet, CSV last row,
+    header), form and consent PDFs, printed accounting and notes, FHIR responses, the CalOMS extract and the
+    county EHR hand-off. Client records carry a "42 CFR Part 2" label.
+  - Privacy & Part 2 page: the §2.22 patient notice (editable, versioned, recorded per client, Home reminder), a
+    §2.4 complaint log, and an incident/breach register with the 60-day, HHS and media notification clock. A
+    failed audit check, audit anchors that no longer match, a flagged emergency access, or a very large
+    identified export open a draft incident.
+- **County IT evidence** — `docs/security/` (architecture, encryption and keys, identity, audit, backup and DR,
+  data lifecycle, vulnerability management, SDLC, incident response, SOC 2 readiness mapping, pre-answered
+  questionnaire, pen-test scope). SUDS holds no SOC 2/ISO/HITRUST attestation and says so.
+  - Recovery drill (`npm run dr-drill`, or Settings → System & backups): restores the newest backup into a
+    temporary copy, never the live database, checks it end to end including a two-step sign-in, measures RTO and
+    RPO against targets and writes a signed report; optional monthly schedule.
+  - Audit anchors: the audit chain's head is sealed to write-once storage (`AUDIT_ANCHOR_DIR`, optionally
+    syslog) every 6 hours, at every backup and after a restore, so a rewrite of the whole log by a key holder is
+    detected. Two anchors in the same millisecond no longer collide (one was silently dropped).
+  - Auditor export of the audit log with a signed manifest, verifiable offline (`npm run verify-audit-export`).
+  - "Require single sign-on" with named break-glass administrators; "Require two-step verification for every
+    role"; a report of accounts without it. Settings → Security status: a read-only page for IT reviewers.
+  - Hardened Docker image, compose file and systemd unit; deployment guidance for county VMs, Azure Government /
+    AWS GovCloud tenants and a warm standby.
+- **Clinical depth (CalAIM documentation redesign)** — `docs/compliance/CALAIM.md`.
+  - Problem list with optional ICD-10-CM and social-determinant Z codes, full change history; notes record the
+    problems they address.
+  - Care coordination plan: goals in the client's words, review dates with an overdue alert, steps that can
+    create to-dos; printable.
+  - ASAM six-dimension ratings with recommended vs referred level of care.
+  - PHQ-9, GAD-7, AUDIT-C, DAST-10 and a wellbeing rating, scored automatically with trends; PHQ-9 item 9 above
+    zero raises a safety alert. Reports → Outcome measures with a de-identified export.
+  - New permissions `careplan:*` and `assessments:*`; assessments sync only to roles that can read them.
+  - No eMAR, e-prescribing or claims (out of scope).
+- **CalOMS Tx and the billing boundary** — `docs/compliance/CALOMS.md`, `docs/SCOPE.md`.
+  - Admission, discharge and annual-update records per episode (off by default; Reports → State reporting),
+    DHCS-style edit checks with a validation report, and an extract with the monthly provider activity report;
+    records with fatal errors are held back, each client is accounted as a state-reporting disclosure. **The
+    code sets and layout are not yet verified against the current DHCS data dictionary** (the spec could not be
+    fetched); verify before a county submits.
+  - County EHR hand-off: encounters per client per day for entry into SmartCare or billing, identified and
+    accounted. SUDS does not submit Drug Medi-Cal (837/Short-Doyle) claims.
+- **FHIR R4** — `docs/integration/FHIR.md`. A read-only API at `/fhir/R4` (Patient, EpisodeOfCare, Encounter,
+  Consent, ServiceRequest, Task, Observation, DocumentReference metadata, the resource directory) with Bulk Data
+  `$export`, OAuth2 client credentials, scopes and rate limits (Settings → FHIR clients). A client's records are
+  returned only under a live Part 2 consent naming the organisation for its purpose; counseling notes and
+  restricted clients are never served; a search for one person never reveals whether they were withheld; every
+  client disclosed gets an accounting row.
+- **Accessibility (WCAG 2.1 AA)** — `docs/accessibility/ACR-WCAG21.md` (VPAT 2.5), `STATEMENT.md`, and an
+  accessibility statement page linked from sign-in and the menu.
+  - `scripts/ui/accessibility.mjs` (axe-core, test-only) audits every page, client tab, Settings tab and about
+    60 dialogs for all roles on both builds, at desktop and phone widths, light and dark, and 200% text, plus
+    keyboard-only walkthroughs; it runs in the browser suite and CI and fails on any finding.
+  - Every page has its own title; focus goes to the new page's heading; dialogs make the page behind them inert;
+    tabs are navigation with the current section marked; colour is never the only cue; dark-theme contrast,
+    3:1 field borders and a clear focus ring; reflow at 320 px and 200% text; the idle warning has "Stay signed
+    in"; Home's refresh can be turned off.
+  - Remaining partials are stated: untagged generated PDFs, uncaptioned pictures, the administrator's maximum
+    session length, and screen-reader testing still to do.
+- **Security fixes found along the way:** an intake API key must now carry the intake scope (any key could stage
+  notes before).
+- Schema migrations 29 (clinical depth), 30 (CalOMS), 31 (Part 2).
+
 ## 1.10.2 — 2026-09-25
 
 - **Pictures without the file window.** A resource's Pictures card has **Add from a web address** (an https
