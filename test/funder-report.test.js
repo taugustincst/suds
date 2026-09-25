@@ -118,7 +118,7 @@ test('the small-cell threshold is a setting (default 11)', async () => {
     const r = await sup.get('/api/reports/funder?from=2026-02-14&to=2026-02-14');
     assert.equal(r.data.suppression.threshold, 5);
     assert.equal(r.data.small_cell_threshold, 5);
-    for (const x of Object.values(r.data.demographics).flat()) assert.ok(x.n === '<5' || x.n >= 5, `${x.k}: ${x.n}`);
+    for (const x of Object.values(r.data.demographics).flat()) assert.ok(x.n === '<5' || x.n === 'suppressed' || x.n >= 5, `${x.k}: ${x.n}`);
   } finally { await admin.put('/api/admin/settings', { small_cell_threshold: null }); }
   assert.equal((await nav.get('/api/reports/funder?from=2026-02-14&to=2026-02-14')).data.suppression.threshold, 11);
 });

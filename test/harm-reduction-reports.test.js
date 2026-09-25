@@ -33,7 +33,9 @@ after(async () => { await H.stop(); });
 
 // ---- (a) Naloxone Distribution Project log ----
 test('the NDP log: distribution and reversals reported, aggregated, with no names or client codes', async () => {
-  const r = await sup.get('/api/reports/naloxone-ndp?from=2026-05-01&to=2026-05-31');
+  // Exact counts: the programme's own submission to the NDP (small-cell suppression is tested in
+  // test/small-cell-suppression.test.js).
+  const r = await sup.get('/api/reports/naloxone-ndp?from=2026-05-01&to=2026-05-31&purpose=submission&counts=exact');
   assert.equal(r.status, 200, JSON.stringify(r.data));
   // A navigator sees community distribution and their own caseload's, as with every other report.
   assert.equal((await nav.get('/api/reports/naloxone-ndp?from=2026-05-01&to=2026-05-31')).data.totals.kits, 23, 'the enrolled client is not on this navigator\'s caseload');
@@ -56,7 +58,7 @@ test('the NDP log: distribution and reversals reported, aggregated, with no name
 test('the NDP log: doses per kit is a setting', async () => {
   assert.equal((await admin.put('/api/admin/settings', { naloxone_doses_per_kit: 0 })).status, 400);
   assert.equal((await admin.put('/api/admin/settings', { naloxone_doses_per_kit: 1 })).status, 200);
-  try { assert.equal((await sup.get('/api/reports/naloxone-ndp?from=2026-05-01&to=2026-05-31')).data.totals.doses, 24); }
+  try { assert.equal((await sup.get('/api/reports/naloxone-ndp?from=2026-05-01&to=2026-05-31&purpose=submission&counts=exact')).data.totals.doses, 24); }
   finally { await admin.put('/api/admin/settings', { naloxone_doses_per_kit: null }); }
 });
 

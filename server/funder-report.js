@@ -16,6 +16,7 @@ const { uuid } = require('./crypto');
 // Between the report's phases the event loop is let go, so a health check or a colleague's page load waits
 // for one phase (tens of milliseconds) rather than the whole report. setImmediate is not in the browser kernel.
 const { defer } = require('./spreadsheet');
+const SC = require('./small-cells');
 const breathe = () => new Promise((resolve) => defer(resolve));
 
 const SMALL_CELL_DEFAULT = 11;
@@ -43,7 +44,7 @@ function countingMode(ctx) {
 function countingStatement(s) {
   return s.mode === 'exact'
     ? `Exact counts: every figure is the true number, including groups of fewer than ${s.threshold} people. For the programme's own submission to its funder; not for publication or sharing.`
-    : `Small cells suppressed: a breakdown row counting fewer than ${s.threshold} people is shown as "<${s.threshold}" so nobody can be picked out of a small group; totals are exact. Suitable for publication or sharing.`;
+    : `Small cells suppressed: every count of people under ${s.threshold} (people served, each breakdown row, people per fund, episodes, discharges, overdose events and reversals, who gave the naloxone) is shown as "<${s.threshold}" so nobody can be picked out of a small group, and wherever a hidden figure could still be worked out from a total, another figure (or the total) is hidden with it, shown as "suppressed", so that it cannot be worked out by subtraction. Counts of naloxone kits, doses, test strips, services, staff hours and money are not counts of people and are exact. Suitable for publication or sharing.`;
 }
 
 // Demographic columns read from each person served, in one pass.
@@ -157,20 +158,41 @@ async function build(ctx, { from, to, ts, tsP }) {
       fix_link: `#/interventions?from=${from}&to=${to}&funding=none`, approve_link: `#/time?from=${from}&to=${to}`,
     };
 
-    const suppress = (rows) => (counting.mode === 'exact' ? rows : rows.map(x => (typeof x.n === 'number' && x.n > 0 && x.n < counting.threshold ? { ...x, n: `<${counting.threshold}`, suppressed: true } : x)));
+    // Small-cell suppression (server/small-cells.js): every count of people, in every table, with
+    // complementary suppression against the published totals. Exact mode returns the figures unchanged.
+    const sc = { threshold: counting.threshold, exact: counting.mode === 'exact' };
+    const one = (v) => SC.cell(v, sc);
+    // Each single-valued breakdown of the people served adds up to the number served; if one of them can
+    // only be protected by hiding that total, it is hidden everywhere.
+    let servedOut = one(unduplicated.served);
+    const demo = {};
+    for (const k of ['by_gender', 'by_language', 'by_housing', 'by_insurance', 'by_ethnicity']) {
+      const t = SC.table(demographics[k], ['n'], { ...sc, totals: { n: servedOut } });
+      demo[k] = t.rows; if (typeof t.totals.n !== 'number') servedOut = t.totals.n;
+    }
+    // A person may report several race codes, so that breakdown has no total to subtract from.
+    demo.by_race_code = SC.table(demographics.by_race_code, ['n'], sc).rows;
+    const discharges = SC.table(episodes.by_discharge_reason, ['n'], { ...sc, totals: { n: one(episodes.discharges) } });
+    const months = SC.table(overdose.by_month, ['n', 'reversals'], { ...sc, totals: { n: one(overdose.events), reversals: one(overdose.reversals) } });
+    const funds = SC.table(byFund, ['clients_served'], sc).rows;
+    const noneRow = funds.find(f => f.id === null);
+    // A median over fewer people than the threshold is one of them.
+    const smallGroup = !sc.exact && typeof episodes.discharges === 'number' && episodes.discharges > 0 && episodes.discharges < counting.threshold;
     return {
       from, to, funding_source_id: fund,
       suppression: counting,
       // Kept for the screens and files that read it: the threshold applied, or null when counts are exact.
       small_cell_threshold: counting.mode === 'exact' ? null : counting.threshold,
       counting_statement: countingStatement(counting),
-      unduplicated,
-      demographics: Object.fromEntries(['by_gender', 'by_language', 'by_housing', 'by_insurance', 'by_race_code', 'by_ethnicity'].map(k => [k, suppress(demographics[k])])),
-      episodes: { ...episodes, by_discharge_reason: suppress(episodes.by_discharge_reason) },
-      overdose: { ...overdose, by_administered_by: suppress(overdose.by_administered_by) },
+      unduplicated: { served: servedOut, new_admissions: one(unduplicated.new_admissions), with_a_referral: one(unduplicated.with_a_referral), admitted_after_referral: one(unduplicated.admitted_after_referral), on_mat: one(unduplicated.on_mat) },
+      demographics: Object.fromEntries(['by_gender', 'by_language', 'by_housing', 'by_insurance', 'by_race_code', 'by_ethnicity'].map(k => [k, demo[k]])),
+      episodes: { ...episodes, admissions: one(episodes.admissions), discharges: discharges.totals.n, open_at_end: one(episodes.open_at_end), by_discharge_reason: discharges.rows,
+        median_length_of_stay_days: smallGroup ? SC.SECONDARY : episodes.median_length_of_stay_days },
+      overdose: { ...overdose, events: months.totals.n, reversals: months.totals.reversals, fatal: one(overdose.fatal), community_reported: one(overdose.community_reported),
+        by_month: months.rows, by_administered_by: SC.table(overdose.by_administered_by, ['n'], sc).rows },
       naloxone_distribution: distribution,
-      by_funding_source: byFund,
-      attribution,
+      by_funding_source: funds,
+      attribution: { ...attribution, unattributed_clients: noneRow ? noneRow.clients_served : 0 },
     };
   } finally { db.run(`DROP TABLE IF EXISTS ${served}`); }
 }
