@@ -57,11 +57,18 @@ function housekeeping() {
     const lastVerify = db.getSetting('audit_verified_at', null);
     if (!verifying && (!lastVerify || Date.now() - Date.parse(lastVerify) > 86400000)) {
       verifying = true;
-      require('./audit').scheduledVerify().catch((e) => console.error('[suds] audit verification', e && e.message || e)).finally(() => { verifying = false; });
+      require('./audit').scheduledVerify()
+        // Then against the anchors written outside the database (server/audit-anchor.js).
+        .then(() => require('./audit-anchor').verifyAndRecord())
+        .catch((e) => console.error('[suds] audit verification', e && e.message || e)).finally(() => { verifying = false; });
     }
     // Scheduled backup, if an administrator has turned it on under Settings → System & backups. A failure
     // here (disk full, unreachable offsite share) must not stop the rest of housekeeping.
     require('./scheduled-backup').runIfDue();
+    // Seal the audit chain's head into write-once storage outside the database every AUDIT_ANCHOR_HOURS.
+    require('./audit-anchor').runIfDue();
+    // Monthly recovery drill, if an administrator turned it on (off by default). Runs in the background.
+    require('./dr-drill').runIfDue();
   } catch (e) { console.error('[suds] housekeeping', e && e.message || e); }
 }
 setInterval(housekeeping, 3600_000).unref();

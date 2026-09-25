@@ -55,6 +55,7 @@ module.exports = (r) => {
     const warnings = [];
     try {
       if (db.getSetting('audit_verify_failed_at', null)) warnings.push(`The audit log failed its integrity check at ${db.getSetting('audit_verify_failed_at')}. Investigate before anything else.`);
+      if (/^FAILED/.test(db.getSetting('audit_anchor_verify_status', '') || '')) warnings.push(`The audit log no longer matches the anchors written outside the database (checked ${db.getSetting('audit_anchor_verified_at')}). Investigate before anything else.`);
       const hours = Number(db.getSetting('backup_schedule_hours', '0')) || 0;
       const last = db.getSetting('last_scheduled_backup_at', null); const status = db.getSetting('last_scheduled_backup_status', '') || '';
       if (hours && (!last || Date.now() - Date.parse(last) > 2 * hours * 3600_000)) warnings.push(`Scheduled backups are set for every ${hours} hours but the last one ${last ? 'ran ' + last : 'has never run'}.`);

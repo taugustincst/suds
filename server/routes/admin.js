@@ -9,7 +9,9 @@ const { uuid, randomToken, sha256 } = require('../crypto');
 
 // default_funding_source_id used to be accepted here and was read by nothing; it is gone (1.9.5).
 const SETTING_KEYS = ['org_name', 'caseload_restriction', 'county_name', 'program_contact', 'self_signup', 'note_lock_days', 'session_idle_minutes', 'session_absolute_hours', 'password_max_age_days', 'mfa_required_roles', 'mfa_grace_days',
-  'backup_schedule_hours', 'backup_retain_count', 'backup_offsite_dir', 'client_retention_years', 'org_timezone'];
+  'backup_schedule_hours', 'backup_retain_count', 'backup_offsite_dir', 'client_retention_years', 'org_timezone',
+  // Identity and recovery controls (server/security-status.js validates them together).
+  'mfa_require_all', 'sso_required', 'sso_emergency_accounts', 'dr_drill_monthly', 'dr_rto_target_minutes', 'dr_rpo_target_hours'];
 const listener = require('../listener');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -32,6 +34,7 @@ module.exports = (r) => {
   });
   r.put('/api/admin/settings', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
     const changed = [];
+    const ssoBefore = [db.getSetting('sso_required', '0'), db.getSetting('sso_emergency_accounts', '')].join('|');
     // One transaction: a bad value part-way through the form must not leave the fields before it saved
     // and the ones after it not.
     db.transaction(() => {
@@ -50,6 +53,8 @@ module.exports = (r) => {
         if (k === 'self_signup' && v !== '' && !['0', '1'].includes(v)) throw badRequest('self_signup must be 1 (on) or 0 (off)');
         // The programme's calendar (server/routes/budget.js orgTimezone): an IANA name this server knows.
         if (k === 'org_timezone' && v !== '' && !require('./budget').validTimezone(v)) throw badRequest('org_timezone must be a time zone name such as America/Los_Angeles');
+        if (['mfa_require_all', 'sso_required', 'dr_drill_monthly'].includes(k) && v !== '' && !['0', '1'].includes(v)) throw badRequest(`${k} must be 1 (on) or 0 (off)`);
+        if (['dr_rto_target_minutes', 'dr_rpo_target_hours'].includes(k) && v !== '' && !(Number(v) > 0)) throw badRequest(`${k} must be a positive number`);
         if (k === 'mfa_required_roles') v = v.split(',').map(x => x.trim()).filter(x => ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'].includes(x)).join(',');
         if (k === 'session_idle_minutes' && v !== '' && Number(v) > 60) throw badRequest('Idle timeout may not exceed 60 minutes (HIPAA automatic logoff)');
         // Blank means "back to the default", so the row goes rather than an empty string being stored:
@@ -57,6 +62,10 @@ module.exports = (r) => {
         if (v === '') db.run(`DELETE FROM settings WHERE key=?`, k); else db.setSetting(k, v);
         changed.push(k);
       }
+      // Checked on the settings as saved, so turning SSO on and naming the emergency accounts can be one save —
+      // and only when this save turns it on or changes the accounts, so a server whose identity provider has
+      // since been unconfigured can still save its other settings (Security status flags that state).
+      if (!config.local && [db.getSetting('sso_required', '0'), db.getSetting('sso_emergency_accounts', '')].join('|') !== ssoBefore) require('../security-status').validateSettings();
     });
     audit.log({ user: ctx.user, action: 'settings.update', ip: ctx.ip, details: { changed } });
     return { ok: true };
@@ -81,6 +90,9 @@ module.exports = (r) => {
   // million-row log does not stall every other request for seconds.
   r.get('/api/admin/audit/verify', auth.requireAuth, auth.requirePerm('audit:read'), async (ctx) => {
     const res = await audit.verifyChainAsync();
+    // And against the anchors written outside the database (server/audit-anchor.js): the check that
+    // catches a chain rebuilt wholesale by someone holding the database and its key.
+    if (!config.local) { const a = require('../audit-anchor').verifyAndRecord(); res.anchors = { ok: a.ok, total: a.total, matched: a.matched, other_key: a.other_key, purged: a.purged, bad: a.bad.slice(0, 20) }; }
     audit.log({ user: ctx.user, action: 'audit.verify', ip: ctx.ip, details: res });
     return res;
   });

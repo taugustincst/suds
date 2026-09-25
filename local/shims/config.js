@@ -29,6 +29,7 @@ const config = {
   // over config.oidc. Single sign-on, the metrics endpoint, update checks and JSON logs are office-only.
   oidc: { enabled: false, label: '', issuer: '', clientId: '', clientSecret: '', redirectUri: '', scopes: '', allowedDomains: [] },
   mfaGraceDays: 14, tombstoneRetentionDays: 180, logFormat: 'text', metricsToken: '', updateFeedUrl: '',
+  auditAnchorDir: '', auditAnchorDirConfigured: false, auditAnchorHours: 0, auditSyslog: '',
   saveServerJson() {},
 };
 config.encryptionKey = key('suds.local.enc'); config.indexKey = key('suds.local.idx');

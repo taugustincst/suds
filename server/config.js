@@ -173,6 +173,17 @@ const config = {
   // documented field-work need. The setup wizard asks and stores the answer in server.json
   // (localModeEnabled); LOCAL_MODE_ENABLED in the environment overrides it either way.
   localModeEnabled: parseLocalMode(process.env.LOCAL_MODE_ENABLED ? process.env.LOCAL_MODE_ENABLED : fileCfg.localModeEnabled),
+  // Audit anchoring (server/audit-anchor.js): the head of the audit hash chain is sealed with the index key
+  // and written, one write-once file per anchor, to this directory — every AUDIT_ANCHOR_HOURS and at every
+  // scheduled backup. Point it at storage the database's administrator cannot rewrite (a WORM/immutable
+  // NAS share, an object-lock bucket mounted read/append-only) so that a wholesale rewrite of the audit
+  // table is detectable. Unset, anchors go to <data>/audit-anchors, which catches a rewrite of the
+  // database alone but not of the whole data directory; the Security status page says which it is.
+  auditAnchorDir: process.env.AUDIT_ANCHOR_DIR ? path.resolve(process.env.AUDIT_ANCHOR_DIR) : path.join(dataDir, 'audit-anchors'),
+  auditAnchorDirConfigured: !!process.env.AUDIT_ANCHOR_DIR,
+  auditAnchorHours: process.env.AUDIT_ANCHOR_HOURS ? Number(process.env.AUDIT_ANCHOR_HOURS) : 6,
+  // Optional: also send each anchor to a syslog collector (UDP, RFC 5424), e.g. udp://siem.county.gov:514.
+  auditSyslog: process.env.AUDIT_SYSLOG || '',
   // Years a discharged client's record is kept before the retention job hard-deletes it (server/retention.js).
   // Overridable per installation in Administration -> Settings (client_retention_years).
   clientRetentionYears: Number(process.env.CLIENT_RETENTION_YEARS || 7),

@@ -1,6 +1,8 @@
 # Example deployment: SUDS behind a TLS-terminating reverse proxy (Caddy, configured by ./Caddyfile). Put
-# real values in .env. Images are pinned to a minor line (node in the Dockerfile, caddy here) so a rebuild
-# or pull picks up patch releases only; move the pins deliberately.
+# real values in .env (keys from the county secrets manager: SUDS_ENCRYPTION_KEY, SUDS_INDEX_KEY,
+# SUDS_BACKUP_KEY). Images are pinned to a minor line (node in the Dockerfile, caddy here) so a rebuild or
+# pull picks up patch releases only; move the pins deliberately. Hardening and the county-hosted / cloud
+# options (warm standby, backup replication) are in docs/DEPLOYMENT.md.
 services:
   suds:
     build: .
@@ -11,9 +13,23 @@ services:
       HOST: 0.0.0.0
       PORT: 8080
       SUDS_DATA_DIR: /data
+      AUDIT_ANCHOR_DIR: /anchors
       TRUST_PROXY: "1"           # the proxy below terminates TLS; log the client's address (the last X-Forwarded-For hop), not the proxy's
+    # Container hardening: nothing but /data and /anchors is writable, no Linux capabilities, no setuid
+    # escalation. SUDS needs none of them (it listens on 8080, above 1024).
+    read_only: true
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
     volumes:
       - suds-data:/data          # place on an encrypted volume (LUKS / BitLocker / cloud KMS-backed disk)
+      # Audit anchors. For evidence an administrator cannot rewrite, bind-mount write-once storage here
+      # instead (an NFS/SMB share with SnapLock / immutable snapshots, or an object-lock bucket via a mount):
+      #   - /mnt/worm/suds-anchors:/anchors
+      - suds-anchors:/anchors
+      # Offsite backup copy (Settings → Scheduled backups → offsite directory = /offsite):
+      #   - /mnt/county-backup-share/suds:/offsite
     expose: ["8080"]
   proxy:
     image: caddy:2.10-alpine
@@ -26,4 +42,5 @@ services:
       - caddy-data:/data
 volumes:
   suds-data:
+  suds-anchors:
   caddy-data:

@@ -70,6 +70,10 @@ Copy `.env.example` to `.env` and set:
 | `UPDATE_FEED_URL` | optional | Lets Administration check for a newer release. See "Upgrades" below. |
 | `METRICS_TOKEN`, `LOG_FORMAT` | optional | Prometheus metrics and JSON logging for an existing monitoring stack. See "Monitoring and logs" below. |
 | `AUDIT_RETENTION_DAYS` | no | Default 2555 (7 years). |
+| `AUDIT_ANCHOR_DIR` | recommended | Where audit anchors are written (`server/audit-anchor.js`): the head of the audit hash chain, sealed with the index key, one write-once file per anchor. Point it at storage the database's administrator cannot rewrite — a WORM / immutable-snapshot NAS share or an object-lock bucket mounted as a directory. SUDS never creates a configured directory (an unmounted share is an empty mount point); it reports the failure instead. Unset: `<data>/audit-anchors`, which catches a rewrite of the database but not of the whole data directory. See security/LOGGING-AND-AUDIT.md. |
+| `AUDIT_ANCHOR_HOURS` | no | Default 6. Hours between anchors; every scheduled backup also writes one. `0` = at backups only. |
+| `AUDIT_SYSLOG` | no | Also send each anchor to a syslog collector over UDP (RFC 5424, facility *log audit*), e.g. `udp://siem.county.gov:514`. |
+| `DR_DRILL_TIMEOUT_MS` | no | Default 900000 (15 min). How long a recovery drill's restored copy may take before the drill is failed. |
 | `SUDS_ADMIN_USERNAME`, `SUDS_ADMIN_PASSWORD` | first run only | Initial admin. Otherwise a temporary password is printed once to stdout (never to the log file) and, in production, also written to `data/first-admin-password.txt` (mode 0600), which is deleted the moment an administrator changes their password. |
 | `SUDS_SKIP_SETUP=1` | no | Never show the browser setup wizard (it is already skipped when keys come from the environment). |
 
@@ -86,6 +90,8 @@ Optional, and additive: SUDS's own username/password + MFA login keeps working e
 
 The ID token is verified against the provider's published signing keys (RS256 only — symmetric and unsigned tokens are refused outright), and its issuer, audience, expiry and nonce are all checked before anyone is signed in. Once signed in, an OIDC session behaves exactly like a password one: the same idle/absolute timeouts, the same MFA requirement if the account's role requires it, and the same audit trail (`auth.oidc.login`, `auth.oidc.failed`). SSO is never offered in local/offline mode — a device with no route to the office server has no route to the identity provider either.
 
+**Requiring SSO.** Once staff are linked, Settings → Security policy → **Require single sign-on** turns password sign-in off for every account except the emergency (break-glass) administrator accounts named beside it — so a leaver is cut off at the identity provider and the county's password and MFA policy applies there. The setting is refused until OIDC is configured and at least one active administrator is named as an emergency account (an identity-provider outage must not lock the programme out). A password sign-in by an emergency account is recorded as `auth.login` with `emergency_account: true` and logged as a warning; a refused one as `auth.login.sso_required`. The check runs only after the password verifies, so it reveals nothing to someone guessing. If OIDC is later unconfigured, the requirement stops being enforced (rather than locking everyone out) and Security status shows it as "Action needed". Local-mode devices sync by password, so with SSO required only emergency accounts can sync a device. SUDS's own TOTP requirement still applies to SSO sign-ins for roles that require it; SUDS does not yet read the identity provider's MFA claim (`amr`) in its place.
+
 ## 2. Run
 
 ### systemd (Linux)
@@ -93,22 +99,58 @@ The ID token is verified against the provider's published signing keys (RS256 on
 ```ini
 [Unit]
 Description=SUDS SUD Navigator Services Tracker
-After=network.target
+After=network-online.target remote-fs.target
+Wants=network-online.target
+# The anchor share must be mounted before SUDS starts writing to it.
+RequiresMountsFor=/opt/suds/data /mnt/worm/suds-anchors
 
 [Service]
 User=suds
+Group=suds
 WorkingDirectory=/opt/suds
+# 0600, root-owned; or LoadCredential= from the county secrets manager integration.
 EnvironmentFile=/etc/suds/suds.env
+Environment=SUDS_ENV=production SUDS_DATA_DIR=/opt/suds/data AUDIT_ANCHOR_DIR=/mnt/worm/suds-anchors
 ExecStart=/usr/bin/node --no-warnings=ExperimentalWarning server/index.js
 Restart=always
-NoNewPrivileges=true
+RestartSec=5
+UMask=0077
+
+# Filesystem: the OS and the code read-only; only the data and anchor directories writable.
 ProtectSystem=strict
-ReadWritePaths=/opt/suds/data
+ReadWritePaths=/opt/suds/data /mnt/worm/suds-anchors
+ReadOnlyPaths=/opt/suds
+ProtectHome=true
 PrivateTmp=true
+PrivateDevices=true
+# Privileges: nothing to escalate to, no capabilities (SUDS listens above 1024; the TLS proxy has 443).
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+# Kernel and process isolation.
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RemoveIPC=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @debug
+# V8's JIT needs writable+executable memory, so MemoryDenyWriteExecute stays off for Node.
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+`ReadWritePaths` must cover `SUDS_DATA_DIR` (which holds the offsite directory too, if you point it at a subdirectory) and `AUDIT_ANCHOR_DIR`; add the offsite share's mount point when it lives elsewhere. `systemd-analyze security suds` scores the unit. The recovery drill (`npm run dr-drill`, or the button in Settings) forks a second Node process inside the same unit, which these settings allow. Test the unit on a staging host before production: `SystemCallFilter` sets differ slightly between systemd versions.
 
 ### Docker
 
@@ -151,9 +193,21 @@ npm run backup -- /secure/backups        # encrypted, consistent snapshot (VACUU
 node scripts/backup.js --restore /secure/backups/suds-<stamp>.db.enc /opt/suds/data/suds.db
 ```
 
-Schedule nightly with cron / Task Scheduler and copy off-host, or turn on the built-in schedule instead: Administration → **Settings → Scheduled backups**, set an interval in hours and (optionally) an offsite directory — a mounted network share or drive path SUDS can write to directly. It runs from the same hourly housekeeping timer as audit and tombstone retention (`server/index.js`), keeps the configured number of local copies (oldest pruned first), and records the result under Administration → **System & backups**, including whether the offsite copy succeeded. The offsite directory must already exist: SUDS never creates it, because an unmounted share is an empty mount point and a folder made there would put the "offsite" copy on the very disk it exists to survive losing. An unreachable or missing offsite path never loses the local backup that already succeeded — it is reported as a status (`offsite copy failed: offsite directory does not exist (is the share mounted?)`), not a failure of the backup itself. A backup that cannot be written or read back at all (a full disk, a locked database) is recorded the same way: the status reads `failed: <reason>`, an audit entry `backup.scheduled` with `success: false` is written, `/api/health` answers 503 with the reason, and the page shows "Attention needed". Old copies beyond the retention count are pruned *before* the new one is written, so a disk full of old backups still has room for tonight's. Test restores quarterly either way. Backups are encrypted with a key derived from `SUDS_ENCRYPTION_KEY`, so a backup without the key is useless to an attacker — and to you.
+Schedule nightly with cron / Task Scheduler and copy off-host, or turn on the built-in schedule instead: Administration → **Settings → Scheduled backups**, set an interval in hours and (optionally) an offsite directory — a mounted network share or drive path SUDS can write to directly. It runs from the same hourly housekeeping timer as audit and tombstone retention (`server/index.js`), keeps the configured number of local copies (oldest pruned first), and records the result under Administration → **System & backups**, including whether the offsite copy succeeded. The offsite directory must already exist: SUDS never creates it, because an unmounted share is an empty mount point and a folder made there would put the "offsite" copy on the very disk it exists to survive losing. An unreachable or missing offsite path never loses the local backup that already succeeded — it is reported as a status (`offsite copy failed: offsite directory does not exist (is the share mounted?)`), not a failure of the backup itself. A backup that cannot be written or read back at all (a full disk, a locked database) is recorded the same way: the status reads `failed: <reason>`, an audit entry `backup.scheduled` with `success: false` is written, `/api/health` answers 503 with the reason, and the page shows "Attention needed". Old copies beyond the retention count are pruned *before* the new one is written, so a disk full of old backups still has room for tonight's. Prove the backups restore with a recovery drill (below) — monthly if you turn the schedule on, and at least quarterly either way. Backups are encrypted with a key derived from `SUDS_ENCRYPTION_KEY`, so a backup without the key is useless to an attacker — and to you.
 
 An administrator can also restore without a shell, from Administration → **System & backups → Restore from a backup**: it reports what the file contains before changing anything, requires the administrator's password, and keeps the replaced database as `suds.db.before-restore-<stamp>` so a mistaken restore is recoverable. The file format is identical either way — both the manual and scheduled paths use `server/backup.js`.
+
+### Recovery drill (tested RTO and RPO)
+
+```bash
+npm run dr-drill                        # restore the newest backup in data/backups into a temporary copy and prove it
+npm run dr-drill -- --backup /path/to/offsite/suds-<stamp>.db.enc   # a copy fetched back from the offsite share
+npm run dr-drill -- --fresh             # take a backup first, then restore that
+```
+
+or **Settings → System & backups → Run a recovery drill now** (runs in the background; the card shows progress and the result), or monthly from housekeeping (**Settings → Scheduled backups → Recovery drill every month**, off by default). The drill (`server/dr-drill.js`) decrypts the backup into `data/.dr-drill/<random>/` (0700), starts SUDS against that copy in a separate process that is never given the live database's path (`server/dr-drill-child.js`; the keys reach it over the IPC channel, not its environment), and checks: SQLite `integrity_check`; that the keys in custody open it (the key fingerprint); the schema is at this build's version (migrating an older backup, as a real restore would); every table holds the rows the backup was taken with; the whole audit chain verifies and matches the anchors written before the backup; a sample of every `*_enc` column decrypts; `/api/health` answers; and a throwaway administrator with a known second factor signs in (password + TOTP) and reads the records back. The copy is deleted afterwards. It measures **RTO** (seconds from starting the restore to the restored copy serving) and **RPO** (the age of the backup it restored — what a loss at that moment would have cost), compares them with the targets under Settings (`dr_rto_target_minutes`, default 60; `dr_rpo_target_hours`, default the backup interval or 24), and writes `data/backups/dr-drill-<stamp>.json` (SHA-256 and HMAC under the index key over the canonical report, so an edited report does not verify) and a `.txt` copy. The result is shown on Settings → System & backups and Security status, recorded as the `dr.drill` audit entry, and kept in the `dr_last_drill` setting. See security/BACKUP-AND-DR.md.
+
+The drill measures a restore onto the *same* host. For a disaster that takes the host, the RTO also includes bringing up the standby (see "County hosting options" below); run the drill on the standby with `--backup` against a copy from the offsite share to measure that end to end.
 
 ### Key rotation runbook
 
@@ -199,7 +253,36 @@ A backup is readable only with the key that was current when it was taken. So, w
 - Take a fresh backup immediately after each rotation, so the most recent backup always matches the current keys. Download a fresh key backup from Administration → System if the keys live in `data/keys.json`.
 - Record who rotated what and when in the county's key-custodian log; the audit entries `security.key_rotated` and `security.index_key_rotated` are the system's side of that record.
 
-## 4a. Monitoring and logs
+## 4a. County hosting options and single-site risk
+
+SUDS is deliberately one process on one SQLite file ("Single instance only" above), so resilience comes from where it runs, how its backups leave the building, and a practised standby — not from clustering. Every option below keeps PHI inside infrastructure the county controls; SUDS has no vendor cloud and no subprocessor (security/DATA-LIFECYCLE.md).
+
+**A. County-hosted VM (the default).** A Linux VM (or Windows Server) in the county data centre, run under the systemd unit above, TLS terminated by the county's proxy or Caddy. The data directory on an encrypted volume; `AUDIT_ANCHOR_DIR` on a WORM/immutable share on a different storage system; scheduled backups every 1–4 hours with the offsite directory on a share at a second site (or replicated to one). Hypervisor snapshots are a convenience, not the backup: a snapshot of a running SQLite file is only crash-consistent — the scheduled backup (`VACUUM INTO`, then encrypted and read back) is the copy to rely on.
+
+**B. County cloud tenant — Azure Government / AWS GovCloud (US), or the commercial regions the county already uses under its BAA.** The same shape, on the county's own subscription or account:
+
+| | Azure (Government) | AWS (GovCloud) |
+| --- | --- | --- |
+| Host | Linux VM, or a container (ACI/AKS) with exactly one replica | EC2, or ECS with `desiredCount: 1` |
+| Data volume | Managed disk, server-side encryption with a customer-managed key in Key Vault | EBS encrypted with a customer-managed KMS key |
+| Keys | Key Vault secrets → environment at start | Secrets Manager / SSM Parameter Store (SecureString) → environment |
+| Anchors (`AUDIT_ANCHOR_DIR`) | Azure Files share on a storage account with an immutability (WORM) policy | S3 bucket with Object Lock (compliance mode) mounted as a directory (Mountpoint for Amazon S3), or EFS protected by AWS Backup Vault Lock |
+| Offsite backups | Storage in the paired region (GRS or object replication) | S3 with Cross-Region Replication to a second region, Object Lock on |
+| TLS / edge | Application Gateway or the county's front door | ALB with an ACM certificate |
+
+Run exactly one instance: a container platform must not scale it out (`server/instance-lock.js` refuses a second process on the same data directory). Check that the county's storage choice supports how SUDS writes anchors (a new file per anchor, created exclusively, never modified) before relying on it. Keep the county's BAA with the cloud provider in force; SUDS itself makes no outbound calls except the optional ones in "Outbound internet".
+
+**C. Warm standby (active–passive).** For an RTO shorter than "rebuild a server":
+
+1. Build a second host (another site, availability zone or region) from the same release, with the same keys available from the secrets manager but **SUDS not running** (`systemctl disable --now suds`, or the container scaled to 0). It can read the offsite backup share and the anchor store.
+2. Replication is the backup set: scheduled backups every *N* hours (RPO ≈ *N*) copied to the offsite share the standby reads. Do not replicate the live SQLite file (copying it while it is written produces a damaged copy).
+3. Prove the standby monthly: on the standby, `npm run dr-drill -- --backup <newest file on the offsite share>`. The report is the evidence that the standby can take over within the RTO, measured on the machine that would.
+4. Failover: declare the primary lost and make sure it is stopped or fenced (two live copies would diverge); on the standby `node scripts/backup.js --restore <newest offsite backup> <data dir>/suds.db`, start SUDS, move the DNS name or proxy target, and tell staff to sign in again. Local-mode devices see the new database generation on their next sync and re-offer what the backup lacked (`server/routes/sync.js`). Record the event in the incident register (Settings → Incidents). A restore through Settings → System & backups also writes a `restore` audit anchor, so the anchors from before it are not reported as tampering.
+5. Failback is the same procedure in the other direction, from a backup taken on the standby.
+
+What this does not give you: automatic failover or zero data loss. Anything entered after the last backup is lost in a site failure; shorten the backup interval to shorten that window.
+
+## 4b. Monitoring and logs
 
 `GET /api/health` needs no authentication and returns `{ ok, database, uptime_seconds, warnings }`. It answers 503 when the database cannot be read, free disk drops below 100 MB, the audit chain failed verification, scheduled backups have stopped or the HTTPS certificate is within 60 days of expiry, so it works directly as a liveness and readiness probe (the Docker image uses it). The inventory figures — `version`, `schema_version`, `database_bytes`, `disk_free_bytes` — are included only for an administrator's session or a request carrying `Authorization: Bearer <METRICS_TOKEN>`, since they describe the installation to anyone who can reach the port.
 
@@ -240,8 +323,11 @@ Schema migrations run automatically at startup (`server/db.js`), each inside a t
 - [ ] Data directory permissions `0700`, database `0600`, owned by the service user.
 - [ ] Host firewall allows only 443 from the county network / VPN.
 - [ ] OS disk encryption enabled; screen lock policies on workstations.
-- [ ] MFA required for all roles (`MFA_REQUIRED_ROLES`); grace period (`MFA_GRACE_DAYS`, default 14) set to what your policy allows.
+- [ ] MFA required for all roles (`MFA_REQUIRED_ROLES`, or the "every role" switch in Settings); grace period (`MFA_GRACE_DAYS`, default 14) set to what your policy allows.
 - [ ] Keys in a secrets manager; key custodian documented.
-- [ ] Backups scheduled, encrypted, off-host, restore tested.
+- [ ] Backups scheduled, encrypted, off-host; a recovery drill passed within the last quarter (Settings → System & backups), monthly drill on.
+- [ ] `AUDIT_ANCHOR_DIR` on write-once storage outside the data directory; Security status shows the anchors matching.
+- [ ] Single sign-on configured and required (Settings → Security policy → Require single sign-on) with named, sealed break-glass administrator accounts; two-step verification required for every role.
+- [ ] Settings → Security status reviewed with no "Action needed" lines.
 - [ ] Audit log reviewed monthly (Administration → Audit log → Break-glass events, Access denials, Exports).
 - [ ] Business Associate Agreements in place with any hosting provider and with Pocket AI / Microsoft if PHI transits their services.
