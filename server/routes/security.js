@@ -11,6 +11,18 @@ const { badRequest, HttpError } = require('../http');
 module.exports = (r) => {
   r.get('/api/admin/security/status', auth.requireAuth, auth.requirePerm('settings:manage'), () => require('../security-status').status());
 
+  // The public half of the Ed25519 key that signs recovery-drill reports and audit-export manifests
+  // (server/signing.js). Not a secret; an auditor records it once and verifies documents against it
+  // (npm run verify-dr-report / verify-audit-export -- --public-key). ?format=pem downloads it as a file.
+  r.get('/api/admin/security/signing-key', auth.requireAuth, auth.requirePerm('audit:read', 'settings:manage'), (ctx) => {
+    const info = require('../signing').publicInfo();
+    if (ctx.query.get('format') === 'pem') {
+      ctx.res.writeHead(200, { 'Content-Type': 'application/x-pem-file', 'Content-Disposition': `attachment; filename="suds-signing-key-${info.key_id}.pem"` });
+      ctx.res.end(info.public_key_pem); return;
+    }
+    return { ...info, signs: ['recovery-drill reports (<data>/backups/dr-drill-*.json)', 'audit-export manifests (GET /api/admin/audit/export)'], verify_with: ['npm run verify-dr-report -- <report.json> --public-key <this key>.pem', 'npm run verify-audit-export -- <export.ndjson> --public-key <this key>.pem'] };
+  });
+
   r.get('/api/admin/security/mfa-report', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
     const rep = require('../security-status').mfaReport();
     audit.log({ user: ctx.user, action: 'security.mfa_report', ip: ctx.ip, details: { without: rep.without.length } });
@@ -76,8 +88,8 @@ module.exports = (r) => {
       after = rows[rows.length - 1].id;
       await new Promise((resolve) => (globalThis.setImmediate ? globalThis.setImmediate(resolve) : setTimeout(resolve, 0)));
     }
-    const manifest = { type: 'manifest', entries: n, first_id: n ? fromId : null, last_id: n ? after : null, first_prev_hash: firstPrev, last_hash: lastHash, sha256: hash.digest('hex'), key_id: anchorMod.keyId(), anchors, head_checkpoint: head, verify_with: 'npm run verify-audit-export -- <this file> [--key <SUDS_INDEX_KEY>] [--anchors <anchor dir>]' };
-    manifest.mac = ex.manifestMac(manifest, config.indexKey);
+    const manifest = { type: 'manifest', entries: n, first_id: n ? fromId : null, last_id: n ? after : null, first_prev_hash: firstPrev, last_hash: lastHash, sha256: hash.digest('hex'), key_id: anchorMod.keyId(), anchors, head_checkpoint: head, verify_with: 'npm run verify-audit-export -- <this file> --public-key <signing-key.pem> [--key <SUDS_INDEX_KEY>] [--anchors <anchor dir>]' };
+    ex.sealManifest(manifest, { indexKey: config.indexKey });
     res.end(JSON.stringify(manifest) + '\n');
   });
 };

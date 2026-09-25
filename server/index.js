@@ -24,6 +24,8 @@ if (config.dbPath !== ':memory:') {
 db.open();
 try { db.checkKeyFingerprint(); } catch (e) { console.error(`[suds] ${e.message}`); process.exit(1); }
 ensureBootstrap();
+// Production problems nobody would otherwise see until an auditor asks: said once, loudly, at every start.
+for (const problem of require('./startup-checks').problems()) console.error(`[suds] WARNING: ${problem}`);
 const handler = createHandler();
 listener.start(handler);
 

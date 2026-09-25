@@ -53,7 +53,7 @@ module.exports = (r) => {
 
     // 1. keys: if they came from dev key files rather than the environment, consolidate them into keys.json
     if (config.keySource !== 'env' && !fs.existsSync(config.keysJsonPath)) {
-      const keys = { SUDS_ENCRYPTION_KEY: config.encryptionKey.toString('hex'), SUDS_INDEX_KEY: config.indexKey.toString('hex'), created_at: new Date().toISOString() };
+      const keys = { SUDS_ENCRYPTION_KEY: config.encryptionKey.toString('hex'), SUDS_INDEX_KEY: config.indexKey.toString('hex'), SUDS_SIGNING_KEY: config.signingKey.toString('hex'), created_at: new Date().toISOString() };
       fs.writeFileSync(config.keysJsonPath, JSON.stringify(keys, null, 2), { mode: 0o600 });
     }
     // 2. admin account (replace bootstrap admin). Hashed off the event loop; a second submission that arrived

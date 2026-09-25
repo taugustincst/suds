@@ -55,6 +55,8 @@ module.exports = (r) => {
     const warnings = [];
     try {
       if (db.getSetting('audit_verify_failed_at', null)) warnings.push(`The audit log failed its integrity check at ${db.getSetting('audit_verify_failed_at')}. Investigate before anything else.`);
+      const placement = config.local ? null : require('../audit-anchor').placementProblem();
+      if (placement) warnings.push(placement);
       if (/^FAILED/.test(db.getSetting('audit_anchor_verify_status', '') || '')) warnings.push(`The audit log no longer matches the anchors written outside the database (checked ${db.getSetting('audit_anchor_verified_at')}). Investigate before anything else.`);
       const hours = Number(db.getSetting('backup_schedule_hours', '0')) || 0;
       const last = db.getSetting('last_scheduled_backup_at', null); const status = db.getSetting('last_scheduled_backup_status', '') || '';

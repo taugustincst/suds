@@ -8,7 +8,7 @@ const LABEL = { ok: 'OK', warn: 'Attention', bad: 'Action needed', info: 'Info' 
 const dur = (s) => s == null ? '—' : s < 120 ? `${s} s` : s < 7200 ? `${Math.round(s / 6) / 10} min` : `${Math.round(s / 360) / 10} h`;
 
 export async function securityTab() {
-  const s = await get('/api/admin/security/status');
+  const [s, signingKey] = await Promise.all([get('/api/admin/security/status'), get('/api/admin/security/signing-key', { quiet: true }).catch(() => null)]);
   const groups = [...new Set(s.items.map(i => i.group))];
   const exportLink = h('a', { class: 'btn sm', href: '/api/admin/audit/export', download: '' }, 'Download audit export (NDJSON + manifest)');
   const anchorMsg = h('span', { class: 'small muted' });
@@ -33,8 +33,9 @@ export async function securityTab() {
         { label: 'Last sign-in', render: u => u.last_login_at ? fmt.dt(u.last_login_at) : 'never' },
       ], s.mfa.without) : h('p', {}, badge('Every active account has enrolled', 'ok'))),
     h('div', { class: 'card' }, h('h2', {}, 'Evidence for an auditor'),
-      h('p', { class: 'small' }, 'The audit export is the hash chain as NDJSON with a manifest (digest, MAC and the anchors in range). It is verified away from this server with ', h('code', {}, 'npm run verify-audit-export -- <file>'), '. Anchors seal the chain head outside the database; the recovery drill report is on System & backups. The evidence package for county IT is docs/security/.'),
-      h('div', { class: 'row' }, exportLink, h('button', { class: 'btn sm', onClick: anchorNow }, 'Anchor the audit log now'), anchorMsg)));
+      h('p', { class: 'small' }, 'The audit export is the hash chain as NDJSON with a manifest (digest, MAC, the anchors in range and an Ed25519 signature). It is verified away from this server with ', h('code', {}, 'npm run verify-audit-export -- <file> --public-key <key>.pem'), ', and a recovery-drill report with ', h('code', {}, 'npm run verify-dr-report'), ' — the public key is all either needs. Anchors seal the chain head outside the database; the recovery drill report is on System & backups. The evidence package for county IT is docs/security/.'),
+      signingKey ? h('p', { class: 'small', 'data-signing-key': signingKey.key_id }, 'Signing key: Ed25519, key id ', h('code', {}, signingKey.key_id), '. Record this id where the auditor can find it independently of the documents it signs.') : null,
+      h('div', { class: 'row' }, exportLink, signingKey ? h('a', { class: 'btn sm', href: '/api/admin/security/signing-key?format=pem', download: '' }, 'Download signing public key') : null, h('button', { class: 'btn sm', onClick: anchorNow }, 'Anchor the audit log now'), anchorMsg)));
 }
 
 // The card on System & backups: last drill, targets, and a button that runs one in the background.

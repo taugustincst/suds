@@ -85,9 +85,10 @@ function status() {
   const anchors = require('./audit-anchor').list().length;
   const lastAnchor = db.getSetting('audit_anchor_last_at', null); const anchorWrite = db.getSetting('audit_anchor_last_status', '') || '';
   const anchorVerify = db.getSetting('audit_anchor_verify_status', '') || '';
-  add('Audit', 'Audit anchors outside the database', /^failed/.test(anchorWrite) || /^FAILED/.test(anchorVerify) ? 'bad' : !ad.configured || ad.inside_data_dir ? 'warn' : !anchors ? 'warn' : 'ok',
+  const placement = require('./audit-anchor').placementProblem();
+  add('Audit', 'Audit anchors outside the database', /^failed/.test(anchorWrite) || /^FAILED/.test(anchorVerify) || placement ? 'bad' : !ad.configured || ad.inside_data_dir ? 'warn' : !anchors ? 'warn' : 'ok',
     `${anchors} anchor${anchors === 1 ? '' : 's'} in ${ad.dir}${lastAnchor ? `; last ${lastAnchor}` : ''}${config.auditAnchorHours > 0 ? `; every ${config.auditAnchorHours} h and at each backup` : '; at each backup only'}`,
-    [anchorVerify ? `Last check: ${anchorVerify}.` : 'Not yet checked (runs with the daily audit verification).', /^failed/.test(anchorWrite) ? `Last write ${anchorWrite}.` : '', !ad.configured || ad.inside_data_dir ? 'Set AUDIT_ANCHOR_DIR to write-once storage outside the data directory (WORM/immutable share) so a rewrite of the whole data directory is also caught.' : '', config.auditSyslog ? `Also sent to syslog ${config.auditSyslog}.` : ''].filter(Boolean).join(' '), 'server/audit-anchor.js');
+    [placement || '', anchorVerify ? `Last check: ${anchorVerify}.` : 'Not yet checked (runs with the daily audit verification).', /^failed/.test(anchorWrite) ? `Last write ${anchorWrite}.` : '', placement ? '' : !ad.configured || ad.inside_data_dir ? 'Set AUDIT_ANCHOR_DIR to write-once storage outside the data directory (WORM/immutable share) so a rewrite of the whole data directory is also caught.' : '', config.auditSyslog ? `Also sent to syslog ${config.auditSyslog}.` : ''].filter(Boolean).join(' '), 'server/audit-anchor.js');
   add('Audit', 'Audit retention', 'info', `${Math.round(config.auditRetentionDays / 365 * 10) / 10} years (${config.auditRetentionDays} days)`, (() => { const p = lastAudit('audit.purge'); return p ? `Last purge ${p.at}.` : 'No audit entries old enough to purge yet.'; })(), 'AUDIT_RETENTION_DAYS; server/audit.js purge');
 
   // ---- Encryption and keys ----
@@ -96,6 +97,11 @@ function status() {
   const keyAge = ageDays(rotated ? rotated.at : keyAt);
   add('Encryption and keys', 'PHI encryption key', keyAge !== null && keyAge > 400 ? 'warn' : 'ok', `AES-256-GCM; keys from ${config.keySource === 'env' ? 'the environment / secrets manager' : config.keySource === 'file' ? 'data/keys.json (0600)' : 'development key files in the data directory'}`,
     `${rotated ? `Last rotated ${rotated.at}` : `In use since ${keyAt || 'unknown'}`}${keyAge !== null ? ` (${Math.round(keyAge)} days)` : ''}. Rotate annually: npm run rotate-key.`, 'server/crypto.js; scripts/rotate-key.js');
+  try {
+    const sk = require('./signing').publicInfo();
+    add('Encryption and keys', 'Evidence signing key (Ed25519)', 'ok', `key id ${sk.key_id}; private key in ${config.signingKeySource === 'env' ? 'the environment (SUDS_SIGNING_KEY)' : config.signingKeySource === 'file' ? 'data/keys.json' : config.signingKeySource === 'devfile' ? 'a development key file in the data directory' : 'the test configuration'}, never in the database`,
+      'Signs recovery-drill reports and audit-export manifests; anyone with the public key (GET /api/admin/security/signing-key) can verify them: npm run verify-dr-report, npm run verify-audit-export -- --public-key.', 'server/signing.js');
+  } catch (e) { add('Encryption and keys', 'Evidence signing key (Ed25519)', 'bad', 'unavailable', String(e.message || e), 'server/signing.js'); }
   add('Encryption and keys', 'Index key (blind indexes, audit chain)', 'info', idxRotated ? `last rotated ${idxRotated.at}` : 'not rotated since install', 'npm run rotate-index-key re-derives the indexes and re-signs the audit chain.', 'scripts/rotate-index-key.js');
   if (config.keySource === 'file') { const kb = db.getSetting('keys_backup_at', null); add('Encryption and keys', 'Key backup', kb ? 'ok' : 'bad', kb ? `downloaded ${kb}` : 'never downloaded', 'Keep it apart from the database backups (a password manager or safe).', 'Settings → System & backups'); }
 

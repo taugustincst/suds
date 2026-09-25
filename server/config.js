@@ -65,6 +65,37 @@ function loadKey(envName, fileName) {
   return key;
 }
 
+// The Ed25519 signing key (server/signing.js): signs the recovery-drill report and the audit export's
+// manifest, so anyone holding only the public key can check them, and nobody holding only the database or the
+// index key can forge one. Unlike the encryption keys, a missing signing key loses nothing (it protects no
+// data, only what is signed from now on), so it is generated wherever the other keys live when it is absent:
+// SUDS_SIGNING_KEY in the environment, else keys.json (added to it, mode 0600), else a development key file.
+// Never in the database. 64 hex characters: the 32-byte Ed25519 private key (seed).
+const signingSourceHolder = { value: 'env' };
+function loadSigningKey() {
+  const hex = process.env.SUDS_SIGNING_KEY;
+  if (hex && /^[0-9a-fA-F]{64}$/.test(hex)) return Buffer.from(hex, 'hex');
+  if (hex) throw new Error('SUDS_SIGNING_KEY must be 64 hex characters (the 32-byte Ed25519 private key). Generate with: npm run gen-key');
+  const fk = fileKeys.SUDS_SIGNING_KEY;
+  if (fk && /^[0-9a-fA-F]{64}$/.test(fk)) { signingSourceHolder.value = 'file'; return Buffer.from(fk, 'hex'); }
+  const key = crypto.randomBytes(32);
+  if (env === 'production' || keySourceHolder.value === 'file') {
+    // Re-read before writing: loadKey may have just created the file, and nothing else in it may be lost.
+    let cur = {}; try { if (fs.existsSync(keysJsonPath)) cur = JSON.parse(fs.readFileSync(keysJsonPath, 'utf8')); } catch { cur = { ...fileKeys }; }
+    cur.SUDS_SIGNING_KEY = key.toString('hex'); cur.signing_key_created_at = new Date().toISOString();
+    fs.writeFileSync(keysJsonPath, JSON.stringify(cur, null, 2), { mode: 0o600 });
+    Object.assign(fileKeys, cur);
+    signingSourceHolder.value = 'file';
+    console.warn(`[suds] SUDS_SIGNING_KEY not set; generated an Ed25519 signing key in ${keysJsonPath}. Back this file up with the other keys.`);
+    return key;
+  }
+  const f = path.join(dataDir, '.dev-signing-key');
+  signingSourceHolder.value = 'devfile';
+  if (fs.existsSync(f)) return Buffer.from(fs.readFileSync(f, 'utf8').trim(), 'hex');
+  fs.writeFileSync(f, key.toString('hex'), { mode: 0o600 });
+  return key;
+}
+
 /** LOCAL_MODE_ENABLED / server.json localModeEnabled: on only when explicitly true. Unset means off. */
 function parseLocalMode(v) { return ['1', 'true', 'yes', 'on'].includes(String(v ?? '').trim().toLowerCase()); }
 
@@ -200,6 +231,9 @@ const config = {
   })(),
 };
 
+// After the other keys (loadSigningKey appends to the keys.json they may just have created).
+config.signingKey = env === 'test' ? crypto.createHash('sha256').update('test-signing-key').digest() : loadSigningKey();
+config.signingKeySource = env === 'test' ? 'test' : signingSourceHolder.value;
 config.oidc.enabled = !!(config.oidc.issuer && config.oidc.clientId && config.oidc.clientSecret && config.oidc.redirectUri);
 config.keySource = keySourceHolder.value;
 config.localModeFromEnv = !!process.env.LOCAL_MODE_ENABLED;

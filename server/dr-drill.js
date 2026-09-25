@@ -60,26 +60,32 @@ function listReports() {
   try { return fs.readdirSync(backupsDir()).filter((f) => /^dr-drill-.*\.json$/.test(f)).sort(); } catch { return []; }
 }
 
-/** Canonical JSON for signing: keys sorted at every level. */
-function canonical(v) {
-  if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`;
-  if (v && typeof v === 'object') return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(',')}}`;
-  return JSON.stringify(v === undefined ? null : v);
-}
+const { canonical } = require('./dr-report');
+// Signed with the Ed25519 signing key (server/signing.js), which anyone can check with the public key alone
+// (npm run verify-dr-report); the HMAC under the index key is kept for checks on the server itself.
 function seal(report, key = config.indexKey) {
   const body = canonical(report);
-  return { sha256: crypto.createHash('sha256').update(body).digest('hex'), hmac_sha256: crypto.createHmac('sha256', key).update(body).digest('hex'), algorithm: 'SHA-256 and HMAC-SHA256 (index key) over the canonical JSON of "report" (keys sorted)' };
+  const signing = require('./signing');
+  const pub = signing.publicInfo();
+  return { sha256: crypto.createHash('sha256').update(body).digest('hex'), hmac_sha256: crypto.createHmac('sha256', key).update(body).digest('hex'),
+    ed25519_signature: signing.sign(body), signing_key_id: pub.key_id, public_key_pem: pub.public_key_pem,
+    algorithm: 'SHA-256, HMAC-SHA256 (index key) and an Ed25519 signature (signing key) over the canonical JSON of "report" (keys sorted)' };
 }
-/** Check a written report: { report, integrity } → true when both digests match. */
+/** Check a written report: { report, integrity } → true when the digest, the HMAC and the signature all match. */
 function verifyReport(doc, key = config.indexKey) {
+  if (!doc || !doc.integrity) return false;
   const s = seal(doc.report, key);
-  return !!doc.integrity && s.sha256 === doc.integrity.sha256 && s.hmac_sha256 === doc.integrity.hmac_sha256;
+  const signed = require('./dr-report').verifyDoc(doc, { publicKeyPem: require('./signing').publicInfo().public_key_pem });
+  return s.sha256 === doc.integrity.sha256 && s.hmac_sha256 === doc.integrity.hmac_sha256 && signed.ok;
 }
 
-function runChild(tmp, dbFile, onStep) {
+function runChild(tmp, dbFile, onStep, keys = { enc: config.encryptionKey, idx: config.indexKey }) {
   const { fork } = require('node:child_process');
   return new Promise((resolve) => {
-    const env = { PATH: process.env.PATH || '', SUDS_ENV: config.isTest ? 'test' : 'production', SUDS_DATA_DIR: tmp, SUDS_DB_PATH: dbFile, SUDS_SKIP_SETUP: '1', TZ: process.env.TZ || '', LOG_FORMAT: 'text', LOGIN_RATE_LIMIT: '1000' };
+    const env = { PATH: process.env.PATH || '', SUDS_ENV: config.isTest ? 'test' : 'production', SUDS_DATA_DIR: tmp, SUDS_DB_PATH: dbFile, SUDS_SKIP_SETUP: '1', TZ: process.env.TZ || '', LOG_FORMAT: 'text', LOGIN_RATE_LIMIT: '1000',
+      // The live server's anchor directory, read (never written) by the copy's anchor check. Named here so the
+      // copy's /api/health does not report the placement of its own (unused) default directory.
+      AUDIT_ANCHOR_DIR: config.auditAnchorDir };
     if (!env.TZ) delete env.TZ;
     const child = fork(path.join(__dirname, 'dr-drill-child.js'), [], { cwd: tmp, env, execArgv: ['--no-warnings=ExperimentalWarning'], stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
     let result = null; let stderr = '';
@@ -92,7 +98,7 @@ function runChild(tmp, dbFile, onStep) {
       resolve(result || { ok: false, error: signal === 'SIGKILL' ? `the restored copy did not finish within ${Math.round(CHILD_TIMEOUT_MS / 60000)} minutes` : `the drill process exited (${code ?? signal})${stderr ? ': ' + stderr.trim().split('\n').slice(-3).join(' ') : ''}`, checks: [] });
     });
     // The keys go over IPC, never in the child's environment or arguments.
-    child.send({ keys: { enc: config.encryptionKey.toString('hex'), idx: config.indexKey.toString('hex') }, anchorDir: config.auditAnchorDir });
+    child.send({ keys: { enc: keys.enc.toString('hex'), idx: keys.idx.toString('hex'), sig: config.signingKey.toString('hex') }, anchorDir: config.auditAnchorDir });
   });
 }
 
@@ -150,6 +156,7 @@ async function run({ backupFile = null, fresh = false, by = 'system', trigger = 
   }
   const report = {
     kind: 'suds-dr-drill', version: 1,
+    signed_by: { algorithm: 'Ed25519', key_id: require('./signing').publicInfo().key_id },
     ok: failures.length === 0 && checks.length > 0,
     started_at: new Date(started).toISOString(), finished_at: new Date(finished).toISOString(), trigger, by,
     server: { version: config.version, host: require('node:os').hostname(), schema_version: db.LATEST_SCHEMA_VERSION },
@@ -201,6 +208,11 @@ function textReport({ report: r, integrity }) {
   L.push('The backup was restored into a temporary directory, checked by a separate process that was never given the live database\'s path, and deleted afterwards. The live database received only this result (a settings row and an audit entry).');
   L.push(`Integrity: SHA-256 ${integrity.sha256}`);
   L.push(`           HMAC-SHA256 ${integrity.hmac_sha256}`);
+  if (integrity.ed25519_signature) {
+    L.push(`           Ed25519 signature ${integrity.ed25519_signature}`);
+    L.push(`           signing key ${integrity.signing_key_id} (public key published at GET /api/admin/security/signing-key)`);
+    L.push('Verify with the public key only: npm run verify-dr-report -- <the .json report> --public-key <signing-key.pem>');
+  }
   L.push('The JSON report beside this file is the record of the drill; this text is a convenience copy.');
   return L.join('\n') + '\n';
 }
