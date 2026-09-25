@@ -2,7 +2,7 @@
 const db = require('./db');
 const config = require('./config');
 const audit = require('./audit');
-const { sha256, randomToken, verifyPassword, verifyPasswordAsync, verifyTotp, decrypt } = require('./crypto');
+const { sha256, randomToken, verifyPassword, verifyPasswordAsync, totpStep, decrypt } = require('./crypto');
 const { unauthorized, forbidden, badRequest, HttpError } = require('./http');
 
 // Security policy: settings table (editable in Administration) overrides environment defaults.
@@ -163,22 +163,38 @@ function reauthStatus(ctx) {
 async function verifySigner(ctx, body, { action = 'note.sign.failed' } = {}) {
   const password = typeof body.password === 'string' && body.password ? body.password : null;
   const code = typeof body.code === 'string' && body.code.trim() ? body.code.trim() : null;
+  const u = db.one(`SELECT id, password_hash, mfa_enabled, mfa_secret_enc, failed_attempts, locked_until FROM users WHERE id=?`, ctx.user.id);
+  // A signature is a password / authenticator check like the sign-in, with the sign-in's protections: a
+  // locked account cannot sign by any route (including the quick confirmation), and every failure below
+  // counts toward the same lockout and rate limits and ends the quick-signing window — whoever is guessing
+  // at an unlocked workstation must not keep it open.
+  if (isLocked(u)) {
+    audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: 'locked' } });
+    throw new HttpError(423, 'Account locked after too many failed attempts. Try again later or contact an administrator.');
+  }
+  const failed = (details, message) => {
+    clearReauth(ctx);
+    audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details });
+    throw forbidden(message);
+  };
   if (password) {
-    const u = db.one(`SELECT password_hash FROM users WHERE id=?`, ctx.user.id);
+    const limit = config.loginRateLimit;
+    const app = require('./app');
+    if (app.rateLimited(`login:${ctx.ip}`, limit)) throw new HttpError(429, 'Too many attempts. Try again later.');
     if (!(await verifyPasswordAsync(password, u.password_hash))) {
-      audit.log({ user: ctx.user, action, ip: ctx.ip, success: false });
-      throw forbidden('Password verification failed');
+      app.rateLimit(`login:${ctx.ip}`, limit, 15 * 60_000);
+      const locked = recordPasswordFailure(u);
+      failed(locked ? { reason: 'locked after failures' } : undefined, locked ? 'Password verification failed. The account is now locked after too many failed attempts.' : 'Password verification failed');
     }
+    clearFailures(u.id);
     markReauth(ctx); return 'password';
   }
   if (code) {
-    const u = db.one(`SELECT mfa_enabled, mfa_secret_enc FROM users WHERE id=?`, ctx.user.id);
     if (!u.mfa_enabled || !u.mfa_secret_enc) throw badRequest('Two-step verification is not set up for your account; give your password instead');
     if (!require('./app').rateLimit(`mfa:${ctx.user.id}`, 10, 10 * 60_000)) throw new HttpError(429, 'Too many attempts');
-    if (!verifyTotp(decrypt(u.mfa_secret_enc), code)) {
-      audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { method: 'totp' } });
-      throw forbidden('That code is not right. Enter the current code from your authenticator app.');
-    }
+    const r = useTotp(u.id, u.mfa_secret_enc, code);
+    if (r === 'replay') failed({ method: 'totp', reason: 'replay' }, 'That code has already been used. Wait for the next code from your authenticator app.');
+    if (r !== 'ok') failed({ method: 'totp' }, 'That code is not right. Enter the current code from your authenticator app.');
     markReauth(ctx); return 'totp';
   }
   const st = reauthStatus(ctx);
@@ -186,6 +202,28 @@ async function verifySigner(ctx, body, { action = 'note.sign.failed' } = {}) {
   if (body.confirm !== true && body.confirm !== 1) throw badRequest(st.recent ? 'Confirm the attestation to sign' : st.method === 'totp' ? 'Enter the code from your authenticator app to sign' : 'Your password is required to sign');
   if (!st.recent) throw new HttpError(403, st.method === 'totp' ? 'It has been a while since you last confirmed it is you. Enter the code from your authenticator app to sign.' : 'It has been a while since you last confirmed it is you. Enter your password to sign.', { reauthRequired: true, method: st.method });
   return 'recent_auth';
+}
+function clearReauth(ctx) { if (ctx.session) { db.run(`UPDATE sessions SET reauth_at=NULL WHERE id=?`, ctx.session.id); ctx.session.reauth_at = null; } }
+function isLocked(user) { return !!(user.locked_until && Date.parse(user.locked_until) > Date.now()); }
+/** Count a wrong password (sign-in or signature) toward the account lockout. True if it now locks the account. */
+function recordPasswordFailure(user) {
+  const row = db.one(`SELECT failed_attempts FROM users WHERE id=?`, user.id);
+  const attempts = ((row && row.failed_attempts) || 0) + 1;
+  const lock = attempts >= config.lockout.maxAttempts ? new Date(Date.now() + config.lockout.minutes * 60000).toISOString() : null;
+  db.run(`UPDATE users SET failed_attempts=?, locked_until=? WHERE id=?`, lock ? 0 : attempts, lock, user.id);
+  return !!lock;
+}
+function clearFailures(userId) { db.run(`UPDATE users SET failed_attempts=0, locked_until=NULL WHERE id=?`, userId); }
+/**
+ * Check an authenticator code for this account and use it up: each code is accepted once, and never one
+ * from a time-step at or before the last accepted (RFC 6238 section 5.2). The step is claimed in one UPDATE,
+ * so two requests racing with the same code cannot both succeed. 'ok', 'wrong' or 'replay'.
+ */
+function useTotp(userId, secretEnc, code) {
+  const step = totpStep(decrypt(secretEnc), code);
+  if (step === null) return 'wrong';
+  const r = db.run(`UPDATE users SET totp_last_step=? WHERE id=? AND (totp_last_step IS NULL OR totp_last_step < ?)`, step, userId, step);
+  return r && r.changes ? 'ok' : 'replay';
 }
 function cookieHeader(token, { clear = false } = {}) {
   const secure = config.tls.cert || config.isProd ? '; Secure' : '';
@@ -335,16 +373,13 @@ async function login({ username, password, ctx }) {
     if (pendingWipe && await verifyPasswordAsync(password || '', user.password_hash)) wipeRequired(true);
     fail('inactive');
   }
-  if (user.locked_until && Date.parse(user.locked_until) > Date.now()) {
+  if (isLocked(user)) {
     audit.log({ user, action: 'auth.login.locked', ip: ctx.ip, success: false });
     if (pendingWipe) wipeRequired(false);
     throw new HttpError(423, 'Account locked. Try again later or contact an administrator.');
   }
   if (!(await verifyPasswordAsync(password || '', user.password_hash))) {
-    const attempts = user.failed_attempts + 1;
-    const lock = attempts >= config.lockout.maxAttempts ? new Date(Date.now() + config.lockout.minutes * 60000).toISOString() : null;
-    db.run(`UPDATE users SET failed_attempts=?, locked_until=? WHERE id=?`, lock ? 0 : attempts, lock, user.id);
-    fail(lock ? 'locked after failures' : 'bad password');
+    fail(recordPasswordFailure(user) ? 'locked after failures' : 'bad password');
   }
   if (pendingWipe) wipeRequired(true);
   // Checked only once the password is right, so the answer says nothing about accounts to someone guessing.
@@ -379,10 +414,10 @@ async function login({ username, password, ctx }) {
 function verifyMfa(ctx, code) {
   if (!ctx.session) throw unauthorized();
   const user = db.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
-  const secret = decrypt(user.mfa_secret_enc);
-  if (!verifyTotp(secret, code)) {
-    audit.log({ user, action: 'auth.mfa.failed', ip: ctx.ip, success: false });
-    throw unauthorized('Invalid verification code');
+  const r = user.mfa_secret_enc ? useTotp(user.id, user.mfa_secret_enc, code) : 'wrong';
+  if (r !== 'ok') {
+    audit.log({ user, action: 'auth.mfa.failed', ip: ctx.ip, success: false, details: r === 'replay' ? { reason: 'replay' } : undefined });
+    throw unauthorized(r === 'replay' ? 'That code has already been used. Wait for the next code from your authenticator app.' : 'Invalid verification code');
   }
   db.run(`UPDATE sessions SET mfa_pending=0, reauth_at=? WHERE id=?`, db.now(), ctx.session.id);
   audit.log({ user, action: 'auth.login', ip: ctx.ip, details: { mfa: true } });
@@ -406,4 +441,4 @@ function passwordPolicy(pw) {
 }
 
 module.exports = { auditUsername, policy, PERMS, hasPerm, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted,
-  createSession, markReauth, reauthStatus, verifySigner, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };
+  createSession, markReauth, reauthStatus, verifySigner, useTotp, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };

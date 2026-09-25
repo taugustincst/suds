@@ -28,7 +28,7 @@ These are visible in Settings → Security policy and on Settings → Security s
 
 ## Brute force and enumeration
 
-Account lockout after 5 failures for 15 minutes; 20 failed sign-ins per source address per 15 minutes (`LOGIN_RATE_LIMIT`); 10 MFA attempts per user per 10 minutes; API 600 requests/min per address; unknown usernames pay the same hashing cost and get the same answer; the audit log records unknown usernames only truncated and hashed (`server/auth.js` `auditUsername`).
+Account lockout after 5 failures for 15 minutes; 20 failed sign-ins per source address per 15 minutes (`LOGIN_RATE_LIMIT`); 10 MFA attempts per user per 10 minutes. The password or authenticator code given to sign a note (`auth.verifySigner`) counts toward the same lockout and limits, a locked account cannot sign at all, and a failed signature attempt ends the session's quick-signing window. Each authenticator code is accepted once — at sign-in, at signing or at enrolment — and never one from a time-step at or before the last one accepted (`users.totp_last_step`, RFC 6238 §5.2; `test/signer-hardening.test.js`); API 600 requests/min per address; unknown usernames pay the same hashing cost and get the same answer; the audit log records unknown usernames only truncated and hashed (`server/auth.js` `auditUsername`).
 
 ## Authorisation
 

@@ -674,7 +674,7 @@ test('MFA enrollment and verification flow', async () => {
   assert.equal(setup.status, 200);
   // This was 'assert.equal(x === 400 || true, true)' — it asserted nothing at all.
   assert.equal((await nav.post('/api/auth/mfa/enable', { code: '000000' })).status, 400, 'a wrong code must not enable two-step verification');
-  const en = await nav.post('/api/auth/mfa/enable', { code: c.totp(setup.data.secret) });
+  const en = await nav.post('/api/auth/mfa/enable', { code: c.totp(setup.data.secret, Date.now() - 30_000) });
   assert.equal(en.status, 200);
   const fresh = H.client();
   const login = await fresh.login('nav1', 'StaffPassw0rd!x');
@@ -935,7 +935,7 @@ test('workspace preferences and continue endpoint follow the user', async () => 
   assert.equal((await nav.put('/api/me/prefs', { theme: 'dark', tour_done: true })).status, 200);
   const second = H.client(); await second.login('nav1', 'StaffPassw0rd!x');
   const c = require('../server/crypto'); const secret = c.decrypt(H.db.one(`SELECT mfa_secret_enc FROM users WHERE username='nav1'`).mfa_secret_enc);
-  await second.post('/api/auth/mfa/verify', { code: c.totp(secret) });
+  await second.post('/api/auth/mfa/verify', { code: c.totp(secret, Date.now() + 30_000) });
   const p = await second.get('/api/me/prefs');
   assert.equal(p.data.prefs.theme, 'dark'); assert.equal(p.data.prefs.tour_done, true);
   const cont = await second.get('/api/me/continue');

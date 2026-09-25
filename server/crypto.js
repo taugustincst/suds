@@ -146,16 +146,19 @@ function hotp(secretB32, counter) {
   return String(code % 1_000_000).padStart(6, '0');
 }
 function totp(secretB32, time = Date.now(), step = 30) { return hotp(secretB32, Math.floor(time / 1000 / step)); }
-function verifyTotp(secretB32, code, window = 1, time = Date.now()) {
+/** The time-step (RFC 6238 counter) `code` matches within ±window steps of `time`, or null. */
+function totpStep(secretB32, code, window = 1, time = Date.now()) {
   const c = String(code || '').replace(/\s+/g, '');
-  if (!/^\d{6}$/.test(c)) return false;
+  if (!/^\d{6}$/.test(c)) return null;
   const counter = Math.floor(time / 1000 / 30);
+  let found = null;
   for (let i = -window; i <= window; i++) {
     const expected = hotp(secretB32, counter + i);
-    if (crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(c))) return true;
+    if (crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(c)) && found === null) found = counter + i;
   }
-  return false;
+  return found;
 }
+function verifyTotp(secretB32, code, window = 1, time = Date.now()) { return totpStep(secretB32, code, window, time) !== null; }
 function otpauthUrl(secret, account, issuer = 'SUDS') {
   return `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(account)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
 }
@@ -167,4 +170,4 @@ function otpauthUrl(secret, account, issuer = 'SUDS') {
 function keyFingerprint() { return sha256('suds-key-check:' + config.encryptionKey.toString('hex')).slice(0, 32); }
 
 module.exports = { encrypt, decrypt, blindIndex, foldText, keyFingerprint, hashPassword, verifyPassword, hashPasswordAsync, verifyPasswordAsync, randomToken, sha256, uuid,
-  generateTotpSecret, totp, verifyTotp, otpauthUrl, base32Encode, base32Decode };
+  generateTotpSecret, totp, totpStep, verifyTotp, otpauthUrl, base32Encode, base32Decode };

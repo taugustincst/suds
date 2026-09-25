@@ -5,7 +5,7 @@ const audit = require('../audit');
 const { rateLimit, rateLimited } = require('../app');
 const { HttpError, badRequest, unauthorized } = require('../http');
 const { validate } = require('../validate');
-const { hashPasswordAsync, verifyPasswordAsync, generateTotpSecret, verifyTotp, otpauthUrl, encrypt, decrypt } = require('../crypto');
+const { hashPasswordAsync, verifyPasswordAsync, generateTotpSecret, otpauthUrl, encrypt } = require('../crypto');
 
 module.exports = (r) => {
   r.post('/api/auth/login', async (ctx) => {
@@ -130,7 +130,9 @@ module.exports = (r) => {
     const { code } = validate(ctx.body, { code: { type: 'string', required: true, maxLen: 10 } });
     const u = db.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
     if (!u.mfa_secret_enc) throw badRequest('Run MFA setup first');
-    if (!verifyTotp(decrypt(u.mfa_secret_enc), code)) throw badRequest('Invalid code');
+    // The enrolment code is used up like any other (auth.useTotp), so it cannot complete a sign-in afterwards.
+    const r = auth.useTotp(u.id, u.mfa_secret_enc, code);
+    if (r !== 'ok') throw badRequest(r === 'replay' ? 'That code has already been used. Wait for the next code from your authenticator app.' : 'Invalid code');
     db.run(`UPDATE users SET mfa_enabled=1, updated_at=? WHERE id=?`, db.now(), u.id);
     db.run(`UPDATE sessions SET mfa_pending=0 WHERE id=?`, ctx.session.id);
     audit.log({ user: u, action: 'auth.mfa.enabled', ip: ctx.ip });

@@ -52,7 +52,10 @@ CREATE TABLE IF NOT EXISTS users (
   scim_external_id TEXT,
   -- The fund this worker's visits are charged to unless they choose another (migration 38). Blank: the
   -- programme's default (settings.default_fund_id). No REFERENCES: users sync to a device before funds do.
-  default_fund_id TEXT
+  default_fund_id TEXT,
+  -- The RFC 6238 time-step of the last authenticator code accepted for this account (migration 41): a code
+  -- is good once, at sign-in, at signing or at enrolment, never replayed within its 90-second window.
+  totp_last_step INTEGER
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_subject ON users(oidc_subject) WHERE oidc_subject IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_scim_external_id ON users(scim_external_id) WHERE scim_external_id IS NOT NULL;

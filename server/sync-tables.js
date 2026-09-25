@@ -152,8 +152,9 @@ function exportRow(t, r) {
   }
   for (const k of Object.keys(o)) if (k.endsWith('_idx')) delete o[k];
   for (const c of t.blob || []) delete o[c];
-  // access_note is an access request's free-text reason: the office's business, not a device's.
-  if (t.name === 'users') { delete o.failed_attempts; delete o.locked_until; delete o.access_note; }
+  // access_note is an access request's free-text reason: the office's business, not a device's. The
+  // lockout counters and the last authenticator time-step are the office's own sign-in state.
+  if (t.name === 'users') { delete o.failed_attempts; delete o.locked_until; delete o.access_note; delete o.totp_last_step; }
   return o;
 }
 

@@ -22,10 +22,22 @@ async function officeLogin(username, password, secret) {
   const r = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Sync-Client': '1' }, body: JSON.stringify({ username, password }) });
   const d = await r.json(); if (!d.token) throw new Error('office login failed: ' + JSON.stringify(d));
   const sess = { token: d.token, H: { 'Content-Type': 'application/json', 'X-Requested-With': 'suds', Authorization: 'Bearer ' + d.token } };
-  if (d.mfaPending) { if (!secret) throw new Error('office login for ' + username + ' needs a code'); await officeJson(sess, 'POST', '/api/auth/mfa/verify', { code: totp(secret) }); }
+  if (d.mfaPending) { if (!secret) throw new Error('office login for ' + username + ' needs a code'); await officeJson(sess, 'POST', '/api/auth/mfa/verify', { code: await nextCode(secret) }); }
   return sess;
 }
 const officeJson = (sess, method, path, body) => fetch(base + path, { method, headers: sess.H, body: body === undefined ? undefined : JSON.stringify(body) }).then(async r => ({ status: r.status, data: await r.json().catch(() => null) }));
+// The server accepts each authenticator code once, and never one older than the last it accepted (1.12.1,
+// server/auth.js useTotp). Like a person waiting for the app to show a new code: the next unused time-step,
+// taking the one after the current (the server allows one step of drift) or waiting for the clock.
+const lastStep = new Map();
+async function nextCode(secret) {
+  for (;;) {
+    const cur = Math.floor(Date.now() / 30000);
+    const want = Math.max(cur, (lastStep.get(secret) ?? -Infinity) + 1);
+    if (want <= cur + 1) { lastStep.set(secret, want); return totp(secret, want * 30000); }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
 // RFC 6238, the same arithmetic as server/crypto.js totp(), so the script can act as an authenticator app.
 function totp(secretB32, time = Date.now()) {
   const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'; let bits = 0, value = 0; const bytes = [];
@@ -127,14 +139,14 @@ try {
   const dchen = await officeLogin('dchen', 'Navigator2026!!');
   const setup = await officeJson(dchen, 'POST', '/api/auth/mfa/setup');
   ok(setup.data && setup.data.secret, 'the office account enrols in two-step verification for the test', setup);
-  const enabled = await officeJson(dchen, 'POST', '/api/auth/mfa/enable', { code: totp(setup.data.secret) });
+  const enabled = await officeJson(dchen, 'POST', '/api/auth/mfa/enable', { code: await nextCode(setup.data.secret) });
   eq(enabled.status, 200, 'enrolment completes with a code from the authenticator');
   await syncViaForm(page, { password: 'Navigator2026!!' });
   const prompt = await until(async () => (await page.$('[data-office-mfa]')) || ((await page.textContent('[data-sync-log]')) || '').includes('failed'), { timeout: 30000 });
   ok(await page.$('[data-office-mfa]'), 'the Sync screen asks for the authenticator code inline', await page.textContent('[data-sync-log]'));
   eq(page.url().split('#')[1], '/sync', 'without navigating the device to its own #/mfa page');
   ok(await page.evaluate(() => document.activeElement && document.activeElement.name === 'code'), 'and puts the cursor in the code field');
-  await page.fill('input[name=code]', totp(setup.data.secret));
+  await page.fill('input[name=code]', await nextCode(setup.data.secret));
   await page.click('button[type=submit]');
   const withCode = await syncLog(page);
   ok(/^Done /.test(withCode), 'syncing with the code succeeds', withCode);
@@ -160,7 +172,7 @@ try {
     await api(page, 'PUT', '/api/clients/' + mineOffice.id, { goals: 'device version', preferred_name: 'Dev' });
     await new Promise(r => setTimeout(r, 1100));
     await officeJson(s, 'PUT', '/api/clients/' + mineOffice.id, { goals: 'office version', preferred_name: 'Off' });
-    await syncViaForm(page, { password: 'Navigator2026!!', code: totp(mfaSecret) });
+    await syncViaForm(page, { password: 'Navigator2026!!', code: await nextCode(mfaSecret) });
     await syncLog(page);
     const banner = await until(() => page.$('[data-sync-conflicts]'), { timeout: 5000 });
     ok(banner, 'an edit the office overrode is reported on the Sync screen');
@@ -174,14 +186,14 @@ try {
   eq(backup.status, 200, 'the administrator downloads a backup');
   const backupBytes = Buffer.from(await backup.arrayBuffer());
   const afterBackup = await api(page, 'POST', '/api/clients', { first_name: 'After', last_name: 'Backup' });
-  await syncViaForm(page, { password: 'Navigator2026!!', code: totp(mfaSecret) });
+  await syncViaForm(page, { password: 'Navigator2026!!', code: await nextCode(mfaSecret) });
   ok(/^Done /.test(await syncLog(page)), 'the device syncs a client created after the backup was taken');
   eq((await officeJson(dchen2, 'GET', '/api/clients/' + afterBackup.json.id)).status, 200, 'the office has it');
   const restore = await officeJson(admin, 'POST', '/api/admin/restore', { password: 'AdminPassw0rd!x', confirm: 'REPLACE', file_b64: backupBytes.toString('base64') });
   eq(restore.status, 200, 'the backup is restored', restore.data);
   const admin2 = await officeLogin('admin', 'AdminPassw0rd!x');
   eq((await officeJson(admin2, 'GET', '/api/clients/' + afterBackup.json.id)).status, 404, 'the restore discarded the client synced after the backup');
-  await syncViaForm(page, { password: 'Navigator2026!!', code: totp(mfaSecret) });
+  await syncViaForm(page, { password: 'Navigator2026!!', code: await nextCode(mfaSecret) });
   const restoredLog = await syncLog(page);
   ok(/^Done /.test(restoredLog), 'the device syncs again after the restore', restoredLog);
   ok(await page.$('[data-sync-notice]'), 'and says the office database was restored', restoredLog);
@@ -194,7 +206,7 @@ try {
   ok(mine, 'the office lists this device', devices.data);
   eq((await officeJson(admin2, 'POST', `/api/admin/devices/${mine.id}/wipe`)).status, 200, 'the administrator requests a wipe');
   await api(page, 'POST', '/api/clients', { first_name: 'Written', last_name: 'BeforeWipe' }); // dirty, unsaved work right before the wipe
-  await syncViaForm(page, { password: 'Navigator2026!!', code: totp(mfaSecret) });
+  await syncViaForm(page, { password: 'Navigator2026!!', code: await nextCode(mfaSecret) });
   const wipeLog = await syncLog(page);
   ok(/remotely wiped/i.test(wipeLog), 'the device reports that it was wiped', wipeLog);
   await until(async () => !(await idbHasDb(page).catch(() => true)), { timeout: 10000 });
