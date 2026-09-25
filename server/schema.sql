@@ -1116,3 +1116,14 @@ CREATE TABLE IF NOT EXISTS privacy_incident_clients (
   UNIQUE (incident_id, client_id)
 );
 CREATE INDEX IF NOT EXISTS idx_privacy_incident_clients_client ON privacy_incident_clients(client_id);
+
+-- FHIR SMART Backend Services: each client assertion (private_key_jwt) may be used once. The hash of its jti
+-- is kept until the assertion expires (a few minutes), so a captured assertion cannot be replayed, even
+-- across a restart. Office server only, never synchronised (server/fhir/jwt.js).
+CREATE TABLE IF NOT EXISTS fhir_jwt_assertions (
+  api_key_id TEXT NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+  jti_hash TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  PRIMARY KEY (api_key_id, jti_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_fhir_jwt_assertions_expires ON fhir_jwt_assertions(expires_at);

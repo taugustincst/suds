@@ -425,23 +425,59 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   const name = 'County EHR ' + Date.now().toString().slice(-5);
   await page.fill('.modal input[name=name]', name);
   await page.fill('.modal input[name=recipient]', 'County Behavioral Health');
+  // A one-word alias would cover most TPO consents that name a class of recipients: the preview says so
+  // (counts only) and saving refuses it, on the field.
+  await page.fill('.modal textarea[name=aliases]', 'county');
+  await page.click('.modal button:has-text("Check aliases")');
+  // Rows are [name, clients covered, accepted, why not]; has-text() ignores case, so read the cells.
+  const previewRows = await until(async () => { const rows = await page.$$eval('.modal [data-alias-preview] tbody tr', trs => trs.map(t => [...t.cells].map(c => c.textContent.trim()))); return rows.length >= 2 ? rows : null; });
+  const countyRow = (previewRows || []).find(r => r[0] === 'county');
+  ok(countyRow && /^(⚠\s*)?No/.test(countyRow[2]) && /generic/.test(countyRow[3]), 'the alias preview marks a one-word generic alias as not accepted', JSON.stringify(previewRows));
+  ok((previewRows || []).some(r => /\(recipient\)$/.test(r[0]) && /^\d+$/.test(r[1])), 'and gives the recipient\'s count', JSON.stringify(previewRows));
+  ok(await page.$('.modal [data-alias-preview]:has-text("Only counts are shown")'), 'the preview shows counts, not names');
   await page.check('.modal input[name=scope_Patient]'); await page.check('.modal input[name=scope_HealthcareService]');
+  await page.click('.modal button[type=submit]');
+  const aliasErr = await until(() => page.$('.modal [data-field="aliases"].error'));
+  ok(aliasErr, 'saving a generic alias is refused on the aliases field');
+  await page.fill('.modal textarea[name=aliases]', 'Sacramento County Behavioral Health');
   await page.click('.modal button[type=submit]');
   const secretEl = await until(() => page.$('[data-fhir-secret]'));
   const secret = secretEl ? (await secretEl.textContent()).trim() : '';
   ok(/^sudsfhir_/.test(secret), 'the secret is shown once after creating a FHIR client', secret.slice(0, 9));
   const created = (await api('GET', '/api/admin/fhir-clients')).data.clients.find(c => c.name === name);
   eq(created && created.scopes.join(' '), 'system/Patient.read system/HealthcareService.read', 'with the scopes that were ticked');
-  const hs = await fetch(`${base}/fhir/R4/HealthcareService?_count=1`, { headers: { Authorization: `Bearer ${secret}` } });
+  eq(created && created.aliases.join('|'), 'Sacramento County Behavioral Health', 'and the specific alias');
+  // The secret is exchanged for an access token; it is not itself a bearer token.
+  eq((await fetch(`${base}/fhir/R4/HealthcareService?_count=1`, { headers: { Authorization: `Bearer ${secret}` } })).status, 401, 'the secret is refused as a bearer token');
+  const tokenRes = await fetch(`${base}/fhir/R4/auth/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: `grant_type=client_credentials&client_id=${created.id}&client_secret=${encodeURIComponent(secret)}` });
+  eq(tokenRes.status, 200, 'the secret gets an access token at the token URL');
+  const access = (await tokenRes.json()).access_token;
+  const hs = await fetch(`${base}/fhir/R4/HealthcareService?_count=1`, { headers: { Authorization: `Bearer ${access}` } });
   eq(hs.status, 200, 'the new client reads the resource directory over FHIR');
-  eq((await fetch(`${base}/fhir/R4/Encounter`, { headers: { Authorization: `Bearer ${secret}` } })).status, 403, 'but not a type it was not granted');
+  eq((await fetch(`${base}/fhir/R4/Encounter`, { headers: { Authorization: `Bearer ${access}` } })).status, 403, 'but not a type it was not granted');
   await page.click('.modal button:has-text("I have copied it")'); await settle(page);
+  // Edit: register a public key and make the client JWT-only (SMART Backend Services).
+  await until(() => page.$(`tr:has-text("${name}") button:has-text("Edit")`));
+  await page.click(`tr:has-text("${name}") button:has-text("Edit")`);
+  await page.waitForSelector('.modal select[name=signin]');
+  const { generateKeyPairSync } = await import('node:crypto');
+  const jwk = { ...generateKeyPairSync('ec', { namedCurve: 'P-384' }).publicKey.export({ format: 'jwk' }), kid: 'ui-key' };
+  await page.selectOption('.modal select[name=signin]', 'jwt');
+  await page.fill('.modal textarea[name=jwks]', JSON.stringify({ keys: [jwk] }));
+  await page.click('.modal button[type=submit]'); await settle(page);
+  const edited = await until(async () => (await api('GET', '/api/admin/fhir-clients')).data.clients.find(c => c.name === name && c.auth.jwt_only));
+  ok(edited && edited.auth.jwks_keys[0].kid === 'ui-key', 'the edit dialog registers a public key and makes the client JWT-only');
+  ok(await until(() => page.$(`tr:has-text("${name}"):has-text("Signed JWT")`)), 'the list says how it signs in');
+  const refusedSecret = await fetch(`${base}/fhir/R4/auth/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: `grant_type=client_credentials&client_id=${created.id}&client_secret=${encodeURIComponent(secret)}` });
+  eq(refusedSecret.status, 401, 'a JWT-only client cannot use its secret');
   await until(() => page.$(`tr:has-text("${name}") button:has-text("Revoke")`));
   await page.click(`tr:has-text("${name}") button:has-text("Revoke")`);
   await page.click('.modal button:has-text("Revoke")'); await settle(page);
   const revoked = await until(async () => (await api('GET', '/api/admin/fhir-clients')).data.clients.find(c => c.name === name && c.revoked_at));
   ok(revoked, 'revoking it from the list takes effect');
-  eq((await fetch(`${base}/fhir/R4/HealthcareService`, { headers: { Authorization: `Bearer ${secret}` } })).status, 401, 'and the secret stops working');
+  eq((await fetch(`${base}/fhir/R4/HealthcareService`, { headers: { Authorization: `Bearer ${access}` } })).status, 401, 'and its access token stops working');
+  const again = await fetch(`${base}/fhir/R4/auth/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: `grant_type=client_credentials&client_id=${created.id}&client_secret=${encodeURIComponent(secret)}` });
+  eq(again.status, 401, 'and the secret no longer gets one');
   await page.screenshot({ path: '/tmp/suds-shots/fhir-clients.png', fullPage: true }).catch(() => {});
 }
 

@@ -26,6 +26,13 @@ async function fhirGet(p, token, extra = {}) {
   const text = await res.text();
   return { status: res.status, headers: res.headers, ct, data: ct.includes('json') && !ct.includes('ndjson') && text ? JSON.parse(text) : text };
 }
+/** Exchange a client's secret for an access token at the token endpoint (the only place the secret works). */
+async function tokenFor(c, scope) {
+  const r = await fetch(base + '/fhir/R4/auth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `grant_type=client_credentials&client_id=${c.id}&client_secret=${encodeURIComponent(c.key)}${scope ? `&scope=${encodeURIComponent(scope)}` : ''}` });
+  assert.equal(r.status, 200, 'token issued');
+  return (await r.json()).access_token;
+}
 const entriesOf = (b, type) => (b.entry || []).filter(e => !type || e.resource.resourceType === type).map(e => e.resource);
 const outcomeOf = (b) => (b.entry || []).map(e => e.resource).find(r => r.resourceType === 'OperationOutcome');
 function refsIn(o, out = []) {
@@ -94,6 +101,8 @@ before(async () => {
   assert.equal(c.status, 201, JSON.stringify(c.data));
   ehr = c.data;
   dirOnly = (await admin.post('/api/admin/fhir-clients', { name: '211 directory', recipient: '211 Info', scopes: ['system/HealthcareService.read'] })).data;
+  ehr.token = await tokenFor(ehr);
+  dirOnly.token = await tokenFor(dirOnly);
 });
 after(async () => {
   // Exports the tests left running or complete would otherwise sit in the data directory until they expire.
@@ -123,15 +132,26 @@ test('no token, a bad token, an intake key: 401 as an OperationOutcome', async (
   assert.match(none.headers.get('www-authenticate'), /Bearer/);
   assert.equal((await none.json()).resourceType, 'OperationOutcome');
   assert.equal((await fhirGet('/fhir/R4/Patient', 'sudsfhir_nope')).status, 401);
+  // The client secret is not a bearer token: it works only at the token endpoint. The refusal says what to
+  // do instead, and the audit trail names the client still trying, so the administrator can find it.
+  const asBearer = await fhirGet('/fhir/R4/Patient', ehr.key);
+  assert.equal(asBearer.status, 401, 'the raw key is refused on a data call');
+  assert.equal(asBearer.data.resourceType, 'OperationOutcome');
+  assert.match(asBearer.data.issue[0].diagnostics, /auth\/token/);
+  assert.equal((await fhirGet('/fhir/R4/HealthcareService', dirOnly.key)).status, 401, 'for every resource type');
+  assert.equal((await fhirGet('/fhir/R4/$export', ehr.key, { Prefer: 'respond-async' })).status, 401, 'and for bulk export');
+  const denied = H.db.one(`SELECT details FROM audit_log WHERE action='fhir.denied' AND entity_id=? ORDER BY rowid DESC LIMIT 1`, ehr.id);
+  assert.ok(denied && /secret used as a bearer/.test(denied.details), 'the refusal is audited against the client');
+  assert.ok(!denied.details.includes(ehr.key), 'without the key');
   const intake = await admin.post('/api/admin/api-keys', { name: 'Pocket AI' });
   assert.equal((await fhirGet('/fhir/R4/Patient', intake.data.key)).status, 401, 'an intake key cannot read FHIR');
   // ...and a FHIR key cannot stage notes through intake.
   const c = H.client();
   assert.equal((await c.get('/api/intake/ping', { Authorization: `Bearer ${ehr.key}`, Cookie: '' })).status, 401);
   assert.equal((await c.get('/api/intake/ping', { Authorization: `Bearer ${intake.data.key}`, Cookie: '' })).status, 200, 'the intake key still works there');
-  const unknown = await fhirGet('/fhir/R4/Nonsense', ehr.key);
+  const unknown = await fhirGet('/fhir/R4/Nonsense', ehr.token);
   assert.equal(unknown.status, 404); assert.equal(unknown.data.resourceType, 'OperationOutcome');
-  const nopath = await fhirGet('/fhir/R4/Patient/a/b/c', ehr.key);
+  const nopath = await fhirGet('/fhir/R4/Patient/a/b/c', ehr.token);
   assert.equal(nopath.status, 404); assert.match(nopath.ct, /fhir\+json/); assert.equal(nopath.data.resourceType, 'OperationOutcome');
 });
 
@@ -159,19 +179,19 @@ test('OAuth2 client credentials: a token, narrowed scopes, refusals', async () =
 });
 
 test('scopes: a client without the scope gets 403 and the refusal is audited', async () => {
-  const r = await fhirGet('/fhir/R4/Patient', dirOnly.key);
+  const r = await fhirGet('/fhir/R4/Patient', dirOnly.token);
   assert.equal(r.status, 403);
   assert.equal(r.data.issue[0].code, 'forbidden');
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='fhir.denied' AND entity='Patient'`));
-  assert.equal((await fhirGet(`/fhir/R4/Patient/${ids.consented}`, dirOnly.key)).status, 403);
-  const hs = await fhirGet('/fhir/R4/HealthcareService', dirOnly.key);
+  assert.equal((await fhirGet(`/fhir/R4/Patient/${ids.consented}`, dirOnly.token)).status, 403);
+  const hs = await fhirGet('/fhir/R4/HealthcareService', dirOnly.token);
   assert.equal(hs.status, 200);
   assert.equal(entriesOf(hs.data, 'HealthcareService')[0].name, 'Riverbend OTP');
 });
 
 test('Patient search returns only consented patients, labelled, with omissions counted and the §2.32 notice', async () => {
   const before = H.db.one(`SELECT COUNT(*) n FROM disclosures WHERE source='fhir'`).n;
-  const r = await fhirGet('/fhir/R4/Patient', ehr.key);
+  const r = await fhirGet('/fhir/R4/Patient', ehr.token);
   assert.equal(r.status, 200);
   assert.match(r.ct, /application\/fhir\+json/);
   const b = r.data;
@@ -216,27 +236,27 @@ test('Patient search returns only consented patients, labelled, with omissions c
 
 test('a search that names one person never says whether they were withheld', async () => {
   const code = H.db.one(`SELECT client_code FROM clients WHERE id=?`, ids.none).client_code;
-  const r = await fhirGet(`/fhir/R4/Patient?identifier=${encodeURIComponent('urn:suds:client-code|' + code)}`, ehr.key);
+  const r = await fhirGet(`/fhir/R4/Patient?identifier=${encodeURIComponent('urn:suds:client-code|' + code)}`, ehr.token);
   assert.equal(entriesOf(r.data, 'Patient').length, 0);
   const text = JSON.stringify(outcomeOf(r.data));
   assert.ok(!/withheld|1 patient/.test(text), 'no count that would confirm the person is a client');
   const code2 = H.db.one(`SELECT client_code FROM clients WHERE id=?`, ids.consented).client_code;
-  const r2 = await fhirGet(`/fhir/R4/Patient?identifier=${code2}`, ehr.key);
+  const r2 = await fhirGet(`/fhir/R4/Patient?identifier=${code2}`, ehr.token);
   assert.deepEqual(entriesOf(r2.data, 'Patient').map(p => p.id), [ids.consented]);
   assert.equal(JSON.stringify(outcomeOf(r2.data)).replace(/"id":"[^"]+"/, ''), text.replace(/"id":"[^"]+"/, ''), 'the same words either way');
-  assert.deepEqual(entriesOf((await fhirGet('/fhir/R4/Patient?family=consented&birthdate=1985-06-15', ehr.key)).data, 'Patient').map(p => p.id), [ids.consented]);
-  assert.deepEqual(entriesOf((await fhirGet('/fhir/R4/Patient?given=Ada', ehr.key)).data, 'Patient').map(p => p.id), [ids.consented]);
+  assert.deepEqual(entriesOf((await fhirGet('/fhir/R4/Patient?family=consented&birthdate=1985-06-15', ehr.token)).data, 'Patient').map(p => p.id), [ids.consented]);
+  assert.deepEqual(entriesOf((await fhirGet('/fhir/R4/Patient?given=Ada', ehr.token)).data, 'Patient').map(p => p.id), [ids.consented]);
 });
 
 test('read: a consented patient is returned, anyone else is 404 exactly like a missing record', async () => {
-  const ok = await fhirGet(`/fhir/R4/Patient/${ids.consented}`, ehr.key);
+  const ok = await fhirGet(`/fhir/R4/Patient/${ids.consented}`, ehr.token);
   assert.equal(ok.status, 200); assert.equal(ok.data.resourceType, 'Patient'); assert.equal(ok.data.id, ids.consented);
-  const no = await fhirGet(`/fhir/R4/Patient/${ids.none}`, ehr.key);
-  const missing = await fhirGet(`/fhir/R4/Patient/${randomUUID()}`, ehr.key);
+  const no = await fhirGet(`/fhir/R4/Patient/${ids.none}`, ehr.token);
+  const missing = await fhirGet(`/fhir/R4/Patient/${randomUUID()}`, ehr.token);
   assert.equal(no.status, 404); assert.equal(missing.status, 404);
   assert.equal(no.data.issue[0].code, missing.data.issue[0].code);
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='fhir.read.withheld' AND client_id=?`, ids.none), 'the refusal is audited internally');
-  assert.equal((await fhirGet(`/fhir/R4/Encounter/iv-${ids.dataNone.iv}`, ehr.key)).status, 404);
+  assert.equal((await fhirGet(`/fhir/R4/Encounter/iv-${ids.dataNone.iv}`, ehr.token)).status, 404);
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='fhir.read' AND entity='Patient' AND client_id=?`, ids.consented));
 });
 
@@ -244,7 +264,7 @@ test('every patient resource type: valid shape, labelled, only the consented pat
   const types = ['EpisodeOfCare', 'Encounter', 'Consent', 'ServiceRequest', 'Task', 'Observation', 'DocumentReference'];
   const seen = {};
   for (const type of types) {
-    const r = await fhirGet(`/fhir/R4/${type}`, ehr.key);
+    const r = await fhirGet(`/fhir/R4/${type}`, ehr.token);
     assert.equal(r.status, 200, type);
     const list = entriesOf(r.data, type);
     assert.ok(list.length > 0, `${type} has results`);
@@ -279,7 +299,7 @@ test('every patient resource type: valid shape, labelled, only the consented pat
   assert.ok(seen.Observation.some(o => o.id === `risk-${ids.consented}` && o.valueCodeableConcept.coding[0].code === 'high'));
   const docs = seen.DocumentReference;
   assert.deepEqual(docs.map(d => d.id), [ids.data.note], 'signed notes only, not drafts, and never a SUD counseling note');
-  assert.equal((await fhirGet(`/fhir/R4/DocumentReference/${ids.counselingNote}`, ehr.key)).status, 404, 'a counseling note cannot be read by id either');
+  assert.equal((await fhirGet(`/fhir/R4/DocumentReference/${ids.counselingNote}`, ehr.token)).status, 404, 'a counseling note cannot be read by id either');
   assert.ok(!JSON.stringify(docs).includes('SECRET COUNSELING CONTENT'), 'never the note text');
   assert.ok(!JSON.stringify(docs).includes('Title A'));
   assert.ok(!docs[0].content[0].attachment.data && !docs[0].content[0].attachment.url);
@@ -287,7 +307,7 @@ test('every patient resource type: valid shape, labelled, only the consented pat
   const refs = new Set(Object.values(seen).flat().flatMap(r => refsIn(r)));
   refs.add(`Patient/${ids.consented}`);
   for (const ref of refs) {
-    const r = await fhirGet(`/fhir/R4/${ref}`, ehr.key);
+    const r = await fhirGet(`/fhir/R4/${ref}`, ehr.token);
     assert.equal(r.status, 200, `${ref} resolves`);
     assert.equal(`${r.data.resourceType}/${r.data.id}`, ref);
   }
@@ -296,23 +316,23 @@ test('every patient resource type: valid shape, labelled, only the consented pat
 test('the resource directory is not PHI: no consent needed, no Part 2 label, nothing in the accounting', async () => {
   const before = H.db.one(`SELECT COUNT(*) n FROM disclosures`).n;
   for (const type of ['Organization', 'Location', 'HealthcareService']) {
-    const r = await fhirGet(`/fhir/R4/${type}`, ehr.key);
+    const r = await fhirGet(`/fhir/R4/${type}`, ehr.token);
     assert.equal(r.status, 200);
     assert.ok(!r.data.meta.security, `${type} bundle is not labelled Part 2`);
     assert.ok(!outcomeOf(r.data));
     assert.ok(entriesOf(r.data, type).length >= 1);
   }
-  const org = await fhirGet(`/fhir/R4/Organization/${ids.resource}`, ehr.key);
+  const org = await fhirGet(`/fhir/R4/Organization/${ids.resource}`, ehr.token);
   assert.equal(org.data.name, 'Riverbend Health'); assert.ok(org.data.meta.profile[0].endsWith('us-core-organization'));
-  assert.equal((await fhirGet('/fhir/R4/Organization/suds-program', ehr.key)).status, 200);
-  const hs = await fhirGet(`/fhir/R4/HealthcareService?name=river`, ehr.key);
+  assert.equal((await fhirGet('/fhir/R4/Organization/suds-program', ehr.token)).status, 200);
+  const hs = await fhirGet(`/fhir/R4/HealthcareService?name=river`, ehr.token);
   assert.equal(entriesOf(hs.data)[0].providedBy.reference, `Organization/${ids.resource}`);
-  assert.equal(entriesOf((await fhirGet(`/fhir/R4/HealthcareService?name:exact=Nope`, ehr.key)).data).length, 0);
+  assert.equal(entriesOf((await fhirGet(`/fhir/R4/HealthcareService?name:exact=Nope`, ehr.token)).data).length, 0);
   assert.equal(H.db.one(`SELECT COUNT(*) n FROM disclosures`).n, before);
 });
 
 test('search parameters: patient, dates, _lastUpdated, _id, status; unknown or malformed ones are refused', async () => {
-  const q = async (p) => entriesOf((await fhirGet(p, ehr.key)).data).filter(r => r.resourceType !== 'OperationOutcome');
+  const q = async (p) => entriesOf((await fhirGet(p, ehr.token)).data).filter(r => r.resourceType !== 'OperationOutcome');
   assert.equal((await q(`/fhir/R4/Encounter?patient=Patient/${ids.consented}`)).length, 2);
   assert.equal((await q(`/fhir/R4/Encounter?patient=${ids.consented}&date=ge2026-04-01`)).length, 1, 'only the April call');
   assert.equal((await q(`/fhir/R4/Encounter?patient=${ids.consented}&date=2026-03`)).length, 1, 'a month is its whole range');
@@ -327,58 +347,58 @@ test('search parameters: patient, dates, _lastUpdated, _id, status; unknown or m
   assert.equal((await q(`/fhir/R4/Observation?category=overdose-event`)).length, 1);
   const eps = await q(`/fhir/R4/EpisodeOfCare?status=active&patient=${ids.consented}`); assert.ok(eps.length >= 1 && eps.every(e => e.status === 'active'));
   assert.equal((await q(`/fhir/R4/EpisodeOfCare?status=finished`)).length, 0);
-  const bad = await fhirGet('/fhir/R4/Patient?nickname=x', ehr.key);
+  const bad = await fhirGet('/fhir/R4/Patient?nickname=x', ehr.token);
   assert.equal(bad.status, 400); assert.equal(bad.data.issue[0].code, 'not-supported');
-  assert.equal((await fhirGet('/fhir/R4/Encounter?date=yesterday', ehr.key)).status, 400);
-  assert.equal((await fhirGet('/fhir/R4/Patient?birthdate=ge1980', ehr.key)).status, 400);
-  assert.equal((await fhirGet('/fhir/R4/Patient?_count=-1', ehr.key)).status, 400);
+  assert.equal((await fhirGet('/fhir/R4/Encounter?date=yesterday', ehr.token)).status, 400);
+  assert.equal((await fhirGet('/fhir/R4/Patient?birthdate=ge1980', ehr.token)).status, 400);
+  assert.equal((await fhirGet('/fhir/R4/Patient?_count=-1', ehr.token)).status, 400);
 });
 
 test('paging: _count, next and previous links, and the cap', async () => {
-  const first = await fhirGet('/fhir/R4/Encounter?_count=1', ehr.key);
+  const first = await fhirGet('/fhir/R4/Encounter?_count=1', ehr.token);
   const self = first.data.link.find(l => l.relation === 'self'); const next = first.data.link.find(l => l.relation === 'next');
   assert.ok(self && next, 'self and next');
   assert.ok(entriesOf(first.data, 'Encounter').length <= 1, 'a page never holds more than _count (fewer when some were withheld)');
   const seen = new Set(entriesOf(first.data, 'Encounter').map(e => e.id));
   let url = next.url; let pages = 1;
   while (url && pages < 10) {
-    const r = await fhirGet(url.replace(/^https?:\/\/[^/]+/, ''), ehr.key);
+    const r = await fhirGet(url.replace(/^https?:\/\/[^/]+/, ''), ehr.token);
     assert.ok(r.data.link.some(l => l.relation === 'previous'));
     for (const e of entriesOf(r.data, 'Encounter')) seen.add(e.id);
     url = r.data.link.find(l => l.relation === 'next')?.url; pages++;
   }
   assert.equal(seen.size, 2, 'both encounters across the pages, the unconsented ones never');
-  const capped = await fhirGet('/fhir/R4/Patient?_count=100000', ehr.key);
+  const capped = await fhirGet('/fhir/R4/Patient?_count=100000', ehr.token);
   assert.match(capped.data.link[0].url, /_count=200/);
 });
 
 test('a general release covers FHIR only outside a Part 2 programme, and lifting a restriction restores the flow', async () => {
-  assert.equal((await fhirGet(`/fhir/R4/Patient/${ids.roi}`, ehr.key)).status, 404, 'a general release is not a Part 2 consent');
+  assert.equal((await fhirGet(`/fhir/R4/Patient/${ids.roi}`, ehr.token)).status, 404, 'a general release is not a Part 2 consent');
   H.db.setSetting('part2_program', '0');
   try {
-    assert.equal((await fhirGet(`/fhir/R4/Patient/${ids.roi}`, ehr.key)).status, 200, 'outside Part 2 a release naming the organisation for TPO is enough');
-    const c = entriesOf((await fhirGet(`/fhir/R4/Consent?patient=${ids.roi}`, ehr.key)).data, 'Consent');
+    assert.equal((await fhirGet(`/fhir/R4/Patient/${ids.roi}`, ehr.token)).status, 200, 'outside Part 2 a release naming the organisation for TPO is enough');
+    const c = entriesOf((await fhirGet(`/fhir/R4/Consent?patient=${ids.roi}`, ehr.token)).data, 'Consent');
     assert.equal(c.length, 1); assert.equal(c[0].policyRule.coding[0].code, 'hipaa-auth');
     const row = H.db.one(`SELECT * FROM disclosures WHERE client_id=? AND source='fhir' ORDER BY rowid DESC LIMIT 1`, ids.roi);
     assert.equal(row.notice_version, null, 'no §2.32 notice version outside a Part 2 programme');
-    assert.equal((await fhirGet(`/fhir/R4/Patient/${ids.cnOnly}`, ehr.key)).status, 404, 'a counseling-notes consent still does not cover FHIR');
+    assert.equal((await fhirGet(`/fhir/R4/Patient/${ids.cnOnly}`, ehr.token)).status, 404, 'a counseling-notes consent still does not cover FHIR');
   } finally { H.db.setSetting('part2_program', '1'); }
-  assert.equal((await fhirGet(`/fhir/R4/Patient/${ids.roi}`, ehr.key)).status, 404, 'and the setting takes effect on the next request');
-  assert.equal((await fhirGet(`/fhir/R4/Patient/${ids.restricted}`, ehr.key)).status, 404);
+  assert.equal((await fhirGet(`/fhir/R4/Patient/${ids.roi}`, ehr.token)).status, 404, 'and the setting takes effect on the next request');
+  assert.equal((await fhirGet(`/fhir/R4/Patient/${ids.restricted}`, ehr.token)).status, 404);
   H.db.run(`UPDATE patient_requests SET status='denied', updated_at=? WHERE client_id=?`, new Date().toISOString(), ids.restricted);
-  try { assert.equal((await fhirGet(`/fhir/R4/Patient/${ids.restricted}`, ehr.key)).status, 200, 'with no agreed restriction the consent covers the client again'); }
+  try { assert.equal((await fhirGet(`/fhir/R4/Patient/${ids.restricted}`, ehr.token)).status, 200, 'with no agreed restriction the consent covers the client again'); }
   finally { H.db.run(`UPDATE patient_requests SET status='fulfilled', updated_at=? WHERE client_id=?`, new Date().toISOString(), ids.restricted); }
-  assert.equal((await fhirGet(`/fhir/R4/Patient/${ids.restricted}`, ehr.key)).status, 404);
+  assert.equal((await fhirGet(`/fhir/R4/Patient/${ids.restricted}`, ehr.token)).status, 404);
 });
 
 test('revoking the consent stops the flow at once', async () => {
   const other = await newClient('Vic', 'Victim');
   const cid = consent(other);
-  assert.equal((await fhirGet(`/fhir/R4/Patient/${other}`, ehr.key)).status, 200);
+  assert.equal((await fhirGet(`/fhir/R4/Patient/${other}`, ehr.token)).status, 200);
   const rv = await admin.post(`/api/consents/${cid}/revoke`, { reason: 'Client withdrew' });
   assert.equal(rv.status, 200);
-  assert.equal((await fhirGet(`/fhir/R4/Patient/${other}`, ehr.key)).status, 404);
-  const s = await fhirGet('/fhir/R4/Patient', ehr.key);
+  assert.equal((await fhirGet(`/fhir/R4/Patient/${other}`, ehr.token)).status, 404);
+  const s = await fhirGet('/fhir/R4/Patient', ehr.token);
   assert.ok(!entriesOf(s.data, 'Patient').some(p => p.id === other));
 });
 
@@ -393,18 +413,18 @@ async function poll(loc, token) {
 }
 
 test('bulk export: kick-off, status, NDJSON files encrypted at rest, consent filtering, accounting, delete', async () => {
-  const noPrefer = await fhirGet('/fhir/R4/$export', ehr.key);
+  const noPrefer = await fhirGet('/fhir/R4/$export', ehr.token);
   assert.equal(noPrefer.status, 400);
-  const bad = await fhirGet('/fhir/R4/Patient/$export?_type=Organization', ehr.key, { Prefer: 'respond-async' });
+  const bad = await fhirGet('/fhir/R4/Patient/$export?_type=Organization', ehr.token, { Prefer: 'respond-async' });
   assert.equal(bad.status, 400, 'the directory is not in the Patient compartment');
-  assert.equal((await fhirGet('/fhir/R4/$export?_type=Patient', dirOnly.key, { Prefer: 'respond-async' })).status, 403, 'scopes apply to export too');
-  const k = await fhirGet('/fhir/R4/$export?_type=Patient,Encounter,Organization&_outputFormat=application/fhir%2Bndjson', ehr.key, { Prefer: 'respond-async' });
+  assert.equal((await fhirGet('/fhir/R4/$export?_type=Patient', dirOnly.token, { Prefer: 'respond-async' })).status, 403, 'scopes apply to export too');
+  const k = await fhirGet('/fhir/R4/$export?_type=Patient,Encounter,Organization&_outputFormat=application/fhir%2Bndjson', ehr.token, { Prefer: 'respond-async' });
   assert.equal(k.status, 202);
   const loc = k.headers.get('content-location');
   assert.match(loc, /\/fhir\/R4\/\$export-status\//);
   const jobId = loc.split('/').pop();
-  assert.equal((await fhirGet(loc.replace(/^https?:\/\/[^/]+/, ''), dirOnly.key)).status, 404, 'another client cannot see this export');
-  const done = await poll(loc, ehr.key);
+  assert.equal((await fhirGet(loc.replace(/^https?:\/\/[^/]+/, ''), dirOnly.token)).status, 404, 'another client cannot see this export');
+  const done = await poll(loc, ehr.token);
   assert.equal(done.status, 200);
   const m = done.data;
   assert.equal(m.requiresAccessToken, true); assert.ok(m.transactionTime);
@@ -416,12 +436,12 @@ test('bulk export: kick-off, status, NDJSON files encrypted at rest, consent fil
   const patients = m.output.find(o => o.type === 'Patient');
   const unauth = await fetch(patients.url.replace(/^https?:\/\/[^/]+/, base));
   assert.equal(unauth.status, 401, 'files need the token');
-  const file = await fhirGet(patients.url.replace(/^https?:\/\/[^/]+/, ''), ehr.key);
+  const file = await fhirGet(patients.url.replace(/^https?:\/\/[^/]+/, ''), ehr.token);
   assert.equal(file.status, 200); assert.match(file.ct, /application\/fhir\+ndjson/);
   const lines = file.data.trim().split('\n').map(l => JSON.parse(l));
   assert.deepEqual(lines.map(p => p.id).sort(), [ids.consented, ids.tpo].sort());
   assert.equal(patients.count, 2);
-  const oo = await fhirGet(m.error[0].url.replace(/^https?:\/\/[^/]+/, ''), ehr.key);
+  const oo = await fhirGet(m.error[0].url.replace(/^https?:\/\/[^/]+/, ''), ehr.token);
   const issues = JSON.parse(oo.data.trim()).issue;
   assert.ok(issues.some(i => /42 CFR part 2/.test(i.diagnostics)));
   assert.ok(issues.some(i => /patient\(s\) were left out/.test(i.diagnostics)));
@@ -431,30 +451,31 @@ test('bulk export: kick-off, status, NDJSON files encrypted at rest, consent fil
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='fhir.export.complete' AND entity_id=?`, jobId));
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='fhir.export.download' AND entity_id=?`, jobId));
   // Delete.
-  const del = await fetch(loc.replace(/^https?:\/\/[^/]+/, base), { method: 'DELETE', headers: { Authorization: `Bearer ${ehr.key}` } });
+  const del = await fetch(loc.replace(/^https?:\/\/[^/]+/, base), { method: 'DELETE', headers: { Authorization: `Bearer ${ehr.token}` } });
   assert.equal(del.status, 202);
   assert.ok(!fs.existsSync(dir), 'files removed');
-  assert.equal((await fhirGet(loc.replace(/^https?:\/\/[^/]+/, ''), ehr.key)).status, 404);
+  assert.equal((await fhirGet(loc.replace(/^https?:\/\/[^/]+/, ''), ehr.token)).status, 404);
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='fhir.export.delete' AND entity_id=?`, jobId));
 });
 
 test('bulk export at Patient level with _since exports only patient data changed since then', async () => {
-  const k = await fhirGet(`/fhir/R4/Patient/$export?_since=${encodeURIComponent('2999-01-01T00:00:00Z')}`, ehr.key, { Prefer: 'respond-async' });
+  const k = await fhirGet(`/fhir/R4/Patient/$export?_since=${encodeURIComponent('2999-01-01T00:00:00Z')}`, ehr.token, { Prefer: 'respond-async' });
   assert.equal(k.status, 202);
-  const done = await poll(k.headers.get('content-location'), ehr.key);
+  const done = await poll(k.headers.get('content-location'), ehr.token);
   assert.equal(done.status, 200);
   assert.deepEqual(done.data.output, [], 'nothing changed after 2999');
-  const all = await fhirGet('/fhir/R4/Patient/$export', ehr.key, { Prefer: 'respond-async' });
-  const m = (await poll(all.headers.get('content-location'), ehr.key)).data;
+  const all = await fhirGet('/fhir/R4/Patient/$export', ehr.token, { Prefer: 'respond-async' });
+  const m = (await poll(all.headers.get('content-location'), ehr.token)).data;
   assert.ok(!m.output.some(o => ['Organization', 'Location', 'HealthcareService'].includes(o.type)));
   assert.ok(m.output.some(o => o.type === 'DocumentReference'));
 });
 
 test('per-client rate limit answers 429 with Retry-After', async () => {
   const c = (await admin.post('/api/admin/fhir-clients', { name: 'Slow HIE', recipient: 'Slow HIE', scopes: ['system/Organization.read'], rate_limit: 2 })).data;
-  assert.equal((await fhirGet('/fhir/R4/Organization', c.key)).status, 200);
-  assert.equal((await fhirGet('/fhir/R4/Organization', c.key)).status, 200);
-  const r = await fhirGet('/fhir/R4/Organization', c.key);
+  const t = await tokenFor(c);
+  assert.equal((await fhirGet('/fhir/R4/Organization', t)).status, 200);
+  assert.equal((await fhirGet('/fhir/R4/Organization', t)).status, 200);
+  const r = await fhirGet('/fhir/R4/Organization', t);
   assert.equal(r.status, 429); assert.equal(r.headers.get('retry-after'), '60'); assert.equal(r.data.issue[0].code, 'throttled');
 });
 
@@ -477,12 +498,13 @@ test('FHIR client administration: admins only, audited, keys shown once, revocat
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='fhir_client.create' AND entity_id=?`, c.data.id));
   // An alias counts as the recipient; the purpose must match (operations here, and TPO covers it).
   const pid = await newClient('Hal', 'Alias'); consent(pid, { recipient: 'Regional Health Information Exchange', purpose: 'Health care operations' });
-  assert.equal((await fhirGet(`/fhir/R4/Patient/${pid}`, c.data.key)).status, 200);
-  assert.equal((await fhirGet(`/fhir/R4/Patient/${ids.consented}`, c.data.key)).status, 404, 'a consent naming another organisation does not cover this one');
-  const tok = await (await fetch(base + '/fhir/R4/auth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: `grant_type=client_credentials&client_id=${c.data.id}&client_secret=${encodeURIComponent(c.data.key)}` })).json();
+  const tok = await tokenFor(c.data);
+  assert.equal((await fhirGet(`/fhir/R4/Patient/${pid}`, tok)).status, 200);
+  assert.equal((await fhirGet(`/fhir/R4/Patient/${ids.consented}`, tok)).status, 404, 'a consent naming another organisation does not cover this one');
   assert.equal((await admin.del(`/api/admin/fhir-clients/${c.data.id}`)).status, 200);
-  assert.equal((await fhirGet('/fhir/R4/Patient', c.data.key)).status, 401);
-  assert.equal((await fhirGet('/fhir/R4/Patient', tok.access_token)).status, 401, 'tokens die with the client');
+  assert.equal((await fhirGet('/fhir/R4/Patient', tok)).status, 401, 'tokens die with the client');
+  const again = await fetch(base + '/fhir/R4/auth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: `grant_type=client_credentials&client_id=${c.data.id}&client_secret=${encodeURIComponent(c.data.key)}` });
+  assert.equal(again.status, 401, 'and the secret no longer gets a token');
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='fhir_client.revoke' AND entity_id=?`, c.data.id));
   assert.equal((await admin.del(`/api/admin/fhir-clients/${randomUUID()}`)).status, 404);
 });

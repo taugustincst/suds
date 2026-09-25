@@ -7,10 +7,20 @@
 //
 // Output files are written to <data dir>/fhir-export/<job id>/, each one encrypted with the database key
 // (AES-256-GCM, server/crypto.js), readable only through the file URL by the FHIR client that asked, and
-// deleted when the job expires (FHIR_EXPORT_TTL_MINUTES, default 60) or is cancelled. Job state is kept in
-// memory: SUDS is one process, and a restart makes a client start its export again (the files left behind
-// are swept by age). A key rotation during that window makes the files unreadable; the file URL then
-// answers 410 and the client starts again.
+// deleted when the job expires (FHIR_EXPORT_TTL_MINUTES, default 60) or is cancelled. A key rotation during
+// that window makes the files unreadable; the file URL then answers 410 and the client starts again.
+//
+// Part 2 timing. Building the files is audited (fhir.export.complete) but is not yet a disclosure: nothing
+// has left the programme. The disclosure happens when a file is downloaded, so that is when it is checked
+// and accounted. At each download every patient in the file must still be covered: a consent revoked (or
+// expired, or a restriction agreed) after the build makes the file answer 410, and the client must start a
+// new export, which leaves that patient out. The first download of each file writes one accounting row per
+// patient in it, under the consent that covers them at that moment.
+//
+// Job state (never access tokens) is kept beside the files as job.json.enc, encrypted likewise, so a restart
+// neither orphans a finished export nor forgets which files were already accounted. A job that was still
+// being built when the process stopped is marked failed (the client starts again) and its partial files are
+// removed; a directory with no readable state is removed at startup (restore(), called by server/index.js).
 const fs = require('node:fs');
 const path = require('node:path');
 const config = require('../config');
@@ -26,13 +36,52 @@ const TTL_MS = Math.max(1, Number(process.env.FHIR_EXPORT_TTL_MINUTES) || 60) * 
 const MAX_ACTIVE_PER_CLIENT = 2;
 const PAGE = 500;
 const OUTPUT_FORMATS = ['application/fhir+ndjson', 'application/ndjson', 'ndjson'];
+const STATE = 'job.json.enc';
 const dir = () => path.join(config.dataDir, 'fhir-export');
 const jobs = new Map();
+
+/** Write a job's state beside its files (encrypted: the per-file patient lists say who was exported). */
+function save(job) {
+  try {
+    fs.mkdirSync(path.join(dir(), job.id), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(path.join(dir(), job.id, STATE), encrypt(JSON.stringify(job)), { mode: 0o600 });
+  } catch (e) { console.error(`[suds] FHIR export ${job.id}: could not save its state:`, e.message); }
+}
+
+let restored = false;
+/**
+ * Bring back the jobs a previous server process left: finished ones carry on where they were; one that was
+ * mid-build is marked failed and its partial files removed; a directory with no readable state (written by
+ * an older SUDS, or under a key since rotated) or past its expiry is removed. Runs once per process, at
+ * startup (server/index.js), when this process is the only one using the data directory (instance-lock.js).
+ */
+function restore() {
+  if (restored) return;
+  restored = true;
+  let entries = [];
+  try { entries = fs.readdirSync(dir()); } catch { return; }
+  const now = Date.now();
+  for (const e of entries) {
+    if (jobs.has(e)) continue;
+    const p = path.join(dir(), e);
+    let job = null;
+    try { job = JSON.parse(decrypt(fs.readFileSync(path.join(p, STATE), 'utf8'))); } catch { /* no readable state */ }
+    if (!job || job.id !== e || (job.expiresAt && job.expiresAt < now)) { try { fs.rmSync(p, { recursive: true, force: true }); } catch { /* raced */ } continue; }
+    if (job.status === 'in-progress') {
+      job.status = 'error'; job.message = 'The server restarted while this export was being built; start a new export';
+      job.expiresAt = now + TTL_MS; job.outputs = []; job.errors = [];
+      try { for (const f of fs.readdirSync(p)) if (f !== STATE) fs.rmSync(path.join(p, f), { force: true }); } catch { /* nothing written */ }
+      save(job);
+    }
+    jobs.set(job.id, job);
+  }
+}
 
 function sweep() {
   const now = Date.now();
   for (const [id, j] of jobs) if (j.expiresAt && j.expiresAt < now) removeJob(id);
-  // Files a previous run of the server left behind (its jobs died with it) go once they are past the TTL.
+  // Anything else in the directory that no job owns (a crash between mkdir and the first save, or a
+  // process that never ran restore()) goes once it is past the TTL.
   let entries = [];
   try { entries = fs.readdirSync(dir()); } catch { return; }
   for (const e of entries) {
@@ -87,8 +136,9 @@ function kickoff(ctx, client, level) {
   if (running >= MAX_ACTIVE_PER_CLIENT) throw new FhirError(429, `This client already has ${running} exports running; wait for one to finish`, { code: 'throttled', headers: { 'Retry-After': '30' } });
   const base = baseUrl(ctx);
   const job = { id: uuid(), keyId: client.id, level, types, since, request: `${base}${level === 'patient' ? '/Patient' : ''}/$export${ctx.query.toString() ? '?' + ctx.query.toString() : ''}`,
-    transactionTime: db.now(), status: 'in-progress', progress: 'queued', outputs: [], errors: [], expiresAt: null, base };
+    transactionTime: db.now(), status: 'in-progress', progress: 'queued', outputs: [], errors: [], expiresAt: null, base, downloaded: {}, massChecked: false };
   jobs.set(job.id, job);
+  save(job);
   audit.log({ user: client.actor, action: 'fhir.export.kickoff', entity: 'fhir_export', entityId: job.id, ip: ctx.ip, details: { client: client.prefix, level, types, since: !!since } });
   later(() => { run(job, client, ctx.ip).catch(() => { /* recorded on the job */ }); });
   send(ctx.res, 202, outcome([{ severity: 'information', code: 'informational', diagnostics: `Export ${job.id} accepted; poll the Content-Location URL for its status.` }]), { 'Content-Location': `${base}/$export-status/${job.id}` });
@@ -99,13 +149,13 @@ async function run(job, client, ip) {
   try {
     fs.mkdirSync(jobDir, { recursive: true, mode: 0o700 });
     const coverage = disclosure.fhirCoverage({ cacheKey: client.id, recipients: client.recipients, purposeOfUse: client.purpose });
-    const perClient = new Map(); const omitted = new Set(); let total = 0;
+    const patients = new Set(); const omitted = new Set(); let total = 0;
     for (const type of job.types) {
       if (!jobs.has(job.id)) return; // cancelled
       job.progress = `exporting ${type}`;
       const d = R.DEFS[type];
       const filter = R.where(type, new URLSearchParams(), { since: job.since });
-      const lines = [];
+      const lines = []; const inFile = {};
       for (let offset = 0; ; offset += PAGE) {
         const rows = R.page(type, filter, { count: PAGE, offset });
         for (const row of rows) {
@@ -113,10 +163,7 @@ async function run(job, client, ip) {
           const r = R.toResource(type, row);
           if (!r || (d.keep && !d.keep(r.full, client))) continue;
           lines.push(JSON.stringify(r.resource));
-          if (d.phi) {
-            const e = perClient.get(row._cid) || { consentId: coverage.get(row._cid), counts: {} };
-            e.counts[type] = (e.counts[type] || 0) + 1; perClient.set(row._cid, e);
-          }
+          if (d.phi) { inFile[row._cid] = (inFile[row._cid] || 0) + 1; patients.add(row._cid); }
         }
         if (rows.length < PAGE) break;
         await new Promise(res => later(res)); // let other requests in between pages
@@ -124,7 +171,8 @@ async function run(job, client, ip) {
       if (lines.length) {
         const file = `${type}.ndjson`;
         fs.writeFileSync(path.join(jobDir, file + '.enc'), encrypt(lines.join('\n') + '\n'), { mode: 0o600 });
-        job.outputs.push({ type, file, count: lines.length });
+        // Who is in each file (client id -> resources): checked again, and accounted, when it is downloaded.
+        job.outputs.push({ type, file, count: lines.length, patients: d.phi ? inFile : null });
         total += lines.length;
       }
     }
@@ -138,16 +186,14 @@ async function run(job, client, ip) {
       fs.writeFileSync(path.join(jobDir, 'OperationOutcome.ndjson.enc'), encrypt(JSON.stringify(oo) + '\n'), { mode: 0o600 });
       job.errors.push({ type: 'OperationOutcome', file: 'OperationOutcome.ndjson', count: 1 });
     }
-    // One accounting-of-disclosures row per patient for the whole export.
-    for (const e of perClient.values()) e.what = `FHIR bulk export ${job.id}: ${Object.entries(e.counts).map(([t, n]) => `${t} (${n})`).join(', ')}`;
-    disclosure.recordFhir({ perClient, recipient: client.recipient, purposeOfUse: client.purpose, sourceRef: `fhir-export:${job.id}`, user: client.actor, ip });
-    // A bulk export naming a great many people is a mass identified export like any other (server/incidents.js).
-    require('../incidents').maybeMassExport({ clients: perClient.size, kind: 'fhir-bulk', user: client.actor });
-    audit.log({ user: client.actor, action: 'fhir.export.complete', entity: 'fhir_export', entityId: job.id, ip, details: { client: client.prefix, types: job.types, resources: total, patients: perClient.size, omitted_patients: omitted.size } });
+    // Built, not yet disclosed: audited now, accounted per file at its first download (file() below).
+    audit.log({ user: client.actor, action: 'fhir.export.complete', entity: 'fhir_export', entityId: job.id, ip, details: { client: client.prefix, types: job.types, resources: total, patients: patients.size, omitted_patients: omitted.size } });
     job.status = 'complete'; job.progress = 'complete'; job.expiresAt = Date.now() + TTL_MS;
+    save(job);
   } catch (e) {
-    job.status = 'error'; job.message = 'The export failed on the server'; job.expiresAt = Date.now() + TTL_MS;
+    job.status = 'error'; job.message = 'The export failed on the server'; job.expiresAt = Date.now() + TTL_MS; job.outputs = []; job.errors = [];
     try { fs.rmSync(jobDir, { recursive: true, force: true }); } catch { /* nothing written */ }
+    if (jobs.has(job.id)) save(job);
     console.error(`[suds] FHIR export ${job.id} failed:`, e.message);
     audit.log({ user: client.actor, action: 'fhir.export.failed', entity: 'fhir_export', entityId: job.id, ip, success: false, details: { message: String(e.message).slice(0, 200) } });
   }
@@ -170,7 +216,8 @@ function status(ctx, client) {
     transactionTime: j.transactionTime, request: j.request, requiresAccessToken: true,
     output: j.outputs.map(f => ({ type: f.type, url: url(f), count: f.count })),
     error: j.errors.map(f => ({ type: f.type, url: url(f) })),
-    extension: { 'urn:suds:part2': { security: j.types.some(t => R.DEFS[t].phi) ? PART2_SECURITY : [], notice: j.types.some(t => R.DEFS[t].phi) ? disclosure.notice().text : undefined, expires: new Date(j.expiresAt).toISOString() } },
+    extension: { 'urn:suds:part2': { security: j.types.some(t => R.DEFS[t].phi) ? PART2_SECURITY : [], notice: j.types.some(t => R.DEFS[t].phi) ? disclosure.notice().text : undefined, expires: new Date(j.expiresAt).toISOString(),
+      consent_checked_at: 'download' } },
   };
   const body = JSON.stringify(manifest);
   ctx.res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(body), Expires: new Date(j.expiresAt).toUTCString() });
@@ -188,12 +235,35 @@ function file(ctx, client) {
   const j = ownJob(ctx, client);
   const f = [...j.outputs, ...j.errors].find(x => x.file === ctx.params.file);
   if (j.status !== 'complete' || !f) throw new FhirError(404, 'No such export file', { code: 'not-found' });
+  const who = f.patients ? Object.keys(f.patients) : [];
+  let perClient = null;
+  if (who.length) {
+    // The disclosure happens now, so the consent is checked now: everyone in this file must still be covered.
+    const coverage = disclosure.fhirCoverage({ cacheKey: client.id, recipients: client.recipients, purposeOfUse: client.purpose });
+    const lapsed = who.filter(cid => !coverage.has(cid));
+    if (lapsed.length) {
+      audit.log({ user: client.actor, action: 'fhir.export.download.refused', entity: 'fhir_export', entityId: j.id, ip: ctx.ip, success: false, details: { client: client.prefix, type: f.type, lapsed_patients: lapsed.length } });
+      throw new FhirError(410, 'Since this export was built, a patient in this file is no longer covered by a consent to this recipient (revoked, expired, or a restriction was agreed). The file will not be released; start a new export.', { code: 'business-rule' });
+    }
+    if (!j.downloaded[f.file]) perClient = new Map(who.map(cid => [cid, { consentId: coverage.get(cid), what: `FHIR bulk export ${j.id}: ${f.type} (${f.patients[cid]})` }]));
+  }
   let body;
   try { body = decrypt(fs.readFileSync(path.join(dir(), j.id, f.file + '.enc'), 'utf8')); }
   catch { throw new FhirError(410, 'This export file can no longer be read (expired, or the server key changed); start a new export', { code: 'not-found' }); }
-  audit.log({ user: client.actor, action: 'fhir.export.download', entity: 'fhir_export', entityId: j.id, ip: ctx.ip, details: { client: client.prefix, type: f.type, count: f.count } });
+  if (perClient) {
+    // First download of this file: one accounting-of-disclosures row per patient in it.
+    disclosure.recordFhir({ perClient, recipient: client.recipient, purposeOfUse: client.purpose, sourceRef: `fhir-export:${j.id}`, user: client.actor, ip: ctx.ip });
+    if (!j.massChecked) {
+      // A bulk export naming a great many people is a mass identified export like any other (server/incidents.js).
+      j.massChecked = true;
+      const everyone = new Set(j.outputs.flatMap(o => (o.patients ? Object.keys(o.patients) : [])));
+      require('../incidents').maybeMassExport({ clients: everyone.size, kind: 'fhir-bulk', user: client.actor });
+    }
+  }
+  if (!j.downloaded[f.file]) { j.downloaded[f.file] = new Date().toISOString(); save(j); }
+  audit.log({ user: client.actor, action: 'fhir.export.download', entity: 'fhir_export', entityId: j.id, ip: ctx.ip, details: { client: client.prefix, type: f.type, count: f.count, patients: who.length, accounted: !!perClient } });
   ctx.res.writeHead(200, { 'Content-Type': FHIR_NDJSON, 'Content-Length': Buffer.byteLength(body) });
   ctx.res.end(body);
 }
 
-module.exports = { kickoff, status, cancel, file, sweep, TTL_MS, _jobs: jobs };
+module.exports = { kickoff, status, cancel, file, sweep, restore, TTL_MS, _jobs: jobs, _resetForTests: () => { jobs.clear(); restored = false; } };
