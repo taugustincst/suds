@@ -95,6 +95,9 @@ function pull(user, since, { limit = PULL_LIMIT } = {}) {
   const horizon = db.getSetting('tombstone_purged_before', null);
   if (horizon && since !== NEVER && since < horizon) { out.full_resync_required = true; out.reason = 'This device has been offline longer than deletions are kept; it will rebuild from the office copy.'; }
   for (const k of SYNC.settings_keys) out.settings[k] = db.getSetting(k, null);
+  // The office's calendar goes to its devices, so "today" and a visit's service date are the same day on
+  // both (the zone in force: the setting, else ORG_TIMEZONE).
+  out.settings.org_timezone = require('./budget').orgTimezone() || null;
   return out;
 }
 

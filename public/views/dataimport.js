@@ -11,7 +11,7 @@ export async function spreadsheetImportCard() {
   const status = h('div', { class: 'small muted mt' });
   const review = h('div', { class: 'mt' });
   let preview = null; let file = null;
-  const drop = h('div', { class: 'dropzone', onClick: () => fileIn.click(), onDragover: e => { e.preventDefault(); drop.classList.add('over'); }, onDragleave: () => drop.classList.remove('over'), onDrop: e => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) load(e.dataTransfer.files[0]); } }, 'Drop an Excel (.xlsx) or CSV file here, or click to choose', h('div', { class: 'small' }, 'Column names are matched automatically; you can adjust them before anything is saved.'));
+  const drop = h('div', { class: 'dropzone', role: 'button', tabindex: '0', 'aria-label': 'Choose a spreadsheet file (Excel or CSV)', onClick: () => fileIn.click(), onKeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileIn.click(); } }, onDragover: e => { e.preventDefault(); drop.classList.add('over'); }, onDragleave: () => drop.classList.remove('over'), onDrop: e => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) load(e.dataTransfer.files[0]); } }, 'Drop an Excel (.xlsx) or CSV file here, or click to choose', h('div', { class: 'small' }, 'Column names are matched automatically; you can adjust them before anything is saved.'));
   fileIn.addEventListener('change', () => { if (fileIn.files[0]) load(fileIn.files[0]); });
   async function load(f, mapping, sheet = 0) {
     file = f; status.textContent = `Reading ${f.name}…`; clear(review);

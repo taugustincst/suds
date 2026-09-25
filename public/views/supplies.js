@@ -8,13 +8,23 @@ const LOW = 5;
 route('supplies', async () => {
   const { rows, drawdown } = await get('/api/supplies');
   const refresh = () => nav('supplies?_=' + Date.now());
-  const writable = can('interventions:write');
+  // A device that syncs with an office shows the office's shelf count: a change made here would never be
+  // sent and is refused (local/kernel.js), so the buttons are there but disabled, with the reason given,
+  // rather than failing on Save. SUDS on this device (no office) keeps its own cupboard.
+  const officeCopy = state.local && !window.SUDS_STATIC_HOST;
+  const writable = can('interventions:write') && !officeCopy;
+  const whyNot = 'Supply counts are kept at the office: change them in the office SUDS. Visits you record here draw the office count down when you sync.';
+  const off = (attrs) => officeCopy && can('interventions:write') ? { ...attrs, disabled: true, title: whyNot, 'aria-describedby': 'supplies-office-note' } : attrs;
   const tracked = Object.values(drawdown || {});
   const addItem = () => {
     const f = form([
       { name: 'item', label: 'Item', required: true, placeholder: 'e.g. Naloxone kit', help: `Name it "${tracked[0]}" or "${tracked[1]}" and visits draw it down automatically.` },
       { name: 'quantity', label: 'Quantity on hand', type: 'number', min: 0, step: 1, required: true, value: 0 },
-    ], { submitText: 'Save', onCancel: () => m.close(), onSubmit: async (d) => { await post('/api/supplies', d); toast('Saved', 'ok'); m.close(); refresh(); } });
+    ], { submitText: 'Save', onCancel: () => m.close(), onSubmit: async (d) => {
+      // The error also goes in a toast: the dialog's own banner can be above where a phone has scrolled.
+      try { await post('/api/supplies', d); } catch (e) { toast(e.message || 'The item could not be saved.', 'error'); throw e; }
+      toast('Saved', 'ok'); m.close(); refresh();
+    } });
     const m = modal('Add a supply item', f);
   };
   const adjust = async (x, delta) => {
@@ -22,17 +32,20 @@ route('supplies', async () => {
     catch (e) { toast(e.message, 'error'); }
   };
   const setCount = (x) => {
-    const f = form([{ name: 'quantity', label: `${x.item} — counted on the shelf`, type: 'number', min: 0, step: 1, required: true, value: x.quantity }], { submitText: 'Record count', onCancel: () => m.close(), onSubmit: async (d) => { await put(`/api/supplies/${x.id}`, { quantity: d.quantity }); toast('Count recorded', 'ok'); m.close(); refresh(); } });
+    const f = form([{ name: 'quantity', label: `${x.item} — counted on the shelf`, type: 'number', min: 0, step: 1, required: true, value: x.quantity }], { submitText: 'Record count', onCancel: () => m.close(), onSubmit: async (d) => { try { await put(`/api/supplies/${x.id}`, { quantity: d.quantity }); } catch (e) { toast(e.message || 'The count could not be saved.', 'error'); throw e; } toast('Count recorded', 'ok'); m.close(); refresh(); } });
     const m = modal('Stock-take', f);
   };
   return h('div', {},
-    pageHead('Supplies', writable ? h('button', { class: 'btn primary', onClick: addItem }, '+ Add item') : null),
+    pageHead('Supplies', writable || officeCopy && can('interventions:write') ? h('button', off({ class: 'btn primary', onClick: addItem }), '+ Add item') : null),
+    officeCopy ? h('div', { class: 'banner info small', id: 'supplies-office-note', 'data-supplies-office': '1' }, whyNot) : null,
     h('p', { class: 'muted small' }, `Recording a visit with naloxone kits or fentanyl test strips takes them off "${tracked.join('" and "')}" here, so this is what is actually left. ${writable ? 'Use + / − for a delivery or a hand-out that was not logged as a visit, and Stock-take after counting the shelf.' : ''}`),
     rows.length ? table([
       { label: 'Item', render: x => [h('b', {}, x.item), tracked.some(t => t.toLowerCase() === x.item.toLowerCase()) ? [' ', badge('auto', 'info')] : null] },
       { label: 'On hand', render: x => [h('b', { 'data-qty': x.item }, fmt.num(x.quantity)), x.quantity <= LOW ? [' ', badge(x.quantity === 0 ? 'Out' : 'Low', 'danger')] : null], num: true },
       { label: 'Last updated', render: x => `${fmt.dt(x.updated_at)}${x.updated_by_name ? ' · ' + x.updated_by_name : ''}` },
-      { label: '', render: x => writable ? h('div', { class: 'row nowrap' },
+      { label: '', render: x => officeCopy && can('interventions:write') ? h('div', { class: 'row nowrap' },
+        h('button', off({ class: 'btn sm', 'aria-label': `One fewer ${x.item}` }), '−'), h('button', off({ class: 'btn sm', 'aria-label': `One more ${x.item}` }), '+'), h('button', off({ class: 'btn sm ghost' }), 'Stock-take'))
+        : writable ? h('div', { class: 'row nowrap' },
         h('button', { class: 'btn sm', 'aria-label': `One fewer ${x.item}`, onClick: () => adjust(x, -1) }, '−'),
         h('button', { class: 'btn sm', 'aria-label': `One more ${x.item}`, onClick: () => adjust(x, 1) }, '+'),
         h('button', { class: 'btn sm', onClick: () => adjust(x, 10) }, '+10'),

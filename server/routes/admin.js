@@ -9,7 +9,7 @@ const { uuid, randomToken, sha256 } = require('../crypto');
 
 // default_funding_source_id used to be accepted here and was read by nothing; it is gone (1.9.5).
 const SETTING_KEYS = ['org_name', 'caseload_restriction', 'county_name', 'program_contact', 'self_signup', 'note_lock_days', 'session_idle_minutes', 'session_absolute_hours', 'password_max_age_days', 'mfa_required_roles', 'mfa_grace_days',
-  'backup_schedule_hours', 'backup_retain_count', 'backup_offsite_dir', 'client_retention_years'];
+  'backup_schedule_hours', 'backup_retain_count', 'backup_offsite_dir', 'client_retention_years', 'org_timezone'];
 const listener = require('../listener');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -23,6 +23,10 @@ module.exports = (r) => {
     for (const k of SETTING_KEYS) { const v = db.getSetting(k, null); out[k] = v === '' ? null : v; }
     const pol = auth.policy();
     out.policy = pol;
+    // The zone in force (the setting, else ORG_TIMEZONE, else the machine's) and the fallback a blank
+    // setting returns to, so the form can say what "not set" means.
+    const budget = require('./budget');
+    out.timezone = { effective: budget.orgTimezone(), fallback: config.orgTimezone || null, from_env: !!process.env.ORG_TIMEZONE };
     out.env = { env: config.env, tls: !!config.tls.cert, tls_mode: config.tls.mode, key_source: config.keySource, idle_minutes: pol.idleMinutes, absolute_hours: pol.absoluteHours, mfa_required_roles: pol.mfaRequiredRoles, listener: listener.describe(), ms_graph_configured: !!(config.msGraph.tenantId && config.msGraph.clientId && config.msGraph.clientSecret && config.msGraph.user), oidc_configured: config.oidc.enabled, oidc_label: config.oidc.label };
     return out;
   });
@@ -44,6 +48,8 @@ module.exports = (r) => {
         if (k === 'client_retention_years' && v !== '' && Number(v) < 6) throw badRequest('Client records must be kept at least 6 years (45 CFR §164.316(b)(2)); most SUD programs keep 7 or more');
         // Sign-up on the sign-in page (POST /api/auth/signup): on unless switched off.
         if (k === 'self_signup' && v !== '' && !['0', '1'].includes(v)) throw badRequest('self_signup must be 1 (on) or 0 (off)');
+        // The programme's calendar (server/routes/budget.js orgTimezone): an IANA name this server knows.
+        if (k === 'org_timezone' && v !== '' && !require('./budget').validTimezone(v)) throw badRequest('org_timezone must be a time zone name such as America/Los_Angeles');
         if (k === 'mfa_required_roles') v = v.split(',').map(x => x.trim()).filter(x => ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'].includes(x)).join(',');
         if (k === 'session_idle_minutes' && v !== '' && Number(v) > 60) throw badRequest('Idle timeout may not exceed 60 minutes (HIPAA automatic logoff)');
         // Blank means "back to the default", so the row goes rather than an empty string being stored:
