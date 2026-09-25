@@ -13282,7 +13282,7 @@ var require_admin = __commonJS({
         audit3.log({ user: ctx.user, action: "audit.verify", ip: ctx.ip, details: res });
         return res;
       });
-      r.get("/api/admin/api-keys", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), () => ({ keys: db3.all(`SELECT k.id,k.name,k.prefix,k.scopes,k.created_at,k.last_used_at,k.revoked_at,u.display_name AS created_by_name FROM api_keys k LEFT JOIN users u ON u.id=k.created_by ORDER BY k.created_at DESC`) }));
+      r.get("/api/admin/api-keys", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), () => ({ keys: db3.all(`SELECT k.id,k.name,k.prefix,k.scopes,k.created_at,k.last_used_at,k.revoked_at,u.display_name AS created_by_name FROM api_keys k LEFT JOIN users u ON u.id=k.created_by WHERE k.scopes NOT LIKE 'fhir%' ORDER BY k.created_at DESC`) }));
       r.post("/api/admin/api-keys", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), (ctx) => {
         const { name } = validate(ctx.body, { name: { type: "string", required: true, maxLen: 100 } });
         const raw = "suds_" + randomToken(32);
@@ -15721,7 +15721,60 @@ var require_disclosure = __commonJS({
       const consents = db3.all(`SELECT id, type, recipient_enc, purpose_enc, signed_at, expires_at, expires_event, revoked_at FROM consents WHERE client_id=? ORDER BY signed_at`, clientId).map((c) => ({ id: c.id, type: c.type, recipient: c.recipient_enc ? decrypt3(c.recipient_enc) : null, purpose: c.purpose_enc ? decrypt3(c.purpose_enc) : null, signed_at: c.signed_at, expires_at: c.expires_at, expires_event: c.expires_event, revoked_at: c.revoked_at }));
       return { client_id: client?.id, client_code: client?.client_code, generated_at: db3.now(), disclosures, consents };
     }
-    module.exports = { BASES, SYSTEM_BASES, STATE_REPORTING, recordStateReport, NEEDS_JUSTIFICATION, MIN_JUSTIFICATION, activeConsent, requireBasis, record, present, accounting };
+    var FHIR_PURPOSES = {
+      TREAT: { display: "Treatment", words: ["treatment", "care coordination", "coordination of care", "continuity of care"] },
+      HPAYMT: { display: "Payment", words: ["payment", "billing", "claims"] },
+      HOPERAT: { display: "Health care operations", words: ["operations"] }
+    };
+    var FHIR_CONSENT_TYPES = ["part2_disclosure", "roi"];
+    var normalise = (s) => String(s || "").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    function isTpo(purpose) {
+      const p = ` ${normalise(purpose)} `;
+      return / tpo /.test(p) || p.includes("treatment") && p.includes("payment") && p.includes("operations");
+    }
+    function consentCovers({ recipient, purpose }, { recipients, purposeOfUse }) {
+      const r = normalise(recipient);
+      if (!r || !recipients.map(normalise).filter(Boolean).includes(r)) return false;
+      if (isTpo(purpose)) return true;
+      const p = ` ${normalise(purpose)} `;
+      return (FHIR_PURPOSES[purposeOfUse]?.words || []).some((w) => p.includes(` ${normalise(w)} `));
+    }
+    var coverageCache = /* @__PURE__ */ new Map();
+    function fhirCoverage({ cacheKey, recipients, purposeOfUse }) {
+      const stamp2 = db3.one(`SELECT COUNT(*) n, MAX(updated_at) u FROM consents`);
+      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const key = `${stamp2.n}|${stamp2.u}|${today}|${recipients.join("")}|${purposeOfUse}`;
+      const hit = coverageCache.get(cacheKey);
+      if (hit && hit.key === key) return hit.map;
+      const map = /* @__PURE__ */ new Map();
+      const rows = db3.all(`SELECT k.id, k.client_id, k.recipient_enc, k.purpose_enc FROM consents k JOIN clients c ON c.id=k.client_id
+    WHERE k.type IN (${FHIR_CONSENT_TYPES.map(() => "?").join(",")}) AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= date('now'))
+      AND c.deleted_at IS NULL AND c.merged_into IS NULL ORDER BY k.signed_at, k.created_at`, ...FHIR_CONSENT_TYPES);
+      for (const row of rows) {
+        let plain;
+        try {
+          plain = { recipient: row.recipient_enc ? decrypt3(row.recipient_enc) : "", purpose: row.purpose_enc ? decrypt3(row.purpose_enc) : "" };
+        } catch {
+          continue;
+        }
+        if (consentCovers(plain, { recipients, purposeOfUse })) map.set(row.client_id, row.id);
+      }
+      if (coverageCache.size > 100) coverageCache.clear();
+      coverageCache.set(cacheKey, { key, map });
+      return map;
+    }
+    function recordFhir({ perClient, recipient, purposeOfUse, sourceRef, user, ip }) {
+      if (!perClient.size) return 0;
+      const purpose = `${FHIR_PURPOSES[purposeOfUse]?.display || purposeOfUse} (FHIR purpose of use ${purposeOfUse})`;
+      db3.transaction(() => {
+        for (const [clientId, { consentId, what }] of perClient) {
+          record({ clientId, consentId, recipient, purpose, what, method: "FHIR API", basis: "consent", source: "fhir", sourceRef, user, ip });
+        }
+      });
+      return perClient.size;
+    }
+    var PART2_NOTICE = "This record which has been disclosed to you is protected by Federal confidentiality rules (42 CFR part 2). These rules prohibit you from using or disclosing this record, or testimony that describes the information contained in this record, in any civil, criminal, administrative, or legislative proceedings by any Federal, State, or local authority, against the patient, unless authorized by the consent of the patient, except as provided at 42 CFR 2.12(c)(5) or as authorized by a court in accordance with 42 CFR 2.64 or 2.65. In addition, the Federal rules prohibit you from making any further disclosure of this record unless authorized by the written consent of the person to whom it pertains, or as otherwise permitted by 42 CFR part 2. A general authorization for the release of medical or other information is not sufficient for this purpose (see 42 CFR 2.31). The Federal rules restrict any use of the information to investigate or prosecute with regard to a crime any patient with a substance use disorder, except as provided at 42 CFR 2.12(c)(5) and 2.65.";
+    module.exports = { BASES, SYSTEM_BASES, STATE_REPORTING, recordStateReport, NEEDS_JUSTIFICATION, MIN_JUSTIFICATION, activeConsent, requireBasis, record, present, accounting, FHIR_PURPOSES, FHIR_CONSENT_TYPES, consentCovers, fhirCoverage, recordFhir, PART2_NOTICE };
   }
 });
 
@@ -17957,6 +18010,1347 @@ var require_episodes = __commonJS({
   }
 });
 
+// server/fhir/common.js
+var require_common = __commonJS({
+  "server/fhir/common.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var config = require_config();
+    var FHIR_JSON = "application/fhir+json; charset=utf-8";
+    var FHIR_NDJSON = "application/fhir+ndjson";
+    var FHIR_VERSION = "4.0.1";
+    var SYS = {
+      clientCode: "urn:suds:client-code",
+      medicaid: "urn:suds:medicaid-id",
+      interventionType: "urn:suds:codesystem:intervention-type",
+      callPurpose: "urn:suds:codesystem:contact",
+      consentType: "urn:suds:codesystem:consent-type",
+      resourceCategory: "urn:suds:codesystem:resource-category",
+      serviceTag: "urn:suds:codesystem:service-tag",
+      observation: "urn:suds:codesystem:observation",
+      noteFormat: "urn:suds:codesystem:note-format",
+      episode: "urn:suds:codesystem:episode",
+      confidentiality: "http://terminology.hl7.org/CodeSystem/v3-Confidentiality",
+      actCode: "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+      actReason: "http://terminology.hl7.org/CodeSystem/v3-ActReason"
+    };
+    var PART2_SECURITY = [
+      { system: SYS.confidentiality, code: "R", display: "restricted" },
+      { system: SYS.actCode, code: "42CFRPart2", display: "42 CFR Part2" },
+      { system: SYS.actCode, code: "NORDSLCD", display: "no redisclosure without consent directive" }
+    ];
+    var FhirError = class extends Error {
+      constructor(status, message, { code = "processing", headers = {} } = {}) {
+        super(message);
+        this.status = status;
+        this.code = code;
+        this.headers = headers;
+      }
+    };
+    function outcome(issues) {
+      return { resourceType: "OperationOutcome", issue: issues.map((i) => ({ severity: i.severity || "error", code: i.code || "processing", diagnostics: i.diagnostics, ...i.details ? { details: i.details } : {} })) };
+    }
+    function send(res, status, body, headers = {}) {
+      const text = JSON.stringify(body);
+      res.writeHead(status, { "Content-Type": FHIR_JSON, "Content-Length": import_buffer.Buffer.byteLength(text), ...headers });
+      res.end(text);
+    }
+    var CODE_FOR_STATUS = { 400: "invalid", 401: "login", 403: "forbidden", 404: "not-found", 405: "not-supported", 406: "not-supported", 410: "not-found", 413: "too-costly", 429: "throttled", 500: "exception", 501: "not-supported", 507: "exception" };
+    function sendError(res, status, message, { code, headers = {} } = {}) {
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      if (status === 401) headers = { "WWW-Authenticate": 'Bearer realm="SUDS FHIR"', ...headers };
+      send(res, status, outcome([{ severity: status >= 500 ? "fatal" : "error", code: code || CODE_FOR_STATUS[status] || "processing", diagnostics: message }]), headers);
+    }
+    function baseUrl(ctx) {
+      const clean2 = (s) => String(s || "").split(",")[0].trim().replace(/[^A-Za-z0-9.:\-[\]]/g, "");
+      let proto = ctx.req?.socket?.encrypted ? "https" : "http";
+      let host = clean2(ctx.headers.host) || "localhost";
+      if (config.trustProxy) {
+        const p = clean2(ctx.headers["x-forwarded-proto"]);
+        if (p === "https" || p === "http") proto = p;
+        const hh = clean2(ctx.headers["x-forwarded-host"]);
+        if (hh) host = hh;
+      }
+      return `${proto}://${host}/fhir/R4`;
+    }
+    var PREFIXES = ["eq", "ne", "gt", "lt", "ge", "le", "sa", "eb"];
+    var DATE_RE = /^\d{4}(-\d{2}(-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})?)?)?)?$/;
+    function dateClause(col, raw) {
+      let v = String(raw || "").trim();
+      let prefix = "eq";
+      if (PREFIXES.includes(v.slice(0, 2)) && /^\d/.test(v.slice(2))) {
+        prefix = v.slice(0, 2);
+        v = v.slice(2);
+      }
+      if (!DATE_RE.test(v)) throw new FhirError(400, `"${raw}" is not a FHIR date`, { code: "invalid" });
+      let lo = v, hi;
+      if (v.includes("T")) {
+        const t = Date.parse(v.length === 16 ? v + ":00Z" : /Z|[+-]\d{2}:\d{2}$/.test(v) ? v : v + "Z");
+        if (Number.isNaN(t)) throw new FhirError(400, `"${raw}" is not a FHIR date`, { code: "invalid" });
+        lo = new Date(t).toISOString();
+        hi = new Date(t + 1e3).toISOString();
+      } else if (v.length === 4) hi = `${Number(v) + 1}`;
+      else if (v.length === 7) {
+        const [y, m] = v.split("-").map(Number);
+        hi = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+      } else {
+        const d = /* @__PURE__ */ new Date(v + "T00:00:00Z");
+        d.setUTCDate(d.getUTCDate() + 1);
+        hi = d.toISOString().slice(0, 10);
+      }
+      switch (prefix) {
+        case "eq":
+          return { sql: `(${col} >= ? AND ${col} < ?)`, params: [lo, hi] };
+        case "ne":
+          return { sql: `(${col} < ? OR ${col} >= ?)`, params: [lo, hi] };
+        case "gt":
+        case "sa":
+          return { sql: `${col} >= ?`, params: [hi] };
+        case "ge":
+          return { sql: `${col} >= ?`, params: [lo] };
+        case "lt":
+        case "eb":
+          return { sql: `${col} < ?`, params: [lo] };
+        case "le":
+          return { sql: `${col} < ?`, params: [hi] };
+      }
+      throw new FhirError(400, `Unsupported date prefix in "${raw}"`, { code: "invalid" });
+    }
+    function refId(raw, type) {
+      const v = String(raw || "").trim();
+      const m = v.match(new RegExp(`(?:^|/)${type}/([A-Za-z0-9\\-.]{1,64})$`));
+      if (m) return m[1];
+      if (/^[A-Za-z0-9\-.]{1,64}$/.test(v)) return v;
+      throw new FhirError(400, `"${raw}" is not a ${type} reference`, { code: "invalid" });
+    }
+    module.exports = { FHIR_JSON, FHIR_NDJSON, FHIR_VERSION, SYS, PART2_SECURITY, FhirError, outcome, send, sendError, baseUrl, dateClause, refId };
+  }
+});
+
+// server/fhir/clients.js
+var require_clients2 = __commonJS({
+  "server/fhir/clients.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var { sha256: sha2562, randomToken } = require_crypto();
+    var { FhirError } = require_common();
+    var RESOURCE_TYPES = {
+      Patient: true,
+      EpisodeOfCare: true,
+      Encounter: true,
+      Consent: true,
+      ServiceRequest: true,
+      Task: true,
+      Observation: true,
+      DocumentReference: true,
+      Organization: false,
+      Location: false,
+      HealthcareService: false
+    };
+    var TOKEN_TTL_SECONDS = 900;
+    var DEFAULT_RATE_LIMIT = 120;
+    var KEY_PREFIX = "sudsfhir_";
+    var SCOPE_RE = /^system\/(\*|[A-Za-z]+)\.(read|rs|r|s|\*)$/;
+    function parseScopes(list2) {
+      const out2 = [];
+      for (const raw of (Array.isArray(list2) ? list2 : String(list2 || "").split(/[\s,]+/)).map((s) => String(s).trim()).filter(Boolean)) {
+        const m = raw.match(SCOPE_RE);
+        if (!m || m[1] !== "*" && !(m[1] in RESOURCE_TYPES)) throw new FhirError(400, `"${raw}" is not a scope this server grants (system/<ResourceType>.read or system/*.read)`, { code: "invalid" });
+        const norm = `system/${m[1]}.read`;
+        if (!out2.includes(norm)) out2.push(norm);
+      }
+      return out2;
+    }
+    var scopesOfKey = (k) => String(k.scopes || "").split(/\s+/).filter((s) => s.startsWith("system/"));
+    function hasScope(scopes, type) {
+      return scopes.includes("system/*.read") || scopes.includes(`system/${type}.read`);
+    }
+    function registration(keyId) {
+      try {
+        return JSON.parse(db3.getSetting(`fhir_client:${keyId}`, "null")) || null;
+      } catch {
+        return null;
+      }
+    }
+    function present(k) {
+      const reg = registration(k.id) || {};
+      return {
+        id: k.id,
+        name: k.name,
+        prefix: k.prefix,
+        scopes: scopesOfKey(k),
+        recipient: reg.recipient || k.name,
+        aliases: reg.aliases || [],
+        purpose: reg.purpose || "TREAT",
+        rate_limit: reg.rate_limit || DEFAULT_RATE_LIMIT,
+        created_at: k.created_at,
+        created_by: k.created_by,
+        created_by_name: k.created_by_name,
+        last_used_at: k.last_used_at,
+        revoked_at: k.revoked_at
+      };
+    }
+    function list() {
+      return db3.all(`SELECT k.*, u.display_name AS created_by_name FROM api_keys k LEFT JOIN users u ON u.id=k.created_by WHERE k.scopes LIKE 'fhir%' ORDER BY k.created_at DESC`).map(present);
+    }
+    function create2({ name, recipient, aliases = [], purpose = "TREAT", scopes, rate_limit }, user) {
+      const granted = parseScopes(scopes);
+      if (!granted.length) throw new FhirError(400, "Grant at least one scope", { code: "invalid" });
+      const raw = KEY_PREFIX + randomToken(32);
+      const id = require_crypto().uuid();
+      db3.transaction(() => {
+        db3.run(`INSERT INTO api_keys(id,name,key_hash,prefix,scopes,created_by) VALUES(?,?,?,?,?,?)`, id, name, sha2562(raw), raw.slice(0, 14), ["fhir", ...granted].join(" "), user.id);
+        db3.setSetting(`fhir_client:${id}`, JSON.stringify({ recipient, aliases, purpose, rate_limit: rate_limit || DEFAULT_RATE_LIMIT }));
+      });
+      return { id, key: raw, scopes: granted };
+    }
+    function revoke(id) {
+      const k = db3.one(`SELECT id FROM api_keys WHERE id=? AND scopes LIKE 'fhir%'`, id);
+      if (!k) return false;
+      db3.run(`UPDATE api_keys SET revoked_at=COALESCE(revoked_at, ?) WHERE id=?`, db3.now(), id);
+      for (const [t, v] of tokens) if (v.keyId === id) tokens.delete(t);
+      return true;
+    }
+    var tokens = /* @__PURE__ */ new Map();
+    function sweepTokens() {
+      const now = Date.now();
+      for (const [t, v] of tokens) if (v.exp < now) tokens.delete(t);
+    }
+    function load(k, scopes) {
+      const reg = registration(k.id) || {};
+      const recipient = reg.recipient || k.name;
+      return {
+        id: k.id,
+        name: k.name,
+        prefix: k.prefix,
+        createdBy: k.created_by,
+        scopes: scopes || scopesOfKey(k),
+        recipient,
+        recipients: [recipient, ...reg.aliases || []],
+        purpose: reg.purpose || "TREAT",
+        rateLimit: reg.rate_limit || DEFAULT_RATE_LIMIT,
+        // Who the audit trail and the accounting of disclosures name: the administrator who registered the
+        // client answers for it (disclosures.disclosed_by must be a user), labelled with the client itself.
+        actor: { id: k.created_by, username: `fhir:${k.name}`.slice(0, 120) }
+      };
+    }
+    var activeKey = (where, ...params) => db3.one(`SELECT * FROM api_keys WHERE ${where} AND revoked_at IS NULL AND scopes LIKE 'fhir%'`, ...params);
+    function issueToken({ clientId, clientSecret, scope }, ctx) {
+      const k = clientSecret ? activeKey("key_hash=?", sha2562(String(clientSecret))) : null;
+      if (!k || clientId && clientId !== k.id) {
+        audit3.log({ user: null, action: "fhir.token.denied", ip: ctx.ip, success: false });
+        const e = new FhirError(401, "invalid_client");
+        e.oauth = { error: "invalid_client", error_description: "Unknown or revoked client credentials" };
+        throw e;
+      }
+      const allowed = scopesOfKey(k);
+      let granted = allowed;
+      if (scope) {
+        let asked;
+        try {
+          asked = parseScopes(scope);
+        } catch {
+          const e = new FhirError(400, "invalid_scope");
+          e.oauth = { error: "invalid_scope", error_description: "Scopes must be system/<ResourceType>.read or system/*.read" };
+          throw e;
+        }
+        granted = asked.filter((s) => allowed.includes(s) || allowed.includes("system/*.read"));
+        if (!granted.length) {
+          const e = new FhirError(400, "invalid_scope");
+          e.oauth = { error: "invalid_scope", error_description: "None of the requested scopes were granted to this client" };
+          throw e;
+        }
+      }
+      sweepTokens();
+      const token2 = randomToken(32);
+      tokens.set(sha2562(token2), { keyId: k.id, scopes: granted, exp: Date.now() + TOKEN_TTL_SECONDS * 1e3 });
+      db3.run(`UPDATE api_keys SET last_used_at=? WHERE id=?`, db3.now(), k.id);
+      audit3.log({ user: load(k).actor, action: "fhir.token.issued", entity: "api_key", entityId: k.id, ip: ctx.ip, details: { scopes: granted } });
+      return { access_token: token2, token_type: "bearer", expires_in: TOKEN_TTL_SECONDS, scope: granted.join(" ") };
+    }
+    function authenticate(ctx) {
+      const h = String(ctx.headers["authorization"] || "");
+      const bearer = h.startsWith("Bearer ") ? h.slice(7).trim() : "";
+      if (!bearer) throw new FhirError(401, "A bearer token is required (see /fhir/R4/metadata)", { code: "login" });
+      const hash2 = sha2562(bearer);
+      const t = tokens.get(hash2);
+      let k, scopes;
+      if (t && t.exp > Date.now()) {
+        k = activeKey("id=?", t.keyId);
+        scopes = t.scopes;
+      } else {
+        if (t) tokens.delete(hash2);
+        k = activeKey("key_hash=?", hash2);
+      }
+      if (!k) {
+        audit3.log({ user: null, action: "fhir.denied", ip: ctx.ip, success: false, details: { reason: "invalid token", path: ctx.path.slice(0, 120) } });
+        throw new FhirError(401, "The bearer token is not valid, has expired, or was revoked", { code: "login" });
+      }
+      if (!k.last_used_at || Date.now() - Date.parse(k.last_used_at) > 6e4) db3.run(`UPDATE api_keys SET last_used_at=? WHERE id=?`, db3.now(), k.id);
+      return load(k, scopes);
+    }
+    function requireScope(ctx, client, type) {
+      if (hasScope(client.scopes, type)) return;
+      audit3.log({ user: client.actor, action: "fhir.denied", entity: type, ip: ctx.ip, success: false, details: { reason: "scope", needed: `system/${type}.read` } });
+      throw new FhirError(403, `This client has not been granted system/${type}.read`, { code: "forbidden" });
+    }
+    module.exports = { RESOURCE_TYPES, TOKEN_TTL_SECONDS, DEFAULT_RATE_LIMIT, KEY_PREFIX, parseScopes, hasScope, list, create: create2, revoke, issueToken, authenticate, requireScope, present };
+  }
+});
+
+// server/fhir/resources.js
+var require_resources = __commonJS({
+  "server/fhir/resources.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var options = require_options();
+    var disclosure = require_disclosure();
+    var { decrypt: decrypt3, blindIndex: blindIndex2 } = require_crypto();
+    var { SYS, PART2_SECURITY, FhirError, dateClause, refId } = require_common();
+    var US_CORE = "http://hl7.org/fhir/us/core/StructureDefinition/";
+    var PROGRAM_ORG = "suds-program";
+    var programRef = () => ({ reference: `Organization/${PROGRAM_ORG}`, display: db3.getSetting("org_name", "SUDS program") || "SUDS program" });
+    var patientRef = (id) => ({ reference: `Patient/${id}` });
+    var dec2 = (v) => {
+      if (!v) return null;
+      try {
+        return decrypt3(v);
+      } catch {
+        return null;
+      }
+    };
+    var dt = (v) => {
+      if (!v) return void 0;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+      const t = Date.parse(v);
+      return Number.isNaN(t) ? void 0 : new Date(t).toISOString();
+    };
+    var instant = (v) => {
+      const t = Date.parse(v || "");
+      return Number.isNaN(t) ? void 0 : new Date(t).toISOString();
+    };
+    var label = (list, code) => code ? options.labelOf(list, code) : void 0;
+    var humanize = options.humanize;
+    function meta(updated, { profile, part2 = true } = {}) {
+      const m = { lastUpdated: instant(updated) };
+      if (profile) m.profile = [US_CORE + profile];
+      if (part2) m.security = PART2_SECURITY;
+      return m;
+    }
+    function prune(o) {
+      if (Array.isArray(o)) return o.map(prune).filter((v) => v !== void 0);
+      if (o && typeof o === "object") {
+        const out2 = {};
+        for (const [k, v] of Object.entries(o)) {
+          const p = prune(v);
+          if (p === void 0 || p === null || p === "" || Array.isArray(p) && !p.length || typeof p === "object" && !Array.isArray(p) && !Object.keys(p).length) continue;
+          out2[k] = p;
+        }
+        return out2;
+      }
+      return o;
+    }
+    var cc = (system, code, display, text) => code ? { coding: [{ system, code, display }], text: text || display } : void 0;
+    var telecom = (system, value, use) => value ? { system, value: String(value), use } : void 0;
+    var address = (line, city, zip) => line || city || zip ? { use: "home", line: line ? [String(line)] : void 0, city: city || void 0, postalCode: zip || void 0, text: [line, city, zip].filter(Boolean).join(", ") } : void 0;
+    var OMB = "urn:oid:2.16.840.1.113883.6.238";
+    var RACE = { american_indian_alaska_native: ["1002-5", "American Indian or Alaska Native"], asian: ["2028-9", "Asian"], black_african_american: ["2054-5", "Black or African American"], native_hawaiian_pacific_islander: ["2076-8", "Native Hawaiian or Other Pacific Islander"], white: ["2106-3", "White"] };
+    var ETHNICITY = { hispanic_latino: ["2135-2", "Hispanic or Latino"], not_hispanic_latino: ["2186-5", "Not Hispanic or Latino"] };
+    var NULL_FLAVOR = "http://terminology.hl7.org/CodeSystem/v3-NullFlavor";
+    function raceEthnicity(codesText) {
+      const codes = String(codesText || "").split(",").map((s) => s.trim()).filter(Boolean);
+      const ext = [];
+      const race = codes.filter((c) => RACE[c]);
+      const eth = codes.filter((c) => ETHNICITY[c]);
+      const raceNull = !race.length && (codes.includes("declined") ? ["ASKU", "Asked but no answer"] : codes.includes("unknown") ? ["UNK", "Unknown"] : null);
+      if (race.length || raceNull || codes.includes("other")) {
+        const parts = race.map((c) => ({ url: "ombCategory", valueCoding: { system: OMB, code: RACE[c][0], display: RACE[c][1] } }));
+        if (raceNull) parts.push({ url: "ombCategory", valueCoding: { system: NULL_FLAVOR, code: raceNull[0], display: raceNull[1] } });
+        parts.push({ url: "text", valueString: [...race.map((c) => RACE[c][1]), ...codes.includes("other") ? ["Other"] : [], ...raceNull ? [raceNull[1]] : []].join(", ") });
+        ext.push({ url: "http://hl7.org/fhir/us/core/StructureDefinition/us-core-race", extension: parts });
+      }
+      if (eth.length) {
+        ext.push({ url: "http://hl7.org/fhir/us/core/StructureDefinition/us-core-ethnicity", extension: [
+          ...eth.map((c) => ({ url: "ombCategory", valueCoding: { system: OMB, code: ETHNICITY[c][0], display: ETHNICITY[c][1] } })),
+          { url: "text", valueString: eth.map((c) => ETHNICITY[c][1]).join(", ") }
+        ] });
+      }
+      return ext;
+    }
+    var GENDER = { female: "female", male: "male", transgender_female: "female", transgender_male: "male", non_binary: "other", other: "other" };
+    function mapPatient(c) {
+      const first = dec2(c.first_name_enc), last = dec2(c.last_name_enc), preferred = dec2(c.preferred_name_enc), dob = dec2(c.dob_enc), medicaid = dec2(c.medicaid_id_enc);
+      return prune({
+        resourceType: "Patient",
+        id: c.id,
+        meta: meta(c.updated_at, { profile: "us-core-patient" }),
+        extension: raceEthnicity(c.race_codes),
+        identifier: [
+          { use: "usual", type: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/v2-0203", code: "MR", display: "Medical record number" }], text: "SUDS client code" }, system: SYS.clientCode, value: c.client_code },
+          medicaid ? { use: "secondary", type: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/v2-0203", code: "MA", display: "Patient Medicaid number" }] }, system: SYS.medicaid, value: medicaid } : void 0
+        ],
+        active: !["closed", "inactive", "deceased"].includes(c.status),
+        name: [{ use: "official", family: last || void 0, given: first ? [first] : void 0 }, preferred ? { use: "usual", given: [preferred] } : void 0],
+        telecom: [telecom("phone", dec2(c.phone_enc), "mobile"), telecom("phone", dec2(c.alt_phone_enc), "home"), telecom("email", dec2(c.email_enc), "home")],
+        gender: GENDER[c.gender] || "unknown",
+        birthDate: /^\d{4}-\d{2}-\d{2}$/.test(dob || "") ? dob : void 0,
+        deceasedBoolean: c.status === "deceased" ? true : void 0,
+        address: [address(dec2(c.address_enc), c.city, c.zip)],
+        communication: c.preferred_language ? [{ language: { text: c.preferred_language }, preferred: true }] : void 0,
+        managingOrganization: programRef()
+      });
+    }
+    function mapEpisode(e) {
+      return prune({
+        resourceType: "EpisodeOfCare",
+        id: e.id,
+        meta: meta(e.updated_at),
+        status: e.status === "closed" ? "finished" : "active",
+        type: [cc(SYS.episode, "sud-navigation", "SUD navigation services")],
+        patient: patientRef(e.client_id),
+        managingOrganization: programRef(),
+        period: { start: dt(e.opened_at), end: dt(e.closed_at) }
+      });
+    }
+    var V3 = SYS.actCode;
+    var VIRTUAL_MODALITIES = ["phone", "video", "text", "email"];
+    var FIELD_LOCATIONS = ["field", "community", "shelter", "jail", "court", "hospital", "emergency_dept", "treatment_facility"];
+    function encounterClass(modality, location) {
+      if (VIRTUAL_MODALITIES.includes(modality) || location === "telehealth" || location === "phone") return { system: V3, code: "VR", display: "virtual" };
+      if (location === "home") return { system: V3, code: "HH", display: "home health" };
+      if (FIELD_LOCATIONS.includes(location)) return { system: V3, code: "FLD", display: "field" };
+      return { system: V3, code: "AMB", display: "ambulatory" };
+    }
+    var NOT_HELD = ["client_declined", "no_show", "unable_to_locate", "rescheduled"];
+    function end(start2, minutes) {
+      const t = Date.parse(start2 || "");
+      return Number.isNaN(t) || !minutes ? void 0 : new Date(t + minutes * 6e4).toISOString();
+    }
+    function mapIntervention(i) {
+      const typeLabel = label("INTERVENTION_TYPES", i.type);
+      return prune({
+        resourceType: "Encounter",
+        id: `iv-${i.id}`,
+        meta: meta(i.updated_at, { profile: "us-core-encounter" }),
+        identifier: [{ system: "urn:suds:intervention", value: i.id }],
+        status: NOT_HELD.includes(i.outcome) ? "cancelled" : "finished",
+        class: encounterClass(i.modality, i.location),
+        type: [cc(SYS.interventionType, i.type, typeLabel)],
+        serviceType: i.location ? { text: `Location: ${label("LOCATIONS", i.location)}` } : void 0,
+        subject: patientRef(i.client_id),
+        period: { start: dt(i.occurred_at), end: end(i.occurred_at, i.duration_minutes) },
+        length: i.duration_minutes ? { value: i.duration_minutes, unit: "min", system: "http://unitsofmeasure.org", code: "min" } : void 0,
+        serviceProvider: programRef()
+      });
+    }
+    var CALL_HELD = ["reached", "callback_scheduled", "crisis_escalated", "replied", "sent"];
+    function mapCall(c) {
+      const text = c.method === "text";
+      return prune({
+        resourceType: "Encounter",
+        id: `call-${c.id}`,
+        meta: meta(c.updated_at, { profile: "us-core-encounter" }),
+        identifier: [{ system: "urn:suds:call", value: c.id }],
+        status: CALL_HELD.includes(c.outcome) ? "finished" : "cancelled",
+        class: { system: V3, code: "VR", display: "virtual" },
+        type: [cc(SYS.callPurpose, text ? "text-message" : "phone-call", text ? "Text message" : "Phone call")],
+        serviceType: c.contact_type ? { text: `Contact: ${humanize(c.contact_type)} (${c.direction})` } : void 0,
+        priority: c.crisis ? cc("http://terminology.hl7.org/CodeSystem/v3-ActPriority", "EM", "emergency") : void 0,
+        subject: patientRef(c.client_id),
+        period: { start: dt(c.started_at), end: end(c.started_at, c.duration_minutes) },
+        length: c.duration_minutes ? { value: c.duration_minutes, unit: "min", system: "http://unitsofmeasure.org", code: "min" } : void 0,
+        serviceProvider: programRef()
+      });
+    }
+    var today = () => (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+    function consentPurposes(purposeText) {
+      const out2 = [];
+      for (const [code, p] of Object.entries(disclosure.FHIR_PURPOSES)) {
+        if (disclosure.consentCovers({ recipient: "x", purpose: purposeText }, { recipients: ["x"], purposeOfUse: code })) out2.push({ system: SYS.actReason, code, display: p.display });
+      }
+      return out2;
+    }
+    function mapConsent(k) {
+      const recipient = dec2(k.recipient_enc), purpose = dec2(k.purpose_enc);
+      const active = !k.revoked_at && (!k.expires_at || k.expires_at >= today());
+      const part2 = k.type === "part2_disclosure";
+      return prune({
+        resourceType: "Consent",
+        id: k.id,
+        meta: meta(k.updated_at),
+        status: active ? "active" : "inactive",
+        scope: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/consentscope", code: "patient-privacy", display: "Privacy Consent" }] },
+        category: [{ coding: [{ system: "http://loinc.org", code: "59284-0", display: "Patient Consent" }] }, cc(SYS.consentType, k.type, humanize(k.type))],
+        patient: patientRef(k.client_id),
+        dateTime: dt(k.signed_at),
+        organization: [programRef()],
+        policy: part2 ? [{ authority: "https://www.ecfr.gov", uri: "https://www.ecfr.gov/current/title-42/chapter-I/subchapter-A/part-2" }] : void 0,
+        policyRule: part2 ? cc(SYS.actCode, "42CFRPart2", "42 CFR Part2") : cc("http://terminology.hl7.org/CodeSystem/consentpolicycodes", "hipaa-auth", "HIPAA Authorization"),
+        provision: {
+          type: "permit",
+          period: { start: dt(k.signed_at), end: k.revoked_at ? dt(k.revoked_at) : dt(k.expires_at) },
+          actor: recipient ? [{ role: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/v3-ParticipationType", code: "IRCP", display: "information recipient" }] }, reference: { display: recipient } }] : void 0,
+          purpose: consentPurposes(purpose)
+        }
+      });
+    }
+    var SR_STATUS = { pending: "active", contacted: "active", accepted: "active", waitlisted: "on-hold", scheduled: "active", admitted: "completed", completed: "completed", declined_by_client: "revoked", declined_by_provider: "revoked", no_show: "revoked", closed: "completed" };
+    var SR_PRIORITY = { routine: "routine", urgent: "urgent", emergent: "stat" };
+    function mapReferral(r) {
+      const res = db3.one(`SELECT name, category FROM resources WHERE id=?`, r.resource_id) || {};
+      return prune({
+        resourceType: "ServiceRequest",
+        id: r.id,
+        meta: meta(r.updated_at),
+        status: SR_STATUS[r.status] || "unknown",
+        intent: "order",
+        category: [{ coding: [{ system: "http://snomed.info/sct", code: "3457005", display: "Patient referral" }] }],
+        priority: SR_PRIORITY[r.urgency] || void 0,
+        code: { coding: res.category ? [{ system: SYS.resourceCategory, code: res.category, display: label("RESOURCE_CATEGORIES", res.category) }] : void 0, text: res.name ? `Referral to ${res.name}` : "Referral" },
+        subject: patientRef(r.client_id),
+        authoredOn: dt(r.referred_at),
+        occurrenceDateTime: dt(r.appointment_at),
+        requester: programRef(),
+        performer: [{ reference: `Organization/${r.resource_id}`, display: res.name }, { reference: `HealthcareService/${r.resource_id}`, display: res.name }]
+      });
+    }
+    var TASK_STATUS = { open: "requested", in_progress: "in-progress", done: "completed", cancelled: "cancelled" };
+    var TASK_PRIORITY = { low: "routine", normal: "routine", high: "urgent", urgent: "asap" };
+    function mapTask(t) {
+      return prune({
+        resourceType: "Task",
+        id: t.id,
+        meta: meta(t.updated_at),
+        status: TASK_STATUS[t.status] || "requested",
+        intent: "order",
+        priority: TASK_PRIORITY[t.priority],
+        code: t.is_milestone ? { text: "Milestone" } : void 0,
+        description: dec2(t.title_enc) || void 0,
+        focus: t.referral_id ? { reference: `ServiceRequest/${t.referral_id}` } : void 0,
+        for: patientRef(t.client_id),
+        authoredOn: dt(t.created_at),
+        lastModified: dt(t.updated_at),
+        requester: programRef(),
+        executionPeriod: t.completed_at ? { end: dt(t.completed_at) } : void 0,
+        restriction: t.due_at ? { period: { end: dt(t.due_at) } } : void 0
+      });
+    }
+    function mapRisk(c) {
+      return prune({
+        resourceType: "Observation",
+        id: `risk-${c.id}`,
+        meta: meta(c.updated_at),
+        status: "final",
+        category: [{ coding: [{ system: "http://terminology.hl7.org/CodeSystem/observation-category", code: "survey", display: "Survey" }] }],
+        code: cc(SYS.observation, "overdose-risk-level", "Overdose risk level (navigator assessment)"),
+        subject: patientRef(c.id),
+        issued: instant(c.updated_at),
+        valueCodeableConcept: cc(SYS.observation, c.risk_level, humanize(c.risk_level))
+      });
+    }
+    function mapOverdose(o) {
+      const comp = (code, display, v) => ({ code: cc(SYS.observation, code, display), ...v });
+      return prune({
+        resourceType: "Observation",
+        id: `od-${o.id}`,
+        meta: meta(o.updated_at),
+        status: "final",
+        category: [cc(SYS.observation, "overdose-event", "Overdose event")],
+        code: cc(SYS.observation, "overdose-event", "Overdose event"),
+        subject: patientRef(o.client_id),
+        effectiveDateTime: dt(o.occurred_at),
+        issued: instant(o.created_at),
+        valueCodeableConcept: cc(SYS.observation, o.kind, label("OVERDOSE_KINDS", o.kind)),
+        component: [
+          comp("naloxone-used", "Naloxone used", { valueBoolean: !!o.naloxone_used }),
+          o.naloxone_doses ? comp("naloxone-doses", "Naloxone doses", { valueInteger: o.naloxone_doses }) : void 0,
+          comp("ems-called", "EMS called", { valueBoolean: !!o.ems_called }),
+          comp("hospitalized", "Hospitalized", { valueBoolean: !!o.hospitalized }),
+          comp("survived", "Survived", { valueBoolean: !!o.survived })
+        ]
+      });
+    }
+    var NOTE_LOINC = { discharge: ["18842-5", "Discharge summary"] };
+    function mapNote(n) {
+      const loinc = NOTE_LOINC[n.format] || ["11506-3", "Progress note"];
+      const encounter = n.intervention_id ? `Encounter/iv-${n.intervention_id}` : n.call_id ? `Encounter/call-${n.call_id}` : null;
+      const encounterOk = encounter && (n.intervention_id ? db3.one(`SELECT 1 FROM interventions WHERE id=? AND client_id=?`, n.intervention_id, n.client_id) : db3.one(`SELECT 1 FROM calls WHERE id=? AND client_id=?`, n.call_id, n.client_id));
+      return prune({
+        resourceType: "DocumentReference",
+        id: n.id,
+        meta: meta(n.updated_at),
+        status: "current",
+        docStatus: n.status === "amended" ? "amended" : "final",
+        type: { coding: [{ system: "http://loinc.org", code: loinc[0], display: loinc[1] }, { system: SYS.noteFormat, code: n.format, display: label("NOTE_FORMATS", n.format) }], text: label("NOTE_FORMATS", n.format) },
+        category: [{ coding: [{ system: "http://hl7.org/fhir/us/core/CodeSystem/us-core-documentreference-category", code: "clinical-note", display: "Clinical Note" }] }, cc(SYS.noteFormat, `kind-${n.kind}`, n.kind === "clinical" ? "Clinical note" : "Case management note")],
+        subject: patientRef(n.client_id),
+        date: instant(n.signed_at || n.updated_at),
+        securityLabel: PART2_SECURITY.map((s) => ({ coding: [s] })),
+        content: [{ attachment: { contentType: "text/plain", title: "Note text is not shared over FHIR (42 CFR Part 2). Request it from the program under a consent that covers it." } }],
+        context: { period: { start: dt(n.occurred_at) }, encounter: encounterOk ? [{ reference: encounter }] : void 0 }
+      });
+    }
+    function directoryTelecom(r) {
+      return [telecom("phone", r.phone, "work"), telecom("fax", r.fax, "work"), telecom("email", r.email, "work"), telecom("url", r.website, "work")];
+    }
+    function mapOrganization(r) {
+      if (r._program) {
+        return prune({
+          resourceType: "Organization",
+          id: PROGRAM_ORG,
+          meta: meta(r.updated_at, { profile: "us-core-organization", part2: false }),
+          active: true,
+          type: [{ coding: [{ system: "http://terminology.hl7.org/CodeSystem/organization-type", code: "prov", display: "Healthcare Provider" }] }],
+          name: db3.getSetting("org_name", "SUDS program") || "SUDS program",
+          telecom: [telecom("phone", db3.getSetting("program_contact", "") || void 0, "work")]
+        });
+      }
+      return prune({
+        resourceType: "Organization",
+        id: r.id,
+        meta: meta(r.updated_at, { profile: "us-core-organization", part2: false }),
+        active: !!r.is_active,
+        type: [{ coding: [{ system: "http://terminology.hl7.org/CodeSystem/organization-type", code: "prov", display: "Healthcare Provider" }] }],
+        name: r.organization || r.name,
+        alias: r.organization && r.organization !== r.name ? [r.name] : void 0,
+        telecom: directoryTelecom(r),
+        address: [address(r.address, r.city, r.zip) && { ...address(r.address, r.city, r.zip), use: "work" }]
+      });
+    }
+    function mapLocation(r) {
+      return prune({
+        resourceType: "Location",
+        id: r.id,
+        meta: meta(r.updated_at, { profile: "us-core-location", part2: false }),
+        status: r.is_active ? "active" : "inactive",
+        name: r.name,
+        telecom: directoryTelecom(r),
+        address: address(r.address, r.city, r.zip) && { ...address(r.address, r.city, r.zip), use: "work" },
+        managingOrganization: { reference: `Organization/${r.id}`, display: r.organization || r.name }
+      });
+    }
+    var split = (s) => String(s || "").split(",").map((x) => x.trim()).filter(Boolean);
+    function mapHealthcareService(r) {
+      return prune({
+        resourceType: "HealthcareService",
+        id: r.id,
+        meta: meta(r.updated_at, { part2: false }),
+        active: !!r.is_active,
+        providedBy: { reference: `Organization/${r.id}`, display: r.organization || r.name },
+        category: [cc(SYS.resourceCategory, r.category, label("RESOURCE_CATEGORIES", r.category))],
+        type: split(r.service_tags).map((t) => cc(SYS.serviceTag, t, humanize(t))),
+        location: [{ reference: `Location/${r.id}` }],
+        name: r.name,
+        comment: r.summary || void 0,
+        extraDetails: [r.services, r.levels_of_care ? `Levels of care: ${r.levels_of_care}` : null, r.mat_offered ? `MAT offered: ${r.mat_offered}` : null, r.intake_process ? `Intake: ${r.intake_process}` : null, r.cost_notes ? `Cost: ${r.cost_notes}` : null].filter(Boolean).join("\n") || void 0,
+        telecom: directoryTelecom(r),
+        eligibility: r.eligibility || r.populations ? [{ code: r.populations ? { text: split(r.populations).map(humanize).join(", ") } : void 0, comment: r.eligibility || void 0 }] : void 0,
+        characteristic: [r.accepts_medicaid ? { text: "Accepts Medicaid" } : void 0, r.accepts_uninsured ? { text: "Accepts uninsured clients" } : void 0],
+        communication: split(r.languages).map((l) => ({ text: l })),
+        availabilityExceptions: r.hours || void 0
+      });
+    }
+    var LIVE_CLIENT = `c.deleted_at IS NULL AND c.merged_into IS NULL`;
+    var eqParam = (col, xform = (v) => v) => (values) => orClause(values, (v) => ({ sql: `${col} = ?`, params: [xform(v)] }));
+    function orClause(values, one) {
+      const parts = [];
+      const params = [];
+      for (const raw of values) {
+        const alts = String(raw).split(",").map((s) => s.trim()).filter(Boolean);
+        if (!alts.length) throw new FhirError(400, "Empty search value", { code: "invalid" });
+        const sub = alts.map(one);
+        parts.push(`(${sub.map((s) => s.sql).join(" OR ")})`);
+        for (const s of sub) params.push(...s.params);
+      }
+      return { sql: parts.join(" AND "), params };
+    }
+    var statusParam = (map) => (values) => orClause(values, (v) => {
+      const raw = Object.entries(map).filter(([, f]) => f === v).map(([k]) => k);
+      if (!raw.length) return { sql: "0", params: [] };
+      return { sql: `_st IN (${raw.map(() => "?").join(",")})`, params: raw };
+    });
+    var nameParam = (values, mod) => orClause(values, (v) => mod === "exact" ? { sql: `_name = ?`, params: [v] } : { sql: `LOWER(_name) LIKE ? ESCAPE '\\'`, params: [(mod === "contains" ? "%" : "") + v.toLowerCase().replace(/[\\%_]/g, (m) => "\\" + m) + "%"] });
+    var DEFS = {
+      Patient: {
+        src: `SELECT c.id _fid, 'client' _kind, c.id _rid, c.id _cid, c.updated_at _upd, c.intake_date _date, c.status _st, c.client_code _code, c.dob_idx _dob, c.last_name_idx _fam, c.first_name_idx _giv FROM clients c WHERE ${LIVE_CLIENT}`,
+        load: (kind, id) => db3.one(`SELECT * FROM clients WHERE id=?`, id),
+        map: mapPatient,
+        params: {
+          identifier: (values) => orClause(values, (v) => {
+            const [sys, val] = v.includes("|") ? [v.slice(0, v.indexOf("|")), v.slice(v.indexOf("|") + 1)] : [null, v];
+            if (sys && sys !== SYS.clientCode) return { sql: "0", params: [] };
+            return { sql: `_code = ?`, params: [val] };
+          }),
+          family: (values) => orClause(values, (v) => ({ sql: `_fam = ?`, params: [blindIndex2(v)] })),
+          given: (values) => orClause(values, (v) => ({ sql: `_giv = ?`, params: [blindIndex2(String(v).trim().toLowerCase())] })),
+          birthdate: (values) => orClause(values, (v) => {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new FhirError(400, "birthdate is searchable by exact date (YYYY-MM-DD) only; dates of birth are stored encrypted", { code: "invalid" });
+            return { sql: `_dob = ?`, params: [blindIndex2(v)] };
+          })
+        },
+        identifying: ["_id", "identifier", "family", "given", "birthdate"]
+      },
+      EpisodeOfCare: {
+        src: `SELECT e.id _fid, 'episode' _kind, e.id _rid, e.client_id _cid, e.updated_at _upd, e.opened_at _date, e.status _st FROM episodes e JOIN clients c ON c.id=e.client_id WHERE ${LIVE_CLIENT}`,
+        load: (kind, id) => db3.one(`SELECT * FROM episodes WHERE id=?`, id),
+        map: mapEpisode,
+        date: true,
+        params: { status: statusParam({ open: "active", closed: "finished" }) }
+      },
+      Encounter: {
+        src: `SELECT 'iv-' || i.id _fid, 'intervention' _kind, i.id _rid, i.client_id _cid, i.updated_at _upd, i.occurred_at _date FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${LIVE_CLIENT}
+      UNION ALL SELECT 'call-' || k.id, 'call', k.id, k.client_id, k.updated_at, k.started_at FROM calls k JOIN clients c ON c.id=k.client_id WHERE ${LIVE_CLIENT}`,
+        load: (kind, id) => db3.one(`SELECT * FROM ${kind === "call" ? "calls" : "interventions"} WHERE id=?`, id),
+        map: (row, kind) => kind === "call" ? mapCall(row) : mapIntervention(row),
+        date: true,
+        params: {}
+      },
+      Consent: {
+        src: `SELECT k.id _fid, 'consent' _kind, k.id _rid, k.client_id _cid, k.updated_at _upd, k.signed_at _date, CASE WHEN k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= date('now')) THEN 'active' ELSE 'inactive' END _st
+      FROM consents k JOIN clients c ON c.id=k.client_id WHERE ${LIVE_CLIENT} AND k.type IN (${disclosure.FHIR_CONSENT_TYPES.map((t) => `'${t}'`).join(",")})`,
+        load: (kind, id) => db3.one(`SELECT * FROM consents WHERE id=?`, id),
+        map: mapConsent,
+        date: true,
+        params: { status: statusParam({ active: "active", inactive: "inactive" }) },
+        // Only the consents that name this recipient for this purpose: which other organisations a client has
+        // agreed to share with is none of this recipient's business.
+        keep: (row, client) => disclosure.consentCovers({ recipient: dec2(row.recipient_enc), purpose: dec2(row.purpose_enc) }, { recipients: client.recipients, purposeOfUse: client.purpose })
+      },
+      ServiceRequest: {
+        src: `SELECT r.id _fid, 'referral' _kind, r.id _rid, r.client_id _cid, r.updated_at _upd, r.referred_at _date, r.status _st FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${LIVE_CLIENT}`,
+        load: (kind, id) => db3.one(`SELECT * FROM referrals WHERE id=?`, id),
+        map: mapReferral,
+        date: "authored",
+        params: { status: statusParam(SR_STATUS) }
+      },
+      Task: {
+        src: `SELECT t.id _fid, 'task' _kind, t.id _rid, t.client_id _cid, t.updated_at _upd, t.created_at _date, t.status _st FROM tasks t JOIN clients c ON c.id=t.client_id WHERE ${LIVE_CLIENT}`,
+        load: (kind, id) => db3.one(`SELECT * FROM tasks WHERE id=?`, id),
+        map: mapTask,
+        date: "authored-on",
+        params: { status: statusParam(TASK_STATUS) }
+      },
+      Observation: {
+        src: `SELECT 'risk-' || c.id _fid, 'risk' _kind, c.id _rid, c.id _cid, c.updated_at _upd, c.updated_at _date, 'survey' _cat FROM clients c WHERE ${LIVE_CLIENT} AND c.risk_level IS NOT NULL AND c.risk_level <> ''
+      UNION ALL SELECT 'od-' || o.id, 'overdose', o.id, o.client_id, o.updated_at, o.occurred_at, 'overdose-event' FROM overdose_events o JOIN clients c ON c.id=o.client_id WHERE ${LIVE_CLIENT}`,
+        load: (kind, id) => db3.one(`SELECT * FROM ${kind === "risk" ? "clients" : "overdose_events"} WHERE id=?`, id),
+        map: (row, kind) => kind === "risk" ? mapRisk(row) : mapOverdose(row),
+        date: true,
+        params: { category: (values) => orClause(values, (v) => ({ sql: `_cat = ?`, params: [v.includes("|") ? v.slice(v.indexOf("|") + 1) : v] })) }
+      },
+      DocumentReference: {
+        src: `SELECT n.id _fid, 'note' _kind, n.id _rid, n.client_id _cid, n.updated_at _upd, COALESCE(n.signed_at, n.occurred_at) _date FROM notes n JOIN clients c ON c.id=n.client_id
+      WHERE ${LIVE_CLIENT} AND n.deleted_at IS NULL AND n.status IN ('signed','amended') AND n.format <> 'supervision'`,
+        load: (kind, id) => db3.one(`SELECT * FROM notes WHERE id=?`, id),
+        map: mapNote,
+        date: true,
+        params: {}
+      },
+      Organization: {
+        directory: true,
+        src: `SELECT '${PROGRAM_ORG}' _fid, 'program' _kind, '${PROGRAM_ORG}' _rid, NULL _cid, COALESCE((SELECT updated_at FROM settings WHERE key='org_name'), '2020-01-01T00:00:00.000Z') _upd, NULL _date, 1 _active, COALESCE((SELECT value FROM settings WHERE key='org_name'), 'SUDS program') _name
+      UNION ALL SELECT r.id, 'resource', r.id, NULL, r.updated_at, NULL, r.is_active, COALESCE(NULLIF(r.organization, ''), r.name) FROM resources r`,
+        load: (kind, id) => kind === "program" ? { _program: true, updated_at: db3.one(`SELECT updated_at FROM settings WHERE key='org_name'`)?.updated_at || "2020-01-01T00:00:00.000Z" } : db3.one(`SELECT * FROM resources WHERE id=?`, id),
+        map: mapOrganization,
+        params: { name: nameParam, active: (values) => orClause(values, (v) => ({ sql: `_active = ?`, params: [v === "true" ? 1 : 0] })) }
+      },
+      Location: {
+        directory: true,
+        src: `SELECT r.id _fid, 'resource' _kind, r.id _rid, NULL _cid, r.updated_at _upd, NULL _date, r.is_active _active, r.name _name, r.city _city, r.zip _zip FROM resources r`,
+        load: (kind, id) => db3.one(`SELECT * FROM resources WHERE id=?`, id),
+        map: mapLocation,
+        params: { name: nameParam, "address-city": eqParam("_city"), "address-postalcode": eqParam("_zip"), status: (values) => orClause(values, (v) => ({ sql: `_active = ?`, params: [v === "active" ? 1 : 0] })) }
+      },
+      HealthcareService: {
+        directory: true,
+        src: `SELECT r.id _fid, 'resource' _kind, r.id _rid, NULL _cid, r.updated_at _upd, NULL _date, r.is_active _active, r.name _name, r.category _cat FROM resources r`,
+        load: (kind, id) => db3.one(`SELECT * FROM resources WHERE id=?`, id),
+        map: mapHealthcareService,
+        params: { name: nameParam, active: (values) => orClause(values, (v) => ({ sql: `_active = ?`, params: [v === "true" ? 1 : 0] })), "service-category": (values) => orClause(values, (v) => ({ sql: `_cat = ?`, params: [v.includes("|") ? v.slice(v.indexOf("|") + 1) : v] })) }
+      }
+    };
+    for (const [type, d] of Object.entries(DEFS)) {
+      d.type = type;
+      d.phi = !d.directory;
+    }
+    var CONTROL = ["_count", "_offset", "_format", "_pretty", "_summary", "_elements"];
+    var MAX_COUNT = 200;
+    var DEFAULT_COUNT = 50;
+    function searchParams(type) {
+      const d = DEFS[type];
+      const out2 = ["_id", "_lastUpdated"];
+      if (d.phi && type !== "Patient") out2.push("patient");
+      if (d.date) out2.push(d.date === true ? "date" : d.date);
+      out2.push(...Object.keys(d.params));
+      if (d.params.name) out2.push("name:contains", "name:exact");
+      return out2;
+    }
+    function where(type, query, { since } = {}) {
+      const d = DEFS[type];
+      const clauses = [];
+      const params = [];
+      const names = [.../* @__PURE__ */ new Set([...query.keys()])];
+      const allowed = searchParams(type);
+      for (const name of names) {
+        if (CONTROL.includes(name)) continue;
+        if (!allowed.includes(name)) throw new FhirError(400, `Search parameter "${name}" is not supported for ${type}. Supported: ${allowed.join(", ")}`, { code: "not-supported" });
+        const values = query.getAll(name);
+        const [base, mod] = name.split(":");
+        let c;
+        if (base === "_id") c = orClause(values, (v) => ({ sql: `_fid = ?`, params: [v] }));
+        else if (base === "_lastUpdated") c = andDates("_upd", values);
+        else if (base === "patient") c = orClause(values, (v) => ({ sql: `_cid = ?`, params: [refId(v, "Patient")] }));
+        else if (d.date && base === (d.date === true ? "date" : d.date)) c = andDates("_date", values);
+        else c = d.params[base](values, mod);
+        clauses.push(c.sql);
+        params.push(...c.params);
+      }
+      if (since) {
+        clauses.push("_upd > ?");
+        params.push(since);
+      }
+      return { sql: clauses.length ? clauses.join(" AND ") : "1=1", params };
+    }
+    function andDates(col, values) {
+      const parts = values.map((v) => dateClause(col, v));
+      return { sql: parts.map((p) => p.sql).join(" AND "), params: parts.flatMap((p) => p.params) };
+    }
+    function page(type, filter, { count, offset }) {
+      const d = DEFS[type];
+      return db3.all(`SELECT * FROM (${d.src}) s WHERE ${filter.sql} ORDER BY _upd, _fid LIMIT ? OFFSET ?`, ...filter.params, count, offset);
+    }
+    function toResource(type, row) {
+      const d = DEFS[type];
+      const full = d.load(row._kind, row._rid);
+      if (!full) return null;
+      return { full, resource: d.map(full, row._kind) };
+    }
+    function identifying(type, query) {
+      const d = DEFS[type];
+      const keys = [...query.keys()].map((k) => k.split(":")[0]);
+      return keys.includes("patient") || keys.includes("_id") || (d.identifying || []).some((k) => keys.includes(k));
+    }
+    module.exports = { DEFS, PROGRAM_ORG, MAX_COUNT, DEFAULT_COUNT, searchParams, where, page, toResource, identifying, US_CORE };
+  }
+});
+
+// server/fhir/bulk.js
+var require_bulk = __commonJS({
+  "server/fhir/bulk.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var path = (init_path(), __toCommonJS(path_exports));
+    var config = require_config();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var disclosure = require_disclosure();
+    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
+    var R = require_resources();
+    var C = require_clients2();
+    var { FhirError, FHIR_NDJSON, PART2_SECURITY, outcome, send, baseUrl } = require_common();
+    var TTL_MS = Math.max(1, Number(proc.env.FHIR_EXPORT_TTL_MINUTES) || 60) * 6e4;
+    var MAX_ACTIVE_PER_CLIENT = 2;
+    var PAGE = 500;
+    var OUTPUT_FORMATS = ["application/fhir+ndjson", "application/ndjson", "ndjson"];
+    var dir = () => path.join(config.dataDir, "fhir-export");
+    var jobs = /* @__PURE__ */ new Map();
+    function sweep() {
+      const now = Date.now();
+      for (const [id, j] of jobs) if (j.expiresAt && j.expiresAt < now) removeJob(id);
+      let entries = [];
+      try {
+        entries = fs.readdirSync(dir());
+      } catch {
+        return;
+      }
+      for (const e of entries) {
+        if (jobs.has(e)) continue;
+        const p = path.join(dir(), e);
+        try {
+          if (now - fs.statSync(p).mtimeMs > TTL_MS) fs.rmSync(p, { recursive: true, force: true });
+        } catch {
+        }
+      }
+    }
+    var later = (fn) => (globalThis.setImmediate || setTimeout)(fn);
+    var sweeper = setInterval(sweep, 5 * 6e4);
+    if (sweeper && sweeper.unref) sweeper.unref();
+    function removeJob(id) {
+      jobs.delete(id);
+      try {
+        fs.rmSync(path.join(dir(), id), { recursive: true, force: true });
+      } catch {
+      }
+    }
+    function exportTypes(ctx, client, level) {
+      const all = Object.keys(R.DEFS).filter((t) => level === "system" || R.DEFS[t].phi);
+      const asked = ctx.query.get("_type");
+      if (!asked) {
+        const types2 = all.filter((t) => C.hasScope(client.scopes, t));
+        if (!types2.length) throw new FhirError(403, "This client has no read scope for any exportable resource type", { code: "forbidden" });
+        return types2;
+      }
+      const types = [...new Set(asked.split(",").map((s) => s.trim()).filter(Boolean))];
+      for (const t of types) {
+        if (!R.DEFS[t]) throw new FhirError(400, `"${t}" is not a resource type this server exports`, { code: "not-supported" });
+        if (!all.includes(t)) throw new FhirError(400, `${t} is not in the Patient compartment; use the system-level $export for it`, { code: "invalid" });
+        C.requireScope(ctx, client, t);
+      }
+      return types;
+    }
+    function kickoff(ctx, client, level) {
+      sweep();
+      if (!/respond-async/i.test(String(ctx.headers.prefer || ""))) throw new FhirError(400, 'Bulk export requires the header "Prefer: respond-async"', { code: "required" });
+      const accept = String(ctx.headers.accept || "");
+      if (accept && !/json|\*\/\*/i.test(accept)) throw new FhirError(406, "Accept must be application/fhir+json", { code: "not-supported" });
+      for (const k of ctx.query.keys()) if (!["_type", "_since", "_outputFormat"].includes(k)) throw new FhirError(400, `Export parameter "${k}" is not supported (supported: _type, _since, _outputFormat)`, { code: "not-supported" });
+      const fmt = ctx.query.get("_outputFormat");
+      if (fmt && !OUTPUT_FORMATS.includes(fmt)) throw new FhirError(400, `_outputFormat must be application/fhir+ndjson`, { code: "not-supported" });
+      let since = null;
+      if (ctx.query.get("_since")) {
+        const t = Date.parse(ctx.query.get("_since"));
+        if (Number.isNaN(t) || !/^\d{4}-\d{2}-\d{2}T/.test(ctx.query.get("_since"))) throw new FhirError(400, "_since must be a FHIR instant (e.g. 2026-01-01T00:00:00Z)", { code: "invalid" });
+        since = new Date(t).toISOString();
+      }
+      const types = exportTypes(ctx, client, level);
+      const running = [...jobs.values()].filter((j) => j.keyId === client.id && j.status === "in-progress").length;
+      if (running >= MAX_ACTIVE_PER_CLIENT) throw new FhirError(429, `This client already has ${running} exports running; wait for one to finish`, { code: "throttled", headers: { "Retry-After": "30" } });
+      const base = baseUrl(ctx);
+      const job = {
+        id: uuid2(),
+        keyId: client.id,
+        level,
+        types,
+        since,
+        request: `${base}${level === "patient" ? "/Patient" : ""}/$export${ctx.query.toString() ? "?" + ctx.query.toString() : ""}`,
+        transactionTime: db3.now(),
+        status: "in-progress",
+        progress: "queued",
+        outputs: [],
+        errors: [],
+        expiresAt: null,
+        base
+      };
+      jobs.set(job.id, job);
+      audit3.log({ user: client.actor, action: "fhir.export.kickoff", entity: "fhir_export", entityId: job.id, ip: ctx.ip, details: { client: client.prefix, level, types, since: !!since } });
+      later(() => {
+        run2(job, client, ctx.ip).catch(() => {
+        });
+      });
+      send(ctx.res, 202, outcome([{ severity: "information", code: "informational", diagnostics: `Export ${job.id} accepted; poll the Content-Location URL for its status.` }]), { "Content-Location": `${base}/$export-status/${job.id}` });
+    }
+    async function run2(job, client, ip) {
+      const jobDir = path.join(dir(), job.id);
+      try {
+        fs.mkdirSync(jobDir, { recursive: true, mode: 448 });
+        const coverage = disclosure.fhirCoverage({ cacheKey: client.id, recipients: client.recipients, purposeOfUse: client.purpose });
+        const perClient = /* @__PURE__ */ new Map();
+        const omitted = /* @__PURE__ */ new Set();
+        let total = 0;
+        for (const type of job.types) {
+          if (!jobs.has(job.id)) return;
+          job.progress = `exporting ${type}`;
+          const d = R.DEFS[type];
+          const filter = R.where(type, new URLSearchParams(), { since: job.since });
+          const lines = [];
+          for (let offset = 0; ; offset += PAGE) {
+            const rows = R.page(type, filter, { count: PAGE, offset });
+            for (const row of rows) {
+              if (d.phi && !coverage.has(row._cid)) {
+                omitted.add(row._cid);
+                continue;
+              }
+              const r = R.toResource(type, row);
+              if (!r || d.keep && !d.keep(r.full, client)) continue;
+              lines.push(JSON.stringify(r.resource));
+              if (d.phi) {
+                const e = perClient.get(row._cid) || { consentId: coverage.get(row._cid), counts: {} };
+                e.counts[type] = (e.counts[type] || 0) + 1;
+                perClient.set(row._cid, e);
+              }
+            }
+            if (rows.length < PAGE) break;
+            await new Promise((res) => later(res));
+          }
+          if (lines.length) {
+            const file2 = `${type}.ndjson`;
+            fs.writeFileSync(path.join(jobDir, file2 + ".enc"), encrypt3(lines.join("\n") + "\n"), { mode: 384 });
+            job.outputs.push({ type, file: file2, count: lines.length });
+            total += lines.length;
+          }
+        }
+        if (!jobs.has(job.id)) return;
+        const phi = job.types.some((t) => R.DEFS[t].phi);
+        if (phi) {
+          const issues = [{ severity: "information", code: "informational", diagnostics: `42 CFR \xA72.32 notice: ${disclosure.PART2_NOTICE}` }];
+          if (omitted.size) issues.push({ severity: "warning", code: "suppressed", diagnostics: `${omitted.size} patient(s) were left out of this export: no active consent names ${client.recipient} for this purpose of use.` });
+          const oo = { ...outcome(issues), meta: { security: PART2_SECURITY } };
+          fs.writeFileSync(path.join(jobDir, "OperationOutcome.ndjson.enc"), encrypt3(JSON.stringify(oo) + "\n"), { mode: 384 });
+          job.errors.push({ type: "OperationOutcome", file: "OperationOutcome.ndjson", count: 1 });
+        }
+        for (const e of perClient.values()) e.what = `FHIR bulk export ${job.id}: ${Object.entries(e.counts).map(([t, n]) => `${t} (${n})`).join(", ")}`;
+        disclosure.recordFhir({ perClient, recipient: client.recipient, purposeOfUse: client.purpose, sourceRef: `fhir-export:${job.id}`, user: client.actor, ip });
+        audit3.log({ user: client.actor, action: "fhir.export.complete", entity: "fhir_export", entityId: job.id, ip, details: { client: client.prefix, types: job.types, resources: total, patients: perClient.size, omitted_patients: omitted.size } });
+        job.status = "complete";
+        job.progress = "complete";
+        job.expiresAt = Date.now() + TTL_MS;
+      } catch (e) {
+        job.status = "error";
+        job.message = "The export failed on the server";
+        job.expiresAt = Date.now() + TTL_MS;
+        try {
+          fs.rmSync(jobDir, { recursive: true, force: true });
+        } catch {
+        }
+        console.error(`[suds] FHIR export ${job.id} failed:`, e.message);
+        audit3.log({ user: client.actor, action: "fhir.export.failed", entity: "fhir_export", entityId: job.id, ip, success: false, details: { message: String(e.message).slice(0, 200) } });
+      }
+    }
+    function ownJob(ctx, client) {
+      sweep();
+      const j = jobs.get(ctx.params.id);
+      if (!j || j.keyId !== client.id) throw new FhirError(404, "No such export (it may have expired or been deleted)", { code: "not-found" });
+      return j;
+    }
+    function status(ctx, client) {
+      const j = ownJob(ctx, client);
+      if (j.status === "in-progress") {
+        ctx.res.writeHead(202, { "X-Progress": j.progress, "Retry-After": "2", "Content-Length": 0 });
+        ctx.res.end();
+        return;
+      }
+      if (j.status === "error") throw new FhirError(500, j.message, { code: "exception" });
+      const url = (f) => `${j.base}/$export-file/${j.id}/${f.file}`;
+      const manifest = {
+        transactionTime: j.transactionTime,
+        request: j.request,
+        requiresAccessToken: true,
+        output: j.outputs.map((f) => ({ type: f.type, url: url(f), count: f.count })),
+        error: j.errors.map((f) => ({ type: f.type, url: url(f) })),
+        extension: { "urn:suds:part2": { security: j.types.some((t) => R.DEFS[t].phi) ? PART2_SECURITY : [], notice: j.types.some((t) => R.DEFS[t].phi) ? disclosure.PART2_NOTICE : void 0, expires: new Date(j.expiresAt).toISOString() } }
+      };
+      const body = JSON.stringify(manifest);
+      ctx.res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Content-Length": import_buffer.Buffer.byteLength(body), Expires: new Date(j.expiresAt).toUTCString() });
+      ctx.res.end(body);
+    }
+    function cancel(ctx, client) {
+      const j = ownJob(ctx, client);
+      removeJob(j.id);
+      audit3.log({ user: client.actor, action: "fhir.export.delete", entity: "fhir_export", entityId: j.id, ip: ctx.ip, details: { client: client.prefix, status: j.status } });
+      send(ctx.res, 202, outcome([{ severity: "information", code: "informational", diagnostics: `Export ${j.id} deleted` }]));
+    }
+    function file(ctx, client) {
+      const j = ownJob(ctx, client);
+      const f = [...j.outputs, ...j.errors].find((x) => x.file === ctx.params.file);
+      if (j.status !== "complete" || !f) throw new FhirError(404, "No such export file", { code: "not-found" });
+      let body;
+      try {
+        body = decrypt3(fs.readFileSync(path.join(dir(), j.id, f.file + ".enc"), "utf8"));
+      } catch {
+        throw new FhirError(410, "This export file can no longer be read (expired, or the server key changed); start a new export", { code: "not-found" });
+      }
+      audit3.log({ user: client.actor, action: "fhir.export.download", entity: "fhir_export", entityId: j.id, ip: ctx.ip, details: { client: client.prefix, type: f.type, count: f.count } });
+      ctx.res.writeHead(200, { "Content-Type": FHIR_NDJSON, "Content-Length": import_buffer.Buffer.byteLength(body) });
+      ctx.res.end(body);
+    }
+    module.exports = { kickoff, status, cancel, file, sweep, TTL_MS, _jobs: jobs };
+  }
+});
+
+// server/routes/fhir.js
+var require_fhir = __commonJS({
+  "server/routes/fhir.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var config = require_config();
+    var disclosure = require_disclosure();
+    var { rateLimit } = require_app2();
+    var { HttpError: HttpError3, badRequest, notFound } = require_http();
+    var { validate } = require_validate();
+    var { uuid: uuid2 } = require_crypto();
+    var C = require_clients2();
+    var R = require_resources();
+    var bulk = require_bulk();
+    var { FhirError, FHIR_VERSION, PART2_SECURITY, outcome, send, sendError, baseUrl } = require_common();
+    function fhir(fn, { open: open2 = false } = {}) {
+      return async (ctx) => {
+        try {
+          let client = null;
+          if (!open2) {
+            client = C.authenticate(ctx);
+            if (!rateLimit(`fhirclient:${client.id}`, client.rateLimit, 6e4)) throw new FhirError(429, `Rate limit of ${client.rateLimit} requests a minute exceeded`, { code: "throttled", headers: { "Retry-After": "60" } });
+          }
+          await fn(ctx, client);
+        } catch (e) {
+          if (e instanceof FhirError || e instanceof HttpError3) sendError(ctx.res, e.status, e.message, { code: e.code, headers: e.headers || {} });
+          else {
+            console.error(`[suds] ${ctx.method} ${ctx.path}:`, e);
+            try {
+              audit3.log({ user: null, action: "server.error", ip: ctx.ip, success: false, details: { path: ctx.path.slice(0, 120), message: String(e.message).slice(0, 300) } });
+            } catch {
+            }
+            sendError(ctx.res, 500, "Internal server error");
+          }
+        }
+      };
+    }
+    var count = (ctx) => {
+      const raw = ctx.query.get("_count");
+      if (raw === null) return R.DEFAULT_COUNT;
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n < 0) throw new FhirError(400, "_count must be a whole number", { code: "invalid" });
+      return Math.min(n, R.MAX_COUNT);
+    };
+    var offsetOf = (ctx) => {
+      const n = Number(ctx.query.get("_offset") || 0);
+      if (!Number.isInteger(n) || n < 0) throw new FhirError(400, "_offset must be a whole number", { code: "invalid" });
+      return n;
+    };
+    var typeOf = (ctx) => {
+      const t = ctx.params.type;
+      if (!R.DEFS[t]) throw new FhirError(404, `Resource type "${String(t).slice(0, 60)}" is not served here`, { code: "not-supported" });
+      return t;
+    };
+    var coverageFor = (client) => disclosure.fhirCoverage({ cacheKey: client.id, recipients: client.recipients, purposeOfUse: client.purpose });
+    var requestId = () => uuid2();
+    function account({ ctx, client, type, interaction, perClient, returned, omittedPatients, reqId }) {
+      const what = (n) => `FHIR ${interaction} ${type}: ${n} resource${n === 1 ? "" : "s"}`;
+      for (const e of perClient.values()) e.what = what(e.n);
+      disclosure.recordFhir({ perClient, recipient: client.recipient, purposeOfUse: client.purpose, sourceRef: `fhir:${reqId}`, user: client.actor, ip: ctx.ip });
+      audit3.log({
+        user: client.actor,
+        action: `fhir.${interaction}`,
+        entity: type,
+        entityId: interaction === "read" ? ctx.params.id : null,
+        clientId: interaction === "read" && perClient.size === 1 ? [...perClient.keys()][0] : null,
+        ip: ctx.ip,
+        details: { client: client.prefix, request: reqId, params: [...new Set(ctx.query.keys())], returned, patients: perClient.size, omitted_patients: omittedPatients }
+      });
+    }
+    function search(ctx, client) {
+      const type = typeOf(ctx);
+      C.requireScope(ctx, client, type);
+      const d = R.DEFS[type];
+      const n = count(ctx), offset = offsetOf(ctx);
+      const filter = R.where(type, ctx.query);
+      const rows = R.page(type, filter, { count: n + 1, offset });
+      const hasNext = rows.length > n;
+      if (hasNext) rows.length = n;
+      const coverage = d.phi ? coverageFor(client) : null;
+      const base = baseUrl(ctx);
+      const entries = [];
+      const perClient = /* @__PURE__ */ new Map();
+      const omitted = /* @__PURE__ */ new Set();
+      let omittedRows = 0;
+      for (const row of rows) {
+        if (d.phi && !coverage.has(row._cid)) {
+          omittedRows++;
+          omitted.add(row._cid);
+          continue;
+        }
+        const r = R.toResource(type, row);
+        if (!r || d.keep && !d.keep(r.full, client)) continue;
+        entries.push({ fullUrl: `${base}/${type}/${r.resource.id}`, resource: r.resource, search: { mode: "match" } });
+        if (d.phi) {
+          const e = perClient.get(row._cid) || { consentId: coverage.get(row._cid), n: 0 };
+          e.n++;
+          perClient.set(row._cid, e);
+        }
+      }
+      const link = (off) => {
+        const q = new URLSearchParams(ctx.query);
+        q.set("_count", String(n));
+        if (off) q.set("_offset", String(off));
+        else q.delete("_offset");
+        return `${base}/${type}?${q}`;
+      };
+      const links = [{ relation: "self", url: link(offset) }];
+      if (hasNext) links.push({ relation: "next", url: link(offset + n) });
+      if (offset > 0) links.push({ relation: "previous", url: link(Math.max(0, offset - n)) });
+      const bundle = { resourceType: "Bundle", id: uuid2(), meta: { lastUpdated: (/* @__PURE__ */ new Date()).toISOString() }, type: "searchset", link: links, entry: entries };
+      if (d.phi) {
+        bundle.meta.security = PART2_SECURITY;
+        const issues = [{ severity: "information", code: "informational", diagnostics: `42 CFR \xA72.32 notice: ${disclosure.PART2_NOTICE}` }];
+        if (R.identifying(type, ctx.query)) issues.push({ severity: "information", code: "suppressed", diagnostics: `Results include only patients whose active consent names ${client.recipient} for this purpose of use.` });
+        else if (omitted.size) issues.push({ severity: "warning", code: "suppressed", diagnostics: `${omitted.size} patient(s) (${omittedRows} ${type} resource(s)) on this page were withheld: no active consent names ${client.recipient} for this purpose of use.` });
+        bundle.entry.push({ resource: { ...outcome(issues), id: uuid2() }, search: { mode: "outcome" } });
+        const reqId = requestId();
+        account({ ctx, client, type, interaction: "search", perClient, returned: entries.length, omittedPatients: R.identifying(type, ctx.query) ? void 0 : omitted.size, reqId });
+      } else {
+        audit3.log({ user: client.actor, action: "fhir.search", entity: type, ip: ctx.ip, details: { client: client.prefix, params: [...new Set(ctx.query.keys())], returned: entries.length } });
+      }
+      send(ctx.res, 200, bundle);
+    }
+    function read(ctx, client) {
+      const type = typeOf(ctx);
+      C.requireScope(ctx, client, type);
+      const d = R.DEFS[type];
+      const id = String(ctx.params.id || "");
+      if (!/^[A-Za-z0-9\-.]{1,64}$/.test(id)) throw new FhirError(404, "Not found", { code: "not-found" });
+      const [row] = R.page(type, { sql: "_fid = ?", params: [id] }, { count: 1, offset: 0 });
+      const withheld = row && d.phi && !coverageFor(client).has(row._cid);
+      const r = row && !withheld ? R.toResource(type, row) : null;
+      if (!r || d.keep && !d.keep(r.full, client)) {
+        if (withheld) audit3.log({ user: client.actor, action: "fhir.read.withheld", entity: type, entityId: id, clientId: row._cid, ip: ctx.ip, success: false, details: { client: client.prefix, reason: "no covering consent" } });
+        throw new FhirError(404, `${type}/${id} is not available`, { code: "not-found" });
+      }
+      if (d.phi) {
+        const perClient = /* @__PURE__ */ new Map([[row._cid, { consentId: coverageFor(client).get(row._cid), n: 1 }]]);
+        account({ ctx, client, type, interaction: "read", perClient, returned: 1, omittedPatients: void 0, reqId: requestId() });
+      } else {
+        audit3.log({ user: client.actor, action: "fhir.read", entity: type, entityId: id, ip: ctx.ip, details: { client: client.prefix } });
+      }
+      send(ctx.res, 200, r.resource, { ETag: `W/"${Date.parse(r.resource.meta?.lastUpdated || 0) || 0}"` });
+    }
+    var PARAM_TYPES = {
+      _id: "token",
+      _lastUpdated: "date",
+      patient: "reference",
+      date: "date",
+      authored: "date",
+      "authored-on": "date",
+      identifier: "token",
+      family: "string",
+      given: "string",
+      birthdate: "date",
+      status: "token",
+      category: "token",
+      name: "string",
+      active: "token",
+      "address-city": "string",
+      "address-postalcode": "string",
+      "service-category": "token"
+    };
+    var PROFILES = { Patient: "us-core-patient", Encounter: "us-core-encounter", Organization: "us-core-organization", Location: "us-core-location" };
+    function capability(ctx) {
+      const base = baseUrl(ctx);
+      return {
+        resourceType: "CapabilityStatement",
+        id: "suds",
+        status: "active",
+        date: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+        publisher: "SUDS",
+        kind: "instance",
+        instantiates: ["http://hl7.org/fhir/uv/bulkdata/CapabilityStatement/bulk-data"],
+        software: { name: "SUDS", version: config.version },
+        implementation: { description: "SUDS read-only FHIR R4 API (42 CFR Part 2: consent-gated)", url: base },
+        fhirVersion: FHIR_VERSION,
+        format: ["json"],
+        implementationGuide: ["http://hl7.org/fhir/us/core/ImplementationGuide/hl7.fhir.us.core", "http://hl7.org/fhir/uv/bulkdata/ImplementationGuide/hl7.fhir.uv.bulkdata"],
+        rest: [{
+          mode: "server",
+          documentation: "Read-only. Resources about a patient are returned only while the patient has an active consent naming the calling client's organisation for its purpose of use (42 CFR Part 2); other patients are omitted and counted in an OperationOutcome entry. Unknown search parameters are rejected.",
+          security: {
+            cors: false,
+            service: [{ coding: [{ system: "http://terminology.hl7.org/CodeSystem/restful-security-service", code: "OAuth", display: "OAuth" }], text: "OAuth2 client credentials (client_secret_post or client_secret_basic) or the API key as a bearer token" }],
+            extension: [{ url: "http://fhir-registry.smarthealthit.org/StructureDefinition/oauth-uris", extension: [{ url: "token", valueUri: `${base}/auth/token` }] }]
+          },
+          resource: Object.keys(R.DEFS).map((type) => ({
+            type,
+            ...PROFILES[type] ? { supportedProfile: [R.US_CORE + PROFILES[type]] } : {},
+            interaction: [{ code: "read" }, { code: "search-type" }],
+            searchParam: R.searchParams(type).filter((p) => !p.includes(":")).map((name) => ({ name, type: PARAM_TYPES[name] || "token" })),
+            ...type === "Patient" ? { operation: [{ name: "export", definition: "http://hl7.org/fhir/uv/bulkdata/OperationDefinition/patient-export" }] } : {}
+          })),
+          operation: [{ name: "export", definition: "http://hl7.org/fhir/uv/bulkdata/OperationDefinition/export" }]
+        }]
+      };
+    }
+    function tokenRequest(ctx) {
+      const ip = ctx.ip;
+      const reply = (status, body) => {
+        const s = JSON.stringify(body);
+        ctx.res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": import_buffer.Buffer.byteLength(s), Pragma: "no-cache" });
+        ctx.res.end(s);
+      };
+      if (!rateLimit(`fhirtoken:${ip}`, 30, 6e4)) return reply(429, { error: "slow_down", error_description: "Too many token requests" });
+      const ct = String(ctx.headers["content-type"] || "");
+      const form = ct.includes("application/json") ? new URLSearchParams(Object.entries(ctx.body || {}).map(([k, v]) => [k, String(v)])) : new URLSearchParams((ctx.rawBody || import_buffer.Buffer.alloc(0)).toString("utf8"));
+      let clientId = form.get("client_id");
+      let clientSecret = form.get("client_secret");
+      const basic = String(ctx.headers.authorization || "");
+      if (basic.startsWith("Basic ")) {
+        const [id, ...rest] = import_buffer.Buffer.from(basic.slice(6), "base64").toString("utf8").split(":");
+        clientId = decodeURIComponent(id || "");
+        clientSecret = decodeURIComponent(rest.join(":"));
+      }
+      if (form.get("grant_type") !== "client_credentials") return reply(400, { error: "unsupported_grant_type", error_description: "Only grant_type=client_credentials is supported" });
+      try {
+        return reply(200, C.issueToken({ clientId, clientSecret, scope: form.get("scope") }, ctx));
+      } catch (e) {
+        if (e.oauth) return reply(e.status, e.oauth);
+        throw e;
+      }
+    }
+    function adminCreate(ctx) {
+      const v = validate(ctx.body, {
+        name: { type: "string", required: true, maxLen: 100 },
+        recipient: { type: "string", required: true, maxLen: 200 },
+        aliases: { type: "string", maxLen: 500 },
+        purpose: { type: "string", enum: Object.keys(disclosure.FHIR_PURPOSES) },
+        scopes: { type: "array", required: true, maxLen: 20 },
+        rate_limit: { type: "number", integer: true, min: 1, max: 6e3 }
+      });
+      let created;
+      try {
+        created = C.create({ name: v.name, recipient: v.recipient, aliases: String(v.aliases || "").split(/[;\n]/).map((s) => s.trim()).filter(Boolean), purpose: v.purpose || "TREAT", scopes: v.scopes, rate_limit: v.rate_limit }, ctx.user);
+      } catch (e) {
+        if (e instanceof FhirError) throw badRequest(e.message);
+        throw e;
+      }
+      audit3.log({ user: ctx.user, action: "fhir_client.create", entity: "api_key", entityId: created.id, ip: ctx.ip, details: { name: v.name, purpose: v.purpose || "TREAT", scopes: created.scopes, rate_limit: v.rate_limit || C.DEFAULT_RATE_LIMIT } });
+      ctx.status = 201;
+      return { id: created.id, key: created.key, scopes: created.scopes, note: "Store this key now; it will not be shown again. Use it as client_secret (client_id is the id above) at the token URL, or directly as a bearer token." };
+    }
+    module.exports = (r) => {
+      r.get("/fhir/R4/metadata", fhir((ctx) => send(ctx.res, 200, capability(ctx)), { open: true }));
+      r.get("/fhir/R4/.well-known/smart-configuration", fhir((ctx) => {
+        const base = baseUrl(ctx);
+        const body = {
+          token_endpoint: `${base}/auth/token`,
+          grant_types_supported: ["client_credentials"],
+          token_endpoint_auth_methods_supported: ["client_secret_post", "client_secret_basic"],
+          scopes_supported: ["system/*.read", ...Object.keys(R.DEFS).map((t) => `system/${t}.read`)],
+          capabilities: ["client-confidential-symmetric"]
+        };
+        const s = JSON.stringify(body);
+        ctx.res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Content-Length": import_buffer.Buffer.byteLength(s) });
+        ctx.res.end(s);
+      }, { open: true }));
+      r.post("/fhir/R4/auth/token", fhir(tokenRequest, { open: true }));
+      r.get("/fhir/R4/\\$export", fhir((ctx, client) => bulk.kickoff(ctx, client, "system")));
+      r.get("/fhir/R4/Patient/\\$export", fhir((ctx, client) => bulk.kickoff(ctx, client, "patient")));
+      r.get("/fhir/R4/\\$export-status/:id", fhir((ctx, client) => bulk.status(ctx, client)));
+      r.delete("/fhir/R4/\\$export-status/:id", fhir((ctx, client) => bulk.cancel(ctx, client)));
+      r.get("/fhir/R4/\\$export-file/:id/:file", fhir((ctx, client) => bulk.file(ctx, client)));
+      r.get("/fhir/R4/:type", fhir(search));
+      r.get("/fhir/R4/:type/:id", fhir(read));
+      r.get("/api/admin/fhir-clients", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), () => ({
+        clients: C.list(),
+        purposes: Object.entries(disclosure.FHIR_PURPOSES).map(([code, p]) => ({ code, label: p.display })),
+        resource_types: Object.entries(C.RESOURCE_TYPES).map(([type, phi]) => ({ type, phi })),
+        token_path: "/fhir/R4/auth/token",
+        base_path: "/fhir/R4"
+      }));
+      r.post("/api/admin/fhir-clients", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), adminCreate);
+      r.delete("/api/admin/fhir-clients/:id", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), (ctx) => {
+        if (!C.revoke(ctx.params.id)) throw notFound();
+        audit3.log({ user: ctx.user, action: "fhir_client.revoke", entity: "api_key", entityId: ctx.params.id, ip: ctx.ip });
+        return { ok: true };
+      });
+    };
+  }
+});
+
 // server/form-starters.js
 var require_form_starters = __commonJS({
   "server/form-starters.js"(exports, module) {
@@ -19433,7 +20827,8 @@ var require_intake = __commonJS({
       const h = ctx.headers["authorization"] || "";
       const key = h.startsWith("Bearer ") ? h.slice(7).trim() : ctx.headers["x-api-key"] || "";
       if (!key) throw unauthorized("API key required");
-      const k = db3.one(`SELECT * FROM api_keys WHERE key_hash=? AND revoked_at IS NULL`, sha2562(key));
+      let k = db3.one(`SELECT * FROM api_keys WHERE key_hash=? AND revoked_at IS NULL`, sha2562(key));
+      if (k && !String(k.scopes || "").split(/[\s,]+/).includes("intake")) k = null;
       if (!k) {
         audit3.log({ user: null, action: "intake.denied", ip: ctx.ip, success: false });
         throw unauthorized("Invalid API key");
@@ -24717,7 +26112,7 @@ var require_regions2 = __commonJS({
 });
 
 // server/routes/resources.js
-var require_resources = __commonJS({
+var require_resources2 = __commonJS({
   "server/routes/resources.js"(exports, module) {
     "use strict";
     init_globals_inject();
@@ -26022,6 +27417,7 @@ var init_ = __esm({
       "./routes/dataimport.js": () => require_dataimport2(),
       "./routes/documents.js": () => require_documents(),
       "./routes/episodes.js": () => require_episodes(),
+      "./routes/fhir.js": () => require_fhir(),
       "./routes/forms.js": () => require_forms(),
       "./routes/handoff.js": () => require_handoff(),
       "./routes/imports.js": () => require_imports(),
@@ -26036,7 +27432,7 @@ var init_ = __esm({
       "./routes/referrals.js": () => require_referrals(),
       "./routes/regions.js": () => require_regions2(),
       "./routes/reports.js": () => require_reports(),
-      "./routes/resources.js": () => require_resources(),
+      "./routes/resources.js": () => require_resources2(),
       "./routes/setup.js": () => require_setup(),
       "./routes/supervision.js": () => require_supervision(),
       "./routes/supplies.js": () => require_supplies(),
@@ -26118,9 +27514,10 @@ var require_app2 = __commonJS({
       "options",
       "regions",
       "intake",
-      "client-errors"
+      "client-errors",
+      "fhir"
     ];
-    var LOCAL_ROUTE_MODULES2 = ROUTE_MODULES.filter((m) => !["setup", "app", "sync", "intake", "oidc", "client-errors"].includes(m));
+    var LOCAL_ROUTE_MODULES2 = ROUTE_MODULES.filter((m) => !["setup", "app", "sync", "intake", "oidc", "client-errors", "fhir"].includes(m));
     var LOCAL_DISABLED_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SUDS \u2014 local mode is off</title>
 <style>body{font-family:system-ui,sans-serif;max-width:36rem;margin:4rem auto;padding:0 1rem;color:#222;line-height:1.5}h1{font-size:1.4rem}a{color:#0b5}</style></head>
 <body><h1>Local mode is turned off on this server</h1>
@@ -26193,7 +27590,7 @@ var require_app2 = __commonJS({
           body: null
         };
         try {
-          if (!url.pathname.startsWith("/api/")) {
+          if (!url.pathname.startsWith("/api/") && !url.pathname.startsWith("/fhir/")) {
             if (!config.localModeEnabled && (url.searchParams.get("local") === "1" || url.pathname.startsWith("/local/"))) {
               if (url.pathname.startsWith("/local/")) {
                 sendJson(res, 404, { error: "Local mode is disabled on this server" });
@@ -26239,7 +27636,10 @@ var require_app2 = __commonJS({
           if (ctx.idempotentReplay && !res.headersSent) res.setHeader("Idempotent-Replayed", "true");
           if (!res.headersSent) sendJson(res, result === void 0 ? 204 : ctx.status || 200, result === void 0 ? null : result);
         } catch (err2) {
-          if (err2 instanceof HttpError3) {
+          if (err2 instanceof HttpError3 && url.pathname.startsWith("/fhir/")) {
+            if (err2.status === 413 && !res.headersSent) res.setHeader("Connection", "close");
+            require_common().sendError(res, err2.status, err2.message);
+          } else if (err2 instanceof HttpError3) {
             if (err2.status === 413 && !res.headersSent) res.setHeader("Connection", "close");
             if (!res.headersSent) sendJson(res, err2.status, { error: err2.message, ...err2.extra || {} });
             else res.destroy();
@@ -26857,7 +28257,7 @@ var routeLoaders = {
   calls: () => Promise.resolve().then(() => __toESM(require_calls())),
   time: () => Promise.resolve().then(() => __toESM(require_time())),
   supervision: () => Promise.resolve().then(() => __toESM(require_supervision())),
-  resources: () => Promise.resolve().then(() => __toESM(require_resources())),
+  resources: () => Promise.resolve().then(() => __toESM(require_resources2())),
   referrals: () => Promise.resolve().then(() => __toESM(require_referrals())),
   tasks: () => Promise.resolve().then(() => __toESM(require_tasks())),
   budget: () => Promise.resolve().then(() => __toESM(require_budget())),

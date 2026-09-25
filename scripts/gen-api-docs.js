@@ -9,11 +9,12 @@ const r = new Router();
 for (const mod of require('../server/app').ROUTE_MODULES) require(`../server/routes/${mod}`)(r);
 const rows = r.routes.map(x => {
   let i = 0;
-  const path = x.re.source.replace(/^\^/, '').replace(/\\\/\?\$$/, "").replace(/\(\[\^\/\]\+\)/g, () => ':' + x.keys[i++]).replace(/\\\//g, '/');
+  const path = x.re.source.replace(/^\^/, '').replace(/\\\/\?\$$/, "").replace(/\(\[\^\/\]\+\)/g, () => ':' + x.keys[i++]).replace(/\\\//g, '/').replace(/\\([$.])/g, '$1');
   return { method: x.method, path };
 });
 const groups = {};
-for (const x of rows) { const g = x.path.split('/')[2]; (groups[g] = groups[g] || []).push(x); }
+// The FHIR API lives under /fhir/R4, not /api; it is listed as one group and described in docs/integration/FHIR.md.
+for (const x of rows) { const g = x.path.startsWith('/fhir/') ? 'fhir (FHIR R4, read-only — see docs/integration/FHIR.md)' : x.path.split('/')[2]; (groups[g] = groups[g] || []).push(x); }
 let out = `# SUDS REST API
 
 All endpoints are under \`/api\`. Authentication is a session cookie set by \`POST /api/auth/login\` (browser) or an \`Authorization: Bearer <session token>\` header; state-changing requests from a cookie session must include \`X-Requested-With: suds\`. Intake endpoints use an API key. Responses are JSON; errors are \`{ error, fields? }\`. List endpoints accept \`limit\`, \`offset\`, \`client_id\`, \`from\`, \`to\`, \`mine=1\` and \`user_id\` where applicable. Every PHI access is audited.
@@ -33,6 +34,10 @@ Content-Type: application/json
 \`\`\`
 
 A JSON array or \`{ "notes": [...] }\` is also accepted. Response: \`202 { import_id, staged }\`.
+
+## FHIR R4 API
+
+\`/fhir/R4\` is a read-only FHIR R4 API for the county EHR or an HIE (Patient, EpisodeOfCare, Encounter, Consent, ServiceRequest, Task, Observation, DocumentReference, Organization, Location, HealthcareService, and Bulk Data \`$export\`). It answers in \`application/fhir+json\`, authenticates FHIR clients (created under Settings → FHIR clients, \`/api/admin/fhir-clients\`) with a bearer API key or an OAuth2 client-credentials token from \`POST /fhir/R4/auth/token\`, and returns a client's records only under a live 42 CFR Part 2 consent naming the FHIR client's organisation, recording each disclosure. Endpoints, mappings, scopes and examples: [docs/integration/FHIR.md](integration/FHIR.md).
 
 ## Break-glass
 

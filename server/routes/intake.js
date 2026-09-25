@@ -13,7 +13,9 @@ function apiKeyAuth(ctx) {
   if (!rateLimit(`intake:${ctx.ip}`, 60, 60_000)) throw new HttpError(429, 'Too many requests');
   const h = ctx.headers['authorization'] || ''; const key = h.startsWith('Bearer ') ? h.slice(7).trim() : (ctx.headers['x-api-key'] || '');
   if (!key) throw unauthorized('API key required');
-  const k = db.one(`SELECT * FROM api_keys WHERE key_hash=? AND revoked_at IS NULL`, sha256(key));
+  let k = db.one(`SELECT * FROM api_keys WHERE key_hash=? AND revoked_at IS NULL`, sha256(key));
+  // Only an intake key may stage notes: a FHIR client's key (scopes "fhir ...") is for reading, elsewhere.
+  if (k && !String(k.scopes || '').split(/[\s,]+/).includes('intake')) k = null;
   if (!k) { audit.log({ user: null, action: 'intake.denied', ip: ctx.ip, success: false }); throw unauthorized('Invalid API key'); }
   db.run(`UPDATE api_keys SET last_used_at=? WHERE id=?`, db.now(), k.id);
   return k;

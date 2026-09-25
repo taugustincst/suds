@@ -31,12 +31,14 @@ function rateLimitReset(key) { buckets.delete(key); }
 // out of the local-mode kernel.
 const ROUTE_MODULES = ['setup', 'auth', 'oidc', 'me', 'app', 'sync', 'dataimport', 'users', 'clients', 'assignments', 'episodes',
   'interventions', 'overdose', 'calls', 'time', 'supervision', 'resources', 'referrals', 'tasks', 'budget', 'notes',
-  'consents', 'patient-requests', 'careplan', 'assessments', 'forms', 'documents', 'imports', 'reports', 'caloms', 'handoff', 'admin', 'options', 'regions', 'intake', 'client-errors'];
+  'consents', 'patient-requests', 'careplan', 'assessments', 'forms', 'documents', 'imports', 'reports', 'caloms', 'handoff', 'admin', 'options', 'regions', 'intake', 'client-errors', 'fhir'];
 
 // Not on a device: setup and app are office-server concerns (first-run wizard, connection info), sync is the
 // device's own runner, intake is an inbound API for other systems to call, and oidc needs a live identity
 // provider to redirect to — meaningless (and always disabled) on a device with no office server behind it.
-const LOCAL_ROUTE_MODULES = ROUTE_MODULES.filter(m => !['setup', 'app', 'sync', 'intake', 'oidc', 'client-errors'].includes(m));
+// fhir is the office server's integration surface for the county EHR (docs/integration/FHIR.md): a device
+// is nobody's system of record and discloses to no one.
+const LOCAL_ROUTE_MODULES = ROUTE_MODULES.filter(m => !['setup', 'app', 'sync', 'intake', 'oidc', 'client-errors', 'fhir'].includes(m));
 
 // Served in place of the app shell when local mode is off (the wizard's answer in server.json, or LOCAL_MODE_ENABLED). No scripts, nothing to configure.
 const LOCAL_DISABLED_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SUDS — local mode is off</title>
@@ -113,7 +115,7 @@ function createHandler() {
       user: null, session: null, body: null,
     };
     try {
-      if (!url.pathname.startsWith('/api/')) {
+      if (!url.pathname.startsWith('/api/') && !url.pathname.startsWith('/fhir/')) {
         // Local mode switched off: the shell page for /?local=1 and the kernel it would load are replaced by a
         // short explanation, so the browser copy of SUDS cannot start on this server.
         if (!config.localModeEnabled && (url.searchParams.get('local') === '1' || url.pathname.startsWith('/local/'))) {
@@ -153,7 +155,11 @@ function createHandler() {
       // Routes that stream (exports, PDFs, backups, certificates) may already have written a header. A
       // second write here would throw inside the catch and take the process down, so it is guarded: the
       // request is simply cut off and the error is still logged.
-      if (err instanceof HttpError) {
+      if (err instanceof HttpError && url.pathname.startsWith('/fhir/')) {
+        // The FHIR API answers every failure as an OperationOutcome (an unknown path, a 405, the global rate limit).
+        if (err.status === 413 && !res.headersSent) res.setHeader('Connection', 'close');
+        require('./fhir/common').sendError(res, err.status, err.message);
+      } else if (err instanceof HttpError) {
         // An over-limit body is still arriving (readBody stopped keeping it, not reading it); close the
         // connection once the answer is out rather than keep draining a stream nobody wants.
         if (err.status === 413 && !res.headersSent) res.setHeader('Connection', 'close');

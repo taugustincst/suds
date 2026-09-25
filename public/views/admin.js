@@ -303,6 +303,8 @@ route('admin', async (r) => {
   // Lists: the choices on documentation forms (settings:manage, administrators) and funding sources
   // (budget:manage — which is how a supervisor gets this tab, with only the funding sources on it).
   if (can('settings:manage') || can('budget:manage')) tabs.splice(full ? 2 : tabs.length, 0, ['lists', 'Lists']);
+  // FHIR clients (the county EHR reading SUDS over FHIR): an office-server feature, next to the intake keys.
+  if (full && !state.local && can('apikeys:manage')) { T.fhir = () => fhirClientsTab(refresh); const at = tabs.findIndex(([k]) => k === 'apikeys'); tabs.splice(at < 0 ? tabs.length : at + 1, 0, ['fhir', 'FHIR clients']); }
   const allowed = tabs.some(([k]) => k === tab) ? tab : tabs[0][0];
   body.append(await (T[allowed] || T[tabs[0][0]])());
   return h('div', {}, pageHead(full ? 'Settings' : 'Supervision tools'), state.local ? h('div', { class: 'banner small' }, window.SUDS_STATIC_HOST ? 'This is SUDS on this device. Backups, and who may sign up here, are on the This device page.' : 'This is the copy of SUDS on this device. Network, API keys and backups are managed on the office SUDS; use Sync to exchange data.') : null, h('div', { class: 'tabs' }, tabs.map(([k, l]) => h('button', { class: k === tab ? 'active' : '', onClick: () => nav(`admin?tab=${k}`) }, l))), body);
@@ -444,4 +446,49 @@ export async function transferCard(fromId) {
     h('h3', {}, 'Move a caseload to another worker'),
     h('p', { class: 'small muted' }, 'When someone leaves or goes on extended leave, this ends every one of their current assignments and gives those clients to another worker in one step. Their last day is the day before the transfer takes effect, so nobody holds a client twice.'),
     f, result);
+}
+
+// ---------------------------------------------------------------------------
+// FHIR clients: outside systems (the county EHR, an HIE) allowed to read SUDS over the FHIR API
+// (docs/integration/FHIR.md). Each stands for one recipient organisation; a client's records reach it only
+// while the client has a live consent naming that organisation for the chosen purpose.
+// ---------------------------------------------------------------------------
+async function fhirClientsTab(refresh) {
+  const d = await get('/api/admin/fhir-clients');
+  const create = () => {
+    const f = form([
+      { name: 'name', label: 'Name (e.g. "County EHR – SmartCare")', required: true, span: true },
+      { name: 'recipient', label: 'Recipient organisation, exactly as consents name it', required: true, span: true, help: 'A client\'s data is returned only while they have an active Part 2 or release-of-information consent naming this organisation.' },
+      { name: 'aliases', label: 'Other names consents use for it (one per line)', type: 'textarea', rows: 2, span: true },
+      { name: 'purpose', label: 'Purpose of use', type: 'select', noBlank: true, value: 'TREAT', options: d.purposes.map(p => ({ value: p.code, label: `${p.label} (${p.code})` })), help: 'The consent\'s purpose must cover it (or say TPO).' },
+      { name: 'rate_limit', label: 'Requests per minute', type: 'number', min: 1, max: 6000, step: 1, value: 120 },
+      { type: 'section', label: 'What it may read' },
+      { name: 'scope_all', label: 'Every resource type (system/*.read)', type: 'checkbox', span: true },
+      ...d.resource_types.map(t => ({ name: `scope_${t.type}`, label: `${t.type}${t.phi ? '' : ' (directory, not PHI)'}`, type: 'checkbox' })),
+    ], { submitText: 'Create FHIR client', onCancel: () => m.close(), onSubmit: async (v) => {
+      const scopes = v.scope_all ? ['system/*.read'] : d.resource_types.filter(t => v[`scope_${t.type}`]).map(t => `system/${t.type}.read`);
+      if (!scopes.length) throw new Error('Choose at least one resource type');
+      const rr = await post('/api/admin/fhir-clients', { name: v.name, recipient: v.recipient, aliases: v.aliases || '', purpose: v.purpose, rate_limit: v.rate_limit ? Number(v.rate_limit) : undefined, scopes });
+      m.close();
+      const origin = location.origin;
+      const shown = modal('FHIR client created', h('div', {},
+        h('p', {}, 'Copy the secret now — it will not be shown again. Give it to the other system\'s administrator over a secure channel.'),
+        kv([['FHIR base URL', `${origin}${d.base_path}`], ['Token URL', `${origin}${d.token_path}`], ['client_id', rr.id], ['Scopes', rr.scopes.join(' ')]]),
+        h('div', { class: 'qr', 'data-fhir-secret': '1' }, rr.key),
+        h('p', { class: 'small muted' }, 'client_secret above. The secret also works directly as a bearer token. See docs/integration/FHIR.md.'),
+        h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', onClick: () => shown.close() }, 'I have copied it'))), { onClose: refresh });
+    } });
+    const m = modal('New FHIR client', f);
+  };
+  const purposeLabel = (c) => (d.purposes.find(p => p.code === c) || {}).label || c;
+  return h('div', {},
+    h('div', { class: 'banner small' }, 'FHIR clients read SUDS through the standards-based FHIR R4 API (read-only). Every answer that names a client is a 42 CFR Part 2 disclosure: it is made only under that client\'s consent, carries the redisclosure notice, and appears in the client\'s accounting of disclosures. The resource directory is not PHI.'),
+    h('div', { class: 'row mb' }, h('button', { class: 'btn primary', onClick: create }, '+ New FHIR client')),
+    table([
+      { label: 'Name', key: 'name' }, { label: 'Recipient', render: c => [c.recipient, ...c.aliases].join(' / ') }, { label: 'Purpose', render: c => purposeLabel(c.purpose) },
+      { label: 'Scopes', render: c => h('span', { class: 'small mono' }, c.scopes.join(' ')) }, { label: 'Limit', render: c => `${c.rate_limit}/min` },
+      { label: 'Created', render: c => `${fmt.dt(c.created_at)} by ${c.created_by_name || ''}` }, { label: 'Last used', render: c => c.last_used_at ? fmt.dt(c.last_used_at) : 'never' },
+      { label: 'Status', render: c => c.revoked_at ? badge('Revoked', 'danger') : badge('Active', 'ok') },
+      { label: '', render: c => !c.revoked_at ? h('button', { class: 'btn sm danger', onClick: async () => { if (await confirmDialog('Revoke FHIR client', `Revoke "${c.name}"? It stops working at once, including any access token it holds.`, { danger: true, okText: 'Revoke' })) { await del(`/api/admin/fhir-clients/${c.id}`); refresh(); } } }, 'Revoke') : null },
+    ], d.clients, { empty: 'No FHIR clients.' }));
 }
