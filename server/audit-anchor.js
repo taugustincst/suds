@@ -75,13 +75,25 @@ function write(reason = 'manual', { key = config.indexKey, d = dir(), prevGen = 
   else if (!dirStatus(d).exists) throw new Error(`the audit anchor directory ${d} does not exist (is the share mounted?)`);
   let install = installId();
   if (!install) { install = require('./crypto').uuid(); db.setSetting('audit_anchor_install', install); }
-  const prev = list(d).filter((x) => x.anchor && x.anchor.install === install).pop();
-  const a = { v: 1, kind: 'suds-audit-anchor', at: db.now(), reason, install, gen: generation(), prev_gen: prevGen, head_id: head.id, head_hash: head.hash, first_id: first, rows, host: require('node:os').hostname(), key_id: keyId(key), prev_mac: prev ? prev.anchor.mac || null : null };
-  a.mac = macOf(a, key);
-  const file = path.join(d, `anchor-${a.at.replace(/[:.]/g, '-')}-${String(head.id).padStart(12, '0')}.json`);
-  // 'wx': fail rather than overwrite. A second anchor in the same millisecond for the same head adds nothing.
-  try { fs.writeFileSync(file, JSON.stringify(a) + '\n', { flag: 'wx', mode: 0o600 }); }
-  catch (e) { if (e.code === 'EEXIST') return a; throw e; }
+  const all = list(d);
+  const prev = all.filter((x) => x.anchor && x.anchor.install === install).pop();
+  // Anchor times are strictly increasing, one millisecond apart at least. File names are the time and the
+  // head, and two anchors of the same head in the same millisecond (a scheduled anchor and a restore, say)
+  // used to share a name: the second write hit EEXIST and was dropped without a word, so a restore could
+  // go unanchored and every older anchor then read as tampering. Names also sort in the order written.
+  const newest = all.filter((x) => x.anchor && typeof x.anchor.at === 'string').map((x) => Date.parse(x.anchor.at)).filter(Number.isFinite);
+  const floor = newest.length ? Math.max(...newest) + 1 : 0;
+  let atMs = Math.max(Date.now(), floor);
+  let a; let file;
+  for (let attempt = 0; ; attempt++, atMs++) {
+    a = { v: 1, kind: 'suds-audit-anchor', at: new Date(atMs).toISOString(), reason, install, gen: generation(), prev_gen: prevGen, head_id: head.id, head_hash: head.hash, first_id: first, rows, host: require('node:os').hostname(), key_id: keyId(key), prev_mac: prev ? prev.anchor.mac || null : null };
+    a.mac = macOf(a, key);
+    file = path.join(d, `anchor-${a.at.replace(/[:.]/g, '-')}-${String(head.id).padStart(12, '0')}.json`);
+    // 'wx': never overwrite an anchor. A name already taken (another process writing to the same share in
+    // the same millisecond) moves this one a millisecond later rather than losing it.
+    try { fs.writeFileSync(file, JSON.stringify(a) + '\n', { flag: 'wx', mode: 0o600 }); break; }
+    catch (e) { if (e.code !== 'EEXIST' || attempt >= 50) throw e; }
+  }
   try { fs.chmodSync(file, 0o400); } catch {}
   db.setSetting('audit_anchor_last_at', a.at);
   db.setSetting('audit_anchor_last_status', 'ok');
