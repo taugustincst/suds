@@ -151,3 +151,160 @@ test('a recovery-drill report is signed with Ed25519, and npm run verify-dr-repo
   });
   assert.match(drill.textReport({ report: { ...report, started_at: 'x', finished_at: 'y', trigger: 't', by: 'b', server: { host: 'h', version: 'v' }, backup: {}, rto: { target_minutes: 60, met: true, seconds: 1 }, rpo: { target_hours: 1, met: true, seconds: 1 }, checks: [], failures: [], adjustments: [], counts: {} }, integrity: doc.integrity }), /Ed25519 signature/);
 });
+
+// ---- 2a/2b: the drill proves the escrowed keys and the offsite copy ----
+
+const hex = (b) => b.toString('hex');
+function keysFile(name, { enc = config.encryptionKey, idx = config.indexKey } = {}) {
+  const f = path.join(dir, name);
+  fs.writeFileSync(f, JSON.stringify({ SUDS_ENCRYPTION_KEY: hex(enc), SUDS_INDEX_KEY: hex(idx), created_at: new Date().toISOString() }), { mode: 0o600 });
+  return f;
+}
+
+test('drill --keys-file: the escrowed key backup, not process memory, opens the backup — and a wrong one fails the drill', async () => {
+  const drill = require('../server/dr-drill');
+  const good = await drill.run({ keysFile: keysFile('keys-escrow.json'), fresh: true, by: { username: 'test' }, trigger: 'test' });
+  assert.equal(good.report.ok, true, JSON.stringify(good.report.failures));
+  assert.equal(good.report.keys.source, 'escrow file');
+  assert.equal(good.report.keys.file, 'keys-escrow.json');
+  assert.ok(good.report.checks.some((c) => c.name === 'The escrowed key file opens the backup' && c.ok));
+  assert.ok(!JSON.stringify(good).includes(hex(config.encryptionKey)), 'the report carries fingerprints, never the keys');
+  const bad = await drill.run({ keysFile: keysFile('keys-wrong.json', { enc: crypto.randomBytes(32), idx: crypto.randomBytes(32) }), by: { username: 'test' }, trigger: 'test' });
+  assert.equal(bad.report.ok, false);
+  assert.match(bad.report.failures.join(' '), /escrowed keys/);
+  assert.ok(bad.report.checks.some((c) => c.name === 'The escrowed key file opens the backup' && !c.ok));
+  assert.throws(() => drill.parseKeysFile('{"SUDS_ENCRYPTION_KEY":"abc"}'), /64 hex/);
+  assert.throws(() => drill.parseKeysFile('not keys'), /no SUDS_ENCRYPTION_KEY/);
+  assert.equal(drill.parseKeysFile(`SUDS_ENCRYPTION_KEY=${hex(config.encryptionKey)}\nSUDS_INDEX_KEY=${hex(config.indexKey)}\n`).indexKey.equals(config.indexKey), true, '.env-style lines work too');
+  // The command line takes the same file.
+  const { main } = require('../scripts/dr-drill');
+  assert.equal(await quiet(() => main(['--keys-file', path.join(dir, 'no-such-keys.json')])), 2);
+});
+
+test('POST /api/admin/dr-drill accepts an uploaded escrowed key file (validated first, never stored)', async () => {
+  assert.equal((await admin.post('/api/admin/dr-drill', { keys_file: '{"SUDS_ENCRYPTION_KEY":"nope"}' })).status, 400);
+  const text = fs.readFileSync(keysFile('keys-upload.json'), 'utf8');
+  const s = await admin.post('/api/admin/dr-drill', { keys_file: text, keys_file_name: 'suds-keys-KEEP-SECRET.json' });
+  assert.equal(s.status, 202);
+  let st;
+  for (let i = 0; i < 300; i++) { st = (await admin.get('/api/admin/dr-drill')).data; if (!st.running) break; await new Promise((r) => setTimeout(r, 100)); }
+  assert.equal(st.last.ok, true, JSON.stringify(st.last.failures));
+  assert.equal(st.last.keys_source, 'uploaded escrow file');
+  const logged = db.all(`SELECT details FROM audit_log WHERE action LIKE 'dr.drill%'`).map((r) => r.details).join(' ');
+  assert.ok(!logged.includes(hex(config.encryptionKey)) && !logged.includes(hex(config.indexKey)), 'the keys never reach the audit log');
+  assert.match(logged, /uploaded escrow file/);
+});
+
+test('with an offsite directory configured, the drill restores the offsite copy and says so; an unmounted share fails it', async () => {
+  const drill = require('../server/dr-drill');
+  const sb = require('../server/scheduled-backup');
+  const offsite = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-offsite-'));
+  try {
+    db.setSetting('backup_offsite_dir', offsite);
+    const made = await quiet(() => sb.run({ retain: 5, offsiteDir: offsite }));
+    assert.ok(made.offsiteOk && made.offsiteFile);
+    const r = await drill.run({ by: { username: 'test' }, trigger: 'test' });
+    assert.equal(r.report.ok, true, JSON.stringify(r.report.failures));
+    assert.equal(r.report.backup.copy, 'offsite');
+    assert.equal(r.report.backup.dir, offsite);
+    assert.ok(r.report.checks.some((c) => c.name === 'The offsite copy was restored' && c.ok));
+    assert.match(drill.textReport(r), /the offsite copy/);
+    assert.equal(drill.lastDrill().backup_copy, 'offsite');
+    const loc = await drill.run({ copy: 'local', by: { username: 'test' }, trigger: 'test' });
+    assert.equal(loc.report.backup.copy, 'local');
+    // The share goes away: the drill still measures the local copy, and fails for the missing offsite one.
+    fs.rmSync(offsite, { recursive: true, force: true });
+    const gone = await drill.run({ by: { username: 'test' }, trigger: 'test' });
+    assert.equal(gone.report.ok, false);
+    assert.equal(gone.report.backup.copy, 'local');
+    assert.match(gone.report.failures.join(' '), /not reachable/);
+  } finally { db.run(`DELETE FROM settings WHERE key='backup_offsite_dir'`); fs.rmSync(offsite, { recursive: true, force: true }); }
+});
+
+// ---- 2c: decrypted copies left by a crash are swept ----
+
+test('stale drill copies and plaintext temp files are securely removed; a drill another live process owns is left alone', async () => {
+  const drill = require('../server/dr-drill');
+  const root = path.join(dir, '.dr-drill'); fs.mkdirSync(root, { recursive: true });
+  const mk = (name, owner) => { const d = path.join(root, name); fs.mkdirSync(d); fs.writeFileSync(path.join(d, 'suds.db'), 'PLAINTEXT DATABASE'); if (owner) fs.writeFileSync(path.join(d, 'owner.json'), JSON.stringify(owner)); return d; };
+  const dead = mk('drill-crashed', { pid: 2147483646, started_at: new Date().toISOString() });
+  const mine = mk('drill-mine-idle', { pid: process.pid, started_at: new Date().toISOString() });
+  const live = mk('drill-other-live', { pid: process.ppid, started_at: new Date().toISOString() });
+  const loose = path.join(dir, '.backup-1700000000000-abcdef01.db'); fs.writeFileSync(loose, 'PLAINTEXT');
+  const old = (Date.now() - 2 * 3600_000) / 1000; fs.utimesSync(loose, old, old);
+  const out = await quiet(() => drill.sweepStale());
+  assert.ok(out.removed.includes('drill-crashed') && out.removed.includes('drill-mine-idle') && out.removed.includes('.backup-1700000000000-abcdef01.db'), JSON.stringify(out));
+  assert.equal(fs.existsSync(dead), false); assert.equal(fs.existsSync(mine), false); assert.equal(fs.existsSync(loose), false);
+  assert.equal(fs.existsSync(live), true, 'a drill another running process owns is not touched');
+  assert.ok(db.one(`SELECT 1 FROM audit_log WHERE action='dr.drill.swept'`));
+  fs.rmSync(live, { recursive: true, force: true });
+  // The overwrite really happens before the unlink: a descriptor held open sees zeros.
+  const f = path.join(dir, 'secure-me.bin'); fs.writeFileSync(f, 'SECRET');
+  const fd = fs.openSync(f, 'r');
+  require('../server/backup').secureUnlink(f);
+  const buf = Buffer.alloc(6); fs.readSync(fd, buf, 0, 6, 0); fs.closeSync(fd);
+  assert.equal(buf.toString(), '\0'.repeat(6), 'the bytes were zeroed before the file was removed');
+  assert.equal(fs.existsSync(f), false);
+});
+
+// ---- 2d: backups off in production ----
+
+test('production with backups off: Security status, the Home alert and the startup log say so; the wizard defaults to every 4 hours', async () => {
+  const saved = db.getSetting('backup_schedule_hours', null);
+  db.run(`DELETE FROM settings WHERE key IN ('backup_schedule_hours','backup_schedule_minutes')`);
+  try {
+    const worm = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-worm2-'));
+    await withConfig({ isProd: true, auditAnchorDirConfigured: true, auditAnchorDir: worm }, async () => {
+      assert.match(require('../server/startup-checks').backupProblem(), /Scheduled backups are off/);
+      assert.ok(require('../server/startup-checks').problems().some((p) => /Scheduled backups are off/.test(p)));
+      const a = (await admin.get('/api/admin/security/alerts')).data.alerts;
+      assert.deepEqual(a.map((x) => x.key), ['backups_off']);
+      const items = (await admin.get('/api/admin/security/status')).data.items;
+      const item = items.find((i) => i.name === 'Scheduled encrypted backups');
+      assert.equal(item.level, 'bad'); assert.match(item.detail, /production server/);
+      assert.equal(items.find((i) => i.name === 'Recovery point objective (worst case)').level, 'bad');
+      assert.equal((await nav.get('/api/admin/security/alerts')).status, 403);
+      const setup = require('../server/routes/setup');
+      assert.deepEqual(setup.applyProductionDefaults(), ['backup_schedule_hours']);
+      assert.equal(db.getSetting('backup_schedule_hours'), '4');
+      assert.deepEqual(setup.applyProductionDefaults(), [], 'a choice already made is kept');
+      assert.equal(require('../server/startup-checks').backupProblem(), null);
+    });
+    fs.rmSync(worm, { recursive: true, force: true });
+    assert.deepEqual(require('../server/routes/setup').applyProductionDefaults({ isProd: false }), []);
+    assert.deepEqual((await admin.get('/api/admin/security/alerts')).data.alerts, [], 'outside production nothing is raised');
+  } finally { if (saved === null) db.run(`DELETE FROM settings WHERE key='backup_schedule_hours'`); else db.setSetting('backup_schedule_hours', saved); }
+});
+
+// ---- 3: frequent snapshots, RPO in minutes ----
+
+test('backup_schedule_minutes: validated, snapshots rotate, the RPO shown is minutes, and the drill restores the newest snapshot', async () => {
+  assert.equal((await admin.put('/api/admin/settings', { backup_schedule_minutes: 3 })).status, 400);
+  assert.equal((await admin.put('/api/admin/settings', { backup_schedule_minutes: 2.5 })).status, 400);
+  assert.equal((await admin.put('/api/admin/settings', { backup_snapshot_retain: 0 })).status, 400);
+  assert.equal((await admin.put('/api/admin/settings', { backup_schedule_minutes: 10, backup_snapshot_retain: 2, backup_schedule_hours: 24 })).status, 200);
+  const sb = require('../server/scheduled-backup');
+  db.run(`DELETE FROM settings WHERE key='last_snapshot_at'`);
+  const first = await sb.snapshotIfDue();
+  assert.ok(first && first.file, JSON.stringify(first));
+  assert.equal(first.where, 'local');
+  assert.equal(await sb.snapshotIfDue(), null, 'not due again for ten minutes');
+  await new Promise((r) => setTimeout(r, 5)); await sb.snapshot();
+  await new Promise((r) => setTimeout(r, 5)); const last = await sb.snapshot();
+  const names = fs.readdirSync(path.join(dir, 'backups'));
+  assert.equal(names.filter((f) => sb.SNAP_RE.test(f)).length, 2, 'rotated to backup_snapshot_retain');
+  assert.ok(names.some((f) => sb.FILE_RE.test(f)), 'scheduled backups are not pruned by snapshot rotation');
+  const plain = require('../server/backup').decrypt(fs.readFileSync(last.file));
+  assert.equal(require('../server/backup').inspect(plain).schema_version, db.LATEST_SCHEMA_VERSION, 'a snapshot is a whole, readable database');
+  const st = (await admin.get('/api/admin/security/status')).data.items;
+  assert.match(st.find((i) => i.name === 'Recovery point objective (worst case)').value, /^10 min \(online snapshots\)/);
+  assert.equal(st.find((i) => i.name === 'Frequent online snapshots').level, 'ok');
+  const drill = require('../server/dr-drill');
+  assert.equal(drill.latestBackup(), last.file, 'the newest copy, snapshot or backup, is what a drill restores');
+  const r = await drill.run({ by: { username: 'test' }, trigger: 'test' });
+  assert.equal(r.report.ok, true, JSON.stringify(r.report.failures));
+  assert.equal(r.report.backup.file, path.basename(last.file));
+  assert.ok(r.report.rpo.seconds < 60, 'the drill measures the snapshot age, not the daily backup');
+  await admin.put('/api/admin/settings', { backup_schedule_minutes: 0 });
+  assert.equal(await sb.snapshotIfDue(), null, 'off is off');
+});

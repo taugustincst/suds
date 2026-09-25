@@ -29,13 +29,34 @@ module.exports = (r) => {
     return rep;
   });
 
+  // Production configuration problems for the Home page (server/startup-checks.js): a short label for the
+  // alert and the full sentence. Empty outside production.
+  r.get('/api/admin/security/alerts', auth.requireAuth, auth.requirePerm('settings:manage'), () => {
+    const sc = require('../startup-checks');
+    const out = [];
+    const anchorProblem = require('../audit-anchor').placementProblem();
+    if (anchorProblem) out.push({ key: 'audit_anchor_dir', label: 'Audit anchors are on the database disk', detail: anchorProblem });
+    const backupProblem = sc.backupProblem();
+    if (backupProblem) out.push({ key: 'backups_off', label: 'Scheduled backups are off', detail: backupProblem });
+    return { alerts: out };
+  });
+
   // ---- Recovery drill (server/dr-drill.js) ----
   r.get('/api/admin/dr-drill', auth.requireAuth, auth.requirePerm('settings:manage'), () => require('../dr-drill').status());
+  // Optional `keys_file`: the text of the escrowed key backup (keys.json), uploaded from the Settings page so
+  // the drill proves that file opens the backup. It is parsed in memory, handed to the drill, and never
+  // written to disk or to the audit log (only which kind of keys were used, and their short fingerprints,
+  // appear in the report). `copy`: 'auto' | 'local' | 'offsite'.
   r.post('/api/admin/dr-drill', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
     const drill = require('../dr-drill');
     if (drill.status().running) throw new HttpError(409, 'A recovery drill is already running');
-    audit.log({ user: ctx.user, action: 'dr.drill.start', ip: ctx.ip, details: { fresh: !!(ctx.body && ctx.body.fresh) } });
-    drill.start({ by: { id: ctx.user.id, username: ctx.user.username }, trigger: 'manual', fresh: !!(ctx.body && ctx.body.fresh) });
+    const b = ctx.body || {};
+    const keysText = typeof b.keys_file === 'string' && b.keys_file.trim() ? b.keys_file : null;
+    if (keysText) { try { drill.parseKeysFile(keysText); } catch (e) { throw badRequest(e.message); } }
+    const copy = ['auto', 'local', 'offsite'].includes(b.copy) ? b.copy : 'auto';
+    const keysLabel = typeof b.keys_file_name === 'string' ? b.keys_file_name.replace(/[^\w.\- ]/g, '').slice(0, 80) : null;
+    audit.log({ user: ctx.user, action: 'dr.drill.start', ip: ctx.ip, details: { fresh: !!b.fresh, keys: keysText ? 'uploaded escrow file' : 'server memory', copy } });
+    drill.start({ by: { id: ctx.user.id, username: ctx.user.username }, trigger: 'manual', fresh: !!b.fresh, keysText, keysLabel, copy });
     ctx.status = 202;
     return { started: true };
   });

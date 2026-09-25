@@ -45,9 +45,19 @@ export async function drillCard() {
     const l = st.last;
     const running = st.running;
     const progress = running ? h('ul', { class: 'small', 'data-drill-progress': '1' }, running.steps.map(x => h('li', {}, x.step))) : null;
+    // Optional: the escrowed key backup (the "Download key backup" file kept offline), so the drill proves
+    // that file opens the backup instead of using the keys this server already has in memory. Read in the
+    // browser and sent once with the request; the server never stores it.
+    const keysInput = h('input', { type: 'file', id: 'drill-keys-file', 'aria-describedby': 'drill-keys-help', accept: '.json,.env,.txt,application/json,text/plain' });
+    const copySel = h('select', { id: 'drill-copy' }, h('option', { value: 'auto' }, 'Offsite copy if one is set up, else local'), h('option', { value: 'local' }, 'Local copy'), h('option', { value: 'offsite' }, 'Offsite copy'));
     const btn = h('button', { class: 'btn sm primary', disabled: !!running, onClick: async () => {
       btn.disabled = true;
-      try { await post('/api/admin/dr-drill', {}); toast('Recovery drill started', 'ok'); poll(); } catch (e) { toast(e.message, 'error'); btn.disabled = false; }
+      try {
+        const body = { copy: copySel.value };
+        const f = keysInput.files && keysInput.files[0];
+        if (f) { if (f.size > 64 * 1024) throw new Error('That file is too large to be a key backup'); body.keys_file = await f.text(); body.keys_file_name = f.name; }
+        await post('/api/admin/dr-drill', body); keysInput.value = ''; toast('Recovery drill started', 'ok'); poll();
+      } catch (e) { toast(e.message, 'error'); btn.disabled = false; }
     } }, running ? 'Drill running…' : 'Run a recovery drill now');
     box.replaceChildren(h('h2', {}, 'Recovery drill'),
       h('p', { class: 'small muted' }, 'Restores the newest backup into a temporary copy (never the live database), starts SUDS against it, verifies the schema, row counts, the audit chain and its anchors, decrypts a sample of encrypted fields and signs in with a second factor. RTO is the time from starting the restore to the copy serving; RPO is the age of the backup it restored.'),
@@ -56,11 +66,15 @@ export async function drillCard() {
         h('dl', { class: 'kv' },
           h('dt', {}, 'RTO (restore → serving)'), h('dd', {}, `${dur(l.rto_seconds)} — target ${l.rto_target_minutes} min`),
           h('dt', {}, 'RPO (backup age)'), h('dd', {}, `${dur(l.rpo_seconds)} — target ${l.rpo_target_hours} h`),
-          h('dt', {}, 'Backup restored'), h('dd', {}, l.backup_file || '—'),
+          h('dt', {}, 'Backup restored'), h('dd', {}, l.backup_file || '—', l.backup_copy ? h('div', { class: 'small muted' }, `the ${l.backup_copy} copy`) : null),
+          h('dt', {}, 'Keys used'), h('dd', {}, l.keys_source || 'server memory', (l.keys_source || 'server memory') === 'server memory' ? h('div', { class: 'small muted' }, 'Not proof that the escrowed key backup works — run with the key file below.') : null),
           h('dt', {}, 'Signed report'), h('dd', {}, h('code', {}, `backups/${l.report_file || '—'}`), h('div', { class: 'small muted mono' }, `SHA-256 ${String(l.sha256 || '').slice(0, 16)}…`))),
         l.failures && l.failures.length ? h('ul', { class: 'small' }, l.failures.map(f => h('li', {}, f))) : null)
         : h('p', {}, badge('No drill has been run', 'warn')),
       h('p', { class: 'small' }, `Monthly drill: ${st.monthly ? 'on' : 'off'} (Settings → Scheduled backups). Also from a shell: `, h('code', {}, 'npm run dr-drill')),
+      running ? null : h('div', { class: 'grid cols-2' },
+        h('div', { class: 'field' }, h('label', { for: 'drill-copy' }, 'Which copy to restore'), copySel),
+        h('div', { class: 'field' }, h('label', { for: 'drill-keys-file' }, 'Escrowed key backup file (optional)'), keysInput, h('div', { class: 'small muted', id: 'drill-keys-help' }, 'The key backup kept offline. With it, the drill decrypts with that file only, proving it opens the backups; it is not stored.'))),
       h('div', { class: 'row' }, btn), progress);
   };
   let timer = null;

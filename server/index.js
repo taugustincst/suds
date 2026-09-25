@@ -26,6 +26,9 @@ try { db.checkKeyFingerprint(); } catch (e) { console.error(`[suds] ${e.message}
 ensureBootstrap();
 // Production problems nobody would otherwise see until an auditor asks: said once, loudly, at every start.
 for (const problem of require('./startup-checks').problems()) console.error(`[suds] WARNING: ${problem}`);
+// A drill or backup interrupted by a crash leaves a decrypted copy of the database in the data directory:
+// overwrite and remove it before serving anything (server/dr-drill.js sweepStale).
+try { require('./dr-drill').sweepStale(); } catch (e) { console.error('[suds] could not sweep stale drill copies:', e.message); }
 const handler = createHandler();
 listener.start(handler);
 
@@ -74,6 +77,11 @@ function housekeeping() {
   } catch (e) { console.error('[suds] housekeeping', e && e.message || e); }
 }
 setInterval(housekeeping, 3600_000).unref();
+
+// Frequent online snapshots (Settings → Scheduled backups → "Also snapshot every … minutes"; off by default):
+// checked every minute, run in the background with SQLite's online backup API so requests keep flowing
+// (server/scheduled-backup.js snapshotIfDue). This is what brings the recovery point down to minutes.
+setInterval(() => { require('./scheduled-backup').snapshotIfDue().catch((e) => console.error('[suds] snapshot', e && e.message || e)); }, 60_000).unref();
 
 let stopping = false;
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => {

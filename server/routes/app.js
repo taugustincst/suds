@@ -62,6 +62,10 @@ module.exports = (r) => {
       const last = db.getSetting('last_scheduled_backup_at', null); const status = db.getSetting('last_scheduled_backup_status', '') || '';
       if (hours && (!last || Date.now() - Date.parse(last) > 2 * hours * 3600_000)) warnings.push(`Scheduled backups are set for every ${hours} hours but the last one ${last ? 'ran ' + last : 'has never run'}.`);
       if (hours && status && !/^ok/.test(status)) warnings.push(`The last scheduled backup reported: ${status}`);
+      const minutes = Number(db.getSetting('backup_schedule_minutes', '0')) || 0;
+      const lastSnap = db.getSetting('last_snapshot_at', null); const snap = db.getSetting('last_snapshot_status', '') || '';
+      if (minutes && lastSnap && Date.now() - Date.parse(lastSnap) > 3 * minutes * 60_000) warnings.push(`Snapshots are set for every ${minutes} minutes but the last one ran ${lastSnap}.`);
+      if (minutes && /^failed/.test(snap)) warnings.push(`The last snapshot reported: ${snap}`);
       const crt = path.join(config.dataDir, 'certs', 'suds.crt');
       // Sixty days, not fourteen: renewing the self-signed certificate means re-enrolling every phone that
       // trusts the old one (docs/INSTALL.md), which takes an office more than a fortnight to get round to.
