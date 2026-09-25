@@ -83,7 +83,7 @@ Staff browser ──HTTPS (TLS 1.2+)──> SUDS server (county or vendor host) 
 | Key management | Three independently rotatable keys; rotation runbook; retired-key handling | [docs/DEPLOYMENT.md](../DEPLOYMENT.md), *Key rotation runbook* |
 | Audit | Every PHI read/write, sign-in, denial, export and config change; tamper-evident hash chain, append-only in the database, anchored every 6 hours (write-once when the county points `AUDIT_ANCHOR_DIR` at WORM storage), verified incrementally and weekly in full; 7-year retention | [docs/HIPAA.md](../HIPAA.md), [docs/security/LOGGING-AND-AUDIT.md](../security/LOGGING-AND-AUDIT.md) |
 | 42 CFR Part 2 | Consent elements enforced, referral gating, disclosure accounting, final-rule controls | [docs/HIPAA.md](../HIPAA.md), [docs/compliance/PART2.md](../compliance/PART2.md) |
-| De-identification | Safe Harbor exports by default; small-cell suppression in funder report | [docs/HIPAA.md](../HIPAA.md) |
+| De-identification | Safe Harbor exports by default (year-only dates, 90+, ZIP3 with restricted areas as 000, no free text, random per-export record ids); small-cell suppression in the funder report only | [docs/HIPAA.md](../HIPAA.md) |
 | Backup and recovery | Scheduled encrypted backups, off-host copy, restore from the UI, pre-migration snapshots; DR drill with measured RTO/RPO | [docs/DEPLOYMENT.md](../DEPLOYMENT.md), *Backups*; [docs/security/BACKUP-AND-DR.md](../security/BACKUP-AND-DR.md) |
 | Monitoring | `/api/health` readiness probe; Prometheus metrics; JSON logs; no PHI in logs | [docs/DEPLOYMENT.md](../DEPLOYMENT.md), *Monitoring and logs* |
 | Hardening | Checklist for host, TLS, proxy, permissions, firewall, MFA, keys | [docs/DEPLOYMENT.md](../DEPLOYMENT.md), *Hardening checklist* |

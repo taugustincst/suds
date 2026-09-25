@@ -390,8 +390,9 @@ test('programme outcomes report: baseline vs latest, % improved, de-identified e
   assert.equal(r.status, 200);
   assert.match(r.headers.get('content-type'), /text\/csv/);
   assert.match(r.headers.get('x-suds-export'), /De-identified/);
-  assert.match(r.data, new RegExp(`${code},PHQ-9,2,2026-03,17,Moderately severe,2026-06,5,Mild,-12,improved`));
-  assert.ok(!/Outcome|Pair|2026-03-01/.test(r.data), 'no names and no full dates');
+  assert.match(r.data, /R-[0-9A-F]{10},PHQ-9,2,2026,17,Moderately severe,2026,5,Mild,-12,improved/);
+  assert.ok(!/Outcome|Pair|2026-03/.test(r.data), 'no names, and no date finer than the year');
+  assert.ok(!r.data.includes(code), 'no client code: a random record id instead');
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='report.export' AND details LIKE '%outcomes%'`));
 });
 

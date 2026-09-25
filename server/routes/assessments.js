@@ -352,19 +352,20 @@ module.exports = (r) => {
     return { ...p, instruments };
   });
 
-  // One row per client and instrument, keyed by client code, with dates reduced to the month (HIPAA Safe
-  // Harbor, as every de-identified export in SUDS). No answers, no notes, no names.
+  // One row per client and instrument, de-identified under HIPAA Safe Harbor like every de-identified export
+  // in SUDS (server/exports.js): dates reduced to the year, and the client code replaced by a record id
+  // drawn at random for this export. No answers, no notes, no names.
   r.get('/api/reports/outcomes/export', auth.requireAuth, auth.requirePerm('export:read'), (ctx) => {
     const p = period(ctx);
     const X = require('../exports'); const S = require('../spreadsheet');
-    const month = (v) => (v ? String(v).slice(0, 7) : '');
+    const year = (v) => (v ? X.toYear(String(v)) : ''); const pseudo = X.pseudonymizer();
     const rows = outcomePairs(ctx, p).map(x => ({
-      client_code: x.client_code, instrument: CL.INSTRUMENTS[x.instrument].name, administrations: x.administrations,
-      baseline_month: month(x.baseline.administered_at), baseline_score: x.baseline.total_score, baseline_band: x.baseline.band || '',
-      latest_month: x.administrations > 1 ? month(x.latest.administered_at) : '', latest_score: x.administrations > 1 ? x.latest.total_score : '', latest_band: x.administrations > 1 ? (x.latest.band || '') : '',
+      record_id: pseudo(x.client_id), instrument: CL.INSTRUMENTS[x.instrument].name, administrations: x.administrations,
+      baseline_year: year(x.baseline.administered_at), baseline_score: x.baseline.total_score, baseline_band: x.baseline.band || '',
+      latest_year: x.administrations > 1 ? year(x.latest.administered_at) : '', latest_score: x.administrations > 1 ? x.latest.total_score : '', latest_band: x.administrations > 1 ? (x.latest.band || '') : '',
       change: x.change === null ? '' : x.change, direction: x.direction === null ? '' : x.direction === 1 ? 'improved' : x.direction === -1 ? 'worse' : 'unchanged',
     }));
-    const columns = ['client_code', 'instrument', 'administrations', 'baseline_month', 'baseline_score', 'baseline_band', 'latest_month', 'latest_score', 'latest_band', 'change', 'direction']
+    const columns = ['record_id', 'instrument', 'administrations', 'baseline_year', 'baseline_score', 'baseline_band', 'latest_year', 'latest_score', 'latest_band', 'change', 'direction']
       .map(k => ({ key: k, label: k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) }));
     audit.log({ user: ctx.user, action: 'report.export', ip: ctx.ip, details: { kind: 'outcomes', rows: rows.length, identified: false, from: p.from, to: p.to, format: 'csv' } });
     const filename = `suds-outcomes-${p.from || 'all'}_${p.to || 'all'}-deidentified.csv`;

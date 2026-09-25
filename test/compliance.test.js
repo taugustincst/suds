@@ -130,19 +130,21 @@ test('exports need export:read; de-identified exports meet Safe Harbor', async (
   assert.match(csv.headers.get('content-disposition'), /-deidentified\.csv/, 'and in the filename');
   assert.ok(!text.startsWith('#'), 'no comment line: the header is row 1');
   const lines = text.split(/\r?\n/).filter(Boolean);
-  const header = lines[0].split(','); const data = lines.find(l => l.includes(H.db.one(`SELECT client_code FROM clients WHERE id=?`, clientId).client_code)).split(',');
+  const header = lines[0].split(','); const data = lines.find(l => l.includes('45-54') && l.includes(',958')).split(',');
   const col = (name) => data[header.indexOf(name)];
   assert.ok(!text.includes('Cora') && !text.includes('1980-04-12'), 'no name, no date of birth');
+  assert.ok(!text.includes(H.db.one(`SELECT client_code FROM clients WHERE id=?`, clientId).client_code), 'no client code');
+  assert.match(col('Record Id'), /^R-[0-9A-F]{10}$/, 'a random record id instead');
   assert.ok(!header.includes('City'), 'city is dropped');
   assert.equal(col('Zip'), '958', 'ZIP is three digits');
   assert.equal(col('Age Band'), '45-54', 'DOB becomes an age band');
-  assert.match(col('Intake Date'), /^\d{4}-\d{2}$/, 'dates are reduced to the month');
+  assert.match(col('Intake Date'), /^\d{4}$/, 'dates are reduced to the year');
 
   const od = String((await fin.get('/api/reports/export/overdose_events?from=2026-01-01&to=2026-12-31')).data);
   assert.ok(!od.includes('fentanyl'), 'substances are redacted'); assert.ok(!od.includes('Sacramento'), 'city dropped');
-  assert.match(od, /2026-09,/, 'event date reduced to the month');
+  assert.match(od, /\n2026,/, 'event date reduced to the year'); assert.ok(!od.includes('2026-09'));
   const iv = String((await fin.get('/api/reports/export/interventions?from=2026-01-01&to=2026-12-31')).data);
-  assert.match(iv, /\n2026-09,/, 'intervention dates reduced to the month');
+  assert.match(iv, /\n2026,/, 'intervention dates reduced to the year'); assert.ok(!iv.includes('2026-09'));
 
   // Identified: full dates, full ZIP, and accounted for.
   const id = String((await sup.get('/api/reports/export/clients?identified=1&basis=audit_evaluation&recipient=County%20counsel&purpose=Subpoena%20response')).data);
@@ -169,18 +171,18 @@ test('a de-identified export carries exactly its allow-listed columns, whatever 
   await seeded(1, sup, '/api/budget/expenditures', { funding_source_id: fundId, client_id: clientId, spent_at: '2026-09-12', amount: 12.5, category: 'transportation', vendor: 'Cora Cabs', description: 'Ride for Cora Compliance', receipt_ref: 'RCPT-CORA-1' });
 
   const expected = {
-    clients: ['Client Code', 'Age Band', 'Status', 'Intake Date', 'Discharge Date', 'Discharge Reason', 'Referral Source', 'Referral Date', 'Engagement Date', 'Days To Engagement', 'Primary Substance', 'Secondary Substances', 'Asam Level', 'Mat Status', 'Mat Medication', 'Risk Level', 'Housing Status', 'Insurance', 'Overdose History', 'Naloxone Provided', 'Naloxone Last Date', 'Co Occurring Mh', 'Justice Involved', 'Pregnant Or Parenting', 'Zip', 'Gender', 'Preferred Language'],
-    interventions: ['Occurred At', 'Client Code', 'Type', 'Duration Minutes', 'Modality', 'Outcome', 'Stage Of Change', 'Naloxone Kits', 'Fentanyl Strips', 'Worker', 'Funding Source', 'Cost', 'Follow Up Due'],
-    calls: ['Started At', 'Client Code', 'Direction', 'Contact Type', 'Duration Minutes', 'Outcome', 'Crisis', 'Follow Up Needed', 'Follow Up Due', 'Worker'],
-    time: ['Work Date', 'Worker', 'Client Code', 'Category', 'Minutes', 'Billable', 'Funding Source'],
-    referrals: ['Referred At', 'Client Code', 'Resource', 'Category', 'Status', 'Urgency', 'Warm Handoff', 'Appointment At', 'Admitted At', 'Closed At', 'Worker'],
-    tasks: ['Client Code', 'Assignee', 'Due At', 'Priority', 'Status', 'Is Milestone', 'Completed At'],
-    forms: ['Created At', 'Client Code', 'Template Name', 'Status', 'Completed At', 'Completed By', 'Created By', 'Attachments'],
-    consents: ['Client Code', 'Type', 'Signed At', 'Expires At', 'Expires Event', 'Revoked At', 'Redisclosure Notice Given'],
-    disclosures: ['Client Code', 'Disclosed At', 'Method', 'Basis', 'Source', 'Disclosed By'],
-    episodes: ['Client Code', 'Opened At', 'Closed At', 'Status', 'Referral Source', 'Discharge Reason', 'Discharge Disposition', 'Funding Source'],
-    overdose_events: ['Occurred At', 'Client Code', 'Kind', 'Naloxone Used', 'Naloxone Doses', 'Administered By', 'Ems Called', 'Hospitalized', 'Survived', 'Location Type'],
-    expenditures: ['Spent At', 'Fund', 'Line', 'Category', 'Amount', 'Status', 'Client Code', 'Worker', 'Approver'],
+    clients: ['Record Id', 'Age Band', 'Status', 'Intake Date', 'Discharge Date', 'Discharge Reason', 'Referral Source', 'Referral Date', 'Engagement Date', 'Days To Engagement', 'Primary Substance', 'Secondary Substances', 'Asam Level', 'Mat Status', 'Mat Medication', 'Risk Level', 'Housing Status', 'Insurance', 'Overdose History', 'Naloxone Provided', 'Naloxone Last Date', 'Co Occurring Mh', 'Justice Involved', 'Pregnant Or Parenting', 'Zip', 'Gender'],
+    interventions: ['Occurred At', 'Record Id', 'Type', 'Duration Minutes', 'Modality', 'Outcome', 'Stage Of Change', 'Naloxone Kits', 'Fentanyl Strips', 'Worker', 'Funding Source', 'Cost', 'Follow Up Due'],
+    calls: ['Started At', 'Record Id', 'Direction', 'Contact Type', 'Duration Minutes', 'Outcome', 'Crisis', 'Follow Up Needed', 'Follow Up Due', 'Worker'],
+    time: ['Work Date', 'Worker', 'Record Id', 'Category', 'Minutes', 'Billable', 'Funding Source'],
+    referrals: ['Referred At', 'Record Id', 'Resource', 'Category', 'Status', 'Urgency', 'Warm Handoff', 'Appointment At', 'Admitted At', 'Closed At', 'Worker'],
+    tasks: ['Record Id', 'Assignee', 'Due At', 'Priority', 'Status', 'Is Milestone', 'Completed At'],
+    forms: ['Created At', 'Record Id', 'Template Name', 'Status', 'Completed At', 'Completed By', 'Created By', 'Attachments'],
+    consents: ['Record Id', 'Type', 'Signed At', 'Expires At', 'Revoked At', 'Redisclosure Notice Given'],
+    disclosures: ['Record Id', 'Disclosed At', 'Basis', 'Source', 'Disclosed By'],
+    episodes: ['Record Id', 'Opened At', 'Closed At', 'Status', 'Referral Source', 'Discharge Reason', 'Funding Source'],
+    overdose_events: ['Occurred At', 'Record Id', 'Kind', 'Naloxone Used', 'Naloxone Doses', 'Administered By', 'Ems Called', 'Hospitalized', 'Survived'],
+    expenditures: ['Spent At', 'Fund', 'Line', 'Category', 'Amount', 'Status', 'Record Id', 'Worker', 'Approver'],
   };
   const X = require('../server/exports');
   assert.deepEqual(Object.keys(X.DEID_COLUMNS).sort(), Object.keys(expected).sort(), 'every client-linked dataset has an allow-list');

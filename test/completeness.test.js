@@ -195,7 +195,7 @@ test('episodes, overdose events, client forms and disclosures export as single t
     assert.equal((await ro.get(`/api/reports/export/${kind}`)).status, 403, `${kind} is refused without export:read`);
   }
   const ep = String((await nav.get('/api/reports/export/episodes?from=2026-01-01&to=2026-12-31')).data);
-  assert.match(ep.split('\r\n')[0], /Client Code/);
+  assert.match(ep.split('\r\n')[0], /Record Id/); assert.ok(!/Client Code/.test(ep), 'no client code in a de-identified export');
   assert.ok(!/Episode Listed|Listed, Episode/.test(ep), 'no names in a de-identified export');
   // Asking for identified without the permission still gets a de-identified file.
   const sneaky = await fin.get('/api/reports/export/episodes?from=2026-01-01&to=2026-12-31&identified=1&basis=audit_evaluation&recipient=x&purpose=y');
