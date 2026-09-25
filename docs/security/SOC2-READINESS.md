@@ -37,7 +37,7 @@ Legend — **S**: provided by SUDS (technical control, with evidence); **C**: co
 | --- | --- | --- | --- |
 | A1.1 Capacity | Disk/health monitoring, metrics; single-instance sizing guidance | S+C | Metrics history; `/api/health` alerts |
 | A1.2 Environmental protections, backups, recovery infrastructure | Encrypted scheduled backups verified on write; offsite copy; warm standby procedure | S+C | Backup status history (`backup.scheduled` audit entries), offsite listings |
-| A1.3 Recovery plan testing | **Recovery drill** with measured RTO/RPO and signed reports; monthly schedule | S | `dr-drill-*.json` reports (verify with `verifyReport`), `dr.drill` audit entries |
+| A1.3 Recovery plan testing | **Recovery drill** with measured RTO/RPO and Ed25519-signed reports; restores the offsite copy by default and can prove the escrowed key file; monthly schedule | S | `dr-drill-*.json` reports (verify with `npm run verify-dr-report -- <file> --public-key <key>.pem`), `dr.drill` audit entries |
 
 ## Confidentiality
 
