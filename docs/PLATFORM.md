@@ -17,6 +17,9 @@ Both are the same web application, and both are production:
 | Protection against loss | Scheduled server backups | Device backups the person downloads, with a reminder on Home |
 | Sync between devices | Every device sees the same server | None; records never leave the device |
 
+Either way, SUDS does not bill: no 837 or Drug Medi-Cal claims. Billed services are handed to the county EHR
+(`docs/SCOPE.md`); CalOMS Tx state reporting is collected and extracted in SUDS (`docs/compliance/CALOMS.md`).
+
 A record lives in exactly one of the two. There is no sync between an on-device copy and an office server,
 so the "which copy is right?" question below never arises between them. A programme that starts on the
 on-device app and later installs an office server re-enters (or imports, `IMPORTS.md`) its records there.

@@ -26,5 +26,6 @@ import './views/supervision.js';
 import './views/episodes.js';
 import './views/overdose.js';
 import './views/funder.js';
+import './views/caloms.js';
 import './views/supplies.js';
 boot();

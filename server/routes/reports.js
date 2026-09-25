@@ -297,3 +297,5 @@ module.exports = (r) => {
     ctx.res.end(body);
   });
 };
+// The report period helper, for other exports that bound a period the same way (server/routes/handoff.js).
+module.exports.range = range;

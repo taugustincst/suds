@@ -13,6 +13,18 @@ const { badRequest, forbidden } = require('./http');
 // emergency must say why in writing. 'export' is what an identified export records and is never chosen by hand.
 const BASES = ['consent', 'court_order', 'medical_emergency', 'qsoa', 'audit_evaluation', 'research', 'crime_on_premises', 'child_abuse_report', 'other'];
 const NEEDS_JUSTIFICATION = ['other', 'medical_emergency'];
+// Bases recorded by the system itself, never chosen by hand: 'export' (an identified export) and
+// 'state_reporting' — the CalOMS Tx submission to DHCS (server/caloms.js). CalOMS reporting is required by
+// state law of every licensed/certified or publicly funded SUD treatment programme; under HIPAA it is a
+// disclosure required by law (45 CFR §164.512(a)), which is still subject to the accounting of disclosures
+// (§164.528), and under Part 2 it is made to the state agency that funds and regulates the programme for
+// audit and evaluation (42 CFR §2.53). Counsel should confirm the Part 2 characterisation for the county.
+const SYSTEM_BASES = ['export', 'state_reporting'];
+const STATE_REPORTING = {
+  basis: 'state_reporting',
+  recipient: 'California Department of Health Care Services (DHCS) — CalOMS Tx',
+  purpose: 'State reporting (CalOMS Tx): treatment admission, discharge and annual update data required by law (HIPAA §164.512(a); 42 CFR §2.53)',
+};
 const MIN_JUSTIFICATION = 20;
 
 /** A consent is usable only while it exists, is unrevoked and has not expired. */
@@ -57,6 +69,14 @@ function record({ clientId, consentId = null, recipient, purpose, what, method =
   return id;
 }
 
+/**
+ * Account for one CalOMS Tx submission: one row per client it contains, under the state-reporting basis.
+ * No consent is needed or checked — the disclosure is required by law — but it is still accounted for.
+ */
+function recordStateReport({ clientIds, what, sourceRef, user, ip }) {
+  return clientIds.map(clientId => record({ clientId, recipient: STATE_REPORTING.recipient, purpose: STATE_REPORTING.purpose, what, method: 'export', basis: STATE_REPORTING.basis, source: 'caloms', sourceRef, user, ip }));
+}
+
 /** Decrypt a disclosure row for display. */
 function present(row) {
   if (!row) return null;
@@ -81,4 +101,4 @@ function accounting(clientId) {
   return { client_id: client?.id, client_code: client?.client_code, generated_at: db.now(), disclosures, consents };
 }
 
-module.exports = { BASES, NEEDS_JUSTIFICATION, MIN_JUSTIFICATION, activeConsent, requireBasis, record, present, accounting };
+module.exports = { BASES, SYSTEM_BASES, STATE_REPORTING, recordStateReport, NEEDS_JUSTIFICATION, MIN_JUSTIFICATION, activeConsent, requireBasis, record, present, accounting };

@@ -710,6 +710,33 @@ CREATE INDEX IF NOT EXISTS idx_episodes_client ON episodes(client_id, opened_at)
 CREATE INDEX IF NOT EXISTS idx_episodes_status ON episodes(status);
 CREATE INDEX IF NOT EXISTS idx_episodes_updated ON episodes(updated_at);
 
+-- CalOMS Tx state reporting (server/caloms.js, server/caloms-spec.js): one row per admission, discharge or
+-- annual update record of an episode of care. The answers (drug use, arrests, pregnancy, disability, ZIP…)
+-- are PHI about a named person and are held encrypted as one JSON document; only the operational codes a
+-- list needs without decrypting are in the clear, like episodes.discharge_reason. At most one admission and
+-- one discharge per episode; annual updates repeat. extracted_at is when a record last went into a state
+-- extract (the accounting of that disclosure is in disclosures).
+CREATE TABLE IF NOT EXISTS caloms_records (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  episode_id TEXT NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+  record_type TEXT NOT NULL CHECK (record_type IN ('admission','discharge','annual_update')),
+  provider_id TEXT,                    -- the CalOMS provider ID (Settings -> State reporting) the record is reported under
+  record_date TEXT NOT NULL,           -- admission date, discharge date, or the annual update's date
+  service_type TEXT,                   -- admission only: CalOMS type of service code
+  discharge_status TEXT,               -- discharge only: CalOMS discharge status code
+  answers_enc TEXT,                    -- encrypted JSON of the coded answers
+  extracted_at TEXT,
+  created_by TEXT REFERENCES users(id),
+  updated_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_caloms_records_episode ON caloms_records(episode_id, record_type);
+CREATE INDEX IF NOT EXISTS idx_caloms_records_date ON caloms_records(record_date);
+CREATE INDEX IF NOT EXISTS idx_caloms_records_updated ON caloms_records(updated_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_caloms_records_one_per_episode ON caloms_records(episode_id, record_type) WHERE record_type IN ('admission','discharge');
+
 -- Overdose and reversal events. Every SUD funder asks for these counts; they were previously only
 -- inferable from two boolean columns on the client record, which cannot answer "how many this quarter".
 CREATE TABLE IF NOT EXISTS overdose_events (
