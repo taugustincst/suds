@@ -6798,7 +6798,12 @@ CREATE TABLE IF NOT EXISTS clients (
   -- A legal hold (litigation, investigation, a patient's own request) exempts the record from the retention
   -- purge in server/retention.js and from deletion until an administrator clears it.
   legal_hold INTEGER NOT NULL DEFAULT 0,
-  legal_hold_reason TEXT,
+  -- Free-text reasons can name the person or their situation, so they are encrypted here and the audit entry
+  -- records only that one was given: why the hold was placed, why it was last cleared, and why the record
+  -- was deleted or merged away.
+  legal_hold_reason_enc TEXT,
+  legal_hold_cleared_reason_enc TEXT,
+  removed_reason_enc TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   deleted_at TEXT
@@ -7205,7 +7210,7 @@ CREATE TABLE IF NOT EXISTS court_orders (
   document_ref TEXT,
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','vacated')),
   vacated_at TEXT,
-  vacated_reason TEXT,
+  vacated_reason_enc TEXT,             -- free text that can describe the case: encrypted
   recorded_by TEXT NOT NULL REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -7411,6 +7416,7 @@ CREATE TABLE IF NOT EXISTS episodes (
   discharge_reason TEXT,               -- completed, transferred, incarcerated, moved, lost_contact, declined, deceased, other
   discharge_disposition TEXT,          -- where the client went (level of care, program)
   discharge_summary_enc TEXT,
+  reopen_reason_enc TEXT,              -- why a closed episode was reopened (free text: encrypted, not in the audit entry)
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed')),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -10656,6 +10662,17 @@ var require_db = __commonJS({
           }
           if (generalScope(scope)) upd.run(r.id);
         }
+      },
+      // 36: free-text reasons out of plaintext. A court order's vacated reason and a legal hold's reason move into
+      //     encrypted columns; a record's delete/merge reason, a legal hold's clearing reason and an episode's
+      //     reopen reason get encrypted columns of their own, and the audit entry records only that a reason was
+      //     given. (Existing audit entries are hash-chained and append-only, so they are left as they are.)
+      (d) => {
+        encryptColumn(d, "court_orders", "vacated_reason", "vacated_reason_enc");
+        if (tableExists(d, "court_orders")) addColumn(d, "court_orders", "vacated_reason_enc", "TEXT");
+        encryptColumn(d, "clients", "legal_hold_reason", "legal_hold_reason_enc");
+        for (const c of ["legal_hold_reason_enc", "legal_hold_cleared_reason_enc", "removed_reason_enc"]) addColumn(d, "clients", c, "TEXT");
+        if (tableExists(d, "episodes")) addColumn(d, "episodes", "reopen_reason_enc", "TEXT");
       }
     ];
     function initialise(d, schemaText, dbPath) {
@@ -10934,9 +10951,9 @@ var require_sync_tables = __commonJS({
         { name: "funding_sources", enc: [], scope: "all", writePerm: "budget:manage" },
         { name: "budget_lines", enc: [], scope: "all", writePerm: "budget:manage", parent: ["funding_sources", "funding_source_id"], selfParent: "parent_id" },
         // merged_into points at another client: the record that was kept must land before its duplicate.
-        { name: "clients", enc: ["first_name_enc", "last_name_enc", "preferred_name_enc", "dob_enc", "phone_enc", "alt_phone_enc", "email_enc", "address_enc", "medicaid_id_enc", "emergency_contact_enc", "goals_enc", "flags_enc"], scope: "client", clientCol: "id", idx: true, writePerm: "clients:write", selfParent: "merged_into" },
+        { name: "clients", enc: ["first_name_enc", "last_name_enc", "preferred_name_enc", "dob_enc", "phone_enc", "alt_phone_enc", "email_enc", "address_enc", "medicaid_id_enc", "emergency_contact_enc", "goals_enc", "flags_enc", "legal_hold_reason_enc", "legal_hold_cleared_reason_enc", "removed_reason_enc"], legacy: { legal_hold_reason: "legal_hold_reason_enc" }, scope: "client", clientCol: "id", idx: true, writePerm: "clients:write", selfParent: "merged_into" },
         { name: "assignments", enc: [], scope: "client", clientCol: "client_id", writePerm: "assignments:manage", parent: ["clients", "client_id"] },
-        { name: "episodes", enc: ["presenting_problem_enc", "discharge_summary_enc"], scope: "client", clientCol: "client_id", writePerm: "episodes:write", parent: ["clients", "client_id"] },
+        { name: "episodes", enc: ["presenting_problem_enc", "discharge_summary_enc", "reopen_reason_enc"], scope: "client", clientCol: "client_id", writePerm: "episodes:write", parent: ["clients", "client_id"] },
         // CalOMS Tx records hang off an episode: the episode must land first.
         { name: "caloms_records", enc: ["answers_enc"], scope: "client", clientCol: "client_id", writePerm: "episodes:write", parent: ["episodes", "episode_id"] },
         { name: "interventions", enc: ["summary_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "interventions:write", parent: ["clients", "client_id"] },
@@ -10946,7 +10963,7 @@ var require_sync_tables = __commonJS({
         // A referral may cite the consent it was made under, so consents come first.
         { name: "consents", enc: ["recipient_enc", "purpose_enc", "scope_enc", "signer_name_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
         // A disclosure made under a subpart E court order cites it, so orders travel before disclosures.
-        { name: "court_orders", enc: ["court_enc", "case_ref_enc", "recipient_enc", "purpose_enc", "scope_enc"], scope: "client", clientCol: "client_id", writePerm: "court-orders:write", parent: ["clients", "client_id"] },
+        { name: "court_orders", enc: ["court_enc", "case_ref_enc", "recipient_enc", "purpose_enc", "scope_enc", "vacated_reason_enc"], legacy: { vacated_reason: "vacated_reason_enc" }, scope: "client", clientCol: "client_id", writePerm: "court-orders:write", parent: ["clients", "client_id"] },
         { name: "part2_notices", enc: ["notes_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
         { name: "referrals", enc: ["outcome_enc", "barrier_enc", "notes_enc"], scope: "client", clientCol: "client_id", writePerm: "referrals:write", parent: ["clients", "client_id"] },
         // Migration 24 moved tasks.description into description_enc; kernels before 1.9.3 still push `description`.
@@ -15675,7 +15692,7 @@ var require_security_status = __commonJS({
           "Identity",
           "Identity provider's multi-factor sign-in",
           trusted ? "info" : "ok",
-          trusted ? `trusted in place of SUDS two-step verification (amr mfa/otp/hwk/swk${acr ? `, or acr ${acr}` : ""}); ${viaIdp} sign-in${viaIdp === 1 ? "" : "s"} in 30 days` : "not trusted: SSO sign-ins still need the SUDS second factor",
+          trusted ? `trusted in place of SUDS two-step verification (amr mfa or two factor kinds such as pwd+otp${acr ? `, or acr ${acr}` : ""}); ${viaIdp} sign-in${viaIdp === 1 ? "" : "s"} in 30 days` : "not trusted: SSO sign-ins still need the SUDS second factor",
           trusted ? 'A sign-in the provider does not mark as multi-factor still needs the SUDS code. Every trusted sign-in is audited (auth.oidc.login with mfa "idp"). Make sure the provider enforces MFA for this application (conditional access).' : `Settings \u2192 Security policy \u2192 "Trust the identity provider's multi-factor sign-in" (off by default).`,
           "server/routes/oidc.js mfaTrust; server/oidc.js idpMfa"
         );
@@ -15769,10 +15786,19 @@ var require_security_status = __commonJS({
         [placement || "", anchorVerify ? `Last check: ${anchorVerify}.` : "Not yet checked (runs with the daily audit verification).", /^failed/.test(anchorWrite) ? `Last write ${anchorWrite}.` : "", placement ? "" : !ad.configured || ad.inside_data_dir ? "Set AUDIT_ANCHOR_DIR to write-once storage outside the data directory (WORM/immutable share) so a rewrite of the whole data directory is also caught." : "", config.auditSyslog ? `Also sent to syslog ${config.auditSyslog}.` : ""].filter(Boolean).join(" "),
         "server/audit-anchor.js"
       );
-      add("Audit", "Audit retention", "info", `${Math.round(config.auditRetentionDays / 365 * 10) / 10} years (${config.auditRetentionDays} days)`, (() => {
+      {
+        const min = config.AUDIT_RETENTION_MIN_DAYS || 2190;
+        const low = config.auditRetentionDaysConfigured != null && config.auditRetentionDaysConfigured < min;
         const p = lastAudit("audit.purge");
-        return p ? `Last purge ${p.at}.` : "No audit entries old enough to purge yet.";
-      })(), "AUDIT_RETENTION_DAYS; server/audit.js purge");
+        add(
+          "Audit",
+          "Audit retention",
+          low || config.auditRetentionDays < min ? "bad" : "ok",
+          `${Math.round(config.auditRetentionDays / 365 * 10) / 10} years (${config.auditRetentionDays} days)`,
+          [low ? `AUDIT_RETENTION_DAYS=${config.auditRetentionDaysConfigured} is below the six-year minimum (${min} days, 45 CFR \xA7164.316(b)(2)); SUDS keeps ${config.auditRetentionDays} days instead. Raise or remove the setting.` : "", p ? `Last purge ${p.at}.` : "No audit entries old enough to purge yet."].filter(Boolean).join(" "),
+          "AUDIT_RETENTION_DAYS (minimum 2190); server/config.js; server/audit.js purge"
+        );
+      }
       const keyAt = settingUpdatedAt("key_fingerprint");
       const rotated = lastAudit("security.key_rotated");
       const idxRotated = lastAudit("security.index_key_rotated");
@@ -19454,11 +19480,13 @@ var require_consents = __commonJS({
         recipient: o.recipient_enc ? decrypt3(o.recipient_enc) : null,
         purpose: o.purpose_enc ? decrypt3(o.purpose_enc) : null,
         scope: o.scope_enc ? decrypt3(o.scope_enc) : null,
+        vacated_reason: o.vacated_reason_enc ? decrypt3(o.vacated_reason_enc) : null,
         court_enc: void 0,
         case_ref_enc: void 0,
         recipient_enc: void 0,
         purpose_enc: void 0,
         scope_enc: void 0,
+        vacated_reason_enc: void 0,
         problems: disclosure.courtOrderProblems(o)
       };
     }
@@ -19898,8 +19926,8 @@ Confirm the determination with counsel. If it was a mistake, switch the programm
         auth3.assertClientAccess(ctx, o.client_id);
         if (o.status === "vacated") throw badRequest("This order has already been vacated");
         const { reason } = validate(ctx.body, { reason: { type: "string", required: true, maxLen: 300 } });
-        db3.run(`UPDATE court_orders SET status='vacated', vacated_at=?, vacated_reason=?, updated_at=? WHERE id=?`, db3.now(), reason, db3.now(), o.id);
-        audit3.log({ user: ctx.user, action: "court_order.vacate", entity: "court_order", entityId: o.id, clientId: o.client_id, ip: ctx.ip });
+        db3.run(`UPDATE court_orders SET status='vacated', vacated_at=?, vacated_reason_enc=?, updated_at=? WHERE id=?`, db3.now(), encrypt3(reason), db3.now(), o.id);
+        audit3.log({ user: ctx.user, action: "court_order.vacate", entity: "court_order", entityId: o.id, clientId: o.client_id, ip: ctx.ip, details: { reason_recorded: true } });
         return { ok: true };
       });
       r.get("/api/disclosure-agreements", auth3.requireAuth, auth3.requirePerm("agreements:read", "agreements:write"), (ctx) => {
@@ -20314,10 +20342,10 @@ var require_clients = __commonJS({
             moved._episodes_closed_as_merged = sourceOpenEpisodes.length;
           }
           db3.run(`UPDATE import_items SET suggested_client_id=?, updated_at=? WHERE suggested_client_id=?`, keep.id, db3.now(), source.id);
-          db3.run(`UPDATE clients SET merged_into=?, status='closed', deleted_at=?, updated_at=? WHERE id=?`, keep.id, db3.now(), db3.now(), source.id);
+          db3.run(`UPDATE clients SET merged_into=?, status='closed', deleted_at=?, removed_reason_enc=?, updated_at=? WHERE id=?`, keep.id, db3.now(), v.reason ? encrypt3(v.reason) : null, db3.now(), source.id);
           moved._filled_fields = keys.length;
         });
-        audit3.log({ user: ctx.user, action: "client.merge", entity: "client", entityId: keep.id, clientId: keep.id, ip: ctx.ip, details: { merged: source.id, merged_code: source.client_code, moved, reason: v.reason || void 0 } });
+        audit3.log({ user: ctx.user, action: "client.merge", entity: "client", entityId: keep.id, clientId: keep.id, ip: ctx.ip, details: { merged: source.id, merged_code: source.client_code, moved, reason_recorded: v.reason ? true : void 0 } });
         audit3.log({ user: ctx.user, action: "client.merged_away", entity: "client", entityId: source.id, clientId: source.id, ip: ctx.ip, details: { into: keep.id } });
         return { ok: true, kept: keep.id, merged: source.id, moved };
       });
@@ -20372,8 +20400,9 @@ var require_clients = __commonJS({
         const row = loadClient(ctx, ctx.params.id);
         const v = validate(ctx.body, { hold: { type: "boolean", required: true }, reason: { type: "string", maxLen: 300 } });
         if (v.hold && !v.reason) throw badRequest("A legal hold needs a reason (the matter or request it relates to)");
-        db3.run(`UPDATE clients SET legal_hold=?, legal_hold_reason=?, updated_at=? WHERE id=?`, v.hold ? 1 : 0, v.hold ? v.reason : null, db3.now(), row.id);
-        audit3.log({ user: ctx.user, action: v.hold ? "client.legal_hold.set" : "client.legal_hold.clear", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip, details: { reason: v.reason || void 0 } });
+        if (v.hold) db3.run(`UPDATE clients SET legal_hold=1, legal_hold_reason_enc=?, updated_at=? WHERE id=?`, encrypt3(v.reason), db3.now(), row.id);
+        else db3.run(`UPDATE clients SET legal_hold=0, legal_hold_reason_enc=NULL, legal_hold_cleared_reason_enc=?, updated_at=? WHERE id=?`, v.reason ? encrypt3(v.reason) : null, db3.now(), row.id);
+        audit3.log({ user: ctx.user, action: v.hold ? "client.legal_hold.set" : "client.legal_hold.clear", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip, details: { reason_recorded: v.reason ? true : void 0 } });
         return { ok: true, legal_hold: v.hold ? 1 : 0 };
       });
       r.delete("/api/clients/:id", auth3.requireAuth, auth3.requirePerm("clients:all"), (ctx) => {
@@ -20381,8 +20410,8 @@ var require_clients = __commonJS({
         if (!auth3.hasPerm(ctx.user, "clients:write")) throw forbidden();
         if (row.legal_hold) throw badRequest("This record is on legal hold and cannot be deleted until the hold is cleared");
         const { reason } = validate(ctx.body || {}, { reason: { type: "string", required: true, maxLen: 300 } });
-        db3.run(`UPDATE clients SET deleted_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), row.id);
-        audit3.log({ user: ctx.user, action: "client.delete", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip, details: { reason } });
+        db3.run(`UPDATE clients SET deleted_at=?, removed_reason_enc=?, updated_at=? WHERE id=?`, db3.now(), encrypt3(reason), db3.now(), row.id);
+        audit3.log({ user: ctx.user, action: "client.delete", entity: "client", entityId: row.id, clientId: row.id, ip: ctx.ip, details: { reason_recorded: true } });
         return { ok: true };
       });
       r.get("/api/clients/:id/timeline", auth3.requireAuth, auth3.requirePerm("clients:read"), (ctx) => {
@@ -21522,14 +21551,14 @@ var require_episodes = __commonJS({
             db3.run(`DELETE FROM caloms_records WHERE id=?`, calDischarge.id);
             db3.tombstone("caloms_records", calDischarge.id);
           }
-          db3.run(`UPDATE episodes SET status='open', closed_at=NULL, closed_by=NULL, discharge_reason=NULL, discharge_disposition=NULL, discharge_summary_enc=NULL, updated_at=? WHERE id=?`, db3.now(), e.id);
+          db3.run(`UPDATE episodes SET status='open', closed_at=NULL, closed_by=NULL, discharge_reason=NULL, discharge_disposition=NULL, discharge_summary_enc=NULL, reopen_reason_enc=?, updated_at=? WHERE id=?`, reason ? encrypt3(reason) : null, db3.now(), e.id);
           db3.run(`UPDATE clients SET status='active', discharge_date=NULL, discharge_reason=NULL, updated_at=? WHERE id=?`, db3.now(), e.client_id);
           if (e.closed_at) db3.run(`UPDATE assignments SET end_date=NULL, updated_at=? WHERE client_id=? AND end_date=? AND ended_at IS NULL`, db3.now(), e.client_id, e.closed_at);
           if (!db3.one(`SELECT 1 FROM assignments WHERE client_id=? AND end_date IS NULL AND ended_at IS NULL`, e.client_id) && (auth3.caseloadRestricted(ctx.user) || ["navigator", "clinician"].includes(ctx.user.role))) {
             db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, uuid2(), e.client_id, ctx.user.id, "primary", (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), ctx.user.id);
           }
         });
-        audit3.log({ user: ctx.user, action: "episode.reopen", entity: "episode", entityId: e.id, clientId: e.client_id, ip: ctx.ip, details: { reason: reason || void 0, was_discharged: e.discharge_reason, caloms_discharge_removed: calDischarge ? true : void 0 } });
+        audit3.log({ user: ctx.user, action: "episode.reopen", entity: "episode", entityId: e.id, clientId: e.client_id, ip: ctx.ip, details: { reason_recorded: reason ? true : void 0, was_discharged: e.discharge_reason, caloms_discharge_removed: calDischarge ? true : void 0 } });
         return { ok: true, warnings: calDischarge && calDischarge.extracted_at ? ["The CalOMS discharge record for this episode had already been sent to DHCS; correct it through the county's CalOMS process."] : [] };
       });
       r.get("/api/episodes", auth3.requireAuth, auth3.requirePerm("episodes:read", "episodes:write"), (ctx) => {
@@ -29060,7 +29089,9 @@ var require_notes = __commonJS({
       return reason.slice(0, 300);
     }
     function recordBreakGlass(ctx, { clientId, noteId = null, reason }) {
-      db3.run(`INSERT INTO breakglass_events(id,user_id,client_id,note_id,reason_enc,at) VALUES(?,?,?,?,?,?)`, uuid2(), ctx.user.id, clientId || null, noteId, encrypt3(reason), db3.now());
+      const id = uuid2();
+      db3.run(`INSERT INTO breakglass_events(id,user_id,client_id,note_id,reason_enc,at) VALUES(?,?,?,?,?,?)`, id, ctx.user.id, clientId || null, noteId, encrypt3(reason), db3.now());
+      return id;
     }
     function canRead(ctx, note) {
       if (auth3.hasPerm(ctx.user, kindPerm(note.kind, "read")) || auth3.hasPerm(ctx.user, kindPerm(note.kind, "write"))) return true;
@@ -29098,8 +29129,8 @@ var require_notes = __commonJS({
         const glassReason = !kinds.includes("clinical") && auth3.hasPerm(ctx.user, "notes:clinical:breakglass") && ctx.query.get("client_id") && ctx.query.get("kind") === "clinical" ? breakGlassReason(ctx) : null;
         if (glassReason) {
           kinds.push("clinical");
-          audit3.log({ user: ctx.user, action: "note.list.breakglass", clientId: ctx.query.get("client_id"), ip: ctx.ip, details: { reason: glassReason } });
-          recordBreakGlass(ctx, { clientId: ctx.query.get("client_id"), reason: glassReason });
+          const event = recordBreakGlass(ctx, { clientId: ctx.query.get("client_id"), reason: glassReason });
+          audit3.log({ user: ctx.user, action: "note.list.breakglass", clientId: ctx.query.get("client_id"), ip: ctx.ip, details: { reason_recorded: true, breakglass_event: event } });
         }
         const where = ["n.deleted_at IS NULL", `n.kind IN (${kinds.map(() => "?").join(",") || "''"})`];
         const params = [...kinds];
@@ -29183,8 +29214,8 @@ var require_notes = __commonJS({
           throw forbidden("You do not have access to this note");
         }
         const addenda = db3.all(`SELECT a.id,a.reason,a.created_at,a.content_enc,u.display_name AS author FROM note_addenda a JOIN users u ON u.id=a.author_id WHERE a.note_id=? ORDER BY a.created_at`, n.id).map((a) => ({ ...a, content: decrypt3(a.content_enc), content_enc: void 0 }));
-        audit3.log({ user: ctx.user, action: access === "breakglass" ? "note.view.breakglass" : "note.view", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: access === "breakglass" ? { reason: breakGlassReason(ctx) } : { kind: n.kind } });
-        if (access === "breakglass") recordBreakGlass(ctx, { clientId: n.client_id, noteId: n.id, reason: breakGlassReason(ctx) });
+        const event = access === "breakglass" ? recordBreakGlass(ctx, { clientId: n.client_id, noteId: n.id, reason: breakGlassReason(ctx) }) : null;
+        audit3.log({ user: ctx.user, action: access === "breakglass" ? "note.view.breakglass" : "note.view", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: access === "breakglass" ? { reason_recorded: true, breakglass_event: event } : { kind: n.kind } });
         return { note: { ...present(n), ...signatureState(n), addenda, problems: linkedProblems(ctx, n) } };
       });
       r.put("/api/notes/:id", auth3.requireAuth, (ctx) => {
@@ -29434,16 +29465,39 @@ var require_oidc = __commonJS({
       if (!claims.sub) throw new Error("The token has no subject");
       return claims;
     }
-    var MFA_AMR = ["mfa", "otp", "hwk", "swk"];
+    var MFA_AMR = ["mfa"];
+    var AMR_FACTOR_KIND = {
+      pwd: "knowledge",
+      pin: "knowledge",
+      kba: "knowledge",
+      otp: "possession",
+      sms: "possession",
+      tel: "possession",
+      hwk: "possession",
+      swk: "possession",
+      sc: "possession",
+      fpt: "inherence",
+      face: "inherence",
+      iris: "inherence",
+      retina: "inherence",
+      vbm: "inherence"
+    };
     function idpMfa(claims, { acrValues = [] } = {}) {
       const amr = Array.isArray(claims.amr) ? claims.amr.map(String) : typeof claims.amr === "string" ? [claims.amr] : [];
       const acr = claims.acr === void 0 || claims.acr === null ? null : String(claims.acr);
-      const amrHit = amr.find((a) => MFA_AMR.includes(a.toLowerCase()));
+      const lower = amr.map((a) => a.toLowerCase());
+      const amrHit = lower.find((a) => MFA_AMR.includes(a));
       if (amrHit) return { ok: true, via: `amr:${amrHit}`, amr, acr };
+      const byKind = /* @__PURE__ */ new Map();
+      for (const a of lower) {
+        const k = AMR_FACTOR_KIND[a];
+        if (k && !byKind.has(k)) byKind.set(k, a);
+      }
+      if (byKind.size >= 2) return { ok: true, via: `amr:${[...byKind.values()].slice(0, 2).join("+")}`, amr, acr };
       if (acr && acrValues.includes(acr)) return { ok: true, via: `acr:${acr}`, amr, acr };
       return { ok: false, via: null, amr, acr };
     }
-    module.exports = { startAuth, completeAuth, stateCookie, COOKIE, idpMfa, MFA_AMR, _resetCacheForTests: () => {
+    module.exports = { startAuth, completeAuth, stateCookie, COOKIE, idpMfa, MFA_AMR, AMR_FACTOR_KIND, _resetCacheForTests: () => {
       discoveryCache = null;
       jwksCache = null;
     } };
