@@ -83,6 +83,8 @@ test('provider pictures are discovered from the provider website and downloaded'
     'https://junk.example.org/': { type: 'text/html', body: Buffer.from('<head><meta property="og:image" content="https://junk.example.org/x.png">') },
     'https://junk.example.org/x.png': { type: 'image/png', body: Buffer.from('this is not a picture') },
   };
+  // The made-up hosts resolve to a public address (the download refuses names that point inside the network).
+  require('../server/region-pictures')._setLookupForTests(async () => [{ address: '93.184.216.34' }]);
   globalThis.fetch = async (url) => {
     const hit = pages[String(url)];
     if (!hit) return { ok: false, status: 404, headers: new Map(), arrayBuffer: async () => new ArrayBuffer(0) };
@@ -104,7 +106,7 @@ test('provider pictures are discovered from the provider website and downloaded'
     assert.match((await region.fetchPicture({ ...t, url: null, website: 'https://missing.example.org/' })).error, /404/);
     assert.match((await region.fetchPicture({ ...t, url: null, website: null })).error, /no website/);
     assert.match((await region.fetchPicture({ ...t, url: 'http://insecure.example.org/a.png' })).error, /https/);
-  } finally { globalThis.fetch = realFetch; }
+  } finally { globalThis.fetch = realFetch; require('../server/region-pictures')._setLookupForTests(null); }
 });
 
 test('a picture batch stops at its deadline instead of outliving the request', async () => {
