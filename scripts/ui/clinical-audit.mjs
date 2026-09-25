@@ -504,6 +504,8 @@ const phone = await session('mrivera', 'Navigator2026!!', { width: 390, height: 
   eq(await page.inputValue('.modal select[name=type]'), 'part2_tpo', 'the consent form starts on the single treatment, payment & operations consent');
   ok(/treatment, payment, and health care operations/i.test(await page.inputValue('.modal input[name=purpose]')), 'with the rule\'s own TPO purpose wording');
   ok(await page.$('.modal input[name=revocation_right_given]') && await page.$('.modal input[name=refusal_consequences_given]') && await page.$('.modal select[name=signer_relationship]') && await page.$('.modal input[name=discloser]'), 'and every 2024 §2.31 element');
+  // The rule's class wording alone names nobody SUDS can check: the providers are named too.
+  await page.fill('.modal input[name=recipient]', 'Riverbend OTP and my other treating providers');
   await page.fill('.modal textarea[name=scope]', 'Treatment records and MAT status'); await page.fill('.modal input[name=expires_at]', day(365));
   await page.check('.modal input[name=signed_on_paper]'); await page.check('.modal input[name=redisclosure_notice_given]');
   await page.click('.modal button[type=submit]');
@@ -523,7 +525,12 @@ const phone = await session('mrivera', 'Navigator2026!!', { width: 390, height: 
   await page.check('.modal input[name=counseling_notes]'); await page.click('.modal button[type=submit]');
   const noNotes = await until(() => page.$('.modal .banner.danger:not(.hidden)'));
   ok(noNotes && /counseling notes/i.test(await noNotes.textContent()), 'counseling notes are refused under a TPO consent');
-  await page.uncheck('.modal input[name=counseling_notes]'); await page.click('.modal button[type=submit]');
+  // A consent covers only the recipients it names: Probation is refused, naming the consent's recipient.
+  await page.uncheck('.modal input[name=counseling_notes]'); await page.fill('.modal input[name=disclosed_to]', 'Probation');
+  await page.click('.modal button[type=submit]');
+  const wrong = await until(async () => { const b = await page.$('.modal .banner.danger:not(.hidden)'); const t = b ? await b.textContent() : ''; return /Riverbend OTP and my other treating providers/.test(t) ? t : null; });
+  ok(wrong && /does not name Probation/.test(wrong), 'a recipient the consent does not name is refused, and the refusal says who the consent names', wrong);
+  await page.fill('.modal input[name=disclosed_to]', 'Riverbend OTP'); await page.click('.modal button[type=submit]');
   const notice = await until(() => page.$('.modal textarea[data-notice-text]'));
   ok(notice && /42 CFR part 2/.test(await notice.inputValue()), 'a disclosure with consent hands back the §2.32 notice to send with it');
   await closeModal(page);

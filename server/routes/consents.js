@@ -16,17 +16,7 @@ const M = require('../clients-model');
 // to sign. A consent of any part2_* type is refused unless every one is recorded.
 const PART2_TYPES = C.PART2_CONSENT_TYPES;
 function requirePart2Elements(v) {
-  const missing = [];
-  if (!v.discloser) missing.push('who may make the disclosure');
-  if (!v.recipient) missing.push('the recipient (a name, or a class of recipients)');
-  if (!v.purpose) missing.push('the purpose');
-  if (!v.scope) missing.push('what information is covered (scope)');
-  if (!v.expires_at && !v.expires_event) missing.push('an expiration date or event');
-  if (!v.document_ref && !v.signed_on_paper && !v.witness) missing.push('evidence it was signed (a document reference, a witness, or "signed on paper")');
-  if (v.signer_relationship !== 'patient' && !v.signer_name) missing.push('the name of the person who signed for the patient');
-  if (!v.revocation_right_given) missing.push('confirmation that the consent states the right to revoke it and how');
-  if (!v.redisclosure_notice_given) missing.push('confirmation that the redisclosure statement was given (§2.32)');
-  if (!v.refusal_consequences_given) missing.push('confirmation that the consent states the consequences of refusing to sign');
+  const missing = disclosure.missingPart2Elements(v);
   if (missing.length) throw badRequest(`A 42 CFR Part 2 consent must record ${missing.join('; ')}`, { missing });
 }
 
@@ -36,7 +26,10 @@ function presentConsent(c) {
   return { ...c, recipient: c.recipient_enc ? decrypt(c.recipient_enc) : null, purpose: c.purpose_enc ? decrypt(c.purpose_enc) : null, scope: c.scope_enc ? decrypt(c.scope_enc) : null,
     signer_name: c.signer_name_enc ? decrypt(c.signer_name_enc) : null,
     recipient_enc: undefined, purpose_enc: undefined, scope_enc: undefined, signer_name_enc: undefined,
-    active, part2: PART2_TYPES.includes(c.type), can_disclose: active && disclosure.disclosingConsentTypes().includes(c.type),
+    // A consent that lacks the §2.31 elements (one that arrived by sync or by hand, or a legacy one) is shown,
+    // but cannot be chosen to authorise a disclosure: incomplete says why.
+    active, part2: PART2_TYPES.includes(c.type), incomplete: disclosure.consentElementProblems(c),
+    can_disclose: active && disclosure.disclosingConsentTypes().includes(c.type) && !disclosure.consentElementProblems(c).length,
     // Recorded before the 2024 element list: still in force, but shown so it can be renewed on the new form.
     legacy_elements: PART2_TYPES.includes(c.type) && c.rule_version !== '2024' };
 }
@@ -135,9 +128,12 @@ module.exports = (r) => {
     auth.assertClientAccess(ctx, ctx.params.id);
     const v = validate(ctx.body, { consent_id: { type: 'string' }, disclosed_to: { type: 'string', required: true, maxLen: 200 }, purpose: { type: 'string', required: true, maxLen: 500 }, info_disclosed: { type: 'string', required: true, maxLen: 1000 },
       method: { type: 'string', maxLen: 60 }, disclosed_at: { type: 'datetime', required: true }, basis: { type: 'string', enum: disclosure.BASES }, justification: { type: 'string', maxLen: 2000 },
-      court_order_id: { type: 'string' }, legal_proceeding: { type: 'boolean' }, counseling_notes: { type: 'boolean' }, restriction_reviewed: { type: 'boolean' } });
-    const basis = disclosure.requireBasis(ctx.params.id, { ...v, user: ctx.user });
-    const id = disclosure.record({ clientId: ctx.params.id, consentId: basis.consent?.id || null, courtOrderId: basis.court_order?.id || null, legalProceeding: basis.legal_proceeding, counselingNotes: basis.counseling_notes,
+      court_order_id: { type: 'string' }, agreement_id: { type: 'string' }, recipient_override: { type: 'boolean' },
+      legal_proceeding: { type: 'boolean' }, counseling_notes: { type: 'boolean' }, restriction_reviewed: { type: 'boolean' } });
+    // The consent, or the registered agreement, is checked against the recipient typed here.
+    const basis = disclosure.requireBasis(ctx.params.id, { ...v, recipient: v.disclosed_to, user: ctx.user });
+    const id = disclosure.record({ clientId: ctx.params.id, consentId: basis.consent?.id || null, courtOrderId: basis.court_order?.id || null, agreementId: basis.agreement?.id || null,
+      recipientOverride: basis.recipient_override, legalProceeding: basis.legal_proceeding, counselingNotes: basis.counseling_notes,
       recipient: v.disclosed_to, purpose: v.purpose, what: v.info_disclosed, method: v.method || null, basis: basis.basis, justification: basis.justification, source: 'manual', disclosedAt: v.disclosed_at, user: ctx.user, ip: ctx.ip });
     // The §2.32 statement the worker must send with it (written disclosures) — returned so the form can show it.
     ctx.status = 201; return { id, notice: disclosure.part2Program() && basis.basis === 'consent' ? disclosure.notice() : null };

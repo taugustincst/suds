@@ -659,6 +659,7 @@ test('reports, exports, and audit chain', async () => {
   assert.ok(!cl.data.includes('Jane')); // finance lacks export:identified → de-identified
   // An identified export is a disclosure: it has to say to whom and why.
   assert.equal((await admin.get('/api/reports/export/clients?identified=1')).status, 400);
+  await H.agreement(admin, 'County auditor');
   const cl2 = await admin.get('/api/reports/export/clients?identified=1&basis=audit_evaluation&recipient=County%20auditor&purpose=Annual%20audit'); assert.ok(cl2.data.includes('Jane'));
   const a = await admin.get('/api/admin/audit?action=note.'); assert.ok(a.data.total > 0);
   assert.equal((await nav.get('/api/admin/audit')).status, 403);

@@ -1,10 +1,12 @@
 // Privacy & Part 2: the programme-level 42 CFR Part 2 controls in one place — whether this is a Part 2
 // programme, the §2.22 patient notice (its text, and the active clients with no record of receiving it), the
-// §2.4 complaint log and the privacy incident / breach register with its 60-day notification clock.
+// §2.4 complaint log, the privacy incident / breach register with its 60-day notification clock, and the
+// register of QSOAs and research / audit approvals the non-consent disclosure bases rest on.
 // Everything here is enforced and audited by the server (server/routes/part2.js, compliance.js);
 // docs/compliance/PART2.md maps each rule to it. SUDS provides the controls; the programme's policies and
 // counsel decide how they are used.
 import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, stat, tabStrip, confirmDialog, clientPicker } from '../app.js';
+import { AGREEMENT_KIND_LABELS } from './part2.js';
 
 const CHANNELS = ['in_person', 'phone', 'mail', 'email', 'web', 'other'];
 const COMPLAINANTS = ['client', 'representative', 'staff', 'anonymous', 'other'];
@@ -26,6 +28,7 @@ route('compliance', async (r) => {
     can('consents:read') ? ['notices', 'Notice not given'] : null,
     can('complaints:read') ? ['complaints', 'Complaints'] : null,
     can('incidents:read') ? ['incidents', 'Incidents & breaches'] : null,
+    can('agreements:read') ? ['agreements', 'Agreements'] : null,
   ].filter(Boolean);
   const tab = tabs.some(([k]) => k === r.query.get('tab')) ? r.query.get('tab') : tabs[0][0];
   const refresh = () => nav(`compliance?tab=${tab}&_=${Date.now()}`);
@@ -36,8 +39,13 @@ route('compliance', async (r) => {
       const settingsCard = can('settings:manage') ? h('div', { class: 'card mt' }, h('h2', {}, 'Programme settings'),
         form([
           { name: 'part2_program', label: 'This is a 42 CFR Part 2 programme (label records, attach the §2.32 notice, refuse general releases)', type: 'checkbox', value: cfg.part2_program, span: true },
+          { name: 'part2_off_reason', label: 'Reason for switching Part 2 off (required to switch it off)', type: 'textarea', rows: 2, span: true,
+            help: 'At least 20 characters — usually counsel\'s determination that this is not a federally assisted Part 2 program. Switching it off is audited, shown to administrators on Home, and opens a draft incident for review.' },
           { name: 'mass_export_threshold', label: 'Open a draft incident when one identified export names this many clients', type: 'number', min: 1, step: 1, value: cfg.mass_export_threshold },
-        ], { submitText: 'Save', onSubmit: async (v) => { await put('/api/part2/settings', v); toast('Saved', 'ok'); refresh(); } })) : null;
+        ], { submitText: 'Save', onSubmit: async (v) => {
+          const r = await put('/api/part2/settings', v);
+          toast(r.incident ? 'Saved. Part 2 is off: a draft incident was opened for review.' : 'Saved', 'ok'); refresh();
+        } })) : null;
       return h('div', {},
         h('p', { class: 'small muted' }, 'SUDS enforces the controls; your programme\'s policies, training and counsel decide how they are used. See docs/compliance/PART2.md for the rule-by-rule matrix.'),
         h('div', { class: 'grid cols-4' },
@@ -103,6 +111,32 @@ route('compliance', async (r) => {
             { label: 'Summary', render: x => String(x.summary || '').slice(0, 120) }, { label: 'Status', render: x => badge(fmt.label(x.status), ['open', 'investigating'].includes(x.status) ? 'warn' : 'ok') }, { label: 'HHS told', render: x => (x.hhs_referral_given ? '✓' : '') }],
           list.rows, { empty: 'No complaints recorded.', onRow: can('complaints:write') ? edit : null })));
     },
+    async agreements() {
+      const d = await get('/api/disclosure-agreements');
+      const kinds = Object.entries(d.kinds || AGREEMENT_KIND_LABELS).map(([value, label]) => ({ value, label: fmt.label(label) }));
+      const add = () => {
+        const f = form([
+          { name: 'kind', label: 'Kind', type: 'select', options: kinds, required: true, noBlank: true, value: 'qsoa' },
+          { name: 'organisation', label: 'Organization (the recipient of disclosures under it)', required: true, span: true },
+          { name: 'aliases', label: 'Other names it goes by (one per line)', type: 'textarea', rows: 2, span: true },
+          { name: 'services', label: 'Services (a QSOA) or study / audit title', span: true },
+          { name: 'approving_body', label: 'IRB, privacy board or approving body (research and audit)', span: true },
+          { name: 'reference', label: 'Protocol or approval number' },
+          { name: 'agreement_date', label: 'Signed / approved on', type: 'date', required: true, value: fmt.today() },
+          { name: 'expires_at', label: 'Expires on', type: 'date' },
+          { name: 'document_ref', label: 'Where the signed agreement or approval is kept', span: true },
+        ], { submitText: 'Register', onCancel: () => m.close(), onSubmit: async (v) => { await post('/api/disclosure-agreements', v); toast('Registered', 'ok'); m.close(); refresh(); } });
+        const m = modal('Register an agreement or approval', h('div', {}, h('p', { class: 'small muted' }, 'A QSOA (§2.11) is a written agreement with an organization that provides a service to this program and is bound by Part 2. Research (§2.52) needs an IRB or privacy board approval; an audit or evaluation (§2.53), the oversight body\'s. Disclosures on those bases may only go to the organization named here.'), f), { wide: true });
+      };
+      const end = async (a) => { const reason = await confirmDialog('End this agreement', `Record that the ${fmt.label(a.label)} with ${a.organisation} has ended. Nothing more can be disclosed under it.`, { danger: true, okText: 'End agreement', requireReason: true }); if (!reason) return; await post(`/api/disclosure-agreements/${a.id}/end`, { reason }); toast('Agreement ended', 'ok'); refresh(); };
+      return h('div', { class: 'card', 'data-agreements': '1' }, h('div', { class: 'card-head' }, h('h2', {}, 'QSOAs and research / audit approvals'), d.editable ? h('button', { class: 'btn sm primary', 'data-add-agreement': '1', onClick: add }, '+ Agreement') : null),
+        h('p', { class: 'small muted' }, 'A disclosure under a qualified service organization agreement, for research, or for an audit or evaluation rests on one of these: the recipient must be the organization it is with (or one of its other names). Research and audit disclosures are recorded by a supervisor or administrator.'),
+        table([{ label: 'Kind', render: a => AGREEMENT_KIND_LABELS[a.kind] || fmt.label(a.kind) }, { label: 'Organization', key: 'organisation' }, { label: 'Services / study', key: 'services' }, { label: 'Approved by', render: a => a.approving_body || '—' },
+          { label: 'Signed', render: a => fmt.date(a.agreement_date) }, { label: 'Expires', render: a => a.expires_at ? fmt.date(a.expires_at) : '—' },
+          { label: 'Status', render: a => a.active ? badge('In force', 'ok') : h('span', {}, badge('Cannot be relied on', 'danger'), h('div', { class: 'small muted' }, a.problems.join('; '))) },
+          { label: '', render: a => d.editable && a.status === 'active' ? h('button', { class: 'btn sm ghost', onClick: () => end(a) }, 'End') : null }],
+        d.rows, { empty: 'No agreements registered. Until one is, nothing can be disclosed on a QSOA, research or audit basis.' }));
+    },
     async incidents() {
       const d = await get('/api/incidents?status=all');
       const due = (i) => { const o = i.obligations; if (i.status === 'closed') return badge('Closed', 'ok'); if (!o.attention) return badge('Nothing owed', 'ok');
@@ -149,8 +183,9 @@ async function openIncident(id, onDone) {
   ], { submitText: 'Save', onCancel: () => m.close(), onSubmit: async (v) => { await put(`/api/incidents/${i.id}`, v); toast('Saved', 'ok'); m.close(); onDone && onDone(); } }) : null;
   const picker = w ? clientPicker('incident_client', '', { placeholder: 'Find an affected client…' }) : null;
   const clients = h('div', { class: 'card tight mt', 'data-incident-clients': '1' }, h('h3', {}, `Affected clients on record (${i.clients.length})`),
-    table([{ label: 'Client', render: x => h('a', { href: `#/client/${x.client_id}` }, x.client_code) }, { label: 'Notified', render: x => x.notified_at ? fmt.date(x.notified_at) : '—' },
-      { label: '', render: x => w ? h('div', { class: 'row nowrap' }, !x.notified_at ? h('button', { class: 'btn sm', onClick: async () => { await put(`/api/incidents/${i.id}/clients/${x.client_id}`, { notified_at: fmt.today() }); m.close(); openIncident(id, onDone); } }, 'Notified today') : null,
+    // A client whose record retention has purged is still listed, by the code kept when they were linked.
+    table([{ label: 'Client', render: x => x.client_id ? h('a', { href: `#/client/${x.client_id}` }, x.client_code) : h('span', {}, x.client_code || '—', h('div', { class: 'small muted' }, `Record purged ${fmt.date(x.client_purged_at)}`)) }, { label: 'Notified', render: x => x.notified_at ? fmt.date(x.notified_at) : '—' },
+      { label: '', render: x => w && x.client_id ? h('div', { class: 'row nowrap' }, !x.notified_at ? h('button', { class: 'btn sm', onClick: async () => { await put(`/api/incidents/${i.id}/clients/${x.client_id}`, { notified_at: fmt.today() }); m.close(); openIncident(id, onDone); } }, 'Notified today') : null,
         h('button', { class: 'btn sm ghost', onClick: async () => { await del(`/api/incidents/${i.id}/clients/${x.client_id}`); m.close(); openIncident(id, onDone); } }, 'Remove')) : null }], i.clients, { empty: 'None linked.' }),
     w ? h('div', { class: 'row mt' }, picker, h('button', { class: 'btn sm', onClick: async () => { if (!picker.value) { toast('Choose a client first', 'error'); return; } await post(`/api/incidents/${i.id}/clients`, { client_ids: [picker.value] }); m.close(); openIncident(id, onDone); } }, 'Link client')) : null);
   const m = modal(i.title, h('div', { 'data-incident': i.id },

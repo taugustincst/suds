@@ -39,6 +39,8 @@ route('dashboard', async () => {
   const inc = d.incidents;
   if (inc && (inc.overdue || inc.due_soon)) alerts.push(['danger', `${inc.overdue ? `${inc.overdue} privacy incident${inc.overdue > 1 ? 's' : ''} past the notification deadline` : `${inc.due_soon} privacy incident${inc.due_soon > 1 ? 's' : ''} due within 14 days`}`, '#/compliance?tab=incidents']);
   else if (inc && inc.attention) alerts.push(['warn', `${inc.attention} privacy incident${inc.attention > 1 ? 's' : ''} need a determination or notice`, '#/compliance?tab=incidents']);
+  // An administrator switched the programme's Part 2 protections off: shown until it is switched back on.
+  if (d.part2_program_off) alerts.push(['danger', `42 CFR Part 2 protections are switched off${d.part2_program_off.since ? ` (since ${fmt.date(d.part2_program_off.since)})` : ''}`, '#/compliance?tab=overview']);
   if (d.complaints_open) alerts.push(['warn', `${d.complaints_open} open privacy complaint${d.complaints_open > 1 ? 's' : ''}`, '#/compliance?tab=complaints']);
   // Account requests from the sign-in page's Sign up, waiting for an administrator (office server only).
   if (can('users:manage') && !state.local) {

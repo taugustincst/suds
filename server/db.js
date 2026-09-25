@@ -447,6 +447,39 @@ const migrations = [
     d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_scim_external_id ON users(scim_external_id) WHERE scim_external_id IS NOT NULL`);
     addColumn(d, 'sessions', 'mfa_source', 'TEXT');
   },
+  // 34: the disclosure gate closed where a review found it open (docs/compliance/PART2.md). A register of the
+  //     QSOAs and research / audit approvals the non-consent bases rest on (disclosure_agreements); an
+  //     incident's title is encrypted, and an incident can be opened by switching the Part 2 programme off;
+  //     an incident's link to a client survives the client's purge as a snapshot (code, encrypted name)
+  //     instead of being deleted with the record — breach documentation is kept six years.
+  (d) => {
+    const schemaText = safeSchema();
+    const m = schemaText.match(/CREATE TABLE IF NOT EXISTS disclosure_agreements \([\s\S]*?\n\);/);
+    if (m) d.exec(m[0]);
+    for (const line of schemaText.split('\n')) if (/^CREATE INDEX IF NOT EXISTS idx_disclosure_agreements/.test(line.trim())) d.exec(line.trim());
+    // Every title (even an empty one) is encrypted before the plaintext goes, then the table is rebuilt so
+    // title_enc carries NOT NULL and the source list gains part2_program_off. Migration 31 creates the table
+    // from today's schema on a database that never had it, so either form may be here.
+    if (tableExists(d, 'privacy_incidents')) {
+      if (tableCols(d, 'privacy_incidents').includes('title')) {
+        const { encrypt } = require('./crypto');
+        addColumn(d, 'privacy_incidents', 'title_enc', 'TEXT');
+        const upd = d.prepare(`UPDATE privacy_incidents SET title_enc=? WHERE id=?`);
+        for (const r of d.prepare(`SELECT id, title FROM privacy_incidents`).all()) upd.run(encrypt(String(r.title ?? '')), r.id);
+        d.exec(`ALTER TABLE privacy_incidents DROP COLUMN title`);
+      }
+      rebuildTable(d, schemaText, 'privacy_incidents');
+    }
+    if (tableExists(d, 'privacy_incident_clients')) {
+      for (const c of ['client_code', 'client_name_enc', 'client_purged_at']) addColumn(d, 'privacy_incident_clients', c, 'TEXT');
+      const { snapshotOf } = require('./incidents');
+      const upd = d.prepare(`UPDATE privacy_incident_clients SET client_code=?, client_name_enc=? WHERE id=?`);
+      for (const x of d.prepare(`SELECT x.id, c.client_code, c.first_name_enc, c.last_name_enc FROM privacy_incident_clients x JOIN clients c ON c.id=x.client_id WHERE x.client_code IS NULL`).all()) {
+        const snap = snapshotOf(x); upd.run(snap.client_code, snap.client_name_enc, x.id);
+      }
+      rebuildTable(d, schemaText, 'privacy_incident_clients');
+    }
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

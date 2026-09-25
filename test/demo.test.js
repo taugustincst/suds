@@ -28,6 +28,16 @@ test('sample data: admin loads it, staff see it, it is removed cleanly with tomb
   const detail = (await sup.get(`/api/clients/${mine[0].id}`)).data; assert.ok(detail.client.first_name && detail.client.dob, 'PHI decrypts');
   const dash = (await sup.get('/api/reports/dashboard')).data; assert.ok(dash.interventions.total_30d > 0 || dash.clients.active > 0);
   const funds = (await sup.get('/api/budget/funds')).data.funds; assert.equal(funds.length, 2);
+  // The sample records are ones SUDS itself would accept: each client's Part 2 consent carries the §2.31
+  // elements and names every agency the client was referred to (a consent covers only who it names).
+  const D = require('../server/disclosure');
+  for (const c of db.all(`SELECT id FROM clients`)) {
+    const k = db.one(`SELECT * FROM consents WHERE client_id=? AND type='part2_tpo'`, c.id);
+    assert.ok(k, 'every sample client has a TPO consent'); assert.deepEqual(D.consentElementProblems(k), []);
+    for (const ref of db.all(`SELECT res.name FROM referrals r JOIN resources res ON res.id=r.resource_id WHERE r.client_id=?`, c.id)) {
+      assert.ok(D.consentNamesRecipient({ type: k.type, recipient: require('../server/crypto').decrypt(k.recipient_enc) }, [ref.name]), `the consent names ${ref.name}`);
+    }
+  }
   // remove
   const rm = await admin.del('/api/admin/demo'); assert.equal(rm.status, 200); assert.ok(rm.data.removed > 300, `removed ${rm.data.removed}`);
   assert.equal((await sup.get('/api/clients')).data.clients.length, 0);

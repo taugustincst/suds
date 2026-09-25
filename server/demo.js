@@ -190,10 +190,13 @@ function seed({ actor, workers, clinician = null, supervisor, seedValue = 42 }) 
           encrypt(outbound ? 'Reminded about tomorrow and offered a ride.' : 'Client said they are running late but will be there.'));
         counts.calls++;
       }
-      // Referrals
+      // Referrals — and the agencies they went to, which the client's consent below names: a consent covers
+      // only the recipients it names (server/disclosure.js), and the sample records should be ones SUDS accepts.
       const nr = c.cstatus === 'waitlist' ? 1 : 2 + Math.floor(rand() * 2);
+      const referredTo = [];
       for (let k = 0; k < nr; k++) {
-        const rid = rids[(i * 3 + k * 5) % rids.length]; const st = k === 0 ? pick(['admitted', 'scheduled', 'accepted', 'completed']) : pick(C.REFERRAL_STATUSES); const off = 10 + Math.floor(rand() * 100);
+        const rid = rids[(i * 3 + k * 5) % rids.length];
+        { const rn = RESOURCES[rids.indexOf(rid)][0]; if (!referredTo.includes(rn)) referredTo.push(rn); } const st = k === 0 ? pick(['admitted', 'scheduled', 'accepted', 'completed']) : pick(C.REFERRAL_STATUSES); const off = 10 + Math.floor(rand() * 100);
         db.run(`INSERT INTO referrals(id,client_id,resource_id,user_id,referred_at,status,urgency,appointment_at,admitted_at,closed_at,outcome_enc,barrier_enc,warm_handoff,follow_up_due,notes_enc) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, track('referrals', uuid()), c.id, rid, c.worker, d(off), st, c.risk === 'critical' ? 'urgent' : 'routine', ['scheduled', 'admitted', 'completed'].includes(st) ? d(off - 3) : null, ['admitted', 'completed'].includes(st) ? d(off - 5) : null, ['completed', 'closed', 'declined_by_client', 'declined_by_provider'].includes(st) ? d(off - 12) : null, st === 'completed' ? encrypt('Completed program') : null, ['waitlisted', 'declined_by_provider'].includes(st) ? encrypt(pick(['no beds', 'insurance', 'transportation'])) : null, rand() < 0.5 ? 1 : 0, ['pending', 'contacted', 'waitlisted'].includes(st) ? day(-2) : null, null);
       }
       // Tasks
@@ -215,11 +218,13 @@ function seed({ actor, workers, clinician = null, supervisor, seedValue = 42 }) 
       }
       // Consents & disclosures
       const consentId = track('consents', uuid());
-      db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,signed_on_paper,redisclosure_notice_given,revocation_right_given,refusal_consequences_given,signer_relationship,discloser,rule_version,document_ref,created_by) VALUES(?,?,?,?,?,?,?,?,1,1,1,1,'patient','Sample County Behavioral Health','2024',?,?)`, consentId, c.id, 'part2_disclosure', encrypt('County Opioid Treatment Program'), encrypt('Treatment coordination and referral'), encrypt('Referral summary, diagnosis, MAT status'), day(60 + i), day(i === 3 ? 5 : i === 5 ? -10 : -300 + i * 20), 'Consent binder, tab ' + (i + 1), c.worker);
+      // The 2024 single TPO consent, naming each agency this client was referred to (§2.31(a)(4)(iii)).
+      const consentRecipient = `${referredTo.join(', ')} and my other treating providers`;
+      db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,signed_on_paper,redisclosure_notice_given,revocation_right_given,refusal_consequences_given,signer_relationship,discloser,rule_version,document_ref,created_by) VALUES(?,?,?,?,?,?,?,?,1,1,1,1,'patient','Sample County Behavioral Health','2024',?,?)`, consentId, c.id, 'part2_tpo', encrypt(consentRecipient), encrypt('Treatment, payment and health care operations'), encrypt('Referral summary, diagnosis, MAT status'), day(60 + i), day(i === 3 ? 5 : i === 5 ? -10 : -300 + i * 20), 'Consent binder, tab ' + (i + 1), c.worker);
       // The §2.22 notice was given to most sample clients; a few are left without one so the reminder shows.
       if (i % 4 !== 1) db.run(`INSERT INTO part2_notices(id,client_id,given_at,method,notice_version,acknowledged,given_by) VALUES(?,?,?,?,?,?,?)`, track('part2_notices', uuid()), c.id, day(60 + i), 'in_person_paper', '1', 1, c.worker);
       if (i % 3 === 0) db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,created_by) VALUES(?,?,?,?,?,?,?,?,?)`, track('consents', uuid()), c.id, 'roi', encrypt('Family member (mother)'), encrypt('Care coordination with family'), encrypt('Appointment dates and general progress'), day(50 + i), day(-315), c.worker);
-      if (i % 2 === 0) db.run(`INSERT INTO disclosures(id,client_id,consent_id,recipient_enc,purpose_enc,what_enc,method,disclosed_at,disclosed_by,basis,source) VALUES(?,?,?,?,?,?,?,?,?,?,'manual')`, track('disclosures', uuid()), c.id, consentId, encrypt('County Opioid Treatment Program'), encrypt('Referral for MAT intake'), encrypt('Referral summary and MAT status'), 'fax', d(40 + i), c.worker, 'consent');
+      if (i % 2 === 0) db.run(`INSERT INTO disclosures(id,client_id,consent_id,recipient_enc,purpose_enc,what_enc,method,disclosed_at,disclosed_by,basis,source) VALUES(?,?,?,?,?,?,?,?,?,?,'manual')`, track('disclosures', uuid()), c.id, consentId, encrypt(referredTo[0]), encrypt('Referral for treatment intake'), encrypt('Referral summary and MAT status'), 'fax', d(40 + i), c.worker, 'consent');
       // Expenditures
       const EXP = [['transportation', 'Metro Transit', 'Bus pass (monthly)', 45], ['client_assistance', 'Walgreens', 'Hygiene kit and phone charger', 32.18], ['housing_assistance', 'Motel 6', 'Emergency motel, 3 nights', 267], ['ids_documents', 'DMV', 'State ID fee', 28], ['client_assistance', 'Uber', 'Ride to intake appointment', 18.75], ['phones_communication', 'Metro PCS', 'Prepaid phone (recovery contact)', 40], ['naloxone_supplies', 'Harm Reduction Coalition', 'Naloxone kits (5)', 150]];
       const ne = c.cstatus === 'waitlist' ? 0 : 1 + Math.floor(rand() * 3);

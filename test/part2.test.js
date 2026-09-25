@@ -74,8 +74,8 @@ test('a disclosure is refused without a valid consent: missing, expired, revoked
   const r = await post({ consent_id: roi });
   assert.equal(r.status, 400, 'a general ROI is not a Part 2 consent'); assert.match(r.data.error, /general release/);
   // Outside a Part 2 programme an ROI does authorise it (and no §2.32 notice is attached).
-  await admin.put('/api/part2/settings', { part2_program: false });
-  const ok = await post({ consent_id: roi });
+  assert.equal((await admin.put('/api/part2/settings', { part2_program: false, part2_off_reason: 'Counsel: not a federally assisted Part 2 program (test).' })).status, 200);
+  const ok = await post({ consent_id: roi, disclosed_to: 'Mother' });
   assert.equal(ok.status, 201); assert.equal(ok.data.notice, null);
   assert.equal(H.db.one(`SELECT notice_version FROM disclosures WHERE id=?`, ok.data.id).notice_version, null);
   await admin.put('/api/part2/settings', { part2_program: true });
@@ -171,14 +171,17 @@ test('an agreed restriction (§2.26) has to be checked before information is sha
 
 test('identified exports state a lawful basis, carry the §2.32 notice, and are refused for proceedings', async () => {
   const q = 'from=2026-01-01&to=2026-12-31&recipient=State%20auditor&purpose=SOR%20audit';
+  assert.equal((await sup.get(`/api/reports/export/clients?identified=1&basis=audit_evaluation&restriction_reviewed=1&${q}`)).status, 400, 'an audit export needs the approval on file');
+  await H.agreement(sup, 'State auditor');
   assert.equal((await sup.get(`/api/reports/export/clients?identified=1&${q}`)).status, 400, 'no basis');
   assert.equal((await sup.get(`/api/reports/export/clients?identified=1&basis=other&${q}`)).status, 400, 'not an export basis');
   assert.equal((await sup.get(`/api/reports/export/clients?identified=1&basis=audit_evaluation&legal_proceeding=1&${q}`)).status, 400, 'a proceeding is never a bulk export');
-  const noConsent = await sup.get(`/api/reports/export/clients?identified=1&basis=consent&${q}`);
-  assert.equal(noConsent.status, 400); assert.ok(noConsent.data.clientsWithoutConsent > 0, 'says how many clients lack a consent');
-  assert.ok(audited('report.export.refused'));
+  // Under consent, a client with no consent naming the recipient is left out of the file and listed by code.
+  const noConsent = await sup.get(`/api/reports/export/clients?identified=1&basis=consent&restriction_reviewed=1&${q}`);
+  assert.equal(noConsent.status, 200); assert.ok(noConsent.headers.get('x-suds-export-excluded').split(',').length > 0, 'names the clients left out, by code');
   const needsReview = await sup.get(`/api/reports/export/clients?identified=1&basis=audit_evaluation&${q}`);
   assert.equal(needsReview.status, 400, 'a client in the file has an agreed restriction'); assert.equal(needsReview.data.restrictionReview, true);
+  assert.ok(audited('report.export.refused'));
   const csv = await sup.get(`/api/reports/export/clients?identified=1&basis=audit_evaluation&restriction_reviewed=1&${q}`);
   assert.equal(csv.status, 200);
   const text = String(csv.data).replace(/^﻿/, '');
@@ -187,7 +190,9 @@ test('identified exports state a lawful basis, carry the §2.32 notice, and are 
   assert.match(csv.headers.get('x-suds-export'), /Basis: audit_evaluation\. 42 CFR part 2 prohibits/);
   assert.equal(H.db.one(`SELECT basis FROM disclosures WHERE source='export' ORDER BY created_at DESC LIMIT 1`).basis, 'audit_evaluation');
   const bearer = (await H.client().post('/api/auth/login', { username: 'p2sup', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' })).data.token;
-  const wb = await fetch(`${await H.start()}/api/reports/export/workbook?identified=1&basis=internal&restriction_reviewed=1&${q}`, { headers: { Authorization: `Bearer ${bearer}` } });
+  // "internal" is this program or its staff, never an outside recipient.
+  assert.equal((await sup.get(`/api/reports/export/clients?identified=1&basis=internal&restriction_reviewed=1&${q}`)).status, 400);
+  const wb = await fetch(`${await H.start()}/api/reports/export/workbook?identified=1&basis=internal&restriction_reviewed=1&from=2026-01-01&to=2026-12-31&recipient=County%20SUD%20Navigation%20Program&purpose=Case%20review`, { headers: { Authorization: `Bearer ${bearer}` } });
   assert.equal(wb.status, 200);
   const about = require('../server/spreadsheet').readWorkbook(Buffer.from(await wb.arrayBuffer())).find(s => s.name === 'About');
   assert.ok(JSON.stringify(about.rows).includes('Notice to recipient (42 CFR §2.32)'), 'the About sheet carries the notice');
@@ -197,7 +202,7 @@ test('identified exports state a lawful basis, carry the §2.32 notice, and are 
 
 test('an identified export past the threshold opens a draft incident for review', async () => {
   await admin.put('/api/part2/settings', { mass_export_threshold: 2 });
-  const q = 'from=2026-01-01&to=2026-12-31&recipient=County%20IT&purpose=Migration&basis=internal&restriction_reviewed=1';
+  const q = 'from=2026-01-01&to=2026-12-31&recipient=County%20SUD%20Navigation%20Program&purpose=Migration&basis=internal&restriction_reviewed=1';
   assert.equal((await sup.get(`/api/reports/export/clients?identified=1&${q}`)).status, 200);
   const inc = H.db.one(`SELECT * FROM privacy_incidents WHERE source='mass_export' ORDER BY created_at DESC LIMIT 1`);
   assert.ok(inc, 'a draft incident was opened'); assert.equal(inc.determination, 'pending'); assert.match(inc.description_enc, /^v1:/);
@@ -315,8 +320,8 @@ test('breach register: the 60-day clock, the four-factor assessment, notices bef
   assert.equal(ok.status, 200); assert.equal(ok.data.obligations.attention, false);
   // The edit form sends every field: a cleared count is zero and a cleared title keeps the old one.
   assert.equal((await sup.put(`/api/incidents/${lowrisk.data.id}`, { affected_count: '', title: '' })).status, 200);
-  const kept = H.db.one(`SELECT title, affected_count FROM privacy_incidents WHERE id=?`, lowrisk.data.id);
-  assert.equal(kept.title, 'Email to wrong staff member'); assert.equal(kept.affected_count, 0);
+  const kept = H.db.one(`SELECT title_enc, affected_count FROM privacy_incidents WHERE id=?`, lowrisk.data.id);
+  assert.equal(require('../server/crypto').decrypt(kept.title_enc), 'Email to wrong staff member'); assert.equal(kept.affected_count, 0);
   assert.ok((await sup.get('/api/incidents')).data.rows.length >= 3);
   for (const a of ['incident.create', 'incident.update', 'incident.view', 'incident.list', 'incident.client.link', 'incident.client.notified', 'incident.client.unlink']) assert.ok(audited(a), a);
   assert.equal((await nav.get('/api/reports/dashboard')).data.incidents, null);
@@ -342,6 +347,8 @@ test('retention purges the Part 2 records with the client and keeps the complain
   assert.equal(counts.court_orders, 1); assert.equal(counts.part2_notices, 1); assert.equal(counts.privacy_incident_clients, 1);
   assert.equal(H.db.one(`SELECT client_id FROM complaints WHERE id=?`, comp).client_id, null, 'the complaint stays, unlinked');
   assert.ok(H.db.one(`SELECT 1 FROM privacy_incidents WHERE id=?`, inc), 'the incident stays');
+  const link = H.db.one(`SELECT * FROM privacy_incident_clients WHERE incident_id=?`, inc);
+  assert.ok(link && link.client_id === null && link.client_purged_at, 'and so does its link to the person, unlinked, as breach documentation');
 });
 
 test('reviewing an emergency access as a concern, and a broken audit chain, each open a draft incident', async () => {

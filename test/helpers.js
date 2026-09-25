@@ -50,6 +50,16 @@ function makeUser(username, role, password = 'StaffPassw0rd!x') {
   return { id, username, password };
 }
 
+/**
+ * Register a QSOA, research or audit/evaluation approval (server/disclosure.js: the non-consent bases rest on
+ * one whose organisation is the recipient) through `c`, a supervisor's or administrator's client. Returns its id.
+ */
+async function agreement(c, organisation, kind = 'audit_evaluation', extra = {}) {
+  const r = await c.post('/api/disclosure-agreements', { kind, organisation, services: 'Test', approving_body: kind === 'qsoa' ? undefined : 'Test approving body', agreement_date: '2026-01-01', ...extra });
+  if (r.status !== 201) throw new Error('agreement failed: ' + JSON.stringify(r.data));
+  return r.data.id;
+}
+
 // The audit log refuses UPDATE and DELETE (schema.sql triggers). A test that plays someone tampering with
 // it does what such a person would have to: drop the guard, edit, and put the guard back.
 function asAttacker(fn) {
@@ -62,4 +72,4 @@ function asAttacker(fn) {
   }
 }
 
-module.exports = { start, stop, client, makeUser, db, asAttacker };
+module.exports = { start, stop, client, makeUser, agreement, db, asAttacker };

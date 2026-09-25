@@ -276,6 +276,17 @@ test('the extract is identified-export only, holds back fatal records, and is ac
   const C = require('../server/constants');
   assert.ok(files['README.txt'].includes(`NOTICE TO RECIPIENT (42 CFR §2.32): ${C.PART2_REDISCLOSURE_NOTICE}`), 'the README carries the §2.32 notice');
   assert.ok(x.headers.get('x-suds-export').includes(C.PART2_NOTICE_SHORT));
+  // Downloading the file is not submitting it: audited, labelled a test/preview, and nobody's accounting
+  // of disclosures changes until someone records that the file was actually submitted to DHCS.
+  assert.match(x.headers.get('x-suds-export'), /Test \/ preview/);
+  assert.ok(!db.one(`SELECT 1 FROM disclosures WHERE client_id=? AND source='caloms'`, goodClient), 'a download alone is not accounted');
+  assert.equal(db.one(`SELECT extracted_at FROM caloms_records WHERE client_id=?`, goodClient).extracted_at, null, 'nor marked as sent');
+  assert.match(db.one(`SELECT details FROM audit_log WHERE action='caloms.extract' ORDER BY id DESC`).details, /"preview":true/);
+  assert.equal((await nav.post('/api/caloms/submissions', { from, to: TODAY })).status, 403, 'marking it submitted is the same permission as making it');
+  const sub = await sup.post('/api/caloms/submissions', { from, to: TODAY });
+  assert.equal(sub.status, 200, JSON.stringify(sub.data));
+  assert.ok(sub.data.clients_disclosed >= 1);
+  assert.ok(db.one(`SELECT 1 FROM audit_log WHERE action='caloms.submitted'`));
   // The accounting of disclosures: one state-reporting row per client in the file, none for the one held back.
   const d = db.one(`SELECT * FROM disclosures WHERE client_id=? AND source='caloms'`, goodClient);
   assert.ok(d, 'the disclosure is accounted for');
@@ -289,7 +300,7 @@ test('the extract is identified-export only, holds back fatal records, and is ac
   assert.ok(listed && listed.basis === 'state_reporting' && /CalOMS Tx/.test(listed.purpose), 'and it appears in the client\'s accounting of disclosures');
   assert.ok(db.one(`SELECT extracted_at FROM caloms_records WHERE client_id=?`, goodClient).extracted_at);
   assert.equal(db.one(`SELECT extracted_at FROM caloms_records WHERE client_id=?`, badClient).extracted_at, null);
-  const audit = db.one(`SELECT details FROM audit_log WHERE action='caloms.extract' ORDER BY id DESC`).details;
+  const audit = db.one(`SELECT details FROM audit_log WHERE action='caloms.submitted' ORDER BY id DESC`).details;
   assert.match(audit, /"held_back":[1-9]/); assert.doesNotMatch(audit, /Oms[a-z0-9]{5}|1990-04-02/);
 });
 
@@ -348,7 +359,9 @@ test('the county EHR hand-off: identified, consent-checked, accounted, and not a
   assert.equal(d.notice_version, '2024'); assert.equal(d.legal_proceeding, 0); assert.equal(d.counseling_notes, 0);
   assert.equal((await sup.get(`/api/handoff/export?${q}&recipient=County%20EHR&purpose=Billing&legal_proceeding=1`)).status, 400, 'never a file for a legal proceeding');
   assert.ok(!db.one(`SELECT 1 FROM disclosures WHERE client_id=? AND source='ehr_handoff'`, without));
-  // A QSOA covers the whole file, so nobody is left out.
+  // A QSOA covers the whole file, so nobody is left out — once the agreement with the recipient is on file.
+  assert.equal((await sup.get(`/api/handoff/export?${q}&recipient=County%20EHR&purpose=Billing&basis=qsoa`)).status, 400, 'no QSOA on file');
+  await H.agreement(sup, 'County EHR', 'qsoa');
   const qsoa = await sup.get(`/api/handoff/export?${q}&recipient=County%20EHR&purpose=Billing&basis=qsoa&format=xlsx`);
   assert.equal(qsoa.status, 200); assert.equal(qsoa.headers.get('x-suds-handoff-excluded'), '');
   assert.ok(db.one(`SELECT 1 FROM disclosures WHERE client_id=? AND source='ehr_handoff' AND basis='qsoa'`, without));

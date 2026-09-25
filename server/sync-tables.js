@@ -73,6 +73,9 @@ module.exports = {
     // pull-only like supply counts. A device needs it to offer the same choices and show the same labels
     // offline; it can never change it (server/routes/options.js refuses writes in the local kernel).
     { name: 'option_overrides', enc: [], scope: 'all', writePerm: 'settings:manage', serverOwned: true },
+    // The QSOA / research / audit register the non-consent disclosure bases rest on (server/disclosure.js):
+    // the office's, pull-only, so a device can offer the same agreements on its disclosure form offline.
+    { name: 'disclosure_agreements', enc: [], scope: 'all', writePerm: 'agreements:write', serverOwned: true },
   ],
   // Push rejection reasons that will never succeed on a retry: the office has ruled, and the device must
   // mark the row as exchanged (office wins) rather than resend it every sync forever. Anything else
@@ -113,7 +116,7 @@ module.exports = {
     ['care_plan_steps', 'owner_user_id'], ['care_plan_steps', 'created_by'], ['asam_assessments', 'assessed_by'], ['outcome_measures', 'administered_by'],
     ['caloms_records', 'created_by'], ['caloms_records', 'updated_by'],
     ['court_orders', 'recorded_by'], ['part2_notices', 'given_by'], ['complaints', 'handled_by'], ['complaints', 'created_by'],
-    ['privacy_incidents', 'determined_by'], ['privacy_incidents', 'reported_by'],
+    ['privacy_incidents', 'determined_by'], ['privacy_incidents', 'reported_by'], ['disclosure_agreements', 'created_by'],
   ],
 };
 // Every column name above that points at users(id), for remapping a single pushed row.

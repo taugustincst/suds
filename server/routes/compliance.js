@@ -24,7 +24,8 @@ function encComplaint(v) {
 }
 
 // ---- incidents ----
-const INCIDENT_ENC = ['description', 'risk_nature', 'risk_recipient', 'risk_acquired', 'risk_mitigation', 'determination_reason'];
+// The title is encrypted too (migration 32): it is typed by a person, and may name one.
+const INCIDENT_ENC = ['title', 'description', 'risk_nature', 'risk_recipient', 'risk_acquired', 'risk_mitigation', 'determination_reason'];
 const INCIDENT_SHAPE = {
   title: { type: 'string', maxLen: 200 }, discovered_at: { type: 'date' }, occurred_at: { type: 'date' }, description: { type: 'string', maxLen: 8000 },
   part2_records: { type: 'boolean' }, affected_count: { type: 'number', integer: true, min: 0, max: 100000000 }, max_in_one_state: { type: 'number', integer: true, min: 0, max: 100000000 },
@@ -34,7 +35,7 @@ const INCIDENT_SHAPE = {
 };
 function presentIncident(row, { full = false } = {}) {
   const out = { ...row };
-  for (const f of INCIDENT_ENC) { if (full) out[f] = dec(row[`${f}_enc`]); delete out[`${f}_enc`]; }
+  for (const f of INCIDENT_ENC) { if (full || f === 'title') out[f] = dec(row[`${f}_enc`]); delete out[`${f}_enc`]; }
   out.obligations = incidents.obligations(row);
   return out;
 }
@@ -101,7 +102,9 @@ module.exports = (r) => {
   });
   r.get('/api/incidents/:id', auth.requireAuth, auth.requirePerm('incidents:read', 'incidents:write'), (ctx) => {
     const i = loadIncident(ctx.params.id);
-    const clients = db.all(`SELECT x.client_id, x.notified_at, c.client_code FROM privacy_incident_clients x JOIN clients c ON c.id=x.client_id WHERE x.incident_id=? ORDER BY c.client_code`, i.id);
+    // A client whose record retention has since purged is still listed, by the code kept when it was linked.
+    const clients = db.all(`SELECT x.client_id, x.notified_at, COALESCE(c.client_code, x.client_code) client_code, x.client_purged_at FROM privacy_incident_clients x LEFT JOIN clients c ON c.id=x.client_id WHERE x.incident_id=? ORDER BY 3`, i.id)
+      .map(x => ({ ...x, purged: !x.client_id }));
     audit.log({ user: ctx.user, action: 'incident.view', entity: 'privacy_incident', entityId: i.id, ip: ctx.ip, details: { linked_clients: clients.length } });
     return { row: { ...presentIncident(i, { full: true }), clients } };
   });
@@ -109,7 +112,7 @@ module.exports = (r) => {
     const v = validate(ctx.body, { ...INCIDENT_SHAPE, title: { ...INCIDENT_SHAPE.title, required: true }, discovered_at: { type: 'date', required: true } });
     if (v.discovered_at > new Date().toISOString().slice(0, 10)) throw badRequest('An incident cannot be discovered in the future');
     const id = uuid();
-    const cols = { id, title: v.title, discovered_at: v.discovered_at, occurred_at: v.occurred_at || null, part2_records: v.part2_records === undefined ? 1 : v.part2_records,
+    const cols = { id, discovered_at: v.discovered_at, occurred_at: v.occurred_at || null, part2_records: v.part2_records === undefined ? 1 : v.part2_records,
       affected_count: v.affected_count || 0, max_in_one_state: v.max_in_one_state || 0, reported_by: ctx.user.id, source: 'manual' };
     for (const f of INCIDENT_ENC) if (v[f]) cols[`${f}_enc`] = encrypt(v[f]);
     const keys = Object.keys(cols);
@@ -163,7 +166,8 @@ module.exports = (r) => {
       for (const cid of client_ids) {
         if (typeof cid !== 'string' || !db.one(`SELECT 1 FROM clients WHERE id=?`, cid)) throw badRequest('Unknown client');
         auth.assertClientAccess(ctx, cid);
-        added += db.run(`INSERT OR IGNORE INTO privacy_incident_clients(id,incident_id,client_id) VALUES(?,?,?)`, uuid(), i.id, cid).changes;
+        // With the snapshot that outlives a purge of the record: its code and the name, encrypted.
+        added += incidents.linkClient(i.id, cid);
       }
       // The count the notification thresholds use is never smaller than the people actually linked.
       const linked = db.one(`SELECT COUNT(*) n FROM privacy_incident_clients WHERE incident_id=?`, i.id).n;

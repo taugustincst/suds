@@ -28,6 +28,8 @@ before(async () => {
   supId = H.db.one(`SELECT id FROM users WHERE username='csup'`).id;
   clientId = (await nav.post('/api/clients', { first_name: 'Cora', last_name: 'Compliance', dob: '1980-04-12', zip: '95814', city: 'Sacramento', status: 'active' })).data.id;
   resourceId = (await nav.post('/api/resources', { name: 'Riverbend OTP', category: 'mat_otp' })).data.id;
+  // The approvals and agreement the audit exports and the QSOA disclosure below rest on (server/disclosure.js).
+  await H.agreement(sup, 'County counsel'); await H.agreement(sup, 'State auditor'); await H.agreement(sup, 'Riverbend OTP', 'qsoa');
 });
 after(async () => { await H.stop(); });
 
@@ -267,8 +269,11 @@ test('a disclosure without consent on an "other" basis needs a supervisor and a 
   // A court order is a basis only when the order itself is on file (42 CFR subpart E): naming the basis
   // is no longer enough (test/part2.test.js covers what makes an order qualify).
   assert.equal((await nav.post(`/api/clients/${clientId}/disclosures`, { ...body, basis: 'court_order' })).status, 400);
-  // Other Part 2 exceptions keep working as before.
-  assert.equal((await nav.post(`/api/clients/${clientId}/disclosures`, { ...body, basis: 'qsoa' })).status, 201);
+  // A QSOA disclosure rests on a registered agreement with the recipient: not with anyone who asks.
+  assert.equal((await nav.post(`/api/clients/${clientId}/disclosures`, { ...body, basis: 'qsoa' })).status, 400, 'no QSOA with the probation officer');
+  assert.equal((await nav.post(`/api/clients/${clientId}/disclosures`, { ...body, basis: 'qsoa', disclosed_to: 'Riverbend OTP' })).status, 201, 'the organisation the agreement is with');
+  // Research, audit, a crime on the premises and a child-abuse report are a supervisor's (test/disclosure-gates.test.js).
+  assert.equal((await nav.post(`/api/clients/${clientId}/disclosures`, { ...body, basis: 'crime_on_premises', justification: 'Assault on staff in the lobby, reported to the sheriff.' })).status, 403);
   // A referral cannot use 'other' without justification either.
   const c3 = (await nav.post('/api/clients', { first_name: 'Ref', last_name: 'Other' })).data.id;
   assert.equal((await sup.post('/api/referrals', { client_id: c3, resource_id: resourceId, referred_at: '2026-09-03T09:00:00Z', warm_handoff: true, _disclosure_basis: 'other' })).status, 400);
