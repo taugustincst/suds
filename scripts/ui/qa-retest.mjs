@@ -63,12 +63,12 @@ for (const [label, base] of surfaces) {
   ok(/^Good (morning|afternoon|evening), QATEST$/.test(h1.trim()), `${label}: the greeting shows the display name exactly as typed`, h1.trim());
   const fallback = await page.evaluate(async () => { const m = await import('./app.js'); return [m.greetingName('', 'jdoe'), m.greetingName('Dr. Kiran Patel'), m.clientStatus({ status: '' }), m.clientStatus({ status: null }), m.clientStatus({ status: 'inactive' }), m.greetingName('QA Tester'), m.greetingName('QATEST'), m.greetingName('Maria de la Cruz Jones'), m.greetingName('Dr. Patel'), m.firstName('Dr. Kiran Patel')]; });
   eq(fallback[0], 'jdoe', `${label}: a blank display name greets by username`);
-  eq(fallback[1], 'Dr. Patel', `${label}: a name with an honorific greets as honorific + surname`);
-  eq(fallback[5], 'QA', `${label}: an ordinary two-word name greets by its first word, as typed (not re-cased)`);
+  eq(fallback[1], 'Dr. Kiran Patel', `${label}: a name with an honorific greets with the whole name`);
+  eq(fallback[5], 'QA Tester', `${label}: an ordinary two-word name greets whole, as typed (not cut to its first word, not re-cased)`);
   eq(fallback[6], 'QATEST', `${label}: a one-word, all-capitals name is neither cut nor re-cased`);
-  eq(fallback[7], 'Maria', `${label}: a long formal name is shortened to the first name`);
-  eq(fallback[8], 'Dr. Patel', `${label}: "Dr. Patel" keeps the honorific with the surname`);
-  eq(fallback[9], 'Kiran', `${label}: firstName (the welcome tour) still gives the first name`);
+  eq(fallback[7], 'Maria de la Cruz Jones', `${label}: a long formal name is shown whole`);
+  eq(fallback[8], 'Dr. Patel', `${label}: "Dr. Patel" is shown as typed`);
+  eq(fallback[9], 'Kiran', `${label}: firstName (kept for code that wants a given name) still gives the first name`);
   eq(fallback[2], 'active', `${label}: a client with an empty status is shown as Active, not blank`);
   eq(fallback[3], 'active', `${label}: a client with a null status is shown as Active, not blank`);
   eq(fallback[4], 'inactive', `${label}: a real status is left alone`);
@@ -155,8 +155,254 @@ for (const [label, base] of surfaces) {
   ok(dateErr && /date/i.test(dateErr), `${label}: a time without a date is refused with a visible message instead of being dropped`, dateErr);
   ok(await page.$('.modal'), `${label}: and the dialog stays open for it to be fixed`);
   await page.keyboard.press('Escape');
+  // Round three: supplies. With no office (the static site) the cupboard is the device's own and an item
+  // saves; on a copy that syncs with an office, the office owns the counts, so the buttons are disabled
+  // with the reason on screen instead of failing on Save.
+  await go('supplies'); await settle(page);
+  const addItem = page.getByRole('button', { name: '+ Add item' }).first();
+  if (label === 'static site') {
+    ok(await addItem.isEnabled(), `${label}: "+ Add item" is available on SUDS on this device`);
+    ok(!(await page.$('[data-supplies-office]')), `${label}: with no office-only notice`);
+  } else {
+    ok(await addItem.isDisabled(), `${label}: "+ Add item" is disabled on a device that syncs with the office`);
+    ok(/kept at the office/.test(await page.textContent('[data-supplies-office]').catch(() => '')), `${label}: and the page says why`);
+  }
   await ctx.close();
 }
+// ---------------------------------------------------------------------------------------------------
+// Retest round three (reported on 1.9.4, rechecked on 1.10.0): a fresh sign-up on the published static
+// site as "qatest-new" / "QATEST QA Engineer", driven the way the tester's browser agent drives it — by
+// accessible role and name (getByRole), with hit targets checked by document.elementFromPoint — on a
+// desktop Chrome window (1280x800) and an Android phone (Pixel 7, touch). The earlier rounds passed with
+// CSS-selector clicks while the tester still saw these defects.
+// ---------------------------------------------------------------------------------------------------
+{
+  const base = (process.env.SUDS_STATIC_URL || 'http://127.0.0.1:8877');
+  // What is at a point of an element: 'self', 'inside' (a descendant), or what covers it.
+  const hitAt = (loc, where = 'center') => loc.evaluate((el, where) => {
+    const r = el.getBoundingClientRect(); const x = where === 'right' ? r.right - 12 : r.left + r.width / 2; const y = r.top + r.height / 2;
+    const t = document.elementFromPoint(x, y); return t === el ? 'self' : t && el.contains(t) ? 'inside' : t ? `covered by <${t.tagName.toLowerCase()} class="${t.className}">${(t.textContent || '').slice(0, 40)}` : 'nothing';
+  }, where);
+  for (const [kind, opts] of [['desktop', { viewport: { width: 1280, height: 800 } }], ['phone', { ...devices['Pixel 7'], hasTouch: true }]]) {
+    const L = `round 3 ${kind}`;
+    const ctx = await browser.newContext(opts);
+    const page = await ctx.newPage();
+    page.on('pageerror', e => errors.push(`${L}: PAGEERROR ${e.message}`));
+    page.on('console', m => { if (m.type() === 'error' && !/404/.test(m.text())) errors.push(`${L}: CONSOLE ${m.text().slice(0, 250)}`); });
+    const press = (loc) => (kind === 'phone' ? loc.tap() : loc.click());
+    const kernel = (method, p, body) => page.evaluate(async ({ method, p, body }) => { const r = await window.SUDS_LOCAL.handle(method, p, body, { 'X-Requested-With': 'suds' }); return { status: r.status, json: r.json }; }, { method, p, body });
+    // Each defect is its own step: one that throws is reported and the next still runs.
+    const step = async (name, fn) => { try { await fn(); } catch (e) { fail(`${L}: ${name}: ${e.message.split('\n')[0]}`); await page.keyboard.press('Escape').catch(() => {}); } };
+    try {
+      await page.goto(base + '/'); await page.waitForSelector('input[name=display_name]', { timeout: 15000 });
+      await page.getByRole('textbox', { name: /Your name/ }).fill('QATEST QA Engineer');
+      await page.getByRole('textbox', { name: /Username/ }).fill('qatest-new');
+      // The first account on a device is its administrator; the tester set it up as one (Settings is checked below).
+      await page.getByRole('combobox', { name: /Your role/ }).selectOption('admin');
+      await page.fill('input[name=password]', 'Navigator2026!!'); await page.fill('input[name=confirm]', 'Navigator2026!!');
+      await page.getByRole('checkbox').first().check();
+      await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 10000 }); await settle(page);
+      for (let i = 0; i < 6; i++) { const b = await page.$('.modal button.primary'); if (!b) break; await b.click(); await settle(page); }
+
+      await step('greeting', async () => {
+      // GREETING: "Good evening, QATEST" was read as the name cut short; the whole display name is used.
+      eq((await page.textContent('h1')).trim().replace(/^Good (morning|afternoon|evening), /, ''), 'QATEST QA Engineer', `${L}: Home greets the new account by its whole display name`);
+      // "compute": the empty-state sentence ends "…on your phone or computer." and nothing clips it — at
+      // phone width and 200% text too.
+      if (kind === 'phone') {
+        for (const big of [false, true]) {
+          await page.setViewportSize({ width: 360, height: 780 });
+          if (big) await page.evaluate(() => { const s = document.createElement('style'); s.id = 'big-text'; s.textContent = 'html { font-size: 200% !important; }'; document.head.append(s); });
+          const word = await page.evaluate(() => {
+            const w = document.createTreeWalker(document.querySelector('#main'), NodeFilter.SHOW_TEXT); let n;
+            while ((n = w.nextNode())) {
+              const i = n.data.indexOf('computer.'); if (i < 0) continue;
+              const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + 9); const rs = [...r.getClientRects()]; const last = rs[rs.length - 1];
+              for (let p = n.parentElement; p; p = p.parentElement) { const cs = getComputedStyle(p); if (cs.overflowX !== 'visible' || cs.overflowY !== 'visible' || cs.webkitLineClamp !== 'none') { const pr = p.getBoundingClientRect(); if (last.right > pr.right + 0.5 || last.bottom > pr.bottom + 0.5) return `clipped by ${p.tagName}.${p.className}`; } }
+              return last.right <= innerWidth ? 'whole' : 'off screen';
+            }
+            return 'sentence not found';
+          });
+          eq(word, 'whole', `${L}: "…on your phone or computer." is shown whole at 360px${big ? ' and 200% text' : ''} (nothing clips it to "compute")`);
+          await page.evaluate(() => document.getElementById('big-text')?.remove());
+        }
+        await page.setViewportSize(devices['Pixel 7'].viewport);
+      }
+
+      });
+      await step('routes', async () => {
+      // ROUTES: the addresses the tester tried were "Page not found".
+      await page.goto(base + '/#/getapp');
+      await page.waitForURL(/get-app\.html/, { timeout: 10000 }).catch(() => {});
+      ok(/get-app\.html$/.test(page.url()) && await page.title() === 'Use SUDS on your phone or tablet', `${L}: #/getapp opens the "Use SUDS on your phone or tablet" page`, page.url());
+      await page.goto(base + '/#/phone'); await page.waitForURL(/get-app\.html/, { timeout: 10000 }).catch(() => {});
+      ok(/get-app\.html$/.test(page.url()), `${L}: so does #/phone`, page.url());
+      await page.goto(base + '/#/devices'); await page.waitForSelector('.layout', { timeout: 10000 }); await settle(page);
+      ok(/#\/sync$/.test(page.url()) && (await page.textContent('h1')) === 'This device', `${L}: #/devices opens This device`, page.url());
+      await page.goto(base + '/#/no-such-page'); await settle(page);
+      ok(await page.$('[data-not-found]') && await page.getByRole('link', { name: 'Go to Home' }).count() === 1, `${L}: an unknown address says Page not found and links Home`);
+
+      });
+      await step('supplies', async () => {
+      // SUPPLIES: "Add a supply item" → Save failed with 403 "kept at the office" on a build with no office.
+      await page.goto(base + '/#/supplies'); await settle(page);
+      await press(page.getByRole('button', { name: '+ Add item' }).first()); await page.waitForSelector('.modal');
+      await page.getByRole('textbox', { name: /Item/ }).fill('Naloxone kit'); await page.getByRole('spinbutton', { name: /Quantity/ }).fill('12');
+      await press(page.getByRole('button', { name: 'Save' }));
+      const closed = await until(async () => !(await page.$('.modal')), { timeout: 6000 });
+      ok(closed, `${L}: Save adds the supply item on SUDS on this device (the dialog closes)`, await page.evaluate(() => document.querySelector('.modal .banner.danger')?.textContent || document.querySelector('#toasts')?.textContent));
+      await settle(page);
+      eq((await kernel('GET', '/api/supplies')).json.rows.find(x => x.item === 'Naloxone kit')?.quantity, 12, `${L}: and it is on the shelf with 12`);
+      if (kind === 'desktop') {
+        await page.getByRole('button', { name: 'One more Naloxone kit' }).click(); await settle(page);
+        eq((await kernel('GET', '/api/supplies')).json.rows.find(x => x.item === 'Naloxone kit')?.quantity, 13, `${L}: + adds one`);
+      } else {
+        await page.getByRole('button', { name: /Naloxone kit/ }).locator('visible=true').first().tap(); await page.waitForSelector('.modal');
+        await page.getByRole('spinbutton').fill('20'); await page.getByRole('button', { name: 'Record count' }).tap();
+        await until(async () => !(await page.$('.modal')), { timeout: 6000 }); await settle(page);
+        eq((await kernel('GET', '/api/supplies')).json.rows.find(x => x.item === 'Naloxone kit')?.quantity, 20, `${L}: a stock-take from the phone row records the count`);
+      }
+
+      });
+      await step('resource and pictures', async () => {
+      // RESOURCE + PICTURES: create "QATEST Resource Round3", open it from the directory by its name, then
+      // "+ Add pictures" must open the file picker and the picture must be saved and shown.
+      await page.goto(base + '/#/resources'); await settle(page);
+      await press(page.getByRole('button', { name: '+ Add resource' }).first()); await page.waitForSelector('.modal');
+      await page.getByRole('textbox', { name: /Program \/ service name/ }).fill('QATEST Resource Round3');
+      await page.getByRole('combobox', { name: /Category/ }).selectOption({ index: 1 });
+      await press(page.getByRole('button', { name: 'Add resource' }).last());
+      await page.waitForURL(/#\/resource\//, { timeout: 10000 }).catch(() => {}); await settle(page);
+      await page.goto(base + '/#/resources'); await settle(page);
+      const named = page.getByText('QATEST Resource Round3').locator('visible=true').first();
+      ok(await named.count(), `${L}: the new resource is listed in the directory by its name`);
+      await press(named); await page.waitForURL(/#\/resource\//, { timeout: 10000 }).catch(() => {}); await settle(page);
+      eq(await page.textContent('h1'), 'QATEST Resource Round3', `${L}: clicking its name opens its profile`);
+      const addPic = page.getByRole('button', { name: /Add pictures/ });
+      eq(await addPic.count(), 1, `${L}: the profile exposes exactly one "Add pictures" button to the accessibility tree`);
+      eq(await hitAt(addPic), 'self', `${L}: the middle of "+ Add pictures" is that button itself (nothing covers it)`);
+      eq(await hitAt(page.locator('label.file-btn')), 'inside', `${L}: and a tap on the visible label lands on it`);
+      const chooser = page.waitForEvent('filechooser', { timeout: 5000 }).catch(() => null);
+      await press(addPic);
+      const fc = await chooser;
+      ok(fc, `${L}: pressing the "Add pictures" button opens the file picker`);
+      ok(/window that opened/.test(await page.textContent('.card:has(.gallery)')), `${L}: and the card says a window has opened for choosing pictures, so the page does not look as if nothing happened`);
+      if (fc) {
+        await fc.setFiles(png);
+        const shown = await until(async () => page.$$eval('.gallery img', i => i.filter(x => x.naturalWidth > 0).length), { timeout: 8000 });
+        ok(shown > 0, `${L}: the chosen picture is saved and shown`, shown);
+      }
+      const chooser2 = page.waitForEvent('filechooser', { timeout: 5000 }).catch(() => null);
+      await press(page.getByText('+ Add pictures'));
+      ok(await chooser2, `${L}: clicking the visible text "+ Add pictures" opens the picker too`);
+
+      });
+      await step('date picker', async () => {
+      // DATE PICKER: New task and Edit task. Nothing may cover the field or the calendar button, a toast
+      // included; the year takes four digits; a garbled date is refused, not saved.
+      await page.goto(base + '/#/tasks'); await settle(page);
+      await press(page.getByRole('button', { name: '+ Add a reminder' })); await page.waitForSelector('.modal');
+      const due = page.getByRole('dialog').locator('input[type=date]');
+      eq(await due.evaluate(i => `${i.min}..${i.max}`), '1900-01-01..2100-12-31', `${L}: New task: the due date is limited to four-digit years (min/max set)`);
+      eq(await hitAt(due, 'right'), 'self', `${L}: New task: the field's own "Show date picker" region is the field itself`);
+      const cal = page.getByRole('button', { name: /Choose Due from a calendar/ });
+      eq(await cal.count(), 1, `${L}: New task: there is a separate calendar button for the due date`);
+      eq(await hitAt(cal), 'self', `${L}: New task: and nothing covers it`);
+      await press(cal); await page.waitForTimeout(200);
+      ok(await page.$('.modal'), `${L}: pressing it opens the calendar without closing or breaking the dialog`);
+      await page.keyboard.press('Escape').catch(() => {}); await page.waitForTimeout(100);
+      if (!(await page.$('.modal'))) { await press(page.getByRole('button', { name: '+ Add a reminder' })); await page.waitForSelector('.modal'); }
+      await page.getByRole('textbox', { name: 'Title' }).fill('QATEST task');
+      if (kind === 'desktop') {
+        await due.click({ position: { x: 12, y: 12 } }); await page.keyboard.type('09052026');
+        eq(await due.inputValue(), '2026-09-05', `${L}: typing 09052026 into the date segments gives 2026-09-05`);
+        // One digit too many: the year segment starts again (Chrome) and the date comes out as 0260-09-05 —
+        // with no max it became a five-digit year instead. Either way it must not be saved.
+        await due.click({ position: { x: 12, y: 12 } }); await page.keyboard.type('090520260');
+        ok(/^\d{4}-\d{2}-\d{2}$/.test(await due.inputValue()), `${L}: an extra digit typed into the year never makes a five- or six-digit year`, await due.inputValue());
+        if ((await due.inputValue()) === '2026-09-05') await due.fill('0006-09-05');
+      } else await due.fill('0006-09-05');
+      await press(page.getByRole('button', { name: 'Create task' }));
+      const refused = await until(async () => page.$eval('.modal .banner.danger:not(.hidden)', b => b.textContent).catch(() => null), { timeout: 5000 });
+      ok(refused && /date/i.test(refused) && await page.$('.modal'), `${L}: a garbled date (a year like 0260 or 0006) is refused with a message, not saved`, refused);
+      ok(/four digits/.test(await page.textContent('.modal [data-field=due_at] .err')), `${L}: and the field says the year must be four digits`, await page.textContent('.modal [data-field=due_at] .err'));
+      await due.fill('2026-09-05');
+      await press(page.getByRole('button', { name: 'Create task' }));
+      await until(async () => !(await page.$('.modal')), { timeout: 6000 }); await settle(page);
+      eq((await kernel('GET', '/api/tasks?status=all&limit=50')).json.rows.find(t => t.title === 'QATEST task')?.due_at, '2026-09-05', `${L}: the corrected date is what was saved`);
+      // Edit task, with the "Task saved" toast still up and one more put in the way
+      if (kind === 'desktop') await page.getByRole('button', { name: 'Edit' }).first().click();
+      else await page.getByRole('button', { name: /QATEST task/ }).locator('visible=true').first().tap();
+      await page.waitForSelector('.modal');
+      await page.evaluate(async () => (await import('./app.js')).toast('Task saved', 'ok'));
+      const toastPass = await page.evaluate(() => { const t = document.querySelector('#toasts .toast'); if (!t) return 'no toast'; const r = t.getBoundingClientRect(); const e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return e && e.closest('#toasts') ? 'toast takes the click' : 'passes through'; });
+      eq(toastPass, 'passes through', `${L}: Edit task: a toast never takes a click meant for the dialog under it`);
+      const due2 = page.getByRole('dialog').locator('input[type=date]');
+      eq(await due2.inputValue(), '2026-09-05', `${L}: Edit task shows the saved date`);
+      eq(await hitAt(due2, 'right'), 'self', `${L}: Edit task: the field's "Show date picker" region is the field itself`);
+      eq(await hitAt(page.getByRole('button', { name: /Choose Due from a calendar/ })), 'self', `${L}: Edit task: the calendar button is not covered`);
+      await page.keyboard.press('Escape');
+
+      });
+      await step('inactive status', async () => {
+      // INACTIVE STATUS: created active, then Edit → Inactive; the header badge and Program › Status show it,
+      // also after a reload.
+      await page.goto(base + '/#/clients'); await settle(page);
+      await press(page.getByRole('button', { name: /New client/ }).first()); await page.waitForSelector('.modal');
+      await page.getByRole('textbox', { name: /First name/ }).fill('QATEST'); await page.getByRole('textbox', { name: /Last name/ }).fill('Inactive Round3');
+      await page.click('.modal button[type=submit]'); await page.waitForURL(/#\/client\//, { timeout: 10000 }); await settle(page);
+      await press(page.getByRole('button', { name: /^Edit/ }).first()); await page.waitForSelector('.modal');
+      await page.getByRole('combobox', { name: /^Status/ }).selectOption('inactive');
+      await page.click('.modal button[type=submit]'); await until(async () => !(await page.$('.modal')), { timeout: 6000 }); await settle(page);
+      const statusShown = () => page.evaluate(() => { const dt = [...document.querySelectorAll('#main dt, #main .k, #main th')].find(e => e.textContent.trim() === 'Status'); return [[...document.querySelectorAll('#main .badge')].some(b => b.textContent === 'Inactive'), dt ? (dt.nextElementSibling?.textContent || '').trim() : 'no Status row']; });
+      eq((await statusShown()).join('|'), 'true|Inactive', `${L}: after Edit → Inactive the profile shows the Inactive badge and Status "Inactive"`);
+      await page.reload(); await page.waitForSelector('.layout'); await settle(page);
+      eq((await statusShown()).join('|'), 'true|Inactive', `${L}: and still does after a reload`);
+
+      });
+      await step('settings', async () => {
+      // SETTINGS on SUDS on this device: no server backup schedule showing 0/0; where backups and phones are
+      // instead; an organisation time zone, defaulted to the browser's at set-up.
+      if (kind === 'desktop') {
+        await page.goto(base + '/#/admin?tab=settings'); await settle(page);
+        ok(!(await page.$('input[name=backup_schedule_hours]')) && !(await page.$('input[name=backup_retain_count]')), `${L}: Settings has no server backup schedule fields on this device`);
+        ok(await page.$('[data-device-settings] a[href="#/sync"]') && await page.$('[data-device-settings] a[href="get-app.html"]'), `${L}: it links to This device (backup and restore) and to "Use SUDS on your phone or tablet"`);
+        const here = await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
+        eq((await kernel('GET', '/api/admin/settings')).json.org_timezone, here, `${L}: the organisation time zone was set to this browser's at set-up`);
+        const tz = page.getByRole('combobox', { name: /Organisation time zone/ });
+        eq(await tz.inputValue(), here, `${L}: and the Settings form shows it`);
+        await tz.selectOption('America/Los_Angeles'); await page.getByRole('button', { name: 'Save settings' }).click(); await settle(page);
+        eq((await kernel('GET', '/api/admin/settings')).json.org_timezone, 'America/Los_Angeles', `${L}: choosing another zone and saving keeps it`);
+      }
+      });
+    } catch (e) { fail(`${L}: ${e.message.split('\n')[0]}`); }
+    await ctx.close();
+  }
+
+  // The office server: its routes and its Settings.
+  {
+    const L = 'round 3 office';
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const page = await ctx.newPage();
+    page.on('pageerror', e => errors.push(`${L}: PAGEERROR ${e.message}`));
+    const office = process.env.SUDS_URL || 'http://127.0.0.1:8090';
+    try {
+      await page.goto(office + '/#/login'); await page.fill('input[name=username]', 'admin'); await page.fill('input[name=password]', 'AdminPassw0rd!x');
+      await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 10000 });
+      await page.evaluate(() => fetch('/api/me/prefs', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'suds' }, body: JSON.stringify({ tour_done: true }) }));
+      await page.goto(office + '/#/devices'); await page.waitForSelector('.layout'); await settle(page);
+      ok(/#\/admin\?tab=devices$/.test(page.url()) && await page.$('.tabs button.active') && (await page.textContent('.tabs button.active')) === 'Synced devices', `${L}: #/devices opens Settings › Synced devices for an administrator`, page.url());
+      await page.goto(office + '/#/getapp'); await page.waitForURL(/\/app$/, { timeout: 10000 }).catch(() => {});
+      ok(/\/app$/.test(page.url()) && await page.title() === 'Use SUDS on your phone or tablet', `${L}: #/getapp opens the office's /app page`, page.url());
+      await page.goto(office + '/#/admin?tab=settings'); await page.waitForSelector('.layout'); await settle(page);
+      ok(await page.$('input[name=backup_schedule_hours]') && /Off: no backups are made automatically|On: a backup is made every/.test(await page.textContent('[data-field=backup_schedule_hours] .help')), `${L}: the backup schedule says plainly whether it is on`);
+      ok(await page.$('[data-backup-link] a[href="#/admin?tab=system"]'), `${L}: and links to System & backups for Back up now, download and restore`);
+      ok(await page.getByRole('combobox', { name: /Organisation time zone/ }).count() === 1, `${L}: Settings offers the organisation time zone`);
+    } catch (e) { fail(`${L}: ${e.message.split('\n')[0]}`); }
+    await ctx.close();
+  }
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Upgraded profile: the static site from OLD_COMMIT, a profile set up on it, then the current build at the
 // same origin into the same profile. Skipped (with a failure) when the old build cannot be produced.

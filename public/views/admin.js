@@ -137,6 +137,31 @@ export async function sampleDataCard(onChange) {
       h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', onClick: load }, 'Load sample data'), busy)]);
 }
 
+// The programme's time zone: which calendar day a visit, a due date and a report period fall on
+// (server/routes/budget.js orgTimezone). Offered from the zones this browser knows, with its own zone first.
+function timezoneField(s) {
+  const tz = s.timezone || {};
+  const here = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return ''; } })();
+  let zones = []; try { zones = Intl.supportedValuesOf('timeZone'); } catch { zones = []; }
+  const all = [...new Set([here, s.org_timezone, tz.effective, ...zones].filter(Boolean))];
+  const options = [
+    ...(here ? [{ value: here, label: `${here.replace(/_/g, ' ')} (this device's time zone)` }] : []),
+    ...all.filter(z => z !== here).sort().map(z => ({ value: z, label: z.replace(/_/g, ' ') })),
+  ];
+  const fallback = tz.fallback || here;
+  return { name: 'org_timezone', label: 'Organisation time zone', type: 'select', options, value: s.org_timezone || '', placeholder: state.local ? `Not set — ${here || 'this device'}'s time zone` : `Not set — the server's (${fallback})`, span: true,
+    help: `Decides which calendar day a visit, a due date and a report period fall on. In use now: ${tz.effective || fallback || 'not known'}.${!state.local && tz.from_env ? ' Choosing one here overrides ORG_TIMEZONE on the server.' : ''}` };
+}
+// On a device copy, the settings the office server has elsewhere: backups and restore are on This device,
+// and staff reach SUDS on a phone or tablet through get-app.html (not /app, which only an office has).
+function deviceSettingsCard() {
+  const onStatic = !!window.SUDS_STATIC_HOST;
+  return h('div', { class: 'card', 'data-device-settings': '1' }, h('h3', {}, 'Backups and other devices'),
+    h('p', { class: 'small' }, onStatic ? 'SUDS on this device keeps its records only in this browser. Back them up, and restore a backup, on ' : 'This copy syncs with the office SUDS, which makes the backups. Sync, and erase this device, on ', h('a', { href: '#/sync', 'data-device-page-link': '1' }, 'This device'), '.'),
+    h('p', { class: 'small' }, h('a', { href: 'get-app.html', target: '_blank', rel: 'noopener', 'data-get-app-link': '1' }, 'Use SUDS on your phone or tablet'), ' — how to add SUDS to a home screen.'),
+    h('p', { class: 'small muted' }, onStatic ? 'There is no server here, so there is no backup schedule, network setting or certificate to download: those belong to an office SUDS server.' : 'The backup schedule, network settings and certificate are managed on the office SUDS server.'));
+}
+
 route('admin', async (r) => {
   const tab = r.query.get('tab') || 'users';
   const refresh = () => nav(`admin?tab=${tab}&_=${Date.now()}`);
@@ -160,12 +185,21 @@ route('admin', async (r) => {
         { name: 'self_signup', label: 'Sign up on the sign-in page', type: 'select', noBlank: true, value: s.self_signup === '0' ? '0' : '1', options: [{ value: '1', label: 'On — people can request an account; an administrator approves each one' }, { value: '0', label: 'Off — the sign-in page says to ask an administrator' }], span: true },
         { type: 'section', label: 'Record retention' },
         { name: 'client_retention_years', label: 'Keep discharged client records for (years, minimum 6)', type: 'number', min: 6, step: 1, value: s.client_retention_years || '7', help: 'Once every episode is closed and this many years have passed since discharge, the record is permanently deleted from every table — unless an administrator has placed it on legal hold from the client\'s Care team tab.' },
-        { type: 'section', label: 'Scheduled backups' },
-        { name: 'backup_schedule_hours', label: 'Back up automatically every (hours, 0 = off)', type: 'number', min: 0, step: 1, value: s.backup_schedule_hours || '0' },
-        { name: 'backup_retain_count', label: 'Keep this many recent backups on disk', type: 'number', min: 1, step: 1, value: s.backup_retain_count || '14' },
-        { name: 'backup_offsite_dir', label: 'Also copy each backup to (a mounted network share or drive path; blank = local only)', span: true, value: s.backup_offsite_dir || '' },
-      ], { values: s, submitText: 'Save settings', onSubmit: async (d) => { await put('/api/admin/settings', d); toast('Settings saved', 'ok'); } });
-      return h('div', { class: 'grid cols-2' }, h('div', { class: 'card' }, h('h3', {}, 'Program settings'), f), await sampleDataCard(refresh),
+        { type: 'section', label: 'Time zone' },
+        timezoneField(s),
+        // Scheduled server backups belong to the office server. A device copy has no backup schedule and no
+        // backup folder: it showed "every 0 hours, keep 0" fields that did nothing. Its backups are on the
+        // This device page (the card beside this form says so).
+        ...(state.local ? [] : [
+          { type: 'section', label: 'Scheduled backups' },
+          { name: 'backup_schedule_hours', label: 'Back up automatically every (hours, 0 = off)', type: 'number', min: 0, step: 1, value: s.backup_schedule_hours || '0',
+            help: Number(s.backup_schedule_hours) > 0 ? `On: a backup is made every ${s.backup_schedule_hours} hour${Number(s.backup_schedule_hours) === 1 ? '' : 's'}, and the newest ${s.backup_retain_count || 14} are kept.` : 'Off: no backups are made automatically. Enter a number of hours (24 = daily) to turn them on.' },
+          { name: 'backup_retain_count', label: 'Keep this many recent backups on disk', type: 'number', min: 1, step: 1, value: s.backup_retain_count || '14' },
+          { name: 'backup_offsite_dir', label: 'Also copy each backup to (a mounted network share or drive path; blank = local only)', span: true, value: s.backup_offsite_dir || '' },
+        ]),
+      ], { values: s, submitText: 'Save settings', onSubmit: async (d) => { await put('/api/admin/settings', d); toast('Settings saved', 'ok'); },
+        extra: state.local ? null : h('p', { class: 'small', 'data-backup-link': '1' }, 'To back up now, download a backup or restore one, open ', h('a', { href: '#/admin?tab=system' }, 'System & backups'), '.') });
+      return h('div', { class: 'grid cols-2' }, h('div', { class: 'card' }, h('h3', {}, 'Program settings'), f), state.local ? deviceSettingsCard() : null, await sampleDataCard(refresh),
         h('div', { class: 'card' }, h('h3', {}, 'Server security configuration'), h('p', { class: 'small muted' }, 'Set via environment variables (see .env.example and docs/DEPLOYMENT.md).'),
           kv([['Environment', s.env.env], ['HTTPS', s.env.tls ? badge(s.env.tls_mode === 'selfsigned' ? 'Self-signed certificate' : 'Enabled', 'ok') : badge('Off — enable under Network', 'danger')], ['Encryption keys', s.env.key_source === 'file' ? 'data/keys.json (back it up under System)' : s.env.key_source === 'devfile' ? 'Development key files in data/' : 'Environment variables'], ['Addresses', (s.env.listener?.urls || []).join(', ')], ['OneNote (Graph) sync', s.env.ms_graph_configured ? badge('Configured', 'ok') : badge('Not configured', 'warn')],
             ['Single sign-on (OIDC)', s.env.oidc_configured ? badge(`Configured — "${s.env.oidc_label}"`, 'ok') : badge('Not configured — set OIDC_ISSUER etc. (see docs/DEPLOYMENT.md)', 'warn')]])));

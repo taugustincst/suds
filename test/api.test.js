@@ -337,6 +337,37 @@ test('fiscal-period checks use the organisation\'s calendar, not UTC', async () 
   } finally { config.orgTimezone = was; }
 });
 
+test('the organisation time zone setting overrides ORG_TIMEZONE, is validated, audited and administrator-only', async () => {
+  const config = require('../server/config');
+  const was = config.orgTimezone;
+  const f = await admin.post('/api/budget/funds', { name: 'FY26 TZ setting', source_type: 'other', fiscal_year_start: '2025-07-01', fiscal_year_end: '2026-06-30', total_amount: 1000 });
+  const line = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'client_assistance', allocated_amount: 1000 });
+  // 9pm on June 30th in Sacramento is 04:00 UTC on July 1st.
+  const body = { client_id: clientId, type: 'case_management', occurred_at: '2026-07-01T04:00:00Z', funding_source_id: f.data.id, budget_line_id: line.data.id, cost: 5 };
+  try {
+    config.orgTimezone = 'UTC';
+    // Only settings:manage may change it
+    assert.equal((await nav.put('/api/admin/settings', { org_timezone: 'America/Los_Angeles' })).status, 403);
+    assert.equal((await admin.put('/api/admin/settings', { org_timezone: 'Mars/Olympus_Mons' })).status, 400, 'an unknown zone is refused');
+    assert.equal((await admin.put('/api/admin/settings', { org_timezone: 'America/Los_Angeles' })).status, 200);
+    const s = await admin.get('/api/admin/settings');
+    assert.equal(s.data.org_timezone, 'America/Los_Angeles');
+    assert.equal(s.data.timezone.effective, 'America/Los_Angeles', 'the setting is what is in force');
+    assert.equal(s.data.timezone.fallback, 'UTC', 'and the form can say what a blank setting falls back to');
+    const a = H.db.one(`SELECT details FROM audit_log WHERE action='settings.update' ORDER BY id DESC LIMIT 1`);
+    assert.match(a.details, /org_timezone/, 'the change is audited');
+    // With ORG_TIMEZONE (config) at UTC, the setting decides the calendar day: this visit is June 30th.
+    const pt = await nav.post('/api/interventions', body);
+    assert.equal(pt.status, 201, JSON.stringify(pt.data));
+    assert.equal(H.db.one(`SELECT spent_at FROM expenditures WHERE intervention_id=?`, pt.data.id).spent_at, '2026-06-30');
+    // Cleared, ORG_TIMEZONE applies again and the same instant is July 1st, outside the period.
+    assert.equal((await admin.put('/api/admin/settings', { org_timezone: null })).status, 200);
+    assert.equal((await admin.get('/api/admin/settings')).data.timezone.effective, 'UTC');
+    const utc = await nav.post('/api/interventions', body);
+    assert.equal(utc.status, 400); assert.match(utc.data.error, /outside the period/);
+  } finally { config.orgTimezone = was; H.db.run(`DELETE FROM settings WHERE key='org_timezone'`); }
+});
+
 test('deleting a visit puts the kits and strips it drew down back on the shelf', async () => {
   const kit = await nav.post('/api/supplies', { item: 'Naloxone kit', quantity: 10 });
   assert.ok([200, 201].includes(kit.status));

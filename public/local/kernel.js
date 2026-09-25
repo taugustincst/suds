@@ -11910,6 +11910,506 @@ var init_listener = __esm({
   }
 });
 
+// server/crud.js
+var require_crud = __commonJS({
+  "server/crud.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var { notFound, forbidden, HttpError: HttpError3 } = require_http();
+    var { validate, paging } = require_validate();
+    var { uuid: uuid2 } = require_crypto();
+    function clientExists(id) {
+      return !!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, id);
+    }
+    var STALE_MESSAGE = "This record was changed by someone else since you opened it. Reload to see their changes.";
+    function assertFresh(ctx, row, entity) {
+      const token2 = ctx.body && typeof ctx.body === "object" ? ctx.body.if_updated_at : void 0;
+      if (token2 === void 0 || token2 === null || token2 === "") return;
+      if (row.updated_at && String(token2) === String(row.updated_at)) return;
+      audit3.log({ user: ctx.user, action: `${entity}.update.conflict`, entity, entityId: row.id, clientId: row.client_id || (entity === "client" ? row.id : null), ip: ctx.ip, success: false });
+      throw new HttpError3(409, STALE_MESSAGE, { stale: true, updated_at: row.updated_at || null });
+    }
+    function build(r, opts) {
+      const { table, entity, perm, shape, dateCol = "created_at", ownerCol = "user_id", joins = "", select = `${table}.*`, clientRequired = true } = opts;
+      const base = opts.base || `/api/${entity}s`;
+      const readPerm = `${perm}:read`, writePerm = `${perm}:write`;
+      function decorate(ctx, rows) {
+        return opts.afterLoad ? rows.map((x) => opts.afterLoad(ctx, x)) : rows;
+      }
+      function checkClient(ctx, clientId) {
+        if (clientId) {
+          if (!clientExists(clientId)) throw notFound("Client not found");
+          auth3.assertClientAccess(ctx, clientId);
+        }
+      }
+      r.get(base, auth3.requireAuth, auth3.requirePerm(readPerm, writePerm), (ctx) => {
+        const { limit: limit2, offset } = paging(ctx.query, { limit: 100, max: 1e3 });
+        const where = ["1=1"];
+        const params = [];
+        if (clientRequired || opts.hasClient !== false) {
+          const cf = auth3.caseloadFilter(ctx.user, `${table}.client_id`);
+          if (cf.sql !== "1=1") {
+            where.push(`(${table}.client_id IS NULL OR ${cf.sql})`);
+            params.push(...cf.params);
+          }
+          const cid = ctx.query.get("client_id");
+          if (cid) {
+            where.push(`${table}.client_id=?`);
+            params.push(cid);
+          }
+        }
+        if (ownerCol && ctx.query.get("user_id")) {
+          where.push(`${table}.${ownerCol}=?`);
+          params.push(ctx.query.get("user_id"));
+        }
+        if (ownerCol && ctx.query.get("mine") === "1") {
+          where.push(`${table}.${ownerCol}=?`);
+          params.push(ctx.user.id);
+        }
+        if (ctx.query.get("from")) {
+          where.push(`${table}.${dateCol} >= ?`);
+          params.push(ctx.query.get("from"));
+        }
+        if (ctx.query.get("to")) {
+          where.push(`${table}.${dateCol} <= ?`);
+          params.push(ctx.query.get("to") + (ctx.query.get("to").length === 10 ? "T23:59:59.999Z" : ""));
+        }
+        if (opts.filters) opts.filters(ctx, where, params);
+        const w = "WHERE " + where.join(" AND ");
+        const order = opts.order || `${table}.${dateCol} DESC`;
+        const rows = db3.all(`SELECT ${select} FROM ${table} ${joins} ${w} ORDER BY ${order} LIMIT ? OFFSET ?`, ...params, limit2, offset);
+        const total = db3.one(`SELECT COUNT(*) n FROM ${table} ${joins} ${w}`, ...params).n;
+        audit3.log({ user: ctx.user, action: `${entity}.list`, ip: ctx.ip, clientId: ctx.query.get("client_id") || null, details: { count: rows.length } });
+        return { rows: decorate(ctx, rows), total, limit: limit2, offset };
+      });
+      r.get(`${base}/:id`, auth3.requireAuth, auth3.requirePerm(readPerm, writePerm), (ctx) => {
+        const row = db3.one(`SELECT ${select} FROM ${table} ${joins} WHERE ${table}.id=?`, ctx.params.id);
+        if (!row) throw notFound();
+        if (row.client_id) auth3.assertClientAccess(ctx, row.client_id);
+        else if (opts.ownerOnly && row[ownerCol] !== ctx.user.id && !auth3.hasPerm(ctx.user, opts.ownerOnly)) {
+          audit3.log({ user: ctx.user, action: "authz.denied", entity, entityId: row.id, ip: ctx.ip, success: false, details: { reason: "not the owner" } });
+          throw forbidden("That record belongs to another worker");
+        }
+        audit3.log({ user: ctx.user, action: `${entity}.view`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip });
+        return { row: decorate(ctx, [row])[0] };
+      });
+      r.post(base, auth3.requireAuth, auth3.requirePerm(writePerm), (ctx) => {
+        const v = validate(ctx.body, shape);
+        if (clientRequired && !v.client_id) throw require_http().badRequest("client_id is required");
+        checkClient(ctx, v.client_id);
+        if (opts.beforeInsert) opts.beforeInsert(ctx, v);
+        const id = uuid2();
+        const cols2 = { id, ...v };
+        if (ownerCol && (cols2[ownerCol] === void 0 || cols2[ownerCol] === null || opts.restrictOwner && !auth3.hasPerm(ctx.user, "clients:all"))) cols2[ownerCol] = ctx.user.id;
+        if (opts.creatorCol) cols2[opts.creatorCol] = ctx.user.id;
+        const keys = Object.keys(cols2).filter((k) => cols2[k] !== void 0 && !k.startsWith("_"));
+        db3.transaction(() => {
+          db3.run(`INSERT INTO ${table}(${keys.join(",")}) VALUES(${keys.map(() => "?").join(",")})`, ...keys.map((k) => cols2[k]));
+          if (opts.afterInsert) opts.afterInsert(ctx, { id, ...cols2 });
+        });
+        audit3.log({ user: ctx.user, action: `${entity}.create`, entity, entityId: id, clientId: v.client_id || null, ip: ctx.ip });
+        ctx.status = 201;
+        return { id };
+      });
+      r.put(`${base}/:id`, auth3.requireAuth, auth3.requirePerm(writePerm), (ctx) => {
+        const row = db3.one(`SELECT * FROM ${table} WHERE id=?`, ctx.params.id);
+        if (!row) throw notFound();
+        if (row.client_id) auth3.assertClientAccess(ctx, row.client_id);
+        if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden("You cannot edit this record");
+        if (!opts.noUpdatedAt) assertFresh(ctx, row, entity);
+        const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true, existing: row });
+        if (v.client_id && v.client_id !== row.client_id) checkClient(ctx, v.client_id);
+        if (opts.restrictOwner && v[ownerCol] !== void 0 && !auth3.hasPerm(ctx.user, "clients:all")) delete v[ownerCol];
+        if (opts.beforeUpdate) opts.beforeUpdate(ctx, v, row);
+        const keys = Object.keys(v).filter((k) => v[k] !== void 0 && !k.startsWith("_"));
+        const stamp2 = db3.now();
+        if (keys.length) db3.run(`UPDATE ${table} SET ${keys.map((k) => `${k}=?`).join(", ")}${opts.noUpdatedAt ? "" : ", updated_at=?"} WHERE id=?`, ...keys.map((k) => v[k]), ...opts.noUpdatedAt ? [] : [stamp2], row.id);
+        if (opts.afterUpdate) opts.afterUpdate(ctx, { ...row, ...v }, row);
+        audit3.log({ user: ctx.user, action: `${entity}.update`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip, details: { fields: keys } });
+        return { ok: true, updated_at: opts.noUpdatedAt ? void 0 : (db3.one(`SELECT updated_at FROM ${table} WHERE id=?`, row.id) || {}).updated_at };
+      });
+      r.delete(`${base}/:id`, auth3.requireAuth, auth3.requirePerm(writePerm), (ctx) => {
+        const row = db3.one(`SELECT * FROM ${table} WHERE id=?`, ctx.params.id);
+        if (!row) throw notFound();
+        if (row.client_id) auth3.assertClientAccess(ctx, row.client_id);
+        if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden("You cannot delete this record");
+        if (opts.canDelete && !opts.canDelete(ctx, row)) throw forbidden("You cannot delete this record");
+        if (opts.beforeDelete) opts.beforeDelete(ctx, row);
+        db3.run(`DELETE FROM ${table} WHERE id=?`, row.id);
+        db3.tombstone(table, row.id);
+        audit3.log({ user: ctx.user, action: `${entity}.delete`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip });
+        return { ok: true };
+      });
+    }
+    function ownerOrManager(col = "user_id") {
+      return (ctx, row) => row[col] === ctx.user.id || auth3.hasPerm(ctx.user, "clients:all");
+    }
+    module.exports = { build, ownerOrManager, clientExists, assertFresh, STALE_MESSAGE };
+  }
+});
+
+// server/routes/budget.js
+var require_budget = __commonJS({
+  "server/routes/budget.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var crud = require_crud();
+    var C = require_constants();
+    var config = require_config();
+    var { badRequest, notFound, HttpError: HttpError3 } = require_http();
+    var { validate } = require_validate();
+    var { uuid: uuid2 } = require_crypto();
+    var cents = (v) => typeof v === "number" && Number.isFinite(v) ? Math.round(v * 100) / 100 : v;
+    function validTimezone(tz) {
+      if (typeof tz !== "string" || !tz.trim() || tz.length > 64) return false;
+      try {
+        new Intl.DateTimeFormat("en-US", { timeZone: tz });
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    function orgTimezone() {
+      let v = null;
+      try {
+        v = db3.getSetting("org_timezone", null);
+      } catch {
+      }
+      return v && validTimezone(v) ? v : config.orgTimezone;
+    }
+    function localDate(when = /* @__PURE__ */ new Date(), tz = orgTimezone()) {
+      const d = when instanceof Date ? when : new Date(when);
+      if (!Number.isFinite(d.getTime())) return null;
+      try {
+        return new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+      } catch {
+        return d.toISOString().slice(0, 10);
+      }
+    }
+    function localMidnight(date, tz = orgTimezone()) {
+      const guess = Date.parse(`${date}T00:00:00Z`);
+      if (!Number.isFinite(guess)) return null;
+      const offset = (ms) => {
+        try {
+          const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+          return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - (ms - ms % 1e3);
+        } catch {
+          return 0;
+        }
+      };
+      const first = guess - offset(guess);
+      return new Date(guess - offset(first)).toISOString();
+    }
+    var fundShape = {
+      name: { type: "string", required: true, maxLen: 200 },
+      source_type: { type: "string", enum: C.FUNDING_TYPES },
+      grant_number: { type: "string", maxLen: 100 },
+      fiscal_year_start: { type: "date", required: true },
+      fiscal_year_end: { type: "date", required: true },
+      total_amount: { type: "number", required: true, min: 0 },
+      restrictions: { type: "string", maxLen: 2e3 },
+      notes: { type: "string", maxLen: 2e3 },
+      is_active: { type: "boolean" }
+    };
+    var lineShape = { category: { type: "string", required: true, enum: C.BUDGET_CATEGORIES }, label: { type: "string", maxLen: 200 }, allocated_amount: { type: "number", required: true, min: 0 }, notes: { type: "string", maxLen: 1e3 }, parent_id: { type: "string" } };
+    function buildLineTree(flat) {
+      const byId = new Map(flat.map((l) => [l.id, { ...l, children: [] }]));
+      const roots = [];
+      for (const l of byId.values()) {
+        const p = l.parent_id && byId.get(l.parent_id);
+        if (p) p.children.push(l);
+        else roots.push(l);
+      }
+      const rollup = (l) => {
+        let subtreeSpent = l.spent, subtreePending = l.pending;
+        for (const c of l.children) {
+          rollup(c);
+          subtreeSpent += c.subtree_spent;
+          subtreePending += c.subtree_pending;
+        }
+        l.subtree_spent = cents(subtreeSpent);
+        l.subtree_pending = cents(subtreePending);
+        l.subtree_remaining = cents(l.allocated_amount - subtreeSpent - subtreePending);
+        l.child_allocated = cents(l.children.reduce((s, c) => s + c.allocated_amount, 0));
+        l.unallocated = cents(l.allocated_amount - l.child_allocated);
+        l.available = cents(l.allocated_amount - l.child_allocated - l.spent - l.pending);
+      };
+      for (const r of roots) rollup(r);
+      return roots;
+    }
+    function wouldCycle(lineId, proposedParentId) {
+      let cur = proposedParentId;
+      const seen2 = /* @__PURE__ */ new Set();
+      while (cur) {
+        if (cur === lineId || seen2.has(cur)) return true;
+        seen2.add(cur);
+        const row = db3.one(`SELECT parent_id FROM budget_lines WHERE id=?`, cur);
+        cur = row ? row.parent_id : null;
+      }
+      return false;
+    }
+    function assertInPeriod(fund, date, what) {
+      if (!date) return;
+      const today = localDate();
+      if (date > today) throw badRequest(`${what} is in the future (${date})`);
+      if (fund && (fund.fiscal_year_start && date < fund.fiscal_year_start || fund.fiscal_year_end && date > fund.fiscal_year_end)) {
+        throw badRequest(`${what} ${date} is outside the period of ${fund.name} (${fund.fiscal_year_start} to ${fund.fiscal_year_end}). Charge it to the fund that covers that date.`);
+      }
+    }
+    var money = (n) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    function assertPeriodOrder(start2, end) {
+      if (start2 && end && end < start2) throw badRequest(`The period ends (${end}) before it starts (${start2})`);
+    }
+    function assertRoom(fundId, parentId, amount, { excluding = null } = {}) {
+      const siblings = parentId ? db3.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE parent_id=? AND id<>?`, parentId, excluding || "").n : db3.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE funding_source_id=? AND parent_id IS NULL AND id<>?`, fundId, excluding || "").n;
+      const holder = parentId ? db3.one(`SELECT COALESCE(label, category) AS name, allocated_amount AS cap FROM budget_lines WHERE id=?`, parentId) : db3.one(`SELECT name, total_amount AS cap FROM funding_sources WHERE id=?`, fundId);
+      if (!holder) return;
+      const total = cents(siblings + amount);
+      if (total > cents(holder.cap)) {
+        throw badRequest(`That would allocate ${money(total)} against ${holder.name}, which ${parentId ? "is allocated" : "totals"} ${money(holder.cap)}; ${money(cents(holder.cap - siblings))} is left to allocate. Reduce the amount, or raise ${parentId ? "the parent allocation" : "the fund's total"} first.`);
+      }
+    }
+    function lineAvailable(lineId, { excluding = null } = {}) {
+      const l = db3.one(`SELECT * FROM budget_lines WHERE id=?`, lineId);
+      if (!l) return null;
+      const child = db3.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE parent_id=?`, lineId).n;
+      const spent = db3.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE budget_line_id=? AND status IN ('approved','reimbursed') AND id<>?`, lineId, excluding || "").n;
+      return cents(l.allocated_amount - child - spent);
+    }
+    function fundSummary(f) {
+      const spent = db3.one(`SELECT ROUND(COALESCE(SUM(amount),0),2) n FROM expenditures WHERE funding_source_id=? AND status IN ('approved','reimbursed')`, f.id).n;
+      const pending = db3.one(`SELECT ROUND(COALESCE(SUM(amount),0),2) n FROM expenditures WHERE funding_source_id=? AND status='pending'`, f.id).n;
+      const staffMinutes = db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE funding_source_id=?`, f.id).n;
+      const staffMinutesApproved = db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE funding_source_id=? AND status='approved'`, f.id).n;
+      const staffCost = db3.one(`SELECT ROUND(COALESCE(SUM(t.minutes/60.0*COALESCE(u.hourly_cost,0)),0),2) n FROM time_entries t JOIN users u ON u.id=t.user_id WHERE t.funding_source_id=?`, f.id).n;
+      const flatLines = db3.all(`SELECT b.*, (SELECT ROUND(COALESCE(SUM(amount),0),2) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status IN ('approved','reimbursed')) AS spent, (SELECT ROUND(COALESCE(SUM(amount),0),2) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status='pending') AS pending FROM budget_lines b WHERE b.funding_source_id=? ORDER BY category`, f.id);
+      const allocated = flatLines.filter((l) => !l.parent_id).reduce((s, l) => s + l.allocated_amount, 0);
+      const lines = buildLineTree(flatLines);
+      const totalDays = Math.max(1, (Date.parse(f.fiscal_year_end) - Date.parse(f.fiscal_year_start)) / 864e5);
+      const elapsed = Math.min(totalDays, Math.max(0, (Date.now() - Date.parse(f.fiscal_year_start)) / 864e5));
+      return {
+        ...f,
+        spent,
+        pending,
+        staff_minutes: staffMinutes,
+        staff_minutes_approved: staffMinutesApproved,
+        staff_cost: staffCost,
+        allocated: cents(allocated),
+        unallocated: cents(f.total_amount - allocated),
+        remaining: cents(f.total_amount - spent - pending),
+        pct_spent: f.total_amount ? spent / f.total_amount * 100 : 0,
+        pct_elapsed: elapsed / totalDays * 100,
+        lines
+      };
+    }
+    module.exports = (r) => {
+      r.get("/api/budget/funds", auth3.requireAuth, auth3.requirePerm("budget:read"), (ctx) => {
+        const rows = db3.all(`SELECT * FROM funding_sources ${ctx.query.get("all") === "1" ? "" : "WHERE is_active=1"} ORDER BY fiscal_year_start DESC, name`);
+        return { funds: rows.map(fundSummary) };
+      });
+      r.post("/api/budget/funds", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
+        const v = validate(ctx.body, fundShape);
+        const id = uuid2();
+        const keys = Object.keys(v);
+        assertPeriodOrder(v.fiscal_year_start, v.fiscal_year_end);
+        db3.run(`INSERT INTO funding_sources(id,${keys.join(",")}) VALUES(?,${keys.map(() => "?").join(",")})`, id, ...keys.map((k) => v[k]));
+        audit3.log({ user: ctx.user, action: "fund.create", entity: "funding_source", entityId: id, ip: ctx.ip });
+        ctx.status = 201;
+        return { id };
+      });
+      r.put("/api/budget/funds/:id", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
+        const f = db3.one(`SELECT * FROM funding_sources WHERE id=?`, ctx.params.id);
+        if (!f) throw notFound();
+        require_crud().assertFresh(ctx, f, "fund");
+        const v = validate(ctx.body, Object.fromEntries(Object.entries(fundShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
+        const keys = Object.keys(v);
+        if (!keys.length) return { ok: true, updated_at: f.updated_at };
+        assertPeriodOrder(v.fiscal_year_start ?? f.fiscal_year_start, v.fiscal_year_end ?? f.fiscal_year_end);
+        const stamp2 = db3.now();
+        db3.run(`UPDATE funding_sources SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), stamp2, f.id);
+        audit3.log({ user: ctx.user, action: "fund.update", entity: "funding_source", entityId: f.id, ip: ctx.ip, details: { fields: keys } });
+        return { ok: true, updated_at: stamp2 };
+      });
+      r.post("/api/budget/funds/:id/lines", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
+        const f = db3.one(`SELECT id FROM funding_sources WHERE id=?`, ctx.params.id);
+        if (!f) throw notFound();
+        const v = validate(ctx.body, lineShape);
+        const id = uuid2();
+        if (v.parent_id) {
+          const p = db3.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, v.parent_id, f.id);
+          if (!p) throw badRequest("Parent allocation does not belong to this fund");
+        }
+        assertRoom(f.id, v.parent_id || null, v.allocated_amount);
+        db3.run(`INSERT INTO budget_lines(id,funding_source_id,parent_id,category,label,allocated_amount,notes) VALUES(?,?,?,?,?,?,?)`, id, f.id, v.parent_id || null, v.category, v.label || null, v.allocated_amount, v.notes || null);
+        audit3.log({ user: ctx.user, action: "budget_line.create", entity: "budget_line", entityId: id, ip: ctx.ip, details: v.parent_id ? { parent_id: v.parent_id } : void 0 });
+        ctx.status = 201;
+        return { id };
+      });
+      r.put("/api/budget/lines/:id", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
+        const l = db3.one(`SELECT * FROM budget_lines WHERE id=?`, ctx.params.id);
+        if (!l) throw notFound();
+        require_crud().assertFresh(ctx, l, "budget_line");
+        const v = validate(ctx.body, Object.fromEntries(Object.entries(lineShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
+        if ("parent_id" in v && v.parent_id) {
+          if (v.parent_id === l.id) throw badRequest("A budget line cannot be its own parent");
+          const p = db3.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, v.parent_id, l.funding_source_id);
+          if (!p) throw badRequest("Parent allocation does not belong to this fund");
+          if (wouldCycle(l.id, v.parent_id)) throw badRequest("That would nest this allocation inside one of its own sub-allocations");
+        }
+        if ("allocated_amount" in v || "parent_id" in v) {
+          const parentId = "parent_id" in v ? v.parent_id || null : l.parent_id;
+          const amount = v.allocated_amount ?? l.allocated_amount;
+          assertRoom(l.funding_source_id, parentId, amount, { excluding: l.id });
+          const handedDown = db3.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE parent_id=?`, l.id).n;
+          if (cents(amount) < cents(handedDown)) throw badRequest(`Its sub-allocations already total ${money(handedDown)}; reduce those first`);
+        }
+        const keys = Object.keys(v);
+        const stamp2 = keys.length ? db3.now() : l.updated_at;
+        if (keys.length) db3.run(`UPDATE budget_lines SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), stamp2, l.id);
+        audit3.log({ user: ctx.user, action: "budget_line.update", entity: "budget_line", entityId: l.id, ip: ctx.ip, details: { fields: keys } });
+        return { ok: true, updated_at: stamp2 };
+      });
+      r.delete("/api/budget/lines/:id", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
+        const ids = db3.all(`WITH RECURSIVE sub(id) AS (SELECT id FROM budget_lines WHERE id=? UNION ALL SELECT b.id FROM budget_lines b JOIN sub ON b.parent_id=sub.id) SELECT id FROM sub`, ctx.params.id).map((row) => row.id);
+        db3.run(`DELETE FROM budget_lines WHERE id=?`, ctx.params.id);
+        for (const id of ids) {
+          db3.tombstone("budget_lines", id);
+          audit3.log({ user: ctx.user, action: "budget_line.delete", entity: "budget_line", entityId: id, ip: ctx.ip });
+        }
+        return { ok: true };
+      });
+      crud.build(r, {
+        table: "expenditures",
+        entity: "expenditure",
+        base: "/api/budget/expenditures",
+        perm: "budget",
+        dateCol: "spent_at",
+        clientRequired: false,
+        restrictOwner: true,
+        joins: "JOIN users u ON u.id=expenditures.user_id JOIN funding_sources f ON f.id=expenditures.funding_source_id LEFT JOIN budget_lines b ON b.id=expenditures.budget_line_id LEFT JOIN clients c ON c.id=expenditures.client_id LEFT JOIN users a ON a.id=expenditures.approved_by",
+        select: "expenditures.*, u.display_name AS worker, f.name AS fund, b.label AS line_label, b.category AS line_category, c.client_code, a.display_name AS approver",
+        // intervention_id is deliberately not writable here: it only ever means "this expenditure was
+        // auto-posted from that service record" (server/routes/interventions.js's syncExpenditure, a raw INSERT
+        // that bypasses this shape entirely). Accepting it from a normal request would let anyone attach a
+        // second expenditure to an already-linked intervention, double-counting its cost.
+        shape: {
+          client_id: { type: "string" },
+          user_id: { type: "string" },
+          funding_source_id: { type: "string", required: true },
+          budget_line_id: { type: "string" },
+          spent_at: { type: "date", required: true },
+          amount: { type: "number", required: true, min: 0.01 },
+          category: { type: "string", required: true, enum: C.BUDGET_CATEGORIES },
+          vendor: { type: "string", maxLen: 200 },
+          description: { type: "string", maxLen: 1e3 },
+          receipt_ref: { type: "string", maxLen: 200 }
+        },
+        filters: (ctx, where, params) => {
+          const f = ctx.query.get("fund");
+          if (f) {
+            where.push("expenditures.funding_source_id=?");
+            params.push(f);
+          }
+          const s = ctx.query.get("status");
+          if (s && s !== "all") {
+            where.push("expenditures.status=?");
+            params.push(s);
+          }
+        },
+        beforeInsert: (ctx, v) => {
+          v.amount = cents(v.amount);
+          const f = db3.one(`SELECT * FROM funding_sources WHERE id=? AND is_active=1`, v.funding_source_id);
+          if (!f) throw badRequest("Unknown or inactive funding source");
+          assertInPeriod(f, v.spent_at, "Expenditure date");
+          if (v.budget_line_id) {
+            const l = db3.one(`SELECT * FROM budget_lines WHERE id=? AND funding_source_id=?`, v.budget_line_id, f.id);
+            if (!l) throw badRequest("Budget line does not belong to fund");
+            if (!v.category) v.category = l.category;
+          }
+        },
+        beforeUpdate: (ctx, v, row) => {
+          if (v.amount !== void 0 && v.amount !== null) v.amount = cents(v.amount);
+          if ("spent_at" in v || "funding_source_id" in v || "budget_line_id" in v) {
+            const f = db3.one(`SELECT * FROM funding_sources WHERE id=? AND is_active=1`, v.funding_source_id || row.funding_source_id);
+            if (!f) throw badRequest("Unknown or inactive funding source");
+            assertInPeriod(f, v.spent_at || row.spent_at, "Expenditure date");
+            const lineId = "budget_line_id" in v ? v.budget_line_id : row.budget_line_id;
+            if (lineId) {
+              const l = db3.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, lineId, f.id);
+              if (!l) throw badRequest("Budget line does not belong to fund");
+            }
+          }
+        },
+        canEdit: (ctx, row) => row.status === "pending" && (row.user_id === ctx.user.id || auth3.hasPerm(ctx.user, "budget:approve"))
+      });
+      const TRANSITIONS = { pending: ["approved", "rejected"], approved: ["reimbursed"] };
+      r.post("/api/budget/expenditures/:id/approve", auth3.requireAuth, auth3.requirePerm("budget:approve"), (ctx) => {
+        const e = db3.one(`SELECT * FROM expenditures WHERE id=?`, ctx.params.id);
+        if (!e) throw notFound();
+        const { status, note, force } = validate(ctx.body, { status: { type: "string", required: true, enum: ["approved", "rejected", "reimbursed"] }, note: { type: "string", maxLen: 500 }, force: { type: "boolean" } });
+        if (!(TRANSITIONS[e.status] || []).includes(status)) {
+          const by = e.approved_by ? db3.one(`SELECT display_name FROM users WHERE id=?`, e.approved_by) : null;
+          throw new HttpError3(409, `This expenditure is already ${e.status}${by ? ` (by ${by.display_name})` : ""}; it cannot be marked ${status}`, { current_status: e.status, approved_by: e.approved_by || null });
+        }
+        if (e.user_id === ctx.user.id && status === "approved") throw badRequest("Separation of duties: you cannot approve your own expenditure; another approver must review it");
+        if (status === "rejected" && !note) throw badRequest("Say why this expenditure is being rejected, so the person who submitted it knows what to fix");
+        const details = { note, amount: e.amount };
+        if (status === "approved" && e.budget_line_id) {
+          const available = lineAvailable(e.budget_line_id, { excluding: e.id });
+          if (available !== null && cents(e.amount) > available) {
+            const over = cents(e.amount - available);
+            const line = db3.one(`SELECT label, category FROM budget_lines WHERE id=?`, e.budget_line_id);
+            const mayForce = ["supervisor", "admin"].includes(ctx.user.role);
+            if (!(force && note && mayForce)) {
+              throw new HttpError3(
+                409,
+                `Approving ${e.amount.toFixed(2)} would take ${line.label || line.category} ${over.toFixed(2)} below zero (${available.toFixed(2)} available)${mayForce ? ". Approve it anyway with force and a note saying why." : ". Ask a supervisor to approve it, or move it to a line with room."}`,
+                { overspend: true, available, over, force_allowed: mayForce }
+              );
+            }
+            details.overspend = over;
+            details.forced = true;
+          }
+        }
+        if (status === "reimbursed") {
+          db3.run(`UPDATE expenditures SET status=?, approval_note=COALESCE(?, approval_note), updated_at=? WHERE id=?`, status, note || null, db3.now(), e.id);
+          details.reimbursed_by = ctx.user.id;
+        } else {
+          db3.run(`UPDATE expenditures SET status=?, approved_by=?, approved_at=?, approval_note=?, updated_at=? WHERE id=?`, status, ctx.user.id, db3.now(), note || null, db3.now(), e.id);
+        }
+        audit3.log({ user: ctx.user, action: `expenditure.${status}`, entity: "expenditure", entityId: e.id, clientId: e.client_id, ip: ctx.ip, details });
+        return { ok: true, status };
+      });
+      r.get("/api/budget/summary", auth3.requireAuth, auth3.requirePerm("budget:read"), () => {
+        const funds = db3.all(`SELECT * FROM funding_sources WHERE is_active=1`).map(fundSummary);
+        return {
+          totals: { budget: cents(funds.reduce((s, f) => s + f.total_amount, 0)), spent: cents(funds.reduce((s, f) => s + f.spent, 0)), pending: cents(funds.reduce((s, f) => s + f.pending, 0)), remaining: cents(funds.reduce((s, f) => s + f.remaining, 0)) },
+          by_category: db3.all(`SELECT category, ROUND(SUM(amount),2) amount, COUNT(*) n FROM expenditures WHERE status IN ('approved','reimbursed') GROUP BY category ORDER BY amount DESC`),
+          // Approved and reimbursed only, the same as the headline "Spent (approved)" figure above it: the two
+          // used to differ by whatever was still pending, on the same page.
+          by_month: db3.all(`SELECT substr(spent_at,1,7) month, ROUND(SUM(amount),2) amount FROM expenditures WHERE status IN ('approved','reimbursed') GROUP BY month ORDER BY month`),
+          per_client: db3.one(`SELECT COUNT(DISTINCT client_id) clients, ROUND(COALESCE(SUM(amount),0),2) amount FROM expenditures WHERE client_id IS NOT NULL AND status IN ('approved','reimbursed')`),
+          funds
+        };
+      });
+    };
+    module.exports.wouldCycle = wouldCycle;
+    module.exports.assertInPeriod = assertInPeriod;
+    module.exports.localDate = localDate;
+    module.exports.localMidnight = localMidnight;
+    module.exports.orgTimezone = orgTimezone;
+    module.exports.validTimezone = validTimezone;
+    module.exports.cents = cents;
+    module.exports.lineAvailable = lineAvailable;
+  }
+});
+
 // local/shims/os.js
 var os_exports = {};
 __export(os_exports, {
@@ -12249,7 +12749,8 @@ var require_admin = __commonJS({
       "backup_schedule_hours",
       "backup_retain_count",
       "backup_offsite_dir",
-      "client_retention_years"
+      "client_retention_years",
+      "org_timezone"
     ];
     var listener = (init_listener(), __toCommonJS(listener_exports));
     var fs = (init_fs(), __toCommonJS(fs_exports));
@@ -12263,6 +12764,8 @@ var require_admin = __commonJS({
         }
         const pol = auth3.policy();
         out2.policy = pol;
+        const budget = require_budget();
+        out2.timezone = { effective: budget.orgTimezone(), fallback: config.orgTimezone || null, from_env: !!proc.env.ORG_TIMEZONE };
         out2.env = { env: config.env, tls: !!config.tls.cert, tls_mode: config.tls.mode, key_source: config.keySource, idle_minutes: pol.idleMinutes, absolute_hours: pol.absoluteHours, mfa_required_roles: pol.mfaRequiredRoles, listener: listener.describe(), ms_graph_configured: !!(config.msGraph.tenantId && config.msGraph.clientId && config.msGraph.clientSecret && config.msGraph.user), oidc_configured: config.oidc.enabled, oidc_label: config.oidc.label };
         return out2;
       });
@@ -12275,6 +12778,7 @@ var require_admin = __commonJS({
             if (["session_idle_minutes", "session_absolute_hours", "password_max_age_days", "backup_retain_count"].includes(k) && v !== "" && Number(v) < 1) throw badRequest(`${k} must be at least 1; leave it blank to use the default`);
             if (k === "client_retention_years" && v !== "" && Number(v) < 6) throw badRequest("Client records must be kept at least 6 years (45 CFR \xA7164.316(b)(2)); most SUD programs keep 7 or more");
             if (k === "self_signup" && v !== "" && !["0", "1"].includes(v)) throw badRequest("self_signup must be 1 (on) or 0 (off)");
+            if (k === "org_timezone" && v !== "" && !require_budget().validTimezone(v)) throw badRequest("org_timezone must be a time zone name such as America/Los_Angeles");
             if (k === "mfa_required_roles") v = v.split(",").map((x) => x.trim()).filter((x) => ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"].includes(x)).join(",");
             if (k === "session_idle_minutes" && v !== "" && Number(v) > 60) throw badRequest("Idle timeout may not exceed 60 minutes (HIPAA automatic logoff)");
             if (v === "") db3.run(`DELETE FROM settings WHERE key=?`, k);
@@ -12841,487 +13345,6 @@ var require_auth2 = __commonJS({
         return { ok: true };
       });
     };
-  }
-});
-
-// server/crud.js
-var require_crud = __commonJS({
-  "server/crud.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth();
-    var audit3 = require_audit();
-    var { notFound, forbidden, HttpError: HttpError3 } = require_http();
-    var { validate, paging } = require_validate();
-    var { uuid: uuid2 } = require_crypto();
-    function clientExists(id) {
-      return !!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, id);
-    }
-    var STALE_MESSAGE = "This record was changed by someone else since you opened it. Reload to see their changes.";
-    function assertFresh(ctx, row, entity) {
-      const token2 = ctx.body && typeof ctx.body === "object" ? ctx.body.if_updated_at : void 0;
-      if (token2 === void 0 || token2 === null || token2 === "") return;
-      if (row.updated_at && String(token2) === String(row.updated_at)) return;
-      audit3.log({ user: ctx.user, action: `${entity}.update.conflict`, entity, entityId: row.id, clientId: row.client_id || (entity === "client" ? row.id : null), ip: ctx.ip, success: false });
-      throw new HttpError3(409, STALE_MESSAGE, { stale: true, updated_at: row.updated_at || null });
-    }
-    function build(r, opts) {
-      const { table, entity, perm, shape, dateCol = "created_at", ownerCol = "user_id", joins = "", select = `${table}.*`, clientRequired = true } = opts;
-      const base = opts.base || `/api/${entity}s`;
-      const readPerm = `${perm}:read`, writePerm = `${perm}:write`;
-      function decorate(ctx, rows) {
-        return opts.afterLoad ? rows.map((x) => opts.afterLoad(ctx, x)) : rows;
-      }
-      function checkClient(ctx, clientId) {
-        if (clientId) {
-          if (!clientExists(clientId)) throw notFound("Client not found");
-          auth3.assertClientAccess(ctx, clientId);
-        }
-      }
-      r.get(base, auth3.requireAuth, auth3.requirePerm(readPerm, writePerm), (ctx) => {
-        const { limit: limit2, offset } = paging(ctx.query, { limit: 100, max: 1e3 });
-        const where = ["1=1"];
-        const params = [];
-        if (clientRequired || opts.hasClient !== false) {
-          const cf = auth3.caseloadFilter(ctx.user, `${table}.client_id`);
-          if (cf.sql !== "1=1") {
-            where.push(`(${table}.client_id IS NULL OR ${cf.sql})`);
-            params.push(...cf.params);
-          }
-          const cid = ctx.query.get("client_id");
-          if (cid) {
-            where.push(`${table}.client_id=?`);
-            params.push(cid);
-          }
-        }
-        if (ownerCol && ctx.query.get("user_id")) {
-          where.push(`${table}.${ownerCol}=?`);
-          params.push(ctx.query.get("user_id"));
-        }
-        if (ownerCol && ctx.query.get("mine") === "1") {
-          where.push(`${table}.${ownerCol}=?`);
-          params.push(ctx.user.id);
-        }
-        if (ctx.query.get("from")) {
-          where.push(`${table}.${dateCol} >= ?`);
-          params.push(ctx.query.get("from"));
-        }
-        if (ctx.query.get("to")) {
-          where.push(`${table}.${dateCol} <= ?`);
-          params.push(ctx.query.get("to") + (ctx.query.get("to").length === 10 ? "T23:59:59.999Z" : ""));
-        }
-        if (opts.filters) opts.filters(ctx, where, params);
-        const w = "WHERE " + where.join(" AND ");
-        const order = opts.order || `${table}.${dateCol} DESC`;
-        const rows = db3.all(`SELECT ${select} FROM ${table} ${joins} ${w} ORDER BY ${order} LIMIT ? OFFSET ?`, ...params, limit2, offset);
-        const total = db3.one(`SELECT COUNT(*) n FROM ${table} ${joins} ${w}`, ...params).n;
-        audit3.log({ user: ctx.user, action: `${entity}.list`, ip: ctx.ip, clientId: ctx.query.get("client_id") || null, details: { count: rows.length } });
-        return { rows: decorate(ctx, rows), total, limit: limit2, offset };
-      });
-      r.get(`${base}/:id`, auth3.requireAuth, auth3.requirePerm(readPerm, writePerm), (ctx) => {
-        const row = db3.one(`SELECT ${select} FROM ${table} ${joins} WHERE ${table}.id=?`, ctx.params.id);
-        if (!row) throw notFound();
-        if (row.client_id) auth3.assertClientAccess(ctx, row.client_id);
-        else if (opts.ownerOnly && row[ownerCol] !== ctx.user.id && !auth3.hasPerm(ctx.user, opts.ownerOnly)) {
-          audit3.log({ user: ctx.user, action: "authz.denied", entity, entityId: row.id, ip: ctx.ip, success: false, details: { reason: "not the owner" } });
-          throw forbidden("That record belongs to another worker");
-        }
-        audit3.log({ user: ctx.user, action: `${entity}.view`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip });
-        return { row: decorate(ctx, [row])[0] };
-      });
-      r.post(base, auth3.requireAuth, auth3.requirePerm(writePerm), (ctx) => {
-        const v = validate(ctx.body, shape);
-        if (clientRequired && !v.client_id) throw require_http().badRequest("client_id is required");
-        checkClient(ctx, v.client_id);
-        if (opts.beforeInsert) opts.beforeInsert(ctx, v);
-        const id = uuid2();
-        const cols2 = { id, ...v };
-        if (ownerCol && (cols2[ownerCol] === void 0 || cols2[ownerCol] === null || opts.restrictOwner && !auth3.hasPerm(ctx.user, "clients:all"))) cols2[ownerCol] = ctx.user.id;
-        if (opts.creatorCol) cols2[opts.creatorCol] = ctx.user.id;
-        const keys = Object.keys(cols2).filter((k) => cols2[k] !== void 0 && !k.startsWith("_"));
-        db3.transaction(() => {
-          db3.run(`INSERT INTO ${table}(${keys.join(",")}) VALUES(${keys.map(() => "?").join(",")})`, ...keys.map((k) => cols2[k]));
-          if (opts.afterInsert) opts.afterInsert(ctx, { id, ...cols2 });
-        });
-        audit3.log({ user: ctx.user, action: `${entity}.create`, entity, entityId: id, clientId: v.client_id || null, ip: ctx.ip });
-        ctx.status = 201;
-        return { id };
-      });
-      r.put(`${base}/:id`, auth3.requireAuth, auth3.requirePerm(writePerm), (ctx) => {
-        const row = db3.one(`SELECT * FROM ${table} WHERE id=?`, ctx.params.id);
-        if (!row) throw notFound();
-        if (row.client_id) auth3.assertClientAccess(ctx, row.client_id);
-        if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden("You cannot edit this record");
-        if (!opts.noUpdatedAt) assertFresh(ctx, row, entity);
-        const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true, existing: row });
-        if (v.client_id && v.client_id !== row.client_id) checkClient(ctx, v.client_id);
-        if (opts.restrictOwner && v[ownerCol] !== void 0 && !auth3.hasPerm(ctx.user, "clients:all")) delete v[ownerCol];
-        if (opts.beforeUpdate) opts.beforeUpdate(ctx, v, row);
-        const keys = Object.keys(v).filter((k) => v[k] !== void 0 && !k.startsWith("_"));
-        const stamp2 = db3.now();
-        if (keys.length) db3.run(`UPDATE ${table} SET ${keys.map((k) => `${k}=?`).join(", ")}${opts.noUpdatedAt ? "" : ", updated_at=?"} WHERE id=?`, ...keys.map((k) => v[k]), ...opts.noUpdatedAt ? [] : [stamp2], row.id);
-        if (opts.afterUpdate) opts.afterUpdate(ctx, { ...row, ...v }, row);
-        audit3.log({ user: ctx.user, action: `${entity}.update`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip, details: { fields: keys } });
-        return { ok: true, updated_at: opts.noUpdatedAt ? void 0 : (db3.one(`SELECT updated_at FROM ${table} WHERE id=?`, row.id) || {}).updated_at };
-      });
-      r.delete(`${base}/:id`, auth3.requireAuth, auth3.requirePerm(writePerm), (ctx) => {
-        const row = db3.one(`SELECT * FROM ${table} WHERE id=?`, ctx.params.id);
-        if (!row) throw notFound();
-        if (row.client_id) auth3.assertClientAccess(ctx, row.client_id);
-        if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden("You cannot delete this record");
-        if (opts.canDelete && !opts.canDelete(ctx, row)) throw forbidden("You cannot delete this record");
-        if (opts.beforeDelete) opts.beforeDelete(ctx, row);
-        db3.run(`DELETE FROM ${table} WHERE id=?`, row.id);
-        db3.tombstone(table, row.id);
-        audit3.log({ user: ctx.user, action: `${entity}.delete`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip });
-        return { ok: true };
-      });
-    }
-    function ownerOrManager(col = "user_id") {
-      return (ctx, row) => row[col] === ctx.user.id || auth3.hasPerm(ctx.user, "clients:all");
-    }
-    module.exports = { build, ownerOrManager, clientExists, assertFresh, STALE_MESSAGE };
-  }
-});
-
-// server/routes/budget.js
-var require_budget = __commonJS({
-  "server/routes/budget.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth();
-    var audit3 = require_audit();
-    var crud = require_crud();
-    var C = require_constants();
-    var config = require_config();
-    var { badRequest, notFound, HttpError: HttpError3 } = require_http();
-    var { validate } = require_validate();
-    var { uuid: uuid2 } = require_crypto();
-    var cents = (v) => typeof v === "number" && Number.isFinite(v) ? Math.round(v * 100) / 100 : v;
-    function localDate(when = /* @__PURE__ */ new Date(), tz = config.orgTimezone) {
-      const d = when instanceof Date ? when : new Date(when);
-      if (!Number.isFinite(d.getTime())) return null;
-      try {
-        return new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
-      } catch {
-        return d.toISOString().slice(0, 10);
-      }
-    }
-    function localMidnight(date, tz = config.orgTimezone) {
-      const guess = Date.parse(`${date}T00:00:00Z`);
-      if (!Number.isFinite(guess)) return null;
-      const offset = (ms) => {
-        try {
-          const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
-          return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - (ms - ms % 1e3);
-        } catch {
-          return 0;
-        }
-      };
-      const first = guess - offset(guess);
-      return new Date(guess - offset(first)).toISOString();
-    }
-    var fundShape = {
-      name: { type: "string", required: true, maxLen: 200 },
-      source_type: { type: "string", enum: C.FUNDING_TYPES },
-      grant_number: { type: "string", maxLen: 100 },
-      fiscal_year_start: { type: "date", required: true },
-      fiscal_year_end: { type: "date", required: true },
-      total_amount: { type: "number", required: true, min: 0 },
-      restrictions: { type: "string", maxLen: 2e3 },
-      notes: { type: "string", maxLen: 2e3 },
-      is_active: { type: "boolean" }
-    };
-    var lineShape = { category: { type: "string", required: true, enum: C.BUDGET_CATEGORIES }, label: { type: "string", maxLen: 200 }, allocated_amount: { type: "number", required: true, min: 0 }, notes: { type: "string", maxLen: 1e3 }, parent_id: { type: "string" } };
-    function buildLineTree(flat) {
-      const byId = new Map(flat.map((l) => [l.id, { ...l, children: [] }]));
-      const roots = [];
-      for (const l of byId.values()) {
-        const p = l.parent_id && byId.get(l.parent_id);
-        if (p) p.children.push(l);
-        else roots.push(l);
-      }
-      const rollup = (l) => {
-        let subtreeSpent = l.spent, subtreePending = l.pending;
-        for (const c of l.children) {
-          rollup(c);
-          subtreeSpent += c.subtree_spent;
-          subtreePending += c.subtree_pending;
-        }
-        l.subtree_spent = cents(subtreeSpent);
-        l.subtree_pending = cents(subtreePending);
-        l.subtree_remaining = cents(l.allocated_amount - subtreeSpent - subtreePending);
-        l.child_allocated = cents(l.children.reduce((s, c) => s + c.allocated_amount, 0));
-        l.unallocated = cents(l.allocated_amount - l.child_allocated);
-        l.available = cents(l.allocated_amount - l.child_allocated - l.spent - l.pending);
-      };
-      for (const r of roots) rollup(r);
-      return roots;
-    }
-    function wouldCycle(lineId, proposedParentId) {
-      let cur = proposedParentId;
-      const seen2 = /* @__PURE__ */ new Set();
-      while (cur) {
-        if (cur === lineId || seen2.has(cur)) return true;
-        seen2.add(cur);
-        const row = db3.one(`SELECT parent_id FROM budget_lines WHERE id=?`, cur);
-        cur = row ? row.parent_id : null;
-      }
-      return false;
-    }
-    function assertInPeriod(fund, date, what) {
-      if (!date) return;
-      const today = localDate();
-      if (date > today) throw badRequest(`${what} is in the future (${date})`);
-      if (fund && (fund.fiscal_year_start && date < fund.fiscal_year_start || fund.fiscal_year_end && date > fund.fiscal_year_end)) {
-        throw badRequest(`${what} ${date} is outside the period of ${fund.name} (${fund.fiscal_year_start} to ${fund.fiscal_year_end}). Charge it to the fund that covers that date.`);
-      }
-    }
-    var money = (n) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    function assertPeriodOrder(start2, end) {
-      if (start2 && end && end < start2) throw badRequest(`The period ends (${end}) before it starts (${start2})`);
-    }
-    function assertRoom(fundId, parentId, amount, { excluding = null } = {}) {
-      const siblings = parentId ? db3.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE parent_id=? AND id<>?`, parentId, excluding || "").n : db3.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE funding_source_id=? AND parent_id IS NULL AND id<>?`, fundId, excluding || "").n;
-      const holder = parentId ? db3.one(`SELECT COALESCE(label, category) AS name, allocated_amount AS cap FROM budget_lines WHERE id=?`, parentId) : db3.one(`SELECT name, total_amount AS cap FROM funding_sources WHERE id=?`, fundId);
-      if (!holder) return;
-      const total = cents(siblings + amount);
-      if (total > cents(holder.cap)) {
-        throw badRequest(`That would allocate ${money(total)} against ${holder.name}, which ${parentId ? "is allocated" : "totals"} ${money(holder.cap)}; ${money(cents(holder.cap - siblings))} is left to allocate. Reduce the amount, or raise ${parentId ? "the parent allocation" : "the fund's total"} first.`);
-      }
-    }
-    function lineAvailable(lineId, { excluding = null } = {}) {
-      const l = db3.one(`SELECT * FROM budget_lines WHERE id=?`, lineId);
-      if (!l) return null;
-      const child = db3.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE parent_id=?`, lineId).n;
-      const spent = db3.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE budget_line_id=? AND status IN ('approved','reimbursed') AND id<>?`, lineId, excluding || "").n;
-      return cents(l.allocated_amount - child - spent);
-    }
-    function fundSummary(f) {
-      const spent = db3.one(`SELECT ROUND(COALESCE(SUM(amount),0),2) n FROM expenditures WHERE funding_source_id=? AND status IN ('approved','reimbursed')`, f.id).n;
-      const pending = db3.one(`SELECT ROUND(COALESCE(SUM(amount),0),2) n FROM expenditures WHERE funding_source_id=? AND status='pending'`, f.id).n;
-      const staffMinutes = db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE funding_source_id=?`, f.id).n;
-      const staffMinutesApproved = db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE funding_source_id=? AND status='approved'`, f.id).n;
-      const staffCost = db3.one(`SELECT ROUND(COALESCE(SUM(t.minutes/60.0*COALESCE(u.hourly_cost,0)),0),2) n FROM time_entries t JOIN users u ON u.id=t.user_id WHERE t.funding_source_id=?`, f.id).n;
-      const flatLines = db3.all(`SELECT b.*, (SELECT ROUND(COALESCE(SUM(amount),0),2) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status IN ('approved','reimbursed')) AS spent, (SELECT ROUND(COALESCE(SUM(amount),0),2) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status='pending') AS pending FROM budget_lines b WHERE b.funding_source_id=? ORDER BY category`, f.id);
-      const allocated = flatLines.filter((l) => !l.parent_id).reduce((s, l) => s + l.allocated_amount, 0);
-      const lines = buildLineTree(flatLines);
-      const totalDays = Math.max(1, (Date.parse(f.fiscal_year_end) - Date.parse(f.fiscal_year_start)) / 864e5);
-      const elapsed = Math.min(totalDays, Math.max(0, (Date.now() - Date.parse(f.fiscal_year_start)) / 864e5));
-      return {
-        ...f,
-        spent,
-        pending,
-        staff_minutes: staffMinutes,
-        staff_minutes_approved: staffMinutesApproved,
-        staff_cost: staffCost,
-        allocated: cents(allocated),
-        unallocated: cents(f.total_amount - allocated),
-        remaining: cents(f.total_amount - spent - pending),
-        pct_spent: f.total_amount ? spent / f.total_amount * 100 : 0,
-        pct_elapsed: elapsed / totalDays * 100,
-        lines
-      };
-    }
-    module.exports = (r) => {
-      r.get("/api/budget/funds", auth3.requireAuth, auth3.requirePerm("budget:read"), (ctx) => {
-        const rows = db3.all(`SELECT * FROM funding_sources ${ctx.query.get("all") === "1" ? "" : "WHERE is_active=1"} ORDER BY fiscal_year_start DESC, name`);
-        return { funds: rows.map(fundSummary) };
-      });
-      r.post("/api/budget/funds", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
-        const v = validate(ctx.body, fundShape);
-        const id = uuid2();
-        const keys = Object.keys(v);
-        assertPeriodOrder(v.fiscal_year_start, v.fiscal_year_end);
-        db3.run(`INSERT INTO funding_sources(id,${keys.join(",")}) VALUES(?,${keys.map(() => "?").join(",")})`, id, ...keys.map((k) => v[k]));
-        audit3.log({ user: ctx.user, action: "fund.create", entity: "funding_source", entityId: id, ip: ctx.ip });
-        ctx.status = 201;
-        return { id };
-      });
-      r.put("/api/budget/funds/:id", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
-        const f = db3.one(`SELECT * FROM funding_sources WHERE id=?`, ctx.params.id);
-        if (!f) throw notFound();
-        require_crud().assertFresh(ctx, f, "fund");
-        const v = validate(ctx.body, Object.fromEntries(Object.entries(fundShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
-        const keys = Object.keys(v);
-        if (!keys.length) return { ok: true, updated_at: f.updated_at };
-        assertPeriodOrder(v.fiscal_year_start ?? f.fiscal_year_start, v.fiscal_year_end ?? f.fiscal_year_end);
-        const stamp2 = db3.now();
-        db3.run(`UPDATE funding_sources SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), stamp2, f.id);
-        audit3.log({ user: ctx.user, action: "fund.update", entity: "funding_source", entityId: f.id, ip: ctx.ip, details: { fields: keys } });
-        return { ok: true, updated_at: stamp2 };
-      });
-      r.post("/api/budget/funds/:id/lines", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
-        const f = db3.one(`SELECT id FROM funding_sources WHERE id=?`, ctx.params.id);
-        if (!f) throw notFound();
-        const v = validate(ctx.body, lineShape);
-        const id = uuid2();
-        if (v.parent_id) {
-          const p = db3.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, v.parent_id, f.id);
-          if (!p) throw badRequest("Parent allocation does not belong to this fund");
-        }
-        assertRoom(f.id, v.parent_id || null, v.allocated_amount);
-        db3.run(`INSERT INTO budget_lines(id,funding_source_id,parent_id,category,label,allocated_amount,notes) VALUES(?,?,?,?,?,?,?)`, id, f.id, v.parent_id || null, v.category, v.label || null, v.allocated_amount, v.notes || null);
-        audit3.log({ user: ctx.user, action: "budget_line.create", entity: "budget_line", entityId: id, ip: ctx.ip, details: v.parent_id ? { parent_id: v.parent_id } : void 0 });
-        ctx.status = 201;
-        return { id };
-      });
-      r.put("/api/budget/lines/:id", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
-        const l = db3.one(`SELECT * FROM budget_lines WHERE id=?`, ctx.params.id);
-        if (!l) throw notFound();
-        require_crud().assertFresh(ctx, l, "budget_line");
-        const v = validate(ctx.body, Object.fromEntries(Object.entries(lineShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
-        if ("parent_id" in v && v.parent_id) {
-          if (v.parent_id === l.id) throw badRequest("A budget line cannot be its own parent");
-          const p = db3.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, v.parent_id, l.funding_source_id);
-          if (!p) throw badRequest("Parent allocation does not belong to this fund");
-          if (wouldCycle(l.id, v.parent_id)) throw badRequest("That would nest this allocation inside one of its own sub-allocations");
-        }
-        if ("allocated_amount" in v || "parent_id" in v) {
-          const parentId = "parent_id" in v ? v.parent_id || null : l.parent_id;
-          const amount = v.allocated_amount ?? l.allocated_amount;
-          assertRoom(l.funding_source_id, parentId, amount, { excluding: l.id });
-          const handedDown = db3.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE parent_id=?`, l.id).n;
-          if (cents(amount) < cents(handedDown)) throw badRequest(`Its sub-allocations already total ${money(handedDown)}; reduce those first`);
-        }
-        const keys = Object.keys(v);
-        const stamp2 = keys.length ? db3.now() : l.updated_at;
-        if (keys.length) db3.run(`UPDATE budget_lines SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), stamp2, l.id);
-        audit3.log({ user: ctx.user, action: "budget_line.update", entity: "budget_line", entityId: l.id, ip: ctx.ip, details: { fields: keys } });
-        return { ok: true, updated_at: stamp2 };
-      });
-      r.delete("/api/budget/lines/:id", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
-        const ids = db3.all(`WITH RECURSIVE sub(id) AS (SELECT id FROM budget_lines WHERE id=? UNION ALL SELECT b.id FROM budget_lines b JOIN sub ON b.parent_id=sub.id) SELECT id FROM sub`, ctx.params.id).map((row) => row.id);
-        db3.run(`DELETE FROM budget_lines WHERE id=?`, ctx.params.id);
-        for (const id of ids) {
-          db3.tombstone("budget_lines", id);
-          audit3.log({ user: ctx.user, action: "budget_line.delete", entity: "budget_line", entityId: id, ip: ctx.ip });
-        }
-        return { ok: true };
-      });
-      crud.build(r, {
-        table: "expenditures",
-        entity: "expenditure",
-        base: "/api/budget/expenditures",
-        perm: "budget",
-        dateCol: "spent_at",
-        clientRequired: false,
-        restrictOwner: true,
-        joins: "JOIN users u ON u.id=expenditures.user_id JOIN funding_sources f ON f.id=expenditures.funding_source_id LEFT JOIN budget_lines b ON b.id=expenditures.budget_line_id LEFT JOIN clients c ON c.id=expenditures.client_id LEFT JOIN users a ON a.id=expenditures.approved_by",
-        select: "expenditures.*, u.display_name AS worker, f.name AS fund, b.label AS line_label, b.category AS line_category, c.client_code, a.display_name AS approver",
-        // intervention_id is deliberately not writable here: it only ever means "this expenditure was
-        // auto-posted from that service record" (server/routes/interventions.js's syncExpenditure, a raw INSERT
-        // that bypasses this shape entirely). Accepting it from a normal request would let anyone attach a
-        // second expenditure to an already-linked intervention, double-counting its cost.
-        shape: {
-          client_id: { type: "string" },
-          user_id: { type: "string" },
-          funding_source_id: { type: "string", required: true },
-          budget_line_id: { type: "string" },
-          spent_at: { type: "date", required: true },
-          amount: { type: "number", required: true, min: 0.01 },
-          category: { type: "string", required: true, enum: C.BUDGET_CATEGORIES },
-          vendor: { type: "string", maxLen: 200 },
-          description: { type: "string", maxLen: 1e3 },
-          receipt_ref: { type: "string", maxLen: 200 }
-        },
-        filters: (ctx, where, params) => {
-          const f = ctx.query.get("fund");
-          if (f) {
-            where.push("expenditures.funding_source_id=?");
-            params.push(f);
-          }
-          const s = ctx.query.get("status");
-          if (s && s !== "all") {
-            where.push("expenditures.status=?");
-            params.push(s);
-          }
-        },
-        beforeInsert: (ctx, v) => {
-          v.amount = cents(v.amount);
-          const f = db3.one(`SELECT * FROM funding_sources WHERE id=? AND is_active=1`, v.funding_source_id);
-          if (!f) throw badRequest("Unknown or inactive funding source");
-          assertInPeriod(f, v.spent_at, "Expenditure date");
-          if (v.budget_line_id) {
-            const l = db3.one(`SELECT * FROM budget_lines WHERE id=? AND funding_source_id=?`, v.budget_line_id, f.id);
-            if (!l) throw badRequest("Budget line does not belong to fund");
-            if (!v.category) v.category = l.category;
-          }
-        },
-        beforeUpdate: (ctx, v, row) => {
-          if (v.amount !== void 0 && v.amount !== null) v.amount = cents(v.amount);
-          if ("spent_at" in v || "funding_source_id" in v || "budget_line_id" in v) {
-            const f = db3.one(`SELECT * FROM funding_sources WHERE id=? AND is_active=1`, v.funding_source_id || row.funding_source_id);
-            if (!f) throw badRequest("Unknown or inactive funding source");
-            assertInPeriod(f, v.spent_at || row.spent_at, "Expenditure date");
-            const lineId = "budget_line_id" in v ? v.budget_line_id : row.budget_line_id;
-            if (lineId) {
-              const l = db3.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, lineId, f.id);
-              if (!l) throw badRequest("Budget line does not belong to fund");
-            }
-          }
-        },
-        canEdit: (ctx, row) => row.status === "pending" && (row.user_id === ctx.user.id || auth3.hasPerm(ctx.user, "budget:approve"))
-      });
-      const TRANSITIONS = { pending: ["approved", "rejected"], approved: ["reimbursed"] };
-      r.post("/api/budget/expenditures/:id/approve", auth3.requireAuth, auth3.requirePerm("budget:approve"), (ctx) => {
-        const e = db3.one(`SELECT * FROM expenditures WHERE id=?`, ctx.params.id);
-        if (!e) throw notFound();
-        const { status, note, force } = validate(ctx.body, { status: { type: "string", required: true, enum: ["approved", "rejected", "reimbursed"] }, note: { type: "string", maxLen: 500 }, force: { type: "boolean" } });
-        if (!(TRANSITIONS[e.status] || []).includes(status)) {
-          const by = e.approved_by ? db3.one(`SELECT display_name FROM users WHERE id=?`, e.approved_by) : null;
-          throw new HttpError3(409, `This expenditure is already ${e.status}${by ? ` (by ${by.display_name})` : ""}; it cannot be marked ${status}`, { current_status: e.status, approved_by: e.approved_by || null });
-        }
-        if (e.user_id === ctx.user.id && status === "approved") throw badRequest("Separation of duties: you cannot approve your own expenditure; another approver must review it");
-        if (status === "rejected" && !note) throw badRequest("Say why this expenditure is being rejected, so the person who submitted it knows what to fix");
-        const details = { note, amount: e.amount };
-        if (status === "approved" && e.budget_line_id) {
-          const available = lineAvailable(e.budget_line_id, { excluding: e.id });
-          if (available !== null && cents(e.amount) > available) {
-            const over = cents(e.amount - available);
-            const line = db3.one(`SELECT label, category FROM budget_lines WHERE id=?`, e.budget_line_id);
-            const mayForce = ["supervisor", "admin"].includes(ctx.user.role);
-            if (!(force && note && mayForce)) {
-              throw new HttpError3(
-                409,
-                `Approving ${e.amount.toFixed(2)} would take ${line.label || line.category} ${over.toFixed(2)} below zero (${available.toFixed(2)} available)${mayForce ? ". Approve it anyway with force and a note saying why." : ". Ask a supervisor to approve it, or move it to a line with room."}`,
-                { overspend: true, available, over, force_allowed: mayForce }
-              );
-            }
-            details.overspend = over;
-            details.forced = true;
-          }
-        }
-        if (status === "reimbursed") {
-          db3.run(`UPDATE expenditures SET status=?, approval_note=COALESCE(?, approval_note), updated_at=? WHERE id=?`, status, note || null, db3.now(), e.id);
-          details.reimbursed_by = ctx.user.id;
-        } else {
-          db3.run(`UPDATE expenditures SET status=?, approved_by=?, approved_at=?, approval_note=?, updated_at=? WHERE id=?`, status, ctx.user.id, db3.now(), note || null, db3.now(), e.id);
-        }
-        audit3.log({ user: ctx.user, action: `expenditure.${status}`, entity: "expenditure", entityId: e.id, clientId: e.client_id, ip: ctx.ip, details });
-        return { ok: true, status };
-      });
-      r.get("/api/budget/summary", auth3.requireAuth, auth3.requirePerm("budget:read"), () => {
-        const funds = db3.all(`SELECT * FROM funding_sources WHERE is_active=1`).map(fundSummary);
-        return {
-          totals: { budget: cents(funds.reduce((s, f) => s + f.total_amount, 0)), spent: cents(funds.reduce((s, f) => s + f.spent, 0)), pending: cents(funds.reduce((s, f) => s + f.pending, 0)), remaining: cents(funds.reduce((s, f) => s + f.remaining, 0)) },
-          by_category: db3.all(`SELECT category, ROUND(SUM(amount),2) amount, COUNT(*) n FROM expenditures WHERE status IN ('approved','reimbursed') GROUP BY category ORDER BY amount DESC`),
-          // Approved and reimbursed only, the same as the headline "Spent (approved)" figure above it: the two
-          // used to differ by whatever was still pending, on the same page.
-          by_month: db3.all(`SELECT substr(spent_at,1,7) month, ROUND(SUM(amount),2) amount FROM expenditures WHERE status IN ('approved','reimbursed') GROUP BY month ORDER BY month`),
-          per_client: db3.one(`SELECT COUNT(DISTINCT client_id) clients, ROUND(COALESCE(SUM(amount),0),2) amount FROM expenditures WHERE client_id IS NOT NULL AND status IN ('approved','reimbursed')`),
-          funds
-        };
-      });
-    };
-    module.exports.wouldCycle = wouldCycle;
-    module.exports.assertInPeriod = assertInPeriod;
-    module.exports.localDate = localDate;
-    module.exports.localMidnight = localMidnight;
-    module.exports.cents = cents;
-    module.exports.lineAvailable = lineAvailable;
   }
 });
 
@@ -22798,6 +22821,7 @@ var require_sync = __commonJS({
         out2.reason = "This device has been offline longer than deletions are kept; it will rebuild from the office copy.";
       }
       for (const k of SYNC2.settings_keys) out2.settings[k] = db3.getSetting(k, null);
+      out2.settings.org_timezone = require_budget().orgTimezone() || null;
       return out2;
     }
     function changedColumns2(t, existing, raw, existingCols) {
@@ -24442,6 +24466,13 @@ async function start({ wasmUrl, onSaveError: onSaveError2, onLockLost: onLockLos
     import_db2.default.setSetting("caseload_restriction", "0");
     import_db2.default.setSetting("local_mode", "1");
     import_db2.default.setSetting("device_admin_user_id", id);
+    if (isStaticHost() && !import_db2.default.getSetting("org_timezone", null)) {
+      try {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (tz) import_db2.default.setSetting("org_timezone", tz);
+      } catch {
+      }
+    }
     import_audit2.default.log({ user: { id, username: v.username }, action: "local.setup" });
     return { ok: true, device_admin: true };
   }
@@ -24610,7 +24641,7 @@ async function handle(method, path, body, headers = {}) {
     if (sqlite_default.isWiped()) throw new import_http2.HttpError(410, "This device has been erased and needs to be set up again.", { wiped: true });
     if (sqlite_default.isReplaced()) throw new import_http2.HttpError(409, "A backup has just been restored on this device. Reload to continue.", { restored: true });
     if (sqlite_default.isFrozen()) throw new import_http2.HttpError(409, "SUDS is now open in another window on this device. Use that window, or take it back here.", { frozen: true });
-    if (method !== "GET" && /^\/api\/supplies(\/|$)/.test(url.pathname)) throw new import_http2.HttpError(403, "Supply counts are kept at the office and cannot be changed on this device. Visits you record here draw the office count down when you sync.", { serverOwned: true });
+    if (method !== "GET" && !isStaticHost() && /^\/api\/supplies(\/|$)/.test(url.pathname)) throw new import_http2.HttpError(403, "Supply counts are kept at the office and cannot be changed on this device. Visits you record here draw the office count down when you sync.", { serverOwned: true });
     const m = router.match(method, url.pathname);
     if (!m) throw new import_http2.HttpError(404, "Not found");
     if (m.methodNotAllowed) throw new import_http2.HttpError(405, "Method not allowed");

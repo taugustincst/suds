@@ -480,10 +480,26 @@ export function hasDraft(key) { return drafts.has(key); }
 // clock), whereas datetime-local swallows a date entered without a time — value reads as "" while the
 // box still shows the date — and its picker is awkward on phones. The wrapper exposes `.value` in the
 // shape the drafts and read() expect: "YYYY-MM-DD", "YYYY-MM-DDTHH:MM" or "".
+// Every date field in a form accepts 1900-01-01 to 2100-12-31 unless the field says otherwise. Without a
+// max, Chrome's year segment takes six digits, so digits typed in the wrong order or into the wrong
+// segment ended up as dates like 0006-09-05 or 20260-01-01 that looked accepted; read() below refuses a
+// date outside the range, by field, instead of saving it.
+export const DATE_MIN = '1900-01-01', DATE_MAX = '2100-12-31';
+// A calendar button beside a date field, opening the browser's own date picker (input.showPicker()).
+// The picker button Chrome draws inside the field ("Show date picker") is a small target at the field's
+// right edge that automated testers and some people miss; this one is a full-size button of the page's
+// own, never under anything. A browser without showPicker gets the field focused instead.
+function datePickButton(input, label) {
+  return h('button', { type: 'button', class: 'btn sm date-pick', 'data-date-pick': input.name, 'aria-label': `Choose ${label ? label.replace(/\s*\*$/, '') : 'the date'} from a calendar`, title: 'Open the calendar',
+    onClick: () => { try { if (typeof input.showPicker === 'function') { input.focus(); input.showPicker(); } else input.focus(); } catch { input.focus(); } } }, '📅');
+}
+// Only the overall range is enforced here: a field's own narrower min/max (a date of birth not in the
+// future) shapes the picker, and an existing record outside it must still be editable.
+const dateOutOfRange = (i) => !!i.value && (!/^\d{4}-\d{2}-\d{2}$/.test(i.value) || i.value < DATE_MIN || i.value > DATE_MAX);
 function dateTimePair(f, v) {
-  const dateI = h('input', { type: 'date', name: f.name, required: !!f.required, 'aria-label': `${f.label} — date` });
+  const dateI = h('input', { type: 'date', name: f.name, required: !!f.required, 'aria-label': `${f.label} — date`, min: f.min || DATE_MIN, max: f.max || DATE_MAX });
   const timeI = h('input', { type: 'time', name: `${f.name}_time`, 'aria-label': `${f.label} — time (optional)` });
-  const wrap = h('div', { class: 'dt-pair' }, dateI, timeI);
+  const wrap = h('div', { class: 'dt-pair' }, dateI, datePickButton(dateI, f.label), timeI);
   wrap.dateInput = dateI; wrap.timeInput = timeI;
   Object.defineProperty(wrap, 'value', {
     get: () => dateI.value ? (timeI.value ? `${dateI.value}T${timeI.value}` : dateI.value) : '',
@@ -516,7 +532,7 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
       case 'textarea': input = h('textarea', { name: f.name, required: !!f.required, rows: f.rows || 4, placeholder: f.placeholder || '' }, v || ''); break;
       case 'checkbox': input = h('input', { type: 'checkbox', name: f.name, checked: !!(v === 1 || v === true || v === '1') }); break;
       case 'datetime': input = dateTimePair(f, v); break;
-      case 'date': input = h('input', { type: 'date', name: f.name, required: !!f.required, value: v ? String(v).slice(0, 10) : '', min: f.min || null, max: f.max || null }); break;
+      case 'date': input = h('input', { type: 'date', name: f.name, required: !!f.required, value: v ? String(v).slice(0, 10) : '', min: f.min || DATE_MIN, max: f.max || DATE_MAX }); break;
       case 'number': input = h('input', { type: 'number', name: f.name, required: !!f.required, value: v ?? '', min: f.min, max: f.max, step: f.step ?? 'any', placeholder: f.placeholder || '' }); break;
       case 'client': input = clientPicker(f.name, v, f); break;
       case 'user': input = h('select', { name: f.name, required: !!f.required }, h('option', { value: '' }, f.placeholder || '—'), state.users.filter(u => u.is_active !== 0).map(u => h('option', { value: u.id, selected: u.id === v }, `${u.display_name} (${fmt.label(u.role)})`))); break;
@@ -541,7 +557,7 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     }
     const errEl = h('div', { class: 'err', id: errId, role: 'alert' });
     const wrap = h('div', { class: `field ${f.span ? 'span' : ''}`, 'data-field': f.name },
-      f.type === 'checkbox' ? h('label', { class: 'check', for: fieldId }, input, f.label) : [h('label', { for: fieldId }, f.label, f.required ? ' *' : ''), fieldLink(f), input],
+      f.type === 'checkbox' ? h('label', { class: 'check', for: fieldId }, input, f.label) : [h('label', { for: fieldId }, f.label, f.required ? ' *' : ''), fieldLink(f), f.type === 'date' ? h('div', { class: 'date-with-pick' }, input, datePickButton(input, f.label)) : input],
       f.help ? h('div', { class: 'help', id: helpId }, f.help) : null, errEl);
     target.append(wrap);
   }
@@ -651,7 +667,7 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
         // .badInput is set, but value is ""), so the field looked filled in and saved as nothing. Now a
         // date on its own is a valid answer, and anything the browser cannot parse is flagged by field.
         const d = i.dateInput, t = i.timeInput;
-        if (d.validity?.badInput || t.validity?.badInput || (t.value && !d.value) || (d.value && !/^\d{4}-\d{2}-\d{2}$/.test(d.value))) { bad.push(f); data[f.name] = null; }
+        if (d.validity?.badInput || t.validity?.badInput || (t.value && !d.value) || dateOutOfRange(d)) { bad.push(f); data[f.name] = null; }
         else if (!d.value) data[f.name] = null;
         // A required date & time (a visit, a call) with no time is midnight local, so it orders among
         // that day's other records; an optional one (a due date, an appointment) is kept as the calendar
@@ -659,11 +675,16 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
         else if (!t.value) data[f.name] = f.required ? new Date(`${d.value}T00:00`).toISOString() : d.value;
         else data[f.name] = new Date(`${d.value}T${t.value}`).toISOString();
       }
+      // A date the browser half-parsed (badInput) or a year typed into the wrong segment (0006, 20260) is
+      // refused by field rather than saved.
+      else if (f.type === 'date' && (i.validity?.badInput || dateOutOfRange(i))) { bad.push(f); data[f.name] = null; }
       else data[f.name] = i.value === '' ? null : i.value;
       if (f.required && (data[f.name] === null || data[f.name] === undefined || data[f.name] === '') && !bad.includes(f)) missing.push(f);
     }
     if (bad.length || missing.length) {
-      const fields = { ...Object.fromEntries(bad.map(f => [f.name, 'enter a valid date (the time is optional), or leave both blank'])), ...Object.fromEntries(missing.map(f => [f.name, `${f.label || 'This field'} is required`])) };
+      const badMsg = (f) => { const i = inputs[f.name]; const d = i.dateInput || i;
+        return d.value && dateOutOfRange(d) ? `is not a real date: the year must be four digits, between ${DATE_MIN.slice(0, 4)} and ${DATE_MAX.slice(0, 4)}` : f.type === 'datetime' ? 'enter a valid date (the time is optional), or leave both blank' : 'enter a valid date, or leave it blank'; };
+      const fields = { ...Object.fromEntries(bad.map(f => [f.name, badMsg(f)])), ...Object.fromEntries(missing.map(f => [f.name, `${f.label || 'This field'} is required`])) };
       // Name the field the way the form does ("Client"), not the way the database does ("client_id").
       const names = missing.map(f => f.label).filter(Boolean);
       const e = new Error(bad.length ? 'Check the date below — it is not a valid date.' : names.length ? `Fill in ${names.length === 1 ? names[0] : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1]} below.` : 'Fill in the required field below.');
@@ -1033,22 +1054,14 @@ export const firstName = (n, fallback = '') => {
   const real = words.filter(w => !HONORIFIC.test(w));
   return real[0] || words[0] || String(fallback || '').trim();
 };
-// The name a greeting uses, the way a colleague would say it:
-//   "Kiran Patel" -> "Kiran" (the given name), "Mary-Jo Baker" -> "Mary-Jo";
-//   "Dr. Patel" and "Dr Kiran Patel" -> "Dr. Patel" (someone who put a title in their name wants it used,
-//   with the surname — "Hi Kiran" to a person who signs as Dr. Patel, or "Hi Patel", is wrong either way);
-//   a single word ("QATEST") is used whole, exactly as typed.
-// Never re-cased; a blank display name falls back to the username.
+// The name a greeting uses: the display name exactly as the person typed it ("QATEST QA Engineer",
+// "Dr. Kiran Patel"), with runs of spaces collapsed. It used to be cut to a first name ("Good evening,
+// QATEST" for "QATEST QA Engineer"), which a tester read — twice — as the name being truncated; a
+// person's display name is theirs to choose, so it is shown whole. Never re-cased; a blank display name
+// falls back to the username so a greeting is never "Good morning, ".
 export const greetingName = (n, fallback = '') => {
-  const words = String(n || '').trim().split(/\s+/).filter(Boolean);
-  if (!words.length) return String(fallback || '').trim();
-  if (words.length === 1) return words[0];
-  const real = words.filter(w => !HONORIFIC.test(w));
-  if (HONORIFIC.test(words[0]) && real.length) {
-    const title = words[0].endsWith('.') ? words[0] : words[0] + '.';
-    return `${title} ${real[real.length - 1]}`;
-  }
-  return real[0] || words[0];
+  const name = String(n || '').trim().split(/\s+/).filter(Boolean).join(' ');
+  return name || String(fallback || '').trim();
 };
 const canAny = (perm) => (Array.isArray(perm) ? perm.some(p => can(p)) : can(perm));
 export function parseHash() {
@@ -1092,6 +1105,7 @@ let renderSeq = 0;
 // A view that rewrites its own address in place (the sign-in page's Log in / Sign up, #/login?mode=…) is
 // still the render that finished: replaceHash() records the rewrite so render() can tell it from a redirect.
 let replacedDuringRender = null;
+const APP_ALIASES = new Set(['getapp', 'get-app', 'app', 'phone', 'tablet', 'install']);
 /** Change the address without a new history entry or a re-render (a view switching its own panel). */
 export function replaceHash(to) {
   const from = location.hash;
@@ -1135,6 +1149,12 @@ async function renderPage() {
   if (state.mfaPending && r.name !== 'mfa') { nav('mfa'); return; }
   if (r.name === 'mfa' || r.name === 'login') return show(routes[r.name === 'mfa' ? 'mfa' : 'dashboard'](r));
   if (state.user.must_change_password && r.name !== 'profile') { nav('profile?force=1'); return; }
+  // Addresses people guess or bookmark for "SUDS on my phone" and for the list of devices were "Page not
+  // found". The phone/tablet page is a page of its own (get-app.html; /app on the office server); the
+  // devices are This device on a device copy, and Settings › Synced devices on the office server.
+  // location.replace, so Back does not land on the alias and bounce forward again.
+  if (APP_ALIASES.has(r.name)) { location.replace(state.local || window.SUDS_STATIC_HOST ? 'get-app.html' : '/app'); return; }
+  if (r.name === 'devices') { location.replace('#/' + (state.local ? 'sync' : can('users:manage') ? 'admin?tab=devices' : 'dashboard')); return; }
   const navItem = NAV.find(n => n.name === r.name);
   // An address that goes nowhere (a mistyped link, a page that no longer exists) says so, instead of
   // quietly showing Home under the wrong address.

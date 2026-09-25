@@ -103,6 +103,9 @@ export async function start({ wasmUrl, onSaveError, onLockLost, force } = {}) {
     db.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,0,?)`, id, v.username, hashPassword(v.password), v.display_name, v.role || 'navigator', db.now());
     db.setSetting('org_name', v.org_name || 'SUDS on this device'); db.setSetting('caseload_restriction', '0'); db.setSetting('local_mode', '1');
     db.setSetting('device_admin_user_id', id);
+    // SUDS on this device has no office server to take a time zone from: the programme's calendar is the
+    // one this browser is set to when the device is set up (Settings → Program settings changes it).
+    if (sync.isStaticHost() && !db.getSetting('org_timezone', null)) { try { const tz = Intl.DateTimeFormat().resolvedOptions().timeZone; if (tz) db.setSetting('org_timezone', tz); } catch { /* the default applies */ } }
     audit.log({ user: { id, username: v.username }, action: 'local.setup' });
     return { ok: true, device_admin: true };
   }
@@ -256,11 +259,13 @@ async function handle(method, path, body, headers = {}) {
     // Another window took the database over (see local/shims/sqlite.js): this page must not write, and a
     // read here could show what that window has since changed. The page shows its own explanation.
     if (sqlite.isFrozen()) throw new HttpError(409, 'SUDS is now open in another window on this device. Use that window, or take it back here.', { frozen: true });
-    // Harm-reduction supply counts are the office's shelf count (server/sync-tables.js serverOwned): a
-    // change made here would never be sent and would be silently overwritten at the next sync, so it is
-    // refused up front instead of looking saved. Visits recorded here still draw the office shelf down
-    // when they sync.
-    if (method !== 'GET' && /^\/api\/supplies(\/|$)/.test(url.pathname)) throw new HttpError(403, 'Supply counts are kept at the office and cannot be changed on this device. Visits you record here draw the office count down when you sync.', { serverOwned: true });
+    // Harm-reduction supply counts on a device that syncs with an office are the office's shelf count
+    // (server/sync-tables.js serverOwned): a change made here would never be sent and would be silently
+    // overwritten at the next sync, so it is refused up front instead of looking saved (the Supplies page
+    // disables its buttons there and says why). Visits recorded here still draw the office shelf down
+    // when they sync. SUDS on this device (the static build) has no office: its cupboard is its own, and
+    // refusing it there left "Add a supply item" failing on every save.
+    if (method !== 'GET' && !sync.isStaticHost() && /^\/api\/supplies(\/|$)/.test(url.pathname)) throw new HttpError(403, 'Supply counts are kept at the office and cannot be changed on this device. Visits you record here draw the office count down when you sync.', { serverOwned: true });
     const m = router.match(method, url.pathname);
     if (!m) throw new HttpError(404, 'Not found');
     if (m.methodNotAllowed) throw new HttpError(405, 'Method not allowed');

@@ -74,7 +74,7 @@ ok(tour, 'the welcome tour opens for the new sample account');
 const step1 = tour ? await page.textContent('.modal') : '';
 ok(!/shows up on the other right away/.test(step1), 'M2: the tour does not promise that entries appear on other devices', step1.slice(0, 200));
 ok(/stays in this browser/.test(step1) && /backup/.test(step1), 'M2: the tour says records stay in this browser, and to back them up');
-ok(/^Hi Sample\./.test(step1.replace(/^Welcome to SUDS/, '').trim()), 'the tour greets "Sample User" as Sample', step1.slice(0, 60));
+ok(/^Hi Sample User\./.test(step1.replace(/^Welcome to SUDS/, '').trim()), 'the tour greets "Sample User" by the whole display name', step1.slice(0, 60));
 let labels = [];
 for (let i = 0; i < 8; i++) { const b = await page.$('.modal button.primary'); if (!b) break; labels.push((await b.textContent()).trim()); if (labels.at(-1) === 'Done') { await shot(page, 'tour-last-step'); } await b.tap(); await settle(page); }
 eq(labels.at(-1), 'Done', 'the last tour step\'s button says Done');
@@ -82,7 +82,7 @@ ok(labels.slice(0, -1).every(l => l === 'Next'), 'the steps before it say Next',
 ok(!(await page.$('.modal-bg')), 'Done closes the tour');
 
 const h1 = (await page.textContent('h1')).trim();
-ok(/^Good (morning|afternoon|evening), Sample$/.test(h1), 'the greeting uses the first name', h1);
+ok(/^Good (morning|afternoon|evening), Sample User$/.test(h1), 'the greeting uses the whole display name, as typed', h1);
 const clients = await kernel(page, 'GET', '/api/clients?limit=100&status=all');
 ok(clients.data.clients.length > 5, 'M3: one tap created the account and loaded the sample data', clients.data.clients.length);
 
@@ -242,7 +242,7 @@ const unit = await page.evaluate(async () => {
 });
 eq(unit.part2, 'Part 2 disclosure', 'consent type part2_disclosure reads "Part 2 disclosure"');
 eq([unit.narrative, unit.soap, unit.intake, unit.safety].join(','), 'Narrative,SOAP,Intake,Safety Plan', 'note formats are Title Case with acronyms kept');
-eq(unit.g.join(','), 'Kiran,Dr. Patel,Dr. Patel,QATEST,Mary-Jo,dr. patel', 'greetings: given name; honorific + surname; one word as typed; never re-cased');
+eq(unit.g.join(','), 'Kiran Patel,Dr. Patel,Dr Kiran Patel,QATEST,Mary-Jo Baker,dr. kiran patel', 'greetings: the display name whole, exactly as typed; never cut, never re-cased');
 eq(unit.fb, 'jdoe', 'a blank name greets by username');
 const contrast = async (theme) => page.evaluate((theme) => {
   document.documentElement.dataset.theme = theme;
@@ -272,7 +272,7 @@ await ctx.close();
   await p.check('input[name=storage_ack]');
   await p.tap('button[type=submit]'); await p.waitForSelector('.layout', { timeout: 15000 }); await settle(p);
   for (let i = 0; i < 6; i++) { const b = await p.$('.modal button.primary'); if (!b) break; await b.tap(); await settle(p); }
-  ok(/, Kiran$/.test((await p.textContent('h1')).trim()), '"Kiran Patel" is greeted as Kiran');
+  ok(/, Kiran Patel$/.test((await p.textContent('h1')).trim()), '"Kiran Patel" is greeted by the whole display name');
   const btn = await until(() => p.$('[data-sample-banner] [data-load-sample]'), { timeout: 5000 });
   ok(btn, 'M1: Home offers to load sample data with a button');
   if (btn) {

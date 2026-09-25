@@ -226,8 +226,16 @@ route('resource', async (r) => {
   // direct user gesture on every browser and WebView — nothing relies on a programmatic .click() on an
   // off-screen input, which Android WebViews refuse and which automated testers report as "the file
   // control is obscured" (an off-screen input can only be reached through the button that forwards to it).
-  const fileInput = h('input', { type: 'file', accept: 'image/*', multiple: true, 'aria-label': 'Add pictures', onChange: async () => {
+  // The accessibility tree has one control here, the button "Add pictures" (the input). The file window a
+  // click opens belongs to the operating system and can open behind or beside the browser, where a person
+  // or a testing tool watching the page does not see it; the card says a window has opened (and says so
+  // on Cancel) instead of the page looking as if nothing happened.
+  const fileInput = h('input', { type: 'file', accept: 'image/*', multiple: true, 'aria-label': 'Add pictures', 'data-add-pictures': '1',
+    onClick: () => { status.textContent = 'Choose one or more pictures in the window that opened.'; },
+    onCancel: () => { status.textContent = 'No pictures chosen.'; },
+    onChange: async () => {
     const files = [...fileInput.files]; fileInput.value = '';
+    if (!files.length) { status.textContent = 'No pictures chosen.'; return; }
     let added = 0;
     for (const f of files) {
       if (photos.length >= 12) { toast('A resource can have at most 12 pictures', 'error'); break; }
