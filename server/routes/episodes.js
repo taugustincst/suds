@@ -130,7 +130,7 @@ module.exports = (r) => {
     const calDischarge = db.one(`SELECT id, extracted_at FROM caloms_records WHERE episode_id=? AND record_type='discharge'`, e.id);
     db.transaction(() => {
       if (calDischarge) { db.run(`DELETE FROM caloms_records WHERE id=?`, calDischarge.id); db.tombstone('caloms_records', calDischarge.id); }
-      db.run(`UPDATE episodes SET status='open', closed_at=NULL, closed_by=NULL, discharge_reason=NULL, discharge_disposition=NULL, discharge_summary_enc=NULL, updated_at=? WHERE id=?`, db.now(), e.id);
+      db.run(`UPDATE episodes SET status='open', closed_at=NULL, closed_by=NULL, discharge_reason=NULL, discharge_disposition=NULL, discharge_summary_enc=NULL, reopen_reason_enc=?, updated_at=? WHERE id=?`, reason ? encrypt(reason) : null, db.now(), e.id);
       // Re-admission is an explicit act, so the client is active again whatever status the discharge left.
       db.run(`UPDATE clients SET status='active', discharge_date=NULL, discharge_reason=NULL, updated_at=? WHERE id=?`, db.now(), e.client_id);
       // The discharge ended the care team on its date; re-admission restores them. Failing that, the worker
@@ -140,7 +140,7 @@ module.exports = (r) => {
         db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, uuid(), e.client_id, ctx.user.id, 'primary', new Date().toISOString().slice(0, 10), ctx.user.id);
       }
     });
-    audit.log({ user: ctx.user, action: 'episode.reopen', entity: 'episode', entityId: e.id, clientId: e.client_id, ip: ctx.ip, details: { reason: reason || undefined, was_discharged: e.discharge_reason, caloms_discharge_removed: calDischarge ? true : undefined } });
+    audit.log({ user: ctx.user, action: 'episode.reopen', entity: 'episode', entityId: e.id, clientId: e.client_id, ip: ctx.ip, details: { reason_recorded: reason ? true : undefined, was_discharged: e.discharge_reason, caloms_discharge_removed: calDischarge ? true : undefined } });
     return { ok: true, warnings: calDischarge && calDischarge.extracted_at ? ['The CalOMS discharge record for this episode had already been sent to DHCS; correct it through the county\'s CalOMS process.'] : [] };
   });
 

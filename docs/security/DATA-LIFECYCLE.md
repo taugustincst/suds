@@ -15,7 +15,7 @@ A second, separate way to run SUDS (`../WEB_APP.md`, `../PLATFORM.md`): the app'
 | Data | Default | Setting | Mechanism |
 | --- | --- | --- | --- |
 | Client records (every table) | 7 years after the **last activity** on the record, once every episode is closed or the record is inactive; never below 6 years | `client_retention_years` (Settings), `CLIENT_RETENTION_YEARS` | Daily hard delete from every client-linked table in one transaction; legal hold exempts; purge audited by client code only (`server/retention.js`) |
-| Audit log | 7 years (2,555 days) | `AUDIT_RETENTION_DAYS` | Oldest entries purged hourly; the purge is recorded so the chain stays verifiable (`server/audit.js` `purge`) |
+| Audit log | 7 years (2,555 days); minimum 6 years (2,190 days) | `AUDIT_RETENTION_DAYS` (a lower value is raised to 2,190 with a startup warning and a "bad" Security status item) | Oldest entries purged hourly; the purge is recorded so the chain stays verifiable (`server/audit.js` `purge`) |
 | Deletion tombstones (for devices) | 180 days | `TOMBSTONE_RETENTION_DAYS` | `server/audit.js` `purgeTombstones` |
 | Sessions | Expired / revoked sessions removed hourly (revoked kept 24 h) | Session policy | `server/index.js` |
 | Operational logs | 30 days, rolled at 8 MB | — | `server/log.js` |

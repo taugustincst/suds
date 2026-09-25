@@ -137,23 +137,35 @@ async function verifyIdToken(idToken, doc) {
   return claims;
 }
 
-// Authentication method references (RFC 8176) that mean a second factor was used at the provider: multiple
-// factors, a one-time password, a hardware- or software-secured key. Entra ID sends ["pwd","mfa"]; Okta
-// sends "mfa" and the factor ("otp", "hwk", "swk").
-const MFA_AMR = ['mfa', 'otp', 'hwk', 'swk'];
+// Authentication method references (RFC 8176). `mfa` says outright that more than one factor was used
+// (Entra ID sends ["pwd","mfa"], Okta "mfa" with the factors). Any other single value — a one-time password,
+// a hardware- or software-secured key, an SMS — can be the only factor on its own (a passwordless key, an
+// emailed code), so it counts only beside a factor of a different kind: something known, something held,
+// something the person is. Two values of the same kind (otp+sms, fpt+face) are still one kind of factor.
+const MFA_AMR = ['mfa'];
+const AMR_FACTOR_KIND = {
+  pwd: 'knowledge', pin: 'knowledge', kba: 'knowledge',
+  otp: 'possession', sms: 'possession', tel: 'possession', hwk: 'possession', swk: 'possession', sc: 'possession',
+  fpt: 'inherence', face: 'inherence', iris: 'inherence', retina: 'inherence', vbm: 'inherence',
+};
 /**
  * Did the identity provider say this sign-in used multi-factor authentication? Only consulted when the
- * administrator has chosen to trust it (sso_trust_idp_mfa). An `acr` equal to one of the configured values
- * counts too, for providers that express MFA as an authentication context class rather than in amr.
+ * administrator has chosen to trust it (sso_trust_idp_mfa). Yes when amr holds `mfa`, when amr names two
+ * factors of different RFC 8176 kinds (pwd+otp, hwk+pin, fpt+swk), or when `acr` equals one of the configured
+ * values (sso_mfa_acr_values), for providers that express MFA as an authentication context class.
  * Returns { ok, via, amr, acr }.
  */
 function idpMfa(claims, { acrValues = [] } = {}) {
   const amr = Array.isArray(claims.amr) ? claims.amr.map(String) : typeof claims.amr === 'string' ? [claims.amr] : [];
   const acr = claims.acr === undefined || claims.acr === null ? null : String(claims.acr);
-  const amrHit = amr.find((a) => MFA_AMR.includes(a.toLowerCase()));
+  const lower = amr.map((a) => a.toLowerCase());
+  const amrHit = lower.find((a) => MFA_AMR.includes(a));
   if (amrHit) return { ok: true, via: `amr:${amrHit}`, amr, acr };
+  const byKind = new Map();
+  for (const a of lower) { const k = AMR_FACTOR_KIND[a]; if (k && !byKind.has(k)) byKind.set(k, a); }
+  if (byKind.size >= 2) return { ok: true, via: `amr:${[...byKind.values()].slice(0, 2).join('+')}`, amr, acr };
   if (acr && acrValues.includes(acr)) return { ok: true, via: `acr:${acr}`, amr, acr };
   return { ok: false, via: null, amr, acr };
 }
 
-module.exports = { startAuth, completeAuth, stateCookie, COOKIE, idpMfa, MFA_AMR, _resetCacheForTests: () => { discoveryCache = null; jwksCache = null; } };
+module.exports = { startAuth, completeAuth, stateCookie, COOKIE, idpMfa, MFA_AMR, AMR_FACTOR_KIND, _resetCacheForTests: () => { discoveryCache = null; jwksCache = null; } };

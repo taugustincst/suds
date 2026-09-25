@@ -73,7 +73,7 @@ test('trust off (the default): an SSO sign-in still needs SUDS two-step verifica
   assert.ok(id2);
 });
 
-test('trust on: amr mfa/otp/hwk/swk (or a configured acr) completes the sign-in without the SUDS code, audited as such', async () => {
+test('trust on: amr mfa or two factor kinds (or a configured acr) completes the sign-in without the SUDS code, audited as such', async () => {
   db.setSetting('sso_trust_idp_mfa', '1'); db.setSetting('sso_mfa_acr_values', 'urn:county:mfa');
   try {
     const id = ssoUser('mfa-trusted', 'sub-trusted', { mfa: true });
@@ -85,8 +85,11 @@ test('trust on: amr mfa/otp/hwk/swk (or a configured acr) completes the sign-in 
     assert.equal(log.mfa, 'idp'); assert.equal(log.via, 'amr:mfa');
     // An account with no SUDS authenticator, past its deadline, reaches records on the provider's MFA.
     ssoUser('mfa-idp-only', 'sub-idp-only');
-    const r2 = await ssoSignIn({ sub: 'sub-idp-only', amr: ['hwk'] });
+    const r2 = await ssoSignIn({ sub: 'sub-idp-only', amr: ['hwk', 'pin'] });
     assert.equal((await get('/api/clients', r2.cookie)).status, 200);
+    // A hardware key alone is one factor (RFC 8176): not MFA, so no records without the SUDS code.
+    const r2b = await ssoSignIn({ sub: 'sub-idp-only', amr: ['hwk'] });
+    assert.equal((await get('/api/clients', r2b.cookie)).status, 403);
     // acr instead of amr, and the acr asked for at the provider.
     const r3 = await ssoSignIn({ sub: 'sub-idp-only', acr: 'urn:county:mfa' });
     assert.equal((await get('/api/clients', r3.cookie)).status, 200);
@@ -102,7 +105,16 @@ test('trust on: amr mfa/otp/hwk/swk (or a configured acr) completes the sign-in 
 
 test('what counts as the provider multi-factor sign-in, and Security status says whether it is trusted', async () => {
   assert.equal(oidc.idpMfa({ amr: ['pwd'] }).ok, false);
-  assert.equal(oidc.idpMfa({ amr: 'otp' }).ok, true);
+  // RFC 8176: otp, hwk, swk, sms alone are single factors; two of the same kind are still one kind.
+  for (const amr of ['otp', ['otp'], ['hwk'], ['swk'], ['sms'], ['otp', 'sms'], ['hwk', 'swk'], ['pwd', 'kba'], ['fpt', 'face'], ['pwd', 'user'], []]) {
+    assert.equal(oidc.idpMfa({ amr }).ok, false, JSON.stringify(amr));
+  }
+  // mfa itself, or two factors of different kinds (knowledge / possession / inherence).
+  for (const amr of [['mfa'], 'mfa', ['pwd', 'mfa'], ['pwd', 'otp'], ['pwd', 'hwk'], ['hwk', 'pin'], ['swk', 'pin'], ['fpt', 'hwk'], ['face', 'swk'], ['PWD', 'OTP'], ['pwd', 'sms'], ['sc', 'pin']]) {
+    assert.equal(oidc.idpMfa({ amr }).ok, true, JSON.stringify(amr));
+  }
+  assert.equal(oidc.idpMfa({ amr: ['pwd', 'otp'] }).via, 'amr:pwd+otp');
+  assert.equal(oidc.idpMfa({ amr: ['otp'], acr: 'gold' }).ok, false);
   assert.equal(oidc.idpMfa({ acr: 'gold' }, { acrValues: ['gold'] }).via, 'acr:gold');
   db.setSetting('sso_trust_idp_mfa', '1');
   try {

@@ -58,8 +58,12 @@ function breakGlassReason(ctx) {
   if (reason.length < BREAK_GLASS_MIN) throw badRequest(`A break-glass reason must be at least ${BREAK_GLASS_MIN} characters and say why emergency access is needed`);
   return reason.slice(0, 300);
 }
+// The reason is kept here, encrypted, for the supervisor's review; the audit entry carries only the event's
+// id (the reason can describe the client, and audit details are plaintext that travels in auditor exports).
 function recordBreakGlass(ctx, { clientId, noteId = null, reason }) {
-  db.run(`INSERT INTO breakglass_events(id,user_id,client_id,note_id,reason_enc,at) VALUES(?,?,?,?,?,?)`, uuid(), ctx.user.id, clientId || null, noteId, encrypt(reason), db.now());
+  const id = uuid();
+  db.run(`INSERT INTO breakglass_events(id,user_id,client_id,note_id,reason_enc,at) VALUES(?,?,?,?,?,?)`, id, ctx.user.id, clientId || null, noteId, encrypt(reason), db.now());
+  return id;
 }
 function canRead(ctx, note) {
   if (auth.hasPerm(ctx.user, kindPerm(note.kind, 'read')) || auth.hasPerm(ctx.user, kindPerm(note.kind, 'write'))) return true;
@@ -101,8 +105,8 @@ module.exports = (r) => {
     const glassReason = !kinds.includes('clinical') && auth.hasPerm(ctx.user, 'notes:clinical:breakglass') && ctx.query.get('client_id') && ctx.query.get('kind') === 'clinical' ? breakGlassReason(ctx) : null;
     if (glassReason) {
       kinds.push('clinical');
-      audit.log({ user: ctx.user, action: 'note.list.breakglass', clientId: ctx.query.get('client_id'), ip: ctx.ip, details: { reason: glassReason } });
-      recordBreakGlass(ctx, { clientId: ctx.query.get('client_id'), reason: glassReason });
+      const event = recordBreakGlass(ctx, { clientId: ctx.query.get('client_id'), reason: glassReason });
+      audit.log({ user: ctx.user, action: 'note.list.breakglass', clientId: ctx.query.get('client_id'), ip: ctx.ip, details: { reason_recorded: true, breakglass_event: event } });
     }
     const where = ['n.deleted_at IS NULL', `n.kind IN (${kinds.map(() => '?').join(',') || "''"})`]; const params = [...kinds];
     const cf = auth.caseloadFilter(ctx.user, 'n.client_id'); where.push(cf.sql); params.push(...cf.params);
@@ -150,8 +154,8 @@ module.exports = (r) => {
     const access = canRead(ctx, n);
     if (!access) { audit.log({ user: ctx.user, action: 'note.view.denied', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, success: false }); throw forbidden('You do not have access to this note'); }
     const addenda = db.all(`SELECT a.id,a.reason,a.created_at,a.content_enc,u.display_name AS author FROM note_addenda a JOIN users u ON u.id=a.author_id WHERE a.note_id=? ORDER BY a.created_at`, n.id).map(a => ({ ...a, content: decrypt(a.content_enc), content_enc: undefined }));
-    audit.log({ user: ctx.user, action: access === 'breakglass' ? 'note.view.breakglass' : 'note.view', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: access === 'breakglass' ? { reason: breakGlassReason(ctx) } : { kind: n.kind } });
-    if (access === 'breakglass') recordBreakGlass(ctx, { clientId: n.client_id, noteId: n.id, reason: breakGlassReason(ctx) });
+    const event = access === 'breakglass' ? recordBreakGlass(ctx, { clientId: n.client_id, noteId: n.id, reason: breakGlassReason(ctx) }) : null;
+    audit.log({ user: ctx.user, action: access === 'breakglass' ? 'note.view.breakglass' : 'note.view', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: access === 'breakglass' ? { reason_recorded: true, breakglass_event: event } : { kind: n.kind } });
     return { note: { ...present(n), ...signatureState(n), addenda, problems: linkedProblems(ctx, n) } };
   });
 

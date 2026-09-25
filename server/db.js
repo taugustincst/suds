@@ -501,6 +501,17 @@ const migrations = [
       if (generalScope(scope)) upd.run(r.id);
     }
   },
+  // 36: free-text reasons out of plaintext. A court order's vacated reason and a legal hold's reason move into
+  //     encrypted columns; a record's delete/merge reason, a legal hold's clearing reason and an episode's
+  //     reopen reason get encrypted columns of their own, and the audit entry records only that a reason was
+  //     given. (Existing audit entries are hash-chained and append-only, so they are left as they are.)
+  (d) => {
+    encryptColumn(d, 'court_orders', 'vacated_reason', 'vacated_reason_enc');
+    if (tableExists(d, 'court_orders')) addColumn(d, 'court_orders', 'vacated_reason_enc', 'TEXT');
+    encryptColumn(d, 'clients', 'legal_hold_reason', 'legal_hold_reason_enc');
+    for (const c of ['legal_hold_reason_enc', 'legal_hold_cleared_reason_enc', 'removed_reason_enc']) addColumn(d, 'clients', c, 'TEXT');
+    if (tableExists(d, 'episodes')) addColumn(d, 'episodes', 'reopen_reason_enc', 'TEXT');
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

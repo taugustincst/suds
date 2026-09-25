@@ -28,9 +28,9 @@ module.exports = {
     { name: 'funding_sources', enc: [], scope: 'all', writePerm: 'budget:manage' },
     { name: 'budget_lines', enc: [], scope: 'all', writePerm: 'budget:manage', parent: ['funding_sources', 'funding_source_id'], selfParent: 'parent_id' },
     // merged_into points at another client: the record that was kept must land before its duplicate.
-    { name: 'clients', enc: ['first_name_enc', 'last_name_enc', 'preferred_name_enc', 'dob_enc', 'phone_enc', 'alt_phone_enc', 'email_enc', 'address_enc', 'medicaid_id_enc', 'emergency_contact_enc', 'goals_enc', 'flags_enc'], scope: 'client', clientCol: 'id', idx: true, writePerm: 'clients:write', selfParent: 'merged_into' },
+    { name: 'clients', enc: ['first_name_enc', 'last_name_enc', 'preferred_name_enc', 'dob_enc', 'phone_enc', 'alt_phone_enc', 'email_enc', 'address_enc', 'medicaid_id_enc', 'emergency_contact_enc', 'goals_enc', 'flags_enc', 'legal_hold_reason_enc', 'legal_hold_cleared_reason_enc', 'removed_reason_enc'], legacy: { legal_hold_reason: 'legal_hold_reason_enc' }, scope: 'client', clientCol: 'id', idx: true, writePerm: 'clients:write', selfParent: 'merged_into' },
     { name: 'assignments', enc: [], scope: 'client', clientCol: 'client_id', writePerm: 'assignments:manage', parent: ['clients', 'client_id'] },
-    { name: 'episodes', enc: ['presenting_problem_enc', 'discharge_summary_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'episodes:write', parent: ['clients', 'client_id'] },
+    { name: 'episodes', enc: ['presenting_problem_enc', 'discharge_summary_enc', 'reopen_reason_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'episodes:write', parent: ['clients', 'client_id'] },
     // CalOMS Tx records hang off an episode: the episode must land first.
     { name: 'caloms_records', enc: ['answers_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'episodes:write', parent: ['episodes', 'episode_id'] },
     { name: 'interventions', enc: ['summary_enc'], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'interventions:write', parent: ['clients', 'client_id'] },
@@ -40,7 +40,7 @@ module.exports = {
     // A referral may cite the consent it was made under, so consents come first.
     { name: 'consents', enc: ['recipient_enc', 'purpose_enc', 'scope_enc', 'signer_name_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
     // A disclosure made under a subpart E court order cites it, so orders travel before disclosures.
-    { name: 'court_orders', enc: ['court_enc', 'case_ref_enc', 'recipient_enc', 'purpose_enc', 'scope_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'court-orders:write', parent: ['clients', 'client_id'] },
+    { name: 'court_orders', enc: ['court_enc', 'case_ref_enc', 'recipient_enc', 'purpose_enc', 'scope_enc', 'vacated_reason_enc'], legacy: { vacated_reason: 'vacated_reason_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'court-orders:write', parent: ['clients', 'client_id'] },
     { name: 'part2_notices', enc: ['notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
     { name: 'referrals', enc: ['outcome_enc', 'barrier_enc', 'notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'referrals:write', parent: ['clients', 'client_id'] },
     // Migration 24 moved tasks.description into description_enc; kernels before 1.9.3 still push `description`.

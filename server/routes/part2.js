@@ -207,8 +207,8 @@ module.exports = (r) => {
     auth.assertClientAccess(ctx, o.client_id);
     if (o.status === 'vacated') throw badRequest('This order has already been vacated');
     const { reason } = validate(ctx.body, { reason: { type: 'string', required: true, maxLen: 300 } });
-    db.run(`UPDATE court_orders SET status='vacated', vacated_at=?, vacated_reason=?, updated_at=? WHERE id=?`, db.now(), reason, db.now(), o.id);
-    audit.log({ user: ctx.user, action: 'court_order.vacate', entity: 'court_order', entityId: o.id, clientId: o.client_id, ip: ctx.ip });
+    db.run(`UPDATE court_orders SET status='vacated', vacated_at=?, vacated_reason_enc=?, updated_at=? WHERE id=?`, db.now(), encrypt(reason), db.now(), o.id);
+    audit.log({ user: ctx.user, action: 'court_order.vacate', entity: 'court_order', entityId: o.id, clientId: o.client_id, ip: ctx.ip, details: { reason_recorded: true } });
     return { ok: true };
   });
 

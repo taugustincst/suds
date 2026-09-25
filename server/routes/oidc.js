@@ -13,8 +13,8 @@ const { HttpError, notFound } = require('../http');
 function redirect(res, location) { res.writeHead(302, { Location: location }); res.end(); }
 
 // Trusting the identity provider's second factor in place of SUDS's own TOTP (Settings → Security policy;
-// off by default). With it on, a sign-in whose ID token says multi-factor was used (amr mfa/otp/hwk/swk, or
-// an acr the administrator named) is complete without the SUDS code; one that does not say so falls back to
+// off by default). With it on, a sign-in whose ID token says multi-factor was used (amr mfa, or two factors
+// of different kinds such as pwd+otp, or an acr the administrator named) is complete without the SUDS code; one that does not say so falls back to
 // the SUDS second factor exactly as before.
 function mfaTrust() {
   const acrValues = String(db.getSetting('sso_mfa_acr_values', '') || '').split(/[\s,]+/).filter(Boolean);

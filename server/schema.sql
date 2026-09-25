@@ -170,7 +170,12 @@ CREATE TABLE IF NOT EXISTS clients (
   -- A legal hold (litigation, investigation, a patient's own request) exempts the record from the retention
   -- purge in server/retention.js and from deletion until an administrator clears it.
   legal_hold INTEGER NOT NULL DEFAULT 0,
-  legal_hold_reason TEXT,
+  -- Free-text reasons can name the person or their situation, so they are encrypted here and the audit entry
+  -- records only that one was given: why the hold was placed, why it was last cleared, and why the record
+  -- was deleted or merged away.
+  legal_hold_reason_enc TEXT,
+  legal_hold_cleared_reason_enc TEXT,
+  removed_reason_enc TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   deleted_at TEXT
@@ -577,7 +582,7 @@ CREATE TABLE IF NOT EXISTS court_orders (
   document_ref TEXT,
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','vacated')),
   vacated_at TEXT,
-  vacated_reason TEXT,
+  vacated_reason_enc TEXT,             -- free text that can describe the case: encrypted
   recorded_by TEXT NOT NULL REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -783,6 +788,7 @@ CREATE TABLE IF NOT EXISTS episodes (
   discharge_reason TEXT,               -- completed, transferred, incarcerated, moved, lost_contact, declined, deceased, other
   discharge_disposition TEXT,          -- where the client went (level of care, program)
   discharge_summary_enc TEXT,
+  reopen_reason_enc TEXT,              -- why a closed episode was reopened (free text: encrypted, not in the audit entry)
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed')),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))

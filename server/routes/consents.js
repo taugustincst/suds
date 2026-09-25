@@ -40,7 +40,8 @@ function presentConsent(c) {
 function presentOrder(o) {
   return { ...o, court: o.court_enc ? decrypt(o.court_enc) : null, case_ref: o.case_ref_enc ? decrypt(o.case_ref_enc) : null, recipient: o.recipient_enc ? decrypt(o.recipient_enc) : null,
     purpose: o.purpose_enc ? decrypt(o.purpose_enc) : null, scope: o.scope_enc ? decrypt(o.scope_enc) : null,
-    court_enc: undefined, case_ref_enc: undefined, recipient_enc: undefined, purpose_enc: undefined, scope_enc: undefined, problems: disclosure.courtOrderProblems(o) };
+    vacated_reason: o.vacated_reason_enc ? decrypt(o.vacated_reason_enc) : null,
+    court_enc: undefined, case_ref_enc: undefined, recipient_enc: undefined, purpose_enc: undefined, scope_enc: undefined, vacated_reason_enc: undefined, problems: disclosure.courtOrderProblems(o) };
 }
 
 module.exports = (r) => {

@@ -342,11 +342,12 @@ module.exports = (r) => {
       }
       // Import suggestions are a plain (non-FK) pointer, so the loop above did not move them.
       db.run(`UPDATE import_items SET suggested_client_id=?, updated_at=? WHERE suggested_client_id=?`, keep.id, db.now(), source.id);
-      db.run(`UPDATE clients SET merged_into=?, status='closed', deleted_at=?, updated_at=? WHERE id=?`, keep.id, db.now(), db.now(), source.id);
+      // Why the duplicate went: free text that can describe the person, so encrypted on the merged-away row.
+      db.run(`UPDATE clients SET merged_into=?, status='closed', deleted_at=?, removed_reason_enc=?, updated_at=? WHERE id=?`, keep.id, db.now(), v.reason ? encrypt(v.reason) : null, db.now(), source.id);
       moved._filled_fields = keys.length;
     });
-    // The detail of what moved is structural, never PHI.
-    audit.log({ user: ctx.user, action: 'client.merge', entity: 'client', entityId: keep.id, clientId: keep.id, ip: ctx.ip, details: { merged: source.id, merged_code: source.client_code, moved, reason: v.reason || undefined } });
+    // The detail of what moved is structural, never PHI; the reason is on the merged-away row, encrypted.
+    audit.log({ user: ctx.user, action: 'client.merge', entity: 'client', entityId: keep.id, clientId: keep.id, ip: ctx.ip, details: { merged: source.id, merged_code: source.client_code, moved, reason_recorded: v.reason ? true : undefined } });
     audit.log({ user: ctx.user, action: 'client.merged_away', entity: 'client', entityId: source.id, clientId: source.id, ip: ctx.ip, details: { into: keep.id } });
     return { ok: true, kept: keep.id, merged: source.id, moved };
   });
@@ -415,8 +416,11 @@ module.exports = (r) => {
     const row = loadClient(ctx, ctx.params.id);
     const v = validate(ctx.body, { hold: { type: 'boolean', required: true }, reason: { type: 'string', maxLen: 300 } });
     if (v.hold && !v.reason) throw badRequest('A legal hold needs a reason (the matter or request it relates to)');
-    db.run(`UPDATE clients SET legal_hold=?, legal_hold_reason=?, updated_at=? WHERE id=?`, v.hold ? 1 : 0, v.hold ? v.reason : null, db.now(), row.id);
-    audit.log({ user: ctx.user, action: v.hold ? 'client.legal_hold.set' : 'client.legal_hold.clear', entity: 'client', entityId: row.id, clientId: row.id, ip: ctx.ip, details: { reason: v.reason || undefined } });
+    // The reason (a matter, a request, often naming people) is kept encrypted on the record; the audit entry
+    // says only whether one was given, because audit details are plaintext and travel in auditor exports.
+    if (v.hold) db.run(`UPDATE clients SET legal_hold=1, legal_hold_reason_enc=?, updated_at=? WHERE id=?`, encrypt(v.reason), db.now(), row.id);
+    else db.run(`UPDATE clients SET legal_hold=0, legal_hold_reason_enc=NULL, legal_hold_cleared_reason_enc=?, updated_at=? WHERE id=?`, v.reason ? encrypt(v.reason) : null, db.now(), row.id);
+    audit.log({ user: ctx.user, action: v.hold ? 'client.legal_hold.set' : 'client.legal_hold.clear', entity: 'client', entityId: row.id, clientId: row.id, ip: ctx.ip, details: { reason_recorded: v.reason ? true : undefined } });
     return { ok: true, legal_hold: v.hold ? 1 : 0 };
   });
 
@@ -425,8 +429,8 @@ module.exports = (r) => {
     if (!auth.hasPerm(ctx.user, 'clients:write')) throw forbidden();
     if (row.legal_hold) throw badRequest('This record is on legal hold and cannot be deleted until the hold is cleared');
     const { reason } = validate(ctx.body || {}, { reason: { type: 'string', required: true, maxLen: 300 } });
-    db.run(`UPDATE clients SET deleted_at=?, updated_at=? WHERE id=?`, db.now(), db.now(), row.id);
-    audit.log({ user: ctx.user, action: 'client.delete', entity: 'client', entityId: row.id, clientId: row.id, ip: ctx.ip, details: { reason } });
+    db.run(`UPDATE clients SET deleted_at=?, removed_reason_enc=?, updated_at=? WHERE id=?`, db.now(), encrypt(reason), db.now(), row.id);
+    audit.log({ user: ctx.user, action: 'client.delete', entity: 'client', entityId: row.id, clientId: row.id, ip: ctx.ip, details: { reason_recorded: true } });
     return { ok: true };
   });
 

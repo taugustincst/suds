@@ -122,7 +122,11 @@ test('an administrator can reach clinical notes only through break-glass, on the
   const glass = await admin.get(`/api/notes?client_id=${clientId}&kind=clinical`, { 'X-Break-Glass-Reason': 'Privacy officer request #12' });
   assert.ok(glass.data.rows.some(x => x.id === n.data.id), 'visible with a documented reason');
   const row = H.db.one(`SELECT details FROM audit_log WHERE action='note.list.breakglass' ORDER BY id DESC LIMIT 1`);
-  assert.ok(row && /Privacy officer/.test(row.details), 'and the reason is in the audit log');
+  // The reason is recorded encrypted in the review queue; the audit entry points at it without repeating it.
+  const details = JSON.parse(row.details);
+  assert.equal(details.reason_recorded, true); assert.ok(!/Privacy officer/.test(row.details), 'the free-text reason is not in the audit log');
+  const ev = H.db.one(`SELECT reason_enc FROM breakglass_events WHERE id=?`, details.breakglass_event);
+  assert.equal(require('../server/crypto').decrypt(ev.reason_enc), 'Privacy officer request #12');
 });
 
 test('a supervisor can approve a batch of staff time from the queue', async () => {
