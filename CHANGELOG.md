@@ -29,6 +29,12 @@ BAA/QSOA, DPA, SLA and pricing for counsel review).
     qualified service organisation, research, audit or evaluation) needs an agreement on file in the new
     Agreements register. The §2.31 elements are checked again at the moment of disclosure and on consents that
     arrive by sync, not only in the form. Turning `part2_program` off needs a recorded reason.
+  - Changing a referral's agency re-checks the consent against the new agency and accounts it; a referral
+    pushed from a device (a new warm hand-off, one progressed offline, a new agency) passes the same gate.
+  - De-identified exports now meet HIPAA Safe Harbor: dates to the year, ages over 89 as `90+`, restricted
+    three-digit ZIP areas as `000`, coded values only (free text never leaves), and record ids drawn at random
+    for each export. A client's discharge reason is chosen from a list. Row-level exports and most aggregate
+    reports do not suppress small cells, and the docs say so.
 - **County IT evidence** — `docs/security/` (architecture, encryption and keys, identity, audit, backup and DR,
   data lifecycle, vulnerability management, SDLC, incident response, SOC 2 readiness mapping, pre-answered
   questionnaire, pen-test scope). SUDS holds no SOC 2/ISO/HITRUST attestation and says so.
@@ -46,7 +52,11 @@ BAA/QSOA, DPA, SLA and pricing for counsel review).
     exports are signed with Ed25519.
   - The drill can prove the escrowed keys (`--keys-file`) and restore from the offsite copy; stale drill copies
     are swept at startup. Snapshots every few minutes (`backup_schedule_minutes`); a warning when backups are off.
-  - Identity: trust the identity provider's MFA claim (opt-in), deprovision accounts not seen at the IdP for N
+  - Audit retention cannot be set below six years (a lower setting is raised and reported). Reasons typed
+    when deleting, merging, holding or reopening a record, or vacating a court order, are stored encrypted and
+    kept out of the audit log.
+  - Identity: trust the identity provider's MFA claim (opt-in; `mfa`, two factors of different kinds, or a
+    configured `acr` — a lone one-time code is not enough), deprovision accounts not seen at the IdP for N
     days, and SCIM 2.0 user provisioning at `/scim/v2`. SAML is not supported (OIDC only).
   - Hardened Docker image, compose file and systemd unit; deployment guidance for county VMs, Azure Government /
     AWS GovCloud tenants and a warm standby.
@@ -64,18 +74,20 @@ BAA/QSOA, DPA, SLA and pricing for counsel review).
 - **CalOMS Tx and the billing boundary** — `docs/compliance/CALOMS.md`, `docs/SCOPE.md`.
   - Admission, discharge and annual-update records per episode (off by default; Reports → State reporting),
     DHCS-style edit checks with a validation report, and an extract with the monthly provider activity report;
-    records with fatal errors are held back. A download is a preview; "Mark as submitted" records the submission and
-    accounts each client as a state-reporting disclosure. **The
+    records with fatal errors are held back. The preview names nobody and cannot be submitted; "Produce submission
+    file" builds the file once, keeps it encrypted with its hash, accounts each client in it as a state-reporting
+    disclosure and serves exactly those bytes again. **The
     code sets and layout are not yet verified against the current DHCS data dictionary** (the spec could not be
     fetched); verify before a county submits.
   - County EHR hand-off: encounters per client per day for entry into SmartCare or billing, identified and
-    accounted. SUDS does not submit Drug Medi-Cal (837/Short-Doyle) claims.
+    accounted; a file-wide basis is a consent, QSOA or internal, never "other". SUDS does not submit Drug Medi-Cal (837/Short-Doyle) claims.
 - **FHIR R4** — `docs/integration/FHIR.md`. A read-only API at `/fhir/R4` (Patient, EpisodeOfCare, Encounter,
   Consent, ServiceRequest, Task, Observation, DocumentReference metadata, the resource directory) with Bulk Data
   `$export`, SMART Backend Services sign-in (private_key_jwt, RS384/ES384) or a client secret usable only at the
   token endpoint, scopes and rate limits (Settings → FHIR clients). Bulk output is encrypted at rest, re-checked
   against consent at download and accounted at first download; export jobs survive a restart. Resources
-  validate against US Core. The no-redisclosure label is now `NORDSCLCD` (HL7 retired `NORDSLCD`). A client's records are
+  validate against US Core. A consent records the categories of information it covers, and FHIR serves only
+  those; an existing consent covers everything over FHIR only when its wording plainly says so. The no-redisclosure label is now `NORDSCLCD` (HL7 retired `NORDSLCD`). A client's records are
   returned only under a live Part 2 consent naming the organisation for its purpose; counseling notes and
   restricted clients are never served; a search for one person never reveals whether they were withheld; every
   client disclosed gets an accounting row.
@@ -88,6 +100,8 @@ BAA/QSOA, DPA, SLA and pricing for counsel review).
     tabs are navigation with the current section marked; colour is never the only cue; dark-theme contrast,
     3:1 field borders and a clear focus ring; reflow at 320 px and 200% text; the idle warning has "Stay signed
     in"; Home's refresh can be turned off.
+  - The conformance report says how each criterion was evaluated; 4.1.2 and 4.1.3 are "Partially Supports"
+    until screen-reader testing is done. Scrolling tables keep a tab stop at 200% text.
   - Remaining partials are stated: untagged generated PDFs, uncaptioned pictures, the administrator's maximum
     session length, and screen-reader testing still to do.
 - **Security fixes found along the way:** an intake API key must now carry the intake scope (any key could stage
@@ -95,7 +109,7 @@ BAA/QSOA, DPA, SLA and pricing for counsel review).
 - **Market documents say only what is true:** claims qualified throughout `docs/market/` and `docs/security/`.
 - Reference lists (funding types and the like) no longer go empty for a moment while they reload.
 - Schema migrations 29 (clinical depth), 30 (CalOMS), 31 (Part 2), 32 (FHIR sign-in), 33 (append-only audit and
-  identity), 34 (disclosure gate).
+  identity), 34 (disclosure gate), 35 (consent categories, CalOMS submissions), 36 (encrypted reasons).
 
 ## 1.10.2 — 2026-09-25
 
