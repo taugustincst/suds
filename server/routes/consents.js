@@ -25,9 +25,10 @@ function presentConsent(c) {
   const active = !c.revoked_at && (!c.expires_at || c.expires_at >= today);
   return { ...c, recipient: c.recipient_enc ? decrypt(c.recipient_enc) : null, purpose: c.purpose_enc ? decrypt(c.purpose_enc) : null, scope: c.scope_enc ? decrypt(c.scope_enc) : null,
     signer_name: c.signer_name_enc ? decrypt(c.signer_name_enc) : null, revoked_reason: c.revoked_reason_enc ? decrypt(c.revoked_reason_enc) : null,
+    witness: c.witness_enc ? decrypt(c.witness_enc) : null,
     // The coded categories it covers, as a list ([] when none were recorded: it covers nothing automated).
     info_categories: [...disclosure.parseCategories(c.info_categories)],
-    recipient_enc: undefined, purpose_enc: undefined, scope_enc: undefined, signer_name_enc: undefined, revoked_reason_enc: undefined,
+    recipient_enc: undefined, purpose_enc: undefined, scope_enc: undefined, signer_name_enc: undefined, revoked_reason_enc: undefined, witness_enc: undefined,
     // A consent that lacks the §2.31 elements (one that arrived by sync or by hand, or a legacy one) is shown,
     // but cannot be chosen to authorise a disclosure: incomplete says why.
     active, part2: PART2_TYPES.includes(c.type), incomplete: disclosure.consentElementProblems(c),
@@ -85,10 +86,10 @@ module.exports = (r) => {
       if (v.expires_at && v.expires_at < v.signed_at) throw badRequest('A consent cannot expire before it was signed');
     }
     const id = uuid();
-    db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,expires_event,document_ref,witness,signed_on_paper,redisclosure_notice_given,
+    db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,expires_event,document_ref,witness_enc,signed_on_paper,redisclosure_notice_given,
         discloser,signer_relationship,signer_name_enc,revocation_right_given,refusal_consequences_given,rule_version,created_by,info_categories) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       id, ctx.params.id, v.type, v.recipient ? encrypt(v.recipient) : null, v.purpose ? encrypt(v.purpose) : null, v.scope ? encrypt(v.scope) : null, v.signed_at, v.expires_at || null, v.expires_event || null,
-      v.document_ref || null, v.witness || null, v.signed_on_paper ? 1 : 0, v.redisclosure_notice_given ? 1 : 0,
+      v.document_ref || null, v.witness ? encrypt(v.witness) : null, v.signed_on_paper ? 1 : 0, v.redisclosure_notice_given ? 1 : 0,
       v.discloser || null, v.signer_relationship || null, v.signer_name ? encrypt(v.signer_name) : null, v.revocation_right_given ? 1 : 0, v.refusal_consequences_given ? 1 : 0, part2 ? '2024' : null, ctx.user.id, infoCategories);
     audit.log({ user: ctx.user, action: 'consent.create', entity: 'consent', entityId: id, clientId: ctx.params.id, ip: ctx.ip, details: { type: v.type, rule_version: part2 ? '2024' : undefined, info_categories: infoCategories || undefined } });
     ctx.status = 201; return { id };

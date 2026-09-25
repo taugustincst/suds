@@ -192,7 +192,7 @@ function consentPushProblem(raw) {
   if (unknownCat) return `has a value the office does not accept (information category "${unknownCat.slice(0, 40)}")`;
   if (!require('../constants').PART2_CONSENT_TYPES.includes(raw.type)) return null;
   const v = { discloser: raw.discloser, recipient: raw.recipient_enc, purpose: raw.purpose_enc, scope: raw.scope_enc, expires_at: raw.expires_at, expires_event: raw.expires_event, document_ref: raw.document_ref,
-    signed_on_paper: raw.signed_on_paper, witness: raw.witness, signer_relationship: raw.signer_relationship, signer_name: raw.signer_name_enc, revocation_right_given: raw.revocation_right_given,
+    signed_on_paper: raw.signed_on_paper, witness: raw.witness_enc ?? raw.witness, signer_relationship: raw.signer_relationship, signer_name: raw.signer_name_enc, revocation_right_given: raw.revocation_right_given,
     redisclosure_notice_given: raw.redisclosure_notice_given, refusal_consequences_given: raw.refusal_consequences_given, signed_at: raw.signed_at };
   const missing = raw.rule_version === '2024' ? disclosure.missingPart2Elements(v) : disclosure.missingLegacyElements(v);
   if (missing.length) return `is missing a required field: a 42 CFR Part 2 consent must record ${missing.join('; ')}`;

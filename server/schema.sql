@@ -534,7 +534,7 @@ CREATE TABLE IF NOT EXISTS consents (
   revoked_at TEXT,
   revoked_reason_enc TEXT,             -- why the client revoked it (free text): encrypted
   document_ref TEXT,
-  witness TEXT,
+  witness_enc TEXT,                    -- who witnessed the signature: often a family member's name (migration 39)
   signed_on_paper INTEGER NOT NULL DEFAULT 0,
   -- The client was told that what is disclosed under this consent may not be redisclosed (§2.32).
   redisclosure_notice_given INTEGER NOT NULL DEFAULT 0,
@@ -690,7 +690,7 @@ CREATE TABLE IF NOT EXISTS import_items (
   title_enc TEXT,
   content_enc TEXT NOT NULL,
   captured_at TEXT,
-  metadata TEXT,
+  metadata_enc TEXT,                   -- JSON: source details and the client-name hints sniffed from the text (migration 39)
   suggested_client_id TEXT,
   status TEXT NOT NULL DEFAULT 'staged' CHECK (status IN ('staged','committed','discarded')),
   note_id TEXT,
