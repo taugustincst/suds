@@ -85,7 +85,11 @@ CREATE TABLE IF NOT EXISTS sessions (
   revoked_at TEXT,
   -- How this session's second factor was satisfied: NULL (none or SUDS's own TOTP) or 'idp' — the identity
   -- provider asserted multi-factor sign-in (amr/acr) and the administrator chose to trust it (server/routes/oidc.js).
-  mfa_source TEXT
+  mfa_source TEXT,
+  -- When this session last proved who is using it: the sign-in (password, and the second factor when there is
+  -- one), or the password or code given again to sign a note. A signature within sign_reauth_minutes of it
+  -- needs only the signer's confirmation (server/routes/notes.js verifyIdentity).
+  reauth_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 

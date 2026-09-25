@@ -87,6 +87,13 @@ module.exports = (r) => {
     return { user: auth.publicUser(u), mfaPending: !!ctx.session.mfa_pending, org_name: db.getSetting('org_name', 'SUDS'), idle_minutes: auth.policy().idleMinutes, setup_needed: false };
   });
 
+  // Whether signing a note now needs the password (or authenticator code) again, or only a confirmation:
+  // the signature form asks for exactly what the server will want (auth.verifySigner).
+  r.get('/api/auth/reauth', (ctx) => {
+    auth.requireAuth(ctx);
+    return auth.reauthStatus(ctx);
+  });
+
   r.post('/api/auth/password', async (ctx) => {
     // requireAuth, not a bare user check: a session that has not cleared its second factor has only
     // half-proven who it belongs to, and must not be able to change the account's password.

@@ -193,8 +193,23 @@ const selected = (page) => page.$eval('[role=tablist] [aria-selected=true]', b =
   eq((await clientNames()).join(','), 'Beta Second', 'only its own');
   eq((await kernel('POST', '/api/local/backup', { passphrase: 'Long-enough-passphrase' })).status, 403, 'and it cannot take a backup of the whole device');
   eq((await kernel('PUT', '/api/local/device', { signup_enabled: false })).status, 403, 'or turn sign-ups off');
+  eq((await kernel('PUT', `/api/local/accounts/${me2.id}`, { role: 'admin' })).status, 403, 'or give itself another role');
+  const grab = await kernel('POST', '/api/local/signup', { display_name: 'Eve Grab', username: 'evegrab', password: PW, role: 'admin' });
+  eq(grab.status, 403, 'a later sign-up asking to be an administrator is refused');
+  eq((await kernel('POST', '/api/local/signup', { display_name: 'Eve Grab', username: 'evegrab', password: PW, role: 'supervisor' })).status, 403, 'as is any role but navigator');
   await logout(); await login('owner');
   eq((await clientNames()).join(','), 'Alpha Owner', 'the first person still sees only their own client');
+
+  // ---- the device administrator gives the second account another role ----
+  await page.goto(device + '/#/sync'); await settle(page);
+  const roleSel = await until(() => page.$(`[data-account-roles] select[data-account-role="${me2.id}"]`), { timeout: 5000 });
+  ok(roleSel, 'the device administrator sees the other accounts with their roles');
+  ok(!(await page.$('[data-account-roles] select[data-account-role] >> nth=1')), 'only the other account (not their own)');
+  eq(roleSel ? await roleSel.inputValue() : '', 'navigator', 'the new account is a navigator');
+  if (roleSel) await roleSel.selectOption('clinician');
+  const roleOf = async () => ((await kernel('GET', '/api/local/accounts')).data.rows || []).find(u => u.id === me2.id)?.role;
+  await until(async () => (await roleOf()) === 'clinician', { timeout: 5000 });
+  eq(await roleOf(), 'clinician', 'and makes it a clinician');
 
   // ---- the device administrator turns sign-ups off ----
   await page.goto(device + '/#/sync'); await settle(page);

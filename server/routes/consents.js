@@ -3,7 +3,7 @@ const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
 const C = require('../constants');
-const { badRequest, notFound } = require('../http');
+const { badRequest, notFound, forbidden } = require('../http');
 const { validate } = require('../validate');
 const { encrypt, decrypt, uuid } = require('../crypto');
 const disclosure = require('../disclosure');
@@ -54,9 +54,36 @@ module.exports = (r) => {
     const orders = auth.hasPerm(ctx.user, 'court-orders:read') ? db.all(`SELECT * FROM court_orders WHERE client_id=? ORDER BY issued_at DESC`, ctx.params.id).map(presentOrder) : null;
     const notices = db.all(`SELECT n.*, u.display_name AS given_by_name FROM part2_notices n JOIN users u ON u.id=n.given_by WHERE n.client_id=? ORDER BY n.given_at DESC`, ctx.params.id)
       .map(n => ({ ...n, notes: n.notes_enc ? decrypt(n.notes_enc) : null, notes_enc: undefined }));
+    // For a referral to a provider (?resource_id=): which consents name it — by its name or organisation,
+    // with the same matching the referral gate uses (disclosure.consentNamesRecipient) — and, when exactly
+    // one live consent does, that one as the suggestion the referral form pre-selects.
+    let suggested;
+    const resourceId = ctx.query.get('resource_id');
+    if (resourceId) {
+      const res = db.one(`SELECT name, organization FROM resources WHERE id=?`, resourceId);
+      const names = res ? disclosure.recipientNames([res.name, res.organization].filter(Boolean)) : [];
+      for (const c of consents) c.names_resource = !!names.length && disclosure.consentNamesRecipient(c, names);
+      const live = consents.filter(c => c.names_resource && c.can_disclose);
+      suggested = live.length === 1 ? live[0].id : null;
+    }
     // Reading who a client's information may be shared with is itself a PHI read.
     audit.log({ user: ctx.user, action: 'consent.list', entity: 'client', entityId: ctx.params.id, clientId: ctx.params.id, ip: ctx.ip, details: { consents: consents.length, disclosures: disclosures.length, court_orders: orders ? orders.length : undefined, notices: notices.length } });
-    return { consents, disclosures, court_orders: orders, notices, restrictions: disclosure.agreedRestrictions(ctx.params.id), part2_program: disclosure.part2Program(), notice: disclosure.notice() };
+    return { consents, disclosures, court_orders: orders, notices, restrictions: disclosure.agreedRestrictions(ctx.params.id), part2_program: disclosure.part2Program(), notice: disclosure.notice(), suggested_consent_id: suggested };
+  });
+  // Before a consent is recorded: the live consents it would duplicate — same type, the same recipient
+  // (compared the way the disclosure gate compares names) and dates that overlap. The form warns and offers
+  // the existing one; recording a second is still allowed (a renewed form, a fresh signature).
+  r.post('/api/clients/:id/consents/duplicates', auth.requireAuth, auth.requirePerm('consents:write'), (ctx) => {
+    if (!db.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id)) throw notFound();
+    auth.assertClientAccess(ctx, ctx.params.id);
+    const v = validate(ctx.body, { type: { type: 'string', required: true, enum: C.CONSENT_TYPES }, recipient: { type: 'string', maxLen: 300 }, signed_at: { type: 'date' }, expires_at: { type: 'date' } });
+    const from = v.signed_at || new Date().toISOString().slice(0, 10); const to = v.expires_at || '9999-12-31';
+    const want = disclosure.normalise(v.recipient);
+    const duplicates = db.all(`SELECT c.*, u.display_name AS created_by_name FROM consents c JOIN users u ON u.id=c.created_by WHERE c.client_id=? AND c.type=? AND c.revoked_at IS NULL ORDER BY c.signed_at DESC`, ctx.params.id, v.type)
+      .map(presentConsent)
+      .filter(c => c.active && disclosure.normalise(c.recipient) === want && c.signed_at <= to && (!c.expires_at || c.expires_at >= from));
+    audit.log({ user: ctx.user, action: 'consent.duplicate_check', entity: 'client', entityId: ctx.params.id, clientId: ctx.params.id, ip: ctx.ip, details: { type: v.type, duplicates: duplicates.length } });
+    return { duplicates };
   });
   r.post('/api/clients/:id/consents', auth.requireAuth, auth.requirePerm('consents:write'), (ctx) => {
     if (!db.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id)) throw notFound();
@@ -93,6 +120,25 @@ module.exports = (r) => {
       v.discloser || null, v.signer_relationship || null, v.signer_name ? encrypt(v.signer_name) : null, v.revocation_right_given ? 1 : 0, v.refusal_consequences_given ? 1 : 0, part2 ? '2024' : null, ctx.user.id, infoCategories);
     audit.log({ user: ctx.user, action: 'consent.create', entity: 'consent', entityId: id, clientId: ctx.params.id, ip: ctx.ip, details: { type: v.type, rule_version: part2 ? '2024' : undefined, info_categories: infoCategories || undefined } });
     ctx.status = 201; return { id };
+  });
+  // The programme's usual consent ("quick consent"): the type, recipient, purpose, information and expiry
+  // most of its consents share, saved once from a filled-in form by a supervisor or administrator and offered
+  // to fill the form with. Programme wording, not about any client; every consent is still signed and
+  // recorded one by one with its own dates and elements.
+  const TEMPLATE_SHAPE = { type: { type: 'string', required: true, enum: C.CONSENT_TYPES }, recipient: { type: 'string', maxLen: 300 }, purpose: { type: 'string', maxLen: 500 },
+    scope: { type: 'string', maxLen: 1000 }, expires_event: { type: 'string', maxLen: 200 }, expires_days: { type: 'number', integer: true, min: 1, max: 3660 } };
+  const readTemplate = () => { try { return JSON.parse(db.getSetting('consent_template', 'null')); } catch { return null; } };
+  r.get('/api/consent-template', auth.requireAuth, auth.requirePerm('consents:read', 'consents:write'), () => ({ template: readTemplate() }));
+  r.put('/api/consent-template', auth.requireAuth, auth.requirePerm('consents:write'), (ctx) => {
+    if (!auth.hasPerm(ctx.user, 'disclosures:override')) throw forbidden('A supervisor or administrator sets the programme\'s usual consent');
+    const v = validate(ctx.body, TEMPLATE_SHAPE);
+    const rawCats = ctx.body.info_categories;
+    const cats = [...new Set((Array.isArray(rawCats) ? rawCats : []).map(String))];
+    if (cats.some(x => !C.CONSENT_INFO_CATEGORIES.includes(x))) throw badRequest('Validation failed', { fields: { info_categories: `choose from ${C.CONSENT_INFO_CATEGORIES.join(', ')}` } });
+    const template = { type: v.type, recipient: v.recipient || null, purpose: v.purpose || null, scope: v.scope || null, expires_event: v.expires_event || null, expires_days: v.expires_days || null, info_categories: cats, saved_by: ctx.user.display_name, saved_at: db.now() };
+    db.setSetting('consent_template', JSON.stringify(template));
+    audit.log({ user: ctx.user, action: 'consent.template.save', ip: ctx.ip, details: { type: v.type } });
+    return { ok: true, template };
   });
   r.post('/api/consents/:id/revoke', auth.requireAuth, auth.requirePerm('consents:write'), (ctx) => {
     const c = db.one(`SELECT * FROM consents WHERE id=?`, ctx.params.id); if (!c) throw notFound();

@@ -117,7 +117,11 @@ export async function start({ wasmUrl, onSaveError, onLockLost, force } = {}) {
   router.post('/api/local/signup', (ctx) => {
     if (userCount() === 0) return createFirstAccount(ctx.body);
     if (!signupEnabled()) throw new HttpError(403, sync.isStaticHost() ? 'Sign-ups are turned off on this device. Ask the person who manages it to turn them back on.' : 'This device is already set up. Accounts come from the office SUDS.', { signupDisabled: true });
-    const v = validate(ctx.body, { display_name: accountShape.display_name, username: accountShape.username, password: accountShape.password });
+    const v = validate(ctx.body, { display_name: accountShape.display_name, username: accountShape.username, password: accountShape.password, role: accountShape.role });
+    // Only the first account chooses its role. Anyone else who signs up here is a navigator until the
+    // device administrator gives them another role (PUT /api/local/accounts/:id) — a sign-up asking to be
+    // an administrator, or anything else, is refused rather than quietly granted or quietly ignored.
+    if (v.role && v.role !== 'navigator') throw new HttpError(403, 'A new account on this device starts as a navigator. The person who manages this device can change its role afterwards.', { roleNotAllowed: true });
     const errs = auth.passwordPolicy(v.password); if (errs.length) throw new HttpError(400, 'Password must contain ' + errs.join(', '));
     if (db.one(`SELECT 1 FROM users WHERE username=?`, v.username)) throw new HttpError(400, 'That username cannot be used here. Choose another.');
     const { hashPassword, uuid } = require('../server/crypto.js');
@@ -129,6 +133,35 @@ export async function start({ wasmUrl, onSaveError, onLockLost, force } = {}) {
     });
     audit.log({ user: { id, username: v.username }, action: 'local.signup', entity: 'user', entityId: id });
     return { ok: true, role: 'navigator' };
+  });
+  // The accounts made on this device, for its administrator to see and give roles to. Accounts that came
+  // down from the office in a sync (blanked password) are the office's to manage, and a copy handed out by
+  // an office server gets its accounts from there, so this is the on-device app's alone.
+  const DEVICE_ROLES = ['navigator', 'clinician', 'supervisor', 'admin'];
+  const deviceAccounts = () => db.all(`SELECT id, username, display_name, role, created_at FROM users WHERE password_hash NOT LIKE 'scrypt$0$%' ORDER BY created_at, rowid`);
+  const mayManageAccounts = (ctx) => {
+    if (!ctx.user) throw new HttpError(401, 'Sign in first');
+    if (!sync.isStaticHost()) throw new HttpError(404, 'Accounts on this copy come from the office SUDS.');
+    if (!isDeviceAdmin(ctx.user)) throw new HttpError(403, 'Only the person who manages this device can change accounts.');
+  };
+  router.get('/api/local/accounts', (ctx) => {
+    mayManageAccounts(ctx);
+    const admin = deviceAdminId();
+    return { rows: deviceAccounts().map(u => ({ ...u, device_admin: u.id === admin })), roles: DEVICE_ROLES };
+  });
+  router.put('/api/local/accounts/:id', (ctx) => {
+    mayManageAccounts(ctx);
+    const v = validate(ctx.body, { role: { type: 'string', required: true, enum: DEVICE_ROLES } });
+    const u = deviceAccounts().find(x => x.id === ctx.params.id);
+    if (!u) throw new HttpError(404, 'No such account on this device');
+    // The administrator's own role is what they chose at set-up; changing it here could leave nobody able to
+    // manage the device's accounts in the app, so it is not offered.
+    if (u.id === ctx.user.id) throw new HttpError(400, 'You cannot change your own role here.');
+    db.run(`UPDATE users SET role=?, updated_at=? WHERE id=?`, v.role, db.now(), u.id);
+    // A role change takes effect on the next sign-in, like an office role change: end that person's sessions.
+    auth.revokeAllForUser(u.id);
+    audit.log({ user: ctx.user, action: 'local.account.role', entity: 'user', entityId: u.id, details: { from: u.role, to: v.role } });
+    return { ok: true, role: v.role };
   });
   // What the "This device" page shows: the last backup, whether further sign-ups are allowed, and whether
   // the signed-in person manages the device.

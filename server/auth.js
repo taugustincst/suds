@@ -3,7 +3,7 @@ const db = require('./db');
 const config = require('./config');
 const audit = require('./audit');
 const { sha256, randomToken, verifyPassword, verifyPasswordAsync, verifyTotp, decrypt } = require('./crypto');
-const { unauthorized, forbidden, HttpError } = require('./http');
+const { unauthorized, forbidden, badRequest, HttpError } = require('./http');
 
 // Security policy: settings table (editable in Administration) overrides environment defaults.
 function policy() {
@@ -24,6 +24,9 @@ function policy() {
     // How long a new account in a role that requires two-step verification has to set it up. Without this
     // the very first administrator would be locked out the moment the setup wizard created them.
     mfaGraceDays: num('mfa_grace_days', config.mfaGraceDays, { zero: true }),
+    // How long after proving who they are (signing in, or giving the password or code again) a person may
+    // sign a note with a confirmation alone. 0: the password (or code) every time. At most an hour.
+    signReauthMinutes: Math.min(60, num('sign_reauth_minutes', 10, { zero: true })),
     ...ssoPolicy(),
   };
 }
@@ -132,9 +135,55 @@ function createSession(user, ctx, { mfaPending = false, mfaSource = null } = {})
   const token = randomToken(32);
   const now = new Date();
   const expires = new Date(now.getTime() + policy().absoluteHours * 3600 * 1000);
-  db.run(`INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,mfa_source) VALUES(?,?,?,?,?,?,?,?,?)`,
-    sha256(token), user.id, now.toISOString(), now.toISOString(), expires.toISOString(), mfaPending ? 1 : 0, ctx.ip, (ctx.headers['user-agent'] || '').slice(0, 200), mfaSource);
+  // Creating a session is the moment its user proved who they are (a password, or the identity provider).
+  db.run(`INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,mfa_source,reauth_at) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+    sha256(token), user.id, now.toISOString(), now.toISOString(), expires.toISOString(), mfaPending ? 1 : 0, ctx.ip, (ctx.headers['user-agent'] || '').slice(0, 200), mfaSource, now.toISOString());
   return token;
+}
+// ---- recent re-authentication (the electronic-signature step) ----
+// A signature is the signer's deliberate act, attested each time; proving identity again for every note is
+// what made signing take eleven steps. A session that proved who is using it within signReauthMinutes
+// (sign-in, second factor, or the password or code given for the last signature) needs only the
+// confirmation; after that, the password again — or the authenticator code for an account with two-step
+// verification on.
+function markReauth(ctx) { if (ctx.session) { const at = db.now(); db.run(`UPDATE sessions SET reauth_at=? WHERE id=?`, at, ctx.session.id); ctx.session.reauth_at = at; } }
+function reauthStatus(ctx) {
+  const minutes = policy().signReauthMinutes;
+  const at = ctx.session && ctx.session.reauth_at ? Date.parse(ctx.session.reauth_at) : NaN;
+  const until = Number.isFinite(at) && minutes > 0 ? at + minutes * 60000 : 0;
+  return { recent: until > Date.now(), until: until ? new Date(until).toISOString() : null, window_minutes: minutes, method: ctx.user && ctx.user.mfa_enabled ? 'totp' : 'password' };
+}
+/**
+ * Establish who is signing: the password (or, with two-step verification on, the authenticator code) given
+ * with this request, or a recent re-authentication plus an explicit confirmation. Returns how, for the audit
+ * entry: 'password', 'totp' or 'recent_auth'. `action` names the failed-attempt audit entry.
+ */
+async function verifySigner(ctx, body, { action = 'note.sign.failed' } = {}) {
+  const password = typeof body.password === 'string' && body.password ? body.password : null;
+  const code = typeof body.code === 'string' && body.code.trim() ? body.code.trim() : null;
+  if (password) {
+    const u = db.one(`SELECT password_hash FROM users WHERE id=?`, ctx.user.id);
+    if (!(await verifyPasswordAsync(password, u.password_hash))) {
+      audit.log({ user: ctx.user, action, ip: ctx.ip, success: false });
+      throw forbidden('Password verification failed');
+    }
+    markReauth(ctx); return 'password';
+  }
+  if (code) {
+    const u = db.one(`SELECT mfa_enabled, mfa_secret_enc FROM users WHERE id=?`, ctx.user.id);
+    if (!u.mfa_enabled || !u.mfa_secret_enc) throw badRequest('Two-step verification is not set up for your account; give your password instead');
+    if (!require('./app').rateLimit(`mfa:${ctx.user.id}`, 10, 10 * 60_000)) throw new HttpError(429, 'Too many attempts');
+    if (!verifyTotp(decrypt(u.mfa_secret_enc), code)) {
+      audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { method: 'totp' } });
+      throw forbidden('That code is not right. Enter the current code from your authenticator app.');
+    }
+    markReauth(ctx); return 'totp';
+  }
+  const st = reauthStatus(ctx);
+  // validate() stores booleans as 1/0 (SQLite); either spelling is the confirmation.
+  if (body.confirm !== true && body.confirm !== 1) throw badRequest(st.recent ? 'Confirm the attestation to sign' : st.method === 'totp' ? 'Enter the code from your authenticator app to sign' : 'Your password is required to sign');
+  if (!st.recent) throw new HttpError(403, st.method === 'totp' ? 'It has been a while since you last confirmed it is you. Enter the code from your authenticator app to sign.' : 'It has been a while since you last confirmed it is you. Enter your password to sign.', { reauthRequired: true, method: st.method });
+  return 'recent_auth';
 }
 function cookieHeader(token, { clear = false } = {}) {
   const secure = config.tls.cert || config.isProd ? '; Secure' : '';
@@ -333,7 +382,7 @@ function verifyMfa(ctx, code) {
     audit.log({ user, action: 'auth.mfa.failed', ip: ctx.ip, success: false });
     throw unauthorized('Invalid verification code');
   }
-  db.run(`UPDATE sessions SET mfa_pending=0 WHERE id=?`, ctx.session.id);
+  db.run(`UPDATE sessions SET mfa_pending=0, reauth_at=? WHERE id=?`, db.now(), ctx.session.id);
   audit.log({ user, action: 'auth.login', ip: ctx.ip, details: { mfa: true } });
   return publicUser(user);
 }
@@ -355,4 +404,4 @@ function passwordPolicy(pw) {
 }
 
 module.exports = { auditUsername, policy, PERMS, hasPerm, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted,
-  createSession, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };
+  createSession, markReauth, reauthStatus, verifySigner, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };

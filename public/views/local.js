@@ -143,7 +143,28 @@ function accountsCard(dev, onChange) {
     h('label', { class: 'check mt' }, box, 'Let other people create their own account here (Sign up)'),
     h('p', { class: 'small muted' }, dev.device_admin
       ? 'Each person who signs up gets a navigator account and sees only the clients they record or are assigned. Turn this off once everyone who shares the device has an account.'
-      : 'Only the person who manages this device can change this.'));
+      : 'Only the person who manages this device can change this.'),
+    dev.device_admin ? accountRoles() : null);
+}
+/** The device administrator gives the other accounts on this device their roles (sign-ups start as navigators). */
+function accountRoles() {
+  const box = h('div', { class: 'mt', 'data-account-roles': '1' });
+  const LABELS = { navigator: 'Navigator', clinician: 'Clinician (clinical notes)', supervisor: 'Supervisor (countersigning, approving time)', admin: 'Administrator (settings and user accounts)' };
+  get('/api/local/accounts', { quiet: true }).then(({ rows, roles }) => {
+    const others = rows.filter(u => u.id !== state.user.id);
+    if (!others.length) return;
+    box.append(h('h3', { class: 'eyebrow' }, 'Roles'),
+      ...others.map(u => {
+        const sel = h('select', { 'data-account-role': u.id, onChange: async () => {
+          const before = u.role;
+          try { await put(`/api/local/accounts/${u.id}`, { role: sel.value }); u.role = sel.value; toast(`${u.display_name} is now ${LABELS[sel.value] || sel.value} — from their next sign-in`, 'ok'); }
+          catch (e) { sel.value = before; toast(e.message, 'error'); }
+        } }, roles.map(r => h('option', { value: r, selected: r === u.role }, LABELS[r] || r)));
+        return h('div', { class: 'field' }, h('label', {}, `Role for ${u.display_name} (${u.username})`), sel);
+      }),
+      h('p', { class: 'small muted' }, 'A new role applies the next time that person signs in.'));
+  }).catch(() => {});
+  return box;
 }
 
 // Sync screen (local mode)

@@ -22,9 +22,21 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
     ...(can('notes:clinical:write') ? [{ name: 'counseling_note', label: 'SUD counseling note (§2.11) — needs its own consent before it can be shared', type: 'checkbox', value: values ? values.counseling_note : false, help: 'Clinical notes only. Not covered by a treatment/payment/operations consent or any general Part 2 consent.' }] : []),
     { name: 'cosign_requested', label: 'Request supervisor co-sign / review', type: 'checkbox', help: 'Puts this note in the supervisor queue once it is signed — for a difficult contact, a safety concern, or anything you want a second pair of eyes on.' },
   ], { values: values || {}, submitText: 'Save draft', onCancel: () => m.close(), onSubmit: async (d) => {
+    const andSign = signAfter; signAfter = false;
     await save(d, true);
+    // "Save & sign": the signature step opens straight from the editor, over it; the editor closes once the
+    // note is signed (or stays, saved, if the signature is cancelled).
+    if (andSign && noteId) { signNote({ id: noteId }, () => { m.close(); }); return; }
     toast('Saved as a draft. Sign it when it is complete.', 'ok'); m.close(); onDone && onDone();
   } });
+  // Only the author can sign (a supervisor editing someone else's draft countersigns later instead).
+  let signAfter = false;
+  const maySign = isNew || values.author_id === state.user.id;
+  if (maySign) {
+    const draftBtn = f.querySelector('.btn-row button[type=submit]');
+    draftBtn.addEventListener('click', () => { signAfter = false; });
+    draftBtn.after(h('button', { class: 'btn', type: 'submit', 'data-save-sign': '1', onClick: () => { signAfter = true; } }, 'Save & sign'));
+  }
   // ---- autosave: after a pause in typing the draft is saved to the server, so it can be finished on any device
   let noteId = values?.id || null; let saving = false; let dirty = false; let asTimer;
   // The version this editor last saved or loaded. Every autosave sends it, so two people with the same draft
@@ -146,9 +158,41 @@ export async function openNote(id, { onChange } = {}) {
   const m = modal(n.title || `${fmt.label(n.format, 'NOTE_FORMATS')} note`, body, { wide: true });
 }
 
+/**
+ * The electronic-signature dialog, for a signature and a countersignature alike. Within a few minutes of
+ * signing in (or of the last password or code given) it is the attestation and one button; after that it
+ * asks for the password — or the authenticator code, with two-step verification on (GET /api/auth/reauth,
+ * the same rule the server applies). `send(body)` makes the request; `fields` come before the identity field.
+ */
+export async function signatureDialog({ title, intro, submitText, send, done, fields = [] }) {
+  let st = { recent: false, method: 'password' };
+  try { st = await get('/api/auth/reauth', { quiet: true }); } catch { /* ask for the password */ }
+  const open = (st, why) => {
+    const identity = st.recent ? []
+      : st.method === 'totp' ? [{ name: 'code', label: 'Code from your authenticator app', required: true, autocomplete: 'one-time-code', pattern: '[0-9]{6}', help: 'It has been a while since you confirmed it is you.' }]
+      : [{ name: 'password', label: 'Re-enter your password to sign', type: 'password', required: true, autocomplete: 'current-password', help: 'It has been a while since you confirmed it is you.' }];
+    const f = form([...fields, ...identity], { submitText, onCancel: () => m.close(), onSubmit: async (d) => {
+      try { await send(st.recent ? { ...d, confirm: true } : d); }
+      catch (e) {
+        // The few minutes ran out while the dialog was open: ask again, keeping what was typed.
+        if (e.data && e.data.reauthRequired && st.recent) { m.close(); open({ recent: false, method: e.data.method || 'password' }, e.message); return; }
+        throw e;
+      }
+      m.close(); done && done();
+    } });
+    const m = modal(title, h('div', { 'data-signature-dialog': st.recent ? 'confirm' : st.method },
+      why ? h('div', { class: 'banner warn', role: 'status' }, why) : null,
+      intro,
+      st.recent ? h('p', { class: 'small muted' }, 'You confirmed it is you a few minutes ago, so your password is not needed again.') : null,
+      f));
+  };
+  open(st);
+}
 function signNote(n, done) {
-  const f = form([{ name: 'password', label: 'Re-enter your password to sign', type: 'password', required: true }], { submitText: 'Sign note', onCancel: () => m.close(), onSubmit: async (d) => { await post(`/api/notes/${n.id}/sign`, d); toast('Note signed and locked', 'ok'); m.close(); done(); } });
-  const m = modal('Electronic signature', h('div', {}, h('p', { class: 'small muted' }, 'By signing you attest that this documentation is accurate and complete. Signed notes cannot be edited or deleted; corrections are made by addendum.'), f));
+  return signatureDialog({ title: 'Electronic signature', submitText: 'Sign note',
+    intro: h('p', { 'data-attestation': '1' }, 'By signing you attest that this documentation is accurate and complete. Signed notes cannot be edited or deleted; corrections are made by addendum.'),
+    send: (body) => post(`/api/notes/${n.id}/sign`, body),
+    done: () => { toast('Note signed and locked', 'ok'); done(); } });
 }
 function addAddendum(n, done) {
   const f = form([{ name: 'reason', label: 'Reason (e.g. late entry, correction)' }, { name: 'content', label: 'Addendum', type: 'textarea', required: true, span: true }], { submitText: 'Add addendum', onCancel: () => m.close(), onSubmit: async (d) => { await post(`/api/notes/${n.id}/addenda`, d); toast('Addendum added', 'ok'); m.close(); done(); } });
