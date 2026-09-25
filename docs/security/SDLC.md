@@ -3,6 +3,7 @@
 ## Change control
 
 * Source in a Git repository; every change is a commit with an author. Contributor and AI-assistant rules are in `CLAUDE.md` (PHI only in `_enc` columns, every PHI access audited, disclosures through `server/disclosure.js`, schema changes with migrations, tests for every new route and permission).
+* **How the code is written.** SUDS is developed with an AI coding assistant: of the 202 commits up to 1.11.0, 171 are authored by Claude and 31 by the owner. The owner sets direction and the rules in `CLAUDE.md`, and reviews and merges the work; automated gates (the test suites and CI jobs below, and the drift checks) are required to pass. There is **no second human reviewer** today, and no independent code review has been done. The reasoning behind the hardest parts is written down in `../architecture/` (decision records with the files to read and the tests that pin each one).
 * **Review.** `../ADOPTION.md` requires a named code owner and review of every change by someone other than its author, with the release branch protected (pull requests only, one approval, CI green). Branch protection is a repository setting the county (or the maintainer) configures; it is not enforced by files in the repository.
 * The county deploys **tagged releases**, never a branch.
 

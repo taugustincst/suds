@@ -67,6 +67,7 @@ Answers to the questions county IT typically sends (HECVAT-Lite and CSA CAIQ sty
 | 34 | Third-party dependencies? | Zero runtime npm dependencies; build-only dev dependencies watched by Dependabot. [VULNERABILITY-MANAGEMENT.md](VULNERABILITY-MANAGEMENT.md) |
 | 35 | OWASP Top 10 controls? | Parameterised SQL, validation, CSP without inline script, CSRF header, secure cookies, rate limits, RBAC on every route, no stack traces to clients. |
 | 36 | Automated tests / CI? | Yes — API/unit suite and browser suite on every push; migrations tested against a real old database. [SDLC.md](SDLC.md) |
+| 36a | How is code written and reviewed? | AI-assisted: most commits (171 of 202 up to 1.11.0) are written with an AI coding assistant under the project rules in `CLAUDE.md`, gated by the automated tests and CI above, and reviewed and merged by the owner. There is no second human reviewer today. Branch protection and independent review of what you deploy are the deployer's to configure ([../ADOPTION.md](../ADOPTION.md) §1). Design decisions: [../architecture/README.md](../architecture/README.md). [SDLC.md](SDLC.md) |
 | 37 | SAST/DAST? | Not in CI today (recommended: CodeQL/Semgrep); county may run DAST in its pen test. |
 | 38 | Penetration test? | None commissioned by the project; scope provided for the county's test. [PEN-TEST-SCOPE.md](PEN-TEST-SCOPE.md) |
 | 39 | Release integrity? | Releases built from tracked files with `git archive`, SHA-256 checksum published; not cryptographically signed yet. |

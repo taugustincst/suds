@@ -8,13 +8,13 @@ approved by the organisation.
 
 ---
 
-## `[Organisation name]`: `[one-line result, e.g. "funder reports in 3 hours instead of 12"]`
+## `[Organisation name]`: `[one-line result, a measured result from the pilot metrics sheet, e.g. "monthly funder report: 12 hours before, N hours after"]`
 
 **Organisation:** `[name, city/county, type of CBO]`
 **Programme:** `[navigation / outreach / harm reduction / prevention / supply distribution]`
 **Funding:** `[SOR / opioid settlement / SAMHSA / county contract — as they agree to disclose]`
 **Team using SUDS:** `[N navigators, N supervisors, finance]`
-**Deployment:** `[county-hosted / vendor-hosted]` · **Live since:** `[month year]`
+**Deployment:** `[self-hosted by IT partner / county-hosted]` · **Live since:** `[month year]`
 
 ### Before SUDS
 `[2–4 sentences: the spreadsheets, paper logs and shared drives; what quarter end looked like; what was hard

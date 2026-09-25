@@ -1,8 +1,25 @@
 # SUDS — SUD Navigator Services Tracker
 
-SUDS is a HIPAA-oriented web application for county **substance use disorder (SUD) navigation programs**. It tracks clients, visits and services, calls, staff time, referrals and community resources, reminders, budget and expenditures, and clinical / administrative documentation — with 42 CFR Part 2 consent and disclosure accounting, encryption of every piece of client information, and an audit log of everything.
+**The operations system for harm-reduction and prevention programmes — outreach encounters, naloxone and supply
+distribution, and grant/funder reporting — with Part 2-grade privacy.**
 
-**Where it fits.** SUDS is program-operations software for California's grant-funded, **non-billing** prevention, harm-reduction, outreach, navigation and supply-distribution programmes — caseload, supplies, resources, referrals, grants and approvals, and the funder reports that go with them. It **complements** the county EHR (SmartCare, Netsmart and others) with encounter hand-off exports and a FHIR R4 feed; it is **not** an EHR, does not create Drug Medi-Cal claims, and has no eMAR or e-prescribing. Positioning, buyer guides, the pilot kit, procurement routes and the readiness scorecard: [docs/market/README.md](docs/market/README.md).
+SUDS is for community-based organisations and county programmes doing outreach, harm reduction, naloxone and
+test-strip distribution and prevention, usually on opioid-settlement, SOR / Naloxone Distribution Project or
+SABG prevention funding. It records outreach contacts (named or anonymous), draws supplies down from a supply
+cupboard, tracks referrals and a verified resource directory, holds grant budgets, expenditures and staff time
+with approvals, and produces the funder reports that go with them. Privacy is built to the 42 CFR Part 2
+standard: consents that name the recipient, one disclosure gate with an accounting of disclosures, AES-256-GCM
+encryption of client identifiers and free text, and a tamper-evident audit log of PHI reads and writes, sign-ins,
+exports, disclosures and configuration changes.
+
+**Optional modules.** Programmes that are treatment-adjacent can switch the *programme profile* from **Harm
+reduction & outreach** (the default) to **Treatment-adjacent** to show the clinical modules: care plan, problem
+list and assessments, structured clinical notes, CalOMS Tx (extract not yet verified against the DHCS data
+dictionary), a FHIR R4 feed and a county EHR encounter hand-off. SUDS is **not** an EHR, does not create Drug
+Medi-Cal claims, and has no eMAR or e-prescribing. It is free, MIT-licensed software that the programme (or its IT
+partner, or its county) runs; it is not a hosted service. Positioning, buyer guides, hosting models, the pilot kit
+and the readiness scorecard: [docs/market/README.md](docs/market/README.md). How it is built, for maintainers:
+[docs/architecture/README.md](docs/architecture/README.md).
 
 ## Two ways to run it
 
@@ -23,7 +40,7 @@ The sign-in page has two options, **Log in** and **Sign up** (link straight to e
 
 * **Platform:** the web application — served by an office SUDS server (the system of record for its programme), or published as SUDS on this device. It also imports field notes from **Pocket AI** and **Microsoft OneNote**. The native phone apps and the desktop launchers were removed in 1.9.3 (their source remains in git history) — see [docs/PLATFORM.md](docs/PLATFORM.md).
 * **Runtime:** Node.js ≥ 22.13 only (built-in SQLite, crypto, HTTP). No npm packages to install or audit on the office server. (The browser's local-mode kernel is a separate, committed bundle that does vendor a few pinned libraries in place of Node's built-ins — see [docs/WEB_APP.md](docs/WEB_APP.md#what-the-browser-kernel-is-built-from).)
-* **Data protection:** AES-256-GCM field-level encryption of PHI, blind-index search, scrypt password hashing, TOTP MFA, role-based access with caseload scoping, 42 CFR Part 2 consent and disclosure accounting, and a hash-chained audit log.
+* **Data protection:** AES-256-GCM field-level encryption of client identifiers and free text (coded reporting fields rely on disk encryption — [docs/HIPAA.md](docs/HIPAA.md), *Data classification*), blind-index search, scrypt password hashing, TOTP MFA, role-based access with caseload scoping, 42 CFR Part 2 consent and disclosure accounting, and a hash-chained audit log.
 * **Documentation:** [Platform policy](docs/PLATFORM.md) · [Adopting SUDS (for a county CIO)](docs/ADOPTION.md) · [Deployment](docs/DEPLOYMENT.md) · [SUDS on this device (GitHub Pages)](docs/WEB_APP.md) · [API reference](docs/API.md) · [HIPAA & security controls](docs/HIPAA.md) · [Importing notes (Pocket AI / OneNote)](docs/IMPORTS.md) · [User guide](docs/USER_GUIDE.md) · [Market & procurement pack](docs/market/README.md) · [Security evidence package for county IT](docs/security/README.md)
 
 ## Get SUDS

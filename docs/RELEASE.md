@@ -11,6 +11,30 @@
 - [ ] Real-device checklist done on the release candidate (2 iPhones, 2 Androids — [ADOPTION.md](ADOPTION.md#4-real-device-release-checklist))
 - [ ] **On-screen version checked**: after deploying to the pilot server, and on the GitHub Pages site (SUDS on this device) once it is republished, the version SUDS shows (footer / `version.json`) is the version being released
 
+## Release cadence (policy)
+
+SUDS shipped 21 releases in its first ten days. That speed fixed defects quickly, but a county cannot
+review, test and roll out a release a day, and the same kind of defect shipped more than once. From 1.11.0:
+
+| Kind | Version bump | How often | What it may contain |
+| --- | --- | --- | --- |
+| **Feature release** | minor (`1.12.0`) | **At most once a month** | New features, schema migrations, changed permissions or reports |
+| **Fix release** | patch (`1.11.1`) | As needed | Defect and security fixes only. **No schema migration**, no new permission, no new route unless the fix needs it (say why in the notes) |
+| **Security release** | patch | As soon as a fix is ready | The fix, and an advisory naming affected versions; counties are told directly |
+
+Rules for every release:
+
+1. **Only from a green gate.** The released commit must have passed CI in full — `npm test`, the drift
+   checks and the browser suite (`scripts/ui/run-all.sh`, including its accessibility script) — on that exact
+   commit, not on a nearby one. A red or skipped required job means no release.
+2. **Release notes reviewed by a human.** The CHANGELOG section is read and approved by the owner (or the
+   named code owner) before tagging, whoever drafted it — including an AI assistant. The reviewer checks that
+   it says what changed for a user, what an administrator must do, and whether there is a migration.
+3. **Migrations are called out** at the top of the notes with the schema version they move to.
+4. **Batch, don't drip.** Fixes found during a feature release's pilot week go into one fix release, not one
+   release each.
+5. The staged rollout ([ADOPTION.md](ADOPTION.md#3-staged-release-cadence)) still applies: pilot group first.
+
 ## Cutting a release
 ```bash
 git checkout main && git pull
