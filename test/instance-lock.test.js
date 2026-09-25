@@ -126,3 +126,89 @@ test('a corrupt lock file (e.g. torn write at power loss) is stale, not a perman
   const release = acquire(d);
   release();
 });
+
+// ---- Hostname + heartbeat: a lock from another machine or container is judged by its heartbeat alone ----
+// Docker replicas on one host all run node as the same pid (1, or tini's child) and share the host's boot id;
+// two hosts on one NFS volume have different boot ids. Neither may be read as "our own previous run".
+const HOST = os.hostname();
+const ageLock = (d, ms) => { const t = new Date(Date.now() - ms); fs.utimesSync(path.join(d, '.suds.lock'), t, t); };
+const fast = { heartbeatMs: 50, staleMs: 400, waitMs: 0 };
+
+test('the lock records this host\'s name', () => {
+  const d = fs.mkdtempSync(path.join(dir, 'host-'));
+  const release = acquire(d, fast);
+  assert.equal(lockOf(d).hostname, HOST);
+  release();
+});
+
+test('same host, own pid (container restarted after a crash keeps its hostname) is taken over at once', () => {
+  const d = fs.mkdtempSync(path.join(dir, 'samehost-'));
+  fs.writeFileSync(path.join(d, '.suds.lock'), JSON.stringify({ pid: process.pid, hostname: HOST, bootId: _internals.bootId(), startTime: 'x' }));
+  const release = acquire(d, fast); // fresh heartbeat, but provably our own dead predecessor
+  assert.equal(lockOf(d).pid, process.pid);
+  release();
+});
+
+test('another host (a second replica) with our pid and a live heartbeat is refused, not taken over', () => {
+  const d = fs.mkdtempSync(path.join(dir, 'replica-'));
+  fs.writeFileSync(path.join(d, '.suds.lock'), JSON.stringify({ pid: process.pid, hostname: 'replica-2', bootId: _internals.bootId(), startTime: _internals.startTime(process.pid) }));
+  assert.throws(() => acquire(d, fast), (e) => /replica-2/.test(e.message) && /already running/.test(e.message) && /heartbeat/.test(e.message));
+  assert.equal(lockOf(d).hostname, 'replica-2', 'the other holder\'s lock is untouched');
+});
+
+test('another host with a different boot id (shared NFS) and a live heartbeat is refused', () => {
+  const d = fs.mkdtempSync(path.join(dir, 'nfs-'));
+  fs.writeFileSync(path.join(d, '.suds.lock'), JSON.stringify({ pid: 4242, hostname: 'other-host', bootId: '00000000-0000-0000-0000-000000000000', startTime: '5' }));
+  assert.throws(() => acquire(d, fast), /other-host/);
+});
+
+test('another host whose heartbeat is older than the stale window is taken over', () => {
+  const d = fs.mkdtempSync(path.join(dir, 'stale-'));
+  fs.writeFileSync(path.join(d, '.suds.lock'), JSON.stringify({ pid: process.pid, hostname: 'crashed-container', bootId: _internals.bootId() }));
+  ageLock(d, 1000);
+  const release = acquire(d, fast);
+  assert.equal(lockOf(d).hostname, HOST);
+  release();
+});
+
+test('start-up waits for another host\'s heartbeat to go stale, then takes over', () => {
+  const d = fs.mkdtempSync(path.join(dir, 'wait-'));
+  fs.writeFileSync(path.join(d, '.suds.lock'), JSON.stringify({ pid: 7, hostname: 'gone' }));
+  ageLock(d, 200); // 200 ms old; stale at 400 ms
+  const t0 = Date.now();
+  const release = acquire(d, { ...fast, waitMs: 3000 });
+  assert.ok(Date.now() - t0 >= 150, 'it waited');
+  assert.equal(lockOf(d).hostname, HOST);
+  release();
+});
+
+test('the holder refreshes the heartbeat (the lock file\'s mtime) while it runs', async () => {
+  const d = fs.mkdtempSync(path.join(dir, 'beat-'));
+  const release = acquire(d, fast);
+  ageLock(d, 5000);
+  await new Promise((r) => setTimeout(r, 200));
+  const age = Date.now() - fs.statSync(path.join(d, '.suds.lock')).mtimeMs;
+  assert.ok(age < 1000, `heartbeat refreshed (age ${age} ms)`);
+  release();
+});
+
+test('a holder whose lock was taken over is told (onLost), so it can stop writing', async () => {
+  const d = fs.mkdtempSync(path.join(dir, 'lost-'));
+  let lost = null;
+  const release = acquire(d, { ...fast, onLost: (why) => { lost = why; } });
+  fs.writeFileSync(path.join(d, '.suds.lock'), JSON.stringify({ pid: 99, hostname: 'usurper' }));
+  await new Promise((r) => setTimeout(r, 200));
+  assert.ok(lost, 'onLost was called');
+  release();
+  assert.equal(lockOf(d).hostname, 'usurper', 'release leaves the new holder\'s lock alone');
+});
+
+test('old lock formats (1.12.0 and earlier, no hostname) are judged as written on this host', () => {
+  const d = fs.mkdtempSync(path.join(dir, 'legacy-'));
+  fs.writeFileSync(path.join(d, '.suds.lock'), JSON.stringify({ pid: process.pid, bootId: _internals.bootId(), startTime: 'x' }));
+  const r1 = acquire(d, fast); r1(); // own pid: the crashed predecessor (node as PID 1 in a container)
+  fs.writeFileSync(path.join(d, '.suds.lock'), String(process.pid));
+  const r2 = acquire(d, fast); r2(); // old plain-pid format, own pid
+  fs.writeFileSync(path.join(d, '.suds.lock'), '999999');
+  const r3 = acquire(d, fast); r3(); // dead pid
+});

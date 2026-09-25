@@ -17,8 +17,14 @@ something a security reviewer must assess. Node 22 ships SQLite (`node:sqlite`),
   record for its programme. No runtime npm packages (`package.json` has devDependencies only, for the browser
   kernel build).
 - Sessions, rate limits and the scheduler live in that process's memory (`server/app.js`, `server/auth.js`).
-- A **second process against the same data directory is refused**: `server/instance-lock.js` takes a pidfile
-  lock with `O_EXCL`; a lock whose pid is no longer running is taken over, so a crash cannot brick start-up.
+- A **second process against the same data directory is refused**: `server/instance-lock.js` takes a lock
+  file with `O_EXCL` recording pid, hostname, boot id and process start time, and the holder refreshes its
+  mtime every 10 s (heartbeat). A lock written under this hostname is judged by local process facts (own
+  pid, previous boot, dead pid, reused pid → stale at once), so a crash cannot brick start-up; a lock from
+  another hostname — another container or another host on shared storage, where pid and boot id prove
+  nothing — only by its heartbeat (stale after 45 s; start-up waits up to 50 s, then refuses). A holder
+  that finds its lock taken over stops. (Up to 1.12.0 own-pid and foreign-boot locks were taken over from
+  anywhere, which let a second Docker replica or a second NFS host in.)
 - Availability comes from backups, restore and a documented warm standby — not clustering
   ([docs/security/BACKUP-AND-DR.md](../security/BACKUP-AND-DR.md)).
 - Multiple programmes = multiple instances (one data directory and key set each), never multi-tenancy inside
@@ -40,6 +46,6 @@ something a security reviewer must assess. Node 22 ships SQLite (`node:sqlite`),
 
 ## Tests that pin it
 
-`test/instance-lock.test.js` (second process refused; stale lock taken over; double-release ordering),
+`test/instance-lock.test.js` (second process refused; stale lock taken over; another host's live heartbeat refused and stale one taken over; old lock formats; double-release ordering),
 `test/perf.test.js` and `test/load-review.test.js` (the sizing assumption), `test/backup.test.js` and
 `test/snapshot.test.js` (online backup without stopping the process).

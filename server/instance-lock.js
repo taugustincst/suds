@@ -3,25 +3,44 @@
 // session store or distributed rate limiter (both live in this process's memory — see server/app.js), and
 // SQLite's own file locking is not safe across two processes writing to the same database from different
 // machines (e.g. a network filesystem). A second process against the same data directory — a systemd
-// restart racing the old process's shutdown, or an orchestrator mistakenly scaled to more than one replica
-// against the same volume — is the actual danger this guards against, not a theoretical one: it can corrupt
-// the database. Enforced with a lock file rather than documented and hoped for.
+// restart racing the old process's shutdown, an orchestrator mistakenly scaled to more than one replica
+// against the same volume, a second host mounting the same NFS share — is the actual danger this guards
+// against, not a theoretical one: it can corrupt the database. Enforced with a lock file rather than
+// documented and hoped for.
 //
-// A bare pid is not enough to tell a live lock from a stale one:
-//   * In a container node is PID 1 on every start. After SIGKILL, an OOM kill or power loss the old lock says
-//     "1", the new process is PID 1 too, and "is pid 1 running?" is always yes — a permanent crash-loop.
-//   * After a reboot (systemd, bare metal) the recorded pid can have been reused by an unrelated process.
-// So the lock records {pid, bootId, startTime}: the kernel's per-boot random id and the process's start time
-// (clock ticks since boot, /proc/<pid>/stat field 22). A lock naming this very process's pid (and not held
-// by this process), a lock from a different boot, or a lock whose pid is running but started at a different
-// time is stale. Old plain-pid lock files (1.11.0 and earlier) are still read. Off Linux, where /proc is
-// absent, the check falls back to "is the pid running, and is it not us".
+// The lock file records {pid, hostname, bootId, startTime, at}, and its holder touches it (mtime) every
+// HEARTBEAT_MS while it runs. Whether a lock left in place is stale is decided in one of two ways:
+//
+//   * Written on THIS host (same os.hostname()): local process facts are conclusive. A lock naming this very
+//     process's pid (and not held by this process — node is PID 1, or tini's child, on every container
+//     start), a lock from a previous boot (kernel boot id), a pid that is not running, or a pid now owned by
+//     a process that started at a different time (/proc/<pid>/stat field 22) is stale at once. Otherwise the
+//     holder is alive and the lock is refused.
+//   * Written by ANOTHER host — a different machine on shared storage, or another container (Docker gives
+//     every container its own hostname; a restarted container keeps it, a new replica or a fresh
+//     `docker run` gets a new one): its pid, boot id and start time say nothing about processes here (every
+//     replica's node has the same pid and they share the host's boot id), so only the heartbeat counts. The
+//     lock is stale when its mtime is older than STALE_MS (3 heartbeats + margin for clock skew and a slow
+//     disk). Start-up waits up to WAIT_MS for that to happen and otherwise refuses with a message naming the
+//     host and the heartbeat's age.
+//
+// Lock files from 1.12.0 and earlier (a plain pid, or JSON without a hostname) were only ever meant for one
+// host, and are judged as written on this one (the rules those versions applied themselves).
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+
+const HEARTBEAT_MS = 10_000;
+const STALE_MS = 3 * HEARTBEAT_MS + 15_000; // 45 s
+const WAIT_MS = STALE_MS + 5_000;            // 50 s: long enough to see a lock left by a crash go stale
 
 function bootId() {
   try { return fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim() || null; }
   catch { return null; }
+}
+
+function hostname() {
+  try { return os.hostname() || null; } catch { return null; }
 }
 
 /** Process start time in clock ticks since boot (a string), or null when /proc is not available. */
@@ -46,21 +65,25 @@ function parseLock(text) {
       const o = JSON.parse(t);
       const pid = Number(o.pid);
       if (!Number.isInteger(pid) || pid <= 0) return null;
-      return { pid, bootId: o.bootId || null, startTime: o.startTime != null ? String(o.startTime) : null };
+      return {
+        pid,
+        hostname: typeof o.hostname === 'string' && o.hostname ? o.hostname : null,
+        bootId: o.bootId || null,
+        startTime: o.startTime != null ? String(o.startTime) : null,
+      };
     } catch { return null; }
   }
   const pid = parseInt(t, 10);
-  return pid > 0 ? { pid, bootId: null, startTime: null } : null;
+  return pid > 0 ? { pid, hostname: null, bootId: null, startTime: null } : null;
 }
 
 // Lock files this process currently holds: a second acquire of the same one in this process is refused.
 const held = new Set();
 
-/** Why the lock `rec` is stale, or null if it belongs to a live other process. */
-function staleReason(rec) {
-  if (!rec) return 'unreadable';
-  // Not held by us (the caller checked), so a previous run with the same pid left it — always the case for
-  // node as PID 1 in a container restarted after a kill.
+/** Why a lock written on this host is stale, or null if it belongs to a live other process here. */
+function localStaleReason(rec) {
+  // Not held by us (the caller checked), so a previous run with the same pid on this host left it — always
+  // the case for node as PID 1 in a container restarted after a kill.
   if (rec.pid === process.pid) return 'own-pid';
   const boot = bootId();
   if (rec.bootId && boot && rec.bootId !== boot) return 'previous-boot';
@@ -72,44 +95,104 @@ function staleReason(rec) {
   return null;
 }
 
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, ms));
+}
+
+const secs = (ms) => Math.round(ms / 1000);
+
 /**
  * Take the lock for `dataDir`, or throw a clear error if another live process already holds it. A lock left
- * behind by a process that crashed without cleaning up is taken over automatically. Returns a release
- * function; also released automatically on process exit.
+ * behind by a process that crashed is taken over (at once on this host; once its heartbeat is stale for a
+ * lock from another host or container, waiting up to `waitMs` for that). Returns a release function; also
+ * released automatically on process exit. `onLost(reason)` is called if the heartbeat finds the lock is no
+ * longer ours (another process took it over, e.g. after this one was suspended for longer than the stale
+ * window): the caller should stop writing.
  */
-function acquire(dataDir) {
+function acquire(dataDir, opts = {}) {
   if (!dataDir) return () => {};
+  const heartbeatMs = opts.heartbeatMs ?? HEARTBEAT_MS;
+  const staleMs = opts.staleMs ?? STALE_MS;
+  const waitMs = opts.waitMs ?? WAIT_MS;
+  const onLost = opts.onLost || ((why) => console.error(`[suds] instance lock: ${why}`));
   const file = path.join(dataDir, '.suds.lock');
   const key = path.resolve(file);
   if (held.has(key)) {
     throw new Error(`This SUDS process (pid ${process.pid}) is already running against this data directory (${dataDir}); it cannot be opened twice.`);
   }
-  const mine = JSON.stringify({ pid: process.pid, bootId: bootId(), startTime: startTime(process.pid), at: new Date().toISOString() });
+  const me = hostname();
+  const mine = JSON.stringify({ pid: process.pid, hostname: me, bootId: bootId(), startTime: startTime(process.pid), at: new Date().toISOString() });
+  const started = Date.now();
+  let told = false;
   for (;;) {
     try {
       fs.writeFileSync(file, mine, { mode: 0o600, flag: 'wx' });
       break;
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
-      let text;
-      try { text = fs.readFileSync(file, 'utf8'); }
+      let text, mtimeMs;
+      try { text = fs.readFileSync(file, 'utf8'); mtimeMs = fs.statSync(file).mtimeMs; }
       catch (re) { if (re.code === 'ENOENT') continue; throw re; }
       const rec = parseLock(text);
-      const reason = staleReason(rec);
-      if (!reason) {
-        throw new Error(`Another SUDS process (pid ${rec.pid}) is already running against this data directory (${dataDir}). Running more than one instance against the same database is not supported (see docs/DEPLOYMENT.md, "Single instance only") and can corrupt it. If that process has actually stopped, remove ${file} and start again.`);
+      let reason;
+      if (!rec) reason = 'unreadable';
+      else if (!rec.hostname || rec.hostname === me) {
+        reason = localStaleReason(rec);
+        if (!reason) {
+          throw new Error(`Another SUDS process (pid ${rec.pid}${rec.hostname ? ` on ${rec.hostname}` : ''}) is already running against this data directory (${dataDir}). Running more than one instance against the same database is not supported (see docs/DEPLOYMENT.md, "Single instance only") and can corrupt it. If that process has actually stopped, remove ${file} and start again.`);
+        }
+      } else {
+        // Another host or container: only its heartbeat tells us whether it is alive.
+        const age = Math.max(0, Date.now() - mtimeMs); // negative = clock skew; treat as fresh
+        if (age > staleMs) reason = 'heartbeat-stale';
+        else {
+          const waited = Date.now() - started;
+          if (waited < waitMs) {
+            if (!told) console.warn(`[suds] instance lock: held by pid ${rec.pid} on ${rec.hostname} (last heartbeat ${secs(age)} s ago); waiting up to ${secs(waitMs)} s for it to stop or go stale (${secs(staleMs)} s without a heartbeat)`);
+            told = true;
+            sleepSync(Math.min(Math.max(staleMs - age + 10, 10), waitMs - waited, 1000));
+            continue;
+          }
+          throw new Error(`Another SUDS process (pid ${rec.pid} on host/container "${rec.hostname}") is already running against this data directory (${dataDir}): its last heartbeat was ${secs(age)} s ago (waited ${secs(waited)} s). Running more than one instance against the same database is not supported (see docs/DEPLOYMENT.md, "Single instance only") and can corrupt it — stop the other instance or scale to one replica. If "${rec.hostname}" has really stopped (e.g. it crashed moments ago), this start will succeed once ${secs(staleMs)} s have passed without a heartbeat; a restart policy will retry on its own.`);
+        }
       }
       // A lock from a process that is no longer running (it crashed, the container was killed, the machine
       // rebooted) is stale; take it over rather than leaving the data directory permanently locked out.
-      console.warn(`[suds] instance lock: taking over a stale lock (${reason}, pid ${rec ? rec.pid : 'unknown'})`);
+      console.warn(`[suds] instance lock: taking over a stale lock (${reason}, pid ${rec ? rec.pid : 'unknown'}${rec && rec.hostname ? ` on ${rec.hostname}` : ''})`);
       try { fs.unlinkSync(file); } catch (ue) { if (ue.code !== 'ENOENT') throw ue; }
     }
   }
   held.add(key);
   let released = false;
+  // Heartbeat: touch the lock file so a process on another host or container can tell a live holder from a
+  // crashed one. It also notices when the lock is no longer ours (removed by hand: re-created; replaced by
+  // another process: onLost).
+  const beat = setInterval(() => {
+    if (released) return;
+    let text;
+    try { text = fs.readFileSync(file, 'utf8'); }
+    catch (e) {
+      if (e.code === 'ENOENT') {
+        try { fs.writeFileSync(file, mine, { mode: 0o600, flag: 'wx' }); return; } catch {}
+      }
+      clearInterval(beat);
+      onLost(`the lock file ${file} could not be read or re-created (${e.code || e.message}); another SUDS process may be using this data directory`);
+      return;
+    }
+    if (text !== mine) {
+      clearInterval(beat);
+      const rec = parseLock(text);
+      onLost(`the lock on ${dataDir} was taken over by ${rec ? `pid ${rec.pid}${rec.hostname ? ` on ${rec.hostname}` : ''}` : 'another process'}; this process must stop writing to the database`);
+      return;
+    }
+    const now = new Date();
+    try { fs.utimesSync(file, now, now); } catch {}
+  }, heartbeatMs);
+  beat.unref();
   const release = () => {
     if (released) return;
     released = true;
+    clearInterval(beat);
     held.delete(key);
     try { if (fs.readFileSync(file, 'utf8') === mine) fs.unlinkSync(file); } catch {}
   };
@@ -117,4 +200,4 @@ function acquire(dataDir) {
   return release;
 }
 
-module.exports = { acquire, _internals: { bootId, startTime, parseLock } };
+module.exports = { acquire, HEARTBEAT_MS, STALE_MS, WAIT_MS, _internals: { bootId, startTime, parseLock, hostname } };
