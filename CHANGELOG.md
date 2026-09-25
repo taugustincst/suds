@@ -8,6 +8,24 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   on a slow device, showed two sign-in forms); it is also what made the local-mode browser check fail
   intermittently in CI, where the click landed on the screen-reader status region during the blank. Full-screen
   pages (sign-in, set-up, MFA) are now built first and swapped in whole, and only the latest render wins.
+- **QA retest fixes (reproduced on the published build, as the tester uses it).**
+  - SUDS on this device: supply items can be added and counted again — it has no office, so it no longer
+    refuses supply changes with "kept at the office". On a device that syncs with an office, the Supplies
+    buttons are disabled with the reason shown, and save errors also appear as a toast.
+  - `#/getapp`, `#/phone`, `#/app` and `#/install` open "Use SUDS on your phone or tablet"; `#/devices` opens
+    This device (on the office server, Settings › Synced devices for administrators).
+  - Home and the welcome tour greet people by their whole display name, not its first word.
+  - Date fields accept years 1900–2100, so Chrome's year box takes four digits, and a garbled date such as
+    0006-09-05 is refused with a message instead of saved. Each date field has its own calendar button.
+    Toasts no longer take taps or clicks meant for the page or dialog under them (a "saved" toast could sit
+    over a dialog's date field).
+  - "+ Add pictures" says a file window has opened (and when none was chosen). The import drop zones can be
+    used from the keyboard and by screen readers.
+  - Settings: new **Organisation time zone**, which overrides `ORG_TIMEZONE` for visit dates, report periods
+    and "today", is sent to synced devices, and defaults to the browser's zone on SUDS on this device. Device
+    copies no longer show the server backup schedule (it read "every 0 hours / keep 0") and link to This
+    device (backup and restore) and the phone/tablet page instead. The office backup schedule says whether it
+    is on and links to System & backups.
 
 ## 1.10.0 — 2026-09-24
 
