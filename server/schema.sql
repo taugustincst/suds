@@ -49,7 +49,10 @@ CREATE TABLE IF NOT EXISTS users (
   -- active); an SSO-linked account not seen for sso_deprovision_days is disabled. scim_external_id: the
   -- provider's own id for the person (Entra objectId / Okta user id), set when SCIM provisions the account.
   idp_seen_at TEXT,
-  scim_external_id TEXT
+  scim_external_id TEXT,
+  -- The fund this worker's visits are charged to unless they choose another (migration 38). Blank: the
+  -- programme's default (settings.default_fund_id). No REFERENCES: users sync to a device before funds do.
+  default_fund_id TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_subject ON users(oidc_subject) WHERE oidc_subject IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_scim_external_id ON users(scim_external_id) WHERE scim_external_id IS NOT NULL;
@@ -218,6 +221,11 @@ CREATE TABLE IF NOT EXISTS funding_sources (
   restrictions TEXT,
   notes TEXT,
   is_active INTEGER NOT NULL DEFAULT 1,
+  -- Opioid settlement funds (migration 38): the allowable use (constants.SETTLEMENT_USES — national
+  -- settlement Exhibit E) and the California High Impact Abatement Activity (constants.SETTLEMENT_HIAA, or
+  -- 'none') that spending from this fund counts toward, unless an expenditure says otherwise.
+  settlement_use TEXT,
+  settlement_hiaa TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -265,7 +273,9 @@ CREATE TABLE IF NOT EXISTS interventions (
 );
 CREATE INDEX IF NOT EXISTS idx_interventions_client ON interventions(client_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_interventions_user ON interventions(user_id, occurred_at);
-CREATE INDEX IF NOT EXISTS idx_interventions_occurred ON interventions(occurred_at);
+-- The report period's index (migration 38 replaced idx_interventions_occurred with it): the date leads, and
+-- the columns the funder report counts ride along, so a year of visits is read from the index alone.
+CREATE INDEX IF NOT EXISTS idx_interventions_period ON interventions(occurred_at, funding_source_id, client_id, naloxone_kits, fentanyl_strips);
 CREATE INDEX IF NOT EXISTS idx_interventions_updated ON interventions(updated_at);
 
 CREATE TABLE IF NOT EXISTS calls (
@@ -457,6 +467,9 @@ CREATE TABLE IF NOT EXISTS expenditures (
   -- What was bought, for whom, and the reviewer's note: free text that can name the client, so encrypted.
   description_enc TEXT,
   receipt_ref TEXT,
+  -- This expenditure's own opioid settlement category, when it differs from its fund's (migration 38).
+  settlement_use TEXT,
+  settlement_hiaa TEXT,
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','reimbursed')),
   approved_by TEXT REFERENCES users(id),
   approved_at TEXT,

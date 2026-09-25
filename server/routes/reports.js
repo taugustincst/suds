@@ -7,6 +7,7 @@ const M = require('../clients-model');
 const CFX = require('../client-filters');
 // Yield to other work between sheets; setImmediate does not exist in the browser kernel.
 const { defer } = require('../spreadsheet');
+const FR = require('../funder-report');
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const addDays = (date, n) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
@@ -25,8 +26,12 @@ function range(ctx) {
   if (!DAY.test(to) || !DAY.test(from) || !Number.isFinite(Date.parse(to)) || !Number.isFinite(Date.parse(from))) throw badRequest('from and to must be dates (YYYY-MM-DD)');
   const fromTs = localMidnight(from);
   const toEnd = new Date(Date.parse(localMidnight(addDays(to, 1))) - 1).toISOString();
-  const ts = (col) => `((length(${col})>10 AND ${col} BETWEEN ? AND ?) OR (length(${col})=10 AND ${col} BETWEEN ? AND ?))`;
-  return { from, to, fromTs, toEnd, ts, tsP: [fromTs, toEnd, from, to] };
+  // Sargable: the leading range (the earliest and latest of the two forms' bounds) is one index range scan
+  // on the date column; the length tests then sort a bare day from a timestamp within it. The two-way OR on
+  // its own was read as two scans merged row by row, and at 100,000 visits that dominated every report.
+  const lo = fromTs < from ? fromTs : from; const hi = toEnd > to ? toEnd : to;
+  const ts = (col) => `(${col} BETWEEN ? AND ? AND ((length(${col})>10 AND ${col} BETWEEN ? AND ?) OR (length(${col})=10 AND ${col} BETWEEN ? AND ?)))`;
+  return { from, to, fromTs, toEnd, ts, tsP: [lo, hi, fromTs, toEnd, from, to] };
 }
 
 module.exports = (r) => {
@@ -50,12 +55,11 @@ module.exports = (r) => {
         by_substance: scoped(`SELECT COALESCE(primary_substance,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k ORDER BY n DESC`),
         mat: scoped(`SELECT COALESCE(mat_status,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k`),
       },
-      interventions: { total: scoped1(`SELECT COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND {CF}`, ...tsP).n,
-        minutes: scoped1(`SELECT COALESCE(SUM(duration_minutes),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND {CF}`, ...tsP).n,
+      // The period's totals in one pass over its visits, not one pass per figure.
+      interventions: { ...scoped1(`SELECT COUNT(*) total, COALESCE(SUM(duration_minutes),0) minutes, COALESCE(SUM(naloxone_kits),0) naloxone_kits, COALESCE(SUM(fentanyl_strips),0) fentanyl_strips
+          FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND {CF}`, ...tsP),
         by_type: db.all(`SELECT i.type k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND ${cf.sql} GROUP BY i.type ORDER BY n DESC`, ...tsP, ...cf.params),
         by_week: db.all(`SELECT strftime('%Y-%W', i.occurred_at) k, COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND ${cf.sql} GROUP BY k ORDER BY k`, ...tsP, ...cf.params),
-        naloxone_kits: scoped1(`SELECT COALESCE(SUM(naloxone_kits),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND {CF}`, ...tsP).n,
-        fentanyl_strips: scoped1(`SELECT COALESCE(SUM(fentanyl_strips),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND {CF}`, ...tsP).n,
         by_worker: db.all(`SELECT u.display_name k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN users u ON u.id=i.user_id JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND ${cf.sql} GROUP BY u.id ORDER BY n DESC`, ...tsP, ...cf.params),
       },
       calls: { total: db.one(`SELECT COUNT(*) n FROM calls WHERE ${ts('started_at')}`, ...tsP).n, minutes: db.one(`SELECT COALESCE(SUM(duration_minutes),0) n FROM calls WHERE ${ts('started_at')}`, ...tsP).n,
@@ -137,109 +141,35 @@ module.exports = (r) => {
     };
   });
 
-  // The report a funder actually asks for: how many distinct people were served in the period, counted once
-  // each, broken down the way a grant report is broken down. Every count on this page is unduplicated —
-  // COUNT(DISTINCT client_id) — because "1,400 services" and "310 people" are different questions and the
-  // platform could previously only answer the first.
-  r.get('/api/reports/funder', auth.requireAuth, auth.requirePerm('reports:read'), (ctx) => {
-    const { from, to, ts, tsP } = range(ctx);
-    const cf = auth.caseloadFilter(ctx.user, 'c.id');
-    const fund = ctx.query.get('funding_source_id') || null;
-    // Restricting to a funding source means counting only the work charged to it.
-    const fundJoin = fund ? 'AND i.funding_source_id=?' : '';
-    const fundP = fund ? [fund] : [];
-
-    // One set of people served per report, and every per-person metric below is counted within it: a
-    // service (visit) or a contact (call) in the period, by a client still on the books (not deleted), in
-    // the caller's caseload — and, when a funding source is chosen, only work charged to that source. A
-    // call carries no funding source, so under a fund filter it cannot make someone "served by" that fund.
-    // (Before this, the fund filter reached the visits half only, the demographics counted anyone with a
-    // visit whatever it was charged to, and deleted records were counted as served.)
-    const servedSql = `SELECT DISTINCT i.client_id AS id FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts('i.occurred_at')} AND c.deleted_at IS NULL AND ${cf.sql} ${fundJoin}`
-      + (fund ? '' : ` UNION SELECT ca.client_id FROM calls ca JOIN clients c ON c.id=ca.client_id WHERE ${ts('ca.started_at')} AND c.deleted_at IS NULL AND ${cf.sql}`);
-    const servedP = fund ? [...tsP, ...cf.params, ...fundP] : [...tsP, ...cf.params, ...tsP, ...cf.params];
-    // `WITH served(id)` goes in front of each query that counts within the set.
-    const inServed = (sql, ...p) => [`WITH served(id) AS (${servedSql}) ${sql}`, ...servedP, ...p];
-    const one = (sql, ...p) => { const [q, ...a] = inServed(sql, ...p); return db.one(q, ...a); };
-    const all = (sql, ...p) => { const [q, ...a] = inServed(sql, ...p); return db.all(q, ...a); };
-
-    const served = one(`SELECT COUNT(*) n FROM served`).n;
-
-    const demographics = (col, label) => all(`SELECT COALESCE(NULLIF(c.${col},''),'unknown') k, COUNT(*) n
-      FROM clients c JOIN served s ON s.id=c.id GROUP BY k ORDER BY n DESC`).map(x => ({ ...x, dimension: label }));
-
-    // race_codes is comma separated because a person may report more than one, so each is counted
-    // separately and the total will exceed the number of people served. That is how funders want it.
-    const raceRows = all(`SELECT c.race_codes FROM clients c JOIN served s ON s.id=c.id`);
-    const byRace = {};
-    for (const row of raceRows) {
-      const codes = String(row.race_codes || '').split(',').map(x => x.trim()).filter(Boolean);
-      for (const code of (codes.length ? codes : ['unknown'])) byRace[code] = (byRace[code] || 0) + 1;
-    }
-
-    const episodes = {
-      admissions: db.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.opened_at BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
-      discharges: db.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
-      open_at_end: db.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.opened_at <= ? AND (e.closed_at IS NULL OR e.closed_at > ?) AND ${cf.sql}`, to, to, ...cf.params).n,
-      by_discharge_reason: db.all(`SELECT COALESCE(e.discharge_reason,'unknown') k, COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql} GROUP BY k ORDER BY n DESC`, from, to, ...cf.params),
-      median_length_of_stay_days: (() => {
-        const d = db.all(`SELECT (julianday(e.closed_at)-julianday(e.opened_at)) d FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY d`, from, to, ...cf.params).map(x => x.d);
-        return d.length ? Math.round(d[Math.floor(d.length / 2)]) : null;
-      })(),
-    };
-
-    const overdose = {
-      events: db.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts('o.occurred_at')}`, ...tsP).n,
-      reversals: db.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts('o.occurred_at')} AND o.naloxone_used=1 AND o.survived=1`, ...tsP).n,
-      fatal: db.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts('o.occurred_at')} AND (o.kind='fatal' OR o.survived=0)`, ...tsP).n,
-      community_reported: db.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts('o.occurred_at')} AND o.client_id IS NULL`, ...tsP).n,
-      naloxone_doses: db.one(`SELECT COALESCE(SUM(o.naloxone_doses),0) n FROM overdose_events o WHERE ${ts('o.occurred_at')}`, ...tsP).n,
-      by_month: db.all(`SELECT substr(o.occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN o.naloxone_used=1 AND o.survived=1 THEN 1 ELSE 0 END) reversals FROM overdose_events o WHERE ${ts('o.occurred_at')} GROUP BY month ORDER BY month`, ...tsP),
-      by_administered_by: db.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE ${ts('o.occurred_at')} AND o.naloxone_used=1 GROUP BY k ORDER BY n DESC`, ...tsP),
-    };
-
-    // Naloxone that went out the door, including community distribution with no identified client.
-    const distribution = db.one(`SELECT COALESCE(SUM(i.naloxone_kits),0) kits, COALESCE(SUM(i.fentanyl_strips),0) strips,
-      COALESCE(SUM(CASE WHEN i.client_id IS NULL THEN i.naloxone_kits ELSE 0 END),0) community_kits
-      FROM interventions i WHERE ${ts('i.occurred_at')} ${fundJoin}`, ...tsP, ...fundP);
-
-    // Small-cell suppression: a breakdown row counting fewer than eleven people can identify them once it is
-    // crossed with another table (the one Vietnamese-speaking veteran in a small county). Totals stay exact;
-    // any row under the threshold is reported as "<11" with the count withheld.
-    const SMALL_CELL = 11;
-    const suppress = (rows) => rows.map(x => (typeof x.n === 'number' && x.n > 0 && x.n < SMALL_CELL ? { ...x, n: '<11', suppressed: true } : x));
-
-    const out = {
-      from, to, funding_source_id: fund,
-      small_cell_threshold: SMALL_CELL,
-      unduplicated: {
-        served,
-        new_admissions: db.one(`SELECT COUNT(DISTINCT c.id) n FROM clients c WHERE c.deleted_at IS NULL AND c.intake_date BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
-        // Of the people served: how many were referred on, admitted somewhere, and are on MAT.
-        with_a_referral: one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN served s ON s.id=r.client_id WHERE ${ts('r.referred_at')}`, ...tsP).n,
-        admitted_after_referral: one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN served s ON s.id=r.client_id WHERE ${ts('r.admitted_at')}`, ...tsP).n,
-        on_mat: one(`SELECT COUNT(*) n FROM clients c JOIN served s ON s.id=c.id WHERE c.mat_status='active'`).n,
-      },
-      demographics: {
-        by_gender: suppress(demographics('gender', 'gender')),
-        by_language: suppress(demographics('preferred_language', 'language')),
-        by_housing: suppress(demographics('housing_status', 'housing')),
-        by_insurance: suppress(demographics('insurance', 'insurance')),
-        by_race_code: suppress(Object.entries(byRace).map(([k, n]) => ({ k, n })).sort((a, b) => b.n - a.n)),
-        by_ethnicity: suppress(demographics('race_ethnicity', 'ethnicity')),
-      },
-      episodes: { ...episodes, by_discharge_reason: suppress(episodes.by_discharge_reason) },
-      overdose: { ...overdose, by_administered_by: suppress(overdose.by_administered_by) },
-      naloxone_distribution: distribution,
-      by_funding_source: db.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end,
-          (SELECT COUNT(DISTINCT i.client_id) FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.funding_source_id=f.id AND c.deleted_at IS NULL AND ${ts('i.occurred_at')}) AS clients_served,
-          (SELECT COUNT(*) FROM interventions i WHERE i.funding_source_id=f.id AND ${ts('i.occurred_at')}) AS services,
-          (SELECT COALESCE(SUM(t.minutes),0) FROM time_entries t WHERE t.funding_source_id=f.id AND t.work_date BETWEEN ? AND ? AND t.status='approved') AS approved_minutes
-        FROM funding_sources f WHERE f.is_active=1 ORDER BY f.name`, ...tsP, ...tsP, from, to),
-    };
-    audit.log({ user: ctx.user, action: 'report.funder', ip: ctx.ip, details: { from, to, funding_source_id: fund || undefined, served } });
+  // The report a funder actually asks for (server/funder-report.js): unduplicated people served, broken down
+  // the way a grant report is. Small cells are suppressed unless this is the programme's own submission and
+  // someone holding reports:exact asks for exact counts; the response says which (suppression).
+  r.get('/api/reports/funder', auth.requireAuth, auth.requirePerm('reports:read'), async (ctx) => {
+    const out = await FR.build(ctx, range(ctx));
+    audit.log({ user: ctx.user, action: 'report.funder', ip: ctx.ip, details: { from: out.from, to: out.to, funding_source_id: out.funding_source_id || undefined, served: out.unduplicated.served, counts: out.suppression.mode, purpose: out.suppression.purpose } });
     return out;
   });
+  // The same report as a file: an Excel workbook whose About sheet states the counting mode, or a CSV whose
+  // first rows do; the mode is also in the filename and the X-SUDS-Report-Counts header. Aggregate counts
+  // only — no names, client codes or dates of service — so it is not a disclosure, but it is audited.
+  r.get('/api/reports/funder/export', auth.requireAuth, auth.requirePerm('reports:read'), auth.requirePerm('export:read'), async (ctx) => {
+    const d = await FR.build(ctx, range(ctx));
+    const fundName = d.funding_source_id ? db.one(`SELECT name FROM funding_sources WHERE id=?`, d.funding_source_id)?.name : null;
+    const sh = FR.sheets(d, ctx, fundName);
+    const S = require('../spreadsheet');
+    const xlsx = ctx.query.get('format') === 'xlsx';
+    const mode = d.suppression.mode === 'exact' ? 'exact-counts' : 'suppressed';
+    const filename = `suds-funder-report-${d.from}_${d.to}-${mode}.${xlsx ? 'xlsx' : 'csv'}`;
+    const body = xlsx ? S.writeWorkbook(sh.workbook) : S.toCsv(sh.csv, sh.csvColumns);
+    audit.log({ user: ctx.user, action: 'report.funder.export', ip: ctx.ip, details: { from: d.from, to: d.to, funding_source_id: d.funding_source_id || undefined, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? 'xlsx' : 'csv' } });
+    ctx.res.writeHead(200, { 'Content-Type': xlsx ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${filename}"`,
+      'X-SUDS-Report-Counts': d.suppression.mode === 'exact' ? 'exact' : `suppressed (threshold ${d.suppression.threshold})` });
+    ctx.res.end(body);
+  });
+
+  // California harm-reduction reporting (server/harm-reduction-reports.js): the Naloxone Distribution Project
+  // log and the opioid settlement expenditure report.
+  require('../harm-reduction-reports').routes(r, range);
 
   // Exports: CSV or Excel per table, or one Excel workbook with every table. Needs export:read; de-identified
   // (HIPAA Safe Harbor) unless identified=1 and the user holds export:identified — and an identified export

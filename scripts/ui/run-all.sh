@@ -80,7 +80,7 @@ fi
 
 fail=0; office_dirty=0; reset_secs=0; suite_start=$SECONDS
 rows=()
-for s in ${SCRIPTS:-desktop review-fixes navigator-flow navigator-fixes ux-features local-mode multitab sync-two-way device-audit spreadsheets sample-data resource-profiles forms region dates setup static-site qa-retest clinical-audit ux-polish signup load-review a11y-round4 caloms frontline accessibility}; do
+for s in ${SCRIPTS:-desktop review-fixes navigator-flow navigator-fixes ux-features local-mode multitab sync-two-way device-audit spreadsheets sample-data resource-profiles forms region dates setup static-site qa-retest clinical-audit ux-polish signup load-review a11y-round4 caloms frontline funder-reporting accessibility}; do
   echo "=== $s"
   if [ ! -f "scripts/ui/$s.mjs" ]; then echo "FAILED: no such script scripts/ui/$s.mjs"; rows+=("$s|-|FAIL|0"); fail=1; continue; fi
   # A script that uses the office server starts from the seed, whatever ran before it.

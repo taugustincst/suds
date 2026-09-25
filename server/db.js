@@ -527,9 +527,18 @@ const migrations = [
       ['clients', 'contact_preferences', 'contact_preferences_enc'],
     ]) encryptColumn(d, t, from, to);
   },
-  // 38: PLACEHOLDER for another change stream's migration 38 (funding attribution); replace this no-op with
-  //     it when the branches are merged. It exists only so migration 39 keeps its number on this branch.
-  () => {},
+  // 38: funding attribution and harm-reduction reporting (docs/compliance/HARM-REDUCTION-REPORTING.md). A
+  //     worker's default fund (users.default_fund_id; the programme's is the default_fund_id setting), and the
+  //     opioid settlement allowable-use and High Impact Abatement Activity categories on a fund and on an
+  //     expenditure. Nothing to backfill: every existing row stays uncategorised until someone chooses.
+  (d) => {
+    addColumn(d, 'users', 'default_fund_id', 'TEXT');
+    for (const t of ['funding_sources', 'expenditures']) for (const c of ['settlement_use', 'settlement_hiaa']) addColumn(d, t, c, 'TEXT');
+    // The funder report read a year of visits through a date-only index and a table lookup per visit; the
+    // covering index answers it from the index alone (server/funder-report.js). It makes the old one redundant.
+    d.exec(`DROP INDEX IF EXISTS idx_interventions_occurred`);
+    d.exec(`CREATE INDEX IF NOT EXISTS idx_interventions_period ON interventions(occurred_at, funding_source_id, client_id, naloxone_kits, fentanyl_strips)`);
+  },
   // 39: the last free text about a person held in plaintext. A consent's witness is usually someone the
   //     client knows (a parent, a partner), and an imported note's metadata carries the client-name hints
   //     sniffed from its text ("Met with J. Smith").

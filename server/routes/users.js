@@ -22,6 +22,8 @@ const shape = {
   // existed with no way to set them short of SQL, so the countersignature workflow could never start.
   requires_cosign: { type: 'boolean' },
   supervisor_id: { type: 'string', maxLen: 64 },
+  // The fund this person's visits are charged to unless they choose another (blank: the programme's default).
+  default_fund_id: { type: 'string', maxLen: 64 },
   // Whether deactivating the account or resetting its password also tells every phone it syncs from to
   // erase itself. On by default: the admin UI shows the checkbox with the device count so it is a choice
   // made knowingly, not a side effect discovered afterwards.
@@ -33,7 +35,7 @@ module.exports = (r) => {
   r.get('/api/users', auth.requireAuth, auth.requirePerm('users:read', 'users:manage'), (ctx) => {
     const full = auth.hasPerm(ctx.user, 'users:manage');
     const rows = db.all(full
-      ? `SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,last_login_at,locked_until,hourly_cost,created_at,oidc_subject,requires_cosign,supervisor_id,access_status FROM users WHERE access_status<>'pending' ORDER BY display_name`
+      ? `SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,last_login_at,locked_until,hourly_cost,created_at,oidc_subject,requires_cosign,supervisor_id,access_status,default_fund_id FROM users WHERE access_status<>'pending' ORDER BY display_name`
       : `SELECT id,display_name,title,role,is_active FROM users WHERE is_active=1 ORDER BY display_name`);
     return { users: rows };
   });
@@ -77,11 +79,12 @@ module.exports = (r) => {
     if (errs.length) throw badRequest('Password must contain ' + errs.join(', '));
     const id = uuid();
     if (v.supervisor_id && !db.one(`SELECT 1 FROM users WHERE id=? AND role IN ('supervisor','admin')`, v.supervisor_id)) throw badRequest('The supervisor must be a supervisor or administrator account');
+    if (v.default_fund_id && !db.one(`SELECT 1 FROM funding_sources WHERE id=? AND is_active=1`, v.default_fund_id)) throw badRequest('The default fund must be an active funding source');
     // scrypt costs ~90 ms: hashed off the event loop, and before the username is checked again below.
     const hash = await hashPasswordAsync(temp);
     if (db.one(`SELECT 1 FROM users WHERE username=?`, v.username)) throw badRequest('Username already exists');
-    db.run(`INSERT INTO users(id,username,password_hash,display_name,email,title,role,is_active,hourly_cost,requires_cosign,supervisor_id,must_change_password,password_changed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,1,?)`,
-      id, v.username, hash, v.display_name, v.email || null, v.title || null, v.role, v.is_active ?? 1, v.hourly_cost ?? null, v.requires_cosign ?? 0, v.supervisor_id || null, db.now());
+    db.run(`INSERT INTO users(id,username,password_hash,display_name,email,title,role,is_active,hourly_cost,requires_cosign,supervisor_id,default_fund_id,must_change_password,password_changed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1,?)`,
+      id, v.username, hash, v.display_name, v.email || null, v.title || null, v.role, v.is_active ?? 1, v.hourly_cost ?? null, v.requires_cosign ?? 0, v.supervisor_id || null, v.default_fund_id || null, db.now());
     audit.log({ user: ctx.user, action: 'user.create', entity: 'user', entityId: id, ip: ctx.ip, details: { username: v.username, role: v.role } });
     ctx.status = 201;
     return { id, temporary_password: v.password ? undefined : temp };
@@ -94,8 +97,10 @@ module.exports = (r) => {
     if (u.id === ctx.user.id && (v.role && v.role !== 'admin' || v.is_active === 0)) throw badRequest('You cannot demote or deactivate your own account');
     if (v.oidc_subject && db.one(`SELECT 1 FROM users WHERE oidc_subject=? AND id<>?`, v.oidc_subject, u.id)) throw badRequest('That single sign-on identity is already linked to a different account');
     if (v.supervisor_id && !db.one(`SELECT 1 FROM users WHERE id=? AND id<>? AND role IN ('supervisor','admin')`, v.supervisor_id, u.id)) throw badRequest('The supervisor must be a different supervisor or administrator account');
+    if (v.default_fund_id && !db.one(`SELECT 1 FROM funding_sources WHERE id=? AND is_active=1`, v.default_fund_id)) throw badRequest('The default fund must be an active funding source');
+    if (v.default_fund_id === '') v.default_fund_id = null;
     const sets = []; const params = [];
-    for (const k of ['username', 'display_name', 'email', 'title', 'role', 'is_active', 'hourly_cost', 'oidc_subject', 'requires_cosign', 'supervisor_id']) if (v[k] !== undefined) { sets.push(`${k}=?`); params.push(v[k]); }
+    for (const k of ['username', 'display_name', 'email', 'title', 'role', 'is_active', 'hourly_cost', 'oidc_subject', 'requires_cosign', 'supervisor_id', 'default_fund_id']) if (v[k] !== undefined) { sets.push(`${k}=?`); params.push(v[k]); }
     if (v.password) {
       const errs = auth.passwordPolicy(v.password);
       if (errs.length) throw badRequest('Password must contain ' + errs.join(', '));
