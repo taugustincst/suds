@@ -180,7 +180,7 @@ function createHandler() {
         else res.destroy();
       } else {
         console.error(`[suds] ${req.method} ${url.pathname}:`, err);
-        try { audit.log({ user: ctx.user, action: 'server.error', ip: ctx.ip, success: false, details: { path: url.pathname, message: String(err.message).slice(0, 300) } }); } catch {}
+        try { audit.log({ user: ctx.user, action: 'server.error', ip: ctx.ip, success: false, details: { path: url.pathname, message: String(err.message).slice(0, 300) } }); } catch (e) { console.error('[suds] the audit entry for that error could not be written:', e && e.message); }
         if (!res.headersSent) sendJson(res, 500, { error: 'Internal server error' });
         else res.destroy();
       }

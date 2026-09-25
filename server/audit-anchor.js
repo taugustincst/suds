@@ -153,7 +153,7 @@ function safeWrite(reason, opts = {}) {
     const msg = String(e.message || e);
     console.error('[suds] audit anchor could not be written:', msg);
     db.setSetting('audit_anchor_last_status', `failed: ${msg}`);
-    try { require('./audit').log({ user: { username: 'system' }, action: 'audit.anchor.failed', success: false, details: { reason, error: msg.slice(0, 300) } }); } catch {}
+    try { require('./audit').log({ user: { username: 'system' }, action: 'audit.anchor.failed', success: false, details: { reason, error: msg.slice(0, 300) } }); } catch (e2) { console.error('[suds] the audit entry for that failure could not be written either:', e2 && e2.message); }
     return null;
   }
 }
@@ -235,7 +235,7 @@ function verifyAndRecord() {
   db.setSetting('audit_anchor_verify_status', r.ok ? `ok: ${r.matched} matched${r.purged ? `, ${r.purged} before a retention purge` : ''}${r.other_key ? `, ${r.other_key} under an earlier index key` : ''}${r.other_generation ? `, ${r.other_generation} from before a restore` : ''}${r.other_install ? `, ${r.other_install} from another installation` : ''} of ${r.total}` : `FAILED: ${r.bad[0].reason} (${r.bad[0].file})`);
   if (!r.ok) {
     console.error(`[suds] AUDIT ANCHOR MISMATCH: ${r.bad.length} anchor(s) do not match the audit log — ${r.bad[0].reason}`);
-    try { require('./audit').log({ user: { username: 'system' }, action: 'audit.anchor.verify.failed', success: false, details: { bad: r.bad.slice(0, 20), total: r.total } }); } catch {}
+    try { require('./audit').log({ user: { username: 'system' }, action: 'audit.anchor.verify.failed', success: false, details: { bad: r.bad.slice(0, 20), total: r.total } }); } catch (e) { console.error('[suds] the audit entry for the anchor mismatch could not be written:', e && e.message); }
     // As with a broken hash chain, an audit log that no longer matches its anchors may hide who read what:
     // a possible breach until someone has looked (server/incidents.js). One open draft, however often checked.
     try {

@@ -353,7 +353,8 @@ function restore(plainBytes) {
     try { db.open(); } catch (e) { cause.message += ` (the previous database could not be reopened either: ${e.message})`; }
   };
   // Checkpoint and close so the copy set aside is the whole database, not a file plus a write-ahead log.
-  try { db.get().exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch {}
+  // If this fails the copy set aside may lack what is still in the write-ahead log: say so in the log.
+  try { db.get().exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch (e) { console.warn('[suds] restore: WAL checkpoint before setting the current database aside failed:', e && e.message); }
   db.close();
   try {
     if (fs.existsSync(dbPath)) fs.copyFileSync(dbPath, aside);
