@@ -541,6 +541,12 @@ CREATE TABLE IF NOT EXISTS consents (
   revocation_right_given INTEGER NOT NULL DEFAULT 0,
   refusal_consequences_given INTEGER NOT NULL DEFAULT 0,
   rule_version TEXT,
+  -- The coded categories of information the consent covers, comma-separated (migration 35; the codes are
+  -- CONSENT_INFO_CATEGORIES in server/constants.js, 'all' for everything). Not PHI: it is what the signed
+  -- form's scope says in machine-readable form, so an automated disclosure (the FHIR API) can honour it.
+  -- NULL on a consent recorded before categories existed: its free-text scope cannot be read by a machine,
+  -- so it covers nothing automated (docs/integration/FHIR.md) unless the migration found it was general.
+  info_categories TEXT,
   revoked_by TEXT REFERENCES users(id),
   created_by TEXT NOT NULL REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -811,6 +817,29 @@ CREATE INDEX IF NOT EXISTS idx_caloms_records_episode ON caloms_records(episode_
 CREATE INDEX IF NOT EXISTS idx_caloms_records_date ON caloms_records(record_date);
 CREATE INDEX IF NOT EXISTS idx_caloms_records_updated ON caloms_records(updated_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_caloms_records_one_per_episode ON caloms_records(episode_id, record_type) WHERE record_type IN ('admission','discharge');
+
+-- CalOMS Tx submissions (migration 35). Producing a submission is the disclosure to DHCS: the file is built
+-- once, accounted for per client (disclosures, source 'caloms', source_ref 'caloms:<id>'), and kept here so
+-- what is downloaded and sent is exactly what was accounted — identified by its SHA-256. The file itself
+-- (a zip of identified records) is encrypted and kept only until it is no longer needed (retention.js
+-- clears file_enc after CALOMS_FILE_DAYS, and when a client in it is purged); the row stays as the record
+-- of the submission. Office server only, never synchronised.
+CREATE TABLE IF NOT EXISTS caloms_submissions (
+  id TEXT PRIMARY KEY,
+  period_from TEXT NOT NULL,
+  period_to TEXT NOT NULL,
+  file_name TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  bytes INTEGER NOT NULL DEFAULT 0,
+  clients INTEGER NOT NULL DEFAULT 0,
+  counts TEXT,                         -- JSON: records per type, and how many were held back
+  file_enc TEXT,                       -- base64 of the zip, encrypted; NULL once cleared
+  file_cleared_at TEXT,
+  created_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_caloms_submissions_created ON caloms_submissions(created_at);
 
 -- Overdose and reversal events. Every SUD funder asks for these counts; they were previously only
 -- inferable from two boolean columns on the client record, which cannot answer "how many this quarter".

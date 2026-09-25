@@ -46,10 +46,12 @@ async function newClient(first, last, extra = {}) {
   assert.equal(r.status, 201, JSON.stringify(r.data));
   return r.data.id;
 }
-function consent(clientId, { type = 'part2_disclosure', recipient = RECIPIENT, purpose = 'Treatment and care coordination', signed = '2026-01-10', expires = '2030-01-01', revoked = null } = {}) {
+// categories: the information categories the consent covers (consents.info_categories); 'all' unless a test
+// says otherwise, null for a consent recorded before categories existed.
+function consent(clientId, { type = 'part2_disclosure', recipient = RECIPIENT, purpose = 'Treatment and care coordination', signed = '2026-01-10', expires = '2030-01-01', revoked = null, categories = 'all' } = {}) {
   const id = randomUUID();
-  H.db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,revoked_at,signed_on_paper,redisclosure_notice_given,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-    id, clientId, type, encrypt(recipient), encrypt(purpose), encrypt('Navigation record'), signed, expires, revoked, 1, 1, adminId);
+  H.db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,revoked_at,signed_on_paper,redisclosure_notice_given,created_by,info_categories) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    id, clientId, type, encrypt(recipient), encrypt(purpose), encrypt('Navigation record'), signed, expires, revoked, 1, 1, adminId, categories);
   return id;
 }
 function clinicalData(clientId, tag) {
@@ -513,4 +515,41 @@ test('the local kernel leaves the FHIR API out', () => {
   const { ROUTE_MODULES, LOCAL_ROUTE_MODULES } = require('../server/app');
   assert.ok(ROUTE_MODULES.includes('fhir'));
   assert.ok(!LOCAL_ROUTE_MODULES.includes('fhir'));
+});
+
+// ---- the consent's information categories (consents.info_categories) ----
+test('a consent covers only the information categories it names; one with none named covers nothing', async () => {
+  const only = await newClient('Cato', 'Attendanceonly');
+  consent(only, { categories: 'encounters' });
+  const d = clinicalData(only, 'C');
+  const got = async (q) => entriesOf((await fhirGet(`/fhir/R4/${q}`, ehr.token)).data).filter(r => r.resourceType !== 'OperationOutcome');
+  assert.ok((await got(`Encounter?patient=${only}`)).some(r => r.id === `iv-${d.iv}`), 'attendance is shared');
+  assert.ok((await got(`EpisodeOfCare?patient=${only}`)).some(r => r.id === d.ep), 'so is the episode of care');
+  for (const t of ['Observation', 'ServiceRequest', 'Task', 'DocumentReference']) assert.deepEqual(await got(`${t}?patient=${only}`), [], `${t} is outside "attendance only"`);
+  assert.deepEqual(await got(`Patient?_id=${only}`), [], 'demographics were not named either');
+  assert.equal((await fhirGet(`/fhir/R4/Observation/od-${d.od}`, ehr.token)).status, 404, 'an overdose event is not readable by id');
+  assert.equal((await fhirGet(`/fhir/R4/Observation/risk-${only}`, ehr.token)).status, 404, 'nor the risk level');
+  assert.equal((await fhirGet(`/fhir/R4/Encounter/iv-${d.iv}`, ehr.token)).status, 200);
+  // A consent recorded before categories existed (free-text scope only) is not machine-readable: nothing.
+  const legacy = await newClient('Lars', 'Legacyscope');
+  consent(legacy, { categories: null }); clinicalData(legacy, 'D');
+  for (const t of [`Patient?_id=${legacy}`, `Encounter?patient=${legacy}`, `Observation?patient=${legacy}`]) assert.deepEqual(await got(t), [], t);
+  // Bulk export follows the same rule, type by type.
+  const k = await fhirGet('/fhir/R4/$export?_type=Encounter,Observation', ehr.token, { Prefer: 'respond-async' });
+  assert.equal(k.status, 202);
+  const m = (await poll(k.headers.get('content-location'), ehr.token)).data;
+  const fileOf = async (type) => { const o = m.output.find(x => x.type === type); return o ? (await fhirGet(o.url.replace(/^https?:\/\/[^/]+/, ''), ehr.token)).data : ''; };
+  assert.ok((await fileOf('Encounter')).includes(`iv-${d.iv}`), 'the attendance-only client is in the Encounter file');
+  assert.ok(!(await fileOf('Observation')).includes(only), 'and not in the Observation file');
+  // The consent form records the categories; an unknown one is refused.
+  const ELEMENTS = { signed_at: '2026-09-01', scope: 'Attendance', expires_at: '2099-09-01', signed_on_paper: true, redisclosure_notice_given: true, revocation_right_given: true, refusal_consequences_given: true };
+  const bad = await admin.post(`/api/clients/${only}/consents`, { type: 'part2_disclosure', recipient: RECIPIENT, purpose: 'Treatment', ...ELEMENTS, info_categories: ['encounters', 'everything'] });
+  assert.equal(bad.status, 400, JSON.stringify(bad.data));
+  const ok = await admin.post(`/api/clients/${only}/consents`, { type: 'part2_disclosure', recipient: RECIPIENT, purpose: 'Treatment', ...ELEMENTS, info_categories: ['encounters', 'risk_overdose'] });
+  assert.equal(ok.status, 201, JSON.stringify(ok.data));
+  assert.equal(H.db.one(`SELECT info_categories FROM consents WHERE id=?`, ok.data.id).info_categories, 'encounters,risk_overdose');
+  const listed = (await admin.get(`/api/clients/${only}/consents`)).data;
+  const row = (listed.rows || listed.consents || []).find(x => x.id === ok.data.id);
+  assert.deepEqual(row && row.info_categories, ['encounters', 'risk_overdose'], 'returned as a list');
+  assert.ok((await got(`Observation?patient=${only}`)).some(r => r.id === `od-${d.od}`), 'with risk and overdose now covered, the overdose event is shared');
 });

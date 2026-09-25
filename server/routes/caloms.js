@@ -11,7 +11,7 @@ const auth = require('../auth');
 const audit = require('../audit');
 const C = require('../caloms');
 const S = require('../caloms-spec');
-const { badRequest, notFound } = require('../http');
+const { badRequest, notFound, HttpError } = require('../http');
 const { validate } = require('../validate');
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -139,43 +139,88 @@ module.exports = (r) => {
     return { from, to, spec_version: rep.spec_version, enabled: rep.enabled, providers: rep.providers, start_date: rep.start_date, summary: rep.summary, rows };
   });
 
-  // The extract, and the submission. Downloading the file is identified, so export:identified, and audited —
-  // but a download is not a disclosure until the file actually goes to DHCS: it is labelled a test / preview,
-  // and nobody's accounting of disclosures changes. "Mark as submitted" (POST /api/caloms/submissions) is the
-  // disclosure: required by law, it is accounted for per client under the state-reporting basis
-  // (server/disclosure.js) and stamps the records as sent. Records with a fatal error are held back from both.
-  function extractFor(ctx) {
+  // The preview, and the submission.
+  //   GET /api/caloms/extract is a preview for checking the file before it is sent. It is unmistakably not
+  //   the submission: every file in it is named PREVIEW-, its README opens with PREVIEW - NOT FOR SUBMISSION,
+  //   and its records carry PREVIEW / NOT FOR SUBMISSION where the name goes and no date of birth — so it is
+  //   not an identified file, cannot be accepted by DHCS, and nobody's accounting changes. Audited.
+  //   POST /api/caloms/submissions produces the submission: the file is built once, kept (encrypted, with its
+  //   SHA-256), accounted for per client under the state-reporting basis against that submission's id, and
+  //   its records are stamped as sent. GET /api/caloms/submissions/:id/file serves exactly those bytes, so
+  //   what goes to DHCS is what was accounted — never a file rebuilt later from records edited since.
+  //   Records with a fatal error are held back from both.
+  function extractFor(ctx, opts = {}) {
     const { from, to } = period(ctx);
     if (!C.enabled()) throw badRequest('CalOMS Tx reporting is switched off for this program (Reports → State reporting → Settings)');
     if (!C.providers().length) throw badRequest('Add this program\'s CalOMS provider ID first (Reports → State reporting → Settings)');
-    return { from, to, x: C.buildExtract({ from, to, scope: scopeFor(ctx.user), generatedBy: ctx.user.display_name || ctx.user.username }) };
+    return { from, to, x: C.buildExtract({ from, to, scope: scopeFor(ctx.user), generatedBy: ctx.user.display_name || ctx.user.username, ...opts }) };
   }
+  const zipOf = (files) => require('../spreadsheet').zip(files);
+  const sha256 = (buf) => require('node:crypto').createHash('sha256').update(buf).digest('hex');
+  const headerSafe = (v) => String(v).replace(/[^\x20-\x7e]/g, '?').slice(0, 900);
+
   r.get('/api/caloms/extract', auth.requireAuth, auth.requirePerm('export:identified'), (ctx) => {
-    const { from, to, x } = extractFor(ctx);
+    const { from, to, x } = extractFor(ctx, { preview: true });
     const disclosure = require('../disclosure');
     const stamp = db.now();
     audit.log({ user: ctx.user, action: 'caloms.extract', ip: ctx.ip, details: { from, to, preview: true, ...x.counts, held_back: x.excluded, provider_months: x.activity_rows, no_activity_months: x.no_activity_months, clients: x.clientIds.length } });
-    const body = require('../spreadsheet').zip(x.files);
-    ctx.res.writeHead(200, { 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="caloms-tx-${from}_${to}.zip"`,
-      'X-SUDS-Export': `Identified - PHI. CalOMS Tx submission for DHCS (state reporting, required by law). Test / preview - not accounted until marked as submitted. ${x.clientIds.length} client(s).${disclosure.fileNotice({ short: true }) ? ` ${disclosure.fileNotice({ short: true })}` : ''} Generated ${stamp}.`,
+    const body = zipOf(x.files);
+    ctx.res.writeHead(200, { 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="caloms-tx-PREVIEW-NOT-FOR-SUBMISSION-${from}_${to}.zip"`,
+      'X-SUDS-Export': headerSafe(`CalOMS Tx Preview - not for submission: names replaced and dates of birth left out; produce the submission file to send to DHCS. ${x.clientIds.length} client(s).${disclosure.fileNotice({ short: true }) ? ` ${disclosure.fileNotice({ short: true })}` : ''} Generated ${stamp}.`),
       'X-SUDS-CalOMS-Counts': `admission=${x.counts.admission}; discharge=${x.counts.discharge}; annual_update=${x.counts.annual_update}; held_back=${x.excluded}` });
     ctx.res.end(body);
   });
+
   r.post('/api/caloms/submissions', auth.requireAuth, auth.requirePerm('export:identified'), (ctx) => {
     const v = validate(ctx.body || {}, { from: { type: 'date', required: true }, to: { type: 'date', required: true } });
     ctx.query.set('from', v.from); ctx.query.set('to', v.to);
-    const { from, to, x } = extractFor(ctx);
+    const id = require('../crypto').uuid();
+    const { from, to, x } = extractFor(ctx, { submissionId: id });
     if (!x.clientIds.length) throw badRequest('There is nothing to submit for this period: no record passed the edit checks.');
     const disclosure = require('../disclosure');
+    const { encrypt } = require('../crypto');
+    const body = zipOf(x.files);
+    const hash = sha256(body);
+    const fileName = `caloms-tx-SUBMISSION-${from}_${to}-${id.slice(0, 8)}.zip`;
     const stamp = db.now();
     db.transaction(() => {
-      disclosure.recordStateReport({ clientIds: x.clientIds, what: `CalOMS Tx records (${from} to ${to}): ${x.counts.admission} admission, ${x.counts.discharge} discharge, ${x.counts.annual_update} annual update`, sourceRef: `caloms:${from}_${to}`, user: ctx.user, ip: ctx.ip });
+      db.run(`INSERT INTO caloms_submissions(id,period_from,period_to,file_name,sha256,bytes,clients,counts,file_enc,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+        id, from, to, fileName, hash, body.length, x.clientIds.length, JSON.stringify({ ...x.counts, held_back: x.excluded }), encrypt(body.toString('base64')), ctx.user.id, stamp, stamp);
+      disclosure.recordStateReport({ clientIds: x.clientIds, what: `CalOMS Tx records (${from} to ${to}): ${x.counts.admission} admission, ${x.counts.discharge} discharge, ${x.counts.annual_update} annual update; submission file ${fileName}, SHA-256 ${hash}`, sourceRef: `caloms:${id}`, user: ctx.user, ip: ctx.ip });
       for (const rec of x.ready) db.run(`UPDATE caloms_records SET extracted_at=?, updated_at=? WHERE id=?`, stamp, stamp, rec.id);
     });
     // A submission naming a great many people at once is reviewed like any other mass identified export,
     // required by law or not (server/incidents.js); the review is a formality when it went to DHCS as recorded.
     require('../incidents').maybeMassExport({ clients: x.clientIds.length, kind: 'caloms', user: ctx.user });
-    audit.log({ user: ctx.user, action: 'caloms.submitted', ip: ctx.ip, details: { from, to, ...x.counts, held_back: x.excluded, clients_disclosed: x.clientIds.length } });
-    return { ok: true, from, to, submitted_at: stamp, clients_disclosed: x.clientIds.length, counts: x.counts, held_back: x.excluded };
+    audit.log({ user: ctx.user, action: 'caloms.submitted', entity: 'caloms_submission', entityId: id, ip: ctx.ip, details: { from, to, ...x.counts, held_back: x.excluded, clients_disclosed: x.clientIds.length, sha256: hash } });
+    return { ok: true, id, from, to, submitted_at: stamp, file_name: fileName, sha256: hash, bytes: body.length, clients_disclosed: x.clientIds.length, counts: x.counts, held_back: x.excluded };
+  });
+
+  // What was produced, when and by whom: periods, counts and hashes, never who was in it.
+  r.get('/api/caloms/submissions', auth.requireAuth, auth.requirePerm('export:identified'), (ctx) => {
+    const rows = db.all(`SELECT s.id, s.period_from, s.period_to, s.file_name, s.sha256, s.bytes, s.clients, s.counts, s.created_at, s.file_cleared_at, s.file_enc IS NOT NULL AS has_file, u.display_name AS created_by_name
+      FROM caloms_submissions s JOIN users u ON u.id=s.created_by ORDER BY s.created_at DESC LIMIT 200`)
+      .map(r => { let counts = {}; try { counts = JSON.parse(r.counts || '{}'); } catch { /* keep {} */ } const o = { ...r, counts, file_available: !!r.has_file }; delete o.has_file; return o; });
+    audit.log({ user: ctx.user, action: 'caloms.submission.list', ip: ctx.ip, details: { count: rows.length } });
+    return { rows, keep_days: require('../retention').CALOMS_FILE_DAYS };
+  });
+
+  // The submission file itself: exactly the bytes that were accounted, checked against the stored hash.
+  r.get('/api/caloms/submissions/:id/file', auth.requireAuth, auth.requirePerm('export:identified'), (ctx) => {
+    const sub = db.one(`SELECT * FROM caloms_submissions WHERE id=?`, ctx.params.id);
+    if (!sub) throw notFound('Submission not found');
+    if (!sub.file_enc) throw new HttpError(410, `This submission's file is no longer kept (files are kept ${require('../retention').CALOMS_FILE_DAYS} days, and removed when a client in it is purged). Its record and hash remain; produce a new submission if the records must be sent again.`);
+    const body = Buffer.from(require('../crypto').decrypt(sub.file_enc), 'base64');
+    if (sha256(body) !== sub.sha256) {
+      audit.log({ user: ctx.user, action: 'caloms.submission.download', entity: 'caloms_submission', entityId: sub.id, ip: ctx.ip, success: false, details: { reason: 'hash mismatch' } });
+      throw new HttpError(500, 'The stored submission file does not match the hash recorded when it was produced; it will not be served. Report this to an administrator.');
+    }
+    // Every download of an identified file naming many clients is reviewed as a mass export.
+    require('../incidents').maybeMassExport({ clients: sub.clients, kind: 'caloms', user: ctx.user });
+    audit.log({ user: ctx.user, action: 'caloms.submission.download', entity: 'caloms_submission', entityId: sub.id, ip: ctx.ip, details: { from: sub.period_from, to: sub.period_to, clients: sub.clients, sha256: sub.sha256 } });
+    const disclosure = require('../disclosure');
+    ctx.res.writeHead(200, { 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="${sub.file_name}"`, 'X-SUDS-SHA256': sub.sha256,
+      'X-SUDS-Export': headerSafe(`Identified - PHI. CalOMS Tx submission for DHCS (state reporting, required by law), accounted for ${sub.clients} client(s) on ${sub.created_at}. Send this file unchanged.${disclosure.fileNotice({ short: true }) ? ` ${disclosure.fileNotice({ short: true })}` : ''}`) });
+    ctx.res.end(body);
   });
 };

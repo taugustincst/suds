@@ -390,8 +390,10 @@ function requireRestrictionReview(clientIds, restriction_reviewed) {
 }
 
 /** Write the disclosure row. Caller has already established the basis. */
-function record({ clientId, consentId = null, courtOrderId = null, agreementId = null, recipientOverride = false, legalProceeding = false, counselingNotes = false, recipient, purpose, what, method = null, basis = 'consent', justification = null, source = 'manual', sourceRef = null, disclosedAt = null, user, ip }) {
-  const id = uuid();
+function record({ id: givenId = null, clientId, consentId = null, courtOrderId = null, agreementId = null, recipientOverride = false, legalProceeding = false, counselingNotes = false, recipient, purpose, what, method = null, basis = 'consent', justification = null, source = 'manual', sourceRef = null, disclosedAt = null, user, ip }) {
+  // givenId: a device's own accounting row for the same disclosure (a referral made offline), so the office's
+  // row replaces it rather than standing beside it (server/routes/referrals.js pushDisclosure).
+  const id = givenId || uuid();
   const at = disclosedAt || db.now();
   const noticeVersion = part2Program() ? C.PART2_NOTICE_VERSION : null;
   db.run(`INSERT INTO disclosures(id,client_id,consent_id,recipient_enc,purpose_enc,what_enc,method,disclosed_at,disclosed_by,basis,justification_enc,source,source_ref,court_order_id,legal_proceeding,counseling_notes,notice_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -484,8 +486,10 @@ function isTpo(purpose) {
  * Does this (decrypted) consent name the recipient organisation and cover the purpose of use? `type` is the
  * consent's type; when it is omitted only the recipient and purpose wording are compared.
  */
-function consentCovers({ type, recipient, purpose }, { recipients, purposeOfUse }) {
+function consentCovers({ type, recipient, purpose, categories }, { recipients, purposeOfUse, category }) {
   if (type !== undefined && !fhirConsentTypes().includes(type)) return false;
+  // The information the consent covers: checked whenever the caller names a category ('*' = any at all).
+  if (category !== undefined && !categoriesCover(categories, category)) return false;
   // The recipient is matched exactly as on every other path (consentNamesRecipient, above).
   if (!consentNamesRecipient({ type, recipient }, recipients)) return false;
   // A TPO consent covers every FHIR purpose of use: treatment, payment and operations are what it is for.
@@ -494,6 +498,35 @@ function consentCovers({ type, recipient, purpose }, { recipients, purposeOfUse 
   const p = ` ${normalise(purpose)} `;
   return (FHIR_PURPOSES[purposeOfUse]?.words || []).some(w => p.includes(` ${normalise(w)} `));
 }
+// ---- information categories (consents.info_categories) ----
+// A consent's scope is free text on the signed form ("attendance records only"); a machine cannot read it.
+// The consent form also records it as codes (C.CONSENT_INFO_CATEGORIES), and an automated disclosure shares
+// only the resource types whose category the consent names. A consent with no categories recorded — one
+// from before they existed — covers nothing automated: the conservative reading of a scope nobody coded
+// (migration 35 gave 'all' only to a scope that says plainly it covers everything, generalScope below).
+const CATEGORY_OF_FHIR_TYPE = {
+  Patient: 'demographics', EpisodeOfCare: 'encounters', Encounter: 'encounters', ServiceRequest: 'referrals', Task: 'tasks',
+  Observation: 'risk_overdose', DocumentReference: 'documents',
+  // The Consent resource is the authorisation itself: listed for any client whose consent covers something.
+  Consent: '*',
+};
+/** The categories stored on a consent (comma-separated text, or an array), as a Set of known codes. */
+function parseCategories(v) {
+  const list = Array.isArray(v) ? v : String(v || '').split(',');
+  return new Set(list.map(x => String(x).trim()).filter(x => C.CONSENT_INFO_CATEGORIES.includes(x)));
+}
+/** Do these stored categories cover `category` ('*': any category at all)? */
+function categoriesCover(stored, category) {
+  const cats = parseCategories(stored);
+  if (!cats.size) return false;
+  return category === '*' || cats.has('all') || cats.has(category);
+}
+/** Does a free-text scope say, plainly, that the consent covers the whole record? (migration 35) */
+function generalScope(text) {
+  const t = normalise(text).replace(/\b(my|of|the|information|records?|in|sud|substance use|treatment|and|file|chart|client|patient)\b/g, ' ').replace(/\s+/g, ' ').trim();
+  return ['all', 'everything', 'entire', 'complete', 'whole', 'full', 'general', 'any and all'].includes(t);
+}
+
 /** The FHIR purposes of use a consent of this type and purpose wording covers (for the Consent resource). */
 function consentPurposeCodes({ type, purpose }) {
   return Object.keys(FHIR_PURPOSES).filter(code => type === 'part2_tpo' || consentCovers({ recipient: 'x', purpose }, { recipients: ['x'], purposeOfUse: code }));
@@ -508,13 +541,15 @@ const coverageCache = new Map();
  * most recently signed one). Clients who were merged away or deleted, and clients with an agreed
  * restriction, are never covered.
  */
-function fhirCoverage({ cacheKey, recipients, purposeOfUse }) {
+function fhirCoverage({ cacheKey, recipients, purposeOfUse, resourceType }) {
+  // What the resource type is (C.CONSENT_INFO_CATEGORIES); '*' when none is named — covered for something.
+  const category = CATEGORY_OF_FHIR_TYPE[resourceType] || '*';
   const stamp = db.one(`SELECT (SELECT COUNT(*) FROM consents) n, (SELECT MAX(updated_at) FROM consents) u,
     (SELECT COUNT(*) FROM patient_requests) rn, (SELECT MAX(updated_at) FROM patient_requests) ru`);
   const today = new Date().toISOString().slice(0, 10);
   const types = fhirConsentTypes();
-  const key = `${stamp.n}|${stamp.u}|${stamp.rn}|${stamp.ru}|${types.join(',')}|${today}|${recipients.join('\u0001')}|${purposeOfUse}`;
-  const hit = coverageCache.get(cacheKey);
+  const key = `${stamp.n}|${stamp.u}|${stamp.rn}|${stamp.ru}|${types.join(',')}|${today}|${recipients.join('\u0001')}|${purposeOfUse}|${category}`;
+  const hit = coverageCache.get(`${cacheKey}|${category}`);
   if (hit && hit.key === key) return hit.map;
   const map = new Map();
   const restricted = new Set(db.all(`SELECT DISTINCT client_id FROM patient_requests WHERE kind='restriction' AND status='fulfilled'`).map(r => r.client_id));
@@ -526,11 +561,11 @@ function fhirCoverage({ cacheKey, recipients, purposeOfUse }) {
     // A consent without the §2.31 elements authorises nothing here either (as requireBasis re-checks them).
     if (consentElementProblems(row).length) continue;
     let plain;
-    try { plain = { type: row.type, recipient: row.recipient_enc ? decrypt(row.recipient_enc) : '', purpose: row.purpose_enc ? decrypt(row.purpose_enc) : '' }; } catch { continue; }
-    if (consentCovers(plain, { recipients, purposeOfUse })) map.set(row.client_id, row.id);
+    try { plain = { type: row.type, recipient: row.recipient_enc ? decrypt(row.recipient_enc) : '', purpose: row.purpose_enc ? decrypt(row.purpose_enc) : '', categories: row.info_categories }; } catch { continue; }
+    if (consentCovers(plain, { recipients, purposeOfUse, category })) map.set(row.client_id, row.id);
   }
   if (coverageCache.size > 100) coverageCache.clear();
-  coverageCache.set(cacheKey, { key, map });
+  coverageCache.set(`${cacheKey}|${category}`, { key, map });
   return map;
 }
 
@@ -554,4 +589,5 @@ function recordFhir({ perClient, recipient, purposeOfUse, sourceRef, user, ip })
 module.exports = { BASES, EXPORT_BASES, SYSTEM_BASES, STATE_REPORTING, NEEDS_JUSTIFICATION, OVERRIDE_BASES, REFERRAL_BASES, AGREEMENT_KINDS, LEGACY_CONSENT_CUTOFF, MIN_JUSTIFICATION, part2Program, notice, fileNotice,
   disclosingConsentTypes, fileConsentTypes, activeConsent, courtOrderProblems, agreedRestrictions, missingPart2Elements, missingLegacyElements, consentElementProblems, consentValues,
   normalise, recipientNames, consentNamesRecipient, isInternalRecipient, agreementProblems, agreementNames, requireAgreement, fileConsentFor,
-  requireBasis, requireExportBasis, requireRestrictionReview, record, recordStateReport, present, accounting, FHIR_PURPOSES, FHIR_CONSENT_TYPES, fhirConsentTypes, consentCovers, consentPurposeCodes, fhirCoverage, recordFhir };
+  requireBasis, requireExportBasis, requireRestrictionReview, record, recordStateReport, present, accounting, FHIR_PURPOSES, FHIR_CONSENT_TYPES, fhirConsentTypes, consentCovers, consentPurposeCodes, fhirCoverage, recordFhir,
+  CATEGORY_OF_FHIR_TYPE, parseCategories, categoriesCover, generalScope };

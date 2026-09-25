@@ -19,6 +19,12 @@ const METHODS = { in_person_paper: 'In person, on paper', electronic: 'Electroni
 // Short names for the consent types in tables and pickers ("Part2 Tpo" is what the generic label makes of them).
 const SHORT = { part2_disclosure: 'Part 2 consent', part2_tpo: 'Part 2 — treatment, payment & operations', part2_counseling_notes: 'Part 2 — counseling notes', part2_proceedings: 'Part 2 — legal proceeding', roi: 'ROI' };
 export const consentTypeLabel = (t) => SHORT[t] || fmt.label(t);
+// The categories of information a consent can cover (server/constants.js CONSENT_INFO_CATEGORIES).
+const INFO_CATEGORIES = () => C().CONSENT_INFO_CATEGORIES || ['demographics', 'encounters', 'diagnoses_assessments', 'referrals', 'tasks', 'documents', 'risk_overdose', 'all'];
+const CATEGORY_LABELS = () => C().CONSENT_INFO_CATEGORY_LABELS || {};
+const CATEGORY_SHORT = { demographics: 'Identity', encounters: 'Attendance', diagnoses_assessments: 'Diagnosis & assessments', referrals: 'Referrals', tasks: 'Tasks', documents: 'Notes (titles)', risk_overdose: 'Risk & overdose', all: 'All' };
+/** A consent's coded categories, short, for a table cell ("—" when none were recorded). */
+export const consentCategoriesLabel = (list) => (list && list.length ? list.map(c => CATEGORY_SHORT[c] || fmt.label(c)).join(', ') : '—');
 export const noticeShort = () => C().PART2_NOTICE_SHORT || '42 CFR part 2 prohibits unauthorized use or disclosure of these records.';
 
 /** The label a Part 2 record carries on screen: header badge, printouts. */
@@ -57,7 +63,15 @@ export function openConsentForm(clientId, { onDone, discloser } = {}) {
     { name: 'revocation_right_given', label: 'The consent states the right to revoke it in writing, and how' + P2, type: 'checkbox', span: true },
     { name: 'redisclosure_notice_given', label: 'The redisclosure statement was given (§2.32; for TPO, that HIPAA entities may redisclose except for proceedings against the patient)' + P2, type: 'checkbox', span: true },
     { name: 'refusal_consequences_given', label: 'The consent states the consequences of refusing to sign' + P2, type: 'checkbox', span: true },
-  ], { submitText: 'Record consent', onCancel: () => m.close(), onSubmit: async (v) => { await post(`/api/clients/${clientId}/consents`, v); toast('Consent recorded', 'ok'); m.close(); onDone && onDone(); } });
+    // The scope above, as categories SUDS can act on: an automated disclosure (the FHIR API) shares only these.
+    { type: 'section', label: 'Information it covers — tick what the signed form covers' },
+    ...INFO_CATEGORIES().map(code => ({ name: `cat_${code}`, label: CATEGORY_LABELS()[code] || fmt.label(code), type: 'checkbox', span: true,
+      help: code === 'all' ? 'Tick only if the form covers the whole record. With nothing ticked, the consent is still on file, but nothing is shared automatically (the FHIR API) under it.' : null })),
+  ], { submitText: 'Record consent', onCancel: () => m.close(), onSubmit: async (v) => {
+    const body = { ...v, info_categories: INFO_CATEGORIES().filter(code => v[`cat_${code}`]) };
+    for (const code of INFO_CATEGORIES()) delete body[`cat_${code}`];
+    await post(`/api/clients/${clientId}/consents`, body); toast('Consent recorded', 'ok'); m.close(); onDone && onDone();
+  } });
   // The TPO wording is only a default for a TPO consent: switching type clears it, switching back restores it.
   const typeSel = f.querySelector('select[name=type]');
   typeSel.addEventListener('change', () => {

@@ -166,6 +166,10 @@ function isSelfAssignment(raw, user, knownUsers, batchClients) {
 function consentPushProblem(raw) {
   const disclosure = require('../disclosure');
   if (!require('../constants').CONSENT_TYPES.includes(raw.type)) return `has a value the office does not accept (consent type "${String(raw.type).slice(0, 40)}")`;
+  // The coded categories of information it covers (what the FHIR API honours): known codes only.
+  const cats = String(raw.info_categories || '').split(',').map(x => x.trim()).filter(Boolean);
+  const unknownCat = cats.find(x => !require('../constants').CONSENT_INFO_CATEGORIES.includes(x));
+  if (unknownCat) return `has a value the office does not accept (information category "${unknownCat.slice(0, 40)}")`;
   if (!require('../constants').PART2_CONSENT_TYPES.includes(raw.type)) return null;
   const v = { discloser: raw.discloser, recipient: raw.recipient_enc, purpose: raw.purpose_enc, scope: raw.scope_enc, expires_at: raw.expires_at, expires_event: raw.expires_event, document_ref: raw.document_ref,
     signed_on_paper: raw.signed_on_paper, witness: raw.witness, signer_relationship: raw.signer_relationship, signer_name: raw.signer_name_enc, revocation_right_given: raw.revocation_right_given,
@@ -238,11 +242,22 @@ function push(user, payload) {
     return out;
   }
 
+  // The accounting rows a device's own referral gate wrote offline, by referral id: the office re-checks the
+  // basis they record and writes its own row in their place (see the referrals gate below).
+  const deviceReferralDisclosures = new Map(); const accountedByOffice = new Set();
+  for (const d of (payload.tables || {}).disclosures || []) {
+    if (!d || typeof d.id !== 'string' || d.source !== 'referral' || typeof d.source_ref !== 'string') continue;
+    if (!deviceReferralDisclosures.has(d.source_ref)) deviceReferralDisclosures.set(d.source_ref, []);
+    deviceReferralDisclosures.get(d.source_ref).push(d);
+  }
+
   db.transaction(() => {
     for (const t of SYNC.tables) {
       let rows = (payload.tables || {})[t.name]; if (!Array.isArray(rows) || !rows.length) continue;
       if (t.selfParent) rows = selfParentOrder(rows, t.selfParent);
       if (t.name === 'users') continue;
+      // A device's accounting row the office has just replaced with its own (same id): already on file.
+      if (t.name === 'disclosures' && accountedByOffice.size) rows = rows.filter(r => !(r && accountedByOffice.has(r.id)));
       // Shared program state the office alone keeps (supply counts): a device's copy is never the truth.
       if (t.serverOwned) {
         for (const raw of rows) if (raw && typeof raw.id === 'string') reject(t.name, raw.id, 'server-owned');
@@ -413,6 +428,19 @@ function push(user, payload) {
           }
           if (t.name === 'notes' && !existing) { raw.cosigned_by = null; raw.cosigned_at = null; raw.cosignature_hash = null; }
           if (db.one(`SELECT 1 FROM tombstones WHERE table_name=? AND id=? AND deleted_at > ?`, t.name, raw.id, incomingAt)) return false; // deleted on server after device edit
+          // A referral that shares information is a disclosure, whichever way it reaches the office: a warm
+          // hand-off made offline, a pending referral progressed on the phone, or a shared one re-pointed at
+          // another agency passes the same gate as PUT /api/referrals/:id and is accounted here. A refusal is
+          // for good (the device shows it) and audited, by reason code only.
+          let referralDisclosure = null;
+          if (t.name === 'referrals') {
+            const deviceRows = (deviceReferralDisclosures.get(raw.id) || []).filter(d => !db.one(`SELECT 1 FROM disclosures WHERE id=?`, d.id));
+            referralDisclosure = require('./referrals').pushDisclosure(user, raw, existing, deviceRows);
+            if (referralDisclosure && referralDisclosure.refused) {
+              audit.log({ user, action: 'sync.disclosure_refused', entity: 'referrals', entityId: raw.id, clientId: raw.client_id, ip: 'device', success: false, details: { reason: referralDisclosure.code } });
+              reject(t.name, raw.id, referralDisclosure.refused, true); return false;
+            }
+          }
           // A user id minted on the device means nothing here, so it becomes the syncing user.
           for (const c of SYNC.user_ref_cols) if (existingCols.includes(c) && raw[c] && !knownUsers.has(raw[c])) raw[c] = user.id;
           // A client that arrives with no creator was created by whoever is sending it (POST /api/clients
@@ -435,6 +463,7 @@ function push(user, payload) {
             db.run(`UPDATE ${t.name} SET ${keys.map(k => `${k}=?`).join(', ')} WHERE id=?`, ...keys.map(k => o[k]), raw.id);
           }
           else db.run(`INSERT INTO ${t.name}(id,${keys.join(',')}) VALUES(?,${keys.map(() => '?').join(',')})`, raw.id, ...keys.map(k => o[k]));
+          if (referralDisclosure) { referralDisclosure.account('device'); for (const id of referralDisclosure.deviceIds) accountedByOffice.add(id); }
           // A row that comes back after being deleted must not leave its tombstone behind, or the two
           // tables disagree and other devices are told to delete a row that is alive here.
           db.run(`DELETE FROM tombstones WHERE table_name=? AND id=?`, t.name, raw.id);

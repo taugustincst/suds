@@ -359,7 +359,7 @@ const DEFS = {
     // Only the consents that cover this recipient for this purpose, of a type that may cover it now (a
     // general release is listed only outside a Part 2 programme): which other organisations a client has
     // agreed to share with is none of this recipient's business.
-    keep: (row, client) => disclosure.consentCovers({ type: row.type, recipient: dec(row.recipient_enc), purpose: dec(row.purpose_enc) }, { recipients: client.recipients, purposeOfUse: client.purpose }),
+    keep: (row, client) => disclosure.consentCovers({ type: row.type, recipient: dec(row.recipient_enc), purpose: dec(row.purpose_enc), categories: row.info_categories }, { recipients: client.recipients, purposeOfUse: client.purpose, category: '*' }),
   },
   ServiceRequest: {
     src: `SELECT r.id _fid, 'referral' _kind, r.id _rid, r.client_id _cid, r.updated_at _upd, r.referred_at _date, r.status _st FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${LIVE_CLIENT}`,

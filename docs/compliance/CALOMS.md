@@ -200,35 +200,52 @@ in it (opened on or after the start date) is checked for the records it should h
 client code, record, date, field and the problem — codes and field names only, never answers or names — and
 can be downloaded as CSV. Anyone who can read episodes sees it for their own caseload (`GET /api/caloms/validation`).
 
-## Extract and how to submit
+## Preview, submission and how to submit
 
-**Download CalOMS Tx extract** (roles with `export:identified`: supervisors and administrators;
-`GET /api/caloms/extract?from=&to=`) produces `caloms-tx-<from>_<to>.zip`:
+The files (in both the preview and the submission):
 
 - `admissions.csv`, `discharges.csv`, `annual_updates.csv` — identifying columns (RecordType, ProviderID,
   ProviderClientID = SUDS client code, ClientLastName, ClientFirstName, DateOfBirth, AdmissionDate), the
   record date, then the elements in the order of the mapping table above. Multi-answer elements are split
   into numbered columns (Race1–Race5, Disability1–Disability5). Dates are `YYYY-MM-DD`.
 - `provider_activity.csv` — ProviderID, ReportMonth (`YYYYMM`), counts, NoActivity.
-- `README.txt` — the period, counts, how many records were held back, the layout version and this warning.
+- `README.txt` — the period, counts, how many records were held back, the layout version, this warning and
+  the §2.32 notice.
 
-Every record with a fatal error is held back. Downloading the extract (`GET /api/caloms/extract`) is a
-**test / preview**: it is audited (`caloms.extract`, `preview: true`) and its `X-SUDS-Export` header says
-so, but nothing is accounted and no record is marked as sent — a file that was only checked, or downloaded
-twice, is not a disclosure to DHCS. Once the file has been submitted, **Mark as submitted**
-(`POST /api/caloms/submissions` with the period, `export:identified`) rebuilds the extract for that period
-and records it: each included record gets `extracted_at`, and each client in the file gets an
-accounting-of-disclosures row: basis **state_reporting**, source `caloms`, recipient *California
-Department of Health Care Services (DHCS) — CalOMS Tx*, purpose *State reporting (CalOMS Tx)…* The audit log
-records the counts, never names. The legal characterisation used (`server/disclosure.js`): a disclosure
-required by law under HIPAA 45 CFR §164.512(a) (still subject to the §164.528 accounting), and under
-42 CFR Part 2 a disclosure to the state agency that funds and regulates the program (§2.53) — **county
-counsel should confirm the Part 2 basis**.
+Every record with a fatal error is held back from both.
+
+**Download preview** (roles with `export:identified`: supervisors and administrators;
+`GET /api/caloms/extract?from=&to=`) is for checking the file, and cannot be mistaken for, or submitted as,
+the real one: it downloads as `caloms-tx-PREVIEW-NOT-FOR-SUBMISSION-<from>_<to>.zip`, every file in it is
+named `PREVIEW-…`, its README opens with *PREVIEW - NOT FOR SUBMISSION*, and every record carries
+`PREVIEW` / `NOT FOR SUBMISSION` where the client's name goes and no date of birth. It is therefore not an
+identified file (client codes and coded answers only): it is audited (`caloms.extract`, `preview: true`),
+nobody's accounting changes and no record is marked as sent.
+
+**Produce submission file** (`POST /api/caloms/submissions` with the period, `export:identified`) is the
+disclosure. The file is built **once**, at that moment, and kept (table `caloms_submissions`: the zip
+encrypted, its SHA-256, the period, counts and who produced it). In the same transaction each client in it
+gets an accounting-of-disclosures row — basis **state_reporting**, source `caloms`, `source_ref`
+`caloms:<submission id>`, recipient *California Department of Health Care Services (DHCS) — CalOMS Tx*,
+purpose *State reporting (CalOMS Tx)…*, and what was sent names the file and its SHA-256 — and each included
+record gets `extracted_at`. A submission naming more clients than `mass_export_threshold` opens a draft
+mass-export incident. The page then downloads the file, `GET /api/caloms/submissions/:id/file`, which
+serves exactly the stored bytes (checked against the stored SHA-256, sent in `X-SUDS-SHA256`; audited as
+`caloms.submission.download` with the hash; a large file opens the mass-export incident again for review).
+A record edited after the submission changes nothing in that file: what goes to DHCS is what was accounted.
+`GET /api/caloms/submissions` lists what was produced (period, counts, hash, who and when — never names).
+The stored file is kept for 90 days (`CALOMS_FILE_DAYS` in `server/retention.js`) and removed earlier if a
+client in it is purged; the submission's row and hash remain, and the file endpoint answers `410`.
+The audit log records counts and hashes, never names. The legal characterisation used
+(`server/disclosure.js`): a disclosure required by law under HIPAA 45 CFR §164.512(a) (still subject to the
+§164.528 accounting), and under 42 CFR Part 2 a disclosure to the state agency that funds and regulates the
+program (§2.53) — **county counsel should confirm the Part 2 basis**.
 
 County process:
 1. Before the monthly deadline, open State reporting for last month and clear every fatal error.
-2. Download the extract (it holds back anything still in error; fix and re-extract as needed).
-3. Convert to the DHCS upload format if the county's channel is not CSV, and upload through the county's
+2. Download the preview to check the file (it holds back anything still in error; fix and preview again).
+3. Produce the submission file, and send that file unchanged (its SHA-256 is on the State reporting page).
+   Convert to the DHCS upload format if the county's channel is not CSV, and upload through the county's
    CalOMS Tx process. Submit the provider activity / no-activity report for months with nothing to report.
 4. Correct anything DHCS rejects in SUDS. A discharge removed by re-admission after it was extracted must
    also be corrected with DHCS.

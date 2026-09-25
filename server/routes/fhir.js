@@ -56,7 +56,8 @@ const offsetOf = (ctx) => {
   return n;
 };
 const typeOf = (ctx) => { const t = ctx.params.type; if (!R.DEFS[t]) throw new FhirError(404, `Resource type "${String(t).slice(0, 60)}" is not served here`, { code: 'not-supported' }); return t; };
-const coverageFor = (client) => disclosure.fhirCoverage({ cacheKey: client.id, recipients: client.recipients, purposeOfUse: client.purpose });
+// Per resource type: a consent covers only the categories of information it names (disclosure.CATEGORY_OF_FHIR_TYPE).
+const coverageFor = (client, type) => disclosure.fhirCoverage({ cacheKey: client.id, recipients: client.recipients, purposeOfUse: client.purpose, resourceType: type });
 const requestId = () => uuid();
 
 /** Record who received what: one accounting row per client, one audit row for the request. */
@@ -77,7 +78,7 @@ function search(ctx, client) {
   const filter = R.where(type, ctx.query);
   const rows = R.page(type, filter, { count: n + 1, offset });
   const hasNext = rows.length > n; if (hasNext) rows.length = n;
-  const coverage = d.phi ? coverageFor(client) : null;
+  const coverage = d.phi ? coverageFor(client, type) : null;
   const base = baseUrl(ctx);
   const entries = []; const perClient = new Map(); const omitted = new Set(); let omittedRows = 0;
   for (const row of rows) {
@@ -116,14 +117,14 @@ function read(ctx, client) {
   if (!/^[A-Za-z0-9\-.]{1,64}$/.test(id)) throw new FhirError(404, 'Not found', { code: 'not-found' });
   const [row] = R.page(type, { sql: '_fid = ?', params: [id] }, { count: 1, offset: 0 });
   // A client whose consent does not cover this recipient is answered exactly like one that does not exist.
-  const withheld = row && d.phi && !coverageFor(client).has(row._cid);
+  const withheld = row && d.phi && !coverageFor(client, type).has(row._cid);
   const r = row && !withheld ? R.toResource(type, row) : null;
   if (!r || (d.keep && !d.keep(r.full, client))) {
     if (withheld) audit.log({ user: client.actor, action: 'fhir.read.withheld', entity: type, entityId: id, clientId: row._cid, ip: ctx.ip, success: false, details: { client: client.prefix, reason: 'no covering consent' } });
     throw new FhirError(404, `${type}/${id} is not available`, { code: 'not-found' });
   }
   if (d.phi) {
-    const perClient = new Map([[row._cid, { consentId: coverageFor(client).get(row._cid), n: 1 }]]);
+    const perClient = new Map([[row._cid, { consentId: coverageFor(client, type).get(row._cid), n: 1 }]]);
     account({ ctx, client, type, interaction: 'read', perClient, returned: 1, omittedPatients: undefined, reqId: requestId() });
   } else {
     audit.log({ user: client.actor, action: 'fhir.read', entity: type, entityId: id, ip: ctx.ip, details: { client: client.prefix } });
