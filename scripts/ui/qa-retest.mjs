@@ -123,8 +123,8 @@ for (const [label, base] of surfaces) {
 
   // P2 and P1-1: with clients on the device, open a reminder, touch the client search, then use the date
   await page.evaluate(async () => { for (let i = 0; i < 6; i++) await window.SUDS_LOCAL.handle('POST', '/api/clients', { first_name: 'Test' + i, last_name: 'Client' + i }, { 'X-Requested-With': 'suds' }); });
-  await go('tasks'); await page.waitForSelector('button:has-text("Add a reminder")', { timeout: 10000 });
-  await page.click('button:has-text("Add a reminder")'); await page.waitForSelector('.modal input[name=title]');
+  await go('tasks'); await page.waitForSelector('button:has-text("Add a to-do")', { timeout: 10000 });
+  await page.click('button:has-text("Add a to-do")'); await page.waitForSelector('.modal input[name=title]');
   const pickerHit = () => page.evaluate(() => { const i = document.querySelector('.modal input[name=due_at]'); const r = i.getBoundingClientRect(); const el = document.elementFromPoint(r.right - 10, r.y + r.height / 2); return el === i ? 'input' : (el ? el.tagName.toLowerCase() + (el.className ? '.' + String(el.className).split(/\s+/).join('.') : '') : 'nothing'); });
   eq(await pickerHit(), 'input', `${label}: with the client list closed, the date input's picker region is what a tap there hits`);
   await page.click('.modal input[role=combobox]');
@@ -147,7 +147,7 @@ for (const [label, base] of surfaces) {
   ok(/Oct 1, 2031/.test(row), `${label}: the date-only due date was kept and is shown on the to-do list`, row.slice(0, 120));
   ok(!/12:00 AM/.test(row), `${label}: a date-only due date shows as a day, not as midnight`, row.slice(0, 120));
   // and an impossible date is refused rather than dropped
-  await page.click('button:has-text("Add a reminder")'); await page.waitForSelector('.modal input[name=title]');
+  await page.click('button:has-text("Add a to-do")'); await page.waitForSelector('.modal input[name=title]');
   await page.fill('.modal input[name=title]', 'Bad date');
   await page.evaluate(() => { const t = document.querySelector('.modal input[name=due_at_time]'); t.value = '09:30'; t.dispatchEvent(new Event('input', { bubbles: true })); });
   await page.click('.modal button[type=submit]');
@@ -301,7 +301,7 @@ for (const [label, base] of surfaces) {
       // DATE PICKER: New task and Edit task. Nothing may cover the field or the calendar button, a toast
       // included; the year takes four digits; a garbled date is refused, not saved.
       await page.goto(base + '/#/tasks'); await settle(page);
-      await press(page.getByRole('button', { name: '+ Add a reminder' })); await page.waitForSelector('.modal');
+      await press(page.getByRole('button', { name: '+ Add a to-do' })); await page.waitForSelector('.modal');
       const due = page.getByRole('dialog').locator('input[type=date]');
       eq(await due.evaluate(i => `${i.min}..${i.max}`), '1900-01-01..2100-12-31', `${L}: New task: the due date is limited to four-digit years (min/max set)`);
       eq(await hitAt(due, 'right'), 'self', `${L}: New task: the field's own "Show date picker" region is the field itself`);
@@ -311,7 +311,7 @@ for (const [label, base] of surfaces) {
       await press(cal); await page.waitForTimeout(200);
       ok(await page.$('.modal'), `${L}: pressing it opens the calendar without closing or breaking the dialog`);
       await page.keyboard.press('Escape').catch(() => {}); await page.waitForTimeout(100);
-      if (!(await page.$('.modal'))) { await press(page.getByRole('button', { name: '+ Add a reminder' })); await page.waitForSelector('.modal'); }
+      if (!(await page.$('.modal'))) { await press(page.getByRole('button', { name: '+ Add a to-do' })); await page.waitForSelector('.modal'); }
       await page.getByRole('textbox', { name: 'Title' }).fill('QATEST task');
       // Typing into the date's day/month/year segments is Chrome's desktop date field; Safari and a phone pick
       // from a calendar or wheel, so there the garbled value is put in directly and only the refusal is checked.
@@ -324,19 +324,19 @@ for (const [label, base] of surfaces) {
         ok(/^\d{4}-\d{2}-\d{2}$/.test(await due.inputValue()), `${L}: an extra digit typed into the year never makes a five- or six-digit year`, await due.inputValue());
         if ((await due.inputValue()) === '2026-09-05') await due.fill('0006-09-05');
       } else await due.fill('0006-09-05');
-      await press(page.getByRole('button', { name: 'Create task' }));
+      await press(page.getByRole('button', { name: 'Create to-do' }));
       const refused = await until(async () => page.$eval('.modal .banner.danger:not(.hidden)', b => b.textContent).catch(() => null), { timeout: 5000 });
       ok(refused && /date/i.test(refused) && await page.$('.modal'), `${L}: a garbled date (a year like 0260 or 0006) is refused with a message, not saved`, refused);
       ok(/four digits/.test(await page.textContent('.modal [data-field=due_at] .err')), `${L}: and the field says the year must be four digits`, await page.textContent('.modal [data-field=due_at] .err'));
       await due.fill('2026-09-05');
-      await press(page.getByRole('button', { name: 'Create task' }));
+      await press(page.getByRole('button', { name: 'Create to-do' }));
       await until(async () => !(await page.$('.modal')), { timeout: 6000 }); await settle(page);
       eq((await kernel('GET', '/api/tasks?status=all&limit=50')).json.rows.find(t => t.title === 'QATEST task')?.due_at, '2026-09-05', `${L}: the corrected date is what was saved`);
       // Edit task, with the "Task saved" toast still up and one more put in the way
       if (kind === 'desktop') await page.getByRole('button', { name: 'Edit' }).first().click();
       else await page.getByRole('button', { name: /QATEST task/ }).locator('visible=true').first().tap();
       await page.waitForSelector('.modal');
-      await page.evaluate(async () => (await import('./app.js')).toast('Task saved', 'ok'));
+      await page.evaluate(async () => (await import('./app.js')).toast('To-do saved', 'ok'));
       const toastPass = await page.evaluate(() => { const t = document.querySelector('#toasts .toast'); if (!t) return 'no toast'; const r = t.getBoundingClientRect(); const e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return e && e.closest('#toasts') ? 'toast takes the click' : 'passes through'; });
       eq(toastPass, 'passes through', `${L}: Edit task: a toast never takes a click meant for the dialog under it`);
       const due2 = page.getByRole('dialog').locator('input[type=date]');
@@ -516,8 +516,8 @@ else if (buildOldSite()) {
     ok(shown > 0, `${label}: the picture is stored and shown`, shown);
     await page.setViewportSize(phone.viewport);
     // item 2: the date picker, client list closed, open, and scrolled under the banners
-    await page.goto(base + '/#/tasks'); await page.waitForSelector('button:has-text("Add a reminder")', { timeout: 10000 });
-    await page.click('button:has-text("Add a reminder")'); await page.waitForSelector('.modal input[name=due_at]');
+    await page.goto(base + '/#/tasks'); await page.waitForSelector('button:has-text("Add a to-do")', { timeout: 10000 });
+    await page.click('button:has-text("Add a to-do")'); await page.waitForSelector('.modal input[name=due_at]');
     const hit = () => page.evaluate(() => { const i = document.querySelector('.modal input[name=due_at]'); const r = i.getBoundingClientRect(); const el = document.elementFromPoint(r.right - 10, r.y + r.height / 2); return el === i ? 'input' : (el ? el.tagName.toLowerCase() + '.' + String(el.className).split(/\s+/).join('.') : 'nothing'); });
     eq(await hit(), 'input', `${label}: the date picker region is the date input (client list closed)`);
     await page.click('.modal input[role=combobox]'); await until(async () => page.$('.modal [role=listbox]:not(.hidden)'), { timeout: 5000 });
@@ -538,7 +538,7 @@ else if (buildOldSite()) {
     ok(inShell, `${label}: get-app.html is in the shell cache`, shellKeys);
     // item 6: no stray dialog title in the accessibility tree
     await page.goto(base + '/#/admin?tab=settings'); await until(async () => !/Loading…/.test((await page.textContent('#main')) || ''), { timeout: 10000 });
-    ok(await until(async () => !(await a11yHas(page, /add a reminder|add resource/i)), { timeout: 8000 }), `${label}: no stray dialog title remains in the accessibility tree`);
+    ok(await until(async () => !(await a11yHas(page, /add a to-do|add resource/i)), { timeout: 8000 }), `${label}: no stray dialog title remains in the accessibility tree`);
     errors.push(...upErrors);
     await ctx.close();
   } catch (e) { fail(`${label}: ${e.message.split('\n')[0]}`); }

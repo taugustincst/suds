@@ -1,4 +1,4 @@
-import { h, route, api, get, post, put, del, state, form, modal, toast, table, badge, flag, statusKind, fmt, can, pageHead, confirmDialog, nav, stat, kv, loadRefData, downloadCsv, clear, pageTabs } from '../app.js';
+import { h, route, api, get, post, put, del, state, form, modal, toast, table, badge, flag, statusKind, fmt, can, pageHead, confirmDialog, nav, stat, kv, loadRefData, downloadCsv, clear, pageTabs, moduleOn } from '../app.js';
 import { qrSvg } from '../qr.js';
 import { listsTab } from './lists.js';
 import { securityTab, drillCard } from './security.js';
@@ -154,6 +154,29 @@ function timezoneField(s) {
   return { name: 'org_timezone', label: 'Organisation time zone', type: 'select', options, value: s.org_timezone || '', placeholder: state.local ? `Not set — ${here || 'this device'}'s time zone` : `Not set — the server's (${fallback})`, span: true,
     help: `Decides which calendar day a visit, a due date and a report period fall on. In use now: ${tz.effective || fallback || 'not known'}.${!state.local && tz.from_env ? ' Choosing one here overrides ORG_TIMEZONE on the server.' : ''}` };
 }
+// The programme profile and its modules (server/programme.js): what kind of programme this is, and which
+// clinical modules it uses. Presentation, not permissions: a module switched off leaves the menus, client
+// tabs and Home, and stops new records in it; records already made can still be read.
+function programmeCard(s, refresh) {
+  const p = s.programme;
+  const profileLabel = (v) => (p.profiles.find(x => x.value === v) || {}).label || v;
+  const f = form([
+    { name: 'programme_profile', label: 'What kind of program is this?', type: 'select', noBlank: true, required: true, value: p.profile, span: true,
+      options: p.profiles.map(x => ({ value: x.value, label: x.label })), help: (p.profiles.find(x => x.value === p.profile) || {}).help },
+    { type: 'section', label: 'Modules', heading: false },
+    ...p.module_list.map(m => ({ name: `module_${m.key}`, label: m.label, type: 'select', noBlank: true, value: p.overrides[m.key] ?? '', help: m.help,
+      options: [{ value: '', label: `As the profile has it (${p.profile === 'treatment' ? 'on' : 'off'} for ${profileLabel(p.profile)})` }, { value: '1', label: 'On' }, { value: '0', label: 'Off' }] })),
+  ], { submitText: 'Save programme profile', onSubmit: async (d) => {
+    await put('/api/admin/settings', d);
+    try { state.programme = (await get('/api/auth/me')).programme || state.programme; } catch { /* the next sign-in picks it up */ }
+    toast('Programme profile saved', 'ok'); refresh();
+  } });
+  const onNow = p.module_list.filter(m => p.modules[m.key]).map(m => m.label);
+  return h('div', { class: 'card', 'data-programme-profile': p.profile }, h('h2', {}, 'Programme profile & modules'),
+    h('p', { class: 'small muted' }, 'Decides what the menus, client records and Home lead with. Permissions do not change: a module switched off hides it and stops new records in it; anything already recorded can still be read.'),
+    h('p', { class: 'small', 'data-modules-on': onNow.length }, onNow.length ? `Switched on: ${onNow.join(', ')}.` : 'No clinical modules are switched on.'),
+    f);
+}
 // On a device copy, the settings the office server has elsewhere: backups and restore are on This device,
 // and staff reach SUDS on a phone or tablet through get-app.html (not /app, which only an office has).
 function deviceSettingsCard() {
@@ -176,15 +199,24 @@ route('admin', async (r) => {
     },
     async settings() {
       const s = await get('/api/admin/settings');
-      const f = form([{ name: 'org_name', label: 'Organization / program name', required: true }, { name: 'county_name', label: 'County' }, { name: 'program_contact', label: 'Privacy officer / program contact' },
+      const f = form([{ type: 'section', label: 'Your programme', collapsible: true, open: true, heading: true },
+        { name: 'org_name', label: 'Organization / program name', required: true }, { name: 'county_name', label: 'County' }, { name: 'program_contact', label: 'Privacy officer / program contact' },
         { name: 'caseload_restriction', label: 'Caseload restriction', type: 'select', options: [{ value: '1', label: 'On — navigators & clinicians see assigned clients only (recommended)' }, { value: '0', label: 'Off — all staff see all clients' }], noBlank: true },
         { name: 'note_lock_days', label: 'Days before unsigned drafts are flagged', type: 'number', min: 0, step: 1 },
-        { type: 'section', label: 'Security policy' },
+        timezoneField(s),
+        // The rest of the page is folded into sections, each opened when it is needed: the whole form used to be
+        // one page over 4,000px tall on a phone.
+        { type: 'section', label: 'Security policy', hint: 'sign-out, passwords, two-step verification, sign-up', collapsible: true, heading: true },
         { name: 'session_idle_minutes', label: 'Auto sign-out after inactivity (minutes, max 60)', type: 'number', min: 1, max: 60, step: 1, value: s.policy.idleMinutes }, { name: 'session_absolute_hours', label: 'Maximum session length (hours)', type: 'number', min: 1, max: 24, step: 1, value: s.policy.absoluteHours },
         { name: 'password_max_age_days', label: 'Password expires after (days)', type: 'number', min: 1, step: 1, value: s.policy.passwordMaxAgeDays },
         { name: 'mfa_required_roles', label: 'Roles that must use MFA (comma separated)', value: s.policy.mfaRequiredRoles.join(','), help: 'admin, supervisor, clinician, navigator, finance, readonly — recommended: all', span: true },
         ...(state.local ? [] : [
           { name: 'mfa_require_all', label: 'Require two-step verification for every role', type: 'select', noBlank: true, value: s.mfa_require_all === '1' ? '1' : '0', options: [{ value: '1', label: 'On — every role, whatever the list above says (recommended)' }, { value: '0', label: 'Off — the roles listed above' }], span: true },
+        ]),
+        { name: 'mfa_grace_days', label: 'Days a new account has to set up MFA', type: 'number', min: 0, step: 1, value: s.policy.mfaGraceDays, help: 'Counted from when the account is created (or its access request approved). 0 = at first sign-in.' },
+        { name: 'self_signup', label: 'Sign up on the sign-in page', type: 'select', noBlank: true, value: s.self_signup === '0' ? '0' : '1', options: [{ value: '1', label: 'On — people can request an account; an administrator approves each one' }, { value: '0', label: 'Off — the sign-in page says to ask an administrator' }], span: true },
+        ...(state.local ? [] : [
+          { type: 'section', label: 'Single sign-on & provisioning', hint: 'identity provider, SCIM', collapsible: true, heading: true },
           { name: 'sso_required', label: 'Require single sign-on', type: 'select', noBlank: true, value: s.sso_required === '1' ? '1' : '0', options: [{ value: '0', label: 'Off — passwords and SSO both work' }, { value: '1', label: 'On — password sign-in only for the emergency accounts below' }], span: true, help: s.env.oidc_configured ? 'Staff sign in through the county identity provider; leavers are cut off there.' : 'Needs single sign-on to be configured first (OIDC_* settings, docs/DEPLOYMENT.md).' },
           { name: 'sso_emergency_accounts', label: 'Emergency (break-glass) administrator accounts that keep a password', value: s.sso_emergency_accounts || '', placeholder: 'e.g. admin', span: true, help: 'Usernames, comma separated. Keep their passwords sealed; every use is audited.' },
           { name: 'sso_trust_idp_mfa', label: "Trust the identity provider's multi-factor sign-in", type: 'select', noBlank: true, value: s.sso_trust_idp_mfa === '1' ? '1' : '0', options: [{ value: '0', label: 'Off — SSO sign-ins still need the SUDS second factor' }, { value: '1', label: 'On — accept the provider\'s MFA (amr mfa, or two factor kinds such as pwd+otp) in place of it' }], span: true, help: 'Only if the county identity provider enforces MFA for SUDS (conditional access). A sign-in it does not mark as multi-factor still needs the SUDS code; every trusted sign-in is audited.' },
@@ -193,17 +225,13 @@ route('admin', async (r) => {
           { name: 'scim_group_roles', label: 'Provisioning (SCIM): identity-provider groups to SUDS roles', type: 'textarea', rows: 3, value: s.scim_group_roles || '', placeholder: 'SUD Navigators=navigator; SUD Supervisors=supervisor', span: true, help: 'One Group=role per line or separated by semicolons. A person in several mapped groups gets the most privileged role.' },
           { name: 'scim_default_role', label: 'Role for a provisioned person in no mapped group', type: 'select', noBlank: true, value: s.scim_default_role || 'readonly', options: ['readonly', 'finance', 'navigator', 'clinician', 'supervisor'].map((r) => ({ value: r, label: r })) },
         ]),
-        { name: 'mfa_grace_days', label: 'Days a new account has to set up MFA', type: 'number', min: 0, step: 1, value: s.policy.mfaGraceDays, help: 'Counted from when the account is created (or its access request approved). 0 = at first sign-in.' },
-        { name: 'self_signup', label: 'Sign up on the sign-in page', type: 'select', noBlank: true, value: s.self_signup === '0' ? '0' : '1', options: [{ value: '1', label: 'On — people can request an account; an administrator approves each one' }, { value: '0', label: 'Off — the sign-in page says to ask an administrator' }], span: true },
-        { type: 'section', label: 'Record retention' },
+        { type: 'section', label: 'Record retention', collapsible: true, heading: true },
         { name: 'client_retention_years', label: 'Keep discharged client records for (years, minimum 6)', type: 'number', min: 6, step: 1, value: s.client_retention_years || '7', help: 'Once every episode is closed and this many years have passed since discharge, the record is permanently deleted from every table — unless an administrator has placed it on legal hold from the client\'s Care team tab.' },
-        { type: 'section', label: 'Time zone' },
-        timezoneField(s),
         // Scheduled server backups belong to the office server. A device copy has no backup schedule and no
         // backup folder: it showed "every 0 hours, keep 0" fields that did nothing. Its backups are on the
         // This device page (the card beside this form says so).
         ...(state.local ? [] : [
-          { type: 'section', label: 'Scheduled backups' },
+          { type: 'section', label: 'Scheduled backups & recovery', collapsible: true, heading: true },
           { name: 'backup_schedule_hours', label: 'Back up automatically every (hours, 0 = off)', type: 'number', min: 0, step: 1, value: s.backup_schedule_hours || '0',
             help: Number(s.backup_schedule_hours) > 0 ? `On: a backup is made every ${s.backup_schedule_hours} hour${Number(s.backup_schedule_hours) === 1 ? '' : 's'}, and the newest ${s.backup_retain_count || 14} are kept.` : 'Off: no backups are made automatically. Enter a number of hours (24 = daily) to turn them on.' },
           { name: 'backup_retain_count', label: 'Keep this many recent backups on disk', type: 'number', min: 1, step: 1, value: s.backup_retain_count || '14' },
@@ -217,7 +245,7 @@ route('admin', async (r) => {
         ]),
       ], { values: s, submitText: 'Save settings', onSubmit: async (d) => { await put('/api/admin/settings', d); toast('Settings saved', 'ok'); },
         extra: state.local ? null : h('p', { class: 'small', 'data-backup-link': '1' }, 'To back up now, download a backup or restore one, open ', h('a', { href: '#/admin?tab=system' }, 'System & backups'), '.') });
-      return h('div', { class: 'grid cols-2' }, h('div', { class: 'card' }, h('h2', {}, 'Program settings'), f), state.local ? deviceSettingsCard() : null, await instrumentsCard(refresh), await sampleDataCard(refresh),
+      return h('div', { class: 'grid cols-2' }, s.programme ? programmeCard(s, refresh) : null, h('div', { class: 'card' }, h('h2', {}, 'Program settings'), f), state.local ? deviceSettingsCard() : null, await instrumentsCard(refresh), await sampleDataCard(refresh),
         h('div', { class: 'card' }, h('h2', {}, 'Server security configuration'), h('p', { class: 'small muted' }, 'Set via environment variables (see .env.example and docs/DEPLOYMENT.md).'),
           kv([['Environment', s.env.env], ['HTTPS', s.env.tls ? badge(s.env.tls_mode === 'selfsigned' ? 'Self-signed certificate' : 'Enabled', 'ok') : badge('Off — enable under Network', 'danger')], ['Encryption keys', s.env.key_source === 'file' ? 'data/keys.json (back it up under System)' : s.env.key_source === 'devfile' ? 'Development key files in data/' : 'Environment variables'], ['Addresses', (s.env.listener?.urls || []).join(', ')], ['OneNote (Graph) sync', s.env.ms_graph_configured ? badge('Configured', 'ok') : badge('Not configured', 'warn')],
             ['Single sign-on (OIDC)', s.env.oidc_configured ? badge(`Configured — "${s.env.oidc_label}"`, 'ok') : badge('Not configured — set OIDC_ISSUER etc. (see docs/DEPLOYMENT.md)', 'warn')]])));
@@ -315,8 +343,9 @@ route('admin', async (r) => {
   // Waiting account requests are counted on the tab itself, so they are seen from any tab of this page.
   const pending = full && !state.local ? await get('/api/users/access-requests', { quiet: true }).then(x => x.requests.length).catch(() => 0) : 0;
   let tabs = !full ? [['caseload', 'Move a caseload'], ...(can('audit:read') ? [['audit', 'Audit log']] : [])]
-    : state.local ? [['users', 'Users & roles'], ['settings', 'Settings'], ['caseload', 'Move a caseload'], ['audit', 'Audit log']]
-    : [['users', pending ? `Users & roles (${pending})` : 'Users & roles'], ['settings', 'Settings'], ['network', 'Network & devices'], ['devices', 'Synced devices'], ['caseload', 'Move a caseload'], ['audit', 'Audit log'], ['apikeys', 'API keys (intake)'], ['system', 'System & backups'], ['security', 'Security status']];
+    // "Programme", not a second "Settings" inside Settings: the programme's name, profile, modules and policies.
+    : state.local ? [['users', 'Users & roles'], ['settings', 'Programme'], ['caseload', 'Move a caseload'], ['audit', 'Audit log']]
+    : [['users', pending ? `Users & roles (${pending})` : 'Users & roles'], ['settings', 'Programme'], ['network', 'Network & devices'], ['devices', 'Synced devices'], ['caseload', 'Move a caseload'], ['audit', 'Audit log'], ['apikeys', 'API keys (intake)'], ['system', 'System & backups'], ['security', 'Security status']];
   // Moving a caseload needs assignments:manage; a role that manages users without it does not get a tab
   // whose form it could not submit (the deactivate dialog tells it a supervisor must move the clients).
   if (!can('assignments:manage')) tabs = tabs.filter(([k]) => k !== 'caseload');
@@ -324,7 +353,8 @@ route('admin', async (r) => {
   // (budget:manage — which is how a supervisor gets this tab, with only the funding sources on it).
   if (can('settings:manage') || can('budget:manage')) tabs.splice(full ? 2 : tabs.length, 0, ['lists', 'Lists']);
   // FHIR clients (the county EHR reading SUDS over FHIR): an office-server feature, next to the intake keys.
-  if (full && !state.local && can('apikeys:manage')) { T.fhir = () => fhirClientsTab(refresh); const at = tabs.findIndex(([k]) => k === 'apikeys'); tabs.splice(at < 0 ? tabs.length : at + 1, 0, ['fhir', 'FHIR clients']); }
+  // Only while the FHIR module is on (Settings › Programme); switched off, the API answers nobody.
+  if (full && !state.local && can('apikeys:manage') && moduleOn('fhir')) { T.fhir = () => fhirClientsTab(refresh); const at = tabs.findIndex(([k]) => k === 'apikeys'); tabs.splice(at < 0 ? tabs.length : at + 1, 0, ['fhir', 'FHIR clients']); }
   const allowed = tabs.some(([k]) => k === tab) ? tab : tabs[0][0];
   body.append(await (T[allowed] || T[tabs[0][0]])());
   return h('div', {}, pageHead(full ? 'Settings' : 'Supervision tools'), state.local ? h('div', { class: 'banner small' }, window.SUDS_STATIC_HOST ? 'This is SUDS on this device. Backups, and who may sign up here, are on the This device page.' : 'This is the copy of SUDS on this device. Network, API keys and backups are managed on the office SUDS; use Sync to exchange data.') : null, pageTabs(tabs, allowed, (k) => nav(`admin?tab=${k}`), { label: full ? 'Settings sections' : 'Supervision tools sections' }), body);
@@ -391,7 +421,7 @@ export function restoreCard() {
           ['Taken from', info.org_name || '—'],
           ['Clients in the backup', `${info.counts.clients} (this server has ${info.current.clients})`],
           ['Notes', String(info.counts.notes)],
-          ['Visits & services', String(info.counts.interventions)],
+          ['Visits', String(info.counts.interventions)],
           ['Staff accounts', String(info.counts.users)],
           ['Version', `schema ${info.schema_version}${info.schema_version < info.current.schema_version ? ' — older than this server; it will be brought up to date automatically' : ''}`],
           ['Size', fmt.bytes(info.bytes)],

@@ -59,6 +59,8 @@ module.exports = (r) => {
       network: { type: 'string', required: true, enum: ['local', 'lan'] }, port: { type: 'number', integer: true, min: 1, max: 65535 }, https: { type: 'boolean' }, extra_hosts: { type: 'string', maxLen: 300 },
       // "Allow staff to keep an offline copy on their devices?" — omitted means No, the recommended answer.
       local_mode: { type: 'boolean' },
+      // What kind of programme this is (server/programme.js); omitted means harm reduction & outreach.
+      programme_profile: { type: 'string', enum: Object.keys(require('../programme').PROFILES) },
       // port omitted → 'auto' (standard port with fallback)
     });
     const errs = auth.passwordPolicy(v.admin_password);
@@ -80,6 +82,7 @@ module.exports = (r) => {
       db.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,0,?)`, uuid(), v.admin_username, adminHash, v.admin_display_name, 'admin', db.now());
       db.setSetting('org_name', v.org_name); if (v.county_name) db.setSetting('county_name', v.county_name); if (v.program_contact) db.setSetting('program_contact', v.program_contact);
       db.setSetting('caseload_restriction', '1');
+      db.setSetting('programme_profile', v.programme_profile || require('../programme').DEFAULT_PROFILE);
     });
     const defaults = applyProductionDefaults();
     // 3. network + TLS
@@ -102,7 +105,7 @@ module.exports = (r) => {
     // in the environment decides it — then the environment keeps winning and the answer is only recorded.
     const localMode = v.local_mode === true;
     if (!config.localModeFromEnv) config.localModeEnabled = localMode;
-    audit.log({ user: { username: v.admin_username }, action: 'setup.complete', ip: ctx.ip, details: { network: v.network, port, tls, local_mode: config.localModeEnabled, defaults } });
+    audit.log({ user: { username: v.admin_username }, action: 'setup.complete', ip: ctx.ip, details: { network: v.network, port, tls, local_mode: config.localModeEnabled, programme_profile: require('../programme').profile(), defaults } });
     // (network switch below persists the final port)
     // 4. switch listener
     let desc;

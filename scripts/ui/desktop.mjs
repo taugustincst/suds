@@ -49,7 +49,7 @@ ok((await page.content()).includes('ROI'), 'a "roi" consent displays as ROI, not
 ok(!/[^A-Za-z]Roi[^A-Za-z]/.test(await page.content()), 'no lingering "Roi" casing on the consents tab');
 // open modals
 await page.goto(`${base}/#/client/${cid}/overview`); await settle(page);
-await page.click('text=+ Intervention'); await page.waitForSelector('.modal', { timeout: 10000 }).catch(() => {}); ok(await page.$('.modal'), 'the intervention form opens'); await shot('modal_intervention'); await closeDialog();
+await page.click('text=+ Visit'); await page.waitForSelector('.modal', { timeout: 10000 }).catch(() => {}); ok(await page.$('.modal'), 'the intervention form opens'); await shot('modal_intervention'); await closeDialog();
 await page.click('text=+ Note'); await page.waitForSelector('.modal select[name=format]', { timeout: 10000 }); await page.selectOption('select[name=format]', 'SOAP'); await settle(page); ok(await page.$('.modal textarea, .modal input'), 'the note form opens and takes a format'); await shot('modal_note'); await closeDialog();
 await page.click('text=Edit'); await page.waitForSelector('.modal', { timeout: 10000 }).catch(() => {}); ok(await page.$('.modal'), 'the client edit form opens'); await shot('modal_client_edit');
 // referral date + engagement date compute "time until engaged", shown on the client and in the list

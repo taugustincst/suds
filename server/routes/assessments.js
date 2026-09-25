@@ -7,6 +7,7 @@
 // are kept readable so the latest assessment, a trend and the de-identified outcomes report can be made.
 // A PHQ-9 whose item 9 is answered above "Not at all" raises a safety alert when it is saved: an urgent
 // to-do for the person who gave it, and a pointer to the client's safety plan (or a prompt to write one).
+const { requireModule } = require('../programme');
 const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
@@ -200,7 +201,7 @@ module.exports = (r) => {
     return { rows, dimensions: CL.ASAM_DIMENSIONS };
   });
 
-  r.post('/api/clients/:id/asam', auth.requireAuth, auth.requirePerm('assessments:write'), (ctx) => {
+  r.post('/api/clients/:id/asam', auth.requireAuth, auth.requirePerm('assessments:write'), requireModule('assessments'), (ctx) => {
     clientFor(ctx, ctx.params.id);
     const v = validate(ctx.body, asamShape);
     const notes = cleanDimensionNotes(v.dimension_notes);
@@ -224,7 +225,7 @@ module.exports = (r) => {
     return { assessment: presentAsam(a), dimensions: CL.ASAM_DIMENSIONS };
   });
 
-  r.put('/api/asam/:id', auth.requireAuth, auth.requirePerm('assessments:write'), (ctx) => {
+  r.put('/api/asam/:id', auth.requireAuth, auth.requirePerm('assessments:write'), requireModule('assessments'), (ctx) => {
     const a = loadAsam(ctx, ctx.params.id);
     if (!mayChange(ctx, a, 'assessed_by')) throw forbidden('Only the person who completed this assessment, or a supervisor, can change it');
     assertFresh(ctx, a, 'asam_assessment');
@@ -247,7 +248,7 @@ module.exports = (r) => {
     return { ok: true, updated_at: sets.length ? stamp : a.updated_at };
   });
 
-  r.delete('/api/asam/:id', auth.requireAuth, auth.requirePerm('assessments:write'), (ctx) => {
+  r.delete('/api/asam/:id', auth.requireAuth, auth.requirePerm('assessments:write'), requireModule('assessments'), (ctx) => {
     const a = loadAsam(ctx, ctx.params.id);
     if (!mayChange(ctx, a, 'assessed_by')) throw forbidden('Only the person who completed this assessment, or a supervisor, can delete it');
     db.run(`DELETE FROM asam_assessments WHERE id=?`, a.id); db.tombstone('asam_assessments', a.id);
@@ -287,7 +288,7 @@ module.exports = (r) => {
     return { rows, series };
   });
 
-  r.post('/api/clients/:id/outcomes', auth.requireAuth, auth.requirePerm('assessments:write'), (ctx) => {
+  r.post('/api/clients/:id/outcomes', auth.requireAuth, auth.requirePerm('assessments:write'), requireModule('assessments'), (ctx) => {
     clientFor(ctx, ctx.params.id);
     const v = validate(ctx.body, outcomeShape);
     assertInstrumentEnabled(v.instrument);
@@ -314,7 +315,7 @@ module.exports = (r) => {
   });
 
   // Correct the answers (a question keyed wrongly): rescored as a new save would be.
-  r.put('/api/outcomes/:id', auth.requireAuth, auth.requirePerm('assessments:write'), (ctx) => {
+  r.put('/api/outcomes/:id', auth.requireAuth, auth.requirePerm('assessments:write'), requireModule('assessments'), (ctx) => {
     const m = loadOutcome(ctx, ctx.params.id);
     if (!mayChange(ctx, m, 'administered_by')) throw forbidden('Only the person who gave this questionnaire, or a supervisor, can change it');
     assertFresh(ctx, m, 'outcome_measure');
@@ -334,7 +335,7 @@ module.exports = (r) => {
     return { ok: true, updated_at: stamp, total: s.total, band: s.band, safety_alert: s.safety_flag && !m.safety_flag ? { task_id: taskId, safety_plan: safetyPlanFor(ctx, m.client_id) } : null };
   });
 
-  r.delete('/api/outcomes/:id', auth.requireAuth, auth.requirePerm('assessments:write'), (ctx) => {
+  r.delete('/api/outcomes/:id', auth.requireAuth, auth.requirePerm('assessments:write'), requireModule('assessments'), (ctx) => {
     const m = loadOutcome(ctx, ctx.params.id);
     if (!mayChange(ctx, m, 'administered_by')) throw forbidden('Only the person who gave this questionnaire, or a supervisor, can delete it');
     db.run(`DELETE FROM outcome_measures WHERE id=?`, m.id); db.tombstone('outcome_measures', m.id);

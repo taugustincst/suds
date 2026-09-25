@@ -295,15 +295,19 @@ window.addEventListener('resize', scrollCheckSoon);
  * A message that stays until it is dismissed, for conditions the user has to act on rather than
  * acknowledge in passing — a device that has stopped saving, a consent that was revoked.
  */
-export function banner(message, kind = 'warn', { id = message } = {}) {
+export function banner(message, kind = 'warn', { id = message, short = null } = {}) {
   // After the skip link, which stays the first thing a keyboard reaches on every page.
   const host = document.getElementById('banners') || (() => { const b = h('div', { id: 'banners' }); skipLink().after(b); return b; })();
   if (host.querySelector(`[data-banner="${CSS.escape(String(id))}"]`)) return;
-  const el = h('div', { class: `banner ${kind}`, 'data-banner': String(id), role: 'alert' },
-    h('span', {}, message),
-    h('button', { class: 'btn ghost sm', 'aria-label': 'Dismiss', onClick: () => el.remove() }, '✕'));
+  // `short`: a banner that must come back (two-step set-up still owed) but that this person has already
+  // dismissed once in this browser session returns as one line, not the whole paragraph above every page.
+  const key = `suds.banner.${id}`;
+  let compact = false; try { compact = !!short && sessionStorage.getItem(key) === '1'; } catch { /* storage blocked: full banner */ }
+  const el = h('div', { class: `banner ${kind}${compact ? ' compact' : ''}`, 'data-banner': String(id), 'data-compact': compact ? '1' : null, role: compact ? null : 'alert' },
+    h('span', {}, compact ? short : message),
+    h('button', { class: 'btn ghost sm', 'aria-label': 'Dismiss', onClick: () => { el.remove(); if (short) { try { sessionStorage.setItem(key, '1'); } catch { /* not remembered */ } } } }, '✕'));
   host.append(el);
-  announce(message);
+  if (!compact) announce(message);
   return el;
 }
 // "Skip to content" (WCAG 2.4.1): one link, the first focusable thing in the document on every screen, that
@@ -621,7 +625,9 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
   let target = grid;
   for (const f of fields) {
     if (f.type === 'section') {
-      if (f.collapsible) { const inner = h('div', { class: 'form-grid' }); grid.append(h('details', { class: 'section', open: !!f.open }, h('summary', {}, f.label, f.hint ? h('span', { class: 'muted small' }, ` — ${f.hint}`) : null), inner)); target = inner; }
+      // heading: the summary carries an h3, so a long form's sections are in the page's outline (a screen
+      // reader's heading list) as well as being folded away.
+      if (f.collapsible) { const inner = h('div', { class: 'form-grid' }); grid.append(h('details', { class: 'section', open: !!f.open, 'data-section': f.heading ? f.label : null }, h('summary', {}, f.heading ? h('h3', { class: 'summary-heading' }, f.label) : f.label, f.hint ? h('span', { class: 'muted small' }, ` — ${f.hint}`) : null), inner)); target = inner; }
       else { target = grid; grid.append(h('div', { class: 'span' }, h('h3', { class: 'eyebrow' }, f.label))); }
       continue;
     }
@@ -710,6 +716,8 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
         const w = el.querySelector(`[data-field="${k}"]`);
         if (!w) continue;
         w.classList.add('error');
+        // A field folded away in a closed section is opened, so the error and the focus land on something visible.
+        for (let d = w.closest('details'); d; d = d.parentElement && d.parentElement.closest('details')) d.open = true;
         // Under the field, say which field: "Client is required", not a bare "is required" (a server
         // message in that shape gets the label put in front of it too).
         const slot = w.querySelector('.err'); if (slot) slot.textContent = /^(is|must|should)\b/.test(String(msg)) ? `${labelOf(k)} ${msg}` : msg;
@@ -977,10 +985,12 @@ export function pagedList({ first, url, key = 'rows', limit = 200, render, summa
 
 // A tab strip that folds the tabs that do not fit into a "More ▾" menu instead of scrolling them off the
 // edge with nothing to say so. Re-measured on resize; the active tab is always kept in view.
+// `core`: the keys of the sections used every day. On a phone (600px or narrower) only those — and the
+// current section — stay in the strip, whatever else would fit; the rest are under More.
 // Each tab is its own address (#/client/…/notes), so the strip is navigation, not an ARIA tab widget: a
 // labelled <nav> of buttons, the current one marked aria-current="page" (WCAG 1.3.1, 4.1.2). role=tablist
 // promised arrow-key behaviour and tab panels that were never there, and could not hold the More button.
-export function tabStrip(tabs, active, onPick, { label = 'Sections' } = {}) {
+export function tabStrip(tabs, active, onPick, { label = 'Sections', core = null } = {}) {
   const strip = h('nav', { class: 'tabs managed', 'aria-label': label });
   const buttons = tabs.map(([k, text]) => h('button', { class: k === active ? 'active' : '', type: 'button', 'aria-current': k === active ? 'page' : null, 'data-tab': k, onClick: () => onPick(k) }, text));
   const menu = h('div', { class: 'tabs-menu hidden', role: 'menu' });
@@ -1004,6 +1014,17 @@ export function tabStrip(tabs, active, onPick, { label = 'Sections' } = {}) {
     for (const b of buttons) { b.hidden = false; strip.insertBefore(b, wrap); }
     clear(menu); wrap.hidden = false; moreText(buttons.length); // measured at its widest
     const avail = strip.clientWidth; if (!avail) return;
+    // A phone with everyday sections named: those (and the current one) stay, in order, wrapping onto a
+    // second row rather than being measured out; everything else is under More.
+    const phoneCore = core && matchMedia('(max-width: 600px)').matches ? new Set(core) : null;
+    strip.classList.toggle('core-wrap', !!phoneCore);
+    if (phoneCore) {
+      const overflow = buttons.map((_, i) => i).filter(i => !phoneCore.has(tabs[i][0]) && tabs[i][0] !== active);
+      if (!overflow.length) { wrap.hidden = true; setOpen(false); return; }
+      for (const i of overflow) { buttons[i].hidden = true; menu.append(menuItem(i)); }
+      moreText(overflow.length);
+      return;
+    }
     const widths = buttons.map(b => b.offsetWidth + 4);
     if (widths.reduce((a, b) => a + b, 0) <= avail) { wrap.hidden = true; setOpen(false); return; }
     const limit = avail - (wrap.offsetWidth + 8);
@@ -1011,13 +1032,14 @@ export function tabStrip(tabs, active, onPick, { label = 'Sections' } = {}) {
     buttons.forEach((b, i) => { if (!overflow.length && used + widths[i] <= limit) used += widths[i]; else overflow.push(i); });
     const activeIdx = buttons.findIndex(b => b.classList.contains('active'));
     if (overflow.includes(activeIdx) && overflow[0] > 0) { overflow[overflow.indexOf(activeIdx)] = overflow[0] - 1; }
-    for (const i of overflow.sort((a, b) => a - b)) {
-      const b = buttons[i]; b.hidden = true;
-      menu.append(h('button', { role: 'menuitem', type: 'button', class: b.classList.contains('active') ? 'active' : '', 'aria-current': b.classList.contains('active') ? 'page' : null, onClick: () => { setOpen(false); onPick(tabs[i][0]); } }, tabs[i][1]));
-    }
+    for (const i of overflow.sort((a, b) => a - b)) { buttons[i].hidden = true; menu.append(menuItem(i)); }
     // The active tab, if it was swapped in, goes right before the More button so the strip reads in order.
     if (!buttons[activeIdx]?.hidden) strip.insertBefore(buttons[activeIdx], wrap);
     moreText(overflow.length);
+  }
+  function menuItem(i) {
+    const b = buttons[i];
+    return h('button', { role: 'menuitem', type: 'button', class: b.classList.contains('active') ? 'active' : '', 'aria-current': b.classList.contains('active') ? 'page' : null, onClick: () => { setOpen(false); onPick(tabs[i][0]); } }, tabs[i][1]);
   }
   if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => layout()).observe(strip);
   else requestAnimationFrame(layout);
@@ -1095,11 +1117,11 @@ export function emptyState(title, text, action, { level = 0 } = {}) { return h('
 // "+ Log" quick action: the one button non-technical users need most
 export function quickActions() {
   const items = [
-    can('interventions:write') ? ['✚', 'Visit or service', async () => (await import('./views/interventions.js')).openInterventionForm(null, { onDone: render })] : null,
+    can('interventions:write') ? ['✚', 'Visit', async () => (await import('./views/interventions.js')).openInterventionForm(null, { onDone: render })] : null,
     can('calls:write') ? ['☎', 'Phone call', async () => (await import('./views/calls.js')).openCallForm(null, { onDone: render })] : null,
     can('calls:write') ? ['💬', 'Text message', async () => (await import('./views/calls.js')).openCallForm(null, { method: 'text', onDone: render })] : null,
     (can('notes:admin:write') || can('notes:clinical:write')) ? ['✎', 'Note', async () => (await import('./views/notes.js')).openNoteForm(null, { onDone: render })] : null,
-    can('tasks:write') ? ['☑', 'Reminder / to-do', async () => (await import('./views/tasks.js')).openTaskForm(null, { onDone: render })] : null,
+    can('tasks:write') ? ['☑', 'To-do', async () => (await import('./views/tasks.js')).openTaskForm(null, { onDone: render })] : null,
     can('time:write') ? ['◷', 'Time (meeting, travel, paperwork…)', async () => (await import('./views/time.js')).openTimeForm(null, { onDone: render })] : null,
     can('clients:write') ? ['👤', 'New client', async () => (await import('./views/clients.js')).openClientForm(null)] : null,
   ].filter(Boolean);
@@ -1135,11 +1157,11 @@ let dueCache = { at: 0, data: null }; const notifiedDue = new Set(); let dueTime
 export function dueBell() {
   if (!can('tasks:read')) return null;
   const count = h('span', { class: 'bell-count hidden', 'aria-hidden': 'true' });
-  const btn = h('a', { class: 'btn ghost bell', href: '#/tasks?overdue=1', 'data-due-bell': '1', 'aria-label': 'Reminders due', title: 'Reminders due within the hour, or overdue' }, h('span', { 'aria-hidden': 'true' }, '🔔'), count);
+  const btn = h('a', { class: 'btn ghost bell', href: '#/tasks?overdue=1', 'data-due-bell': '1', 'aria-label': 'To-dos due', title: 'To-dos due within the hour, or overdue' }, h('span', { 'aria-hidden': 'true' }, '🔔'), count);
   const paint = (r) => {
     const n = r ? r.rows.length : 0;
     count.textContent = String(n); count.classList.toggle('hidden', !n); btn.classList.toggle('has-due', !!n);
-    btn.setAttribute('aria-label', n ? `${n} reminder${n === 1 ? '' : 's'} due or overdue` : 'No reminders due');
+    btn.setAttribute('aria-label', n ? `${n} to-do${n === 1 ? '' : 's'} due or overdue` : 'No to-dos due');
   };
   async function poll(force = false) {
     if (!state.user) return;
@@ -1163,7 +1185,7 @@ function maybeNotify(rows) {
     if (notifiedDue.has(t.id)) continue;
     notifiedDue.add(t.id);
     try {
-      const n = new Notification(t.overdue ? 'Overdue reminder' : 'Reminder due now', { body: t.title + (t.client_name ? ` · ${t.client_name}` : ''), tag: `suds-task-${t.id}` });
+      const n = new Notification(t.overdue ? 'Overdue to-do' : 'To-do due now', { body: t.title + (t.client_name ? ` · ${t.client_name}` : ''), tag: `suds-task-${t.id}` });
       n.onclick = () => { window.focus(); nav(`tasks?id=${t.id}`); n.close(); };
     } catch { /* the browser refused; the badge still shows it */ }
   }
@@ -1180,9 +1202,9 @@ export function maybeTour() {
       ? 'Everything you record stays in this browser on this device, encrypted. Download a backup regularly from This device so a cleared browser or a lost phone does not take your records with it.'
       : state.local ? 'This copy keeps your work on this device; it reaches the office SUDS when you sync.'
       : 'It works the same on your phone and your computer. Anything you add on one shows up on the other right away.'}`],
-    ['Start with Home', 'Home shows what needs attention today: reminders due, clients you have not contacted in a while, and drafts you started on another device.'],
-    ['Record work with + Log', 'The blue + Log button (top of the page, or bottom-right on a phone) records a visit, call, note, reminder or time in a few taps. Visits and calls also fill in your time sheet.'],
-    ['Find anyone fast', 'Use the search box at the top with a last name, phone number or client code. Open a client to see their story: visits, calls, notes, referrals and reminders on one timeline.'],
+    ['Start with Home', 'Home shows what needs attention today: to-dos due, clients you have not contacted in a while, and drafts you started on another device.'],
+    ['Record work with + Log', 'The blue + Log button (top of the page, or bottom-right on a phone) records a visit, call, note, to-do or time in a few taps. Visits and calls also fill in your time sheet.'],
+    ['Find anyone fast', 'Use the search box at the top with a last name, phone number or client code. Open a client to see their story: visits, calls, notes, referrals and to-dos on one timeline.'],
     ['Look for the ? marks', 'Every page has a ? that explains it in plain language. You cannot break anything: records are never truly deleted and every change is logged.'],
   ];
   let i = 0; const body = h('div', {}); const dots = h('div', { class: 'muted small center' });
@@ -1239,35 +1261,60 @@ export function parseHash() {
 }
 export function nav(to) { location.hash = to.startsWith('#') ? to : '#/' + to; }
 
+// The sidebar. Each entry shows for a role that holds its permission (perm) — and, so a front-line worker's
+// sidebar is the handful of pages they use every day rather than every page they may open, two more marks:
+//   more: true       — for front-line roles (frontline() below) it folds into a closed "More" group at the end;
+//                      everyone else sees it in its section.
+//   programme: true  — the programme's own pages (money, contracts, imports, the funder report, settings), in
+//                      the "Programme" section, shown to the roles that run the programme. A front-line worker
+//                      who may still open one (a navigator may record spending) reaches it from the page that
+//                      needs it, or its address; Import, which Home links to for imported notes, sits in More.
+// Nothing here changes a permission: the server decides what each role may do (server/auth.js PERMS).
 export const NAV = [
   { sec: 'My day' },
   { name: 'dashboard', label: 'Home', ico: '⌂', help: 'What needs attention today, and where you left off on any device.' },
   { name: 'clients', label: 'My clients', ico: '👤', perm: 'clients:read', help: 'Everyone you serve. Open a client to see their whole story in one place.' },
-  { name: 'waitlist', label: 'Waitlist', ico: '⧗', perm: 'clients:read', help: 'People waiting for a place, longest and highest risk first.' },
-  { name: 'tasks', label: 'To-do list', ico: '☑', perm: 'tasks:read', help: 'Follow-ups and reminders. Check a box when it is done.' },
+  { name: 'waitlist', label: 'Waitlist', ico: '⧗', perm: 'clients:read', more: true, help: 'People waiting for a place, longest and highest risk first.' },
+  { name: 'tasks', label: 'To-dos', ico: '☑', perm: 'tasks:read', help: 'Your to-dos: follow-ups and reminders. Check a box when it is done.' },
   { name: 'supervision', label: 'Supervision', ico: '✍', perm: ['notes:cosign', 'time:approve', 'assignments:manage'], help: 'Notes waiting for your countersignature, drafts your team has not finished, staff time to approve, and referrals with no outcome recorded.' },
   { sec: 'Record work' },
-  { name: 'interventions', label: 'Visits & services', ico: '✚', perm: 'interventions:read', help: 'Every face-to-face or phone service you provide: outreach, screenings, warm handoffs, naloxone, transport and more.' },
+  { name: 'interventions', label: 'Visits', ico: '✚', perm: 'interventions:read', help: 'Every visit: the face-to-face or phone services you provide — outreach, screenings, warm handoffs, naloxone, transport and more.' },
   { name: 'calls', label: 'Calls & texts', ico: '☎', perm: 'calls:read', help: 'Phone calls and text messages with clients, families and providers — including ones that went to voicemail or got no reply.' },
-  { name: 'forms', label: 'Forms', ico: '🧾', perm: 'forms:read', help: 'County forms (releases, intake sheets, assistance requests). Fill one out from a client record: it is pre-filled from the chart, printable, and holds the signed copy.' },
   { name: 'notes', label: 'Notes', ico: '✎', perm: 'notes:admin:read', help: 'Written documentation. Drafts save automatically and can be finished on any device; sign when complete.' },
-  { name: 'time', label: 'My time', ico: '◷', perm: 'time:read', help: 'Your hours by activity. Visits and calls add time automatically; log meetings, travel and paperwork here.' },
-  { name: 'imports', label: 'Import', ico: '⇩', perm: 'imports:write', help: 'Bring in spreadsheets (Excel / CSV) of clients, visits, calls, resources and more, or notes from Pocket AI and OneNote. Everything is checked before it is saved.' },
-  { name: 'overdose', label: 'Overdose & reversals', ico: '⛑', perm: 'overdose:read', help: 'Overdoses and naloxone reversals, including ones involving people who are not clients. These are the counts funders ask for.' },
   { name: 'supplies', label: 'Supplies', ico: '📦', perm: 'interventions:read', help: 'Naloxone kits, test strips and other harm-reduction stock on hand. A visit that hands out kits or strips takes them off this count automatically.' },
+  { name: 'overdose', label: 'Overdose & reversals', ico: '⛑', perm: 'overdose:read', help: 'Overdoses and naloxone reversals, including ones involving people who are not clients. These are the counts funders ask for.' },
+  { name: 'forms', label: 'Forms', ico: '🧾', perm: 'forms:read', more: true, help: 'County forms (releases, intake sheets, assistance requests). Fill one out from a client record: it is pre-filled from the chart, printable, and holds the signed copy.' },
+  { name: 'time', label: 'My time', ico: '◷', perm: 'time:read', more: true, help: 'Your hours by activity. Visits and calls add time automatically; log meetings, travel and paperwork here.' },
   { sec: 'Connect clients' },
   { name: 'referrals', label: 'Referrals', ico: '⇢', perm: 'referrals:read', help: 'Track each referral from "sent" to "admitted" so nothing falls through the cracks.' },
   { name: 'resources', label: 'Resource directory', ico: '☰', perm: 'resources:read', help: 'Treatment programs, MAT clinics, shelters, legal aid and other partners you refer to.' },
-  { sec: 'Program' },
-  { name: 'budget', label: 'Funding & spending', ico: '$', perm: 'budget:read', help: 'Grants and what has been spent, including client assistance such as bus passes and IDs.' },
-  { name: 'documents', label: 'Policies & contracts', ico: '📋', perm: 'documents:read', help: 'County policies, procedures and signed contracts, searchable by title and category.' },
-  { name: 'reports', label: 'Reports', ico: '▤', perm: 'reports:read', help: 'Numbers for your funders and supervisors. Exports never include client names unless you ask.' },
-  { name: 'compliance', label: 'Privacy & Part 2', ico: '⚖', perm: ['consents:read', 'complaints:read', 'incidents:read', 'settings:manage'], help: '42 CFR Part 2: the patient notice and who has not been given it, the privacy complaint log, and the incident and breach register with its 60-day notification clock.' },
-  { name: 'funder', label: 'Funder report', ico: '▦', perm: 'reports:read', help: 'Unduplicated counts — people, not services — by fiscal period and funding source, with admissions, discharges, demographics and overdose figures in the shape a grant report asks for.' },
+  { sec: 'Programme' },
+  { name: 'reports', label: 'Reports', ico: '▤', perm: 'reports:read', more: true, help: 'Numbers for your funders and supervisors. Exports never include client names unless you ask.' },
+  { name: 'funder', label: 'Funder report', ico: '▦', perm: 'reports:read', programme: true, help: 'Unduplicated counts — people, not services — by fiscal period and funding source, with admissions, discharges, demographics and overdose figures in the shape a grant report asks for.' },
+  { name: 'budget', label: 'Funding & spending', ico: '$', perm: 'budget:read', programme: true, help: 'Grants and what has been spent, including client assistance such as bus passes and IDs.' },
+  { name: 'documents', label: 'Policies & contracts', ico: '📋', perm: 'documents:read', programme: true, help: 'County policies, procedures and signed contracts, searchable by title and category.' },
+  { name: 'compliance', label: 'Privacy & Part 2', ico: '⚖', perm: ['consents:read', 'complaints:read', 'incidents:read', 'settings:manage'], more: true, help: '42 CFR Part 2: the patient notice and who has not been given it, the privacy complaint log, and the incident and breach register with its 60-day notification clock.' },
+  { name: 'imports', label: 'Import', ico: '⇩', perm: 'imports:write', programme: true, more: true, help: 'Bring in spreadsheets (Excel / CSV) of clients, visits, calls, resources and more, or notes from Pocket AI and OneNote. Everything is checked before it is saved.' },
   // A supervisor holds assignments:manage (moving a caseload when someone leaves lives on this page) but not
   // users:manage; gating the whole page on the latter locked them out of a feature built for them.
-  { name: 'admin', label: 'Settings', ico: '⚙', perm: ['users:manage', 'assignments:manage'], help: 'Staff accounts, security, connecting devices and backups — or, for a supervisor, moving a caseload and the audit log.' },
+  { name: 'admin', label: 'Settings', ico: '⚙', perm: ['users:manage', 'assignments:manage'], programme: true, help: 'Staff accounts, security, connecting devices and backups — or, for a supervisor, moving a caseload and the audit log.' },
 ];
+/**
+ * A front-line worker (navigator, clinician): records work with clients and does not run the programme's
+ * money, staff or settings. Presentation only — the short sidebar and a Home without the budget.
+ */
+export function frontline() {
+  return can('interventions:write') && !can('budget:approve') && !can('assignments:manage') && !can('users:manage') && !can('settings:manage');
+}
+/** Where a NAV entry goes in this person's sidebar: 'main', 'more' (folded away), or null (not shown). */
+export function navPlacement(n) {
+  if (!n.name || (n.perm && !canAny(n.perm))) return null;
+  if (!frontline()) return 'main';
+  if (n.more) return 'more';
+  return n.programme ? null : 'main';
+}
+/** Is a module of the programme profile switched on (server/programme.js)? Unknown means on. */
+export function moduleOn(key) { const m = state.programme && state.programme.modules; return !m || m[key] !== false; }
 
 let current = null;
 let renderSeq = 0;
@@ -1398,16 +1445,20 @@ export function setPageTitle(r = parseHash(), navItem = NAV.find(n => n.name ===
   document.title = parts.join(' — ');
 }
 function sidebar(r) {
+  // Sections with nothing to show (a finance account and "Connect clients") are left out, headings and all.
+  const groups = []; let cur = null; const more = [];
+  const link = (n) => h('a', { href: '#/' + n.name, class: r.name === n.name ? 'active' : '', 'aria-current': r.name === n.name ? 'page' : null }, h('span', { class: 'ico', 'aria-hidden': 'true' }, n.ico), n.label);
+  for (const n of NAV) {
+    if (n.sec) { cur = { sec: n.sec, items: [] }; groups.push(cur); continue; }
+    const where = navPlacement(n);
+    if (where === 'main') cur.items.push(link(n)); else if (where === 'more') more.push({ n, a: link(n) });
+  }
+  // A front-line worker's less-used pages, folded into one closed group (open while one of them is showing).
+  const moreGroup = more.length ? h('details', { class: 'nav-more', 'data-nav-more': '1', open: more.some(x => x.n.name === r.name) ? true : null },
+    h('summary', {}, 'More'), ...more.map(x => x.a)) : null;
   return h('aside', { class: 'sidebar' },
     h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('b', {}, 'SUDS'), h('small', {}, state.org))),
-    h('nav', { class: 'nav' }, NAV.map((n, i) => {
-      if (n.sec) {
-        // A heading with nothing under it (a finance account and "Connect clients") is just noise.
-        const rest = NAV.slice(i + 1); const end = rest.findIndex(m => m.sec); const items = end < 0 ? rest : rest.slice(0, end);
-        return items.some(m => !m.perm || canAny(m.perm)) ? h('div', { class: 'sec' }, n.sec) : null;
-      }
-      return (!n.perm || canAny(n.perm)) ? h('a', { href: '#/' + n.name, class: r.name === n.name ? 'active' : '' }, h('span', { class: 'ico' }, n.ico), n.label) : null;
-    })),
+    h('nav', { class: 'nav', 'aria-label': 'Main' }, groups.filter(g => g.items.length).flatMap(g => [h('div', { class: 'sec' }, g.sec), ...g.items]), moreGroup),
     h('div', { class: 'foot' }, state.local ? h('a', { href: '#/sync', class: 'badge info', style: { display: 'block', textAlign: 'center', marginBottom: '.5rem' } }, window.SUDS_STATIC_HOST ? '📱 On this device · Backup' : '📱 On this device · Sync') : null, h('div', {}, h('b', {}, state.user.display_name)), h('div', { class: 'muted' }, fmt.label(state.user.role)),
       h('div', { class: 'row', style: { marginTop: '.5rem' } }, h('a', { href: '#/profile' }, 'Profile'), h('a', { href: '#', onClick: (e) => { e.preventDefault(); logout(); } }, 'Sign out'), h('a', { href: '#', title: 'Light / dark', onClick: (e) => { e.preventDefault(); toggleTheme(); } }, 'Light/dark'), h('a', { href: 'accessibility.html', 'data-accessibility-statement': '1' }, 'Accessibility')),
       h('div', { class: 'small muted', 'data-build-stamp': '1', style: { marginTop: '.4rem' } }, `SUDS ${SUDS_VERSION}`)));
@@ -1473,7 +1524,7 @@ export async function loadSession() {
   else { try { const st = await get('/api/setup/status', { quiet: true }); state.setupNeeded = !!st.needed; } catch { state.setupNeeded = false; } if (state.setupNeeded) { state.user = null; return; } }
   try {
     const me = await get('/api/auth/me', { quiet: true });
-    state.user = me.user; state.org = me.org_name; state.mfaPending = me.mfaPending; state.idleMinutes = me.idle_minutes || 15;
+    state.user = me.user; state.org = me.org_name; state.mfaPending = me.mfaPending; state.idleMinutes = me.idle_minutes || 15; state.programme = me.programme || null;
     await Promise.all([loadRefData(), prefs.load()]);
     // Two-step verification is required of this role but not set up yet. There is a grace period, after which
     // the server refuses every request until it is done -- so say when that is, and where to do it, instead of
@@ -1481,7 +1532,7 @@ export async function loadSession() {
     if (state.user.mfa_required && !state.user.mfa_enabled && !state.mfaPending && !state.local) {
       const due = state.user.mfa_setup_deadline ? fmt.parse(state.user.mfa_setup_deadline) : null;
       const when = due ? (due.getTime() < Date.now() ? 'now' : `by ${fmt.date(state.user.mfa_setup_deadline)}`) : 'now';
-      const el = banner(`Your role requires two-step verification. Set it up ${when} — after that, SUDS will not let you in until it is done.`, 'warn', { id: 'mfa-required' });
+      const el = banner(`Your role requires two-step verification. Set it up ${when} — after that, SUDS will not let you in until it is done.`, 'warn', { id: 'mfa-required', short: `Two-step verification: set it up ${when}.` });
       if (el) el.firstChild.append(' ', h('a', { href: '#/profile?mfa=1', class: 'btn sm primary', style: { marginLeft: '.5rem' } }, 'Set up now'));
     }
   } catch { state.user = null; }

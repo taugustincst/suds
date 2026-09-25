@@ -57,7 +57,7 @@ export function openInterventionForm(values, { clientId, clientDisplay, onDone, 
     fundSel.addEventListener('change', fillLines);
     fillLines();
   }
-  const m = modal(isNew ? (template ? 'Repeat visit or service' : 'Record a visit or service') : 'Edit visit / service', f, { wide: true });
+  const m = modal(isNew ? (template ? 'Repeat a visit' : 'Record a visit') : 'Edit visit', f, { wide: true });
 }
 // Opens the form prefilled from the client's most recent intervention, or falls back to a blank one if
 // they have none yet — so the button on a client's page never has to know in advance whether history exists.
@@ -91,7 +91,7 @@ route('interventions', async (r) => {
   const mineI = h('input', { type: 'checkbox', checked: mine });
   const apply = () => nav(`interventions?type=${type}&from=${fromI.value}&to=${toI.value}${mineI.checked ? '&mine=1' : ''}`);
   return h('div', {},
-    pageHead('Visits & services', can('interventions:write') ? h('button', { class: 'btn primary', onClick: () => openInterventionForm(null, { onDone: refresh }) }, '+ Log a visit or service') : null, can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv(`/api/reports/export/interventions?from=${from || '2000-01-01'}&to=${to || fmt.today()}&format=xlsx`) }, 'Export to Excel') : null),
+    pageHead('Visits', can('interventions:write') ? h('button', { class: 'btn primary', onClick: () => openInterventionForm(null, { onDone: refresh }) }, '+ Log a visit') : null, can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv(`/api/reports/export/interventions?from=${from || '2000-01-01'}&to=${to || fmt.today()}&format=xlsx`) }, 'Export to Excel') : null),
     h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'Type'), typeSel), h('div', { class: 'field' }, h('label', {}, 'From'), fromI), h('div', { class: 'field' }, h('label', {}, 'To'), toI), h('label', { class: 'check', style: { marginTop: 0 } }, mineI, 'Mine only'), h('button', { class: 'btn', onClick: apply }, 'Apply')),
     pagedList({ first: data, url: `/api/interventions${qs ? '?' + qs : ''}`, limit: PAGE, render: (rows) => interventionTable(rows, { onChange: refresh }),
       summary: (rows, total) => h('div', { class: 'muted small mb' }, `${total} interventions · ${fmt.mins(rows.reduce((s, x) => s + (x.duration_minutes || 0), 0))} shown`) }));

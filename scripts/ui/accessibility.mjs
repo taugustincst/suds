@@ -300,7 +300,7 @@ const DIALOGS = [
   ['Log call', 'calls:write', async (p) => p.evaluate(async () => (await import('./views/calls.js')).openCallForm(null, {}))],
   ['Log text', 'calls:write', async (p) => p.evaluate(async () => (await import('./views/calls.js')).openCallForm(null, { method: 'text' }))],
   ['Write note', ['notes:admin:write', 'notes:clinical:write'], async (p) => p.evaluate(async () => (await import('./views/notes.js')).openNoteForm(null, {}))],
-  ['New task', 'tasks:write', async (p) => p.evaluate(async () => (await import('./views/tasks.js')).openTaskForm(null, {}))],
+  ['New to-do', 'tasks:write', async (p) => p.evaluate(async () => (await import('./views/tasks.js')).openTaskForm(null, {}))],
   ['Log time', 'time:write', async (p) => p.evaluate(async () => (await import('./views/time.js')).openTimeForm(null, {}))],
   ['New referral', 'referrals:write', async (p) => p.evaluate(async () => (await import('./views/referrals.js')).openReferralForm(null, {}))],
   ['New resource', 'resources:write', async (p) => p.evaluate(async () => (await import('./views/resources.js')).openResourceForm(null))],
@@ -390,6 +390,8 @@ const BUTTON_DIALOGS = [
 const EXPANDED = [
   ['compliance?tab=notice', 'details[data-notice-editor] > summary', 'notice editor open'],
   ['admin?tab=lists', 'details.list-card > summary', 'a list open'],
+  // Settings › Programme is folded into sections (views/admin.js): every one of them opened.
+  ['admin?tab=settings', 'details.section[data-section] > summary', 'every programme settings section open', { all: true }],
 ];
 // [page, the list's container, name]: the first row's own button opens the record in a dialog.
 const ROW_DIALOGS = [
@@ -432,13 +434,14 @@ async function auditPages(page, base, cfg, tag, { clientId, resourceId, settings
     for (const t of tabs.slice(1)) { await go(page, base, `compliance?tab=${t}`); await checkPage(page, cfg, tag, `compliance?tab=${t}`); }
   }
   // Content that is on the page but folded away until it is opened.
-  for (const [hash, summary, name] of EXPANDED) {
+  for (const [hash, summary, name, opts = {}] of EXPANDED) {
     if (hash.startsWith('admin') && !settingsTabs) continue;
     if (hash.startsWith('compliance') && !pages.includes('compliance')) continue;
     await go(page, base, hash);
     const el = await page.$(summary);
     if (!el) continue;
     if (!(await el.evaluate(x => x.parentElement.open))) { await el.click(); await settle(page); }
+    if (opts.all) { await page.$$eval(summary, s => s.forEach(x => { x.parentElement.open = true; })); await settle(page); }
     const where = `${tag} #/${hash} (${name})`;
     await axe(page, where);
     if (cfg.mobile) await reflowCheck(page, where, 320);
@@ -582,10 +585,10 @@ async function keyboardRun() {
   ok(await page.evaluate(() => !!document.activeElement.closest('#main')), `${K}: Enter on it moves focus to the page content`, await active(page));
 
   // --- 2.4.3 focus after moving pages: focus lands on the new page's heading, not the top of the document.
-  await tabTo(page, '.nav a', { text: 'To-do list' });
+  await tabTo(page, '.nav a', { text: 'To-dos' });
   await page.keyboard.press('Enter'); await settle(page);
   ok(await page.evaluate(() => document.activeElement?.tagName === 'H1'), `${K}: after following a link, focus is on the new page's heading`, await active(page));
-  eq(await page.title(), 'To-do list — SUDS', `${K}: and the title names the new page`);
+  eq(await page.title(), 'To-dos — SUDS', `${K}: and the title names the new page`);
 
   // --- create a client, keyboard only; with an error first (3.3.1, 3.3.3, 4.1.3), then correctly.
   await go(page, office, 'clients');
@@ -623,7 +626,7 @@ async function keyboardRun() {
   await go(page, office, 'dashboard');
   ok(await tabTo(page, '.appbar .quick'), `${K}: Tab reaches "+ Log"`);
   await page.keyboard.press('Enter'); await page.waitForSelector('.modal .quick-list');
-  ok(await tabTo(page, '.modal .quick-list button', { text: 'Visit or service' }), `${K}: Tab reaches "Visit or service"`);
+  ok(await tabTo(page, '.modal .quick-list button', { text: 'Visit' }), `${K}: Tab reaches "Visit"`);
   await page.keyboard.press('Enter'); await page.waitForSelector('.modal [name=type]');
   ok((await active(page))?.inModal, `${K}: the visit form opens with focus inside it`);
   ok(await chooseClient(page, `Board${stamp}`) === clientId, `${K}: the client is chosen from the search with arrow keys and Enter`);

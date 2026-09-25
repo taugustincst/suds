@@ -9,6 +9,11 @@ route('setup', async () => {
     { type: 'section', label: 'Your program' },
     { name: 'org_name', label: 'Program name', required: true, placeholder: 'e.g. Clark County SUD Navigation Program', span: true },
     { name: 'county_name', label: 'County' }, { name: 'program_contact', label: 'Privacy officer / program contact' },
+    // The programme profile (server/programme.js): what the screens lead with. Harm reduction is the default;
+    // Settings › Programme changes it, and switches single clinical modules on, at any time.
+    { name: 'programme_profile', label: 'What kind of program is this?', type: 'select', noBlank: true, required: true, value: 'harm_reduction', span: true,
+      options: [{ value: 'harm_reduction', label: 'Harm reduction & outreach — outreach, visits, supplies, referrals and grant reporting (recommended)' }, { value: 'treatment', label: 'Treatment-adjacent — adds care plans, assessments (ASAM), CalOMS Tx, the FHIR API and the county EHR hand-off' }],
+      help: 'Changes only what the screens show. You can switch any clinical module on later in Settings › Programme.' },
     { type: 'section', label: 'Administrator account (you)' },
     { name: 'admin_display_name', label: 'Your name', required: true }, { name: 'admin_username', label: 'Username', required: true, pattern: '[a-zA-Z0-9._@\\-]+', placeholder: 'e.g. jsmith' },
     { name: 'admin_password', label: 'Password', type: 'password', required: true, autocomplete: 'new-password', help: '12+ characters with upper and lower case, a number and a symbol.' }, { name: 'confirm', label: 'Confirm password', type: 'password', required: true, autocomplete: 'new-password' },

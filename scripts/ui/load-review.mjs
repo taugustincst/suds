@@ -115,7 +115,7 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   const nav = await session('mrivera', PW);
   const { page, api } = nav;
   await go(page, 'tasks');
-  await page.click('.main button:has-text("+ Add a reminder")');
+  await page.click('.main button:has-text("+ Add a to-do")');
   await page.waitForSelector('.modal input[name=title]');
   const title = `Retry check ${Date.now()}`;
   await page.fill('.modal input[name=title]', title);
@@ -139,7 +139,7 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   eq(mine.length, 1, 'and only one to-do exists');
   await page.unroute('**/api/tasks');
   // A different submission gets a different key.
-  await page.click('.main button:has-text("+ Add a reminder")');
+  await page.click('.main button:has-text("+ Add a to-do")');
   await page.waitForSelector('.modal input[name=title]');
   await page.fill('.modal input[name=title]', title + ' (second)');
   const req = page.waitForRequest(r => r.method() === 'POST' && r.url().endsWith('/api/tasks'));

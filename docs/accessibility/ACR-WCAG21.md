@@ -31,8 +31,8 @@ shown in the application as **Accessibility** (`accessibility.html`).
 
 ## Notes
 
-* **Scope.** Every page in the application's navigation (Home, My clients, Waitlist, To-do list, Supervision,
-  Visits & services, Calls & texts, Forms, Notes, My time, Import, Overdose & reversals, Supplies, Referrals,
+* **Scope.** Every page in the application's navigation (Home, My clients, Waitlist, To-dos, Supervision,
+  Visits, Calls & texts, Forms, Notes, My time, Import, Overdose & reversals, Supplies, Referrals,
   Resource directory, Funding & spending, Policies & contracts, Reports, Privacy & Part 2 and each of its
   sections — overview, patient notice with its editor open, notice not given, complaints, incidents & breaches —
   Funder report, Settings), State reporting (CalOMS Tx and the county EHR hand-off), the profile, every section
@@ -137,7 +137,7 @@ shown in the application as **Accessibility** (`accessibility.html`).
 | [2.2.2 Pause, Stop, Hide](https://www.w3.org/TR/WCAG21/#pause-stop-hide) (Level A) | Supports | Nothing moves, blinks or scrolls. Home refreshes its figures every 90 seconds; a checkbox on Home ("Update this page every 90 seconds") turns that off, and the refresh never runs while focus is on a control in the page or a dialog is open. The reminders count in the header updates every five minutes and does not move or take focus. *Evaluated by:* review. |
 | [2.3.1 Three Flashes or Below Threshold](https://www.w3.org/TR/WCAG21/#three-flashes-or-below-threshold) (Level A) | Supports | No flashing content. *Evaluated by:* review. |
 | [2.4.1 Bypass Blocks](https://www.w3.org/TR/WCAG21/#bypass-blocks) (Level A) | Supports | "Skip to content" is the first focusable element on every screen (ahead of any banner) and moves focus to the `main` landmark; landmarks and headings are present on every page. *Evaluated by:* axe (`bypass`, landmark rules), keyboard (skip link). |
-| [2.4.2 Page Titled](https://www.w3.org/TR/WCAG21/#page-titled) (Level A) | Supports | Each address sets its own title, e.g. "To-do list — SUDS", "Notes · Client record — SUDS", "Log in — SUDS". Titles never include a client's name (it would be kept in browser history). *Evaluated by:* axe (`document-title`), scripted (a descriptive title per page, never a client name). |
+| [2.4.2 Page Titled](https://www.w3.org/TR/WCAG21/#page-titled) (Level A) | Supports | Each address sets its own title, e.g. "To-dos — SUDS", "Notes · Client record — SUDS", "Log in — SUDS". Titles never include a client's name (it would be kept in browser history). *Evaluated by:* axe (`document-title`), scripted (a descriptive title per page, never a client name). |
 | [2.4.3 Focus Order](https://www.w3.org/TR/WCAG21/#focus-order) (Level A) | Supports | Focus order follows the DOM; no positive `tabindex`. Opening a dialog moves focus into it; closing returns it. Moving to another page puts focus on the new page's heading; redrawing the same page (a filter changed, a record saved, Home's refresh) returns focus to the same control. Invisible or duplicate focus stops (hidden file inputs) were removed. *Evaluated by:* scripted (Tab through every page), keyboard, review. |
 | [2.4.4 Link Purpose (In Context)](https://www.w3.org/TR/WCAG21/#link-purpose-in-context) (Level A) | Supports | Link text names its destination or is determined by its row or card (a client code in a client row, "Edit this list" beside the list's field). *Evaluated by:* axe (`link-name`), review. |
 | [2.5.1 Pointer Gestures](https://www.w3.org/TR/WCAG21/#pointer-gestures) (Level A 2.1 only) | Supports | No path-based or multipoint gestures. Drag-and-drop (files, pictures) always has a button alternative; list order is changed with ↑/↓ buttons. *Evaluated by:* review. |

@@ -4,6 +4,15 @@ SUDS is case-management and service tracking for county SUD navigation, outreach
 and non-billing treatment programs: clients, episodes of care, visits, calls, referrals, notes, consents and
 the accounting of disclosures, funding and spending, and the reports those programs owe.
 
+## Programme profile
+
+A programme is set up as **Harm reduction & outreach** (the default for a new install) or **Treatment-adjacent**
+(`server/programme.js`; the setup wizard asks, Settings → Programme changes it). The clinical modules — care plan
+and problem list, assessments, CalOMS Tx, the FHIR API and the county EHR hand-off — are shown only to a
+treatment-adjacent programme or when switched on one by one. A module that is off is hidden and refuses new
+records (403) but keeps what was already recorded readable; permissions do not change. A database upgraded from
+before profiles is treatment-adjacent if it already held any clinical record or CalOMS/FHIR set-up.
+
 ## The billing boundary
 
 **SUDS does not bill.** It does not produce 837 transactions, Short-Doyle/Medi-Cal claims, or any other

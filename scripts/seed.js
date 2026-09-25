@@ -28,5 +28,8 @@ db.run(`UPDATE users SET must_change_password=0 WHERE username='admin'`);
 if (demo.status().loaded) console.log('Sample data already loaded; skipping.');
 else if (db.one(`SELECT COUNT(*) n FROM clients`).n > 0) console.log('Database already has clients; not adding sample data.');
 else { const s = demo.seed({ actor: sup, workers: [nav1, nav2], clinician: clin, supervisor: sup }); console.log(`Seeded ${s.counts.clients} clients, ${s.counts.interventions} visits, ${s.counts.calls} calls, ${s.counts.notes} notes, ${s.counts.resources} resources.`); }
+// The sample data has care plans, assessments and CalOMS-ready episodes, and the browser suite drives every
+// module, so the development database is a treatment-adjacent programme (a new install is harm reduction).
+db.setSetting('programme_profile', 'treatment');
 console.log(`Demo logins (password "${PW}"): mrivera (navigator), dchen (navigator), kpatel (clinician), jwalker (supervisor), afinance (finance), rreader (read-only), admin`);
 db.close();

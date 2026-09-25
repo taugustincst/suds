@@ -265,7 +265,7 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   // validation names the field the way the form does
   await go(page, 'interventions');
   await page.click('text=+ Log');
-  await page.click('.modal button:has-text("Visit or service")');
+  await page.click('.modal button:has-text("Visit")');
   await page.waitForSelector('.modal select[name=type]');
   await page.click('.modal button[type=submit]');
   const msg = await until(async () => { const el = await page.$('.modal .banner, .modal .err:not(:empty)'); return el ? el.textContent() : null; });
@@ -285,7 +285,7 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   const kitsAfter = (await navS.api('GET', '/api/interventions?type=naloxone_distribution&limit=200')).data.rows.filter(r => !r.client_id).length;
   eq(kitsAfter, kitsBefore + 1, 'and is recorded with no client');
   await page.click('text=+ Log');
-  await page.click('.modal button:has-text("Visit or service")');
+  await page.click('.modal button:has-text("Visit")');
   await page.waitForSelector('.modal select[name=type]');
   await page.selectOption('.modal select[name=type]', 'outreach');
   await page.selectOption('.modal select[name=type]', 'assessment');
@@ -336,7 +336,7 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   await go(page, 'admin?tab=lists');
   ok(await page.$('.tabs button:has-text("Lists")'), 'Settings has a Lists tab');
   const groups = await page.$$eval('[data-lists] > h2', hs => hs.map(x => x.textContent));
-  for (const g of ['Visits & services', 'Calls & texts', 'Referrals', 'Overdose & reversals', 'Time', 'Notes', 'Clients', 'Episodes of care', 'Funding']) ok(groups.includes(g), `the lists are grouped by form: ${g}`, groups);
+  for (const g of ['Visits', 'Calls & texts', 'Referrals', 'Overdose & reversals', 'Time', 'Notes', 'Clients', 'Episodes of care', 'Funding']) ok(groups.includes(g), `the lists are grouped by form: ${g}`, groups);
   // Reword the overdose form's "What happened" choice.
   await openCard('OVERDOSE_KINDS');
   await page.fill(`${card('OVERDOSE_KINDS')} [data-entry-label="reversal"]`, 'Reversed with Narcan');
@@ -361,7 +361,7 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   // The visit form offers what the office set up, with an "Edit this list" link for the administrator.
   await page.reload(); await page.waitForSelector('.layout'); await settle(page);
   await go(page, 'interventions');
-  await page.click('text=+ Log a visit or service'); await page.waitForSelector('.modal select[name=location]');
+  await page.click('text=+ Log a visit'); await page.waitForSelector('.modal select[name=location]');
   const locs = await page.$$eval('.modal select[name=location] option', o => o.map(x => [x.value, x.textContent]));
   ok(locs.some(([v, t]) => v === 'mobile_van' && t === 'Mobile van'), 'the new location is offered on the visit form', locs);
   ok(!locs.some(([v]) => v === 'jail'), 'the retired one is not');

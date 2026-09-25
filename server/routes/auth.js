@@ -84,7 +84,9 @@ module.exports = (r) => {
   r.get('/api/auth/me', (ctx) => {
     if (!ctx.user) throw unauthorized();
     const u = db.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
-    return { user: auth.publicUser(u), mfaPending: !!ctx.session.mfa_pending, org_name: db.getSetting('org_name', 'SUDS'), idle_minutes: auth.policy().idleMinutes, setup_needed: false };
+    return { user: auth.publicUser(u), mfaPending: !!ctx.session.mfa_pending, org_name: db.getSetting('org_name', 'SUDS'), idle_minutes: auth.policy().idleMinutes, setup_needed: false,
+      // The programme profile and the modules in force (server/programme.js): what the navigation shows.
+      programme: { profile: require('../programme').profile(), modules: require('../programme').modules() } };
   });
 
   r.post('/api/auth/password', async (ctx) => {

@@ -18,14 +18,18 @@ const { HttpError, badRequest, notFound } = require('../http');
 const { validate } = require('../validate');
 const { uuid } = require('../crypto');
 const C = require('../fhir/clients');
+const P = require('../programme');
 const R = require('../fhir/resources');
 const bulk = require('../fhir/bulk');
 const { FhirError, FHIR_VERSION, PART2_SECURITY, outcome, send, sendError, baseUrl } = require('../fhir/common');
 
 /** Wrap a FHIR handler: authenticate the client, apply its rate limit, and answer failures as OperationOutcome. */
-function fhir(fn, { open = false } = {}) {
+function fhir(fn, { open = false, always = false } = {}) {
   return async (ctx) => {
     try {
+      // The FHIR module switched off (Settings › Programme › Modules, server/programme.js) closes the API:
+      // no tokens and no data. The capability statement stays, so a caller learns why rather than a 404.
+      if (!always && !P.moduleOn('fhir')) throw new FhirError(403, P.offMessage('fhir'), { code: 'forbidden' });
       let client = null;
       if (!open) {
         client = C.authenticate(ctx);
@@ -238,7 +242,7 @@ function adminAliasPreview(ctx) {
 
 module.exports = (r) => {
   // Discovery: public, and nothing in it is about anyone.
-  r.get('/fhir/R4/metadata', fhir((ctx) => send(ctx.res, 200, capability(ctx)), { open: true }));
+  r.get('/fhir/R4/metadata', fhir((ctx) => send(ctx.res, 200, capability(ctx)), { open: true, always: true }));
   r.get('/fhir/R4/.well-known/smart-configuration', fhir((ctx) => {
     const base = baseUrl(ctx);
     const body = { token_endpoint: `${base}/auth/token`, grant_types_supported: ['client_credentials'], token_endpoint_auth_methods_supported: ['private_key_jwt', 'client_secret_post', 'client_secret_basic'],
@@ -262,9 +266,9 @@ module.exports = (r) => {
     clients: C.list(), purposes: Object.entries(disclosure.FHIR_PURPOSES).map(([code, p]) => ({ code, label: p.display })),
     resource_types: Object.entries(C.RESOURCE_TYPES).map(([type, phi]) => ({ type, phi })), token_path: '/fhir/R4/auth/token', base_path: '/fhir/R4',
   }));
-  r.post('/api/admin/fhir-clients', auth.requireAuth, auth.requirePerm('apikeys:manage'), adminCreate);
+  r.post('/api/admin/fhir-clients', auth.requireAuth, auth.requirePerm('apikeys:manage'), P.requireModule('fhir'), adminCreate);
   r.post('/api/admin/fhir-clients/alias-preview', auth.requireAuth, auth.requirePerm('apikeys:manage'), adminAliasPreview);
-  r.patch('/api/admin/fhir-clients/:id', auth.requireAuth, auth.requirePerm('apikeys:manage'), adminUpdate);
+  r.patch('/api/admin/fhir-clients/:id', auth.requireAuth, auth.requirePerm('apikeys:manage'), P.requireModule('fhir'), adminUpdate);
   r.delete('/api/admin/fhir-clients/:id', auth.requireAuth, auth.requirePerm('apikeys:manage'), (ctx) => {
     if (!C.revoke(ctx.params.id)) throw notFound();
     audit.log({ user: ctx.user, action: 'fhir_client.revoke', entity: 'api_key', entityId: ctx.params.id, ip: ctx.ip });

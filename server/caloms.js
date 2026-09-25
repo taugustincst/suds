@@ -12,7 +12,9 @@ const S = require('./caloms-spec');
 const { encrypt, decrypt } = require('./crypto');
 
 // ---- settings ----
-function enabled() { return db.getSetting('caloms_enabled', '0') === '1'; }
+// Reporting is on when the programme has turned it on and the CalOMS module is not switched off
+// (server/programme.js): a module switched off stops asking the admission and discharge questions.
+function enabled() { return db.getSetting('caloms_enabled', '0') === '1' && require('./programme').moduleOn('caloms'); }
 function providers() {
   try { const v = JSON.parse(db.getSetting('caloms_providers', '[]') || '[]'); return Array.isArray(v) ? v.filter(p => p && p.id) : []; }
   catch { return []; }

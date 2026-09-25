@@ -1,4 +1,4 @@
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, parseHash, kv, stat, clientPicker, clear, contactLinks, mapLink, openHref, tabStrip, clientStatus, emptyState, downloadCsv, flag } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, parseHash, kv, stat, clientPicker, clear, contactLinks, mapLink, openHref, tabStrip, clientStatus, emptyState, downloadCsv, flag, moduleOn } from '../app.js';
 import { openClientForm } from './clients.js';
 import { openInterventionForm, openRepeatInterventionForm, interventionTable } from './interventions.js';
 import { openCallForm, callTable } from './calls.js';
@@ -35,23 +35,55 @@ route('client', async (r) => {
   // instead of firing at all once they've left this client's page.
   const refresh = () => { const h = parseHash(); if (h.name === 'client' && h.id === id) nav(`client/${id}/${h.sub || 'overview'}?_=${Date.now()}`); };
   const ctxOpts = { clientId: id, clientDisplay: disp, onDone: refresh };
-  const tabs = [['overview', 'Overview'], ['timeline', 'Timeline'], ['interventions', `Interventions (${c.counts.interventions})`], ['calls', `Calls (${c.counts.calls})`], ['notes', `Notes (${c.counts.notes})`], can('careplan:read') ? ['problems', 'Problems'] : null, can('careplan:read') ? ['careplan', 'Care plan'] : null, can('assessments:read') ? ['assessments', 'Assessments'] : null, ['referrals', `Referrals (${c.counts.referrals})`], ['forms', `Forms (${c.counts.forms || 0})`], ['tasks', `Tasks (${c.counts.open_tasks})`], ['episodes', 'Episodes'], ['consents', 'Consents & ROI'], ['requests', 'Requests'], ['time', 'Time'], can('budget:read') ? ['budget', 'Assistance $'] : null, ['team', 'Care team']].filter(Boolean);
+  // The clinical modules show only when the programme uses them (server/programme.js); an address that names
+  // one still opens it, so a record made before a module was switched off can be read.
+  const shows = (mod, k) => moduleOn(mod) || tab === k;
+  const tabs = [['overview', 'Overview'], ['timeline', 'Timeline'], ['interventions', `Visits (${c.counts.interventions})`], ['calls', `Calls (${c.counts.calls})`], ['notes', `Notes (${c.counts.notes})`], can('careplan:read') && shows('careplan', 'problems') ? ['problems', 'Problems'] : null, can('careplan:read') && shows('careplan', 'careplan') ? ['careplan', 'Care plan'] : null, can('assessments:read') && shows('assessments', 'assessments') ? ['assessments', 'Assessments'] : null, ['referrals', `Referrals (${c.counts.referrals})`], ['forms', `Forms (${c.counts.forms || 0})`], ['tasks', `To-dos (${c.counts.open_tasks})`], ['episodes', 'Episodes'], ['consents', 'Consents & ROI'], ['requests', 'Requests'], ['time', 'Time'], can('budget:read') ? ['budget', 'Assistance $'] : null, ['team', 'Care team']].filter(Boolean);
+  // What can be added to this record. On a wide screen each is its own button; on a phone (styles.css,
+  // .client-actions) they fold into one "Add…" button that opens the same list, so the section tabs are not
+  // pushed below the fold by a wall of buttons.
+  function actionBar() {
+    const acts = [
+      can('interventions:write') ? ['+ Visit', 'Visit', () => openInterventionForm(null, ctxOpts), { primary: true }] : null,
+      can('interventions:write') && c.counts.interventions ? ['↻ Repeat last visit', 'Repeat last visit', () => openRepeatInterventionForm(id, disp, refresh), { title: 'Prefill from their most recent visit — same type, location and supplies, with today\'s date and a blank summary' }] : null,
+      can('calls:write') ? ['+ Call', 'Call', () => openCallForm(null, ctxOpts)] : null,
+      can('calls:write') ? ['+ Text', 'Text message', () => openCallForm(null, { ...ctxOpts, method: 'text' })] : null,
+      (can('notes:admin:write') || can('notes:clinical:write')) ? ['+ Note', 'Note', () => openNoteForm(null, ctxOpts)] : null,
+      can('tasks:write') ? ['+ To-do', 'To-do', () => openTaskForm(null, ctxOpts)] : null,
+    ].filter(Boolean);
+    const edit = can('clients:write') ? () => openClientForm(c, refresh) : null;
+    const wide = h('div', { class: 'row client-actions wide' },
+      acts.map(([text, , fn, o = {}]) => h('button', { class: `btn${o.primary ? ' primary' : ''}`, title: o.title || null, onClick: fn }, text)),
+      edit ? h('button', { class: 'btn', onClick: edit }, 'Edit') : null);
+    if (!acts.length) return wide;
+    // The phone's version: a disclosure (not an ARIA menu), so it is a button and a list of buttons to a
+    // screen reader and Tab walks through it. Escape or a click elsewhere closes it.
+    const listId = `client-add-${id}`;
+    const list = h('div', { class: 'add-list hidden', id: listId });
+    const addBtn = h('button', { class: 'btn primary', type: 'button', 'aria-expanded': 'false', 'aria-controls': listId, 'data-client-add': '1' }, 'Add…');
+    const setOpen = (open) => {
+      clear(list);
+      if (open) list.append(...acts.map(([, label, fn]) => h('button', { class: 'btn', type: 'button', onClick: () => { setOpen(false); fn(); } }, label)));
+      list.classList.toggle('hidden', !open); addBtn.setAttribute('aria-expanded', String(open));
+      if (open) list.querySelector('button')?.focus();
+    };
+    addBtn.addEventListener('click', () => setOpen(list.classList.contains('hidden')));
+    const narrow = h('div', { class: 'client-actions narrow' }, h('div', { class: 'row' }, addBtn, edit ? h('button', { class: 'btn', onClick: edit }, 'Edit') : null), list);
+    narrow.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !list.classList.contains('hidden')) { e.stopPropagation(); setOpen(false); addBtn.focus(); } });
+    const onDoc = (e) => { if (!narrow.isConnected) { document.removeEventListener('click', onDoc); return; } if (!narrow.contains(e.target)) setOpen(false); };
+    document.addEventListener('click', onDoc);
+    return h('div', { class: 'client-actions-wrap' }, wide, narrow);
+  }
   const body = h('div', {});
-  const view = h('div', {},
+  const view = h('div', { class: 'client-record' },
     h('div', { class: 'topbar' }, h('div', {}, h('h1', {}, c.display_name, ' ', h('span', { class: 'muted', style: { fontWeight: 400, fontSize: '1rem' } }, c.client_code)),
       // A list, so a screen reader meets each badge on its own ("Status: Inactive") instead of one run of text.
       h('ul', { class: 'row badge-list', 'aria-label': 'Status and flags' }, ...[h('span', { class: `badge ${statusKind(clientStatus(c))}`, 'data-client-status': clientStatus(c) }, h('span', { class: 'sr-only' }, 'Status: '), fmt.label(clientStatus(c))), badge(`Risk: ${fmt.label(c.risk_level)}`, statusKind(c.risk_level)), c.primary_substance ? badge(fmt.label(c.primary_substance, 'SUBSTANCES')) : null, c.mat_status && c.mat_status !== 'none' ? badge(`MAT: ${fmt.label(c.mat_status)}`, 'purple') : null, c.overdose_history ? badge('OD history', 'danger') : null, c.naloxone_provided ? badge('Naloxone ✓', 'ok') : badge('No naloxone', 'warn'), c.flags ? badge(`⚠ ${c.flags}`, 'danger') : null, c.legal_hold ? badge('Legal hold', 'purple') : null, c.part2 && c.part2.program ? part2Badge() : null,
         // A safety plan on file is worth seeing before anything else on a bad day; the chip opens it.
         c.safety_plan ? h('button', { class: 'chip', type: 'button', 'data-safety-plan': c.safety_plan.id, title: 'Open the safety plan', onClick: async () => (await import('./notes.js')).openNote(c.safety_plan.id, { onChange: refresh }) }, `🛟 Safety plan on file (${fmt.date(c.safety_plan.occurred_at)})`) : null].filter(Boolean).map(x => h('li', {}, x)))),
-      h('div', { class: 'row' },
-        can('interventions:write') ? h('button', { class: 'btn primary', onClick: () => openInterventionForm(null, ctxOpts) }, '+ Intervention') : null,
-        can('interventions:write') && c.counts.interventions ? h('button', { class: 'btn', title: 'Prefill from their most recent visit — same type, location and supplies, with today\'s date and a blank summary', onClick: () => openRepeatInterventionForm(id, disp, refresh) }, '↻ Repeat last visit') : null,
-        can('calls:write') ? h('button', { class: 'btn', onClick: () => openCallForm(null, ctxOpts) }, '+ Call') : null,
-        can('calls:write') ? h('button', { class: 'btn', onClick: () => openCallForm(null, { ...ctxOpts, method: 'text' }) }, '+ Text') : null,
-        (can('notes:admin:write') || can('notes:clinical:write')) ? h('button', { class: 'btn', onClick: () => openNoteForm(null, ctxOpts) }, '+ Note') : null,
-        can('tasks:write') ? h('button', { class: 'btn', onClick: () => openTaskForm(null, ctxOpts) }, '+ Task') : null,
-        can('clients:write') ? h('button', { class: 'btn', onClick: () => openClientForm(c, refresh) }, 'Edit') : null)),
-    tabStrip(tabs, tab, (k) => nav(`client/${id}/${k}`), { label: 'Client record sections' }),
+      actionBar()),
+    // On a phone the strip leads with the sections used every day; the rest are under More.
+    tabStrip(tabs, tab, (k) => nav(`client/${id}/${k}`), { label: 'Client record sections', core: ['overview', 'interventions', 'notes', 'tasks', 'consents'] }),
     body);
 
   // Free text such as "Rosa (sister) 555-0134" gets its number turned into a tel: link.
@@ -81,7 +113,7 @@ route('client', async (r) => {
           ['Time until engaged', c.days_to_engagement === null ? (c.referral_date || c.engagement_date ? h('span', { class: 'muted' }, 'needs both dates') : null) : flag(`${c.days_to_engagement} day${Math.abs(c.days_to_engagement) === 1 ? '' : 's'}`, c.days_to_engagement < 0, 'engagement date is before the referral date')],
           ['Episode', c.open_episode ? h('a', { href: `#/client/${id}/episodes` }, 'Open — ', c.counts.episodes > 1 ? `${c.counts.episodes} episodes` : 'first episode') : c.counts.episodes ? h('a', { href: `#/client/${id}/episodes`, style: { color: 'var(--warn)' } }, 'Discharged — re-admit on the Episodes tab') : h('a', { href: `#/client/${id}/episodes`, style: { color: 'var(--warn)' } }, 'None open — start one on the Episodes tab')],
           ['Discharge', c.discharge_date ? `${fmt.date(c.discharge_date)} — ${c.discharge_reason ? (/^[a-z_]+$/.test(c.discharge_reason) ? fmt.label(c.discharge_reason, 'DISCHARGE_REASONS') : c.discharge_reason) : ''}` : null], ['Care team', c.assignments.filter(a => !a.end_date).map(a => `${a.display_name} (${fmt.label(a.role_on_case)})`).join(', ') || 'Unassigned'], c.part2 && c.part2.program ? ['Part 2 notice', c.part2.notice ? h('span', { 'data-notice-given': '1' }, `Given ${fmt.date(c.part2.notice.given_at)}${c.part2.notice.acknowledged ? ', acknowledged' : ''}`) : h('a', { href: `#/client/${id}/consents`, 'data-notice-missing': '1', style: { color: 'var(--warn)' } }, 'Not recorded — record it on the Consents tab')] : null, ['Active consents', c.active_consents.length ? c.active_consents.map(x => `${fmt.label(x.type)}${x.recipient ? ' → ' + x.recipient : ''}`).join('; ') : h('span', { style: { color: 'var(--warn)' } }, 'None on file')]])),
-        h('div', { class: 'grid cols-4', style: { gridColumn: '1 / -1' } }, stat('Interventions', c.counts.interventions, '', `client/${id}/interventions`), stat('Calls', c.counts.calls, '', `client/${id}/calls`), stat('Service time', fmt.mins(c.counts.minutes), '', `client/${id}/time`), stat('Open tasks', c.counts.open_tasks, c.counts.open_tasks ? 'warn' : '', `client/${id}/tasks`), can('budget:read') ? stat('Assistance spent', fmt.money(c.counts.spent), '', `client/${id}/budget`) : null, stat('Referrals', c.counts.referrals, '', `client/${id}/referrals`)));
+        h('div', { class: 'grid cols-4', style: { gridColumn: '1 / -1' } }, stat('Visits', c.counts.interventions, '', `client/${id}/interventions`), stat('Calls', c.counts.calls, '', `client/${id}/calls`), stat('Service time', fmt.mins(c.counts.minutes), '', `client/${id}/time`), stat('Open to-dos', c.counts.open_tasks, c.counts.open_tasks ? 'warn' : '', `client/${id}/tasks`), can('budget:read') ? stat('Assistance spent', fmt.money(c.counts.spent), '', `client/${id}/budget`) : null, stat('Referrals', c.counts.referrals, '', `client/${id}/referrals`)));
     },
     async problems() { return (await import('./clinical.js')).problemsTab(id, { refresh }); },
     async careplan() { return (await import('./clinical.js')).carePlanTab(id, { refresh, clientDisplay: disp }); },
