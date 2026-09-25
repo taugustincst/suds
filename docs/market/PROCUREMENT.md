@@ -93,7 +93,8 @@ does not hold.
 
 4. SECURITY
    Field-level AES-256-GCM encryption of PHI; TLS 1.2+; MFA required for every role; OIDC SSO;
-   role-based access with caseload scoping; hash-chained, daily-sealed audit log.
+   role-based access with caseload scoping; tamper-evident hash-chained audit log, append-only in the
+   database, anchored every 6 hours (write-once when AUDIT_ANCHOR_DIR points at WORM storage).
    Evidence: docs/HIPAA.md, docs/security/. Attestation: SOC 2 Type 1 [readiness complete; audit
    planned for ___]; independent penetration test [planned for ___]. Security questionnaire: docs/security/.
 
@@ -102,7 +103,7 @@ does not hold.
    controls. Evidence: docs/HIPAA.md, docs/compliance/PART2.md. BAA and Part 2 QSOA: provided.
 
 6. STATE REPORTING AND INTEGRATION
-   CalOMS Tx capture/validation/extract (docs/compliance/CALOMS.md); encounter hand-off to the county
+   CalOMS Tx capture/validation/extract (docs/compliance/CALOMS.md) -- built, but the layout and code sets are NOT verified against the DHCS data dictionary; do not submit until verified with DHCS/county; encounter hand-off to the county
    EHR (docs/SCOPE.md); FHIR R4 read API and bulk export with Part 2 consent enforcement
    (docs/integration/FHIR.md); OIDC SSO; Excel/CSV import and export.
 

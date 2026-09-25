@@ -4,9 +4,9 @@
 
 ## Name of Product/Version
 
-SUDS — SUD Navigator Services Tracker, version 1.10.2 with the accessibility changes that accompany this
-report (the next release), including the clinical documentation (problem list, care plan, ASAM and outcome
-measures), CalOMS Tx state reporting, the FHIR interface settings, the security evidence pages and the
+SUDS — SUD Navigator Services Tracker, SUDS 1.11.0 (1.10.2 with the accessibility changes that accompany
+this report), including the clinical documentation (problem list, care plan, six-dimension assessment
+(ASAM-aligned) and outcome measures), CalOMS Tx state reporting, the FHIR interface settings, the security evidence pages and the
 42 CFR Part 2 controls that release adds. Both ways SUDS is run are covered: the **office server** (the web application an
 administrator installs for a programme) and **SUDS on this device** (the same web application published as a
 static site, keeping its records in the browser).
@@ -44,8 +44,8 @@ shown in the application as **Accessibility** (`accessibility.html`).
   phone" pages, the accessibility statement, and the dialogs used for daily work (+ Log and everything it
   records, new client, referral, consent with every §2.31 element, disclosure and the §2.32 notice shown after
   it, patient notice given, court order and vacating one, request, care-team assignment, client assistance, a
-  problem and its history, a care-plan goal, step and review, an ASAM assessment (new and opened), each outcome
-  measure (PHQ-9, GAD-7, AUDIT-C, DAST-10) new and opened, starting and discharging an episode with the CalOMS
+  problem and its history, a care-plan goal, step and review, a six-dimension assessment (new and opened), each outcome
+  measure (PHQ-9, GAD-7, AUDIT-C, DAST-10 with it enabled) new and opened, turning the optional DAST-10 off, starting and discharging an episode with the CalOMS
   questions, an episode's CalOMS records and an annual update, the CalOMS extract confirmation, the identified
   export, a privacy complaint and an incident (new and opened), a FHIR client, approving an access request,
   resource, overdose event, expenditure, funding source and budget line, county form design and filling,
@@ -88,7 +88,7 @@ shown in the application as **Accessibility** (`accessibility.html`).
   purpose, content on hover or focus, non-text contrast of form fields and focus rings, which were measured
   from the colour tokens in both themes).
 * Not yet done: testing with screen readers (NVDA, JAWS, VoiceOver, TalkBack) and with speech recognition by
-  their users. That is planned before the next release; findings will be added to this report.
+  their users. That is planned before the release after SUDS 1.11.0; findings will be added to this report.
 
 ## Applicable Standards/Guidelines
 

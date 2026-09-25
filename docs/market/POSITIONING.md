@@ -48,7 +48,7 @@ spreadsheets today. SUDS is where it goes.
 | --- | --- | --- |
 | Billable treatment encounters, DMC claims | Non-billable navigation, outreach, harm-reduction and prevention services | Encounter hand-off export for services that must be entered or billed in the EHR (`docs/SCOPE.md`) |
 | Clinical record for treatment | Programme record: caseload, visits, calls/texts, referrals, supplies, time, budget | FHIR R4 read API and bulk export, with 42 CFR Part 2 consent enforced (`docs/integration/FHIR.md`) |
-| CalOMS Tx for treatment admissions | CalOMS Tx capture, validation and extract where a programme is required to report it | CalOMS extract for the county's submission (`docs/compliance/CALOMS.md`) |
+| CalOMS Tx for treatment admissions | CalOMS Tx capture, validation and extract where a programme is required to report it | CalOMS extract for the county's submission (`docs/compliance/CALOMS.md`); built, but the layout and code sets are NOT verified against the DHCS data dictionary; do not submit until verified with DHCS/county |
 | County-wide identity | Programme accounts, or sign-in with the county identity provider | OIDC single sign-on (`docs/DEPLOYMENT.md`, *Single sign-on*) |
 
 ## Key messages
@@ -69,7 +69,7 @@ spreadsheets today. SUDS is where it goes.
 
 1. *Small attack surface.* Node.js built-ins only — zero third-party runtime packages.
 2. *PHI encrypted field by field* (AES-256-GCM) on top of disk encryption; blind-index search.
-3. *Tamper-evident audit* of every PHI read and write, hash-chained and sealed daily.
+3. *Tamper-evident audit* of every PHI read and write, in a tamper-evident hash chain, append-only in the database, anchored every 6 hours; write-once when the county points `AUDIT_ANCHOR_DIR` at WORM storage.
 4. *42 CFR Part 2 enforced in the software*, not only in policy: consent elements, referral gating, disclosure accounting.
 5. *Your identity provider* via OIDC; MFA required for every role by default.
 6. *Your infrastructure or ours.* County-hosted on a single server or container, or (planned) vendor-hosted

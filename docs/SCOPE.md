@@ -29,4 +29,4 @@ of record for the claim, and SUDS hands encounters over to it:
 ## State reporting
 
 Treatment programs that must report **CalOMS Tx** can collect, validate and extract it in SUDS
-(`docs/compliance/CALOMS.md`). That is reporting, not billing.
+(`docs/compliance/CALOMS.md`). That is reporting, not billing. The extract is built, but the layout and code sets are NOT verified against the DHCS data dictionary; do not submit until verified with DHCS/county.

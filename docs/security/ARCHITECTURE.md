@@ -37,6 +37,7 @@
                                                   │        └─▶ <data>/logs (no PHI) ─▶ log collector       │
                                                   └────────────────────────────────────────────────────────┘
    Keys: SUDS_ENCRYPTION_KEY, SUDS_INDEX_KEY, SUDS_BACKUP_KEY — environment (secrets manager) or <data>/keys.json (0600)
+   AUDIT_ANCHOR_DIR is write-once only when the county points it at WORM storage; unset, anchors go to <data>/audit-anchors.
 ```
 
 ## Where PHI goes

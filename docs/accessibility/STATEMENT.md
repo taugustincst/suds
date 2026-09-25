@@ -12,7 +12,10 @@ or large text on a phone. The same statement is shown inside the application at 
 
 SUDS aims to conform to the **Web Content Accessibility Guidelines (WCAG) 2.1, level AA** — the standard the
 U.S. Department of Justice adopted for state and local government web content under Title II of the
-Americans with Disabilities Act (28 CFR part 35, subpart H).
+Americans with Disabilities Act (28 CFR part 35, subpart H). Per the DOJ Title II rule as extended, public
+entities with a population of 50,000 or more must meet it by **April 26, 2027**, and smaller public entities
+and special district governments by **April 26, 2028** — confirm the current dates with county counsel or
+ada.gov, as DOJ has changed them before.
 
 SUDS is **partially conformant** with WCAG 2.1 AA: most of the application meets every level A and AA
 criterion, and the parts that do not yet are listed below with what we are doing about them. The criterion

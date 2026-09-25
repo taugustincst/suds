@@ -7,10 +7,10 @@ Answers to the questions county IT typically sends (HECVAT-Lite and CSA CAIQ sty
 | # | Question | Answer |
 | --- | --- | --- |
 | 1 | Describe the product. | Case-management web app for county SUD navigation services: clients, visits, notes, referrals, consents (42 CFR Part 2), disclosures, budgets. Node.js server + SQLite, web client. [ARCHITECTURE.md](ARCHITECTURE.md) |
-| 2 | Is it SaaS? | No. The county installs and operates it (county VM, container or the county's own cloud tenant). There is no vendor-hosted service. |
-| 3 | Do you hold SOC 2 Type 2 / ISO 27001 / HITRUST / StateRAMP / FedRAMP? | **No.** There is no service organisation to attest; see [SOC2-READINESS.md](SOC2-READINESS.md) for the criteria mapping, and use the county's own audit programme (or the hosting provider's report where hosting is outsourced). |
-| 4 | Will you sign a BAA? | The software's authors do not receive, store or process the county's PHI, so a BAA with them is not required for the software itself. A BAA is required with any party that hosts or supports the installation with access to PHI (cloud provider, support contractor). |
-| 5 | Subprocessors / third parties with access to data? | None. No telemetry, analytics or vendor service. [DATA-LIFECYCLE.md](DATA-LIFECYCLE.md) |
+| 2 | Is it SaaS? | Not by default. The county installs and operates it (county VM, container or the county's own cloud tenant). A vendor-hosted option is **planned**, not available ([../market/BUYER-GUIDE-IT.md](../market/BUYER-GUIDE-IT.md)); if a county later takes it, the answers below that assume county hosting change and a BAA and Part 2 QSOA are required. |
+| 3 | Do you hold SOC 2 Type 2 / ISO 27001 / HITRUST / StateRAMP / FedRAMP? | **No.** For a county-hosted installation there is no vendor-operated service to attest (SOC 2 is readiness only; see the vendor timeline in [../market/PROCUREMENT.md](../market/PROCUREMENT.md)); see [SOC2-READINESS.md](SOC2-READINESS.md) for the criteria mapping, and use the county's own audit programme (or the hosting provider's report where hosting is outsourced). |
+| 4 | Will you sign a BAA? | It depends on who can reach PHI. **County-hosted with no vendor access to PHI:** the vendor does not receive, store or process the county's PHI, so no BAA with the vendor is needed for the software itself. **Vendor-hosted, or vendor support with access to PHI** (e.g. support sessions on the server, receiving a database or backup): a BAA and a 42 CFR Part 2 QSOA are required; the vendor provides a draft ([../market/templates/](../market/templates/), and see [../market/templates/SUPPORT-SLA.md](../market/templates/SUPPORT-SLA.md)). A BAA is also required with any other party that hosts or supports the installation with access to PHI (cloud provider, support contractor). |
+| 5 | Subprocessors / third parties with access to data? | County-hosted: none. No telemetry or analytics, and the vendor has no access unless the county grants support access (which then needs a BAA and QSOA, Q4). Vendor-hosted (planned): the vendor and its cloud provider, under a BAA. [DATA-LIFECYCLE.md](DATA-LIFECYCLE.md) |
 | 6 | Is the source code available for review? | Yes (repository; MIT licence). |
 
 ## Data
@@ -21,7 +21,7 @@ Answers to the questions county IT typically sends (HECVAT-Lite and CSA CAIQ sty
 | 8 | Where is data stored (residency)? | Only where the county installs it and points its backups. Nothing leaves the county's infrastructure unless an administrator configures an integration. |
 | 9 | Is data encrypted at rest? | Yes — PHI fields AES-256-GCM at the application layer, backups AES-256-GCM; county volume encryption in addition. [ENCRYPTION-AND-KEYS.md](ENCRYPTION-AND-KEYS.md) |
 | 10 | Encrypted in transit? | Yes — TLS 1.2+ (native or proxy), HSTS, Secure cookies; LAN access cannot be enabled without HTTPS. |
-| 11 | Who manages encryption keys? Customer-managed keys? | The county, always. Keys come from the county's secrets manager (or a 0600 key file for small installs). No vendor escrow. |
+| 11 | Who manages encryption keys? Customer-managed keys? | The county, always. Keys come from the county's secrets manager (or a 0600 key file for small installs). No vendor escrow for a county-hosted installation. |
 | 12 | Key rotation? | Yes, per key, scripted, audited (`npm run rotate-key`, `npm run rotate-index-key`). |
 | 13 | Data retention and deletion? | Configurable client-record retention (default 7 years after last activity, minimum 6) with daily hard delete across all tables and legal hold; audit log 7 years; logs 30 days. [DATA-LIFECYCLE.md](DATA-LIFECYCLE.md) |
 | 14 | Can data be exported/returned at contract end? | The county holds the database and keys at all times; exports built in. |
@@ -46,7 +46,7 @@ Answers to the questions county IT typically sends (HECVAT-Lite and CSA CAIQ sty
 | # | Question | Answer |
 | --- | --- | --- |
 | 25 | Are access and changes logged? | Yes — every PHI read/write, auth event, denial, configuration change. [LOGGING-AND-AUDIT.md](LOGGING-AND-AUDIT.md) |
-| 26 | Are logs tamper-evident / immutable? | Hash-chained (HMAC) audit log with sealed head and scheduled verification; chain head anchored every 6 h and at every backup to write-once storage (WORM) and optionally syslog, so even a rewrite by a DB administrator with the key is detected. Immutability of the anchor store is the county's storage configuration. |
+| 26 | Are logs tamper-evident / immutable? | Tamper-evident: hash-chained (HMAC) audit log with sealed head and scheduled verification; chain head anchored every 6 h and at every backup to `AUDIT_ANCHOR_DIR` and optionally syslog. **When `AUDIT_ANCHOR_DIR` is configured to WORM storage**, even a rewrite by a DB administrator with the key is detected; otherwise the anchors sit on storage the administrator can rewrite. Immutability of the anchor store is the county's storage configuration. |
 | 27 | Log retention? | Audit 7 years (configurable); operational logs 30 days (ship to SIEM for longer). |
 | 28 | SIEM integration? | JSON logs (`LOG_FORMAT=json`), syslog for anchors, Prometheus metrics, `/api/health`. |
 | 29 | Can an auditor get the logs? | Yes — NDJSON export with signed manifest, verifiable offline (`npm run verify-audit-export`). |
@@ -55,9 +55,9 @@ Answers to the questions county IT typically sends (HECVAT-Lite and CSA CAIQ sty
 
 | # | Question | Answer |
 | --- | --- | --- |
-| 30 | Backups? | Scheduled, encrypted, verified on write, retained N copies, copied offsite. |
+| 30 | Backups? | Encrypted, verified on write, retained N copies. Scheduling and the offsite copy must be configured by the county (production warns when they are not). [BACKUP-AND-DR.md](BACKUP-AND-DR.md) |
 | 31 | Tested recovery / RTO / RPO? | Yes — recovery drill (`npm run dr-drill` or Settings) restores the newest backup into a throwaway copy, verifies it end to end, measures RTO and RPO against configured targets and writes a signed report; optional monthly schedule. [BACKUP-AND-DR.md](BACKUP-AND-DR.md) |
-| 32 | High availability? | Single instance by design; warm-standby (active–passive) procedure with drilled failover. No automatic failover. |
+| 32 | High availability? | Single instance by design; documented warm-standby (active–passive) failover procedure; the recovery drill tests restore, not failover. No automatic failover. |
 | 33 | Business continuity plan? | County's plan; SUDS supplies drill evidence and the standby procedure. |
 
 ## Application security and SDLC

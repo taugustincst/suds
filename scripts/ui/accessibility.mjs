@@ -259,6 +259,8 @@ async function prepareOffice() {
   // The administrator: CalOMS Tx on (so the episode dialogs ask its questions) and a FHIR client.
   await as('admin', ROLES[0][1]);
   must(await api(page, 'PUT', '/api/caloms/settings', { enabled: true, providers: [{ id: '123456', name: 'Main clinic' }, { id: '654321', name: 'Satellite' }], start_date: '2020-01-01' }), 'CalOMS Tx reporting is on');
+  // The DAST-10 is optional and off by default (its licence); switched on here so its form is audited too.
+  must(await api(page, 'PUT', '/api/admin/instruments/dast10', { enabled: true, confirm_rights: true }), 'the DAST-10 is on');
   must(await api(page, 'POST', '/api/admin/fhir-clients', { name: 'County EHR', recipient: 'County Behavioral Health', purpose: 'TREAT', scopes: ['system/*.read'] }), 'a FHIR client exists');
   // A supervisor (clients:all, care plan, assessments, Part 2 registers) records the clinical and Part 2 records.
   await as('jwalker', PW);
@@ -368,8 +370,8 @@ const BUTTON_DIALOGS = [
   // Clinical depth: the problem list, the care plan, ASAM and each outcome measure.
   ['client/:client/problems', '+ Problem'], ['client/:client/problems', 'Edit'], ['client/:client/problems', 'History'],
   ['client/:client/careplan', '+ Goal'], ['client/:client/careplan', '+ Step'], ['client/:client/careplan', 'Reviewed'],
-  ['client/:client/assessments', '+ ASAM assessment'], ['client/:client/assessments', '+ PHQ-9'], ['client/:client/assessments', '+ GAD-7'],
-  ['client/:client/assessments', '+ AUDIT-C'], ['client/:client/assessments', '+ DAST-10'],
+  ['client/:client/assessments', '+ Six-dimension assessment'], ['client/:client/assessments', '+ PHQ-9'], ['client/:client/assessments', '+ GAD-7'],
+  ['client/:client/assessments', '+ AUDIT-C'], ['client/:client/assessments', '+ DAST-10'], ['admin?tab=settings', 'Turn off DAST-10'],
   // CalOMS Tx on the Episodes tab (it is switched on for the audit), and the extract's confirmation.
   ['client/:client/episodes', 'CalOMS records'], ['client/:client/episodes', ['CalOMS records', '+ Annual update']], ['client/:client/episodes', 'Discharge'],
   ['client/:fresh/episodes', '+ Start an episode'], ['caloms', 'Download CalOMS Tx extract'],

@@ -22,7 +22,7 @@ decision tree in [PILOT-KIT.md](PILOT-KIT.md) settles the grey cases (Part 2 rec
 | **Referrals** | Status pipeline from pending to admitted/completed, warm handoff, urgency, barriers, days-to-admit, automatic follow-up — and a consent check before a client is named to an outside agency. |
 | **Grants and budget** | Funding sources (opioid settlement, SOR, SAMHSA, county…), budget lines, burn rate against time elapsed, client assistance (bus passes, IDs, motel nights) charged to the right line, staff time by funding source. |
 | **Approvals** | Expenditure approval (pending → approved/rejected → reimbursed) and time approval, with separation of duties: nobody approves their own. Supervisor countersignature on notes. |
-| **Documentation** | Administrative and clinical notes (SOAP/DAP/BIRP/GIRP), sign-and-lock, addenda; your own county forms, pre-filled and saved with the client. Clinical depth for programmes that need it — problem list, care plan, ASAM dimensions, PHQ-9 / GAD-7 / AUDIT-C / DAST-10 outcome measures ([docs/compliance/CALAIM.md](../compliance/CALAIM.md)). |
+| **Documentation** | Administrative and clinical notes (SOAP/DAP/BIRP/GIRP), sign-and-lock, addenda; your own county forms, pre-filled and saved with the client. Clinical depth for programmes that need it — problem list, care plan, six-dimension assessment (ASAM-aligned; the ASAM Criteria are not included — your programme needs its own ASAM licence to use them), PHQ-9 / GAD-7 / AUDIT-C outcome measures and an optional DAST-10 (off until your administrator confirms your programme holds the rights to use it) ([docs/compliance/CALAIM.md](../compliance/CALAIM.md)). |
 | **Consent and Part 2** | Part 2 consents with every required element, releases of information, revocations, and an accounting of disclosures you can print for the client ([docs/HIPAA.md](../HIPAA.md), [docs/compliance/PART2.md](../compliance/PART2.md)). |
 | **Getting data in** | Import clients, resources, visits, calls, time, to-dos and expenditures from your existing Excel or CSV files, with automatic column matching and row-by-row checks; import field notes from Pocket AI or OneNote ([docs/IMPORTS.md](../IMPORTS.md)). |
 
@@ -35,9 +35,9 @@ decision tree in [PILOT-KIT.md](PILOT-KIT.md) settles the grey cases (Part 2 rec
 - **Programme summary and monthly trends** for any date range, by calendar day in your time zone.
 - **Episodes of care**: admissions and discharges by reason.
 - **Referral outcomes**: how many warm handoffs led to an admission, and what got in the way.
-- **Outcome measures** (PHQ-9, GAD-7, AUDIT-C, DAST-10) over time, where your programme collects them.
+- **Outcome measures** (PHQ-9, GAD-7, AUDIT-C, and the DAST-10 where enabled) over time, where your programme collects them.
 - **CalOMS Tx** capture, validation and extract, where your programme is required to report it
-  ([docs/compliance/CALOMS.md](../compliance/CALOMS.md)).
+  ([docs/compliance/CALOMS.md](../compliance/CALOMS.md)). Built, but the layout and code sets are NOT verified against the DHCS data dictionary; do not submit until verified with DHCS/county.
 - **Excel / CSV** of every table or one workbook, de-identified (HIPAA Safe Harbor) by default. Identified
   exports are for supervisors, name a recipient and purpose, and are recorded as disclosures.
 

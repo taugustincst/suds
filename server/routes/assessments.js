@@ -93,6 +93,27 @@ const outcomeShape = {
   variant: { type: 'string', enum: ['men', 'women', 'unspecified'] },
   notes: { type: 'string', maxLen: 2000 },
 };
+// Optional instruments (server/clinical.js OPTIONAL_INSTRUMENTS, e.g. the DAST-10): off until an administrator
+// enables one and confirms the programme holds the rights to use it. Results already recorded stay readable.
+function instrumentEnabled(code) {
+  const opt = CL.OPTIONAL_INSTRUMENTS[code];
+  return !opt || db.getSetting(opt.setting, '0') === '1';
+}
+function assertInstrumentEnabled(code) {
+  if (!instrumentEnabled(code)) throw fieldError('instrument', `${CL.INSTRUMENTS[code].name} is not enabled for this programme. An administrator can turn it on under Settings → Screening instruments, after confirming the programme holds the rights to use it.`);
+}
+function instrumentList() {
+  return CL.INSTRUMENT_CODES.map((code) => {
+    const ins = CL.INSTRUMENTS[code]; const opt = CL.OPTIONAL_INSTRUMENTS[code];
+    const out = { code, name: ins.name, title: ins.title, optional: !!opt, enabled: instrumentEnabled(code) };
+    if (opt) {
+      const by = db.getSetting(`${opt.setting}_by`, null);
+      Object.assign(out, { notice: opt.notice, confirmation: opt.confirmation, confirmed_at: out.enabled ? db.getSetting(`${opt.setting}_at`, null) : null,
+        confirmed_by_name: out.enabled && by ? (db.one(`SELECT display_name FROM users WHERE id=?`, by) || {}).display_name || null : null });
+    }
+    return out;
+  });
+}
 function scoreOrReject(instrument, responses, variant) {
   try { return CL.score(instrument, responses, { variant }); }
   catch (e) { throw badRequest(e.message, { fields: e.fields || { responses: 'invalid' } }); }
@@ -149,7 +170,8 @@ function outcomePairs(ctx, { from, to } = {}) {
 function summarise(pairs) {
   const round = (n) => Math.round(n * 10) / 10;
   const mean = (a) => (a.length ? round(a.reduce((x, y) => x + y, 0) / a.length) : null);
-  return CL.INSTRUMENT_CODES.map(code => {
+  // An optional instrument that is off and has no results in the period is not a row of zeros.
+  return CL.INSTRUMENT_CODES.filter(code => instrumentEnabled(code) || pairs.some(p => p.instrument === code)).map(code => {
     const all = pairs.filter(p => p.instrument === code);
     const paired = all.filter(p => p.administrations > 1);
     const improved = paired.filter(p => p.direction === 1).length, worse = paired.filter(p => p.direction === -1).length;
@@ -233,6 +255,28 @@ module.exports = (r) => {
     return { ok: true };
   });
 
+  // ---------- which instruments this programme uses ----------
+  // Reference data, not PHI: every signed-in user may read it (the Assessments tab offers only enabled ones).
+  r.get('/api/instruments', auth.requireAuth, () => ({ instruments: instrumentList() }));
+  // Turning an optional instrument on needs the administrator's confirmation that the programme holds the
+  // rights to use it; the confirmation text, who gave it and when are kept and audited.
+  r.put('/api/admin/instruments/:code', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
+    const opt = CL.OPTIONAL_INSTRUMENTS[ctx.params.code];
+    if (!opt) throw notFound('No optional instrument by that name');
+    const v = validate(ctx.body, { enabled: { type: 'boolean', required: true }, confirm_rights: { type: 'boolean' } });
+    if (v.enabled && v.confirm_rights !== 1) throw fieldError('confirm_rights', `must be confirmed: ${opt.confirmation}`);
+    db.transaction(() => {
+      if (v.enabled) {
+        db.setSetting(opt.setting, '1'); db.setSetting(`${opt.setting}_by`, ctx.user.id); db.setSetting(`${opt.setting}_at`, db.now());
+      } else {
+        for (const k of [opt.setting, `${opt.setting}_by`, `${opt.setting}_at`]) db.run(`DELETE FROM settings WHERE key=?`, k);
+      }
+    });
+    audit.log({ user: ctx.user, action: v.enabled ? 'instrument.enable' : 'instrument.disable', entity: 'instrument', entityId: ctx.params.code, ip: ctx.ip,
+      details: v.enabled ? { instrument: ctx.params.code, confirmation: opt.confirmation } : { instrument: ctx.params.code } });
+    return { instruments: instrumentList() };
+  });
+
   // ---------- outcome measures ----------
   r.get('/api/clients/:id/outcomes', auth.requireAuth, auth.requirePerm('assessments:read', 'assessments:write'), (ctx) => {
     clientFor(ctx, ctx.params.id);
@@ -246,6 +290,7 @@ module.exports = (r) => {
   r.post('/api/clients/:id/outcomes', auth.requireAuth, auth.requirePerm('assessments:write'), (ctx) => {
     clientFor(ctx, ctx.params.id);
     const v = validate(ctx.body, outcomeShape);
+    assertInstrumentEnabled(v.instrument);
     const s = scoreOrReject(v.instrument, v.responses, v.variant);
     const id = uuid(); let taskId = null;
     db.transaction(() => {
@@ -275,6 +320,7 @@ module.exports = (r) => {
     assertFresh(ctx, m, 'outcome_measure');
     const v = validate(ctx.body, { administered_at: { type: 'date' }, responses: { type: 'array', maxLen: 20 }, variant: outcomeShape.variant, notes: outcomeShape.notes }, { partial: true });
     if (v.administered_at === null) throw fieldError('administered_at', 'is required');
+    assertInstrumentEnabled(m.instrument);
     let responses; try { responses = JSON.parse(dec(m.responses_enc) || '[]'); } catch { responses = []; }
     const s = scoreOrReject(m.instrument, v.responses || responses, v.variant !== undefined ? v.variant : m.variant);
     const stamp = db.now(); let taskId = null;

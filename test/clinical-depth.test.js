@@ -331,6 +331,41 @@ test('PHQ-9 item 9 above "Not at all" raises a safety alert: an urgent to-do and
   assert.equal(ok.data.band, 'Severe'); assert.equal(ok.data.safety_alert, null);
 });
 
+test('DAST-10 is optional: off by default, turned on only with the administrator\'s confirmation of rights, audited; old results still show', async () => {
+  const c3 = (await clin.post('/api/clients', { first_name: 'Dast', last_name: 'Licence', confirm_duplicate: true })).data.id;
+  const dast = { instrument: 'dast10', administered_at: day(0), responses: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0] };
+  const list = (await clin.get('/api/instruments')).data.instruments;
+  assert.equal(list.find(i => i.code === 'dast10').enabled, false, 'off on a fresh install');
+  assert.equal(list.find(i => i.code === 'dast10').optional, true);
+  assert.ok(list.find(i => i.code === 'phq9').enabled && !list.find(i => i.code === 'phq9').optional);
+  let r = await clin.post(`/api/clients/${c3}/outcomes`, dast);
+  assert.equal(r.status, 400); assert.ok(r.data.fields.instrument, 'refused while off');
+  assert.ok(!(await clin.get('/api/reports/outcomes')).data.instruments.some(x => x.instrument === 'dast10'), 'no empty DAST-10 row while off');
+  // Only an administrator (settings:manage) may turn it on, and only with the confirmation.
+  for (const who of [clin, sup, ro]) assert.equal((await who.put('/api/admin/instruments/dast10', { enabled: true, confirm_rights: true })).status, 403);
+  r = await admin.put('/api/admin/instruments/dast10', { enabled: true });
+  assert.equal(r.status, 400); assert.ok(r.data.fields.confirm_rights);
+  assert.equal((await admin.put('/api/admin/instruments/phq9', { enabled: false })).status, 404, 'core instruments cannot be switched');
+  r = await admin.put('/api/admin/instruments/dast10', { enabled: true, confirm_rights: true });
+  assert.equal(r.status, 200);
+  const on = r.data.instruments.find(i => i.code === 'dast10');
+  assert.equal(on.enabled, true); assert.ok(on.confirmed_at); assert.ok(on.confirmed_by_name);
+  const a = H.db.one(`SELECT details FROM audit_log WHERE action='instrument.enable' ORDER BY id DESC`);
+  assert.ok(a && /holds the rights/.test(a.details), 'the enable and its confirmation text are audited');
+  r = await clin.post(`/api/clients/${c3}/outcomes`, dast);
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  const mid = r.data.id;
+  // Off again: no new ones, no edits, but the recorded result still shows.
+  assert.equal((await admin.put('/api/admin/instruments/dast10', { enabled: false })).status, 200);
+  assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='instrument.disable'`));
+  assert.equal((await clin.post(`/api/clients/${c3}/outcomes`, dast)).status, 400);
+  const rows = (await clin.get(`/api/clients/${c3}/outcomes`)).data.rows;
+  assert.ok(rows.some(m => m.id === mid && m.instrument === 'dast10'), 'an existing DAST-10 result still displays');
+  const m = (await clin.get(`/api/outcomes/${mid}`)).data.measure;
+  assert.equal((await clin.put(`/api/outcomes/${mid}`, { responses: Array(10).fill(0), if_updated_at: m.updated_at })).status, 400);
+  assert.ok((await clin.get('/api/reports/outcomes')).data.instruments.some(x => x.instrument === 'dast10'), 'results on file keep their report row');
+});
+
 test('programme outcomes report: baseline vs latest, % improved, de-identified export', async () => {
   const c2 = (await clin.post('/api/clients', { first_name: 'Outcome', last_name: 'Pair', confirm_duplicate: true })).data.id;
   const code = H.db.one(`SELECT client_code FROM clients WHERE id=?`, c2).client_code;

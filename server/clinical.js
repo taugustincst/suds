@@ -6,13 +6,17 @@
 //
 // What is and is not here, and why:
 // * ASAM: only the six dimension names (as in The ASAM Criteria, 3rd edition, which DHCS still cites) and a
-//   generic 0-4 risk rating. The criteria text itself is copyrighted and is not reproduced.
+//   generic 0-4 risk rating. The Criteria are copyrighted and "ASAM" is a trademark of the American Society
+//   of Addiction Medicine: the text is not reproduced, the feature is labelled "six-dimension assessment
+//   (ASAM-aligned)", and a programme that uses the Criteria needs its own licence from ASAM.
 // * PHQ-9 and GAD-7 (Spitzer, Kroenke, Williams et al.; Pfizer): free to reproduce, translate, display and
 //   distribute; no permission required.
 // * AUDIT-C (the first three AUDIT questions; WHO / US Department of Veterans Affairs): public domain.
 // * DAST-10 (Skinner, 1982): copyright Harvey A. Skinner; may be reproduced for non-commercial clinical,
-//   research and training use with credit, which is how a county programme uses it. The credit line is
-//   shown with the form.
+//   research and training use with credit. SUDS may be sold, so the DAST-10 is OPTIONAL and off by default:
+//   an administrator turns it on only after confirming the programme holds the rights to use it
+//   (OPTIONAL_INSTRUMENTS below; PUT /api/admin/instruments/:code, audited). Results already recorded are
+//   always shown. The credit line is shown with the form.
 // * A single self-rated wellbeing item (0-10), written for SUDS, as a simple recovery-capital style check.
 // * Deliberately NOT included: BAM, BARC-10, ARC, CAGE-AID and other instruments whose licensing for use in
 //   software could not be confirmed. A programme that holds a licence can record them as county forms.
@@ -144,7 +148,7 @@ const INSTRUMENTS = {
     positiveAt: 3,
   },
   dast10: {
-    code: 'dast10', name: 'DAST-10', title: 'Drug Abuse Screening Test', better: 'lower', max: 10,
+    code: 'dast10', name: 'DAST-10', title: 'Drug Abuse Screening Test', better: 'lower', max: 10, optional: true,
     stem: 'These questions refer to the past 12 months. "Drug use" means use of prescribed or over-the-counter drugs in excess of the directions, and any non-medical use of drugs. Do not include alcohol or tobacco.',
     credit: 'DAST-10 © 1982 Harvey A. Skinner, PhD. Reproduced for non-commercial clinical use with credit.',
     items: [
@@ -172,6 +176,16 @@ const INSTRUMENTS = {
   },
 };
 const INSTRUMENT_CODES = Object.keys(INSTRUMENTS);
+
+// Instruments whose licence does not plainly cover every way SUDS may be supplied. Each is off until an
+// administrator enables it and confirms, in these words, that the programme holds the rights to use it.
+const OPTIONAL_INSTRUMENTS = {
+  dast10: {
+    setting: 'instrument_dast10_enabled',
+    notice: 'The DAST-10 is © 1982 Harvey A. Skinner, PhD. It may be reproduced free of charge for non-commercial clinical, research and training use, with credit to the author. SUDS may be supplied commercially, so the DAST-10 is off until an administrator confirms this programme holds the rights to use it.',
+    confirmation: 'I confirm that this programme holds the rights to use the DAST-10 as it will be used here (for example, non-commercial clinical use with credit to the author, or written permission from the copyright holder).',
+  },
+};
 
 /**
  * Score one administration. `responses` is an array with one numeric answer per item, each one of the
@@ -211,5 +225,5 @@ function direction(code, baseline, latest) {
 
 module.exports = {
   ICD10_RE, normalizeIcd10, isZCode, Z_CODES, PROBLEM_STATUSES, PROBLEM_SOURCES, GOAL_STATUSES, STEP_OWNERS, STEP_STATUSES,
-  ASAM_DIMENSIONS, ASAM_RATINGS, ASAM_DISCREPANCY_REASONS, INSTRUMENTS, INSTRUMENT_CODES, score, direction,
+  ASAM_DIMENSIONS, ASAM_RATINGS, ASAM_DISCREPANCY_REASONS, INSTRUMENTS, INSTRUMENT_CODES, OPTIONAL_INSTRUMENTS, score, direction,
 };

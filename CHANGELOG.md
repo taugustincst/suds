@@ -30,8 +30,8 @@ BAA/QSOA, DPA, SLA and pricing for counsel review).
   - Recovery drill (`npm run dr-drill`, or Settings → System & backups): restores the newest backup into a
     temporary copy, never the live database, checks it end to end including a two-step sign-in, measures RTO and
     RPO against targets and writes a signed report; optional monthly schedule.
-  - Audit anchors: the audit chain's head is sealed to write-once storage (`AUDIT_ANCHOR_DIR`, optionally
-    syslog) every 6 hours, at every backup and after a restore, so a rewrite of the whole log by a key holder is
+  - Audit anchors: the audit chain's head is sealed to `AUDIT_ANCHOR_DIR` (point it at write-once storage;
+    optionally syslog) every 6 hours, at every backup and after a restore, so a rewrite of the whole log by a key holder is
     detected. Two anchors in the same millisecond no longer collide (one was silently dropped).
   - Auditor export of the audit log with a signed manifest, verifiable offline (`npm run verify-audit-export`).
   - "Require single sign-on" with named break-glass administrators; "Require two-step verification for every

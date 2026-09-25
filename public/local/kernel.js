@@ -10219,6 +10219,7 @@ var require_clinical = __commonJS({
         title: "Drug Abuse Screening Test",
         better: "lower",
         max: 10,
+        optional: true,
         stem: 'These questions refer to the past 12 months. "Drug use" means use of prescribed or over-the-counter drugs in excess of the directions, and any non-medical use of drugs. Do not include alcohol or tobacco.',
         credit: "DAST-10 \xA9 1982 Harvey A. Skinner, PhD. Reproduced for non-commercial clinical use with credit.",
         items: [
@@ -10250,6 +10251,13 @@ var require_clinical = __commonJS({
       }
     };
     var INSTRUMENT_CODES = Object.keys(INSTRUMENTS);
+    var OPTIONAL_INSTRUMENTS = {
+      dast10: {
+        setting: "instrument_dast10_enabled",
+        notice: "The DAST-10 is \xA9 1982 Harvey A. Skinner, PhD. It may be reproduced free of charge for non-commercial clinical, research and training use, with credit to the author. SUDS may be supplied commercially, so the DAST-10 is off until an administrator confirms this programme holds the rights to use it.",
+        confirmation: "I confirm that this programme holds the rights to use the DAST-10 as it will be used here (for example, non-commercial clinical use with credit to the author, or written permission from the copyright holder)."
+      }
+    };
     function score(code, responses, { variant } = {}) {
       const ins = INSTRUMENTS[code];
       if (!ins) {
@@ -10307,6 +10315,7 @@ var require_clinical = __commonJS({
       ASAM_DISCREPANCY_REASONS,
       INSTRUMENTS,
       INSTRUMENT_CODES,
+      OPTIONAL_INSTRUMENTS,
       score,
       direction
     };
@@ -15357,6 +15366,30 @@ var require_assessments = __commonJS({
       variant: { type: "string", enum: ["men", "women", "unspecified"] },
       notes: { type: "string", maxLen: 2e3 }
     };
+    function instrumentEnabled(code) {
+      const opt = CL.OPTIONAL_INSTRUMENTS[code];
+      return !opt || db3.getSetting(opt.setting, "0") === "1";
+    }
+    function assertInstrumentEnabled(code) {
+      if (!instrumentEnabled(code)) throw fieldError("instrument", `${CL.INSTRUMENTS[code].name} is not enabled for this programme. An administrator can turn it on under Settings \u2192 Screening instruments, after confirming the programme holds the rights to use it.`);
+    }
+    function instrumentList() {
+      return CL.INSTRUMENT_CODES.map((code) => {
+        const ins = CL.INSTRUMENTS[code];
+        const opt = CL.OPTIONAL_INSTRUMENTS[code];
+        const out2 = { code, name: ins.name, title: ins.title, optional: !!opt, enabled: instrumentEnabled(code) };
+        if (opt) {
+          const by = db3.getSetting(`${opt.setting}_by`, null);
+          Object.assign(out2, {
+            notice: opt.notice,
+            confirmation: opt.confirmation,
+            confirmed_at: out2.enabled ? db3.getSetting(`${opt.setting}_at`, null) : null,
+            confirmed_by_name: out2.enabled && by ? (db3.one(`SELECT display_name FROM users WHERE id=?`, by) || {}).display_name || null : null
+          });
+        }
+        return out2;
+      });
+    }
     function scoreOrReject(instrument, responses, variant) {
       try {
         return CL.score(instrument, responses, { variant });
@@ -15444,7 +15477,7 @@ var require_assessments = __commonJS({
     function summarise(pairs) {
       const round = (n) => Math.round(n * 10) / 10;
       const mean = (a) => a.length ? round(a.reduce((x, y) => x + y, 0) / a.length) : null;
-      return CL.INSTRUMENT_CODES.map((code) => {
+      return CL.INSTRUMENT_CODES.filter((code) => instrumentEnabled(code) || pairs.some((p) => p.instrument === code)).map((code) => {
         const all = pairs.filter((p) => p.instrument === code);
         const paired = all.filter((p) => p.administrations > 1);
         const improved = paired.filter((p) => p.direction === 1).length, worse = paired.filter((p) => p.direction === -1).length;
@@ -15562,6 +15595,31 @@ var require_assessments = __commonJS({
         audit3.log({ user: ctx.user, action: "asam.delete", entity: "asam_assessment", entityId: a.id, clientId: a.client_id, ip: ctx.ip });
         return { ok: true };
       });
+      r.get("/api/instruments", auth3.requireAuth, () => ({ instruments: instrumentList() }));
+      r.put("/api/admin/instruments/:code", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+        const opt = CL.OPTIONAL_INSTRUMENTS[ctx.params.code];
+        if (!opt) throw notFound("No optional instrument by that name");
+        const v = validate(ctx.body, { enabled: { type: "boolean", required: true }, confirm_rights: { type: "boolean" } });
+        if (v.enabled && v.confirm_rights !== 1) throw fieldError("confirm_rights", `must be confirmed: ${opt.confirmation}`);
+        db3.transaction(() => {
+          if (v.enabled) {
+            db3.setSetting(opt.setting, "1");
+            db3.setSetting(`${opt.setting}_by`, ctx.user.id);
+            db3.setSetting(`${opt.setting}_at`, db3.now());
+          } else {
+            for (const k of [opt.setting, `${opt.setting}_by`, `${opt.setting}_at`]) db3.run(`DELETE FROM settings WHERE key=?`, k);
+          }
+        });
+        audit3.log({
+          user: ctx.user,
+          action: v.enabled ? "instrument.enable" : "instrument.disable",
+          entity: "instrument",
+          entityId: ctx.params.code,
+          ip: ctx.ip,
+          details: v.enabled ? { instrument: ctx.params.code, confirmation: opt.confirmation } : { instrument: ctx.params.code }
+        });
+        return { instruments: instrumentList() };
+      });
       r.get("/api/clients/:id/outcomes", auth3.requireAuth, auth3.requirePerm("assessments:read", "assessments:write"), (ctx) => {
         clientFor(ctx, ctx.params.id);
         const rows = db3.all(`SELECT m.*, u.display_name AS administered_by_name FROM outcome_measures m LEFT JOIN users u ON u.id=m.administered_by WHERE m.client_id=? ORDER BY m.administered_at DESC, m.created_at DESC`, ctx.params.id).map(presentOutcome);
@@ -15573,6 +15631,7 @@ var require_assessments = __commonJS({
       r.post("/api/clients/:id/outcomes", auth3.requireAuth, auth3.requirePerm("assessments:write"), (ctx) => {
         clientFor(ctx, ctx.params.id);
         const v = validate(ctx.body, outcomeShape);
+        assertInstrumentEnabled(v.instrument);
         const s = scoreOrReject(v.instrument, v.responses, v.variant);
         const id = uuid2();
         let taskId = null;
@@ -15614,6 +15673,7 @@ var require_assessments = __commonJS({
         assertFresh(ctx, m, "outcome_measure");
         const v = validate(ctx.body, { administered_at: { type: "date" }, responses: { type: "array", maxLen: 20 }, variant: outcomeShape.variant, notes: outcomeShape.notes }, { partial: true });
         if (v.administered_at === null) throw fieldError("administered_at", "is required");
+        assertInstrumentEnabled(m.instrument);
         let responses;
         try {
           responses = JSON.parse(dec2(m.responses_enc) || "[]");

@@ -1,11 +1,15 @@
-// Clinical documentation on a client's page (CalAIM): the problem list, the care coordination plan, ASAM
-// six-dimension assessments and outcome measures (PHQ-9, GAD-7, AUDIT-C, DAST-10, wellbeing), and the card
+// Clinical documentation on a client's page (CalAIM): the problem list, the care coordination plan,
+// six-dimension assessments (ASAM-aligned: dimension names and 0-4 ratings only, not the ASAM Criteria) and
+// outcome measures (PHQ-9, GAD-7, AUDIT-C, wellbeing, and the optional DAST-10), and the card
 // that sums them up on the Overview. The instrument wording, scoring bands, ASAM dimension names and Z codes
 // come from the server (GET /api/meta/constants, built from server/clinical.js), so the score shown while
 // the form is filled in is the one the server saves.
 import { h, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, confirmDialog, kv, emptyState, clear, flag } from '../app.js';
 
 const C = () => state.constants || {};
+// SUDS stores only the six dimension names and 0-4 ratings. The ASAM Criteria are copyrighted and "ASAM" is a
+// trademark of the American Society of Addiction Medicine; neither is included or licensed with SUDS.
+export const ASAM_NOTICE = 'SUDS records six-dimension risk ratings (0–4) and the level of care decision. It does not include the ASAM Criteria. "ASAM" is a trademark of the American Society of Addiction Medicine; this feature is not endorsed by ASAM. Your programme needs its own licence from ASAM to use the Criteria.';
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 const PROBLEM_STATUS_KIND = { active: 'warn', resolved: 'ok', inactive: '' };
 const GOAL_STATUS_KIND = { active: 'info', met: 'ok', partially_met: 'warn', not_met: 'danger', discontinued: '' };
@@ -37,7 +41,7 @@ export async function overviewCard(clientId, { refresh } = {}) {
       s.care_plan.next_review ? ` · next review ${fmt.date(s.care_plan.next_review)}` : ''),
     s.care_plan.overdue_reviews.length ? h('p', { class: 'small flag danger', 'data-review-overdue': String(s.care_plan.overdue_reviews.length) },
       h('span', { 'aria-hidden': 'true' }, '⚠\u00a0'), `Review overdue: ${s.care_plan.overdue_reviews.map(g => `"${g.goal.slice(0, 60)}" (due ${fmt.date(g.review_date)})`).join('; ')}`) : null));
-  if (s.asam !== undefined) parts.push(h('div', { 'data-overview-asam': s.asam ? s.asam.id : '' }, h('h3', {}, 'Latest ASAM assessment'),
+  if (s.asam !== undefined) parts.push(h('div', { 'data-overview-asam': s.asam ? s.asam.id : '' }, h('h3', {}, 'Latest six-dimension assessment'),
     s.asam ? h('div', { class: 'small' }, h('div', {}, `${fmt.date(s.asam.assessed_at)}${s.asam.assessed_by_name ? ' · ' + s.asam.assessed_by_name : ''}`),
       h('div', { class: 'row', style: { gap: '.25rem', flexWrap: 'wrap' } }, s.asam.ratings.map((r, i) => badge(`D${i + 1}: ${r}`, r >= 3 ? 'danger' : r === 2 ? 'warn' : 'ok'))),
       h('div', {}, `Recommended ${s.asam.recommended_loc || '—'} · referred ${s.asam.actual_loc || '—'}`, s.asam.discrepancy_reason ? ` (${fmt.label(s.asam.discrepancy_reason)})` : ''))
@@ -227,13 +231,14 @@ function openAsamForm(clientId, a, { onDone } = {}) {
     if (a) toast('Assessment saved', 'ok');
     m.close(); onDone && onDone();
   } });
-  const m = modal(a ? 'Edit ASAM assessment' : 'ASAM multidimensional assessment', h('div', {},
-    h('p', { class: 'small muted' }, 'Rate the risk in each of the six ASAM dimensions from 0 (none) to 4 (severe) and note what supports it. Use your programme\'s ASAM Criteria materials for the rating definitions; SUDS records the ratings and the level of care decision.'), f), { wide: true });
+  const m = modal(a ? 'Edit six-dimension assessment' : 'Six-dimension assessment (ASAM-aligned)', h('div', {},
+    h('p', { class: 'small muted' }, 'Rate the risk in each of the six dimensions from 0 (none) to 4 (severe) and note what supports it. Use your programme\'s own licensed ASAM Criteria materials for the rating definitions.'),
+    h('p', { class: 'small muted', 'data-asam-notice': '1' }, ASAM_NOTICE), f), { wide: true });
 }
 function asamDetail(a, { onDone } = {}) {
   const dims = C().ASAM_DIMENSIONS || [];
   const mayEdit = can('assessments:write') && (a.assessed_by === state.user.id || can('clients:all'));
-  const m = modal(`ASAM assessment — ${fmt.date(a.assessed_at)}`, h('div', {},
+  const m = modal(`Six-dimension assessment — ${fmt.date(a.assessed_at)}`, h('div', {},
     kv([['Assessed by', a.assessed_by_name], ['Recommended level', a.recommended_loc], ['Referred to', a.actual_loc], ['Discrepancy', a.discrepancy ? `${fmt.label(a.discrepancy_reason)}${a.discrepancy_notes ? ' — ' + a.discrepancy_notes : ''}` : 'None'], ['Summary', a.summary]]),
     table([{ label: 'Dimension', key: 'label' }, { label: 'Rating', render: d => String(a[`${d.key}_rating`]) }, { label: 'Notes', render: d => a.dimension_notes?.[d.key] || '—' }], dims),
     mayEdit ? h('div', { class: 'btn-row' },
@@ -291,22 +296,25 @@ function safetyAlert(clientId, alert, { onDone, clientDisplay } = {}) {
 }
 
 export async function assessmentsTab(clientId, { refresh, clientDisplay } = {}) {
-  const [asam, out] = await Promise.all([get(`/api/clients/${clientId}/asam`), get(`/api/clients/${clientId}/outcomes`)]);
+  const [asam, out, list] = await Promise.all([get(`/api/clients/${clientId}/asam`), get(`/api/clients/${clientId}/outcomes`), get('/api/instruments', { quiet: true }).catch(() => null)]);
   const writable = can('assessments:write');
   const INS = C().INSTRUMENTS || {};
+  // Only the instruments this programme uses are offered; an optional one (the DAST-10) is off until an
+  // administrator confirms the programme holds the rights to use it. Results already recorded always show.
+  const offered = list ? list.instruments.filter(i => i.enabled).map(i => INS[i.code]).filter(Boolean) : Object.values(INS).filter(i => !i.optional);
   const asamCard = h('div', { class: 'card', 'data-asam': '1' },
-    h('div', { class: 'card-head' }, h('div', {}, h('h2', {}, 'ASAM assessments'), h('div', { class: 'small muted' }, 'Six-dimension risk ratings and the level of care decision. The latest is shown on the Overview and sets the client\'s level of care.')),
-      writable ? h('button', { class: 'btn sm primary', 'data-add-asam': '1', onClick: () => openAsamForm(clientId, null, { onDone: refresh }) }, '+ ASAM assessment') : null),
+    h('div', { class: 'card-head' }, h('div', {}, h('h2', {}, 'Six-dimension assessments (ASAM-aligned)'), h('div', { class: 'small muted' }, 'Six-dimension risk ratings and the level of care decision. The latest is shown on the Overview and sets the client\'s level of care.'), h('div', { class: 'small muted', 'data-asam-notice': '1' }, ASAM_NOTICE)),
+      writable ? h('button', { class: 'btn sm primary', 'data-add-asam': '1', onClick: () => openAsamForm(clientId, null, { onDone: refresh }) }, '+ Six-dimension assessment') : null),
     table([
       { label: 'Date', render: a => fmt.date(a.assessed_at) },
       ...[1, 2, 3, 4, 5, 6].map(n => ({ label: `D${n}`, render: a => flag(String(a.ratings[n - 1]), a.ratings[n - 1] >= 3, 'high risk') })),
       { label: 'Recommended', render: a => a.recommended_loc || '—' }, { label: 'Referred', render: a => a.actual_loc || '—' },
       { label: 'Discrepancy', render: a => a.discrepancy ? fmt.label(a.discrepancy_reason) : '—' }, { label: 'By', key: 'assessed_by_name' },
-    ], asam.rows, { onRow: (a) => asamDetail(a, { onDone: refresh }), empty: 'No ASAM assessments yet.' }));
+    ], asam.rows, { onRow: (a) => asamDetail(a, { onDone: refresh }), empty: 'No six-dimension assessments yet.' }));
   const series = out.series || {};
   const outcomesCard = h('div', { class: 'card mt', 'data-outcomes': '1' },
     h('div', { class: 'card-head' }, h('div', {}, h('h2', {}, 'Outcome measures'), h('div', { class: 'small muted' }, 'Standardized screenings, scored automatically. Give the same one again over time to see the trend.')),
-      writable ? h('div', { class: 'row' }, Object.values(INS).map(i => h('button', { class: 'btn sm', 'data-add-outcome': i.code, onClick: () => openOutcomeForm(clientId, i.code, { onDone: refresh, clientDisplay }) }, `+ ${i.name}`))) : null),
+      writable ? h('div', { class: 'row' }, offered.map(i => h('button', { class: 'btn sm', 'data-add-outcome': i.code, onClick: () => openOutcomeForm(clientId, i.code, { onDone: refresh, clientDisplay }) }, `+ ${i.name}`))) : null),
     Object.keys(series).length ? h('div', { class: 'grid cols-4 mb' }, Object.entries(series).map(([code, s]) => h('div', { class: 'card stat', 'data-outcome-trend': code },
       h('div', { class: 'small muted' }, INS[code]?.name || code), h('div', { style: { fontWeight: 600 } }, `${s[s.length - 1].score} · ${s[s.length - 1].band || ''}`), trend(s, INS[code]?.max)))) : null,
     table([
@@ -320,6 +328,33 @@ export async function assessmentsTab(clientId, { refresh, clientDisplay } = {}) 
         ins ? table([{ label: 'Question', render: x => x.text }, { label: 'Answer', render: x => x.answer }], ins.items.map((it, i) => ({ text: it.text, answer: (it.options.find(o => o.value === m.responses[i]) || {}).label || '—' }))) : null), { wide: true });
     } }));
   return h('div', {}, asamCard, outcomesCard);
+}
+
+// ---------------------------------------------------------------- optional instruments (Settings)
+/** Settings → Program settings: the optional screening instruments (the DAST-10), each off until an
+ *  administrator confirms the programme holds the rights to use it. */
+export async function instrumentsCard(onDone) {
+  const list = await get('/api/instruments', { quiet: true }).catch(() => null);
+  const opts = list ? list.instruments.filter(i => i.optional) : [];
+  if (!opts.length) return null;
+  const enable = (i) => {
+    const f = form([{ name: 'confirm_rights', label: i.confirmation, type: 'checkbox', span: true, required: true }], { submitText: `Turn on ${i.name}`, onCancel: () => m.close(), onSubmit: async (d) => {
+      if (!d.confirm_rights) { toast('Tick the confirmation first', 'error'); return; }
+      await put(`/api/admin/instruments/${i.code}`, { enabled: true, confirm_rights: true }); m.close(); toast(`${i.name} is on`, 'ok'); onDone && onDone();
+    } });
+    const m = modal(`Turn on ${i.name}`, h('div', { 'data-instrument-enable': i.code }, h('p', { class: 'small' }, i.notice), f));
+  };
+  const disable = async (i) => {
+    if (!await confirmDialog(`Turn off ${i.name}`, `Staff will no longer be offered the ${i.name}. Results already recorded stay on each client's record.`, { okText: 'Turn off' })) return;
+    await put(`/api/admin/instruments/${i.code}`, { enabled: false }); toast(`${i.name} is off`, 'ok'); onDone && onDone();
+  };
+  return h('div', { class: 'card', 'data-instruments': '1' }, h('h2', {}, 'Screening instruments'),
+    h('p', { class: 'small muted' }, 'PHQ-9, GAD-7, AUDIT-C and the wellbeing item are always available. The instruments below are licensed for limited uses, so each is off until you confirm this programme holds the rights to use it. The six-dimension assessment is ASAM-aligned only: SUDS does not include the ASAM Criteria, and your programme needs its own licence from ASAM to use them.'),
+    table([
+      { label: 'Instrument', render: i => h('div', {}, h('b', {}, i.name), h('div', { class: 'small muted' }, i.title)) },
+      { label: 'Status', render: i => i.enabled ? h('span', {}, badge('On', 'ok'), i.confirmed_by_name ? h('div', { class: 'small muted' }, `Rights confirmed by ${i.confirmed_by_name}${i.confirmed_at ? ', ' + fmt.date(i.confirmed_at) : ''}`) : null) : badge('Off') },
+      { label: '', render: i => i.enabled ? h('button', { class: 'btn sm', 'data-instrument-off': i.code, onClick: () => disable(i) }, `Turn off ${i.name}`) : h('button', { class: 'btn sm', 'data-instrument-on': i.code, onClick: () => enable(i) }, `Turn on ${i.name}…`) },
+    ], opts));
 }
 
 // ---------------------------------------------------------------- note form: problems addressed
