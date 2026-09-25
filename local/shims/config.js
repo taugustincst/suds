@@ -1,11 +1,8 @@
-// Local-mode configuration: keys live in this browser profile's localStorage, beside the encrypted database
-// (docs/HIPAA.md, risk register). They are generated on first run. The native Android Keystore / iOS
-// Keychain lookups that used to come first here served the phone apps, which were removed in 1.9.3.
-const crypto = require('./crypto.js');
-function key(name) {
-  let hex = localStorage.getItem(name); if (!hex) { hex = crypto.randomBytes(32).toString('hex'); localStorage.setItem(name, hex); }
-  return Buffer.from(hex, 'hex');
-}
+// Local-mode configuration. The two column keys (encryptionKey for `*_enc`, indexKey for blind indexes) are
+// not kept here: the kernel sets them when a device account signs in and unseals them from the vault
+// (local/vault.js), and clears them when the device locks (local/kernel.js setKeys / clearKeys). Up to
+// 1.11 they sat in this browser profile's localStorage in hex; the kernel reads them from there once, to
+// seal an old device's database, and then erases them.
 const config = {
   version: (typeof SUDS_VERSION !== 'undefined' ? SUDS_VERSION : 'local'),
   env: 'local', isProd: true, isTest: false, local: true,
@@ -32,5 +29,5 @@ const config = {
   auditAnchorDir: '', auditAnchorDirConfigured: false, auditAnchorHours: 0, auditSyslog: '',
   saveServerJson() {},
 };
-config.encryptionKey = key('suds.local.enc'); config.indexKey = key('suds.local.idx');
+config.encryptionKey = null; config.indexKey = null;
 module.exports = config;

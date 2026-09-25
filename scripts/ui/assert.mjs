@@ -40,6 +40,20 @@ export async function saved(page, { timeout = 15000 } = {}) {
   await page.waitForFunction(() => window.SUDS_LOCAL && !(window.SUDS_LOCAL.isDirty && window.SUDS_LOCAL.isDirty()), null, { timeout, polling: 50 });
 }
 
+/**
+ * The on-device app is locked after every page load until an account signs in (local/kernel.js,
+ * docs/architecture/ADR-0008-device-encryption.md). Wait for the page to finish booting and, if it is
+ * showing the sign-in form, sign in; resolves once the app is showing (on the page it was on before).
+ */
+export async function signInAgain(page, username, password, { timeout = 20000 } = {}) {
+  await page.waitForSelector('.layout, .login input[name=username], .boot.error', { timeout });
+  if (!(await page.$('.layout')) && (await page.$('.login input[name=username]'))) {
+    await page.fill('.login input[name=username]', username); await page.fill('.login input[name=password]', password);
+    await page.click('.login button[type=submit]');
+    await page.waitForSelector('.layout', { timeout });
+  }
+}
+
 export function makeChecks(name) {
   const failures = [];
   const results = [];

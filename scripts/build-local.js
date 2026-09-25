@@ -22,7 +22,8 @@ await esbuild.build({
     name: 'suds-local', setup(b) {
       b.onResolve({ filter: /(^|[\\/])config(\.js)?$/ }, (a) => (a.importer.includes(path.join('server')) ? { path: shim('config.js') } : undefined));
       b.onResolve({ filter: /(^|[\\/])listener(\.js)?$/ }, (a) => (a.importer.includes(path.join('server')) ? { path: shim('listener.js') } : undefined));
-      b.onResolve({ filter: /(^|[\\/])(mdns|selfsigned|bootstrap)(\.js)?$/ }, (a) => (a.importer.includes(path.join('server')) ? { path: shim('empty.js') } : undefined));
+      b.onResolve({ filter: /(^|[\\/])(mdns|selfsigned)(\.js)?$/ }, (a) => (a.importer.includes(path.join('server')) ? { path: shim('empty.js') } : undefined));
+      b.onResolve({ filter: /(^|[\\/])bootstrap(\.js)?$/ }, (a) => (a.importer.includes(path.join('server')) ? { path: shim('bootstrap.js') } : undefined));
       b.onResolve({ filter: /package\.json$/ }, () => ({ path: shim('package.js') }));
     },
   }],
