@@ -76,6 +76,8 @@ async function axe(page, where) {
   const res = await page.evaluate(async ({ tags, extra }) => {
     if (!window.axe) return { error: 'axe did not load' };
     const rules = [...new Set([...window.axe.getRules(tags).map(r => r.ruleId), ...extra])];
+    // Let the app's own post-layout pass (scroll regions get a tab stop one frame after a resize) settle first.
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
     const r = await window.axe.run(document, { runOnly: { type: 'rule', values: rules }, resultTypes: ['violations'] });
     return { violations: r.violations.map(v => ({ id: v.id, impact: v.impact, help: v.help, helpUrl: v.helpUrl, nodes: v.nodes.map(n => ({ target: n.target, summary: (n.failureSummary || '').split('\n').slice(1, 2).join('').trim() })) })) };
   }, { tags: TAGS, extra: STRUCTURE });

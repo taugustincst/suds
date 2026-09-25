@@ -65,5 +65,26 @@ const signIn = async (page, username) => {
   eq((body.match(/Add resource/g) || []).length - (body.match(/button "\+ Add resource"/g) || []).length, 3, 'inside the dialog "Add resource" is only its name, its heading and its Save button');
   await ctx.close();
 }
+{
+  // At 200% text a client's Calls table scrolls both ways. Its phone list (hidden at this width) holds
+  // focusable rows; those must not count, or the table is left with no tab stop and cannot be scrolled
+  // from the keyboard (axe scrollable-region-focusable, seen intermittently in the accessibility audit).
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  await ctx.addInitScript(() => { document.addEventListener('DOMContentLoaded', () => { document.documentElement.style.fontSize = '200%'; }); });
+  const page = await ctx.newPage();
+  page.on('pageerror', e => errors.push('PAGEERROR ' + e.message));
+  await signIn(page, 'mrivera');
+  const ids = await page.evaluate(async () => { const j = await (await fetch('/api/clients?limit=200', { headers: { 'X-Requested-With': 'suds' } })).json(); return (j.clients || []).map(r => r.id); });
+  const unreachable = []; let scrolling = 0;
+  for (const id of ids) {
+    await page.goto(`${base}/#/client/${id}/calls`); await settle(page);
+    await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const res = await page.$$eval('.table-wrap', ws => ws.filter(w => w.scrollHeight > w.clientHeight + 1 || w.scrollWidth > w.clientWidth + 1).map(w => w.hasAttribute('tabindex') || [...w.querySelectorAll('a[href],button:not([disabled]),input,select,textarea')].some(e => e.getClientRects().length)));
+    scrolling += res.length; if (res.includes(false)) unreachable.push(id);
+  }
+  ok(scrolling > 0, 'at 200% text some client Calls tables scroll', scrolling);
+  eq(unreachable.join(', '), '', 'every scrolling Calls table can be reached from the keyboard');
+  await ctx.close();
+}
 await browser.close();
 finish(errors);

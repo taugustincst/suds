@@ -269,7 +269,8 @@ function scrollRegions(root) {
     // Whether it scrolls can change after it is drawn (fonts, a sibling growing, a rotation): watch its size.
     if (scrollWatch && !w._a11yWatched) { w._a11yWatched = true; scrollWatch.observe(w); if (w.firstElementChild) scrollWatch.observe(w.firstElementChild); }
     const scrolls = w.scrollHeight > w.clientHeight + 1 || w.scrollWidth > w.clientWidth + 1;
-    if (!scrolls || w.hasAttribute('tabindex') || w.querySelector(FOCUSABLE)) continue;
+    // Only a control that is showing counts: a table that has collapsed to its phone list hides its own links.
+    if (!scrolls || w.hasAttribute('tabindex') || [...w.querySelectorAll(FOCUSABLE)].some(e => e.getClientRects().length)) continue;
     w.tabIndex = 0; w.setAttribute('role', 'region');
     if (!w.hasAttribute('aria-label')) {
       const head = w.closest('.card, .modal')?.querySelector('h2,h3') || document.querySelector('.main h1');
