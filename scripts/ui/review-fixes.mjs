@@ -443,6 +443,8 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   ok(revoked, 'revoking it from the list takes effect');
   eq((await fetch(`${base}/fhir/R4/HealthcareService`, { headers: { Authorization: `Bearer ${secret}` } })).status, 401, 'and the secret stops working');
   await page.screenshot({ path: '/tmp/suds-shots/fhir-clients.png', fullPage: true }).catch(() => {});
+}
+
 // ---- administrator: Security status is what a county IT reviewer is shown; the recovery drill runs from System ----
 {
   const { page } = admin;
