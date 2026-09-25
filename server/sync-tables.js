@@ -85,6 +85,7 @@ module.exports = {
     'not permitted', 'server-owned', 'your role cannot', 'clinical notes not permitted', 'you do not have permission',
     'is missing a required field', 'refers to a record the office server does not have', 'attributed to',
     'would create a cycle', 'parent allocation does not belong', 'its ', 'has a value the office does not accept',
+    'needs a lawful basis for disclosure',
   ],
   // Server-side only, never synchronised: breakglass_events is the office supervisor's review queue for
   // emergency access, and a device has no supervisor to review it.

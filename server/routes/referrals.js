@@ -68,6 +68,50 @@ function recordDisclosure(ctx, row, v = {}) {
     method: (v.warm_handoff ?? row.warm_handoff) ? 'warm handoff' : 'referral', basis: basis.basis, justification: basis.justification, source: 'referral', sourceRef: row.id, user: ctx.user, ip: ctx.ip });
 }
 
+/**
+ * A referral row arriving by sync (server/routes/sync.js) meets the same gate as one saved over REST: when
+ * it shares information and nothing has been accounted for this recipient yet — a new warm hand-off, a
+ * pending referral progressed offline, or a shared referral re-pointed at another agency — the basis is
+ * re-checked here against the agency it now goes to. A device that made the referral offline also pushes
+ * the accounting row its own copy of this gate wrote (`deviceRows`: disclosures in the same batch with
+ * source 'referral' for this referral); its basis, consent, order and justification are what is re-checked,
+ * under the syncing user's own permissions. Without one, only the consent the referral cites can stand.
+ * Returns null (nothing to disclose), { refused } (a short reason with no PHI in it) or { account(ip) },
+ * which writes the office's accounting row — under the device row's id, so the two copies stay one row.
+ */
+const OVERRIDE_PREFIX = /^Recipient override \(the consent names "[\s\S]*?"\): /;
+function pushDisclosure(user, raw, existing, deviceRows = []) {
+  if (!sharesInformation(raw, existing || {})) return null;
+  const recipientChanged = !!existing && !!raw.resource_id && raw.resource_id !== existing.resource_id;
+  if (existing && !recipientChanged && existingDisclosure(raw.id)) return null;
+  const dev = deviceRows.length ? deviceRows[deviceRows.length - 1] : null;
+  const just = dev && dev.justification_enc ? String(dev.justification_enc) : '';
+  const resourceId = raw.resource_id || existing?.resource_id;
+  let basis;
+  try {
+    basis = disclosure.requireBasis(raw.client_id, { consent_id: (dev && dev.consent_id) || raw.consent_id, basis: (dev && dev.basis) || 'consent', justification: just.replace(OVERRIDE_PREFIX, '') || null,
+      court_order_id: dev && dev.court_order_id, recipient: resourceNames(resourceId), recipient_override: OVERRIDE_PREFIX.test(just), allowed: disclosure.REFERRAL_BASES,
+      // The device's gate asked the worker to confirm an agreed restriction before it wrote its row.
+      restriction_reviewed: !!dev, user });
+  } catch (e) {
+    const x = e && e.extra || {};
+    const why = x.recipientNotCovered ? 'the consent it cites does not name the agency it is sent to'
+      : x.restrictionReview ? 'the client has an agreed restriction on sharing, which has to be confirmed at the office'
+        : x.consentIncomplete ? 'the consent it cites does not carry every §2.31 element'
+          : 'it needs a live consent that names the agency, or another basis recorded at the office';
+    return { refused: `needs a lawful basis for disclosure the office accepts: ${why}`, code: x.recipientNotCovered ? 'recipient_not_covered' : x.restrictionReview ? 'restriction' : x.consentIncomplete ? 'consent_incomplete' : 'no_basis' };
+  }
+  return {
+    deviceIds: deviceRows.map(d => d.id),
+    account(ip) {
+      return disclosure.record({ id: dev ? dev.id : undefined, clientId: raw.client_id, consentId: basis.consent?.id || null, courtOrderId: basis.court_order?.id || null, recipientOverride: basis.recipient_override,
+        recipient: resourceName(resourceId), purpose: 'Referral for services', what: (dev && dev.what_enc) || 'Referral information (name, contact details and presenting need)',
+        method: (raw.warm_handoff ?? existing?.warm_handoff) ? 'warm handoff' : 'referral', basis: basis.basis, justification: basis.justification, source: 'referral', sourceRef: raw.id,
+        disclosedAt: (dev && dev.disclosed_at) || null, user, ip });
+    },
+  };
+}
+
 module.exports = (r) => {
   crud.build(r, {
     table: 'referrals', entity: 'referral', perm: 'referrals', dateCol: 'referred_at', restrictOwner: true,
@@ -106,8 +150,13 @@ module.exports = (r) => {
     },
     beforeUpdate: (ctx, v, row) => {
       if (v.consent_id && !db.one(`SELECT 1 FROM consents WHERE id=? AND client_id=?`, v.consent_id, row.client_id)) throw badRequest('That consent belongs to a different client');
-      // A referral that was only "pending" and is now being progressed starts sharing information now.
-      if (sharesInformation(v, row) && !existingDisclosure(row.id)) recordDisclosure(ctx, row, v);
+      // A referral that was only "pending" and is now being progressed starts sharing information now. One
+      // that already shares and is re-pointed at another agency tells that agency who this person is: the
+      // basis is checked against the new recipient (as creating the referral there would be) and the new
+      // disclosure is accounted — the old row still stands for the agency that was told first.
+      const recipientChanged = !!v.resource_id && v.resource_id !== row.resource_id;
+      if (recipientChanged && !db.one(`SELECT 1 FROM resources WHERE id=?`, v.resource_id)) throw badRequest('Unknown resource');
+      if (sharesInformation(v, row) && (recipientChanged || !existingDisclosure(row.id))) recordDisclosure(ctx, row, v);
       if (v.status && CLOSED_STATUSES.includes(v.status) && !v.closed_at && !row.closed_at) v.closed_at = db.now();
       if (v.status === 'admitted' && !v.admitted_at && !row.admitted_at) v.admitted_at = db.now();
       // An outcome is what makes the referral answerable in a funder report.
@@ -160,3 +209,4 @@ module.exports = (r) => {
   });
 };
 module.exports.present = present;
+module.exports.pushDisclosure = pushDisclosure;

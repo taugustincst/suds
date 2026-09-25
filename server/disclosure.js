@@ -390,8 +390,10 @@ function requireRestrictionReview(clientIds, restriction_reviewed) {
 }
 
 /** Write the disclosure row. Caller has already established the basis. */
-function record({ clientId, consentId = null, courtOrderId = null, agreementId = null, recipientOverride = false, legalProceeding = false, counselingNotes = false, recipient, purpose, what, method = null, basis = 'consent', justification = null, source = 'manual', sourceRef = null, disclosedAt = null, user, ip }) {
-  const id = uuid();
+function record({ id: givenId = null, clientId, consentId = null, courtOrderId = null, agreementId = null, recipientOverride = false, legalProceeding = false, counselingNotes = false, recipient, purpose, what, method = null, basis = 'consent', justification = null, source = 'manual', sourceRef = null, disclosedAt = null, user, ip }) {
+  // givenId: a device's own accounting row for the same disclosure (a referral made offline), so the office's
+  // row replaces it rather than standing beside it (server/routes/referrals.js pushDisclosure).
+  const id = givenId || uuid();
   const at = disclosedAt || db.now();
   const noticeVersion = part2Program() ? C.PART2_NOTICE_VERSION : null;
   db.run(`INSERT INTO disclosures(id,client_id,consent_id,recipient_enc,purpose_enc,what_enc,method,disclosed_at,disclosed_by,basis,justification_enc,source,source_ref,court_order_id,legal_proceeding,counseling_notes,notice_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,

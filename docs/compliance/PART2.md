@@ -59,6 +59,22 @@ each confirmed with a probe test, and each now closed (`test/disclosure-gates.te
    titles were stored in plain text; the Part 2 programme could be switched off silently; and every test
    download of the CalOMS Tx extract was written to clients' accounting of disclosures as if submitted.
 
+A further review (September 2026, schema migration 35) found four more gaps, each closed with a failing test
+first:
+
+* **A referral's recipient could be changed around the gate.** Re-pointing a shared referral at another
+  agency (`PUT /api/referrals/:id` with a new `resource_id`) was saved without re-checking the consent and
+  without accounting for the new agency, and a referral pushed from a device was never gated at all. Changing
+  the agency of a referral that shares information now re-runs the basis check against the new agency (409
+  when the consent does not name it, as creating the referral there would be) and writes a new accounting
+  row; the first row still stands for the agency told first. A pushed referral that shares information — a
+  warm hand-off made offline, a pending one progressed on the phone, or a shared one re-pointed — passes the
+  same gate at the office (`pushDisclosure` in `server/routes/referrals.js`): the basis the device's own gate
+  recorded (or, without one, the consent the referral cites) is re-checked under the syncing user's
+  permissions; a refusal is permanent, shown on the device, and audited (`sync.disclosure_refused`, reason code
+  only); an accepted one is accounted by the office, under the id of the device's own accounting row so the
+  two copies stay one (`test/disclosure-gates.test.js`).
+
 ## Control matrix
 
 | Requirement | Where SUDS implements it | Status |

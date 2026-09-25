@@ -344,3 +344,75 @@ test('a pushed result for a screening instrument the office has not enabled is r
     CL.OPTIONAL_INSTRUMENTS = had;
   }
 });
+
+// ---- a referral's recipient cannot be changed around the gate (REST or sync) ----
+const acctFor = (refId) => H.db.all(`SELECT * FROM disclosures WHERE source='referral' AND source_ref=? ORDER BY disclosed_at, rowid`, refId).map(r => require('../server/disclosure').present(r));
+
+test('changing the agency on a shared referral re-runs the consent check and accounts the new recipient', async () => {
+  const c = await newClient();
+  const agencyA = await resource(`Recip A ${randomUUID().slice(0, 6)}`); const agencyB = await resource(`Recip B ${randomUUID().slice(0, 6)}`);
+  const nameA = H.db.one(`SELECT name FROM resources WHERE id=?`, agencyA).name; const nameB = H.db.one(`SELECT name FROM resources WHERE id=?`, agencyB).name;
+  const k = await addConsent(c, consent(nameA));
+  const ref = await nav.post('/api/referrals', referral(c, agencyA, { consent_id: k }));
+  assert.equal(ref.status, 201, JSON.stringify(ref.data));
+  assert.equal(acctFor(ref.data.id).length, 1);
+  // Moving the warm hand-off to an agency the consent does not name is refused, exactly as creating it would be.
+  const moved = await nav.put(`/api/referrals/${ref.data.id}`, { resource_id: agencyB });
+  assert.equal(moved.status, 409, JSON.stringify(moved.data));
+  assert.equal(H.db.one(`SELECT resource_id FROM referrals WHERE id=?`, ref.data.id).resource_id, agencyA, 'the referral still points at the agency the consent covers');
+  assert.equal(acctFor(ref.data.id).length, 1, 'nothing new accounted');
+  // A consent that names the new agency: the change is allowed and the new recipient is accounted.
+  const kB = await addConsent(c, consent(nameB));
+  const ok = await nav.put(`/api/referrals/${ref.data.id}`, { resource_id: agencyB, consent_id: kB });
+  assert.equal(ok.status, 200, JSON.stringify(ok.data));
+  const rows = acctFor(ref.data.id);
+  assert.deepEqual(rows.map(r => r.recipient), [nameA, nameB], 'the accounting lists both agencies');
+  assert.equal(rows[1].consent_id, kB);
+  // An unknown agency is refused outright.
+  assert.equal((await nav.put(`/api/referrals/${ref.data.id}`, { resource_id: randomUUID() })).status, 400);
+  // A pending referral with no warm hand-off shares nothing, so its agency can change freely.
+  const pending = await nav.post('/api/referrals', referral(c, agencyA, { warm_handoff: false, status: 'pending' }));
+  assert.equal((await nav.put(`/api/referrals/${pending.data.id}`, { resource_id: agencyB })).status, 200);
+  assert.equal(acctFor(pending.data.id).length, 0);
+});
+
+test('a pushed referral that shares information passes the same gate, is accounted, and a refusal is audited', async () => {
+  const c = await newClient();
+  const agencyA = await resource(`Sync A ${randomUUID().slice(0, 6)}`); const agencyB = await resource(`Sync B ${randomUUID().slice(0, 6)}`);
+  const nameA = H.db.one(`SELECT name FROM resources WHERE id=?`, agencyA).name;
+  const k = await addConsent(c, consent(nameA));
+  const now = iso(Date.now());
+  const row = (extra) => ({ id: randomUUID(), client_id: c, resource_id: agencyA, user_id: navId, referred_at: '2026-09-03T09:00:00Z', status: 'pending', warm_handoff: 1, consent_id: k, created_at: now, updated_at: now, ...extra });
+  // A warm hand-off to the agency the consent names lands and is accounted at the office.
+  const good = row();
+  const r1 = await nav.post('/api/sync/push', { device_now: now, tables: { referrals: [good] } });
+  assert.equal(r1.data.applied.referrals, 1, JSON.stringify(r1.data));
+  assert.equal(acctFor(good.id).length, 1, 'accounted');
+  // To an agency it does not name: refused for good, never lands, audited, nothing accounted.
+  const bad = row({ resource_id: agencyB });
+  const r2 = await nav.post('/api/sync/push', { device_now: now, tables: { referrals: [bad] } });
+  const rej = r2.data.rejected.find(x => x.id === bad.id);
+  assert.ok(rej && rej.permanent, JSON.stringify(r2.data)); assert.match(rej.reason, /lawful basis/);
+  assert.doesNotMatch(rej.reason, new RegExp(nameA), 'no consent recipient in the reason');
+  assert.ok(!H.db.one(`SELECT 1 FROM referrals WHERE id=?`, bad.id));
+  assert.equal(acctFor(bad.id).length, 0);
+  assert.ok(audited('sync.disclosure_refused', bad.id), 'the refusal is audited');
+  // With no consent at all.
+  const none = row({ consent_id: null });
+  assert.ok((await nav.post('/api/sync/push', { device_now: now, tables: { referrals: [none] } })).data.rejected.find(x => x.id === none.id));
+  // A pending referral with no hand-off shares nothing and needs no basis.
+  const quiet = row({ warm_handoff: 0, consent_id: null });
+  assert.equal((await nav.post('/api/sync/push', { device_now: now, tables: { referrals: [quiet] } })).data.applied.referrals, 1);
+  // Re-pointing an already-shared referral at another agency by sync is gated too.
+  const later = iso(Date.now() + 5000);
+  const r3 = await nav.post('/api/sync/push', { device_now: later, tables: { referrals: [{ ...good, resource_id: agencyB, updated_at: later }] } });
+  assert.ok(r3.data.rejected.find(x => x.id === good.id), JSON.stringify(r3.data));
+  assert.equal(H.db.one(`SELECT resource_id FROM referrals WHERE id=?`, good.id).resource_id, agencyA);
+  // The device's own accounting row for a referral it made offline is not doubled: the office's row takes its id.
+  const offline = row(); const devDisc = { id: randomUUID(), client_id: c, consent_id: k, recipient_enc: nameA, purpose_enc: 'Referral for services', what_enc: 'Referral information', method: 'warm handoff', disclosed_at: now, disclosed_by: navId, basis: 'consent', source: 'referral', source_ref: offline.id, created_at: now };
+  const r4 = await nav.post('/api/sync/push', { device_now: now, tables: { referrals: [offline], disclosures: [devDisc] } });
+  assert.equal(r4.data.applied.referrals, 1, JSON.stringify(r4.data));
+  assert.ok(!r4.data.rejected.length, JSON.stringify(r4.data.rejected));
+  const acc = acctFor(offline.id);
+  assert.equal(acc.length, 1, 'one accounting row'); assert.equal(acc[0].id, devDisc.id, 'under the device\'s id');
+});
