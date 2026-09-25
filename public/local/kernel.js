@@ -7169,6 +7169,12 @@ CREATE TABLE IF NOT EXISTS consents (
   revocation_right_given INTEGER NOT NULL DEFAULT 0,
   refusal_consequences_given INTEGER NOT NULL DEFAULT 0,
   rule_version TEXT,
+  -- The coded categories of information the consent covers, comma-separated (migration 35; the codes are
+  -- CONSENT_INFO_CATEGORIES in server/constants.js, 'all' for everything). Not PHI: it is what the signed
+  -- form's scope says in machine-readable form, so an automated disclosure (the FHIR API) can honour it.
+  -- NULL on a consent recorded before categories existed: its free-text scope cannot be read by a machine,
+  -- so it covers nothing automated (docs/integration/FHIR.md) unless the migration found it was general.
+  info_categories TEXT,
   revoked_by TEXT REFERENCES users(id),
   created_by TEXT NOT NULL REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -7439,6 +7445,29 @@ CREATE INDEX IF NOT EXISTS idx_caloms_records_episode ON caloms_records(episode_
 CREATE INDEX IF NOT EXISTS idx_caloms_records_date ON caloms_records(record_date);
 CREATE INDEX IF NOT EXISTS idx_caloms_records_updated ON caloms_records(updated_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_caloms_records_one_per_episode ON caloms_records(episode_id, record_type) WHERE record_type IN ('admission','discharge');
+
+-- CalOMS Tx submissions (migration 35). Producing a submission is the disclosure to DHCS: the file is built
+-- once, accounted for per client (disclosures, source 'caloms', source_ref 'caloms:<id>'), and kept here so
+-- what is downloaded and sent is exactly what was accounted \u2014 identified by its SHA-256. The file itself
+-- (a zip of identified records) is encrypted and kept only until it is no longer needed (retention.js
+-- clears file_enc after CALOMS_FILE_DAYS, and when a client in it is purged); the row stays as the record
+-- of the submission. Office server only, never synchronised.
+CREATE TABLE IF NOT EXISTS caloms_submissions (
+  id TEXT PRIMARY KEY,
+  period_from TEXT NOT NULL,
+  period_to TEXT NOT NULL,
+  file_name TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  bytes INTEGER NOT NULL DEFAULT 0,
+  clients INTEGER NOT NULL DEFAULT 0,
+  counts TEXT,                         -- JSON: records per type, and how many were held back
+  file_enc TEXT,                       -- base64 of the zip, encrypted; NULL once cleared
+  file_cleared_at TEXT,
+  created_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_caloms_submissions_created ON caloms_submissions(created_at);
 
 -- Overdose and reversal events. Every SUD funder asks for these counts; they were previously only
 -- inferable from two boolean columns on the client record, which cannot answer "how many this quarter".
@@ -8504,699 +8533,352 @@ var require_incidents = __commonJS({
   }
 });
 
-// server/db.js
-var require_db = __commonJS({
-  "server/db.js"(exports, module) {
+// server/clinical.js
+var require_clinical = __commonJS({
+  "server/clinical.js"(exports, module) {
     "use strict";
     init_globals_inject();
-    var fs = (init_fs(), __toCommonJS(fs_exports));
-    var path = (init_path(), __toCommonJS(path_exports));
-    var { DatabaseSync: DatabaseSync2 } = (init_sqlite(), __toCommonJS(sqlite_exports));
-    var config = require_config();
-    var db3;
-    function open2(dbPath = config.dbPath) {
-      if (db3) return db3;
-      if (dbPath !== ":memory:") fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-      db3 = new DatabaseSync2(dbPath);
-      try {
-        db3.exec("PRAGMA busy_timeout = 5000");
-        initialise(db3, fs.readFileSync(path.join("/", "schema.sql"), "utf8"), dbPath);
-      } catch (e) {
-        try {
-          db3.close();
-        } catch {
-        }
-        db3 = void 0;
-        throw e;
-      }
-      if (dbPath !== ":memory:") for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
-        try {
-          fs.chmodSync(f, 384);
-        } catch {
-        }
-      }
-      return db3;
+    var ICD10_RE = /^[A-Z][0-9][0-9A-Z](\.[0-9A-Z]{1,4})?$/;
+    function normalizeIcd10(raw) {
+      if (raw === null || raw === void 0) return null;
+      let s = String(raw).trim().toUpperCase().replace(/\s+/g, "");
+      if (!s) return null;
+      if (!s.includes(".") && s.length > 3) s = `${s.slice(0, 3)}.${s.slice(3)}`;
+      return ICD10_RE.test(s) ? s : null;
     }
-    function openWith(bytes3) {
-      if (db3) {
-        try {
-          db3.close();
-        } catch {
-        }
-        db3 = void 0;
-      }
-      db3 = bytes3 ? new DatabaseSync2(":memory:", bytes3) : new DatabaseSync2(":memory:");
-      try {
-        db3.exec("PRAGMA busy_timeout = 5000");
-      } catch {
-      }
-      initialise(db3, safeSchema());
-      return db3;
-    }
-    function safeSchema() {
-      try {
-        return fs.readFileSync(path.join("/", "schema.sql"), "utf8");
-      } catch {
-        return require_schema_text();
-      }
-    }
-    var addColumn = (d, table, col, def) => {
-      const cols2 = d.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
-      if (!cols2.includes(col)) d.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
-    };
-    var tableCols = (d, table) => d.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
-    var tableExists = (d, table) => !!d.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(table);
-    function encryptColumn(d, table, oldCol, newCol) {
-      if (!tableExists(d, table)) return;
-      const cols2 = tableCols(d, table);
-      if (!cols2.includes(oldCol)) return;
-      const { encrypt: encrypt3 } = require_crypto();
-      addColumn(d, table, newCol, "TEXT");
-      const rows = d.prepare(`SELECT id, ${oldCol} AS v FROM ${table} WHERE ${oldCol} IS NOT NULL AND ${oldCol} <> ''`).all();
-      const upd = d.prepare(`UPDATE ${table} SET ${newCol}=? WHERE id=?`);
-      for (const r of rows) upd.run(encrypt3(String(r.v)), r.id);
-      d.exec(`ALTER TABLE ${table} DROP COLUMN ${oldCol}`);
-    }
-    function rebuildTable(d, schemaText, table, coalesce = {}) {
-      if (!tableExists(d, table)) return;
-      const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\(([\\s\\S]*?)\\n\\);`));
-      if (!m) throw new Error(`rebuildTable: no definition for ${table} in schema`);
-      const tmp = `__new_${table}`;
-      d.exec(`DROP TABLE IF EXISTS ${tmp}`);
-      d.exec(`CREATE TABLE ${tmp} (${m[1]}
-)`);
-      const oldCols = tableCols(d, table), newCols = tableCols(d, tmp);
-      const shared = newCols.filter((c) => oldCols.includes(c));
-      const select = shared.map((c) => coalesce[c] ? `COALESCE(${c}, ${coalesce[c]})` : c).join(", ");
-      d.exec(`INSERT INTO ${tmp}(${shared.join(", ")}) SELECT ${select} FROM ${table}`);
-      d.exec(`DROP TABLE ${table}`);
-      d.exec(`ALTER TABLE ${tmp} RENAME TO ${table}`);
-      for (const line of schemaText.split("\n")) {
-        const im = line.match(new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${table}\\(`));
-        if (im) d.exec(line.trim());
-      }
-    }
-    var migrations = [
-      // 1: initial schema (created by schema.sql)
-      () => {
-      },
-      // 2: sync support — updated_at on tables that lacked it, tombstones for hard deletes
-      (d) => {
-        for (const t of ["assignments", "consents", "disclosures", "budget_lines", "note_addenda", "imports", "import_items"]) {
-          addColumn(d, t, "updated_at", "TEXT");
-          d.exec(`UPDATE ${t} SET updated_at = created_at WHERE updated_at IS NULL`);
-        }
-        d.exec(`CREATE TABLE IF NOT EXISTS tombstones (table_name TEXT NOT NULL, id TEXT NOT NULL, deleted_at TEXT NOT NULL, PRIMARY KEY (table_name, id))`);
-        d.exec(`CREATE INDEX IF NOT EXISTS idx_tombstones_at ON tombstones(deleted_at)`);
-      },
-      // 3: treatment center profiles — summary/service tags on resources, photo gallery table
-      (d) => {
-        for (const [c, t] of [["summary", "TEXT"], ["service_tags", "TEXT"], ["levels_of_care", "TEXT"], ["populations", "TEXT"], ["intake_process", "TEXT"], ["cost_notes", "TEXT"]]) addColumn(d, "resources", c, t);
-        d.exec(`CREATE TABLE IF NOT EXISTS resource_photos (id TEXT PRIMARY KEY, resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE, caption TEXT, content_type TEXT NOT NULL, bytes INTEGER NOT NULL DEFAULT 0, width INTEGER, height INTEGER, data_b64 TEXT NOT NULL, thumb_b64 TEXT, sort_order INTEGER NOT NULL DEFAULT 0, uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
-        d.exec(`CREATE INDEX IF NOT EXISTS idx_resource_photos ON resource_photos(resource_id, sort_order)`);
-      },
-      // 4: county form library
-      (d) => {
-        d.exec(`CREATE TABLE IF NOT EXISTS form_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, category TEXT NOT NULL DEFAULT 'other', version TEXT, filename TEXT, content_type TEXT, bytes INTEGER NOT NULL DEFAULT 0, file_b64 TEXT, fields_json TEXT NOT NULL DEFAULT '[]', instructions TEXT, is_active INTEGER NOT NULL DEFAULT 1, uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
-        d.exec(`CREATE TABLE IF NOT EXISTS client_forms (id TEXT PRIMARY KEY, client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE, template_id TEXT REFERENCES form_templates(id) ON DELETE SET NULL, template_name TEXT NOT NULL, fields_json TEXT NOT NULL DEFAULT '[]', values_enc TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','completed','void')), completed_at TEXT, completed_by TEXT REFERENCES users(id), created_by TEXT NOT NULL REFERENCES users(id), notes TEXT, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), deleted_at TEXT)`);
-        d.exec(`CREATE INDEX IF NOT EXISTS idx_client_forms_client ON client_forms(client_id)`);
-        d.exec(`CREATE TABLE IF NOT EXISTS client_form_files (id TEXT PRIMARY KEY, client_form_id TEXT NOT NULL REFERENCES client_forms(id) ON DELETE CASCADE, client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE, filename TEXT NOT NULL, content_type TEXT NOT NULL, bytes INTEGER NOT NULL DEFAULT 0, data_enc TEXT NOT NULL, uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
-        d.exec(`CREATE INDEX IF NOT EXISTS idx_client_form_files ON client_form_files(client_form_id)`);
-      },
-      // 5: PHI that was still in plaintext moves into _enc columns; co-signature, time approval, episodes,
-      //    overdose events, coded race, client-less interventions, and the updated_at indexes sync needs.
-      (d) => {
-        const schemaText = safeSchema();
-        for (const [t, from, to] of [
-          ["clients", "goals", "goals_enc"],
-          ["clients", "flags", "flags_enc"],
-          ["notes", "title", "title_enc"],
-          ["interventions", "summary", "summary_enc"],
-          ["import_items", "title", "title_enc"],
-          ["consents", "recipient", "recipient_enc"],
-          ["consents", "purpose", "purpose_enc"],
-          ["consents", "scope", "scope_enc"],
-          ["disclosures", "disclosed_to", "recipient_enc"],
-          ["disclosures", "purpose", "purpose_enc"],
-          ["disclosures", "info_disclosed", "what_enc"]
-        ]) encryptColumn(d, t, from, to);
-        addColumn(d, "clients", "race_codes", "TEXT");
-        addColumn(d, "users", "requires_cosign", "INTEGER NOT NULL DEFAULT 0");
-        addColumn(d, "users", "supervisor_id", "TEXT REFERENCES users(id)");
-        for (const [c, def] of [["cosign_required", "INTEGER NOT NULL DEFAULT 0"], ["cosigned_by", "TEXT REFERENCES users(id)"], ["cosigned_at", "TEXT"], ["cosignature_hash", "TEXT"], ["cosign_note", "TEXT"]]) addColumn(d, "notes", c, def);
-        for (const [c, def] of [["status", "TEXT NOT NULL DEFAULT 'draft'"], ["submitted_at", "TEXT"], ["approved_by", "TEXT REFERENCES users(id)"], ["approved_at", "TEXT"], ["approval_note", "TEXT"]]) addColumn(d, "time_entries", c, def);
-        addColumn(d, "consents", "revoked_by", "TEXT REFERENCES users(id)");
-        for (const [c, def] of [["consent_revoked", "INTEGER NOT NULL DEFAULT 0"], ["outcome_recorded_at", "TEXT"], ["episode_id", "TEXT REFERENCES episodes(id)"]]) addColumn(d, "referrals", c, def);
-        for (const [c, def] of [["source", "TEXT"], ["source_ref", "TEXT"]]) addColumn(d, "disclosures", c, def);
-        for (const t of ["assignments", "budget_lines", "note_addenda", "imports", "import_items", "consents", "disclosures"])
-          rebuildTable(d, schemaText, t, { updated_at: "created_at" });
-        rebuildTable(d, schemaText, "interventions", { updated_at: "created_at" });
-        for (const t of ["episodes", "overdose_events"]) {
-          const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
-          if (m) d.exec(m[0]);
-        }
-        for (const line of schemaText.split("\n")) if (/^CREATE( UNIQUE)? INDEX IF NOT EXISTS /.test(line.trim())) {
-          try {
-            d.exec(line.trim());
-          } catch {
-          }
-        }
-        if (tableExists(d, "episodes")) {
-          const { uuid: uuid2 } = require_crypto();
-          const open3 = d.prepare(`SELECT id, intake_date, created_at, created_by, referral_source, status, discharge_date, discharge_reason FROM clients WHERE deleted_at IS NULL`).all();
-          const ins = d.prepare(`INSERT INTO episodes(id,client_id,opened_at,opened_by,referral_source,closed_at,discharge_reason,status) VALUES(?,?,?,?,?,?,?,?)`);
-          const has = d.prepare(`SELECT 1 FROM episodes WHERE client_id=?`);
-          for (const c of open3) {
-            if (has.get(c.id)) continue;
-            const closed = c.status === "closed" || c.status === "deceased";
-            ins.run(uuid2(), c.id, c.intake_date || String(c.created_at).slice(0, 10), c.created_by, c.referral_source, closed ? c.discharge_date || c.created_at : null, closed ? c.discharge_reason : null, closed ? "closed" : "open");
-          }
-        }
-      },
-      // 6: coarse blind indexes so search tolerates typos and partial surnames, and duplicate detection has
-      //    something to match on, without putting any name in the clear.
-      (d) => {
-        const schemaText = safeSchema();
-        addColumn(d, "clients", "merged_into", "TEXT REFERENCES clients(id)");
-        addColumn(d, "clients", "name_prefix_idx", "TEXT");
-        addColumn(d, "clients", "name_phonetic_idx", "TEXT");
-        const { decrypt: decrypt3 } = require_crypto();
-        const M = require_clients_model();
-        const upd = d.prepare(`UPDATE clients SET name_prefix_idx=?, name_phonetic_idx=? WHERE id=?`);
-        for (const c of d.prepare(`SELECT id, last_name_enc FROM clients`).all()) {
-          let last = "";
-          try {
-            last = c.last_name_enc ? decrypt3(c.last_name_enc) : "";
-          } catch {
-            continue;
-          }
-          upd.run(M.namePrefixIndex(last), M.namePhoneticIndex(last), c.id);
-        }
-        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_clients_name_/.test(line.trim())) d.exec(line.trim());
-      },
-      // 7: attachment bytes become nullable. Rows now reach a device before their bytes do — a sync payload
-      //    carrying every photo and scan inline was tens of megabytes the phone could not parse — so an
-      //    attachment row has to be insertable while its content is still on its way.
-      (d) => {
-        const schemaText = safeSchema();
-        for (const t of ["resource_photos", "client_form_files"]) rebuildTable(d, schemaText, t);
-      },
-      // 8: assignments record the instant they were ended. Ending one used to leave the worker with the client
-      //    for the rest of the day, because access was decided by date alone — not what a supervisor taking
-      //    somebody off a case expects to happen.
-      (d) => {
-        addColumn(d, "assignments", "ended_at", "TEXT");
-      },
-      // 9: a logged contact says whether it was a phone call or a text message. Everything already recorded
-      //    was a call, which is what the default says.
-      (d) => {
-        addColumn(d, "calls", "method", `TEXT NOT NULL DEFAULT 'phone' CHECK (method IN ('phone','text'))`);
-      },
-      // 10: referral and engagement dates on clients, so time-to-engagement (a common navigator KPI) can be
-      //     tracked per client instead of only inferred from intake_date.
-      (d) => {
-        addColumn(d, "clients", "referral_date", "TEXT");
-        addColumn(d, "clients", "engagement_date", "TEXT");
-      },
-      // 11: optional single sign-on. An administrator links an existing account to the county identity
-      //     provider's 'sub' claim; OIDC login only ever signs in to an already-linked account.
-      (d) => {
-        addColumn(d, "users", "oidc_subject", "TEXT");
-        d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_subject ON users(oidc_subject) WHERE oidc_subject IS NOT NULL`);
-      },
-      // 12: device tracking for local-mode phones/tablets, so a lost device can be revoked or wiped the next
-      //     time it tries to sync (server/devices.js).
-      (d) => {
-        d.exec(`CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, label TEXT,
-      first_seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), last_seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-      last_ip TEXT, sync_count INTEGER NOT NULL DEFAULT 0, wipe_requested_at TEXT, revoked_at TEXT)`);
-        d.exec(`CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id)`);
-      },
-      // 13: nested budget allocations — a budget line can now sit inside a larger one instead of every line
-      //     being a flat peer under the fund (server/routes/budget.js enforces same-fund + no cycles).
-      (d) => {
-        addColumn(d, "budget_lines", "parent_id", "TEXT REFERENCES budget_lines(id) ON DELETE CASCADE");
-        d.exec(`CREATE INDEX IF NOT EXISTS idx_budget_lines_parent ON budget_lines(parent_id)`);
-      },
-      // 14: an intervention with a direct cost against a fund can now name the specific allocation it draws
-      //     down — interventions already had funding_source_id and cost, but nothing to point at which budget
-      //     line, so recording a service never actually reduced a budget. server/routes/interventions.js now
-      //     auto-posts a matching (pending) expenditure from these three columns.
-      (d) => {
-        addColumn(d, "interventions", "budget_line_id", "TEXT REFERENCES budget_lines(id) ON DELETE SET NULL");
-      },
-      // 15: county policies, procedures and contracts — an uploaded-file library (server/routes/documents.js),
-      //     searched by title/category/metadata only, the same shape as the existing form template library.
-      (d) => {
-        d.exec(`CREATE TABLE IF NOT EXISTS policy_documents (id TEXT PRIMARY KEY, title TEXT NOT NULL, category TEXT NOT NULL CHECK (category IN ('policy','procedure','contract')),
-      description TEXT, effective_date TEXT, expires_at TEXT, filename TEXT, content_type TEXT, bytes INTEGER NOT NULL DEFAULT 0, file_b64 TEXT, is_active INTEGER NOT NULL DEFAULT 1,
-      uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
-        d.exec(`CREATE INDEX IF NOT EXISTS idx_policy_documents_cat ON policy_documents(category)`);
-        d.exec(`CREATE INDEX IF NOT EXISTS idx_policy_documents_updated ON policy_documents(updated_at)`);
-      },
-      // 16: at most one expenditure per intervention — a second one would double-count that service's cost.
-      //     Before this, intervention_id was a writable field on the generic expenditures POST, so a database
-      //     that saw any traffic on that route could already have duplicates; keep the most recently updated
-      //     row's link and unlink the rest (they stay, just as ordinary expenditures with no linked service)
-      //     rather than deleting real financial records during a migration.
-      (d) => {
-        const dupes = d.prepare(`SELECT intervention_id, id FROM expenditures WHERE intervention_id IS NOT NULL
-      AND id NOT IN (SELECT id FROM expenditures e2 WHERE e2.intervention_id=expenditures.intervention_id ORDER BY e2.updated_at DESC LIMIT 1)`).all();
-        const unlink = d.prepare(`UPDATE expenditures SET intervention_id=NULL WHERE id=?`);
-        for (const row of dupes) unlink.run(row.id);
-        d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_exp_intervention_unique ON expenditures(intervention_id) WHERE intervention_id IS NOT NULL`);
-      },
-      // 17: why an expenditure was rejected. Time entries have carried this since their approval step was
-      //     added; expenditures accepted a note on the approve route and then dropped it on the floor.
-      (d) => {
-        addColumn(d, "expenditures", "approval_note", "TEXT");
-      },
-      // 18: a first name on its own finds the person (the search box always said it would), and the policy
-      //     library keeps the words inside each file so a policy can be found by what it says, not only its
-      //     title. Existing documents are indexed by server/routes/documents.js the next time they are saved.
-      (d) => {
-        const schemaText = safeSchema();
-        addColumn(d, "clients", "first_name_idx", "TEXT");
-        addColumn(d, "clients", "first_name_prefix_idx", "TEXT");
-        const { decrypt: decrypt3, blindIndex: blindIndex2 } = require_crypto();
-        const M = require_clients_model();
-        const upd = d.prepare(`UPDATE clients SET first_name_idx=?, first_name_prefix_idx=? WHERE id=?`);
-        for (const c of d.prepare(`SELECT id, first_name_enc FROM clients`).all()) {
-          let first = "";
-          try {
-            first = c.first_name_enc ? decrypt3(c.first_name_enc) : "";
-          } catch {
-            continue;
-          }
-          upd.run(blindIndex2(String(first || "").trim().toLowerCase()), M.namePrefixIndex(first), c.id);
-        }
-        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_clients_first_name/.test(line.trim())) d.exec(line.trim());
-        addColumn(d, "policy_documents", "search_text", "TEXT");
-      },
-      // 19: compliance review. Free text that reveals a named person's diagnosis moves into _enc columns
-      //     (call purposes, referral outcomes/barriers/notes, task titles, overdose substances); Part 2 consents
-      //     record their expiry event, paper signature and redisclosure notice; disclosures made without consent
-      //     carry an encrypted justification; clients can be placed on legal hold; break-glass events queue
-      //     for supervisor review; patient-rights requests get a table with a 30-day clock.
-      (d) => {
-        const schemaText = safeSchema();
-        for (const [t, from, to] of [
-          ["calls", "purpose", "purpose_enc"],
-          ["referrals", "outcome", "outcome_enc"],
-          ["referrals", "barrier", "barrier_enc"],
-          ["referrals", "notes", "notes_enc"],
-          ["overdose_events", "substances", "substances_enc"]
-        ]) encryptColumn(d, t, from, to);
-        encryptColumn(d, "tasks", "description", "description_enc");
-        if (tableExists(d, "tasks") && tableCols(d, "tasks").includes("title")) {
-          const { encrypt: encrypt3 } = require_crypto();
-          addColumn(d, "tasks", "title_enc", "TEXT");
-          const upd = d.prepare(`UPDATE tasks SET title_enc=? WHERE id=?`);
-          for (const r of d.prepare(`SELECT id, title FROM tasks`).all()) upd.run(encrypt3(String(r.title ?? "")), r.id);
-          d.exec(`ALTER TABLE tasks DROP COLUMN title`);
-          rebuildTable(d, schemaText, "tasks");
-        }
-        addColumn(d, "clients", "legal_hold", "INTEGER NOT NULL DEFAULT 0");
-        addColumn(d, "clients", "legal_hold_reason", "TEXT");
-        addColumn(d, "consents", "expires_event", "TEXT");
-        addColumn(d, "consents", "signed_on_paper", "INTEGER NOT NULL DEFAULT 0");
-        addColumn(d, "consents", "redisclosure_notice_given", "INTEGER NOT NULL DEFAULT 0");
-        addColumn(d, "disclosures", "justification_enc", "TEXT");
-        for (const t of ["breakglass_events", "patient_requests"]) {
-          const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
-          if (m) d.exec(m[0]);
-        }
-        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_(breakglass|patient_requests)/.test(line.trim())) d.exec(line.trim());
-      },
-      // 20: navigator field tools — a preferred name / alias finds the person too; an author can ask a
-      //     supervisor to review/co-sign a note; and a harm-reduction supply inventory that visits draw down.
-      (d) => {
-        const schemaText = safeSchema();
-        addColumn(d, "clients", "preferred_name_idx", "TEXT");
-        const { decrypt: decrypt3 } = require_crypto();
-        const M = require_clients_model();
-        const upd = d.prepare(`UPDATE clients SET preferred_name_idx=? WHERE id=?`);
-        for (const c of d.prepare(`SELECT id, preferred_name_enc FROM clients WHERE preferred_name_enc IS NOT NULL`).all()) {
-          let pref = "";
-          try {
-            pref = decrypt3(c.preferred_name_enc);
-          } catch {
-            continue;
-          }
-          upd.run(M.preferredNameIndex(pref), c.id);
-        }
-        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_clients_preferred_name/.test(line.trim())) d.exec(line.trim());
-        addColumn(d, "notes", "cosign_requested", "INTEGER NOT NULL DEFAULT 0");
-        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS supply_stock \([\s\S]*?\n\);/);
-        if (m) d.exec(m[0]);
-        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_supply_stock/.test(line.trim())) d.exec(line.trim());
-      },
-      // 21: a client whose status is NULL or blank (rows written before the value was enforced end to end,
-      //     including through sync) showed no status at all in the header and Overview. The column's default
-      //     is 'active', so that is what an empty value has always meant.
-      (d) => {
-        d.exec(`UPDATE clients SET status='active' WHERE status IS NULL OR TRIM(status)=''`);
-      },
-      // 22: spreadsheet import idempotency — a hash per imported row (import_rows), so the same file imported
-      //     twice does not double every visit, call, hour and expenditure it holds.
-      (d) => {
-        const schemaText = safeSchema();
-        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS import_rows \([\s\S]*?\n\);/);
-        if (m) d.exec(m[0]);
-        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_import_rows/.test(line.trim())) d.exec(line.trim());
-      },
-      // 23: a referral's follow-up to-do remembers which referral it belongs to. Recording one referral's
-      //     outcome used to close every "Follow up on referral…" to-do on the client, by title prefix.
-      (d) => {
-        addColumn(d, "tasks", "referral_id", "TEXT REFERENCES referrals(id) ON DELETE SET NULL");
-      },
-      // 24: a to-do's details ("detox bed at Granite on Tuesday; bring the MAT letter") reveal as much as its
-      //     title, which has been encrypted since 19. tasks.description moves into description_enc and the
-      //     plaintext column goes; the table is rebuilt from schema.sql so it matches a fresh install.
-      (d) => {
-        if (!tableExists(d, "tasks") || !tableCols(d, "tasks").includes("description")) return;
-        encryptColumn(d, "tasks", "description", "description_enc");
-        rebuildTable(d, safeSchema(), "tasks");
-      },
-      // 25: self sign-up. A request for an account is a users row that cannot sign in until an administrator
-      //     approves it (access_status 'pending'); every existing account is 'active'.
-      (d) => {
-        addColumn(d, "users", "access_status", `TEXT NOT NULL DEFAULT 'active' CHECK (access_status IN ('active','pending','declined'))`);
-        addColumn(d, "users", "access_note", "TEXT");
-        addColumn(d, "users", "requested_at", "TEXT");
-      },
-      // 26: name search and duplicate detection work in every script. Blind indexes used to keep only a-z and
-      //     0-9, so an Arabic or Cyrillic name indexed as nothing (unsearchable, never flagged as a duplicate)
-      //     and "Øster"/"Łecki" lost a letter; they now fold accents, transliterate Ø/Ł/ß/Æ… and keep every
-      //     Unicode letter (server/crypto.js foldText). Every client's indexes are re-derived from the decrypted
-      //     values with the same function key rotation uses (clients-model clientIndexes). A migration can
-      //     decrypt: the keys are loaded (config) before the database is opened, here and in the local kernel.
-      //     A row that cannot be decrypted keeps the indexes it had. No schema change.
-      (d) => {
-        const { decrypt: decrypt3 } = require_crypto();
-        const M = require_clients_model();
-        const cols2 = ["last_name_idx", "full_name_idx", "name_prefix_idx", "name_phonetic_idx", "first_name_idx", "first_name_prefix_idx", "preferred_name_idx", "dob_idx", "phone_idx"];
-        const upd = d.prepare(`UPDATE clients SET ${cols2.map((c) => `${c}=?`).join(", ")} WHERE id=?`);
-        for (const c of d.prepare(`SELECT id, first_name_enc, last_name_enc, preferred_name_enc, dob_enc, phone_enc FROM clients`).all()) {
-          let plain;
-          try {
-            plain = { first_name: decrypt3(c.first_name_enc), last_name: decrypt3(c.last_name_enc), preferred_name: decrypt3(c.preferred_name_enc), dob: decrypt3(c.dob_enc), phone: decrypt3(c.phone_enc) };
-          } catch {
-            continue;
-          }
-          const idx = M.clientIndexes(plain);
-          upd.run(...cols2.map((k) => idx[k]), c.id);
-        }
-      },
-      // 27:
-      //     idempotency_keys, so a retried POST is answered once instead of creating everything twice; and
-      //     breakglass_events.kind, because the supervisors' review queue now also receives re-admissions of
-      //     discharged clients by a worker whose caseload they were not on (POST /api/clients/:id/readmit).
-      (d) => {
-        addColumn(d, "breakglass_events", "kind", "TEXT NOT NULL DEFAULT 'clinical_note'");
-        const schemaText = safeSchema();
-        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS idempotency_keys \([\s\S]*?\n\);/);
-        if (m) d.exec(m[0]);
-        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_idempotency/.test(line.trim())) d.exec(line.trim());
-      },
-      // 28: Settings → Lists. An administrator's changes to the choices on documentation forms (a renamed,
-      //     reordered or retired choice, or a programme's own addition) are kept in option_overrides; the
-      //     built-in choices stay in code (server/options.js). An existing database starts with none.
-      (d) => {
-        const schemaText = safeSchema();
-        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS option_overrides \([\s\S]*?\n\);/);
-        if (m) d.exec(m[0]);
-        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_option_overrides/.test(line.trim())) d.exec(line.trim());
-      },
-      // 29: clinical depth for CalAIM documentation — the problem list
-      //     and its change history, the care coordination plan (goals and steps), ASAM six-dimension
-      //     assessments and scored outcome measures; and notes.problem_ids, the problems a note addresses.
-      //     New tables only, plus one nullable column, so an existing database starts with none of them.
-      (d) => {
-        addColumn(d, "notes", "problem_ids", "TEXT");
-        const schemaText = safeSchema();
-        for (const t of ["problems", "problem_history", "care_plan_goals", "care_plan_steps", "asam_assessments", "outcome_measures"]) {
-          const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
-          if (!m) throw new Error(`migration 29: no definition for ${t} in schema`);
-          d.exec(m[0]);
-          for (const line of schemaText.split("\n")) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
-        }
-      },
-      // 30: CalOMS Tx state reporting. caloms_records holds each episode's
-      //     admission, discharge and annual update records (answers encrypted); an existing database starts
-      //     with none and with CalOMS reporting switched off (settings caloms_enabled / caloms_providers).
-      (d) => {
-        const schemaText = safeSchema();
-        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS caloms_records \([\s\S]*?\n\);/);
-        if (m) d.exec(m[0]);
-        for (const line of schemaText.split("\n")) if (/^CREATE (UNIQUE )?INDEX IF NOT EXISTS idx_caloms_records/.test(line.trim())) d.exec(line.trim());
-      },
-      // 31: 42 CFR Part 2 (2024 final rule). Consents record the rest of the §2.31 elements (who may disclose,
-      //     who signed if not the patient, the revocation and refusal statements, which rule version they were
-      //     taken against); subpart E court orders get a table that disclosures point at; a disclosure says
-      //     whether it is for a proceeding against the patient, includes SUD counseling notes, and which §2.32
-      //     notice went with it; notes can be SUD counseling notes (§2.11); the §2.22 patient notice is
-      //     recorded per client; and a complaint log (§2.4) and a breach/incident register. Existing consents
-      //     keep rule_version NULL (recorded before the 2024 element list) and are shown as such.
-      (d) => {
-        const schemaText = safeSchema();
-        for (const [c, def] of [
-          ["discloser", "TEXT"],
-          ["signer_relationship", "TEXT"],
-          ["signer_name_enc", "TEXT"],
-          ["revocation_right_given", "INTEGER NOT NULL DEFAULT 0"],
-          ["refusal_consequences_given", "INTEGER NOT NULL DEFAULT 0"],
-          ["rule_version", "TEXT"]
-        ]) addColumn(d, "consents", c, def);
-        addColumn(d, "notes", "counseling_note", "INTEGER NOT NULL DEFAULT 0");
-        for (const t of ["court_orders", "part2_notices", "complaints", "privacy_incidents", "privacy_incident_clients"]) {
-          const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
-          if (m) d.exec(m[0]);
-        }
-        for (const [c, def] of [
-          ["court_order_id", "TEXT REFERENCES court_orders(id) ON DELETE SET NULL"],
-          ["legal_proceeding", "INTEGER NOT NULL DEFAULT 0"],
-          ["counseling_notes", "INTEGER NOT NULL DEFAULT 0"],
-          ["notice_version", "TEXT"]
-        ]) addColumn(d, "disclosures", c, def);
-        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_(court_orders|part2_notices|complaints|privacy_incident)/.test(line.trim())) d.exec(line.trim());
-      },
-      // 32: FHIR SMART Backend Services (private_key_jwt). fhir_jwt_assertions remembers each client assertion's
-      //     jti until it expires, so an assertion cannot be replayed (server/fhir/jwt.js). A new table only; an
-      //     existing database starts with it empty.
-      (d) => {
-        const schemaText = safeSchema();
-        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS fhir_jwt_assertions \([\s\S]*?\n\);/);
-        if (!m) throw new Error("migration 32: no definition for fhir_jwt_assertions in schema");
-        d.exec(m[0]);
-        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_fhir_jwt_assertions/.test(line.trim())) d.exec(line.trim());
-      },
-      // 33: the audit log becomes append-only in the database (triggers that refuse UPDATE
-      //     and DELETE outside the sanctioned maintenance window, server/audit.js maintenance()); accounts
-      //     remember when the identity provider last vouched for them and SCIM's id for them; a session records
-      //     whether its second factor came from the identity provider.
-      (d) => {
-        const schemaText = safeSchema();
-        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS audit_maintenance \([\s\S]*?\n\);/);
-        if (m) d.exec(m[0]);
-        for (const t of schemaText.match(/CREATE TRIGGER IF NOT EXISTS audit_log_no_\w+ [\s\S]*?END;/g) || []) d.exec(t);
-        addColumn(d, "users", "idp_seen_at", "TEXT");
-        addColumn(d, "users", "scim_external_id", "TEXT");
-        d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_scim_external_id ON users(scim_external_id) WHERE scim_external_id IS NOT NULL`);
-        addColumn(d, "sessions", "mfa_source", "TEXT");
-      },
-      // 34: the disclosure gate closed where a review found it open (docs/compliance/PART2.md). A register of the
-      //     QSOAs and research / audit approvals the non-consent bases rest on (disclosure_agreements); an
-      //     incident's title is encrypted, and an incident can be opened by switching the Part 2 programme off;
-      //     an incident's link to a client survives the client's purge as a snapshot (code, encrypted name)
-      //     instead of being deleted with the record — breach documentation is kept six years.
-      (d) => {
-        const schemaText = safeSchema();
-        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS disclosure_agreements \([\s\S]*?\n\);/);
-        if (m) d.exec(m[0]);
-        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_disclosure_agreements/.test(line.trim())) d.exec(line.trim());
-        if (tableExists(d, "privacy_incidents")) {
-          if (tableCols(d, "privacy_incidents").includes("title")) {
-            const { encrypt: encrypt3 } = require_crypto();
-            addColumn(d, "privacy_incidents", "title_enc", "TEXT");
-            const upd = d.prepare(`UPDATE privacy_incidents SET title_enc=? WHERE id=?`);
-            for (const r of d.prepare(`SELECT id, title FROM privacy_incidents`).all()) upd.run(encrypt3(String(r.title ?? "")), r.id);
-            d.exec(`ALTER TABLE privacy_incidents DROP COLUMN title`);
-          }
-          rebuildTable(d, schemaText, "privacy_incidents");
-        }
-        if (tableExists(d, "privacy_incident_clients")) {
-          for (const c of ["client_code", "client_name_enc", "client_purged_at"]) addColumn(d, "privacy_incident_clients", c, "TEXT");
-          const { snapshotOf } = require_incidents();
-          const upd = d.prepare(`UPDATE privacy_incident_clients SET client_code=?, client_name_enc=? WHERE id=?`);
-          for (const x of d.prepare(`SELECT x.id, c.client_code, c.first_name_enc, c.last_name_enc FROM privacy_incident_clients x JOIN clients c ON c.id=x.client_id WHERE x.client_code IS NULL`).all()) {
-            const snap = snapshotOf(x);
-            upd.run(snap.client_code, snap.client_name_enc, x.id);
-          }
-          rebuildTable(d, schemaText, "privacy_incident_clients");
-        }
-      }
+    var Z_RANGE_RE = /^Z(5[5-9]|6[0-5])(\.[0-9A-Z]{1,4})?$/;
+    var isZCode = (code) => Z_RANGE_RE.test(code || "");
+    var Z_CODES = [
+      { code: "Z55.0", label: "Illiteracy and low-level literacy" },
+      { code: "Z55.9", label: "Problems related to education and literacy, unspecified" },
+      { code: "Z56.0", label: "Unemployment, unspecified" },
+      { code: "Z56.9", label: "Unspecified problems related to employment" },
+      { code: "Z59.00", label: "Homelessness, unspecified" },
+      { code: "Z59.01", label: "Sheltered homelessness" },
+      { code: "Z59.02", label: "Unsheltered homelessness" },
+      { code: "Z59.1", label: "Inadequate housing" },
+      { code: "Z59.41", label: "Food insecurity" },
+      { code: "Z59.6", label: "Low income" },
+      { code: "Z59.7", label: "Insufficient social insurance and welfare support" },
+      { code: "Z59.811", label: "Housing instability, housed, with risk of homelessness" },
+      { code: "Z59.82", label: "Transportation insecurity" },
+      { code: "Z59.86", label: "Financial insecurity" },
+      { code: "Z60.2", label: "Problems related to living alone" },
+      { code: "Z60.4", label: "Social exclusion and rejection" },
+      { code: "Z60.5", label: "Target of (perceived) adverse discrimination and persecution" },
+      { code: "Z62.9", label: "Problem related to upbringing, unspecified" },
+      { code: "Z63.0", label: "Problems in relationship with spouse or partner" },
+      { code: "Z63.4", label: "Disappearance and death of family member" },
+      { code: "Z63.72", label: "Alcoholism and drug addiction in family" },
+      { code: "Z63.8", label: "Other specified problems related to primary support group" },
+      { code: "Z64.4", label: "Discord with counselors" },
+      { code: "Z65.1", label: "Imprisonment and other incarceration" },
+      { code: "Z65.2", label: "Problems related to release from prison" },
+      { code: "Z65.3", label: "Problems related to other legal circumstances" },
+      { code: "Z65.4", label: "Victim of crime and terrorism" },
+      { code: "Z65.8", label: "Other specified problems related to psychosocial circumstances" }
     ];
-    function initialise(d, schemaText, dbPath) {
-      const fresh = !d.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings'`).get();
-      if (fresh) {
-        d.exec(schemaText);
-        d.prepare(`INSERT INTO settings(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(String(migrations.length));
-        return;
+    var PROBLEM_STATUSES = ["active", "resolved", "inactive"];
+    var PROBLEM_SOURCES = ["self_report", "assessment", "referral", "other"];
+    var GOAL_STATUSES = ["active", "met", "partially_met", "not_met", "discontinued"];
+    var STEP_OWNERS = ["client", "staff", "family_support", "other_provider"];
+    var STEP_STATUSES = ["open", "done", "cancelled"];
+    var ASAM_DIMENSIONS = [
+      { key: "d1", label: "Dimension 1: Acute intoxication and/or withdrawal potential" },
+      { key: "d2", label: "Dimension 2: Biomedical conditions and complications" },
+      { key: "d3", label: "Dimension 3: Emotional, behavioral, or cognitive conditions and complications" },
+      { key: "d4", label: "Dimension 4: Readiness to change" },
+      { key: "d5", label: "Dimension 5: Relapse, continued use, or continued problem potential" },
+      { key: "d6", label: "Dimension 6: Recovery/living environment" }
+    ];
+    var ASAM_RATINGS = [
+      { value: 0, label: "0 \u2014 No risk / no current problem" },
+      { value: 1, label: "1 \u2014 Mild" },
+      { value: 2, label: "2 \u2014 Moderate" },
+      { value: 3, label: "3 \u2014 Significant" },
+      { value: 4, label: "4 \u2014 Severe" }
+    ];
+    var ASAM_DISCREPANCY_REASONS = ["client_preference", "level_not_available", "waitlist", "geographic_accessibility", "family_responsibilities", "legal_issues", "language_or_cultural", "clinical_judgment", "payment_or_coverage", "other"];
+    var FREQ4 = [{ value: 0, label: "Not at all" }, { value: 1, label: "Several days" }, { value: 2, label: "More than half the days" }, { value: 3, label: "Nearly every day" }];
+    var YES_NO = [{ value: 1, label: "Yes" }, { value: 0, label: "No" }];
+    var INSTRUMENTS = {
+      phq9: {
+        code: "phq9",
+        name: "PHQ-9",
+        title: "Patient Health Questionnaire (depression)",
+        better: "lower",
+        max: 27,
+        stem: "Over the last 2 weeks, how often have you been bothered by any of the following problems?",
+        credit: "PHQ-9 \xA9 Pfizer Inc. Developed by Drs. Robert L. Spitzer, Janet B.W. Williams, Kurt Kroenke and colleagues. No permission required to reproduce, translate, display or distribute.",
+        items: [
+          "Little interest or pleasure in doing things",
+          "Feeling down, depressed, or hopeless",
+          "Trouble falling or staying asleep, or sleeping too much",
+          "Feeling tired or having little energy",
+          "Poor appetite or overeating",
+          "Feeling bad about yourself \u2014 or that you are a failure or have let yourself or your family down",
+          "Trouble concentrating on things, such as reading the newspaper or watching television",
+          "Moving or speaking so slowly that other people could have noticed? Or the opposite \u2014 being so fidgety or restless that you have been moving around a lot more than usual",
+          "Thoughts that you would be better off dead or of hurting yourself in some way"
+        ].map((text) => ({ text, options: FREQ4 })),
+        bands: [[0, 4, "Minimal"], [5, 9, "Mild"], [10, 14, "Moderate"], [15, 19, "Moderately severe"], [20, 27, "Severe"]],
+        positiveAt: 10,
+        // Item 9 (index 8) above "Not at all" is a safety alert whatever the total.
+        safetyItem: 8
+      },
+      gad7: {
+        code: "gad7",
+        name: "GAD-7",
+        title: "Generalized Anxiety Disorder scale",
+        better: "lower",
+        max: 21,
+        stem: "Over the last 2 weeks, how often have you been bothered by the following problems?",
+        credit: "GAD-7 \xA9 Pfizer Inc. Developed by Drs. Robert L. Spitzer, Janet B.W. Williams, Kurt Kroenke and colleagues. No permission required to reproduce, translate, display or distribute.",
+        items: [
+          "Feeling nervous, anxious, or on edge",
+          "Not being able to stop or control worrying",
+          "Worrying too much about different things",
+          "Trouble relaxing",
+          "Being so restless that it is hard to sit still",
+          "Becoming easily annoyed or irritable",
+          "Feeling afraid, as if something awful might happen"
+        ].map((text) => ({ text, options: FREQ4 })),
+        bands: [[0, 4, "Minimal"], [5, 9, "Mild"], [10, 14, "Moderate"], [15, 21, "Severe"]],
+        positiveAt: 10
+      },
+      auditc: {
+        code: "auditc",
+        name: "AUDIT-C",
+        title: "Alcohol Use Disorders Identification Test \u2014 consumption",
+        better: "lower",
+        max: 12,
+        stem: "Think about your drinking over the past year.",
+        credit: "AUDIT-C: the first three questions of the AUDIT (World Health Organization); public domain.",
+        items: [
+          { text: "How often do you have a drink containing alcohol?", options: [{ value: 0, label: "Never" }, { value: 1, label: "Monthly or less" }, { value: 2, label: "2\u20134 times a month" }, { value: 3, label: "2\u20133 times a week" }, { value: 4, label: "4 or more times a week" }] },
+          { text: "How many standard drinks containing alcohol do you have on a typical day?", options: [{ value: 0, label: "1 or 2" }, { value: 1, label: "3 or 4" }, { value: 2, label: "5 or 6" }, { value: 3, label: "7 to 9" }, { value: 4, label: "10 or more" }] },
+          { text: "How often do you have six or more drinks on one occasion?", options: [{ value: 0, label: "Never" }, { value: 1, label: "Less than monthly" }, { value: 2, label: "Monthly" }, { value: 3, label: "Weekly" }, { value: 4, label: "Daily or almost daily" }] }
+        ],
+        // A positive screen is 4 or more for men and 3 or more for women. When the variant is not given the
+        // lower cut-off is used, so nobody is screened negative by a missing answer.
+        variants: [{ value: "men", label: "Cut-off for men (4 or more)", positiveAt: 4 }, { value: "women", label: "Cut-off for women (3 or more)", positiveAt: 3 }, { value: "unspecified", label: "Not specified (3 or more)", positiveAt: 3 }],
+        positiveAt: 3
+      },
+      dast10: {
+        code: "dast10",
+        name: "DAST-10",
+        title: "Drug Abuse Screening Test",
+        better: "lower",
+        max: 10,
+        optional: true,
+        stem: 'These questions refer to the past 12 months. "Drug use" means use of prescribed or over-the-counter drugs in excess of the directions, and any non-medical use of drugs. Do not include alcohol or tobacco.',
+        credit: "DAST-10 \xA9 1982 Harvey A. Skinner, PhD. Reproduced for non-commercial clinical use with credit.",
+        items: [
+          { text: "Have you used drugs other than those required for medical reasons?", options: YES_NO },
+          { text: "Do you abuse more than one drug at a time?", options: YES_NO },
+          // Reverse scored: "No" is the answer that counts.
+          { text: "Are you always able to stop using drugs when you want to?", options: [{ value: 0, label: "Yes" }, { value: 1, label: "No" }] },
+          { text: 'Have you had "blackouts" or "flashbacks" as a result of drug use?', options: YES_NO },
+          { text: "Do you ever feel bad or guilty about your drug use?", options: YES_NO },
+          { text: "Does your spouse (or parents) ever complain about your involvement with drugs?", options: YES_NO },
+          { text: "Have you neglected your family because of your use of drugs?", options: YES_NO },
+          { text: "Have you engaged in illegal activities in order to obtain drugs?", options: YES_NO },
+          { text: "Have you ever experienced withdrawal symptoms (felt sick) when you stopped taking drugs?", options: YES_NO },
+          { text: "Have you had medical problems as a result of your drug use (e.g., memory loss, hepatitis, convulsions, bleeding)?", options: YES_NO }
+        ],
+        bands: [[0, 0, "No problems reported"], [1, 2, "Low level"], [3, 5, "Moderate level"], [6, 8, "Substantial level"], [9, 10, "Severe level"]],
+        positiveAt: 3
+      },
+      wellbeing: {
+        code: "wellbeing",
+        name: "Wellbeing (0\u201310)",
+        title: "Self-rated wellbeing",
+        better: "higher",
+        max: 10,
+        stem: "A single question, answered by the person in their own words and numbers.",
+        credit: "A single self-rating item written for SUDS; not a validated instrument.",
+        items: [{ text: "Overall, how are things going for you right now? (0 = the worst they could be, 10 = the best they could be)", options: Array.from({ length: 11 }, (_, i) => ({ value: i, label: String(i) })) }],
+        bands: [[0, 3, "Low"], [4, 6, "Moderate"], [7, 10, "Good"]]
       }
-      migrate(d, dbPath);
-    }
-    var SNAPSHOTS_KEPT = 5;
-    function snapshotBeforeMigration(d, dbPath, fromVersion) {
-      if (!dbPath || dbPath === ":memory:") return "";
-      const dir = path.join(path.dirname(dbPath), "pre-migration");
-      const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-      const file = path.join(dir, `${path.basename(dbPath)}.v${fromVersion}.${stamp2}.db`);
-      fs.mkdirSync(dir, { recursive: true });
-      try {
-        fs.unlinkSync(file);
-      } catch {
+    };
+    var INSTRUMENT_CODES = Object.keys(INSTRUMENTS);
+    var OPTIONAL_INSTRUMENTS = {
+      dast10: {
+        setting: "instrument_dast10_enabled",
+        notice: "The DAST-10 is \xA9 1982 Harvey A. Skinner, PhD. It may be reproduced free of charge for non-commercial clinical, research and training use, with credit to the author. SUDS may be supplied commercially, so the DAST-10 is off until an administrator confirms this programme holds the rights to use it.",
+        confirmation: "I confirm that this programme holds the rights to use the DAST-10 as it will be used here (for example, non-commercial clinical use with credit to the author, or written permission from the copyright holder)."
       }
-      d.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
-      try {
-        fs.chmodSync(file, 384);
-      } catch {
-      }
-      try {
-        const old = fs.readdirSync(dir).filter((f) => f.startsWith(path.basename(dbPath) + ".v")).sort();
-        for (const f of old.slice(0, Math.max(0, old.length - SNAPSHOTS_KEPT))) fs.unlinkSync(path.join(dir, f));
-      } catch {
-      }
-      return file;
-    }
-    function fkViolationKeys(d) {
-      return new Set(d.prepare("PRAGMA foreign_key_check").all().map((r) => `${r.table}:${r.rowid}:${r.parent}:${r.fkid}`));
-    }
-    function migrate(d, dbPath) {
-      const row = d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get();
-      let v = row ? Number(row.value) : 0;
-      if (v > migrations.length) throw new Error(`This database was created by a newer version of SUDS (schema ${v}; this build understands ${migrations.length}). Upgrade SUDS before opening it.`);
-      if (v < migrations.length) {
-        let snapshot = "";
-        try {
-          snapshot = snapshotBeforeMigration(d, dbPath, v);
-        } catch (e) {
-          throw new Error(`Could not snapshot the database before upgrading it from schema ${v} to ${migrations.length}: ${e.message}. Free up disk space or back up ${dbPath} by hand, then start SUDS again.`);
-        }
-        if (snapshot) console.log(`[suds] upgrading schema ${v} -> ${migrations.length}; snapshot saved to ${snapshot}`);
-      }
-      let remaining = [];
-      for (let i = v; i < migrations.length; i++) {
-        d.exec("PRAGMA foreign_keys = OFF");
-        d.exec("BEGIN");
-        try {
-          const before = fkViolationKeys(d);
-          migrations[i](d);
-          const after = d.prepare("PRAGMA foreign_key_check").all();
-          const introduced = after.filter((r) => !before.has(`${r.table}:${r.rowid}:${r.parent}:${r.fkid}`));
-          if (introduced.length) throw new Error(`migration ${i + 1} introduced ${introduced.length} new orphaned row(s), first in table ${introduced[0].table}`);
-          remaining = after;
-          d.prepare(`INSERT INTO settings(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`).run(String(i + 1));
-          d.exec("COMMIT");
-        } catch (e) {
-          try {
-            d.exec("ROLLBACK");
-          } catch {
-          }
-          throw e;
-        } finally {
-          d.exec("PRAGMA foreign_keys = ON");
-        }
-      }
-      if (remaining.length) {
-        const byTable = {};
-        for (const r of remaining) byTable[r.table] = (byTable[r.table] || 0) + 1;
-        console.warn(`[suds] this database has ${remaining.length} pre-existing orphaned reference(s), not introduced by this upgrade, by table: ${Object.entries(byTable).map(([t, n]) => `${t}=${n}`).join(", ")}. Records are otherwise intact; anything joined through the missing reference may just be absent from a report until it is repaired.`);
-      }
-    }
-    function get() {
-      if (!db3) open2();
-      return db3;
-    }
-    function close() {
-      if (db3) {
-        db3.close();
-        db3 = void 0;
-      }
-    }
-    function now() {
-      return (/* @__PURE__ */ new Date()).toISOString();
-    }
-    function all(sql, ...params) {
-      return get().prepare(sql).all(...params);
-    }
-    function one(sql, ...params) {
-      return get().prepare(sql).get(...params);
-    }
-    function run2(sql, ...params) {
-      return get().prepare(sql).run(...params);
-    }
-    var txDepth = 0;
-    function transaction(fn) {
-      const d = get();
-      const depth = txDepth++;
-      const sp = `sp_tx_${depth}`;
-      d.exec(depth === 0 ? "BEGIN" : `SAVEPOINT ${sp}`);
-      try {
-        const r = fn();
-        d.exec(depth === 0 ? "COMMIT" : `RELEASE ${sp}`);
-        txDepth--;
-        return r;
-      } catch (e) {
-        txDepth--;
-        try {
-          d.exec(depth === 0 ? "ROLLBACK" : `ROLLBACK TO ${sp}; RELEASE ${sp}`);
-        } catch (rollbackError) {
-          if (depth === 0) txDepth = 0;
-          console.error("[suds] rollback failed:", rollbackError.message);
-        }
+    };
+    function score(code, responses, { variant } = {}) {
+      const ins = INSTRUMENTS[code];
+      if (!ins) {
+        const e = new Error(`Unknown instrument ${code}`);
+        e.fields = { instrument: `must be one of ${INSTRUMENT_CODES.join(", ")}` };
         throw e;
       }
-    }
-    function savepoint(fn, onError) {
-      const d = get();
-      const sp = `sp_${txDepth}_${savepoint.n = (savepoint.n || 0) + 1}`;
-      d.exec(`SAVEPOINT ${sp}`);
-      try {
-        const r = fn();
-        d.exec(`RELEASE ${sp}`);
-        return r;
-      } catch (e) {
-        try {
-          d.exec(`ROLLBACK TO ${sp}`);
-          d.exec(`RELEASE ${sp}`);
-        } catch {
+      if (!Array.isArray(responses) || responses.length !== ins.items.length) {
+        const e = new Error(`${ins.name} needs an answer to each of its ${ins.items.length} questions`);
+        e.fields = { responses: `must have ${ins.items.length} answers` };
+        throw e;
+      }
+      const values = responses.map((raw, i) => {
+        const v = typeof raw === "string" && raw.trim() !== "" ? Number(raw) : raw;
+        if (typeof v !== "number" || !Number.isInteger(v) || !ins.items[i].options.some((o) => o.value === v)) {
+          const e = new Error(`${ins.name} question ${i + 1} has no valid answer`);
+          e.fields = { responses: `question ${i + 1} is missing or out of range` };
+          throw e;
         }
-        if (onError) onError(e);
-        else throw e;
+        return v;
+      });
+      const total = values.reduce((a, b) => a + b, 0);
+      let positiveAt = ins.positiveAt;
+      let usedVariant = null;
+      if (ins.variants) {
+        const vv = ins.variants.find((x) => x.value === variant) || ins.variants.find((x) => x.value === "unspecified");
+        positiveAt = vv.positiveAt;
+        usedVariant = vv.value;
       }
+      let band;
+      if (ins.bands) band = (ins.bands.find(([lo, hi]) => total >= lo && total <= hi) || [])[2] || null;
+      else band = total >= positiveAt ? "Positive screen" : "Negative screen";
+      const positive = positiveAt === void 0 ? null : total >= positiveAt ? 1 : 0;
+      const safety = ins.safetyItem !== void 0 && values[ins.safetyItem] > 0 ? 1 : 0;
+      return { total, band, positive, safety_flag: safety, responses: values, variant: usedVariant };
     }
-    function checkKeyFingerprint() {
-      const fp = require_crypto().keyFingerprint();
-      const stored = getSetting("key_fingerprint", null);
-      if (!stored) {
-        setSetting("key_fingerprint", fp);
-        return { first: true };
-      }
-      if (stored !== fp) throw new Error("The encryption key this server was started with is not the key this database was written with. Nothing has been changed. Restore the key backup (keys.json) saved at setup or set SUDS_ENCRYPTION_KEY to the original key, then start again. If the key was deliberately rotated with scripts/rotate-key.js, that script records the new key; a database this happened to some other way needs the original key back.");
-      return { first: false };
+    function direction(code, baseline, latest) {
+      const ins = INSTRUMENTS[code];
+      if (!ins || baseline === null || latest === null) return 0;
+      if (latest === baseline) return 0;
+      return (ins.better === "higher" ? latest > baseline : latest < baseline) ? 1 : -1;
     }
-    function getSetting(key, def = null) {
-      const r = one(`SELECT value FROM settings WHERE key=?`, key);
-      return r ? r.value : def;
-    }
-    function setSetting(key, value) {
-      run2(`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, key, String(value));
-    }
-    function tombstone(table, id) {
-      run2(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now());
-    }
-    module.exports = { open: open2, openWith, get, close, LATEST_SCHEMA_VERSION: migrations.length, now, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint };
+    module.exports = {
+      ICD10_RE,
+      normalizeIcd10,
+      isZCode,
+      Z_CODES,
+      PROBLEM_STATUSES,
+      PROBLEM_SOURCES,
+      GOAL_STATUSES,
+      STEP_OWNERS,
+      STEP_STATUSES,
+      ASAM_DIMENSIONS,
+      ASAM_RATINGS,
+      ASAM_DISCREPANCY_REASONS,
+      INSTRUMENTS,
+      INSTRUMENT_CODES,
+      OPTIONAL_INSTRUMENTS,
+      score,
+      direction
+    };
+  }
+});
+
+// server/constants.js
+var require_constants = __commonJS({
+  "server/constants.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var CL = require_clinical();
+    var RACE_CODES = [
+      { code: "american_indian_alaska_native", label: "American Indian or Alaska Native" },
+      { code: "asian", label: "Asian" },
+      { code: "black_african_american", label: "Black or African American" },
+      { code: "native_hawaiian_pacific_islander", label: "Native Hawaiian or Other Pacific Islander" },
+      { code: "white", label: "White" },
+      { code: "other", label: "Other" },
+      { code: "declined", label: "Declined to answer" },
+      { code: "unknown", label: "Unknown" }
+    ];
+    var ETHNICITY_CODES = [
+      { code: "hispanic_latino", label: "Hispanic or Latino" },
+      { code: "not_hispanic_latino", label: "Not Hispanic or Latino" },
+      { code: "declined", label: "Declined to answer" },
+      { code: "unknown", label: "Unknown" }
+    ];
+    module.exports = {
+      RACE_CODES,
+      ETHNICITY_CODES,
+      INTERVENTION_TYPES: ["outreach", "screening_sbirt", "assessment", "intake", "care_coordination", "warm_handoff", "referral", "case_management", "harm_reduction", "naloxone_distribution", "peer_support", "crisis_response", "post_overdose_follow_up", "transport", "housing_assistance", "benefits_enrollment", "employment_support", "family_support", "education", "court_or_probation", "hospital_or_ed_visit", "jail_in_reach", "recovery_check_in", "discharge_planning", "other"],
+      // The services that can be recorded with no identified client: street outreach and community naloxone
+      // distribution (a kit handed to a stranger). Every other type is work with a person on the caseload, and
+      // needs the client (server/routes/interventions.js and the visit form enforce the same list).
+      CLIENTLESS_INTERVENTION_TYPES: ["outreach", "naloxone_distribution"],
+      LOCATIONS: ["office", "field", "home", "phone", "telehealth", "hospital", "emergency_dept", "jail", "court", "shelter", "treatment_facility", "community", "other"],
+      MODALITIES: ["in_person", "phone", "video", "text", "email", "collateral"],
+      OUTCOMES: ["completed", "partial", "client_declined", "no_show", "unable_to_locate", "rescheduled", "crisis_resolved", "transported", "admitted", "other"],
+      STAGES: ["precontemplation", "contemplation", "preparation", "action", "maintenance", "relapse"],
+      CALL_CONTACT_TYPES: ["client", "family", "provider", "agency", "hospital", "law_enforcement", "hotline", "pharmacy", "insurance", "other"],
+      CALL_OUTCOMES: ["reached", "voicemail", "no_answer", "busy", "wrong_number", "disconnected", "callback_scheduled", "crisis_escalated"],
+      // A contact logged under calls is either a phone call or a text message; a text has its own outcomes,
+      // because "voicemail" and "busy" mean nothing to a text and "no reply" means nothing to a call.
+      CONTACT_METHODS: ["phone", "text"],
+      TEXT_OUTCOMES: ["replied", "sent", "no_reply", "undeliverable", "wrong_number", "opted_out"],
+      TIME_CATEGORIES: ["direct_service", "documentation", "travel", "care_coordination", "outreach", "meeting", "training", "supervision", "admin", "on_call"],
+      RESOURCE_CATEGORIES: ["detox_withdrawal_mgmt", "residential", "inpatient", "partial_hospitalization", "intensive_outpatient", "outpatient", "mat_otp", "mat_obot", "sober_living", "housing", "shelter", "mental_health", "primary_care", "harm_reduction", "syringe_services", "naloxone", "crisis_line", "transportation", "employment", "legal", "food", "benefits", "peer_support", "recovery_community", "family_support", "pregnancy_parenting", "veterans", "other"],
+      REFERRAL_STATUSES: ["pending", "contacted", "accepted", "waitlisted", "scheduled", "admitted", "declined_by_client", "declined_by_provider", "no_show", "completed", "closed"],
+      BUDGET_CATEGORIES: ["staffing", "client_assistance", "transportation", "naloxone_supplies", "harm_reduction_supplies", "housing_assistance", "treatment_fees", "medication", "phones_communication", "food_basic_needs", "ids_documents", "training", "outreach_materials", "supplies", "indirect", "other"],
+      FUNDING_TYPES: ["opioid_settlement", "sor_grant", "samhsa", "state_block_grant", "county_general", "medicaid", "foundation", "other"],
+      // 'handoff' is the shift hand-off note (what the next worker on needs to know), 'safety_plan' a structured
+      // safety plan (see SECTIONS in public/views/notes.js); both are ordinary notes as far as access rules go.
+      NOTE_FORMATS: ["narrative", "SOAP", "DAP", "BIRP", "GIRP", "intake", "progress", "discharge", "contact", "collateral", "crisis", "supervision", "handoff", "safety_plan"],
+      // part2_* are 42 CFR Part 2 consents (§2.31): every element is required of them. part2_tpo is the 2024
+      // rule's single consent for all future treatment, payment and health care operations; part2_counseling_notes
+      // is the separate consent SUD counseling notes need (§2.31(b)); part2_proceedings is the stand-alone consent
+      // for use in a civil, criminal, administrative or legislative proceeding (§2.31(d)), which may not be
+      // combined with any other. 'roi' is a general release, which Part 2 says is not sufficient on its own.
+      CONSENT_TYPES: ["part2_disclosure", "part2_tpo", "part2_counseling_notes", "part2_proceedings", "roi", "treatment", "telehealth", "contact_preferences", "research", "photo_media"],
+      PART2_CONSENT_TYPES: ["part2_disclosure", "part2_tpo", "part2_counseling_notes", "part2_proceedings"],
+      // The categories of information a consent can cover, recorded as codes (consents.info_categories) beside
+      // the free-text scope the signed form carries, so that an automated disclosure (the FHIR API) shares only
+      // what the consent covers (server/disclosure.js CATEGORY_OF_FHIR_TYPE). 'all' covers every category.
+      CONSENT_INFO_CATEGORIES: ["demographics", "encounters", "diagnoses_assessments", "referrals", "tasks", "documents", "risk_overdose", "all"],
+      CONSENT_INFO_CATEGORY_LABELS: {
+        demographics: "Identity and contact details (name, date of birth, address, phone, Medi-Cal ID)",
+        encounters: "Attendance and services (episodes of care, visits, calls)",
+        diagnoses_assessments: "SUD diagnosis and assessments (problems, ASAM, screening results)",
+        referrals: "Referrals and care coordination",
+        tasks: "Tasks and follow-ups",
+        documents: "Signed notes \u2014 titles and dates only, never their text",
+        risk_overdose: "Risk level and overdose events",
+        all: "All of the above"
+      },
+      CONSENT_SIGNERS: ["patient", "parent_or_guardian", "personal_representative", "court_appointed_guardian"],
+      COURT_ORDER_TYPES: ["noncriminal_2_64", "criminal_patient_2_65", "program_investigation_2_66", "undercover_2_67"],
+      PART2_NOTICE_METHODS: ["in_person_paper", "electronic", "mail", "verbal_with_copy"],
+      // 42 CFR §2.32(a)(1) as amended by the 2024 final rule (89 FR 12472): the notice that must accompany
+      // every disclosure made with the patient's written consent. PART2_NOTICE_SHORT is §2.32(a)(2)'s
+      // abbreviated form, used as the label on screens and printouts.
+      PART2_NOTICE_VERSION: "2024",
+      PART2_REDISCLOSURE_NOTICE: "This record which has been disclosed to you is protected by Federal confidentiality rules (42 CFR part 2). These rules prohibit you from using or disclosing this record, or testimony that describes the information contained in this record, in any civil, criminal, administrative, or legislative proceedings by any Federal, State, or local authority, against the patient, unless authorized by the consent of the patient, except as provided at 42 CFR 2.12(c)(5) or as authorized by a court in accordance with 42 CFR 2.64 or 2.65. In addition, the Federal rules prohibit you from making any other use or disclosure of this record unless at least one of the following applies: (i) Further use or disclosure is expressly permitted by the written consent of the individual whose information is being disclosed in this record or as otherwise permitted by 42 CFR part 2. (ii) You are a covered entity or business associate and have received the record for treatment, payment, or health care operations, or (iii) You have received the record from a covered entity or business associate as permitted by 45 CFR part 164, subparts A and E. A general authorization for the release of medical or other information is NOT sufficient to meet the required elements of written consent to further use or redisclose the record (see 42 CFR 2.31).",
+      PART2_NOTICE_SHORT: "42 CFR part 2 prohibits unauthorized use or disclosure of these records.",
+      SUBSTANCES: ["opioids_fentanyl", "opioids_heroin", "opioids_rx", "alcohol", "methamphetamine", "cocaine", "benzodiazepines", "cannabis", "synthetic_cannabinoids", "xylazine", "nicotine", "other", "unknown"],
+      SERVICE_TAGS: ["detox", "residential", "inpatient", "partial_hospitalization", "intensive_outpatient", "outpatient", "mat_buprenorphine", "mat_methadone", "mat_naltrexone", "medication_management", "individual_counseling", "group_counseling", "family_program", "peer_support", "case_management", "mental_health", "trauma_informed", "co_occurring", "medical_care", "harm_reduction", "naloxone", "syringe_services", "housing", "sober_living", "employment", "legal_help", "transportation", "childcare", "telehealth", "walk_in", "same_day_intake", "crisis_24_7", "aftercare", "faith_based", "spanish_speaking"],
+      POPULATIONS: ["adults", "adolescents", "women", "men", "pregnant_parenting", "families", "veterans", "lgbtq", "justice_involved", "unhoused", "older_adults", "native_american", "spanish_speakers", "deaf_hard_of_hearing"],
+      FORM_CATEGORIES: ["consent_release", "intake_screening", "assessment", "treatment_plan", "referral", "assistance_request", "transportation", "housing", "benefits", "discharge", "incident", "grievance", "other"],
+      DOCUMENT_CATEGORIES: ["policy", "procedure", "contract"],
+      FORM_FIELD_TYPES: ["text", "textarea", "date", "number", "checkbox", "select", "signature", "section", "note"],
+      FORM_AUTOFILL: ["client.full_name", "client.first_name", "client.last_name", "client.preferred_name", "client.dob", "client.phone", "client.email", "client.address", "client.city", "client.zip", "client.client_code", "client.gender", "client.pronouns", "client.insurance", "client.medicaid_id", "client.emergency_contact", "client.primary_substance", "client.mat_status", "client.intake_date", "worker.name", "worker.title", "org.name", "org.county", "today"],
+      // The overdose form's "What happened" and "Given by". The kinds are fixed by a CHECK constraint on
+      // overdose_events.kind and each drives a count, so Settings → Lists can reword them but not add to them.
+      OVERDOSE_KINDS: ["overdose", "reversal", "fatal"],
+      ADMINISTERED_BY: ["bystander", "first_responder", "staff", "self", "family", "unknown"],
+      // Why an episode of care ended ('deceased' also marks the client deceased: server/routes/episodes.js).
+      DISCHARGE_REASONS: ["completed", "transferred", "incarcerated", "moved", "lost_contact", "declined", "deceased", "administrative", "other"],
+      // A referral outcome's "If it did not happen, why" (stored encrypted in referrals.barrier_enc).
+      REFERRAL_BARRIERS: ["none", "transportation", "insurance", "waitlist", "no_beds", "client_declined", "childcare", "documentation", "legal", "phone_access", "other"],
+      ASAM: ["0.5", "1.0", "2.1", "2.5", "3.1", "3.3", "3.5", "3.7", "4.0", "OTP", "unknown"],
+      // Problem list, care plan, ASAM dimensions and the screening instruments (server/clinical.js).
+      Z_CODES: CL.Z_CODES,
+      PROBLEM_STATUSES: CL.PROBLEM_STATUSES,
+      PROBLEM_SOURCES: CL.PROBLEM_SOURCES,
+      GOAL_STATUSES: CL.GOAL_STATUSES,
+      STEP_OWNERS: CL.STEP_OWNERS,
+      STEP_STATUSES: CL.STEP_STATUSES,
+      ASAM_DIMENSIONS: CL.ASAM_DIMENSIONS,
+      ASAM_RATINGS: CL.ASAM_RATINGS,
+      ASAM_DISCREPANCY_REASONS: CL.ASAM_DISCREPANCY_REASONS,
+      INSTRUMENTS: CL.INSTRUMENTS
+    };
   }
 });
 
@@ -9934,6 +9616,1211 @@ var require_auth = __commonJS({
   }
 });
 
+// server/disclosure.js
+var require_disclosure = __commonJS({
+  "server/disclosure.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var C = require_constants();
+    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
+    var { badRequest, forbidden, HttpError: HttpError3 } = require_http();
+    var BASES = ["consent", "court_order", "medical_emergency", "qsoa", "audit_evaluation", "research", "crime_on_premises", "child_abuse_report", "other"];
+    var NEEDS_JUSTIFICATION = ["other", "medical_emergency", "crime_on_premises", "child_abuse_report"];
+    var OVERRIDE_BASES = ["other", "research", "audit_evaluation", "crime_on_premises", "child_abuse_report"];
+    var AGREEMENT_KINDS = { qsoa: "qualified service organization agreement", research: "research approval", audit_evaluation: "audit or evaluation approval" };
+    var REFERRAL_BASES = ["consent", "medical_emergency", "court_order", "other"];
+    var LEGACY_CONSENT_CUTOFF = "2026-02-16";
+    var SYSTEM_BASES = ["export", "state_reporting"];
+    var STATE_REPORTING = {
+      basis: "state_reporting",
+      recipient: "California Department of Health Care Services (DHCS) \u2014 CalOMS Tx",
+      purpose: "State reporting (CalOMS Tx): treatment admission, discharge and annual update data required by law (HIPAA \xA7164.512(a); 42 CFR \xA72.53)"
+    };
+    var MIN_JUSTIFICATION = 20;
+    var EXPORT_BASES = ["consent", "audit_evaluation", "research", "qsoa", "internal"];
+    var RESTRICTION_EXEMPT = ["court_order", "medical_emergency", "child_abuse_report", "crime_on_premises", "state_reporting"];
+    function part2Program() {
+      return db3.getSetting("part2_program", "1") !== "0";
+    }
+    function notice() {
+      return { version: C.PART2_NOTICE_VERSION, text: C.PART2_REDISCLOSURE_NOTICE, short: C.PART2_NOTICE_SHORT };
+    }
+    function disclosingConsentTypes() {
+      return part2Program() ? C.PART2_CONSENT_TYPES : [...C.PART2_CONSENT_TYPES, "roi", "research"];
+    }
+    function fileConsentTypes() {
+      return disclosingConsentTypes().filter((t) => t !== "part2_proceedings" && t !== "part2_counseling_notes");
+    }
+    function fileNotice({ short = false } = {}) {
+      if (!part2Program()) return null;
+      const n = notice();
+      return short ? n.short : `${n.short} NOTICE TO RECIPIENT (42 CFR \xA72.32): ${n.text}`;
+    }
+    function missingPart2Elements(v) {
+      const missing = [];
+      if (!v.discloser) missing.push("who may make the disclosure");
+      if (!v.recipient) missing.push("the recipient (a name, or a class of recipients)");
+      if (!v.purpose) missing.push("the purpose");
+      if (!v.scope) missing.push("what information is covered (scope)");
+      if (!v.expires_at && !v.expires_event) missing.push("an expiration date or event");
+      if (!v.document_ref && !v.signed_on_paper && !v.witness) missing.push('evidence it was signed (a document reference, a witness, or "signed on paper")');
+      if (v.signer_relationship !== "patient" && !v.signer_name) missing.push("the name of the person who signed for the patient");
+      if (!v.revocation_right_given) missing.push("confirmation that the consent states the right to revoke it and how");
+      if (!v.redisclosure_notice_given) missing.push("confirmation that the redisclosure statement was given (\xA72.32)");
+      if (!v.refusal_consequences_given) missing.push("confirmation that the consent states the consequences of refusing to sign");
+      return missing;
+    }
+    function missingLegacyElements(v) {
+      const missing = [];
+      if (!v.recipient) missing.push("the recipient");
+      if (!v.purpose) missing.push("the purpose");
+      if (!v.scope) missing.push("what information is covered (scope)");
+      if (!v.expires_at && !v.expires_event) missing.push("an expiration date or event");
+      if (!v.document_ref && !v.signed_on_paper && !v.witness) missing.push('evidence it was signed (a document reference, a witness, or "signed on paper")');
+      if (String(v.signed_at || "") >= LEGACY_CONSENT_CUTOFF) missing.push(`the 2024 elements (it was signed on or after ${LEGACY_CONSENT_CUTOFF}, when the 2024 rule's element list became mandatory)`);
+      return missing;
+    }
+    var dec2 = (v) => {
+      if (!v) return "";
+      try {
+        return decrypt3(v);
+      } catch {
+        return "";
+      }
+    };
+    function consentValues(row) {
+      return {
+        discloser: row.discloser,
+        recipient: dec2(row.recipient_enc),
+        purpose: dec2(row.purpose_enc),
+        scope: dec2(row.scope_enc),
+        expires_at: row.expires_at,
+        expires_event: row.expires_event,
+        document_ref: row.document_ref,
+        signed_on_paper: row.signed_on_paper,
+        witness: row.witness,
+        signer_relationship: row.signer_relationship,
+        signer_name: dec2(row.signer_name_enc),
+        revocation_right_given: row.revocation_right_given,
+        redisclosure_notice_given: row.redisclosure_notice_given,
+        refusal_consequences_given: row.refusal_consequences_given,
+        signed_at: row.signed_at
+      };
+    }
+    function consentElementProblems(row) {
+      if (!C.PART2_CONSENT_TYPES.includes(row.type)) return [];
+      const v = consentValues(row);
+      return row.rule_version === "2024" ? missingPart2Elements(v) : missingLegacyElements(v);
+    }
+    function activeConsent(clientId, consentId, { elements = true } = {}) {
+      if (!consentId) return null;
+      const row = db3.one(`SELECT * FROM consents WHERE id=? AND client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, consentId, clientId) || null;
+      if (row && elements && consentElementProblems(row).length) return null;
+      return row;
+    }
+    function courtOrderProblems(o) {
+      const out2 = [];
+      if (o.status !== "active") out2.push("it has been vacated");
+      if (o.expires_at && o.expires_at < (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)) out2.push("it has expired");
+      if (!o.findings_recorded) out2.push("it does not record the good-cause findings the regulation requires (\xA72.64(d))");
+      if (!o.notice_requirement_met) out2.push("the notice and opportunity to respond the regulation requires was not given");
+      return out2;
+    }
+    function agreedRestrictions(clientId) {
+      return db3.one(`SELECT COUNT(*) n FROM patient_requests WHERE client_id=? AND kind='restriction' AND status='fulfilled'`, clientId).n;
+    }
+    var normalise = (s) => String(s || "").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    var splitAliases = (s) => String(s || "").split(/[;\n]/).map((x) => x.trim()).filter(Boolean);
+    function aliasGroups() {
+      const groups = db3.all(`SELECT organisation, aliases FROM disclosure_agreements`).map((a) => [a.organisation, ...splitAliases(a.aliases)]);
+      for (const r of db3.all(`SELECT value FROM settings WHERE key LIKE 'fhir_client:%'`)) {
+        try {
+          const reg = JSON.parse(r.value);
+          if (reg && reg.recipient) groups.push([reg.recipient, ...Array.isArray(reg.aliases) ? reg.aliases : []]);
+        } catch {
+        }
+      }
+      return groups;
+    }
+    function recipientNames(recipient) {
+      const given = (Array.isArray(recipient) ? recipient : [recipient]).map((x) => String(x || "").trim()).filter(Boolean);
+      const seen2 = new Set(given.map(normalise));
+      const out2 = [...given];
+      for (const group of aliasGroups()) {
+        if (!group.some((n) => seen2.has(normalise(n)))) continue;
+        for (const n of group) if (!seen2.has(normalise(n))) {
+          seen2.add(normalise(n));
+          out2.push(n);
+        }
+      }
+      return out2;
+    }
+    function consentNamesRecipient({ type, recipient }, names) {
+      const r = normalise(recipient);
+      const ns = names.map(normalise).filter(Boolean);
+      if (!r || !ns.length) return false;
+      if (type === "part2_tpo") return ns.some((n) => ` ${r} `.includes(` ${n} `));
+      return ns.includes(r);
+    }
+    function isInternalRecipient(recipient) {
+      const r = normalise(recipient);
+      if (!r) return false;
+      if (r === normalise(db3.getSetting("org_name", ""))) return true;
+      return db3.all(`SELECT username, display_name FROM users WHERE is_active=1`).some((u) => normalise(u.username) === r || normalise(u.display_name) === r);
+    }
+    function agreementProblems(a) {
+      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const out2 = [];
+      if (a.status !== "active") out2.push("it has been ended");
+      if (a.expires_at && a.expires_at < today) out2.push("it has expired");
+      if (a.agreement_date > today) out2.push("it is not in force yet");
+      if (a.kind !== "qsoa" && !a.approving_body) out2.push("it does not name the IRB or approving body");
+      return out2;
+    }
+    function agreementNames(a) {
+      return [a.organisation, ...splitAliases(a.aliases)];
+    }
+    function requireAgreement(basis, agreementId, recipient) {
+      const label = AGREEMENT_KINDS[basis];
+      let a = agreementId ? db3.one(`SELECT * FROM disclosure_agreements WHERE id=?`, agreementId) : null;
+      if (!agreementId) {
+        const names2 = new Set(recipientNames(recipient).map(normalise));
+        a = db3.all(`SELECT * FROM disclosure_agreements WHERE kind=? AND status='active' ORDER BY agreement_date DESC, created_at DESC`, basis).find((x) => !agreementProblems(x).length && agreementNames(x).some((n) => names2.has(normalise(n)))) || null;
+      }
+      if (!a) {
+        throw badRequest(basis === "qsoa" ? "A disclosure to a qualified service organization needs the qualified service organization agreement on file (\xA72.11, \xA72.12(c)(4)): register it under Privacy & Part 2 \u2192 Agreements, and choose it." : `A ${basis === "research" ? "research (\xA72.52)" : "audit or evaluation (\xA72.53)"} disclosure needs the ${label} on file \u2014 the IRB, privacy board or approving body, and its dates: register it under Privacy & Part 2 \u2192 Agreements, and choose it.`, { agreementRequired: basis });
+      }
+      if (a.kind !== basis) throw badRequest(`That is a ${AGREEMENT_KINDS[a.kind]}, not a ${label}.`);
+      const problems = agreementProblems(a);
+      if (problems.length) throw badRequest(`That ${label} cannot authorise a disclosure: ${problems.join("; ")}.`);
+      const names = recipientNames(recipient);
+      if (!names.length) throw badRequest("Name the recipient of the disclosure.");
+      const theirs = new Set(agreementNames(a).map(normalise));
+      if (!names.some((n) => theirs.has(normalise(n)))) {
+        throw new HttpError3(409, `This ${label} is with "${a.organisation}"; it only covers disclosures to that organisation. Name it as the recipient, or choose the agreement with the organisation you are disclosing to.`, { agreementOrganisation: a.organisation });
+      }
+      return a;
+    }
+    function requireBasis(clientId, { consent_id, basis, justification, user, court_order_id, legal_proceeding, counseling_notes, restriction_reviewed, recipient, agreement_id, recipient_override, allowed } = {}) {
+      const b = basis || "consent";
+      if (!BASES.includes(b)) throw badRequest(`"${b}" is not a lawful basis for disclosure`);
+      if (allowed && !allowed.includes(b)) throw badRequest(`A referral can only be made with the client's consent, in a medical emergency, under a court order, or on a supervisor's justified override \u2014 not on a "${b.replace(/_/g, " ")}" basis. Record that disclosure on the client's Consents tab instead.`);
+      const canOverride = require_auth().hasPerm(user, "disclosures:override");
+      if (OVERRIDE_BASES.includes(b) && !canOverride) {
+        throw forbidden(b === "other" ? 'Only a supervisor or administrator can record a disclosure on an "other" basis' : `Only a supervisor or administrator can record a disclosure on a "${b.replace(/_/g, " ")}" basis`);
+      }
+      const proceeding = !!legal_proceeding;
+      const notes = !!counseling_notes;
+      if (proceeding && !["consent", "court_order"].includes(b)) throw badRequest("Information for use in a proceeding against the patient may only be disclosed under a court order issued under 42 CFR \xA72.64/\xA72.65, or the patient's written consent given for that proceeding alone (\xA72.12(d), \xA72.31(d)). A subpoena on its own is not enough.");
+      if (notes && !["consent", "court_order"].includes(b)) throw badRequest("SUD counseling notes may only be disclosed under a consent given for counseling notes alone (\xA72.31(b)), or a court order that expressly covers them.");
+      const why = String(justification || "").trim();
+      let consent = null;
+      let order = null;
+      let agreement = null;
+      let override = false;
+      if (b === "consent") {
+        consent = activeConsent(clientId, consent_id, { elements: false });
+        if (!consent) throw badRequest("A valid, unexpired consent must be selected before information can be shared. Record the consent first, or choose another lawful basis.");
+        if (!disclosingConsentTypes().includes(consent.type)) {
+          throw badRequest(consent.type === "roi" ? "A general release of information is not a 42 CFR Part 2 consent (\xA72.31, \xA72.32). Record a Part 2 consent with every required element, or choose another lawful basis." : `A "${consent.type.replace(/_/g, " ")}" consent does not authorise sharing information. Record a Part 2 consent, or choose another lawful basis.`);
+        }
+        const missing = consentElementProblems(consent);
+        if (missing.length) throw badRequest(`This consent cannot authorise a disclosure: it does not record ${missing.join("; ")}. Record a new consent with every \xA72.31 element.`, { consentIncomplete: missing });
+        if (proceeding && consent.type !== "part2_proceedings") throw badRequest("Information for use in a proceeding against the patient needs a court order, or a consent given for that proceeding alone (\xA72.31(d)); this consent does not cover it.");
+        if (!proceeding && consent.type === "part2_proceedings") throw badRequest("A consent for use in a legal proceeding cannot be combined with any other purpose (\xA72.31(d)); use it only for the proceeding it names.");
+        if (notes && consent.type !== "part2_counseling_notes") throw badRequest("SUD counseling notes need a separate consent given for counseling notes alone (\xA72.31(b)); a treatment, payment and operations consent or a general Part 2 consent does not cover them.");
+        if (!notes && consent.type === "part2_counseling_notes") throw badRequest('A consent for SUD counseling notes covers counseling notes only (\xA72.31(b)); tick "includes SUD counseling notes", or rely on a different consent for other information.');
+        const names = recipientNames(recipient);
+        if (!names.length) throw badRequest("Name the recipient of the disclosure: the consent is checked against it.");
+        const named = dec2(consent.recipient_enc);
+        if (!consentNamesRecipient({ type: consent.type, recipient: named }, names)) {
+          if (!recipient_override) {
+            throw new HttpError3(409, `This consent covers disclosures to "${named}" only; it does not name ${names[0]}. Choose a consent that names this recipient, record a new one, or ask a supervisor to override with a written justification.`, { consentRecipient: named, recipientNotCovered: true });
+          }
+          if (!canOverride) throw forbidden("Only a supervisor or administrator can rely on a consent for a recipient it does not name");
+          if (why.length < MIN_JUSTIFICATION) throw badRequest(`Relying on a consent for a recipient it does not name needs a written justification of at least ${MIN_JUSTIFICATION} characters, which is kept with the disclosure record.`);
+          override = true;
+        }
+      }
+      if (b === "court_order") {
+        order = court_order_id ? db3.one(`SELECT * FROM court_orders WHERE id=? AND client_id=?`, court_order_id, clientId) : null;
+        if (!order) throw badRequest("A disclosure under a court order must name the order: record it on the client's Consents tab (42 CFR subpart E) and choose it. A subpoena on its own does not authorise disclosing a Part 2 record.");
+        const problems = courtOrderProblems(order);
+        if (problems.length) throw badRequest(`That court order cannot authorise a disclosure: ${problems.join("; ")}.`);
+        if (notes && !order.covers_counseling_notes) throw badRequest("That court order does not expressly cover SUD counseling notes.");
+      }
+      if (AGREEMENT_KINDS[b]) agreement = requireAgreement(b, agreement_id, recipient);
+      if (!RESTRICTION_EXEMPT.includes(b) && !restriction_reviewed && agreedRestrictions(clientId)) {
+        throw badRequest("This client has an agreed restriction on how their information is shared (see their Requests tab). Check that this disclosure respects it, then confirm.", { restrictionReview: true });
+      }
+      if (NEEDS_JUSTIFICATION.includes(b) && why.length < MIN_JUSTIFICATION) {
+        throw badRequest(b === "other" ? `Sharing without consent on an "other" basis needs a written justification of at least ${MIN_JUSTIFICATION} characters, which is kept with the disclosure record.` : b === "medical_emergency" ? `A medical emergency disclosure (42 CFR \xA72.51) needs a written justification of at least ${MIN_JUSTIFICATION} characters: the nature of the emergency and who was told.` : `A ${b === "crime_on_premises" ? "report of a crime on the premises or against staff (\xA72.12(c)(5))" : "mandated report of suspected child abuse or neglect (\xA72.12(c)(6))"} needs a written justification of at least ${MIN_JUSTIFICATION} characters: what happened, and what was reported to whom.`);
+      }
+      const kept = override ? `Recipient override (the consent names "${dec2(consent.recipient_enc)}"): ${why}` : why || null;
+      return { basis: b, consent, court_order: order, agreement, justification: kept, legal_proceeding: proceeding, counseling_notes: notes, recipient_override: override };
+    }
+    function requireExportBasis(clientIds, { basis, restriction_reviewed, legal_proceeding, recipient, agreement_id, user } = {}) {
+      if (legal_proceeding) throw badRequest("Records for use in a legal proceeding against a patient are disclosed one client at a time, under a recorded court order or a proceedings-only consent (Consents tab \u2192 Record a disclosure), never as a bulk export.");
+      if (!basis) throw badRequest(`An identified export must state its lawful basis (basis=${EXPORT_BASES.join("|")}); it is written to the accounting of disclosures for every client in the file`);
+      if (!EXPORT_BASES.includes(basis)) throw badRequest(`"${basis}" is not a basis an identified export can be made under (${EXPORT_BASES.join(", ")})`);
+      if (OVERRIDE_BASES.includes(basis) && !require_auth().hasPerm(user, "disclosures:override")) throw forbidden(`Only a supervisor or administrator can make an export on a "${basis.replace(/_/g, " ")}" basis`);
+      if (basis === "internal" && !isInternalRecipient(recipient)) {
+        throw badRequest(`An "internal" export stays within this program (\xA72.12(c)(3)): the recipient must be ${db3.getSetting("org_name", "") || "this program"} or one of its staff (their name or username). A file for anyone else needs another basis.`);
+      }
+      const agreement = AGREEMENT_KINDS[basis] ? requireAgreement(basis, agreement_id, recipient) : null;
+      const consentOf = /* @__PURE__ */ new Map();
+      const excluded = [];
+      if (basis === "consent") {
+        const names = recipientNames(recipient);
+        for (const id of clientIds) {
+          const c = fileConsentFor(id, names);
+          if (c) consentOf.set(id, c.id);
+          else excluded.push(id);
+        }
+      }
+      const out2 = new Set(excluded);
+      requireRestrictionReview(clientIds.filter((id) => !out2.has(id)), restriction_reviewed);
+      return { basis, agreement, consentOf, excluded };
+    }
+    function fileConsentFor(clientId, names) {
+      const types = fileConsentTypes();
+      if (!names.length || !types.length) return null;
+      const rows = db3.all(`SELECT * FROM consents WHERE client_id=? AND type IN (${types.map(() => "?").join(",")}) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now')) ORDER BY signed_at DESC, created_at DESC`, clientId, ...types);
+      return rows.find((c) => !consentElementProblems(c).length && consentNamesRecipient({ type: c.type, recipient: dec2(c.recipient_enc) }, names)) || null;
+    }
+    function requireRestrictionReview(clientIds, restriction_reviewed) {
+      if (restriction_reviewed || !clientIds.length) return;
+      const restricted = new Set(db3.all(`SELECT DISTINCT client_id FROM patient_requests WHERE kind='restriction' AND status='fulfilled'`).map((r) => r.client_id));
+      const n = clientIds.filter((id) => restricted.has(id)).length;
+      if (n) throw badRequest(`${n} client${n === 1 ? "" : "s"} in this export ${n === 1 ? "has" : "have"} an agreed restriction on how their information is shared. Check the export respects it, then confirm (restriction_reviewed=1).`, { restrictionReview: true, restrictedClients: n });
+    }
+    function record({ id: givenId = null, clientId, consentId = null, courtOrderId = null, agreementId = null, recipientOverride = false, legalProceeding = false, counselingNotes = false, recipient, purpose, what, method = null, basis = "consent", justification = null, source = "manual", sourceRef = null, disclosedAt = null, user, ip }) {
+      const id = givenId || uuid2();
+      const at = disclosedAt || db3.now();
+      const noticeVersion = part2Program() ? C.PART2_NOTICE_VERSION : null;
+      db3.run(
+        `INSERT INTO disclosures(id,client_id,consent_id,recipient_enc,purpose_enc,what_enc,method,disclosed_at,disclosed_by,basis,justification_enc,source,source_ref,court_order_id,legal_proceeding,counseling_notes,notice_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        id,
+        clientId,
+        consentId,
+        encrypt3(String(recipient)),
+        encrypt3(String(purpose)),
+        encrypt3(String(what)),
+        method,
+        at,
+        user.id,
+        basis,
+        justification ? encrypt3(String(justification)) : null,
+        source,
+        sourceRef,
+        courtOrderId,
+        legalProceeding ? 1 : 0,
+        counselingNotes ? 1 : 0,
+        noticeVersion
+      );
+      audit3.log({ user, action: "disclosure.record", entity: "disclosure", entityId: id, clientId, ip, details: {
+        basis,
+        source,
+        consent_id: consentId || void 0,
+        court_order_id: courtOrderId || void 0,
+        agreement_id: agreementId || void 0,
+        recipient_override: recipientOverride ? true : void 0,
+        justified: justification ? true : void 0,
+        legal_proceeding: legalProceeding ? true : void 0,
+        counseling_notes: counselingNotes ? true : void 0,
+        notice: noticeVersion || void 0
+      } });
+      return id;
+    }
+    function recordStateReport({ clientIds, what, sourceRef, user, ip }) {
+      return clientIds.map((clientId) => record({ clientId, recipient: STATE_REPORTING.recipient, purpose: STATE_REPORTING.purpose, what, method: "export", basis: STATE_REPORTING.basis, source: "caloms", sourceRef, user, ip }));
+    }
+    function present(row) {
+      if (!row) return null;
+      const out2 = { ...row };
+      out2.recipient = row.recipient_enc ? decrypt3(row.recipient_enc) : null;
+      out2.purpose = row.purpose_enc ? decrypt3(row.purpose_enc) : null;
+      out2.what = row.what_enc ? decrypt3(row.what_enc) : null;
+      out2.justification = row.justification_enc ? decrypt3(row.justification_enc) : null;
+      delete out2.recipient_enc;
+      delete out2.purpose_enc;
+      delete out2.what_enc;
+      delete out2.justification_enc;
+      return out2;
+    }
+    function accounting(clientId) {
+      const client = db3.one(`SELECT id, client_code FROM clients WHERE id=?`, clientId);
+      const disclosures = db3.all(`SELECT d.*, u.display_name AS disclosed_by_name, u.username AS disclosed_by_username, co.order_type AS court_order_type FROM disclosures d JOIN users u ON u.id=d.disclosed_by LEFT JOIN court_orders co ON co.id=d.court_order_id WHERE d.client_id=? ORDER BY d.disclosed_at`, clientId).map(present);
+      const consents = db3.all(`SELECT id, type, recipient_enc, purpose_enc, signed_at, expires_at, expires_event, revoked_at, rule_version FROM consents WHERE client_id=? ORDER BY signed_at`, clientId).map((c) => ({ id: c.id, type: c.type, recipient: c.recipient_enc ? decrypt3(c.recipient_enc) : null, purpose: c.purpose_enc ? decrypt3(c.purpose_enc) : null, signed_at: c.signed_at, expires_at: c.expires_at, expires_event: c.expires_event, revoked_at: c.revoked_at, rule_version: c.rule_version }));
+      return { client_id: client?.id, client_code: client?.client_code, generated_at: db3.now(), part2_program: part2Program(), notice: part2Program() ? notice() : null, disclosures, consents };
+    }
+    var FHIR_PURPOSES = {
+      TREAT: { display: "Treatment", words: ["treatment", "care coordination", "coordination of care", "continuity of care"] },
+      HPAYMT: { display: "Payment", words: ["payment", "billing", "claims"] },
+      HOPERAT: { display: "Health care operations", words: ["operations"] }
+    };
+    var FHIR_CONSENT_TYPES = ["part2_disclosure", "part2_tpo", "roi"];
+    function fhirConsentTypes() {
+      const ok = disclosingConsentTypes();
+      return FHIR_CONSENT_TYPES.filter((t) => ok.includes(t));
+    }
+    function isTpo(purpose) {
+      const p = ` ${normalise(purpose)} `;
+      return / tpo /.test(p) || p.includes("treatment") && p.includes("payment") && p.includes("operations");
+    }
+    function consentCovers({ type, recipient, purpose, categories }, { recipients, purposeOfUse, category }) {
+      if (type !== void 0 && !fhirConsentTypes().includes(type)) return false;
+      if (category !== void 0 && !categoriesCover(categories, category)) return false;
+      if (!consentNamesRecipient({ type, recipient }, recipients)) return false;
+      if (type === "part2_tpo") return !!FHIR_PURPOSES[purposeOfUse];
+      if (isTpo(purpose)) return true;
+      const p = ` ${normalise(purpose)} `;
+      return (FHIR_PURPOSES[purposeOfUse]?.words || []).some((w) => p.includes(` ${normalise(w)} `));
+    }
+    var CATEGORY_OF_FHIR_TYPE = {
+      Patient: "demographics",
+      EpisodeOfCare: "encounters",
+      Encounter: "encounters",
+      ServiceRequest: "referrals",
+      Task: "tasks",
+      Observation: "risk_overdose",
+      DocumentReference: "documents",
+      // The Consent resource is the authorisation itself: listed for any client whose consent covers something.
+      Consent: "*"
+    };
+    function parseCategories(v) {
+      const list = Array.isArray(v) ? v : String(v || "").split(",");
+      return new Set(list.map((x) => String(x).trim()).filter((x) => C.CONSENT_INFO_CATEGORIES.includes(x)));
+    }
+    function categoriesCover(stored, category) {
+      const cats = parseCategories(stored);
+      if (!cats.size) return false;
+      return category === "*" || cats.has("all") || cats.has(category);
+    }
+    function generalScope(text) {
+      const t = normalise(text).replace(/\b(my|of|the|information|records?|in|sud|substance use|treatment|and|file|chart|client|patient)\b/g, " ").replace(/\s+/g, " ").trim();
+      return ["all", "everything", "entire", "complete", "whole", "full", "general", "any and all"].includes(t);
+    }
+    function consentPurposeCodes({ type, purpose }) {
+      return Object.keys(FHIR_PURPOSES).filter((code) => type === "part2_tpo" || consentCovers({ recipient: "x", purpose }, { recipients: ["x"], purposeOfUse: code }));
+    }
+    var coverageCache = /* @__PURE__ */ new Map();
+    function fhirCoverage({ cacheKey, recipients, purposeOfUse, resourceType }) {
+      const category = CATEGORY_OF_FHIR_TYPE[resourceType] || "*";
+      const stamp2 = db3.one(`SELECT (SELECT COUNT(*) FROM consents) n, (SELECT MAX(updated_at) FROM consents) u,
+    (SELECT COUNT(*) FROM patient_requests) rn, (SELECT MAX(updated_at) FROM patient_requests) ru`);
+      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const types = fhirConsentTypes();
+      const key = `${stamp2.n}|${stamp2.u}|${stamp2.rn}|${stamp2.ru}|${types.join(",")}|${today}|${recipients.join("")}|${purposeOfUse}|${category}`;
+      const hit = coverageCache.get(`${cacheKey}|${category}`);
+      if (hit && hit.key === key) return hit.map;
+      const map = /* @__PURE__ */ new Map();
+      const restricted = new Set(db3.all(`SELECT DISTINCT client_id FROM patient_requests WHERE kind='restriction' AND status='fulfilled'`).map((r) => r.client_id));
+      const rows = types.length ? db3.all(`SELECT k.* FROM consents k JOIN clients c ON c.id=k.client_id
+    WHERE k.type IN (${types.map(() => "?").join(",")}) AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= date('now'))
+      AND c.deleted_at IS NULL AND c.merged_into IS NULL ORDER BY k.signed_at, k.created_at`, ...types) : [];
+      for (const row of rows) {
+        if (restricted.has(row.client_id)) continue;
+        if (consentElementProblems(row).length) continue;
+        let plain;
+        try {
+          plain = { type: row.type, recipient: row.recipient_enc ? decrypt3(row.recipient_enc) : "", purpose: row.purpose_enc ? decrypt3(row.purpose_enc) : "", categories: row.info_categories };
+        } catch {
+          continue;
+        }
+        if (consentCovers(plain, { recipients, purposeOfUse, category })) map.set(row.client_id, row.id);
+      }
+      if (coverageCache.size > 100) coverageCache.clear();
+      coverageCache.set(`${cacheKey}|${category}`, { key, map });
+      return map;
+    }
+    function recordFhir({ perClient, recipient, purposeOfUse, sourceRef, user, ip }) {
+      if (!perClient.size) return 0;
+      const purpose = `${FHIR_PURPOSES[purposeOfUse]?.display || purposeOfUse} (FHIR purpose of use ${purposeOfUse})`;
+      db3.transaction(() => {
+        for (const [clientId, { consentId, what }] of perClient) {
+          record({ clientId, consentId, recipient, purpose, what, method: "FHIR API", basis: "consent", source: "fhir", sourceRef, user, ip });
+        }
+      });
+      return perClient.size;
+    }
+    module.exports = {
+      BASES,
+      EXPORT_BASES,
+      SYSTEM_BASES,
+      STATE_REPORTING,
+      NEEDS_JUSTIFICATION,
+      OVERRIDE_BASES,
+      REFERRAL_BASES,
+      AGREEMENT_KINDS,
+      LEGACY_CONSENT_CUTOFF,
+      MIN_JUSTIFICATION,
+      part2Program,
+      notice,
+      fileNotice,
+      disclosingConsentTypes,
+      fileConsentTypes,
+      activeConsent,
+      courtOrderProblems,
+      agreedRestrictions,
+      missingPart2Elements,
+      missingLegacyElements,
+      consentElementProblems,
+      consentValues,
+      normalise,
+      recipientNames,
+      consentNamesRecipient,
+      isInternalRecipient,
+      agreementProblems,
+      agreementNames,
+      requireAgreement,
+      fileConsentFor,
+      requireBasis,
+      requireExportBasis,
+      requireRestrictionReview,
+      record,
+      recordStateReport,
+      present,
+      accounting,
+      FHIR_PURPOSES,
+      FHIR_CONSENT_TYPES,
+      fhirConsentTypes,
+      consentCovers,
+      consentPurposeCodes,
+      fhirCoverage,
+      recordFhir,
+      CATEGORY_OF_FHIR_TYPE,
+      parseCategories,
+      categoriesCover,
+      generalScope
+    };
+  }
+});
+
+// server/db.js
+var require_db = __commonJS({
+  "server/db.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var path = (init_path(), __toCommonJS(path_exports));
+    var { DatabaseSync: DatabaseSync2 } = (init_sqlite(), __toCommonJS(sqlite_exports));
+    var config = require_config();
+    var db3;
+    function open2(dbPath = config.dbPath) {
+      if (db3) return db3;
+      if (dbPath !== ":memory:") fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+      db3 = new DatabaseSync2(dbPath);
+      try {
+        db3.exec("PRAGMA busy_timeout = 5000");
+        initialise(db3, fs.readFileSync(path.join("/", "schema.sql"), "utf8"), dbPath);
+      } catch (e) {
+        try {
+          db3.close();
+        } catch {
+        }
+        db3 = void 0;
+        throw e;
+      }
+      if (dbPath !== ":memory:") for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+        try {
+          fs.chmodSync(f, 384);
+        } catch {
+        }
+      }
+      return db3;
+    }
+    function openWith(bytes3) {
+      if (db3) {
+        try {
+          db3.close();
+        } catch {
+        }
+        db3 = void 0;
+      }
+      db3 = bytes3 ? new DatabaseSync2(":memory:", bytes3) : new DatabaseSync2(":memory:");
+      try {
+        db3.exec("PRAGMA busy_timeout = 5000");
+      } catch {
+      }
+      initialise(db3, safeSchema());
+      return db3;
+    }
+    function safeSchema() {
+      try {
+        return fs.readFileSync(path.join("/", "schema.sql"), "utf8");
+      } catch {
+        return require_schema_text();
+      }
+    }
+    var addColumn = (d, table, col, def) => {
+      const cols2 = d.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+      if (!cols2.includes(col)) d.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+    };
+    var tableCols = (d, table) => d.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+    var tableExists = (d, table) => !!d.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(table);
+    function encryptColumn(d, table, oldCol, newCol) {
+      if (!tableExists(d, table)) return;
+      const cols2 = tableCols(d, table);
+      if (!cols2.includes(oldCol)) return;
+      const { encrypt: encrypt3 } = require_crypto();
+      addColumn(d, table, newCol, "TEXT");
+      const rows = d.prepare(`SELECT id, ${oldCol} AS v FROM ${table} WHERE ${oldCol} IS NOT NULL AND ${oldCol} <> ''`).all();
+      const upd = d.prepare(`UPDATE ${table} SET ${newCol}=? WHERE id=?`);
+      for (const r of rows) upd.run(encrypt3(String(r.v)), r.id);
+      d.exec(`ALTER TABLE ${table} DROP COLUMN ${oldCol}`);
+    }
+    function rebuildTable(d, schemaText, table, coalesce = {}) {
+      if (!tableExists(d, table)) return;
+      const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\(([\\s\\S]*?)\\n\\);`));
+      if (!m) throw new Error(`rebuildTable: no definition for ${table} in schema`);
+      const tmp = `__new_${table}`;
+      d.exec(`DROP TABLE IF EXISTS ${tmp}`);
+      d.exec(`CREATE TABLE ${tmp} (${m[1]}
+)`);
+      const oldCols = tableCols(d, table), newCols = tableCols(d, tmp);
+      const shared = newCols.filter((c) => oldCols.includes(c));
+      const select = shared.map((c) => coalesce[c] ? `COALESCE(${c}, ${coalesce[c]})` : c).join(", ");
+      d.exec(`INSERT INTO ${tmp}(${shared.join(", ")}) SELECT ${select} FROM ${table}`);
+      d.exec(`DROP TABLE ${table}`);
+      d.exec(`ALTER TABLE ${tmp} RENAME TO ${table}`);
+      for (const line of schemaText.split("\n")) {
+        const im = line.match(new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${table}\\(`));
+        if (im) d.exec(line.trim());
+      }
+    }
+    var migrations = [
+      // 1: initial schema (created by schema.sql)
+      () => {
+      },
+      // 2: sync support — updated_at on tables that lacked it, tombstones for hard deletes
+      (d) => {
+        for (const t of ["assignments", "consents", "disclosures", "budget_lines", "note_addenda", "imports", "import_items"]) {
+          addColumn(d, t, "updated_at", "TEXT");
+          d.exec(`UPDATE ${t} SET updated_at = created_at WHERE updated_at IS NULL`);
+        }
+        d.exec(`CREATE TABLE IF NOT EXISTS tombstones (table_name TEXT NOT NULL, id TEXT NOT NULL, deleted_at TEXT NOT NULL, PRIMARY KEY (table_name, id))`);
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_tombstones_at ON tombstones(deleted_at)`);
+      },
+      // 3: treatment center profiles — summary/service tags on resources, photo gallery table
+      (d) => {
+        for (const [c, t] of [["summary", "TEXT"], ["service_tags", "TEXT"], ["levels_of_care", "TEXT"], ["populations", "TEXT"], ["intake_process", "TEXT"], ["cost_notes", "TEXT"]]) addColumn(d, "resources", c, t);
+        d.exec(`CREATE TABLE IF NOT EXISTS resource_photos (id TEXT PRIMARY KEY, resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE, caption TEXT, content_type TEXT NOT NULL, bytes INTEGER NOT NULL DEFAULT 0, width INTEGER, height INTEGER, data_b64 TEXT NOT NULL, thumb_b64 TEXT, sort_order INTEGER NOT NULL DEFAULT 0, uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_resource_photos ON resource_photos(resource_id, sort_order)`);
+      },
+      // 4: county form library
+      (d) => {
+        d.exec(`CREATE TABLE IF NOT EXISTS form_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, category TEXT NOT NULL DEFAULT 'other', version TEXT, filename TEXT, content_type TEXT, bytes INTEGER NOT NULL DEFAULT 0, file_b64 TEXT, fields_json TEXT NOT NULL DEFAULT '[]', instructions TEXT, is_active INTEGER NOT NULL DEFAULT 1, uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
+        d.exec(`CREATE TABLE IF NOT EXISTS client_forms (id TEXT PRIMARY KEY, client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE, template_id TEXT REFERENCES form_templates(id) ON DELETE SET NULL, template_name TEXT NOT NULL, fields_json TEXT NOT NULL DEFAULT '[]', values_enc TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','completed','void')), completed_at TEXT, completed_by TEXT REFERENCES users(id), created_by TEXT NOT NULL REFERENCES users(id), notes TEXT, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), deleted_at TEXT)`);
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_client_forms_client ON client_forms(client_id)`);
+        d.exec(`CREATE TABLE IF NOT EXISTS client_form_files (id TEXT PRIMARY KEY, client_form_id TEXT NOT NULL REFERENCES client_forms(id) ON DELETE CASCADE, client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE, filename TEXT NOT NULL, content_type TEXT NOT NULL, bytes INTEGER NOT NULL DEFAULT 0, data_enc TEXT NOT NULL, uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_client_form_files ON client_form_files(client_form_id)`);
+      },
+      // 5: PHI that was still in plaintext moves into _enc columns; co-signature, time approval, episodes,
+      //    overdose events, coded race, client-less interventions, and the updated_at indexes sync needs.
+      (d) => {
+        const schemaText = safeSchema();
+        for (const [t, from, to] of [
+          ["clients", "goals", "goals_enc"],
+          ["clients", "flags", "flags_enc"],
+          ["notes", "title", "title_enc"],
+          ["interventions", "summary", "summary_enc"],
+          ["import_items", "title", "title_enc"],
+          ["consents", "recipient", "recipient_enc"],
+          ["consents", "purpose", "purpose_enc"],
+          ["consents", "scope", "scope_enc"],
+          ["disclosures", "disclosed_to", "recipient_enc"],
+          ["disclosures", "purpose", "purpose_enc"],
+          ["disclosures", "info_disclosed", "what_enc"]
+        ]) encryptColumn(d, t, from, to);
+        addColumn(d, "clients", "race_codes", "TEXT");
+        addColumn(d, "users", "requires_cosign", "INTEGER NOT NULL DEFAULT 0");
+        addColumn(d, "users", "supervisor_id", "TEXT REFERENCES users(id)");
+        for (const [c, def] of [["cosign_required", "INTEGER NOT NULL DEFAULT 0"], ["cosigned_by", "TEXT REFERENCES users(id)"], ["cosigned_at", "TEXT"], ["cosignature_hash", "TEXT"], ["cosign_note", "TEXT"]]) addColumn(d, "notes", c, def);
+        for (const [c, def] of [["status", "TEXT NOT NULL DEFAULT 'draft'"], ["submitted_at", "TEXT"], ["approved_by", "TEXT REFERENCES users(id)"], ["approved_at", "TEXT"], ["approval_note", "TEXT"]]) addColumn(d, "time_entries", c, def);
+        addColumn(d, "consents", "revoked_by", "TEXT REFERENCES users(id)");
+        for (const [c, def] of [["consent_revoked", "INTEGER NOT NULL DEFAULT 0"], ["outcome_recorded_at", "TEXT"], ["episode_id", "TEXT REFERENCES episodes(id)"]]) addColumn(d, "referrals", c, def);
+        for (const [c, def] of [["source", "TEXT"], ["source_ref", "TEXT"]]) addColumn(d, "disclosures", c, def);
+        for (const t of ["assignments", "budget_lines", "note_addenda", "imports", "import_items", "consents", "disclosures"])
+          rebuildTable(d, schemaText, t, { updated_at: "created_at" });
+        rebuildTable(d, schemaText, "interventions", { updated_at: "created_at" });
+        for (const t of ["episodes", "overdose_events"]) {
+          const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
+          if (m) d.exec(m[0]);
+        }
+        for (const line of schemaText.split("\n")) if (/^CREATE( UNIQUE)? INDEX IF NOT EXISTS /.test(line.trim())) {
+          try {
+            d.exec(line.trim());
+          } catch {
+          }
+        }
+        if (tableExists(d, "episodes")) {
+          const { uuid: uuid2 } = require_crypto();
+          const open3 = d.prepare(`SELECT id, intake_date, created_at, created_by, referral_source, status, discharge_date, discharge_reason FROM clients WHERE deleted_at IS NULL`).all();
+          const ins = d.prepare(`INSERT INTO episodes(id,client_id,opened_at,opened_by,referral_source,closed_at,discharge_reason,status) VALUES(?,?,?,?,?,?,?,?)`);
+          const has = d.prepare(`SELECT 1 FROM episodes WHERE client_id=?`);
+          for (const c of open3) {
+            if (has.get(c.id)) continue;
+            const closed = c.status === "closed" || c.status === "deceased";
+            ins.run(uuid2(), c.id, c.intake_date || String(c.created_at).slice(0, 10), c.created_by, c.referral_source, closed ? c.discharge_date || c.created_at : null, closed ? c.discharge_reason : null, closed ? "closed" : "open");
+          }
+        }
+      },
+      // 6: coarse blind indexes so search tolerates typos and partial surnames, and duplicate detection has
+      //    something to match on, without putting any name in the clear.
+      (d) => {
+        const schemaText = safeSchema();
+        addColumn(d, "clients", "merged_into", "TEXT REFERENCES clients(id)");
+        addColumn(d, "clients", "name_prefix_idx", "TEXT");
+        addColumn(d, "clients", "name_phonetic_idx", "TEXT");
+        const { decrypt: decrypt3 } = require_crypto();
+        const M = require_clients_model();
+        const upd = d.prepare(`UPDATE clients SET name_prefix_idx=?, name_phonetic_idx=? WHERE id=?`);
+        for (const c of d.prepare(`SELECT id, last_name_enc FROM clients`).all()) {
+          let last = "";
+          try {
+            last = c.last_name_enc ? decrypt3(c.last_name_enc) : "";
+          } catch {
+            continue;
+          }
+          upd.run(M.namePrefixIndex(last), M.namePhoneticIndex(last), c.id);
+        }
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_clients_name_/.test(line.trim())) d.exec(line.trim());
+      },
+      // 7: attachment bytes become nullable. Rows now reach a device before their bytes do — a sync payload
+      //    carrying every photo and scan inline was tens of megabytes the phone could not parse — so an
+      //    attachment row has to be insertable while its content is still on its way.
+      (d) => {
+        const schemaText = safeSchema();
+        for (const t of ["resource_photos", "client_form_files"]) rebuildTable(d, schemaText, t);
+      },
+      // 8: assignments record the instant they were ended. Ending one used to leave the worker with the client
+      //    for the rest of the day, because access was decided by date alone — not what a supervisor taking
+      //    somebody off a case expects to happen.
+      (d) => {
+        addColumn(d, "assignments", "ended_at", "TEXT");
+      },
+      // 9: a logged contact says whether it was a phone call or a text message. Everything already recorded
+      //    was a call, which is what the default says.
+      (d) => {
+        addColumn(d, "calls", "method", `TEXT NOT NULL DEFAULT 'phone' CHECK (method IN ('phone','text'))`);
+      },
+      // 10: referral and engagement dates on clients, so time-to-engagement (a common navigator KPI) can be
+      //     tracked per client instead of only inferred from intake_date.
+      (d) => {
+        addColumn(d, "clients", "referral_date", "TEXT");
+        addColumn(d, "clients", "engagement_date", "TEXT");
+      },
+      // 11: optional single sign-on. An administrator links an existing account to the county identity
+      //     provider's 'sub' claim; OIDC login only ever signs in to an already-linked account.
+      (d) => {
+        addColumn(d, "users", "oidc_subject", "TEXT");
+        d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_subject ON users(oidc_subject) WHERE oidc_subject IS NOT NULL`);
+      },
+      // 12: device tracking for local-mode phones/tablets, so a lost device can be revoked or wiped the next
+      //     time it tries to sync (server/devices.js).
+      (d) => {
+        d.exec(`CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, label TEXT,
+      first_seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), last_seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+      last_ip TEXT, sync_count INTEGER NOT NULL DEFAULT 0, wipe_requested_at TEXT, revoked_at TEXT)`);
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id)`);
+      },
+      // 13: nested budget allocations — a budget line can now sit inside a larger one instead of every line
+      //     being a flat peer under the fund (server/routes/budget.js enforces same-fund + no cycles).
+      (d) => {
+        addColumn(d, "budget_lines", "parent_id", "TEXT REFERENCES budget_lines(id) ON DELETE CASCADE");
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_budget_lines_parent ON budget_lines(parent_id)`);
+      },
+      // 14: an intervention with a direct cost against a fund can now name the specific allocation it draws
+      //     down — interventions already had funding_source_id and cost, but nothing to point at which budget
+      //     line, so recording a service never actually reduced a budget. server/routes/interventions.js now
+      //     auto-posts a matching (pending) expenditure from these three columns.
+      (d) => {
+        addColumn(d, "interventions", "budget_line_id", "TEXT REFERENCES budget_lines(id) ON DELETE SET NULL");
+      },
+      // 15: county policies, procedures and contracts — an uploaded-file library (server/routes/documents.js),
+      //     searched by title/category/metadata only, the same shape as the existing form template library.
+      (d) => {
+        d.exec(`CREATE TABLE IF NOT EXISTS policy_documents (id TEXT PRIMARY KEY, title TEXT NOT NULL, category TEXT NOT NULL CHECK (category IN ('policy','procedure','contract')),
+      description TEXT, effective_date TEXT, expires_at TEXT, filename TEXT, content_type TEXT, bytes INTEGER NOT NULL DEFAULT 0, file_b64 TEXT, is_active INTEGER NOT NULL DEFAULT 1,
+      uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_policy_documents_cat ON policy_documents(category)`);
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_policy_documents_updated ON policy_documents(updated_at)`);
+      },
+      // 16: at most one expenditure per intervention — a second one would double-count that service's cost.
+      //     Before this, intervention_id was a writable field on the generic expenditures POST, so a database
+      //     that saw any traffic on that route could already have duplicates; keep the most recently updated
+      //     row's link and unlink the rest (they stay, just as ordinary expenditures with no linked service)
+      //     rather than deleting real financial records during a migration.
+      (d) => {
+        const dupes = d.prepare(`SELECT intervention_id, id FROM expenditures WHERE intervention_id IS NOT NULL
+      AND id NOT IN (SELECT id FROM expenditures e2 WHERE e2.intervention_id=expenditures.intervention_id ORDER BY e2.updated_at DESC LIMIT 1)`).all();
+        const unlink = d.prepare(`UPDATE expenditures SET intervention_id=NULL WHERE id=?`);
+        for (const row of dupes) unlink.run(row.id);
+        d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_exp_intervention_unique ON expenditures(intervention_id) WHERE intervention_id IS NOT NULL`);
+      },
+      // 17: why an expenditure was rejected. Time entries have carried this since their approval step was
+      //     added; expenditures accepted a note on the approve route and then dropped it on the floor.
+      (d) => {
+        addColumn(d, "expenditures", "approval_note", "TEXT");
+      },
+      // 18: a first name on its own finds the person (the search box always said it would), and the policy
+      //     library keeps the words inside each file so a policy can be found by what it says, not only its
+      //     title. Existing documents are indexed by server/routes/documents.js the next time they are saved.
+      (d) => {
+        const schemaText = safeSchema();
+        addColumn(d, "clients", "first_name_idx", "TEXT");
+        addColumn(d, "clients", "first_name_prefix_idx", "TEXT");
+        const { decrypt: decrypt3, blindIndex: blindIndex2 } = require_crypto();
+        const M = require_clients_model();
+        const upd = d.prepare(`UPDATE clients SET first_name_idx=?, first_name_prefix_idx=? WHERE id=?`);
+        for (const c of d.prepare(`SELECT id, first_name_enc FROM clients`).all()) {
+          let first = "";
+          try {
+            first = c.first_name_enc ? decrypt3(c.first_name_enc) : "";
+          } catch {
+            continue;
+          }
+          upd.run(blindIndex2(String(first || "").trim().toLowerCase()), M.namePrefixIndex(first), c.id);
+        }
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_clients_first_name/.test(line.trim())) d.exec(line.trim());
+        addColumn(d, "policy_documents", "search_text", "TEXT");
+      },
+      // 19: compliance review. Free text that reveals a named person's diagnosis moves into _enc columns
+      //     (call purposes, referral outcomes/barriers/notes, task titles, overdose substances); Part 2 consents
+      //     record their expiry event, paper signature and redisclosure notice; disclosures made without consent
+      //     carry an encrypted justification; clients can be placed on legal hold; break-glass events queue
+      //     for supervisor review; patient-rights requests get a table with a 30-day clock.
+      (d) => {
+        const schemaText = safeSchema();
+        for (const [t, from, to] of [
+          ["calls", "purpose", "purpose_enc"],
+          ["referrals", "outcome", "outcome_enc"],
+          ["referrals", "barrier", "barrier_enc"],
+          ["referrals", "notes", "notes_enc"],
+          ["overdose_events", "substances", "substances_enc"]
+        ]) encryptColumn(d, t, from, to);
+        encryptColumn(d, "tasks", "description", "description_enc");
+        if (tableExists(d, "tasks") && tableCols(d, "tasks").includes("title")) {
+          const { encrypt: encrypt3 } = require_crypto();
+          addColumn(d, "tasks", "title_enc", "TEXT");
+          const upd = d.prepare(`UPDATE tasks SET title_enc=? WHERE id=?`);
+          for (const r of d.prepare(`SELECT id, title FROM tasks`).all()) upd.run(encrypt3(String(r.title ?? "")), r.id);
+          d.exec(`ALTER TABLE tasks DROP COLUMN title`);
+          rebuildTable(d, schemaText, "tasks");
+        }
+        addColumn(d, "clients", "legal_hold", "INTEGER NOT NULL DEFAULT 0");
+        addColumn(d, "clients", "legal_hold_reason", "TEXT");
+        addColumn(d, "consents", "expires_event", "TEXT");
+        addColumn(d, "consents", "signed_on_paper", "INTEGER NOT NULL DEFAULT 0");
+        addColumn(d, "consents", "redisclosure_notice_given", "INTEGER NOT NULL DEFAULT 0");
+        addColumn(d, "disclosures", "justification_enc", "TEXT");
+        for (const t of ["breakglass_events", "patient_requests"]) {
+          const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
+          if (m) d.exec(m[0]);
+        }
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_(breakglass|patient_requests)/.test(line.trim())) d.exec(line.trim());
+      },
+      // 20: navigator field tools — a preferred name / alias finds the person too; an author can ask a
+      //     supervisor to review/co-sign a note; and a harm-reduction supply inventory that visits draw down.
+      (d) => {
+        const schemaText = safeSchema();
+        addColumn(d, "clients", "preferred_name_idx", "TEXT");
+        const { decrypt: decrypt3 } = require_crypto();
+        const M = require_clients_model();
+        const upd = d.prepare(`UPDATE clients SET preferred_name_idx=? WHERE id=?`);
+        for (const c of d.prepare(`SELECT id, preferred_name_enc FROM clients WHERE preferred_name_enc IS NOT NULL`).all()) {
+          let pref = "";
+          try {
+            pref = decrypt3(c.preferred_name_enc);
+          } catch {
+            continue;
+          }
+          upd.run(M.preferredNameIndex(pref), c.id);
+        }
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_clients_preferred_name/.test(line.trim())) d.exec(line.trim());
+        addColumn(d, "notes", "cosign_requested", "INTEGER NOT NULL DEFAULT 0");
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS supply_stock \([\s\S]*?\n\);/);
+        if (m) d.exec(m[0]);
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_supply_stock/.test(line.trim())) d.exec(line.trim());
+      },
+      // 21: a client whose status is NULL or blank (rows written before the value was enforced end to end,
+      //     including through sync) showed no status at all in the header and Overview. The column's default
+      //     is 'active', so that is what an empty value has always meant.
+      (d) => {
+        d.exec(`UPDATE clients SET status='active' WHERE status IS NULL OR TRIM(status)=''`);
+      },
+      // 22: spreadsheet import idempotency — a hash per imported row (import_rows), so the same file imported
+      //     twice does not double every visit, call, hour and expenditure it holds.
+      (d) => {
+        const schemaText = safeSchema();
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS import_rows \([\s\S]*?\n\);/);
+        if (m) d.exec(m[0]);
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_import_rows/.test(line.trim())) d.exec(line.trim());
+      },
+      // 23: a referral's follow-up to-do remembers which referral it belongs to. Recording one referral's
+      //     outcome used to close every "Follow up on referral…" to-do on the client, by title prefix.
+      (d) => {
+        addColumn(d, "tasks", "referral_id", "TEXT REFERENCES referrals(id) ON DELETE SET NULL");
+      },
+      // 24: a to-do's details ("detox bed at Granite on Tuesday; bring the MAT letter") reveal as much as its
+      //     title, which has been encrypted since 19. tasks.description moves into description_enc and the
+      //     plaintext column goes; the table is rebuilt from schema.sql so it matches a fresh install.
+      (d) => {
+        if (!tableExists(d, "tasks") || !tableCols(d, "tasks").includes("description")) return;
+        encryptColumn(d, "tasks", "description", "description_enc");
+        rebuildTable(d, safeSchema(), "tasks");
+      },
+      // 25: self sign-up. A request for an account is a users row that cannot sign in until an administrator
+      //     approves it (access_status 'pending'); every existing account is 'active'.
+      (d) => {
+        addColumn(d, "users", "access_status", `TEXT NOT NULL DEFAULT 'active' CHECK (access_status IN ('active','pending','declined'))`);
+        addColumn(d, "users", "access_note", "TEXT");
+        addColumn(d, "users", "requested_at", "TEXT");
+      },
+      // 26: name search and duplicate detection work in every script. Blind indexes used to keep only a-z and
+      //     0-9, so an Arabic or Cyrillic name indexed as nothing (unsearchable, never flagged as a duplicate)
+      //     and "Øster"/"Łecki" lost a letter; they now fold accents, transliterate Ø/Ł/ß/Æ… and keep every
+      //     Unicode letter (server/crypto.js foldText). Every client's indexes are re-derived from the decrypted
+      //     values with the same function key rotation uses (clients-model clientIndexes). A migration can
+      //     decrypt: the keys are loaded (config) before the database is opened, here and in the local kernel.
+      //     A row that cannot be decrypted keeps the indexes it had. No schema change.
+      (d) => {
+        const { decrypt: decrypt3 } = require_crypto();
+        const M = require_clients_model();
+        const cols2 = ["last_name_idx", "full_name_idx", "name_prefix_idx", "name_phonetic_idx", "first_name_idx", "first_name_prefix_idx", "preferred_name_idx", "dob_idx", "phone_idx"];
+        const upd = d.prepare(`UPDATE clients SET ${cols2.map((c) => `${c}=?`).join(", ")} WHERE id=?`);
+        for (const c of d.prepare(`SELECT id, first_name_enc, last_name_enc, preferred_name_enc, dob_enc, phone_enc FROM clients`).all()) {
+          let plain;
+          try {
+            plain = { first_name: decrypt3(c.first_name_enc), last_name: decrypt3(c.last_name_enc), preferred_name: decrypt3(c.preferred_name_enc), dob: decrypt3(c.dob_enc), phone: decrypt3(c.phone_enc) };
+          } catch {
+            continue;
+          }
+          const idx = M.clientIndexes(plain);
+          upd.run(...cols2.map((k) => idx[k]), c.id);
+        }
+      },
+      // 27:
+      //     idempotency_keys, so a retried POST is answered once instead of creating everything twice; and
+      //     breakglass_events.kind, because the supervisors' review queue now also receives re-admissions of
+      //     discharged clients by a worker whose caseload they were not on (POST /api/clients/:id/readmit).
+      (d) => {
+        addColumn(d, "breakglass_events", "kind", "TEXT NOT NULL DEFAULT 'clinical_note'");
+        const schemaText = safeSchema();
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS idempotency_keys \([\s\S]*?\n\);/);
+        if (m) d.exec(m[0]);
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_idempotency/.test(line.trim())) d.exec(line.trim());
+      },
+      // 28: Settings → Lists. An administrator's changes to the choices on documentation forms (a renamed,
+      //     reordered or retired choice, or a programme's own addition) are kept in option_overrides; the
+      //     built-in choices stay in code (server/options.js). An existing database starts with none.
+      (d) => {
+        const schemaText = safeSchema();
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS option_overrides \([\s\S]*?\n\);/);
+        if (m) d.exec(m[0]);
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_option_overrides/.test(line.trim())) d.exec(line.trim());
+      },
+      // 29: clinical depth for CalAIM documentation — the problem list
+      //     and its change history, the care coordination plan (goals and steps), ASAM six-dimension
+      //     assessments and scored outcome measures; and notes.problem_ids, the problems a note addresses.
+      //     New tables only, plus one nullable column, so an existing database starts with none of them.
+      (d) => {
+        addColumn(d, "notes", "problem_ids", "TEXT");
+        const schemaText = safeSchema();
+        for (const t of ["problems", "problem_history", "care_plan_goals", "care_plan_steps", "asam_assessments", "outcome_measures"]) {
+          const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
+          if (!m) throw new Error(`migration 29: no definition for ${t} in schema`);
+          d.exec(m[0]);
+          for (const line of schemaText.split("\n")) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
+        }
+      },
+      // 30: CalOMS Tx state reporting. caloms_records holds each episode's
+      //     admission, discharge and annual update records (answers encrypted); an existing database starts
+      //     with none and with CalOMS reporting switched off (settings caloms_enabled / caloms_providers).
+      (d) => {
+        const schemaText = safeSchema();
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS caloms_records \([\s\S]*?\n\);/);
+        if (m) d.exec(m[0]);
+        for (const line of schemaText.split("\n")) if (/^CREATE (UNIQUE )?INDEX IF NOT EXISTS idx_caloms_records/.test(line.trim())) d.exec(line.trim());
+      },
+      // 31: 42 CFR Part 2 (2024 final rule). Consents record the rest of the §2.31 elements (who may disclose,
+      //     who signed if not the patient, the revocation and refusal statements, which rule version they were
+      //     taken against); subpart E court orders get a table that disclosures point at; a disclosure says
+      //     whether it is for a proceeding against the patient, includes SUD counseling notes, and which §2.32
+      //     notice went with it; notes can be SUD counseling notes (§2.11); the §2.22 patient notice is
+      //     recorded per client; and a complaint log (§2.4) and a breach/incident register. Existing consents
+      //     keep rule_version NULL (recorded before the 2024 element list) and are shown as such.
+      (d) => {
+        const schemaText = safeSchema();
+        for (const [c, def] of [
+          ["discloser", "TEXT"],
+          ["signer_relationship", "TEXT"],
+          ["signer_name_enc", "TEXT"],
+          ["revocation_right_given", "INTEGER NOT NULL DEFAULT 0"],
+          ["refusal_consequences_given", "INTEGER NOT NULL DEFAULT 0"],
+          ["rule_version", "TEXT"]
+        ]) addColumn(d, "consents", c, def);
+        addColumn(d, "notes", "counseling_note", "INTEGER NOT NULL DEFAULT 0");
+        for (const t of ["court_orders", "part2_notices", "complaints", "privacy_incidents", "privacy_incident_clients"]) {
+          const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
+          if (m) d.exec(m[0]);
+        }
+        for (const [c, def] of [
+          ["court_order_id", "TEXT REFERENCES court_orders(id) ON DELETE SET NULL"],
+          ["legal_proceeding", "INTEGER NOT NULL DEFAULT 0"],
+          ["counseling_notes", "INTEGER NOT NULL DEFAULT 0"],
+          ["notice_version", "TEXT"]
+        ]) addColumn(d, "disclosures", c, def);
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_(court_orders|part2_notices|complaints|privacy_incident)/.test(line.trim())) d.exec(line.trim());
+      },
+      // 32: FHIR SMART Backend Services (private_key_jwt). fhir_jwt_assertions remembers each client assertion's
+      //     jti until it expires, so an assertion cannot be replayed (server/fhir/jwt.js). A new table only; an
+      //     existing database starts with it empty.
+      (d) => {
+        const schemaText = safeSchema();
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS fhir_jwt_assertions \([\s\S]*?\n\);/);
+        if (!m) throw new Error("migration 32: no definition for fhir_jwt_assertions in schema");
+        d.exec(m[0]);
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_fhir_jwt_assertions/.test(line.trim())) d.exec(line.trim());
+      },
+      // 33: the audit log becomes append-only in the database (triggers that refuse UPDATE
+      //     and DELETE outside the sanctioned maintenance window, server/audit.js maintenance()); accounts
+      //     remember when the identity provider last vouched for them and SCIM's id for them; a session records
+      //     whether its second factor came from the identity provider.
+      (d) => {
+        const schemaText = safeSchema();
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS audit_maintenance \([\s\S]*?\n\);/);
+        if (m) d.exec(m[0]);
+        for (const t of schemaText.match(/CREATE TRIGGER IF NOT EXISTS audit_log_no_\w+ [\s\S]*?END;/g) || []) d.exec(t);
+        addColumn(d, "users", "idp_seen_at", "TEXT");
+        addColumn(d, "users", "scim_external_id", "TEXT");
+        d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_scim_external_id ON users(scim_external_id) WHERE scim_external_id IS NOT NULL`);
+        addColumn(d, "sessions", "mfa_source", "TEXT");
+      },
+      // 34: the disclosure gate closed where a review found it open (docs/compliance/PART2.md). A register of the
+      //     QSOAs and research / audit approvals the non-consent bases rest on (disclosure_agreements); an
+      //     incident's title is encrypted, and an incident can be opened by switching the Part 2 programme off;
+      //     an incident's link to a client survives the client's purge as a snapshot (code, encrypted name)
+      //     instead of being deleted with the record — breach documentation is kept six years.
+      (d) => {
+        const schemaText = safeSchema();
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS disclosure_agreements \([\s\S]*?\n\);/);
+        if (m) d.exec(m[0]);
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_disclosure_agreements/.test(line.trim())) d.exec(line.trim());
+        if (tableExists(d, "privacy_incidents")) {
+          if (tableCols(d, "privacy_incidents").includes("title")) {
+            const { encrypt: encrypt3 } = require_crypto();
+            addColumn(d, "privacy_incidents", "title_enc", "TEXT");
+            const upd = d.prepare(`UPDATE privacy_incidents SET title_enc=? WHERE id=?`);
+            for (const r of d.prepare(`SELECT id, title FROM privacy_incidents`).all()) upd.run(encrypt3(String(r.title ?? "")), r.id);
+            d.exec(`ALTER TABLE privacy_incidents DROP COLUMN title`);
+          }
+          rebuildTable(d, schemaText, "privacy_incidents");
+        }
+        if (tableExists(d, "privacy_incident_clients")) {
+          for (const c of ["client_code", "client_name_enc", "client_purged_at"]) addColumn(d, "privacy_incident_clients", c, "TEXT");
+          const { snapshotOf } = require_incidents();
+          const upd = d.prepare(`UPDATE privacy_incident_clients SET client_code=?, client_name_enc=? WHERE id=?`);
+          for (const x of d.prepare(`SELECT x.id, c.client_code, c.first_name_enc, c.last_name_enc FROM privacy_incident_clients x JOIN clients c ON c.id=x.client_id WHERE x.client_code IS NULL`).all()) {
+            const snap = snapshotOf(x);
+            upd.run(snap.client_code, snap.client_name_enc, x.id);
+          }
+          rebuildTable(d, schemaText, "privacy_incident_clients");
+        }
+      },
+      // 35: a further disclosure review (docs/compliance/PART2.md). A consent records the categories of
+      //     information it covers (consents.info_categories), which the FHIR API honours; and a CalOMS Tx
+      //     submission is produced once and kept (caloms_submissions), so the file sent is the file accounted.
+      //     An existing consent's scope is free text: it is given the 'all' category only when that text says
+      //     plainly that it covers everything (GENERAL_SCOPE below); every other one stays NULL and covers nothing
+      //     automated until a new consent is recorded with its categories — the conservative reading.
+      (d) => {
+        const schemaText = safeSchema();
+        addColumn(d, "consents", "info_categories", "TEXT");
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS caloms_submissions \([\s\S]*?\n\);/);
+        if (!m) throw new Error("migration 35: no definition for caloms_submissions in schema");
+        d.exec(m[0]);
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_caloms_submissions/.test(line.trim())) d.exec(line.trim());
+        const { decrypt: decrypt3 } = require_crypto();
+        const { generalScope } = require_disclosure();
+        const upd = d.prepare(`UPDATE consents SET info_categories='all' WHERE id=?`);
+        for (const r of d.prepare(`SELECT id, scope_enc FROM consents WHERE scope_enc IS NOT NULL AND info_categories IS NULL`).all()) {
+          let scope = "";
+          try {
+            scope = decrypt3(r.scope_enc);
+          } catch {
+            continue;
+          }
+          if (generalScope(scope)) upd.run(r.id);
+        }
+      }
+    ];
+    function initialise(d, schemaText, dbPath) {
+      const fresh = !d.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings'`).get();
+      if (fresh) {
+        d.exec(schemaText);
+        d.prepare(`INSERT INTO settings(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(String(migrations.length));
+        return;
+      }
+      migrate(d, dbPath);
+    }
+    var SNAPSHOTS_KEPT = 5;
+    function snapshotBeforeMigration(d, dbPath, fromVersion) {
+      if (!dbPath || dbPath === ":memory:") return "";
+      const dir = path.join(path.dirname(dbPath), "pre-migration");
+      const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+      const file = path.join(dir, `${path.basename(dbPath)}.v${fromVersion}.${stamp2}.db`);
+      fs.mkdirSync(dir, { recursive: true });
+      try {
+        fs.unlinkSync(file);
+      } catch {
+      }
+      d.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
+      try {
+        fs.chmodSync(file, 384);
+      } catch {
+      }
+      try {
+        const old = fs.readdirSync(dir).filter((f) => f.startsWith(path.basename(dbPath) + ".v")).sort();
+        for (const f of old.slice(0, Math.max(0, old.length - SNAPSHOTS_KEPT))) fs.unlinkSync(path.join(dir, f));
+      } catch {
+      }
+      return file;
+    }
+    function fkViolationKeys(d) {
+      return new Set(d.prepare("PRAGMA foreign_key_check").all().map((r) => `${r.table}:${r.rowid}:${r.parent}:${r.fkid}`));
+    }
+    function migrate(d, dbPath) {
+      const row = d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get();
+      let v = row ? Number(row.value) : 0;
+      if (v > migrations.length) throw new Error(`This database was created by a newer version of SUDS (schema ${v}; this build understands ${migrations.length}). Upgrade SUDS before opening it.`);
+      if (v < migrations.length) {
+        let snapshot = "";
+        try {
+          snapshot = snapshotBeforeMigration(d, dbPath, v);
+        } catch (e) {
+          throw new Error(`Could not snapshot the database before upgrading it from schema ${v} to ${migrations.length}: ${e.message}. Free up disk space or back up ${dbPath} by hand, then start SUDS again.`);
+        }
+        if (snapshot) console.log(`[suds] upgrading schema ${v} -> ${migrations.length}; snapshot saved to ${snapshot}`);
+      }
+      let remaining = [];
+      for (let i = v; i < migrations.length; i++) {
+        d.exec("PRAGMA foreign_keys = OFF");
+        d.exec("BEGIN");
+        try {
+          const before = fkViolationKeys(d);
+          migrations[i](d);
+          const after = d.prepare("PRAGMA foreign_key_check").all();
+          const introduced = after.filter((r) => !before.has(`${r.table}:${r.rowid}:${r.parent}:${r.fkid}`));
+          if (introduced.length) throw new Error(`migration ${i + 1} introduced ${introduced.length} new orphaned row(s), first in table ${introduced[0].table}`);
+          remaining = after;
+          d.prepare(`INSERT INTO settings(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`).run(String(i + 1));
+          d.exec("COMMIT");
+        } catch (e) {
+          try {
+            d.exec("ROLLBACK");
+          } catch {
+          }
+          throw e;
+        } finally {
+          d.exec("PRAGMA foreign_keys = ON");
+        }
+      }
+      if (remaining.length) {
+        const byTable = {};
+        for (const r of remaining) byTable[r.table] = (byTable[r.table] || 0) + 1;
+        console.warn(`[suds] this database has ${remaining.length} pre-existing orphaned reference(s), not introduced by this upgrade, by table: ${Object.entries(byTable).map(([t, n]) => `${t}=${n}`).join(", ")}. Records are otherwise intact; anything joined through the missing reference may just be absent from a report until it is repaired.`);
+      }
+    }
+    function get() {
+      if (!db3) open2();
+      return db3;
+    }
+    function close() {
+      if (db3) {
+        db3.close();
+        db3 = void 0;
+      }
+    }
+    function now() {
+      return (/* @__PURE__ */ new Date()).toISOString();
+    }
+    function all(sql, ...params) {
+      return get().prepare(sql).all(...params);
+    }
+    function one(sql, ...params) {
+      return get().prepare(sql).get(...params);
+    }
+    function run2(sql, ...params) {
+      return get().prepare(sql).run(...params);
+    }
+    var txDepth = 0;
+    function transaction(fn) {
+      const d = get();
+      const depth = txDepth++;
+      const sp = `sp_tx_${depth}`;
+      d.exec(depth === 0 ? "BEGIN" : `SAVEPOINT ${sp}`);
+      try {
+        const r = fn();
+        d.exec(depth === 0 ? "COMMIT" : `RELEASE ${sp}`);
+        txDepth--;
+        return r;
+      } catch (e) {
+        txDepth--;
+        try {
+          d.exec(depth === 0 ? "ROLLBACK" : `ROLLBACK TO ${sp}; RELEASE ${sp}`);
+        } catch (rollbackError) {
+          if (depth === 0) txDepth = 0;
+          console.error("[suds] rollback failed:", rollbackError.message);
+        }
+        throw e;
+      }
+    }
+    function savepoint(fn, onError) {
+      const d = get();
+      const sp = `sp_${txDepth}_${savepoint.n = (savepoint.n || 0) + 1}`;
+      d.exec(`SAVEPOINT ${sp}`);
+      try {
+        const r = fn();
+        d.exec(`RELEASE ${sp}`);
+        return r;
+      } catch (e) {
+        try {
+          d.exec(`ROLLBACK TO ${sp}`);
+          d.exec(`RELEASE ${sp}`);
+        } catch {
+        }
+        if (onError) onError(e);
+        else throw e;
+      }
+    }
+    function checkKeyFingerprint() {
+      const fp = require_crypto().keyFingerprint();
+      const stored = getSetting("key_fingerprint", null);
+      if (!stored) {
+        setSetting("key_fingerprint", fp);
+        return { first: true };
+      }
+      if (stored !== fp) throw new Error("The encryption key this server was started with is not the key this database was written with. Nothing has been changed. Restore the key backup (keys.json) saved at setup or set SUDS_ENCRYPTION_KEY to the original key, then start again. If the key was deliberately rotated with scripts/rotate-key.js, that script records the new key; a database this happened to some other way needs the original key back.");
+      return { first: false };
+    }
+    function getSetting(key, def = null) {
+      const r = one(`SELECT value FROM settings WHERE key=?`, key);
+      return r ? r.value : def;
+    }
+    function setSetting(key, value) {
+      run2(`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, key, String(value));
+    }
+    function tombstone(table, id) {
+      run2(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now());
+    }
+    module.exports = { open: open2, openWith, get, close, LATEST_SCHEMA_VERSION: migrations.length, now, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint };
+  }
+});
+
 // server/idempotency.js
 var require_idempotency = __commonJS({
   "server/idempotency.js"(exports, module) {
@@ -10116,13 +11003,15 @@ var require_sync_tables = __commonJS({
         "would create a cycle",
         "parent allocation does not belong",
         "its ",
-        "has a value the office does not accept"
+        "has a value the office does not accept",
+        "needs a lawful basis for disclosure"
       ],
       // Server-side only, never synchronised: breakglass_events is the office supervisor's review queue for
       // emergency access, and a device has no supervisor to review it.
       // complaints and the privacy incident register are the privacy officer's, kept at the office likewise.
       // fhir_jwt_assertions is the FHIR token endpoint's replay guard for client assertions (office server only).
-      server_only: ["breakglass_events", "complaints", "privacy_incidents", "privacy_incident_clients", "fhir_jwt_assertions"],
+      // caloms_submissions holds each CalOMS Tx file as produced for DHCS, which only the office sends.
+      server_only: ["breakglass_events", "complaints", "privacy_incidents", "privacy_incident_clients", "fhir_jwt_assertions", "caloms_submissions"],
       // Kept by each database for itself and never synchronised in either direction: idempotency_keys holds
       // the answers to retried POSTs made against that database (server/idempotency.js). A device's retry is
       // answered by the device; the office never sees the key, only the rows the request created.
@@ -10191,7 +11080,8 @@ var require_sync_tables = __commonJS({
         ["complaints", "created_by"],
         ["privacy_incidents", "determined_by"],
         ["privacy_incidents", "reported_by"],
-        ["disclosure_agreements", "created_by"]
+        ["disclosure_agreements", "created_by"],
+        ["caloms_submissions", "created_by"]
       ]
     };
     module.exports.user_ref_cols = [...new Set(module.exports.user_refs.map(([, c]) => c))];
@@ -10249,341 +11139,6 @@ var require_sync_tables = __commonJS({
     module.exports.exportRow = exportRow2;
     module.exports.importRow = importRow2;
     module.exports.upgradeLegacyRow = upgradeLegacyRow;
-  }
-});
-
-// server/clinical.js
-var require_clinical = __commonJS({
-  "server/clinical.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var ICD10_RE = /^[A-Z][0-9][0-9A-Z](\.[0-9A-Z]{1,4})?$/;
-    function normalizeIcd10(raw) {
-      if (raw === null || raw === void 0) return null;
-      let s = String(raw).trim().toUpperCase().replace(/\s+/g, "");
-      if (!s) return null;
-      if (!s.includes(".") && s.length > 3) s = `${s.slice(0, 3)}.${s.slice(3)}`;
-      return ICD10_RE.test(s) ? s : null;
-    }
-    var Z_RANGE_RE = /^Z(5[5-9]|6[0-5])(\.[0-9A-Z]{1,4})?$/;
-    var isZCode = (code) => Z_RANGE_RE.test(code || "");
-    var Z_CODES = [
-      { code: "Z55.0", label: "Illiteracy and low-level literacy" },
-      { code: "Z55.9", label: "Problems related to education and literacy, unspecified" },
-      { code: "Z56.0", label: "Unemployment, unspecified" },
-      { code: "Z56.9", label: "Unspecified problems related to employment" },
-      { code: "Z59.00", label: "Homelessness, unspecified" },
-      { code: "Z59.01", label: "Sheltered homelessness" },
-      { code: "Z59.02", label: "Unsheltered homelessness" },
-      { code: "Z59.1", label: "Inadequate housing" },
-      { code: "Z59.41", label: "Food insecurity" },
-      { code: "Z59.6", label: "Low income" },
-      { code: "Z59.7", label: "Insufficient social insurance and welfare support" },
-      { code: "Z59.811", label: "Housing instability, housed, with risk of homelessness" },
-      { code: "Z59.82", label: "Transportation insecurity" },
-      { code: "Z59.86", label: "Financial insecurity" },
-      { code: "Z60.2", label: "Problems related to living alone" },
-      { code: "Z60.4", label: "Social exclusion and rejection" },
-      { code: "Z60.5", label: "Target of (perceived) adverse discrimination and persecution" },
-      { code: "Z62.9", label: "Problem related to upbringing, unspecified" },
-      { code: "Z63.0", label: "Problems in relationship with spouse or partner" },
-      { code: "Z63.4", label: "Disappearance and death of family member" },
-      { code: "Z63.72", label: "Alcoholism and drug addiction in family" },
-      { code: "Z63.8", label: "Other specified problems related to primary support group" },
-      { code: "Z64.4", label: "Discord with counselors" },
-      { code: "Z65.1", label: "Imprisonment and other incarceration" },
-      { code: "Z65.2", label: "Problems related to release from prison" },
-      { code: "Z65.3", label: "Problems related to other legal circumstances" },
-      { code: "Z65.4", label: "Victim of crime and terrorism" },
-      { code: "Z65.8", label: "Other specified problems related to psychosocial circumstances" }
-    ];
-    var PROBLEM_STATUSES = ["active", "resolved", "inactive"];
-    var PROBLEM_SOURCES = ["self_report", "assessment", "referral", "other"];
-    var GOAL_STATUSES = ["active", "met", "partially_met", "not_met", "discontinued"];
-    var STEP_OWNERS = ["client", "staff", "family_support", "other_provider"];
-    var STEP_STATUSES = ["open", "done", "cancelled"];
-    var ASAM_DIMENSIONS = [
-      { key: "d1", label: "Dimension 1: Acute intoxication and/or withdrawal potential" },
-      { key: "d2", label: "Dimension 2: Biomedical conditions and complications" },
-      { key: "d3", label: "Dimension 3: Emotional, behavioral, or cognitive conditions and complications" },
-      { key: "d4", label: "Dimension 4: Readiness to change" },
-      { key: "d5", label: "Dimension 5: Relapse, continued use, or continued problem potential" },
-      { key: "d6", label: "Dimension 6: Recovery/living environment" }
-    ];
-    var ASAM_RATINGS = [
-      { value: 0, label: "0 \u2014 No risk / no current problem" },
-      { value: 1, label: "1 \u2014 Mild" },
-      { value: 2, label: "2 \u2014 Moderate" },
-      { value: 3, label: "3 \u2014 Significant" },
-      { value: 4, label: "4 \u2014 Severe" }
-    ];
-    var ASAM_DISCREPANCY_REASONS = ["client_preference", "level_not_available", "waitlist", "geographic_accessibility", "family_responsibilities", "legal_issues", "language_or_cultural", "clinical_judgment", "payment_or_coverage", "other"];
-    var FREQ4 = [{ value: 0, label: "Not at all" }, { value: 1, label: "Several days" }, { value: 2, label: "More than half the days" }, { value: 3, label: "Nearly every day" }];
-    var YES_NO = [{ value: 1, label: "Yes" }, { value: 0, label: "No" }];
-    var INSTRUMENTS = {
-      phq9: {
-        code: "phq9",
-        name: "PHQ-9",
-        title: "Patient Health Questionnaire (depression)",
-        better: "lower",
-        max: 27,
-        stem: "Over the last 2 weeks, how often have you been bothered by any of the following problems?",
-        credit: "PHQ-9 \xA9 Pfizer Inc. Developed by Drs. Robert L. Spitzer, Janet B.W. Williams, Kurt Kroenke and colleagues. No permission required to reproduce, translate, display or distribute.",
-        items: [
-          "Little interest or pleasure in doing things",
-          "Feeling down, depressed, or hopeless",
-          "Trouble falling or staying asleep, or sleeping too much",
-          "Feeling tired or having little energy",
-          "Poor appetite or overeating",
-          "Feeling bad about yourself \u2014 or that you are a failure or have let yourself or your family down",
-          "Trouble concentrating on things, such as reading the newspaper or watching television",
-          "Moving or speaking so slowly that other people could have noticed? Or the opposite \u2014 being so fidgety or restless that you have been moving around a lot more than usual",
-          "Thoughts that you would be better off dead or of hurting yourself in some way"
-        ].map((text) => ({ text, options: FREQ4 })),
-        bands: [[0, 4, "Minimal"], [5, 9, "Mild"], [10, 14, "Moderate"], [15, 19, "Moderately severe"], [20, 27, "Severe"]],
-        positiveAt: 10,
-        // Item 9 (index 8) above "Not at all" is a safety alert whatever the total.
-        safetyItem: 8
-      },
-      gad7: {
-        code: "gad7",
-        name: "GAD-7",
-        title: "Generalized Anxiety Disorder scale",
-        better: "lower",
-        max: 21,
-        stem: "Over the last 2 weeks, how often have you been bothered by the following problems?",
-        credit: "GAD-7 \xA9 Pfizer Inc. Developed by Drs. Robert L. Spitzer, Janet B.W. Williams, Kurt Kroenke and colleagues. No permission required to reproduce, translate, display or distribute.",
-        items: [
-          "Feeling nervous, anxious, or on edge",
-          "Not being able to stop or control worrying",
-          "Worrying too much about different things",
-          "Trouble relaxing",
-          "Being so restless that it is hard to sit still",
-          "Becoming easily annoyed or irritable",
-          "Feeling afraid, as if something awful might happen"
-        ].map((text) => ({ text, options: FREQ4 })),
-        bands: [[0, 4, "Minimal"], [5, 9, "Mild"], [10, 14, "Moderate"], [15, 21, "Severe"]],
-        positiveAt: 10
-      },
-      auditc: {
-        code: "auditc",
-        name: "AUDIT-C",
-        title: "Alcohol Use Disorders Identification Test \u2014 consumption",
-        better: "lower",
-        max: 12,
-        stem: "Think about your drinking over the past year.",
-        credit: "AUDIT-C: the first three questions of the AUDIT (World Health Organization); public domain.",
-        items: [
-          { text: "How often do you have a drink containing alcohol?", options: [{ value: 0, label: "Never" }, { value: 1, label: "Monthly or less" }, { value: 2, label: "2\u20134 times a month" }, { value: 3, label: "2\u20133 times a week" }, { value: 4, label: "4 or more times a week" }] },
-          { text: "How many standard drinks containing alcohol do you have on a typical day?", options: [{ value: 0, label: "1 or 2" }, { value: 1, label: "3 or 4" }, { value: 2, label: "5 or 6" }, { value: 3, label: "7 to 9" }, { value: 4, label: "10 or more" }] },
-          { text: "How often do you have six or more drinks on one occasion?", options: [{ value: 0, label: "Never" }, { value: 1, label: "Less than monthly" }, { value: 2, label: "Monthly" }, { value: 3, label: "Weekly" }, { value: 4, label: "Daily or almost daily" }] }
-        ],
-        // A positive screen is 4 or more for men and 3 or more for women. When the variant is not given the
-        // lower cut-off is used, so nobody is screened negative by a missing answer.
-        variants: [{ value: "men", label: "Cut-off for men (4 or more)", positiveAt: 4 }, { value: "women", label: "Cut-off for women (3 or more)", positiveAt: 3 }, { value: "unspecified", label: "Not specified (3 or more)", positiveAt: 3 }],
-        positiveAt: 3
-      },
-      dast10: {
-        code: "dast10",
-        name: "DAST-10",
-        title: "Drug Abuse Screening Test",
-        better: "lower",
-        max: 10,
-        optional: true,
-        stem: 'These questions refer to the past 12 months. "Drug use" means use of prescribed or over-the-counter drugs in excess of the directions, and any non-medical use of drugs. Do not include alcohol or tobacco.',
-        credit: "DAST-10 \xA9 1982 Harvey A. Skinner, PhD. Reproduced for non-commercial clinical use with credit.",
-        items: [
-          { text: "Have you used drugs other than those required for medical reasons?", options: YES_NO },
-          { text: "Do you abuse more than one drug at a time?", options: YES_NO },
-          // Reverse scored: "No" is the answer that counts.
-          { text: "Are you always able to stop using drugs when you want to?", options: [{ value: 0, label: "Yes" }, { value: 1, label: "No" }] },
-          { text: 'Have you had "blackouts" or "flashbacks" as a result of drug use?', options: YES_NO },
-          { text: "Do you ever feel bad or guilty about your drug use?", options: YES_NO },
-          { text: "Does your spouse (or parents) ever complain about your involvement with drugs?", options: YES_NO },
-          { text: "Have you neglected your family because of your use of drugs?", options: YES_NO },
-          { text: "Have you engaged in illegal activities in order to obtain drugs?", options: YES_NO },
-          { text: "Have you ever experienced withdrawal symptoms (felt sick) when you stopped taking drugs?", options: YES_NO },
-          { text: "Have you had medical problems as a result of your drug use (e.g., memory loss, hepatitis, convulsions, bleeding)?", options: YES_NO }
-        ],
-        bands: [[0, 0, "No problems reported"], [1, 2, "Low level"], [3, 5, "Moderate level"], [6, 8, "Substantial level"], [9, 10, "Severe level"]],
-        positiveAt: 3
-      },
-      wellbeing: {
-        code: "wellbeing",
-        name: "Wellbeing (0\u201310)",
-        title: "Self-rated wellbeing",
-        better: "higher",
-        max: 10,
-        stem: "A single question, answered by the person in their own words and numbers.",
-        credit: "A single self-rating item written for SUDS; not a validated instrument.",
-        items: [{ text: "Overall, how are things going for you right now? (0 = the worst they could be, 10 = the best they could be)", options: Array.from({ length: 11 }, (_, i) => ({ value: i, label: String(i) })) }],
-        bands: [[0, 3, "Low"], [4, 6, "Moderate"], [7, 10, "Good"]]
-      }
-    };
-    var INSTRUMENT_CODES = Object.keys(INSTRUMENTS);
-    var OPTIONAL_INSTRUMENTS = {
-      dast10: {
-        setting: "instrument_dast10_enabled",
-        notice: "The DAST-10 is \xA9 1982 Harvey A. Skinner, PhD. It may be reproduced free of charge for non-commercial clinical, research and training use, with credit to the author. SUDS may be supplied commercially, so the DAST-10 is off until an administrator confirms this programme holds the rights to use it.",
-        confirmation: "I confirm that this programme holds the rights to use the DAST-10 as it will be used here (for example, non-commercial clinical use with credit to the author, or written permission from the copyright holder)."
-      }
-    };
-    function score(code, responses, { variant } = {}) {
-      const ins = INSTRUMENTS[code];
-      if (!ins) {
-        const e = new Error(`Unknown instrument ${code}`);
-        e.fields = { instrument: `must be one of ${INSTRUMENT_CODES.join(", ")}` };
-        throw e;
-      }
-      if (!Array.isArray(responses) || responses.length !== ins.items.length) {
-        const e = new Error(`${ins.name} needs an answer to each of its ${ins.items.length} questions`);
-        e.fields = { responses: `must have ${ins.items.length} answers` };
-        throw e;
-      }
-      const values = responses.map((raw, i) => {
-        const v = typeof raw === "string" && raw.trim() !== "" ? Number(raw) : raw;
-        if (typeof v !== "number" || !Number.isInteger(v) || !ins.items[i].options.some((o) => o.value === v)) {
-          const e = new Error(`${ins.name} question ${i + 1} has no valid answer`);
-          e.fields = { responses: `question ${i + 1} is missing or out of range` };
-          throw e;
-        }
-        return v;
-      });
-      const total = values.reduce((a, b) => a + b, 0);
-      let positiveAt = ins.positiveAt;
-      let usedVariant = null;
-      if (ins.variants) {
-        const vv = ins.variants.find((x) => x.value === variant) || ins.variants.find((x) => x.value === "unspecified");
-        positiveAt = vv.positiveAt;
-        usedVariant = vv.value;
-      }
-      let band;
-      if (ins.bands) band = (ins.bands.find(([lo, hi]) => total >= lo && total <= hi) || [])[2] || null;
-      else band = total >= positiveAt ? "Positive screen" : "Negative screen";
-      const positive = positiveAt === void 0 ? null : total >= positiveAt ? 1 : 0;
-      const safety = ins.safetyItem !== void 0 && values[ins.safetyItem] > 0 ? 1 : 0;
-      return { total, band, positive, safety_flag: safety, responses: values, variant: usedVariant };
-    }
-    function direction(code, baseline, latest) {
-      const ins = INSTRUMENTS[code];
-      if (!ins || baseline === null || latest === null) return 0;
-      if (latest === baseline) return 0;
-      return (ins.better === "higher" ? latest > baseline : latest < baseline) ? 1 : -1;
-    }
-    module.exports = {
-      ICD10_RE,
-      normalizeIcd10,
-      isZCode,
-      Z_CODES,
-      PROBLEM_STATUSES,
-      PROBLEM_SOURCES,
-      GOAL_STATUSES,
-      STEP_OWNERS,
-      STEP_STATUSES,
-      ASAM_DIMENSIONS,
-      ASAM_RATINGS,
-      ASAM_DISCREPANCY_REASONS,
-      INSTRUMENTS,
-      INSTRUMENT_CODES,
-      OPTIONAL_INSTRUMENTS,
-      score,
-      direction
-    };
-  }
-});
-
-// server/constants.js
-var require_constants = __commonJS({
-  "server/constants.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var CL = require_clinical();
-    var RACE_CODES = [
-      { code: "american_indian_alaska_native", label: "American Indian or Alaska Native" },
-      { code: "asian", label: "Asian" },
-      { code: "black_african_american", label: "Black or African American" },
-      { code: "native_hawaiian_pacific_islander", label: "Native Hawaiian or Other Pacific Islander" },
-      { code: "white", label: "White" },
-      { code: "other", label: "Other" },
-      { code: "declined", label: "Declined to answer" },
-      { code: "unknown", label: "Unknown" }
-    ];
-    var ETHNICITY_CODES = [
-      { code: "hispanic_latino", label: "Hispanic or Latino" },
-      { code: "not_hispanic_latino", label: "Not Hispanic or Latino" },
-      { code: "declined", label: "Declined to answer" },
-      { code: "unknown", label: "Unknown" }
-    ];
-    module.exports = {
-      RACE_CODES,
-      ETHNICITY_CODES,
-      INTERVENTION_TYPES: ["outreach", "screening_sbirt", "assessment", "intake", "care_coordination", "warm_handoff", "referral", "case_management", "harm_reduction", "naloxone_distribution", "peer_support", "crisis_response", "post_overdose_follow_up", "transport", "housing_assistance", "benefits_enrollment", "employment_support", "family_support", "education", "court_or_probation", "hospital_or_ed_visit", "jail_in_reach", "recovery_check_in", "discharge_planning", "other"],
-      // The services that can be recorded with no identified client: street outreach and community naloxone
-      // distribution (a kit handed to a stranger). Every other type is work with a person on the caseload, and
-      // needs the client (server/routes/interventions.js and the visit form enforce the same list).
-      CLIENTLESS_INTERVENTION_TYPES: ["outreach", "naloxone_distribution"],
-      LOCATIONS: ["office", "field", "home", "phone", "telehealth", "hospital", "emergency_dept", "jail", "court", "shelter", "treatment_facility", "community", "other"],
-      MODALITIES: ["in_person", "phone", "video", "text", "email", "collateral"],
-      OUTCOMES: ["completed", "partial", "client_declined", "no_show", "unable_to_locate", "rescheduled", "crisis_resolved", "transported", "admitted", "other"],
-      STAGES: ["precontemplation", "contemplation", "preparation", "action", "maintenance", "relapse"],
-      CALL_CONTACT_TYPES: ["client", "family", "provider", "agency", "hospital", "law_enforcement", "hotline", "pharmacy", "insurance", "other"],
-      CALL_OUTCOMES: ["reached", "voicemail", "no_answer", "busy", "wrong_number", "disconnected", "callback_scheduled", "crisis_escalated"],
-      // A contact logged under calls is either a phone call or a text message; a text has its own outcomes,
-      // because "voicemail" and "busy" mean nothing to a text and "no reply" means nothing to a call.
-      CONTACT_METHODS: ["phone", "text"],
-      TEXT_OUTCOMES: ["replied", "sent", "no_reply", "undeliverable", "wrong_number", "opted_out"],
-      TIME_CATEGORIES: ["direct_service", "documentation", "travel", "care_coordination", "outreach", "meeting", "training", "supervision", "admin", "on_call"],
-      RESOURCE_CATEGORIES: ["detox_withdrawal_mgmt", "residential", "inpatient", "partial_hospitalization", "intensive_outpatient", "outpatient", "mat_otp", "mat_obot", "sober_living", "housing", "shelter", "mental_health", "primary_care", "harm_reduction", "syringe_services", "naloxone", "crisis_line", "transportation", "employment", "legal", "food", "benefits", "peer_support", "recovery_community", "family_support", "pregnancy_parenting", "veterans", "other"],
-      REFERRAL_STATUSES: ["pending", "contacted", "accepted", "waitlisted", "scheduled", "admitted", "declined_by_client", "declined_by_provider", "no_show", "completed", "closed"],
-      BUDGET_CATEGORIES: ["staffing", "client_assistance", "transportation", "naloxone_supplies", "harm_reduction_supplies", "housing_assistance", "treatment_fees", "medication", "phones_communication", "food_basic_needs", "ids_documents", "training", "outreach_materials", "supplies", "indirect", "other"],
-      FUNDING_TYPES: ["opioid_settlement", "sor_grant", "samhsa", "state_block_grant", "county_general", "medicaid", "foundation", "other"],
-      // 'handoff' is the shift hand-off note (what the next worker on needs to know), 'safety_plan' a structured
-      // safety plan (see SECTIONS in public/views/notes.js); both are ordinary notes as far as access rules go.
-      NOTE_FORMATS: ["narrative", "SOAP", "DAP", "BIRP", "GIRP", "intake", "progress", "discharge", "contact", "collateral", "crisis", "supervision", "handoff", "safety_plan"],
-      // part2_* are 42 CFR Part 2 consents (§2.31): every element is required of them. part2_tpo is the 2024
-      // rule's single consent for all future treatment, payment and health care operations; part2_counseling_notes
-      // is the separate consent SUD counseling notes need (§2.31(b)); part2_proceedings is the stand-alone consent
-      // for use in a civil, criminal, administrative or legislative proceeding (§2.31(d)), which may not be
-      // combined with any other. 'roi' is a general release, which Part 2 says is not sufficient on its own.
-      CONSENT_TYPES: ["part2_disclosure", "part2_tpo", "part2_counseling_notes", "part2_proceedings", "roi", "treatment", "telehealth", "contact_preferences", "research", "photo_media"],
-      PART2_CONSENT_TYPES: ["part2_disclosure", "part2_tpo", "part2_counseling_notes", "part2_proceedings"],
-      CONSENT_SIGNERS: ["patient", "parent_or_guardian", "personal_representative", "court_appointed_guardian"],
-      COURT_ORDER_TYPES: ["noncriminal_2_64", "criminal_patient_2_65", "program_investigation_2_66", "undercover_2_67"],
-      PART2_NOTICE_METHODS: ["in_person_paper", "electronic", "mail", "verbal_with_copy"],
-      // 42 CFR §2.32(a)(1) as amended by the 2024 final rule (89 FR 12472): the notice that must accompany
-      // every disclosure made with the patient's written consent. PART2_NOTICE_SHORT is §2.32(a)(2)'s
-      // abbreviated form, used as the label on screens and printouts.
-      PART2_NOTICE_VERSION: "2024",
-      PART2_REDISCLOSURE_NOTICE: "This record which has been disclosed to you is protected by Federal confidentiality rules (42 CFR part 2). These rules prohibit you from using or disclosing this record, or testimony that describes the information contained in this record, in any civil, criminal, administrative, or legislative proceedings by any Federal, State, or local authority, against the patient, unless authorized by the consent of the patient, except as provided at 42 CFR 2.12(c)(5) or as authorized by a court in accordance with 42 CFR 2.64 or 2.65. In addition, the Federal rules prohibit you from making any other use or disclosure of this record unless at least one of the following applies: (i) Further use or disclosure is expressly permitted by the written consent of the individual whose information is being disclosed in this record or as otherwise permitted by 42 CFR part 2. (ii) You are a covered entity or business associate and have received the record for treatment, payment, or health care operations, or (iii) You have received the record from a covered entity or business associate as permitted by 45 CFR part 164, subparts A and E. A general authorization for the release of medical or other information is NOT sufficient to meet the required elements of written consent to further use or redisclose the record (see 42 CFR 2.31).",
-      PART2_NOTICE_SHORT: "42 CFR part 2 prohibits unauthorized use or disclosure of these records.",
-      SUBSTANCES: ["opioids_fentanyl", "opioids_heroin", "opioids_rx", "alcohol", "methamphetamine", "cocaine", "benzodiazepines", "cannabis", "synthetic_cannabinoids", "xylazine", "nicotine", "other", "unknown"],
-      SERVICE_TAGS: ["detox", "residential", "inpatient", "partial_hospitalization", "intensive_outpatient", "outpatient", "mat_buprenorphine", "mat_methadone", "mat_naltrexone", "medication_management", "individual_counseling", "group_counseling", "family_program", "peer_support", "case_management", "mental_health", "trauma_informed", "co_occurring", "medical_care", "harm_reduction", "naloxone", "syringe_services", "housing", "sober_living", "employment", "legal_help", "transportation", "childcare", "telehealth", "walk_in", "same_day_intake", "crisis_24_7", "aftercare", "faith_based", "spanish_speaking"],
-      POPULATIONS: ["adults", "adolescents", "women", "men", "pregnant_parenting", "families", "veterans", "lgbtq", "justice_involved", "unhoused", "older_adults", "native_american", "spanish_speakers", "deaf_hard_of_hearing"],
-      FORM_CATEGORIES: ["consent_release", "intake_screening", "assessment", "treatment_plan", "referral", "assistance_request", "transportation", "housing", "benefits", "discharge", "incident", "grievance", "other"],
-      DOCUMENT_CATEGORIES: ["policy", "procedure", "contract"],
-      FORM_FIELD_TYPES: ["text", "textarea", "date", "number", "checkbox", "select", "signature", "section", "note"],
-      FORM_AUTOFILL: ["client.full_name", "client.first_name", "client.last_name", "client.preferred_name", "client.dob", "client.phone", "client.email", "client.address", "client.city", "client.zip", "client.client_code", "client.gender", "client.pronouns", "client.insurance", "client.medicaid_id", "client.emergency_contact", "client.primary_substance", "client.mat_status", "client.intake_date", "worker.name", "worker.title", "org.name", "org.county", "today"],
-      // The overdose form's "What happened" and "Given by". The kinds are fixed by a CHECK constraint on
-      // overdose_events.kind and each drives a count, so Settings → Lists can reword them but not add to them.
-      OVERDOSE_KINDS: ["overdose", "reversal", "fatal"],
-      ADMINISTERED_BY: ["bystander", "first_responder", "staff", "self", "family", "unknown"],
-      // Why an episode of care ended ('deceased' also marks the client deceased: server/routes/episodes.js).
-      DISCHARGE_REASONS: ["completed", "transferred", "incarcerated", "moved", "lost_contact", "declined", "deceased", "administrative", "other"],
-      // A referral outcome's "If it did not happen, why" (stored encrypted in referrals.barrier_enc).
-      REFERRAL_BARRIERS: ["none", "transportation", "insurance", "waitlist", "no_beds", "client_declined", "childcare", "documentation", "legal", "phone_access", "other"],
-      ASAM: ["0.5", "1.0", "2.1", "2.5", "3.1", "3.3", "3.5", "3.7", "4.0", "OTP", "unknown"],
-      // Problem list, care plan, ASAM dimensions and the screening instruments (server/clinical.js).
-      Z_CODES: CL.Z_CODES,
-      PROBLEM_STATUSES: CL.PROBLEM_STATUSES,
-      PROBLEM_SOURCES: CL.PROBLEM_SOURCES,
-      GOAL_STATUSES: CL.GOAL_STATUSES,
-      STEP_OWNERS: CL.STEP_OWNERS,
-      STEP_STATUSES: CL.STEP_STATUSES,
-      ASAM_DIMENSIONS: CL.ASAM_DIMENSIONS,
-      ASAM_RATINGS: CL.ASAM_RATINGS,
-      ASAM_DISCREPANCY_REASONS: CL.ASAM_DISCREPANCY_REASONS,
-      INSTRUMENTS: CL.INSTRUMENTS
-    };
   }
 });
 
@@ -15788,459 +16343,6 @@ var require_app = __commonJS({
   }
 });
 
-// server/disclosure.js
-var require_disclosure = __commonJS({
-  "server/disclosure.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var audit3 = require_audit();
-    var C = require_constants();
-    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
-    var { badRequest, forbidden, HttpError: HttpError3 } = require_http();
-    var BASES = ["consent", "court_order", "medical_emergency", "qsoa", "audit_evaluation", "research", "crime_on_premises", "child_abuse_report", "other"];
-    var NEEDS_JUSTIFICATION = ["other", "medical_emergency", "crime_on_premises", "child_abuse_report"];
-    var OVERRIDE_BASES = ["other", "research", "audit_evaluation", "crime_on_premises", "child_abuse_report"];
-    var AGREEMENT_KINDS = { qsoa: "qualified service organization agreement", research: "research approval", audit_evaluation: "audit or evaluation approval" };
-    var REFERRAL_BASES = ["consent", "medical_emergency", "court_order", "other"];
-    var LEGACY_CONSENT_CUTOFF = "2026-02-16";
-    var SYSTEM_BASES = ["export", "state_reporting"];
-    var STATE_REPORTING = {
-      basis: "state_reporting",
-      recipient: "California Department of Health Care Services (DHCS) \u2014 CalOMS Tx",
-      purpose: "State reporting (CalOMS Tx): treatment admission, discharge and annual update data required by law (HIPAA \xA7164.512(a); 42 CFR \xA72.53)"
-    };
-    var MIN_JUSTIFICATION = 20;
-    var EXPORT_BASES = ["consent", "audit_evaluation", "research", "qsoa", "internal"];
-    var RESTRICTION_EXEMPT = ["court_order", "medical_emergency", "child_abuse_report", "crime_on_premises", "state_reporting"];
-    function part2Program() {
-      return db3.getSetting("part2_program", "1") !== "0";
-    }
-    function notice() {
-      return { version: C.PART2_NOTICE_VERSION, text: C.PART2_REDISCLOSURE_NOTICE, short: C.PART2_NOTICE_SHORT };
-    }
-    function disclosingConsentTypes() {
-      return part2Program() ? C.PART2_CONSENT_TYPES : [...C.PART2_CONSENT_TYPES, "roi", "research"];
-    }
-    function fileConsentTypes() {
-      return disclosingConsentTypes().filter((t) => t !== "part2_proceedings" && t !== "part2_counseling_notes");
-    }
-    function fileNotice({ short = false } = {}) {
-      if (!part2Program()) return null;
-      const n = notice();
-      return short ? n.short : `${n.short} NOTICE TO RECIPIENT (42 CFR \xA72.32): ${n.text}`;
-    }
-    function missingPart2Elements(v) {
-      const missing = [];
-      if (!v.discloser) missing.push("who may make the disclosure");
-      if (!v.recipient) missing.push("the recipient (a name, or a class of recipients)");
-      if (!v.purpose) missing.push("the purpose");
-      if (!v.scope) missing.push("what information is covered (scope)");
-      if (!v.expires_at && !v.expires_event) missing.push("an expiration date or event");
-      if (!v.document_ref && !v.signed_on_paper && !v.witness) missing.push('evidence it was signed (a document reference, a witness, or "signed on paper")');
-      if (v.signer_relationship !== "patient" && !v.signer_name) missing.push("the name of the person who signed for the patient");
-      if (!v.revocation_right_given) missing.push("confirmation that the consent states the right to revoke it and how");
-      if (!v.redisclosure_notice_given) missing.push("confirmation that the redisclosure statement was given (\xA72.32)");
-      if (!v.refusal_consequences_given) missing.push("confirmation that the consent states the consequences of refusing to sign");
-      return missing;
-    }
-    function missingLegacyElements(v) {
-      const missing = [];
-      if (!v.recipient) missing.push("the recipient");
-      if (!v.purpose) missing.push("the purpose");
-      if (!v.scope) missing.push("what information is covered (scope)");
-      if (!v.expires_at && !v.expires_event) missing.push("an expiration date or event");
-      if (!v.document_ref && !v.signed_on_paper && !v.witness) missing.push('evidence it was signed (a document reference, a witness, or "signed on paper")');
-      if (String(v.signed_at || "") >= LEGACY_CONSENT_CUTOFF) missing.push(`the 2024 elements (it was signed on or after ${LEGACY_CONSENT_CUTOFF}, when the 2024 rule's element list became mandatory)`);
-      return missing;
-    }
-    var dec2 = (v) => {
-      if (!v) return "";
-      try {
-        return decrypt3(v);
-      } catch {
-        return "";
-      }
-    };
-    function consentValues(row) {
-      return {
-        discloser: row.discloser,
-        recipient: dec2(row.recipient_enc),
-        purpose: dec2(row.purpose_enc),
-        scope: dec2(row.scope_enc),
-        expires_at: row.expires_at,
-        expires_event: row.expires_event,
-        document_ref: row.document_ref,
-        signed_on_paper: row.signed_on_paper,
-        witness: row.witness,
-        signer_relationship: row.signer_relationship,
-        signer_name: dec2(row.signer_name_enc),
-        revocation_right_given: row.revocation_right_given,
-        redisclosure_notice_given: row.redisclosure_notice_given,
-        refusal_consequences_given: row.refusal_consequences_given,
-        signed_at: row.signed_at
-      };
-    }
-    function consentElementProblems(row) {
-      if (!C.PART2_CONSENT_TYPES.includes(row.type)) return [];
-      const v = consentValues(row);
-      return row.rule_version === "2024" ? missingPart2Elements(v) : missingLegacyElements(v);
-    }
-    function activeConsent(clientId, consentId, { elements = true } = {}) {
-      if (!consentId) return null;
-      const row = db3.one(`SELECT * FROM consents WHERE id=? AND client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, consentId, clientId) || null;
-      if (row && elements && consentElementProblems(row).length) return null;
-      return row;
-    }
-    function courtOrderProblems(o) {
-      const out2 = [];
-      if (o.status !== "active") out2.push("it has been vacated");
-      if (o.expires_at && o.expires_at < (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)) out2.push("it has expired");
-      if (!o.findings_recorded) out2.push("it does not record the good-cause findings the regulation requires (\xA72.64(d))");
-      if (!o.notice_requirement_met) out2.push("the notice and opportunity to respond the regulation requires was not given");
-      return out2;
-    }
-    function agreedRestrictions(clientId) {
-      return db3.one(`SELECT COUNT(*) n FROM patient_requests WHERE client_id=? AND kind='restriction' AND status='fulfilled'`, clientId).n;
-    }
-    var normalise = (s) => String(s || "").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
-    var splitAliases = (s) => String(s || "").split(/[;\n]/).map((x) => x.trim()).filter(Boolean);
-    function aliasGroups() {
-      const groups = db3.all(`SELECT organisation, aliases FROM disclosure_agreements`).map((a) => [a.organisation, ...splitAliases(a.aliases)]);
-      for (const r of db3.all(`SELECT value FROM settings WHERE key LIKE 'fhir_client:%'`)) {
-        try {
-          const reg = JSON.parse(r.value);
-          if (reg && reg.recipient) groups.push([reg.recipient, ...Array.isArray(reg.aliases) ? reg.aliases : []]);
-        } catch {
-        }
-      }
-      return groups;
-    }
-    function recipientNames(recipient) {
-      const given = (Array.isArray(recipient) ? recipient : [recipient]).map((x) => String(x || "").trim()).filter(Boolean);
-      const seen2 = new Set(given.map(normalise));
-      const out2 = [...given];
-      for (const group of aliasGroups()) {
-        if (!group.some((n) => seen2.has(normalise(n)))) continue;
-        for (const n of group) if (!seen2.has(normalise(n))) {
-          seen2.add(normalise(n));
-          out2.push(n);
-        }
-      }
-      return out2;
-    }
-    function consentNamesRecipient({ type, recipient }, names) {
-      const r = normalise(recipient);
-      const ns = names.map(normalise).filter(Boolean);
-      if (!r || !ns.length) return false;
-      if (type === "part2_tpo") return ns.some((n) => ` ${r} `.includes(` ${n} `));
-      return ns.includes(r);
-    }
-    function isInternalRecipient(recipient) {
-      const r = normalise(recipient);
-      if (!r) return false;
-      if (r === normalise(db3.getSetting("org_name", ""))) return true;
-      return db3.all(`SELECT username, display_name FROM users WHERE is_active=1`).some((u) => normalise(u.username) === r || normalise(u.display_name) === r);
-    }
-    function agreementProblems(a) {
-      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-      const out2 = [];
-      if (a.status !== "active") out2.push("it has been ended");
-      if (a.expires_at && a.expires_at < today) out2.push("it has expired");
-      if (a.agreement_date > today) out2.push("it is not in force yet");
-      if (a.kind !== "qsoa" && !a.approving_body) out2.push("it does not name the IRB or approving body");
-      return out2;
-    }
-    function agreementNames(a) {
-      return [a.organisation, ...splitAliases(a.aliases)];
-    }
-    function requireAgreement(basis, agreementId, recipient) {
-      const label = AGREEMENT_KINDS[basis];
-      let a = agreementId ? db3.one(`SELECT * FROM disclosure_agreements WHERE id=?`, agreementId) : null;
-      if (!agreementId) {
-        const names2 = new Set(recipientNames(recipient).map(normalise));
-        a = db3.all(`SELECT * FROM disclosure_agreements WHERE kind=? AND status='active' ORDER BY agreement_date DESC, created_at DESC`, basis).find((x) => !agreementProblems(x).length && agreementNames(x).some((n) => names2.has(normalise(n)))) || null;
-      }
-      if (!a) {
-        throw badRequest(basis === "qsoa" ? "A disclosure to a qualified service organization needs the qualified service organization agreement on file (\xA72.11, \xA72.12(c)(4)): register it under Privacy & Part 2 \u2192 Agreements, and choose it." : `A ${basis === "research" ? "research (\xA72.52)" : "audit or evaluation (\xA72.53)"} disclosure needs the ${label} on file \u2014 the IRB, privacy board or approving body, and its dates: register it under Privacy & Part 2 \u2192 Agreements, and choose it.`, { agreementRequired: basis });
-      }
-      if (a.kind !== basis) throw badRequest(`That is a ${AGREEMENT_KINDS[a.kind]}, not a ${label}.`);
-      const problems = agreementProblems(a);
-      if (problems.length) throw badRequest(`That ${label} cannot authorise a disclosure: ${problems.join("; ")}.`);
-      const names = recipientNames(recipient);
-      if (!names.length) throw badRequest("Name the recipient of the disclosure.");
-      const theirs = new Set(agreementNames(a).map(normalise));
-      if (!names.some((n) => theirs.has(normalise(n)))) {
-        throw new HttpError3(409, `This ${label} is with "${a.organisation}"; it only covers disclosures to that organisation. Name it as the recipient, or choose the agreement with the organisation you are disclosing to.`, { agreementOrganisation: a.organisation });
-      }
-      return a;
-    }
-    function requireBasis(clientId, { consent_id, basis, justification, user, court_order_id, legal_proceeding, counseling_notes, restriction_reviewed, recipient, agreement_id, recipient_override, allowed } = {}) {
-      const b = basis || "consent";
-      if (!BASES.includes(b)) throw badRequest(`"${b}" is not a lawful basis for disclosure`);
-      if (allowed && !allowed.includes(b)) throw badRequest(`A referral can only be made with the client's consent, in a medical emergency, under a court order, or on a supervisor's justified override \u2014 not on a "${b.replace(/_/g, " ")}" basis. Record that disclosure on the client's Consents tab instead.`);
-      const canOverride = require_auth().hasPerm(user, "disclosures:override");
-      if (OVERRIDE_BASES.includes(b) && !canOverride) {
-        throw forbidden(b === "other" ? 'Only a supervisor or administrator can record a disclosure on an "other" basis' : `Only a supervisor or administrator can record a disclosure on a "${b.replace(/_/g, " ")}" basis`);
-      }
-      const proceeding = !!legal_proceeding;
-      const notes = !!counseling_notes;
-      if (proceeding && !["consent", "court_order"].includes(b)) throw badRequest("Information for use in a proceeding against the patient may only be disclosed under a court order issued under 42 CFR \xA72.64/\xA72.65, or the patient's written consent given for that proceeding alone (\xA72.12(d), \xA72.31(d)). A subpoena on its own is not enough.");
-      if (notes && !["consent", "court_order"].includes(b)) throw badRequest("SUD counseling notes may only be disclosed under a consent given for counseling notes alone (\xA72.31(b)), or a court order that expressly covers them.");
-      const why = String(justification || "").trim();
-      let consent = null;
-      let order = null;
-      let agreement = null;
-      let override = false;
-      if (b === "consent") {
-        consent = activeConsent(clientId, consent_id, { elements: false });
-        if (!consent) throw badRequest("A valid, unexpired consent must be selected before information can be shared. Record the consent first, or choose another lawful basis.");
-        if (!disclosingConsentTypes().includes(consent.type)) {
-          throw badRequest(consent.type === "roi" ? "A general release of information is not a 42 CFR Part 2 consent (\xA72.31, \xA72.32). Record a Part 2 consent with every required element, or choose another lawful basis." : `A "${consent.type.replace(/_/g, " ")}" consent does not authorise sharing information. Record a Part 2 consent, or choose another lawful basis.`);
-        }
-        const missing = consentElementProblems(consent);
-        if (missing.length) throw badRequest(`This consent cannot authorise a disclosure: it does not record ${missing.join("; ")}. Record a new consent with every \xA72.31 element.`, { consentIncomplete: missing });
-        if (proceeding && consent.type !== "part2_proceedings") throw badRequest("Information for use in a proceeding against the patient needs a court order, or a consent given for that proceeding alone (\xA72.31(d)); this consent does not cover it.");
-        if (!proceeding && consent.type === "part2_proceedings") throw badRequest("A consent for use in a legal proceeding cannot be combined with any other purpose (\xA72.31(d)); use it only for the proceeding it names.");
-        if (notes && consent.type !== "part2_counseling_notes") throw badRequest("SUD counseling notes need a separate consent given for counseling notes alone (\xA72.31(b)); a treatment, payment and operations consent or a general Part 2 consent does not cover them.");
-        if (!notes && consent.type === "part2_counseling_notes") throw badRequest('A consent for SUD counseling notes covers counseling notes only (\xA72.31(b)); tick "includes SUD counseling notes", or rely on a different consent for other information.');
-        const names = recipientNames(recipient);
-        if (!names.length) throw badRequest("Name the recipient of the disclosure: the consent is checked against it.");
-        const named = dec2(consent.recipient_enc);
-        if (!consentNamesRecipient({ type: consent.type, recipient: named }, names)) {
-          if (!recipient_override) {
-            throw new HttpError3(409, `This consent covers disclosures to "${named}" only; it does not name ${names[0]}. Choose a consent that names this recipient, record a new one, or ask a supervisor to override with a written justification.`, { consentRecipient: named, recipientNotCovered: true });
-          }
-          if (!canOverride) throw forbidden("Only a supervisor or administrator can rely on a consent for a recipient it does not name");
-          if (why.length < MIN_JUSTIFICATION) throw badRequest(`Relying on a consent for a recipient it does not name needs a written justification of at least ${MIN_JUSTIFICATION} characters, which is kept with the disclosure record.`);
-          override = true;
-        }
-      }
-      if (b === "court_order") {
-        order = court_order_id ? db3.one(`SELECT * FROM court_orders WHERE id=? AND client_id=?`, court_order_id, clientId) : null;
-        if (!order) throw badRequest("A disclosure under a court order must name the order: record it on the client's Consents tab (42 CFR subpart E) and choose it. A subpoena on its own does not authorise disclosing a Part 2 record.");
-        const problems = courtOrderProblems(order);
-        if (problems.length) throw badRequest(`That court order cannot authorise a disclosure: ${problems.join("; ")}.`);
-        if (notes && !order.covers_counseling_notes) throw badRequest("That court order does not expressly cover SUD counseling notes.");
-      }
-      if (AGREEMENT_KINDS[b]) agreement = requireAgreement(b, agreement_id, recipient);
-      if (!RESTRICTION_EXEMPT.includes(b) && !restriction_reviewed && agreedRestrictions(clientId)) {
-        throw badRequest("This client has an agreed restriction on how their information is shared (see their Requests tab). Check that this disclosure respects it, then confirm.", { restrictionReview: true });
-      }
-      if (NEEDS_JUSTIFICATION.includes(b) && why.length < MIN_JUSTIFICATION) {
-        throw badRequest(b === "other" ? `Sharing without consent on an "other" basis needs a written justification of at least ${MIN_JUSTIFICATION} characters, which is kept with the disclosure record.` : b === "medical_emergency" ? `A medical emergency disclosure (42 CFR \xA72.51) needs a written justification of at least ${MIN_JUSTIFICATION} characters: the nature of the emergency and who was told.` : `A ${b === "crime_on_premises" ? "report of a crime on the premises or against staff (\xA72.12(c)(5))" : "mandated report of suspected child abuse or neglect (\xA72.12(c)(6))"} needs a written justification of at least ${MIN_JUSTIFICATION} characters: what happened, and what was reported to whom.`);
-      }
-      const kept = override ? `Recipient override (the consent names "${dec2(consent.recipient_enc)}"): ${why}` : why || null;
-      return { basis: b, consent, court_order: order, agreement, justification: kept, legal_proceeding: proceeding, counseling_notes: notes, recipient_override: override };
-    }
-    function requireExportBasis(clientIds, { basis, restriction_reviewed, legal_proceeding, recipient, agreement_id, user } = {}) {
-      if (legal_proceeding) throw badRequest("Records for use in a legal proceeding against a patient are disclosed one client at a time, under a recorded court order or a proceedings-only consent (Consents tab \u2192 Record a disclosure), never as a bulk export.");
-      if (!basis) throw badRequest(`An identified export must state its lawful basis (basis=${EXPORT_BASES.join("|")}); it is written to the accounting of disclosures for every client in the file`);
-      if (!EXPORT_BASES.includes(basis)) throw badRequest(`"${basis}" is not a basis an identified export can be made under (${EXPORT_BASES.join(", ")})`);
-      if (OVERRIDE_BASES.includes(basis) && !require_auth().hasPerm(user, "disclosures:override")) throw forbidden(`Only a supervisor or administrator can make an export on a "${basis.replace(/_/g, " ")}" basis`);
-      if (basis === "internal" && !isInternalRecipient(recipient)) {
-        throw badRequest(`An "internal" export stays within this program (\xA72.12(c)(3)): the recipient must be ${db3.getSetting("org_name", "") || "this program"} or one of its staff (their name or username). A file for anyone else needs another basis.`);
-      }
-      const agreement = AGREEMENT_KINDS[basis] ? requireAgreement(basis, agreement_id, recipient) : null;
-      const consentOf = /* @__PURE__ */ new Map();
-      const excluded = [];
-      if (basis === "consent") {
-        const names = recipientNames(recipient);
-        for (const id of clientIds) {
-          const c = fileConsentFor(id, names);
-          if (c) consentOf.set(id, c.id);
-          else excluded.push(id);
-        }
-      }
-      const out2 = new Set(excluded);
-      requireRestrictionReview(clientIds.filter((id) => !out2.has(id)), restriction_reviewed);
-      return { basis, agreement, consentOf, excluded };
-    }
-    function fileConsentFor(clientId, names) {
-      const types = fileConsentTypes();
-      if (!names.length || !types.length) return null;
-      const rows = db3.all(`SELECT * FROM consents WHERE client_id=? AND type IN (${types.map(() => "?").join(",")}) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now')) ORDER BY signed_at DESC, created_at DESC`, clientId, ...types);
-      return rows.find((c) => !consentElementProblems(c).length && consentNamesRecipient({ type: c.type, recipient: dec2(c.recipient_enc) }, names)) || null;
-    }
-    function requireRestrictionReview(clientIds, restriction_reviewed) {
-      if (restriction_reviewed || !clientIds.length) return;
-      const restricted = new Set(db3.all(`SELECT DISTINCT client_id FROM patient_requests WHERE kind='restriction' AND status='fulfilled'`).map((r) => r.client_id));
-      const n = clientIds.filter((id) => restricted.has(id)).length;
-      if (n) throw badRequest(`${n} client${n === 1 ? "" : "s"} in this export ${n === 1 ? "has" : "have"} an agreed restriction on how their information is shared. Check the export respects it, then confirm (restriction_reviewed=1).`, { restrictionReview: true, restrictedClients: n });
-    }
-    function record({ clientId, consentId = null, courtOrderId = null, agreementId = null, recipientOverride = false, legalProceeding = false, counselingNotes = false, recipient, purpose, what, method = null, basis = "consent", justification = null, source = "manual", sourceRef = null, disclosedAt = null, user, ip }) {
-      const id = uuid2();
-      const at = disclosedAt || db3.now();
-      const noticeVersion = part2Program() ? C.PART2_NOTICE_VERSION : null;
-      db3.run(
-        `INSERT INTO disclosures(id,client_id,consent_id,recipient_enc,purpose_enc,what_enc,method,disclosed_at,disclosed_by,basis,justification_enc,source,source_ref,court_order_id,legal_proceeding,counseling_notes,notice_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        id,
-        clientId,
-        consentId,
-        encrypt3(String(recipient)),
-        encrypt3(String(purpose)),
-        encrypt3(String(what)),
-        method,
-        at,
-        user.id,
-        basis,
-        justification ? encrypt3(String(justification)) : null,
-        source,
-        sourceRef,
-        courtOrderId,
-        legalProceeding ? 1 : 0,
-        counselingNotes ? 1 : 0,
-        noticeVersion
-      );
-      audit3.log({ user, action: "disclosure.record", entity: "disclosure", entityId: id, clientId, ip, details: {
-        basis,
-        source,
-        consent_id: consentId || void 0,
-        court_order_id: courtOrderId || void 0,
-        agreement_id: agreementId || void 0,
-        recipient_override: recipientOverride ? true : void 0,
-        justified: justification ? true : void 0,
-        legal_proceeding: legalProceeding ? true : void 0,
-        counseling_notes: counselingNotes ? true : void 0,
-        notice: noticeVersion || void 0
-      } });
-      return id;
-    }
-    function recordStateReport({ clientIds, what, sourceRef, user, ip }) {
-      return clientIds.map((clientId) => record({ clientId, recipient: STATE_REPORTING.recipient, purpose: STATE_REPORTING.purpose, what, method: "export", basis: STATE_REPORTING.basis, source: "caloms", sourceRef, user, ip }));
-    }
-    function present(row) {
-      if (!row) return null;
-      const out2 = { ...row };
-      out2.recipient = row.recipient_enc ? decrypt3(row.recipient_enc) : null;
-      out2.purpose = row.purpose_enc ? decrypt3(row.purpose_enc) : null;
-      out2.what = row.what_enc ? decrypt3(row.what_enc) : null;
-      out2.justification = row.justification_enc ? decrypt3(row.justification_enc) : null;
-      delete out2.recipient_enc;
-      delete out2.purpose_enc;
-      delete out2.what_enc;
-      delete out2.justification_enc;
-      return out2;
-    }
-    function accounting(clientId) {
-      const client = db3.one(`SELECT id, client_code FROM clients WHERE id=?`, clientId);
-      const disclosures = db3.all(`SELECT d.*, u.display_name AS disclosed_by_name, u.username AS disclosed_by_username, co.order_type AS court_order_type FROM disclosures d JOIN users u ON u.id=d.disclosed_by LEFT JOIN court_orders co ON co.id=d.court_order_id WHERE d.client_id=? ORDER BY d.disclosed_at`, clientId).map(present);
-      const consents = db3.all(`SELECT id, type, recipient_enc, purpose_enc, signed_at, expires_at, expires_event, revoked_at, rule_version FROM consents WHERE client_id=? ORDER BY signed_at`, clientId).map((c) => ({ id: c.id, type: c.type, recipient: c.recipient_enc ? decrypt3(c.recipient_enc) : null, purpose: c.purpose_enc ? decrypt3(c.purpose_enc) : null, signed_at: c.signed_at, expires_at: c.expires_at, expires_event: c.expires_event, revoked_at: c.revoked_at, rule_version: c.rule_version }));
-      return { client_id: client?.id, client_code: client?.client_code, generated_at: db3.now(), part2_program: part2Program(), notice: part2Program() ? notice() : null, disclosures, consents };
-    }
-    var FHIR_PURPOSES = {
-      TREAT: { display: "Treatment", words: ["treatment", "care coordination", "coordination of care", "continuity of care"] },
-      HPAYMT: { display: "Payment", words: ["payment", "billing", "claims"] },
-      HOPERAT: { display: "Health care operations", words: ["operations"] }
-    };
-    var FHIR_CONSENT_TYPES = ["part2_disclosure", "part2_tpo", "roi"];
-    function fhirConsentTypes() {
-      const ok = disclosingConsentTypes();
-      return FHIR_CONSENT_TYPES.filter((t) => ok.includes(t));
-    }
-    function isTpo(purpose) {
-      const p = ` ${normalise(purpose)} `;
-      return / tpo /.test(p) || p.includes("treatment") && p.includes("payment") && p.includes("operations");
-    }
-    function consentCovers({ type, recipient, purpose }, { recipients, purposeOfUse }) {
-      if (type !== void 0 && !fhirConsentTypes().includes(type)) return false;
-      if (!consentNamesRecipient({ type, recipient }, recipients)) return false;
-      if (type === "part2_tpo") return !!FHIR_PURPOSES[purposeOfUse];
-      if (isTpo(purpose)) return true;
-      const p = ` ${normalise(purpose)} `;
-      return (FHIR_PURPOSES[purposeOfUse]?.words || []).some((w) => p.includes(` ${normalise(w)} `));
-    }
-    function consentPurposeCodes({ type, purpose }) {
-      return Object.keys(FHIR_PURPOSES).filter((code) => type === "part2_tpo" || consentCovers({ recipient: "x", purpose }, { recipients: ["x"], purposeOfUse: code }));
-    }
-    var coverageCache = /* @__PURE__ */ new Map();
-    function fhirCoverage({ cacheKey, recipients, purposeOfUse }) {
-      const stamp2 = db3.one(`SELECT (SELECT COUNT(*) FROM consents) n, (SELECT MAX(updated_at) FROM consents) u,
-    (SELECT COUNT(*) FROM patient_requests) rn, (SELECT MAX(updated_at) FROM patient_requests) ru`);
-      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-      const types = fhirConsentTypes();
-      const key = `${stamp2.n}|${stamp2.u}|${stamp2.rn}|${stamp2.ru}|${types.join(",")}|${today}|${recipients.join("")}|${purposeOfUse}`;
-      const hit = coverageCache.get(cacheKey);
-      if (hit && hit.key === key) return hit.map;
-      const map = /* @__PURE__ */ new Map();
-      const restricted = new Set(db3.all(`SELECT DISTINCT client_id FROM patient_requests WHERE kind='restriction' AND status='fulfilled'`).map((r) => r.client_id));
-      const rows = types.length ? db3.all(`SELECT k.* FROM consents k JOIN clients c ON c.id=k.client_id
-    WHERE k.type IN (${types.map(() => "?").join(",")}) AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= date('now'))
-      AND c.deleted_at IS NULL AND c.merged_into IS NULL ORDER BY k.signed_at, k.created_at`, ...types) : [];
-      for (const row of rows) {
-        if (restricted.has(row.client_id)) continue;
-        if (consentElementProblems(row).length) continue;
-        let plain;
-        try {
-          plain = { type: row.type, recipient: row.recipient_enc ? decrypt3(row.recipient_enc) : "", purpose: row.purpose_enc ? decrypt3(row.purpose_enc) : "" };
-        } catch {
-          continue;
-        }
-        if (consentCovers(plain, { recipients, purposeOfUse })) map.set(row.client_id, row.id);
-      }
-      if (coverageCache.size > 100) coverageCache.clear();
-      coverageCache.set(cacheKey, { key, map });
-      return map;
-    }
-    function recordFhir({ perClient, recipient, purposeOfUse, sourceRef, user, ip }) {
-      if (!perClient.size) return 0;
-      const purpose = `${FHIR_PURPOSES[purposeOfUse]?.display || purposeOfUse} (FHIR purpose of use ${purposeOfUse})`;
-      db3.transaction(() => {
-        for (const [clientId, { consentId, what }] of perClient) {
-          record({ clientId, consentId, recipient, purpose, what, method: "FHIR API", basis: "consent", source: "fhir", sourceRef, user, ip });
-        }
-      });
-      return perClient.size;
-    }
-    module.exports = {
-      BASES,
-      EXPORT_BASES,
-      SYSTEM_BASES,
-      STATE_REPORTING,
-      NEEDS_JUSTIFICATION,
-      OVERRIDE_BASES,
-      REFERRAL_BASES,
-      AGREEMENT_KINDS,
-      LEGACY_CONSENT_CUTOFF,
-      MIN_JUSTIFICATION,
-      part2Program,
-      notice,
-      fileNotice,
-      disclosingConsentTypes,
-      fileConsentTypes,
-      activeConsent,
-      courtOrderProblems,
-      agreedRestrictions,
-      missingPart2Elements,
-      missingLegacyElements,
-      consentElementProblems,
-      consentValues,
-      normalise,
-      recipientNames,
-      consentNamesRecipient,
-      isInternalRecipient,
-      agreementProblems,
-      agreementNames,
-      requireAgreement,
-      fileConsentFor,
-      requireBasis,
-      requireExportBasis,
-      requireRestrictionReview,
-      record,
-      recordStateReport,
-      present,
-      accounting,
-      FHIR_PURPOSES,
-      FHIR_CONSENT_TYPES,
-      fhirConsentTypes,
-      consentCovers,
-      consentPurposeCodes,
-      fhirCoverage,
-      recordFhir
-    };
-  }
-});
-
 // server/exports.js
 var require_exports = __commonJS({
   "server/exports.js"(exports, module) {
@@ -18303,7 +18405,8 @@ var require_caloms = __commonJS({
       }
       return cols2;
     }
-    function buildExtract({ from, to, scope, generatedBy }) {
+    var PREVIEW_NAME = { last_name: "PREVIEW", first_name: "NOT FOR SUBMISSION", dob: "" };
+    function buildExtract({ from, to, scope, generatedBy, preview = false, submissionId = null }) {
       const rep = report({ from, to, scope });
       const ready = rep.checked.filter((x) => !fatal(x.issues).length).map((x) => x.record);
       const names = /* @__PURE__ */ new Map();
@@ -18317,7 +18420,7 @@ var require_caloms = __commonJS({
             return "";
           }
         };
-        const o = { client_id: c.client_code, first_name: d(c.first_name_enc), last_name: d(c.last_name_enc), dob: d(c.dob_enc) };
+        const o = preview ? { client_id: c.client_code, ...PREVIEW_NAME } : { client_id: c.client_code, first_name: d(c.first_name_enc), last_name: d(c.last_name_enc), dob: d(c.dob_enc) };
         names.set(clientId, o);
         return o;
       };
@@ -18350,18 +18453,33 @@ var require_caloms = __commonJS({
       }
       files.push(["provider_activity.csv", T.toCsv(activity, [{ key: "provider_id", label: "ProviderID" }, { key: "report_month", label: "ReportMonth" }, { key: "admissions", label: "Admissions" }, { key: "discharges", label: "Discharges" }, { key: "annual_updates", label: "AnnualUpdates" }, { key: "no_activity", label: "NoActivity" }])]);
       const excluded = rep.summary.blocked;
-      files.push(["README.txt", readme({ from, to, counts, excluded, activity, generatedBy, missing: rep.summary.missing })]);
+      files.push(["README.txt", readme({ from, to, counts, excluded, activity, generatedBy, missing: rep.summary.missing, preview, submissionId })]);
+      if (preview) for (const f of files) f[0] = `PREVIEW-${f[0]}`;
       return { files, ready, clientIds: [...new Set(ready.map((r) => r.client_id))], counts, excluded, activity_rows: activity.length, no_activity_months: activity.filter((a) => a.no_activity === "Y").length };
     }
-    function readme({ from, to, counts, excluded, activity, generatedBy, missing }) {
+    function readme({ from, to, counts, excluded, activity, generatedBy, missing, preview = false, submissionId = null }) {
       return [
+        ...preview ? [
+          "PREVIEW - NOT FOR SUBMISSION",
+          "============================",
+          "",
+          "This is a preview for checking the records before they are submitted. Names are replaced with PREVIEW /",
+          "NOT FOR SUBMISSION and dates of birth are left out, so DHCS cannot accept it. To submit, produce the",
+          "submission file in SUDS (Reports -> State reporting -> Produce submission file) and send that file.",
+          ""
+        ] : [],
         "CalOMS Tx submission prepared by SUDS",
         "====================================",
         "",
-        "CONTAINS PHI. Identified client records for the California Department of Health Care Services (DHCS),",
-        "disclosed as required by law for state treatment outcome reporting. The disclosure is recorded in each",
-        "client's accounting of disclosures in SUDS. Transmit only through the county's approved DHCS channel.",
+        ...preview ? [
+          "Contains client codes and coded treatment answers (42 CFR Part 2 records), but no names or dates of birth."
+        ] : [
+          "CONTAINS PHI. Identified client records for the California Department of Health Care Services (DHCS),",
+          "disclosed as required by law for state treatment outcome reporting. The disclosure is recorded in each",
+          "client's accounting of disclosures in SUDS. Transmit only through the county's approved DHCS channel."
+        ],
         "",
+        ...submissionId ? [`Submission: ${submissionId} (its SHA-256 is recorded in SUDS; send this file unchanged)`] : [],
         `Period: ${from} to ${to}`,
         `Generated: ${db3.now()}${generatedBy ? ` by ${generatedBy}` : ""}`,
         `Layout: ${S.SPEC_VERSION}`,
@@ -18374,7 +18492,7 @@ var require_caloms = __commonJS({
         `  provider_activity.csv   ${activity.length} provider-month row(s); NoActivity=Y marks a month with nothing to report`,
         "",
         `Records held back because of fatal errors: ${excluded}. Missing or overdue records: ${missing}.`,
-        "Fix them in SUDS (Reports -> State reporting -> Validation) and produce the extract again.",
+        "Fix them in SUDS (Reports -> State reporting -> Validation) and produce a new submission for them.",
         "",
         "IMPORTANT: the code values and column names in these files follow SUDS's CalOMS Tx layout, which has",
         "NOT been verified against the current DHCS CalOMS Tx data dictionary / file specification. Before the",
@@ -18384,7 +18502,8 @@ var require_caloms = __commonJS({
         "",
         "How to submit (county process)",
         "  1. Resolve every fatal error in the SUDS validation report for the period.",
-        "  2. Produce this extract (it holds back anything still in error).",
+        "  2. Produce the submission file in SUDS (it holds back anything still in error). Producing it records",
+        "     the disclosure in each client's accounting; send exactly that file.",
         "  3. Load the files through the county's CalOMS Tx submission tool or DHCS upload, per the county's",
         "     CalOMS Tx procedure, by the monthly deadline. Submit a provider activity (no activity) report for",
         "     any month with no admissions, discharges or annual updates.",
@@ -18398,6 +18517,167 @@ var require_caloms = __commonJS({
   }
 });
 
+// server/retention.js
+var require_retention = __commonJS({
+  "server/retention.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var config = require_config();
+    var audit3 = require_audit();
+    var DELETE_TABLES = ["care_plan_steps", "care_plan_goals", "problem_history", "problems", "asam_assessments", "outcome_measures", "client_form_files", "client_forms", "disclosures", "court_orders", "part2_notices", "consents", "patient_requests", "referrals", "tasks", "calls", "overdose_events", "interventions", "caloms_records", "episodes", "assignments", "breakglass_events"];
+    var UNLINK_TABLES = ["time_entries", "expenditures", "complaints"];
+    var NO_TOMBSTONE = ["breakglass_events"];
+    function retentionYears() {
+      const v = Number(db3.getSetting("client_retention_years", ""));
+      return Number.isFinite(v) && v > 0 ? v : config.clientRetentionYears;
+    }
+    var ACTIVITY = {
+      clients: ["intake_date", "discharge_date"],
+      episodes: ["opened_at", "closed_at"],
+      caloms_records: ["record_date"],
+      interventions: ["occurred_at"],
+      calls: ["started_at"],
+      notes: ["occurred_at", "signed_at", "cosigned_at"],
+      note_addenda: ["created_at"],
+      referrals: ["referred_at", "appointment_at", "admitted_at", "closed_at", "outcome_recorded_at"],
+      tasks: ["due_at", "completed_at"],
+      consents: ["signed_at", "revoked_at"],
+      disclosures: ["disclosed_at"],
+      client_forms: ["completed_at"],
+      client_form_files: ["created_at"],
+      overdose_events: ["occurred_at"],
+      patient_requests: ["received_at", "closed_at"],
+      problems: ["onset_date", "resolved_date", "updated_at"],
+      problem_history: ["created_at"],
+      care_plan_goals: ["start_date", "reviewed_at", "updated_at"],
+      care_plan_steps: ["completed_at", "updated_at"],
+      asam_assessments: ["assessed_at"],
+      outcome_measures: ["administered_at"],
+      court_orders: ["issued_at"],
+      part2_notices: ["given_at"],
+      time_entries: ["work_date"],
+      expenditures: ["spent_at"]
+    };
+    var NOT_ACTIVITY = ["assignments", "breakglass_events", "complaints", "privacy_incident_clients"];
+    function lastActivitySql() {
+      const parts = [];
+      for (const [t, cols2] of Object.entries(ACTIVITY)) {
+        for (const col of cols2) {
+          if (t === "clients") parts.push(`SELECT substr(c.${col},1,10) d`);
+          else if (t === "note_addenda") parts.push(`SELECT MAX(substr(a.${col},1,10)) FROM note_addenda a JOIN notes n ON n.id=a.note_id WHERE n.client_id=c.id`);
+          else if (t === "client_form_files") parts.push(`SELECT MAX(substr(x.${col},1,10)) FROM client_form_files x JOIN client_forms f ON f.id=x.client_form_id WHERE f.client_id=c.id`);
+          else parts.push(`SELECT MAX(substr(${col},1,10)) FROM ${t} WHERE client_id=c.id`);
+        }
+      }
+      return `(SELECT MAX(d) FROM (${parts.join(" UNION ALL ")}))`;
+    }
+    function expiredClients(years = retentionYears(), now = /* @__PURE__ */ new Date()) {
+      const cutoff = new Date(now.getTime() - years * 365.25 * 864e5).toISOString().slice(0, 10);
+      return db3.all(`SELECT * FROM (
+      SELECT c.id, c.client_code, c.legal_hold, c.status, ${lastActivitySql()} AS ended
+      FROM clients c
+      WHERE c.legal_hold=0
+        AND c.merged_into IS NULL
+        AND (c.status='inactive' OR (c.status IN ('closed','deceased') AND NOT EXISTS (SELECT 1 FROM episodes e WHERE e.client_id=c.id AND e.status='open')))
+    ) WHERE ended IS NOT NULL AND ended <> '' AND ended < ?`, cutoff);
+    }
+    function purgeBlockers(clientId) {
+      const out2 = {};
+      const n = (sql) => db3.one(sql, clientId).n;
+      const referrals = n(`SELECT COUNT(*) n FROM referrals WHERE client_id=? AND status IN ('pending','contacted','accepted','waitlisted','scheduled')`);
+      const tasks = n(`SELECT COUNT(*) n FROM tasks WHERE client_id=? AND status IN ('open','in_progress')`);
+      const requests = n(`SELECT COUNT(*) n FROM patient_requests WHERE client_id=? AND status='open'`);
+      if (referrals) out2.open_referrals = referrals;
+      if (tasks) out2.open_tasks = tasks;
+      if (requests) out2.open_requests = requests;
+      return out2;
+    }
+    function purgeClient(client, { user = { username: "system" }, reason = "retention" } = {}) {
+      const counts = {};
+      db3.transaction(() => {
+        const noteIds = db3.all(`SELECT id FROM notes WHERE client_id=?`, client.id).map((n) => n.id);
+        for (const id of noteIds) {
+          db3.run(`DELETE FROM note_addenda WHERE note_id=?`, id);
+        }
+        counts.notes = db3.run(`DELETE FROM notes WHERE client_id=?`, client.id).changes;
+        for (const id of noteIds) db3.tombstone("notes", id);
+        const inFiles = db3.all(`SELECT DISTINCT source_ref FROM disclosures WHERE client_id=? AND source='caloms' AND source_ref LIKE 'caloms:%'`, client.id).map((r) => r.source_ref.slice("caloms:".length));
+        counts.caloms_files_cleared = inFiles.reduce((n, id) => n + db3.run(`UPDATE caloms_submissions SET file_enc=NULL, file_cleared_at=?, updated_at=? WHERE id=? AND file_enc IS NOT NULL`, db3.now(), db3.now(), id).changes, 0);
+        for (const t of DELETE_TABLES) {
+          const ids = db3.all(`SELECT id FROM ${t} WHERE client_id=?`, client.id).map((r) => r.id);
+          counts[t] = ids.length;
+          if (!ids.length) continue;
+          db3.run(`DELETE FROM ${t} WHERE client_id=?`, client.id);
+          if (!NO_TOMBSTONE.includes(t)) for (const id of ids) db3.tombstone(t, id);
+        }
+        for (const t of UNLINK_TABLES) counts[t] = db3.run(`UPDATE ${t} SET client_id=NULL, updated_at=? WHERE client_id=?`, db3.now(), client.id).changes;
+        counts.privacy_incident_clients = db3.run(
+          `UPDATE privacy_incident_clients SET client_code=COALESCE(client_code, ?), client_purged_at=?, client_id=NULL, updated_at=? WHERE client_id=?`,
+          client.client_code,
+          db3.now(),
+          db3.now(),
+          client.id
+        ).changes;
+        counts.import_items_unlinked = db3.run(`UPDATE import_items SET suggested_client_id=NULL, updated_at=? WHERE suggested_client_id=?`, db3.now(), client.id).changes;
+        for (const dup of db3.all(`SELECT id, client_code, legal_hold FROM clients WHERE merged_into=?`, client.id)) {
+          if (dup.legal_hold) {
+            db3.run(`UPDATE clients SET merged_into=NULL, updated_at=? WHERE id=?`, db3.now(), dup.id);
+            continue;
+          }
+          purgeClient({ ...dup, ended: client.ended }, { user, reason: `merged into ${client.client_code} (${reason})` });
+          counts.merged_records = (counts.merged_records || 0) + 1;
+        }
+        db3.run(`DELETE FROM clients WHERE id=?`, client.id);
+        db3.tombstone("clients", client.id);
+      });
+      audit3.log({ user, action: "client.purge", entity: "client", entityId: client.id, clientId: client.id, details: { client_code: client.client_code, reason, ended: client.ended, counts } });
+      return counts;
+    }
+    function purgeExpiredClients(opts = {}) {
+      const years = retentionYears();
+      const purged = [];
+      const skipped = [];
+      for (const c of expiredClients(years)) {
+        const blockers = purgeBlockers(c.id);
+        if (Object.keys(blockers).length) {
+          console.warn(`[suds] retention: not purging ${c.client_code}: ${Object.entries(blockers).map(([k, v]) => `${v} ${k.replace("_", " ")}`).join(", ")}`);
+          audit3.log({ user: opts.user || { username: "system" }, action: "client.purge.skipped", entity: "client", entityId: c.id, clientId: c.id, details: { client_code: c.client_code, ...blockers } });
+          skipped.push(c.client_code);
+          continue;
+        }
+        try {
+          purgeClient(c, opts);
+          purged.push(c.client_code);
+        } catch (e) {
+          console.error(`[suds] retention: could not purge ${c.client_code}: ${e.message}`);
+        }
+      }
+      if (purged.length) console.log(`[suds] retention: purged ${purged.length} client record(s) older than ${years} years`);
+      db3.setSetting("client_retention_ran_at", db3.now());
+      return { years, purged, skipped };
+    }
+    var CALOMS_FILE_DAYS = 90;
+    function clearOldCalomsFiles(days = CALOMS_FILE_DAYS) {
+      const cutoff = new Date(Date.now() - days * 864e5).toISOString();
+      const n = db3.run(`UPDATE caloms_submissions SET file_enc=NULL, file_cleared_at=?, updated_at=? WHERE file_enc IS NOT NULL AND created_at < ?`, db3.now(), db3.now(), cutoff).changes;
+      if (n) audit3.log({ user: { username: "system" }, action: "caloms.submission.file_cleared", details: { files: n, older_than_days: days } });
+      return n;
+    }
+    function runIfDue() {
+      const last = db3.getSetting("client_retention_ran_at", null);
+      if (last && Date.now() - Date.parse(last) < 864e5) return null;
+      try {
+        clearOldCalomsFiles();
+      } catch (e) {
+        console.error(`[suds] retention: could not clear old CalOMS files: ${e.message}`);
+      }
+      return purgeExpiredClients();
+    }
+    module.exports = { ACTIVITY, NOT_ACTIVITY, retentionYears, expiredClients, purgeBlockers, purgeClient, purgeExpiredClients, runIfDue, DELETE_TABLES, UNLINK_TABLES, CALOMS_FILE_DAYS, clearOldCalomsFiles };
+  }
+});
+
 // server/routes/caloms.js
 var require_caloms2 = __commonJS({
   "server/routes/caloms.js"(exports, module) {
@@ -18408,7 +18688,7 @@ var require_caloms2 = __commonJS({
     var audit3 = require_audit();
     var C = require_caloms();
     var S = require_caloms_spec();
-    var { badRequest, notFound } = require_http();
+    var { badRequest, notFound, HttpError: HttpError3 } = require_http();
     var { validate } = require_validate();
     var DAY = /^\d{4}-\d{2}-\d{2}$/;
     function period(ctx) {
@@ -18522,22 +18802,25 @@ var require_caloms2 = __commonJS({
         }
         return { from, to, spec_version: rep.spec_version, enabled: rep.enabled, providers: rep.providers, start_date: rep.start_date, summary: rep.summary, rows };
       });
-      function extractFor(ctx) {
+      function extractFor(ctx, opts = {}) {
         const { from, to } = period(ctx);
         if (!C.enabled()) throw badRequest("CalOMS Tx reporting is switched off for this program (Reports \u2192 State reporting \u2192 Settings)");
         if (!C.providers().length) throw badRequest("Add this program's CalOMS provider ID first (Reports \u2192 State reporting \u2192 Settings)");
-        return { from, to, x: C.buildExtract({ from, to, scope: scopeFor(ctx.user), generatedBy: ctx.user.display_name || ctx.user.username }) };
+        return { from, to, x: C.buildExtract({ from, to, scope: scopeFor(ctx.user), generatedBy: ctx.user.display_name || ctx.user.username, ...opts }) };
       }
+      const zipOf = (files) => require_spreadsheet().zip(files);
+      const sha2562 = (buf) => (init_crypto2(), __toCommonJS(crypto_exports)).createHash("sha256").update(buf).digest("hex");
+      const headerSafe = (v) => String(v).replace(/[^\x20-\x7e]/g, "?").slice(0, 900);
       r.get("/api/caloms/extract", auth3.requireAuth, auth3.requirePerm("export:identified"), (ctx) => {
-        const { from, to, x } = extractFor(ctx);
+        const { from, to, x } = extractFor(ctx, { preview: true });
         const disclosure = require_disclosure();
         const stamp2 = db3.now();
         audit3.log({ user: ctx.user, action: "caloms.extract", ip: ctx.ip, details: { from, to, preview: true, ...x.counts, held_back: x.excluded, provider_months: x.activity_rows, no_activity_months: x.no_activity_months, clients: x.clientIds.length } });
-        const body = require_spreadsheet().zip(x.files);
+        const body = zipOf(x.files);
         ctx.res.writeHead(200, {
           "Content-Type": "application/zip",
-          "Content-Disposition": `attachment; filename="caloms-tx-${from}_${to}.zip"`,
-          "X-SUDS-Export": `Identified - PHI. CalOMS Tx submission for DHCS (state reporting, required by law). Test / preview - not accounted until marked as submitted. ${x.clientIds.length} client(s).${disclosure.fileNotice({ short: true }) ? ` ${disclosure.fileNotice({ short: true })}` : ""} Generated ${stamp2}.`,
+          "Content-Disposition": `attachment; filename="caloms-tx-PREVIEW-NOT-FOR-SUBMISSION-${from}_${to}.zip"`,
+          "X-SUDS-Export": headerSafe(`CalOMS Tx Preview - not for submission: names replaced and dates of birth left out; produce the submission file to send to DHCS. ${x.clientIds.length} client(s).${disclosure.fileNotice({ short: true }) ? ` ${disclosure.fileNotice({ short: true })}` : ""} Generated ${stamp2}.`),
           "X-SUDS-CalOMS-Counts": `admission=${x.counts.admission}; discharge=${x.counts.discharge}; annual_update=${x.counts.annual_update}; held_back=${x.excluded}`
         });
         ctx.res.end(body);
@@ -18546,17 +18829,72 @@ var require_caloms2 = __commonJS({
         const v = validate(ctx.body || {}, { from: { type: "date", required: true }, to: { type: "date", required: true } });
         ctx.query.set("from", v.from);
         ctx.query.set("to", v.to);
-        const { from, to, x } = extractFor(ctx);
+        const id = require_crypto().uuid();
+        const { from, to, x } = extractFor(ctx, { submissionId: id });
         if (!x.clientIds.length) throw badRequest("There is nothing to submit for this period: no record passed the edit checks.");
         const disclosure = require_disclosure();
+        const { encrypt: encrypt3 } = require_crypto();
+        const body = zipOf(x.files);
+        const hash2 = sha2562(body);
+        const fileName = `caloms-tx-SUBMISSION-${from}_${to}-${id.slice(0, 8)}.zip`;
         const stamp2 = db3.now();
         db3.transaction(() => {
-          disclosure.recordStateReport({ clientIds: x.clientIds, what: `CalOMS Tx records (${from} to ${to}): ${x.counts.admission} admission, ${x.counts.discharge} discharge, ${x.counts.annual_update} annual update`, sourceRef: `caloms:${from}_${to}`, user: ctx.user, ip: ctx.ip });
+          db3.run(
+            `INSERT INTO caloms_submissions(id,period_from,period_to,file_name,sha256,bytes,clients,counts,file_enc,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+            id,
+            from,
+            to,
+            fileName,
+            hash2,
+            body.length,
+            x.clientIds.length,
+            JSON.stringify({ ...x.counts, held_back: x.excluded }),
+            encrypt3(body.toString("base64")),
+            ctx.user.id,
+            stamp2,
+            stamp2
+          );
+          disclosure.recordStateReport({ clientIds: x.clientIds, what: `CalOMS Tx records (${from} to ${to}): ${x.counts.admission} admission, ${x.counts.discharge} discharge, ${x.counts.annual_update} annual update; submission file ${fileName}, SHA-256 ${hash2}`, sourceRef: `caloms:${id}`, user: ctx.user, ip: ctx.ip });
           for (const rec of x.ready) db3.run(`UPDATE caloms_records SET extracted_at=?, updated_at=? WHERE id=?`, stamp2, stamp2, rec.id);
         });
         require_incidents().maybeMassExport({ clients: x.clientIds.length, kind: "caloms", user: ctx.user });
-        audit3.log({ user: ctx.user, action: "caloms.submitted", ip: ctx.ip, details: { from, to, ...x.counts, held_back: x.excluded, clients_disclosed: x.clientIds.length } });
-        return { ok: true, from, to, submitted_at: stamp2, clients_disclosed: x.clientIds.length, counts: x.counts, held_back: x.excluded };
+        audit3.log({ user: ctx.user, action: "caloms.submitted", entity: "caloms_submission", entityId: id, ip: ctx.ip, details: { from, to, ...x.counts, held_back: x.excluded, clients_disclosed: x.clientIds.length, sha256: hash2 } });
+        return { ok: true, id, from, to, submitted_at: stamp2, file_name: fileName, sha256: hash2, bytes: body.length, clients_disclosed: x.clientIds.length, counts: x.counts, held_back: x.excluded };
+      });
+      r.get("/api/caloms/submissions", auth3.requireAuth, auth3.requirePerm("export:identified"), (ctx) => {
+        const rows = db3.all(`SELECT s.id, s.period_from, s.period_to, s.file_name, s.sha256, s.bytes, s.clients, s.counts, s.created_at, s.file_cleared_at, s.file_enc IS NOT NULL AS has_file, u.display_name AS created_by_name
+      FROM caloms_submissions s JOIN users u ON u.id=s.created_by ORDER BY s.created_at DESC LIMIT 200`).map((r2) => {
+          let counts = {};
+          try {
+            counts = JSON.parse(r2.counts || "{}");
+          } catch {
+          }
+          const o = { ...r2, counts, file_available: !!r2.has_file };
+          delete o.has_file;
+          return o;
+        });
+        audit3.log({ user: ctx.user, action: "caloms.submission.list", ip: ctx.ip, details: { count: rows.length } });
+        return { rows, keep_days: require_retention().CALOMS_FILE_DAYS };
+      });
+      r.get("/api/caloms/submissions/:id/file", auth3.requireAuth, auth3.requirePerm("export:identified"), (ctx) => {
+        const sub = db3.one(`SELECT * FROM caloms_submissions WHERE id=?`, ctx.params.id);
+        if (!sub) throw notFound("Submission not found");
+        if (!sub.file_enc) throw new HttpError3(410, `This submission's file is no longer kept (files are kept ${require_retention().CALOMS_FILE_DAYS} days, and removed when a client in it is purged). Its record and hash remain; produce a new submission if the records must be sent again.`);
+        const body = import_buffer.Buffer.from(require_crypto().decrypt(sub.file_enc), "base64");
+        if (sha2562(body) !== sub.sha256) {
+          audit3.log({ user: ctx.user, action: "caloms.submission.download", entity: "caloms_submission", entityId: sub.id, ip: ctx.ip, success: false, details: { reason: "hash mismatch" } });
+          throw new HttpError3(500, "The stored submission file does not match the hash recorded when it was produced; it will not be served. Report this to an administrator.");
+        }
+        require_incidents().maybeMassExport({ clients: sub.clients, kind: "caloms", user: ctx.user });
+        audit3.log({ user: ctx.user, action: "caloms.submission.download", entity: "caloms_submission", entityId: sub.id, ip: ctx.ip, details: { from: sub.period_from, to: sub.period_to, clients: sub.clients, sha256: sub.sha256 } });
+        const disclosure = require_disclosure();
+        ctx.res.writeHead(200, {
+          "Content-Type": "application/zip",
+          "Content-Disposition": `attachment; filename="${sub.file_name}"`,
+          "X-SUDS-SHA256": sub.sha256,
+          "X-SUDS-Export": headerSafe(`Identified - PHI. CalOMS Tx submission for DHCS (state reporting, required by law), accounted for ${sub.clients} client(s) on ${sub.created_at}. Send this file unchanged.${disclosure.fileNotice({ short: true }) ? ` ${disclosure.fileNotice({ short: true })}` : ""}`)
+        });
+        ctx.res.end(body);
       });
     };
   }
@@ -19092,6 +19430,8 @@ var require_consents = __commonJS({
         purpose: c.purpose_enc ? decrypt3(c.purpose_enc) : null,
         scope: c.scope_enc ? decrypt3(c.scope_enc) : null,
         signer_name: c.signer_name_enc ? decrypt3(c.signer_name_enc) : null,
+        // The coded categories it covers, as a list ([] when none were recorded: it covers nothing automated).
+        info_categories: [...disclosure.parseCategories(c.info_categories)],
         recipient_enc: void 0,
         purpose_enc: void 0,
         scope_enc: void 0,
@@ -19153,6 +19493,12 @@ var require_consents = __commonJS({
           revocation_right_given: { type: "boolean" },
           refusal_consequences_given: { type: "boolean" }
         });
+        const rawCats = ctx.body && ctx.body.info_categories;
+        const catList = rawCats === void 0 || rawCats === null || rawCats === "" ? [] : Array.isArray(rawCats) ? rawCats.map(String) : String(rawCats).split(",");
+        const cats = [...new Set(catList.map((x) => x.trim()).filter(Boolean))];
+        const unknown = cats.filter((x) => !C.CONSENT_INFO_CATEGORIES.includes(x));
+        if (unknown.length) throw badRequest("Validation failed", { fields: { info_categories: `has a category SUDS does not know (${unknown.map((x) => x.slice(0, 40)).join(", ")}); choose from ${C.CONSENT_INFO_CATEGORIES.join(", ")}` } });
+        const infoCategories = cats.length ? cats.includes("all") ? "all" : C.CONSENT_INFO_CATEGORIES.filter((x) => cats.includes(x)).join(",") : null;
         const part2 = PART2_TYPES.includes(v.type);
         if (part2) {
           if (!v.discloser) v.discloser = db3.getSetting("org_name", null) || null;
@@ -19163,7 +19509,7 @@ var require_consents = __commonJS({
         const id = uuid2();
         db3.run(
           `INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,expires_event,document_ref,witness,signed_on_paper,redisclosure_notice_given,
-        discloser,signer_relationship,signer_name_enc,revocation_right_given,refusal_consequences_given,rule_version,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        discloser,signer_relationship,signer_name_enc,revocation_right_given,refusal_consequences_given,rule_version,created_by,info_categories) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           id,
           ctx.params.id,
           v.type,
@@ -19183,9 +19529,10 @@ var require_consents = __commonJS({
           v.revocation_right_given ? 1 : 0,
           v.refusal_consequences_given ? 1 : 0,
           part2 ? "2024" : null,
-          ctx.user.id
+          ctx.user.id,
+          infoCategories
         );
-        audit3.log({ user: ctx.user, action: "consent.create", entity: "consent", entityId: id, clientId: ctx.params.id, ip: ctx.ip, details: { type: v.type, rule_version: part2 ? "2024" : void 0 } });
+        audit3.log({ user: ctx.user, action: "consent.create", entity: "consent", entityId: id, clientId: ctx.params.id, ip: ctx.ip, details: { type: v.type, rule_version: part2 ? "2024" : void 0, info_categories: infoCategories || void 0 } });
         ctx.status = 201;
         return { id };
       });
@@ -25780,7 +26127,7 @@ var require_resources = __commonJS({
         // Only the consents that cover this recipient for this purpose, of a type that may cover it now (a
         // general release is listed only outside a Part 2 programme): which other organisations a client has
         // agreed to share with is none of this recipient's business.
-        keep: (row, client) => disclosure.consentCovers({ type: row.type, recipient: dec2(row.recipient_enc), purpose: dec2(row.purpose_enc) }, { recipients: client.recipients, purposeOfUse: client.purpose })
+        keep: (row, client) => disclosure.consentCovers({ type: row.type, recipient: dec2(row.recipient_enc), purpose: dec2(row.purpose_enc), categories: row.info_categories }, { recipients: client.recipients, purposeOfUse: client.purpose, category: "*" })
       },
       ServiceRequest: {
         src: `SELECT r.id _fid, 'referral' _kind, r.id _rid, r.client_id _cid, r.updated_at _upd, r.referred_at _date, r.status _st FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${LIVE_CLIENT}`,
@@ -26063,7 +26410,6 @@ var require_bulk = __commonJS({
       const jobDir = path.join(dir(), job.id);
       try {
         fs.mkdirSync(jobDir, { recursive: true, mode: 448 });
-        const coverage = disclosure.fhirCoverage({ cacheKey: client.id, recipients: client.recipients, purposeOfUse: client.purpose });
         const patients = /* @__PURE__ */ new Set();
         const omitted = /* @__PURE__ */ new Set();
         let total = 0;
@@ -26071,6 +26417,7 @@ var require_bulk = __commonJS({
           if (!jobs.has(job.id)) return;
           job.progress = `exporting ${type}`;
           const d = R.DEFS[type];
+          const coverage = disclosure.fhirCoverage({ cacheKey: client.id, recipients: client.recipients, purposeOfUse: client.purpose, resourceType: type });
           const filter = R.where(type, new URLSearchParams(), { since: job.since });
           const lines = [];
           const inFile = {};
@@ -26173,7 +26520,7 @@ var require_bulk = __commonJS({
       const who = f.patients ? Object.keys(f.patients) : [];
       let perClient = null;
       if (who.length) {
-        const coverage = disclosure.fhirCoverage({ cacheKey: client.id, recipients: client.recipients, purposeOfUse: client.purpose });
+        const coverage = disclosure.fhirCoverage({ cacheKey: client.id, recipients: client.recipients, purposeOfUse: client.purpose, resourceType: f.type });
         const lapsed = who.filter((cid) => !coverage.has(cid));
         if (lapsed.length) {
           audit3.log({ user: client.actor, action: "fhir.export.download.refused", entity: "fhir_export", entityId: j.id, ip: ctx.ip, success: false, details: { client: client.prefix, type: f.type, lapsed_patients: lapsed.length } });
@@ -26266,7 +26613,7 @@ var require_fhir = __commonJS({
       if (!R.DEFS[t]) throw new FhirError(404, `Resource type "${String(t).slice(0, 60)}" is not served here`, { code: "not-supported" });
       return t;
     };
-    var coverageFor = (client) => disclosure.fhirCoverage({ cacheKey: client.id, recipients: client.recipients, purposeOfUse: client.purpose });
+    var coverageFor = (client, type) => disclosure.fhirCoverage({ cacheKey: client.id, recipients: client.recipients, purposeOfUse: client.purpose, resourceType: type });
     var requestId = () => uuid2();
     function account({ ctx, client, type, interaction, perClient, returned, omittedPatients, reqId }) {
       const what = (n) => `FHIR ${interaction} ${type}: ${n} resource${n === 1 ? "" : "s"}`;
@@ -26291,7 +26638,7 @@ var require_fhir = __commonJS({
       const rows = R.page(type, filter, { count: n + 1, offset });
       const hasNext = rows.length > n;
       if (hasNext) rows.length = n;
-      const coverage = d.phi ? coverageFor(client) : null;
+      const coverage = d.phi ? coverageFor(client, type) : null;
       const base = baseUrl(ctx);
       const entries = [];
       const perClient = /* @__PURE__ */ new Map();
@@ -26343,14 +26690,14 @@ var require_fhir = __commonJS({
       const id = String(ctx.params.id || "");
       if (!/^[A-Za-z0-9\-.]{1,64}$/.test(id)) throw new FhirError(404, "Not found", { code: "not-found" });
       const [row] = R.page(type, { sql: "_fid = ?", params: [id] }, { count: 1, offset: 0 });
-      const withheld = row && d.phi && !coverageFor(client).has(row._cid);
+      const withheld = row && d.phi && !coverageFor(client, type).has(row._cid);
       const r = row && !withheld ? R.toResource(type, row) : null;
       if (!r || d.keep && !d.keep(r.full, client)) {
         if (withheld) audit3.log({ user: client.actor, action: "fhir.read.withheld", entity: type, entityId: id, clientId: row._cid, ip: ctx.ip, success: false, details: { client: client.prefix, reason: "no covering consent" } });
         throw new FhirError(404, `${type}/${id} is not available`, { code: "not-found" });
       }
       if (d.phi) {
-        const perClient = /* @__PURE__ */ new Map([[row._cid, { consentId: coverageFor(client).get(row._cid), n: 1 }]]);
+        const perClient = /* @__PURE__ */ new Map([[row._cid, { consentId: coverageFor(client, type).get(row._cid), n: 1 }]]);
         account({ ctx, client, type, interaction: "read", perClient, returned: 1, omittedPatients: void 0, reqId: requestId() });
       } else {
         audit3.log({ user: client.actor, action: "fhir.read", entity: type, entityId: id, ip: ctx.ip, details: { client: client.prefix } });
@@ -27517,7 +27864,7 @@ var require_handoff = __commonJS({
     var { badRequest } = require_http();
     var { decrypt: decrypt3 } = require_crypto();
     var NOT_A_CLAIM = "Encounter hand-off for entry into the county EHR / billing system. This is not a claim: SUDS does not submit Drug Medi-Cal (837 / Short-Doyle) claims. Minutes are the total of the services recorded; the county EHR decides what is billable.";
-    var BASES = ["consent", "qsoa", "other"];
+    var BASES = require_disclosure().EXPORT_BASES;
     var COLUMNS = [
       ["service_date", "Service Date"],
       ["client_code", "Client Code"],
@@ -27620,10 +27967,10 @@ var require_handoff = __commonJS({
         const purpose = (ctx.query.get("purpose") || "").trim().slice(0, 500);
         if (!recipient || !purpose) throw badRequest("The hand-off names clients: say who receives it and why (recipient= and purpose=); both go into each client's accounting of disclosures");
         const basis = ctx.query.get("basis") || "consent";
-        if (!BASES.includes(basis)) throw badRequest(`basis must be one of ${BASES.join(", ")}`);
+        if (!BASES.includes(basis)) throw badRequest(`"${String(basis).slice(0, 40)}" is not a basis the hand-off can be made under (${BASES.join(", ")})`);
         const disclosure = require_disclosure();
         if (ctx.query.get("legal_proceeding") === "1") disclosure.requireExportBasis([], { basis: "internal", legal_proceeding: true });
-        const fileBasis = basis === "consent" ? null : disclosure.requireBasis(null, { basis, justification: ctx.query.get("justification"), agreement_id: ctx.query.get("agreement_id") || void 0, recipient, user: ctx.user, restriction_reviewed: true });
+        const fileBasis = basis === "consent" ? null : disclosure.requireExportBasis([], { basis, agreement_id: ctx.query.get("agreement_id") || void 0, recipient, user: ctx.user, restriction_reviewed: true });
         const all = encounters(ctx, p);
         const consentOf = /* @__PURE__ */ new Map();
         const excluded = /* @__PURE__ */ new Set();
@@ -27642,7 +27989,7 @@ var require_handoff = __commonJS({
           throw e;
         }
         db3.transaction(() => {
-          for (const clientId of clientIds) disclosure.record({ clientId, consentId: consentOf.get(clientId) || null, agreementId: fileBasis?.agreement?.id || null, recipient, purpose, what: `County EHR encounter hand-off (${p.from} to ${p.to}): service dates, types, minutes, staff and funding; name, date of birth, Medi-Cal ID`, method: "export", basis, justification: fileBasis ? fileBasis.justification : null, source: "ehr_handoff", sourceRef: `handoff:${p.from}_${p.to}`, user: ctx.user, ip: ctx.ip });
+          for (const clientId of clientIds) disclosure.record({ clientId, consentId: consentOf.get(clientId) || null, agreementId: fileBasis?.agreement?.id || null, recipient, purpose, what: `County EHR encounter hand-off (${p.from} to ${p.to}): service dates, types, minutes, staff and funding; name, date of birth, Medi-Cal ID`, method: "export", basis, justification: null, source: "ehr_handoff", sourceRef: `handoff:${p.from}_${p.to}`, user: ctx.user, ip: ctx.ip });
         });
         require_incidents().maybeMassExport({ clients: clientIds.length, kind: "ehr-handoff", user: ctx.user });
         audit3.log({ user: ctx.user, action: "handoff.export", ip: ctx.ip, details: { from: p.from, to: p.to, rows: rows.length, basis, clients_disclosed: clientIds.length, excluded_no_consent: excludedCodes.length || void 0 } });
@@ -29626,6 +29973,57 @@ var require_referrals = __commonJS({
         ip: ctx.ip
       });
     }
+    var OVERRIDE_PREFIX = /^Recipient override \(the consent names "[\s\S]*?"\): /;
+    function pushDisclosure(user, raw, existing, deviceRows = []) {
+      if (!sharesInformation(raw, existing || {})) return null;
+      const recipientChanged = !!existing && !!raw.resource_id && raw.resource_id !== existing.resource_id;
+      if (existing && !recipientChanged && existingDisclosure(raw.id)) return null;
+      const dev = deviceRows.length ? deviceRows[deviceRows.length - 1] : null;
+      const just = dev && dev.justification_enc ? String(dev.justification_enc) : "";
+      const resourceId = raw.resource_id || existing?.resource_id;
+      let basis;
+      try {
+        basis = disclosure.requireBasis(raw.client_id, {
+          consent_id: dev && dev.consent_id || raw.consent_id,
+          basis: dev && dev.basis || "consent",
+          justification: just.replace(OVERRIDE_PREFIX, "") || null,
+          court_order_id: dev && dev.court_order_id,
+          recipient: resourceNames(resourceId),
+          recipient_override: OVERRIDE_PREFIX.test(just),
+          allowed: disclosure.REFERRAL_BASES,
+          // The device's gate asked the worker to confirm an agreed restriction before it wrote its row.
+          restriction_reviewed: !!dev,
+          user
+        });
+      } catch (e) {
+        const x = e && e.extra || {};
+        const why = x.recipientNotCovered ? "the consent it cites does not name the agency it is sent to" : x.restrictionReview ? "the client has an agreed restriction on sharing, which has to be confirmed at the office" : x.consentIncomplete ? "the consent it cites does not carry every \xA72.31 element" : "it needs a live consent that names the agency, or another basis recorded at the office";
+        return { refused: `needs a lawful basis for disclosure the office accepts: ${why}`, code: x.recipientNotCovered ? "recipient_not_covered" : x.restrictionReview ? "restriction" : x.consentIncomplete ? "consent_incomplete" : "no_basis" };
+      }
+      return {
+        deviceIds: deviceRows.map((d) => d.id),
+        account(ip) {
+          return disclosure.record({
+            id: dev ? dev.id : void 0,
+            clientId: raw.client_id,
+            consentId: basis.consent?.id || null,
+            courtOrderId: basis.court_order?.id || null,
+            recipientOverride: basis.recipient_override,
+            recipient: resourceName(resourceId),
+            purpose: "Referral for services",
+            what: dev && dev.what_enc || "Referral information (name, contact details and presenting need)",
+            method: raw.warm_handoff ?? existing?.warm_handoff ? "warm handoff" : "referral",
+            basis: basis.basis,
+            justification: basis.justification,
+            source: "referral",
+            sourceRef: raw.id,
+            disclosedAt: dev && dev.disclosed_at || null,
+            user,
+            ip
+          });
+        }
+      };
+    }
     module.exports = (r) => {
       crud.build(r, {
         table: "referrals",
@@ -29688,7 +30086,9 @@ var require_referrals = __commonJS({
         },
         beforeUpdate: (ctx, v, row) => {
           if (v.consent_id && !db3.one(`SELECT 1 FROM consents WHERE id=? AND client_id=?`, v.consent_id, row.client_id)) throw badRequest("That consent belongs to a different client");
-          if (sharesInformation(v, row) && !existingDisclosure(row.id)) recordDisclosure(ctx, row, v);
+          const recipientChanged = !!v.resource_id && v.resource_id !== row.resource_id;
+          if (recipientChanged && !db3.one(`SELECT 1 FROM resources WHERE id=?`, v.resource_id)) throw badRequest("Unknown resource");
+          if (sharesInformation(v, row) && (recipientChanged || !existingDisclosure(row.id))) recordDisclosure(ctx, row, v);
           if (v.status && CLOSED_STATUSES.includes(v.status) && !v.closed_at && !row.closed_at) v.closed_at = db3.now();
           if (v.status === "admitted" && !v.admitted_at && !row.admitted_at) v.admitted_at = db3.now();
           if ((v.outcome !== void 0 || v.status === "admitted" || v.status && CLOSED_STATUSES.includes(v.status)) && !row.outcome_recorded_at) v.outcome_recorded_at = db3.now();
@@ -29763,6 +30163,7 @@ var require_referrals = __commonJS({
       });
     };
     module.exports.present = present;
+    module.exports.pushDisclosure = pushDisclosure;
   }
 });
 
@@ -31122,6 +31523,9 @@ var require_sync = __commonJS({
     function consentPushProblem(raw) {
       const disclosure = require_disclosure();
       if (!require_constants().CONSENT_TYPES.includes(raw.type)) return `has a value the office does not accept (consent type "${String(raw.type).slice(0, 40)}")`;
+      const cats = String(raw.info_categories || "").split(",").map((x) => x.trim()).filter(Boolean);
+      const unknownCat = cats.find((x) => !require_constants().CONSENT_INFO_CATEGORIES.includes(x));
+      if (unknownCat) return `has a value the office does not accept (information category "${unknownCat.slice(0, 40)}")`;
       if (!require_constants().PART2_CONSENT_TYPES.includes(raw.type)) return null;
       const v = {
         discloser: raw.discloser,
@@ -31209,12 +31613,20 @@ var require_sync = __commonJS({
         }
         return out2;
       }
+      const deviceReferralDisclosures = /* @__PURE__ */ new Map();
+      const accountedByOffice = /* @__PURE__ */ new Set();
+      for (const d of (payload.tables || {}).disclosures || []) {
+        if (!d || typeof d.id !== "string" || d.source !== "referral" || typeof d.source_ref !== "string") continue;
+        if (!deviceReferralDisclosures.has(d.source_ref)) deviceReferralDisclosures.set(d.source_ref, []);
+        deviceReferralDisclosures.get(d.source_ref).push(d);
+      }
       db3.transaction(() => {
         for (const t of SYNC2.tables) {
           let rows = (payload.tables || {})[t.name];
           if (!Array.isArray(rows) || !rows.length) continue;
           if (t.selfParent) rows = selfParentOrder2(rows, t.selfParent);
           if (t.name === "users") continue;
+          if (t.name === "disclosures" && accountedByOffice.size) rows = rows.filter((r) => !(r && accountedByOffice.has(r.id)));
           if (t.serverOwned) {
             for (const raw of rows) if (raw && typeof raw.id === "string") reject(t.name, raw.id, "server-owned");
             applied[t.name] = 0;
@@ -31428,6 +31840,16 @@ var require_sync = __commonJS({
                 raw.cosignature_hash = null;
               }
               if (db3.one(`SELECT 1 FROM tombstones WHERE table_name=? AND id=? AND deleted_at > ?`, t.name, raw.id, incomingAt)) return false;
+              let referralDisclosure = null;
+              if (t.name === "referrals") {
+                const deviceRows = (deviceReferralDisclosures.get(raw.id) || []).filter((d) => !db3.one(`SELECT 1 FROM disclosures WHERE id=?`, d.id));
+                referralDisclosure = require_referrals().pushDisclosure(user, raw, existing, deviceRows);
+                if (referralDisclosure && referralDisclosure.refused) {
+                  audit3.log({ user, action: "sync.disclosure_refused", entity: "referrals", entityId: raw.id, clientId: raw.client_id, ip: "device", success: false, details: { reason: referralDisclosure.code } });
+                  reject(t.name, raw.id, referralDisclosure.refused, true);
+                  return false;
+                }
+              }
               for (const c of SYNC2.user_ref_cols) if (existingCols.includes(c) && raw[c] && !knownUsers.has(raw[c])) raw[c] = user.id;
               if (t.name === "clients" && !existing && !raw.created_by) raw.created_by = user.id;
               const o = importRow2(t, raw, existingCols);
@@ -31449,6 +31871,10 @@ var require_sync = __commonJS({
                 }
                 db3.run(`UPDATE ${t.name} SET ${keys.map((k) => `${k}=?`).join(", ")} WHERE id=?`, ...keys.map((k) => o[k]), raw.id);
               } else db3.run(`INSERT INTO ${t.name}(id,${keys.join(",")}) VALUES(?,${keys.map(() => "?").join(",")})`, raw.id, ...keys.map((k) => o[k]));
+              if (referralDisclosure) {
+                referralDisclosure.account("device");
+                for (const id of referralDisclosure.deviceIds) accountedByOffice.add(id);
+              }
               db3.run(`DELETE FROM tombstones WHERE table_name=? AND id=?`, t.name, raw.id);
               if (t.name === "clients" && !existing && auth3.caseloadRestricted(user) && !pushedSelfAssignments.get(raw.id)) db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, require_crypto().uuid(), raw.id, user.id, "primary", (raw.intake_date || db3.now()).slice(0, 10), user.id);
               if (t.name === "interventions") {
