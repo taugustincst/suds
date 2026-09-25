@@ -139,12 +139,18 @@ async function build(ctx, { from, to, ts, tsP }) {
     const hrs = new Map(db.all(`SELECT t.funding_source_id f, COALESCE(SUM(CASE WHEN t.status='approved' THEN t.minutes END),0) approved_minutes,
       COALESCE(SUM(CASE WHEN t.status IN ('draft','submitted') THEN t.minutes END),0) unapproved_minutes FROM time_entries t WHERE t.work_date BETWEEN ? AND ? GROUP BY t.funding_source_id`, from, to).map(x => [x.f, x]));
     const figures = (id) => ({ clients_served: svc.get(id)?.clients_served || 0, services: svc.get(id)?.services || 0, approved_minutes: hrs.get(id)?.approved_minutes || 0, unapproved_minutes: hrs.get(id)?.unapproved_minutes || 0 });
-    const byFund = db.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end FROM funding_sources f WHERE f.is_active=1 ORDER BY f.name`).map(f => ({ ...f, ...figures(f.id) }));
+    // Filtered to one fund, the report is about that fund: its row, its staff hours, and no "No funding
+    // source" row (a visit charged to no fund is not work charged to this one). Unfiltered, every active fund
+    // and the "No funding source" row.
+    const byFund = fund
+      ? db.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end FROM funding_sources f WHERE f.id=?`, fund).map(f => ({ ...f, ...figures(f.id) }))
+      : db.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end FROM funding_sources f WHERE f.is_active=1 ORDER BY f.name`).map(f => ({ ...f, ...figures(f.id) }));
     const none = { id: null, name: 'No funding source', grant_number: null, fiscal_year_start: null, fiscal_year_end: null, ...figures(null) };
-    byFund.push(none);
-    let approved = 0, unapproved = 0; for (const x of hrs.values()) { approved += x.approved_minutes; unapproved += x.unapproved_minutes; }
+    if (!fund) byFund.push(none);
+    let approved = 0, unapproved = 0;
+    for (const [f, x] of hrs) if (!fund || f === fund) { approved += x.approved_minutes; unapproved += x.unapproved_minutes; }
     const attribution = {
-      unattributed_services: none.services, unattributed_clients: none.clients_served,
+      unattributed_services: fund ? 0 : none.services, unattributed_clients: fund ? 0 : none.clients_served,
       approved_minutes: approved, unapproved_minutes: unapproved,
       // Where to fix it: the visits in this period with no fund (public/views/interventions.js), and the time
       // sheets waiting for approval.

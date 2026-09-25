@@ -12,7 +12,7 @@ All three reports are aggregate. None contains names, client codes, dates of bir
 | --- | --- |
 | Unduplicated clients served | Clients (not deleted, within the caller's caseload) with a visit or a call in the period; with a fund chosen, only visits charged to it. Each person once. |
 | Demographic breakdowns | Those people's gender, language, housing, insurance, race codes (a person may report several) and ethnicity. |
-| By funding source | Visits in the period grouped by `interventions.funding_source_id`, with an explicit **No funding source** row; staff time from `time_entries` in the period: *approved* minutes and *logged, not yet approved* (draft or submitted) minutes. |
+| By funding source | Visits in the period grouped by `interventions.funding_source_id`, with an explicit **No funding source** row; staff time from `time_entries` in the period: *approved* minutes and *logged, not yet approved* (draft or submitted) minutes. With a fund chosen, the table, the staff hours on the page and on the Summary sheet, and the attribution figures are that fund's alone (visits charged to no fund are not in a report about one fund). |
 | Overdose & naloxone | `overdose_events` and the naloxone kits and test strips on visits. |
 
 **Small-cell suppression** (`purpose`, `counts`):
