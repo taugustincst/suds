@@ -30,6 +30,13 @@ const { exportRow, importRow } = SYNC;
 function scopeSql(t, user, alias) {
   const cf = auth.caseloadFilter(user, `${alias}.${t.clientCol}`);
   if (t.scope === 'all' || t.scope === 'users') return { sql: '1=1', params: [] };
+  // Imports are their importer's until filed (server/routes/imports.js shows them to nobody else without
+  // clients:all). They used to travel to every device, other people's OneNote pages included.
+  if (t.scope === 'importer' || t.scope === 'via-import') {
+    if (auth.hasPerm(user, 'clients:all')) return { sql: '1=1', params: [] };
+    if (t.scope === 'importer') return { sql: `(${alias}.imported_by=? OR ${alias}.imported_by IS NULL)`, params: [user.id] };
+    return { sql: `${alias}.import_id IN (SELECT i.id FROM imports i WHERE i.imported_by=? OR i.imported_by IS NULL)`, params: [user.id] };
+  }
   // A client merged away at the office drops off the caseload (its assignments moved to the record that
   // was kept), so the device that still held it was never told and showed a duplicate for ever. The merged
   // row travels when the record it was merged into is on the caseload: the device marks it merged and
@@ -38,6 +45,18 @@ function scopeSql(t, user, alias) {
   if (t.scope === 'via-note') { const nf = auth.caseloadFilter(user, 'n.client_id'); return { sql: `${alias}.note_id IN (SELECT n.id FROM notes n WHERE ${nf.sql})`, params: nf.params }; }
   if (t.scope === 'client-or-null') return { sql: `(${alias}.${t.clientCol} IS NULL OR ${cf.sql})`, params: cf.params };
   return cf;
+}
+
+// Clients this person's device holds but may no longer: an assignment of theirs ended (or ran out) since the
+// device last pulled, and nothing else keeps the client in scope. Ending an assignment changes no client row,
+// so without this the device kept the record -- and everything written about the client -- for good. The
+// device removes them (sync-tables.js purgeClient); it is not a deletion and is never echoed back.
+function droppedClients(user, since) {
+  if (!auth.caseloadRestricted(user) || since === NEVER) return [];
+  const ids = db.all(`SELECT DISTINCT client_id FROM assignments WHERE user_id=? AND NOT ${auth.activeAssignment()}
+    AND (ended_at > ? OR (ended_at IS NULL AND (updated_at > ? OR end_date >= date(?))))`, user.id, since, since, since).map(r => r.client_id);
+  const sc = scopeSql(SYNC.tables.find(t => t.name === 'clients'), user, 'c');
+  return ids.filter(id => !db.one(`SELECT 1 FROM clients c WHERE c.id=? AND ${sc.sql}`, id, ...sc.params));
 }
 
 // Pull everything changed since `since` that the user may see, in bounded pages.
@@ -90,6 +109,7 @@ function pull(user, since, { limit = PULL_LIMIT } = {}) {
     }
     out.tables[t.name] = exported;
   }
+  out.dropped_clients = droppedClients(user, since);
   out.tombstones = db.all(`SELECT table_name, id, deleted_at FROM tombstones WHERE deleted_at > ? AND deleted_at <= ? ORDER BY deleted_at`, since, cursor);
   // A device that has been away longer than tombstones are kept cannot be told what was deleted, so it is
   // sent for a full resync instead of quietly keeping rows everyone else has dropped.

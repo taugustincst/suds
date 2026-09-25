@@ -51,8 +51,10 @@ module.exports = {
     { name: 'notes', enc: ['content_enc', 'structured_enc', 'title_enc', 'cosign_note_enc'], legacy: { cosign_note: 'cosign_note_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'notes:admin:write', parent: ['clients', 'client_id'] },
     { name: 'note_addenda', enc: ['content_enc', 'reason_enc'], legacy: { reason: 'reason_enc' }, scope: 'via-note', writePerm: 'notes:admin:write', parent: ['notes', 'note_id'] },
     { name: 'disclosures', enc: ['recipient_enc', 'purpose_enc', 'what_enc', 'justification_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
-    { name: 'imports', enc: [], scope: 'all', writePerm: 'imports:write' },
-    { name: 'import_items', enc: ['content_enc', 'title_enc'], scope: 'all', writePerm: 'imports:write', parent: ['imports', 'import_id'] },
+    // An import (a OneNote page, a Pocket AI transcript) is its importer's until it is filed against a client:
+    // the REST routes show it only to them (or to clients:all), and a device gets the same -- scope 'importer'.
+    { name: 'imports', enc: [], scope: 'importer', writePerm: 'imports:write' },
+    { name: 'import_items', enc: ['content_enc', 'title_enc'], scope: 'via-import', writePerm: 'imports:write', parent: ['imports', 'import_id'] },
     { name: 'form_templates', enc: [], scope: 'all', writePerm: 'forms:manage', blob: ['file_b64'] },
     { name: 'client_forms', enc: ['values_enc', 'notes_enc'], legacy: { notes: 'notes_enc' }, scope: 'client', clientCol: 'client_id', writePerm: 'forms:write', parent: ['clients', 'client_id'] },
     { name: 'client_form_files', enc: ['data_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'forms:write', parent: ['client_forms', 'client_form_id'], blob: ['data_enc'] },
@@ -186,8 +188,38 @@ function upgradeLegacyRow(t, r) {
   return r;
 }
 
+/**
+ * Remove a client, and every row that hangs off it, from a device's database -- the office took the client off
+ * this person's caseload (server/routes/sync.js pull, dropped_clients). `d` is a { run, all, one } database.
+ * It is not a deletion: no tombstone is written, so nothing is echoed back to the office, and sync_seen is
+ * cleared so a later reassignment brings the client back whole. Children are removed explicitly rather than
+ * left to ON DELETE SET NULL, which would keep a call's summary or a task on the phone with no client.
+ * Shared with local/sync.js so the kernel and its test cannot drift. Returns the number of rows removed.
+ */
+function purgeClient(d, clientId, depth = 0) {
+  let n = 0;
+  const has = (t) => !!d.one(`SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name=?`, t);
+  const seenTable = has('sync_seen');
+  const drop = (table, id) => {
+    const r = d.run(`DELETE FROM ${table} WHERE id=?`, id); n += Number((r && r.changes) || 0);
+    if (seenTable) d.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, table, id);
+  };
+  // A duplicate merged into this client travelled only because this client was on the caseload.
+  if (depth < 25) for (const m of d.all(`SELECT id FROM clients WHERE merged_into=?`, clientId)) n += purgeClient(d, m.id, depth + 1);
+  // Reverse table order is child-before-parent (the array is in foreign-key order).
+  for (const t of [...module.exports.tables].reverse()) {
+    if (!has(t.name)) continue;
+    if (t.scope === 'via-note') { for (const r of d.all(`SELECT id FROM ${t.name} WHERE note_id IN (SELECT id FROM notes WHERE client_id=?)`, clientId)) drop(t.name, r.id); continue; }
+    if (!t.clientCol || t.name === 'clients') continue;
+    for (const r of d.all(`SELECT id FROM ${t.name} WHERE ${t.clientCol}=?`, clientId)) drop(t.name, r.id);
+  }
+  drop('clients', clientId);
+  return n;
+}
+
 /** Whether a push rejection reason is one a retry can never fix (see permanent_reasons). */
 module.exports.isPermanentReason = (reason) => module.exports.permanent_reasons.some(p => String(reason || '').startsWith(p));
 module.exports.exportRow = exportRow;
 module.exports.importRow = importRow;
 module.exports.upgradeLegacyRow = upgradeLegacyRow;
+module.exports.purgeClient = purgeClient;
