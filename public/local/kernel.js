@@ -15788,17 +15788,473 @@ var require_app = __commonJS({
   }
 });
 
+// server/disclosure.js
+var require_disclosure = __commonJS({
+  "server/disclosure.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var C = require_constants();
+    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
+    var { badRequest, forbidden, HttpError: HttpError3 } = require_http();
+    var BASES = ["consent", "court_order", "medical_emergency", "qsoa", "audit_evaluation", "research", "crime_on_premises", "child_abuse_report", "other"];
+    var NEEDS_JUSTIFICATION = ["other", "medical_emergency", "crime_on_premises", "child_abuse_report"];
+    var OVERRIDE_BASES = ["other", "research", "audit_evaluation", "crime_on_premises", "child_abuse_report"];
+    var AGREEMENT_KINDS = { qsoa: "qualified service organization agreement", research: "research approval", audit_evaluation: "audit or evaluation approval" };
+    var REFERRAL_BASES = ["consent", "medical_emergency", "court_order", "other"];
+    var LEGACY_CONSENT_CUTOFF = "2026-02-16";
+    var SYSTEM_BASES = ["export", "state_reporting"];
+    var STATE_REPORTING = {
+      basis: "state_reporting",
+      recipient: "California Department of Health Care Services (DHCS) \u2014 CalOMS Tx",
+      purpose: "State reporting (CalOMS Tx): treatment admission, discharge and annual update data required by law (HIPAA \xA7164.512(a); 42 CFR \xA72.53)"
+    };
+    var MIN_JUSTIFICATION = 20;
+    var EXPORT_BASES = ["consent", "audit_evaluation", "research", "qsoa", "internal"];
+    var RESTRICTION_EXEMPT = ["court_order", "medical_emergency", "child_abuse_report", "crime_on_premises", "state_reporting"];
+    function part2Program() {
+      return db3.getSetting("part2_program", "1") !== "0";
+    }
+    function notice() {
+      return { version: C.PART2_NOTICE_VERSION, text: C.PART2_REDISCLOSURE_NOTICE, short: C.PART2_NOTICE_SHORT };
+    }
+    function disclosingConsentTypes() {
+      return part2Program() ? C.PART2_CONSENT_TYPES : [...C.PART2_CONSENT_TYPES, "roi", "research"];
+    }
+    function fileConsentTypes() {
+      return disclosingConsentTypes().filter((t) => t !== "part2_proceedings" && t !== "part2_counseling_notes");
+    }
+    function fileNotice({ short = false } = {}) {
+      if (!part2Program()) return null;
+      const n = notice();
+      return short ? n.short : `${n.short} NOTICE TO RECIPIENT (42 CFR \xA72.32): ${n.text}`;
+    }
+    function missingPart2Elements(v) {
+      const missing = [];
+      if (!v.discloser) missing.push("who may make the disclosure");
+      if (!v.recipient) missing.push("the recipient (a name, or a class of recipients)");
+      if (!v.purpose) missing.push("the purpose");
+      if (!v.scope) missing.push("what information is covered (scope)");
+      if (!v.expires_at && !v.expires_event) missing.push("an expiration date or event");
+      if (!v.document_ref && !v.signed_on_paper && !v.witness) missing.push('evidence it was signed (a document reference, a witness, or "signed on paper")');
+      if (v.signer_relationship !== "patient" && !v.signer_name) missing.push("the name of the person who signed for the patient");
+      if (!v.revocation_right_given) missing.push("confirmation that the consent states the right to revoke it and how");
+      if (!v.redisclosure_notice_given) missing.push("confirmation that the redisclosure statement was given (\xA72.32)");
+      if (!v.refusal_consequences_given) missing.push("confirmation that the consent states the consequences of refusing to sign");
+      return missing;
+    }
+    function missingLegacyElements(v) {
+      const missing = [];
+      if (!v.recipient) missing.push("the recipient");
+      if (!v.purpose) missing.push("the purpose");
+      if (!v.scope) missing.push("what information is covered (scope)");
+      if (!v.expires_at && !v.expires_event) missing.push("an expiration date or event");
+      if (!v.document_ref && !v.signed_on_paper && !v.witness) missing.push('evidence it was signed (a document reference, a witness, or "signed on paper")');
+      if (String(v.signed_at || "") >= LEGACY_CONSENT_CUTOFF) missing.push(`the 2024 elements (it was signed on or after ${LEGACY_CONSENT_CUTOFF}, when the 2024 rule's element list became mandatory)`);
+      return missing;
+    }
+    var dec2 = (v) => {
+      if (!v) return "";
+      try {
+        return decrypt3(v);
+      } catch {
+        return "";
+      }
+    };
+    function consentValues(row) {
+      return {
+        discloser: row.discloser,
+        recipient: dec2(row.recipient_enc),
+        purpose: dec2(row.purpose_enc),
+        scope: dec2(row.scope_enc),
+        expires_at: row.expires_at,
+        expires_event: row.expires_event,
+        document_ref: row.document_ref,
+        signed_on_paper: row.signed_on_paper,
+        witness: row.witness,
+        signer_relationship: row.signer_relationship,
+        signer_name: dec2(row.signer_name_enc),
+        revocation_right_given: row.revocation_right_given,
+        redisclosure_notice_given: row.redisclosure_notice_given,
+        refusal_consequences_given: row.refusal_consequences_given,
+        signed_at: row.signed_at
+      };
+    }
+    function consentElementProblems(row) {
+      if (!C.PART2_CONSENT_TYPES.includes(row.type)) return [];
+      const v = consentValues(row);
+      return row.rule_version === "2024" ? missingPart2Elements(v) : missingLegacyElements(v);
+    }
+    function activeConsent(clientId, consentId, { elements = true } = {}) {
+      if (!consentId) return null;
+      const row = db3.one(`SELECT * FROM consents WHERE id=? AND client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, consentId, clientId) || null;
+      if (row && elements && consentElementProblems(row).length) return null;
+      return row;
+    }
+    function courtOrderProblems(o) {
+      const out2 = [];
+      if (o.status !== "active") out2.push("it has been vacated");
+      if (o.expires_at && o.expires_at < (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)) out2.push("it has expired");
+      if (!o.findings_recorded) out2.push("it does not record the good-cause findings the regulation requires (\xA72.64(d))");
+      if (!o.notice_requirement_met) out2.push("the notice and opportunity to respond the regulation requires was not given");
+      return out2;
+    }
+    function agreedRestrictions(clientId) {
+      return db3.one(`SELECT COUNT(*) n FROM patient_requests WHERE client_id=? AND kind='restriction' AND status='fulfilled'`, clientId).n;
+    }
+    var normalise = (s) => String(s || "").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    var splitAliases = (s) => String(s || "").split(/[;\n]/).map((x) => x.trim()).filter(Boolean);
+    function aliasGroups() {
+      const groups = db3.all(`SELECT organisation, aliases FROM disclosure_agreements`).map((a) => [a.organisation, ...splitAliases(a.aliases)]);
+      for (const r of db3.all(`SELECT value FROM settings WHERE key LIKE 'fhir_client:%'`)) {
+        try {
+          const reg = JSON.parse(r.value);
+          if (reg && reg.recipient) groups.push([reg.recipient, ...Array.isArray(reg.aliases) ? reg.aliases : []]);
+        } catch {
+        }
+      }
+      return groups;
+    }
+    function recipientNames(recipient) {
+      const given = (Array.isArray(recipient) ? recipient : [recipient]).map((x) => String(x || "").trim()).filter(Boolean);
+      const seen2 = new Set(given.map(normalise));
+      const out2 = [...given];
+      for (const group of aliasGroups()) {
+        if (!group.some((n) => seen2.has(normalise(n)))) continue;
+        for (const n of group) if (!seen2.has(normalise(n))) {
+          seen2.add(normalise(n));
+          out2.push(n);
+        }
+      }
+      return out2;
+    }
+    function consentNamesRecipient({ type, recipient }, names) {
+      const r = normalise(recipient);
+      const ns = names.map(normalise).filter(Boolean);
+      if (!r || !ns.length) return false;
+      if (type === "part2_tpo") return ns.some((n) => ` ${r} `.includes(` ${n} `));
+      return ns.includes(r);
+    }
+    function isInternalRecipient(recipient) {
+      const r = normalise(recipient);
+      if (!r) return false;
+      if (r === normalise(db3.getSetting("org_name", ""))) return true;
+      return db3.all(`SELECT username, display_name FROM users WHERE is_active=1`).some((u) => normalise(u.username) === r || normalise(u.display_name) === r);
+    }
+    function agreementProblems(a) {
+      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const out2 = [];
+      if (a.status !== "active") out2.push("it has been ended");
+      if (a.expires_at && a.expires_at < today) out2.push("it has expired");
+      if (a.agreement_date > today) out2.push("it is not in force yet");
+      if (a.kind !== "qsoa" && !a.approving_body) out2.push("it does not name the IRB or approving body");
+      return out2;
+    }
+    function agreementNames(a) {
+      return [a.organisation, ...splitAliases(a.aliases)];
+    }
+    function requireAgreement(basis, agreementId, recipient) {
+      const label = AGREEMENT_KINDS[basis];
+      let a = agreementId ? db3.one(`SELECT * FROM disclosure_agreements WHERE id=?`, agreementId) : null;
+      if (!agreementId) {
+        const names2 = new Set(recipientNames(recipient).map(normalise));
+        a = db3.all(`SELECT * FROM disclosure_agreements WHERE kind=? AND status='active' ORDER BY agreement_date DESC, created_at DESC`, basis).find((x) => !agreementProblems(x).length && agreementNames(x).some((n) => names2.has(normalise(n)))) || null;
+      }
+      if (!a) {
+        throw badRequest(basis === "qsoa" ? "A disclosure to a qualified service organization needs the qualified service organization agreement on file (\xA72.11, \xA72.12(c)(4)): register it under Privacy & Part 2 \u2192 Agreements, and choose it." : `A ${basis === "research" ? "research (\xA72.52)" : "audit or evaluation (\xA72.53)"} disclosure needs the ${label} on file \u2014 the IRB, privacy board or approving body, and its dates: register it under Privacy & Part 2 \u2192 Agreements, and choose it.`, { agreementRequired: basis });
+      }
+      if (a.kind !== basis) throw badRequest(`That is a ${AGREEMENT_KINDS[a.kind]}, not a ${label}.`);
+      const problems = agreementProblems(a);
+      if (problems.length) throw badRequest(`That ${label} cannot authorise a disclosure: ${problems.join("; ")}.`);
+      const names = recipientNames(recipient);
+      if (!names.length) throw badRequest("Name the recipient of the disclosure.");
+      const theirs = new Set(agreementNames(a).map(normalise));
+      if (!names.some((n) => theirs.has(normalise(n)))) {
+        throw new HttpError3(409, `This ${label} is with "${a.organisation}"; it only covers disclosures to that organisation. Name it as the recipient, or choose the agreement with the organisation you are disclosing to.`, { agreementOrganisation: a.organisation });
+      }
+      return a;
+    }
+    function requireBasis(clientId, { consent_id, basis, justification, user, court_order_id, legal_proceeding, counseling_notes, restriction_reviewed, recipient, agreement_id, recipient_override, allowed } = {}) {
+      const b = basis || "consent";
+      if (!BASES.includes(b)) throw badRequest(`"${b}" is not a lawful basis for disclosure`);
+      if (allowed && !allowed.includes(b)) throw badRequest(`A referral can only be made with the client's consent, in a medical emergency, under a court order, or on a supervisor's justified override \u2014 not on a "${b.replace(/_/g, " ")}" basis. Record that disclosure on the client's Consents tab instead.`);
+      const canOverride = require_auth().hasPerm(user, "disclosures:override");
+      if (OVERRIDE_BASES.includes(b) && !canOverride) {
+        throw forbidden(b === "other" ? 'Only a supervisor or administrator can record a disclosure on an "other" basis' : `Only a supervisor or administrator can record a disclosure on a "${b.replace(/_/g, " ")}" basis`);
+      }
+      const proceeding = !!legal_proceeding;
+      const notes = !!counseling_notes;
+      if (proceeding && !["consent", "court_order"].includes(b)) throw badRequest("Information for use in a proceeding against the patient may only be disclosed under a court order issued under 42 CFR \xA72.64/\xA72.65, or the patient's written consent given for that proceeding alone (\xA72.12(d), \xA72.31(d)). A subpoena on its own is not enough.");
+      if (notes && !["consent", "court_order"].includes(b)) throw badRequest("SUD counseling notes may only be disclosed under a consent given for counseling notes alone (\xA72.31(b)), or a court order that expressly covers them.");
+      const why = String(justification || "").trim();
+      let consent = null;
+      let order = null;
+      let agreement = null;
+      let override = false;
+      if (b === "consent") {
+        consent = activeConsent(clientId, consent_id, { elements: false });
+        if (!consent) throw badRequest("A valid, unexpired consent must be selected before information can be shared. Record the consent first, or choose another lawful basis.");
+        if (!disclosingConsentTypes().includes(consent.type)) {
+          throw badRequest(consent.type === "roi" ? "A general release of information is not a 42 CFR Part 2 consent (\xA72.31, \xA72.32). Record a Part 2 consent with every required element, or choose another lawful basis." : `A "${consent.type.replace(/_/g, " ")}" consent does not authorise sharing information. Record a Part 2 consent, or choose another lawful basis.`);
+        }
+        const missing = consentElementProblems(consent);
+        if (missing.length) throw badRequest(`This consent cannot authorise a disclosure: it does not record ${missing.join("; ")}. Record a new consent with every \xA72.31 element.`, { consentIncomplete: missing });
+        if (proceeding && consent.type !== "part2_proceedings") throw badRequest("Information for use in a proceeding against the patient needs a court order, or a consent given for that proceeding alone (\xA72.31(d)); this consent does not cover it.");
+        if (!proceeding && consent.type === "part2_proceedings") throw badRequest("A consent for use in a legal proceeding cannot be combined with any other purpose (\xA72.31(d)); use it only for the proceeding it names.");
+        if (notes && consent.type !== "part2_counseling_notes") throw badRequest("SUD counseling notes need a separate consent given for counseling notes alone (\xA72.31(b)); a treatment, payment and operations consent or a general Part 2 consent does not cover them.");
+        if (!notes && consent.type === "part2_counseling_notes") throw badRequest('A consent for SUD counseling notes covers counseling notes only (\xA72.31(b)); tick "includes SUD counseling notes", or rely on a different consent for other information.');
+        const names = recipientNames(recipient);
+        if (!names.length) throw badRequest("Name the recipient of the disclosure: the consent is checked against it.");
+        const named = dec2(consent.recipient_enc);
+        if (!consentNamesRecipient({ type: consent.type, recipient: named }, names)) {
+          if (!recipient_override) {
+            throw new HttpError3(409, `This consent covers disclosures to "${named}" only; it does not name ${names[0]}. Choose a consent that names this recipient, record a new one, or ask a supervisor to override with a written justification.`, { consentRecipient: named, recipientNotCovered: true });
+          }
+          if (!canOverride) throw forbidden("Only a supervisor or administrator can rely on a consent for a recipient it does not name");
+          if (why.length < MIN_JUSTIFICATION) throw badRequest(`Relying on a consent for a recipient it does not name needs a written justification of at least ${MIN_JUSTIFICATION} characters, which is kept with the disclosure record.`);
+          override = true;
+        }
+      }
+      if (b === "court_order") {
+        order = court_order_id ? db3.one(`SELECT * FROM court_orders WHERE id=? AND client_id=?`, court_order_id, clientId) : null;
+        if (!order) throw badRequest("A disclosure under a court order must name the order: record it on the client's Consents tab (42 CFR subpart E) and choose it. A subpoena on its own does not authorise disclosing a Part 2 record.");
+        const problems = courtOrderProblems(order);
+        if (problems.length) throw badRequest(`That court order cannot authorise a disclosure: ${problems.join("; ")}.`);
+        if (notes && !order.covers_counseling_notes) throw badRequest("That court order does not expressly cover SUD counseling notes.");
+      }
+      if (AGREEMENT_KINDS[b]) agreement = requireAgreement(b, agreement_id, recipient);
+      if (!RESTRICTION_EXEMPT.includes(b) && !restriction_reviewed && agreedRestrictions(clientId)) {
+        throw badRequest("This client has an agreed restriction on how their information is shared (see their Requests tab). Check that this disclosure respects it, then confirm.", { restrictionReview: true });
+      }
+      if (NEEDS_JUSTIFICATION.includes(b) && why.length < MIN_JUSTIFICATION) {
+        throw badRequest(b === "other" ? `Sharing without consent on an "other" basis needs a written justification of at least ${MIN_JUSTIFICATION} characters, which is kept with the disclosure record.` : b === "medical_emergency" ? `A medical emergency disclosure (42 CFR \xA72.51) needs a written justification of at least ${MIN_JUSTIFICATION} characters: the nature of the emergency and who was told.` : `A ${b === "crime_on_premises" ? "report of a crime on the premises or against staff (\xA72.12(c)(5))" : "mandated report of suspected child abuse or neglect (\xA72.12(c)(6))"} needs a written justification of at least ${MIN_JUSTIFICATION} characters: what happened, and what was reported to whom.`);
+      }
+      const kept = override ? `Recipient override (the consent names "${dec2(consent.recipient_enc)}"): ${why}` : why || null;
+      return { basis: b, consent, court_order: order, agreement, justification: kept, legal_proceeding: proceeding, counseling_notes: notes, recipient_override: override };
+    }
+    function requireExportBasis(clientIds, { basis, restriction_reviewed, legal_proceeding, recipient, agreement_id, user } = {}) {
+      if (legal_proceeding) throw badRequest("Records for use in a legal proceeding against a patient are disclosed one client at a time, under a recorded court order or a proceedings-only consent (Consents tab \u2192 Record a disclosure), never as a bulk export.");
+      if (!basis) throw badRequest(`An identified export must state its lawful basis (basis=${EXPORT_BASES.join("|")}); it is written to the accounting of disclosures for every client in the file`);
+      if (!EXPORT_BASES.includes(basis)) throw badRequest(`"${basis}" is not a basis an identified export can be made under (${EXPORT_BASES.join(", ")})`);
+      if (OVERRIDE_BASES.includes(basis) && !require_auth().hasPerm(user, "disclosures:override")) throw forbidden(`Only a supervisor or administrator can make an export on a "${basis.replace(/_/g, " ")}" basis`);
+      if (basis === "internal" && !isInternalRecipient(recipient)) {
+        throw badRequest(`An "internal" export stays within this program (\xA72.12(c)(3)): the recipient must be ${db3.getSetting("org_name", "") || "this program"} or one of its staff (their name or username). A file for anyone else needs another basis.`);
+      }
+      const agreement = AGREEMENT_KINDS[basis] ? requireAgreement(basis, agreement_id, recipient) : null;
+      const consentOf = /* @__PURE__ */ new Map();
+      const excluded = [];
+      if (basis === "consent") {
+        const names = recipientNames(recipient);
+        for (const id of clientIds) {
+          const c = fileConsentFor(id, names);
+          if (c) consentOf.set(id, c.id);
+          else excluded.push(id);
+        }
+      }
+      const out2 = new Set(excluded);
+      requireRestrictionReview(clientIds.filter((id) => !out2.has(id)), restriction_reviewed);
+      return { basis, agreement, consentOf, excluded };
+    }
+    function fileConsentFor(clientId, names) {
+      const types = fileConsentTypes();
+      if (!names.length || !types.length) return null;
+      const rows = db3.all(`SELECT * FROM consents WHERE client_id=? AND type IN (${types.map(() => "?").join(",")}) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now')) ORDER BY signed_at DESC, created_at DESC`, clientId, ...types);
+      return rows.find((c) => !consentElementProblems(c).length && consentNamesRecipient({ type: c.type, recipient: dec2(c.recipient_enc) }, names)) || null;
+    }
+    function requireRestrictionReview(clientIds, restriction_reviewed) {
+      if (restriction_reviewed || !clientIds.length) return;
+      const restricted = new Set(db3.all(`SELECT DISTINCT client_id FROM patient_requests WHERE kind='restriction' AND status='fulfilled'`).map((r) => r.client_id));
+      const n = clientIds.filter((id) => restricted.has(id)).length;
+      if (n) throw badRequest(`${n} client${n === 1 ? "" : "s"} in this export ${n === 1 ? "has" : "have"} an agreed restriction on how their information is shared. Check the export respects it, then confirm (restriction_reviewed=1).`, { restrictionReview: true, restrictedClients: n });
+    }
+    function record({ clientId, consentId = null, courtOrderId = null, agreementId = null, recipientOverride = false, legalProceeding = false, counselingNotes = false, recipient, purpose, what, method = null, basis = "consent", justification = null, source = "manual", sourceRef = null, disclosedAt = null, user, ip }) {
+      const id = uuid2();
+      const at = disclosedAt || db3.now();
+      const noticeVersion = part2Program() ? C.PART2_NOTICE_VERSION : null;
+      db3.run(
+        `INSERT INTO disclosures(id,client_id,consent_id,recipient_enc,purpose_enc,what_enc,method,disclosed_at,disclosed_by,basis,justification_enc,source,source_ref,court_order_id,legal_proceeding,counseling_notes,notice_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        id,
+        clientId,
+        consentId,
+        encrypt3(String(recipient)),
+        encrypt3(String(purpose)),
+        encrypt3(String(what)),
+        method,
+        at,
+        user.id,
+        basis,
+        justification ? encrypt3(String(justification)) : null,
+        source,
+        sourceRef,
+        courtOrderId,
+        legalProceeding ? 1 : 0,
+        counselingNotes ? 1 : 0,
+        noticeVersion
+      );
+      audit3.log({ user, action: "disclosure.record", entity: "disclosure", entityId: id, clientId, ip, details: {
+        basis,
+        source,
+        consent_id: consentId || void 0,
+        court_order_id: courtOrderId || void 0,
+        agreement_id: agreementId || void 0,
+        recipient_override: recipientOverride ? true : void 0,
+        justified: justification ? true : void 0,
+        legal_proceeding: legalProceeding ? true : void 0,
+        counseling_notes: counselingNotes ? true : void 0,
+        notice: noticeVersion || void 0
+      } });
+      return id;
+    }
+    function recordStateReport({ clientIds, what, sourceRef, user, ip }) {
+      return clientIds.map((clientId) => record({ clientId, recipient: STATE_REPORTING.recipient, purpose: STATE_REPORTING.purpose, what, method: "export", basis: STATE_REPORTING.basis, source: "caloms", sourceRef, user, ip }));
+    }
+    function present(row) {
+      if (!row) return null;
+      const out2 = { ...row };
+      out2.recipient = row.recipient_enc ? decrypt3(row.recipient_enc) : null;
+      out2.purpose = row.purpose_enc ? decrypt3(row.purpose_enc) : null;
+      out2.what = row.what_enc ? decrypt3(row.what_enc) : null;
+      out2.justification = row.justification_enc ? decrypt3(row.justification_enc) : null;
+      delete out2.recipient_enc;
+      delete out2.purpose_enc;
+      delete out2.what_enc;
+      delete out2.justification_enc;
+      return out2;
+    }
+    function accounting(clientId) {
+      const client = db3.one(`SELECT id, client_code FROM clients WHERE id=?`, clientId);
+      const disclosures = db3.all(`SELECT d.*, u.display_name AS disclosed_by_name, u.username AS disclosed_by_username, co.order_type AS court_order_type FROM disclosures d JOIN users u ON u.id=d.disclosed_by LEFT JOIN court_orders co ON co.id=d.court_order_id WHERE d.client_id=? ORDER BY d.disclosed_at`, clientId).map(present);
+      const consents = db3.all(`SELECT id, type, recipient_enc, purpose_enc, signed_at, expires_at, expires_event, revoked_at, rule_version FROM consents WHERE client_id=? ORDER BY signed_at`, clientId).map((c) => ({ id: c.id, type: c.type, recipient: c.recipient_enc ? decrypt3(c.recipient_enc) : null, purpose: c.purpose_enc ? decrypt3(c.purpose_enc) : null, signed_at: c.signed_at, expires_at: c.expires_at, expires_event: c.expires_event, revoked_at: c.revoked_at, rule_version: c.rule_version }));
+      return { client_id: client?.id, client_code: client?.client_code, generated_at: db3.now(), part2_program: part2Program(), notice: part2Program() ? notice() : null, disclosures, consents };
+    }
+    var FHIR_PURPOSES = {
+      TREAT: { display: "Treatment", words: ["treatment", "care coordination", "coordination of care", "continuity of care"] },
+      HPAYMT: { display: "Payment", words: ["payment", "billing", "claims"] },
+      HOPERAT: { display: "Health care operations", words: ["operations"] }
+    };
+    var FHIR_CONSENT_TYPES = ["part2_disclosure", "part2_tpo", "roi"];
+    function fhirConsentTypes() {
+      const ok = disclosingConsentTypes();
+      return FHIR_CONSENT_TYPES.filter((t) => ok.includes(t));
+    }
+    function isTpo(purpose) {
+      const p = ` ${normalise(purpose)} `;
+      return / tpo /.test(p) || p.includes("treatment") && p.includes("payment") && p.includes("operations");
+    }
+    function consentCovers({ type, recipient, purpose }, { recipients, purposeOfUse }) {
+      if (type !== void 0 && !fhirConsentTypes().includes(type)) return false;
+      if (!consentNamesRecipient({ type, recipient }, recipients)) return false;
+      if (type === "part2_tpo") return !!FHIR_PURPOSES[purposeOfUse];
+      if (isTpo(purpose)) return true;
+      const p = ` ${normalise(purpose)} `;
+      return (FHIR_PURPOSES[purposeOfUse]?.words || []).some((w) => p.includes(` ${normalise(w)} `));
+    }
+    function consentPurposeCodes({ type, purpose }) {
+      return Object.keys(FHIR_PURPOSES).filter((code) => type === "part2_tpo" || consentCovers({ recipient: "x", purpose }, { recipients: ["x"], purposeOfUse: code }));
+    }
+    var coverageCache = /* @__PURE__ */ new Map();
+    function fhirCoverage({ cacheKey, recipients, purposeOfUse }) {
+      const stamp2 = db3.one(`SELECT (SELECT COUNT(*) FROM consents) n, (SELECT MAX(updated_at) FROM consents) u,
+    (SELECT COUNT(*) FROM patient_requests) rn, (SELECT MAX(updated_at) FROM patient_requests) ru`);
+      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const types = fhirConsentTypes();
+      const key = `${stamp2.n}|${stamp2.u}|${stamp2.rn}|${stamp2.ru}|${types.join(",")}|${today}|${recipients.join("")}|${purposeOfUse}`;
+      const hit = coverageCache.get(cacheKey);
+      if (hit && hit.key === key) return hit.map;
+      const map = /* @__PURE__ */ new Map();
+      const restricted = new Set(db3.all(`SELECT DISTINCT client_id FROM patient_requests WHERE kind='restriction' AND status='fulfilled'`).map((r) => r.client_id));
+      const rows = types.length ? db3.all(`SELECT k.* FROM consents k JOIN clients c ON c.id=k.client_id
+    WHERE k.type IN (${types.map(() => "?").join(",")}) AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= date('now'))
+      AND c.deleted_at IS NULL AND c.merged_into IS NULL ORDER BY k.signed_at, k.created_at`, ...types) : [];
+      for (const row of rows) {
+        if (restricted.has(row.client_id)) continue;
+        if (consentElementProblems(row).length) continue;
+        let plain;
+        try {
+          plain = { type: row.type, recipient: row.recipient_enc ? decrypt3(row.recipient_enc) : "", purpose: row.purpose_enc ? decrypt3(row.purpose_enc) : "" };
+        } catch {
+          continue;
+        }
+        if (consentCovers(plain, { recipients, purposeOfUse })) map.set(row.client_id, row.id);
+      }
+      if (coverageCache.size > 100) coverageCache.clear();
+      coverageCache.set(cacheKey, { key, map });
+      return map;
+    }
+    function recordFhir({ perClient, recipient, purposeOfUse, sourceRef, user, ip }) {
+      if (!perClient.size) return 0;
+      const purpose = `${FHIR_PURPOSES[purposeOfUse]?.display || purposeOfUse} (FHIR purpose of use ${purposeOfUse})`;
+      db3.transaction(() => {
+        for (const [clientId, { consentId, what }] of perClient) {
+          record({ clientId, consentId, recipient, purpose, what, method: "FHIR API", basis: "consent", source: "fhir", sourceRef, user, ip });
+        }
+      });
+      return perClient.size;
+    }
+    module.exports = {
+      BASES,
+      EXPORT_BASES,
+      SYSTEM_BASES,
+      STATE_REPORTING,
+      NEEDS_JUSTIFICATION,
+      OVERRIDE_BASES,
+      REFERRAL_BASES,
+      AGREEMENT_KINDS,
+      LEGACY_CONSENT_CUTOFF,
+      MIN_JUSTIFICATION,
+      part2Program,
+      notice,
+      fileNotice,
+      disclosingConsentTypes,
+      fileConsentTypes,
+      activeConsent,
+      courtOrderProblems,
+      agreedRestrictions,
+      missingPart2Elements,
+      missingLegacyElements,
+      consentElementProblems,
+      consentValues,
+      normalise,
+      recipientNames,
+      consentNamesRecipient,
+      isInternalRecipient,
+      agreementProblems,
+      agreementNames,
+      requireAgreement,
+      fileConsentFor,
+      requireBasis,
+      requireExportBasis,
+      requireRestrictionReview,
+      record,
+      recordStateReport,
+      present,
+      accounting,
+      FHIR_PURPOSES,
+      FHIR_CONSENT_TYPES,
+      fhirConsentTypes,
+      consentCovers,
+      consentPurposeCodes,
+      fhirCoverage,
+      recordFhir
+    };
+  }
+});
+
 // server/exports.js
 var require_exports = __commonJS({
   "server/exports.js"(exports, module) {
     "use strict";
     init_globals_inject();
+    var { randomBytes: randomBytes3 } = (init_crypto2(), __toCommonJS(crypto_exports));
     var db3 = require_db();
     var auth3 = require_auth();
+    var C = require_constants();
     var M = require_clients_model();
     var { decrypt: decrypt3 } = require_crypto();
     var MAX_ROWS = 5e4;
-    var DEID_LABEL = "De-identified (HIPAA Safe Harbor): dates reduced to year-month, ZIP codes to the first three digits, city omitted, ages banded, free text redacted.";
+    var DEID_LABEL = "De-identified (HIPAA Safe Harbor): dates reduced to the year, ages over 89 reported as 90+, ZIP codes cut to the first three digits (000 for sparsely populated areas), city omitted, free text left out, coded fields limited to their lists, and client codes replaced by a random record id drawn for each export.";
+    var RESTRICTED_ZIP3 = /* @__PURE__ */ new Set(["036", "059", "063", "102", "203", "556", "692", "790", "821", "823", "830", "831", "878", "879", "884", "890", "893"]);
     var AGE_BANDS = [[0, 17, "0-17"], [18, 24, "18-24"], [25, 34, "25-34"], [35, 44, "35-44"], [45, 54, "45-54"], [55, 64, "55-64"], [65, 89, "65-89"]];
     function ageBand(dob, now = /* @__PURE__ */ new Date()) {
       if (!dob) return "";
@@ -15810,9 +16266,14 @@ var require_exports = __commonJS({
       const band = AGE_BANDS.find(([lo, hi]) => age >= lo && age <= hi);
       return band ? band[2] : "";
     }
-    var isDateCol = (k) => /(_at|_date|_due|_on)$/.test(k) || k === "date";
-    var toMonth = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 7) : v;
-    var zip3 = (v) => v ? String(v).replace(/\D/g, "").slice(0, 3) : v;
+    var DATE_LIKE = /^\d{4}-\d{2}(-\d{2})?([T ].*)?$/;
+    var toYear = (v) => typeof v === "string" && DATE_LIKE.test(v) ? v.slice(0, 4) : v;
+    function zip3(v) {
+      if (v === null || v === void 0 || v === "") return "";
+      const z = String(v).replace(/\D/g, "").slice(0, 3);
+      if (z.length < 3) return "";
+      return RESTRICTED_ZIP3.has(z) ? "000" : z;
+    }
     function deidentifyRow(r) {
       const o = {};
       for (const [k, v] of Object.entries(r)) {
@@ -15821,23 +16282,95 @@ var require_exports = __commonJS({
           o[k] = zip3(v);
           continue;
         }
-        o[k] = isDateCol(k) ? toMonth(v) : v;
+        o[k] = toYear(v);
       }
       return o;
     }
+    function pseudonymizer() {
+      const ids = /* @__PURE__ */ new Map();
+      const used = /* @__PURE__ */ new Set();
+      return (clientId) => {
+        if (!clientId) return "";
+        if (!ids.has(clientId)) {
+          let p;
+          do
+            p = `R-${randomBytes3(5).toString("hex").toUpperCase()}`;
+          while (used.has(p));
+          used.add(p);
+          ids.set(clientId, p);
+        }
+        return ids.get(clientId);
+      };
+    }
+    var FORM_CHOICES = {
+      gender: ["female", "male", "non_binary", "transgender_female", "transgender_male", "other", "declined"],
+      referral_source: ["self", "family", "emergency_dept", "hospital", "ems", "law_enforcement", "jail", "court_probation", "treatment_provider", "primary_care", "shelter", "outreach", "hotline", "school", "other"],
+      housing_status: ["stable", "doubled_up", "shelter", "unsheltered", "transitional", "sober_living", "incarcerated", "treatment_facility", "unknown"],
+      insurance: ["medicaid", "medicare", "private", "uninsured", "va", "pending", "unknown"],
+      mat_medication: ["buprenorphine", "buprenorphine_xr", "methadone", "naltrexone_xr", "naltrexone_oral", "other"]
+    };
+    var DEID_CODED = {
+      clients: {
+        ...FORM_CHOICES,
+        status: ["waitlist", "active", "inactive", "closed", "deceased"],
+        primary_substance: "SUBSTANCES",
+        secondary_substances: { each: "SUBSTANCES" },
+        discharge_reason: "DISCHARGE_REASONS",
+        asam_level: C.ASAM,
+        mat_status: ["none", "interested", "referred", "active", "discontinued", "unknown"],
+        risk_level: ["low", "moderate", "high", "critical"]
+      },
+      interventions: { type: "INTERVENTION_TYPES", modality: "MODALITIES", outcome: "OUTCOMES", stage_of_change: C.STAGES },
+      calls: { direction: ["inbound", "outbound"], contact_type: "CALL_CONTACT_TYPES", outcome: (r) => r.method === "text" ? "TEXT_OUTCOMES" : "CALL_OUTCOMES" },
+      time: { category: "TIME_CATEGORIES" },
+      referrals: { category: C.RESOURCE_CATEGORIES, status: "REFERRAL_STATUSES", urgency: ["routine", "urgent", "emergent"] },
+      tasks: { priority: ["low", "normal", "high", "urgent"], status: ["open", "in_progress", "done", "cancelled"] },
+      forms: { status: ["draft", "completed", "void"] },
+      consents: { type: C.CONSENT_TYPES },
+      disclosures: { basis: () => require_disclosure().BASES },
+      episodes: { status: ["open", "closed"], referral_source: FORM_CHOICES.referral_source, discharge_reason: "DISCHARGE_REASONS" },
+      overdose_events: { kind: "OVERDOSE_KINDS", administered_by: "ADMINISTERED_BY" },
+      expenditures: { category: C.BUDGET_CATEGORIES, status: ["pending", "approved", "rejected", "reimbursed"] }
+    };
+    function codeRows(kind, rows) {
+      const cols2 = DEID_CODED[kind];
+      if (!cols2) return rows;
+      const O = require_options();
+      const known = {};
+      const codesFor = (spec, r) => {
+        if (typeof spec === "function") spec = spec(r);
+        if (Array.isArray(spec)) return spec;
+        return known[spec] = known[spec] || O.known(spec);
+      };
+      const one = (v, codes) => codes.includes(v) ? v : "other";
+      return rows.map((r) => {
+        const o = { ...r };
+        for (const [col, spec] of Object.entries(cols2)) {
+          const v = o[col];
+          if (v === null || v === void 0 || v === "") continue;
+          if (spec && spec.each) {
+            const codes = codesFor(spec.each, r);
+            o[col] = [...new Set(String(v).split(/[,;]/).map((s) => s.trim()).filter(Boolean).map((s) => one(s, codes)))].join(", ");
+            continue;
+          }
+          o[col] = one(String(v), codesFor(spec, r));
+        }
+        return o;
+      });
+    }
     var DEID_COLUMNS = {
-      clients: ["client_code", "age_band", "status", "intake_date", "discharge_date", "discharge_reason", "referral_source", "referral_date", "engagement_date", "days_to_engagement", "primary_substance", "secondary_substances", "asam_level", "mat_status", "mat_medication", "risk_level", "housing_status", "insurance", "overdose_history", "naloxone_provided", "naloxone_last_date", "co_occurring_mh", "justice_involved", "pregnant_or_parenting", "zip", "gender", "preferred_language"],
-      interventions: ["occurred_at", "client_code", "type", "duration_minutes", "modality", "outcome", "stage_of_change", "naloxone_kits", "fentanyl_strips", "worker", "funding_source", "cost", "follow_up_due"],
-      calls: ["started_at", "client_code", "direction", "contact_type", "duration_minutes", "outcome", "crisis", "follow_up_needed", "follow_up_due", "worker"],
-      time: ["work_date", "worker", "client_code", "category", "minutes", "billable", "funding_source"],
-      referrals: ["referred_at", "client_code", "resource", "category", "status", "urgency", "warm_handoff", "appointment_at", "admitted_at", "closed_at", "worker"],
-      tasks: ["client_code", "assignee", "due_at", "priority", "status", "is_milestone", "completed_at"],
-      forms: ["created_at", "client_code", "template_name", "status", "completed_at", "completed_by", "created_by", "attachments"],
-      consents: ["client_code", "type", "signed_at", "expires_at", "expires_event", "revoked_at", "redisclosure_notice_given"],
-      disclosures: ["client_code", "disclosed_at", "method", "basis", "source", "disclosed_by"],
-      episodes: ["client_code", "opened_at", "closed_at", "status", "referral_source", "discharge_reason", "discharge_disposition", "funding_source"],
-      overdose_events: ["occurred_at", "client_code", "kind", "naloxone_used", "naloxone_doses", "administered_by", "ems_called", "hospitalized", "survived", "location_type"],
-      expenditures: ["spent_at", "fund", "line", "category", "amount", "status", "client_code", "worker", "approver"]
+      clients: ["record_id", "age_band", "status", "intake_date", "discharge_date", "discharge_reason", "referral_source", "referral_date", "engagement_date", "days_to_engagement", "primary_substance", "secondary_substances", "asam_level", "mat_status", "mat_medication", "risk_level", "housing_status", "insurance", "overdose_history", "naloxone_provided", "naloxone_last_date", "co_occurring_mh", "justice_involved", "pregnant_or_parenting", "zip", "gender"],
+      interventions: ["occurred_at", "record_id", "type", "duration_minutes", "modality", "outcome", "stage_of_change", "naloxone_kits", "fentanyl_strips", "worker", "funding_source", "cost", "follow_up_due"],
+      calls: ["started_at", "record_id", "direction", "contact_type", "duration_minutes", "outcome", "crisis", "follow_up_needed", "follow_up_due", "worker"],
+      time: ["work_date", "worker", "record_id", "category", "minutes", "billable", "funding_source"],
+      referrals: ["referred_at", "record_id", "resource", "category", "status", "urgency", "warm_handoff", "appointment_at", "admitted_at", "closed_at", "worker"],
+      tasks: ["record_id", "assignee", "due_at", "priority", "status", "is_milestone", "completed_at"],
+      forms: ["created_at", "record_id", "template_name", "status", "completed_at", "completed_by", "created_by", "attachments"],
+      consents: ["record_id", "type", "signed_at", "expires_at", "revoked_at", "redisclosure_notice_given"],
+      disclosures: ["record_id", "disclosed_at", "basis", "source", "disclosed_by"],
+      episodes: ["record_id", "opened_at", "closed_at", "status", "referral_source", "discharge_reason", "funding_source"],
+      overdose_events: ["occurred_at", "record_id", "kind", "naloxone_used", "naloxone_doses", "administered_by", "ems_called", "hospitalized", "survived"],
+      expenditures: ["spent_at", "fund", "line", "category", "amount", "status", "record_id", "worker", "approver"]
     };
     var LIST_COLUMNS = {
       interventions: { type: "INTERVENTION_TYPES", location: "LOCATIONS", modality: "MODALITIES", outcome: "OUTCOMES" },
@@ -15950,17 +16483,17 @@ var require_exports = __commonJS({
           rows: () => db3.all(`SELECT e.*, f.name fund, b.label line, c.client_code, e.client_id AS _client_id, u.display_name worker, a.display_name approver FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id LEFT JOIN budget_lines b ON b.id=e.budget_line_id LEFT JOIN clients c ON c.id=e.client_id JOIN users u ON u.id=e.user_id LEFT JOIN users a ON a.id=e.approved_by WHERE e.spent_at BETWEEN ? AND ? ORDER BY e.spent_at`, from, to).map((r) => ({ ...r, amount: cents(r.amount) }))
         };
       }
+      const pseudo = pseudonymizer();
       for (const [kind, d] of Object.entries(D)) {
-        const coded = d.rows;
-        const raw = () => labelRows(kind, coded());
+        const read = d.rows;
         if (identified || d.noClients) {
-          d.rows = raw;
+          d.rows = () => labelRows(kind, read());
           continue;
         }
         const allowed = DEID_COLUMNS[kind];
         if (!allowed) throw new Error(`No de-identified column list is defined for the ${kind} dataset`);
-        d.columns = d.columns.filter((c) => allowed.includes(c));
-        d.rows = () => raw().map((r) => projectRow(deidentifyRow(r), allowed));
+        d.columns = d.columns.map((c) => c === "client_code" ? "record_id" : c).filter((c) => allowed.includes(c));
+        d.rows = () => labelRows(kind, codeRows(kind, read())).map((r) => projectRow({ ...deidentifyRow(r), record_id: pseudo(r._client_id) }, allowed));
       }
       return D;
     }
@@ -15974,7 +16507,7 @@ var require_exports = __commonJS({
         return o;
       });
     }
-    module.exports = { LIST_COLUMNS, labelRows, datasets, ageBand, deidentifyRow, clientIdsOf, publicRows, DEID_LABEL, DEID_COLUMNS, cents };
+    module.exports = { LIST_COLUMNS, labelRows, datasets, ageBand, deidentifyRow, pseudonymizer, zip3, toYear, codeRows, clientIdsOf, publicRows, DEID_LABEL, DEID_COLUMNS, DEID_CODED, RESTRICTED_ZIP3, cents };
   }
 });
 
@@ -16830,21 +17363,22 @@ var require_assessments = __commonJS({
         const p = period(ctx);
         const X = require_exports();
         const S = require_spreadsheet();
-        const month = (v) => v ? String(v).slice(0, 7) : "";
+        const year = (v) => v ? X.toYear(String(v)) : "";
+        const pseudo = X.pseudonymizer();
         const rows = outcomePairs(ctx, p).map((x) => ({
-          client_code: x.client_code,
+          record_id: pseudo(x.client_id),
           instrument: CL.INSTRUMENTS[x.instrument].name,
           administrations: x.administrations,
-          baseline_month: month(x.baseline.administered_at),
+          baseline_year: year(x.baseline.administered_at),
           baseline_score: x.baseline.total_score,
           baseline_band: x.baseline.band || "",
-          latest_month: x.administrations > 1 ? month(x.latest.administered_at) : "",
+          latest_year: x.administrations > 1 ? year(x.latest.administered_at) : "",
           latest_score: x.administrations > 1 ? x.latest.total_score : "",
           latest_band: x.administrations > 1 ? x.latest.band || "" : "",
           change: x.change === null ? "" : x.change,
           direction: x.direction === null ? "" : x.direction === 1 ? "improved" : x.direction === -1 ? "worse" : "unchanged"
         }));
-        const columns = ["client_code", "instrument", "administrations", "baseline_month", "baseline_score", "baseline_band", "latest_month", "latest_score", "latest_band", "change", "direction"].map((k) => ({ key: k, label: k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) }));
+        const columns = ["record_id", "instrument", "administrations", "baseline_year", "baseline_score", "baseline_band", "latest_year", "latest_score", "latest_band", "change", "direction"].map((k) => ({ key: k, label: k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) }));
         audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: "outcomes", rows: rows.length, identified: false, from: p.from, to: p.to, format: "csv" } });
         const filename = `suds-outcomes-${p.from || "all"}_${p.to || "all"}-deidentified.csv`;
         ctx.res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${filename}"`, "X-SUDS-Export": `${X.DEID_LABEL} Generated ${db3.now()}.`.replace(/[^\x20-\x7e]/g, "?") });
@@ -17411,459 +17945,6 @@ var require_caloms_spec = __commonJS({
     ];
     var RECORD_CODE = { admission: "A", discharge: "D", annual_update: "U" };
     module.exports = { SPEC_VERSION, SPEC_SOURCE, SETS, FIELDS, FIELD, RECORD_TYPES, RECORD_CODE, ADMINISTRATIVE_DISCHARGE, MULTI_MAX, fieldsFor, FROM_SUDS, ID_COLUMNS };
-  }
-});
-
-// server/disclosure.js
-var require_disclosure = __commonJS({
-  "server/disclosure.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var audit3 = require_audit();
-    var C = require_constants();
-    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
-    var { badRequest, forbidden, HttpError: HttpError3 } = require_http();
-    var BASES = ["consent", "court_order", "medical_emergency", "qsoa", "audit_evaluation", "research", "crime_on_premises", "child_abuse_report", "other"];
-    var NEEDS_JUSTIFICATION = ["other", "medical_emergency", "crime_on_premises", "child_abuse_report"];
-    var OVERRIDE_BASES = ["other", "research", "audit_evaluation", "crime_on_premises", "child_abuse_report"];
-    var AGREEMENT_KINDS = { qsoa: "qualified service organization agreement", research: "research approval", audit_evaluation: "audit or evaluation approval" };
-    var REFERRAL_BASES = ["consent", "medical_emergency", "court_order", "other"];
-    var LEGACY_CONSENT_CUTOFF = "2026-02-16";
-    var SYSTEM_BASES = ["export", "state_reporting"];
-    var STATE_REPORTING = {
-      basis: "state_reporting",
-      recipient: "California Department of Health Care Services (DHCS) \u2014 CalOMS Tx",
-      purpose: "State reporting (CalOMS Tx): treatment admission, discharge and annual update data required by law (HIPAA \xA7164.512(a); 42 CFR \xA72.53)"
-    };
-    var MIN_JUSTIFICATION = 20;
-    var EXPORT_BASES = ["consent", "audit_evaluation", "research", "qsoa", "internal"];
-    var RESTRICTION_EXEMPT = ["court_order", "medical_emergency", "child_abuse_report", "crime_on_premises", "state_reporting"];
-    function part2Program() {
-      return db3.getSetting("part2_program", "1") !== "0";
-    }
-    function notice() {
-      return { version: C.PART2_NOTICE_VERSION, text: C.PART2_REDISCLOSURE_NOTICE, short: C.PART2_NOTICE_SHORT };
-    }
-    function disclosingConsentTypes() {
-      return part2Program() ? C.PART2_CONSENT_TYPES : [...C.PART2_CONSENT_TYPES, "roi", "research"];
-    }
-    function fileConsentTypes() {
-      return disclosingConsentTypes().filter((t) => t !== "part2_proceedings" && t !== "part2_counseling_notes");
-    }
-    function fileNotice({ short = false } = {}) {
-      if (!part2Program()) return null;
-      const n = notice();
-      return short ? n.short : `${n.short} NOTICE TO RECIPIENT (42 CFR \xA72.32): ${n.text}`;
-    }
-    function missingPart2Elements(v) {
-      const missing = [];
-      if (!v.discloser) missing.push("who may make the disclosure");
-      if (!v.recipient) missing.push("the recipient (a name, or a class of recipients)");
-      if (!v.purpose) missing.push("the purpose");
-      if (!v.scope) missing.push("what information is covered (scope)");
-      if (!v.expires_at && !v.expires_event) missing.push("an expiration date or event");
-      if (!v.document_ref && !v.signed_on_paper && !v.witness) missing.push('evidence it was signed (a document reference, a witness, or "signed on paper")');
-      if (v.signer_relationship !== "patient" && !v.signer_name) missing.push("the name of the person who signed for the patient");
-      if (!v.revocation_right_given) missing.push("confirmation that the consent states the right to revoke it and how");
-      if (!v.redisclosure_notice_given) missing.push("confirmation that the redisclosure statement was given (\xA72.32)");
-      if (!v.refusal_consequences_given) missing.push("confirmation that the consent states the consequences of refusing to sign");
-      return missing;
-    }
-    function missingLegacyElements(v) {
-      const missing = [];
-      if (!v.recipient) missing.push("the recipient");
-      if (!v.purpose) missing.push("the purpose");
-      if (!v.scope) missing.push("what information is covered (scope)");
-      if (!v.expires_at && !v.expires_event) missing.push("an expiration date or event");
-      if (!v.document_ref && !v.signed_on_paper && !v.witness) missing.push('evidence it was signed (a document reference, a witness, or "signed on paper")');
-      if (String(v.signed_at || "") >= LEGACY_CONSENT_CUTOFF) missing.push(`the 2024 elements (it was signed on or after ${LEGACY_CONSENT_CUTOFF}, when the 2024 rule's element list became mandatory)`);
-      return missing;
-    }
-    var dec2 = (v) => {
-      if (!v) return "";
-      try {
-        return decrypt3(v);
-      } catch {
-        return "";
-      }
-    };
-    function consentValues(row) {
-      return {
-        discloser: row.discloser,
-        recipient: dec2(row.recipient_enc),
-        purpose: dec2(row.purpose_enc),
-        scope: dec2(row.scope_enc),
-        expires_at: row.expires_at,
-        expires_event: row.expires_event,
-        document_ref: row.document_ref,
-        signed_on_paper: row.signed_on_paper,
-        witness: row.witness,
-        signer_relationship: row.signer_relationship,
-        signer_name: dec2(row.signer_name_enc),
-        revocation_right_given: row.revocation_right_given,
-        redisclosure_notice_given: row.redisclosure_notice_given,
-        refusal_consequences_given: row.refusal_consequences_given,
-        signed_at: row.signed_at
-      };
-    }
-    function consentElementProblems(row) {
-      if (!C.PART2_CONSENT_TYPES.includes(row.type)) return [];
-      const v = consentValues(row);
-      return row.rule_version === "2024" ? missingPart2Elements(v) : missingLegacyElements(v);
-    }
-    function activeConsent(clientId, consentId, { elements = true } = {}) {
-      if (!consentId) return null;
-      const row = db3.one(`SELECT * FROM consents WHERE id=? AND client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, consentId, clientId) || null;
-      if (row && elements && consentElementProblems(row).length) return null;
-      return row;
-    }
-    function courtOrderProblems(o) {
-      const out2 = [];
-      if (o.status !== "active") out2.push("it has been vacated");
-      if (o.expires_at && o.expires_at < (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)) out2.push("it has expired");
-      if (!o.findings_recorded) out2.push("it does not record the good-cause findings the regulation requires (\xA72.64(d))");
-      if (!o.notice_requirement_met) out2.push("the notice and opportunity to respond the regulation requires was not given");
-      return out2;
-    }
-    function agreedRestrictions(clientId) {
-      return db3.one(`SELECT COUNT(*) n FROM patient_requests WHERE client_id=? AND kind='restriction' AND status='fulfilled'`, clientId).n;
-    }
-    var normalise = (s) => String(s || "").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
-    var splitAliases = (s) => String(s || "").split(/[;\n]/).map((x) => x.trim()).filter(Boolean);
-    function aliasGroups() {
-      const groups = db3.all(`SELECT organisation, aliases FROM disclosure_agreements`).map((a) => [a.organisation, ...splitAliases(a.aliases)]);
-      for (const r of db3.all(`SELECT value FROM settings WHERE key LIKE 'fhir_client:%'`)) {
-        try {
-          const reg = JSON.parse(r.value);
-          if (reg && reg.recipient) groups.push([reg.recipient, ...Array.isArray(reg.aliases) ? reg.aliases : []]);
-        } catch {
-        }
-      }
-      return groups;
-    }
-    function recipientNames(recipient) {
-      const given = (Array.isArray(recipient) ? recipient : [recipient]).map((x) => String(x || "").trim()).filter(Boolean);
-      const seen2 = new Set(given.map(normalise));
-      const out2 = [...given];
-      for (const group of aliasGroups()) {
-        if (!group.some((n) => seen2.has(normalise(n)))) continue;
-        for (const n of group) if (!seen2.has(normalise(n))) {
-          seen2.add(normalise(n));
-          out2.push(n);
-        }
-      }
-      return out2;
-    }
-    function consentNamesRecipient({ type, recipient }, names) {
-      const r = normalise(recipient);
-      const ns = names.map(normalise).filter(Boolean);
-      if (!r || !ns.length) return false;
-      if (type === "part2_tpo") return ns.some((n) => ` ${r} `.includes(` ${n} `));
-      return ns.includes(r);
-    }
-    function isInternalRecipient(recipient) {
-      const r = normalise(recipient);
-      if (!r) return false;
-      if (r === normalise(db3.getSetting("org_name", ""))) return true;
-      return db3.all(`SELECT username, display_name FROM users WHERE is_active=1`).some((u) => normalise(u.username) === r || normalise(u.display_name) === r);
-    }
-    function agreementProblems(a) {
-      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-      const out2 = [];
-      if (a.status !== "active") out2.push("it has been ended");
-      if (a.expires_at && a.expires_at < today) out2.push("it has expired");
-      if (a.agreement_date > today) out2.push("it is not in force yet");
-      if (a.kind !== "qsoa" && !a.approving_body) out2.push("it does not name the IRB or approving body");
-      return out2;
-    }
-    function agreementNames(a) {
-      return [a.organisation, ...splitAliases(a.aliases)];
-    }
-    function requireAgreement(basis, agreementId, recipient) {
-      const label = AGREEMENT_KINDS[basis];
-      let a = agreementId ? db3.one(`SELECT * FROM disclosure_agreements WHERE id=?`, agreementId) : null;
-      if (!agreementId) {
-        const names2 = new Set(recipientNames(recipient).map(normalise));
-        a = db3.all(`SELECT * FROM disclosure_agreements WHERE kind=? AND status='active' ORDER BY agreement_date DESC, created_at DESC`, basis).find((x) => !agreementProblems(x).length && agreementNames(x).some((n) => names2.has(normalise(n)))) || null;
-      }
-      if (!a) {
-        throw badRequest(basis === "qsoa" ? "A disclosure to a qualified service organization needs the qualified service organization agreement on file (\xA72.11, \xA72.12(c)(4)): register it under Privacy & Part 2 \u2192 Agreements, and choose it." : `A ${basis === "research" ? "research (\xA72.52)" : "audit or evaluation (\xA72.53)"} disclosure needs the ${label} on file \u2014 the IRB, privacy board or approving body, and its dates: register it under Privacy & Part 2 \u2192 Agreements, and choose it.`, { agreementRequired: basis });
-      }
-      if (a.kind !== basis) throw badRequest(`That is a ${AGREEMENT_KINDS[a.kind]}, not a ${label}.`);
-      const problems = agreementProblems(a);
-      if (problems.length) throw badRequest(`That ${label} cannot authorise a disclosure: ${problems.join("; ")}.`);
-      const names = recipientNames(recipient);
-      if (!names.length) throw badRequest("Name the recipient of the disclosure.");
-      const theirs = new Set(agreementNames(a).map(normalise));
-      if (!names.some((n) => theirs.has(normalise(n)))) {
-        throw new HttpError3(409, `This ${label} is with "${a.organisation}"; it only covers disclosures to that organisation. Name it as the recipient, or choose the agreement with the organisation you are disclosing to.`, { agreementOrganisation: a.organisation });
-      }
-      return a;
-    }
-    function requireBasis(clientId, { consent_id, basis, justification, user, court_order_id, legal_proceeding, counseling_notes, restriction_reviewed, recipient, agreement_id, recipient_override, allowed } = {}) {
-      const b = basis || "consent";
-      if (!BASES.includes(b)) throw badRequest(`"${b}" is not a lawful basis for disclosure`);
-      if (allowed && !allowed.includes(b)) throw badRequest(`A referral can only be made with the client's consent, in a medical emergency, under a court order, or on a supervisor's justified override \u2014 not on a "${b.replace(/_/g, " ")}" basis. Record that disclosure on the client's Consents tab instead.`);
-      const canOverride = require_auth().hasPerm(user, "disclosures:override");
-      if (OVERRIDE_BASES.includes(b) && !canOverride) {
-        throw forbidden(b === "other" ? 'Only a supervisor or administrator can record a disclosure on an "other" basis' : `Only a supervisor or administrator can record a disclosure on a "${b.replace(/_/g, " ")}" basis`);
-      }
-      const proceeding = !!legal_proceeding;
-      const notes = !!counseling_notes;
-      if (proceeding && !["consent", "court_order"].includes(b)) throw badRequest("Information for use in a proceeding against the patient may only be disclosed under a court order issued under 42 CFR \xA72.64/\xA72.65, or the patient's written consent given for that proceeding alone (\xA72.12(d), \xA72.31(d)). A subpoena on its own is not enough.");
-      if (notes && !["consent", "court_order"].includes(b)) throw badRequest("SUD counseling notes may only be disclosed under a consent given for counseling notes alone (\xA72.31(b)), or a court order that expressly covers them.");
-      const why = String(justification || "").trim();
-      let consent = null;
-      let order = null;
-      let agreement = null;
-      let override = false;
-      if (b === "consent") {
-        consent = activeConsent(clientId, consent_id, { elements: false });
-        if (!consent) throw badRequest("A valid, unexpired consent must be selected before information can be shared. Record the consent first, or choose another lawful basis.");
-        if (!disclosingConsentTypes().includes(consent.type)) {
-          throw badRequest(consent.type === "roi" ? "A general release of information is not a 42 CFR Part 2 consent (\xA72.31, \xA72.32). Record a Part 2 consent with every required element, or choose another lawful basis." : `A "${consent.type.replace(/_/g, " ")}" consent does not authorise sharing information. Record a Part 2 consent, or choose another lawful basis.`);
-        }
-        const missing = consentElementProblems(consent);
-        if (missing.length) throw badRequest(`This consent cannot authorise a disclosure: it does not record ${missing.join("; ")}. Record a new consent with every \xA72.31 element.`, { consentIncomplete: missing });
-        if (proceeding && consent.type !== "part2_proceedings") throw badRequest("Information for use in a proceeding against the patient needs a court order, or a consent given for that proceeding alone (\xA72.31(d)); this consent does not cover it.");
-        if (!proceeding && consent.type === "part2_proceedings") throw badRequest("A consent for use in a legal proceeding cannot be combined with any other purpose (\xA72.31(d)); use it only for the proceeding it names.");
-        if (notes && consent.type !== "part2_counseling_notes") throw badRequest("SUD counseling notes need a separate consent given for counseling notes alone (\xA72.31(b)); a treatment, payment and operations consent or a general Part 2 consent does not cover them.");
-        if (!notes && consent.type === "part2_counseling_notes") throw badRequest('A consent for SUD counseling notes covers counseling notes only (\xA72.31(b)); tick "includes SUD counseling notes", or rely on a different consent for other information.');
-        const names = recipientNames(recipient);
-        if (!names.length) throw badRequest("Name the recipient of the disclosure: the consent is checked against it.");
-        const named = dec2(consent.recipient_enc);
-        if (!consentNamesRecipient({ type: consent.type, recipient: named }, names)) {
-          if (!recipient_override) {
-            throw new HttpError3(409, `This consent covers disclosures to "${named}" only; it does not name ${names[0]}. Choose a consent that names this recipient, record a new one, or ask a supervisor to override with a written justification.`, { consentRecipient: named, recipientNotCovered: true });
-          }
-          if (!canOverride) throw forbidden("Only a supervisor or administrator can rely on a consent for a recipient it does not name");
-          if (why.length < MIN_JUSTIFICATION) throw badRequest(`Relying on a consent for a recipient it does not name needs a written justification of at least ${MIN_JUSTIFICATION} characters, which is kept with the disclosure record.`);
-          override = true;
-        }
-      }
-      if (b === "court_order") {
-        order = court_order_id ? db3.one(`SELECT * FROM court_orders WHERE id=? AND client_id=?`, court_order_id, clientId) : null;
-        if (!order) throw badRequest("A disclosure under a court order must name the order: record it on the client's Consents tab (42 CFR subpart E) and choose it. A subpoena on its own does not authorise disclosing a Part 2 record.");
-        const problems = courtOrderProblems(order);
-        if (problems.length) throw badRequest(`That court order cannot authorise a disclosure: ${problems.join("; ")}.`);
-        if (notes && !order.covers_counseling_notes) throw badRequest("That court order does not expressly cover SUD counseling notes.");
-      }
-      if (AGREEMENT_KINDS[b]) agreement = requireAgreement(b, agreement_id, recipient);
-      if (!RESTRICTION_EXEMPT.includes(b) && !restriction_reviewed && agreedRestrictions(clientId)) {
-        throw badRequest("This client has an agreed restriction on how their information is shared (see their Requests tab). Check that this disclosure respects it, then confirm.", { restrictionReview: true });
-      }
-      if (NEEDS_JUSTIFICATION.includes(b) && why.length < MIN_JUSTIFICATION) {
-        throw badRequest(b === "other" ? `Sharing without consent on an "other" basis needs a written justification of at least ${MIN_JUSTIFICATION} characters, which is kept with the disclosure record.` : b === "medical_emergency" ? `A medical emergency disclosure (42 CFR \xA72.51) needs a written justification of at least ${MIN_JUSTIFICATION} characters: the nature of the emergency and who was told.` : `A ${b === "crime_on_premises" ? "report of a crime on the premises or against staff (\xA72.12(c)(5))" : "mandated report of suspected child abuse or neglect (\xA72.12(c)(6))"} needs a written justification of at least ${MIN_JUSTIFICATION} characters: what happened, and what was reported to whom.`);
-      }
-      const kept = override ? `Recipient override (the consent names "${dec2(consent.recipient_enc)}"): ${why}` : why || null;
-      return { basis: b, consent, court_order: order, agreement, justification: kept, legal_proceeding: proceeding, counseling_notes: notes, recipient_override: override };
-    }
-    function requireExportBasis(clientIds, { basis, restriction_reviewed, legal_proceeding, recipient, agreement_id, user } = {}) {
-      if (legal_proceeding) throw badRequest("Records for use in a legal proceeding against a patient are disclosed one client at a time, under a recorded court order or a proceedings-only consent (Consents tab \u2192 Record a disclosure), never as a bulk export.");
-      if (!basis) throw badRequest(`An identified export must state its lawful basis (basis=${EXPORT_BASES.join("|")}); it is written to the accounting of disclosures for every client in the file`);
-      if (!EXPORT_BASES.includes(basis)) throw badRequest(`"${basis}" is not a basis an identified export can be made under (${EXPORT_BASES.join(", ")})`);
-      if (OVERRIDE_BASES.includes(basis) && !require_auth().hasPerm(user, "disclosures:override")) throw forbidden(`Only a supervisor or administrator can make an export on a "${basis.replace(/_/g, " ")}" basis`);
-      if (basis === "internal" && !isInternalRecipient(recipient)) {
-        throw badRequest(`An "internal" export stays within this program (\xA72.12(c)(3)): the recipient must be ${db3.getSetting("org_name", "") || "this program"} or one of its staff (their name or username). A file for anyone else needs another basis.`);
-      }
-      const agreement = AGREEMENT_KINDS[basis] ? requireAgreement(basis, agreement_id, recipient) : null;
-      const consentOf = /* @__PURE__ */ new Map();
-      const excluded = [];
-      if (basis === "consent") {
-        const names = recipientNames(recipient);
-        for (const id of clientIds) {
-          const c = fileConsentFor(id, names);
-          if (c) consentOf.set(id, c.id);
-          else excluded.push(id);
-        }
-      }
-      const out2 = new Set(excluded);
-      requireRestrictionReview(clientIds.filter((id) => !out2.has(id)), restriction_reviewed);
-      return { basis, agreement, consentOf, excluded };
-    }
-    function fileConsentFor(clientId, names) {
-      const types = fileConsentTypes();
-      if (!names.length || !types.length) return null;
-      const rows = db3.all(`SELECT * FROM consents WHERE client_id=? AND type IN (${types.map(() => "?").join(",")}) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now')) ORDER BY signed_at DESC, created_at DESC`, clientId, ...types);
-      return rows.find((c) => !consentElementProblems(c).length && consentNamesRecipient({ type: c.type, recipient: dec2(c.recipient_enc) }, names)) || null;
-    }
-    function requireRestrictionReview(clientIds, restriction_reviewed) {
-      if (restriction_reviewed || !clientIds.length) return;
-      const restricted = new Set(db3.all(`SELECT DISTINCT client_id FROM patient_requests WHERE kind='restriction' AND status='fulfilled'`).map((r) => r.client_id));
-      const n = clientIds.filter((id) => restricted.has(id)).length;
-      if (n) throw badRequest(`${n} client${n === 1 ? "" : "s"} in this export ${n === 1 ? "has" : "have"} an agreed restriction on how their information is shared. Check the export respects it, then confirm (restriction_reviewed=1).`, { restrictionReview: true, restrictedClients: n });
-    }
-    function record({ clientId, consentId = null, courtOrderId = null, agreementId = null, recipientOverride = false, legalProceeding = false, counselingNotes = false, recipient, purpose, what, method = null, basis = "consent", justification = null, source = "manual", sourceRef = null, disclosedAt = null, user, ip }) {
-      const id = uuid2();
-      const at = disclosedAt || db3.now();
-      const noticeVersion = part2Program() ? C.PART2_NOTICE_VERSION : null;
-      db3.run(
-        `INSERT INTO disclosures(id,client_id,consent_id,recipient_enc,purpose_enc,what_enc,method,disclosed_at,disclosed_by,basis,justification_enc,source,source_ref,court_order_id,legal_proceeding,counseling_notes,notice_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        id,
-        clientId,
-        consentId,
-        encrypt3(String(recipient)),
-        encrypt3(String(purpose)),
-        encrypt3(String(what)),
-        method,
-        at,
-        user.id,
-        basis,
-        justification ? encrypt3(String(justification)) : null,
-        source,
-        sourceRef,
-        courtOrderId,
-        legalProceeding ? 1 : 0,
-        counselingNotes ? 1 : 0,
-        noticeVersion
-      );
-      audit3.log({ user, action: "disclosure.record", entity: "disclosure", entityId: id, clientId, ip, details: {
-        basis,
-        source,
-        consent_id: consentId || void 0,
-        court_order_id: courtOrderId || void 0,
-        agreement_id: agreementId || void 0,
-        recipient_override: recipientOverride ? true : void 0,
-        justified: justification ? true : void 0,
-        legal_proceeding: legalProceeding ? true : void 0,
-        counseling_notes: counselingNotes ? true : void 0,
-        notice: noticeVersion || void 0
-      } });
-      return id;
-    }
-    function recordStateReport({ clientIds, what, sourceRef, user, ip }) {
-      return clientIds.map((clientId) => record({ clientId, recipient: STATE_REPORTING.recipient, purpose: STATE_REPORTING.purpose, what, method: "export", basis: STATE_REPORTING.basis, source: "caloms", sourceRef, user, ip }));
-    }
-    function present(row) {
-      if (!row) return null;
-      const out2 = { ...row };
-      out2.recipient = row.recipient_enc ? decrypt3(row.recipient_enc) : null;
-      out2.purpose = row.purpose_enc ? decrypt3(row.purpose_enc) : null;
-      out2.what = row.what_enc ? decrypt3(row.what_enc) : null;
-      out2.justification = row.justification_enc ? decrypt3(row.justification_enc) : null;
-      delete out2.recipient_enc;
-      delete out2.purpose_enc;
-      delete out2.what_enc;
-      delete out2.justification_enc;
-      return out2;
-    }
-    function accounting(clientId) {
-      const client = db3.one(`SELECT id, client_code FROM clients WHERE id=?`, clientId);
-      const disclosures = db3.all(`SELECT d.*, u.display_name AS disclosed_by_name, u.username AS disclosed_by_username, co.order_type AS court_order_type FROM disclosures d JOIN users u ON u.id=d.disclosed_by LEFT JOIN court_orders co ON co.id=d.court_order_id WHERE d.client_id=? ORDER BY d.disclosed_at`, clientId).map(present);
-      const consents = db3.all(`SELECT id, type, recipient_enc, purpose_enc, signed_at, expires_at, expires_event, revoked_at, rule_version FROM consents WHERE client_id=? ORDER BY signed_at`, clientId).map((c) => ({ id: c.id, type: c.type, recipient: c.recipient_enc ? decrypt3(c.recipient_enc) : null, purpose: c.purpose_enc ? decrypt3(c.purpose_enc) : null, signed_at: c.signed_at, expires_at: c.expires_at, expires_event: c.expires_event, revoked_at: c.revoked_at, rule_version: c.rule_version }));
-      return { client_id: client?.id, client_code: client?.client_code, generated_at: db3.now(), part2_program: part2Program(), notice: part2Program() ? notice() : null, disclosures, consents };
-    }
-    var FHIR_PURPOSES = {
-      TREAT: { display: "Treatment", words: ["treatment", "care coordination", "coordination of care", "continuity of care"] },
-      HPAYMT: { display: "Payment", words: ["payment", "billing", "claims"] },
-      HOPERAT: { display: "Health care operations", words: ["operations"] }
-    };
-    var FHIR_CONSENT_TYPES = ["part2_disclosure", "part2_tpo", "roi"];
-    function fhirConsentTypes() {
-      const ok = disclosingConsentTypes();
-      return FHIR_CONSENT_TYPES.filter((t) => ok.includes(t));
-    }
-    function isTpo(purpose) {
-      const p = ` ${normalise(purpose)} `;
-      return / tpo /.test(p) || p.includes("treatment") && p.includes("payment") && p.includes("operations");
-    }
-    function consentCovers({ type, recipient, purpose }, { recipients, purposeOfUse }) {
-      if (type !== void 0 && !fhirConsentTypes().includes(type)) return false;
-      if (!consentNamesRecipient({ type, recipient }, recipients)) return false;
-      if (type === "part2_tpo") return !!FHIR_PURPOSES[purposeOfUse];
-      if (isTpo(purpose)) return true;
-      const p = ` ${normalise(purpose)} `;
-      return (FHIR_PURPOSES[purposeOfUse]?.words || []).some((w) => p.includes(` ${normalise(w)} `));
-    }
-    function consentPurposeCodes({ type, purpose }) {
-      return Object.keys(FHIR_PURPOSES).filter((code) => type === "part2_tpo" || consentCovers({ recipient: "x", purpose }, { recipients: ["x"], purposeOfUse: code }));
-    }
-    var coverageCache = /* @__PURE__ */ new Map();
-    function fhirCoverage({ cacheKey, recipients, purposeOfUse }) {
-      const stamp2 = db3.one(`SELECT (SELECT COUNT(*) FROM consents) n, (SELECT MAX(updated_at) FROM consents) u,
-    (SELECT COUNT(*) FROM patient_requests) rn, (SELECT MAX(updated_at) FROM patient_requests) ru`);
-      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-      const types = fhirConsentTypes();
-      const key = `${stamp2.n}|${stamp2.u}|${stamp2.rn}|${stamp2.ru}|${types.join(",")}|${today}|${recipients.join("")}|${purposeOfUse}`;
-      const hit = coverageCache.get(cacheKey);
-      if (hit && hit.key === key) return hit.map;
-      const map = /* @__PURE__ */ new Map();
-      const restricted = new Set(db3.all(`SELECT DISTINCT client_id FROM patient_requests WHERE kind='restriction' AND status='fulfilled'`).map((r) => r.client_id));
-      const rows = types.length ? db3.all(`SELECT k.* FROM consents k JOIN clients c ON c.id=k.client_id
-    WHERE k.type IN (${types.map(() => "?").join(",")}) AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= date('now'))
-      AND c.deleted_at IS NULL AND c.merged_into IS NULL ORDER BY k.signed_at, k.created_at`, ...types) : [];
-      for (const row of rows) {
-        if (restricted.has(row.client_id)) continue;
-        if (consentElementProblems(row).length) continue;
-        let plain;
-        try {
-          plain = { type: row.type, recipient: row.recipient_enc ? decrypt3(row.recipient_enc) : "", purpose: row.purpose_enc ? decrypt3(row.purpose_enc) : "" };
-        } catch {
-          continue;
-        }
-        if (consentCovers(plain, { recipients, purposeOfUse })) map.set(row.client_id, row.id);
-      }
-      if (coverageCache.size > 100) coverageCache.clear();
-      coverageCache.set(cacheKey, { key, map });
-      return map;
-    }
-    function recordFhir({ perClient, recipient, purposeOfUse, sourceRef, user, ip }) {
-      if (!perClient.size) return 0;
-      const purpose = `${FHIR_PURPOSES[purposeOfUse]?.display || purposeOfUse} (FHIR purpose of use ${purposeOfUse})`;
-      db3.transaction(() => {
-        for (const [clientId, { consentId, what }] of perClient) {
-          record({ clientId, consentId, recipient, purpose, what, method: "FHIR API", basis: "consent", source: "fhir", sourceRef, user, ip });
-        }
-      });
-      return perClient.size;
-    }
-    module.exports = {
-      BASES,
-      EXPORT_BASES,
-      SYSTEM_BASES,
-      STATE_REPORTING,
-      NEEDS_JUSTIFICATION,
-      OVERRIDE_BASES,
-      REFERRAL_BASES,
-      AGREEMENT_KINDS,
-      LEGACY_CONSENT_CUTOFF,
-      MIN_JUSTIFICATION,
-      part2Program,
-      notice,
-      fileNotice,
-      disclosingConsentTypes,
-      fileConsentTypes,
-      activeConsent,
-      courtOrderProblems,
-      agreedRestrictions,
-      missingPart2Elements,
-      missingLegacyElements,
-      consentElementProblems,
-      consentValues,
-      normalise,
-      recipientNames,
-      consentNamesRecipient,
-      isInternalRecipient,
-      agreementProblems,
-      agreementNames,
-      requireAgreement,
-      fileConsentFor,
-      requireBasis,
-      requireExportBasis,
-      requireRestrictionReview,
-      record,
-      recordStateReport,
-      present,
-      accounting,
-      FHIR_PURPOSES,
-      FHIR_CONSENT_TYPES,
-      fhirConsentTypes,
-      consentCovers,
-      consentPurposeCodes,
-      fhirCoverage,
-      recordFhir
-    };
   }
 });
 
@@ -19572,7 +19653,7 @@ var require_clients = __commonJS({
       status: { type: "string", enum: ["waitlist", "active", "inactive", "closed", "deceased"] },
       intake_date: { type: "date" },
       discharge_date: { type: "date" },
-      discharge_reason: { type: "string", maxLen: 200 },
+      discharge_reason: { type: "string", maxLen: 200, list: "DISCHARGE_REASONS" },
       referral_source: { type: "string", maxLen: 120 },
       referral_date: { type: "date" },
       engagement_date: { type: "date" },
@@ -27344,7 +27425,7 @@ var require_reports = __commonJS({
           ...part2 ? [{ k: "Protected by 42 CFR Part 2", v: notice.short }, { k: "Notice to recipient (42 CFR \xA72.32)", v: notice.text }] : []
         ] };
         const label = (k) => ({ key: k, label: k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) });
-        const RAW = /* @__PURE__ */ new Set(["client_code", "receipt_ref", "grant_number", "email", "website", "phone", "fax", "zip", "username", "document_ref", "medicaid_id", "address", "first_name", "last_name", "contact_name", "name", "organization", "vendor", "title", "template_name", "fund", "line", "resource", "worker", "approver", "assignee", "completed_by", "created_by", "disclosed_by", "recipient", "summary", "description", "notes", "purpose", "what", "goals", "flags", "hours", "eligibility", "services", "languages", "capacity_notes", "contact_person", "intake_process", "cost_notes", "restrictions", "label", "city"]);
+        const RAW = /* @__PURE__ */ new Set(["client_code", "record_id", "receipt_ref", "grant_number", "email", "website", "phone", "fax", "zip", "username", "document_ref", "medicaid_id", "address", "first_name", "last_name", "contact_name", "name", "organization", "vendor", "title", "template_name", "fund", "line", "resource", "worker", "approver", "assignee", "completed_by", "created_by", "disclosed_by", "recipient", "summary", "description", "notes", "purpose", "what", "goals", "flags", "hours", "eligibility", "services", "languages", "capacity_notes", "contact_person", "intake_process", "cost_notes", "restrictions", "label", "city"]);
         const humanize = (v) => String(v).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).replace(/\bSbirt\b/, "SBIRT").replace(/\bMat\b/g, "MAT").replace(/\bOtp\b/, "OTP").replace(/\bObot\b/, "OBOT").replace(/\bEd\b/, "ED").replace(/\bMh\b/, "MH").replace(/\bIds\b/, "IDs").replace(/\bRoi\b/, "ROI");
         const pretty = (rows, kind) => rows.map((r2) => {
           const listed = X.LIST_COLUMNS[kind] || {};
