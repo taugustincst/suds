@@ -233,22 +233,74 @@ route('resource', async (r) => {
   const fileInput = h('input', { type: 'file', accept: 'image/*', multiple: true, 'aria-label': 'Add pictures', 'data-add-pictures': '1',
     onClick: () => { status.textContent = 'Choose one or more pictures in the window that opened.'; },
     onCancel: () => { status.textContent = 'No pictures chosen.'; },
-    onChange: async () => {
-    const files = [...fileInput.files]; fileInput.value = '';
-    if (!files.length) { status.textContent = 'No pictures chosen.'; return; }
+    onChange: () => { const files = [...fileInput.files]; fileInput.value = ''; return addFiles(files); } });
+  // One upload path for every way a picture arrives: the file window, a drop onto the card, a paste, or a
+  // picture this page fetched from a web address on a device. Shrunk here, sent as an ordinary upload.
+  const uploadBlob = async (blob, name, caption = '') => {
+    const pic = await shrinkImage(blob, 1600, 0.85); const th = await shrinkImage(blob, 240, 0.7, true);
+    status.textContent = `Uploading ${name}…`;
+    const r = await post(`/api/resources/${x.id}/photos`, { data_url: pic.dataUrl, thumb_url: th.dataUrl, width: pic.width, height: pic.height, caption });
+    photos.push({ ...r.photo, data_url: pic.dataUrl, thumb_url: th.dataUrl }); renderGallery();
+  };
+  async function addFiles(files, { how = '' } = {}) {
+    files = [...files];
+    if (!files.length) { status.textContent = how ? `Nothing to add: ${how} held no picture.` : 'No pictures chosen.'; return; }
     let added = 0;
     for (const f of files) {
       if (photos.length >= 12) { toast('A resource can have at most 12 pictures', 'error'); break; }
-      status.textContent = `Preparing ${f.name}…`;
-      try {
-        const pic = await shrinkImage(f, 1600, 0.85); const th = await shrinkImage(f, 240, 0.7, true);
-        status.textContent = `Uploading ${f.name}…`;
-        const r = await post(`/api/resources/${x.id}/photos`, { data_url: pic.dataUrl, thumb_url: th.dataUrl, width: pic.width, height: pic.height, caption: '' });
-        photos.push({ ...r.photo, data_url: pic.dataUrl, thumb_url: th.dataUrl }); added++; renderGallery();
-      } catch (e) { toast(`${f.name}: ${e.message}`, 'error'); }
+      const name = f.name || 'picture';
+      status.textContent = `Preparing ${name}…`;
+      try { await uploadBlob(f, name); added++; } catch (e) { toast(`${name}: ${e.message}`, 'error'); }
     }
     status.textContent = added ? `${added} picture${added > 1 ? 's' : ''} added` : '';
-  } });
+    if (added && how) toast(`${added} picture${added > 1 ? 's' : ''} added`, 'ok');
+  }
+  // "Add from a web address": for anyone who cannot use the operating system's file window (a testing
+  // tool, a locked-down kiosk, a picture already open in another tab). The office server downloads it
+  // with the same checks as provider pictures. A copy running in this browser cannot ask its kernel to
+  // (the kernel is this page), so the page fetches the picture itself; most sites do not allow that
+  // (CORS), and the message then says what to do instead.
+  const onDevice = !!state.local;
+  const CORS_REFUSED = 'That site does not allow its pictures to be copied from a browser. Save the picture to this device and use + Add pictures, or drag it onto this card.';
+  // On a device: https addresses; plain http only for this site's own address (a picture published beside
+  // SUDS on this device) or this computer itself (localhost). The browser's own rules (CORS, mixed content)
+  // still apply; nothing here reaches the office server.
+  const deviceAddressOk = (u) => u.protocol === 'https:' || (u.protocol === 'http:' && (u.origin === location.origin || /^(localhost|127\.0\.0\.1|\[::1\])$/.test(u.hostname)));
+  async function addFromAddress(raw, caption) {
+    let u; try { u = new URL(String(raw || '').trim()); } catch { throw new Error('Enter the full address of the picture, starting with https://'); }
+    if (onDevice ? !deviceAddressOk(u) : u.protocol !== 'https:') throw new Error('Only https:// addresses can be used');
+    if (photos.length >= 12) throw new Error('A resource can have at most 12 pictures; remove one first');
+    status.textContent = `Fetching the picture from ${u.hostname}…`;
+    if (!onDevice) {
+      const r = await post(`/api/resources/${x.id}/photos/from-url`, { url: u.href, caption });
+      photos.push(r.photo); renderGallery();
+      // The server cannot shrink a picture; this page makes the thumbnail the directory card shows.
+      try { await saveThumbnail(x.id, r.id); photos[photos.length - 1] = { ...r.photo, thumb_url: `/api/resources/${x.id}/photos/${r.id}/thumb` }; } catch { /* the card shows the picture itself */ }
+      return;
+    }
+    let blob;
+    try {
+      const res = await fetch(u.href, { mode: 'cors', credentials: 'omit', referrerPolicy: 'no-referrer' });
+      if (!res.ok) throw Object.assign(new Error(`That site answered ${res.status}; check the address`), { shown: true });
+      blob = await res.blob();
+    } catch (e) { throw e && e.shown ? e : new Error(CORS_REFUSED); }
+    if (blob.size > 20 * 1024 * 1024) throw new Error('That picture is too large');
+    if (!/^image\//.test(blob.type)) throw new Error('That address is not a picture (JPEG, PNG or WebP). Open the picture itself and copy its address.');
+    await uploadBlob(blob, u.hostname, caption || `From ${u.hostname}`);
+  }
+  const openAddressDialog = () => {
+    const f = form([
+      { name: 'url', label: 'Address of the picture', type: 'url', required: true, span: true, placeholder: 'https://', help: onDevice ? 'The address of a picture (or of the program\'s web page, on the office server). Some sites do not allow their pictures to be copied from a browser.' : 'The address of a picture, or of the program\'s web page (its preview picture is used).' },
+      { name: 'caption', label: 'Caption (optional)', span: true, maxLen: 200 },
+    ], { submitText: 'Add picture', onCancel: () => m.close(), onSubmit: async (d) => {
+      try { await addFromAddress(d.url, d.caption || ''); }
+      catch (e) { status.textContent = e.message; toast(e.message, 'error'); throw e; }
+      status.textContent = '1 picture added'; toast('Picture added', 'ok'); m.close();
+    } });
+    const m = modal('Add a picture from a web address', f);
+  };
+  const addressBtn = h('button', { class: 'btn sm', type: 'button', 'data-add-from-address': '1', onClick: openAddressDialog }, 'Add from a web address');
+  const imagesIn = (list) => [...(list || [])].filter(f => f && f.type && f.type.startsWith('image/'));
   const head = h('div', { class: 'res-head' },
     h('div', {}, h('div', { class: 'row mb', style: { gap: '.35rem' } }, badge(fmt.label(x.category), 'info'), x.is_active ? null : badge('Inactive', 'warn'), x.accepts_medicaid ? badge('Medicaid', 'ok') : null, x.accepts_uninsured ? badge('Uninsured OK', 'info') : null, x.mat_offered ? badge(`MAT: ${x.mat_offered}`, 'purple') : null, stale(x) ? badge(x.last_verified_at ? `verified ${fmt.date(x.last_verified_at)}` : 'never verified', 'warn') : badge(`verified ${fmt.date(x.last_verified_at)}`, 'ok')),
       x.organization ? h('div', { class: 'muted' }, x.organization) : null,
@@ -261,6 +313,32 @@ route('resource', async (r) => {
     !x.service_tags && !x.services && !x.eligibility ? h('p', { class: 'muted small' }, 'No service details yet.') : null);
   const outcomes = x.referral_stats.length ? h('div', {}, x.referral_stats.map(s => [badge(`${fmt.label(s.status, 'REFERRAL_STATUSES')}: ${s.n}`), ' '])) : h('p', { class: 'muted small' }, 'No referrals yet.');
   const recent = (x.recent_referrals || []).length ? table([{ label: 'Client', render: y => h('a', { href: `#/client/${y.client_id}/referrals` }, y.client_code) }, { label: 'Referred', render: y => fmt.date(y.referred_at) }, { label: 'Status', render: y => badge(fmt.label(y.status)) }], x.recent_referrals) : null;
+  // Drag pictures onto the card, or paste one (Ctrl+V / Cmd+V) while on this page: the same upload as the
+  // file window, for people and tools that cannot use that window.
+  const picturesCard = h('div', { class: 'card', 'data-pictures-card': '1' }, h('div', { class: 'card-head' }, h('h3', {}, 'Pictures'), can('resources:write') ? h('div', { class: 'row', style: { gap: '.35rem' } }, h('label', { class: 'btn sm file-btn' }, '+ Add pictures', fileInput), addressBtn) : null), gallery, status,
+    can('resources:write') ? h('p', { class: 'small muted mt' }, 'Pictures are shrunk on this device before saving. You can also drag pictures onto this card or paste one. Do not upload pictures of clients.') : null);
+  if (can('resources:write')) {
+    const hasFiles = (e) => [...((e.dataTransfer && e.dataTransfer.types) || [])].includes('Files');
+    let depth = 0;
+    picturesCard.addEventListener('dragenter', (e) => { if (!hasFiles(e)) return; e.preventDefault(); depth++; picturesCard.classList.add('drop-over'); status.textContent = 'Drop the pictures here to add them.'; });
+    picturesCard.addEventListener('dragover', (e) => { if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+    picturesCard.addEventListener('dragleave', () => { depth = Math.max(0, depth - 1); if (!depth) picturesCard.classList.remove('drop-over'); });
+    picturesCard.addEventListener('drop', (e) => {
+      e.preventDefault(); depth = 0; picturesCard.classList.remove('drop-over');
+      const files = imagesIn(e.dataTransfer && e.dataTransfer.files);
+      if (!files.length) { status.textContent = 'Only picture files (JPEG, PNG or WebP) can be dropped here.'; toast('Only picture files can be added', 'error'); return; }
+      addFiles(files, { how: 'the drop' });
+    });
+    const onPaste = (e) => {
+      if (!document.body.contains(picturesCard)) { document.removeEventListener('paste', onPaste); return; }
+      // Typing into a field (a dialog's caption, a search box) keeps its own paste.
+      if (e.target && e.target.closest && e.target.closest('input, textarea, [contenteditable=""], [contenteditable=true]')) return;
+      const files = imagesIn(e.clipboardData && e.clipboardData.files);
+      if (!files.length) return;
+      e.preventDefault(); addFiles(files, { how: 'the paste' });
+    };
+    document.addEventListener('paste', onPaste);
+  }
   // The phone's top bar names the page; a provider's page is not in the menu, so it said "SUDS".
   const barTitle = document.querySelector('.mobilebar-title > b'); if (barTitle) { barTitle.textContent = x.name; barTitle.title = x.name; }
   return h('div', {},
@@ -270,8 +348,7 @@ route('resource', async (r) => {
       can('resources:write') ? h('button', { class: 'btn primary', onClick: () => openResourceForm(x, refresh) }, 'Edit') : null),
     head,
     h('div', { class: 'grid cols-2' },
-      h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Pictures'), can('resources:write') ? h('div', {}, h('label', { class: 'btn sm file-btn' }, '+ Add pictures', fileInput)) : null), gallery, status,
-        can('resources:write') ? h('p', { class: 'small muted mt' }, 'Pictures are shrunk on this device before saving. Do not upload pictures of clients.') : null),
+      picturesCard,
       h('div', {}, h('div', { class: 'card mb' }, h('h3', {}, 'Services offered'), services), h('div', { class: 'card' }, h('h3', {}, 'Contact & location'), contact))),
     h('div', { class: 'grid cols-2 mt' }, h('div', { class: 'card' }, h('h3', {}, 'Referral outcomes'), outcomes, recent ? h('div', { class: 'mt' }, recent) : null),
       x.notes || can('resources:write') ? h('div', { class: 'card' }, h('h3', {}, 'Internal notes'), x.notes ? h('p', { class: 'small', style: { whiteSpace: 'pre-wrap' } }, x.notes) : h('p', { class: 'muted small' }, 'Nothing noted.'),

@@ -4,6 +4,12 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
+}) : x)(function(x) {
+  if (typeof require !== "undefined") return require.apply(this, arguments);
+  throw Error('Dynamic require of "' + x + '" is not supported');
+});
 var __glob = (map) => (path) => {
   var fn = map[path];
   if (fn) return fn();
@@ -12,7 +18,7 @@ var __glob = (map) => (path) => {
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
-var __commonJS = (cb, mod) => function __require() {
+var __commonJS = (cb, mod) => function __require2() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
 var __export = (target, all) => {
@@ -21359,8 +21365,46 @@ var require_region_pictures = __commonJS({
     var MAX_PICTURE_BYTES = 2 * 1024 * 1024;
     var MAX_PAGE_BYTES = 2 * 1024 * 1024;
     var fetchImpl = (...args) => globalThis.fetch(...args);
+    var lookupImpl = null;
+    var fetchOverridden = false;
     function _setFetchForTests(fn) {
       fetchImpl = fn || ((...args) => globalThis.fetch(...args));
+      fetchOverridden = !!fn;
+    }
+    function _setLookupForTests(fn) {
+      lookupImpl = fn;
+    }
+    function isPrivateAddress(ip) {
+      let a = String(ip).toLowerCase();
+      const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(a);
+      if (mapped) a = mapped[1];
+      if (/^\d+\.\d+\.\d+\.\d+$/.test(a)) {
+        const [x, y] = a.split(".").map(Number);
+        return x === 0 || x === 10 || x === 127 || x === 100 && y >= 64 && y <= 127 || x === 169 && y === 254 || x === 172 && y >= 16 && y <= 31 || x === 192 && y === 168 || x === 192 && y === 0 || x === 198 && (y === 18 || y === 19) || x >= 224;
+      }
+      return a === "::" || a === "::1" || /^f[cd]/.test(a) || /^fe[89ab]/.test(a) || /^ff/.test(a) || /^64:ff9b:/.test(a) || /^2001:db8:/.test(a);
+    }
+    async function assertResolvesPublic(url) {
+      const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
+      let lookup = lookupImpl;
+      if (!lookup) {
+        if (fetchOverridden) return;
+        let dns;
+        try {
+          dns = __require("node:dns").promises;
+        } catch {
+          return;
+        }
+        lookup = (h) => dns.lookup(h, { all: true, verbatim: true });
+      }
+      let addrs;
+      try {
+        addrs = await lookup(host);
+      } catch (e) {
+        if (proc.env.HTTPS_PROXY || proc.env.https_proxy) return;
+        throw describeNetworkError({ cause: e }) || soft("could not find that address");
+      }
+      if (!addrs.length || addrs.some((x) => isPrivateAddress(x.address || x))) throw soft("that address is not on the public internet");
     }
     var soft = (message, extra = {}) => Object.assign(new Error(message), { soft: true }, extra);
     var sniff = (buf) => buf.length > 3 && buf[0] === 255 && buf[1] === 216 && buf[2] === 255 ? "image/jpeg" : buf.length > 8 && buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71 ? "image/png" : buf.length > 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP" ? "image/webp" : null;
@@ -21412,10 +21456,11 @@ var require_region_pictures = __commonJS({
       if (NETWORK_CODES.test(String(code)) || /fetch failed/i.test(e && e.message)) return soft(`the computer running SUDS could not reach the internet${code ? ` (${code})` : ""}.${proxyHint}`, { network: true });
       return null;
     }
-    async function get(url, { timeoutMs, maxBytes, hops = 4 }) {
+    async function fetchChecked(url, { timeoutMs, maxBytes, hops = 4 }) {
       let target = assertPublicHttps(url);
       let res;
       for (let i = 0; i <= hops; i++) {
+        await assertResolvesPublic(target);
         try {
           res = await fetchImpl(target, { signal: AbortSignal.timeout(timeoutMs), redirect: "manual", headers: { "User-Agent": "SUDS resource directory", Accept: "*/*" } });
         } catch (e) {
@@ -21432,7 +21477,15 @@ var require_region_pictures = __commonJS({
       if (Number(res.headers.get("content-length") || 0) > maxBytes) throw soft("file is too large");
       const buf = import_buffer.Buffer.from(await res.arrayBuffer());
       if (buf.length > maxBytes) throw soft("file is too large");
-      return buf;
+      return { buf, url: target };
+    }
+    async function get(url, opts) {
+      return (await fetchChecked(url, opts)).buf;
+    }
+    function failure(e) {
+      if (e && e.soft) return { ok: false, error: e.message, ...e.network ? { network: true } : {} };
+      if (e && e.name === "TimeoutError") return { ok: false, error: "timed out" };
+      return { ok: false, error: e && e.message || "could not connect" };
     }
     async function downloadPicture(target, { timeoutMs = 12e3, deadline = 0 } = {}) {
       let url = target.url;
@@ -21453,9 +21506,24 @@ var require_region_pictures = __commonJS({
         if (!type) return { ok: false, error: "not a JPEG, PNG or WebP picture" };
         return { ok: true, buf, type, url };
       } catch (e) {
-        if (e && e.soft) return { ok: false, error: e.message, ...e.network ? { network: true } : {} };
-        if (e && e.name === "TimeoutError") return { ok: false, error: "timed out" };
-        return { ok: false, error: e && e.message || "could not connect" };
+        return failure(e);
+      }
+    }
+    async function downloadFromAddress(address, { timeoutMs = 12e3 } = {}) {
+      try {
+        const first = await fetchChecked(address, { timeoutMs, maxBytes: Math.max(MAX_PICTURE_BYTES, MAX_PAGE_BYTES) });
+        let type = sniff(first.buf);
+        if (type) return { ok: true, buf: first.buf, type, url: first.url };
+        const text = first.buf.subarray(0, 512 * 1024).toString("utf8");
+        if (!/<(html|head|meta|link)\b/i.test(text)) return { ok: false, error: "not a JPEG, PNG or WebP picture" };
+        const url = pickImageUrl(text, first.url);
+        if (!url) return { ok: false, error: "that page does not advertise a picture; open the picture itself and copy its address" };
+        const buf = await get(url, { timeoutMs, maxBytes: MAX_PICTURE_BYTES });
+        type = sniff(buf);
+        if (!type) return { ok: false, error: "not a JPEG, PNG or WebP picture" };
+        return { ok: true, buf, type, url };
+      } catch (e) {
+        return failure(e);
       }
     }
     function regionTargets(regionId) {
@@ -21463,7 +21531,7 @@ var require_region_pictures = __commonJS({
       if (!region) throw new Error("Unknown region");
       return region.providers.filter((p) => p.image_url || p.website).map((p) => ({ key: p.key, name: p.name, category: p.category, url: p.image_url || null, website: p.website || null }));
     }
-    module.exports = { REGIONS, MAX_PICTURE_BYTES, EXT, sniff, pickImageUrl, assertPublicHttps, get, downloadPicture, regionTargets, describeNetworkError, _setFetchForTests };
+    module.exports = { REGIONS, MAX_PICTURE_BYTES, EXT, sniff, pickImageUrl, assertPublicHttps, get, downloadPicture, downloadFromAddress, regionTargets, describeNetworkError, isPrivateAddress, _setFetchForTests, _setLookupForTests };
   }
 });
 
@@ -22342,7 +22410,8 @@ var require_resources = __commonJS({
     var MAX_PHOTOS = 12;
     var MAX_PHOTO_BYTES = 2 * 1024 * 1024;
     var MAX_THUMB_BYTES = 96 * 1024;
-    var { badRequest } = require_http();
+    var { badRequest, HttpError: HttpError3 } = require_http();
+    var pictures = require_region_pictures();
     function sniff(buf) {
       if (buf.length > 3 && buf[0] === 255 && buf[1] === 216 && buf[2] === 255) return "image/jpeg";
       if (buf.length > 8 && buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71) return "image/png";
@@ -22435,6 +22504,47 @@ var require_resources = __commonJS({
         db3.run(`INSERT INTO resource_photos(id,resource_id,caption,content_type,bytes,width,height,data_b64,thumb_b64,sort_order,uploaded_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, id, res.id, v.caption || null, pic.type, pic.buf.length, v.width || null, v.height || null, pic.b64, thumb ? thumb.b64 : null, order, ctx.user.id);
         db3.run(`UPDATE resources SET updated_at=? WHERE id=?`, db3.now(), res.id);
         audit3.log({ user: ctx.user, action: "resource.photo.add", entity: "resource", entityId: res.id, ip: ctx.ip, details: { photo_id: id, bytes: pic.buf.length, type: pic.type } });
+        ctx.status = 201;
+        return { id, photo: photoRows(res.id).find((p) => p.id === id) };
+      });
+      r.post("/api/resources/:id/photos/from-url", auth3.requireAuth, auth3.requirePerm("resources:write"), async (ctx) => {
+        const res = db3.one(`SELECT id FROM resources WHERE id=?`, ctx.params.id);
+        if (!res) throw notFound();
+        if (require_config().local) throw new HttpError3(501, "On this device a picture from a web address is fetched by the page itself; this route runs on the office server only");
+        const v = validate(ctx.body, { url: { type: "string", required: true, maxLen: 2e3 }, caption: { type: "string", maxLen: 200 } });
+        let parsed;
+        try {
+          parsed = new URL(v.url.trim());
+        } catch {
+          throw badRequest("Enter the full address of the picture, starting with https://");
+        }
+        if (parsed.protocol !== "https:") throw badRequest("Only https:// addresses can be used");
+        try {
+          pictures.assertPublicHttps(parsed.href);
+        } catch (e) {
+          throw badRequest(`That address cannot be used: ${e.message}`);
+        }
+        if (db3.one(`SELECT COUNT(*) n FROM resource_photos WHERE resource_id=?`, res.id).n >= MAX_PHOTOS) throw badRequest(`A resource can have at most ${MAX_PHOTOS} pictures; remove one first`);
+        const got = await pictures.downloadFromAddress(parsed.href);
+        if (!got.ok) throw new HttpError3(got.network ? 502 : 400, `Could not add that picture: ${got.error}`);
+        if (db3.one(`SELECT COUNT(*) n FROM resource_photos WHERE resource_id=?`, res.id).n >= MAX_PHOTOS) throw badRequest(`A resource can have at most ${MAX_PHOTOS} pictures; remove one first`);
+        const host = new URL(got.url).hostname;
+        const id = uuid2();
+        const order = db3.one(`SELECT COALESCE(MAX(sort_order), -1) m FROM resource_photos WHERE resource_id=?`, res.id).m + 1;
+        db3.run(
+          `INSERT INTO resource_photos(id,resource_id,caption,content_type,bytes,data_b64,thumb_b64,sort_order,uploaded_by) VALUES(?,?,?,?,?,?,?,?,?)`,
+          id,
+          res.id,
+          (v.caption || "").trim() || `From ${host}`,
+          got.type,
+          got.buf.length,
+          got.buf.toString("base64"),
+          got.buf.length <= MAX_THUMB_BYTES ? got.buf.toString("base64") : null,
+          order,
+          ctx.user.id
+        );
+        db3.run(`UPDATE resources SET updated_at=? WHERE id=?`, db3.now(), res.id);
+        audit3.log({ user: ctx.user, action: "resource.photo.add", entity: "resource", entityId: res.id, ip: ctx.ip, details: { photo_id: id, bytes: got.buf.length, type: got.type, source: "web_address", host } });
         ctx.status = 201;
         return { id, photo: photoRows(res.id).find((p) => p.id === id) };
       });

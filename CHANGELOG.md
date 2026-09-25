@@ -2,6 +2,28 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+- **Pictures without the file window.** A resource's Pictures card has **Add from a web address** (an https
+  address of a picture, or of a web page whose preview picture is used), and picture files can be dragged onto
+  the card or pasted on the page. The office server downloads the address with the same checks as provider
+  pictures and records only the site name in the audit log; on SUDS on this device the browser fetches it and
+  explains when a site does not allow that. New route `POST /api/resources/:id/photos/from-url`
+  (resources:write). **+ Add pictures** is unchanged.
+- **Downloads refuse names that point inside the county network.** Provider pictures and "Add from a web
+  address" now resolve each address (every redirect hop) before connecting and refuse loopback, private,
+  link-local and similar addresses; before, only the name was checked, so a public-looking name that resolved
+  to an internal server was fetched.
+- **QA round 4 (what an automated tester reading the accessibility tree reported on 1.10.1).**
+  - Home's numbers and bars link only to pages the viewer may open; a read-only account no longer lands on
+    "Not available for your role".
+  - The client header's badges are a list, and the status reads "Status: Inactive" to a screen reader instead
+    of running into the risk badge.
+  - A dialog no longer copies its title into the page's live region (a second "Add resource" / "New task" in
+    the accessibility tree).
+  - The Home empty-state sentence is under 100 characters (a tool that cuts text at 100 read "…or compute").
+  - Sample data has a read-only account (`rreader`); new browser script `a11y-round4`.
+
 ## 1.10.1 — 2026-09-25
 
 - **Signing out no longer draws the sign-in page twice.** The second draw blanked the screen for a moment (or,
