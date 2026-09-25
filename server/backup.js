@@ -78,7 +78,7 @@ async function createAsync({ encryptionKey, rate = 256 } = {}) {
   const SLICE = 4 << 20;
   for (let off = 0; off < plain.length; off += SLICE) {
     parts.push(c.update(plain.subarray(off, Math.min(off + SLICE, plain.length))));
-    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => (globalThis.setImmediate ? globalThis.setImmediate(resolve) : setTimeout(resolve, 0)));
   }
   parts.push(c.final());
   const bytes = Buffer.concat([iv, c.getAuthTag(), ...parts]);

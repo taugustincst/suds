@@ -242,7 +242,7 @@ async function run({ backupFile = null, fresh = false, by = 'system', trigger = 
   }
   const extraChecks = [];
   if (escrow) extraChecks.push({ name: 'The escrowed key file opens the backup', ok: restoreBytes > 0, detail: `${keyInfo.source}${keyInfo.file ? ` ${keyInfo.file}` : ''}; encryption key ${keyInfo.encryption_key_fingerprint}, index key ${keyInfo.index_key_fingerprint}` });
-  if (source.offsite_configured) extraChecks.push({ name: 'The offsite copy was restored', ok: source.copy === 'offsite' || source.copy === 'given', detail: source.copy === 'offsite' ? source.dir : source.copy === 'given' ? 'a backup file was named explicitly' : 'the local copy was restored instead' });
+  if (source.offsite_configured && copy !== 'local') extraChecks.push({ name: 'The offsite copy was restored', ok: source.copy === 'offsite' || source.copy === 'given', detail: source.copy === 'offsite' ? source.dir : source.copy === 'given' ? 'a backup file was named explicitly' : 'the local copy was restored instead' });
   if (extraChecks.length) result.checks = [...extraChecks, ...(result.checks || [])];
   const finished = Date.now();
   const checks = result.checks || [];

@@ -66,7 +66,10 @@ function mergeUser(localId, serverId) {
   for (const [t, c] of SYNC.user_refs) {
     if (!db.one(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`, t)) continue;
     if (!cols(t).includes(c)) continue;
-    db.run(`UPDATE ${t} SET ${c}=? WHERE ${c}=?`, serverId, localId);
+    const remap = () => db.run(`UPDATE ${t} SET ${c}=? WHERE ${c}=?`, serverId, localId);
+    // The device's own audit log is append-only (schema.sql triggers); renaming its local account to the
+    // office one is the sanctioned maintenance that may touch it.
+    if (t === 'audit_log') audit.maintenance('sync: the device account becomes its office account', remap); else remap();
   }
   db.run(`DELETE FROM users WHERE id=?`, localId);
   // The device's own administrator (local/kernel.js) is the same person under their office id now.

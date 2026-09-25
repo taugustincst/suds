@@ -212,6 +212,7 @@ test('with an offsite directory configured, the drill restores the offsite copy 
     assert.equal(drill.lastDrill().backup_copy, 'offsite');
     const loc = await drill.run({ copy: 'local', by: { username: 'test' }, trigger: 'test' });
     assert.equal(loc.report.backup.copy, 'local');
+    assert.equal(loc.report.ok, true, 'asking for the local copy is not a failure');
     // The share goes away: the drill still measures the local copy, and fails for the missing offsite one.
     fs.rmSync(offsite, { recursive: true, force: true });
     const gone = await drill.run({ by: { username: 'test' }, trigger: 'test' });
