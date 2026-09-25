@@ -9467,11 +9467,11 @@ var require_auth = __commonJS({
       if (!ctx.user) throw unauthorized();
       if (ctx.session?.mfa_pending) throw new HttpError3(401, "MFA verification required", { mfaRequired: true });
       if (!ctx.path.startsWith("/api/auth/")) {
+        const shellOnly = ctx.method === "GET" && (ctx.path === "/api/meta/constants" || ctx.path === "/api/me/prefs");
         const due = ctx.session?.mfa_source === "idp" ? null : mfaDeadline(ctx.user);
-        if (due && Date.now() > Date.parse(due)) {
+        if (due && Date.now() > Date.parse(due) && !shellOnly) {
           throw new HttpError3(403, "Two-step verification must be set up for your role before you can continue", { mfaSetupRequired: true, mfaSetupDeadline: due });
         }
-        const shellOnly = ctx.method === "GET" && (ctx.path === "/api/meta/constants" || ctx.path === "/api/me/prefs");
         if (ctx.user.must_change_password && !shellOnly) throw new HttpError3(403, "Password change required", { passwordChangeRequired: true });
         const age = ctx.user.password_changed_at ? (Date.now() - Date.parse(ctx.user.password_changed_at)) / 864e5 : Infinity;
         const maxAge = policy().passwordMaxAgeDays;
@@ -10721,9 +10721,30 @@ var require_db = __commonJS({
       if (fresh) {
         d.exec(schemaText);
         d.prepare(`INSERT INTO settings(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(String(migrations.length));
-        return;
+      } else migrate(d, dbPath);
+      ensureIndexes(d, schemaText);
+    }
+    var lastIndexProblems = [];
+    function ensureIndexes(d, schemaText) {
+      const problems = [];
+      for (const raw of schemaText.split("\n")) {
+        const line = raw.trim();
+        const m = line.match(/^CREATE (?:UNIQUE )?INDEX IF NOT EXISTS (\S+) ON /);
+        if (!m) continue;
+        if (d.prepare(`SELECT 1 FROM sqlite_master WHERE type='index' AND name=?`).get(m[1])) continue;
+        try {
+          d.exec(line);
+        } catch (e) {
+          const error = String(e && e.message || e).slice(0, 200);
+          problems.push({ index: m[1], error });
+          console.warn(`[suds] ${JSON.stringify({ event: "db.index_missing", index: m[1], error })}`);
+        }
       }
-      migrate(d, dbPath);
+      lastIndexProblems = problems;
+      return problems;
+    }
+    function indexProblems() {
+      return lastIndexProblems.slice();
     }
     var SNAPSHOTS_KEPT = 5;
     function snapshotBeforeMigration(d, dbPath, fromVersion) {
@@ -10875,7 +10896,7 @@ var require_db = __commonJS({
     function tombstone(table, id) {
       run2(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now());
     }
-    module.exports = { open: open2, openWith, get, close, LATEST_SCHEMA_VERSION: migrations.length, now, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint };
+    module.exports = { open: open2, openWith, get, close, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, now, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint };
   }
 });
 
@@ -14383,6 +14404,19 @@ var require_deprovision = __commonJS({
   }
 });
 
+// local/shims/empty.js
+var empty_exports = {};
+__export(empty_exports, {
+  default: () => empty_default
+});
+var empty_default;
+var init_empty = __esm({
+  "local/shims/empty.js"() {
+    init_globals_inject();
+    empty_default = {};
+  }
+});
+
 // local/shims/os.js
 var os_exports = {};
 __export(os_exports, {
@@ -14401,19 +14435,6 @@ var init_os = __esm({
   "local/shims/os.js"() {
     init_globals_inject();
     os_default = { hostname, networkInterfaces };
-  }
-});
-
-// local/shims/empty.js
-var empty_exports = {};
-__export(empty_exports, {
-  default: () => empty_default
-});
-var empty_default;
-var init_empty = __esm({
-  "local/shims/empty.js"() {
-    init_globals_inject();
-    empty_default = {};
   }
 });
 
@@ -14573,7 +14594,8 @@ var require_audit_anchor = __commonJS({
         db3.setSetting("audit_anchor_last_status", `failed: ${msg}`);
         try {
           require_audit().log({ user: { username: "system" }, action: "audit.anchor.failed", success: false, details: { reason, error: msg.slice(0, 300) } });
-        } catch {
+        } catch (e2) {
+          console.error("[suds] the audit entry for that failure could not be written either:", e2 && e2.message);
         }
         return null;
       }
@@ -14693,7 +14715,8 @@ var require_audit_anchor = __commonJS({
         console.error(`[suds] AUDIT ANCHOR MISMATCH: ${r.bad.length} anchor(s) do not match the audit log \u2014 ${r.bad[0].reason}`);
         try {
           require_audit().log({ user: { username: "system" }, action: "audit.anchor.verify.failed", success: false, details: { bad: r.bad.slice(0, 20), total: r.total } });
-        } catch {
+        } catch (e) {
+          console.error("[suds] the audit entry for the anchor mismatch could not be written:", e && e.message);
         }
         try {
           require_incidents().draft({
@@ -14777,9 +14800,9 @@ var require_backup = __commonJS({
       const iv = crypto3.randomBytes(12);
       const c = crypto3.createCipheriv("aes-256-gcm", backupKey(encryptionKey), iv);
       const parts = [];
-      const SLICE = 4 << 20;
-      for (let off = 0; off < plain.length; off += SLICE) {
-        parts.push(c.update(plain.subarray(off, Math.min(off + SLICE, plain.length))));
+      const SLICE2 = 4 << 20;
+      for (let off = 0; off < plain.length; off += SLICE2) {
+        parts.push(c.update(plain.subarray(off, Math.min(off + SLICE2, plain.length))));
         await new Promise((resolve2) => globalThis.setImmediate ? globalThis.setImmediate(resolve2) : setTimeout(resolve2, 0));
       }
       parts.push(c.final());
@@ -14787,6 +14810,164 @@ var require_backup = __commonJS({
       const plainBytes = plain.length;
       plain.fill(0);
       return { bytes: bytes3, method, copy_ms: t1 - t0, encrypt_ms: Date.now() - t1, plain_bytes: plainBytes };
+    }
+    var SLICE = 4 << 20;
+    var tmpName = (kind) => path.join(config.dataDir, `.${kind}-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
+    var removeTmp = async (tmp) => {
+      await secureUnlinkAsync(tmp);
+      for (const suffix of ["-wal", "-shm", "-journal"]) await secureUnlinkAsync(tmp + suffix);
+    };
+    async function createToFileAsync(outFile, { encryptionKey, rate = 256, flag = "w" } = {}) {
+      const sqlite = (init_sqlite(), __toCommonJS(sqlite_exports));
+      const tmp = tmpName("backup");
+      let method;
+      const t0 = Date.now();
+      let t1;
+      let plainBytes = 0;
+      let written = 0;
+      try {
+        await fs.promises.writeFile(tmp, "", { mode: 384 });
+        if (typeof sqlite.backup === "function" && config.dbPath !== ":memory:") {
+          method = "sqlite-online-backup";
+          await sqlite.backup(db3.get(), tmp, { rate });
+        } else {
+          method = "vacuum-into";
+          await fs.promises.unlink(tmp);
+          db3.get().exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
+        }
+        try {
+          await fs.promises.chmod(tmp, 384);
+        } catch {
+        }
+        t1 = Date.now();
+        const iv = crypto3.randomBytes(12);
+        const c = crypto3.createCipheriv("aes-256-gcm", backupKey(encryptionKey), iv);
+        const src = await fs.promises.open(tmp, "r");
+        let out2 = null;
+        try {
+          out2 = await fs.promises.open(outFile, flag, 384);
+          await out2.write(import_buffer.Buffer.concat([iv, import_buffer.Buffer.alloc(16)]), 0, 28, 0);
+          written = 28;
+          const chunk = import_buffer.Buffer.alloc(SLICE);
+          for (; ; ) {
+            const { bytesRead } = await src.read(chunk, 0, SLICE, plainBytes);
+            if (!bytesRead) break;
+            plainBytes += bytesRead;
+            const enc2 = c.update(chunk.subarray(0, bytesRead));
+            await out2.write(enc2, 0, enc2.length, written);
+            written += enc2.length;
+          }
+          chunk.fill(0);
+          const fin = c.final();
+          if (fin.length) {
+            await out2.write(fin, 0, fin.length, written);
+            written += fin.length;
+          }
+          await out2.write(c.getAuthTag(), 0, 16, 12);
+          await out2.sync();
+        } finally {
+          await src.close().catch(() => {
+          });
+          if (out2) await out2.close().catch(() => {
+          });
+        }
+      } finally {
+        await removeTmp(tmp);
+      }
+      return { bytes: written, method, copy_ms: t1 - t0, encrypt_ms: Date.now() - t1, plain_bytes: plainBytes };
+    }
+    async function decryptFileAsync(encFile, plainFile, { encryptionKey, escrow } = {}) {
+      const src = await fs.promises.open(encFile, "r");
+      try {
+        const { size } = await src.stat();
+        if (size < 29) throw new Error("That does not look like a SUDS backup file");
+        const head = import_buffer.Buffer.alloc(28);
+        await src.read(head, 0, 28, 0);
+        const iv = head.subarray(0, 12), tag = head.subarray(12, 28);
+        const chunk = import_buffer.Buffer.alloc(SLICE);
+        for (const key of candidateKeys(encryptionKey, escrow)) {
+          const d = crypto3.createDecipheriv("aes-256-gcm", key, iv);
+          d.setAuthTag(tag);
+          const out2 = await fs.promises.open(plainFile, "w", 384);
+          let ok = false;
+          try {
+            let pos = 28;
+            let at = 0;
+            for (; ; ) {
+              const { bytesRead } = await src.read(chunk, 0, SLICE, pos);
+              if (!bytesRead) break;
+              pos += bytesRead;
+              const p = d.update(chunk.subarray(0, bytesRead));
+              await out2.write(p, 0, p.length, at);
+              at += p.length;
+              p.fill(0);
+            }
+            const fin = d.final();
+            if (fin.length) await out2.write(fin, 0, fin.length, at);
+            ok = true;
+          } catch {
+          } finally {
+            await out2.close().catch(() => {
+            });
+            chunk.fill(0);
+          }
+          if (ok) return;
+          await secureUnlinkAsync(plainFile);
+        }
+      } finally {
+        await src.close().catch(() => {
+        });
+      }
+      throw new Error(escrow ? "The backup could not be read with the escrowed keys. Either the key file is not the one for this backup set, or the backup is damaged." : "The backup could not be read. It is either damaged, or it was made with a different encryption key.");
+    }
+    var INSPECT_WORKER = `
+const { parentPort, workerData } = require('node:worker_threads');
+const { DatabaseSync } = require('node:sqlite');
+try {
+  const d = new DatabaseSync(workerData.file, { readOnly: true });
+  try {
+    const integrity = d.prepare('PRAGMA integrity_check').get();
+    const has = (t) => !!d.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(t);
+    const count = (t) => (has(t) ? d.prepare('SELECT COUNT(*) n FROM ' + t).get().n : 0);
+    const setting = (k) => (has('settings') ? d.prepare('SELECT value FROM settings WHERE key=?').get(k)?.value : undefined);
+    parentPort.postMessage({ ok: true, integrity: String(integrity.integrity_check || ''), hasSettings: has('settings'), hasClients: has('clients'),
+      schema_version: Number(setting('schema_version') || 0), org_name: setting('org_name') || null,
+      counts: { clients: count('clients'), notes: count('notes'), interventions: count('interventions'), users: count('users'), audit_log: count('audit_log') } });
+  } finally { d.close(); }
+} catch (e) { parentPort.postMessage({ ok: false, error: String(e && e.message || e) }); }
+`;
+    var WorkerCtor;
+    try {
+      WorkerCtor = (init_empty(), __toCommonJS(empty_exports)).Worker;
+    } catch {
+      WorkerCtor = null;
+    }
+    function inspectInWorker(file) {
+      return new Promise((resolve2, reject) => {
+        const w = new WorkerCtor(INSPECT_WORKER, { eval: true, workerData: { file } });
+        let msg = null;
+        w.once("message", (m) => {
+          msg = m;
+        });
+        w.once("error", reject);
+        w.once("exit", (code) => msg ? resolve2(msg) : reject(new Error(`backup verification worker exited (${code})`)));
+      });
+    }
+    async function verifyFileAsync(encFile, opts = {}) {
+      if (typeof WorkerCtor !== "function" || config.local) return inspect2(decrypt3(fs.readFileSync(encFile), opts));
+      const tmp = tmpName("inspect");
+      try {
+        await decryptFileAsync(encFile, tmp, opts);
+        const { size } = await fs.promises.stat(tmp);
+        const r = await inspectInWorker(tmp);
+        if (!r.ok) throw new Error(r.error);
+        if (r.integrity.toLowerCase() !== "ok") throw new Error("The backup file is damaged.");
+        if (!r.hasSettings || !r.hasClients) throw new Error("That file is not a SUDS backup.");
+        if (r.schema_version > db3.LATEST_SCHEMA_VERSION) throw new Error(`This backup was made by a newer version of SUDS (schema ${r.schema_version}; this build understands ${db3.LATEST_SCHEMA_VERSION}). Upgrade SUDS before restoring it.`);
+        return { schema_version: r.schema_version, org_name: r.org_name, counts: r.counts, bytes: size };
+      } finally {
+        await removeTmp(tmp);
+      }
     }
     async function secureUnlinkAsync(file) {
       let st = null;
@@ -14915,6 +15096,7 @@ var require_backup = __commonJS({
         }
       } finally {
         secureUnlink(tmp);
+        for (const suffix of ["-wal", "-shm", "-journal"]) secureUnlink(tmp + suffix);
       }
     }
     function restore(plainBytes) {
@@ -14952,7 +15134,8 @@ var require_backup = __commonJS({
       };
       try {
         db3.get().exec("PRAGMA wal_checkpoint(TRUNCATE)");
-      } catch {
+      } catch (e) {
+        console.warn("[suds] restore: WAL checkpoint before setting the current database aside failed:", e && e.message);
       }
       db3.close();
       try {
@@ -14974,7 +15157,7 @@ var require_backup = __commonJS({
       if (!config.local) require_audit_anchor().safeWrite("restore", { prevGen: restoredGen });
       return { ...info, previous_database_kept_at: aside };
     }
-    module.exports = { create: create2, createAsync, encryptPlain, decrypt: decrypt3, inspect: inspect2, restore, backupKey, secureUnlink, secureUnlinkAsync, secureRemoveDir };
+    module.exports = { create: create2, createAsync, encryptPlain, decrypt: decrypt3, decryptFileAsync, createToFileAsync, verifyFileAsync, inspect: inspect2, restore, backupKey, secureUnlink, secureUnlinkAsync, secureRemoveDir };
   }
 });
 
@@ -15007,14 +15190,22 @@ var require_scheduled_backup = __commonJS({
       if (!c.length) return null;
       return c.sort((a, b) => a.minutes - b.minutes)[0];
     }
-    function runIfDue(now = Date.now()) {
+    async function runIfDue(now = Date.now()) {
       const { hours, retain, offsiteDir } = settings();
       if (!hours) return null;
       const last = db3.getSetting("last_scheduled_backup_at", null);
       if (last && now - Date.parse(last) < hours * 36e5) return null;
       return run2({ retain, offsiteDir });
     }
-    function run2({ retain = 14, offsiteDir = "" } = {}) {
+    var inFlight = null;
+    function run2(opts = {}) {
+      if (inFlight) return inFlight;
+      inFlight = runOnce(opts).finally(() => {
+        inFlight = null;
+      });
+      return inFlight;
+    }
+    async function runOnce({ retain = 14, offsiteDir = "" } = {}) {
       const dir = path.join(config.dataDir, "backups");
       const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
       const file = path.join(dir, `suds-${stamp2}.db.enc`);
@@ -15022,13 +15213,15 @@ var require_scheduled_backup = __commonJS({
       let verified = false;
       let verifyError = null;
       let kept = 0;
+      let method = null;
       try {
         fs.mkdirSync(dir, { recursive: true, mode: 448 });
         prune(dir, Math.max(0, retain - 1));
-        bytes3 = backup.create();
-        fs.writeFileSync(file, bytes3, { mode: 384 });
+        const made = await backup.createToFileAsync(file);
+        bytes3 = made.bytes;
+        method = made.method;
         try {
-          const info = backup.inspect(backup.decrypt(fs.readFileSync(file)));
+          const info = await backup.verifyFileAsync(file);
           verified = info.counts.clients >= 0;
         } catch (e) {
           verifyError = String(e && e.message || e);
@@ -15053,12 +15246,12 @@ var require_scheduled_backup = __commonJS({
         try {
           let st = null;
           try {
-            st = fs.statSync(offsiteDir);
+            st = await fs.promises.stat(offsiteDir);
           } catch {
           }
           if (!st || !st.isDirectory()) throw new Error(OFFSITE_MISSING);
           offsiteFile = path.join(offsiteDir, path.basename(file));
-          fs.copyFileSync(file, offsiteFile);
+          await fs.promises.copyFile(file, offsiteFile);
           offsiteOk = true;
         } catch (e) {
           offsiteOk = false;
@@ -15070,8 +15263,8 @@ var require_scheduled_backup = __commonJS({
       kept = prune(dir, retain);
       db3.setSetting("last_scheduled_backup_at", db3.now());
       db3.setSetting("last_scheduled_backup_status", !verified ? `backup written but could not be read back \u2014 ${verifyError}` : offsiteDir && offsiteOk === false ? `ok (verified) \u2014 offsite copy failed: ${offsiteError}; local backup kept` : "ok (verified)");
-      audit3.log({ user: { username: "system" }, action: "backup.scheduled", details: { bytes: bytes3.length, offsite: offsiteDir ? offsiteOk : null, offsite_error: offsiteError || void 0, kept, verified } });
-      return { file, bytes: bytes3.length, offsiteOk, offsiteError, offsiteFile: offsiteOk ? offsiteFile : null, verified, verifyError };
+      audit3.log({ user: { username: "system" }, action: "backup.scheduled", details: { bytes: bytes3, method, offsite: offsiteDir ? offsiteOk : null, offsite_error: offsiteError || void 0, kept, verified } });
+      return { file, bytes: bytes3, method, offsiteOk, offsiteError, offsiteFile: offsiteOk ? offsiteFile : null, verified, verifyError };
     }
     var snapshotting = false;
     async function snapshotIfDue(now = Date.now()) {
@@ -15100,13 +15293,12 @@ var require_scheduled_backup = __commonJS({
           target = s.offsiteDir;
           where = "offsite";
         } else fs.mkdirSync(localDir, { recursive: true, mode: 448 });
-        const made = await backup.createAsync();
         file = path.join(target, `suds-snap-${stamp2}.db.enc`);
-        await fs.promises.writeFile(file, made.bytes, { mode: 384, flag: "wx" });
+        const made = await backup.createToFileAsync(file, { flag: "wx" });
         const kept = pruneMatching(target, SNAP_RE, s.snapshotRetain);
         db3.setSetting("last_snapshot_at", db3.now());
-        db3.setSetting("last_snapshot_status", `ok (${where}; ${made.method}; ${Math.round(made.bytes.length / 1024)} KB in ${made.copy_ms + made.encrypt_ms} ms)`);
-        return { file, where, kept, bytes: made.bytes.length, method: made.method, copy_ms: made.copy_ms, encrypt_ms: made.encrypt_ms };
+        db3.setSetting("last_snapshot_status", `ok (${where}; ${made.method}; ${Math.round(made.bytes / 1024)} KB in ${made.copy_ms + made.encrypt_ms} ms)`);
+        return { file, where, kept, bytes: made.bytes, method: made.method, copy_ms: made.copy_ms, encrypt_ms: made.encrypt_ms };
       } catch (e) {
         const reason = e && e.code === "ENOSPC" ? `no space left on the disk holding ${target}` : String(e && e.message || e);
         if (file) {
@@ -15379,7 +15571,8 @@ var require_dr_drill = __commonJS({
         console.warn(`[suds] removed ${out2.removed.length} stale decrypted copy(ies) left by an interrupted drill or backup: ${out2.removed.join(", ")}`);
         try {
           audit3.log({ user: { username: "system" }, action: "dr.drill.swept", details: { removed: out2.removed.slice(0, 20), files: out2.files } });
-        } catch {
+        } catch (e) {
+          console.error("[suds] the audit entry for the sweep could not be written:", e && e.message);
         }
       }
       return out2;
@@ -15504,7 +15697,8 @@ var require_dr_drill = __commonJS({
       try {
         try {
           sweepStale({ except: tmp });
-        } catch {
+        } catch (e) {
+          console.error("[suds] could not sweep stale drill copies:", e && e.message);
         }
         if (keysFile || keysText !== null && keysText !== void 0) {
           const uploaded = keysText !== null && keysText !== void 0;
@@ -15542,7 +15736,7 @@ var require_dr_drill = __commonJS({
         }
         if (!file) {
           step("No backup on disk; taking one first");
-          const made = require_scheduled_backup().run({ retain: sched.retain, offsiteDir: sched.offsiteDir });
+          const made = await require_scheduled_backup().run({ retain: sched.retain, offsiteDir: sched.offsiteDir });
           if (!made.file) throw new Error(`a backup could not be taken: ${made.error}`);
           madeBackup = true;
           if (made.offsiteFile && copy !== "local") {
@@ -15937,6 +16131,15 @@ var require_security_status = __commonJS({
       add("Platform", "HTTPS", config.tls.cert || config.trustProxy ? "ok" : config.isProd ? "bad" : "warn", tls, certNote || (config.tls.cert || config.trustProxy ? "" : "Enable HTTPS under Network & devices, or run behind a TLS proxy."), "server/listener.js; Caddyfile");
       add("Platform", "Local mode (offline copies on devices)", config.localModeEnabled ? "warn" : "ok", config.localModeEnabled ? "on" : "off", config.localModeEnabled ? `Records are copied to devices${pol.ssoRequired ? "; with SSO required only emergency accounts can sync a device" : ""}. Only for a documented field-work need (docs/PLATFORM.md).` : "The office server is the only copy.", "LOCAL_MODE_ENABLED / server.json");
       add("Platform", "Version", "info", `SUDS ${config.version}, schema ${db3.getSetting("schema_version", "?")}, Node ${proc.versions.node}`, config.updateFeedUrl ? "Update checks are configured (System & backups \u2192 Check for updates)." : "UPDATE_FEED_URL is not set, so this server cannot check for updates itself.", "package.json; server/update.js");
+      const ixp = db3.indexProblems();
+      add(
+        "Platform",
+        "Database indexes",
+        ixp.length ? "bad" : "ok",
+        ixp.length ? `${ixp.length} missing: ${ixp.map((x) => x.index).join(", ")}` : "every index in schema.sql is present",
+        ixp.length ? `Could not be created at startup: ${ixp.map((x) => `${x.index} (${x.error})`).join("; ")}. A missing UNIQUE index usually means duplicate rows it would have prevented; resolve them, then restart.` : "Checked at every start.",
+        "server/db.js ensureIndexes"
+      );
       add("Platform", "Monitoring", config.metricsToken || config.logFormat === "json" ? "ok" : "info", [config.metricsToken ? "Prometheus metrics on" : "metrics off", `logs ${config.logFormat}`].join("; "), "/api/health answers 503 on a failed audit check, stale backups or an expiring certificate.", "server/metrics.js, server/log.js, server/routes/app.js");
       const counts = { ok: 0, warn: 0, bad: 0, info: 0 };
       for (const i of items) counts[i.level]++;
@@ -16192,9 +16395,9 @@ var require_admin = __commonJS({
         ctx.res.end(enc2);
       });
       const scheduledBackup = require_scheduled_backup();
-      r.post("/api/admin/backup/run-now", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+      r.post("/api/admin/backup/run-now", auth3.requireAuth, auth3.requirePerm("settings:manage"), async (ctx) => {
         const { retain, offsiteDir } = scheduledBackup.settings();
-        const out2 = scheduledBackup.run({ retain, offsiteDir });
+        const out2 = await scheduledBackup.run({ retain, offsiteDir });
         audit3.log({ user: ctx.user, action: "backup.run_now", ip: ctx.ip, details: { bytes: out2.bytes, offsite: out2.offsiteOk, verified: out2.verified } });
         return { ok: true, file: path.basename(out2.file), bytes: out2.bytes, offsite_ok: out2.offsiteOk, offsite_error: out2.offsiteError || null, verified: out2.verified, verify_error: out2.verifyError || null };
       });
@@ -16422,6 +16625,7 @@ var require_app = __commonJS({
           const snap = db3.getSetting("last_snapshot_status", "") || "";
           if (minutes && lastSnap && Date.now() - Date.parse(lastSnap) > 3 * minutes * 6e4) warnings.push(`Snapshots are set for every ${minutes} minutes but the last one ran ${lastSnap}.`);
           if (minutes && /^failed/.test(snap)) warnings.push(`The last snapshot reported: ${snap}`);
+          for (const x of db3.indexProblems()) warnings.push(`The database index ${x.index} is missing and could not be created (${x.error}). See Security status.`);
           const crt = path.join(config.dataDir, "certs", "suds.crt");
           if (fs.existsSync(crt)) {
             const validTo = new (init_crypto2(), __toCommonJS(crypto_exports)).X509Certificate(fs.readFileSync(crt)).validTo;
@@ -32206,7 +32410,8 @@ var require_sync = __commonJS({
       let matches = [];
       try {
         matches = require_clients().possibleDuplicates({ first_name: raw.first_name_enc, last_name: raw.last_name_enc, dob: raw.dob_enc, phone: raw.phone_enc }, raw.id);
-      } catch {
+      } catch (e) {
+        console.error("[suds] sync: the possible-duplicate check failed; no supervisor task was raised:", e && e.message);
         return;
       }
       if (!matches.length) return;
@@ -32843,7 +33048,8 @@ var require_app2 = __commonJS({
             console.error(`[suds] ${req.method} ${url.pathname}:`, err2);
             try {
               audit3.log({ user: ctx.user, action: "server.error", ip: ctx.ip, success: false, details: { path: url.pathname, message: String(err2.message).slice(0, 300) } });
-            } catch {
+            } catch (e) {
+              console.error("[suds] the audit entry for that error could not be written:", e && e.message);
             }
             if (!res.headersSent) sendJson(res, 500, { error: "Internal server error" });
             else res.destroy();
