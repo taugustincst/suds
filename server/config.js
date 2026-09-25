@@ -99,6 +99,27 @@ function loadSigningKey() {
 /** LOCAL_MODE_ENABLED / server.json localModeEnabled: on only when explicitly true. Unset means off. */
 function parseLocalMode(v) { return ['1', 'true', 'yes', 'on'].includes(String(v ?? '').trim().toLowerCase()); }
 
+// Audit history is documentation HIPAA says to keep six years (45 CFR §164.316(b)(2)); counties expect at
+// least that. A shorter AUDIT_RETENTION_DAYS would have the hourly purge delete it, so it is raised to the
+// floor — with a warning, not a refusal to start, so an existing server that had it set low keeps running
+// (Security status shows it as a problem until the setting is fixed).
+const AUDIT_RETENTION_MIN_DAYS = 2190;
+const AUDIT_RETENTION_DEFAULT_DAYS = 2555;
+const auditRetention = (() => {
+  const raw = process.env.AUDIT_RETENTION_DAYS;
+  if (raw === undefined || raw === '') return { days: AUDIT_RETENTION_DEFAULT_DAYS, configured: null };
+  const n = Number(raw);
+  if (!Number.isFinite(n)) {
+    console.warn(`[suds] AUDIT_RETENTION_DAYS="${raw}" is not a number of days; keeping audit entries ${AUDIT_RETENTION_DEFAULT_DAYS} days (the default).`);
+    return { days: AUDIT_RETENTION_DEFAULT_DAYS, configured: null };
+  }
+  if (n < AUDIT_RETENTION_MIN_DAYS) {
+    console.warn(`[suds] AUDIT_RETENTION_DAYS=${raw} is below the six-year minimum for audit history (45 CFR §164.316(b)(2)); keeping audit entries ${AUDIT_RETENTION_MIN_DAYS} days instead. Raise or remove the setting.`);
+    return { days: AUDIT_RETENTION_MIN_DAYS, configured: n };
+  }
+  return { days: n, configured: n };
+})();
+
 const config = {
   version: require('../package.json').version,
   env,
@@ -170,7 +191,10 @@ const config = {
   logFormat: process.env.LOG_FORMAT === 'json' ? 'json' : 'text',
   // Audit entries are kept for the full HIPAA seven years, then purged; the chain stays verifiable because a
   // purge records the hash it continues from.
-  auditRetentionDays: Number(process.env.AUDIT_RETENTION_DAYS || 2555),
+  // Days audit entries are kept before the hourly purge (server/audit.js purge). Never fewer than
+  // AUDIT_RETENTION_MIN_DAYS: see auditRetention below.
+  auditRetentionDaysConfigured: auditRetention.configured,
+  auditRetentionDays: auditRetention.days,
   // How long deletions are remembered for devices that have been away. A device offline longer than this
   // is sent for a full resync rather than being left holding rows the office deleted.
   tombstoneRetentionDays: Number(process.env.TOMBSTONE_RETENTION_DAYS || 180),
@@ -238,5 +262,6 @@ config.oidc.enabled = !!(config.oidc.issuer && config.oidc.clientId && config.oi
 config.keySource = keySourceHolder.value;
 config.localModeFromEnv = !!process.env.LOCAL_MODE_ENABLED;
 config.parseLocalMode = parseLocalMode;
+config.AUDIT_RETENTION_MIN_DAYS = AUDIT_RETENTION_MIN_DAYS;
 config.saveServerJson = (patch) => { Object.assign(fileCfg, patch); fs.writeFileSync(serverJsonPath, JSON.stringify(fileCfg, null, 2), { mode: 0o600 }); config.setupComplete = !!fileCfg.setupComplete; };
 module.exports = config;

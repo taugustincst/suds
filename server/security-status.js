@@ -116,7 +116,13 @@ function status() {
   add('Audit', 'Audit anchors outside the database', /^failed/.test(anchorWrite) || /^FAILED/.test(anchorVerify) || placement ? 'bad' : !ad.configured || ad.inside_data_dir ? 'warn' : !anchors ? 'warn' : 'ok',
     `${anchors} anchor${anchors === 1 ? '' : 's'} in ${ad.dir}${lastAnchor ? `; last ${lastAnchor}` : ''}${config.auditAnchorHours > 0 ? `; every ${config.auditAnchorHours} h and at each backup` : '; at each backup only'}`,
     [placement || '', anchorVerify ? `Last check: ${anchorVerify}.` : 'Not yet checked (runs with the daily audit verification).', /^failed/.test(anchorWrite) ? `Last write ${anchorWrite}.` : '', placement ? '' : !ad.configured || ad.inside_data_dir ? 'Set AUDIT_ANCHOR_DIR to write-once storage outside the data directory (WORM/immutable share) so a rewrite of the whole data directory is also caught.' : '', config.auditSyslog ? `Also sent to syslog ${config.auditSyslog}.` : ''].filter(Boolean).join(' '), 'server/audit-anchor.js');
-  add('Audit', 'Audit retention', 'info', `${Math.round(config.auditRetentionDays / 365 * 10) / 10} years (${config.auditRetentionDays} days)`, (() => { const p = lastAudit('audit.purge'); return p ? `Last purge ${p.at}.` : 'No audit entries old enough to purge yet.'; })(), 'AUDIT_RETENTION_DAYS; server/audit.js purge');
+  {
+    const min = config.AUDIT_RETENTION_MIN_DAYS || 2190;
+    const low = config.auditRetentionDaysConfigured != null && config.auditRetentionDaysConfigured < min;
+    const p = lastAudit('audit.purge');
+    add('Audit', 'Audit retention', low || config.auditRetentionDays < min ? 'bad' : 'ok', `${Math.round(config.auditRetentionDays / 365 * 10) / 10} years (${config.auditRetentionDays} days)`,
+      [low ? `AUDIT_RETENTION_DAYS=${config.auditRetentionDaysConfigured} is below the six-year minimum (${min} days, 45 CFR §164.316(b)(2)); SUDS keeps ${config.auditRetentionDays} days instead. Raise or remove the setting.` : '', p ? `Last purge ${p.at}.` : 'No audit entries old enough to purge yet.'].filter(Boolean).join(' '), 'AUDIT_RETENTION_DAYS (minimum 2190); server/config.js; server/audit.js purge');
+  }
 
   // ---- Encryption and keys ----
   const keyAt = settingUpdatedAt('key_fingerprint');

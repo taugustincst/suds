@@ -54,7 +54,7 @@ With `--public-key` it checks the manifest's Ed25519 signature against the key t
 
 ## Retention
 
-Audit entries are kept `AUDIT_RETENTION_DAYS` (default 2,555 days, seven years), then purged oldest-first by the hourly housekeeping; each purge writes an `audit.purge` entry recording the last purged id and hash so the chain stays verifiable, and anchors older than the purge are accounted for. The audit table is otherwise never updated or deleted from — enforced by the database triggers above, not only by convention — except by the index-key rotation's re-signing (`server/audit.js` `resignChain`), which verifies first, runs inside the same maintenance window, and is itself audited.
+Audit entries are kept `AUDIT_RETENTION_DAYS` (default 2,555 days, seven years; never fewer than 2,190 days, the six years 45 CFR §164.316(b)(2) requires documentation to be kept — a lower value does not stop the server starting, but it is raised to 2,190 days, the startup log warns, and Security status shows *Audit retention* as a problem until the setting is fixed), then purged oldest-first by the hourly housekeeping; each purge writes an `audit.purge` entry recording the last purged id and hash so the chain stays verifiable, and anchors older than the purge are accounted for. The audit table is otherwise never updated or deleted from — enforced by the database triggers above, not only by convention — except by the index-key rotation's re-signing (`server/audit.js` `resignChain`), which verifies first, runs inside the same maintenance window, and is itself audited.
 
 ## Operational logs and monitoring
 

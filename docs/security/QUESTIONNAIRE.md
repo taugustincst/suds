@@ -23,7 +23,7 @@ Answers to the questions county IT typically sends (HECVAT-Lite and CSA CAIQ sty
 | 10 | Encrypted in transit? | Yes — TLS 1.2+ (native or proxy), HSTS, Secure cookies; LAN access cannot be enabled without HTTPS. |
 | 11 | Who manages encryption keys? Customer-managed keys? | The county, always. Keys come from the county's secrets manager (or a 0600 key file for small installs). No vendor escrow for a county-hosted installation. |
 | 12 | Key rotation? | Yes, per key, scripted, audited (`npm run rotate-key`, `npm run rotate-index-key`). |
-| 13 | Data retention and deletion? | Configurable client-record retention (default 7 years after last activity, minimum 6) with daily hard delete across all tables and legal hold; audit log 7 years; logs 30 days. [DATA-LIFECYCLE.md](DATA-LIFECYCLE.md) |
+| 13 | Data retention and deletion? | Configurable client-record retention (default 7 years after last activity, minimum 6) with daily hard delete across all tables and legal hold; audit log 7 years (configurable, minimum 6); logs 30 days. [DATA-LIFECYCLE.md](DATA-LIFECYCLE.md) |
 | 14 | Can data be exported/returned at contract end? | The county holds the database and keys at all times; exports built in. |
 | 15 | Is production data used in test/dev? | No; development uses fictional seed data. |
 | 16 | De-identification? | Safe Harbor de-identified exports by default; identified exports require a recipient/purpose and are accounted. |
@@ -47,7 +47,7 @@ Answers to the questions county IT typically sends (HECVAT-Lite and CSA CAIQ sty
 | --- | --- | --- |
 | 25 | Are access and changes logged? | Yes — every PHI read/write, auth event, denial, configuration change. [LOGGING-AND-AUDIT.md](LOGGING-AND-AUDIT.md) |
 | 26 | Are logs tamper-evident / immutable? | Tamper-evident and append-only in the database: hash-chained (HMAC) audit log with sealed head and scheduled verification, and SQLite triggers that refuse UPDATE/DELETE outside the retention purge and index-key re-signing; production reports anchors kept on the data disk as a failure; chain head anchored every 6 h and at every backup to `AUDIT_ANCHOR_DIR` and optionally syslog. **When `AUDIT_ANCHOR_DIR` is configured to WORM storage**, even a rewrite by a DB administrator with the key is detected; otherwise the anchors sit on storage the administrator can rewrite. Immutability of the anchor store is the county's storage configuration. |
-| 27 | Log retention? | Audit 7 years (configurable); operational logs 30 days (ship to SIEM for longer). |
+| 27 | Log retention? | Audit 7 years (configurable, never below 6 years / 2,190 days: a lower `AUDIT_RETENTION_DAYS` is raised to the floor, logged at startup and shown as a problem in Security status); operational logs 30 days (ship to SIEM for longer). |
 | 28 | SIEM integration? | JSON logs (`LOG_FORMAT=json`), syslog for anchors, Prometheus metrics, `/api/health`. |
 | 29 | Can an auditor get the logs? | Yes — NDJSON export whose manifest is signed with Ed25519 (and MACed), verifiable offline with the published public key alone (`npm run verify-audit-export -- --public-key`). [LOGGING-AND-AUDIT.md](LOGGING-AND-AUDIT.md) |
 
