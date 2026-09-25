@@ -185,7 +185,9 @@ function buildOld() {
   const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-old-wt-'));
   const git = (...args) => execFileSync('git', ['-C', repo, ...args], { stdio: 'pipe' });
   try {
-    try { git('rev-parse', '--verify', '--quiet', OLD_COMMIT + '^{commit}'); } catch { git('fetch', '--depth=50', 'origin'); }
+    // CI clones one commit deep. Fetch the release's own tag rather than "the last N commits": 1.9.0 falls out
+    // of any fixed window as the history grows (it did at 157 commits, failing every CI run from then on).
+    try { git('rev-parse', '--verify', '--quiet', OLD_COMMIT + '^{commit}'); } catch { git('fetch', '--depth=1', 'origin', 'refs/tags/v1.9.0:refs/tags/v1.9.0'); }
     git('worktree', 'add', '--detach', wt, OLD_COMMIT);
     fs.symlinkSync(path.join(repo, 'node_modules'), path.join(wt, 'node_modules'));
     execFileSync('node', [path.join(wt, 'scripts/build-static-site.js'), oldSite], { stdio: 'pipe', cwd: wt });
