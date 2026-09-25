@@ -12,7 +12,7 @@ const audit = require('./audit');
 // Every client-scoped table, children before parents. Tables whose client link is financial or
 // staff-time bookkeeping (time_entries, expenditures) keep their rows with the client link removed:
 // the money was spent and the hours were worked whether or not the person's record still exists.
-const DELETE_TABLES = ['client_form_files', 'client_forms', 'disclosures', 'consents', 'patient_requests', 'referrals', 'tasks', 'calls', 'overdose_events', 'interventions', 'episodes', 'assignments', 'breakglass_events'];
+const DELETE_TABLES = ['care_plan_steps', 'care_plan_goals', 'problem_history', 'problems', 'asam_assessments', 'outcome_measures', 'client_form_files', 'client_forms', 'disclosures', 'consents', 'patient_requests', 'referrals', 'tasks', 'calls', 'overdose_events', 'interventions', 'episodes', 'assignments', 'breakglass_events'];
 const UNLINK_TABLES = ['time_entries', 'expenditures'];
 
 function retentionYears() {
@@ -41,6 +41,12 @@ const ACTIVITY = {
   client_form_files: ['created_at'],
   overdose_events: ['occurred_at'],
   patient_requests: ['received_at', 'closed_at'],
+  problems: ['onset_date', 'resolved_date', 'updated_at'],
+  problem_history: ['created_at'],
+  care_plan_goals: ['start_date', 'reviewed_at', 'updated_at'],
+  care_plan_steps: ['completed_at', 'updated_at'],
+  asam_assessments: ['assessed_at'],
+  outcome_measures: ['administered_at'],
   time_entries: ['work_date'],
   expenditures: ['spent_at'],
 };

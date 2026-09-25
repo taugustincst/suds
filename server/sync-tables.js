@@ -8,6 +8,7 @@
 // selfParent: a column that references another row in this same table (e.g. a nested budget line's
 //   parent_id) — rows are topologically sorted by it before applying, so a parent created offline in the
 //   same sync batch as its children is always applied first.
+// readPerm: rows are only sent to a device whose role holds this permission (see server/routes/sync.js pull).
 // NOTE: the order of this array is a foreign-key ordering — a table must appear after everything it references.
 // blob: columns too large to belong in a sync payload; they are fetched by id on demand instead.
 // legacy: { oldColumn: newColumn } for a column a migration renamed. A device still running an older kernel
@@ -47,6 +48,15 @@ module.exports = {
     { name: 'client_forms', enc: ['values_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'forms:write', parent: ['clients', 'client_id'] },
     { name: 'client_form_files', enc: ['data_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'forms:write', parent: ['client_forms', 'client_form_id'], blob: ['data_enc'] },
     { name: 'patient_requests', enc: ['notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'consents:write', parent: ['clients', 'client_id'] },
+    // Clinical documentation (CalAIM): the problem list and its history, the care plan, ASAM assessments and
+    // outcome measures. readPerm: a device whose role cannot read them (an ASAM rating on a navigator's
+    // phone) is never sent them, the same minimum-necessary rule clinical notes follow.
+    { name: 'problems', enc: ['problem_enc', 'icd10_code_enc', 'icd10_description_enc', 'z_codes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'careplan:write', readPerm: 'careplan:read', parent: ['clients', 'client_id'] },
+    { name: 'problem_history', enc: ['changes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'careplan:write', readPerm: 'careplan:read', parent: ['problems', 'problem_id'] },
+    { name: 'care_plan_goals', enc: ['goal_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'careplan:write', readPerm: 'careplan:read', parent: ['clients', 'client_id'] },
+    { name: 'care_plan_steps', enc: ['step_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'careplan:write', readPerm: 'careplan:read', parent: ['care_plan_goals', 'goal_id'] },
+    { name: 'asam_assessments', enc: ['dimension_notes_enc', 'discrepancy_notes_enc', 'summary_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'assessments:write', readPerm: 'assessments:read', parent: ['clients', 'client_id'] },
+    { name: 'outcome_measures', enc: ['responses_enc', 'notes_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'assessments:write', readPerm: 'assessments:read', parent: ['clients', 'client_id'] },
     // Harm-reduction supply counts: shared program state. Pull-only (serverOwned): the office copy is the
     // one shelf count, drawn down there when a pushed visit lands (server/routes/sync.js calls the same
     // draw-down the REST route does). A device's absolute count is never accepted — two phones each
@@ -75,7 +85,7 @@ module.exports = {
   per_database: ['idempotency_keys'],
   // Rows a device may create but never change once they exist (a consent may only be revoked). The legal
   // record of what was agreed to and what was shared cannot be rewritten by whichever phone syncs last.
-  immutable: ['consents', 'disclosures', 'note_addenda'],
+  immutable: ['consents', 'disclosures', 'note_addenda', 'problem_history'],
   // Columns that reference users(id) somewhere in the schema. A device's local account id is meaningless on the
   // office server (and vice versa), so every one of these has to be remapped on both sides of a sync.
   user_refs: [
@@ -90,6 +100,8 @@ module.exports = {
     ['breakglass_events', 'user_id'], ['breakglass_events', 'acknowledged_by'], ['patient_requests', 'handled_by'], ['patient_requests', 'created_by'],
     ['audit_log', 'user_id'], ['sessions', 'user_id'], ['user_prefs', 'user_id'], ['api_keys', 'created_by'], ['users', 'supervisor_id'], ['devices', 'user_id'],
     ['supply_stock', 'updated_by'], ['option_overrides', 'updated_by'],
+    ['problems', 'added_by'], ['problems', 'updated_by'], ['problem_history', 'changed_by'], ['care_plan_goals', 'created_by'], ['care_plan_goals', 'updated_by'],
+    ['care_plan_steps', 'owner_user_id'], ['care_plan_steps', 'created_by'], ['asam_assessments', 'assessed_by'], ['outcome_measures', 'administered_by'],
   ],
 };
 // Every column name above that points at users(id), for remapping a single pushed row.

@@ -4,8 +4,19 @@ route('reports', async (r) => {
   const to = r.query.get('to') || fmt.today(); const from = r.query.get('from') || new Date(Date.parse(to) - 89 * 86400000).toISOString().slice(0, 10);
   const months = Number(r.query.get('months') || 12);
   const seesEpisodes = can('episodes:read') || can('episodes:write');
-  const [d, m, eps] = await Promise.all([get(`/api/reports/dashboard?from=${from}&to=${to}`), get(`/api/reports/monthly?months=${months}`),
-    seesEpisodes ? get(`/api/episodes?from=${from}&to=${to}&status=all&limit=500`).catch(() => null) : null]);
+  const [d, m, eps, oc] = await Promise.all([get(`/api/reports/dashboard?from=${from}&to=${to}`), get(`/api/reports/monthly?months=${months}`),
+    seesEpisodes ? get(`/api/episodes?from=${from}&to=${to}&status=all&limit=500`).catch(() => null) : null,
+    get(`/api/reports/outcomes?from=${from}&to=${to}`).catch(() => null)]);
+  // Outcome measures (PHQ-9, GAD-7, AUDIT-C, DAST-10, wellbeing): each client's first score in the period
+  // against their last. Aggregate only; the export is one de-identified row per client and measure.
+  const outcomesCard = () => h('div', { class: 'card mb', 'data-outcomes-report': '1' },
+    h('div', { class: 'card-head' }, h('h3', {}, 'Outcome measures'), can('export:read') ? h('button', { class: 'btn sm', 'data-export-outcomes': '1', onClick: () => downloadCsv(`/api/reports/outcomes/export?from=${from}&to=${to}`) }, 'Export (de-identified CSV)') : null),
+    h('p', { class: 'small muted' }, 'Baseline is each client\'s first administration in the period and latest their last; only clients screened at least twice count toward change. Improved means the score moved in the better direction (lower for PHQ-9, GAD-7, AUDIT-C and DAST-10; higher for wellbeing).'),
+    table([{ label: 'Measure', key: 'name' }, { label: 'Clients screened', key: 'clients_screened', num: true }, { label: 'Screened twice or more', key: 'clients_with_followup', num: true },
+      { label: 'Mean baseline', render: x => x.mean_baseline ?? '—', num: true }, { label: 'Mean latest', render: x => x.mean_latest ?? '—', num: true }, { label: 'Mean change', render: x => x.mean_change ?? '—', num: true },
+      { label: 'Improved', render: x => (x.pct_improved === null ? '—' : `${x.improved} (${x.pct_improved}%)`), num: true }, { label: 'Worse', key: 'worse', num: true }, { label: 'Unchanged', key: 'unchanged', num: true },
+      { label: 'Positive at baseline → latest', render: x => (x.clients_with_followup ? `${x.positive_at_baseline} → ${x.positive_at_latest}` : '—') }, { label: 'PHQ-9 safety alerts', render: x => (x.instrument === 'phq9' ? String(x.safety_flags) : '') }],
+      oc.instruments, { empty: 'No outcome measures in this period.' }));
   // Admissions and discharges in the period (GET /api/episodes). A client code opens the client only for a
   // role that can open client records.
   const clientCell = (x) => (can('clients:read') ? h('a', { href: `#/client/${x.client_id}/episodes` }, x.client_code) : h('span', { class: 'mono' }, x.client_code));
@@ -41,6 +52,7 @@ route('reports', async (r) => {
       h('div', { class: 'card' }, h('h3', {}, 'Clients by status'), bars(d.clients.by_status, { labelKey: 'status', link: x => `clients?status=${x.status}` })), h('div', { class: 'card' }, h('h3', {}, 'Primary substance (active)'), bars(d.clients.by_substance, { list: 'SUBSTANCES', link: x => `clients?status=active&substance=${x.k}` })), h('div', { class: 'card' }, h('h3', {}, 'MAT status'), bars(d.clients.mat, { link: x => `clients?status=active&mat=${x.k}` })),
       d.time ? h('div', { class: 'card' }, h('h3', {}, 'Staff time by category'), bars(d.time.by_category, { list: 'TIME_CATEGORIES', format: fmt.mins })) : null, h('div', { class: 'card' }, h('h3', {}, 'Calls and texts by outcome'), bars(d.calls.by_outcome, { list: ['CALL_OUTCOMES', 'TEXT_OUTCOMES'], link: () => 'calls' })), h('div', { class: 'card' }, h('h3', {}, 'Weekly interventions'), sparkline(d.interventions.by_week.map(w => w.n)))),
     eps ? episodesCard() : null,
+    oc ? outcomesCard() : null,
     h('div', { class: 'card mb' }, h('div', { class: 'card-head' }, h('h3', {}, `Monthly trend (last ${months} months)`), h('div', { class: 'row' }, [6, 12, 24].map(n => h('button', { class: `btn sm ${n === months ? 'primary' : ''}`, onClick: () => nav(`reports?from=${from}&to=${to}&months=${n}`) }, `${n}m`)))), monthTable()),
     can('export:read') ? h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Export to Excel or CSV'), h('button', { class: 'btn primary', onClick: () => downloadCsv(`/api/reports/export/workbook?from=${from}&to=${to}`) }, 'Everything as one Excel workbook')),
       h('p', { class: 'small muted' }, 'Exports use client codes instead of names and carry only the columns a de-identified file may hold. Dates follow the range above (clients, resources and to-dos are complete lists).'),

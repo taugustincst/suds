@@ -481,7 +481,10 @@ CREATE TABLE IF NOT EXISTS notes (
   part2_protected INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  deleted_at TEXT
+  deleted_at TEXT,
+  -- The problem-list entries this note addresses: a JSON array of problems.id (CalAIM progress notes tie
+  -- each service to the problem list). Ids only, never the problem text.
+  problem_ids TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_notes_client ON notes(client_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_notes_author ON notes(author_id);
@@ -824,3 +827,129 @@ CREATE TABLE IF NOT EXISTS option_overrides (
   UNIQUE (list_key, code)
 );
 CREATE INDEX IF NOT EXISTS idx_option_overrides_updated ON option_overrides(updated_at);
+
+-- CalAIM problem list: the client's current problems and needs, kept up to date as they change. The text
+-- and any code are PHI (a diagnosis code says as much as the words), so all of it is encrypted; status,
+-- dates and source are what the list is sorted and counted by. Never deleted: a problem that no longer
+-- applies is resolved or made inactive, and problem_history keeps who changed what.
+CREATE TABLE IF NOT EXISTS problems (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  problem_enc TEXT NOT NULL,           -- the problem or need, in words
+  icd10_code_enc TEXT,                 -- optional ICD-10-CM code (format-checked, no bundled code set)
+  icd10_description_enc TEXT,
+  z_codes_enc TEXT,                    -- optional social determinant codes (Z55-Z65), comma separated
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','resolved','inactive')),
+  onset_date TEXT,
+  resolved_date TEXT,
+  source TEXT NOT NULL DEFAULT 'self_report' CHECK (source IN ('self_report','assessment','referral','other')),
+  added_by TEXT REFERENCES users(id),
+  updated_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_problems_client ON problems(client_id, status);
+CREATE INDEX IF NOT EXISTS idx_problems_updated ON problems(updated_at);
+
+-- Every change to a problem-list entry: who, when, and each field's old and new value (encrypted JSON,
+-- because the values are the problem text and codes). Append-only.
+CREATE TABLE IF NOT EXISTS problem_history (
+  id TEXT PRIMARY KEY,
+  problem_id TEXT NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  action TEXT NOT NULL CHECK (action IN ('created','updated')),
+  changes_enc TEXT,
+  changed_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_problem_history_problem ON problem_history(problem_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_problem_history_updated ON problem_history(updated_at);
+
+-- Care coordination plan: goals in the client's own words, each tied (optionally) to a problem, with a
+-- review date that shows as overdue once it passes; and the steps toward each goal, with who does them
+-- and by when. A step can create a to-do (task_id) so it lands on someone's list.
+CREATE TABLE IF NOT EXISTS care_plan_goals (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  problem_id TEXT REFERENCES problems(id) ON DELETE SET NULL,
+  goal_enc TEXT NOT NULL,              -- the goal as the client puts it
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','met','partially_met','not_met','discontinued')),
+  start_date TEXT,
+  target_date TEXT,
+  review_date TEXT,
+  reviewed_at TEXT,
+  created_by TEXT REFERENCES users(id),
+  updated_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_care_plan_goals_client ON care_plan_goals(client_id, status);
+CREATE INDEX IF NOT EXISTS idx_care_plan_goals_updated ON care_plan_goals(updated_at);
+
+CREATE TABLE IF NOT EXISTS care_plan_steps (
+  id TEXT PRIMARY KEY,
+  goal_id TEXT NOT NULL REFERENCES care_plan_goals(id) ON DELETE CASCADE,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  step_enc TEXT NOT NULL,              -- the step or intervention
+  owner_role TEXT NOT NULL DEFAULT 'staff' CHECK (owner_role IN ('client','staff','family_support','other_provider')),
+  owner_user_id TEXT REFERENCES users(id),
+  target_date TEXT,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','done','cancelled')),
+  completed_at TEXT,
+  task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+  created_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_care_plan_steps_goal ON care_plan_steps(goal_id);
+CREATE INDEX IF NOT EXISTS idx_care_plan_steps_updated ON care_plan_steps(updated_at);
+
+-- ASAM multidimensional assessment: a 0-4 risk rating for each of the six dimensions, with the reasoning
+-- (encrypted), the level of care recommended and the level actually referred to, and why they differ.
+-- Only the dimension names and ratings are stored; the ASAM Criteria text is not reproduced.
+CREATE TABLE IF NOT EXISTS asam_assessments (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  assessed_at TEXT NOT NULL,
+  assessed_by TEXT REFERENCES users(id),
+  d1_rating INTEGER NOT NULL CHECK (d1_rating BETWEEN 0 AND 4),
+  d2_rating INTEGER NOT NULL CHECK (d2_rating BETWEEN 0 AND 4),
+  d3_rating INTEGER NOT NULL CHECK (d3_rating BETWEEN 0 AND 4),
+  d4_rating INTEGER NOT NULL CHECK (d4_rating BETWEEN 0 AND 4),
+  d5_rating INTEGER NOT NULL CHECK (d5_rating BETWEEN 0 AND 4),
+  d6_rating INTEGER NOT NULL CHECK (d6_rating BETWEEN 0 AND 4),
+  dimension_notes_enc TEXT,            -- JSON {d1..d6: reasoning}
+  recommended_loc TEXT,
+  actual_loc TEXT,
+  discrepancy_reason TEXT,
+  discrepancy_notes_enc TEXT,
+  summary_enc TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_asam_client ON asam_assessments(client_id, assessed_at);
+CREATE INDEX IF NOT EXISTS idx_asam_updated ON asam_assessments(updated_at);
+
+-- Outcome measures: standardized screening instruments (PHQ-9, GAD-7, AUDIT-C, DAST-10, a 0-10 wellbeing
+-- rating) scored automatically (server/clinical.js). The answers are encrypted; the total and band stay
+-- readable so a trend and the programme outcomes report can be computed. safety_flag marks a PHQ-9 whose
+-- item 9 was answered above "Not at all".
+CREATE TABLE IF NOT EXISTS outcome_measures (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  instrument TEXT NOT NULL CHECK (instrument IN ('phq9','gad7','auditc','dast10','wellbeing')),
+  administered_at TEXT NOT NULL,
+  administered_by TEXT REFERENCES users(id),
+  responses_enc TEXT NOT NULL,         -- JSON array of the answers
+  total_score INTEGER NOT NULL,
+  band TEXT,
+  positive INTEGER,
+  variant TEXT,
+  safety_flag INTEGER NOT NULL DEFAULT 0,
+  notes_enc TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_outcome_measures_client ON outcome_measures(client_id, instrument, administered_at);
+CREATE INDEX IF NOT EXISTS idx_outcome_measures_updated ON outcome_measures(updated_at);

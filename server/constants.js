@@ -1,4 +1,5 @@
 'use strict';
+const CL = require('./clinical');
 // Race and ethnicity as reportable codes (OMB 1997 / CalOMS categories). The free-text race_ethnicity
 // field stays for what a client says about themselves; race_codes is what a funder report can count.
 // A person may select more than one, which is why this is a list and the column is comma separated.
@@ -61,4 +62,8 @@ module.exports = {
   // A referral outcome's "If it did not happen, why" (stored encrypted in referrals.barrier_enc).
   REFERRAL_BARRIERS: ['none', 'transportation', 'insurance', 'waitlist', 'no_beds', 'client_declined', 'childcare', 'documentation', 'legal', 'phone_access', 'other'],
   ASAM: ['0.5', '1.0', '2.1', '2.5', '3.1', '3.3', '3.5', '3.7', '4.0', 'OTP', 'unknown'],
+  // Problem list, care plan, ASAM dimensions and the screening instruments (server/clinical.js).
+  Z_CODES: CL.Z_CODES, PROBLEM_STATUSES: CL.PROBLEM_STATUSES, PROBLEM_SOURCES: CL.PROBLEM_SOURCES, GOAL_STATUSES: CL.GOAL_STATUSES,
+  STEP_OWNERS: CL.STEP_OWNERS, STEP_STATUSES: CL.STEP_STATUSES, ASAM_DIMENSIONS: CL.ASAM_DIMENSIONS, ASAM_RATINGS: CL.ASAM_RATINGS,
+  ASAM_DISCREPANCY_REASONS: CL.ASAM_DISCREPANCY_REASONS, INSTRUMENTS: CL.INSTRUMENTS,
 };

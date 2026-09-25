@@ -379,6 +379,20 @@ const migrations = [
     if (m) d.exec(m[0]);
     for (const line of schemaText.split('\n')) if (/^CREATE INDEX IF NOT EXISTS idx_option_overrides/.test(line.trim())) d.exec(line.trim());
   },
+  // 30 (assigned number; renumbered at merge): clinical depth for CalAIM documentation — the problem list
+  //     and its change history, the care coordination plan (goals and steps), ASAM six-dimension
+  //     assessments and scored outcome measures; and notes.problem_ids, the problems a note addresses.
+  //     New tables only, plus one nullable column, so an existing database starts with none of them.
+  (d) => {
+    addColumn(d, 'notes', 'problem_ids', 'TEXT');
+    const schemaText = safeSchema();
+    for (const t of ['problems', 'problem_history', 'care_plan_goals', 'care_plan_steps', 'asam_assessments', 'outcome_measures']) {
+      const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
+      if (!m) throw new Error(`migration 30: no definition for ${t} in schema`);
+      d.exec(m[0]);
+      for (const line of schemaText.split('\n')) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
+    }
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

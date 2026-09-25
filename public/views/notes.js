@@ -1,4 +1,5 @@
 import { h, route, get, pagedList, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, kv } from '../app.js';
+import { problemPicker } from './clinical.js';
 
 const SECTIONS = { SOAP: [['S', 'Subjective'], ['O', 'Objective'], ['A', 'Assessment'], ['P', 'Plan']], DAP: [['D', 'Data'], ['A', 'Assessment'], ['P', 'Plan']], BIRP: [['B', 'Behavior'], ['I', 'Intervention'], ['R', 'Response'], ['P', 'Plan']], GIRP: [['G', 'Goal'], ['I', 'Intervention'], ['R', 'Response'], ['P', 'Plan']],
   // Stanley-Brown style safety plan, as a structured note so it prints and reads the same for everyone.
@@ -38,6 +39,8 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
     if (d) data = d;
     else { try { data = f.read(); } catch { if (explicit) throw new Error('Choose a client and write something first'); return; } }
     const structured = readStructured();
+    // The problems ticked, once the list has loaded (never an empty list sent by a form that could not load it).
+    if (problemBox.loaded) data.problem_ids = problemBox.read();
     if (structured) { data.structured = structured; if (!data.content || data.content === autoText) data.content = Object.entries(structured).map(([k, v]) => `${sectionLabel(fmtSel.value, k)}: ${v}`).join('\n\n'); }
     if (!data.client_id || !data.content) { if (explicit) throw new Error('Choose a client and write something first'); return; }
     if (saving) { dirty = true; return; }
@@ -58,6 +61,15 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
   const scheduleSave = () => { clearTimeout(asTimer); status.textContent = 'Unsaved changes'; asTimer = setTimeout(() => save(), 2500); };
   f.addEventListener('input', scheduleSave); f.addEventListener('change', scheduleSave);
   f.querySelector('.btn-row').prepend(status);
+  // CalAIM: which problem-list entries this note addresses.
+  let linkedIds = []; try { linkedIds = values?.problem_ids ? JSON.parse(values.problem_ids) : (values?.problems || []).map(p => p.id); } catch { linkedIds = []; }
+  const problemBox = problemPicker(Array.isArray(linkedIds) ? linkedIds : []);
+  f.querySelector('[data-field="part2_protected"]').before(problemBox);
+  let problemClient = clientId || values?.client_id || null;
+  problemBox.load(problemClient);
+  // A client picked from the search list sets a hidden value without a change event, so a click is checked too.
+  const followClient = () => setTimeout(() => { const cid = f.inputs.client_id?.value || null; if (cid && cid !== problemClient) { problemClient = cid; problemBox.reset(); problemBox.load(cid); } }, 0);
+  f.addEventListener('change', followClient); f.addEventListener('click', followClient);
   fmtSel = f.inputs.format; contentArea = f.inputs.content;
   structuredBox = h('div', { class: 'span' });
   f.querySelector('[data-field="content"]').before(structuredBox);
@@ -110,6 +122,7 @@ export async function openNote(id, { onChange } = {}) {
       n.cosigned_at ? badge(`Countersigned by ${n.cosigner}`, 'ok') : n.cosign_requested ? badge('Review requested', 'warn') : n.cosign_required ? badge('Needs countersignature', 'warn') : null),
     kv([['Client', h('a', { href: `#/client/${n.client_id}` }, n.client_code || 'view')], ['Date of service', fmt.dt(n.occurred_at)], ['Author', n.author], n.signed_at ? ['Signed', `${fmt.dt(n.signed_at)} by ${n.signer}`] : null, n.signature_hash ? ['Signature hash', h('details', { class: 'sig-hash' }, h('summary', {}, h('code', {}, n.signature_hash.slice(0, 16) + '…'), ' ', h('span', { class: 'small muted' }, 'show full')), h('code', { class: 'sig-hash-full', style: { wordBreak: 'break-all' } }, n.signature_hash))] : null, ['Created', fmt.dt(n.created_at)]]),
     n.signature_hash ? verifyPanel(n, breakGlass) : null,
+    n.problems && n.problems.length ? h('div', { class: 'small mt', 'data-note-problems-view': '1' }, h('b', {}, 'Addresses: '), n.problems.map(p => p.problem || 'a problem on the list').join('; ')) : null,
     n.structured ? h('div', { class: 'mt' }, Object.entries(n.structured).map(([k, v]) => v ? h('div', { class: 'mb' }, h('b', {}, sectionLabel(n.format, k)), h('div', { style: { whiteSpace: 'pre-wrap' } }, v)) : null)) : h('pre', { class: 'note mt' }, n.content),
     n.structured && n.content ? h('details', { class: 'mt' }, h('summary', { class: 'muted small' }, 'Narrative text'), h('pre', { class: 'note' }, n.content)) : null,
     n.addenda.length ? h('div', { class: 'mt' }, h('h4', {}, 'Addenda'), n.addenda.map(a => h('div', { class: 'list-item' }, h('div', { class: 'small muted' }, `${fmt.dt(a.created_at)} · ${a.author}${a.reason ? ' · ' + a.reason : ''}`), h('div', { style: { whiteSpace: 'pre-wrap' } }, a.content)))) : null,
