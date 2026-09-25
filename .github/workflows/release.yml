@@ -1,5 +1,5 @@
 name: Release
-# Uses no marketplace actions. Creates the tag + GitHub Release with the source zip, then asks web-app.yml to
+# Uses no marketplace actions. Refuses to release a commit whose CI did not pass (the `gate` job). Creates the tag + GitHub Release with the source zip, then asks web-app.yml to
 # publish the web app for that tag. The native apps and desktop launchers were removed in 1.9.3
 # (docs/PLATFORM.md): nothing else is built or attached.
 on:
@@ -17,7 +17,26 @@ permissions:
   # `release` event for other workflows, so the web app publish is started explicitly.
   actions: write
 jobs:
+  # The release gate. Nothing is built or published unless CI (ci.yml) concluded success for this exact
+  # commit, with the test, browser (the whole browser suite: accessibility, a11y-round4 and the rest), node24
+  # and dr-drill jobs all green (scripts/release-gate.js; docs/RELEASE.md, "Release gate"). It waits for CI
+  # still running on the commit, up to an hour. WebKit stays advisory.
+  gate:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.inputs.confirm == 'release'
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out the gate script at the commit being released
+        run: git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
+      - name: CI passed for this exact commit
+        working-directory: src
+        run: node scripts/release-gate.js "${GITHUB_SHA}"
   release:
+    needs: gate
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event.inputs.confirm == 'release'
     env:
@@ -25,6 +44,13 @@ jobs:
     steps:
       - name: Check out
         run: git clone --branch "${GITHUB_REF_NAME}" "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src
+      # The gate checked GITHUB_SHA. A branch that moved since (workflow_dispatch) would release a commit CI
+      # never passed, so release exactly the gated commit or nothing.
+      - name: Release exactly the commit the gate checked
+        working-directory: src
+        run: |
+          git checkout --quiet "${GITHUB_SHA}" || { echo "::error::${GITHUB_SHA} is not on ${GITHUB_REF_NAME}"; exit 1; }
+          [ "$(git rev-parse HEAD)" = "${GITHUB_SHA}" ] || { echo "::error::Checked out $(git rev-parse HEAD), gated ${GITHUB_SHA}"; exit 1; }
       # These were one `&&`/`||` chain. Both operators bind at the same precedence and associate left, so a
       # failing `npm test` fell through to the `echo` and the step exited 0 — releases were published with
       # failing tests. They are separate steps now, and a stale kernel fails rather than warns.

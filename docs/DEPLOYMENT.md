@@ -12,7 +12,7 @@
 
 SUDS is pinned to Node 22 (`.nvmrc`, the Dockerfile, CI). Node 22 leaves maintenance at the end of April 2027, and `node:sqlite` is still marked experimental in both 22 and 24, so its API can change between releases. The plan:
 
-1. **Now:** CI runs the full `npm test` suite on Node 24 in an advisory job (`node24` in `.github/workflows/ci.yml`, `continue-on-error`). A failure there is a warning to fix, not a blocked release. `.nvmrc` stays at 22.
+1. **Now:** CI runs the full `npm test` suite on Node 24 (`node24` in `.github/workflows/ci.yml`). It was advisory until 1.11.0 and is now a required job: the release gate (RELEASE.md, "Release gate") refuses a commit where it failed. `.nvmrc` stays at 22.
 2. **When the Node 24 job has been green for a full release cycle, and no later than January 2027:** move `.nvmrc`, the Dockerfile base image and `package.json` `engines` to 24 in one release; the Node-22 job becomes the advisory one for a release, then is dropped. The browser suite and a real-device check (ADOPTION.md) run on the release candidate as usual.
 3. **Before April 2027:** every county install is on that release. Upgrading Node is a host change: install Node 24 LTS, restart the service; the database and `data/` are untouched.
 
