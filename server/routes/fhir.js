@@ -149,7 +149,7 @@ function capability(ctx) {
       documentation: 'Read-only. Resources about a patient are returned only while the patient has an active consent naming the calling client\'s organisation for its purpose of use (42 CFR Part 2); other patients are omitted and counted in an OperationOutcome entry. Unknown search parameters are rejected.',
       security: {
         cors: false,
-        service: [{ coding: [{ system: 'http://terminology.hl7.org/CodeSystem/restful-security-service', code: 'OAuth', display: 'OAuth' }], text: 'OAuth2 client credentials (client_secret_post or client_secret_basic) or the API key as a bearer token' }],
+        service: [{ coding: [{ system: 'http://terminology.hl7.org/CodeSystem/restful-security-service', code: 'SMART-on-FHIR', display: 'SMART-on-FHIR' }], text: 'OAuth2 client credentials (SMART Backend Services): private_key_jwt with RS384 or ES384, or client_secret_post / client_secret_basic where the client allows it. Data requests take the access token only.' }],
         extension: [{ url: 'http://fhir-registry.smarthealthit.org/StructureDefinition/oauth-uris', extension: [{ url: 'token', valueUri: `${base}/auth/token` }] }],
       },
       resource: Object.keys(R.DEFS).map(type => ({
@@ -164,9 +164,9 @@ function capability(ctx) {
 }
 
 // ---- OAuth2 token endpoint ----
-function tokenRequest(ctx) {
+async function tokenRequest(ctx) {
   const ip = ctx.ip;
-  const reply = (status, body) => { const s = JSON.stringify(body); ctx.res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(s), Pragma: 'no-cache' }); ctx.res.end(s); };
+  const reply = (status, body) => { const s = JSON.stringify(body); ctx.res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(s), 'Cache-Control': 'no-store', Pragma: 'no-cache' }); ctx.res.end(s); };
   if (!rateLimit(`fhirtoken:${ip}`, 30, 60_000)) return reply(429, { error: 'slow_down', error_description: 'Too many token requests' });
   const ct = String(ctx.headers['content-type'] || '');
   const form = ct.includes('application/json') ? new URLSearchParams(Object.entries(ctx.body || {}).map(([k, v]) => [k, String(v)])) : new URLSearchParams((ctx.rawBody || Buffer.alloc(0)).toString('utf8'));
@@ -177,22 +177,62 @@ function tokenRequest(ctx) {
     clientId = decodeURIComponent(id || ''); clientSecret = decodeURIComponent(rest.join(':'));
   }
   if (form.get('grant_type') !== 'client_credentials') return reply(400, { error: 'unsupported_grant_type', error_description: 'Only grant_type=client_credentials is supported' });
-  try { return reply(200, C.issueToken({ clientId, clientSecret, scope: form.get('scope') }, ctx)); }
-  catch (e) { if (e.oauth) return reply(e.status, e.oauth); throw e; }
+  try {
+    return reply(200, await C.issueToken({ clientId, clientSecret, assertionType: form.get('client_assertion_type'), assertion: form.get('client_assertion'), scope: form.get('scope'), tokenUrl: `${baseUrl(ctx)}/auth/token` }, ctx));
+  } catch (e) { if (e.oauth) return reply(e.status, e.oauth); throw e; }
 }
 
 // ---- administration (Settings -> FHIR clients) ----
+const KEY_FIELDS = { jwks: { type: 'string', maxLen: 40000 }, jwks_url: { type: 'string', maxLen: 500 }, jwt_only: { type: 'boolean' } };
+const asBad = (e) => (e instanceof FhirError ? badRequest(e.message, e.fields ? { fields: e.fields } : undefined) : e);
+// A JWKS may arrive as JSON text (the form's textarea) or as an object (an API caller).
+const jwksOf = (body) => (body && body.jwks && typeof body.jwks === 'object' ? JSON.stringify(body.jwks) : body?.jwks);
+
 function adminCreate(ctx) {
-  const v = validate(ctx.body, {
-    name: { type: 'string', required: true, maxLen: 100 }, recipient: { type: 'string', required: true, maxLen: 200 }, aliases: { type: 'string', maxLen: 500 },
-    purpose: { type: 'string', enum: Object.keys(disclosure.FHIR_PURPOSES) }, scopes: { type: 'array', required: true, maxLen: 20 }, rate_limit: { type: 'number', integer: true, min: 1, max: 6000 },
+  const v = validate({ ...ctx.body, jwks: jwksOf(ctx.body) }, {
+    name: { type: 'string', required: true, maxLen: 100 }, recipient: { type: 'string', required: true, maxLen: 200 }, aliases: { type: 'string', maxLen: 2000 },
+    purpose: { type: 'string', enum: Object.keys(disclosure.FHIR_PURPOSES) }, scopes: { type: 'array', required: true, maxLen: 20 }, rate_limit: { type: 'number', integer: true, min: 1, max: 6000 }, ...KEY_FIELDS,
   });
   let created;
-  try { created = C.create({ name: v.name, recipient: v.recipient, aliases: String(v.aliases || '').split(/[;\n]/).map(s => s.trim()).filter(Boolean), purpose: v.purpose || 'TREAT', scopes: v.scopes, rate_limit: v.rate_limit }, ctx.user); }
-  catch (e) { if (e instanceof FhirError) throw badRequest(e.message); throw e; }
-  audit.log({ user: ctx.user, action: 'fhir_client.create', entity: 'api_key', entityId: created.id, ip: ctx.ip, details: { name: v.name, purpose: v.purpose || 'TREAT', scopes: created.scopes, rate_limit: v.rate_limit || C.DEFAULT_RATE_LIMIT } });
+  try { created = C.create({ name: v.name, recipient: v.recipient, aliases: v.aliases || '', purpose: v.purpose || 'TREAT', scopes: v.scopes, rate_limit: v.rate_limit, jwks: v.jwks || undefined, jwks_url: v.jwks_url || undefined, jwt_only: v.jwt_only }, ctx.user); }
+  catch (e) { throw asBad(e); }
+  audit.log({ user: ctx.user, action: 'fhir_client.create', entity: 'api_key', entityId: created.id, ip: ctx.ip, details: { name: v.name, purpose: v.purpose || 'TREAT', scopes: created.scopes, rate_limit: v.rate_limit || C.DEFAULT_RATE_LIMIT, jwt: !!(v.jwks || v.jwks_url), jwt_only: !!created.jwt_only } });
   ctx.status = 201;
-  return { id: created.id, key: created.key, scopes: created.scopes, note: 'Store this key now; it will not be shown again. Use it as client_secret (client_id is the id above) at the token URL, or directly as a bearer token.' };
+  return { id: created.id, key: created.key, scopes: created.scopes, jwt_only: created.jwt_only,
+    note: created.key ? 'Store this key now; it will not be shown again. Use it as client_secret (client_id is the id above) at the token URL to get an access token; it is not itself a bearer token.'
+      : 'This client authenticates only with a JWT signed by its registered key (private_key_jwt); client_id is the id above.' };
+}
+
+/** Change a client's aliases, its public keys or JWKS URL, or whether it must use JWT. */
+function adminUpdate(ctx) {
+  const v = validate({ ...ctx.body, jwks: jwksOf(ctx.body) }, { aliases: { type: 'string', maxLen: 2000 }, ...KEY_FIELDS });
+  const patch = {};
+  for (const k of ['aliases', 'jwks', 'jwks_url', 'jwt_only']) if (ctx.body && k in ctx.body) patch[k] = ctx.body[k] === null ? null : v[k] ?? '';
+  let out;
+  try { out = C.update(ctx.params.id, patch); } catch (e) { throw asBad(e); }
+  if (!out) throw notFound();
+  audit.log({ user: ctx.user, action: 'fhir_client.update', entity: 'api_key', entityId: ctx.params.id, ip: ctx.ip, details: { changed: Object.keys(patch), jwt_only: out.auth.jwt_only, keys: out.auth.jwks_keys.length, jwks_url: !!out.auth.jwks_url } });
+  return out;
+}
+
+/**
+ * Before an administrator saves aliases: how many clients each name would cover today, and whether each alias
+ * is specific enough. Counts only — never who — so the preview itself discloses nothing.
+ */
+function adminAliasPreview(ctx) {
+  const v = validate(ctx.body, { recipient: { type: 'string', maxLen: 200 }, aliases: { type: 'string', maxLen: 2000 }, purpose: { type: 'string', enum: Object.keys(disclosure.FHIR_PURPOSES) } });
+  const purpose = v.purpose || 'TREAT';
+  const aliases = C.splitAliases(v.aliases || '').slice(0, 20);
+  const dir = C.directoryNames();
+  const covered = (names) => disclosure.fhirCoverage({ cacheKey: 'alias-preview', recipients: names, purposeOfUse: purpose }).size;
+  const recipient = String(v.recipient || '').trim();
+  const rows = aliases.map(alias => { const problem = C.aliasProblem(alias, dir); return { alias, ok: !problem, problem, clients: covered([alias]) }; });
+  const valid = aliases.filter((a, i) => rows[i].ok);
+  const out = { purpose, recipient: recipient ? { name: recipient, clients: covered([recipient]) } : null, aliases: rows,
+    total: recipient || valid.length ? covered([recipient, ...valid].filter(Boolean)) : 0 };
+  // Working this out decrypts consents: record that it was done, with the counts and never the names.
+  audit.log({ user: ctx.user, action: 'fhir_client.alias_preview', ip: ctx.ip, details: { purpose, aliases: aliases.length, rejected: rows.filter(r => !r.ok).length, total: out.total } });
+  return out;
 }
 
 module.exports = (r) => {
@@ -200,8 +240,9 @@ module.exports = (r) => {
   r.get('/fhir/R4/metadata', fhir((ctx) => send(ctx.res, 200, capability(ctx)), { open: true }));
   r.get('/fhir/R4/.well-known/smart-configuration', fhir((ctx) => {
     const base = baseUrl(ctx);
-    const body = { token_endpoint: `${base}/auth/token`, grant_types_supported: ['client_credentials'], token_endpoint_auth_methods_supported: ['client_secret_post', 'client_secret_basic'],
-      scopes_supported: ['system/*.read', ...Object.keys(R.DEFS).map(t => `system/${t}.read`)], capabilities: ['client-confidential-symmetric'] };
+    const body = { token_endpoint: `${base}/auth/token`, grant_types_supported: ['client_credentials'], token_endpoint_auth_methods_supported: ['private_key_jwt', 'client_secret_post', 'client_secret_basic'],
+      token_endpoint_auth_signing_alg_values_supported: Object.keys(require('../fhir/jwt').ALGS),
+      scopes_supported: ['system/*.read', ...Object.keys(R.DEFS).map(t => `system/${t}.read`)], capabilities: ['client-confidential-asymmetric', 'client-confidential-symmetric'] };
     const s = JSON.stringify(body); ctx.res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(s) }); ctx.res.end(s);
   }, { open: true }));
   r.post('/fhir/R4/auth/token', fhir(tokenRequest, { open: true }));
@@ -221,6 +262,8 @@ module.exports = (r) => {
     resource_types: Object.entries(C.RESOURCE_TYPES).map(([type, phi]) => ({ type, phi })), token_path: '/fhir/R4/auth/token', base_path: '/fhir/R4',
   }));
   r.post('/api/admin/fhir-clients', auth.requireAuth, auth.requirePerm('apikeys:manage'), adminCreate);
+  r.post('/api/admin/fhir-clients/alias-preview', auth.requireAuth, auth.requirePerm('apikeys:manage'), adminAliasPreview);
+  r.patch('/api/admin/fhir-clients/:id', auth.requireAuth, auth.requirePerm('apikeys:manage'), adminUpdate);
   r.delete('/api/admin/fhir-clients/:id', auth.requireAuth, auth.requirePerm('apikeys:manage'), (ctx) => {
     if (!C.revoke(ctx.params.id)) throw notFound();
     audit.log({ user: ctx.user, action: 'fhir_client.revoke', entity: 'api_key', entityId: ctx.params.id, ip: ctx.ip });

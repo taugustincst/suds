@@ -5,7 +5,7 @@ SUDS is a navigation and case-management tool for a county SUD programme. It is 
 - **Read-only.** Nothing can be created or changed over FHIR. Inbound referrals are a later design (see [below](#inbound-referral-intake-design-placeholder)).
 - **Office server only.** SUDS on this device (the GitHub Pages build) and a local-mode copy do not serve it. The route module is left out of `LOCAL_ROUTE_MODULES` in `server/app.js`.
 - **Consent-gated.** A response includes a client's records only while that client has a live Part 2 consent that names the calling organisation for its purpose of use, and no agreed restriction (see *42 CFR Part 2* below). The accounting of disclosures records every response that names a client.
-- Code: `server/routes/fhir.js` (routes), `server/fhir/resources.js` (mappings and search), `server/fhir/bulk.js` (`$export`), `server/fhir/clients.js` (clients, tokens, scopes), `server/disclosure.js` (`fhirCoverage`, `recordFhir`, the §2.32 notice). Tests: `test/fhir.test.js`.
+- Code: `server/routes/fhir.js` (routes), `server/fhir/resources.js` (mappings and search), `server/fhir/bulk.js` (`$export`), `server/fhir/clients.js` (clients, tokens, scopes, aliases), `server/fhir/jwt.js` (SMART Backend Services client assertions), `server/disclosure.js` (`fhirCoverage`, `recordFhir`, the §2.32 notice). Tests: `test/fhir.test.js`, `test/fhir-hardening.test.js`, `test/fhir-uscore.test.js`.
 
 ## Endpoints
 
@@ -15,16 +15,16 @@ Base URL: `https://<suds-server>/fhir/R4`. Responses are `application/fhir+json`
 | --- | --- | --- | --- |
 | GET | `/metadata` | public | CapabilityStatement: types, search parameters, profiles, token URL. Contains no PHI. |
 | GET | `/.well-known/smart-configuration` | public | Token endpoint, grant types and scopes, for SMART Backend Services-style discovery. |
-| POST | `/auth/token` | client credentials | OAuth2 `client_credentials` grant. Returns a bearer token that lasts 15 minutes. |
-| GET | `/{type}` | bearer | Search. Returns a `searchset` Bundle. |
-| GET | `/{type}/{id}` | bearer | Read. |
-| GET | `/$export` | bearer | Bulk Data kick-off, system level (every type the client may read). |
-| GET | `/Patient/$export` | bearer | Bulk Data kick-off, Patient level (Patient compartment types only). |
-| GET | `/$export-status/{job}` | bearer | Status: `202` with `X-Progress` while the job runs, then `200` with the manifest. |
-| DELETE | `/$export-status/{job}` | bearer | Cancels the job or deletes it (`202`). Its files are removed. |
-| GET | `/$export-file/{job}/{file}` | bearer | An output file, in NDJSON. |
+| POST | `/auth/token` | client assertion (`private_key_jwt`) or client secret | OAuth2 `client_credentials` grant. Returns an access token that lasts 15 minutes. |
+| GET | `/{type}` | access token | Search. Returns a `searchset` Bundle. |
+| GET | `/{type}/{id}` | access token | Read. |
+| GET | `/$export` | access token | Bulk Data kick-off, system level (every type the client may read). |
+| GET | `/Patient/$export` | access token | Bulk Data kick-off, Patient level (Patient compartment types only). |
+| GET | `/$export-status/{job}` | access token | Status: `202` with `X-Progress` while the job runs, then `200` with the manifest. |
+| DELETE | `/$export-status/{job}` | access token | Cancels the job or deletes it (`202`). Its files are removed. |
+| GET | `/$export-file/{job}/{file}` | access token | An output file, in NDJSON. Consent is checked again here (see *Bulk export*). |
 
-Administration (session login, `apikeys:manage`, which administrators hold): `GET/POST /api/admin/fhir-clients` and `DELETE /api/admin/fhir-clients/:id`. The UI for these is **Settings → FHIR clients**.
+Administration (session login, `apikeys:manage`, which administrators hold): `GET/POST /api/admin/fhir-clients`, `PATCH /api/admin/fhir-clients/:id` (aliases, public keys, JWT-only), `POST /api/admin/fhir-clients/alias-preview` (counts only) and `DELETE /api/admin/fhir-clients/:id`. The UI for these is **Settings → FHIR clients**.
 
 ## Authentication and scopes
 
@@ -33,19 +33,55 @@ An administrator creates a **FHIR client** under **Settings → FHIR clients** a
 | Field | Meaning |
 | --- | --- |
 | Name | A label, e.g. "County EHR – SmartCare". |
-| Recipient organisation | The organisation this client stands for, spelled the way consents name it. This is what a client's consent must name. Other spellings in use go in **aliases** (one per line). |
+| Recipient organisation | The organisation this client stands for, spelled the way consents name it. This is what a client's consent must name. Other spellings in use go in **aliases** (one per line; see *Aliases* below: each must name this organisation and no other). |
 | Purpose of use | `TREAT` (treatment), `HPAYMT` (payment) or `HOPERAT` (health care operations), all HL7 v3 ActReason codes. The consent's purpose must cover it. |
 | Scopes | `system/<Type>.read` for each type, or `system/*.read` for all types. Only read scopes exist. `.rs`, `.r`, `.s` and `.*` are also accepted and mean read. |
 | Rate limit | Requests per minute for this client (default 120). Over the limit, the answer is `429` with `Retry-After: 60`. |
+| How it signs in | **Client secret**, **Signed JWT only** (SMART Backend Services `private_key_jwt`), or **Signed JWT or client secret** while the other system moves over. For a signed JWT, paste the client's public key set (JWKS) or give its https JWKS URL. |
 
 The client is stored as an API key (`api_keys`, the same mechanism as the intake keys, with scopes beginning `fhir`), plus its registration in `settings` under `fhir_client:<id>`. The secret is shown once, when the client is created. Creating a client, revoking one, issuing a token and every refusal are all audited.
 
-There are two ways to authenticate:
+Every data request carries an **access token** (`Authorization: Bearer <token>`) from the token endpoint, `POST /fhir/R4/auth/token` (OAuth2 `grant_type=client_credentials`). A token lasts 15 minutes (`expires_in: 900`) and carries the client's scopes, or fewer if the request passes `scope=`. The response is `{ access_token, token_type: "bearer", expires_in: 900, scope }`. At the token endpoint the client proves who it is in one of two ways:
 
-1. **OAuth2 client credentials.** Call `POST /fhir/R4/auth/token` with `grant_type=client_credentials` and credentials in either form: `client_id=<id>&client_secret=<secret>` in the body, or `Authorization: Basic base64(id:secret)`. You may also pass `scope=` to ask for fewer scopes than the client holds. The response is `{ access_token, token_type: "bearer", expires_in: 900, scope }`. SUDS does not support JWT client assertions (the full SMART Backend Services profile).
-2. **The secret itself as a bearer token.** It carries every scope granted to the client. This is simpler for a server-to-server integration on a private network.
+1. **A signed JWT (`private_key_jwt`, SMART Backend Services / RFC 7523).** The recommended way: no shared secret exists on either side. The administrator registers the client's **public** key set (paste the JWKS) or its JWKS URL. The client then posts
 
-Revoking the client stops both at once, including any token it has already been issued. Tokens are kept in memory, so after a server restart a client has to request a new one.
+   ```
+   grant_type=client_credentials
+   &client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+   &client_assertion=<signed JWT>
+   [&scope=system/Patient.read ...]
+   ```
+
+   The JWT must be signed with **RS384** (RSA, 2048 bits or more) or **ES384** (EC P-384), have `kid` naming a registered key (it may be left out when only one key fits), and carry these claims:
+
+   | Claim | Rule |
+   | --- | --- |
+   | `iss`, `sub` | Both the client_id. |
+   | `aud` | The token URL exactly as the client reaches it, e.g. `https://suds.county.local/fhir/R4/auth/token` (also in `/.well-known/smart-configuration`). |
+   | `exp` | In the future and **no more than five minutes** ahead (60 seconds of clock skew allowed). |
+   | `jti` | Unique. Each assertion works **once**: its jti is kept (hashed, in `fhir_jwt_assertions`) until it expires, so a replay is refused even after a restart. |
+   | `iat`, `nbf` | Optional; if present, not in the future. |
+
+   `alg: none`, HMAC algorithms, a key of the wrong type for the alg, and keys named inside the assertion (`jku`, `x5u`, `jwk`) are refused. A key set containing private key material is refused when it is registered.
+
+   A **JWKS URL** must be `https` and on the public internet: it is fetched through the same guard as provider pictures (`server/region-pictures.js`), which refuses any address on the server itself or the county network, on every redirect. A fetched key set is cached for an hour; an assertion with an unknown `kid` refetches it (at most once a minute), so the client can rotate keys by publishing the new one first. For a system on the county's own network, paste its key set instead of giving a URL.
+
+2. **The client secret** (`client_secret_post`: `client_id=<id>&client_secret=<secret>` in the body, or `client_secret_basic`: `Authorization: Basic base64(id:secret)`). The secret is shown once, when the client is created. An administrator can make a client **JWT-only** (Settings → FHIR clients → Edit → *Signed JWT only*), after which its secret gets `401 invalid_client`.
+
+A failed client authentication is always `401 invalid_client` with no detail; the reason (bad signature, expired, replayed jti, wrong `aud`, secret on a JWT-only client…) is written to the audit trail as `fhir.token.denied`, never the assertion or secret itself.
+
+**The secret is not a bearer token.** It works only at the token endpoint. Sent as `Authorization: Bearer` on a data request it gets `401` with an OperationOutcome that says to exchange it at `/auth/token`, and the attempt is audited as `fhir.denied` (`reason: client secret used as a bearer token`) against that client, so an administrator can see which integration still does it.
+
+Revoking the client stops everything at once, including any token it has already been issued. Tokens are kept in memory, so after a server restart a client has to request a new one (it would within 15 minutes anyway); used JWT ids are kept in the database.
+
+### Moving an existing integration off the secret-as-bearer
+
+Up to SUDS 1.10 the secret itself was also accepted as a bearer token. An integration that did that now gets `401` on every data request. Nothing has to be re-registered:
+
+1. **Now, no change on the SUDS side:** have the other system call `POST /fhir/R4/auth/token` with `grant_type=client_credentials`, `client_id` (the id shown when the client was created, also in the list) and `client_secret` (the same key it used as a bearer), and send the `access_token` it gets back. Request a new one before `expires_in` runs out (or on any `401`).
+2. **Then, recommended:** have it generate an RS384 or ES384 key pair, and register the public key under **Settings → FHIR clients → Edit** (sign-in *Signed JWT or client secret*). Once it sends signed JWTs (the audit trail shows `fhir.token.issued` with `method: private_key_jwt`), switch the client to **Signed JWT only**, and the old secret stops working.
+
+To find integrations still using the secret as a bearer, search the audit log for `fhir.denied` with that reason.
 
 The intake keys and the FHIR clients are kept apart. An intake key cannot read FHIR, and a FHIR client's secret cannot stage notes through `/api/intake`.
 
@@ -63,13 +99,20 @@ Every FHIR answer that identifies a client is a disclosure from a Part 2 program
 - it has not been revoked and has not expired (`expires_at` is empty or on or after today)
 - its recipient names the FHIR client's organisation. The comparison ignores case, accents and punctuation.
   - `part2_disclosure` / `roi`: the recipient must *be* the organisation's recipient name or one of its aliases.
-  - `part2_tpo`: the recipient may be a list or a class of recipients (the 2024 rule allows "my treating providers" wording); it covers the organisation when the name or an alias appears in it as whole words, e.g. "County Behavioral Health and my other treating providers". A class with no name in it ("my health plans") cannot be matched mechanically and is **not** honoured over FHIR — record the organisation's name on the consent.
+  - `part2_tpo`: the recipient may be a list or a class of recipients (the 2024 rule allows "my treating providers" wording); it covers the organisation when the name or an alias appears in it as whole words, e.g. "County Behavioral Health and my other treating providers". A class with no name in it ("my health plans") cannot be matched mechanically and is **not** honoured over FHIR — record the organisation's name on the consent. Because a name only has to *appear* in such wording, aliases are restricted (below).
 - its purpose covers the FHIR client's purpose of use.
   - `part2_tpo` covers `TREAT`, `HPAYMT` and `HOPERAT` by definition.
   - Otherwise the purpose text must contain *treatment* (or *care coordination*) for `TREAT`, *payment* (or *billing*/*claims*) for `HPAYMT`, or *operations* for `HOPERAT`. A consent that says *TPO*, or *treatment, payment and health care operations*, covers all three.
 - the client has **no agreed restriction** (a fulfilled `restriction` request on their Requests tab, §2.26 / §164.522). `requireBasis` makes a worker confirm that a disclosure respects an agreed restriction; there is no worker to confirm a FHIR answer, so a client with one is withheld entirely until the restriction is lifted.
 
 A general TPO wording that names no organisation is **not** honoured over FHIR: the organisation has to be named on the consent. This is the conservative reading, and it keeps the match mechanical and auditable. `fhirCoverage()` in `server/disclosure.js` holds the rule, and its result is cached until any consent or patient request changes, the Part 2 programme setting changes, or the date turns. A revocation or a newly agreed restriction therefore takes effect on the very next request.
+
+**Aliases.** A single TPO consent covers a FHIR client when the client's recipient name or an alias appears in its recipient wording as whole words. A one-word or generic alias would therefore match almost every consent that describes a class of recipients: "county" is in "my treating providers in the county", "health" in "my health plans". So an alias is accepted only when it names one organisation:
+
+- it is not made only of generic words (county, health, services, department, behavioral, care, clinic, center, program, provider, plan and the like — `GENERIC_WORDS` in `server/fhir/clients.js`; "of", "the", "and" are ignored), and
+- it has two specific words ("Riverbend Wellspring"), or one specific word within a name of three words or more ("Sacramento County Behavioral Health"), **or** it is exactly the name of an organisation in the resource directory ("Kaiser", when the directory has it).
+
+"Sacramento County" is refused (one specific word, two words), as are "County Health" and "Department of Health Services". The recipient name itself is not restricted: it is the organisation the administrator registered the client for. Before saving, **Check aliases** (in the new-client and Edit dialogs; `POST /api/admin/fhir-clients/alias-preview`) shows, for the recipient and each alias, how many clients with a live consent it would cover for the chosen purpose of use — counts only, never who — and which aliases would be refused and why. The preview is audited (`fhir_client.alias_preview`, counts only). Aliases saved before this rule that break it are **ignored** for coverage and listed as ignored under Settings → FHIR clients; edit them to a specific name.
 
 FHIR is never used for a legal proceeding against the patient (§2.12(d)); that disclosure needs a subpart E court order or a proceedings-only consent and is recorded one client at a time on the Consents tab. A client's retention *legal hold* keeps their record from being purged and does not change what FHIR discloses.
 
@@ -85,7 +128,7 @@ A search that names one person (`identifier`, `family`, `given`, `birthdate`, `_
 
 **Labels and notice.**
 
-- Every Bundle and every client resource carries `meta.security` with three codes. `R` (restricted, `v3-Confidentiality`). `42CFRPart2` (`v3-ActCode`). `NORDSLCD` (no redisclosure without consent directive, `v3-ActCode`).
+- Every Bundle and every client resource carries `meta.security` with three codes. `R` (restricted, `v3-Confidentiality`). `42CFRPart2` (`v3-ActCode`). `NORDSCLCD` (no redisclosure without consent directive, `v3-ActCode`; up to 1.10 SUDS sent `NORDSLCD`, which HL7 Terminology has retired).
 - DocumentReference also carries these in `securityLabel`.
 - The §2.32(a)(1) notice, in the 2024 final rule's wording, is in the Bundle's OperationOutcome, in the bulk export's `OperationOutcome.ndjson` and in its manifest (`extension["urn:suds:part2"]`). It is the one notice text SUDS uses everywhere (`PART2_REDISCLOSURE_NOTICE` in `server/constants.js`, via `disclosure.notice()`): identified exports, the CalOMS README, the county EHR hand-off, form and consent PDFs.
 - The resource directory (Organization, Location, HealthcareService) is not PHI. It carries no labels, needs no consent and is not recorded as a disclosure.
@@ -100,13 +143,22 @@ A search that names one person (`identifier`, `family`, `given`, `birthdate`, `_
 - what was sent, e.g. "FHIR search Encounter: 3 resources"
 - `source_ref = fhir:<request id>`
 
-A bulk export writes one row per client for the whole export (`source_ref = fhir-export:<job id>`); one naming more clients than the mass-export threshold opens a draft privacy incident, like any identified export. It is recorded when the export completes, conservatively, whether or not the files are ever downloaded. `disclosed_by` is the administrator who created the FHIR client, because disclosures must name a user. The audit rows name the client as `fhir:<name>`. These rows appear in the client's accounting (`GET /api/clients/:id/disclosures/accounting`) like any other disclosure.
+A bulk export is accounted when it is **downloaded**, not when it is built: building the files is audited (`fhir.export.complete`) but nothing has left the programme yet. The first download of each output file writes one row per client in that file (`source_ref = fhir-export:<job id>`, what e.g. "FHIR bulk export <job>: Encounter (3)"), under the consent that covers the client at that moment; downloading the same file again writes nothing more. The first download of an export naming more clients than the mass-export threshold opens a draft privacy incident, like any identified export. `disclosed_by` is the administrator who created the FHIR client, because disclosures must name a user. The audit rows name the client as `fhir:<name>`. These rows appear in the client's accounting (`GET /api/clients/:id/disclosures/accounting`) like any other disclosure.
 
 **Audit.** Each request writes one `fhir.search`, `fhir.read`, `fhir.export.*` or `fhir.token.*` row. The row records the client, the parameter *names* (never their values, which can be PHI), and how many results were returned, covered and withheld. Each disclosed client also gets a `disclosure.record` row, and every refusal is written as `fhir.denied`.
 
 ## Resources and mappings
 
-Profiles are declared in `meta.profile` only where the resource conforms: US Core Patient, Encounter, Organization and Location. The other types are base R4. SUDS's own codes use `urn:suds:codesystem:*` systems, because each county runs its own server and there is no single SUDS domain to publish them under.
+Profiles are declared in `meta.profile` for US Core Patient, Encounter, Organization and Location, which these resources are intended to conform to; the other types are base R4. SUDS's own codes use `urn:suds:codesystem:*` systems, because each county runs its own server and there is no single SUDS domain to publish them under.
+
+**Profiles and conformance.** What has been checked, and what has not:
+
+- `test/fhir-uscore.test.js` checks, on every test run, the US Core required elements, cardinalities and fixed structures for the elements SUDS populates (identifier system and value, name, gender, the race and ethnicity extensions' structure and OMB codes, Encounter status/class/type/subject, Organization active/name, Location name, no empty values) and that the CapabilityStatement names the same four profiles. These are SUDS's own structural tests.
+- Sample output (a Patient with every field SUDS sends, one with race declined, a sparse one, visit and call Encounters, the programme and a directory Organization, a Location) was run through the **official HL7 FHIR validator** (validator_cli 6.10.4) against US Core **3.1.1, 4.0.0 and 5.0.1**: **0 errors** for all nine resources in each version, after two fixes it found (race *declined*/*unknown* is now said in the race extension's `text` only, because an `ombCategory` of ASKU/UNK is outside the OMB value set before US Core 6; and the retired `NORDSLCD` label became `NORDSCLCD`). That run was **offline**: the packages came from mirrors (npm and Maven Central) rather than packages.fhir.org, and no terminology server was used (`-tx n/a`), so codes in external code systems (OMB, BCP-47) were not checked against those systems.
+- Remaining validator **warnings**, by design: `Encounter.type` uses SUDS's own intervention and contact codes, not the (extensible) US Core Encounter Type value set, because SUDS has no CPT/SNOMED code for a navigation visit; `42CFRPart2` is outside base R4's (extensible) security-labels value set; resources carry no narrative (`dom-6`, a best-practice recommendation); a preferred language SUDS cannot code is sent as text only (common languages are coded in BCP-47).
+- **Not yet done:** validation against US Core 6.x/7.x, a run with a terminology server, and **Inferno** (the ONC test kit). A county that needs certification-grade evidence should run Inferno's US Core test kit against its own server.
+
+To repeat the validator run: `FHIR_SAMPLE_DIR=/tmp/suds-fhir node --test test/fhir-uscore.test.js` writes the resources it checked, then `java -jar validator_cli.jar -version 4.0.1 -ig hl7.fhir.us.core#5.0.1 /tmp/suds-fhir/Patient-*.json /tmp/suds-fhir/Encounter-*.json /tmp/suds-fhir/Organization-*.json /tmp/suds-fhir/Location-*.json` (with internet access the validator fetches the packages itself).
 
 | FHIR resource | SUDS source | Mapping notes |
 | --- | --- | --- |
@@ -155,7 +207,10 @@ The export follows the [FHIR Bulk Data Access IG](https://hl7.org/fhir/uv/bulkda
 - Each client may run at most two exports at once.
 - Output: one NDJSON file per type with results, and an `OperationOutcome.ndjson` in `error[]`. That file carries the §2.32 notice and how many clients were left out (no covering consent, or an agreed restriction).
 - `requiresAccessToken` is `true`. Files are downloaded with the same bearer token, and only by the client that started the export (another client's job answers 404).
-- **At rest:** the files are written to `<data dir>/fhir-export/<job>/`, encrypted with the database key (AES-256-GCM, `server/crypto.js`). They are deleted when the job is deleted or expires (`FHIR_EXPORT_TTL_MINUTES`, default 60; the manifest carries `Expires`). A sweep also removes files a previous server process left behind. Job state is in memory, so after a restart the client starts again. If the encryption key is rotated while a job's files still exist, those files answer 410.
+- **Consent is checked at download.** A file is built from the clients covered at kick-off, but the disclosure happens when it is downloaded, so every client in a file must *still* be covered then. If any consent was revoked or expired, or a restriction was agreed, after the build (within the export's lifetime), that file answers **`410`** with an OperationOutcome (`business-rule`: start a new export), is not released, and the refusal is audited (`fhir.export.download.refused`, with a count, not who). A new export leaves that client out. Files that do not name the client are still released. The manifest's `extension["urn:suds:part2"].consent_checked_at` is `download`.
+- **Accounting** is written at each file's first download (see *Accounting of disclosures* above).
+- **At rest:** the files are written to `<data dir>/fhir-export/<job>/`, encrypted with the database key (AES-256-GCM, `server/crypto.js`). They are deleted when the job is deleted or expires (`FHIR_EXPORT_TTL_MINUTES`, default 60, counted from completion; the manifest carries `Expires`). If the encryption key is rotated while a job's files still exist, those files answer 410.
+- **Restarts:** the job's state (never an access token) is kept beside its files as `job.json.enc`, encrypted likewise: which client started it, the output list, who is in each file, and which files were already downloaded and accounted. At startup (`restore()` in `server/fhir/bulk.js`, called by `server/index.js`) a finished export comes back as it was, so the client can keep downloading with a new access token and nothing is accounted twice; an export that was still being built is marked failed (its status answers `500` "the server restarted…"; start again) and its partial files are removed; a directory with no readable state (an older SUDS, a rotated key) is removed. A periodic sweep removes expired jobs.
 
 ## Examples
 
@@ -164,10 +219,18 @@ BASE=https://suds.county.local/fhir/R4
 # Discovery (no auth)
 curl -s $BASE/metadata | jq '.rest[0].resource[].type'
 
-# Token (client credentials)
+# Token with a client secret
 TOKEN=$(curl -s -X POST $BASE/auth/token \
   -d grant_type=client_credentials -d client_id=$CLIENT_ID -d client_secret=$CLIENT_SECRET \
   -d scope='system/Patient.read system/Encounter.read' | jq -r .access_token)
+
+# Token with a signed JWT (SMART Backend Services). $ASSERTION is a JWT the client signs with its private
+# key (RS384 or ES384, header kid = the registered key): iss = sub = $CLIENT_ID, aud = "$BASE/auth/token",
+# exp <= 5 minutes ahead, a fresh jti each time.
+TOKEN=$(curl -s -X POST $BASE/auth/token \
+  -d grant_type=client_credentials \
+  -d client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer \
+  -d client_assertion=$ASSERTION | jq -r .access_token)
 
 # Find a client by SUDS client code, then their encounters since January
 curl -s -H "Authorization: Bearer $TOKEN" "$BASE/Patient?identifier=urn:suds:client-code|C26-0001"
@@ -190,7 +253,7 @@ A search Bundle, shortened:
 { "resourceType": "Bundle", "type": "searchset",
   "meta": { "security": [ { "system": "http://terminology.hl7.org/CodeSystem/v3-Confidentiality", "code": "R" },
                           { "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode", "code": "42CFRPart2" },
-                          { "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode", "code": "NORDSLCD" } ] },
+                          { "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode", "code": "NORDSCLCD" } ] },
   "link": [ { "relation": "self", "url": ".../Patient?_count=50" } ],
   "entry": [
     { "fullUrl": ".../Patient/1f5a…", "resource": { "resourceType": "Patient", "id": "1f5a…", "...": "..." }, "search": { "mode": "match" } },
@@ -202,10 +265,10 @@ A search Bundle, shortened:
 
 ## Operating notes
 
-- Put the office server behind HTTPS (docs/DEPLOYMENT.md) before giving a FHIR client its secret. The secret is a password for the programme's records.
+- Put the office server behind HTTPS (docs/DEPLOYMENT.md) before giving a FHIR client its secret. The secret is a password for the programme's records; prefer a signed JWT (no shared secret) and make the client JWT-only once it works.
 - Behind a reverse proxy with `trustProxy` on, `X-Forwarded-Proto` and `X-Forwarded-Host` set the URLs in links, `fullUrl` and the export manifest.
 - The per-IP API limit (600 requests a minute) applies in addition to each client's own limit.
-- When a recipient organisation is renamed, add the old name as an alias. Consents that use the old name then keep working.
+- When a recipient organisation is renamed, add the old name as an alias (it must name the organisation specifically; see *Aliases*). Consents that use the old name then keep working.
 
 ## Inbound referral intake (design placeholder)
 

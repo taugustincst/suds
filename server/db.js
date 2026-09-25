@@ -422,6 +422,15 @@ const migrations = [
     for (const [c, def] of [['court_order_id', 'TEXT REFERENCES court_orders(id) ON DELETE SET NULL'], ['legal_proceeding', 'INTEGER NOT NULL DEFAULT 0'],
       ['counseling_notes', 'INTEGER NOT NULL DEFAULT 0'], ['notice_version', 'TEXT']]) addColumn(d, 'disclosures', c, def);
     for (const line of schemaText.split('\n')) if (/^CREATE INDEX IF NOT EXISTS idx_(court_orders|part2_notices|complaints|privacy_incident)/.test(line.trim())) d.exec(line.trim());
+  },  // 34: FHIR SMART Backend Services (private_key_jwt). fhir_jwt_assertions remembers each client assertion's
+  //     jti until it expires, so an assertion cannot be replayed (server/fhir/jwt.js). A new table only; an
+  //     existing database starts with it empty. (Entries 32 and 33 are other work merged beside this one.)
+  (d) => {
+    const schemaText = safeSchema();
+    const m = schemaText.match(/CREATE TABLE IF NOT EXISTS fhir_jwt_assertions \([\s\S]*?\n\);/);
+    if (!m) throw new Error('migration 34: no definition for fhir_jwt_assertions in schema');
+    d.exec(m[0]);
+    for (const line of schemaText.split('\n')) if (/^CREATE INDEX IF NOT EXISTS idx_fhir_jwt_assertions/.test(line.trim())) d.exec(line.trim());
   },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.

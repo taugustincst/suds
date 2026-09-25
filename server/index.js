@@ -24,6 +24,8 @@ if (config.dbPath !== ':memory:') {
 db.open();
 try { db.checkKeyFingerprint(); } catch (e) { console.error(`[suds] ${e.message}`); process.exit(1); }
 ensureBootstrap();
+// FHIR bulk exports a previous run left behind: finished ones carry on, half-built or unreadable ones go.
+try { require('./fhir/bulk').restore(); } catch (e) { console.error('[suds] FHIR export restore:', e.message); }
 const handler = createHandler();
 listener.start(handler);
 

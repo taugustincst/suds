@@ -1,4 +1,4 @@
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, stat, kv, loadRefData, downloadCsv, clear, pageTabs } from '../app.js';
+import { h, route, api, get, post, put, del, state, form, modal, toast, table, badge, flag, statusKind, fmt, can, pageHead, confirmDialog, nav, stat, kv, loadRefData, downloadCsv, clear, pageTabs } from '../app.js';
 import { qrSvg } from '../qr.js';
 import { listsTab } from './lists.js';
 import { securityTab, drillCard } from './security.js';
@@ -464,42 +464,120 @@ export async function transferCard(fromId) {
 // (docs/integration/FHIR.md). Each stands for one recipient organisation; a client's records reach it only
 // while the client has a live consent naming that organisation for the chosen purpose.
 // ---------------------------------------------------------------------------
+// How a FHIR client proves who it is at the token endpoint. Its secret is never a bearer token itself.
+const FHIR_SIGNIN = [
+  { value: 'secret', label: 'Client secret (shown once)' },
+  { value: 'jwt', label: 'Signed JWT only (SMART Backend Services, private_key_jwt)' },
+  { value: 'both', label: 'Signed JWT or client secret (while the other system moves to JWT)' },
+];
+const fhirSigninOf = (c) => c.auth.jwt_only ? 'jwt' : c.auth.private_key_jwt ? 'both' : 'secret';
+const fhirSigninLabel = { secret: 'Client secret', jwt: 'Signed JWT', both: 'Signed JWT or secret' };
+
+// Before aliases are saved: how many clients each name would cover today (counts only, never who), and
+// which aliases are too broad to be accepted. A one-word or generic alias ("county", "health") would match
+// almost every consent that names a class of recipients.
+function aliasPreview(getValues) {
+  const out = h('div', { class: 'span', role: 'status', 'aria-live': 'polite', 'data-alias-preview': '1' });
+  const run = async () => {
+    const v = getValues();
+    clear(out);
+    if (!String(v.aliases || '').trim() && !String(v.recipient || '').trim()) { out.append(h('p', { class: 'small muted' }, 'Enter the recipient organisation or an alias first.')); return; }
+    const r = await post('/api/admin/fhir-clients/alias-preview', { recipient: v.recipient || undefined, aliases: v.aliases || '', purpose: v.purpose || 'TREAT' });
+    const rows = [
+      ...(r.recipient ? [{ name: `${r.recipient.name} (recipient)`, ok: true, clients: r.recipient.clients }] : []),
+      ...r.aliases.map(a => ({ name: a.alias, ok: a.ok, problem: a.problem, clients: a.clients })),
+    ];
+    out.append(
+      h('h3', { class: 'eyebrow' }, 'Who this would cover today'),
+      table([
+        { label: 'Name', render: x => x.name },
+        { label: 'Clients covered', render: x => String(x.clients) },
+        { label: 'Accepted', render: x => x.ok ? 'Yes' : flag('No', true, 'too broad', 'danger') },
+        { label: 'Why not', render: x => x.problem || '' },
+      ], rows, { empty: 'Nothing to check.' }),
+      h('p', { class: 'small' }, `In total ${r.total} client${r.total === 1 ? '' : 's'} with a live consent would be covered by the accepted names, for ${r.purpose}. Only counts are shown.`));
+  };
+  const btn = h('button', { class: 'btn sm', type: 'button', onClick: () => run().catch(e => { clear(out); out.append(h('p', { class: 'err' }, e.message)); }) }, 'Check aliases');
+  return { btn, out };
+}
+
 async function fhirClientsTab(refresh) {
   const d = await get('/api/admin/fhir-clients');
+  const keyFields = (values = {}) => [
+    { type: 'section', label: 'How it signs in' },
+    { name: 'signin', label: 'Authentication at the token URL', type: 'select', noBlank: true, span: true, options: FHIR_SIGNIN, value: values.signin || 'secret',
+      help: 'Either way the other system gets a 15-minute access token from the token URL; its secret is never accepted as a bearer token on a data request. A signed JWT (RS384 or ES384) is the SMART Backend Services standard and keeps no shared secret on either side.' },
+    { name: 'jwks', label: 'Public key set (JWKS JSON)', type: 'textarea', rows: 3, span: true, placeholder: '{"keys":[{"kty":"RSA","kid":"…","n":"…","e":"AQAB"}]}', help: 'Paste the public keys only. SUDS refuses a key set that contains private key material.' },
+    { name: 'jwks_url', label: 'Or the key set\'s https address (JWKS URL)', type: 'url', span: true, help: 'Fetched by the server over the internet (never an address on this network) and cached for an hour. For a system on the county network, paste the key set instead.' },
+  ];
+  const keysOf = (v, { editing = false } = {}) => {
+    const out = {};
+    if (v.signin !== 'secret' && !String(v.jwks || '').trim() && !String(v.jwks_url || '').trim() && !editing) throw new Error('A signed-JWT client needs its public key set or the key set\'s address');
+    if (String(v.jwks || '').trim()) out.jwks = v.jwks.trim(); else if (editing) out.jwks = null;
+    if (String(v.jwks_url || '').trim()) out.jwks_url = v.jwks_url.trim(); else if (editing) out.jwks_url = null;
+    out.jwt_only = v.signin === 'jwt';
+    if (v.signin === 'secret' && editing) { out.jwks = null; out.jwks_url = null; }
+    return out;
+  };
   const create = () => {
-    const f = form([
+    let f;
+    const preview = aliasPreview(() => Object.fromEntries(new FormData(f)));
+    f = form([
       { name: 'name', label: 'Name (e.g. "County EHR – SmartCare")', required: true, span: true },
       { name: 'recipient', label: 'Recipient organisation, exactly as consents name it', required: true, span: true, help: 'A client\'s data is returned only while they have an active Part 2 or release-of-information consent naming this organisation.' },
-      { name: 'aliases', label: 'Other names consents use for it (one per line)', type: 'textarea', rows: 2, span: true },
+      { name: 'aliases', label: 'Other names consents use for it (one per line)', type: 'textarea', rows: 2, span: true, help: 'Each must name this organisation and no other: its full name (two specific words, or one within a longer name), or exactly a name in the resource directory. Generic words like county, health or services are not enough. Check them before saving.' },
       { name: 'purpose', label: 'Purpose of use', type: 'select', noBlank: true, value: 'TREAT', options: d.purposes.map(p => ({ value: p.code, label: `${p.label} (${p.code})` })), help: 'The consent\'s purpose must cover it (or say TPO).' },
       { name: 'rate_limit', label: 'Requests per minute', type: 'number', min: 1, max: 6000, step: 1, value: 120 },
+      ...keyFields(),
       { type: 'section', label: 'What it may read' },
       { name: 'scope_all', label: 'Every resource type (system/*.read)', type: 'checkbox', span: true },
       ...d.resource_types.map(t => ({ name: `scope_${t.type}`, label: `${t.type}${t.phi ? '' : ' (directory, not PHI)'}`, type: 'checkbox' })),
-    ], { submitText: 'Create FHIR client', onCancel: () => m.close(), onSubmit: async (v) => {
+    ], { submitText: 'Create FHIR client', onCancel: () => m.close(), extra: h('div', {}, h('div', { class: 'btn-row' }, preview.btn), preview.out), onSubmit: async (v) => {
       const scopes = v.scope_all ? ['system/*.read'] : d.resource_types.filter(t => v[`scope_${t.type}`]).map(t => `system/${t.type}.read`);
       if (!scopes.length) throw new Error('Choose at least one resource type');
-      const rr = await post('/api/admin/fhir-clients', { name: v.name, recipient: v.recipient, aliases: v.aliases || '', purpose: v.purpose, rate_limit: v.rate_limit ? Number(v.rate_limit) : undefined, scopes });
+      const rr = await post('/api/admin/fhir-clients', { name: v.name, recipient: v.recipient, aliases: v.aliases || '', purpose: v.purpose, rate_limit: v.rate_limit ? Number(v.rate_limit) : undefined, scopes, ...keysOf(v) });
       m.close();
       const origin = location.origin;
       const shown = modal('FHIR client created', h('div', {},
-        h('p', {}, 'Copy the secret now — it will not be shown again. Give it to the other system\'s administrator over a secure channel.'),
+        rr.key ? h('p', {}, 'Copy the secret now — it will not be shown again. Give it to the other system\'s administrator over a secure channel.') : h('p', {}, 'This client signs in with a JWT signed by its own private key. Give the other system\'s administrator the client_id and the token URL; there is no secret to share.'),
         kv([['FHIR base URL', `${origin}${d.base_path}`], ['Token URL', `${origin}${d.token_path}`], ['client_id', rr.id], ['Scopes', rr.scopes.join(' ')]]),
-        h('div', { class: 'qr', 'data-fhir-secret': '1' }, rr.key),
-        h('p', { class: 'small muted' }, 'client_secret above. The secret also works directly as a bearer token. See docs/integration/FHIR.md.'),
-        h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', onClick: () => shown.close() }, 'I have copied it'))), { onClose: refresh });
+        rr.key ? h('div', { class: 'qr', 'data-fhir-secret': '1' }, rr.key) : null,
+        h('p', { class: 'small muted' }, rr.key ? 'client_secret above. Exchange it at the token URL (grant_type=client_credentials) for a 15-minute access token; the secret itself is not accepted as a bearer token. See docs/integration/FHIR.md.' : 'The assertion\'s iss and sub are the client_id and its aud is the token URL (SMART Backend Services). See docs/integration/FHIR.md.'),
+        h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', onClick: () => shown.close() }, rr.key ? 'I have copied it' : 'Done'))), { onClose: refresh });
     } });
     const m = modal('New FHIR client', f);
+  };
+  const edit = (c) => {
+    let f;
+    const preview = aliasPreview(() => ({ ...Object.fromEntries(new FormData(f)), recipient: c.recipient, purpose: c.purpose }));
+    f = form([
+      { name: 'aliases', label: 'Other names consents use for it (one per line)', type: 'textarea', rows: 2, span: true, value: c.aliases.join('\n'), help: 'Each must name this organisation and no other; generic words like county, health or services are not enough.' },
+      ...keyFields({ signin: fhirSigninOf(c) }),
+    ], { values: { jwks_url: c.auth.jwks_url || '' }, submitText: 'Save', onCancel: () => m.close(), extra: h('div', {}, h('div', { class: 'btn-row' }, preview.btn), preview.out), onSubmit: async (v) => {
+      const body = { aliases: v.aliases || '', ...keysOf(v, { editing: true }) };
+      // Keys already registered stay unless a new set is pasted (the public keys are not shown back here).
+      if (!String(v.jwks || '').trim() && v.signin !== 'secret') delete body.jwks;
+      await api('PATCH', `/api/admin/fhir-clients/${c.id}`, body);
+      m.close(); toast('FHIR client saved'); refresh();
+    } });
+    const m = modal(`Edit FHIR client: ${c.name}`, h('div', {},
+      c.auth.jwks_keys.length ? h('p', { class: 'small' }, `Registered public keys: ${c.auth.jwks_keys.map(k => `${k.kid || '(no kid)'} ${k.alg}`).join(', ')}. Paste a new key set to replace them.`) : null, f));
   };
   const purposeLabel = (c) => (d.purposes.find(p => p.code === c) || {}).label || c;
   return h('div', {},
     h('div', { class: 'banner small' }, 'FHIR clients read SUDS through the standards-based FHIR R4 API (read-only). Every answer that names a client is a 42 CFR Part 2 disclosure: it is made only under that client\'s consent, carries the redisclosure notice, and appears in the client\'s accounting of disclosures. The resource directory is not PHI.'),
     h('div', { class: 'row mb' }, h('button', { class: 'btn primary', onClick: create }, '+ New FHIR client')),
     table([
-      { label: 'Name', key: 'name' }, { label: 'Recipient', render: c => [c.recipient, ...c.aliases].join(' / ') }, { label: 'Purpose', render: c => purposeLabel(c.purpose) },
+      { label: 'Name', key: 'name' },
+      { label: 'Recipient', render: c => h('div', {}, [c.recipient, ...c.aliases.filter(a => !c.aliases_ignored.some(x => x.alias === a))].join(' / '),
+        c.aliases_ignored.length ? h('div', { class: 'small' }, flag(`Ignored: ${c.aliases_ignored.map(x => x.alias).join(', ')}`, true, 'too broad to name one organisation', 'warn')) : null) },
+      { label: 'Purpose', render: c => purposeLabel(c.purpose) },
+      { label: 'Sign-in', render: c => fhirSigninLabel[fhirSigninOf(c)] },
       { label: 'Scopes', render: c => h('span', { class: 'small mono' }, c.scopes.join(' ')) }, { label: 'Limit', render: c => `${c.rate_limit}/min` },
       { label: 'Created', render: c => `${fmt.dt(c.created_at)} by ${c.created_by_name || ''}` }, { label: 'Last used', render: c => c.last_used_at ? fmt.dt(c.last_used_at) : 'never' },
       { label: 'Status', render: c => c.revoked_at ? badge('Revoked', 'danger') : badge('Active', 'ok') },
-      { label: '', render: c => !c.revoked_at ? h('button', { class: 'btn sm danger', onClick: async () => { if (await confirmDialog('Revoke FHIR client', `Revoke "${c.name}"? It stops working at once, including any access token it holds.`, { danger: true, okText: 'Revoke' })) { await del(`/api/admin/fhir-clients/${c.id}`); refresh(); } } }, 'Revoke') : null },
+      { label: '', render: c => !c.revoked_at ? h('div', { class: 'btn-row' },
+        h('button', { class: 'btn sm', onClick: () => edit(c) }, 'Edit'),
+        h('button', { class: 'btn sm danger', onClick: async () => { if (await confirmDialog('Revoke FHIR client', `Revoke "${c.name}"? It stops working at once, including any access token it holds.`, { danger: true, okText: 'Revoke' })) { await del(`/api/admin/fhir-clients/${c.id}`); refresh(); } } }, 'Revoke')) : null },
     ], d.clients, { empty: 'No FHIR clients.' }));
 }

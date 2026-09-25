@@ -31,7 +31,8 @@ const SYS = {
 const PART2_SECURITY = [
   { system: SYS.confidentiality, code: 'R', display: 'restricted' },
   { system: SYS.actCode, code: '42CFRPart2', display: '42 CFR Part2' },
-  { system: SYS.actCode, code: 'NORDSLCD', display: 'no redisclosure without consent directive' },
+  // NORDSCLCD, not NORDSLCD: the latter is retired in HL7 Terminology (the HL7 validator flags it).
+  { system: SYS.actCode, code: 'NORDSCLCD', display: 'no redisclosure without consent directive' },
 ];
 
 class FhirError extends Error {

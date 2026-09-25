@@ -86,7 +86,8 @@ module.exports = {
   // Server-side only, never synchronised: breakglass_events is the office supervisor's review queue for
   // emergency access, and a device has no supervisor to review it.
   // complaints and the privacy incident register are the privacy officer's, kept at the office likewise.
-  server_only: ['breakglass_events', 'complaints', 'privacy_incidents', 'privacy_incident_clients'],
+  // fhir_jwt_assertions is the FHIR token endpoint's replay guard for client assertions (office server only).
+  server_only: ['breakglass_events', 'complaints', 'privacy_incidents', 'privacy_incident_clients', 'fhir_jwt_assertions'],
   // Kept by each database for itself and never synchronised in either direction: idempotency_keys holds
   // the answers to retried POSTs made against that database (server/idempotency.js). A device's retry is
   // answered by the device; the office never sees the key, only the rows the request created.

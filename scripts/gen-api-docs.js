@@ -37,7 +37,7 @@ A JSON array or \`{ "notes": [...] }\` is also accepted. Response: \`202 { impor
 
 ## FHIR R4 API
 
-\`/fhir/R4\` is a read-only FHIR R4 API for the county EHR or an HIE (Patient, EpisodeOfCare, Encounter, Consent, ServiceRequest, Task, Observation, DocumentReference, Organization, Location, HealthcareService, and Bulk Data \`$export\`). It answers in \`application/fhir+json\`, authenticates FHIR clients (created under Settings → FHIR clients, \`/api/admin/fhir-clients\`) with a bearer API key or an OAuth2 client-credentials token from \`POST /fhir/R4/auth/token\`, and returns a client's records only under a live 42 CFR Part 2 consent naming the FHIR client's organisation, recording each disclosure. Endpoints, mappings, scopes and examples: [docs/integration/FHIR.md](integration/FHIR.md).
+\`/fhir/R4\` is a read-only FHIR R4 API for the county EHR or an HIE (Patient, EpisodeOfCare, Encounter, Consent, ServiceRequest, Task, Observation, DocumentReference, Organization, Location, HealthcareService, and Bulk Data \`$export\`). It answers in \`application/fhir+json\`, authenticates FHIR clients (created under Settings → FHIR clients, \`/api/admin/fhir-clients\`) with a 15-minute bearer token from \`POST /fhir/R4/auth/token\` (OAuth2 client credentials; the client signs a JWT with its registered key, SMART Backend Services \`private_key_jwt\`, or sends its secret; the secret is never itself a bearer token), and returns a client's records only under a live 42 CFR Part 2 consent naming the FHIR client's organisation, recording each disclosure. Endpoints, mappings, scopes and examples: [docs/integration/FHIR.md](integration/FHIR.md).
 
 ## Break-glass
 

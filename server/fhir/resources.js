@@ -45,15 +45,16 @@ const address = (line, city, zip) => (line || city || zip) ? { use: 'home', line
 const OMB = 'urn:oid:2.16.840.1.113883.6.238';
 const RACE = { american_indian_alaska_native: ['1002-5', 'American Indian or Alaska Native'], asian: ['2028-9', 'Asian'], black_african_american: ['2054-5', 'Black or African American'], native_hawaiian_pacific_islander: ['2076-8', 'Native Hawaiian or Other Pacific Islander'], white: ['2106-3', 'White'] };
 const ETHNICITY = { hispanic_latino: ['2135-2', 'Hispanic or Latino'], not_hispanic_latino: ['2186-5', 'Not Hispanic or Latino'] };
-const NULL_FLAVOR = 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor';
 function raceEthnicity(codesText) {
   const codes = String(codesText || '').split(',').map(s => s.trim()).filter(Boolean);
   const ext = [];
   const race = codes.filter(c => RACE[c]); const eth = codes.filter(c => ETHNICITY[c]);
+  // Declined or unknown is said in the extension's text only. The OMB race value set of US Core 3.1.1 to
+  // 5.0.1 has no null-flavor codes, so an ombCategory of ASKU or UNK fails validation against those
+  // versions (the HL7 validator reports it as an error).
   const raceNull = !race.length && (codes.includes('declined') ? ['ASKU', 'Asked but no answer'] : codes.includes('unknown') ? ['UNK', 'Unknown'] : null);
   if (race.length || raceNull || codes.includes('other')) {
     const parts = race.map(c => ({ url: 'ombCategory', valueCoding: { system: OMB, code: RACE[c][0], display: RACE[c][1] } }));
-    if (raceNull) parts.push({ url: 'ombCategory', valueCoding: { system: NULL_FLAVOR, code: raceNull[0], display: raceNull[1] } });
     parts.push({ url: 'text', valueString: [...race.map(c => RACE[c][1]), ...(codes.includes('other') ? ['Other'] : []), ...(raceNull ? [raceNull[1]] : [])].join(', ') });
     ext.push({ url: 'http://hl7.org/fhir/us/core/StructureDefinition/us-core-race', extension: parts });
   }
@@ -63,6 +64,15 @@ function raceEthnicity(codesText) {
       { url: 'text', valueString: eth.map(c => ETHNICITY[c][1]).join(', ') }] });
   }
   return ext;
+}
+// Preferred language is free text in SUDS. The common ones are also coded (BCP-47, US Core's binding), so
+// a receiving EHR can match them; anything else is sent as text alone.
+const LANGUAGES = { english: 'en', spanish: 'es', 'español': 'es', espanol: 'es', chinese: 'zh', mandarin: 'zh', cantonese: 'yue', vietnamese: 'vi', tagalog: 'tl', filipino: 'fil',
+  korean: 'ko', russian: 'ru', arabic: 'ar', armenian: 'hy', farsi: 'fa', persian: 'fa', dari: 'prs', pashto: 'ps', punjabi: 'pa', hindi: 'hi', urdu: 'ur', hmong: 'hmn', khmer: 'km',
+  lao: 'lo', japanese: 'ja', portuguese: 'pt', french: 'fr', ukrainian: 'uk', somali: 'so', amharic: 'am', tigrinya: 'ti', mien: 'ium', 'american sign language': 'ase', asl: 'ase' };
+function language(text) {
+  const code = LANGUAGES[String(text || '').trim().toLowerCase()];
+  return { coding: code ? [{ system: 'urn:ietf:bcp:47', code }] : undefined, text };
 }
 const GENDER = { female: 'female', male: 'male', transgender_female: 'female', transgender_male: 'male', non_binary: 'other', other: 'other' };
 function mapPatient(c) {
@@ -81,7 +91,7 @@ function mapPatient(c) {
     birthDate: /^\d{4}-\d{2}-\d{2}$/.test(dob || '') ? dob : undefined,
     deceasedBoolean: c.status === 'deceased' ? true : undefined,
     address: [address(dec(c.address_enc), c.city, c.zip)],
-    communication: c.preferred_language ? [{ language: { text: c.preferred_language }, preferred: true }] : undefined,
+    communication: c.preferred_language ? [{ language: language(c.preferred_language), preferred: true }] : undefined,
     managingOrganization: programRef(),
   });
 }

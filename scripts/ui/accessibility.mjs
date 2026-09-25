@@ -377,7 +377,7 @@ const BUTTON_DIALOGS = [
   ['client/:client/consents', '+ Notice given'], ['client/:client/consents', '+ Court order'], ['client/:client/consents', 'Vacate'],
   ['compliance?tab=complaints', '+ Complaint'], ['compliance?tab=incidents', '+ Incident'],
   // Settings: an access request, a FHIR client, the recovery drill.
-  ['admin?tab=users', 'Approve'], ['admin?tab=fhir', '+ New FHIR client'],
+  ['admin?tab=users', 'Approve'], ['admin?tab=fhir', '+ New FHIR client'], ['admin?tab=fhir', 'Edit'],
   ['reports', 'Identified Excel workbook'], ['admin?tab=lists', '+ Add funding source'],
 ];
 // [page, the <summary> that unfolds it, name]
