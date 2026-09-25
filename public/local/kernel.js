@@ -6713,7 +6713,11 @@ CREATE TABLE IF NOT EXISTS sessions (
   revoked_at TEXT,
   -- How this session's second factor was satisfied: NULL (none or SUDS's own TOTP) or 'idp' \u2014 the identity
   -- provider asserted multi-factor sign-in (amr/acr) and the administrator chose to trust it (server/routes/oidc.js).
-  mfa_source TEXT
+  mfa_source TEXT,
+  -- When this session last proved who is using it: the sign-in (password, and the second factor when there is
+  -- one), or the password or code given again to sign a note. A signature within sign_reauth_minutes of it
+  -- needs only the signer's confirmation (server/routes/notes.js verifyIdentity).
+  reauth_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
@@ -9111,2141 +9115,3020 @@ var require_http = __commonJS({
   }
 });
 
-// server/devices.js
-var require_devices = __commonJS({
-  "server/devices.js"(exports, module) {
+// server/options.js
+var require_options = __commonJS({
+  "server/options.js"(exports, module) {
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var { sha256: sha2562, randomToken } = require_crypto();
-    function labelFrom(userAgent) {
-      const ua = userAgent || "";
-      if (/android/i.test(ua)) return "Android phone";
-      if (/ipad/i.test(ua)) return "iPad";
-      if (/iphone/i.test(ua)) return "iPhone";
-      return "Device";
+    var C = require_constants();
+    function humanize(s) {
+      if (!s) return "";
+      return String(s).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).replace(/\bSbirt\b/, "SBIRT").replace(/\bMat\b/g, "MAT").replace(/\bOtp\b/, "OTP").replace(/\bObot\b/, "OBOT").replace(/\bEd\b/, "ED").replace(/\bMh\b/, "MH").replace(/\bRx\b/, "Rx").replace(/\bIds\b/, "IDs").replace(/\bRoi\b/, "ROI").replace(/\bPart2 Disclosure\b/, "Part 2 disclosure").replace(/\bPart2\b/g, "Part 2");
     }
-    function touch(user, deviceId2, ctx) {
-      const existing = db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
-      const label = labelFrom(ctx.headers["user-agent"]);
-      const now = db3.now();
-      if (existing) db3.run(`UPDATE devices SET user_id=?, last_seen_at=?, last_ip=?, sync_count=sync_count+1, label=COALESCE(label, ?) WHERE id=?`, user.id, now, ctx.ip, label, deviceId2);
-      else db3.run(`INSERT INTO devices(id,user_id,label,first_seen_at,last_seen_at,last_ip,sync_count) VALUES(?,?,?,?,?,?,1)`, deviceId2, user.id, label, now, now, ctx.ip);
-      return db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
+    var OPEN_SHARED = "the provider has been told who the client is (consent check), and the referral counts as open";
+    var LISTS = [
+      {
+        key: "INTERVENTION_TYPES",
+        group: "Visits & services",
+        name: "What did you do?",
+        codes: C.INTERVENTION_TYPES,
+        protect: { outreach: "can be recorded without a client", naloxone_distribution: "can be recorded without a client" }
+      },
+      { key: "LOCATIONS", group: "Visits & services", name: "Location", codes: C.LOCATIONS },
+      { key: "MODALITIES", group: "Visits & services", name: "Modality", codes: C.MODALITIES },
+      { key: "OUTCOMES", group: "Visits & services", name: "Outcome", codes: C.OUTCOMES },
+      { key: "CALL_CONTACT_TYPES", group: "Calls & texts", name: "Who", codes: C.CALL_CONTACT_TYPES },
+      {
+        key: "CALL_OUTCOMES",
+        group: "Calls & texts",
+        name: "Outcome (phone call)",
+        codes: C.CALL_OUTCOMES,
+        protect: { reached: 'counts as contact with the client (last contact, "no contact in 30 days")', crisis_escalated: "marks the call as a crisis" }
+      },
+      {
+        key: "TEXT_OUTCOMES",
+        group: "Calls & texts",
+        name: "Outcome (text message)",
+        codes: C.TEXT_OUTCOMES,
+        protect: { replied: 'counts as contact with the client (last contact, "no contact in 30 days")', sent: "what a text with no outcome is recorded as" }
+      },
+      // No additions: every status means something to the consent check, loop closure and the open/closed
+      // counts (server/routes/referrals.js SHARED_STATUSES / CLOSED_STATUSES, reports.js), and a new one would
+      // silently mean none of them.
+      {
+        key: "REFERRAL_STATUSES",
+        group: "Referrals",
+        name: "Status / What happened",
+        codes: C.REFERRAL_STATUSES,
+        custom: false,
+        protect: {
+          pending: "a new referral starts here and counts as open",
+          contacted: OPEN_SHARED,
+          accepted: OPEN_SHARED,
+          waitlisted: OPEN_SHARED,
+          scheduled: OPEN_SHARED,
+          admitted: "records an admission (funder report, loop closure)",
+          completed: "counts as a successful referral and closes it",
+          closed: "closes the referral",
+          declined_by_client: "closes the referral",
+          declined_by_provider: "closes the referral"
+        },
+        why: "Statuses can be reworded, but not added to: each one tells SUDS whether the provider has been told who the client is, and whether the referral is open, closed or successful."
+      },
+      { key: "REFERRAL_BARRIERS", group: "Referrals", name: "If it did not happen, why", codes: C.REFERRAL_BARRIERS },
+      // No additions: overdose_events.kind has a CHECK constraint, and each kind is a different count.
+      {
+        key: "OVERDOSE_KINDS",
+        group: "Overdose & reversals",
+        name: "What happened",
+        codes: C.OVERDOSE_KINDS,
+        custom: false,
+        labels: { overdose: "Overdose (no naloxone given)", reversal: "Overdose reversed with naloxone", fatal: "Fatal overdose" },
+        protect: { overdose: "counted as an overdose in reports", reversal: "counted as a naloxone reversal in reports", fatal: "marks the client deceased and closes their episode" },
+        why: "These can be reworded, but not added to: each is a separate count in the overdose and funder reports."
+      },
+      {
+        key: "ADMINISTERED_BY",
+        group: "Overdose & reversals",
+        name: "Given by",
+        codes: C.ADMINISTERED_BY,
+        labels: { bystander: "A bystander", first_responder: "A first responder", staff: "Our staff", self: "The person themselves", family: "Family member", unknown: "Unknown" },
+        protect: { unknown: "a blank answer is counted as Unknown in reports" }
+      },
+      {
+        key: "TIME_CATEGORIES",
+        group: "Time",
+        name: "Category",
+        codes: C.TIME_CATEGORIES,
+        protect: { direct_service: "time logged automatically from visits and calls" }
+      },
+      {
+        key: "NOTE_FORMATS",
+        group: "Notes",
+        name: "Format",
+        codes: C.NOTE_FORMATS,
+        labels: { handoff: "Shift hand-off (for the next worker on)", safety_plan: "Safety plan (structured)" },
+        protect: {
+          narrative: "the default format, and what imported notes are saved as",
+          SOAP: "has its own structured sections",
+          DAP: "has its own structured sections",
+          BIRP: "has its own structured sections",
+          GIRP: "has its own structured sections",
+          handoff: "listed in shift hand-offs",
+          safety_plan: "shown as the client's safety plan"
+        }
+      },
+      {
+        key: "SUBSTANCES",
+        group: "Clients",
+        name: "Primary substance",
+        codes: C.SUBSTANCES,
+        protect: { unknown: "a blank answer is counted as Unknown in reports and filters" }
+      },
+      {
+        key: "DISCHARGE_REASONS",
+        group: "Episodes of care",
+        name: "Reason for discharge",
+        codes: C.DISCHARGE_REASONS,
+        labels: {
+          completed: "Completed the program",
+          transferred: "Transferred to another provider",
+          incarcerated: "Incarcerated",
+          moved: "Moved out of the area",
+          lost_contact: "Lost contact",
+          declined: "Declined further services",
+          deceased: "Deceased",
+          administrative: "Administrative closure",
+          other: "Other"
+        },
+        protect: { deceased: "marks the client deceased" }
+      }
+    ];
+    var BY_KEY = new Map(LISTS.map((l) => [l.key, l]));
+    var EXCLUDED = [
+      { name: "Race and ethnicity", why: "Federal (OMB) reporting categories that funder reports count as they are." },
+      { name: "ASAM level of care", why: "The ASAM criteria levels: a national standard, not a programme choice." },
+      { name: "Screening instruments (PHQ-9, GAD-7, AUDIT-C, DAST-10)", why: "Validated questionnaires: their wording and scoring cannot change without making the score meaningless." },
+      { name: "ASAM dimensions and ratings", why: "The six ASAM dimensions and the 0\u20134 risk scale: a national standard." },
+      { name: "Stage of change", why: "The stages of the transtheoretical model: a clinical standard." },
+      { name: "Consent type", why: "Each type is a different legal authority under 42 CFR Part 2 and HIPAA." },
+      { name: "Patient-rights request", why: "The four HIPAA rights (access, amendment, restriction, accounting), each with its own legal deadline." },
+      { name: "Funding type", why: "Grouped by funder in reports; add funding sources themselves under Funding sources below." },
+      { name: "Phone call or text", why: "Fixed by the database: each has its own outcomes list above." }
+    ];
+    var MAX_LABEL = 80;
+    var RESERVED = /* @__PURE__ */ new Set(["all", "open", "none_selected"]);
+    function has(key) {
+      return BY_KEY.has(key);
     }
-    function markWiped(deviceId2) {
-      db3.run(`UPDATE devices SET revoked_at=COALESCE(revoked_at, ?) WHERE id=?`, db3.now(), deviceId2);
-      db3.run(`DELETE FROM settings WHERE key=?`, ackKey(deviceId2));
+    function def(key) {
+      const l = BY_KEY.get(key);
+      if (!l) throw new Error(`Unknown option list ${key}`);
+      return l;
     }
-    var ACK_TTL_MS = 15 * 6e4;
-    var ackKey = (deviceId2) => `device_wipe_ack:${deviceId2}`;
-    function issueWipeToken(deviceId2) {
-      const token2 = randomToken(32);
-      db3.setSetting(ackKey(deviceId2), JSON.stringify({ hash: sha2562(token2), expires: new Date(Date.now() + ACK_TTL_MS).toISOString() }));
-      return token2;
-    }
-    function ackWipe(deviceId2, token2) {
-      const raw = db3.getSetting(ackKey(deviceId2), null);
-      if (!raw || typeof token2 !== "string" || !token2) return false;
-      let rec;
+    function overrideRows(key) {
       try {
-        rec = JSON.parse(raw);
+        return db3.all(`SELECT * FROM option_overrides WHERE list_key=?`, key);
       } catch {
-        return false;
+        return [];
       }
-      if (!rec.hash || Date.parse(rec.expires || 0) < Date.now()) {
-        db3.run(`DELETE FROM settings WHERE key=?`, ackKey(deviceId2));
-        return false;
+    }
+    function entries(key) {
+      const l = def(key);
+      const rows = new Map(overrideRows(key).map((r) => [r.code, r]));
+      const out2 = l.codes.map((code, i) => {
+        const r = rows.get(code);
+        const dflt2 = l.labels && l.labels[code] || humanize(code);
+        return {
+          code,
+          label: r && r.label || dflt2,
+          default_label: dflt2,
+          hidden: !!(r && r.hidden) && !(l.protect && l.protect[code]),
+          custom: false,
+          protected: l.protect && l.protect[code] || null,
+          _order: r && r.sort_order !== null && r.sort_order !== void 0 ? r.sort_order : 1e3 + i
+        };
+      });
+      const builtin = new Set(l.codes);
+      let n = 0;
+      for (const r of rows.values()) {
+        if (builtin.has(r.code) || !r.is_custom) continue;
+        out2.push({
+          code: r.code,
+          label: r.label || humanize(r.code),
+          default_label: null,
+          hidden: !!r.hidden,
+          custom: true,
+          protected: null,
+          _order: r.sort_order !== null && r.sort_order !== void 0 ? r.sort_order : 2e3 + n++
+        });
       }
-      const given = sha2562(token2);
-      if (given.length !== rec.hash.length || !(init_crypto2(), __toCommonJS(crypto_exports)).timingSafeEqual(import_buffer.Buffer.from(given), import_buffer.Buffer.from(rec.hash))) return false;
-      markWiped(deviceId2);
-      return true;
+      out2.sort((a, b) => a._order - b._order);
+      return out2.map(({ _order, ...e }) => e);
     }
-    function requestWipeForUser(userId, { actor, ip, reason } = {}) {
-      const rows = db3.all(`SELECT id FROM devices WHERE user_id=? AND revoked_at IS NULL AND wipe_requested_at IS NULL`, userId);
-      if (!rows.length) return [];
-      const now = db3.now();
-      for (const d of rows) db3.run(`UPDATE devices SET wipe_requested_at=? WHERE id=?`, now, d.id);
-      require_audit().log({ user: actor, action: "device.wipe.requested", entity: "user", entityId: userId, ip, details: { reason, devices: rows.map((d) => d.id) } });
-      return rows.map((d) => d.id);
+    function visible(key) {
+      return entries(key).filter((e) => !e.hidden).map((e) => e.code);
     }
-    module.exports = { touch, markWiped, requestWipeForUser, labelFrom, issueWipeToken, ackWipe };
+    function known(key) {
+      return entries(key).map((e) => e.code);
+    }
+    function accepts(key, value, existing) {
+      if (value === null || value === void 0 || value === "") return true;
+      if (existing !== void 0 && existing !== null && value === existing) return true;
+      return visible(key).includes(value);
+    }
+    function labelMap(key) {
+      return Object.fromEntries(entries(key).map((e) => [e.code, e.label]));
+    }
+    function labelOf(key, code) {
+      if (code === null || code === void 0 || code === "") return code;
+      if (!has(key)) return humanize(code);
+      return labelMap(key)[code] || humanize(code);
+    }
+    function meta() {
+      const option_lists = {};
+      const visibleLists = {};
+      for (const l of LISTS) {
+        const es = entries(l.key);
+        option_lists[l.key] = es;
+        visibleLists[l.key] = es.filter((e) => !e.hidden).map((e) => e.code);
+      }
+      return { visible: visibleLists, option_lists };
+    }
+    function describe2() {
+      return {
+        lists: LISTS.map((l) => ({ key: l.key, group: l.group, name: l.name, custom_allowed: l.custom !== false, note: l.why || null, entries: entries(l.key) })),
+        excluded: EXCLUDED
+      };
+    }
+    function slug(label, taken) {
+      let base = String(label).normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40).replace(/_+$/, "");
+      if (!base || RESERVED.has(base)) base = base ? `${base}_custom` : "custom";
+      let code = base;
+      let i = 2;
+      while (taken.has(code)) code = `${base}_${i++}`;
+      return code;
+    }
+    module.exports = { LISTS, EXCLUDED, MAX_LABEL, has, def, entries, visible, known, accepts, labelMap, labelOf, meta, describe: describe2, slug, humanize };
   }
 });
 
-// server/auth.js
-var require_auth = __commonJS({
-  "server/auth.js"(exports, module) {
+// server/validate.js
+var require_validate = __commonJS({
+  "server/validate.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var { badRequest } = require_http();
+    function validate(body, shape, { partial = false, existing = null } = {}) {
+      if (!body || typeof body !== "object" || Array.isArray(body)) throw badRequest("JSON object body required");
+      const out2 = {};
+      const errors = {};
+      for (const [k, rule] of Object.entries(shape)) {
+        let v = body[k];
+        if (v === "") v = null;
+        if (v === void 0) {
+          if (rule.required && !partial) errors[k] = "required";
+          continue;
+        }
+        if (v === null) {
+          if (rule.required) errors[k] = "required";
+          else out2[k] = null;
+          continue;
+        }
+        switch (rule.type) {
+          case "string":
+            if (typeof v !== "string") {
+              errors[k] = "must be a string";
+              continue;
+            }
+            v = v.trim();
+            if (rule.maxLen && v.length > rule.maxLen) {
+              errors[k] = `max length ${rule.maxLen}`;
+              continue;
+            }
+            if (rule.pattern && !rule.pattern.test(v)) {
+              errors[k] = "invalid format";
+              continue;
+            }
+            if (rule.enum && !rule.enum.includes(v)) {
+              errors[k] = `must be one of ${rule.enum.join(", ")}`;
+              continue;
+            }
+            if (rule.list && v) {
+              const O = require_options();
+              if (!O.accepts(rule.list, v, existing ? existing[k] : void 0)) {
+                errors[k] = `must be one of ${O.visible(rule.list).join(", ")}`;
+                continue;
+              }
+            }
+            if (!v && rule.required) {
+              errors[k] = "required";
+              continue;
+            }
+            break;
+          case "number":
+            v = Number(v);
+            if (!Number.isFinite(v)) {
+              errors[k] = "must be a number";
+              continue;
+            }
+            if (rule.min !== void 0 && v < rule.min) {
+              errors[k] = `min ${rule.min}`;
+              continue;
+            }
+            if (rule.max !== void 0 && v > rule.max) {
+              errors[k] = `max ${rule.max}`;
+              continue;
+            }
+            if (rule.integer && !Number.isInteger(v)) {
+              errors[k] = "must be an integer";
+              continue;
+            }
+            break;
+          case "boolean":
+            v = v === true || v === 1 || v === "1" || v === "true" ? 1 : 0;
+            break;
+          case "date":
+            if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v) || isNaN(Date.parse(v))) {
+              errors[k] = "must be YYYY-MM-DD";
+              continue;
+            }
+            break;
+          case "datetime":
+            if (typeof v !== "string" || isNaN(Date.parse(v))) {
+              errors[k] = "must be an ISO datetime";
+              continue;
+            }
+            v = /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : new Date(v).toISOString();
+            break;
+          case "object":
+            if (typeof v !== "object") {
+              errors[k] = "must be an object";
+              continue;
+            }
+            break;
+          case "array":
+            if (!Array.isArray(v)) {
+              errors[k] = "must be an array";
+              continue;
+            }
+            if (rule.maxLen && v.length > rule.maxLen) {
+              errors[k] = `must have at most ${rule.maxLen} items`;
+              continue;
+            }
+            if (rule.of === "string") {
+              if (!v.every((x) => typeof x === "string" && x.length <= 200)) {
+                errors[k] = "must be a list of identifiers";
+                continue;
+              }
+            }
+            break;
+          default:
+            break;
+        }
+        out2[k] = v;
+      }
+      if (Object.keys(errors).length) throw badRequest("Validation failed", { fields: errors });
+      return out2;
+    }
+    function paging(query, defaults = { limit: 50, max: 500 }) {
+      const limit2 = Math.min(defaults.max, Math.max(1, Number(query.get("limit") || defaults.limit)));
+      const offset = Math.max(0, Number(query.get("offset") || 0));
+      return { limit: limit2, offset };
+    }
+    module.exports = { validate, paging };
+  }
+});
+
+// local/shims/listener.js
+var listener_exports = {};
+__export(listener_exports, {
+  default: () => listener_default,
+  describe: () => describe,
+  lanAddresses: () => lanAddresses,
+  relisten: () => relisten
+});
+function describe() {
+  return { scheme: "local", host: "local", port: 0, tls: false, urls: [], lan: [], hostname: "this-device", mdns: false, friendly: null };
+}
+function lanAddresses() {
+  return [];
+}
+async function relisten() {
+  throw new Error("Not available in local mode");
+}
+var listener_default;
+var init_listener = __esm({
+  "local/shims/listener.js"() {
+    init_globals_inject();
+    listener_default = { describe, lanAddresses, relisten, start() {
+    }, stop() {
+    } };
+  }
+});
+
+// server/crud.js
+var require_crud = __commonJS({
+  "server/crud.js"(exports, module) {
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var config = require_config();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
-    var { sha256: sha2562, randomToken, verifyPassword, verifyPasswordAsync, verifyTotp, decrypt: decrypt3 } = require_crypto();
-    var { unauthorized, forbidden, HttpError: HttpError3 } = require_http();
-    function policy() {
-      const num = (k, d, { zero = false } = {}) => {
-        const raw = db3.getSetting(k, null);
-        if (raw === null || String(raw).trim() === "") return d;
-        const v = Number(raw);
-        return Number.isFinite(v) && (v > 0 || zero && v === 0) ? v : d;
-      };
-      const roles = db3.getSetting("mfa_required_roles", null);
-      const mfaAll = db3.getSetting("mfa_require_all", "0") === "1";
-      return {
-        idleMinutes: num("session_idle_minutes", config.session.idleMinutes),
-        absoluteHours: num("session_absolute_hours", config.session.absoluteHours),
-        passwordMaxAgeDays: num("password_max_age_days", config.password.maxAgeDays),
-        mfaRequiredRoles: mfaAll ? Object.keys(PERMS) : roles === null ? config.mfaRequiredRoles : roles.split(",").map((x) => x.trim()).filter(Boolean),
-        mfaRequireAll: mfaAll,
-        // How long a new account in a role that requires two-step verification has to set it up. Without this
-        // the very first administrator would be locked out the moment the setup wizard created them.
-        mfaGraceDays: num("mfa_grace_days", config.mfaGraceDays, { zero: true }),
-        ...ssoPolicy()
-      };
+    var { notFound, forbidden, HttpError: HttpError3 } = require_http();
+    var { validate, paging } = require_validate();
+    var { uuid: uuid2 } = require_crypto();
+    function clientExists(id) {
+      return !!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, id);
     }
-    function ssoPolicy() {
-      const wanted = db3.getSetting("sso_required", "0") === "1";
-      const emergency = String(db3.getSetting("sso_emergency_accounts", "") || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
-      return { ssoRequiredSetting: wanted, ssoRequired: wanted && !config.local && !!(config.oidc && config.oidc.enabled), ssoEmergencyAccounts: emergency };
+    var STALE_MESSAGE = "This record was changed by someone else since you opened it. Reload to see their changes.";
+    function assertFresh(ctx, row, entity) {
+      const token2 = ctx.body && typeof ctx.body === "object" ? ctx.body.if_updated_at : void 0;
+      if (token2 === void 0 || token2 === null || token2 === "") return;
+      if (row.updated_at && String(token2) === String(row.updated_at)) return;
+      audit3.log({ user: ctx.user, action: `${entity}.update.conflict`, entity, entityId: row.id, clientId: row.client_id || (entity === "client" ? row.id : null), ip: ctx.ip, success: false });
+      throw new HttpError3(409, STALE_MESSAGE, { stale: true, updated_at: row.updated_at || null });
     }
-    var PERMS = {
-      admin: [
-        "users:manage",
-        "settings:manage",
-        "audit:read",
-        "apikeys:manage",
-        "clients:read",
-        "clients:write",
-        "clients:all",
-        "interventions:*",
-        "calls:*",
-        "time:read",
-        "time:write",
-        "time:all",
-        "time:approve",
-        "resources:*",
-        "referrals:*",
-        "tasks:*",
-        "budget:read",
-        "budget:write",
-        "budget:approve",
-        "budget:manage",
-        "notes:admin:read",
-        "notes:admin:write",
-        "notes:clinical:breakglass",
-        "consents:*",
-        "imports:*",
-        "reports:read",
-        "assignments:manage",
-        "export:read",
-        "export:identified",
-        "forms:*",
-        "notes:cosign",
-        "time:approve",
-        "episodes:*",
-        "overdose:*",
-        "clients:merge",
-        "documents:read",
-        "documents:write",
-        "disclosures:override",
-        "clients:legal-hold",
-        "patient-requests:*",
-        "careplan:read",
-        "complaints:*",
-        "incidents:*",
-        "court-orders:*",
-        "agreements:*"
-      ],
-      supervisor: [
-        "clients:read",
-        "clients:write",
-        "clients:all",
-        "interventions:*",
-        "calls:*",
-        "time:read",
-        "time:write",
-        "time:all",
-        "time:approve",
-        "resources:*",
-        "referrals:*",
-        "tasks:*",
-        "budget:read",
-        "budget:write",
-        "budget:approve",
-        "budget:manage",
-        "notes:admin:read",
-        "notes:admin:write",
-        "notes:clinical:read",
-        "notes:clinical:write",
-        "consents:*",
-        "imports:*",
-        "reports:read",
-        "assignments:manage",
-        "audit:read",
-        "export:read",
-        "export:identified",
-        "users:read",
-        "forms:*",
-        "notes:cosign",
-        "time:approve",
-        "episodes:*",
-        "overdose:*",
-        "clients:merge",
-        "documents:read",
-        "documents:write",
-        "disclosures:override",
-        "patient-requests:*",
-        "careplan:*",
-        "assessments:*",
-        "complaints:*",
-        "incidents:*",
-        "court-orders:*",
-        "agreements:*"
-      ],
-      // Front-line staff hold export:read so the Export buttons on their own screens work; without
-      // export:identified every file they can produce is de-identified (Safe Harbor) and caseload-scoped.
-      clinician: [
-        "clients:read",
-        "clients:write",
-        "interventions:*",
-        "calls:*",
-        "time:read",
-        "time:write",
-        "resources:read",
-        "referrals:*",
-        "tasks:*",
-        "notes:admin:read",
-        "notes:admin:write",
-        "notes:clinical:read",
-        "notes:clinical:write",
-        "consents:*",
-        "imports:*",
-        "reports:read",
-        "users:read",
-        "forms:read",
-        "forms:write",
-        "episodes:*",
-        "overdose:*",
-        "documents:read",
-        "patient-requests:*",
-        "export:read",
-        "careplan:*",
-        "assessments:*",
-        "court-orders:read",
-        "agreements:read"
-      ],
-      navigator: [
-        "clients:read",
-        "clients:write",
-        "interventions:*",
-        "calls:*",
-        "time:read",
-        "time:write",
-        "resources:*",
-        "referrals:*",
-        "tasks:*",
-        "budget:read",
-        "budget:write",
-        "notes:admin:read",
-        "notes:admin:write",
-        "consents:*",
-        "imports:*",
-        "reports:read",
-        "users:read",
-        "forms:read",
-        "forms:write",
-        "episodes:*",
-        "overdose:*",
-        "documents:read",
-        "patient-requests:*",
-        "export:read",
-        "careplan:*",
-        "court-orders:read",
-        "agreements:read"
-      ],
-      // finance sees money, not people: export:read without export:identified means every export it can run
-      // comes out keyed by client_code. Do not add 'export:identified' here — docs/HIPAA.md promises otherwise.
-      finance: ["clients:list-deidentified", "budget:read", "budget:write", "budget:approve", "budget:manage", "time:read", "time:all", "time:approve", "reports:read", "export:read", "users:read", "documents:read", "documents:write"],
-      // readonly is for oversight (a county analyst, an auditor's dashboard): aggregate reports and the resource
-      // directory, keyed by client code. It holds neither clients:read nor export:read, so it can identify nobody
-      // and take nothing off the system.
-      readonly: ["clients:list-deidentified", "resources:read", "reports:read", "users:read", "forms:read", "documents:read"]
+    function build(r, opts) {
+      const { table, entity, perm, shape, dateCol = "created_at", ownerCol = "user_id", joins = "", select = `${table}.*`, clientRequired = true } = opts;
+      const base = opts.base || `/api/${entity}s`;
+      const readPerm = `${perm}:read`, writePerm = `${perm}:write`;
+      function decorate(ctx, rows) {
+        return opts.afterLoad ? rows.map((x) => opts.afterLoad(ctx, x)) : rows;
+      }
+      function checkClient(ctx, clientId) {
+        if (clientId) {
+          if (!clientExists(clientId)) throw notFound("Client not found");
+          auth3.assertClientAccess(ctx, clientId);
+        }
+      }
+      r.get(base, auth3.requireAuth, auth3.requirePerm(readPerm, writePerm), (ctx) => {
+        const { limit: limit2, offset } = paging(ctx.query, { limit: 100, max: 1e3 });
+        const where = ["1=1"];
+        const params = [];
+        if (clientRequired || opts.hasClient !== false) {
+          const cf = auth3.caseloadFilter(ctx.user, `${table}.client_id`);
+          if (cf.sql !== "1=1") {
+            where.push(`(${table}.client_id IS NULL OR ${cf.sql})`);
+            params.push(...cf.params);
+          }
+          const cid = ctx.query.get("client_id");
+          if (cid) {
+            where.push(`${table}.client_id=?`);
+            params.push(cid);
+          }
+        }
+        if (ownerCol && ctx.query.get("user_id")) {
+          where.push(`${table}.${ownerCol}=?`);
+          params.push(ctx.query.get("user_id"));
+        }
+        if (ownerCol && ctx.query.get("mine") === "1") {
+          where.push(`${table}.${ownerCol}=?`);
+          params.push(ctx.user.id);
+        }
+        if (ctx.query.get("from")) {
+          where.push(`${table}.${dateCol} >= ?`);
+          params.push(ctx.query.get("from"));
+        }
+        if (ctx.query.get("to")) {
+          where.push(`${table}.${dateCol} <= ?`);
+          params.push(ctx.query.get("to") + (ctx.query.get("to").length === 10 ? "T23:59:59.999Z" : ""));
+        }
+        if (opts.filters) opts.filters(ctx, where, params);
+        const w = "WHERE " + where.join(" AND ");
+        const order = opts.order || `${table}.${dateCol} DESC`;
+        const rows = db3.all(`SELECT ${select} FROM ${table} ${joins} ${w} ORDER BY ${order} LIMIT ? OFFSET ?`, ...params, limit2, offset);
+        const total = db3.one(`SELECT COUNT(*) n FROM ${table} ${joins} ${w}`, ...params).n;
+        audit3.log({ user: ctx.user, action: `${entity}.list`, ip: ctx.ip, clientId: ctx.query.get("client_id") || null, details: { count: rows.length } });
+        return { rows: decorate(ctx, rows), total, limit: limit2, offset };
+      });
+      r.get(`${base}/:id`, auth3.requireAuth, auth3.requirePerm(readPerm, writePerm), (ctx) => {
+        const row = db3.one(`SELECT ${select} FROM ${table} ${joins} WHERE ${table}.id=?`, ctx.params.id);
+        if (!row) throw notFound();
+        if (row.client_id) auth3.assertClientAccess(ctx, row.client_id);
+        else if (opts.ownerOnly && row[ownerCol] !== ctx.user.id && !auth3.hasPerm(ctx.user, opts.ownerOnly)) {
+          audit3.log({ user: ctx.user, action: "authz.denied", entity, entityId: row.id, ip: ctx.ip, success: false, details: { reason: "not the owner" } });
+          throw forbidden("That record belongs to another worker");
+        }
+        audit3.log({ user: ctx.user, action: `${entity}.view`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip });
+        return { row: decorate(ctx, [row])[0] };
+      });
+      r.post(base, auth3.requireAuth, auth3.requirePerm(writePerm), (ctx) => {
+        const v = validate(ctx.body, shape);
+        if (clientRequired && !v.client_id) throw require_http().badRequest("client_id is required");
+        checkClient(ctx, v.client_id);
+        if (opts.beforeInsert) opts.beforeInsert(ctx, v);
+        const id = uuid2();
+        const cols2 = { id, ...v };
+        if (ownerCol && (cols2[ownerCol] === void 0 || cols2[ownerCol] === null || opts.restrictOwner && !auth3.hasPerm(ctx.user, "clients:all"))) cols2[ownerCol] = ctx.user.id;
+        if (opts.creatorCol) cols2[opts.creatorCol] = ctx.user.id;
+        const keys = Object.keys(cols2).filter((k) => cols2[k] !== void 0 && !k.startsWith("_"));
+        db3.transaction(() => {
+          db3.run(`INSERT INTO ${table}(${keys.join(",")}) VALUES(${keys.map(() => "?").join(",")})`, ...keys.map((k) => cols2[k]));
+          if (opts.afterInsert) opts.afterInsert(ctx, { id, ...cols2 });
+        });
+        audit3.log({ user: ctx.user, action: `${entity}.create`, entity, entityId: id, clientId: v.client_id || null, ip: ctx.ip });
+        ctx.status = 201;
+        return { id };
+      });
+      r.put(`${base}/:id`, auth3.requireAuth, auth3.requirePerm(writePerm), (ctx) => {
+        const row = db3.one(`SELECT * FROM ${table} WHERE id=?`, ctx.params.id);
+        if (!row) throw notFound();
+        if (row.client_id) auth3.assertClientAccess(ctx, row.client_id);
+        if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden("You cannot edit this record");
+        if (!opts.noUpdatedAt) assertFresh(ctx, row, entity);
+        const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true, existing: row });
+        if (v.client_id && v.client_id !== row.client_id) checkClient(ctx, v.client_id);
+        if (opts.restrictOwner && v[ownerCol] !== void 0 && !auth3.hasPerm(ctx.user, "clients:all")) delete v[ownerCol];
+        if (opts.beforeUpdate) opts.beforeUpdate(ctx, v, row);
+        const keys = Object.keys(v).filter((k) => v[k] !== void 0 && !k.startsWith("_"));
+        const stamp2 = db3.now();
+        if (keys.length) db3.run(`UPDATE ${table} SET ${keys.map((k) => `${k}=?`).join(", ")}${opts.noUpdatedAt ? "" : ", updated_at=?"} WHERE id=?`, ...keys.map((k) => v[k]), ...opts.noUpdatedAt ? [] : [stamp2], row.id);
+        if (opts.afterUpdate) opts.afterUpdate(ctx, { ...row, ...v }, row);
+        audit3.log({ user: ctx.user, action: `${entity}.update`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip, details: { fields: keys } });
+        return { ok: true, updated_at: opts.noUpdatedAt ? void 0 : (db3.one(`SELECT updated_at FROM ${table} WHERE id=?`, row.id) || {}).updated_at };
+      });
+      r.delete(`${base}/:id`, auth3.requireAuth, auth3.requirePerm(writePerm), (ctx) => {
+        const row = db3.one(`SELECT * FROM ${table} WHERE id=?`, ctx.params.id);
+        if (!row) throw notFound();
+        if (row.client_id) auth3.assertClientAccess(ctx, row.client_id);
+        if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden("You cannot delete this record");
+        if (opts.canDelete && !opts.canDelete(ctx, row)) throw forbidden("You cannot delete this record");
+        if (opts.beforeDelete) opts.beforeDelete(ctx, row);
+        db3.run(`DELETE FROM ${table} WHERE id=?`, row.id);
+        db3.tombstone(table, row.id);
+        audit3.log({ user: ctx.user, action: `${entity}.delete`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip });
+        return { ok: true };
+      });
+    }
+    function ownerOrManager(col = "user_id") {
+      return (ctx, row) => row[col] === ctx.user.id || auth3.hasPerm(ctx.user, "clients:all");
+    }
+    module.exports = { build, ownerOrManager, clientExists, assertFresh, STALE_MESSAGE };
+  }
+});
+
+// server/routes/budget.js
+var require_budget = __commonJS({
+  "server/routes/budget.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth2();
+    var audit3 = require_audit();
+    var crud = require_crud();
+    var C = require_constants();
+    var config = require_config();
+    var { badRequest, notFound, HttpError: HttpError3 } = require_http();
+    var { validate } = require_validate();
+    var { uuid: uuid2, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
+    function encDescription(v) {
+      if (v.description !== void 0) {
+        v.description_enc = v.description ? encrypt3(String(v.description)) : null;
+        delete v.description;
+      }
+    }
+    function presentExpenditure(e) {
+      if (!e) return e;
+      const o = { ...e };
+      if ("description_enc" in e) {
+        o.description = e.description_enc ? decrypt3(e.description_enc) : null;
+        delete o.description_enc;
+      }
+      if ("approval_note_enc" in e) {
+        o.approval_note = e.approval_note_enc ? decrypt3(e.approval_note_enc) : null;
+        delete o.approval_note_enc;
+      }
+      return o;
+    }
+    var cents = (v) => typeof v === "number" && Number.isFinite(v) ? Math.round(v * 100) / 100 : v;
+    function validTimezone(tz) {
+      if (typeof tz !== "string" || !tz.trim() || tz.length > 64) return false;
+      try {
+        new Intl.DateTimeFormat("en-US", { timeZone: tz });
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    function orgTimezone() {
+      let v = null;
+      try {
+        v = db3.getSetting("org_timezone", null);
+      } catch {
+      }
+      return v && validTimezone(v) ? v : config.orgTimezone;
+    }
+    function localDate(when = /* @__PURE__ */ new Date(), tz = orgTimezone()) {
+      const d = when instanceof Date ? when : new Date(when);
+      if (!Number.isFinite(d.getTime())) return null;
+      try {
+        return new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+      } catch {
+        return d.toISOString().slice(0, 10);
+      }
+    }
+    function localMidnight(date, tz = orgTimezone()) {
+      const guess = Date.parse(`${date}T00:00:00Z`);
+      if (!Number.isFinite(guess)) return null;
+      const offset = (ms) => {
+        try {
+          const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+          return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - (ms - ms % 1e3);
+        } catch {
+          return 0;
+        }
+      };
+      const first = guess - offset(guess);
+      return new Date(guess - offset(first)).toISOString();
+    }
+    var fundShape = {
+      name: { type: "string", required: true, maxLen: 200 },
+      source_type: { type: "string", enum: C.FUNDING_TYPES },
+      grant_number: { type: "string", maxLen: 100 },
+      fiscal_year_start: { type: "date", required: true },
+      fiscal_year_end: { type: "date", required: true },
+      total_amount: { type: "number", required: true, min: 0 },
+      restrictions: { type: "string", maxLen: 2e3 },
+      notes: { type: "string", maxLen: 2e3 },
+      is_active: { type: "boolean" }
     };
-    function hasPerm(user, perm) {
-      if (!user) return false;
-      const perms = PERMS[user.role] || [];
-      if (perms.includes(perm)) return true;
-      const [ns] = perm.split(":");
-      if (perms.includes(`${ns}:*`)) return true;
-      if (perm.endsWith(":read") && perms.includes(perm.replace(/:read$/, ":write"))) return true;
+    var lineShape = { category: { type: "string", required: true, enum: C.BUDGET_CATEGORIES }, label: { type: "string", maxLen: 200 }, allocated_amount: { type: "number", required: true, min: 0 }, notes: { type: "string", maxLen: 1e3 }, parent_id: { type: "string" } };
+    function buildLineTree(flat) {
+      const byId = new Map(flat.map((l) => [l.id, { ...l, children: [] }]));
+      const roots = [];
+      for (const l of byId.values()) {
+        const p = l.parent_id && byId.get(l.parent_id);
+        if (p) p.children.push(l);
+        else roots.push(l);
+      }
+      const rollup = (l) => {
+        let subtreeSpent = l.spent, subtreePending = l.pending;
+        for (const c of l.children) {
+          rollup(c);
+          subtreeSpent += c.subtree_spent;
+          subtreePending += c.subtree_pending;
+        }
+        l.subtree_spent = cents(subtreeSpent);
+        l.subtree_pending = cents(subtreePending);
+        l.subtree_remaining = cents(l.allocated_amount - subtreeSpent - subtreePending);
+        l.child_allocated = cents(l.children.reduce((s, c) => s + c.allocated_amount, 0));
+        l.unallocated = cents(l.allocated_amount - l.child_allocated);
+        l.available = cents(l.allocated_amount - l.child_allocated - l.spent - l.pending);
+      };
+      for (const r of roots) rollup(r);
+      return roots;
+    }
+    function wouldCycle(lineId, proposedParentId) {
+      let cur = proposedParentId;
+      const seen2 = /* @__PURE__ */ new Set();
+      while (cur) {
+        if (cur === lineId || seen2.has(cur)) return true;
+        seen2.add(cur);
+        const row = db3.one(`SELECT parent_id FROM budget_lines WHERE id=?`, cur);
+        cur = row ? row.parent_id : null;
+      }
       return false;
     }
-    function requirePerm(...perms) {
-      return (ctx) => {
-        if (!ctx.user) throw unauthorized();
-        if (!perms.some((p) => hasPerm(ctx.user, p))) {
-          audit3.log({ user: ctx.user, action: "authz.denied", ip: ctx.ip, success: false, details: { perms, path: ctx.path } });
-          throw forbidden("You do not have permission for this action");
-        }
-      };
-    }
-    function caseloadRestricted(user) {
-      if (hasPerm(user, "clients:all") || hasPerm(user, "clients:list-deidentified")) return false;
-      return db3.getSetting("caseload_restriction", "1") === "1";
-    }
-    var ACTIVE_ASSIGNMENT = `((end_date IS NULL OR end_date >= date('now')) AND (ended_at IS NULL OR ended_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')))`;
-    var activeAssignment = (prefix = "") => ACTIVE_ASSIGNMENT.replace(/\b(end_date|ended_at)\b/g, `${prefix}$1`);
-    function canAccessClient(user, clientId) {
-      if (!caseloadRestricted(user)) return true;
-      const r = db3.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND ${activeAssignment()}`, clientId, user.id);
-      return !!r;
-    }
-    function assertClientAccess(ctx, clientId) {
-      if (!canAccessClient(ctx.user, clientId)) {
-        audit3.log({ user: ctx.user, action: "authz.denied", entity: "client", entityId: clientId, clientId, ip: ctx.ip, success: false, details: { reason: "not on caseload" } });
-        throw forbidden("This client is not on your caseload");
+    function assertInPeriod(fund, date, what) {
+      if (!date) return;
+      const today = localDate();
+      if (date > today) throw badRequest(`${what} is in the future (${date})`);
+      if (fund && (fund.fiscal_year_start && date < fund.fiscal_year_start || fund.fiscal_year_end && date > fund.fiscal_year_end)) {
+        throw badRequest(`${what} ${date} is outside the period of ${fund.name} (${fund.fiscal_year_start} to ${fund.fiscal_year_end}). Charge it to the fund that covers that date.`);
       }
     }
-    function caseloadFilter(user, col = "c.id") {
-      if (!caseloadRestricted(user)) return { sql: "1=1", params: [] };
-      return { sql: `${col} IN (SELECT client_id FROM assignments WHERE user_id=? AND ${activeAssignment()})`, params: [user.id] };
+    var money = (n) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    function assertPeriodOrder(start2, end) {
+      if (start2 && end && end < start2) throw badRequest(`The period ends (${end}) before it starts (${start2})`);
     }
-    var COOKIE = "suds_session";
-    function createSession(user, ctx, { mfaPending = false, mfaSource = null } = {}) {
-      const token2 = randomToken(32);
-      const now = /* @__PURE__ */ new Date();
-      const expires = new Date(now.getTime() + policy().absoluteHours * 3600 * 1e3);
-      db3.run(
-        `INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,mfa_source) VALUES(?,?,?,?,?,?,?,?,?)`,
-        sha2562(token2),
-        user.id,
-        now.toISOString(),
-        now.toISOString(),
-        expires.toISOString(),
-        mfaPending ? 1 : 0,
-        ctx.ip,
-        (ctx.headers["user-agent"] || "").slice(0, 200),
-        mfaSource
-      );
-      return token2;
-    }
-    function cookieHeader(token2, { clear = false } = {}) {
-      const secure = config.tls.cert || config.isProd ? "; Secure" : "";
-      if (clear) return `${COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`;
-      return `${COOKIE}=${token2}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${policy().absoluteHours * 3600}${secure}`;
-    }
-    function revokeSession(token2) {
-      if (token2) db3.run(`UPDATE sessions SET revoked_at=? WHERE id=?`, db3.now(), sha2562(token2));
-    }
-    function revokeAllForUser(userId) {
-      db3.run(`UPDATE sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL`, db3.now(), userId);
-    }
-    function resolveSession(ctx) {
-      let token2 = ctx.cookies[COOKIE];
-      const authz = ctx.headers["authorization"];
-      if (!token2 && authz && authz.startsWith("Bearer ")) token2 = authz.slice(7).trim();
-      if (!token2) return null;
-      const s = db3.one(`SELECT * FROM sessions WHERE id=? AND revoked_at IS NULL`, sha2562(token2));
-      if (!s) return null;
-      const now = Date.now();
-      if (Date.parse(s.expires_at) < now) return null;
-      const idleMs = policy().idleMinutes * 60 * 1e3;
-      if (now - Date.parse(s.last_seen_at) > idleMs) {
-        db3.run(`UPDATE sessions SET revoked_at=? WHERE id=?`, db3.now(), s.id);
-        return null;
-      }
-      const user = db3.one(`SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,must_change_password,password_changed_at,hourly_cost,created_at,requires_cosign,supervisor_id FROM users WHERE id=?`, s.user_id);
-      if (!user || !user.is_active) return null;
-      if (ctx.headers["x-background"] !== "1" && now - Date.parse(s.last_seen_at) > 6e4) db3.run(`UPDATE sessions SET last_seen_at=? WHERE id=?`, new Date(now).toISOString(), s.id);
-      ctx.sessionToken = token2;
-      ctx.session = s;
-      return user;
-    }
-    function requireAuth(ctx) {
-      if (!ctx.user) throw unauthorized();
-      if (ctx.session?.mfa_pending) throw new HttpError3(401, "MFA verification required", { mfaRequired: true });
-      if (!ctx.path.startsWith("/api/auth/")) {
-        const shellOnly = ctx.method === "GET" && (ctx.path === "/api/meta/constants" || ctx.path === "/api/me/prefs");
-        const due = ctx.session?.mfa_source === "idp" ? null : mfaDeadline(ctx.user);
-        if (due && Date.now() > Date.parse(due) && !shellOnly) {
-          throw new HttpError3(403, "Two-step verification must be set up for your role before you can continue", { mfaSetupRequired: true, mfaSetupDeadline: due });
-        }
-        if (ctx.user.must_change_password && !shellOnly) throw new HttpError3(403, "Password change required", { passwordChangeRequired: true });
-        const age = ctx.user.password_changed_at ? (Date.now() - Date.parse(ctx.user.password_changed_at)) / 864e5 : Infinity;
-        const maxAge = policy().passwordMaxAgeDays;
-        if (age > maxAge && !shellOnly) throw new HttpError3(403, `Password is older than ${maxAge} days and must be changed`, { passwordChangeRequired: true });
+    function assertRoom(fundId, parentId, amount, { excluding = null } = {}) {
+      const siblings = parentId ? db3.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE parent_id=? AND id<>?`, parentId, excluding || "").n : db3.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE funding_source_id=? AND parent_id IS NULL AND id<>?`, fundId, excluding || "").n;
+      const holder = parentId ? db3.one(`SELECT COALESCE(label, category) AS name, allocated_amount AS cap FROM budget_lines WHERE id=?`, parentId) : db3.one(`SELECT name, total_amount AS cap FROM funding_sources WHERE id=?`, fundId);
+      if (!holder) return;
+      const total = cents(siblings + amount);
+      if (total > cents(holder.cap)) {
+        throw badRequest(`That would allocate ${money(total)} against ${holder.name}, which ${parentId ? "is allocated" : "totals"} ${money(holder.cap)}; ${money(cents(holder.cap - siblings))} is left to allocate. Reduce the amount, or raise ${parentId ? "the parent allocation" : "the fund's total"} first.`);
       }
     }
-    function mfaDeadline(user) {
-      if (!user || user.mfa_enabled) return null;
-      if (!policy().mfaRequiredRoles.includes(user.role)) return null;
-      const created = Date.parse(user.created_at || 0) || Date.now();
-      return new Date(created + policy().mfaGraceDays * 864e5).toISOString();
+    function lineAvailable(lineId, { excluding = null } = {}) {
+      const l = db3.one(`SELECT * FROM budget_lines WHERE id=?`, lineId);
+      if (!l) return null;
+      const child = db3.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE parent_id=?`, lineId).n;
+      const spent = db3.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE budget_line_id=? AND status IN ('approved','reimbursed') AND id<>?`, lineId, excluding || "").n;
+      return cents(l.allocated_amount - child - spent);
     }
-    function auditUsername(username) {
-      const u = String(username || "");
-      return `unknown:${u.slice(0, 8)}${u.length > 8 ? "\u2026" : ""}#${sha2562(u).slice(0, 12)}`;
-    }
-    async function login({ username, password, ctx }) {
-      const user = db3.one(`SELECT * FROM users WHERE username=?`, String(username || "").trim());
-      const devices = require_devices();
-      const deviceId2 = ctx.headers["x-sync-client"] && ctx.headers["x-device-id"] ? String(ctx.headers["x-device-id"]).slice(0, 100) : null;
-      const who = user ? { id: user.id, username: user.username } : { username: auditUsername(username) };
-      let pendingWipe = null;
-      if (deviceId2) {
-        const known = db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
-        if (known && known.revoked_at) {
-          audit3.log({ user: who, action: "auth.login.device_revoked", entity: "device", entityId: known.id, ip: ctx.ip, success: false, details: { device_user: known.user_id, wipe_requested: !!known.wipe_requested_at } });
-          throw new HttpError3(403, "This device has been revoked and can no longer sync. Contact your administrator.", { deviceRevoked: true, wipeRequested: !!known.wipe_requested_at, deviceWipeRequired: !!known.wipe_requested_at || void 0 });
-        }
-        if (known && known.wipe_requested_at) pendingWipe = known;
-      }
-      const wipeRequired = (verified) => {
-        const extra = { deviceWipeRequired: true };
-        if (verified) {
-          devices.markWiped(pendingWipe.id);
-          audit3.log({ user: who, action: "auth.login.device_wiped", entity: "device", entityId: pendingWipe.id, ip: ctx.ip, success: false, details: { device_user: pendingWipe.user_id } });
-        } else {
-          extra.wipeAckToken = devices.issueWipeToken(pendingWipe.id);
-          audit3.log({ user: who, action: "auth.login.device_wipe_pending", entity: "device", entityId: pendingWipe.id, ip: ctx.ip, success: false, details: { device_user: pendingWipe.user_id } });
-        }
-        throw new HttpError3(403, "An administrator has remotely wiped this device. It must be set up again before it can sync.", extra);
-      };
-      const fail = (reason) => {
-        audit3.log({ user: who, action: "auth.login.failed", ip: ctx.ip, success: false, details: { reason } });
-        if (pendingWipe) wipeRequired(false);
-        throw unauthorized("Invalid username or password");
-      };
-      if (!user) {
-        await verifyPasswordAsync(password || "", "scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AA==");
-        fail("unknown user");
-      }
-      if (!user.is_active && (user.access_status === "pending" || user.access_status === "declined") && !pendingWipe) {
-        if (!await verifyPasswordAsync(password || "", user.password_hash)) fail("bad password");
-        audit3.log({ user: who, action: "auth.login.access_" + user.access_status, ip: ctx.ip, success: false });
-        throw new HttpError3(403, user.access_status === "pending" ? "Your request is waiting for an administrator to approve it. You can sign in once it has been approved." : "Your request for an account was not approved. Ask your administrator if you think this is a mistake.", { accessPending: user.access_status === "pending", accessDeclined: user.access_status === "declined" });
-      }
-      if (!user.is_active) {
-        if (pendingWipe && await verifyPasswordAsync(password || "", user.password_hash)) wipeRequired(true);
-        fail("inactive");
-      }
-      if (user.locked_until && Date.parse(user.locked_until) > Date.now()) {
-        audit3.log({ user, action: "auth.login.locked", ip: ctx.ip, success: false });
-        if (pendingWipe) wipeRequired(false);
-        throw new HttpError3(423, "Account locked. Try again later or contact an administrator.");
-      }
-      if (!await verifyPasswordAsync(password || "", user.password_hash)) {
-        const attempts = user.failed_attempts + 1;
-        const lock = attempts >= config.lockout.maxAttempts ? new Date(Date.now() + config.lockout.minutes * 6e4).toISOString() : null;
-        db3.run(`UPDATE users SET failed_attempts=?, locked_until=? WHERE id=?`, lock ? 0 : attempts, lock, user.id);
-        fail(lock ? "locked after failures" : "bad password");
-      }
-      if (pendingWipe) wipeRequired(true);
-      const pol = policy();
-      const emergency = pol.ssoRequired && pol.ssoEmergencyAccounts.includes(String(user.username).toLowerCase());
-      if (pol.ssoRequired && !emergency) {
-        audit3.log({ user, action: "auth.login.sso_required", ip: ctx.ip, success: false });
-        throw new HttpError3(403, "This organisation requires single sign-on. Use the county sign-in button instead of a password.", { ssoRequired: true });
-      }
-      db3.run(`UPDATE users SET failed_attempts=0, locked_until=NULL, last_login_at=? WHERE id=?`, db3.now(), user.id);
-      if (deviceId2) {
-        const device = devices.touch(user, deviceId2, ctx);
-        if (device.revoked_at) {
-          audit3.log({ user, action: "auth.login.device_revoked", entity: "device", entityId: device.id, ip: ctx.ip, success: false, details: { wipe_requested: !!device.wipe_requested_at } });
-          throw new HttpError3(403, "This device has been revoked and can no longer sync. Contact your administrator.", { deviceRevoked: true, wipeRequested: !!device.wipe_requested_at, deviceWipeRequired: !!device.wipe_requested_at || void 0 });
-        }
-        if (device.wipe_requested_at) {
-          pendingWipe = device;
-          wipeRequired(true);
-        }
-      }
-      const mfaRequiredForRole = policy().mfaRequiredRoles.includes(user.role);
-      const mfaPending = !!user.mfa_enabled;
-      const token2 = createSession(user, ctx, { mfaPending });
-      if (emergency) console.warn(`[suds] emergency (break-glass) password sign-in by ${user.username} while single sign-on is required`);
-      audit3.log({ user, action: mfaPending ? "auth.login.mfa_pending" : "auth.login", ip: ctx.ip, details: emergency ? { emergency_account: true } : void 0 });
-      const deadline = mfaDeadline(user);
-      return { token: token2, user: publicUser(user), mfaPending, mfaSetupRequired: mfaRequiredForRole && !user.mfa_enabled, mfaSetupDeadline: deadline };
-    }
-    function verifyMfa(ctx, code) {
-      if (!ctx.session) throw unauthorized();
-      const user = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
-      const secret = decrypt3(user.mfa_secret_enc);
-      if (!verifyTotp(secret, code)) {
-        audit3.log({ user, action: "auth.mfa.failed", ip: ctx.ip, success: false });
-        throw unauthorized("Invalid verification code");
-      }
-      db3.run(`UPDATE sessions SET mfa_pending=0 WHERE id=?`, ctx.session.id);
-      audit3.log({ user, action: "auth.login", ip: ctx.ip, details: { mfa: true } });
-      return publicUser(user);
-    }
-    function publicUser(u) {
-      const perms = PERMS[u.role] || [];
+    function fundSummary(f) {
+      const spent = db3.one(`SELECT ROUND(COALESCE(SUM(amount),0),2) n FROM expenditures WHERE funding_source_id=? AND status IN ('approved','reimbursed')`, f.id).n;
+      const pending = db3.one(`SELECT ROUND(COALESCE(SUM(amount),0),2) n FROM expenditures WHERE funding_source_id=? AND status='pending'`, f.id).n;
+      const staffMinutes = db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE funding_source_id=?`, f.id).n;
+      const staffMinutesApproved = db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE funding_source_id=? AND status='approved'`, f.id).n;
+      const staffCost = db3.one(`SELECT ROUND(COALESCE(SUM(t.minutes/60.0*COALESCE(u.hourly_cost,0)),0),2) n FROM time_entries t JOIN users u ON u.id=t.user_id WHERE t.funding_source_id=?`, f.id).n;
+      const flatLines = db3.all(`SELECT b.*, (SELECT ROUND(COALESCE(SUM(amount),0),2) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status IN ('approved','reimbursed')) AS spent, (SELECT ROUND(COALESCE(SUM(amount),0),2) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status='pending') AS pending FROM budget_lines b WHERE b.funding_source_id=? ORDER BY category`, f.id);
+      const allocated = flatLines.filter((l) => !l.parent_id).reduce((s, l) => s + l.allocated_amount, 0);
+      const lines = buildLineTree(flatLines);
+      const totalDays = Math.max(1, (Date.parse(f.fiscal_year_end) - Date.parse(f.fiscal_year_start)) / 864e5);
+      const elapsed = Math.min(totalDays, Math.max(0, (Date.now() - Date.parse(f.fiscal_year_start)) / 864e5));
       return {
-        id: u.id,
-        username: u.username,
-        display_name: u.display_name,
-        email: u.email,
-        title: u.title,
-        role: u.role,
-        mfa_enabled: !!u.mfa_enabled,
-        must_change_password: !!u.must_change_password,
-        permissions: perms,
-        mfa_required: policy().mfaRequiredRoles.includes(u.role),
-        mfa_setup_deadline: mfaDeadline(u),
-        caseload_restricted: caseloadRestricted(u)
+        ...f,
+        spent,
+        pending,
+        staff_minutes: staffMinutes,
+        staff_minutes_approved: staffMinutesApproved,
+        staff_cost: staffCost,
+        allocated: cents(allocated),
+        unallocated: cents(f.total_amount - allocated),
+        remaining: cents(f.total_amount - spent - pending),
+        pct_spent: f.total_amount ? spent / f.total_amount * 100 : 0,
+        pct_elapsed: elapsed / totalDays * 100,
+        lines
       };
     }
-    function passwordPolicy(pw) {
-      const errors = [];
-      if (typeof pw !== "string" || pw.length < config.password.minLength) errors.push(`at least ${config.password.minLength} characters`);
-      if (!/[a-z]/.test(pw) || !/[A-Z]/.test(pw)) errors.push("upper and lower case letters");
-      if (!/[0-9]/.test(pw)) errors.push("a number");
-      if (!/[^A-Za-z0-9]/.test(pw)) errors.push("a symbol");
-      return errors;
-    }
-    module.exports = {
-      auditUsername,
-      policy,
-      PERMS,
-      hasPerm,
-      activeAssignment,
-      requirePerm,
-      requireAuth,
-      mfaDeadline,
-      canAccessClient,
-      assertClientAccess,
-      caseloadFilter,
-      caseloadRestricted,
-      createSession,
-      cookieHeader,
-      revokeSession,
-      revokeAllForUser,
-      resolveSession,
-      login,
-      verifyMfa,
-      publicUser,
-      passwordPolicy,
-      COOKIE
+    module.exports = (r) => {
+      r.get("/api/budget/funds", auth3.requireAuth, auth3.requirePerm("budget:read"), (ctx) => {
+        const rows = db3.all(`SELECT * FROM funding_sources ${ctx.query.get("all") === "1" ? "" : "WHERE is_active=1"} ORDER BY fiscal_year_start DESC, name`);
+        return { funds: rows.map(fundSummary) };
+      });
+      r.post("/api/budget/funds", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
+        const v = validate(ctx.body, fundShape);
+        const id = uuid2();
+        const keys = Object.keys(v);
+        assertPeriodOrder(v.fiscal_year_start, v.fiscal_year_end);
+        db3.run(`INSERT INTO funding_sources(id,${keys.join(",")}) VALUES(?,${keys.map(() => "?").join(",")})`, id, ...keys.map((k) => v[k]));
+        audit3.log({ user: ctx.user, action: "fund.create", entity: "funding_source", entityId: id, ip: ctx.ip });
+        ctx.status = 201;
+        return { id };
+      });
+      r.put("/api/budget/funds/:id", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
+        const f = db3.one(`SELECT * FROM funding_sources WHERE id=?`, ctx.params.id);
+        if (!f) throw notFound();
+        require_crud().assertFresh(ctx, f, "fund");
+        const v = validate(ctx.body, Object.fromEntries(Object.entries(fundShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
+        const keys = Object.keys(v);
+        if (!keys.length) return { ok: true, updated_at: f.updated_at };
+        assertPeriodOrder(v.fiscal_year_start ?? f.fiscal_year_start, v.fiscal_year_end ?? f.fiscal_year_end);
+        const stamp2 = db3.now();
+        db3.run(`UPDATE funding_sources SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), stamp2, f.id);
+        audit3.log({ user: ctx.user, action: "fund.update", entity: "funding_source", entityId: f.id, ip: ctx.ip, details: { fields: keys } });
+        return { ok: true, updated_at: stamp2 };
+      });
+      r.post("/api/budget/funds/:id/lines", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
+        const f = db3.one(`SELECT id FROM funding_sources WHERE id=?`, ctx.params.id);
+        if (!f) throw notFound();
+        const v = validate(ctx.body, lineShape);
+        const id = uuid2();
+        if (v.parent_id) {
+          const p = db3.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, v.parent_id, f.id);
+          if (!p) throw badRequest("Parent allocation does not belong to this fund");
+        }
+        assertRoom(f.id, v.parent_id || null, v.allocated_amount);
+        db3.run(`INSERT INTO budget_lines(id,funding_source_id,parent_id,category,label,allocated_amount,notes) VALUES(?,?,?,?,?,?,?)`, id, f.id, v.parent_id || null, v.category, v.label || null, v.allocated_amount, v.notes || null);
+        audit3.log({ user: ctx.user, action: "budget_line.create", entity: "budget_line", entityId: id, ip: ctx.ip, details: v.parent_id ? { parent_id: v.parent_id } : void 0 });
+        ctx.status = 201;
+        return { id };
+      });
+      r.put("/api/budget/lines/:id", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
+        const l = db3.one(`SELECT * FROM budget_lines WHERE id=?`, ctx.params.id);
+        if (!l) throw notFound();
+        require_crud().assertFresh(ctx, l, "budget_line");
+        const v = validate(ctx.body, Object.fromEntries(Object.entries(lineShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
+        if ("parent_id" in v && v.parent_id) {
+          if (v.parent_id === l.id) throw badRequest("A budget line cannot be its own parent");
+          const p = db3.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, v.parent_id, l.funding_source_id);
+          if (!p) throw badRequest("Parent allocation does not belong to this fund");
+          if (wouldCycle(l.id, v.parent_id)) throw badRequest("That would nest this allocation inside one of its own sub-allocations");
+        }
+        if ("allocated_amount" in v || "parent_id" in v) {
+          const parentId = "parent_id" in v ? v.parent_id || null : l.parent_id;
+          const amount = v.allocated_amount ?? l.allocated_amount;
+          assertRoom(l.funding_source_id, parentId, amount, { excluding: l.id });
+          const handedDown = db3.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE parent_id=?`, l.id).n;
+          if (cents(amount) < cents(handedDown)) throw badRequest(`Its sub-allocations already total ${money(handedDown)}; reduce those first`);
+        }
+        const keys = Object.keys(v);
+        const stamp2 = keys.length ? db3.now() : l.updated_at;
+        if (keys.length) db3.run(`UPDATE budget_lines SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), stamp2, l.id);
+        audit3.log({ user: ctx.user, action: "budget_line.update", entity: "budget_line", entityId: l.id, ip: ctx.ip, details: { fields: keys } });
+        return { ok: true, updated_at: stamp2 };
+      });
+      r.delete("/api/budget/lines/:id", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
+        const ids = db3.all(`WITH RECURSIVE sub(id) AS (SELECT id FROM budget_lines WHERE id=? UNION ALL SELECT b.id FROM budget_lines b JOIN sub ON b.parent_id=sub.id) SELECT id FROM sub`, ctx.params.id).map((row) => row.id);
+        db3.run(`DELETE FROM budget_lines WHERE id=?`, ctx.params.id);
+        for (const id of ids) {
+          db3.tombstone("budget_lines", id);
+          audit3.log({ user: ctx.user, action: "budget_line.delete", entity: "budget_line", entityId: id, ip: ctx.ip });
+        }
+        return { ok: true };
+      });
+      crud.build(r, {
+        table: "expenditures",
+        entity: "expenditure",
+        base: "/api/budget/expenditures",
+        perm: "budget",
+        dateCol: "spent_at",
+        clientRequired: false,
+        restrictOwner: true,
+        joins: "JOIN users u ON u.id=expenditures.user_id JOIN funding_sources f ON f.id=expenditures.funding_source_id LEFT JOIN budget_lines b ON b.id=expenditures.budget_line_id LEFT JOIN clients c ON c.id=expenditures.client_id LEFT JOIN users a ON a.id=expenditures.approved_by",
+        select: "expenditures.*, u.display_name AS worker, f.name AS fund, b.label AS line_label, b.category AS line_category, c.client_code, a.display_name AS approver",
+        // intervention_id is deliberately not writable here: it only ever means "this expenditure was
+        // auto-posted from that service record" (server/routes/interventions.js's syncExpenditure, a raw INSERT
+        // that bypasses this shape entirely). Accepting it from a normal request would let anyone attach a
+        // second expenditure to an already-linked intervention, double-counting its cost.
+        shape: {
+          client_id: { type: "string" },
+          user_id: { type: "string" },
+          funding_source_id: { type: "string", required: true },
+          budget_line_id: { type: "string" },
+          spent_at: { type: "date", required: true },
+          amount: { type: "number", required: true, min: 0.01 },
+          category: { type: "string", required: true, enum: C.BUDGET_CATEGORIES },
+          vendor: { type: "string", maxLen: 200 },
+          description: { type: "string", maxLen: 1e3 },
+          receipt_ref: { type: "string", maxLen: 200 }
+        },
+        filters: (ctx, where, params) => {
+          const f = ctx.query.get("fund");
+          if (f) {
+            where.push("expenditures.funding_source_id=?");
+            params.push(f);
+          }
+          const s = ctx.query.get("status");
+          if (s && s !== "all") {
+            where.push("expenditures.status=?");
+            params.push(s);
+          }
+        },
+        beforeInsert: (ctx, v) => {
+          v.amount = cents(v.amount);
+          const f = db3.one(`SELECT * FROM funding_sources WHERE id=? AND is_active=1`, v.funding_source_id);
+          if (!f) throw badRequest("Unknown or inactive funding source");
+          assertInPeriod(f, v.spent_at, "Expenditure date");
+          if (v.budget_line_id) {
+            const l = db3.one(`SELECT * FROM budget_lines WHERE id=? AND funding_source_id=?`, v.budget_line_id, f.id);
+            if (!l) throw badRequest("Budget line does not belong to fund");
+            if (!v.category) v.category = l.category;
+          }
+          encDescription(v);
+        },
+        beforeUpdate: (ctx, v, row) => {
+          if (v.amount !== void 0 && v.amount !== null) v.amount = cents(v.amount);
+          if ("spent_at" in v || "funding_source_id" in v || "budget_line_id" in v) {
+            const f = db3.one(`SELECT * FROM funding_sources WHERE id=? AND is_active=1`, v.funding_source_id || row.funding_source_id);
+            if (!f) throw badRequest("Unknown or inactive funding source");
+            assertInPeriod(f, v.spent_at || row.spent_at, "Expenditure date");
+            const lineId = "budget_line_id" in v ? v.budget_line_id : row.budget_line_id;
+            if (lineId) {
+              const l = db3.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, lineId, f.id);
+              if (!l) throw badRequest("Budget line does not belong to fund");
+            }
+          }
+          encDescription(v);
+        },
+        afterLoad: (ctx, x) => presentExpenditure(x),
+        canEdit: (ctx, row) => row.status === "pending" && (row.user_id === ctx.user.id || auth3.hasPerm(ctx.user, "budget:approve"))
+      });
+      const TRANSITIONS = { pending: ["approved", "rejected"], approved: ["reimbursed"] };
+      r.post("/api/budget/expenditures/:id/approve", auth3.requireAuth, auth3.requirePerm("budget:approve"), (ctx) => {
+        const e = db3.one(`SELECT * FROM expenditures WHERE id=?`, ctx.params.id);
+        if (!e) throw notFound();
+        const { status, note, force } = validate(ctx.body, { status: { type: "string", required: true, enum: ["approved", "rejected", "reimbursed"] }, note: { type: "string", maxLen: 500 }, force: { type: "boolean" } });
+        if (!(TRANSITIONS[e.status] || []).includes(status)) {
+          const by = e.approved_by ? db3.one(`SELECT display_name FROM users WHERE id=?`, e.approved_by) : null;
+          throw new HttpError3(409, `This expenditure is already ${e.status}${by ? ` (by ${by.display_name})` : ""}; it cannot be marked ${status}`, { current_status: e.status, approved_by: e.approved_by || null });
+        }
+        if (e.user_id === ctx.user.id && status === "approved") throw badRequest("Separation of duties: you cannot approve your own expenditure; another approver must review it");
+        if (status === "rejected" && !note) throw badRequest("Say why this expenditure is being rejected, so the person who submitted it knows what to fix");
+        const details = { note_recorded: note ? true : void 0, amount: e.amount };
+        if (status === "approved" && e.budget_line_id) {
+          const available = lineAvailable(e.budget_line_id, { excluding: e.id });
+          if (available !== null && cents(e.amount) > available) {
+            const over = cents(e.amount - available);
+            const line = db3.one(`SELECT label, category FROM budget_lines WHERE id=?`, e.budget_line_id);
+            const mayForce = ["supervisor", "admin"].includes(ctx.user.role);
+            if (!(force && note && mayForce)) {
+              throw new HttpError3(
+                409,
+                `Approving ${e.amount.toFixed(2)} would take ${line.label || line.category} ${over.toFixed(2)} below zero (${available.toFixed(2)} available)${mayForce ? ". Approve it anyway with force and a note saying why." : ". Ask a supervisor to approve it, or move it to a line with room."}`,
+                { overspend: true, available, over, force_allowed: mayForce }
+              );
+            }
+            details.overspend = over;
+            details.forced = true;
+          }
+        }
+        if (status === "reimbursed") {
+          db3.run(`UPDATE expenditures SET status=?, approval_note_enc=COALESCE(?, approval_note_enc), updated_at=? WHERE id=?`, status, note ? encrypt3(note) : null, db3.now(), e.id);
+          details.reimbursed_by = ctx.user.id;
+        } else {
+          db3.run(`UPDATE expenditures SET status=?, approved_by=?, approved_at=?, approval_note_enc=?, updated_at=? WHERE id=?`, status, ctx.user.id, db3.now(), note ? encrypt3(note) : null, db3.now(), e.id);
+        }
+        audit3.log({ user: ctx.user, action: `expenditure.${status}`, entity: "expenditure", entityId: e.id, clientId: e.client_id, ip: ctx.ip, details });
+        return { ok: true, status };
+      });
+      r.get("/api/budget/summary", auth3.requireAuth, auth3.requirePerm("budget:read"), () => {
+        const funds = db3.all(`SELECT * FROM funding_sources WHERE is_active=1`).map(fundSummary);
+        return {
+          totals: { budget: cents(funds.reduce((s, f) => s + f.total_amount, 0)), spent: cents(funds.reduce((s, f) => s + f.spent, 0)), pending: cents(funds.reduce((s, f) => s + f.pending, 0)), remaining: cents(funds.reduce((s, f) => s + f.remaining, 0)) },
+          by_category: db3.all(`SELECT category, ROUND(SUM(amount),2) amount, COUNT(*) n FROM expenditures WHERE status IN ('approved','reimbursed') GROUP BY category ORDER BY amount DESC`),
+          // Approved and reimbursed only, the same as the headline "Spent (approved)" figure above it: the two
+          // used to differ by whatever was still pending, on the same page.
+          by_month: db3.all(`SELECT substr(spent_at,1,7) month, ROUND(SUM(amount),2) amount FROM expenditures WHERE status IN ('approved','reimbursed') GROUP BY month ORDER BY month`),
+          per_client: db3.one(`SELECT COUNT(DISTINCT client_id) clients, ROUND(COALESCE(SUM(amount),0),2) amount FROM expenditures WHERE client_id IS NOT NULL AND status IN ('approved','reimbursed')`),
+          funds
+        };
+      });
     };
+    module.exports.wouldCycle = wouldCycle;
+    module.exports.assertInPeriod = assertInPeriod;
+    module.exports.localDate = localDate;
+    module.exports.localMidnight = localMidnight;
+    module.exports.orgTimezone = orgTimezone;
+    module.exports.validTimezone = validTimezone;
+    module.exports.cents = cents;
+    module.exports.lineAvailable = lineAvailable;
+    module.exports.presentExpenditure = presentExpenditure;
   }
 });
 
-// server/disclosure.js
-var require_disclosure = __commonJS({
-  "server/disclosure.js"(exports, module) {
+// server/scim.js
+var require_scim = __commonJS({
+  "server/scim.js"(exports, module) {
     "use strict";
     init_globals_inject();
     var db3 = require_db();
     var audit3 = require_audit();
-    var C = require_constants();
-    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
-    var { badRequest, forbidden, HttpError: HttpError3 } = require_http();
-    var BASES = ["consent", "court_order", "medical_emergency", "qsoa", "audit_evaluation", "research", "crime_on_premises", "child_abuse_report", "other"];
-    var NEEDS_JUSTIFICATION = ["other", "medical_emergency", "crime_on_premises", "child_abuse_report"];
-    var OVERRIDE_BASES = ["other", "research", "audit_evaluation", "crime_on_premises", "child_abuse_report"];
-    var AGREEMENT_KINDS = { qsoa: "qualified service organization agreement", research: "research approval", audit_evaluation: "audit or evaluation approval" };
-    var REFERRAL_BASES = ["consent", "medical_emergency", "court_order", "other"];
-    var LEGACY_CONSENT_CUTOFF = "2026-02-16";
-    var SYSTEM_BASES = ["export", "state_reporting"];
-    var STATE_REPORTING = {
-      basis: "state_reporting",
-      recipient: "California Department of Health Care Services (DHCS) \u2014 CalOMS Tx",
-      purpose: "State reporting (CalOMS Tx): treatment admission, discharge and annual update data required by law (HIPAA \xA7164.512(a); 42 CFR \xA72.53)"
-    };
-    var MIN_JUSTIFICATION = 20;
-    var EXPORT_BASES = ["consent", "audit_evaluation", "research", "qsoa", "internal"];
-    var RESTRICTION_EXEMPT = ["court_order", "medical_emergency", "child_abuse_report", "crime_on_premises", "state_reporting"];
-    function part2Program() {
-      return db3.getSetting("part2_program", "1") !== "0";
-    }
-    function notice() {
-      return { version: C.PART2_NOTICE_VERSION, text: C.PART2_REDISCLOSURE_NOTICE, short: C.PART2_NOTICE_SHORT };
-    }
-    function disclosingConsentTypes() {
-      return part2Program() ? C.PART2_CONSENT_TYPES : [...C.PART2_CONSENT_TYPES, "roi", "research"];
-    }
-    function fileConsentTypes() {
-      return disclosingConsentTypes().filter((t) => t !== "part2_proceedings" && t !== "part2_counseling_notes");
-    }
-    function fileNotice({ short = false } = {}) {
-      if (!part2Program()) return null;
-      const n = notice();
-      return short ? n.short : `${n.short} NOTICE TO RECIPIENT (42 CFR \xA72.32): ${n.text}`;
-    }
-    function missingPart2Elements(v) {
-      const missing = [];
-      if (!v.discloser) missing.push("who may make the disclosure");
-      if (!v.recipient) missing.push("the recipient (a name, or a class of recipients)");
-      if (!v.purpose) missing.push("the purpose");
-      if (!v.scope) missing.push("what information is covered (scope)");
-      if (!v.expires_at && !v.expires_event) missing.push("an expiration date or event");
-      if (!v.document_ref && !v.signed_on_paper && !v.witness) missing.push('evidence it was signed (a document reference, a witness, or "signed on paper")');
-      if (v.signer_relationship !== "patient" && !v.signer_name) missing.push("the name of the person who signed for the patient");
-      if (!v.revocation_right_given) missing.push("confirmation that the consent states the right to revoke it and how");
-      if (!v.redisclosure_notice_given) missing.push("confirmation that the redisclosure statement was given (\xA72.32)");
-      if (!v.refusal_consequences_given) missing.push("confirmation that the consent states the consequences of refusing to sign");
-      return missing;
-    }
-    function missingLegacyElements(v) {
-      const missing = [];
-      if (!v.recipient) missing.push("the recipient");
-      if (!v.purpose) missing.push("the purpose");
-      if (!v.scope) missing.push("what information is covered (scope)");
-      if (!v.expires_at && !v.expires_event) missing.push("an expiration date or event");
-      if (!v.document_ref && !v.signed_on_paper && !v.witness) missing.push('evidence it was signed (a document reference, a witness, or "signed on paper")');
-      if (String(v.signed_at || "") >= LEGACY_CONSENT_CUTOFF) missing.push(`the 2024 elements (it was signed on or after ${LEGACY_CONSENT_CUTOFF}, when the 2024 rule's element list became mandatory)`);
-      return missing;
-    }
-    var dec2 = (v) => {
-      if (!v) return "";
-      try {
-        return decrypt3(v);
-      } catch {
-        return "";
+    var { uuid: uuid2 } = require_crypto();
+    var USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User";
+    var LIST_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse";
+    var ERROR_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:Error";
+    var PATCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:PatchOp";
+    var ROLES = ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"];
+    var NO_PASSWORD = "!scim-provisioned-no-password";
+    var ScimError = class extends Error {
+      constructor(status, detail, scimType) {
+        super(detail);
+        this.status = status;
+        this.scimType = scimType;
       }
     };
-    function consentValues(row) {
+    var errorBody = (status, detail, scimType) => ({ schemas: [ERROR_SCHEMA], status: String(status), ...scimType ? { scimType } : {}, detail });
+    function parseGroupRoles(text) {
+      const out2 = [];
+      for (const part of String(text || "").split(/[;\n]+/)) {
+        const t = part.trim();
+        if (!t) continue;
+        const i = t.lastIndexOf("=");
+        if (i <= 0) throw Object.assign(new Error(`"${t}" is not Group=role`), { status: 400 });
+        const group = t.slice(0, i).trim();
+        const role = t.slice(i + 1).trim().toLowerCase();
+        if (!ROLES.includes(role)) throw Object.assign(new Error(`"${role}" is not a SUDS role (${ROLES.join(", ")})`), { status: 400 });
+        if (group.length > 200) throw Object.assign(new Error("A group name is too long"), { status: 400 });
+        out2.push([group, role]);
+      }
+      return out2;
+    }
+    function normaliseGroupRoles(text) {
+      try {
+        return parseGroupRoles(text).map(([g, r]) => `${g}=${r}`).join("; ");
+      } catch (e) {
+        const { badRequest } = require_http();
+        throw badRequest(`scim_group_roles: ${e.message}`);
+      }
+    }
+    function mappedRole(names) {
+      let map = [];
+      try {
+        map = parseGroupRoles(db3.getSetting("scim_group_roles", ""));
+      } catch {
+      }
+      const lower = new Set(names.filter(Boolean).map((n) => String(n).toLowerCase()));
+      const hits = map.filter(([g]) => lower.has(g.toLowerCase())).map(([, r]) => r);
+      return ROLES.find((r) => hits.includes(r)) || null;
+    }
+    function defaultRole() {
+      const r = db3.getSetting("scim_default_role", "readonly");
+      return ROLES.includes(r) ? r : "readonly";
+    }
+    function emergencyAccounts() {
+      return String(db3.getSetting("sso_emergency_accounts", "") || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+    }
+    function toResource(u, base = "") {
       return {
-        discloser: row.discloser,
-        recipient: dec2(row.recipient_enc),
-        purpose: dec2(row.purpose_enc),
-        scope: dec2(row.scope_enc),
-        expires_at: row.expires_at,
-        expires_event: row.expires_event,
-        document_ref: row.document_ref,
-        signed_on_paper: row.signed_on_paper,
-        witness: dec2(row.witness_enc),
-        signer_relationship: row.signer_relationship,
-        signer_name: dec2(row.signer_name_enc),
-        revocation_right_given: row.revocation_right_given,
-        redisclosure_notice_given: row.redisclosure_notice_given,
-        refusal_consequences_given: row.refusal_consequences_given,
-        signed_at: row.signed_at
+        schemas: [USER_SCHEMA],
+        id: u.id,
+        ...u.scim_external_id ? { externalId: u.scim_external_id } : {},
+        userName: u.username,
+        displayName: u.display_name,
+        name: { formatted: u.display_name },
+        ...u.title ? { title: u.title } : {},
+        emails: u.email ? [{ value: u.email, type: "work", primary: true }] : [],
+        active: !!u.is_active,
+        roles: [{ value: u.role, primary: true }],
+        meta: { resourceType: "User", created: u.created_at, lastModified: u.updated_at, location: `${base}/scim/v2/Users/${u.id}` }
       };
     }
-    function consentElementProblems(row) {
-      if (!C.PART2_CONSENT_TYPES.includes(row.type)) return [];
-      const v = consentValues(row);
-      return row.rule_version === "2024" ? missingPart2Elements(v) : missingLegacyElements(v);
-    }
-    function activeConsent(clientId, consentId, { elements = true } = {}) {
-      if (!consentId) return null;
-      const row = db3.one(`SELECT * FROM consents WHERE id=? AND client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, consentId, clientId) || null;
-      if (row && elements && consentElementProblems(row).length) return null;
-      return row;
-    }
-    function courtOrderProblems(o) {
-      const out2 = [];
-      if (o.status !== "active") out2.push("it has been vacated");
-      if (o.expires_at && o.expires_at < (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)) out2.push("it has expired");
-      if (!o.findings_recorded) out2.push("it does not record the good-cause findings the regulation requires (\xA72.64(d))");
-      if (!o.notice_requirement_met) out2.push("the notice and opportunity to respond the regulation requires was not given");
-      return out2;
-    }
-    function agreedRestrictions(clientId) {
-      return db3.one(`SELECT COUNT(*) n FROM patient_requests WHERE client_id=? AND kind='restriction' AND status='fulfilled'`, clientId).n;
-    }
-    var normalise = (s) => String(s || "").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
-    var splitAliases = (s) => String(s || "").split(/[;\n]/).map((x) => x.trim()).filter(Boolean);
-    function aliasGroups() {
-      const groups = db3.all(`SELECT organisation, aliases FROM disclosure_agreements`).map((a) => [a.organisation, ...splitAliases(a.aliases)]);
-      for (const r of db3.all(`SELECT value FROM settings WHERE key LIKE 'fhir_client:%'`)) {
-        try {
-          const reg = JSON.parse(r.value);
-          if (reg && reg.recipient) groups.push([reg.recipient, ...Array.isArray(reg.aliases) ? reg.aliases : []]);
-        } catch {
-        }
+    var bool = (v) => typeof v === "boolean" ? v : typeof v === "string" && /^(true|false)$/i.test(v) ? v.toLowerCase() === "true" : void 0;
+    var USERNAME_RE = /^[\w.@+'-]{1,120}$/;
+    function attrsFrom(body, { partial = false } = {}) {
+      const a = {};
+      if (!body || typeof body !== "object") throw new ScimError(400, "The request body must be a SCIM User", "invalidSyntax");
+      if (body.userName !== void 0) {
+        if (typeof body.userName !== "string" || !USERNAME_RE.test(body.userName.trim())) throw new ScimError(400, "userName must be 1-120 letters, digits or . _ @ + ' -", "invalidValue");
+        a.username = body.userName.trim();
+      } else if (!partial) throw new ScimError(400, "userName is required", "invalidValue");
+      const n = body.name && typeof body.name === "object" ? body.name : {};
+      const display = [body.displayName, n.formatted, [n.givenName, n.familyName].filter(Boolean).join(" ")].find((x) => typeof x === "string" && x.trim());
+      if (display) a.display_name = display.trim().slice(0, 120);
+      else if (!partial) a.display_name = a.username;
+      if (body.title !== void 0) a.title = body.title === null ? null : String(body.title).slice(0, 120);
+      if (body.emails !== void 0) {
+        const list2 = Array.isArray(body.emails) ? body.emails : [];
+        const e = list2.find((x) => x && x.primary) || list2.find((x) => x && x.type === "work") || list2[0];
+        a.email = e && e.value ? String(e.value).slice(0, 200) : null;
       }
-      return groups;
-    }
-    function recipientNames(recipient) {
-      const given = (Array.isArray(recipient) ? recipient : [recipient]).map((x) => String(x || "").trim()).filter(Boolean);
-      const seen2 = new Set(given.map(normalise));
-      const out2 = [...given];
-      for (const group of aliasGroups()) {
-        if (!group.some((n) => seen2.has(normalise(n)))) continue;
-        for (const n of group) if (!seen2.has(normalise(n))) {
-          seen2.add(normalise(n));
-          out2.push(n);
-        }
+      if (body.externalId !== void 0) a.scim_external_id = body.externalId === null || body.externalId === "" ? null : String(body.externalId).slice(0, 200);
+      if (body.active !== void 0) {
+        const b = bool(body.active);
+        if (b === void 0) throw new ScimError(400, "active must be true or false", "invalidValue");
+        a.active = b;
       }
-      return out2;
-    }
-    function consentNamesRecipient({ type, recipient }, names) {
-      const r = normalise(recipient);
-      const ns = names.map(normalise).filter(Boolean);
-      if (!r || !ns.length) return false;
-      if (type === "part2_tpo") return ns.some((n) => ` ${r} `.includes(` ${n} `));
-      return ns.includes(r);
-    }
-    function isInternalRecipient(recipient) {
-      const r = normalise(recipient);
-      if (!r) return false;
-      if (r === normalise(db3.getSetting("org_name", ""))) return true;
-      return db3.all(`SELECT username, display_name FROM users WHERE is_active=1`).some((u) => normalise(u.username) === r || normalise(u.display_name) === r);
-    }
-    function agreementProblems(a) {
-      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-      const out2 = [];
-      if (a.status !== "active") out2.push("it has been ended");
-      if (a.expires_at && a.expires_at < today) out2.push("it has expired");
-      if (a.agreement_date > today) out2.push("it is not in force yet");
-      if (a.kind !== "qsoa" && !a.approving_body) out2.push("it does not name the IRB or approving body");
-      return out2;
-    }
-    function agreementNames(a) {
-      return [a.organisation, ...splitAliases(a.aliases)];
-    }
-    function requireAgreement(basis, agreementId, recipient) {
-      const label = AGREEMENT_KINDS[basis];
-      let a = agreementId ? db3.one(`SELECT * FROM disclosure_agreements WHERE id=?`, agreementId) : null;
-      if (!agreementId) {
-        const names2 = new Set(recipientNames(recipient).map(normalise));
-        a = db3.all(`SELECT * FROM disclosure_agreements WHERE kind=? AND status='active' ORDER BY agreement_date DESC, created_at DESC`, basis).find((x) => !agreementProblems(x).length && agreementNames(x).some((n) => names2.has(normalise(n)))) || null;
+      const names = [];
+      for (const k of ["roles", "groups"]) if (Array.isArray(body[k])) {
+        for (const x of body[k]) if (x) names.push(typeof x === "string" ? x : x.display, typeof x === "string" ? null : x.value);
       }
-      if (!a) {
-        throw badRequest(basis === "qsoa" ? "A disclosure to a qualified service organization needs the qualified service organization agreement on file (\xA72.11, \xA72.12(c)(4)): register it under Privacy & Part 2 \u2192 Agreements, and choose it." : `A ${basis === "research" ? "research (\xA72.52)" : "audit or evaluation (\xA72.53)"} disclosure needs the ${label} on file \u2014 the IRB, privacy board or approving body, and its dates: register it under Privacy & Part 2 \u2192 Agreements, and choose it.`, { agreementRequired: basis });
-      }
-      if (a.kind !== basis) throw badRequest(`That is a ${AGREEMENT_KINDS[a.kind]}, not a ${label}.`);
-      const problems = agreementProblems(a);
-      if (problems.length) throw badRequest(`That ${label} cannot authorise a disclosure: ${problems.join("; ")}.`);
-      const names = recipientNames(recipient);
-      if (!names.length) throw badRequest("Name the recipient of the disclosure.");
-      const theirs = new Set(agreementNames(a).map(normalise));
-      if (!names.some((n) => theirs.has(normalise(n)))) {
-        throw new HttpError3(409, `This ${label} is with "${a.organisation}"; it only covers disclosures to that organisation. Name it as the recipient, or choose the agreement with the organisation you are disclosing to.`, { agreementOrganisation: a.organisation });
+      if (names.length) {
+        const r = mappedRole(names);
+        if (r) a.role = r;
       }
       return a;
     }
-    function requireBasis(clientId, { consent_id, basis, justification, user, court_order_id, legal_proceeding, counseling_notes, restriction_reviewed, recipient, agreement_id, recipient_override, allowed } = {}) {
-      const b = basis || "consent";
-      if (!BASES.includes(b)) throw badRequest(`"${b}" is not a lawful basis for disclosure`);
-      if (allowed && !allowed.includes(b)) throw badRequest(`A referral can only be made with the client's consent, in a medical emergency, under a court order, or on a supervisor's justified override \u2014 not on a "${b.replace(/_/g, " ")}" basis. Record that disclosure on the client's Consents tab instead.`);
-      const canOverride = require_auth().hasPerm(user, "disclosures:override");
-      if (OVERRIDE_BASES.includes(b) && !canOverride) {
-        throw forbidden(b === "other" ? 'Only a supervisor or administrator can record a disclosure on an "other" basis' : `Only a supervisor or administrator can record a disclosure on a "${b.replace(/_/g, " ")}" basis`);
-      }
-      const proceeding = !!legal_proceeding;
-      const notes = !!counseling_notes;
-      if (proceeding && !["consent", "court_order"].includes(b)) throw badRequest("Information for use in a proceeding against the patient may only be disclosed under a court order issued under 42 CFR \xA72.64/\xA72.65, or the patient's written consent given for that proceeding alone (\xA72.12(d), \xA72.31(d)). A subpoena on its own is not enough.");
-      if (notes && !["consent", "court_order"].includes(b)) throw badRequest("SUD counseling notes may only be disclosed under a consent given for counseling notes alone (\xA72.31(b)), or a court order that expressly covers them.");
-      const why = String(justification || "").trim();
-      let consent = null;
-      let order = null;
-      let agreement = null;
-      let override = false;
-      if (b === "consent") {
-        consent = activeConsent(clientId, consent_id, { elements: false });
-        if (!consent) throw badRequest("A valid, unexpired consent must be selected before information can be shared. Record the consent first, or choose another lawful basis.");
-        if (!disclosingConsentTypes().includes(consent.type)) {
-          throw badRequest(consent.type === "roi" ? "A general release of information is not a 42 CFR Part 2 consent (\xA72.31, \xA72.32). Record a Part 2 consent with every required element, or choose another lawful basis." : `A "${consent.type.replace(/_/g, " ")}" consent does not authorise sharing information. Record a Part 2 consent, or choose another lawful basis.`);
-        }
-        const missing = consentElementProblems(consent);
-        if (missing.length) throw badRequest(`This consent cannot authorise a disclosure: it does not record ${missing.join("; ")}. Record a new consent with every \xA72.31 element.`, { consentIncomplete: missing });
-        if (proceeding && consent.type !== "part2_proceedings") throw badRequest("Information for use in a proceeding against the patient needs a court order, or a consent given for that proceeding alone (\xA72.31(d)); this consent does not cover it.");
-        if (!proceeding && consent.type === "part2_proceedings") throw badRequest("A consent for use in a legal proceeding cannot be combined with any other purpose (\xA72.31(d)); use it only for the proceeding it names.");
-        if (notes && consent.type !== "part2_counseling_notes") throw badRequest("SUD counseling notes need a separate consent given for counseling notes alone (\xA72.31(b)); a treatment, payment and operations consent or a general Part 2 consent does not cover them.");
-        if (!notes && consent.type === "part2_counseling_notes") throw badRequest('A consent for SUD counseling notes covers counseling notes only (\xA72.31(b)); tick "includes SUD counseling notes", or rely on a different consent for other information.');
-        const names = recipientNames(recipient);
-        if (!names.length) throw badRequest("Name the recipient of the disclosure: the consent is checked against it.");
-        const named = dec2(consent.recipient_enc);
-        if (!consentNamesRecipient({ type: consent.type, recipient: named }, names)) {
-          if (!recipient_override) {
-            throw new HttpError3(409, `This consent covers disclosures to "${named}" only; it does not name ${names[0]}. Choose a consent that names this recipient, record a new one, or ask a supervisor to override with a written justification.`, { consentRecipient: named, recipientNotCovered: true });
-          }
-          if (!canOverride) throw forbidden("Only a supervisor or administrator can rely on a consent for a recipient it does not name");
-          if (why.length < MIN_JUSTIFICATION) throw badRequest(`Relying on a consent for a recipient it does not name needs a written justification of at least ${MIN_JUSTIFICATION} characters, which is kept with the disclosure record.`);
-          override = true;
-        }
-      }
-      if (b === "court_order") {
-        order = court_order_id ? db3.one(`SELECT * FROM court_orders WHERE id=? AND client_id=?`, court_order_id, clientId) : null;
-        if (!order) throw badRequest("A disclosure under a court order must name the order: record it on the client's Consents tab (42 CFR subpart E) and choose it. A subpoena on its own does not authorise disclosing a Part 2 record.");
-        const problems = courtOrderProblems(order);
-        if (problems.length) throw badRequest(`That court order cannot authorise a disclosure: ${problems.join("; ")}.`);
-        if (notes && !order.covers_counseling_notes) throw badRequest("That court order does not expressly cover SUD counseling notes.");
-      }
-      if (AGREEMENT_KINDS[b]) agreement = requireAgreement(b, agreement_id, recipient);
-      if (!RESTRICTION_EXEMPT.includes(b) && !restriction_reviewed && agreedRestrictions(clientId)) {
-        throw badRequest("This client has an agreed restriction on how their information is shared (see their Requests tab). Check that this disclosure respects it, then confirm.", { restrictionReview: true });
-      }
-      if (NEEDS_JUSTIFICATION.includes(b) && why.length < MIN_JUSTIFICATION) {
-        throw badRequest(b === "other" ? `Sharing without consent on an "other" basis needs a written justification of at least ${MIN_JUSTIFICATION} characters, which is kept with the disclosure record.` : b === "medical_emergency" ? `A medical emergency disclosure (42 CFR \xA72.51) needs a written justification of at least ${MIN_JUSTIFICATION} characters: the nature of the emergency and who was told.` : `A ${b === "crime_on_premises" ? "report of a crime on the premises or against staff (\xA72.12(c)(5))" : "mandated report of suspected child abuse or neglect (\xA72.12(c)(6))"} needs a written justification of at least ${MIN_JUSTIFICATION} characters: what happened, and what was reported to whom.`);
-      }
-      const kept = override ? `Recipient override (the consent names "${dec2(consent.recipient_enc)}"): ${why}` : why || null;
-      return { basis: b, consent, court_order: order, agreement, justification: kept, legal_proceeding: proceeding, counseling_notes: notes, recipient_override: override };
-    }
-    function requireExportBasis(clientIds, { basis, restriction_reviewed, legal_proceeding, recipient, agreement_id, user } = {}) {
-      if (legal_proceeding) throw badRequest("Records for use in a legal proceeding against a patient are disclosed one client at a time, under a recorded court order or a proceedings-only consent (Consents tab \u2192 Record a disclosure), never as a bulk export.");
-      if (!basis) throw badRequest(`An identified export must state its lawful basis (basis=${EXPORT_BASES.join("|")}); it is written to the accounting of disclosures for every client in the file`);
-      if (!EXPORT_BASES.includes(basis)) throw badRequest(`"${basis}" is not a basis an identified export can be made under (${EXPORT_BASES.join(", ")})`);
-      if (OVERRIDE_BASES.includes(basis) && !require_auth().hasPerm(user, "disclosures:override")) throw forbidden(`Only a supervisor or administrator can make an export on a "${basis.replace(/_/g, " ")}" basis`);
-      if (basis === "internal" && !isInternalRecipient(recipient)) {
-        throw badRequest(`An "internal" export stays within this program (\xA72.12(c)(3)): the recipient must be ${db3.getSetting("org_name", "") || "this program"} or one of its staff (their name or username). A file for anyone else needs another basis.`);
-      }
-      const agreement = AGREEMENT_KINDS[basis] ? requireAgreement(basis, agreement_id, recipient) : null;
-      const consentOf = /* @__PURE__ */ new Map();
-      const excluded = [];
-      if (basis === "consent") {
-        const names = recipientNames(recipient);
-        for (const id of clientIds) {
-          const c = fileConsentFor(id, names);
-          if (c) consentOf.set(id, c.id);
-          else excluded.push(id);
-        }
-      }
-      const out2 = new Set(excluded);
-      requireRestrictionReview(clientIds.filter((id) => !out2.has(id)), restriction_reviewed);
-      return { basis, agreement, consentOf, excluded };
-    }
-    function fileConsentFor(clientId, names) {
-      const types = fileConsentTypes();
-      if (!names.length || !types.length) return null;
-      const rows = db3.all(`SELECT * FROM consents WHERE client_id=? AND type IN (${types.map(() => "?").join(",")}) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now')) ORDER BY signed_at DESC, created_at DESC`, clientId, ...types);
-      return rows.find((c) => !consentElementProblems(c).length && consentNamesRecipient({ type: c.type, recipient: dec2(c.recipient_enc) }, names)) || null;
-    }
-    function requireRestrictionReview(clientIds, restriction_reviewed) {
-      if (restriction_reviewed || !clientIds.length) return;
-      const restricted = new Set(db3.all(`SELECT DISTINCT client_id FROM patient_requests WHERE kind='restriction' AND status='fulfilled'`).map((r) => r.client_id));
-      const n = clientIds.filter((id) => restricted.has(id)).length;
-      if (n) throw badRequest(`${n} client${n === 1 ? "" : "s"} in this export ${n === 1 ? "has" : "have"} an agreed restriction on how their information is shared. Check the export respects it, then confirm (restriction_reviewed=1).`, { restrictionReview: true, restrictedClients: n });
-    }
-    function record({ id: givenId = null, clientId, consentId = null, courtOrderId = null, agreementId = null, recipientOverride = false, legalProceeding = false, counselingNotes = false, recipient, purpose, what, method = null, basis = "consent", justification = null, source = "manual", sourceRef = null, disclosedAt = null, user, ip }) {
-      const id = givenId || uuid2();
-      const at = disclosedAt || db3.now();
-      const noticeVersion = part2Program() ? C.PART2_NOTICE_VERSION : null;
-      db3.run(
-        `INSERT INTO disclosures(id,client_id,consent_id,recipient_enc,purpose_enc,what_enc,method,disclosed_at,disclosed_by,basis,justification_enc,source,source_ref,court_order_id,legal_proceeding,counseling_notes,notice_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        id,
-        clientId,
-        consentId,
-        encrypt3(String(recipient)),
-        encrypt3(String(purpose)),
-        encrypt3(String(what)),
-        method,
-        at,
-        user.id,
-        basis,
-        justification ? encrypt3(String(justification)) : null,
-        source,
-        sourceRef,
-        courtOrderId,
-        legalProceeding ? 1 : 0,
-        counselingNotes ? 1 : 0,
-        noticeVersion
-      );
-      audit3.log({ user, action: "disclosure.record", entity: "disclosure", entityId: id, clientId, ip, details: {
-        basis,
-        source,
-        consent_id: consentId || void 0,
-        court_order_id: courtOrderId || void 0,
-        agreement_id: agreementId || void 0,
-        recipient_override: recipientOverride ? true : void 0,
-        justified: justification ? true : void 0,
-        legal_proceeding: legalProceeding ? true : void 0,
-        counseling_notes: counselingNotes ? true : void 0,
-        notice: noticeVersion || void 0
-      } });
-      return id;
-    }
-    function recordStateReport({ clientIds, what, sourceRef, user, ip }) {
-      return clientIds.map((clientId) => record({ clientId, recipient: STATE_REPORTING.recipient, purpose: STATE_REPORTING.purpose, what, method: "export", basis: STATE_REPORTING.basis, source: "caloms", sourceRef, user, ip }));
-    }
-    function present(row) {
-      if (!row) return null;
-      const out2 = { ...row };
-      out2.recipient = row.recipient_enc ? decrypt3(row.recipient_enc) : null;
-      out2.purpose = row.purpose_enc ? decrypt3(row.purpose_enc) : null;
-      out2.what = row.what_enc ? decrypt3(row.what_enc) : null;
-      out2.justification = row.justification_enc ? decrypt3(row.justification_enc) : null;
-      delete out2.recipient_enc;
-      delete out2.purpose_enc;
-      delete out2.what_enc;
-      delete out2.justification_enc;
-      return out2;
-    }
-    function accounting(clientId) {
-      const client = db3.one(`SELECT id, client_code FROM clients WHERE id=?`, clientId);
-      const disclosures = db3.all(`SELECT d.*, u.display_name AS disclosed_by_name, u.username AS disclosed_by_username, co.order_type AS court_order_type FROM disclosures d JOIN users u ON u.id=d.disclosed_by LEFT JOIN court_orders co ON co.id=d.court_order_id WHERE d.client_id=? ORDER BY d.disclosed_at`, clientId).map(present);
-      const consents = db3.all(`SELECT id, type, recipient_enc, purpose_enc, signed_at, expires_at, expires_event, revoked_at, rule_version FROM consents WHERE client_id=? ORDER BY signed_at`, clientId).map((c) => ({ id: c.id, type: c.type, recipient: c.recipient_enc ? decrypt3(c.recipient_enc) : null, purpose: c.purpose_enc ? decrypt3(c.purpose_enc) : null, signed_at: c.signed_at, expires_at: c.expires_at, expires_event: c.expires_event, revoked_at: c.revoked_at, rule_version: c.rule_version }));
-      return { client_id: client?.id, client_code: client?.client_code, generated_at: db3.now(), part2_program: part2Program(), notice: part2Program() ? notice() : null, disclosures, consents };
-    }
-    var FHIR_PURPOSES = {
-      TREAT: { display: "Treatment", words: ["treatment", "care coordination", "coordination of care", "continuity of care"] },
-      HPAYMT: { display: "Payment", words: ["payment", "billing", "claims"] },
-      HOPERAT: { display: "Health care operations", words: ["operations"] }
-    };
-    var FHIR_CONSENT_TYPES = ["part2_disclosure", "part2_tpo", "roi"];
-    function fhirConsentTypes() {
-      const ok = disclosingConsentTypes();
-      return FHIR_CONSENT_TYPES.filter((t) => ok.includes(t));
-    }
-    function isTpo(purpose) {
-      const p = ` ${normalise(purpose)} `;
-      return / tpo /.test(p) || p.includes("treatment") && p.includes("payment") && p.includes("operations");
-    }
-    function consentCovers({ type, recipient, purpose, categories }, { recipients, purposeOfUse, category }) {
-      if (type !== void 0 && !fhirConsentTypes().includes(type)) return false;
-      if (category !== void 0 && !categoriesCover(categories, category)) return false;
-      if (!consentNamesRecipient({ type, recipient }, recipients)) return false;
-      if (type === "part2_tpo") return !!FHIR_PURPOSES[purposeOfUse];
-      if (isTpo(purpose)) return true;
-      const p = ` ${normalise(purpose)} `;
-      return (FHIR_PURPOSES[purposeOfUse]?.words || []).some((w) => p.includes(` ${normalise(w)} `));
-    }
-    var CATEGORY_OF_FHIR_TYPE = {
-      Patient: "demographics",
-      EpisodeOfCare: "encounters",
-      Encounter: "encounters",
-      ServiceRequest: "referrals",
-      Task: "tasks",
-      Observation: "risk_overdose",
-      DocumentReference: "documents",
-      // The Consent resource is the authorisation itself: listed for any client whose consent covers something.
-      Consent: "*"
-    };
-    function parseCategories(v) {
-      const list = Array.isArray(v) ? v : String(v || "").split(",");
-      return new Set(list.map((x) => String(x).trim()).filter((x) => C.CONSENT_INFO_CATEGORIES.includes(x)));
-    }
-    function categoriesCover(stored, category) {
-      const cats = parseCategories(stored);
-      if (!cats.size) return false;
-      return category === "*" || cats.has("all") || cats.has(category);
-    }
-    function generalScope(text) {
-      const t = normalise(text).replace(/\b(my|of|the|information|records?|in|sud|substance use|treatment|and|file|chart|client|patient)\b/g, " ").replace(/\s+/g, " ").trim();
-      return ["all", "everything", "entire", "complete", "whole", "full", "general", "any and all"].includes(t);
-    }
-    function consentPurposeCodes({ type, purpose }) {
-      return Object.keys(FHIR_PURPOSES).filter((code) => type === "part2_tpo" || consentCovers({ recipient: "x", purpose }, { recipients: ["x"], purposeOfUse: code }));
-    }
-    var coverageCache = /* @__PURE__ */ new Map();
-    function fhirCoverage({ cacheKey, recipients, purposeOfUse, resourceType }) {
-      const category = CATEGORY_OF_FHIR_TYPE[resourceType] || "*";
-      const stamp2 = db3.one(`SELECT (SELECT COUNT(*) FROM consents) n, (SELECT MAX(updated_at) FROM consents) u,
-    (SELECT COUNT(*) FROM patient_requests) rn, (SELECT MAX(updated_at) FROM patient_requests) ru`);
-      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-      const types = fhirConsentTypes();
-      const key = `${stamp2.n}|${stamp2.u}|${stamp2.rn}|${stamp2.ru}|${types.join(",")}|${today}|${recipients.join("")}|${purposeOfUse}|${category}`;
-      const hit = coverageCache.get(`${cacheKey}|${category}`);
-      if (hit && hit.key === key) return hit.map;
-      const map = /* @__PURE__ */ new Map();
-      const restricted = new Set(db3.all(`SELECT DISTINCT client_id FROM patient_requests WHERE kind='restriction' AND status='fulfilled'`).map((r) => r.client_id));
-      const rows = types.length ? db3.all(`SELECT k.* FROM consents k JOIN clients c ON c.id=k.client_id
-    WHERE k.type IN (${types.map(() => "?").join(",")}) AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= date('now'))
-      AND c.deleted_at IS NULL AND c.merged_into IS NULL ORDER BY k.signed_at, k.created_at`, ...types) : [];
-      for (const row of rows) {
-        if (restricted.has(row.client_id)) continue;
-        if (consentElementProblems(row).length) continue;
-        let plain;
-        try {
-          plain = { type: row.type, recipient: row.recipient_enc ? decrypt3(row.recipient_enc) : "", purpose: row.purpose_enc ? decrypt3(row.purpose_enc) : "", categories: row.info_categories };
-        } catch {
+    function attrsFromPatch(body) {
+      if (!body || !Array.isArray(body.Operations)) throw new ScimError(400, "A PATCH needs Operations", "invalidSyntax");
+      const merged = {};
+      for (const op of body.Operations) {
+        const kind = String(op && op.op || "").toLowerCase();
+        if (!["add", "replace", "remove"].includes(kind)) throw new ScimError(400, `Unsupported PATCH op "${op && op.op}"`, "invalidSyntax");
+        const p = op.path ? String(op.path).trim() : "";
+        if (!p) {
+          if (kind === "remove") throw new ScimError(400, "remove needs a path", "noTarget");
+          Object.assign(merged, attrsFrom(op.value, { partial: true }));
           continue;
         }
-        if (consentCovers(plain, { recipients, purposeOfUse, category })) map.set(row.client_id, row.id);
-      }
-      if (coverageCache.size > 100) coverageCache.clear();
-      coverageCache.set(`${cacheKey}|${category}`, { key, map });
-      return map;
-    }
-    function recordFhir({ perClient, recipient, purposeOfUse, sourceRef, user, ip }) {
-      if (!perClient.size) return 0;
-      const purpose = `${FHIR_PURPOSES[purposeOfUse]?.display || purposeOfUse} (FHIR purpose of use ${purposeOfUse})`;
-      db3.transaction(() => {
-        for (const [clientId, { consentId, what }] of perClient) {
-          record({ clientId, consentId, recipient, purpose, what, method: "FHIR API", basis: "consent", source: "fhir", sourceRef, user, ip });
+        const key = p.toLowerCase();
+        const v = kind === "remove" ? null : op.value;
+        const one = (attr) => Object.assign(merged, attrsFrom({ [attr]: v }, { partial: true }));
+        if (key === "active") {
+          if (kind === "remove") continue;
+          one("active");
+        } else if (key === "username") {
+          if (kind !== "remove") one("userName");
+        } else if (key === "displayname" || key === "name.formatted") {
+          if (kind !== "remove" && v) merged.display_name = String(v).trim().slice(0, 120);
+        } else if (key === "title") one("title");
+        else if (key === "externalid") one("externalId");
+        else if (key === "emails" || key.startsWith("emails[")) merged.email = kind === "remove" ? null : Array.isArray(v) ? attrsFrom({ emails: v }, { partial: true }).email : v && typeof v === "object" ? String(v.value || "") || null : v ? String(v).slice(0, 200) : null;
+        else if (key === "roles" || key === "groups") {
+          if (kind !== "remove") Object.assign(merged, attrsFrom({ [key]: Array.isArray(v) ? v : [v] }, { partial: true }));
         }
-      });
-      return perClient.size;
+      }
+      return merged;
     }
-    module.exports = {
-      BASES,
-      EXPORT_BASES,
-      SYSTEM_BASES,
-      STATE_REPORTING,
-      NEEDS_JUSTIFICATION,
-      OVERRIDE_BASES,
-      REFERRAL_BASES,
-      AGREEMENT_KINDS,
-      LEGACY_CONSENT_CUTOFF,
-      MIN_JUSTIFICATION,
-      part2Program,
-      notice,
-      fileNotice,
-      disclosingConsentTypes,
-      fileConsentTypes,
-      activeConsent,
-      courtOrderProblems,
-      agreedRestrictions,
-      missingPart2Elements,
-      missingLegacyElements,
-      consentElementProblems,
-      consentValues,
-      normalise,
-      recipientNames,
-      consentNamesRecipient,
-      isInternalRecipient,
-      agreementProblems,
-      agreementNames,
-      requireAgreement,
-      fileConsentFor,
-      requireBasis,
-      requireExportBasis,
-      requireRestrictionReview,
-      record,
-      recordStateReport,
-      present,
-      accounting,
-      FHIR_PURPOSES,
-      FHIR_CONSENT_TYPES,
-      fhirConsentTypes,
-      consentCovers,
-      consentPurposeCodes,
-      fhirCoverage,
-      recordFhir,
-      CATEGORY_OF_FHIR_TYPE,
-      parseCategories,
-      categoriesCover,
-      generalScope
-    };
+    function parseFilter(filter) {
+      if (!filter) return null;
+      const m = String(filter).trim().match(/^(userName|externalId|id)\s+eq\s+"((?:[^"\\]|\\.)*)"$/i);
+      if (!m) throw new ScimError(400, 'Only userName eq "\u2026", externalId eq "\u2026" and id eq "\u2026" filters are supported', "invalidFilter");
+      const value = m[2].replace(/\\(.)/g, "$1");
+      const col = { username: "username", externalid: "scim_external_id", id: "id" }[m[1].toLowerCase()];
+      return { sql: col === "username" ? "username = ? COLLATE NOCASE" : `${col} = ?`, value };
+    }
+    var LISTED = `access_status NOT IN ('pending','declined')`;
+    function list({ filter, startIndex = 1, count = 100 } = {}, base = "") {
+      const f = parseFilter(filter);
+      const where = f ? `${LISTED} AND ${f.sql}` : LISTED;
+      const params = f ? [f.value] : [];
+      const total = db3.one(`SELECT COUNT(*) n FROM users WHERE ${where}`, ...params).n;
+      const start2 = Math.max(1, Number(startIndex) || 1);
+      const n = Math.min(200, Math.max(0, Number.isFinite(Number(count)) ? Number(count) : 100));
+      const rows = n ? db3.all(`SELECT * FROM users WHERE ${where} ORDER BY created_at, id LIMIT ? OFFSET ?`, ...params, n, start2 - 1) : [];
+      return { schemas: [LIST_SCHEMA], totalResults: total, startIndex: start2, itemsPerPage: rows.length, Resources: rows.map((u) => toResource(u, base)) };
+    }
+    function find(id) {
+      const u = db3.one(`SELECT * FROM users WHERE id=? AND ${LISTED}`, id);
+      if (!u) throw new ScimError(404, `User ${id} not found`);
+      return u;
+    }
+    function guard(u) {
+      if (emergencyAccounts().includes(String(u.username).toLowerCase())) throw new ScimError(403, `${u.username} is an emergency (break-glass) account and is managed in SUDS, not by provisioning`, "mutability");
+    }
+    function cutOff(userId) {
+      require_auth2().revokeAllForUser(userId);
+      return db3.run(`UPDATE devices SET revoked_at=COALESCE(revoked_at, ?), wipe_requested_at=COALESCE(wipe_requested_at, ?) WHERE user_id=?`, db3.now(), db3.now(), userId).changes;
+    }
+    function create2(body, actor, base) {
+      const a = attrsFrom(body);
+      if (db3.one(`SELECT 1 FROM users WHERE username=? COLLATE NOCASE`, a.username)) throw new ScimError(409, `A user named ${a.username} already exists`, "uniqueness");
+      if (a.scim_external_id && db3.one(`SELECT 1 FROM users WHERE scim_external_id=?`, a.scim_external_id)) throw new ScimError(409, "A user with this externalId already exists", "uniqueness");
+      const id = uuid2();
+      const now = db3.now();
+      const active = a.active !== false;
+      const role = a.role || defaultRole();
+      db3.run(
+        `INSERT INTO users(id,username,password_hash,display_name,email,title,role,is_active,must_change_password,password_changed_at,scim_external_id,idp_seen_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,0,?,?,?,?,?)`,
+        id,
+        a.username,
+        NO_PASSWORD,
+        a.display_name,
+        a.email || null,
+        a.title || null,
+        role,
+        active ? 1 : 0,
+        now,
+        a.scim_external_id || null,
+        active ? now : null,
+        now,
+        now
+      );
+      audit3.log({ user: actor, action: "scim.user.create", entity: "user", entityId: id, details: { username: a.username, role, active, role_from: a.role ? "group mapping" : "default" } });
+      return toResource(find(id), base);
+    }
+    function apply(id, a, actor, base, action) {
+      const u = find(id);
+      guard(u);
+      if (a.username && a.username.toLowerCase() !== String(u.username).toLowerCase() && db3.one(`SELECT 1 FROM users WHERE username=? COLLATE NOCASE AND id<>?`, a.username, id)) throw new ScimError(409, `A user named ${a.username} already exists`, "uniqueness");
+      if (a.scim_external_id && db3.one(`SELECT 1 FROM users WHERE scim_external_id=? AND id<>?`, a.scim_external_id, id)) throw new ScimError(409, "Another user has this externalId", "uniqueness");
+      const sets = [];
+      const vals = [];
+      const changed = [];
+      const col = (c, v) => {
+        if (v !== void 0 && v !== u[c]) {
+          sets.push(`${c}=?`);
+          vals.push(v);
+          changed.push(c);
+        }
+      };
+      col("username", a.username);
+      col("display_name", a.display_name);
+      col("email", a.email);
+      col("title", a.title);
+      col("scim_external_id", a.scim_external_id);
+      col("role", a.role);
+      let deactivated = false;
+      let reactivated = false;
+      if (a.active === false && u.is_active) {
+        sets.push("is_active=0");
+        changed.push("active");
+        deactivated = true;
+      }
+      if (a.active === true && !u.is_active) {
+        sets.push(`is_active=1`, `access_status='active'`);
+        changed.push("active");
+        reactivated = true;
+      }
+      if (a.active !== false && (u.is_active || reactivated)) {
+        sets.push("idp_seen_at=?");
+        vals.push(db3.now());
+      }
+      sets.push("updated_at=?");
+      vals.push(db3.now());
+      db3.transaction(() => {
+        db3.run(`UPDATE users SET ${sets.join(", ")} WHERE id=?`, ...vals, id);
+        if (deactivated) cutOff(id);
+      });
+      if (changed.length) audit3.log({ user: actor, action: deactivated ? "scim.user.deactivate" : action, entity: "user", entityId: id, details: { username: a.username || u.username, changed, ...a.role && a.role !== u.role ? { role: { from: u.role, to: a.role } } : {}, ...reactivated ? { reactivated: true } : {} } });
+      return toResource(find(id), base);
+    }
+    function replace(id, body, actor, base) {
+      return apply(id, attrsFrom(body), actor, base, "scim.user.update");
+    }
+    function patch(id, body, actor, base) {
+      return apply(id, attrsFromPatch(body), actor, base, "scim.user.update");
+    }
+    function deactivate(id, actor) {
+      const u = find(id);
+      guard(u);
+      if (u.is_active) {
+        db3.transaction(() => {
+          db3.run(`UPDATE users SET is_active=0, updated_at=? WHERE id=?`, db3.now(), id);
+          cutOff(id);
+        });
+        audit3.log({ user: actor, action: "scim.user.deactivate", entity: "user", entityId: id, details: { username: u.username, via: "DELETE" } });
+      }
+    }
+    var serviceProviderConfig = () => ({
+      schemas: ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"],
+      documentationUri: "docs/security/IDENTITY.md",
+      patch: { supported: true },
+      bulk: { supported: false, maxOperations: 0, maxPayloadSize: 0 },
+      filter: { supported: true, maxResults: 200 },
+      changePassword: { supported: false },
+      sort: { supported: false },
+      etag: { supported: false },
+      authenticationSchemes: [{ type: "oauthbearertoken", name: "Bearer token", description: "A SCIM token created under Settings \u2192 Security status \u2192 Provisioning (SCIM)", primary: true }]
+    });
+    module.exports = { USER_SCHEMA, LIST_SCHEMA, ERROR_SCHEMA, PATCH_SCHEMA, ScimError, errorBody, parseGroupRoles, normaliseGroupRoles, mappedRole, toResource, attrsFrom, attrsFromPatch, parseFilter, list, find, create: create2, replace, patch, deactivate, cutOff, serviceProviderConfig, NO_PASSWORD };
   }
 });
 
-// server/db.js
-var require_db = __commonJS({
-  "server/db.js"(exports, module) {
+// server/deprovision.js
+var require_deprovision = __commonJS({
+  "server/deprovision.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var config = require_config();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var DAY = 864e5;
+    function days() {
+      const v = Number(db3.getSetting("sso_deprovision_days", "0"));
+      return Number.isInteger(v) && v > 0 ? v : 0;
+    }
+    function emergency() {
+      return String(db3.getSetting("sso_emergency_accounts", "") || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+    }
+    function applicable() {
+      return !config.local && (!!(config.oidc && config.oidc.enabled) || !!db3.one(`SELECT 1 FROM api_keys WHERE scopes='scim' AND revoked_at IS NULL`));
+    }
+    var SEEN = `COALESCE(idp_seen_at, last_login_at, created_at)`;
+    function linked() {
+      const skip = emergency();
+      return db3.all(`SELECT id, username, display_name, role, ${SEEN} AS seen_at, oidc_subject IS NOT NULL AS sso, scim_external_id IS NOT NULL AS scim FROM users
+    WHERE is_active=1 AND (oidc_subject IS NOT NULL OR scim_external_id IS NOT NULL) ORDER BY ${SEEN}`).filter((u) => !skip.includes(String(u.username).toLowerCase()));
+    }
+    function disable(u, { by = { username: "system" }, n }) {
+      let devices = 0;
+      db3.transaction(() => {
+        db3.run(`UPDATE users SET is_active=0, updated_at=? WHERE id=? AND is_active=1`, db3.now(), u.id);
+        devices = require_scim().cutOff(u.id);
+      });
+      audit3.log({ user: by, action: "user.deprovisioned", entity: "user", entityId: u.id, details: { username: u.username, reason: `not seen at the identity provider for ${n} days`, last_seen_at: u.seen_at, devices_revoked: devices } });
+    }
+    function run2({ now = Date.now(), by } = {}) {
+      const n = days();
+      if (!n || !applicable()) return { days: n, disabled: [] };
+      const cutoff = now - n * DAY;
+      const disabled = [];
+      for (const u of linked()) {
+        if (Date.parse(u.seen_at) >= cutoff) continue;
+        disable(u, { by, n });
+        disabled.push({ id: u.id, username: u.username, last_seen_at: u.seen_at });
+      }
+      if (disabled.length) console.warn(`[suds] deprovisioned ${disabled.length} account(s) not seen at the identity provider for ${n} days`);
+      db3.setSetting("sso_deprovision_ran_at", db3.now());
+      return { days: n, disabled };
+    }
+    function runIfDue(now = Date.now()) {
+      const last = db3.getSetting("sso_deprovision_ran_at", null);
+      if (last && now - Date.parse(last) < DAY) return null;
+      return run2({ now });
+    }
+    function report(now = Date.now()) {
+      const n = days();
+      const rows = linked().map((u) => ({ ...u, sso: !!u.sso, scim: !!u.scim, days_unseen: Math.floor((now - Date.parse(u.seen_at)) / DAY) }));
+      const recent = db3.all(`SELECT at, entity_id, details, username AS by_username, action FROM audit_log WHERE action IN ('user.deprovisioned','scim.user.deactivate') AND at >= ? ORDER BY id DESC LIMIT 200`, new Date(now - 90 * DAY).toISOString()).map((r) => {
+        let d = {};
+        try {
+          d = JSON.parse(r.details || "{}");
+        } catch {
+        }
+        return { at: r.at, user_id: r.entity_id, username: d.username || null, reason: r.action === "user.deprovisioned" ? d.reason : "deactivated by the identity provider (SCIM)", by: r.by_username };
+      });
+      return {
+        days: n,
+        applicable: applicable(),
+        last_run_at: db3.getSetting("sso_deprovision_ran_at", null),
+        due: n ? rows.filter((u) => u.days_unseen >= n) : [],
+        soon: n ? rows.filter((u) => u.days_unseen < n && u.days_unseen >= n - 7) : [],
+        linked_active: rows.length,
+        recent
+      };
+    }
+    module.exports = { run: run2, runIfDue, report, days };
+  }
+});
+
+// local/shims/empty.js
+var empty_exports = {};
+__export(empty_exports, {
+  default: () => empty_default
+});
+var empty_default;
+var init_empty = __esm({
+  "local/shims/empty.js"() {
+    init_globals_inject();
+    empty_default = {};
+  }
+});
+
+// local/shims/os.js
+var os_exports = {};
+__export(os_exports, {
+  default: () => os_default,
+  hostname: () => hostname,
+  networkInterfaces: () => networkInterfaces
+});
+function hostname() {
+  return "this-device";
+}
+function networkInterfaces() {
+  return {};
+}
+var os_default;
+var init_os = __esm({
+  "local/shims/os.js"() {
+    init_globals_inject();
+    os_default = { hostname, networkInterfaces };
+  }
+});
+
+// server/audit-anchor.js
+var require_audit_anchor = __commonJS({
+  "server/audit-anchor.js"(exports, module) {
     "use strict";
     init_globals_inject();
     var fs = (init_fs(), __toCommonJS(fs_exports));
     var path = (init_path(), __toCommonJS(path_exports));
-    var { DatabaseSync: DatabaseSync2 } = (init_sqlite(), __toCommonJS(sqlite_exports));
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
     var config = require_config();
-    var db3;
-    function open2(dbPath = config.dbPath) {
-      if (db3) return db3;
-      if (dbPath !== ":memory:") fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-      db3 = new DatabaseSync2(dbPath);
-      try {
-        db3.exec("PRAGMA busy_timeout = 5000");
-        initialise(db3, fs.readFileSync(path.join("/", "schema.sql"), "utf8"), dbPath);
-      } catch (e) {
-        try {
-          db3.close();
-        } catch {
-        }
-        db3 = void 0;
-        throw e;
-      }
-      if (dbPath !== ":memory:") for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
-        try {
-          fs.chmodSync(f, 384);
-        } catch {
-        }
-      }
-      return db3;
-    }
-    function openWith(bytes3) {
-      if (db3) {
-        try {
-          db3.close();
-        } catch {
-        }
-        db3 = void 0;
-      }
-      db3 = bytes3 ? new DatabaseSync2(":memory:", bytes3) : new DatabaseSync2(":memory:");
-      try {
-        db3.exec("PRAGMA busy_timeout = 5000");
-      } catch {
-      }
-      initialise(db3, safeSchema());
-      return db3;
-    }
-    function safeSchema() {
-      try {
-        return fs.readFileSync(path.join("/", "schema.sql"), "utf8");
-      } catch {
-        return require_schema_text();
-      }
-    }
-    var addColumn = (d, table, col, def) => {
-      const cols2 = d.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
-      if (!cols2.includes(col)) d.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
-    };
-    var tableCols = (d, table) => d.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
-    var tableExists = (d, table) => !!d.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(table);
-    function encryptColumn(d, table, oldCol, newCol) {
-      if (!tableExists(d, table)) return;
-      const cols2 = tableCols(d, table);
-      if (!cols2.includes(oldCol)) return;
-      const { encrypt: encrypt3 } = require_crypto();
-      addColumn(d, table, newCol, "TEXT");
-      const rows = d.prepare(`SELECT id, ${oldCol} AS v FROM ${table} WHERE ${oldCol} IS NOT NULL AND ${oldCol} <> ''`).all();
-      const upd = d.prepare(`UPDATE ${table} SET ${newCol}=? WHERE id=?`);
-      for (const r of rows) upd.run(encrypt3(String(r.v)), r.id);
-      d.exec(`ALTER TABLE ${table} DROP COLUMN ${oldCol}`);
-    }
-    function rebuildTable(d, schemaText, table, coalesce = {}) {
-      if (!tableExists(d, table)) return;
-      const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\(([\\s\\S]*?)\\n\\);`));
-      if (!m) throw new Error(`rebuildTable: no definition for ${table} in schema`);
-      const tmp = `__new_${table}`;
-      d.exec(`DROP TABLE IF EXISTS ${tmp}`);
-      d.exec(`CREATE TABLE ${tmp} (${m[1]}
-)`);
-      const oldCols = tableCols(d, table), newCols = tableCols(d, tmp);
-      const shared = newCols.filter((c) => oldCols.includes(c));
-      const select = shared.map((c) => coalesce[c] ? `COALESCE(${c}, ${coalesce[c]})` : c).join(", ");
-      d.exec(`INSERT INTO ${tmp}(${shared.join(", ")}) SELECT ${select} FROM ${table}`);
-      d.exec(`DROP TABLE ${table}`);
-      d.exec(`ALTER TABLE ${tmp} RENAME TO ${table}`);
-      for (const line of schemaText.split("\n")) {
-        const im = line.match(new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${table}\\(`));
-        if (im) d.exec(line.trim());
-      }
-    }
-    var migrations = [
-      // 1: initial schema (created by schema.sql)
-      () => {
-      },
-      // 2: sync support — updated_at on tables that lacked it, tombstones for hard deletes
-      (d) => {
-        for (const t of ["assignments", "consents", "disclosures", "budget_lines", "note_addenda", "imports", "import_items"]) {
-          addColumn(d, t, "updated_at", "TEXT");
-          d.exec(`UPDATE ${t} SET updated_at = created_at WHERE updated_at IS NULL`);
-        }
-        d.exec(`CREATE TABLE IF NOT EXISTS tombstones (table_name TEXT NOT NULL, id TEXT NOT NULL, deleted_at TEXT NOT NULL, PRIMARY KEY (table_name, id))`);
-        d.exec(`CREATE INDEX IF NOT EXISTS idx_tombstones_at ON tombstones(deleted_at)`);
-      },
-      // 3: treatment center profiles — summary/service tags on resources, photo gallery table
-      (d) => {
-        for (const [c, t] of [["summary", "TEXT"], ["service_tags", "TEXT"], ["levels_of_care", "TEXT"], ["populations", "TEXT"], ["intake_process", "TEXT"], ["cost_notes", "TEXT"]]) addColumn(d, "resources", c, t);
-        d.exec(`CREATE TABLE IF NOT EXISTS resource_photos (id TEXT PRIMARY KEY, resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE, caption TEXT, content_type TEXT NOT NULL, bytes INTEGER NOT NULL DEFAULT 0, width INTEGER, height INTEGER, data_b64 TEXT NOT NULL, thumb_b64 TEXT, sort_order INTEGER NOT NULL DEFAULT 0, uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
-        d.exec(`CREATE INDEX IF NOT EXISTS idx_resource_photos ON resource_photos(resource_id, sort_order)`);
-      },
-      // 4: county form library
-      (d) => {
-        d.exec(`CREATE TABLE IF NOT EXISTS form_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, category TEXT NOT NULL DEFAULT 'other', version TEXT, filename TEXT, content_type TEXT, bytes INTEGER NOT NULL DEFAULT 0, file_b64 TEXT, fields_json TEXT NOT NULL DEFAULT '[]', instructions TEXT, is_active INTEGER NOT NULL DEFAULT 1, uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
-        d.exec(`CREATE TABLE IF NOT EXISTS client_forms (id TEXT PRIMARY KEY, client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE, template_id TEXT REFERENCES form_templates(id) ON DELETE SET NULL, template_name TEXT NOT NULL, fields_json TEXT NOT NULL DEFAULT '[]', values_enc TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','completed','void')), completed_at TEXT, completed_by TEXT REFERENCES users(id), created_by TEXT NOT NULL REFERENCES users(id), notes TEXT, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), deleted_at TEXT)`);
-        d.exec(`CREATE INDEX IF NOT EXISTS idx_client_forms_client ON client_forms(client_id)`);
-        d.exec(`CREATE TABLE IF NOT EXISTS client_form_files (id TEXT PRIMARY KEY, client_form_id TEXT NOT NULL REFERENCES client_forms(id) ON DELETE CASCADE, client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE, filename TEXT NOT NULL, content_type TEXT NOT NULL, bytes INTEGER NOT NULL DEFAULT 0, data_enc TEXT NOT NULL, uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
-        d.exec(`CREATE INDEX IF NOT EXISTS idx_client_form_files ON client_form_files(client_form_id)`);
-      },
-      // 5: PHI that was still in plaintext moves into _enc columns; co-signature, time approval, episodes,
-      //    overdose events, coded race, client-less interventions, and the updated_at indexes sync needs.
-      (d) => {
-        const schemaText = safeSchema();
-        for (const [t, from, to] of [
-          ["clients", "goals", "goals_enc"],
-          ["clients", "flags", "flags_enc"],
-          ["notes", "title", "title_enc"],
-          ["interventions", "summary", "summary_enc"],
-          ["import_items", "title", "title_enc"],
-          ["consents", "recipient", "recipient_enc"],
-          ["consents", "purpose", "purpose_enc"],
-          ["consents", "scope", "scope_enc"],
-          ["disclosures", "disclosed_to", "recipient_enc"],
-          ["disclosures", "purpose", "purpose_enc"],
-          ["disclosures", "info_disclosed", "what_enc"]
-        ]) encryptColumn(d, t, from, to);
-        addColumn(d, "clients", "race_codes", "TEXT");
-        addColumn(d, "users", "requires_cosign", "INTEGER NOT NULL DEFAULT 0");
-        addColumn(d, "users", "supervisor_id", "TEXT REFERENCES users(id)");
-        for (const [c, def] of [["cosign_required", "INTEGER NOT NULL DEFAULT 0"], ["cosigned_by", "TEXT REFERENCES users(id)"], ["cosigned_at", "TEXT"], ["cosignature_hash", "TEXT"], ["cosign_note", "TEXT"]]) addColumn(d, "notes", c, def);
-        for (const [c, def] of [["status", "TEXT NOT NULL DEFAULT 'draft'"], ["submitted_at", "TEXT"], ["approved_by", "TEXT REFERENCES users(id)"], ["approved_at", "TEXT"], ["approval_note", "TEXT"]]) addColumn(d, "time_entries", c, def);
-        addColumn(d, "consents", "revoked_by", "TEXT REFERENCES users(id)");
-        for (const [c, def] of [["consent_revoked", "INTEGER NOT NULL DEFAULT 0"], ["outcome_recorded_at", "TEXT"], ["episode_id", "TEXT REFERENCES episodes(id)"]]) addColumn(d, "referrals", c, def);
-        for (const [c, def] of [["source", "TEXT"], ["source_ref", "TEXT"]]) addColumn(d, "disclosures", c, def);
-        for (const t of ["assignments", "budget_lines", "note_addenda", "imports", "import_items", "consents", "disclosures"])
-          rebuildTable(d, schemaText, t, { updated_at: "created_at" });
-        rebuildTable(d, schemaText, "interventions", { updated_at: "created_at" });
-        for (const t of ["episodes", "overdose_events"]) {
-          const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
-          if (m) d.exec(m[0]);
-        }
-        for (const line of schemaText.split("\n")) if (/^CREATE( UNIQUE)? INDEX IF NOT EXISTS /.test(line.trim())) {
-          try {
-            d.exec(line.trim());
-          } catch {
-          }
-        }
-        if (tableExists(d, "episodes")) {
-          const { uuid: uuid2 } = require_crypto();
-          const open3 = d.prepare(`SELECT id, intake_date, created_at, created_by, referral_source, status, discharge_date, discharge_reason FROM clients WHERE deleted_at IS NULL`).all();
-          const ins = d.prepare(`INSERT INTO episodes(id,client_id,opened_at,opened_by,referral_source,closed_at,discharge_reason,status) VALUES(?,?,?,?,?,?,?,?)`);
-          const has = d.prepare(`SELECT 1 FROM episodes WHERE client_id=?`);
-          for (const c of open3) {
-            if (has.get(c.id)) continue;
-            const closed = c.status === "closed" || c.status === "deceased";
-            ins.run(uuid2(), c.id, c.intake_date || String(c.created_at).slice(0, 10), c.created_by, c.referral_source, closed ? c.discharge_date || c.created_at : null, closed ? c.discharge_reason : null, closed ? "closed" : "open");
-          }
-        }
-      },
-      // 6: coarse blind indexes so search tolerates typos and partial surnames, and duplicate detection has
-      //    something to match on, without putting any name in the clear.
-      (d) => {
-        const schemaText = safeSchema();
-        addColumn(d, "clients", "merged_into", "TEXT REFERENCES clients(id)");
-        addColumn(d, "clients", "name_prefix_idx", "TEXT");
-        addColumn(d, "clients", "name_phonetic_idx", "TEXT");
-        const { decrypt: decrypt3 } = require_crypto();
-        const M = require_clients_model();
-        const upd = d.prepare(`UPDATE clients SET name_prefix_idx=?, name_phonetic_idx=? WHERE id=?`);
-        for (const c of d.prepare(`SELECT id, last_name_enc FROM clients`).all()) {
-          let last = "";
-          try {
-            last = c.last_name_enc ? decrypt3(c.last_name_enc) : "";
-          } catch {
-            continue;
-          }
-          upd.run(M.namePrefixIndex(last), M.namePhoneticIndex(last), c.id);
-        }
-        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_clients_name_/.test(line.trim())) d.exec(line.trim());
-      },
-      // 7: attachment bytes become nullable. Rows now reach a device before their bytes do — a sync payload
-      //    carrying every photo and scan inline was tens of megabytes the phone could not parse — so an
-      //    attachment row has to be insertable while its content is still on its way.
-      (d) => {
-        const schemaText = safeSchema();
-        for (const t of ["resource_photos", "client_form_files"]) rebuildTable(d, schemaText, t);
-      },
-      // 8: assignments record the instant they were ended. Ending one used to leave the worker with the client
-      //    for the rest of the day, because access was decided by date alone — not what a supervisor taking
-      //    somebody off a case expects to happen.
-      (d) => {
-        addColumn(d, "assignments", "ended_at", "TEXT");
-      },
-      // 9: a logged contact says whether it was a phone call or a text message. Everything already recorded
-      //    was a call, which is what the default says.
-      (d) => {
-        addColumn(d, "calls", "method", `TEXT NOT NULL DEFAULT 'phone' CHECK (method IN ('phone','text'))`);
-      },
-      // 10: referral and engagement dates on clients, so time-to-engagement (a common navigator KPI) can be
-      //     tracked per client instead of only inferred from intake_date.
-      (d) => {
-        addColumn(d, "clients", "referral_date", "TEXT");
-        addColumn(d, "clients", "engagement_date", "TEXT");
-      },
-      // 11: optional single sign-on. An administrator links an existing account to the county identity
-      //     provider's 'sub' claim; OIDC login only ever signs in to an already-linked account.
-      (d) => {
-        addColumn(d, "users", "oidc_subject", "TEXT");
-        d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_subject ON users(oidc_subject) WHERE oidc_subject IS NOT NULL`);
-      },
-      // 12: device tracking for local-mode phones/tablets, so a lost device can be revoked or wiped the next
-      //     time it tries to sync (server/devices.js).
-      (d) => {
-        d.exec(`CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, label TEXT,
-      first_seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), last_seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-      last_ip TEXT, sync_count INTEGER NOT NULL DEFAULT 0, wipe_requested_at TEXT, revoked_at TEXT)`);
-        d.exec(`CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id)`);
-      },
-      // 13: nested budget allocations — a budget line can now sit inside a larger one instead of every line
-      //     being a flat peer under the fund (server/routes/budget.js enforces same-fund + no cycles).
-      (d) => {
-        addColumn(d, "budget_lines", "parent_id", "TEXT REFERENCES budget_lines(id) ON DELETE CASCADE");
-        d.exec(`CREATE INDEX IF NOT EXISTS idx_budget_lines_parent ON budget_lines(parent_id)`);
-      },
-      // 14: an intervention with a direct cost against a fund can now name the specific allocation it draws
-      //     down — interventions already had funding_source_id and cost, but nothing to point at which budget
-      //     line, so recording a service never actually reduced a budget. server/routes/interventions.js now
-      //     auto-posts a matching (pending) expenditure from these three columns.
-      (d) => {
-        addColumn(d, "interventions", "budget_line_id", "TEXT REFERENCES budget_lines(id) ON DELETE SET NULL");
-      },
-      // 15: county policies, procedures and contracts — an uploaded-file library (server/routes/documents.js),
-      //     searched by title/category/metadata only, the same shape as the existing form template library.
-      (d) => {
-        d.exec(`CREATE TABLE IF NOT EXISTS policy_documents (id TEXT PRIMARY KEY, title TEXT NOT NULL, category TEXT NOT NULL CHECK (category IN ('policy','procedure','contract')),
-      description TEXT, effective_date TEXT, expires_at TEXT, filename TEXT, content_type TEXT, bytes INTEGER NOT NULL DEFAULT 0, file_b64 TEXT, is_active INTEGER NOT NULL DEFAULT 1,
-      uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
-        d.exec(`CREATE INDEX IF NOT EXISTS idx_policy_documents_cat ON policy_documents(category)`);
-        d.exec(`CREATE INDEX IF NOT EXISTS idx_policy_documents_updated ON policy_documents(updated_at)`);
-      },
-      // 16: at most one expenditure per intervention — a second one would double-count that service's cost.
-      //     Before this, intervention_id was a writable field on the generic expenditures POST, so a database
-      //     that saw any traffic on that route could already have duplicates; keep the most recently updated
-      //     row's link and unlink the rest (they stay, just as ordinary expenditures with no linked service)
-      //     rather than deleting real financial records during a migration.
-      (d) => {
-        const dupes = d.prepare(`SELECT intervention_id, id FROM expenditures WHERE intervention_id IS NOT NULL
-      AND id NOT IN (SELECT id FROM expenditures e2 WHERE e2.intervention_id=expenditures.intervention_id ORDER BY e2.updated_at DESC LIMIT 1)`).all();
-        const unlink = d.prepare(`UPDATE expenditures SET intervention_id=NULL WHERE id=?`);
-        for (const row of dupes) unlink.run(row.id);
-        d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_exp_intervention_unique ON expenditures(intervention_id) WHERE intervention_id IS NOT NULL`);
-      },
-      // 17: why an expenditure was rejected. Time entries have carried this since their approval step was
-      //     added; expenditures accepted a note on the approve route and then dropped it on the floor.
-      (d) => {
-        addColumn(d, "expenditures", "approval_note", "TEXT");
-      },
-      // 18: a first name on its own finds the person (the search box always said it would), and the policy
-      //     library keeps the words inside each file so a policy can be found by what it says, not only its
-      //     title. Existing documents are indexed by server/routes/documents.js the next time they are saved.
-      (d) => {
-        const schemaText = safeSchema();
-        addColumn(d, "clients", "first_name_idx", "TEXT");
-        addColumn(d, "clients", "first_name_prefix_idx", "TEXT");
-        const { decrypt: decrypt3, blindIndex: blindIndex2 } = require_crypto();
-        const M = require_clients_model();
-        const upd = d.prepare(`UPDATE clients SET first_name_idx=?, first_name_prefix_idx=? WHERE id=?`);
-        for (const c of d.prepare(`SELECT id, first_name_enc FROM clients`).all()) {
-          let first = "";
-          try {
-            first = c.first_name_enc ? decrypt3(c.first_name_enc) : "";
-          } catch {
-            continue;
-          }
-          upd.run(blindIndex2(String(first || "").trim().toLowerCase()), M.namePrefixIndex(first), c.id);
-        }
-        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_clients_first_name/.test(line.trim())) d.exec(line.trim());
-        addColumn(d, "policy_documents", "search_text", "TEXT");
-      },
-      // 19: compliance review. Free text that reveals a named person's diagnosis moves into _enc columns
-      //     (call purposes, referral outcomes/barriers/notes, task titles, overdose substances); Part 2 consents
-      //     record their expiry event, paper signature and redisclosure notice; disclosures made without consent
-      //     carry an encrypted justification; clients can be placed on legal hold; break-glass events queue
-      //     for supervisor review; patient-rights requests get a table with a 30-day clock.
-      (d) => {
-        const schemaText = safeSchema();
-        for (const [t, from, to] of [
-          ["calls", "purpose", "purpose_enc"],
-          ["referrals", "outcome", "outcome_enc"],
-          ["referrals", "barrier", "barrier_enc"],
-          ["referrals", "notes", "notes_enc"],
-          ["overdose_events", "substances", "substances_enc"]
-        ]) encryptColumn(d, t, from, to);
-        encryptColumn(d, "tasks", "description", "description_enc");
-        if (tableExists(d, "tasks") && tableCols(d, "tasks").includes("title")) {
-          const { encrypt: encrypt3 } = require_crypto();
-          addColumn(d, "tasks", "title_enc", "TEXT");
-          const upd = d.prepare(`UPDATE tasks SET title_enc=? WHERE id=?`);
-          for (const r of d.prepare(`SELECT id, title FROM tasks`).all()) upd.run(encrypt3(String(r.title ?? "")), r.id);
-          d.exec(`ALTER TABLE tasks DROP COLUMN title`);
-          rebuildTable(d, schemaText, "tasks");
-        }
-        addColumn(d, "clients", "legal_hold", "INTEGER NOT NULL DEFAULT 0");
-        addColumn(d, "clients", "legal_hold_reason", "TEXT");
-        addColumn(d, "consents", "expires_event", "TEXT");
-        addColumn(d, "consents", "signed_on_paper", "INTEGER NOT NULL DEFAULT 0");
-        addColumn(d, "consents", "redisclosure_notice_given", "INTEGER NOT NULL DEFAULT 0");
-        addColumn(d, "disclosures", "justification_enc", "TEXT");
-        for (const t of ["breakglass_events", "patient_requests"]) {
-          const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
-          if (m) d.exec(m[0]);
-        }
-        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_(breakglass|patient_requests)/.test(line.trim())) d.exec(line.trim());
-      },
-      // 20: navigator field tools — a preferred name / alias finds the person too; an author can ask a
-      //     supervisor to review/co-sign a note; and a harm-reduction supply inventory that visits draw down.
-      (d) => {
-        const schemaText = safeSchema();
-        addColumn(d, "clients", "preferred_name_idx", "TEXT");
-        const { decrypt: decrypt3 } = require_crypto();
-        const M = require_clients_model();
-        const upd = d.prepare(`UPDATE clients SET preferred_name_idx=? WHERE id=?`);
-        for (const c of d.prepare(`SELECT id, preferred_name_enc FROM clients WHERE preferred_name_enc IS NOT NULL`).all()) {
-          let pref = "";
-          try {
-            pref = decrypt3(c.preferred_name_enc);
-          } catch {
-            continue;
-          }
-          upd.run(M.preferredNameIndex(pref), c.id);
-        }
-        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_clients_preferred_name/.test(line.trim())) d.exec(line.trim());
-        addColumn(d, "notes", "cosign_requested", "INTEGER NOT NULL DEFAULT 0");
-        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS supply_stock \([\s\S]*?\n\);/);
-        if (m) d.exec(m[0]);
-        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_supply_stock/.test(line.trim())) d.exec(line.trim());
-      },
-      // 21: a client whose status is NULL or blank (rows written before the value was enforced end to end,
-      //     including through sync) showed no status at all in the header and Overview. The column's default
-      //     is 'active', so that is what an empty value has always meant.
-      (d) => {
-        d.exec(`UPDATE clients SET status='active' WHERE status IS NULL OR TRIM(status)=''`);
-      },
-      // 22: spreadsheet import idempotency — a hash per imported row (import_rows), so the same file imported
-      //     twice does not double every visit, call, hour and expenditure it holds.
-      (d) => {
-        const schemaText = safeSchema();
-        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS import_rows \([\s\S]*?\n\);/);
-        if (m) d.exec(m[0]);
-        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_import_rows/.test(line.trim())) d.exec(line.trim());
-      },
-      // 23: a referral's follow-up to-do remembers which referral it belongs to. Recording one referral's
-      //     outcome used to close every "Follow up on referral…" to-do on the client, by title prefix.
-      (d) => {
-        addColumn(d, "tasks", "referral_id", "TEXT REFERENCES referrals(id) ON DELETE SET NULL");
-      },
-      // 24: a to-do's details ("detox bed at Granite on Tuesday; bring the MAT letter") reveal as much as its
-      //     title, which has been encrypted since 19. tasks.description moves into description_enc and the
-      //     plaintext column goes; the table is rebuilt from schema.sql so it matches a fresh install.
-      (d) => {
-        if (!tableExists(d, "tasks") || !tableCols(d, "tasks").includes("description")) return;
-        encryptColumn(d, "tasks", "description", "description_enc");
-        rebuildTable(d, safeSchema(), "tasks");
-      },
-      // 25: self sign-up. A request for an account is a users row that cannot sign in until an administrator
-      //     approves it (access_status 'pending'); every existing account is 'active'.
-      (d) => {
-        addColumn(d, "users", "access_status", `TEXT NOT NULL DEFAULT 'active' CHECK (access_status IN ('active','pending','declined'))`);
-        addColumn(d, "users", "access_note", "TEXT");
-        addColumn(d, "users", "requested_at", "TEXT");
-      },
-      // 26: name search and duplicate detection work in every script. Blind indexes used to keep only a-z and
-      //     0-9, so an Arabic or Cyrillic name indexed as nothing (unsearchable, never flagged as a duplicate)
-      //     and "Øster"/"Łecki" lost a letter; they now fold accents, transliterate Ø/Ł/ß/Æ… and keep every
-      //     Unicode letter (server/crypto.js foldText). Every client's indexes are re-derived from the decrypted
-      //     values with the same function key rotation uses (clients-model clientIndexes). A migration can
-      //     decrypt: the keys are loaded (config) before the database is opened, here and in the local kernel.
-      //     A row that cannot be decrypted keeps the indexes it had. No schema change.
-      (d) => {
-        const { decrypt: decrypt3 } = require_crypto();
-        const M = require_clients_model();
-        const cols2 = ["last_name_idx", "full_name_idx", "name_prefix_idx", "name_phonetic_idx", "first_name_idx", "first_name_prefix_idx", "preferred_name_idx", "dob_idx", "phone_idx"];
-        const upd = d.prepare(`UPDATE clients SET ${cols2.map((c) => `${c}=?`).join(", ")} WHERE id=?`);
-        for (const c of d.prepare(`SELECT id, first_name_enc, last_name_enc, preferred_name_enc, dob_enc, phone_enc FROM clients`).all()) {
-          let plain;
-          try {
-            plain = { first_name: decrypt3(c.first_name_enc), last_name: decrypt3(c.last_name_enc), preferred_name: decrypt3(c.preferred_name_enc), dob: decrypt3(c.dob_enc), phone: decrypt3(c.phone_enc) };
-          } catch {
-            continue;
-          }
-          const idx = M.clientIndexes(plain);
-          upd.run(...cols2.map((k) => idx[k]), c.id);
-        }
-      },
-      // 27:
-      //     idempotency_keys, so a retried POST is answered once instead of creating everything twice; and
-      //     breakglass_events.kind, because the supervisors' review queue now also receives re-admissions of
-      //     discharged clients by a worker whose caseload they were not on (POST /api/clients/:id/readmit).
-      (d) => {
-        addColumn(d, "breakglass_events", "kind", "TEXT NOT NULL DEFAULT 'clinical_note'");
-        const schemaText = safeSchema();
-        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS idempotency_keys \([\s\S]*?\n\);/);
-        if (m) d.exec(m[0]);
-        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_idempotency/.test(line.trim())) d.exec(line.trim());
-      },
-      // 28: Settings → Lists. An administrator's changes to the choices on documentation forms (a renamed,
-      //     reordered or retired choice, or a programme's own addition) are kept in option_overrides; the
-      //     built-in choices stay in code (server/options.js). An existing database starts with none.
-      (d) => {
-        const schemaText = safeSchema();
-        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS option_overrides \([\s\S]*?\n\);/);
-        if (m) d.exec(m[0]);
-        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_option_overrides/.test(line.trim())) d.exec(line.trim());
-      },
-      // 29: clinical depth for CalAIM documentation — the problem list
-      //     and its change history, the care coordination plan (goals and steps), ASAM six-dimension
-      //     assessments and scored outcome measures; and notes.problem_ids, the problems a note addresses.
-      //     New tables only, plus one nullable column, so an existing database starts with none of them.
-      (d) => {
-        addColumn(d, "notes", "problem_ids", "TEXT");
-        const schemaText = safeSchema();
-        for (const t of ["problems", "problem_history", "care_plan_goals", "care_plan_steps", "asam_assessments", "outcome_measures"]) {
-          const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
-          if (!m) throw new Error(`migration 29: no definition for ${t} in schema`);
-          d.exec(m[0]);
-          for (const line of schemaText.split("\n")) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
-        }
-      },
-      // 30: CalOMS Tx state reporting. caloms_records holds each episode's
-      //     admission, discharge and annual update records (answers encrypted); an existing database starts
-      //     with none and with CalOMS reporting switched off (settings caloms_enabled / caloms_providers).
-      (d) => {
-        const schemaText = safeSchema();
-        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS caloms_records \([\s\S]*?\n\);/);
-        if (m) d.exec(m[0]);
-        for (const line of schemaText.split("\n")) if (/^CREATE (UNIQUE )?INDEX IF NOT EXISTS idx_caloms_records/.test(line.trim())) d.exec(line.trim());
-      },
-      // 31: 42 CFR Part 2 (2024 final rule). Consents record the rest of the §2.31 elements (who may disclose,
-      //     who signed if not the patient, the revocation and refusal statements, which rule version they were
-      //     taken against); subpart E court orders get a table that disclosures point at; a disclosure says
-      //     whether it is for a proceeding against the patient, includes SUD counseling notes, and which §2.32
-      //     notice went with it; notes can be SUD counseling notes (§2.11); the §2.22 patient notice is
-      //     recorded per client; and a complaint log (§2.4) and a breach/incident register. Existing consents
-      //     keep rule_version NULL (recorded before the 2024 element list) and are shown as such.
-      (d) => {
-        const schemaText = safeSchema();
-        for (const [c, def] of [
-          ["discloser", "TEXT"],
-          ["signer_relationship", "TEXT"],
-          ["signer_name_enc", "TEXT"],
-          ["revocation_right_given", "INTEGER NOT NULL DEFAULT 0"],
-          ["refusal_consequences_given", "INTEGER NOT NULL DEFAULT 0"],
-          ["rule_version", "TEXT"]
-        ]) addColumn(d, "consents", c, def);
-        addColumn(d, "notes", "counseling_note", "INTEGER NOT NULL DEFAULT 0");
-        for (const t of ["court_orders", "part2_notices", "complaints", "privacy_incidents", "privacy_incident_clients"]) {
-          const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
-          if (m) d.exec(m[0]);
-        }
-        for (const [c, def] of [
-          ["court_order_id", "TEXT REFERENCES court_orders(id) ON DELETE SET NULL"],
-          ["legal_proceeding", "INTEGER NOT NULL DEFAULT 0"],
-          ["counseling_notes", "INTEGER NOT NULL DEFAULT 0"],
-          ["notice_version", "TEXT"]
-        ]) addColumn(d, "disclosures", c, def);
-        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_(court_orders|part2_notices|complaints|privacy_incident)/.test(line.trim())) d.exec(line.trim());
-      },
-      // 32: FHIR SMART Backend Services (private_key_jwt). fhir_jwt_assertions remembers each client assertion's
-      //     jti until it expires, so an assertion cannot be replayed (server/fhir/jwt.js). A new table only; an
-      //     existing database starts with it empty.
-      (d) => {
-        const schemaText = safeSchema();
-        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS fhir_jwt_assertions \([\s\S]*?\n\);/);
-        if (!m) throw new Error("migration 32: no definition for fhir_jwt_assertions in schema");
-        d.exec(m[0]);
-        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_fhir_jwt_assertions/.test(line.trim())) d.exec(line.trim());
-      },
-      // 33: the audit log becomes append-only in the database (triggers that refuse UPDATE
-      //     and DELETE outside the sanctioned maintenance window, server/audit.js maintenance()); accounts
-      //     remember when the identity provider last vouched for them and SCIM's id for them; a session records
-      //     whether its second factor came from the identity provider.
-      (d) => {
-        const schemaText = safeSchema();
-        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS audit_maintenance \([\s\S]*?\n\);/);
-        if (m) d.exec(m[0]);
-        for (const t of schemaText.match(/CREATE TRIGGER IF NOT EXISTS audit_log_no_\w+ [\s\S]*?END;/g) || []) d.exec(t);
-        addColumn(d, "users", "idp_seen_at", "TEXT");
-        addColumn(d, "users", "scim_external_id", "TEXT");
-        d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_scim_external_id ON users(scim_external_id) WHERE scim_external_id IS NOT NULL`);
-        addColumn(d, "sessions", "mfa_source", "TEXT");
-      },
-      // 34: the disclosure gate closed where a review found it open (docs/compliance/PART2.md). A register of the
-      //     QSOAs and research / audit approvals the non-consent bases rest on (disclosure_agreements); an
-      //     incident's title is encrypted, and an incident can be opened by switching the Part 2 programme off;
-      //     an incident's link to a client survives the client's purge as a snapshot (code, encrypted name)
-      //     instead of being deleted with the record — breach documentation is kept six years.
-      (d) => {
-        const schemaText = safeSchema();
-        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS disclosure_agreements \([\s\S]*?\n\);/);
-        if (m) d.exec(m[0]);
-        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_disclosure_agreements/.test(line.trim())) d.exec(line.trim());
-        if (tableExists(d, "privacy_incidents")) {
-          if (tableCols(d, "privacy_incidents").includes("title")) {
-            const { encrypt: encrypt3 } = require_crypto();
-            addColumn(d, "privacy_incidents", "title_enc", "TEXT");
-            const upd = d.prepare(`UPDATE privacy_incidents SET title_enc=? WHERE id=?`);
-            for (const r of d.prepare(`SELECT id, title FROM privacy_incidents`).all()) upd.run(encrypt3(String(r.title ?? "")), r.id);
-            d.exec(`ALTER TABLE privacy_incidents DROP COLUMN title`);
-          }
-          rebuildTable(d, schemaText, "privacy_incidents");
-        }
-        if (tableExists(d, "privacy_incident_clients")) {
-          for (const c of ["client_code", "client_name_enc", "client_purged_at"]) addColumn(d, "privacy_incident_clients", c, "TEXT");
-          const { snapshotOf } = require_incidents();
-          const upd = d.prepare(`UPDATE privacy_incident_clients SET client_code=?, client_name_enc=? WHERE id=?`);
-          for (const x of d.prepare(`SELECT x.id, c.client_code, c.first_name_enc, c.last_name_enc FROM privacy_incident_clients x JOIN clients c ON c.id=x.client_id WHERE x.client_code IS NULL`).all()) {
-            const snap = snapshotOf(x);
-            upd.run(snap.client_code, snap.client_name_enc, x.id);
-          }
-          rebuildTable(d, schemaText, "privacy_incident_clients");
-        }
-      },
-      // 35: a further disclosure review (docs/compliance/PART2.md). A consent records the categories of
-      //     information it covers (consents.info_categories), which the FHIR API honours; and a CalOMS Tx
-      //     submission is produced once and kept (caloms_submissions), so the file sent is the file accounted.
-      //     An existing consent's scope is free text: it is given the 'all' category only when that text says
-      //     plainly that it covers everything (GENERAL_SCOPE below); every other one stays NULL and covers nothing
-      //     automated until a new consent is recorded with its categories — the conservative reading.
-      (d) => {
-        const schemaText = safeSchema();
-        addColumn(d, "consents", "info_categories", "TEXT");
-        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS caloms_submissions \([\s\S]*?\n\);/);
-        if (!m) throw new Error("migration 35: no definition for caloms_submissions in schema");
-        d.exec(m[0]);
-        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_caloms_submissions/.test(line.trim())) d.exec(line.trim());
-        const { decrypt: decrypt3 } = require_crypto();
-        const { generalScope } = require_disclosure();
-        const upd = d.prepare(`UPDATE consents SET info_categories='all' WHERE id=?`);
-        for (const r of d.prepare(`SELECT id, scope_enc FROM consents WHERE scope_enc IS NOT NULL AND info_categories IS NULL`).all()) {
-          let scope = "";
-          try {
-            scope = decrypt3(r.scope_enc);
-          } catch {
-            continue;
-          }
-          if (generalScope(scope)) upd.run(r.id);
-        }
-      },
-      // 36: free-text reasons out of plaintext. A court order's vacated reason and a legal hold's reason move into
-      //     encrypted columns; a record's delete/merge reason, a legal hold's clearing reason and an episode's
-      //     reopen reason get encrypted columns of their own, and the audit entry records only that a reason was
-      //     given. (Existing audit entries are hash-chained and append-only, so they are left as they are.)
-      (d) => {
-        encryptColumn(d, "court_orders", "vacated_reason", "vacated_reason_enc");
-        if (tableExists(d, "court_orders")) addColumn(d, "court_orders", "vacated_reason_enc", "TEXT");
-        encryptColumn(d, "clients", "legal_hold_reason", "legal_hold_reason_enc");
-        for (const c of ["legal_hold_reason_enc", "legal_hold_cleared_reason_enc", "removed_reason_enc"]) addColumn(d, "clients", c, "TEXT");
-        if (tableExists(d, "episodes")) addColumn(d, "episodes", "reopen_reason_enc", "TEXT");
-      },
-      // 37: the rest of the free text typed about a client or a note leaves plaintext: an addendum's reason, a
-      //     consent's revocation reason, a countersignature note, an assignment's notes (a caseload transfer's
-      //     reason), a time entry's or expenditure's description and reviewer's note, a client form's notes and
-      //     a client's contact preferences ("safe contact" notes). Staff-only text with no client (a fund's notes,
-      //     a list label, a template's description) stays as it is.
-      (d) => {
-        for (const [t, from, to] of [
-          ["note_addenda", "reason", "reason_enc"],
-          ["consents", "revoked_reason", "revoked_reason_enc"],
-          ["notes", "cosign_note", "cosign_note_enc"],
-          ["assignments", "notes", "notes_enc"],
-          ["time_entries", "description", "description_enc"],
-          ["time_entries", "approval_note", "approval_note_enc"],
-          ["expenditures", "description", "description_enc"],
-          ["expenditures", "approval_note", "approval_note_enc"],
-          ["client_forms", "notes", "notes_enc"],
-          ["clients", "contact_preferences", "contact_preferences_enc"]
-        ]) encryptColumn(d, t, from, to);
-      },
-      // 38: PLACEHOLDER for another change stream's migration 38 (funding attribution); replace this no-op with
-      //     it when the branches are merged. It exists only so migration 39 keeps its number on this branch.
-      () => {
-      },
-      // 39: the last free text about a person held in plaintext. A consent's witness is usually someone the
-      //     client knows (a parent, a partner), and an imported note's metadata carries the client-name hints
-      //     sniffed from its text ("Met with J. Smith").
-      (d) => {
-        encryptColumn(d, "consents", "witness", "witness_enc");
-        encryptColumn(d, "import_items", "metadata", "metadata_enc");
-      }
-    ];
-    function initialise(d, schemaText, dbPath) {
-      const fresh = !d.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings'`).get();
-      if (fresh) {
-        d.exec(schemaText);
-        d.prepare(`INSERT INTO settings(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(String(migrations.length));
-      } else migrate(d, dbPath);
-      ensureIndexes(d, schemaText);
-    }
-    var lastIndexProblems = [];
-    function ensureIndexes(d, schemaText) {
-      const problems = [];
-      for (const raw of schemaText.split("\n")) {
-        const line = raw.trim();
-        const m = line.match(/^CREATE (?:UNIQUE )?INDEX IF NOT EXISTS (\S+) ON /);
-        if (!m) continue;
-        if (d.prepare(`SELECT 1 FROM sqlite_master WHERE type='index' AND name=?`).get(m[1])) continue;
-        try {
-          d.exec(line);
-        } catch (e) {
-          const error = String(e && e.message || e).slice(0, 200);
-          problems.push({ index: m[1], error });
-          console.warn(`[suds] ${JSON.stringify({ event: "db.index_missing", index: m[1], error })}`);
-        }
-      }
-      lastIndexProblems = problems;
-      return problems;
-    }
-    function indexProblems() {
-      return lastIndexProblems.slice();
-    }
-    var SNAPSHOTS_KEPT = 5;
-    function snapshotBeforeMigration(d, dbPath, fromVersion) {
-      if (!dbPath || dbPath === ":memory:") return "";
-      const dir = path.join(path.dirname(dbPath), "pre-migration");
-      const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-      const file = path.join(dir, `${path.basename(dbPath)}.v${fromVersion}.${stamp2}.db`);
-      fs.mkdirSync(dir, { recursive: true });
-      try {
-        fs.unlinkSync(file);
-      } catch {
-      }
-      d.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
-      try {
-        fs.chmodSync(file, 384);
-      } catch {
-      }
-      try {
-        const old = fs.readdirSync(dir).filter((f) => f.startsWith(path.basename(dbPath) + ".v")).sort();
-        for (const f of old.slice(0, Math.max(0, old.length - SNAPSHOTS_KEPT))) fs.unlinkSync(path.join(dir, f));
-      } catch {
-      }
-      return file;
-    }
-    function fkViolationKeys(d) {
-      return new Set(d.prepare("PRAGMA foreign_key_check").all().map((r) => `${r.table}:${r.rowid}:${r.parent}:${r.fkid}`));
-    }
-    function migrate(d, dbPath) {
-      const row = d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get();
-      let v = row ? Number(row.value) : 0;
-      if (v > migrations.length) throw new Error(`This database was created by a newer version of SUDS (schema ${v}; this build understands ${migrations.length}). Upgrade SUDS before opening it.`);
-      if (v < migrations.length) {
-        let snapshot = "";
-        try {
-          snapshot = snapshotBeforeMigration(d, dbPath, v);
-        } catch (e) {
-          throw new Error(`Could not snapshot the database before upgrading it from schema ${v} to ${migrations.length}: ${e.message}. Free up disk space or back up ${dbPath} by hand, then start SUDS again.`);
-        }
-        if (snapshot) console.log(`[suds] upgrading schema ${v} -> ${migrations.length}; snapshot saved to ${snapshot}`);
-      }
-      let remaining = [];
-      for (let i = v; i < migrations.length; i++) {
-        d.exec("PRAGMA foreign_keys = OFF");
-        d.exec("BEGIN");
-        try {
-          const before = fkViolationKeys(d);
-          migrations[i](d);
-          const after = d.prepare("PRAGMA foreign_key_check").all();
-          const introduced = after.filter((r) => !before.has(`${r.table}:${r.rowid}:${r.parent}:${r.fkid}`));
-          if (introduced.length) throw new Error(`migration ${i + 1} introduced ${introduced.length} new orphaned row(s), first in table ${introduced[0].table}`);
-          remaining = after;
-          d.prepare(`INSERT INTO settings(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`).run(String(i + 1));
-          d.exec("COMMIT");
-        } catch (e) {
-          try {
-            d.exec("ROLLBACK");
-          } catch {
-          }
-          throw e;
-        } finally {
-          d.exec("PRAGMA foreign_keys = ON");
-        }
-      }
-      if (remaining.length) {
-        const byTable = {};
-        for (const r of remaining) byTable[r.table] = (byTable[r.table] || 0) + 1;
-        console.warn(`[suds] this database has ${remaining.length} pre-existing orphaned reference(s), not introduced by this upgrade, by table: ${Object.entries(byTable).map(([t, n]) => `${t}=${n}`).join(", ")}. Records are otherwise intact; anything joined through the missing reference may just be absent from a report until it is repaired.`);
-      }
-    }
-    function get() {
-      if (!db3) open2();
-      return db3;
-    }
-    function close() {
-      if (db3) {
-        db3.close();
-        db3 = void 0;
-      }
-    }
-    function now() {
-      return (/* @__PURE__ */ new Date()).toISOString();
-    }
-    function all(sql, ...params) {
-      return get().prepare(sql).all(...params);
-    }
-    function one(sql, ...params) {
-      return get().prepare(sql).get(...params);
-    }
-    function run2(sql, ...params) {
-      return get().prepare(sql).run(...params);
-    }
-    var txDepth = 0;
-    function transaction(fn) {
-      const d = get();
-      const depth = txDepth++;
-      const sp = `sp_tx_${depth}`;
-      d.exec(depth === 0 ? "BEGIN" : `SAVEPOINT ${sp}`);
-      try {
-        const r = fn();
-        d.exec(depth === 0 ? "COMMIT" : `RELEASE ${sp}`);
-        txDepth--;
-        return r;
-      } catch (e) {
-        txDepth--;
-        try {
-          d.exec(depth === 0 ? "ROLLBACK" : `ROLLBACK TO ${sp}; RELEASE ${sp}`);
-        } catch (rollbackError) {
-          if (depth === 0) txDepth = 0;
-          console.error("[suds] rollback failed:", rollbackError.message);
-        }
-        throw e;
-      }
-    }
-    function savepoint(fn, onError) {
-      const d = get();
-      const sp = `sp_${txDepth}_${savepoint.n = (savepoint.n || 0) + 1}`;
-      d.exec(`SAVEPOINT ${sp}`);
-      try {
-        const r = fn();
-        d.exec(`RELEASE ${sp}`);
-        return r;
-      } catch (e) {
-        try {
-          d.exec(`ROLLBACK TO ${sp}`);
-          d.exec(`RELEASE ${sp}`);
-        } catch {
-        }
-        if (onError) onError(e);
-        else throw e;
-      }
-    }
-    function checkKeyFingerprint() {
-      const fp = require_crypto().keyFingerprint();
-      const stored = getSetting("key_fingerprint", null);
-      if (!stored) {
-        setSetting("key_fingerprint", fp);
-        return { first: true };
-      }
-      if (stored !== fp) throw new Error("The encryption key this server was started with is not the key this database was written with. Nothing has been changed. Restore the key backup (keys.json) saved at setup or set SUDS_ENCRYPTION_KEY to the original key, then start again. If the key was deliberately rotated with scripts/rotate-key.js, that script records the new key; a database this happened to some other way needs the original key back.");
-      return { first: false };
-    }
-    function getSetting(key, def = null) {
-      const r = one(`SELECT value FROM settings WHERE key=?`, key);
-      return r ? r.value : def;
-    }
-    function setSetting(key, value) {
-      run2(`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, key, String(value));
-    }
-    function tombstone(table, id) {
-      run2(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now());
-    }
-    module.exports = { open: open2, openWith, get, close, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, now, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint };
-  }
-});
-
-// server/idempotency.js
-var require_idempotency = __commonJS({
-  "server/idempotency.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
     var db3 = require_db();
-    var audit3 = require_audit();
-    var { HttpError: HttpError3 } = require_http();
-    var { sha256: sha2562, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
-    var TTL_MS = 24 * 3600 * 1e3;
-    var MAX_STORED_BYTES = 512 * 1024;
-    var EXEMPT = [/^\/api\/auth\//, /^\/api\/sync\//, /^\/api\/local\//, /^\/api\/setup(\/|$)/, /^\/api\/users(\/|$)/, /^\/api\/admin\/(api-keys|restore|keys-backup)/, /^\/api\/me\/(password|mfa)/];
-    var inflight2 = /* @__PURE__ */ new Map();
-    var lastPurge = 0;
-    function applies(ctx) {
-      if (ctx.method !== "POST" || !ctx.user) return false;
-      if (!ctx.headers || ctx.headers["idempotency-key"] === void 0) return false;
-      return !EXEMPT.some((re) => re.test(ctx.path));
+    var FILE_RE = /^anchor-.*\.json$/;
+    var keyId = (key = config.indexKey) => crypto3.createHmac("sha256", key).update("suds-audit-anchor-key-id").digest("hex").slice(0, 16);
+    var FIELDS = ["v", "kind", "at", "reason", "install", "gen", "prev_gen", "head_id", "head_hash", "first_id", "rows", "host", "key_id", "prev_mac"];
+    var installId = () => db3.getSetting("audit_anchor_install", null);
+    var generation = () => db3.getSetting("db_generation", null) || "initial";
+    function canonical(a) {
+      const o = {};
+      for (const k of FIELDS) o[k] = a[k] === void 0 ? null : a[k];
+      return JSON.stringify(o);
     }
-    function requestHash(ctx) {
-      const body = ctx.rawBody && ctx.rawBody.length ? sha2562(ctx.rawBody) : JSON.stringify(ctx.body ?? null);
-      return sha2562(`${ctx.method} ${ctx.path}?${ctx.query ? ctx.query.toString() : ""}
-${body}`);
+    function macOf(a, key = config.indexKey) {
+      return crypto3.createHmac("sha256", key).update(canonical(a)).digest("hex");
     }
-    async function run2(ctx, exec) {
-      if (!applies(ctx)) return exec();
-      const key = String(ctx.headers["idempotency-key"]);
-      if (!key || key.length > 255 || !/^[\x21-\x7e]+$/.test(key)) throw new HttpError3(400, "Idempotency-Key must be 1-255 printable characters");
-      maybePurge();
-      const id = sha2562(`${ctx.user.id}|${key}`);
-      const hash2 = requestHash(ctx);
-      while (inflight2.has(id)) {
+    function macOk(a, key = config.indexKey) {
+      if (typeof a.mac !== "string") return false;
+      const want = macOf(a, key);
+      return want.length === a.mac.length && crypto3.timingSafeEqual(import_buffer.Buffer.from(want), import_buffer.Buffer.from(a.mac));
+    }
+    function dir() {
+      return config.auditAnchorDir;
+    }
+    function list(d = dir()) {
+      let names = [];
+      try {
+        names = fs.readdirSync(d).filter((f) => FILE_RE.test(f)).sort();
+      } catch {
+        return [];
+      }
+      return names.map((file) => {
         try {
-          await inflight2.get(id);
+          return { file, anchor: JSON.parse(fs.readFileSync(path.join(d, file), "utf8")) };
+        } catch (e) {
+          return { file, error: String(e.message || e) };
+        }
+      });
+    }
+    var real = (p) => {
+      try {
+        return fs.realpathSync(p);
+      } catch {
+        return path.resolve(p);
+      }
+    };
+    var within = (child, parent) => child === parent || child.startsWith(parent + path.sep);
+    function dirStatus(d = dir()) {
+      let exists3 = false;
+      let writable = false;
+      try {
+        exists3 = fs.statSync(d).isDirectory();
+      } catch {
+      }
+      if (exists3) {
+        try {
+          fs.accessSync(d, fs.constants.W_OK);
+          writable = true;
         } catch {
         }
       }
-      const prior = db3.one(`SELECT * FROM idempotency_keys WHERE id=? AND created_at > ?`, id, new Date(Date.now() - TTL_MS).toISOString());
-      if (prior) {
-        if (prior.request_hash !== hash2 || prior.user_id !== ctx.user.id) {
-          audit3.log({ user: ctx.user, action: "idempotency.mismatch", ip: ctx.ip, success: false, details: { path: ctx.path } });
-          throw new HttpError3(422, "This request was already sent with the same Idempotency-Key and different content. Reload the form and try again.");
-        }
-        audit3.log({ user: ctx.user, action: "idempotency.replay", ip: ctx.ip, details: { path: ctx.path, status: prior.status, first_at: prior.created_at } });
-        ctx.status = prior.status;
-        ctx.idempotentReplay = true;
-        return prior.response_enc ? JSON.parse(decrypt3(prior.response_enc)) : void 0;
+      const a = real(d);
+      const data = real(config.dataDir);
+      return { dir: d, configured: config.auditAnchorDirConfigured, exists: exists3, writable, inside_data_dir: within(a, data) || within(data, a) };
+    }
+    function placementProblem(d = dir()) {
+      if (!config.isProd) return null;
+      const st = dirStatus(d);
+      if (!st.configured) return `AUDIT_ANCHOR_DIR is not set, so audit anchors are written to ${d}, inside the data directory on the same disk as the database they are meant to check. Point AUDIT_ANCHOR_DIR at write-once (WORM) storage outside the data directory (docs/security/LOGGING-AND-AUDIT.md).`;
+      if (st.inside_data_dir) return `AUDIT_ANCHOR_DIR (${d}) is inside the data directory (or contains it), so a rewrite of the data directory rewrites the anchors too. Point it at write-once (WORM) storage outside the data directory (docs/security/LOGGING-AND-AUDIT.md).`;
+      return null;
+    }
+    function write(reason = "manual", { key = config.indexKey, d = dir(), prevGen = null } = {}) {
+      const head = db3.one(`SELECT id, hash FROM audit_log ORDER BY id DESC LIMIT 1`);
+      if (!head) return null;
+      const first = db3.one(`SELECT MIN(id) m FROM audit_log`).m;
+      const rows = db3.one(`SELECT COUNT(*) n FROM audit_log WHERE id <= ?`, head.id).n;
+      if (!config.auditAnchorDirConfigured || d !== config.auditAnchorDir) fs.mkdirSync(d, { recursive: true, mode: 448 });
+      else if (!dirStatus(d).exists) throw new Error(`the audit anchor directory ${d} does not exist (is the share mounted?)`);
+      let install = installId();
+      if (!install) {
+        install = require_crypto().uuid();
+        db3.setSetting("audit_anchor_install", install);
       }
-      let done;
-      const gate = new Promise((resolve2) => {
-        done = resolve2;
-      });
-      inflight2.set(id, gate);
+      const all = list(d);
+      const prev = all.filter((x) => x.anchor && x.anchor.install === install).pop();
+      const newest = all.filter((x) => x.anchor && typeof x.anchor.at === "string").map((x) => Date.parse(x.anchor.at)).filter(Number.isFinite);
+      const floor = newest.length ? Math.max(...newest) + 1 : 0;
+      let atMs = Math.max(Date.now(), floor);
+      let a;
+      let file;
+      for (let attempt = 0; ; attempt++, atMs++) {
+        a = { v: 1, kind: "suds-audit-anchor", at: new Date(atMs).toISOString(), reason, install, gen: generation(), prev_gen: prevGen, head_id: head.id, head_hash: head.hash, first_id: first, rows, host: (init_os(), __toCommonJS(os_exports)).hostname(), key_id: keyId(key), prev_mac: prev ? prev.anchor.mac || null : null };
+        a.mac = macOf(a, key);
+        file = path.join(d, `anchor-${a.at.replace(/[:.]/g, "-")}-${String(head.id).padStart(12, "0")}.json`);
+        try {
+          fs.writeFileSync(file, JSON.stringify(a) + "\n", { flag: "wx", mode: 384 });
+          break;
+        } catch (e) {
+          if (e.code !== "EEXIST" || attempt >= 50) throw e;
+        }
+      }
       try {
-        const result = await exec();
-        const status = result === void 0 ? 204 : ctx.status || 200;
-        if (!(ctx.res && ctx.res.headersSent) && status >= 200 && status < 300) {
-          const json = result === void 0 ? null : JSON.stringify(result);
-          if (json === null || json.length <= MAX_STORED_BYTES) {
-            db3.run(
-              `INSERT OR REPLACE INTO idempotency_keys(id,user_id,method,path,request_hash,status,response_enc,created_at) VALUES(?,?,?,?,?,?,?,?)`,
-              id,
-              ctx.user.id,
-              ctx.method,
-              ctx.path,
-              hash2,
-              status,
-              json === null ? null : encrypt3(json),
-              db3.now()
-            );
+        fs.chmodSync(file, 256);
+      } catch {
+      }
+      db3.setSetting("audit_anchor_last_at", a.at);
+      db3.setSetting("audit_anchor_last_status", "ok");
+      console.log(`[suds] audit anchor id=${a.head_id} rows=${a.rows} hash=${a.head_hash} mac=${a.mac} reason=${reason}`);
+      sendSyslog(a);
+      return { ...a, file: path.basename(file) };
+    }
+    function sendSyslog(a) {
+      if (!config.auditSyslog) return;
+      try {
+        const m = String(config.auditSyslog).match(/^(?:udp:\/\/)?\[?([^\]]+?)\]?(?::(\d+))?$/);
+        if (!m) return;
+        const host = m[1];
+        const port = Number(m[2] || 514);
+        const dgram = (init_empty(), __toCommonJS(empty_exports));
+        const sock = dgram.createSocket(host.includes(":") ? "udp6" : "udp4");
+        const msg = import_buffer.Buffer.from(`<110>1 ${a.at} ${a.host} suds - audit-anchor - ${JSON.stringify(a)}`);
+        sock.send(msg, port, host, () => {
+          try {
+            sock.close();
+          } catch {
+          }
+        });
+        if (sock.unref) sock.unref();
+      } catch (e) {
+        console.error("[suds] audit anchor syslog send failed:", e.message);
+      }
+    }
+    function runIfDue(now = Date.now()) {
+      const hours = config.auditAnchorHours;
+      if (!(hours > 0)) return null;
+      const last = db3.getSetting("audit_anchor_last_at", null);
+      if (last && now - Date.parse(last) < hours * 36e5) return null;
+      return safeWrite("schedule");
+    }
+    function safeWrite(reason, opts = {}) {
+      try {
+        return write(reason, opts);
+      } catch (e) {
+        const msg = String(e.message || e);
+        console.error("[suds] audit anchor could not be written:", msg);
+        db3.setSetting("audit_anchor_last_status", `failed: ${msg}`);
+        try {
+          require_audit().log({ user: { username: "system" }, action: "audit.anchor.failed", success: false, details: { reason, error: msg.slice(0, 300) } });
+        } catch (e2) {
+          console.error("[suds] the audit entry for that failure could not be written either:", e2 && e2.message);
+        }
+        return null;
+      }
+    }
+    function verify({ key = config.indexKey, d = dir(), tolerateNewer = false } = {}) {
+      const files = list(d);
+      const out2 = { dir: d, total: files.length, matched: 0, other_key: 0, other_install: 0, other_generation: 0, purged: 0, newer: 0, bad: [], last_anchor_at: null };
+      const install = installId();
+      const gen = generation();
+      const kid = keyId(key);
+      const bounds = db3.one(`SELECT MIN(id) mn, MAX(id) mx FROM audit_log`);
+      const minId = bounds.mn || 0;
+      const maxId = bounds.mx || 0;
+      let purgedThrough = null;
+      const purged = () => {
+        if (purgedThrough === null) {
+          purgedThrough = 0;
+          for (const r of db3.all(`SELECT details FROM audit_log WHERE action='audit.purge'`)) {
+            try {
+              purgedThrough = Math.max(purgedThrough, Number(JSON.parse(r.details).last_purged_id) || 0);
+            } catch {
+            }
           }
         }
-        return result;
-      } finally {
-        inflight2.delete(id);
-        done();
+        return purgedThrough;
+      };
+      const mine = files.filter((f) => f.anchor && f.anchor.install === install);
+      const newest = mine.filter((f) => f.anchor.key_id === kid && f.anchor.gen === gen).pop();
+      const restores = /* @__PURE__ */ new Map();
+      for (const f of mine) if (f.anchor.reason === "restore" && f.anchor.key_id === kid && macOk(f.anchor, key) && !restores.has(f.anchor.gen)) restores.set(f.anchor.gen, f.anchor);
+      const boundFor = (g) => {
+        let bound = Infinity;
+        let cur = gen;
+        const seen2 = /* @__PURE__ */ new Set();
+        while (cur !== g) {
+          const r = restores.get(cur);
+          if (!r || seen2.has(cur)) return null;
+          seen2.add(cur);
+          bound = Math.min(bound, r.head_id);
+          cur = r.prev_gen || "initial";
+        }
+        return bound;
+      };
+      let prevMac = null;
+      let first = true;
+      for (const f of files) {
+        const bad = (reason) => out2.bad.push({ file: f.file, head_id: f.anchor ? f.anchor.head_id : null, reason });
+        if (!f.anchor) {
+          bad(`unreadable: ${f.error}`);
+          prevMac = void 0;
+          first = false;
+          continue;
+        }
+        const a = f.anchor;
+        if (!install || a.install !== install) {
+          out2.other_install++;
+          continue;
+        }
+        out2.last_anchor_at = a.at || out2.last_anchor_at;
+        if (!first && prevMac !== void 0 && a.prev_mac !== prevMac) bad("the anchor before this one is missing or was replaced (the sequence of anchor files is broken)");
+        first = false;
+        prevMac = a.mac;
+        if (a.key_id !== kid) {
+          out2.other_key++;
+          continue;
+        }
+        if (!macOk(a, key)) {
+          bad("the anchor file does not verify (it was altered, or was not written by this server)");
+          continue;
+        }
+        if (a.gen !== gen) {
+          const bound = boundFor(a.gen);
+          if (bound === null && !tolerateNewer) {
+            bad("the database has been replaced since this anchor (its generation changed) but no restore was anchored");
+            continue;
+          }
+          if (bound === null || a.head_id > bound) {
+            out2.other_generation++;
+            continue;
+          }
+        }
+        const row = db3.one(`SELECT id, hash FROM audit_log WHERE id=?`, a.head_id);
+        if (!row) {
+          if (a.head_id > maxId) {
+            if (tolerateNewer) out2.newer++;
+            else bad(`the audit log now ends at entry ${maxId}, before this anchor's entry ${a.head_id}: newer entries were removed`);
+            continue;
+          }
+          if (a.head_id < minId && a.head_id <= purged()) {
+            out2.purged++;
+            continue;
+          }
+          bad(`entry ${a.head_id} recorded by this anchor is missing${a.head_id < minId ? " and no retention purge accounts for it" : ""}`);
+          continue;
+        }
+        if (row.hash !== a.head_hash) {
+          bad(`entry ${a.head_id} no longer has the hash this anchor recorded: the chain was rewritten`);
+          continue;
+        }
+        if (f === newest && a.first_id === minId) {
+          const n = db3.one(`SELECT COUNT(*) n FROM audit_log WHERE id <= ?`, a.head_id).n;
+          if (n !== a.rows) {
+            bad(`${a.rows - n} entr${Math.abs(a.rows - n) === 1 ? "y" : "ies"} at or before entry ${a.head_id} ${n < a.rows ? "were removed" : "were inserted"} since this anchor`);
+            continue;
+          }
+        }
+        out2.matched++;
       }
+      out2.ok = out2.bad.length === 0;
+      return out2;
     }
-    function purge(now = Date.now()) {
-      lastPurge = now;
-      return db3.run(`DELETE FROM idempotency_keys WHERE created_at <= ?`, new Date(now - TTL_MS).toISOString()).changes;
-    }
-    function maybePurge() {
-      if (Date.now() - lastPurge > 3600 * 1e3) {
+    function verifyAndRecord() {
+      const r = verify();
+      db3.setSetting("audit_anchor_verified_at", db3.now());
+      db3.setSetting("audit_anchor_verify_status", r.ok ? `ok: ${r.matched} matched${r.purged ? `, ${r.purged} before a retention purge` : ""}${r.other_key ? `, ${r.other_key} under an earlier index key` : ""}${r.other_generation ? `, ${r.other_generation} from before a restore` : ""}${r.other_install ? `, ${r.other_install} from another installation` : ""} of ${r.total}` : `FAILED: ${r.bad[0].reason} (${r.bad[0].file})`);
+      if (!r.ok) {
+        console.error(`[suds] AUDIT ANCHOR MISMATCH: ${r.bad.length} anchor(s) do not match the audit log \u2014 ${r.bad[0].reason}`);
         try {
-          purge();
-        } catch {
+          require_audit().log({ user: { username: "system" }, action: "audit.anchor.verify.failed", success: false, details: { bad: r.bad.slice(0, 20), total: r.total } });
+        } catch (e) {
+          console.error("[suds] the audit entry for the anchor mismatch could not be written:", e && e.message);
         }
-      }
-    }
-    module.exports = { run: run2, purge, TTL_MS };
-  }
-});
-
-// server/sync-tables.js
-var require_sync_tables = __commonJS({
-  "server/sync-tables.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    module.exports = {
-      // caloms_*: whether this programme reports CalOMS Tx (which turns on the CalOMS questions in the admission
-      // and discharge forms) and its provider IDs — a device needs both to offer the same forms offline.
-      settings_keys: ["org_name", "county_name", "program_contact", "note_lock_days", "caloms_enabled", "caloms_providers", "caloms_start_date"],
-      tables: [
-        // supervisor_id points at another user: a supervisor must land before the people who report to them.
-        { name: "users", enc: ["mfa_secret_enc"], scope: "users", cols: null, selfParent: "supervisor_id" },
-        { name: "resources", enc: [], scope: "all", writePerm: "resources:write" },
-        { name: "resource_photos", enc: [], scope: "all", writePerm: "resources:write", parent: ["resources", "resource_id"], blob: ["data_b64"] },
-        { name: "policy_documents", enc: [], scope: "all", writePerm: "documents:write", blob: ["file_b64"] },
-        // Grant structure is budget:manage over REST; a device holding only budget:write must not restructure it by sync.
-        { name: "funding_sources", enc: [], scope: "all", writePerm: "budget:manage" },
-        { name: "budget_lines", enc: [], scope: "all", writePerm: "budget:manage", parent: ["funding_sources", "funding_source_id"], selfParent: "parent_id" },
-        // merged_into points at another client: the record that was kept must land before its duplicate.
-        { name: "clients", enc: ["first_name_enc", "last_name_enc", "preferred_name_enc", "dob_enc", "phone_enc", "alt_phone_enc", "email_enc", "address_enc", "medicaid_id_enc", "emergency_contact_enc", "goals_enc", "flags_enc", "legal_hold_reason_enc", "legal_hold_cleared_reason_enc", "removed_reason_enc", "contact_preferences_enc"], legacy: { legal_hold_reason: "legal_hold_reason_enc", contact_preferences: "contact_preferences_enc" }, scope: "client", clientCol: "id", idx: true, writePerm: "clients:write", selfParent: "merged_into" },
-        { name: "assignments", enc: ["notes_enc"], legacy: { notes: "notes_enc" }, scope: "client", clientCol: "client_id", writePerm: "assignments:manage", parent: ["clients", "client_id"] },
-        { name: "episodes", enc: ["presenting_problem_enc", "discharge_summary_enc", "reopen_reason_enc"], scope: "client", clientCol: "client_id", writePerm: "episodes:write", parent: ["clients", "client_id"] },
-        // CalOMS Tx records hang off an episode: the episode must land first.
-        { name: "caloms_records", enc: ["answers_enc"], scope: "client", clientCol: "client_id", writePerm: "episodes:write", parent: ["episodes", "episode_id"] },
-        { name: "interventions", enc: ["summary_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "interventions:write", parent: ["clients", "client_id"] },
-        { name: "overdose_events", enc: ["notes_enc", "substances_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "overdose:write", parent: ["clients", "client_id"] },
-        { name: "calls", enc: ["contact_name_enc", "phone_enc", "summary_enc", "purpose_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "calls:write", parent: ["clients", "client_id"] },
-        { name: "time_entries", enc: ["description_enc", "approval_note_enc"], legacy: { description: "description_enc", approval_note: "approval_note_enc" }, scope: "client-or-null", clientCol: "client_id", writePerm: "time:write", parent: ["clients", "client_id"] },
-        // A referral may cite the consent it was made under, so consents come first.
-        { name: "consents", enc: ["recipient_enc", "purpose_enc", "scope_enc", "signer_name_enc", "revoked_reason_enc", "witness_enc"], legacy: { revoked_reason: "revoked_reason_enc", witness: "witness_enc" }, scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
-        // A disclosure made under a subpart E court order cites it, so orders travel before disclosures.
-        { name: "court_orders", enc: ["court_enc", "case_ref_enc", "recipient_enc", "purpose_enc", "scope_enc", "vacated_reason_enc"], legacy: { vacated_reason: "vacated_reason_enc" }, scope: "client", clientCol: "client_id", writePerm: "court-orders:write", parent: ["clients", "client_id"] },
-        { name: "part2_notices", enc: ["notes_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
-        { name: "referrals", enc: ["outcome_enc", "barrier_enc", "notes_enc"], scope: "client", clientCol: "client_id", writePerm: "referrals:write", parent: ["clients", "client_id"] },
-        // Migration 39 moved consents.witness and import_items.metadata into witness_enc and metadata_enc.
-        // Migration 37 moved the free text on assignments, time entries, consents (revocation), expenditures, notes
-        // (countersignature), addenda, client forms and clients (contact preferences) into _enc columns likewise.
-        // Migration 24 moved tasks.description into description_enc; kernels before 1.9.3 still push `description`.
-        { name: "tasks", enc: ["title_enc", "description_enc"], legacy: { description: "description_enc" }, scope: "client-or-null", clientCol: "client_id", writePerm: "tasks:write", parent: ["clients", "client_id"] },
-        { name: "expenditures", enc: ["description_enc", "approval_note_enc"], legacy: { description: "description_enc", approval_note: "approval_note_enc" }, scope: "client-or-null", clientCol: "client_id", writePerm: "budget:write", parent: ["clients", "client_id"] },
-        { name: "notes", enc: ["content_enc", "structured_enc", "title_enc", "cosign_note_enc"], legacy: { cosign_note: "cosign_note_enc" }, scope: "client", clientCol: "client_id", writePerm: "notes:admin:write", parent: ["clients", "client_id"] },
-        { name: "note_addenda", enc: ["content_enc", "reason_enc"], legacy: { reason: "reason_enc" }, scope: "via-note", writePerm: "notes:admin:write", parent: ["notes", "note_id"] },
-        { name: "disclosures", enc: ["recipient_enc", "purpose_enc", "what_enc", "justification_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
-        // An import (a OneNote page, a Pocket AI transcript) is its importer's until it is filed against a client:
-        // the REST routes show it only to them (or to clients:all), and a device gets the same -- scope 'importer'.
-        { name: "imports", enc: [], scope: "importer", writePerm: "imports:write" },
-        { name: "import_items", enc: ["content_enc", "title_enc", "metadata_enc"], legacy: { metadata: "metadata_enc" }, scope: "via-import", writePerm: "imports:write", parent: ["imports", "import_id"] },
-        { name: "form_templates", enc: [], scope: "all", writePerm: "forms:manage", blob: ["file_b64"] },
-        { name: "client_forms", enc: ["values_enc", "notes_enc"], legacy: { notes: "notes_enc" }, scope: "client", clientCol: "client_id", writePerm: "forms:write", parent: ["clients", "client_id"] },
-        { name: "client_form_files", enc: ["data_enc"], scope: "client", clientCol: "client_id", writePerm: "forms:write", parent: ["client_forms", "client_form_id"], blob: ["data_enc"] },
-        { name: "patient_requests", enc: ["notes_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
-        // Clinical documentation (CalAIM): the problem list and its history, the care plan, ASAM assessments and
-        // outcome measures. readPerm: a device whose role cannot read them (an ASAM rating on a navigator's
-        // phone) is never sent them, the same minimum-necessary rule clinical notes follow.
-        { name: "problems", enc: ["problem_enc", "icd10_code_enc", "icd10_description_enc", "z_codes_enc"], scope: "client", clientCol: "client_id", writePerm: "careplan:write", readPerm: "careplan:read", parent: ["clients", "client_id"] },
-        { name: "problem_history", enc: ["changes_enc"], scope: "client", clientCol: "client_id", writePerm: "careplan:write", readPerm: "careplan:read", parent: ["problems", "problem_id"] },
-        { name: "care_plan_goals", enc: ["goal_enc"], scope: "client", clientCol: "client_id", writePerm: "careplan:write", readPerm: "careplan:read", parent: ["clients", "client_id"] },
-        { name: "care_plan_steps", enc: ["step_enc"], scope: "client", clientCol: "client_id", writePerm: "careplan:write", readPerm: "careplan:read", parent: ["care_plan_goals", "goal_id"] },
-        { name: "asam_assessments", enc: ["dimension_notes_enc", "discrepancy_notes_enc", "summary_enc"], scope: "client", clientCol: "client_id", writePerm: "assessments:write", readPerm: "assessments:read", parent: ["clients", "client_id"] },
-        { name: "outcome_measures", enc: ["responses_enc", "notes_enc"], scope: "client", clientCol: "client_id", writePerm: "assessments:write", readPerm: "assessments:read", parent: ["clients", "client_id"] },
-        // Harm-reduction supply counts: shared program state. Pull-only (serverOwned): the office copy is the
-        // one shelf count, drawn down there when a pushed visit lands (server/routes/sync.js calls the same
-        // draw-down the REST route does). A device's absolute count is never accepted — two phones each
-        // subtracting from their own stale copy would otherwise leave whichever synced last as the truth.
-        { name: "supply_stock", enc: [], scope: "all", writePerm: "interventions:write", serverOwned: true },
-        // Settings → Lists (the wording and order of documentation choices): the office's configuration,
-        // pull-only like supply counts. A device needs it to offer the same choices and show the same labels
-        // offline; it can never change it (server/routes/options.js refuses writes in the local kernel).
-        { name: "option_overrides", enc: [], scope: "all", writePerm: "settings:manage", serverOwned: true },
-        // The QSOA / research / audit register the non-consent disclosure bases rest on (server/disclosure.js):
-        // the office's, pull-only, so a device can offer the same agreements on its disclosure form offline.
-        { name: "disclosure_agreements", enc: [], scope: "all", writePerm: "agreements:write", serverOwned: true }
-      ],
-      // Push rejection reasons that will never succeed on a retry: the office has ruled, and the device must
-      // mark the row as exchanged (office wins) rather than resend it every sync forever. Anything else
-      // (network, a 5xx, an unknown SQL error) is transient and is retried. Reasons are matched as prefixes.
-      permanent_reasons: [
-        "immutable",
-        "purged",
-        "merged into another record",
-        "conflicts with an existing record",
-        "not on caseload",
-        "not permitted",
-        "server-owned",
-        "your role cannot",
-        "clinical notes not permitted",
-        "you do not have permission",
-        "is missing a required field",
-        "refers to a record the office server does not have",
-        "attributed to",
-        "would create a cycle",
-        "parent allocation does not belong",
-        "its ",
-        "has a value the office does not accept",
-        "needs a lawful basis for disclosure"
-      ],
-      // Server-side only, never synchronised: breakglass_events is the office supervisor's review queue for
-      // emergency access, and a device has no supervisor to review it.
-      // complaints and the privacy incident register are the privacy officer's, kept at the office likewise.
-      // fhir_jwt_assertions is the FHIR token endpoint's replay guard for client assertions (office server only).
-      // caloms_submissions holds each CalOMS Tx file as produced for DHCS, which only the office sends.
-      server_only: ["breakglass_events", "complaints", "privacy_incidents", "privacy_incident_clients", "fhir_jwt_assertions", "caloms_submissions"],
-      // Kept by each database for itself and never synchronised in either direction: idempotency_keys holds
-      // the answers to retried POSTs made against that database (server/idempotency.js). A device's retry is
-      // answered by the device; the office never sees the key, only the rows the request created.
-      per_database: ["idempotency_keys"],
-      // Rows a device may create but never change once they exist (a consent may only be revoked). The legal
-      // record of what was agreed to and what was shared cannot be rewritten by whichever phone syncs last.
-      immutable: ["consents", "disclosures", "note_addenda", "problem_history"],
-      // Columns that reference users(id) somewhere in the schema. A device's local account id is meaningless on the
-      // office server (and vice versa), so every one of these has to be remapped on both sides of a sync.
-      user_refs: [
-        ["clients", "created_by"],
-        ["assignments", "user_id"],
-        ["assignments", "created_by"],
-        ["interventions", "user_id"],
-        ["calls", "user_id"],
-        ["time_entries", "user_id"],
-        ["time_entries", "approved_by"],
-        ["referrals", "user_id"],
-        ["tasks", "assigned_to"],
-        ["tasks", "created_by"],
-        ["expenditures", "user_id"],
-        ["expenditures", "approved_by"],
-        ["episodes", "opened_by"],
-        ["episodes", "closed_by"],
-        ["overdose_events", "reported_by"],
-        ["consents", "revoked_by"],
-        ["notes", "author_id"],
-        ["notes", "signed_by"],
-        ["notes", "cosigned_by"],
-        ["note_addenda", "author_id"],
-        ["consents", "created_by"],
-        ["disclosures", "disclosed_by"],
-        ["imports", "imported_by"],
-        ["client_forms", "created_by"],
-        ["client_forms", "completed_by"],
-        ["client_form_files", "uploaded_by"],
-        ["resource_photos", "uploaded_by"],
-        ["form_templates", "uploaded_by"],
-        ["policy_documents", "uploaded_by"],
-        ["breakglass_events", "user_id"],
-        ["breakglass_events", "acknowledged_by"],
-        ["patient_requests", "handled_by"],
-        ["patient_requests", "created_by"],
-        ["audit_log", "user_id"],
-        ["sessions", "user_id"],
-        ["user_prefs", "user_id"],
-        ["api_keys", "created_by"],
-        ["users", "supervisor_id"],
-        ["devices", "user_id"],
-        ["supply_stock", "updated_by"],
-        ["option_overrides", "updated_by"],
-        ["problems", "added_by"],
-        ["problems", "updated_by"],
-        ["problem_history", "changed_by"],
-        ["care_plan_goals", "created_by"],
-        ["care_plan_goals", "updated_by"],
-        ["care_plan_steps", "owner_user_id"],
-        ["care_plan_steps", "created_by"],
-        ["asam_assessments", "assessed_by"],
-        ["outcome_measures", "administered_by"],
-        ["caloms_records", "created_by"],
-        ["caloms_records", "updated_by"],
-        ["court_orders", "recorded_by"],
-        ["part2_notices", "given_by"],
-        ["complaints", "handled_by"],
-        ["complaints", "created_by"],
-        ["privacy_incidents", "determined_by"],
-        ["privacy_incidents", "reported_by"],
-        ["disclosure_agreements", "created_by"],
-        ["caloms_submissions", "created_by"]
-      ]
-    };
-    module.exports.user_ref_cols = [...new Set(module.exports.user_refs.map(([, c]) => c))];
-    var crypto3 = require_crypto();
-    function exportRow2(t, r) {
-      const o = { ...r };
-      for (const c of t.enc) {
-        if (!o[c]) continue;
         try {
-          o[c] = crypto3.decrypt(o[c]);
-        } catch {
-          return null;
+          require_incidents().draft({
+            source: "audit_chain",
+            sourceRef: "audit_anchor",
+            title: "Audit log does not match its external anchors",
+            description: `${r.bad.length} audit anchor(s) written outside the database do not match the audit log (${r.bad[0].reason}). Establish whether audit entries were altered, rebuilt or removed, and whether that concealed access to client records.`
+          });
+        } catch (e) {
+          console.error("[suds] could not open an incident for the anchor mismatch:", e.message);
         }
-      }
-      for (const k of Object.keys(o)) if (k.endsWith("_idx")) delete o[k];
-      for (const c of t.blob || []) delete o[c];
-      if (t.name === "users") {
-        delete o.failed_attempts;
-        delete o.locked_until;
-        delete o.access_note;
-      }
-      return o;
-    }
-    function importRow2(t, r, existingCols) {
-      const o = {};
-      for (const [k, v] of Object.entries(r)) if (existingCols.includes(k) && !k.endsWith("_idx") && v !== void 0) o[k] = v;
-      for (const c of t.enc) if (o[c] !== void 0 && o[c] !== null) o[c] = crypto3.encrypt(o[c]);
-      if (t.name === "clients") {
-        const M = require_clients_model();
-        if (r.last_name_enc !== void 0) {
-          o.last_name_idx = crypto3.blindIndex(r.last_name_enc || "");
-          o.name_prefix_idx = M.namePrefixIndex(r.last_name_enc || "");
-          o.name_phonetic_idx = M.namePhoneticIndex(r.last_name_enc || "");
-        }
-        if (r.last_name_enc !== void 0 || r.first_name_enc !== void 0) o.full_name_idx = crypto3.blindIndex((r.last_name_enc || "") + (r.first_name_enc || ""));
-        if (r.first_name_enc !== void 0) {
-          o.first_name_idx = crypto3.blindIndex(String(r.first_name_enc || "").trim().toLowerCase());
-          o.first_name_prefix_idx = M.namePrefixIndex(r.first_name_enc || "");
-        }
-        if (r.preferred_name_enc !== void 0) o.preferred_name_idx = M.preferredNameIndex(r.preferred_name_enc || "");
-        if (r.dob_enc !== void 0) o.dob_idx = crypto3.blindIndex(r.dob_enc || "");
-        if (r.phone_enc !== void 0) o.phone_idx = crypto3.blindIndex(String(r.phone_enc || "").replace(/\D/g, ""));
-      }
-      return o;
-    }
-    function upgradeLegacyRow(t, r) {
-      for (const [from, to] of Object.entries(t.legacy || {})) {
-        if (!(from in r)) continue;
-        if (r[to] === void 0 && r[from] !== null && r[from] !== "") r[to] = r[from];
-        delete r[from];
       }
       return r;
     }
-    function purgeClient(d, clientId, depth = 0) {
-      let n = 0;
-      const has = (t) => !!d.one(`SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name=?`, t);
-      const seenTable = has("sync_seen");
-      const drop = (table, id) => {
-        const r = d.run(`DELETE FROM ${table} WHERE id=?`, id);
-        n += Number(r && r.changes || 0);
-        if (seenTable) d.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, table, id);
-      };
-      if (depth < 25) for (const m of d.all(`SELECT id FROM clients WHERE merged_into=?`, clientId)) n += purgeClient(d, m.id, depth + 1);
-      for (const t of [...module.exports.tables].reverse()) {
-        if (!has(t.name)) continue;
-        if (t.scope === "via-note") {
-          for (const r of d.all(`SELECT id FROM ${t.name} WHERE note_id IN (SELECT id FROM notes WHERE client_id=?)`, clientId)) drop(t.name, r.id);
-          continue;
-        }
-        if (!t.clientCol || t.name === "clients") continue;
-        for (const r of d.all(`SELECT id FROM ${t.name} WHERE ${t.clientCol}=?`, clientId)) drop(t.name, r.id);
+    module.exports = { write, safeWrite, runIfDue, verify, verifyAndRecord, list, dirStatus, placementProblem, keyId, macOf, macOk, canonical, FIELDS };
+  }
+});
+
+// server/backup.js
+var require_backup = __commonJS({
+  "server/backup.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var path = (init_path(), __toCommonJS(path_exports));
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    var { DatabaseSync: DatabaseSync2 } = (init_sqlite(), __toCommonJS(sqlite_exports));
+    var config = require_config();
+    var db3 = require_db();
+    function backupKey(encryptionKey) {
+      if (!encryptionKey && config.backupKey) return fromBackupKey(config.backupKey);
+      return crypto3.createHash("sha256").update(import_buffer.Buffer.concat([encryptionKey || config.encryptionKey, import_buffer.Buffer.from("suds-backup")])).digest();
+    }
+    var fromBackupKey = (raw) => crypto3.createHash("sha256").update(import_buffer.Buffer.concat([raw, import_buffer.Buffer.from("suds-backup-key")])).digest();
+    function candidateKeys(encryptionKey, escrow) {
+      if (escrow) {
+        const out3 = [];
+        if (escrow.backupKey) out3.push(fromBackupKey(escrow.backupKey));
+        if (escrow.encryptionKey) out3.push(backupKey(escrow.encryptionKey));
+        return out3;
       }
-      drop("clients", clientId);
+      if (encryptionKey) return [backupKey(encryptionKey)];
+      const out2 = [];
+      if (config.backupKey) out2.push(backupKey());
+      out2.push(crypto3.createHash("sha256").update(import_buffer.Buffer.concat([config.encryptionKey, import_buffer.Buffer.from("suds-backup")])).digest());
+      return out2;
+    }
+    function encryptPlain(plain, { encryptionKey } = {}) {
+      const iv = crypto3.randomBytes(12);
+      const c = crypto3.createCipheriv("aes-256-gcm", backupKey(encryptionKey), iv);
+      const body = import_buffer.Buffer.concat([c.update(plain), c.final()]);
+      return import_buffer.Buffer.concat([iv, c.getAuthTag(), body]);
+    }
+    async function createAsync({ encryptionKey, rate = 256 } = {}) {
+      const sqlite = (init_sqlite(), __toCommonJS(sqlite_exports));
+      const tmp = path.join(config.dataDir, `.backup-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
+      let plain;
+      let method;
+      const t0 = Date.now();
+      let t1;
+      try {
+        fs.writeFileSync(tmp, "", { mode: 384 });
+        if (typeof sqlite.backup === "function" && config.dbPath !== ":memory:") {
+          method = "sqlite-online-backup";
+          await sqlite.backup(db3.get(), tmp, { rate });
+        } else {
+          method = "vacuum-into";
+          fs.unlinkSync(tmp);
+          db3.get().exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
+        }
+        try {
+          fs.chmodSync(tmp, 384);
+        } catch {
+        }
+        t1 = Date.now();
+        plain = await fs.promises.readFile(tmp);
+      } finally {
+        await secureUnlinkAsync(tmp);
+        for (const suffix of ["-wal", "-shm", "-journal"]) await secureUnlinkAsync(tmp + suffix);
+      }
+      const iv = crypto3.randomBytes(12);
+      const c = crypto3.createCipheriv("aes-256-gcm", backupKey(encryptionKey), iv);
+      const parts = [];
+      const SLICE2 = 4 << 20;
+      for (let off = 0; off < plain.length; off += SLICE2) {
+        parts.push(c.update(plain.subarray(off, Math.min(off + SLICE2, plain.length))));
+        await new Promise((resolve2) => globalThis.setImmediate ? globalThis.setImmediate(resolve2) : setTimeout(resolve2, 0));
+      }
+      parts.push(c.final());
+      const bytes3 = import_buffer.Buffer.concat([iv, c.getAuthTag(), ...parts]);
+      const plainBytes = plain.length;
+      plain.fill(0);
+      return { bytes: bytes3, method, copy_ms: t1 - t0, encrypt_ms: Date.now() - t1, plain_bytes: plainBytes };
+    }
+    var SLICE = 4 << 20;
+    var tmpName = (kind) => path.join(config.dataDir, `.${kind}-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
+    var removeTmp = async (tmp) => {
+      await secureUnlinkAsync(tmp);
+      for (const suffix of ["-wal", "-shm", "-journal"]) await secureUnlinkAsync(tmp + suffix);
+    };
+    async function createToFileAsync(outFile, { encryptionKey, rate = 256, flag = "w" } = {}) {
+      const sqlite = (init_sqlite(), __toCommonJS(sqlite_exports));
+      const tmp = tmpName("backup");
+      let method;
+      const t0 = Date.now();
+      let t1;
+      let plainBytes = 0;
+      let written = 0;
+      try {
+        await fs.promises.writeFile(tmp, "", { mode: 384 });
+        if (typeof sqlite.backup === "function" && config.dbPath !== ":memory:") {
+          method = "sqlite-online-backup";
+          await sqlite.backup(db3.get(), tmp, { rate });
+        } else {
+          method = "vacuum-into";
+          await fs.promises.unlink(tmp);
+          db3.get().exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
+        }
+        try {
+          await fs.promises.chmod(tmp, 384);
+        } catch {
+        }
+        t1 = Date.now();
+        const iv = crypto3.randomBytes(12);
+        const c = crypto3.createCipheriv("aes-256-gcm", backupKey(encryptionKey), iv);
+        const src = await fs.promises.open(tmp, "r");
+        let out2 = null;
+        try {
+          out2 = await fs.promises.open(outFile, flag, 384);
+          await out2.write(import_buffer.Buffer.concat([iv, import_buffer.Buffer.alloc(16)]), 0, 28, 0);
+          written = 28;
+          const chunk = import_buffer.Buffer.alloc(SLICE);
+          for (; ; ) {
+            const { bytesRead } = await src.read(chunk, 0, SLICE, plainBytes);
+            if (!bytesRead) break;
+            plainBytes += bytesRead;
+            const enc2 = c.update(chunk.subarray(0, bytesRead));
+            await out2.write(enc2, 0, enc2.length, written);
+            written += enc2.length;
+          }
+          chunk.fill(0);
+          const fin = c.final();
+          if (fin.length) {
+            await out2.write(fin, 0, fin.length, written);
+            written += fin.length;
+          }
+          await out2.write(c.getAuthTag(), 0, 16, 12);
+          await out2.sync();
+        } finally {
+          await src.close().catch(() => {
+          });
+          if (out2) await out2.close().catch(() => {
+          });
+        }
+      } finally {
+        await removeTmp(tmp);
+      }
+      return { bytes: written, method, copy_ms: t1 - t0, encrypt_ms: Date.now() - t1, plain_bytes: plainBytes };
+    }
+    async function decryptFileAsync(encFile, plainFile, { encryptionKey, escrow } = {}) {
+      const src = await fs.promises.open(encFile, "r");
+      try {
+        const { size } = await src.stat();
+        if (size < 29) throw new Error("That does not look like a SUDS backup file");
+        const head = import_buffer.Buffer.alloc(28);
+        await src.read(head, 0, 28, 0);
+        const iv = head.subarray(0, 12), tag = head.subarray(12, 28);
+        const chunk = import_buffer.Buffer.alloc(SLICE);
+        for (const key of candidateKeys(encryptionKey, escrow)) {
+          const d = crypto3.createDecipheriv("aes-256-gcm", key, iv);
+          d.setAuthTag(tag);
+          const out2 = await fs.promises.open(plainFile, "w", 384);
+          let ok = false;
+          try {
+            let pos = 28;
+            let at = 0;
+            for (; ; ) {
+              const { bytesRead } = await src.read(chunk, 0, SLICE, pos);
+              if (!bytesRead) break;
+              pos += bytesRead;
+              const p = d.update(chunk.subarray(0, bytesRead));
+              await out2.write(p, 0, p.length, at);
+              at += p.length;
+              p.fill(0);
+            }
+            const fin = d.final();
+            if (fin.length) await out2.write(fin, 0, fin.length, at);
+            ok = true;
+          } catch {
+          } finally {
+            await out2.close().catch(() => {
+            });
+            chunk.fill(0);
+          }
+          if (ok) return;
+          await secureUnlinkAsync(plainFile);
+        }
+      } finally {
+        await src.close().catch(() => {
+        });
+      }
+      throw new Error(escrow ? "The backup could not be read with the escrowed keys. Either the key file is not the one for this backup set, or the backup is damaged." : "The backup could not be read. It is either damaged, or it was made with a different encryption key.");
+    }
+    var INSPECT_WORKER = `
+const { parentPort, workerData } = require('node:worker_threads');
+const { DatabaseSync } = require('node:sqlite');
+try {
+  const d = new DatabaseSync(workerData.file, { readOnly: true });
+  try {
+    const integrity = d.prepare('PRAGMA integrity_check').get();
+    const has = (t) => !!d.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(t);
+    const count = (t) => (has(t) ? d.prepare('SELECT COUNT(*) n FROM ' + t).get().n : 0);
+    const setting = (k) => (has('settings') ? d.prepare('SELECT value FROM settings WHERE key=?').get(k)?.value : undefined);
+    parentPort.postMessage({ ok: true, integrity: String(integrity.integrity_check || ''), hasSettings: has('settings'), hasClients: has('clients'),
+      schema_version: Number(setting('schema_version') || 0), org_name: setting('org_name') || null,
+      counts: { clients: count('clients'), notes: count('notes'), interventions: count('interventions'), users: count('users'), audit_log: count('audit_log') } });
+  } finally { d.close(); }
+} catch (e) { parentPort.postMessage({ ok: false, error: String(e && e.message || e) }); }
+`;
+    var WorkerCtor;
+    try {
+      WorkerCtor = (init_empty(), __toCommonJS(empty_exports)).Worker;
+    } catch {
+      WorkerCtor = null;
+    }
+    function inspectInWorker(file) {
+      return new Promise((resolve2, reject) => {
+        const w = new WorkerCtor(INSPECT_WORKER, { eval: true, workerData: { file } });
+        let msg = null;
+        w.once("message", (m) => {
+          msg = m;
+        });
+        w.once("error", reject);
+        w.once("exit", (code) => msg ? resolve2(msg) : reject(new Error(`backup verification worker exited (${code})`)));
+      });
+    }
+    async function verifyFileAsync(encFile, opts = {}) {
+      if (typeof WorkerCtor !== "function" || config.local) return inspect2(decrypt3(fs.readFileSync(encFile), opts));
+      const tmp = tmpName("inspect");
+      try {
+        await decryptFileAsync(encFile, tmp, opts);
+        const { size } = await fs.promises.stat(tmp);
+        const r = await inspectInWorker(tmp);
+        if (!r.ok) throw new Error(r.error);
+        if (r.integrity.toLowerCase() !== "ok") throw new Error("The backup file is damaged.");
+        if (!r.hasSettings || !r.hasClients) throw new Error("That file is not a SUDS backup.");
+        if (r.schema_version > db3.LATEST_SCHEMA_VERSION) throw new Error(`This backup was made by a newer version of SUDS (schema ${r.schema_version}; this build understands ${db3.LATEST_SCHEMA_VERSION}). Upgrade SUDS before restoring it.`);
+        return { schema_version: r.schema_version, org_name: r.org_name, counts: r.counts, bytes: size };
+      } finally {
+        await removeTmp(tmp);
+      }
+    }
+    async function secureUnlinkAsync(file) {
+      let st = null;
+      try {
+        st = await fs.promises.lstat(file);
+      } catch (e) {
+        if (e && e.code === "ENOENT") return false;
+      }
+      if (st && st.isFile() && st.size > 0) {
+        let fh = null;
+        try {
+          fh = await fs.promises.open(file, "r+");
+          const chunk = import_buffer.Buffer.alloc(Math.min(st.size, 4 << 20));
+          for (let off = 0; off < st.size; off += chunk.length) await fh.write(chunk, 0, Math.min(chunk.length, st.size - off), off);
+          await fh.sync();
+        } catch {
+        } finally {
+          if (fh) await fh.close().catch(() => {
+          });
+        }
+      }
+      try {
+        await fs.promises.unlink(file);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    function secureUnlink(file) {
+      let st = null;
+      try {
+        st = fs.lstatSync(file);
+      } catch (e) {
+        if (e && e.code === "ENOENT") return false;
+      }
+      if (st && st.isFile() && st.size > 0) {
+        try {
+          const fd2 = fs.openSync(file, "r+");
+          try {
+            const chunk = import_buffer.Buffer.alloc(Math.min(st.size, 1 << 20));
+            for (let off = 0; off < st.size; off += chunk.length) fs.writeSync(fd2, chunk, 0, Math.min(chunk.length, st.size - off), off);
+            fs.fsyncSync(fd2);
+          } finally {
+            fs.closeSync(fd2);
+          }
+        } catch {
+        }
+      }
+      try {
+        fs.unlinkSync(file);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    function secureRemoveDir(dir) {
+      let n = 0;
+      let entries = [];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return 0;
+      }
+      for (const e of entries) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) n += secureRemoveDir(p);
+        else if (secureUnlink(p)) n++;
+      }
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch {
+      }
       return n;
     }
-    module.exports.isPermanentReason = (reason) => module.exports.permanent_reasons.some((p) => String(reason || "").startsWith(p));
-    module.exports.exportRow = exportRow2;
-    module.exports.importRow = importRow2;
-    module.exports.upgradeLegacyRow = upgradeLegacyRow;
-    module.exports.purgeClient = purgeClient;
+    function create2({ encryptionKey } = {}) {
+      const tmp = path.join(config.dataDir, `.backup-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
+      let plain;
+      try {
+        fs.writeFileSync(tmp, "", { mode: 384 });
+        fs.unlinkSync(tmp);
+        db3.get().exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
+        try {
+          fs.chmodSync(tmp, 384);
+        } catch {
+        }
+        plain = fs.readFileSync(tmp);
+      } finally {
+        secureUnlink(tmp);
+      }
+      return encryptPlain(plain, { encryptionKey });
+    }
+    function decrypt3(buf, { encryptionKey, escrow } = {}) {
+      if (!import_buffer.Buffer.isBuffer(buf) || buf.length < 29) throw new Error("That does not look like a SUDS backup file");
+      const iv = buf.subarray(0, 12), tag = buf.subarray(12, 28), data = buf.subarray(28);
+      for (const key of candidateKeys(encryptionKey, escrow)) {
+        const d = crypto3.createDecipheriv("aes-256-gcm", key, iv);
+        d.setAuthTag(tag);
+        try {
+          return import_buffer.Buffer.concat([d.update(data), d.final()]);
+        } catch {
+        }
+      }
+      throw new Error(escrow ? "The backup could not be read with the escrowed keys. Either the key file is not the one for this backup set, or the backup is damaged." : "The backup could not be read. It is either damaged, or it was made with a different encryption key.");
+    }
+    function inspect2(plainBytes) {
+      const tmp = path.join(config.dataDir, `.inspect-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
+      fs.writeFileSync(tmp, plainBytes, { mode: 384 });
+      try {
+        const d = new DatabaseSync2(tmp, { readOnly: true });
+        try {
+          const integrity = d.prepare("PRAGMA integrity_check").get();
+          if ((integrity.integrity_check || "").toLowerCase() !== "ok") throw new Error("The backup file is damaged.");
+          const has = (t) => !!d.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(t);
+          if (!has("settings") || !has("clients")) throw new Error("That file is not a SUDS backup.");
+          const count = (t) => has(t) ? d.prepare(`SELECT COUNT(*) n FROM ${t}`).get().n : 0;
+          const schemaVersion = Number(d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get()?.value || 0);
+          if (schemaVersion > db3.LATEST_SCHEMA_VERSION) throw new Error(`This backup was made by a newer version of SUDS (schema ${schemaVersion}; this build understands ${db3.LATEST_SCHEMA_VERSION}). Upgrade SUDS before restoring it.`);
+          return {
+            schema_version: schemaVersion,
+            org_name: d.prepare(`SELECT value FROM settings WHERE key='org_name'`).get()?.value || null,
+            counts: { clients: count("clients"), notes: count("notes"), interventions: count("interventions"), users: count("users"), audit_log: count("audit_log") },
+            bytes: plainBytes.length
+          };
+        } finally {
+          d.close();
+        }
+      } finally {
+        secureUnlink(tmp);
+        for (const suffix of ["-wal", "-shm", "-journal"]) secureUnlink(tmp + suffix);
+      }
+    }
+    function restore(plainBytes) {
+      const info = inspect2(plainBytes);
+      const dbPath = config.dbPath;
+      if (dbPath === ":memory:") throw new Error("This server is running on an in-memory database; there is nothing to restore into.");
+      const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+      const aside = `${dbPath}.before-restore-${stamp2}`;
+      const dropJournal = () => {
+        for (const suffix of ["-wal", "-shm"]) {
+          try {
+            fs.unlinkSync(dbPath + suffix);
+          } catch {
+          }
+        }
+      };
+      const rollBack = (cause) => {
+        try {
+          if (fs.existsSync(aside)) {
+            fs.copyFileSync(aside, dbPath);
+            dropJournal();
+          }
+        } catch (e) {
+          cause.message += ` (and the previous database could not be put back from ${aside}: ${e.message})`;
+        }
+        try {
+          db3.close();
+        } catch {
+        }
+        try {
+          db3.open();
+        } catch (e) {
+          cause.message += ` (the previous database could not be reopened either: ${e.message})`;
+        }
+      };
+      try {
+        db3.get().exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      } catch (e) {
+        console.warn("[suds] restore: WAL checkpoint before setting the current database aside failed:", e && e.message);
+      }
+      db3.close();
+      try {
+        if (fs.existsSync(dbPath)) fs.copyFileSync(dbPath, aside);
+        fs.writeFileSync(dbPath, plainBytes, { mode: 384 });
+        dropJournal();
+      } catch (e) {
+        rollBack(e);
+        throw e;
+      }
+      try {
+        db3.open();
+      } catch (e) {
+        rollBack(e);
+        throw new Error(`The backup could not be opened after it was restored, so the previous database was put back: ${e.message}`);
+      }
+      const restoredGen = db3.getSetting("db_generation", null) || "initial";
+      db3.setSetting("db_generation", require_crypto().uuid());
+      if (!config.local) require_audit_anchor().safeWrite("restore", { prevGen: restoredGen });
+      return { ...info, previous_database_kept_at: aside };
+    }
+    module.exports = { create: create2, createAsync, encryptPlain, decrypt: decrypt3, decryptFileAsync, createToFileAsync, verifyFileAsync, inspect: inspect2, restore, backupKey, secureUnlink, secureUnlinkAsync, secureRemoveDir };
+  }
+});
+
+// server/scheduled-backup.js
+var require_scheduled_backup = __commonJS({
+  "server/scheduled-backup.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var path = (init_path(), __toCommonJS(path_exports));
+    var config = require_config();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var backup = require_backup();
+    var FILE_RE = /^suds-\d.*\.db\.enc$/;
+    var SNAP_RE = /^suds-snap-.*\.db\.enc$/;
+    var OFFSITE_MISSING = "offsite directory does not exist (is the share mounted?)";
+    function settings() {
+      const hours = Number(db3.getSetting("backup_schedule_hours", "0")) || 0;
+      const retain = Math.max(1, Number(db3.getSetting("backup_retain_count", "14")) || 14);
+      const offsiteDir = db3.getSetting("backup_offsite_dir", "") || "";
+      const minutes = Number(db3.getSetting("backup_schedule_minutes", "0")) || 0;
+      const snapshotRetain = Math.max(1, Number(db3.getSetting("backup_snapshot_retain", "24")) || 24);
+      return { hours, retain, offsiteDir, minutes, snapshotRetain };
+    }
+    function rpo(s = settings()) {
+      const c = [];
+      if (s.hours > 0) c.push({ minutes: s.hours * 60, by: "scheduled backups" });
+      if (s.minutes > 0) c.push({ minutes: s.minutes, by: "online snapshots" });
+      if (!c.length) return null;
+      return c.sort((a, b) => a.minutes - b.minutes)[0];
+    }
+    async function runIfDue(now = Date.now()) {
+      const { hours, retain, offsiteDir } = settings();
+      if (!hours) return null;
+      const last = db3.getSetting("last_scheduled_backup_at", null);
+      if (last && now - Date.parse(last) < hours * 36e5) return null;
+      return run2({ retain, offsiteDir });
+    }
+    var inFlight = null;
+    function run2(opts = {}) {
+      if (inFlight) return inFlight;
+      inFlight = runOnce(opts).finally(() => {
+        inFlight = null;
+      });
+      return inFlight;
+    }
+    async function runOnce({ retain = 14, offsiteDir = "" } = {}) {
+      const dir = path.join(config.dataDir, "backups");
+      const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+      const file = path.join(dir, `suds-${stamp2}.db.enc`);
+      let bytes3;
+      let verified = false;
+      let verifyError = null;
+      let kept = 0;
+      let method = null;
+      try {
+        fs.mkdirSync(dir, { recursive: true, mode: 448 });
+        prune(dir, Math.max(0, retain - 1));
+        const made = await backup.createToFileAsync(file);
+        bytes3 = made.bytes;
+        method = made.method;
+        try {
+          const info = await backup.verifyFileAsync(file);
+          verified = info.counts.clients >= 0;
+        } catch (e) {
+          verifyError = String(e && e.message || e);
+          console.error("[suds] backup written but could not be read back:", verifyError);
+        }
+      } catch (e) {
+        const reason = e && e.code === "ENOSPC" ? `no space left on the disk holding ${dir}` : String(e && e.message || e);
+        try {
+          fs.unlinkSync(file);
+        } catch {
+        }
+        console.error("[suds] scheduled backup failed:", reason);
+        db3.setSetting("last_scheduled_backup_at", db3.now());
+        db3.setSetting("last_scheduled_backup_status", `failed: ${reason}`);
+        audit3.log({ user: { username: "system" }, action: "backup.scheduled", success: false, details: { error: reason, code: e && e.code || void 0 } });
+        return { file: null, bytes: 0, offsiteOk: null, verified: false, verifyError: reason, failed: true, error: reason };
+      }
+      let offsiteOk = null;
+      let offsiteError = null;
+      let offsiteFile = null;
+      if (offsiteDir) {
+        try {
+          let st = null;
+          try {
+            st = await fs.promises.stat(offsiteDir);
+          } catch {
+          }
+          if (!st || !st.isDirectory()) throw new Error(OFFSITE_MISSING);
+          offsiteFile = path.join(offsiteDir, path.basename(file));
+          await fs.promises.copyFile(file, offsiteFile);
+          offsiteOk = true;
+        } catch (e) {
+          offsiteOk = false;
+          offsiteError = String(e && e.message || e);
+          console.error("[suds] offsite backup copy failed:", offsiteError);
+        }
+      }
+      if (!config.local) require_audit_anchor().safeWrite("backup");
+      kept = prune(dir, retain);
+      db3.setSetting("last_scheduled_backup_at", db3.now());
+      db3.setSetting("last_scheduled_backup_status", !verified ? `backup written but could not be read back \u2014 ${verifyError}` : offsiteDir && offsiteOk === false ? `ok (verified) \u2014 offsite copy failed: ${offsiteError}; local backup kept` : "ok (verified)");
+      audit3.log({ user: { username: "system" }, action: "backup.scheduled", details: { bytes: bytes3, method, offsite: offsiteDir ? offsiteOk : null, offsite_error: offsiteError || void 0, kept, verified } });
+      return { file, bytes: bytes3, method, offsiteOk, offsiteError, offsiteFile: offsiteOk ? offsiteFile : null, verified, verifyError };
+    }
+    var snapshotting = false;
+    async function snapshotIfDue(now = Date.now()) {
+      const s = settings();
+      if (!s.minutes || snapshotting) return null;
+      const last = db3.getSetting("last_snapshot_at", null);
+      if (last && now - Date.parse(last) < s.minutes * 6e4) return null;
+      return snapshot(s);
+    }
+    async function snapshot(s = settings()) {
+      if (snapshotting) return null;
+      snapshotting = true;
+      const localDir = path.join(config.dataDir, "backups");
+      let target = localDir;
+      let where = "local";
+      const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+      let file = null;
+      try {
+        if (s.offsiteDir) {
+          let st = null;
+          try {
+            st = fs.statSync(s.offsiteDir);
+          } catch {
+          }
+          if (!st || !st.isDirectory()) throw new Error(OFFSITE_MISSING);
+          target = s.offsiteDir;
+          where = "offsite";
+        } else fs.mkdirSync(localDir, { recursive: true, mode: 448 });
+        file = path.join(target, `suds-snap-${stamp2}.db.enc`);
+        const made = await backup.createToFileAsync(file, { flag: "wx" });
+        const kept = pruneMatching(target, SNAP_RE, s.snapshotRetain);
+        db3.setSetting("last_snapshot_at", db3.now());
+        db3.setSetting("last_snapshot_status", `ok (${where}; ${made.method}; ${Math.round(made.bytes / 1024)} KB in ${made.copy_ms + made.encrypt_ms} ms)`);
+        return { file, where, kept, bytes: made.bytes, method: made.method, copy_ms: made.copy_ms, encrypt_ms: made.encrypt_ms };
+      } catch (e) {
+        const reason = e && e.code === "ENOSPC" ? `no space left on the disk holding ${target}` : String(e && e.message || e);
+        if (file) {
+          try {
+            fs.unlinkSync(file);
+          } catch {
+          }
+        }
+        console.error("[suds] snapshot failed:", reason);
+        const prev = db3.getSetting("last_snapshot_status", "") || "";
+        db3.setSetting("last_snapshot_at", db3.now());
+        db3.setSetting("last_snapshot_status", `failed: ${reason}`);
+        if (!/^failed/.test(prev)) audit3.log({ user: { username: "system" }, action: "backup.snapshot.failed", success: false, details: { error: reason.slice(0, 300) } });
+        return { file: null, failed: true, error: reason };
+      } finally {
+        snapshotting = false;
+      }
+    }
+    function pruneMatching(dir, re, retain) {
+      const files = fs.readdirSync(dir).filter((f) => re.test(f)).sort();
+      const excess = files.length - retain;
+      if (excess > 0) for (const f of files.slice(0, excess)) {
+        try {
+          fs.unlinkSync(path.join(dir, f));
+        } catch {
+        }
+      }
+      return Math.min(files.length, retain);
+    }
+    function prune(dir, retain) {
+      const files = fs.readdirSync(dir).filter((f) => FILE_RE.test(f)).sort();
+      const excess = files.length - retain;
+      if (excess > 0) for (const f of files.slice(0, excess)) {
+        try {
+          fs.unlinkSync(path.join(dir, f));
+        } catch {
+        }
+      }
+      return Math.min(files.length, retain);
+    }
+    module.exports = { runIfDue, run: run2, settings, rpo, snapshot, snapshotIfDue, FILE_RE, SNAP_RE };
+  }
+});
+
+// server/signing.js
+var require_signing = __commonJS({
+  "server/signing.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    var PKCS8_PREFIX = import_buffer.Buffer.from("302e020100300506032b657004220420", "hex");
+    var ALGORITHM = "Ed25519";
+    function privateKeyFrom(seed) {
+      if (!import_buffer.Buffer.isBuffer(seed) || seed.length !== 32) throw new Error("The signing key must be 32 bytes");
+      return crypto3.createPrivateKey({ key: import_buffer.Buffer.concat([PKCS8_PREFIX, seed]), format: "der", type: "pkcs8" });
+    }
+    var cached = null;
+    function keys(seed = require_config().signingKey) {
+      if (cached && cached.seed.equals(seed)) return cached;
+      const privateKey = privateKeyFrom(seed);
+      const publicKey = crypto3.createPublicKey(privateKey);
+      const pem = publicKey.export({ type: "spki", format: "pem" });
+      cached = { seed, privateKey, publicKey, pem, keyId: keyIdOf(pem) };
+      return cached;
+    }
+    function keyIdOf(publicKeyPem) {
+      const der = crypto3.createPublicKey(publicKeyPem).export({ type: "spki", format: "der" });
+      return crypto3.createHash("sha256").update(der).digest("hex").slice(0, 16);
+    }
+    function publicInfo(seed) {
+      const k = keys(seed);
+      const der = k.publicKey.export({ type: "spki", format: "der" });
+      return { algorithm: ALGORITHM, key_id: k.keyId, public_key_pem: k.pem, sha256_fingerprint: crypto3.createHash("sha256").update(der).digest("hex") };
+    }
+    function sign2(data, seed) {
+      return crypto3.sign(null, import_buffer.Buffer.from(data), keys(seed).privateKey).toString("base64");
+    }
+    function verify(data, signatureB64, publicKeyPem) {
+      try {
+        const key = crypto3.createPublicKey(publicKeyPem);
+        if (key.asymmetricKeyType !== "ed25519") return false;
+        return crypto3.verify(null, import_buffer.Buffer.from(data), key, import_buffer.Buffer.from(String(signatureB64), "base64"));
+      } catch {
+        return false;
+      }
+    }
+    module.exports = { ALGORITHM, sign: sign2, verify, publicInfo, keyIdOf, privateKeyFrom };
+  }
+});
+
+// server/dr-report.js
+var require_dr_report = __commonJS({
+  "server/dr-report.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    var signing = require_signing();
+    function canonical(v) {
+      if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+      if (v && typeof v === "object") return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(",")}}`;
+      return JSON.stringify(v === void 0 ? null : v);
+    }
+    function verifyDoc(doc, { publicKeyPem = null } = {}) {
+      const errors = [];
+      const warnings = [];
+      const out2 = { ok: false, errors, warnings, key_id: null, key_source: publicKeyPem ? "supplied" : "embedded" };
+      if (!doc || typeof doc !== "object" || !doc.report || !doc.integrity) {
+        errors.push("this is not a SUDS recovery-drill report ({ report, integrity })");
+        return out2;
+      }
+      const { report, integrity } = doc;
+      const body = canonical(report);
+      if (crypto3.createHash("sha256").update(body).digest("hex") !== integrity.sha256) errors.push("the SHA-256 of the report does not match its integrity block: the report was edited");
+      const key = publicKeyPem || integrity.public_key_pem;
+      if (!integrity.ed25519_signature) errors.push("the report is not signed (made by a SUDS version before Ed25519 signing); only its HMAC can be checked, with the index key");
+      else if (!key) errors.push("no public key: supply the one published by the server (--public-key)");
+      else {
+        let kid = null;
+        try {
+          kid = signing.keyIdOf(key);
+        } catch {
+          errors.push("the public key is not a valid PEM key");
+        }
+        out2.key_id = kid;
+        if (kid) {
+          if (!signing.verify(body, integrity.ed25519_signature, key)) errors.push("the Ed25519 signature does not verify with this public key: the report was altered, or was not signed by this server");
+          if (integrity.signing_key_id && integrity.signing_key_id !== kid) errors.push(`the report names signing key ${integrity.signing_key_id}, not the key supplied (${kid})`);
+          if (report.signed_by && report.signed_by.key_id && report.signed_by.key_id !== kid) errors.push(`the signed report names signing key ${report.signed_by.key_id}, not ${kid}`);
+        }
+        if (!publicKeyPem) warnings.push(`checked with the public key embedded in the report (key id ${kid}); compare that id with the one published by the server (Settings \u2192 Security status, or GET /api/admin/security/signing-key) before relying on it`);
+      }
+      out2.ok = errors.length === 0;
+      return out2;
+    }
+    module.exports = { canonical, verifyDoc };
+  }
+});
+
+// server/dr-drill.js
+var require_dr_drill = __commonJS({
+  "server/dr-drill.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var path = (init_path(), __toCommonJS(path_exports));
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    var config = require_config();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var BACKUP_RE = /^suds-.*\.db\.enc$/;
+    var MONTH_MS = 30 * 864e5;
+    var CHILD_TIMEOUT_MS = Number(proc.env.DR_DRILL_TIMEOUT_MS || 15 * 6e4);
+    function backupsDir() {
+      return path.join(config.dataDir, "backups");
+    }
+    function backupTime(file) {
+      const m = path.basename(file).match(/^suds-(?:snap-)?(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z/);
+      if (m) {
+        const t = Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`);
+        if (Number.isFinite(t)) return t;
+      }
+      try {
+        return fs.statSync(file).mtimeMs;
+      } catch {
+        return null;
+      }
+    }
+    function latestBackup(dir = backupsDir()) {
+      let names = [];
+      try {
+        names = fs.readdirSync(dir).filter((f) => BACKUP_RE.test(f));
+      } catch {
+        return null;
+      }
+      let best = null;
+      let bestT = -Infinity;
+      for (const n of names) {
+        const f = path.join(dir, n);
+        const t = backupTime(f) ?? -Infinity;
+        if (t > bestT || t === bestT && n > path.basename(best)) {
+          best = f;
+          bestT = t;
+        }
+      }
+      return best;
+    }
+    function parseKeysFile(text) {
+      const t = String(text || "").trim();
+      let obj = null;
+      if (t.startsWith("{")) {
+        try {
+          obj = JSON.parse(t);
+        } catch {
+          throw new Error("The key file is not valid JSON");
+        }
+      } else {
+        obj = {};
+        for (const line of t.split(/\r?\n/)) {
+          const m = line.match(/^\s*(?:export\s+)?([A-Z_]+)\s*=\s*["']?([0-9a-fA-F]+)["']?\s*$/);
+          if (m) obj[m[1]] = m[2];
+        }
+      }
+      const hex2 = (k, required) => {
+        const v = obj[k];
+        if (v === void 0 || v === null || v === "") {
+          if (required) throw new Error(`The key file has no ${k}`);
+          return null;
+        }
+        if (!/^[0-9a-fA-F]{64}$/.test(String(v))) throw new Error(`${k} in the key file is not 64 hex characters`);
+        return import_buffer.Buffer.from(String(v), "hex");
+      };
+      return { encryptionKey: hex2("SUDS_ENCRYPTION_KEY", true), indexKey: hex2("SUDS_INDEX_KEY", true), backupKey: hex2("SUDS_BACKUP_KEY", false) };
+    }
+    var fingerprint = (buf) => crypto3.createHash("sha256").update(import_buffer.Buffer.concat([import_buffer.Buffer.from("suds-drill-key:"), buf])).digest("hex").slice(0, 12);
+    function pidAlive(pid) {
+      if (!pid) return false;
+      try {
+        proc.kill(pid, 0);
+        return true;
+      } catch (e) {
+        return !!e && e.code === "EPERM";
+      }
+    }
+    function sweepStale({ now = Date.now(), except = null } = {}) {
+      const backup = require_backup();
+      const root = path.join(config.dataDir, ".dr-drill");
+      const out2 = { removed: [], files: 0 };
+      let dirs = [];
+      try {
+        dirs = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => path.join(root, d.name));
+      } catch {
+      }
+      for (const d of dirs) {
+        if (except && path.resolve(d) === path.resolve(except)) continue;
+        let owner = null;
+        try {
+          owner = JSON.parse(fs.readFileSync(path.join(d, "owner.json"), "utf8"));
+        } catch {
+        }
+        let age = 0;
+        try {
+          age = now - fs.statSync(d).mtimeMs;
+        } catch {
+        }
+        const mineIdle = owner && owner.pid === proc.pid && !current2;
+        const orphaned = owner ? mineIdle || !pidAlive(owner.pid) || now - Date.parse(owner.started_at) > CHILD_TIMEOUT_MS * 2 : age > 6e4;
+        if (!orphaned) continue;
+        out2.files += backup.secureRemoveDir(d);
+        out2.removed.push(path.basename(d));
+      }
+      let loose = [];
+      try {
+        loose = fs.readdirSync(config.dataDir).filter((f) => /^\.(backup|inspect)-\d+-[0-9a-f]+\.db(-wal|-shm|-journal)?$/.test(f));
+      } catch {
+      }
+      for (const f of loose) {
+        const p = path.join(config.dataDir, f);
+        let age = 0;
+        try {
+          age = now - fs.statSync(p).mtimeMs;
+        } catch {
+          continue;
+        }
+        if (age > 36e5 && backup.secureUnlink(p)) {
+          out2.removed.push(f);
+          out2.files++;
+        }
+      }
+      if (out2.removed.length) {
+        console.warn(`[suds] removed ${out2.removed.length} stale decrypted copy(ies) left by an interrupted drill or backup: ${out2.removed.join(", ")}`);
+        try {
+          audit3.log({ user: { username: "system" }, action: "dr.drill.swept", details: { removed: out2.removed.slice(0, 20), files: out2.files } });
+        } catch (e) {
+          console.error("[suds] the audit entry for the sweep could not be written:", e && e.message);
+        }
+      }
+      return out2;
+    }
+    function targets() {
+      const num = (k, d) => {
+        const v = Number(db3.getSetting(k, ""));
+        return Number.isFinite(v) && v > 0 ? v : d;
+      };
+      const r = require_scheduled_backup().rpo();
+      return { rto_minutes: num("dr_rto_target_minutes", 60), rpo_hours: num("dr_rpo_target_hours", r ? Math.round(r.minutes / 60 * 1e3) / 1e3 : 24) };
+    }
+    function lastDrill() {
+      try {
+        return JSON.parse(db3.getSetting("dr_last_drill", "null"));
+      } catch {
+        return null;
+      }
+    }
+    var current2 = null;
+    function status() {
+      return {
+        running: current2 ? { started_at: current2.started_at, by: current2.by, steps: current2.steps.slice() } : null,
+        last: lastDrill(),
+        monthly: db3.getSetting("dr_drill_monthly", "0") === "1",
+        targets: targets(),
+        reports: listReports().slice(-12).reverse()
+      };
+    }
+    function listReports() {
+      try {
+        return fs.readdirSync(backupsDir()).filter((f) => /^dr-drill-.*\.json$/.test(f)).sort();
+      } catch {
+        return [];
+      }
+    }
+    var { canonical } = require_dr_report();
+    function seal(report, key = config.indexKey) {
+      const body = canonical(report);
+      const signing = require_signing();
+      const pub = signing.publicInfo();
+      return {
+        sha256: crypto3.createHash("sha256").update(body).digest("hex"),
+        hmac_sha256: crypto3.createHmac("sha256", key).update(body).digest("hex"),
+        ed25519_signature: signing.sign(body),
+        signing_key_id: pub.key_id,
+        public_key_pem: pub.public_key_pem,
+        algorithm: 'SHA-256, HMAC-SHA256 (index key) and an Ed25519 signature (signing key) over the canonical JSON of "report" (keys sorted)'
+      };
+    }
+    function verifyReport(doc, key = config.indexKey) {
+      if (!doc || !doc.integrity) return false;
+      const s = seal(doc.report, key);
+      const signed = require_dr_report().verifyDoc(doc, { publicKeyPem: require_signing().publicInfo().public_key_pem });
+      return s.sha256 === doc.integrity.sha256 && s.hmac_sha256 === doc.integrity.hmac_sha256 && signed.ok;
+    }
+    function runChild(tmp, dbFile, onStep, keys = { enc: config.encryptionKey, idx: config.indexKey }) {
+      const { fork } = (init_empty(), __toCommonJS(empty_exports));
+      return new Promise((resolve2) => {
+        const env = {
+          PATH: proc.env.PATH || "",
+          SUDS_ENV: config.isTest ? "test" : "production",
+          SUDS_DATA_DIR: tmp,
+          SUDS_DB_PATH: dbFile,
+          SUDS_SKIP_SETUP: "1",
+          TZ: proc.env.TZ || "",
+          LOG_FORMAT: "text",
+          LOGIN_RATE_LIMIT: "1000",
+          // The live server's anchor directory, read (never written) by the copy's anchor check. Named here so the
+          // copy's /api/health does not report the placement of its own (unused) default directory.
+          AUDIT_ANCHOR_DIR: config.auditAnchorDir
+        };
+        if (!env.TZ) delete env.TZ;
+        const child = fork(path.join("/", "dr-drill-child.js"), [], { cwd: tmp, env, execArgv: ["--no-warnings=ExperimentalWarning"], stdio: ["ignore", "pipe", "pipe", "ipc"] });
+        let result = null;
+        let stderr = "";
+        child.stdout.on("data", () => {
+        });
+        child.stderr.on("data", (b) => {
+          stderr = (stderr + b.toString()).slice(-4e3);
+        });
+        const timer = setTimeout(() => {
+          try {
+            child.kill("SIGKILL");
+          } catch {
+          }
+        }, CHILD_TIMEOUT_MS);
+        child.on("message", (m) => {
+          if (m && m.type === "progress") onStep(m.step);
+          else if (m && m.type === "result") result = m;
+        });
+        child.on("exit", (code, signal) => {
+          clearTimeout(timer);
+          resolve2(result || { ok: false, error: signal === "SIGKILL" ? `the restored copy did not finish within ${Math.round(CHILD_TIMEOUT_MS / 6e4)} minutes` : `the drill process exited (${code ?? signal})${stderr ? ": " + stderr.trim().split("\n").slice(-3).join(" ") : ""}`, checks: [] });
+        });
+        child.send({ keys: { enc: keys.enc.toString("hex"), idx: keys.idx.toString("hex"), sig: config.signingKey.toString("hex") }, anchorDir: config.auditAnchorDir });
+      });
+    }
+    async function run2({ backupFile = null, fresh = false, by = "system", trigger = "manual", record = true, keysFile = null, keysText = null, keysLabel = null, copy = "auto" } = {}) {
+      if (current2) {
+        const e = new Error("A recovery drill is already running");
+        e.code = "EBUSY";
+        throw e;
+      }
+      const job = current2 = { started_at: (/* @__PURE__ */ new Date()).toISOString(), by, steps: [] };
+      const step = (s) => {
+        job.steps.push({ at: (/* @__PURE__ */ new Date()).toISOString(), step: s });
+      };
+      const started = Date.now();
+      const tmpRoot = path.join(config.dataDir, ".dr-drill");
+      const tmp = path.join(tmpRoot, `drill-${started}-${crypto3.randomBytes(4).toString("hex")}`);
+      const failures = [];
+      let result = { checks: [] };
+      let file = backupFile;
+      let madeBackup = false;
+      let restoreStarted = null;
+      let restoreBytes = 0;
+      const sched = require_scheduled_backup().settings();
+      let source = { copy: backupFile ? "given" : null, dir: backupFile ? path.dirname(backupFile) : null, offsite_configured: !!sched.offsiteDir };
+      let keyInfo = { source: "server memory", note: "the keys this server process holds; run with an escrowed key file to prove the offline copy of the keys" };
+      let escrow = null;
+      try {
+        try {
+          sweepStale({ except: tmp });
+        } catch (e) {
+          console.error("[suds] could not sweep stale drill copies:", e && e.message);
+        }
+        if (keysFile || keysText !== null && keysText !== void 0) {
+          const uploaded = keysText !== null && keysText !== void 0;
+          escrow = parseKeysFile(uploaded ? keysText : fs.readFileSync(keysFile, "utf8"));
+          keyInfo = {
+            source: uploaded ? "uploaded escrow file" : "escrow file",
+            file: keysLabel || (keysFile ? path.basename(keysFile) : null),
+            encryption_key_fingerprint: fingerprint(escrow.encryptionKey),
+            index_key_fingerprint: fingerprint(escrow.indexKey),
+            backup_key: !!escrow.backupKey,
+            same_as_running_server: escrow.encryptionKey.equals(config.encryptionKey) && escrow.indexKey.equals(config.indexKey)
+          };
+          step(`Using the escrowed keys from ${keyInfo.file || "the uploaded file"}, not the keys in this server's memory`);
+        }
+        if (!file && !fresh) {
+          if (copy === "offsite" || copy === "auto" && sched.offsiteDir) {
+            let st = null;
+            try {
+              st = sched.offsiteDir ? fs.statSync(sched.offsiteDir) : null;
+            } catch {
+            }
+            const off = st && st.isDirectory() ? latestBackup(sched.offsiteDir) : null;
+            if (off) {
+              file = off;
+              source = { ...source, copy: "offsite", dir: sched.offsiteDir };
+            } else {
+              failures.push(!sched.offsiteDir ? "an offsite copy was asked for but no offsite directory is configured" : !st ? `the offsite directory ${sched.offsiteDir} is not reachable (is the share mounted?), so the offsite copy could not be restored` : `the offsite directory ${sched.offsiteDir} holds no backup`);
+              step("The offsite copy is not available; restoring the local copy instead");
+            }
+          }
+          if (!file) {
+            file = latestBackup();
+            if (file) source = { ...source, copy: "local", dir: backupsDir() };
+          }
+        }
+        if (!file) {
+          step("No backup on disk; taking one first");
+          const made = await require_scheduled_backup().run({ retain: sched.retain, offsiteDir: sched.offsiteDir });
+          if (!made.file) throw new Error(`a backup could not be taken: ${made.error}`);
+          madeBackup = true;
+          if (made.offsiteFile && copy !== "local") {
+            file = made.offsiteFile;
+            source = { ...source, copy: "offsite", dir: sched.offsiteDir };
+          } else {
+            file = made.file;
+            source = { ...source, copy: "local", dir: backupsDir() };
+          }
+        }
+        step(`Restoring ${path.basename(file)} (${source.copy} copy)`);
+        restoreStarted = Date.now();
+        const enc2 = fs.readFileSync(file);
+        const plain = require_backup().decrypt(enc2, escrow ? { escrow } : {});
+        restoreBytes = plain.length;
+        fs.mkdirSync(tmp, { recursive: true, mode: 448 });
+        try {
+          fs.chmodSync(tmpRoot, 448);
+        } catch {
+        }
+        fs.writeFileSync(path.join(tmp, "owner.json"), JSON.stringify({ pid: proc.pid, started_at: new Date(started).toISOString() }), { mode: 384 });
+        const dbFile = path.join(tmp, "suds.db");
+        fs.writeFileSync(dbFile, plain, { mode: 384 });
+        plain.fill(0);
+        result = await runChild(tmp, dbFile, step, escrow ? { enc: escrow.encryptionKey, idx: escrow.indexKey } : void 0);
+        if (result.error) failures.push(result.error);
+      } catch (e) {
+        failures.push(String(e && e.message || e));
+      } finally {
+        try {
+          require_backup().secureRemoveDir(tmp);
+          if (fs.existsSync(tmp)) throw new Error("it is still there");
+        } catch (e) {
+          failures.push(`the drill copy could not be removed from ${tmp}: ${e.message}`);
+        }
+      }
+      const extraChecks = [];
+      if (escrow) extraChecks.push({ name: "The escrowed key file opens the backup", ok: restoreBytes > 0, detail: `${keyInfo.source}${keyInfo.file ? ` ${keyInfo.file}` : ""}; encryption key ${keyInfo.encryption_key_fingerprint}, index key ${keyInfo.index_key_fingerprint}` });
+      if (source.offsite_configured && copy !== "local") extraChecks.push({ name: "The offsite copy was restored", ok: source.copy === "offsite" || source.copy === "given", detail: source.copy === "offsite" ? source.dir : source.copy === "given" ? "a backup file was named explicitly" : "the local copy was restored instead" });
+      if (extraChecks.length) result.checks = [...extraChecks, ...result.checks || []];
+      const finished = Date.now();
+      const checks = result.checks || [];
+      for (const c of checks) if (!c.ok) failures.push(`${c.name}${c.detail ? ` \u2014 ${c.detail}` : ""}`);
+      const taken = file ? backupTime(file) : null;
+      const t = targets();
+      const rtoSeconds = restoreStarted && result.ready_at ? Math.round((result.ready_at - restoreStarted) / 100) / 10 : null;
+      const rpoSeconds = taken ? Math.round(((restoreStarted || started) - taken) / 1e3) : null;
+      const exposure = {};
+      if (result.source_counts) for (const tname of ["clients", "notes", "interventions", "referrals", "tasks", "audit_log"]) {
+        try {
+          exposure[tname] = db3.one(`SELECT COUNT(*) n FROM "${tname}"`).n - (result.source_counts[tname] || 0);
+        } catch {
+        }
+      }
+      const report = {
+        kind: "suds-dr-drill",
+        version: 1,
+        signed_by: { algorithm: "Ed25519", key_id: require_signing().publicInfo().key_id },
+        ok: failures.length === 0 && checks.length > 0,
+        started_at: new Date(started).toISOString(),
+        finished_at: new Date(finished).toISOString(),
+        trigger,
+        by,
+        server: { version: config.version, host: (init_os(), __toCommonJS(os_exports)).hostname(), schema_version: db3.LATEST_SCHEMA_VERSION },
+        backup: { file: file ? path.basename(file) : null, copy: source.copy, dir: source.dir, offsite_configured: source.offsite_configured, taken_at: taken ? new Date(taken).toISOString() : null, made_for_drill: madeBackup, decrypted_bytes: restoreBytes, latest_record_at: result.latest_audit_at || null },
+        keys: keyInfo,
+        rto: { seconds: rtoSeconds, target_minutes: t.rto_minutes, met: rtoSeconds === null ? null : rtoSeconds <= t.rto_minutes * 60, measures: "from starting the restore (reading and decrypting the backup) to the restored copy answering /api/health" },
+        rpo: { seconds: rpoSeconds, target_hours: t.rpo_hours, met: rpoSeconds === null ? null : rpoSeconds <= t.rpo_hours * 3600, measures: "age of the newest backup at the time of the drill: what a loss at that moment would have cost" },
+        elapsed_seconds: Math.round((finished - started) / 100) / 10,
+        schema: { restored_from: result.source_schema_version ?? null, now: result.schema_version ?? null },
+        counts: { restored: result.restored_counts || null, live_minus_backup: exposure },
+        audit: { entries_verified: result.audit_entries_verified ?? null, anchors: result.anchors || null },
+        decrypt_sample: result.decrypt_sample || null,
+        checks,
+        adjustments: result.adjustments || [],
+        failures,
+        live_database_untouched: true
+      };
+      const doc = { report, integrity: seal(report) };
+      const files = {};
+      try {
+        const dir = backupsDir();
+        fs.mkdirSync(dir, { recursive: true, mode: 448 });
+        const stamp2 = report.started_at.replace(/[:.]/g, "-");
+        files.json = `dr-drill-${stamp2}.json`;
+        files.text = `dr-drill-${stamp2}.txt`;
+        fs.writeFileSync(path.join(dir, files.json), JSON.stringify(doc, null, 2) + "\n", { mode: 384 });
+        fs.writeFileSync(path.join(dir, files.text), textReport(doc), { mode: 384 });
+      } catch (e) {
+        report.failures.push(`the report could not be written: ${e.message}`);
+      }
+      if (record) {
+        const summary = { at: report.finished_at, ok: report.ok, rto_seconds: rtoSeconds, rpo_seconds: rpoSeconds, rto_target_minutes: t.rto_minutes, rpo_target_hours: t.rpo_hours, backup_file: report.backup.file, backup_copy: source.copy, keys_source: keyInfo.source, backup_taken_at: report.backup.taken_at, report_file: files.json || null, sha256: doc.integrity.sha256, failures: failures.slice(0, 5), checks_passed: checks.filter((c) => c.ok).length, checks_total: checks.length, trigger };
+        db3.setSetting("dr_last_drill", JSON.stringify(summary));
+        audit3.log({ user: typeof by === "object" ? by : { username: String(by) }, action: "dr.drill", success: report.ok, details: { trigger, backup: report.backup.file, copy: source.copy, keys: keyInfo.source, rto_seconds: rtoSeconds, rpo_seconds: rpoSeconds, checks_passed: summary.checks_passed, checks_total: summary.checks_total, report: files.json || null, sha256: doc.integrity.sha256 } });
+      }
+      if (current2 === job) current2 = null;
+      return { ...doc, files };
+    }
+    function fmtDur(s) {
+      if (s === null || s === void 0) return "n/a";
+      if (s < 120) return `${s} s`;
+      if (s < 7200) return `${(s / 60).toFixed(1)} min`;
+      return `${(s / 3600).toFixed(1)} h`;
+    }
+    function textReport({ report: r, integrity }) {
+      const L = [];
+      L.push(`SUDS disaster-recovery drill \u2014 ${r.ok ? "PASSED" : "FAILED"}`);
+      L.push(`Started ${r.started_at}, finished ${r.finished_at} (${r.trigger}, by ${typeof r.by === "object" ? r.by.username : r.by}) on ${r.server.host}, SUDS ${r.server.version}`);
+      L.push("");
+      L.push(`Backup restored: ${r.backup.file || "none"}${r.backup.copy ? ` \u2014 the ${r.backup.copy} copy${r.backup.dir ? ` in ${r.backup.dir}` : ""}` : ""}${r.backup.taken_at ? ` (taken ${r.backup.taken_at})` : ""}${r.backup.made_for_drill ? " \u2014 made for this drill, no earlier backup was on disk" : ""}`);
+      if (r.keys) L.push(`Keys used: ${r.keys.source}${r.keys.file ? ` (${r.keys.file})` : ""}${r.keys.source === "server memory" ? " \u2014 this does not prove the escrowed key backup works; run the drill with the key file (--keys-file)" : ""}`);
+      L.push(`RTO (restore to serving): ${fmtDur(r.rto.seconds)} \u2014 target ${r.rto.target_minutes} min \u2014 ${r.rto.met === null ? "not measured" : r.rto.met ? "met" : "NOT MET"}`);
+      L.push(`RPO (age of that backup): ${fmtDur(r.rpo.seconds)} \u2014 target ${r.rpo.target_hours} h \u2014 ${r.rpo.met === null ? "not measured" : r.rpo.met ? "met" : "NOT MET"}`);
+      L.push("");
+      L.push("Checks:");
+      for (const c of r.checks) L.push(`  [${c.ok ? "PASS" : "FAIL"}] ${c.name}${c.detail ? ` \u2014 ${c.detail}` : ""}`);
+      for (const f of r.failures.filter((f2) => !r.checks.some((c) => f2.startsWith(c.name)))) L.push(`  [FAIL] ${f}`);
+      if (r.adjustments.length) {
+        L.push("");
+        L.push("Changed in the throwaway copy only: " + r.adjustments.join("; "));
+      }
+      if (r.counts.live_minus_backup && Object.keys(r.counts.live_minus_backup).length) {
+        L.push("");
+        L.push("Rows the live server holds beyond this backup: " + Object.entries(r.counts.live_minus_backup).map(([k, v]) => `${k} ${v}`).join(", "));
+      }
+      L.push("");
+      L.push("The backup was restored into a temporary directory, checked by a separate process that was never given the live database's path, and deleted afterwards. The live database received only this result (a settings row and an audit entry).");
+      L.push(`Integrity: SHA-256 ${integrity.sha256}`);
+      L.push(`           HMAC-SHA256 ${integrity.hmac_sha256}`);
+      if (integrity.ed25519_signature) {
+        L.push(`           Ed25519 signature ${integrity.ed25519_signature}`);
+        L.push(`           signing key ${integrity.signing_key_id} (public key published at GET /api/admin/security/signing-key)`);
+        L.push("Verify with the public key only: npm run verify-dr-report -- <the .json report> --public-key <signing-key.pem>");
+      }
+      L.push("The JSON report beside this file is the record of the drill; this text is a convenience copy.");
+      return L.join("\n") + "\n";
+    }
+    function start2(opts) {
+      if (current2) {
+        const e = new Error("A recovery drill is already running");
+        e.code = "EBUSY";
+        throw e;
+      }
+      const p = run2(opts).catch((e) => {
+        console.error("[suds] recovery drill:", e && e.message || e);
+      });
+      return p;
+    }
+    function runIfDue(now = Date.now()) {
+      if (db3.getSetting("dr_drill_monthly", "0") !== "1" || current2) return null;
+      const last = lastDrill();
+      if (last && last.at && now - Date.parse(last.at) < MONTH_MS) return null;
+      return start2({ by: "system", trigger: "monthly" });
+    }
+    module.exports = { run: run2, start: start2, runIfDue, status, lastDrill, latestBackup, backupTime, verifyReport, canonical, seal, textReport, targets, parseKeysFile, sweepStale };
+  }
+});
+
+// server/security-status.js
+var require_security_status = __commonJS({
+  "server/security-status.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var path = (init_path(), __toCommonJS(path_exports));
+    var config = require_config();
+    var db3 = require_db();
+    var auth3 = require_auth2();
+    var ROLES = ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"];
+    var DAY = 864e5;
+    var ageDays = (iso) => iso ? (Date.now() - Date.parse(iso)) / DAY : null;
+    function validateSettings() {
+      const { badRequest } = require_http();
+      const pol = auth3.policy();
+      if (!pol.ssoRequiredSetting) return;
+      if (!config.oidc.enabled) throw badRequest("Single sign-on cannot be required until it is configured (OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_REDIRECT_URI; docs/DEPLOYMENT.md)");
+      if (!pol.ssoEmergencyAccounts.length) throw badRequest("Name at least one emergency (break-glass) administrator account that may still sign in with a password, or an identity-provider outage would lock everyone out");
+      for (const u of pol.ssoEmergencyAccounts) {
+        const row = db3.one(`SELECT role, is_active FROM users WHERE username=?`, u);
+        if (!row) throw badRequest(`Emergency account "${u}" does not exist`);
+        if (row.role !== "admin" || !row.is_active) throw badRequest(`Emergency account "${u}" must be an active administrator`);
+      }
+    }
+    function mfaReport() {
+      const pol = auth3.policy();
+      const users = db3.all(`SELECT id, username, display_name, role, mfa_enabled, created_at, last_login_at, oidc_subject FROM users WHERE is_active=1 ORDER BY display_name`);
+      const without = users.filter((u) => !u.mfa_enabled).map((u) => {
+        const deadline = auth3.mfaDeadline(u);
+        return { id: u.id, username: u.username, display_name: u.display_name, role: u.role, required: pol.mfaRequiredRoles.includes(u.role), deadline, overdue: !!deadline && Date.now() > Date.parse(deadline), sso_linked: !!u.oidc_subject, emergency_account: pol.ssoEmergencyAccounts.includes(String(u.username).toLowerCase()), last_login_at: u.last_login_at };
+      });
+      return { active: users.length, with_mfa: users.length - without.length, coverage_pct: users.length ? Math.round((users.length - without.length) / users.length * 1e3) / 10 : 100, required_roles: pol.mfaRequiredRoles, require_all: pol.mfaRequireAll, grace_days: pol.mfaGraceDays, without };
+    }
+    function lastAudit(action) {
+      return db3.one(`SELECT at, details FROM audit_log WHERE action=? ORDER BY id DESC LIMIT 1`, action) || null;
+    }
+    function settingUpdatedAt(key) {
+      const r = db3.one(`SELECT updated_at FROM settings WHERE key=?`, key);
+      return r ? r.updated_at : null;
+    }
+    function status() {
+      const items = [];
+      const add = (group, name, level, value, detail = "", evidence = "") => items.push({ group, name, level, value, detail, evidence });
+      const pol = auth3.policy();
+      const mfa = mfaReport();
+      const overdue = mfa.without.filter((u) => u.overdue).length;
+      add(
+        "Identity",
+        "Two-step verification coverage",
+        mfa.coverage_pct === 100 ? "ok" : overdue ? "bad" : "warn",
+        `${mfa.coverage_pct}% (${mfa.with_mfa} of ${mfa.active} active accounts)`,
+        mfa.without.length ? `${mfa.without.length} without it${overdue ? `, ${overdue} past their enrolment deadline (locked out of everything but enrolment)` : ""} \u2014 see "Accounts without two-step verification" below.` : "Every active account has enrolled.",
+        "server/auth.js requireAuth, mfaDeadline"
+      );
+      const allRoles = ROLES.every((r) => pol.mfaRequiredRoles.includes(r));
+      add(
+        "Identity",
+        "Two-step verification required for",
+        allRoles ? "ok" : "warn",
+        pol.mfaRequireAll ? 'every role (enforced by the "all roles" switch)' : allRoles ? "every role" : pol.mfaRequiredRoles.join(", ") || "no role",
+        `New accounts have ${pol.mfaGraceDays} day${pol.mfaGraceDays === 1 ? "" : "s"} to enrol, then are blocked until they do.${pol.mfaRequireAll ? "" : ' Turn on "Require two-step verification for every role" in Settings to make this explicit.'}`,
+        "Settings \u2192 Security policy; server/auth.js policy()"
+      );
+      const linked = db3.one(`SELECT COUNT(*) n FROM users WHERE is_active=1 AND oidc_subject IS NOT NULL AND oidc_subject <> ''`).n;
+      add(
+        "Identity",
+        "Single sign-on (OIDC)",
+        config.oidc.enabled ? "ok" : "warn",
+        config.oidc.enabled ? `configured (${config.oidc.issuer.replace(/^https?:\/\//, "")}); ${linked} account${linked === 1 ? "" : "s"} linked` : "not configured",
+        config.oidc.enabled ? "" : "Set OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET and OIDC_REDIRECT_URI to sign in through the county identity provider (docs/DEPLOYMENT.md).",
+        "server/oidc.js, server/routes/oidc.js"
+      );
+      if (config.oidc.enabled || db3.getSetting("sso_trust_idp_mfa", "0") === "1") {
+        const trusted = db3.getSetting("sso_trust_idp_mfa", "0") === "1";
+        const acr = db3.getSetting("sso_mfa_acr_values", "") || "";
+        const since = new Date(Date.now() - 30 * DAY).toISOString();
+        const viaIdp = trusted ? db3.one(`SELECT COUNT(*) n FROM audit_log WHERE action='auth.oidc.login' AND at >= ? AND details LIKE '%"mfa":"idp"%'`, since).n : 0;
+        add(
+          "Identity",
+          "Identity provider's multi-factor sign-in",
+          trusted ? "info" : "ok",
+          trusted ? `trusted in place of SUDS two-step verification (amr mfa or two factor kinds such as pwd+otp${acr ? `, or acr ${acr}` : ""}); ${viaIdp} sign-in${viaIdp === 1 ? "" : "s"} in 30 days` : "not trusted: SSO sign-ins still need the SUDS second factor",
+          trusted ? 'A sign-in the provider does not mark as multi-factor still needs the SUDS code. Every trusted sign-in is audited (auth.oidc.login with mfa "idp"). Make sure the provider enforces MFA for this application (conditional access).' : `Settings \u2192 Security policy \u2192 "Trust the identity provider's multi-factor sign-in" (off by default).`,
+          "server/routes/oidc.js mfaTrust; server/oidc.js idpMfa"
+        );
+      }
+      {
+        const dp = require_deprovision().report();
+        const scimTokens = db3.one(`SELECT COUNT(*) n FROM api_keys WHERE scopes='scim' AND revoked_at IS NULL`).n;
+        add(
+          "Identity",
+          "Deprovisioning",
+          dp.days || scimTokens ? dp.due.length ? "warn" : "ok" : config.oidc.enabled ? "warn" : "info",
+          [scimTokens ? `SCIM provisioning on (${scimTokens} token${scimTokens === 1 ? "" : "s"})` : "no SCIM provisioning", dp.days ? `SSO accounts not seen for ${dp.days} days are disabled` : "accounts not seen at the identity provider are not disabled automatically"].join("; "),
+          `${dp.linked_active} active account${dp.linked_active === 1 ? "" : "s"} linked to the identity provider${dp.due.length ? `, ${dp.due.length} due to be disabled at the next daily run` : ""}${dp.recent.length ? `; ${dp.recent.length} disabled in the last 90 days` : ""}. ${dp.days || scimTokens ? "" : 'Create a SCIM token (Provisioning below) or set "Disable single sign-on accounts not seen for (days)".'}`.trim(),
+          "server/deprovision.js; server/routes/scim.js"
+        );
+      }
+      add(
+        "Identity",
+        "Password sign-in",
+        pol.ssoRequired ? "ok" : pol.ssoRequiredSetting ? "bad" : "info",
+        pol.ssoRequired ? `disabled except for emergency account${pol.ssoEmergencyAccounts.length === 1 ? "" : "s"} ${pol.ssoEmergencyAccounts.join(", ")}` : pol.ssoRequiredSetting ? "SSO is set as required, but OIDC is not configured, so passwords are still accepted" : "allowed for every account",
+        pol.ssoRequired ? "Every emergency sign-in is audited (auth.login with emergency_account) and logged." : 'Settings \u2192 Security policy \u2192 "Require single sign-on" turns password sign-in off for everyone but named break-glass administrators.',
+        "server/auth.js login()"
+      );
+      add("Identity", "Password policy", "info", `${config.password.minLength}+ characters with upper, lower, digit and symbol; expires after ${pol.passwordMaxAgeDays} days; locked for ${config.lockout.minutes} min after ${config.lockout.maxAttempts} failures`, "Hashed with scrypt (N=32768).", "server/auth.js passwordPolicy, server/crypto.js");
+      add("Identity", "Session timeouts", pol.idleMinutes <= 15 ? "ok" : "warn", `signed out after ${pol.idleMinutes} min idle; ${pol.absoluteHours} h maximum`, pol.idleMinutes <= 15 ? "" : "HIPAA automatic logoff: 15 minutes or less is typical.", "Settings \u2192 Security policy; server/auth.js resolveSession");
+      const hours = Number(db3.getSetting("backup_schedule_hours", "0")) || 0;
+      const lastBackup = db3.getSetting("last_scheduled_backup_at", null);
+      const lastStatus = db3.getSetting("last_scheduled_backup_status", "") || "";
+      const stale = hours && (!lastBackup || ageDays(lastBackup) * 24 > 2 * hours);
+      const sb = require_scheduled_backup();
+      const sched = sb.settings();
+      add("Backups and recovery", "Scheduled encrypted backups", !hours ? "bad" : stale || !/^ok/.test(lastStatus) ? "bad" : "ok", hours ? `every ${hours} h; last ${lastBackup || "never"}` : "off", hours ? lastStatus : `${config.isProd ? "This is a production server with nothing backing it up. " : ""}Turn on under Settings \u2192 Scheduled backups (every 4 hours is the production default).`, "server/scheduled-backup.js");
+      const lastSnap = db3.getSetting("last_snapshot_at", null);
+      const snapStatus = db3.getSetting("last_snapshot_status", "") || "";
+      const snapStale = sched.minutes && (!lastSnap || ageDays(lastSnap) * 1440 > 3 * sched.minutes);
+      add(
+        "Backups and recovery",
+        "Frequent online snapshots",
+        !sched.minutes ? "info" : snapStale || /^failed/.test(snapStatus) ? "bad" : "ok",
+        sched.minutes ? `every ${sched.minutes} min to ${sched.offsiteDir ? "the offsite directory" : "the local backups directory"}, newest ${sched.snapshotRetain} kept; last ${lastSnap || "never"}` : "off",
+        sched.minutes ? `${snapStatus}${!sched.offsiteDir ? " Snapshots stay on this disk until an offsite directory is set." : ""}` : "Turn on under Settings \u2192 Scheduled backups to bring the recovery point down to minutes (SQLite online backup; measured cost in docs/security/BACKUP-AND-DR.md).",
+        "server/scheduled-backup.js snapshot"
+      );
+      const rpo = sb.rpo(sched);
+      const rpoTarget = require_dr_drill().targets().rpo_hours;
+      add(
+        "Backups and recovery",
+        "Recovery point objective (worst case)",
+        !rpo ? "bad" : rpo.minutes > rpoTarget * 60 ? "warn" : "ok",
+        rpo ? `${rpo.minutes < 120 ? `${rpo.minutes} min` : `${Math.round(rpo.minutes / 6) / 10} h`} (${rpo.by}); target ${rpoTarget < 2 ? `${Math.round(rpoTarget * 60)} min` : `${rpoTarget} h`}` : "unbounded: nothing is scheduled",
+        rpo ? "A loss just before the next copy runs costs one whole interval. The last recovery drill measures the age of the copy it restored." : "With no schedule, everything since the last manual backup would be lost.",
+        "server/scheduled-backup.js rpo"
+      );
+      const offsite = db3.getSetting("backup_offsite_dir", "") || "";
+      add("Backups and recovery", "Offsite copy", !offsite ? "warn" : /offsite copy failed/.test(lastStatus) ? "bad" : "ok", offsite ? offsite : "not configured", offsite ? /offsite copy failed/.test(lastStatus) ? lastStatus : "Each scheduled backup is copied here after it is verified." : "Set an offsite directory (a mounted share on another host or site).", "server/scheduled-backup.js");
+      const drill = require_dr_drill().lastDrill();
+      const drillAge = drill ? ageDays(drill.at) : null;
+      add(
+        "Backups and recovery",
+        "Last recovery drill",
+        !drill ? "bad" : !drill.ok ? "bad" : drillAge > 95 ? "warn" : "ok",
+        drill ? `${drill.ok ? "passed" : "FAILED"} ${drill.at.slice(0, 10)} \u2014 RTO ${drill.rto_seconds ?? "?"} s (target ${drill.rto_target_minutes} min), RPO ${drill.rpo_seconds != null ? Math.round(drill.rpo_seconds / 360) / 10 + " h" : "?"} (target ${drill.rpo_target_hours} h)` : "never run",
+        drill ? drill.ok ? `${drill.checks_passed}/${drill.checks_total} checks; restored the ${drill.backup_copy || "local"} copy with keys from ${drill.keys_source || "server memory"}; report ${drill.report_file || "(not written)"}.${drill.keys_source && drill.keys_source !== "server memory" ? "" : " Run one with the escrowed key file to prove it opens the backups."}` : (drill.failures || []).join("; ") : "Run one from System & backups, or npm run dr-drill.",
+        "server/dr-drill.js; report in <data>/backups/dr-drill-*.json"
+      );
+      add("Backups and recovery", "Monthly recovery drill", db3.getSetting("dr_drill_monthly", "0") === "1" ? "ok" : "info", db3.getSetting("dr_drill_monthly", "0") === "1" ? "on" : "off", "Settings \u2192 Scheduled backups.", "server/dr-drill.js runIfDue");
+      add("Backups and recovery", "Backup encryption key", config.backupKey ? "ok" : "info", config.backupKey ? "separate SUDS_BACKUP_KEY" : "derived from the PHI encryption key", config.backupKey ? "" : "Setting SUDS_BACKUP_KEY lets the PHI key rotate without re-keying the backup set.", "server/backup.js");
+      const verifiedAt = db3.getSetting("audit_verified_at", null);
+      const fullAt = db3.getSetting("audit_full_verified_at", null);
+      const failedAt = db3.getSetting("audit_verify_failed_at", null);
+      add(
+        "Audit",
+        "Audit chain verification",
+        failedAt ? "bad" : !verifiedAt || ageDays(verifiedAt) > 2 ? "warn" : "ok",
+        failedAt ? `FAILED ${failedAt}` : verifiedAt ? `verified ${verifiedAt}${fullAt ? `; last full walk ${fullAt}` : ""}` : "not yet verified",
+        "Hash chain keyed with the index key; verified daily (incremental) and weekly (full).",
+        "server/audit.js scheduledVerify"
+      );
+      const ad = require_audit_anchor().dirStatus();
+      const anchors = require_audit_anchor().list().length;
+      const lastAnchor = db3.getSetting("audit_anchor_last_at", null);
+      const anchorWrite = db3.getSetting("audit_anchor_last_status", "") || "";
+      const anchorVerify = db3.getSetting("audit_anchor_verify_status", "") || "";
+      const placement = require_audit_anchor().placementProblem();
+      add(
+        "Audit",
+        "Audit anchors outside the database",
+        /^failed/.test(anchorWrite) || /^FAILED/.test(anchorVerify) || placement ? "bad" : !ad.configured || ad.inside_data_dir ? "warn" : !anchors ? "warn" : "ok",
+        `${anchors} anchor${anchors === 1 ? "" : "s"} in ${ad.dir}${lastAnchor ? `; last ${lastAnchor}` : ""}${config.auditAnchorHours > 0 ? `; every ${config.auditAnchorHours} h and at each backup` : "; at each backup only"}`,
+        [placement || "", anchorVerify ? `Last check: ${anchorVerify}.` : "Not yet checked (runs with the daily audit verification).", /^failed/.test(anchorWrite) ? `Last write ${anchorWrite}.` : "", placement ? "" : !ad.configured || ad.inside_data_dir ? "Set AUDIT_ANCHOR_DIR to write-once storage outside the data directory (WORM/immutable share) so a rewrite of the whole data directory is also caught." : "", config.auditSyslog ? `Also sent to syslog ${config.auditSyslog}.` : ""].filter(Boolean).join(" "),
+        "server/audit-anchor.js"
+      );
+      {
+        const min = config.AUDIT_RETENTION_MIN_DAYS || 2190;
+        const low = config.auditRetentionDaysConfigured != null && config.auditRetentionDaysConfigured < min;
+        const p = lastAudit("audit.purge");
+        add(
+          "Audit",
+          "Audit retention",
+          low || config.auditRetentionDays < min ? "bad" : "ok",
+          `${Math.round(config.auditRetentionDays / 365 * 10) / 10} years (${config.auditRetentionDays} days)`,
+          [low ? `AUDIT_RETENTION_DAYS=${config.auditRetentionDaysConfigured} is below the six-year minimum (${min} days, 45 CFR \xA7164.316(b)(2)); SUDS keeps ${config.auditRetentionDays} days instead. Raise or remove the setting.` : "", p ? `Last purge ${p.at}.` : "No audit entries old enough to purge yet."].filter(Boolean).join(" "),
+          "AUDIT_RETENTION_DAYS (minimum 2190); server/config.js; server/audit.js purge"
+        );
+      }
+      const keyAt = settingUpdatedAt("key_fingerprint");
+      const rotated = lastAudit("security.key_rotated");
+      const idxRotated = lastAudit("security.index_key_rotated");
+      const keyAge = ageDays(rotated ? rotated.at : keyAt);
+      add(
+        "Encryption and keys",
+        "PHI encryption key",
+        keyAge !== null && keyAge > 400 ? "warn" : "ok",
+        `AES-256-GCM; keys from ${config.keySource === "env" ? "the environment / secrets manager" : config.keySource === "file" ? "data/keys.json (0600)" : "development key files in the data directory"}`,
+        `${rotated ? `Last rotated ${rotated.at}` : `In use since ${keyAt || "unknown"}`}${keyAge !== null ? ` (${Math.round(keyAge)} days)` : ""}. Rotate annually: npm run rotate-key.`,
+        "server/crypto.js; scripts/rotate-key.js"
+      );
+      try {
+        const sk = require_signing().publicInfo();
+        add(
+          "Encryption and keys",
+          "Evidence signing key (Ed25519)",
+          "ok",
+          `key id ${sk.key_id}; private key in ${config.signingKeySource === "env" ? "the environment (SUDS_SIGNING_KEY)" : config.signingKeySource === "file" ? "data/keys.json" : config.signingKeySource === "devfile" ? "a development key file in the data directory" : "the test configuration"}, never in the database`,
+          "Signs recovery-drill reports and audit-export manifests; anyone with the public key (GET /api/admin/security/signing-key) can verify them: npm run verify-dr-report, npm run verify-audit-export -- --public-key.",
+          "server/signing.js"
+        );
+      } catch (e) {
+        add("Encryption and keys", "Evidence signing key (Ed25519)", "bad", "unavailable", String(e.message || e), "server/signing.js");
+      }
+      add("Encryption and keys", "Index key (blind indexes, audit chain)", "info", idxRotated ? `last rotated ${idxRotated.at}` : "not rotated since install", "npm run rotate-index-key re-derives the indexes and re-signs the audit chain.", "scripts/rotate-index-key.js");
+      if (config.keySource === "file") {
+        const kb = db3.getSetting("keys_backup_at", null);
+        add("Encryption and keys", "Key backup", kb ? "ok" : "bad", kb ? `downloaded ${kb}` : "never downloaded", "Keep it apart from the database backups (a password manager or safe).", "Settings \u2192 System & backups");
+      }
+      const years = (() => {
+        const v = Number(db3.getSetting("client_retention_years", ""));
+        return Number.isFinite(v) && v > 0 ? v : config.clientRetentionYears;
+      })();
+      const ran = db3.getSetting("client_retention_ran_at", null);
+      add("Data lifecycle", "Client record retention", "info", `${years} years after last activity, then deleted from every table (legal hold exempts)`, ran ? `Retention job last ran ${ran}.` : "The retention job has not run yet.", "server/retention.js");
+      const tls = config.tls.cert ? `served by SUDS (${config.tls.mode === "selfsigned" ? "self-signed certificate" : "certificate from TLS_CERT_PATH"})` : config.trustProxy ? "terminated by a reverse proxy (TRUST_PROXY)" : "not configured";
+      let certNote = "";
+      try {
+        const crt = config.tls.cert || path.join(config.dataDir, "certs", "suds.crt");
+        if (fs.existsSync(crt)) certNote = `Certificate valid until ${new (init_crypto2(), __toCommonJS(crypto_exports)).X509Certificate(fs.readFileSync(crt)).validTo}.`;
+      } catch {
+      }
+      add("Platform", "HTTPS", config.tls.cert || config.trustProxy ? "ok" : config.isProd ? "bad" : "warn", tls, certNote || (config.tls.cert || config.trustProxy ? "" : "Enable HTTPS under Network & devices, or run behind a TLS proxy."), "server/listener.js; Caddyfile");
+      add("Platform", "Local mode (offline copies on devices)", config.localModeEnabled ? "warn" : "ok", config.localModeEnabled ? "on" : "off", config.localModeEnabled ? `Records are copied to devices${pol.ssoRequired ? "; with SSO required only emergency accounts can sync a device" : ""}. Only for a documented field-work need (docs/PLATFORM.md).` : "The office server is the only copy.", "LOCAL_MODE_ENABLED / server.json");
+      add("Platform", "Version", "info", `SUDS ${config.version}, schema ${db3.getSetting("schema_version", "?")}, Node ${proc.versions.node}`, config.updateFeedUrl ? "Update checks are configured (System & backups \u2192 Check for updates)." : "UPDATE_FEED_URL is not set, so this server cannot check for updates itself.", "package.json; server/update.js");
+      const ixp = db3.indexProblems();
+      add(
+        "Platform",
+        "Database indexes",
+        ixp.length ? "bad" : "ok",
+        ixp.length ? `${ixp.length} missing: ${ixp.map((x) => x.index).join(", ")}` : "every index in schema.sql is present",
+        ixp.length ? `Could not be created at startup: ${ixp.map((x) => `${x.index} (${x.error})`).join("; ")}. A missing UNIQUE index usually means duplicate rows it would have prevented; resolve them, then restart.` : "Checked at every start.",
+        "server/db.js ensureIndexes"
+      );
+      add("Platform", "Monitoring", config.metricsToken || config.logFormat === "json" ? "ok" : "info", [config.metricsToken ? "Prometheus metrics on" : "metrics off", `logs ${config.logFormat}`].join("; "), "/api/health answers 503 on a failed audit check, stale backups or an expiring certificate.", "server/metrics.js, server/log.js, server/routes/app.js");
+      const counts = { ok: 0, warn: 0, bad: 0, info: 0 };
+      for (const i of items) counts[i.level]++;
+      return { generated_at: db3.now(), version: config.version, counts, items, mfa, attestation: "SUDS holds no SOC 2, ISO 27001, HITRUST, StateRAMP or FedRAMP attestation. This page reports the technical controls in this installation; independent attestation requires an auditor (docs/security/SOC2-READINESS.md)." };
+    }
+    module.exports = { status, mfaReport, validateSettings };
   }
 });
 
@@ -13132,3023 +14015,6 @@ P: ${P2} (Sample data)`), encrypt3(JSON.stringify(i % 4 === 0 ? { S, O, A, P: P2
   }
 });
 
-// server/options.js
-var require_options = __commonJS({
-  "server/options.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var C = require_constants();
-    function humanize(s) {
-      if (!s) return "";
-      return String(s).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).replace(/\bSbirt\b/, "SBIRT").replace(/\bMat\b/g, "MAT").replace(/\bOtp\b/, "OTP").replace(/\bObot\b/, "OBOT").replace(/\bEd\b/, "ED").replace(/\bMh\b/, "MH").replace(/\bRx\b/, "Rx").replace(/\bIds\b/, "IDs").replace(/\bRoi\b/, "ROI").replace(/\bPart2 Disclosure\b/, "Part 2 disclosure").replace(/\bPart2\b/g, "Part 2");
-    }
-    var OPEN_SHARED = "the provider has been told who the client is (consent check), and the referral counts as open";
-    var LISTS = [
-      {
-        key: "INTERVENTION_TYPES",
-        group: "Visits & services",
-        name: "What did you do?",
-        codes: C.INTERVENTION_TYPES,
-        protect: { outreach: "can be recorded without a client", naloxone_distribution: "can be recorded without a client" }
-      },
-      { key: "LOCATIONS", group: "Visits & services", name: "Location", codes: C.LOCATIONS },
-      { key: "MODALITIES", group: "Visits & services", name: "Modality", codes: C.MODALITIES },
-      { key: "OUTCOMES", group: "Visits & services", name: "Outcome", codes: C.OUTCOMES },
-      { key: "CALL_CONTACT_TYPES", group: "Calls & texts", name: "Who", codes: C.CALL_CONTACT_TYPES },
-      {
-        key: "CALL_OUTCOMES",
-        group: "Calls & texts",
-        name: "Outcome (phone call)",
-        codes: C.CALL_OUTCOMES,
-        protect: { reached: 'counts as contact with the client (last contact, "no contact in 30 days")', crisis_escalated: "marks the call as a crisis" }
-      },
-      {
-        key: "TEXT_OUTCOMES",
-        group: "Calls & texts",
-        name: "Outcome (text message)",
-        codes: C.TEXT_OUTCOMES,
-        protect: { replied: 'counts as contact with the client (last contact, "no contact in 30 days")', sent: "what a text with no outcome is recorded as" }
-      },
-      // No additions: every status means something to the consent check, loop closure and the open/closed
-      // counts (server/routes/referrals.js SHARED_STATUSES / CLOSED_STATUSES, reports.js), and a new one would
-      // silently mean none of them.
-      {
-        key: "REFERRAL_STATUSES",
-        group: "Referrals",
-        name: "Status / What happened",
-        codes: C.REFERRAL_STATUSES,
-        custom: false,
-        protect: {
-          pending: "a new referral starts here and counts as open",
-          contacted: OPEN_SHARED,
-          accepted: OPEN_SHARED,
-          waitlisted: OPEN_SHARED,
-          scheduled: OPEN_SHARED,
-          admitted: "records an admission (funder report, loop closure)",
-          completed: "counts as a successful referral and closes it",
-          closed: "closes the referral",
-          declined_by_client: "closes the referral",
-          declined_by_provider: "closes the referral"
-        },
-        why: "Statuses can be reworded, but not added to: each one tells SUDS whether the provider has been told who the client is, and whether the referral is open, closed or successful."
-      },
-      { key: "REFERRAL_BARRIERS", group: "Referrals", name: "If it did not happen, why", codes: C.REFERRAL_BARRIERS },
-      // No additions: overdose_events.kind has a CHECK constraint, and each kind is a different count.
-      {
-        key: "OVERDOSE_KINDS",
-        group: "Overdose & reversals",
-        name: "What happened",
-        codes: C.OVERDOSE_KINDS,
-        custom: false,
-        labels: { overdose: "Overdose (no naloxone given)", reversal: "Overdose reversed with naloxone", fatal: "Fatal overdose" },
-        protect: { overdose: "counted as an overdose in reports", reversal: "counted as a naloxone reversal in reports", fatal: "marks the client deceased and closes their episode" },
-        why: "These can be reworded, but not added to: each is a separate count in the overdose and funder reports."
-      },
-      {
-        key: "ADMINISTERED_BY",
-        group: "Overdose & reversals",
-        name: "Given by",
-        codes: C.ADMINISTERED_BY,
-        labels: { bystander: "A bystander", first_responder: "A first responder", staff: "Our staff", self: "The person themselves", family: "Family member", unknown: "Unknown" },
-        protect: { unknown: "a blank answer is counted as Unknown in reports" }
-      },
-      {
-        key: "TIME_CATEGORIES",
-        group: "Time",
-        name: "Category",
-        codes: C.TIME_CATEGORIES,
-        protect: { direct_service: "time logged automatically from visits and calls" }
-      },
-      {
-        key: "NOTE_FORMATS",
-        group: "Notes",
-        name: "Format",
-        codes: C.NOTE_FORMATS,
-        labels: { handoff: "Shift hand-off (for the next worker on)", safety_plan: "Safety plan (structured)" },
-        protect: {
-          narrative: "the default format, and what imported notes are saved as",
-          SOAP: "has its own structured sections",
-          DAP: "has its own structured sections",
-          BIRP: "has its own structured sections",
-          GIRP: "has its own structured sections",
-          handoff: "listed in shift hand-offs",
-          safety_plan: "shown as the client's safety plan"
-        }
-      },
-      {
-        key: "SUBSTANCES",
-        group: "Clients",
-        name: "Primary substance",
-        codes: C.SUBSTANCES,
-        protect: { unknown: "a blank answer is counted as Unknown in reports and filters" }
-      },
-      {
-        key: "DISCHARGE_REASONS",
-        group: "Episodes of care",
-        name: "Reason for discharge",
-        codes: C.DISCHARGE_REASONS,
-        labels: {
-          completed: "Completed the program",
-          transferred: "Transferred to another provider",
-          incarcerated: "Incarcerated",
-          moved: "Moved out of the area",
-          lost_contact: "Lost contact",
-          declined: "Declined further services",
-          deceased: "Deceased",
-          administrative: "Administrative closure",
-          other: "Other"
-        },
-        protect: { deceased: "marks the client deceased" }
-      }
-    ];
-    var BY_KEY = new Map(LISTS.map((l) => [l.key, l]));
-    var EXCLUDED = [
-      { name: "Race and ethnicity", why: "Federal (OMB) reporting categories that funder reports count as they are." },
-      { name: "ASAM level of care", why: "The ASAM criteria levels: a national standard, not a programme choice." },
-      { name: "Screening instruments (PHQ-9, GAD-7, AUDIT-C, DAST-10)", why: "Validated questionnaires: their wording and scoring cannot change without making the score meaningless." },
-      { name: "ASAM dimensions and ratings", why: "The six ASAM dimensions and the 0\u20134 risk scale: a national standard." },
-      { name: "Stage of change", why: "The stages of the transtheoretical model: a clinical standard." },
-      { name: "Consent type", why: "Each type is a different legal authority under 42 CFR Part 2 and HIPAA." },
-      { name: "Patient-rights request", why: "The four HIPAA rights (access, amendment, restriction, accounting), each with its own legal deadline." },
-      { name: "Funding type", why: "Grouped by funder in reports; add funding sources themselves under Funding sources below." },
-      { name: "Phone call or text", why: "Fixed by the database: each has its own outcomes list above." }
-    ];
-    var MAX_LABEL = 80;
-    var RESERVED = /* @__PURE__ */ new Set(["all", "open", "none_selected"]);
-    function has(key) {
-      return BY_KEY.has(key);
-    }
-    function def(key) {
-      const l = BY_KEY.get(key);
-      if (!l) throw new Error(`Unknown option list ${key}`);
-      return l;
-    }
-    function overrideRows(key) {
-      try {
-        return db3.all(`SELECT * FROM option_overrides WHERE list_key=?`, key);
-      } catch {
-        return [];
-      }
-    }
-    function entries(key) {
-      const l = def(key);
-      const rows = new Map(overrideRows(key).map((r) => [r.code, r]));
-      const out2 = l.codes.map((code, i) => {
-        const r = rows.get(code);
-        const dflt2 = l.labels && l.labels[code] || humanize(code);
-        return {
-          code,
-          label: r && r.label || dflt2,
-          default_label: dflt2,
-          hidden: !!(r && r.hidden) && !(l.protect && l.protect[code]),
-          custom: false,
-          protected: l.protect && l.protect[code] || null,
-          _order: r && r.sort_order !== null && r.sort_order !== void 0 ? r.sort_order : 1e3 + i
-        };
-      });
-      const builtin = new Set(l.codes);
-      let n = 0;
-      for (const r of rows.values()) {
-        if (builtin.has(r.code) || !r.is_custom) continue;
-        out2.push({
-          code: r.code,
-          label: r.label || humanize(r.code),
-          default_label: null,
-          hidden: !!r.hidden,
-          custom: true,
-          protected: null,
-          _order: r.sort_order !== null && r.sort_order !== void 0 ? r.sort_order : 2e3 + n++
-        });
-      }
-      out2.sort((a, b) => a._order - b._order);
-      return out2.map(({ _order, ...e }) => e);
-    }
-    function visible(key) {
-      return entries(key).filter((e) => !e.hidden).map((e) => e.code);
-    }
-    function known(key) {
-      return entries(key).map((e) => e.code);
-    }
-    function accepts(key, value, existing) {
-      if (value === null || value === void 0 || value === "") return true;
-      if (existing !== void 0 && existing !== null && value === existing) return true;
-      return visible(key).includes(value);
-    }
-    function labelMap(key) {
-      return Object.fromEntries(entries(key).map((e) => [e.code, e.label]));
-    }
-    function labelOf(key, code) {
-      if (code === null || code === void 0 || code === "") return code;
-      if (!has(key)) return humanize(code);
-      return labelMap(key)[code] || humanize(code);
-    }
-    function meta() {
-      const option_lists = {};
-      const visibleLists = {};
-      for (const l of LISTS) {
-        const es = entries(l.key);
-        option_lists[l.key] = es;
-        visibleLists[l.key] = es.filter((e) => !e.hidden).map((e) => e.code);
-      }
-      return { visible: visibleLists, option_lists };
-    }
-    function describe2() {
-      return {
-        lists: LISTS.map((l) => ({ key: l.key, group: l.group, name: l.name, custom_allowed: l.custom !== false, note: l.why || null, entries: entries(l.key) })),
-        excluded: EXCLUDED
-      };
-    }
-    function slug(label, taken) {
-      let base = String(label).normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40).replace(/_+$/, "");
-      if (!base || RESERVED.has(base)) base = base ? `${base}_custom` : "custom";
-      let code = base;
-      let i = 2;
-      while (taken.has(code)) code = `${base}_${i++}`;
-      return code;
-    }
-    module.exports = { LISTS, EXCLUDED, MAX_LABEL, has, def, entries, visible, known, accepts, labelMap, labelOf, meta, describe: describe2, slug, humanize };
-  }
-});
-
-// server/validate.js
-var require_validate = __commonJS({
-  "server/validate.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var { badRequest } = require_http();
-    function validate(body, shape, { partial = false, existing = null } = {}) {
-      if (!body || typeof body !== "object" || Array.isArray(body)) throw badRequest("JSON object body required");
-      const out2 = {};
-      const errors = {};
-      for (const [k, rule] of Object.entries(shape)) {
-        let v = body[k];
-        if (v === "") v = null;
-        if (v === void 0) {
-          if (rule.required && !partial) errors[k] = "required";
-          continue;
-        }
-        if (v === null) {
-          if (rule.required) errors[k] = "required";
-          else out2[k] = null;
-          continue;
-        }
-        switch (rule.type) {
-          case "string":
-            if (typeof v !== "string") {
-              errors[k] = "must be a string";
-              continue;
-            }
-            v = v.trim();
-            if (rule.maxLen && v.length > rule.maxLen) {
-              errors[k] = `max length ${rule.maxLen}`;
-              continue;
-            }
-            if (rule.pattern && !rule.pattern.test(v)) {
-              errors[k] = "invalid format";
-              continue;
-            }
-            if (rule.enum && !rule.enum.includes(v)) {
-              errors[k] = `must be one of ${rule.enum.join(", ")}`;
-              continue;
-            }
-            if (rule.list && v) {
-              const O = require_options();
-              if (!O.accepts(rule.list, v, existing ? existing[k] : void 0)) {
-                errors[k] = `must be one of ${O.visible(rule.list).join(", ")}`;
-                continue;
-              }
-            }
-            if (!v && rule.required) {
-              errors[k] = "required";
-              continue;
-            }
-            break;
-          case "number":
-            v = Number(v);
-            if (!Number.isFinite(v)) {
-              errors[k] = "must be a number";
-              continue;
-            }
-            if (rule.min !== void 0 && v < rule.min) {
-              errors[k] = `min ${rule.min}`;
-              continue;
-            }
-            if (rule.max !== void 0 && v > rule.max) {
-              errors[k] = `max ${rule.max}`;
-              continue;
-            }
-            if (rule.integer && !Number.isInteger(v)) {
-              errors[k] = "must be an integer";
-              continue;
-            }
-            break;
-          case "boolean":
-            v = v === true || v === 1 || v === "1" || v === "true" ? 1 : 0;
-            break;
-          case "date":
-            if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v) || isNaN(Date.parse(v))) {
-              errors[k] = "must be YYYY-MM-DD";
-              continue;
-            }
-            break;
-          case "datetime":
-            if (typeof v !== "string" || isNaN(Date.parse(v))) {
-              errors[k] = "must be an ISO datetime";
-              continue;
-            }
-            v = /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : new Date(v).toISOString();
-            break;
-          case "object":
-            if (typeof v !== "object") {
-              errors[k] = "must be an object";
-              continue;
-            }
-            break;
-          case "array":
-            if (!Array.isArray(v)) {
-              errors[k] = "must be an array";
-              continue;
-            }
-            if (rule.maxLen && v.length > rule.maxLen) {
-              errors[k] = `must have at most ${rule.maxLen} items`;
-              continue;
-            }
-            if (rule.of === "string") {
-              if (!v.every((x) => typeof x === "string" && x.length <= 200)) {
-                errors[k] = "must be a list of identifiers";
-                continue;
-              }
-            }
-            break;
-          default:
-            break;
-        }
-        out2[k] = v;
-      }
-      if (Object.keys(errors).length) throw badRequest("Validation failed", { fields: errors });
-      return out2;
-    }
-    function paging(query, defaults = { limit: 50, max: 500 }) {
-      const limit2 = Math.min(defaults.max, Math.max(1, Number(query.get("limit") || defaults.limit)));
-      const offset = Math.max(0, Number(query.get("offset") || 0));
-      return { limit: limit2, offset };
-    }
-    module.exports = { validate, paging };
-  }
-});
-
-// local/shims/listener.js
-var listener_exports = {};
-__export(listener_exports, {
-  default: () => listener_default,
-  describe: () => describe,
-  lanAddresses: () => lanAddresses,
-  relisten: () => relisten
-});
-function describe() {
-  return { scheme: "local", host: "local", port: 0, tls: false, urls: [], lan: [], hostname: "this-device", mdns: false, friendly: null };
-}
-function lanAddresses() {
-  return [];
-}
-async function relisten() {
-  throw new Error("Not available in local mode");
-}
-var listener_default;
-var init_listener = __esm({
-  "local/shims/listener.js"() {
-    init_globals_inject();
-    listener_default = { describe, lanAddresses, relisten, start() {
-    }, stop() {
-    } };
-  }
-});
-
-// server/crud.js
-var require_crud = __commonJS({
-  "server/crud.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth();
-    var audit3 = require_audit();
-    var { notFound, forbidden, HttpError: HttpError3 } = require_http();
-    var { validate, paging } = require_validate();
-    var { uuid: uuid2 } = require_crypto();
-    function clientExists(id) {
-      return !!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, id);
-    }
-    var STALE_MESSAGE = "This record was changed by someone else since you opened it. Reload to see their changes.";
-    function assertFresh(ctx, row, entity) {
-      const token2 = ctx.body && typeof ctx.body === "object" ? ctx.body.if_updated_at : void 0;
-      if (token2 === void 0 || token2 === null || token2 === "") return;
-      if (row.updated_at && String(token2) === String(row.updated_at)) return;
-      audit3.log({ user: ctx.user, action: `${entity}.update.conflict`, entity, entityId: row.id, clientId: row.client_id || (entity === "client" ? row.id : null), ip: ctx.ip, success: false });
-      throw new HttpError3(409, STALE_MESSAGE, { stale: true, updated_at: row.updated_at || null });
-    }
-    function build(r, opts) {
-      const { table, entity, perm, shape, dateCol = "created_at", ownerCol = "user_id", joins = "", select = `${table}.*`, clientRequired = true } = opts;
-      const base = opts.base || `/api/${entity}s`;
-      const readPerm = `${perm}:read`, writePerm = `${perm}:write`;
-      function decorate(ctx, rows) {
-        return opts.afterLoad ? rows.map((x) => opts.afterLoad(ctx, x)) : rows;
-      }
-      function checkClient(ctx, clientId) {
-        if (clientId) {
-          if (!clientExists(clientId)) throw notFound("Client not found");
-          auth3.assertClientAccess(ctx, clientId);
-        }
-      }
-      r.get(base, auth3.requireAuth, auth3.requirePerm(readPerm, writePerm), (ctx) => {
-        const { limit: limit2, offset } = paging(ctx.query, { limit: 100, max: 1e3 });
-        const where = ["1=1"];
-        const params = [];
-        if (clientRequired || opts.hasClient !== false) {
-          const cf = auth3.caseloadFilter(ctx.user, `${table}.client_id`);
-          if (cf.sql !== "1=1") {
-            where.push(`(${table}.client_id IS NULL OR ${cf.sql})`);
-            params.push(...cf.params);
-          }
-          const cid = ctx.query.get("client_id");
-          if (cid) {
-            where.push(`${table}.client_id=?`);
-            params.push(cid);
-          }
-        }
-        if (ownerCol && ctx.query.get("user_id")) {
-          where.push(`${table}.${ownerCol}=?`);
-          params.push(ctx.query.get("user_id"));
-        }
-        if (ownerCol && ctx.query.get("mine") === "1") {
-          where.push(`${table}.${ownerCol}=?`);
-          params.push(ctx.user.id);
-        }
-        if (ctx.query.get("from")) {
-          where.push(`${table}.${dateCol} >= ?`);
-          params.push(ctx.query.get("from"));
-        }
-        if (ctx.query.get("to")) {
-          where.push(`${table}.${dateCol} <= ?`);
-          params.push(ctx.query.get("to") + (ctx.query.get("to").length === 10 ? "T23:59:59.999Z" : ""));
-        }
-        if (opts.filters) opts.filters(ctx, where, params);
-        const w = "WHERE " + where.join(" AND ");
-        const order = opts.order || `${table}.${dateCol} DESC`;
-        const rows = db3.all(`SELECT ${select} FROM ${table} ${joins} ${w} ORDER BY ${order} LIMIT ? OFFSET ?`, ...params, limit2, offset);
-        const total = db3.one(`SELECT COUNT(*) n FROM ${table} ${joins} ${w}`, ...params).n;
-        audit3.log({ user: ctx.user, action: `${entity}.list`, ip: ctx.ip, clientId: ctx.query.get("client_id") || null, details: { count: rows.length } });
-        return { rows: decorate(ctx, rows), total, limit: limit2, offset };
-      });
-      r.get(`${base}/:id`, auth3.requireAuth, auth3.requirePerm(readPerm, writePerm), (ctx) => {
-        const row = db3.one(`SELECT ${select} FROM ${table} ${joins} WHERE ${table}.id=?`, ctx.params.id);
-        if (!row) throw notFound();
-        if (row.client_id) auth3.assertClientAccess(ctx, row.client_id);
-        else if (opts.ownerOnly && row[ownerCol] !== ctx.user.id && !auth3.hasPerm(ctx.user, opts.ownerOnly)) {
-          audit3.log({ user: ctx.user, action: "authz.denied", entity, entityId: row.id, ip: ctx.ip, success: false, details: { reason: "not the owner" } });
-          throw forbidden("That record belongs to another worker");
-        }
-        audit3.log({ user: ctx.user, action: `${entity}.view`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip });
-        return { row: decorate(ctx, [row])[0] };
-      });
-      r.post(base, auth3.requireAuth, auth3.requirePerm(writePerm), (ctx) => {
-        const v = validate(ctx.body, shape);
-        if (clientRequired && !v.client_id) throw require_http().badRequest("client_id is required");
-        checkClient(ctx, v.client_id);
-        if (opts.beforeInsert) opts.beforeInsert(ctx, v);
-        const id = uuid2();
-        const cols2 = { id, ...v };
-        if (ownerCol && (cols2[ownerCol] === void 0 || cols2[ownerCol] === null || opts.restrictOwner && !auth3.hasPerm(ctx.user, "clients:all"))) cols2[ownerCol] = ctx.user.id;
-        if (opts.creatorCol) cols2[opts.creatorCol] = ctx.user.id;
-        const keys = Object.keys(cols2).filter((k) => cols2[k] !== void 0 && !k.startsWith("_"));
-        db3.transaction(() => {
-          db3.run(`INSERT INTO ${table}(${keys.join(",")}) VALUES(${keys.map(() => "?").join(",")})`, ...keys.map((k) => cols2[k]));
-          if (opts.afterInsert) opts.afterInsert(ctx, { id, ...cols2 });
-        });
-        audit3.log({ user: ctx.user, action: `${entity}.create`, entity, entityId: id, clientId: v.client_id || null, ip: ctx.ip });
-        ctx.status = 201;
-        return { id };
-      });
-      r.put(`${base}/:id`, auth3.requireAuth, auth3.requirePerm(writePerm), (ctx) => {
-        const row = db3.one(`SELECT * FROM ${table} WHERE id=?`, ctx.params.id);
-        if (!row) throw notFound();
-        if (row.client_id) auth3.assertClientAccess(ctx, row.client_id);
-        if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden("You cannot edit this record");
-        if (!opts.noUpdatedAt) assertFresh(ctx, row, entity);
-        const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true, existing: row });
-        if (v.client_id && v.client_id !== row.client_id) checkClient(ctx, v.client_id);
-        if (opts.restrictOwner && v[ownerCol] !== void 0 && !auth3.hasPerm(ctx.user, "clients:all")) delete v[ownerCol];
-        if (opts.beforeUpdate) opts.beforeUpdate(ctx, v, row);
-        const keys = Object.keys(v).filter((k) => v[k] !== void 0 && !k.startsWith("_"));
-        const stamp2 = db3.now();
-        if (keys.length) db3.run(`UPDATE ${table} SET ${keys.map((k) => `${k}=?`).join(", ")}${opts.noUpdatedAt ? "" : ", updated_at=?"} WHERE id=?`, ...keys.map((k) => v[k]), ...opts.noUpdatedAt ? [] : [stamp2], row.id);
-        if (opts.afterUpdate) opts.afterUpdate(ctx, { ...row, ...v }, row);
-        audit3.log({ user: ctx.user, action: `${entity}.update`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip, details: { fields: keys } });
-        return { ok: true, updated_at: opts.noUpdatedAt ? void 0 : (db3.one(`SELECT updated_at FROM ${table} WHERE id=?`, row.id) || {}).updated_at };
-      });
-      r.delete(`${base}/:id`, auth3.requireAuth, auth3.requirePerm(writePerm), (ctx) => {
-        const row = db3.one(`SELECT * FROM ${table} WHERE id=?`, ctx.params.id);
-        if (!row) throw notFound();
-        if (row.client_id) auth3.assertClientAccess(ctx, row.client_id);
-        if (opts.canEdit && !opts.canEdit(ctx, row)) throw forbidden("You cannot delete this record");
-        if (opts.canDelete && !opts.canDelete(ctx, row)) throw forbidden("You cannot delete this record");
-        if (opts.beforeDelete) opts.beforeDelete(ctx, row);
-        db3.run(`DELETE FROM ${table} WHERE id=?`, row.id);
-        db3.tombstone(table, row.id);
-        audit3.log({ user: ctx.user, action: `${entity}.delete`, entity, entityId: row.id, clientId: row.client_id, ip: ctx.ip });
-        return { ok: true };
-      });
-    }
-    function ownerOrManager(col = "user_id") {
-      return (ctx, row) => row[col] === ctx.user.id || auth3.hasPerm(ctx.user, "clients:all");
-    }
-    module.exports = { build, ownerOrManager, clientExists, assertFresh, STALE_MESSAGE };
-  }
-});
-
-// server/routes/budget.js
-var require_budget = __commonJS({
-  "server/routes/budget.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth();
-    var audit3 = require_audit();
-    var crud = require_crud();
-    var C = require_constants();
-    var config = require_config();
-    var { badRequest, notFound, HttpError: HttpError3 } = require_http();
-    var { validate } = require_validate();
-    var { uuid: uuid2, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
-    function encDescription(v) {
-      if (v.description !== void 0) {
-        v.description_enc = v.description ? encrypt3(String(v.description)) : null;
-        delete v.description;
-      }
-    }
-    function presentExpenditure(e) {
-      if (!e) return e;
-      const o = { ...e };
-      if ("description_enc" in e) {
-        o.description = e.description_enc ? decrypt3(e.description_enc) : null;
-        delete o.description_enc;
-      }
-      if ("approval_note_enc" in e) {
-        o.approval_note = e.approval_note_enc ? decrypt3(e.approval_note_enc) : null;
-        delete o.approval_note_enc;
-      }
-      return o;
-    }
-    var cents = (v) => typeof v === "number" && Number.isFinite(v) ? Math.round(v * 100) / 100 : v;
-    function validTimezone(tz) {
-      if (typeof tz !== "string" || !tz.trim() || tz.length > 64) return false;
-      try {
-        new Intl.DateTimeFormat("en-US", { timeZone: tz });
-        return true;
-      } catch {
-        return false;
-      }
-    }
-    function orgTimezone() {
-      let v = null;
-      try {
-        v = db3.getSetting("org_timezone", null);
-      } catch {
-      }
-      return v && validTimezone(v) ? v : config.orgTimezone;
-    }
-    function localDate(when = /* @__PURE__ */ new Date(), tz = orgTimezone()) {
-      const d = when instanceof Date ? when : new Date(when);
-      if (!Number.isFinite(d.getTime())) return null;
-      try {
-        return new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
-      } catch {
-        return d.toISOString().slice(0, 10);
-      }
-    }
-    function localMidnight(date, tz = orgTimezone()) {
-      const guess = Date.parse(`${date}T00:00:00Z`);
-      if (!Number.isFinite(guess)) return null;
-      const offset = (ms) => {
-        try {
-          const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
-          return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - (ms - ms % 1e3);
-        } catch {
-          return 0;
-        }
-      };
-      const first = guess - offset(guess);
-      return new Date(guess - offset(first)).toISOString();
-    }
-    var fundShape = {
-      name: { type: "string", required: true, maxLen: 200 },
-      source_type: { type: "string", enum: C.FUNDING_TYPES },
-      grant_number: { type: "string", maxLen: 100 },
-      fiscal_year_start: { type: "date", required: true },
-      fiscal_year_end: { type: "date", required: true },
-      total_amount: { type: "number", required: true, min: 0 },
-      restrictions: { type: "string", maxLen: 2e3 },
-      notes: { type: "string", maxLen: 2e3 },
-      is_active: { type: "boolean" }
-    };
-    var lineShape = { category: { type: "string", required: true, enum: C.BUDGET_CATEGORIES }, label: { type: "string", maxLen: 200 }, allocated_amount: { type: "number", required: true, min: 0 }, notes: { type: "string", maxLen: 1e3 }, parent_id: { type: "string" } };
-    function buildLineTree(flat) {
-      const byId = new Map(flat.map((l) => [l.id, { ...l, children: [] }]));
-      const roots = [];
-      for (const l of byId.values()) {
-        const p = l.parent_id && byId.get(l.parent_id);
-        if (p) p.children.push(l);
-        else roots.push(l);
-      }
-      const rollup = (l) => {
-        let subtreeSpent = l.spent, subtreePending = l.pending;
-        for (const c of l.children) {
-          rollup(c);
-          subtreeSpent += c.subtree_spent;
-          subtreePending += c.subtree_pending;
-        }
-        l.subtree_spent = cents(subtreeSpent);
-        l.subtree_pending = cents(subtreePending);
-        l.subtree_remaining = cents(l.allocated_amount - subtreeSpent - subtreePending);
-        l.child_allocated = cents(l.children.reduce((s, c) => s + c.allocated_amount, 0));
-        l.unallocated = cents(l.allocated_amount - l.child_allocated);
-        l.available = cents(l.allocated_amount - l.child_allocated - l.spent - l.pending);
-      };
-      for (const r of roots) rollup(r);
-      return roots;
-    }
-    function wouldCycle(lineId, proposedParentId) {
-      let cur = proposedParentId;
-      const seen2 = /* @__PURE__ */ new Set();
-      while (cur) {
-        if (cur === lineId || seen2.has(cur)) return true;
-        seen2.add(cur);
-        const row = db3.one(`SELECT parent_id FROM budget_lines WHERE id=?`, cur);
-        cur = row ? row.parent_id : null;
-      }
-      return false;
-    }
-    function assertInPeriod(fund, date, what) {
-      if (!date) return;
-      const today = localDate();
-      if (date > today) throw badRequest(`${what} is in the future (${date})`);
-      if (fund && (fund.fiscal_year_start && date < fund.fiscal_year_start || fund.fiscal_year_end && date > fund.fiscal_year_end)) {
-        throw badRequest(`${what} ${date} is outside the period of ${fund.name} (${fund.fiscal_year_start} to ${fund.fiscal_year_end}). Charge it to the fund that covers that date.`);
-      }
-    }
-    var money = (n) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    function assertPeriodOrder(start2, end) {
-      if (start2 && end && end < start2) throw badRequest(`The period ends (${end}) before it starts (${start2})`);
-    }
-    function assertRoom(fundId, parentId, amount, { excluding = null } = {}) {
-      const siblings = parentId ? db3.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE parent_id=? AND id<>?`, parentId, excluding || "").n : db3.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE funding_source_id=? AND parent_id IS NULL AND id<>?`, fundId, excluding || "").n;
-      const holder = parentId ? db3.one(`SELECT COALESCE(label, category) AS name, allocated_amount AS cap FROM budget_lines WHERE id=?`, parentId) : db3.one(`SELECT name, total_amount AS cap FROM funding_sources WHERE id=?`, fundId);
-      if (!holder) return;
-      const total = cents(siblings + amount);
-      if (total > cents(holder.cap)) {
-        throw badRequest(`That would allocate ${money(total)} against ${holder.name}, which ${parentId ? "is allocated" : "totals"} ${money(holder.cap)}; ${money(cents(holder.cap - siblings))} is left to allocate. Reduce the amount, or raise ${parentId ? "the parent allocation" : "the fund's total"} first.`);
-      }
-    }
-    function lineAvailable(lineId, { excluding = null } = {}) {
-      const l = db3.one(`SELECT * FROM budget_lines WHERE id=?`, lineId);
-      if (!l) return null;
-      const child = db3.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE parent_id=?`, lineId).n;
-      const spent = db3.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE budget_line_id=? AND status IN ('approved','reimbursed') AND id<>?`, lineId, excluding || "").n;
-      return cents(l.allocated_amount - child - spent);
-    }
-    function fundSummary(f) {
-      const spent = db3.one(`SELECT ROUND(COALESCE(SUM(amount),0),2) n FROM expenditures WHERE funding_source_id=? AND status IN ('approved','reimbursed')`, f.id).n;
-      const pending = db3.one(`SELECT ROUND(COALESCE(SUM(amount),0),2) n FROM expenditures WHERE funding_source_id=? AND status='pending'`, f.id).n;
-      const staffMinutes = db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE funding_source_id=?`, f.id).n;
-      const staffMinutesApproved = db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE funding_source_id=? AND status='approved'`, f.id).n;
-      const staffCost = db3.one(`SELECT ROUND(COALESCE(SUM(t.minutes/60.0*COALESCE(u.hourly_cost,0)),0),2) n FROM time_entries t JOIN users u ON u.id=t.user_id WHERE t.funding_source_id=?`, f.id).n;
-      const flatLines = db3.all(`SELECT b.*, (SELECT ROUND(COALESCE(SUM(amount),0),2) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status IN ('approved','reimbursed')) AS spent, (SELECT ROUND(COALESCE(SUM(amount),0),2) FROM expenditures e WHERE e.budget_line_id=b.id AND e.status='pending') AS pending FROM budget_lines b WHERE b.funding_source_id=? ORDER BY category`, f.id);
-      const allocated = flatLines.filter((l) => !l.parent_id).reduce((s, l) => s + l.allocated_amount, 0);
-      const lines = buildLineTree(flatLines);
-      const totalDays = Math.max(1, (Date.parse(f.fiscal_year_end) - Date.parse(f.fiscal_year_start)) / 864e5);
-      const elapsed = Math.min(totalDays, Math.max(0, (Date.now() - Date.parse(f.fiscal_year_start)) / 864e5));
-      return {
-        ...f,
-        spent,
-        pending,
-        staff_minutes: staffMinutes,
-        staff_minutes_approved: staffMinutesApproved,
-        staff_cost: staffCost,
-        allocated: cents(allocated),
-        unallocated: cents(f.total_amount - allocated),
-        remaining: cents(f.total_amount - spent - pending),
-        pct_spent: f.total_amount ? spent / f.total_amount * 100 : 0,
-        pct_elapsed: elapsed / totalDays * 100,
-        lines
-      };
-    }
-    module.exports = (r) => {
-      r.get("/api/budget/funds", auth3.requireAuth, auth3.requirePerm("budget:read"), (ctx) => {
-        const rows = db3.all(`SELECT * FROM funding_sources ${ctx.query.get("all") === "1" ? "" : "WHERE is_active=1"} ORDER BY fiscal_year_start DESC, name`);
-        return { funds: rows.map(fundSummary) };
-      });
-      r.post("/api/budget/funds", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
-        const v = validate(ctx.body, fundShape);
-        const id = uuid2();
-        const keys = Object.keys(v);
-        assertPeriodOrder(v.fiscal_year_start, v.fiscal_year_end);
-        db3.run(`INSERT INTO funding_sources(id,${keys.join(",")}) VALUES(?,${keys.map(() => "?").join(",")})`, id, ...keys.map((k) => v[k]));
-        audit3.log({ user: ctx.user, action: "fund.create", entity: "funding_source", entityId: id, ip: ctx.ip });
-        ctx.status = 201;
-        return { id };
-      });
-      r.put("/api/budget/funds/:id", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
-        const f = db3.one(`SELECT * FROM funding_sources WHERE id=?`, ctx.params.id);
-        if (!f) throw notFound();
-        require_crud().assertFresh(ctx, f, "fund");
-        const v = validate(ctx.body, Object.fromEntries(Object.entries(fundShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
-        const keys = Object.keys(v);
-        if (!keys.length) return { ok: true, updated_at: f.updated_at };
-        assertPeriodOrder(v.fiscal_year_start ?? f.fiscal_year_start, v.fiscal_year_end ?? f.fiscal_year_end);
-        const stamp2 = db3.now();
-        db3.run(`UPDATE funding_sources SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), stamp2, f.id);
-        audit3.log({ user: ctx.user, action: "fund.update", entity: "funding_source", entityId: f.id, ip: ctx.ip, details: { fields: keys } });
-        return { ok: true, updated_at: stamp2 };
-      });
-      r.post("/api/budget/funds/:id/lines", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
-        const f = db3.one(`SELECT id FROM funding_sources WHERE id=?`, ctx.params.id);
-        if (!f) throw notFound();
-        const v = validate(ctx.body, lineShape);
-        const id = uuid2();
-        if (v.parent_id) {
-          const p = db3.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, v.parent_id, f.id);
-          if (!p) throw badRequest("Parent allocation does not belong to this fund");
-        }
-        assertRoom(f.id, v.parent_id || null, v.allocated_amount);
-        db3.run(`INSERT INTO budget_lines(id,funding_source_id,parent_id,category,label,allocated_amount,notes) VALUES(?,?,?,?,?,?,?)`, id, f.id, v.parent_id || null, v.category, v.label || null, v.allocated_amount, v.notes || null);
-        audit3.log({ user: ctx.user, action: "budget_line.create", entity: "budget_line", entityId: id, ip: ctx.ip, details: v.parent_id ? { parent_id: v.parent_id } : void 0 });
-        ctx.status = 201;
-        return { id };
-      });
-      r.put("/api/budget/lines/:id", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
-        const l = db3.one(`SELECT * FROM budget_lines WHERE id=?`, ctx.params.id);
-        if (!l) throw notFound();
-        require_crud().assertFresh(ctx, l, "budget_line");
-        const v = validate(ctx.body, Object.fromEntries(Object.entries(lineShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
-        if ("parent_id" in v && v.parent_id) {
-          if (v.parent_id === l.id) throw badRequest("A budget line cannot be its own parent");
-          const p = db3.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, v.parent_id, l.funding_source_id);
-          if (!p) throw badRequest("Parent allocation does not belong to this fund");
-          if (wouldCycle(l.id, v.parent_id)) throw badRequest("That would nest this allocation inside one of its own sub-allocations");
-        }
-        if ("allocated_amount" in v || "parent_id" in v) {
-          const parentId = "parent_id" in v ? v.parent_id || null : l.parent_id;
-          const amount = v.allocated_amount ?? l.allocated_amount;
-          assertRoom(l.funding_source_id, parentId, amount, { excluding: l.id });
-          const handedDown = db3.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE parent_id=?`, l.id).n;
-          if (cents(amount) < cents(handedDown)) throw badRequest(`Its sub-allocations already total ${money(handedDown)}; reduce those first`);
-        }
-        const keys = Object.keys(v);
-        const stamp2 = keys.length ? db3.now() : l.updated_at;
-        if (keys.length) db3.run(`UPDATE budget_lines SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => v[k]), stamp2, l.id);
-        audit3.log({ user: ctx.user, action: "budget_line.update", entity: "budget_line", entityId: l.id, ip: ctx.ip, details: { fields: keys } });
-        return { ok: true, updated_at: stamp2 };
-      });
-      r.delete("/api/budget/lines/:id", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
-        const ids = db3.all(`WITH RECURSIVE sub(id) AS (SELECT id FROM budget_lines WHERE id=? UNION ALL SELECT b.id FROM budget_lines b JOIN sub ON b.parent_id=sub.id) SELECT id FROM sub`, ctx.params.id).map((row) => row.id);
-        db3.run(`DELETE FROM budget_lines WHERE id=?`, ctx.params.id);
-        for (const id of ids) {
-          db3.tombstone("budget_lines", id);
-          audit3.log({ user: ctx.user, action: "budget_line.delete", entity: "budget_line", entityId: id, ip: ctx.ip });
-        }
-        return { ok: true };
-      });
-      crud.build(r, {
-        table: "expenditures",
-        entity: "expenditure",
-        base: "/api/budget/expenditures",
-        perm: "budget",
-        dateCol: "spent_at",
-        clientRequired: false,
-        restrictOwner: true,
-        joins: "JOIN users u ON u.id=expenditures.user_id JOIN funding_sources f ON f.id=expenditures.funding_source_id LEFT JOIN budget_lines b ON b.id=expenditures.budget_line_id LEFT JOIN clients c ON c.id=expenditures.client_id LEFT JOIN users a ON a.id=expenditures.approved_by",
-        select: "expenditures.*, u.display_name AS worker, f.name AS fund, b.label AS line_label, b.category AS line_category, c.client_code, a.display_name AS approver",
-        // intervention_id is deliberately not writable here: it only ever means "this expenditure was
-        // auto-posted from that service record" (server/routes/interventions.js's syncExpenditure, a raw INSERT
-        // that bypasses this shape entirely). Accepting it from a normal request would let anyone attach a
-        // second expenditure to an already-linked intervention, double-counting its cost.
-        shape: {
-          client_id: { type: "string" },
-          user_id: { type: "string" },
-          funding_source_id: { type: "string", required: true },
-          budget_line_id: { type: "string" },
-          spent_at: { type: "date", required: true },
-          amount: { type: "number", required: true, min: 0.01 },
-          category: { type: "string", required: true, enum: C.BUDGET_CATEGORIES },
-          vendor: { type: "string", maxLen: 200 },
-          description: { type: "string", maxLen: 1e3 },
-          receipt_ref: { type: "string", maxLen: 200 }
-        },
-        filters: (ctx, where, params) => {
-          const f = ctx.query.get("fund");
-          if (f) {
-            where.push("expenditures.funding_source_id=?");
-            params.push(f);
-          }
-          const s = ctx.query.get("status");
-          if (s && s !== "all") {
-            where.push("expenditures.status=?");
-            params.push(s);
-          }
-        },
-        beforeInsert: (ctx, v) => {
-          v.amount = cents(v.amount);
-          const f = db3.one(`SELECT * FROM funding_sources WHERE id=? AND is_active=1`, v.funding_source_id);
-          if (!f) throw badRequest("Unknown or inactive funding source");
-          assertInPeriod(f, v.spent_at, "Expenditure date");
-          if (v.budget_line_id) {
-            const l = db3.one(`SELECT * FROM budget_lines WHERE id=? AND funding_source_id=?`, v.budget_line_id, f.id);
-            if (!l) throw badRequest("Budget line does not belong to fund");
-            if (!v.category) v.category = l.category;
-          }
-          encDescription(v);
-        },
-        beforeUpdate: (ctx, v, row) => {
-          if (v.amount !== void 0 && v.amount !== null) v.amount = cents(v.amount);
-          if ("spent_at" in v || "funding_source_id" in v || "budget_line_id" in v) {
-            const f = db3.one(`SELECT * FROM funding_sources WHERE id=? AND is_active=1`, v.funding_source_id || row.funding_source_id);
-            if (!f) throw badRequest("Unknown or inactive funding source");
-            assertInPeriod(f, v.spent_at || row.spent_at, "Expenditure date");
-            const lineId = "budget_line_id" in v ? v.budget_line_id : row.budget_line_id;
-            if (lineId) {
-              const l = db3.one(`SELECT id FROM budget_lines WHERE id=? AND funding_source_id=?`, lineId, f.id);
-              if (!l) throw badRequest("Budget line does not belong to fund");
-            }
-          }
-          encDescription(v);
-        },
-        afterLoad: (ctx, x) => presentExpenditure(x),
-        canEdit: (ctx, row) => row.status === "pending" && (row.user_id === ctx.user.id || auth3.hasPerm(ctx.user, "budget:approve"))
-      });
-      const TRANSITIONS = { pending: ["approved", "rejected"], approved: ["reimbursed"] };
-      r.post("/api/budget/expenditures/:id/approve", auth3.requireAuth, auth3.requirePerm("budget:approve"), (ctx) => {
-        const e = db3.one(`SELECT * FROM expenditures WHERE id=?`, ctx.params.id);
-        if (!e) throw notFound();
-        const { status, note, force } = validate(ctx.body, { status: { type: "string", required: true, enum: ["approved", "rejected", "reimbursed"] }, note: { type: "string", maxLen: 500 }, force: { type: "boolean" } });
-        if (!(TRANSITIONS[e.status] || []).includes(status)) {
-          const by = e.approved_by ? db3.one(`SELECT display_name FROM users WHERE id=?`, e.approved_by) : null;
-          throw new HttpError3(409, `This expenditure is already ${e.status}${by ? ` (by ${by.display_name})` : ""}; it cannot be marked ${status}`, { current_status: e.status, approved_by: e.approved_by || null });
-        }
-        if (e.user_id === ctx.user.id && status === "approved") throw badRequest("Separation of duties: you cannot approve your own expenditure; another approver must review it");
-        if (status === "rejected" && !note) throw badRequest("Say why this expenditure is being rejected, so the person who submitted it knows what to fix");
-        const details = { note_recorded: note ? true : void 0, amount: e.amount };
-        if (status === "approved" && e.budget_line_id) {
-          const available = lineAvailable(e.budget_line_id, { excluding: e.id });
-          if (available !== null && cents(e.amount) > available) {
-            const over = cents(e.amount - available);
-            const line = db3.one(`SELECT label, category FROM budget_lines WHERE id=?`, e.budget_line_id);
-            const mayForce = ["supervisor", "admin"].includes(ctx.user.role);
-            if (!(force && note && mayForce)) {
-              throw new HttpError3(
-                409,
-                `Approving ${e.amount.toFixed(2)} would take ${line.label || line.category} ${over.toFixed(2)} below zero (${available.toFixed(2)} available)${mayForce ? ". Approve it anyway with force and a note saying why." : ". Ask a supervisor to approve it, or move it to a line with room."}`,
-                { overspend: true, available, over, force_allowed: mayForce }
-              );
-            }
-            details.overspend = over;
-            details.forced = true;
-          }
-        }
-        if (status === "reimbursed") {
-          db3.run(`UPDATE expenditures SET status=?, approval_note_enc=COALESCE(?, approval_note_enc), updated_at=? WHERE id=?`, status, note ? encrypt3(note) : null, db3.now(), e.id);
-          details.reimbursed_by = ctx.user.id;
-        } else {
-          db3.run(`UPDATE expenditures SET status=?, approved_by=?, approved_at=?, approval_note_enc=?, updated_at=? WHERE id=?`, status, ctx.user.id, db3.now(), note ? encrypt3(note) : null, db3.now(), e.id);
-        }
-        audit3.log({ user: ctx.user, action: `expenditure.${status}`, entity: "expenditure", entityId: e.id, clientId: e.client_id, ip: ctx.ip, details });
-        return { ok: true, status };
-      });
-      r.get("/api/budget/summary", auth3.requireAuth, auth3.requirePerm("budget:read"), () => {
-        const funds = db3.all(`SELECT * FROM funding_sources WHERE is_active=1`).map(fundSummary);
-        return {
-          totals: { budget: cents(funds.reduce((s, f) => s + f.total_amount, 0)), spent: cents(funds.reduce((s, f) => s + f.spent, 0)), pending: cents(funds.reduce((s, f) => s + f.pending, 0)), remaining: cents(funds.reduce((s, f) => s + f.remaining, 0)) },
-          by_category: db3.all(`SELECT category, ROUND(SUM(amount),2) amount, COUNT(*) n FROM expenditures WHERE status IN ('approved','reimbursed') GROUP BY category ORDER BY amount DESC`),
-          // Approved and reimbursed only, the same as the headline "Spent (approved)" figure above it: the two
-          // used to differ by whatever was still pending, on the same page.
-          by_month: db3.all(`SELECT substr(spent_at,1,7) month, ROUND(SUM(amount),2) amount FROM expenditures WHERE status IN ('approved','reimbursed') GROUP BY month ORDER BY month`),
-          per_client: db3.one(`SELECT COUNT(DISTINCT client_id) clients, ROUND(COALESCE(SUM(amount),0),2) amount FROM expenditures WHERE client_id IS NOT NULL AND status IN ('approved','reimbursed')`),
-          funds
-        };
-      });
-    };
-    module.exports.wouldCycle = wouldCycle;
-    module.exports.assertInPeriod = assertInPeriod;
-    module.exports.localDate = localDate;
-    module.exports.localMidnight = localMidnight;
-    module.exports.orgTimezone = orgTimezone;
-    module.exports.validTimezone = validTimezone;
-    module.exports.cents = cents;
-    module.exports.lineAvailable = lineAvailable;
-    module.exports.presentExpenditure = presentExpenditure;
-  }
-});
-
-// server/scim.js
-var require_scim = __commonJS({
-  "server/scim.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var audit3 = require_audit();
-    var { uuid: uuid2 } = require_crypto();
-    var USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User";
-    var LIST_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse";
-    var ERROR_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:Error";
-    var PATCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:PatchOp";
-    var ROLES = ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"];
-    var NO_PASSWORD = "!scim-provisioned-no-password";
-    var ScimError = class extends Error {
-      constructor(status, detail, scimType) {
-        super(detail);
-        this.status = status;
-        this.scimType = scimType;
-      }
-    };
-    var errorBody = (status, detail, scimType) => ({ schemas: [ERROR_SCHEMA], status: String(status), ...scimType ? { scimType } : {}, detail });
-    function parseGroupRoles(text) {
-      const out2 = [];
-      for (const part of String(text || "").split(/[;\n]+/)) {
-        const t = part.trim();
-        if (!t) continue;
-        const i = t.lastIndexOf("=");
-        if (i <= 0) throw Object.assign(new Error(`"${t}" is not Group=role`), { status: 400 });
-        const group = t.slice(0, i).trim();
-        const role = t.slice(i + 1).trim().toLowerCase();
-        if (!ROLES.includes(role)) throw Object.assign(new Error(`"${role}" is not a SUDS role (${ROLES.join(", ")})`), { status: 400 });
-        if (group.length > 200) throw Object.assign(new Error("A group name is too long"), { status: 400 });
-        out2.push([group, role]);
-      }
-      return out2;
-    }
-    function normaliseGroupRoles(text) {
-      try {
-        return parseGroupRoles(text).map(([g, r]) => `${g}=${r}`).join("; ");
-      } catch (e) {
-        const { badRequest } = require_http();
-        throw badRequest(`scim_group_roles: ${e.message}`);
-      }
-    }
-    function mappedRole(names) {
-      let map = [];
-      try {
-        map = parseGroupRoles(db3.getSetting("scim_group_roles", ""));
-      } catch {
-      }
-      const lower = new Set(names.filter(Boolean).map((n) => String(n).toLowerCase()));
-      const hits = map.filter(([g]) => lower.has(g.toLowerCase())).map(([, r]) => r);
-      return ROLES.find((r) => hits.includes(r)) || null;
-    }
-    function defaultRole() {
-      const r = db3.getSetting("scim_default_role", "readonly");
-      return ROLES.includes(r) ? r : "readonly";
-    }
-    function emergencyAccounts() {
-      return String(db3.getSetting("sso_emergency_accounts", "") || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
-    }
-    function toResource(u, base = "") {
-      return {
-        schemas: [USER_SCHEMA],
-        id: u.id,
-        ...u.scim_external_id ? { externalId: u.scim_external_id } : {},
-        userName: u.username,
-        displayName: u.display_name,
-        name: { formatted: u.display_name },
-        ...u.title ? { title: u.title } : {},
-        emails: u.email ? [{ value: u.email, type: "work", primary: true }] : [],
-        active: !!u.is_active,
-        roles: [{ value: u.role, primary: true }],
-        meta: { resourceType: "User", created: u.created_at, lastModified: u.updated_at, location: `${base}/scim/v2/Users/${u.id}` }
-      };
-    }
-    var bool = (v) => typeof v === "boolean" ? v : typeof v === "string" && /^(true|false)$/i.test(v) ? v.toLowerCase() === "true" : void 0;
-    var USERNAME_RE = /^[\w.@+'-]{1,120}$/;
-    function attrsFrom(body, { partial = false } = {}) {
-      const a = {};
-      if (!body || typeof body !== "object") throw new ScimError(400, "The request body must be a SCIM User", "invalidSyntax");
-      if (body.userName !== void 0) {
-        if (typeof body.userName !== "string" || !USERNAME_RE.test(body.userName.trim())) throw new ScimError(400, "userName must be 1-120 letters, digits or . _ @ + ' -", "invalidValue");
-        a.username = body.userName.trim();
-      } else if (!partial) throw new ScimError(400, "userName is required", "invalidValue");
-      const n = body.name && typeof body.name === "object" ? body.name : {};
-      const display = [body.displayName, n.formatted, [n.givenName, n.familyName].filter(Boolean).join(" ")].find((x) => typeof x === "string" && x.trim());
-      if (display) a.display_name = display.trim().slice(0, 120);
-      else if (!partial) a.display_name = a.username;
-      if (body.title !== void 0) a.title = body.title === null ? null : String(body.title).slice(0, 120);
-      if (body.emails !== void 0) {
-        const list2 = Array.isArray(body.emails) ? body.emails : [];
-        const e = list2.find((x) => x && x.primary) || list2.find((x) => x && x.type === "work") || list2[0];
-        a.email = e && e.value ? String(e.value).slice(0, 200) : null;
-      }
-      if (body.externalId !== void 0) a.scim_external_id = body.externalId === null || body.externalId === "" ? null : String(body.externalId).slice(0, 200);
-      if (body.active !== void 0) {
-        const b = bool(body.active);
-        if (b === void 0) throw new ScimError(400, "active must be true or false", "invalidValue");
-        a.active = b;
-      }
-      const names = [];
-      for (const k of ["roles", "groups"]) if (Array.isArray(body[k])) {
-        for (const x of body[k]) if (x) names.push(typeof x === "string" ? x : x.display, typeof x === "string" ? null : x.value);
-      }
-      if (names.length) {
-        const r = mappedRole(names);
-        if (r) a.role = r;
-      }
-      return a;
-    }
-    function attrsFromPatch(body) {
-      if (!body || !Array.isArray(body.Operations)) throw new ScimError(400, "A PATCH needs Operations", "invalidSyntax");
-      const merged = {};
-      for (const op of body.Operations) {
-        const kind = String(op && op.op || "").toLowerCase();
-        if (!["add", "replace", "remove"].includes(kind)) throw new ScimError(400, `Unsupported PATCH op "${op && op.op}"`, "invalidSyntax");
-        const p = op.path ? String(op.path).trim() : "";
-        if (!p) {
-          if (kind === "remove") throw new ScimError(400, "remove needs a path", "noTarget");
-          Object.assign(merged, attrsFrom(op.value, { partial: true }));
-          continue;
-        }
-        const key = p.toLowerCase();
-        const v = kind === "remove" ? null : op.value;
-        const one = (attr) => Object.assign(merged, attrsFrom({ [attr]: v }, { partial: true }));
-        if (key === "active") {
-          if (kind === "remove") continue;
-          one("active");
-        } else if (key === "username") {
-          if (kind !== "remove") one("userName");
-        } else if (key === "displayname" || key === "name.formatted") {
-          if (kind !== "remove" && v) merged.display_name = String(v).trim().slice(0, 120);
-        } else if (key === "title") one("title");
-        else if (key === "externalid") one("externalId");
-        else if (key === "emails" || key.startsWith("emails[")) merged.email = kind === "remove" ? null : Array.isArray(v) ? attrsFrom({ emails: v }, { partial: true }).email : v && typeof v === "object" ? String(v.value || "") || null : v ? String(v).slice(0, 200) : null;
-        else if (key === "roles" || key === "groups") {
-          if (kind !== "remove") Object.assign(merged, attrsFrom({ [key]: Array.isArray(v) ? v : [v] }, { partial: true }));
-        }
-      }
-      return merged;
-    }
-    function parseFilter(filter) {
-      if (!filter) return null;
-      const m = String(filter).trim().match(/^(userName|externalId|id)\s+eq\s+"((?:[^"\\]|\\.)*)"$/i);
-      if (!m) throw new ScimError(400, 'Only userName eq "\u2026", externalId eq "\u2026" and id eq "\u2026" filters are supported', "invalidFilter");
-      const value = m[2].replace(/\\(.)/g, "$1");
-      const col = { username: "username", externalid: "scim_external_id", id: "id" }[m[1].toLowerCase()];
-      return { sql: col === "username" ? "username = ? COLLATE NOCASE" : `${col} = ?`, value };
-    }
-    var LISTED = `access_status NOT IN ('pending','declined')`;
-    function list({ filter, startIndex = 1, count = 100 } = {}, base = "") {
-      const f = parseFilter(filter);
-      const where = f ? `${LISTED} AND ${f.sql}` : LISTED;
-      const params = f ? [f.value] : [];
-      const total = db3.one(`SELECT COUNT(*) n FROM users WHERE ${where}`, ...params).n;
-      const start2 = Math.max(1, Number(startIndex) || 1);
-      const n = Math.min(200, Math.max(0, Number.isFinite(Number(count)) ? Number(count) : 100));
-      const rows = n ? db3.all(`SELECT * FROM users WHERE ${where} ORDER BY created_at, id LIMIT ? OFFSET ?`, ...params, n, start2 - 1) : [];
-      return { schemas: [LIST_SCHEMA], totalResults: total, startIndex: start2, itemsPerPage: rows.length, Resources: rows.map((u) => toResource(u, base)) };
-    }
-    function find(id) {
-      const u = db3.one(`SELECT * FROM users WHERE id=? AND ${LISTED}`, id);
-      if (!u) throw new ScimError(404, `User ${id} not found`);
-      return u;
-    }
-    function guard(u) {
-      if (emergencyAccounts().includes(String(u.username).toLowerCase())) throw new ScimError(403, `${u.username} is an emergency (break-glass) account and is managed in SUDS, not by provisioning`, "mutability");
-    }
-    function cutOff(userId) {
-      require_auth().revokeAllForUser(userId);
-      return db3.run(`UPDATE devices SET revoked_at=COALESCE(revoked_at, ?), wipe_requested_at=COALESCE(wipe_requested_at, ?) WHERE user_id=?`, db3.now(), db3.now(), userId).changes;
-    }
-    function create2(body, actor, base) {
-      const a = attrsFrom(body);
-      if (db3.one(`SELECT 1 FROM users WHERE username=? COLLATE NOCASE`, a.username)) throw new ScimError(409, `A user named ${a.username} already exists`, "uniqueness");
-      if (a.scim_external_id && db3.one(`SELECT 1 FROM users WHERE scim_external_id=?`, a.scim_external_id)) throw new ScimError(409, "A user with this externalId already exists", "uniqueness");
-      const id = uuid2();
-      const now = db3.now();
-      const active = a.active !== false;
-      const role = a.role || defaultRole();
-      db3.run(
-        `INSERT INTO users(id,username,password_hash,display_name,email,title,role,is_active,must_change_password,password_changed_at,scim_external_id,idp_seen_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,0,?,?,?,?,?)`,
-        id,
-        a.username,
-        NO_PASSWORD,
-        a.display_name,
-        a.email || null,
-        a.title || null,
-        role,
-        active ? 1 : 0,
-        now,
-        a.scim_external_id || null,
-        active ? now : null,
-        now,
-        now
-      );
-      audit3.log({ user: actor, action: "scim.user.create", entity: "user", entityId: id, details: { username: a.username, role, active, role_from: a.role ? "group mapping" : "default" } });
-      return toResource(find(id), base);
-    }
-    function apply(id, a, actor, base, action) {
-      const u = find(id);
-      guard(u);
-      if (a.username && a.username.toLowerCase() !== String(u.username).toLowerCase() && db3.one(`SELECT 1 FROM users WHERE username=? COLLATE NOCASE AND id<>?`, a.username, id)) throw new ScimError(409, `A user named ${a.username} already exists`, "uniqueness");
-      if (a.scim_external_id && db3.one(`SELECT 1 FROM users WHERE scim_external_id=? AND id<>?`, a.scim_external_id, id)) throw new ScimError(409, "Another user has this externalId", "uniqueness");
-      const sets = [];
-      const vals = [];
-      const changed = [];
-      const col = (c, v) => {
-        if (v !== void 0 && v !== u[c]) {
-          sets.push(`${c}=?`);
-          vals.push(v);
-          changed.push(c);
-        }
-      };
-      col("username", a.username);
-      col("display_name", a.display_name);
-      col("email", a.email);
-      col("title", a.title);
-      col("scim_external_id", a.scim_external_id);
-      col("role", a.role);
-      let deactivated = false;
-      let reactivated = false;
-      if (a.active === false && u.is_active) {
-        sets.push("is_active=0");
-        changed.push("active");
-        deactivated = true;
-      }
-      if (a.active === true && !u.is_active) {
-        sets.push(`is_active=1`, `access_status='active'`);
-        changed.push("active");
-        reactivated = true;
-      }
-      if (a.active !== false && (u.is_active || reactivated)) {
-        sets.push("idp_seen_at=?");
-        vals.push(db3.now());
-      }
-      sets.push("updated_at=?");
-      vals.push(db3.now());
-      db3.transaction(() => {
-        db3.run(`UPDATE users SET ${sets.join(", ")} WHERE id=?`, ...vals, id);
-        if (deactivated) cutOff(id);
-      });
-      if (changed.length) audit3.log({ user: actor, action: deactivated ? "scim.user.deactivate" : action, entity: "user", entityId: id, details: { username: a.username || u.username, changed, ...a.role && a.role !== u.role ? { role: { from: u.role, to: a.role } } : {}, ...reactivated ? { reactivated: true } : {} } });
-      return toResource(find(id), base);
-    }
-    function replace(id, body, actor, base) {
-      return apply(id, attrsFrom(body), actor, base, "scim.user.update");
-    }
-    function patch(id, body, actor, base) {
-      return apply(id, attrsFromPatch(body), actor, base, "scim.user.update");
-    }
-    function deactivate(id, actor) {
-      const u = find(id);
-      guard(u);
-      if (u.is_active) {
-        db3.transaction(() => {
-          db3.run(`UPDATE users SET is_active=0, updated_at=? WHERE id=?`, db3.now(), id);
-          cutOff(id);
-        });
-        audit3.log({ user: actor, action: "scim.user.deactivate", entity: "user", entityId: id, details: { username: u.username, via: "DELETE" } });
-      }
-    }
-    var serviceProviderConfig = () => ({
-      schemas: ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"],
-      documentationUri: "docs/security/IDENTITY.md",
-      patch: { supported: true },
-      bulk: { supported: false, maxOperations: 0, maxPayloadSize: 0 },
-      filter: { supported: true, maxResults: 200 },
-      changePassword: { supported: false },
-      sort: { supported: false },
-      etag: { supported: false },
-      authenticationSchemes: [{ type: "oauthbearertoken", name: "Bearer token", description: "A SCIM token created under Settings \u2192 Security status \u2192 Provisioning (SCIM)", primary: true }]
-    });
-    module.exports = { USER_SCHEMA, LIST_SCHEMA, ERROR_SCHEMA, PATCH_SCHEMA, ScimError, errorBody, parseGroupRoles, normaliseGroupRoles, mappedRole, toResource, attrsFrom, attrsFromPatch, parseFilter, list, find, create: create2, replace, patch, deactivate, cutOff, serviceProviderConfig, NO_PASSWORD };
-  }
-});
-
-// server/deprovision.js
-var require_deprovision = __commonJS({
-  "server/deprovision.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var config = require_config();
-    var db3 = require_db();
-    var audit3 = require_audit();
-    var DAY = 864e5;
-    function days() {
-      const v = Number(db3.getSetting("sso_deprovision_days", "0"));
-      return Number.isInteger(v) && v > 0 ? v : 0;
-    }
-    function emergency() {
-      return String(db3.getSetting("sso_emergency_accounts", "") || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
-    }
-    function applicable() {
-      return !config.local && (!!(config.oidc && config.oidc.enabled) || !!db3.one(`SELECT 1 FROM api_keys WHERE scopes='scim' AND revoked_at IS NULL`));
-    }
-    var SEEN = `COALESCE(idp_seen_at, last_login_at, created_at)`;
-    function linked() {
-      const skip = emergency();
-      return db3.all(`SELECT id, username, display_name, role, ${SEEN} AS seen_at, oidc_subject IS NOT NULL AS sso, scim_external_id IS NOT NULL AS scim FROM users
-    WHERE is_active=1 AND (oidc_subject IS NOT NULL OR scim_external_id IS NOT NULL) ORDER BY ${SEEN}`).filter((u) => !skip.includes(String(u.username).toLowerCase()));
-    }
-    function disable(u, { by = { username: "system" }, n }) {
-      let devices = 0;
-      db3.transaction(() => {
-        db3.run(`UPDATE users SET is_active=0, updated_at=? WHERE id=? AND is_active=1`, db3.now(), u.id);
-        devices = require_scim().cutOff(u.id);
-      });
-      audit3.log({ user: by, action: "user.deprovisioned", entity: "user", entityId: u.id, details: { username: u.username, reason: `not seen at the identity provider for ${n} days`, last_seen_at: u.seen_at, devices_revoked: devices } });
-    }
-    function run2({ now = Date.now(), by } = {}) {
-      const n = days();
-      if (!n || !applicable()) return { days: n, disabled: [] };
-      const cutoff = now - n * DAY;
-      const disabled = [];
-      for (const u of linked()) {
-        if (Date.parse(u.seen_at) >= cutoff) continue;
-        disable(u, { by, n });
-        disabled.push({ id: u.id, username: u.username, last_seen_at: u.seen_at });
-      }
-      if (disabled.length) console.warn(`[suds] deprovisioned ${disabled.length} account(s) not seen at the identity provider for ${n} days`);
-      db3.setSetting("sso_deprovision_ran_at", db3.now());
-      return { days: n, disabled };
-    }
-    function runIfDue(now = Date.now()) {
-      const last = db3.getSetting("sso_deprovision_ran_at", null);
-      if (last && now - Date.parse(last) < DAY) return null;
-      return run2({ now });
-    }
-    function report(now = Date.now()) {
-      const n = days();
-      const rows = linked().map((u) => ({ ...u, sso: !!u.sso, scim: !!u.scim, days_unseen: Math.floor((now - Date.parse(u.seen_at)) / DAY) }));
-      const recent = db3.all(`SELECT at, entity_id, details, username AS by_username, action FROM audit_log WHERE action IN ('user.deprovisioned','scim.user.deactivate') AND at >= ? ORDER BY id DESC LIMIT 200`, new Date(now - 90 * DAY).toISOString()).map((r) => {
-        let d = {};
-        try {
-          d = JSON.parse(r.details || "{}");
-        } catch {
-        }
-        return { at: r.at, user_id: r.entity_id, username: d.username || null, reason: r.action === "user.deprovisioned" ? d.reason : "deactivated by the identity provider (SCIM)", by: r.by_username };
-      });
-      return {
-        days: n,
-        applicable: applicable(),
-        last_run_at: db3.getSetting("sso_deprovision_ran_at", null),
-        due: n ? rows.filter((u) => u.days_unseen >= n) : [],
-        soon: n ? rows.filter((u) => u.days_unseen < n && u.days_unseen >= n - 7) : [],
-        linked_active: rows.length,
-        recent
-      };
-    }
-    module.exports = { run: run2, runIfDue, report, days };
-  }
-});
-
-// local/shims/empty.js
-var empty_exports = {};
-__export(empty_exports, {
-  default: () => empty_default
-});
-var empty_default;
-var init_empty = __esm({
-  "local/shims/empty.js"() {
-    init_globals_inject();
-    empty_default = {};
-  }
-});
-
-// local/shims/os.js
-var os_exports = {};
-__export(os_exports, {
-  default: () => os_default,
-  hostname: () => hostname,
-  networkInterfaces: () => networkInterfaces
-});
-function hostname() {
-  return "this-device";
-}
-function networkInterfaces() {
-  return {};
-}
-var os_default;
-var init_os = __esm({
-  "local/shims/os.js"() {
-    init_globals_inject();
-    os_default = { hostname, networkInterfaces };
-  }
-});
-
-// server/audit-anchor.js
-var require_audit_anchor = __commonJS({
-  "server/audit-anchor.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var fs = (init_fs(), __toCommonJS(fs_exports));
-    var path = (init_path(), __toCommonJS(path_exports));
-    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
-    var config = require_config();
-    var db3 = require_db();
-    var FILE_RE = /^anchor-.*\.json$/;
-    var keyId = (key = config.indexKey) => crypto3.createHmac("sha256", key).update("suds-audit-anchor-key-id").digest("hex").slice(0, 16);
-    var FIELDS = ["v", "kind", "at", "reason", "install", "gen", "prev_gen", "head_id", "head_hash", "first_id", "rows", "host", "key_id", "prev_mac"];
-    var installId = () => db3.getSetting("audit_anchor_install", null);
-    var generation = () => db3.getSetting("db_generation", null) || "initial";
-    function canonical(a) {
-      const o = {};
-      for (const k of FIELDS) o[k] = a[k] === void 0 ? null : a[k];
-      return JSON.stringify(o);
-    }
-    function macOf(a, key = config.indexKey) {
-      return crypto3.createHmac("sha256", key).update(canonical(a)).digest("hex");
-    }
-    function macOk(a, key = config.indexKey) {
-      if (typeof a.mac !== "string") return false;
-      const want = macOf(a, key);
-      return want.length === a.mac.length && crypto3.timingSafeEqual(import_buffer.Buffer.from(want), import_buffer.Buffer.from(a.mac));
-    }
-    function dir() {
-      return config.auditAnchorDir;
-    }
-    function list(d = dir()) {
-      let names = [];
-      try {
-        names = fs.readdirSync(d).filter((f) => FILE_RE.test(f)).sort();
-      } catch {
-        return [];
-      }
-      return names.map((file) => {
-        try {
-          return { file, anchor: JSON.parse(fs.readFileSync(path.join(d, file), "utf8")) };
-        } catch (e) {
-          return { file, error: String(e.message || e) };
-        }
-      });
-    }
-    var real = (p) => {
-      try {
-        return fs.realpathSync(p);
-      } catch {
-        return path.resolve(p);
-      }
-    };
-    var within = (child, parent) => child === parent || child.startsWith(parent + path.sep);
-    function dirStatus(d = dir()) {
-      let exists3 = false;
-      let writable = false;
-      try {
-        exists3 = fs.statSync(d).isDirectory();
-      } catch {
-      }
-      if (exists3) {
-        try {
-          fs.accessSync(d, fs.constants.W_OK);
-          writable = true;
-        } catch {
-        }
-      }
-      const a = real(d);
-      const data = real(config.dataDir);
-      return { dir: d, configured: config.auditAnchorDirConfigured, exists: exists3, writable, inside_data_dir: within(a, data) || within(data, a) };
-    }
-    function placementProblem(d = dir()) {
-      if (!config.isProd) return null;
-      const st = dirStatus(d);
-      if (!st.configured) return `AUDIT_ANCHOR_DIR is not set, so audit anchors are written to ${d}, inside the data directory on the same disk as the database they are meant to check. Point AUDIT_ANCHOR_DIR at write-once (WORM) storage outside the data directory (docs/security/LOGGING-AND-AUDIT.md).`;
-      if (st.inside_data_dir) return `AUDIT_ANCHOR_DIR (${d}) is inside the data directory (or contains it), so a rewrite of the data directory rewrites the anchors too. Point it at write-once (WORM) storage outside the data directory (docs/security/LOGGING-AND-AUDIT.md).`;
-      return null;
-    }
-    function write(reason = "manual", { key = config.indexKey, d = dir(), prevGen = null } = {}) {
-      const head = db3.one(`SELECT id, hash FROM audit_log ORDER BY id DESC LIMIT 1`);
-      if (!head) return null;
-      const first = db3.one(`SELECT MIN(id) m FROM audit_log`).m;
-      const rows = db3.one(`SELECT COUNT(*) n FROM audit_log WHERE id <= ?`, head.id).n;
-      if (!config.auditAnchorDirConfigured || d !== config.auditAnchorDir) fs.mkdirSync(d, { recursive: true, mode: 448 });
-      else if (!dirStatus(d).exists) throw new Error(`the audit anchor directory ${d} does not exist (is the share mounted?)`);
-      let install = installId();
-      if (!install) {
-        install = require_crypto().uuid();
-        db3.setSetting("audit_anchor_install", install);
-      }
-      const all = list(d);
-      const prev = all.filter((x) => x.anchor && x.anchor.install === install).pop();
-      const newest = all.filter((x) => x.anchor && typeof x.anchor.at === "string").map((x) => Date.parse(x.anchor.at)).filter(Number.isFinite);
-      const floor = newest.length ? Math.max(...newest) + 1 : 0;
-      let atMs = Math.max(Date.now(), floor);
-      let a;
-      let file;
-      for (let attempt = 0; ; attempt++, atMs++) {
-        a = { v: 1, kind: "suds-audit-anchor", at: new Date(atMs).toISOString(), reason, install, gen: generation(), prev_gen: prevGen, head_id: head.id, head_hash: head.hash, first_id: first, rows, host: (init_os(), __toCommonJS(os_exports)).hostname(), key_id: keyId(key), prev_mac: prev ? prev.anchor.mac || null : null };
-        a.mac = macOf(a, key);
-        file = path.join(d, `anchor-${a.at.replace(/[:.]/g, "-")}-${String(head.id).padStart(12, "0")}.json`);
-        try {
-          fs.writeFileSync(file, JSON.stringify(a) + "\n", { flag: "wx", mode: 384 });
-          break;
-        } catch (e) {
-          if (e.code !== "EEXIST" || attempt >= 50) throw e;
-        }
-      }
-      try {
-        fs.chmodSync(file, 256);
-      } catch {
-      }
-      db3.setSetting("audit_anchor_last_at", a.at);
-      db3.setSetting("audit_anchor_last_status", "ok");
-      console.log(`[suds] audit anchor id=${a.head_id} rows=${a.rows} hash=${a.head_hash} mac=${a.mac} reason=${reason}`);
-      sendSyslog(a);
-      return { ...a, file: path.basename(file) };
-    }
-    function sendSyslog(a) {
-      if (!config.auditSyslog) return;
-      try {
-        const m = String(config.auditSyslog).match(/^(?:udp:\/\/)?\[?([^\]]+?)\]?(?::(\d+))?$/);
-        if (!m) return;
-        const host = m[1];
-        const port = Number(m[2] || 514);
-        const dgram = (init_empty(), __toCommonJS(empty_exports));
-        const sock = dgram.createSocket(host.includes(":") ? "udp6" : "udp4");
-        const msg = import_buffer.Buffer.from(`<110>1 ${a.at} ${a.host} suds - audit-anchor - ${JSON.stringify(a)}`);
-        sock.send(msg, port, host, () => {
-          try {
-            sock.close();
-          } catch {
-          }
-        });
-        if (sock.unref) sock.unref();
-      } catch (e) {
-        console.error("[suds] audit anchor syslog send failed:", e.message);
-      }
-    }
-    function runIfDue(now = Date.now()) {
-      const hours = config.auditAnchorHours;
-      if (!(hours > 0)) return null;
-      const last = db3.getSetting("audit_anchor_last_at", null);
-      if (last && now - Date.parse(last) < hours * 36e5) return null;
-      return safeWrite("schedule");
-    }
-    function safeWrite(reason, opts = {}) {
-      try {
-        return write(reason, opts);
-      } catch (e) {
-        const msg = String(e.message || e);
-        console.error("[suds] audit anchor could not be written:", msg);
-        db3.setSetting("audit_anchor_last_status", `failed: ${msg}`);
-        try {
-          require_audit().log({ user: { username: "system" }, action: "audit.anchor.failed", success: false, details: { reason, error: msg.slice(0, 300) } });
-        } catch (e2) {
-          console.error("[suds] the audit entry for that failure could not be written either:", e2 && e2.message);
-        }
-        return null;
-      }
-    }
-    function verify({ key = config.indexKey, d = dir(), tolerateNewer = false } = {}) {
-      const files = list(d);
-      const out2 = { dir: d, total: files.length, matched: 0, other_key: 0, other_install: 0, other_generation: 0, purged: 0, newer: 0, bad: [], last_anchor_at: null };
-      const install = installId();
-      const gen = generation();
-      const kid = keyId(key);
-      const bounds = db3.one(`SELECT MIN(id) mn, MAX(id) mx FROM audit_log`);
-      const minId = bounds.mn || 0;
-      const maxId = bounds.mx || 0;
-      let purgedThrough = null;
-      const purged = () => {
-        if (purgedThrough === null) {
-          purgedThrough = 0;
-          for (const r of db3.all(`SELECT details FROM audit_log WHERE action='audit.purge'`)) {
-            try {
-              purgedThrough = Math.max(purgedThrough, Number(JSON.parse(r.details).last_purged_id) || 0);
-            } catch {
-            }
-          }
-        }
-        return purgedThrough;
-      };
-      const mine = files.filter((f) => f.anchor && f.anchor.install === install);
-      const newest = mine.filter((f) => f.anchor.key_id === kid && f.anchor.gen === gen).pop();
-      const restores = /* @__PURE__ */ new Map();
-      for (const f of mine) if (f.anchor.reason === "restore" && f.anchor.key_id === kid && macOk(f.anchor, key) && !restores.has(f.anchor.gen)) restores.set(f.anchor.gen, f.anchor);
-      const boundFor = (g) => {
-        let bound = Infinity;
-        let cur = gen;
-        const seen2 = /* @__PURE__ */ new Set();
-        while (cur !== g) {
-          const r = restores.get(cur);
-          if (!r || seen2.has(cur)) return null;
-          seen2.add(cur);
-          bound = Math.min(bound, r.head_id);
-          cur = r.prev_gen || "initial";
-        }
-        return bound;
-      };
-      let prevMac = null;
-      let first = true;
-      for (const f of files) {
-        const bad = (reason) => out2.bad.push({ file: f.file, head_id: f.anchor ? f.anchor.head_id : null, reason });
-        if (!f.anchor) {
-          bad(`unreadable: ${f.error}`);
-          prevMac = void 0;
-          first = false;
-          continue;
-        }
-        const a = f.anchor;
-        if (!install || a.install !== install) {
-          out2.other_install++;
-          continue;
-        }
-        out2.last_anchor_at = a.at || out2.last_anchor_at;
-        if (!first && prevMac !== void 0 && a.prev_mac !== prevMac) bad("the anchor before this one is missing or was replaced (the sequence of anchor files is broken)");
-        first = false;
-        prevMac = a.mac;
-        if (a.key_id !== kid) {
-          out2.other_key++;
-          continue;
-        }
-        if (!macOk(a, key)) {
-          bad("the anchor file does not verify (it was altered, or was not written by this server)");
-          continue;
-        }
-        if (a.gen !== gen) {
-          const bound = boundFor(a.gen);
-          if (bound === null && !tolerateNewer) {
-            bad("the database has been replaced since this anchor (its generation changed) but no restore was anchored");
-            continue;
-          }
-          if (bound === null || a.head_id > bound) {
-            out2.other_generation++;
-            continue;
-          }
-        }
-        const row = db3.one(`SELECT id, hash FROM audit_log WHERE id=?`, a.head_id);
-        if (!row) {
-          if (a.head_id > maxId) {
-            if (tolerateNewer) out2.newer++;
-            else bad(`the audit log now ends at entry ${maxId}, before this anchor's entry ${a.head_id}: newer entries were removed`);
-            continue;
-          }
-          if (a.head_id < minId && a.head_id <= purged()) {
-            out2.purged++;
-            continue;
-          }
-          bad(`entry ${a.head_id} recorded by this anchor is missing${a.head_id < minId ? " and no retention purge accounts for it" : ""}`);
-          continue;
-        }
-        if (row.hash !== a.head_hash) {
-          bad(`entry ${a.head_id} no longer has the hash this anchor recorded: the chain was rewritten`);
-          continue;
-        }
-        if (f === newest && a.first_id === minId) {
-          const n = db3.one(`SELECT COUNT(*) n FROM audit_log WHERE id <= ?`, a.head_id).n;
-          if (n !== a.rows) {
-            bad(`${a.rows - n} entr${Math.abs(a.rows - n) === 1 ? "y" : "ies"} at or before entry ${a.head_id} ${n < a.rows ? "were removed" : "were inserted"} since this anchor`);
-            continue;
-          }
-        }
-        out2.matched++;
-      }
-      out2.ok = out2.bad.length === 0;
-      return out2;
-    }
-    function verifyAndRecord() {
-      const r = verify();
-      db3.setSetting("audit_anchor_verified_at", db3.now());
-      db3.setSetting("audit_anchor_verify_status", r.ok ? `ok: ${r.matched} matched${r.purged ? `, ${r.purged} before a retention purge` : ""}${r.other_key ? `, ${r.other_key} under an earlier index key` : ""}${r.other_generation ? `, ${r.other_generation} from before a restore` : ""}${r.other_install ? `, ${r.other_install} from another installation` : ""} of ${r.total}` : `FAILED: ${r.bad[0].reason} (${r.bad[0].file})`);
-      if (!r.ok) {
-        console.error(`[suds] AUDIT ANCHOR MISMATCH: ${r.bad.length} anchor(s) do not match the audit log \u2014 ${r.bad[0].reason}`);
-        try {
-          require_audit().log({ user: { username: "system" }, action: "audit.anchor.verify.failed", success: false, details: { bad: r.bad.slice(0, 20), total: r.total } });
-        } catch (e) {
-          console.error("[suds] the audit entry for the anchor mismatch could not be written:", e && e.message);
-        }
-        try {
-          require_incidents().draft({
-            source: "audit_chain",
-            sourceRef: "audit_anchor",
-            title: "Audit log does not match its external anchors",
-            description: `${r.bad.length} audit anchor(s) written outside the database do not match the audit log (${r.bad[0].reason}). Establish whether audit entries were altered, rebuilt or removed, and whether that concealed access to client records.`
-          });
-        } catch (e) {
-          console.error("[suds] could not open an incident for the anchor mismatch:", e.message);
-        }
-      }
-      return r;
-    }
-    module.exports = { write, safeWrite, runIfDue, verify, verifyAndRecord, list, dirStatus, placementProblem, keyId, macOf, macOk, canonical, FIELDS };
-  }
-});
-
-// server/backup.js
-var require_backup = __commonJS({
-  "server/backup.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var fs = (init_fs(), __toCommonJS(fs_exports));
-    var path = (init_path(), __toCommonJS(path_exports));
-    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
-    var { DatabaseSync: DatabaseSync2 } = (init_sqlite(), __toCommonJS(sqlite_exports));
-    var config = require_config();
-    var db3 = require_db();
-    function backupKey(encryptionKey) {
-      if (!encryptionKey && config.backupKey) return fromBackupKey(config.backupKey);
-      return crypto3.createHash("sha256").update(import_buffer.Buffer.concat([encryptionKey || config.encryptionKey, import_buffer.Buffer.from("suds-backup")])).digest();
-    }
-    var fromBackupKey = (raw) => crypto3.createHash("sha256").update(import_buffer.Buffer.concat([raw, import_buffer.Buffer.from("suds-backup-key")])).digest();
-    function candidateKeys(encryptionKey, escrow) {
-      if (escrow) {
-        const out3 = [];
-        if (escrow.backupKey) out3.push(fromBackupKey(escrow.backupKey));
-        if (escrow.encryptionKey) out3.push(backupKey(escrow.encryptionKey));
-        return out3;
-      }
-      if (encryptionKey) return [backupKey(encryptionKey)];
-      const out2 = [];
-      if (config.backupKey) out2.push(backupKey());
-      out2.push(crypto3.createHash("sha256").update(import_buffer.Buffer.concat([config.encryptionKey, import_buffer.Buffer.from("suds-backup")])).digest());
-      return out2;
-    }
-    function encryptPlain(plain, { encryptionKey } = {}) {
-      const iv = crypto3.randomBytes(12);
-      const c = crypto3.createCipheriv("aes-256-gcm", backupKey(encryptionKey), iv);
-      const body = import_buffer.Buffer.concat([c.update(plain), c.final()]);
-      return import_buffer.Buffer.concat([iv, c.getAuthTag(), body]);
-    }
-    async function createAsync({ encryptionKey, rate = 256 } = {}) {
-      const sqlite = (init_sqlite(), __toCommonJS(sqlite_exports));
-      const tmp = path.join(config.dataDir, `.backup-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
-      let plain;
-      let method;
-      const t0 = Date.now();
-      let t1;
-      try {
-        fs.writeFileSync(tmp, "", { mode: 384 });
-        if (typeof sqlite.backup === "function" && config.dbPath !== ":memory:") {
-          method = "sqlite-online-backup";
-          await sqlite.backup(db3.get(), tmp, { rate });
-        } else {
-          method = "vacuum-into";
-          fs.unlinkSync(tmp);
-          db3.get().exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
-        }
-        try {
-          fs.chmodSync(tmp, 384);
-        } catch {
-        }
-        t1 = Date.now();
-        plain = await fs.promises.readFile(tmp);
-      } finally {
-        await secureUnlinkAsync(tmp);
-        for (const suffix of ["-wal", "-shm", "-journal"]) await secureUnlinkAsync(tmp + suffix);
-      }
-      const iv = crypto3.randomBytes(12);
-      const c = crypto3.createCipheriv("aes-256-gcm", backupKey(encryptionKey), iv);
-      const parts = [];
-      const SLICE2 = 4 << 20;
-      for (let off = 0; off < plain.length; off += SLICE2) {
-        parts.push(c.update(plain.subarray(off, Math.min(off + SLICE2, plain.length))));
-        await new Promise((resolve2) => globalThis.setImmediate ? globalThis.setImmediate(resolve2) : setTimeout(resolve2, 0));
-      }
-      parts.push(c.final());
-      const bytes3 = import_buffer.Buffer.concat([iv, c.getAuthTag(), ...parts]);
-      const plainBytes = plain.length;
-      plain.fill(0);
-      return { bytes: bytes3, method, copy_ms: t1 - t0, encrypt_ms: Date.now() - t1, plain_bytes: plainBytes };
-    }
-    var SLICE = 4 << 20;
-    var tmpName = (kind) => path.join(config.dataDir, `.${kind}-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
-    var removeTmp = async (tmp) => {
-      await secureUnlinkAsync(tmp);
-      for (const suffix of ["-wal", "-shm", "-journal"]) await secureUnlinkAsync(tmp + suffix);
-    };
-    async function createToFileAsync(outFile, { encryptionKey, rate = 256, flag = "w" } = {}) {
-      const sqlite = (init_sqlite(), __toCommonJS(sqlite_exports));
-      const tmp = tmpName("backup");
-      let method;
-      const t0 = Date.now();
-      let t1;
-      let plainBytes = 0;
-      let written = 0;
-      try {
-        await fs.promises.writeFile(tmp, "", { mode: 384 });
-        if (typeof sqlite.backup === "function" && config.dbPath !== ":memory:") {
-          method = "sqlite-online-backup";
-          await sqlite.backup(db3.get(), tmp, { rate });
-        } else {
-          method = "vacuum-into";
-          await fs.promises.unlink(tmp);
-          db3.get().exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
-        }
-        try {
-          await fs.promises.chmod(tmp, 384);
-        } catch {
-        }
-        t1 = Date.now();
-        const iv = crypto3.randomBytes(12);
-        const c = crypto3.createCipheriv("aes-256-gcm", backupKey(encryptionKey), iv);
-        const src = await fs.promises.open(tmp, "r");
-        let out2 = null;
-        try {
-          out2 = await fs.promises.open(outFile, flag, 384);
-          await out2.write(import_buffer.Buffer.concat([iv, import_buffer.Buffer.alloc(16)]), 0, 28, 0);
-          written = 28;
-          const chunk = import_buffer.Buffer.alloc(SLICE);
-          for (; ; ) {
-            const { bytesRead } = await src.read(chunk, 0, SLICE, plainBytes);
-            if (!bytesRead) break;
-            plainBytes += bytesRead;
-            const enc2 = c.update(chunk.subarray(0, bytesRead));
-            await out2.write(enc2, 0, enc2.length, written);
-            written += enc2.length;
-          }
-          chunk.fill(0);
-          const fin = c.final();
-          if (fin.length) {
-            await out2.write(fin, 0, fin.length, written);
-            written += fin.length;
-          }
-          await out2.write(c.getAuthTag(), 0, 16, 12);
-          await out2.sync();
-        } finally {
-          await src.close().catch(() => {
-          });
-          if (out2) await out2.close().catch(() => {
-          });
-        }
-      } finally {
-        await removeTmp(tmp);
-      }
-      return { bytes: written, method, copy_ms: t1 - t0, encrypt_ms: Date.now() - t1, plain_bytes: plainBytes };
-    }
-    async function decryptFileAsync(encFile, plainFile, { encryptionKey, escrow } = {}) {
-      const src = await fs.promises.open(encFile, "r");
-      try {
-        const { size } = await src.stat();
-        if (size < 29) throw new Error("That does not look like a SUDS backup file");
-        const head = import_buffer.Buffer.alloc(28);
-        await src.read(head, 0, 28, 0);
-        const iv = head.subarray(0, 12), tag = head.subarray(12, 28);
-        const chunk = import_buffer.Buffer.alloc(SLICE);
-        for (const key of candidateKeys(encryptionKey, escrow)) {
-          const d = crypto3.createDecipheriv("aes-256-gcm", key, iv);
-          d.setAuthTag(tag);
-          const out2 = await fs.promises.open(plainFile, "w", 384);
-          let ok = false;
-          try {
-            let pos = 28;
-            let at = 0;
-            for (; ; ) {
-              const { bytesRead } = await src.read(chunk, 0, SLICE, pos);
-              if (!bytesRead) break;
-              pos += bytesRead;
-              const p = d.update(chunk.subarray(0, bytesRead));
-              await out2.write(p, 0, p.length, at);
-              at += p.length;
-              p.fill(0);
-            }
-            const fin = d.final();
-            if (fin.length) await out2.write(fin, 0, fin.length, at);
-            ok = true;
-          } catch {
-          } finally {
-            await out2.close().catch(() => {
-            });
-            chunk.fill(0);
-          }
-          if (ok) return;
-          await secureUnlinkAsync(plainFile);
-        }
-      } finally {
-        await src.close().catch(() => {
-        });
-      }
-      throw new Error(escrow ? "The backup could not be read with the escrowed keys. Either the key file is not the one for this backup set, or the backup is damaged." : "The backup could not be read. It is either damaged, or it was made with a different encryption key.");
-    }
-    var INSPECT_WORKER = `
-const { parentPort, workerData } = require('node:worker_threads');
-const { DatabaseSync } = require('node:sqlite');
-try {
-  const d = new DatabaseSync(workerData.file, { readOnly: true });
-  try {
-    const integrity = d.prepare('PRAGMA integrity_check').get();
-    const has = (t) => !!d.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(t);
-    const count = (t) => (has(t) ? d.prepare('SELECT COUNT(*) n FROM ' + t).get().n : 0);
-    const setting = (k) => (has('settings') ? d.prepare('SELECT value FROM settings WHERE key=?').get(k)?.value : undefined);
-    parentPort.postMessage({ ok: true, integrity: String(integrity.integrity_check || ''), hasSettings: has('settings'), hasClients: has('clients'),
-      schema_version: Number(setting('schema_version') || 0), org_name: setting('org_name') || null,
-      counts: { clients: count('clients'), notes: count('notes'), interventions: count('interventions'), users: count('users'), audit_log: count('audit_log') } });
-  } finally { d.close(); }
-} catch (e) { parentPort.postMessage({ ok: false, error: String(e && e.message || e) }); }
-`;
-    var WorkerCtor;
-    try {
-      WorkerCtor = (init_empty(), __toCommonJS(empty_exports)).Worker;
-    } catch {
-      WorkerCtor = null;
-    }
-    function inspectInWorker(file) {
-      return new Promise((resolve2, reject) => {
-        const w = new WorkerCtor(INSPECT_WORKER, { eval: true, workerData: { file } });
-        let msg = null;
-        w.once("message", (m) => {
-          msg = m;
-        });
-        w.once("error", reject);
-        w.once("exit", (code) => msg ? resolve2(msg) : reject(new Error(`backup verification worker exited (${code})`)));
-      });
-    }
-    async function verifyFileAsync(encFile, opts = {}) {
-      if (typeof WorkerCtor !== "function" || config.local) return inspect2(decrypt3(fs.readFileSync(encFile), opts));
-      const tmp = tmpName("inspect");
-      try {
-        await decryptFileAsync(encFile, tmp, opts);
-        const { size } = await fs.promises.stat(tmp);
-        const r = await inspectInWorker(tmp);
-        if (!r.ok) throw new Error(r.error);
-        if (r.integrity.toLowerCase() !== "ok") throw new Error("The backup file is damaged.");
-        if (!r.hasSettings || !r.hasClients) throw new Error("That file is not a SUDS backup.");
-        if (r.schema_version > db3.LATEST_SCHEMA_VERSION) throw new Error(`This backup was made by a newer version of SUDS (schema ${r.schema_version}; this build understands ${db3.LATEST_SCHEMA_VERSION}). Upgrade SUDS before restoring it.`);
-        return { schema_version: r.schema_version, org_name: r.org_name, counts: r.counts, bytes: size };
-      } finally {
-        await removeTmp(tmp);
-      }
-    }
-    async function secureUnlinkAsync(file) {
-      let st = null;
-      try {
-        st = await fs.promises.lstat(file);
-      } catch (e) {
-        if (e && e.code === "ENOENT") return false;
-      }
-      if (st && st.isFile() && st.size > 0) {
-        let fh = null;
-        try {
-          fh = await fs.promises.open(file, "r+");
-          const chunk = import_buffer.Buffer.alloc(Math.min(st.size, 4 << 20));
-          for (let off = 0; off < st.size; off += chunk.length) await fh.write(chunk, 0, Math.min(chunk.length, st.size - off), off);
-          await fh.sync();
-        } catch {
-        } finally {
-          if (fh) await fh.close().catch(() => {
-          });
-        }
-      }
-      try {
-        await fs.promises.unlink(file);
-        return true;
-      } catch {
-        return false;
-      }
-    }
-    function secureUnlink(file) {
-      let st = null;
-      try {
-        st = fs.lstatSync(file);
-      } catch (e) {
-        if (e && e.code === "ENOENT") return false;
-      }
-      if (st && st.isFile() && st.size > 0) {
-        try {
-          const fd2 = fs.openSync(file, "r+");
-          try {
-            const chunk = import_buffer.Buffer.alloc(Math.min(st.size, 1 << 20));
-            for (let off = 0; off < st.size; off += chunk.length) fs.writeSync(fd2, chunk, 0, Math.min(chunk.length, st.size - off), off);
-            fs.fsyncSync(fd2);
-          } finally {
-            fs.closeSync(fd2);
-          }
-        } catch {
-        }
-      }
-      try {
-        fs.unlinkSync(file);
-        return true;
-      } catch {
-        return false;
-      }
-    }
-    function secureRemoveDir(dir) {
-      let n = 0;
-      let entries = [];
-      try {
-        entries = fs.readdirSync(dir, { withFileTypes: true });
-      } catch {
-        return 0;
-      }
-      for (const e of entries) {
-        const p = path.join(dir, e.name);
-        if (e.isDirectory()) n += secureRemoveDir(p);
-        else if (secureUnlink(p)) n++;
-      }
-      try {
-        fs.rmSync(dir, { recursive: true, force: true });
-      } catch {
-      }
-      return n;
-    }
-    function create2({ encryptionKey } = {}) {
-      const tmp = path.join(config.dataDir, `.backup-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
-      let plain;
-      try {
-        fs.writeFileSync(tmp, "", { mode: 384 });
-        fs.unlinkSync(tmp);
-        db3.get().exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
-        try {
-          fs.chmodSync(tmp, 384);
-        } catch {
-        }
-        plain = fs.readFileSync(tmp);
-      } finally {
-        secureUnlink(tmp);
-      }
-      return encryptPlain(plain, { encryptionKey });
-    }
-    function decrypt3(buf, { encryptionKey, escrow } = {}) {
-      if (!import_buffer.Buffer.isBuffer(buf) || buf.length < 29) throw new Error("That does not look like a SUDS backup file");
-      const iv = buf.subarray(0, 12), tag = buf.subarray(12, 28), data = buf.subarray(28);
-      for (const key of candidateKeys(encryptionKey, escrow)) {
-        const d = crypto3.createDecipheriv("aes-256-gcm", key, iv);
-        d.setAuthTag(tag);
-        try {
-          return import_buffer.Buffer.concat([d.update(data), d.final()]);
-        } catch {
-        }
-      }
-      throw new Error(escrow ? "The backup could not be read with the escrowed keys. Either the key file is not the one for this backup set, or the backup is damaged." : "The backup could not be read. It is either damaged, or it was made with a different encryption key.");
-    }
-    function inspect2(plainBytes) {
-      const tmp = path.join(config.dataDir, `.inspect-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
-      fs.writeFileSync(tmp, plainBytes, { mode: 384 });
-      try {
-        const d = new DatabaseSync2(tmp, { readOnly: true });
-        try {
-          const integrity = d.prepare("PRAGMA integrity_check").get();
-          if ((integrity.integrity_check || "").toLowerCase() !== "ok") throw new Error("The backup file is damaged.");
-          const has = (t) => !!d.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(t);
-          if (!has("settings") || !has("clients")) throw new Error("That file is not a SUDS backup.");
-          const count = (t) => has(t) ? d.prepare(`SELECT COUNT(*) n FROM ${t}`).get().n : 0;
-          const schemaVersion = Number(d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get()?.value || 0);
-          if (schemaVersion > db3.LATEST_SCHEMA_VERSION) throw new Error(`This backup was made by a newer version of SUDS (schema ${schemaVersion}; this build understands ${db3.LATEST_SCHEMA_VERSION}). Upgrade SUDS before restoring it.`);
-          return {
-            schema_version: schemaVersion,
-            org_name: d.prepare(`SELECT value FROM settings WHERE key='org_name'`).get()?.value || null,
-            counts: { clients: count("clients"), notes: count("notes"), interventions: count("interventions"), users: count("users"), audit_log: count("audit_log") },
-            bytes: plainBytes.length
-          };
-        } finally {
-          d.close();
-        }
-      } finally {
-        secureUnlink(tmp);
-        for (const suffix of ["-wal", "-shm", "-journal"]) secureUnlink(tmp + suffix);
-      }
-    }
-    function restore(plainBytes) {
-      const info = inspect2(plainBytes);
-      const dbPath = config.dbPath;
-      if (dbPath === ":memory:") throw new Error("This server is running on an in-memory database; there is nothing to restore into.");
-      const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-      const aside = `${dbPath}.before-restore-${stamp2}`;
-      const dropJournal = () => {
-        for (const suffix of ["-wal", "-shm"]) {
-          try {
-            fs.unlinkSync(dbPath + suffix);
-          } catch {
-          }
-        }
-      };
-      const rollBack = (cause) => {
-        try {
-          if (fs.existsSync(aside)) {
-            fs.copyFileSync(aside, dbPath);
-            dropJournal();
-          }
-        } catch (e) {
-          cause.message += ` (and the previous database could not be put back from ${aside}: ${e.message})`;
-        }
-        try {
-          db3.close();
-        } catch {
-        }
-        try {
-          db3.open();
-        } catch (e) {
-          cause.message += ` (the previous database could not be reopened either: ${e.message})`;
-        }
-      };
-      try {
-        db3.get().exec("PRAGMA wal_checkpoint(TRUNCATE)");
-      } catch (e) {
-        console.warn("[suds] restore: WAL checkpoint before setting the current database aside failed:", e && e.message);
-      }
-      db3.close();
-      try {
-        if (fs.existsSync(dbPath)) fs.copyFileSync(dbPath, aside);
-        fs.writeFileSync(dbPath, plainBytes, { mode: 384 });
-        dropJournal();
-      } catch (e) {
-        rollBack(e);
-        throw e;
-      }
-      try {
-        db3.open();
-      } catch (e) {
-        rollBack(e);
-        throw new Error(`The backup could not be opened after it was restored, so the previous database was put back: ${e.message}`);
-      }
-      const restoredGen = db3.getSetting("db_generation", null) || "initial";
-      db3.setSetting("db_generation", require_crypto().uuid());
-      if (!config.local) require_audit_anchor().safeWrite("restore", { prevGen: restoredGen });
-      return { ...info, previous_database_kept_at: aside };
-    }
-    module.exports = { create: create2, createAsync, encryptPlain, decrypt: decrypt3, decryptFileAsync, createToFileAsync, verifyFileAsync, inspect: inspect2, restore, backupKey, secureUnlink, secureUnlinkAsync, secureRemoveDir };
-  }
-});
-
-// server/scheduled-backup.js
-var require_scheduled_backup = __commonJS({
-  "server/scheduled-backup.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var fs = (init_fs(), __toCommonJS(fs_exports));
-    var path = (init_path(), __toCommonJS(path_exports));
-    var config = require_config();
-    var db3 = require_db();
-    var audit3 = require_audit();
-    var backup = require_backup();
-    var FILE_RE = /^suds-\d.*\.db\.enc$/;
-    var SNAP_RE = /^suds-snap-.*\.db\.enc$/;
-    var OFFSITE_MISSING = "offsite directory does not exist (is the share mounted?)";
-    function settings() {
-      const hours = Number(db3.getSetting("backup_schedule_hours", "0")) || 0;
-      const retain = Math.max(1, Number(db3.getSetting("backup_retain_count", "14")) || 14);
-      const offsiteDir = db3.getSetting("backup_offsite_dir", "") || "";
-      const minutes = Number(db3.getSetting("backup_schedule_minutes", "0")) || 0;
-      const snapshotRetain = Math.max(1, Number(db3.getSetting("backup_snapshot_retain", "24")) || 24);
-      return { hours, retain, offsiteDir, minutes, snapshotRetain };
-    }
-    function rpo(s = settings()) {
-      const c = [];
-      if (s.hours > 0) c.push({ minutes: s.hours * 60, by: "scheduled backups" });
-      if (s.minutes > 0) c.push({ minutes: s.minutes, by: "online snapshots" });
-      if (!c.length) return null;
-      return c.sort((a, b) => a.minutes - b.minutes)[0];
-    }
-    async function runIfDue(now = Date.now()) {
-      const { hours, retain, offsiteDir } = settings();
-      if (!hours) return null;
-      const last = db3.getSetting("last_scheduled_backup_at", null);
-      if (last && now - Date.parse(last) < hours * 36e5) return null;
-      return run2({ retain, offsiteDir });
-    }
-    var inFlight = null;
-    function run2(opts = {}) {
-      if (inFlight) return inFlight;
-      inFlight = runOnce(opts).finally(() => {
-        inFlight = null;
-      });
-      return inFlight;
-    }
-    async function runOnce({ retain = 14, offsiteDir = "" } = {}) {
-      const dir = path.join(config.dataDir, "backups");
-      const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-      const file = path.join(dir, `suds-${stamp2}.db.enc`);
-      let bytes3;
-      let verified = false;
-      let verifyError = null;
-      let kept = 0;
-      let method = null;
-      try {
-        fs.mkdirSync(dir, { recursive: true, mode: 448 });
-        prune(dir, Math.max(0, retain - 1));
-        const made = await backup.createToFileAsync(file);
-        bytes3 = made.bytes;
-        method = made.method;
-        try {
-          const info = await backup.verifyFileAsync(file);
-          verified = info.counts.clients >= 0;
-        } catch (e) {
-          verifyError = String(e && e.message || e);
-          console.error("[suds] backup written but could not be read back:", verifyError);
-        }
-      } catch (e) {
-        const reason = e && e.code === "ENOSPC" ? `no space left on the disk holding ${dir}` : String(e && e.message || e);
-        try {
-          fs.unlinkSync(file);
-        } catch {
-        }
-        console.error("[suds] scheduled backup failed:", reason);
-        db3.setSetting("last_scheduled_backup_at", db3.now());
-        db3.setSetting("last_scheduled_backup_status", `failed: ${reason}`);
-        audit3.log({ user: { username: "system" }, action: "backup.scheduled", success: false, details: { error: reason, code: e && e.code || void 0 } });
-        return { file: null, bytes: 0, offsiteOk: null, verified: false, verifyError: reason, failed: true, error: reason };
-      }
-      let offsiteOk = null;
-      let offsiteError = null;
-      let offsiteFile = null;
-      if (offsiteDir) {
-        try {
-          let st = null;
-          try {
-            st = await fs.promises.stat(offsiteDir);
-          } catch {
-          }
-          if (!st || !st.isDirectory()) throw new Error(OFFSITE_MISSING);
-          offsiteFile = path.join(offsiteDir, path.basename(file));
-          await fs.promises.copyFile(file, offsiteFile);
-          offsiteOk = true;
-        } catch (e) {
-          offsiteOk = false;
-          offsiteError = String(e && e.message || e);
-          console.error("[suds] offsite backup copy failed:", offsiteError);
-        }
-      }
-      if (!config.local) require_audit_anchor().safeWrite("backup");
-      kept = prune(dir, retain);
-      db3.setSetting("last_scheduled_backup_at", db3.now());
-      db3.setSetting("last_scheduled_backup_status", !verified ? `backup written but could not be read back \u2014 ${verifyError}` : offsiteDir && offsiteOk === false ? `ok (verified) \u2014 offsite copy failed: ${offsiteError}; local backup kept` : "ok (verified)");
-      audit3.log({ user: { username: "system" }, action: "backup.scheduled", details: { bytes: bytes3, method, offsite: offsiteDir ? offsiteOk : null, offsite_error: offsiteError || void 0, kept, verified } });
-      return { file, bytes: bytes3, method, offsiteOk, offsiteError, offsiteFile: offsiteOk ? offsiteFile : null, verified, verifyError };
-    }
-    var snapshotting = false;
-    async function snapshotIfDue(now = Date.now()) {
-      const s = settings();
-      if (!s.minutes || snapshotting) return null;
-      const last = db3.getSetting("last_snapshot_at", null);
-      if (last && now - Date.parse(last) < s.minutes * 6e4) return null;
-      return snapshot(s);
-    }
-    async function snapshot(s = settings()) {
-      if (snapshotting) return null;
-      snapshotting = true;
-      const localDir = path.join(config.dataDir, "backups");
-      let target = localDir;
-      let where = "local";
-      const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-      let file = null;
-      try {
-        if (s.offsiteDir) {
-          let st = null;
-          try {
-            st = fs.statSync(s.offsiteDir);
-          } catch {
-          }
-          if (!st || !st.isDirectory()) throw new Error(OFFSITE_MISSING);
-          target = s.offsiteDir;
-          where = "offsite";
-        } else fs.mkdirSync(localDir, { recursive: true, mode: 448 });
-        file = path.join(target, `suds-snap-${stamp2}.db.enc`);
-        const made = await backup.createToFileAsync(file, { flag: "wx" });
-        const kept = pruneMatching(target, SNAP_RE, s.snapshotRetain);
-        db3.setSetting("last_snapshot_at", db3.now());
-        db3.setSetting("last_snapshot_status", `ok (${where}; ${made.method}; ${Math.round(made.bytes / 1024)} KB in ${made.copy_ms + made.encrypt_ms} ms)`);
-        return { file, where, kept, bytes: made.bytes, method: made.method, copy_ms: made.copy_ms, encrypt_ms: made.encrypt_ms };
-      } catch (e) {
-        const reason = e && e.code === "ENOSPC" ? `no space left on the disk holding ${target}` : String(e && e.message || e);
-        if (file) {
-          try {
-            fs.unlinkSync(file);
-          } catch {
-          }
-        }
-        console.error("[suds] snapshot failed:", reason);
-        const prev = db3.getSetting("last_snapshot_status", "") || "";
-        db3.setSetting("last_snapshot_at", db3.now());
-        db3.setSetting("last_snapshot_status", `failed: ${reason}`);
-        if (!/^failed/.test(prev)) audit3.log({ user: { username: "system" }, action: "backup.snapshot.failed", success: false, details: { error: reason.slice(0, 300) } });
-        return { file: null, failed: true, error: reason };
-      } finally {
-        snapshotting = false;
-      }
-    }
-    function pruneMatching(dir, re, retain) {
-      const files = fs.readdirSync(dir).filter((f) => re.test(f)).sort();
-      const excess = files.length - retain;
-      if (excess > 0) for (const f of files.slice(0, excess)) {
-        try {
-          fs.unlinkSync(path.join(dir, f));
-        } catch {
-        }
-      }
-      return Math.min(files.length, retain);
-    }
-    function prune(dir, retain) {
-      const files = fs.readdirSync(dir).filter((f) => FILE_RE.test(f)).sort();
-      const excess = files.length - retain;
-      if (excess > 0) for (const f of files.slice(0, excess)) {
-        try {
-          fs.unlinkSync(path.join(dir, f));
-        } catch {
-        }
-      }
-      return Math.min(files.length, retain);
-    }
-    module.exports = { runIfDue, run: run2, settings, rpo, snapshot, snapshotIfDue, FILE_RE, SNAP_RE };
-  }
-});
-
-// server/signing.js
-var require_signing = __commonJS({
-  "server/signing.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
-    var PKCS8_PREFIX = import_buffer.Buffer.from("302e020100300506032b657004220420", "hex");
-    var ALGORITHM = "Ed25519";
-    function privateKeyFrom(seed) {
-      if (!import_buffer.Buffer.isBuffer(seed) || seed.length !== 32) throw new Error("The signing key must be 32 bytes");
-      return crypto3.createPrivateKey({ key: import_buffer.Buffer.concat([PKCS8_PREFIX, seed]), format: "der", type: "pkcs8" });
-    }
-    var cached = null;
-    function keys(seed = require_config().signingKey) {
-      if (cached && cached.seed.equals(seed)) return cached;
-      const privateKey = privateKeyFrom(seed);
-      const publicKey = crypto3.createPublicKey(privateKey);
-      const pem = publicKey.export({ type: "spki", format: "pem" });
-      cached = { seed, privateKey, publicKey, pem, keyId: keyIdOf(pem) };
-      return cached;
-    }
-    function keyIdOf(publicKeyPem) {
-      const der = crypto3.createPublicKey(publicKeyPem).export({ type: "spki", format: "der" });
-      return crypto3.createHash("sha256").update(der).digest("hex").slice(0, 16);
-    }
-    function publicInfo(seed) {
-      const k = keys(seed);
-      const der = k.publicKey.export({ type: "spki", format: "der" });
-      return { algorithm: ALGORITHM, key_id: k.keyId, public_key_pem: k.pem, sha256_fingerprint: crypto3.createHash("sha256").update(der).digest("hex") };
-    }
-    function sign2(data, seed) {
-      return crypto3.sign(null, import_buffer.Buffer.from(data), keys(seed).privateKey).toString("base64");
-    }
-    function verify(data, signatureB64, publicKeyPem) {
-      try {
-        const key = crypto3.createPublicKey(publicKeyPem);
-        if (key.asymmetricKeyType !== "ed25519") return false;
-        return crypto3.verify(null, import_buffer.Buffer.from(data), key, import_buffer.Buffer.from(String(signatureB64), "base64"));
-      } catch {
-        return false;
-      }
-    }
-    module.exports = { ALGORITHM, sign: sign2, verify, publicInfo, keyIdOf, privateKeyFrom };
-  }
-});
-
-// server/dr-report.js
-var require_dr_report = __commonJS({
-  "server/dr-report.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
-    var signing = require_signing();
-    function canonical(v) {
-      if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
-      if (v && typeof v === "object") return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(",")}}`;
-      return JSON.stringify(v === void 0 ? null : v);
-    }
-    function verifyDoc(doc, { publicKeyPem = null } = {}) {
-      const errors = [];
-      const warnings = [];
-      const out2 = { ok: false, errors, warnings, key_id: null, key_source: publicKeyPem ? "supplied" : "embedded" };
-      if (!doc || typeof doc !== "object" || !doc.report || !doc.integrity) {
-        errors.push("this is not a SUDS recovery-drill report ({ report, integrity })");
-        return out2;
-      }
-      const { report, integrity } = doc;
-      const body = canonical(report);
-      if (crypto3.createHash("sha256").update(body).digest("hex") !== integrity.sha256) errors.push("the SHA-256 of the report does not match its integrity block: the report was edited");
-      const key = publicKeyPem || integrity.public_key_pem;
-      if (!integrity.ed25519_signature) errors.push("the report is not signed (made by a SUDS version before Ed25519 signing); only its HMAC can be checked, with the index key");
-      else if (!key) errors.push("no public key: supply the one published by the server (--public-key)");
-      else {
-        let kid = null;
-        try {
-          kid = signing.keyIdOf(key);
-        } catch {
-          errors.push("the public key is not a valid PEM key");
-        }
-        out2.key_id = kid;
-        if (kid) {
-          if (!signing.verify(body, integrity.ed25519_signature, key)) errors.push("the Ed25519 signature does not verify with this public key: the report was altered, or was not signed by this server");
-          if (integrity.signing_key_id && integrity.signing_key_id !== kid) errors.push(`the report names signing key ${integrity.signing_key_id}, not the key supplied (${kid})`);
-          if (report.signed_by && report.signed_by.key_id && report.signed_by.key_id !== kid) errors.push(`the signed report names signing key ${report.signed_by.key_id}, not ${kid}`);
-        }
-        if (!publicKeyPem) warnings.push(`checked with the public key embedded in the report (key id ${kid}); compare that id with the one published by the server (Settings \u2192 Security status, or GET /api/admin/security/signing-key) before relying on it`);
-      }
-      out2.ok = errors.length === 0;
-      return out2;
-    }
-    module.exports = { canonical, verifyDoc };
-  }
-});
-
-// server/dr-drill.js
-var require_dr_drill = __commonJS({
-  "server/dr-drill.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var fs = (init_fs(), __toCommonJS(fs_exports));
-    var path = (init_path(), __toCommonJS(path_exports));
-    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
-    var config = require_config();
-    var db3 = require_db();
-    var audit3 = require_audit();
-    var BACKUP_RE = /^suds-.*\.db\.enc$/;
-    var MONTH_MS = 30 * 864e5;
-    var CHILD_TIMEOUT_MS = Number(proc.env.DR_DRILL_TIMEOUT_MS || 15 * 6e4);
-    function backupsDir() {
-      return path.join(config.dataDir, "backups");
-    }
-    function backupTime(file) {
-      const m = path.basename(file).match(/^suds-(?:snap-)?(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z/);
-      if (m) {
-        const t = Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`);
-        if (Number.isFinite(t)) return t;
-      }
-      try {
-        return fs.statSync(file).mtimeMs;
-      } catch {
-        return null;
-      }
-    }
-    function latestBackup(dir = backupsDir()) {
-      let names = [];
-      try {
-        names = fs.readdirSync(dir).filter((f) => BACKUP_RE.test(f));
-      } catch {
-        return null;
-      }
-      let best = null;
-      let bestT = -Infinity;
-      for (const n of names) {
-        const f = path.join(dir, n);
-        const t = backupTime(f) ?? -Infinity;
-        if (t > bestT || t === bestT && n > path.basename(best)) {
-          best = f;
-          bestT = t;
-        }
-      }
-      return best;
-    }
-    function parseKeysFile(text) {
-      const t = String(text || "").trim();
-      let obj = null;
-      if (t.startsWith("{")) {
-        try {
-          obj = JSON.parse(t);
-        } catch {
-          throw new Error("The key file is not valid JSON");
-        }
-      } else {
-        obj = {};
-        for (const line of t.split(/\r?\n/)) {
-          const m = line.match(/^\s*(?:export\s+)?([A-Z_]+)\s*=\s*["']?([0-9a-fA-F]+)["']?\s*$/);
-          if (m) obj[m[1]] = m[2];
-        }
-      }
-      const hex2 = (k, required) => {
-        const v = obj[k];
-        if (v === void 0 || v === null || v === "") {
-          if (required) throw new Error(`The key file has no ${k}`);
-          return null;
-        }
-        if (!/^[0-9a-fA-F]{64}$/.test(String(v))) throw new Error(`${k} in the key file is not 64 hex characters`);
-        return import_buffer.Buffer.from(String(v), "hex");
-      };
-      return { encryptionKey: hex2("SUDS_ENCRYPTION_KEY", true), indexKey: hex2("SUDS_INDEX_KEY", true), backupKey: hex2("SUDS_BACKUP_KEY", false) };
-    }
-    var fingerprint = (buf) => crypto3.createHash("sha256").update(import_buffer.Buffer.concat([import_buffer.Buffer.from("suds-drill-key:"), buf])).digest("hex").slice(0, 12);
-    function pidAlive(pid) {
-      if (!pid) return false;
-      try {
-        proc.kill(pid, 0);
-        return true;
-      } catch (e) {
-        return !!e && e.code === "EPERM";
-      }
-    }
-    function sweepStale({ now = Date.now(), except = null } = {}) {
-      const backup = require_backup();
-      const root = path.join(config.dataDir, ".dr-drill");
-      const out2 = { removed: [], files: 0 };
-      let dirs = [];
-      try {
-        dirs = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => path.join(root, d.name));
-      } catch {
-      }
-      for (const d of dirs) {
-        if (except && path.resolve(d) === path.resolve(except)) continue;
-        let owner = null;
-        try {
-          owner = JSON.parse(fs.readFileSync(path.join(d, "owner.json"), "utf8"));
-        } catch {
-        }
-        let age = 0;
-        try {
-          age = now - fs.statSync(d).mtimeMs;
-        } catch {
-        }
-        const mineIdle = owner && owner.pid === proc.pid && !current2;
-        const orphaned = owner ? mineIdle || !pidAlive(owner.pid) || now - Date.parse(owner.started_at) > CHILD_TIMEOUT_MS * 2 : age > 6e4;
-        if (!orphaned) continue;
-        out2.files += backup.secureRemoveDir(d);
-        out2.removed.push(path.basename(d));
-      }
-      let loose = [];
-      try {
-        loose = fs.readdirSync(config.dataDir).filter((f) => /^\.(backup|inspect)-\d+-[0-9a-f]+\.db(-wal|-shm|-journal)?$/.test(f));
-      } catch {
-      }
-      for (const f of loose) {
-        const p = path.join(config.dataDir, f);
-        let age = 0;
-        try {
-          age = now - fs.statSync(p).mtimeMs;
-        } catch {
-          continue;
-        }
-        if (age > 36e5 && backup.secureUnlink(p)) {
-          out2.removed.push(f);
-          out2.files++;
-        }
-      }
-      if (out2.removed.length) {
-        console.warn(`[suds] removed ${out2.removed.length} stale decrypted copy(ies) left by an interrupted drill or backup: ${out2.removed.join(", ")}`);
-        try {
-          audit3.log({ user: { username: "system" }, action: "dr.drill.swept", details: { removed: out2.removed.slice(0, 20), files: out2.files } });
-        } catch (e) {
-          console.error("[suds] the audit entry for the sweep could not be written:", e && e.message);
-        }
-      }
-      return out2;
-    }
-    function targets() {
-      const num = (k, d) => {
-        const v = Number(db3.getSetting(k, ""));
-        return Number.isFinite(v) && v > 0 ? v : d;
-      };
-      const r = require_scheduled_backup().rpo();
-      return { rto_minutes: num("dr_rto_target_minutes", 60), rpo_hours: num("dr_rpo_target_hours", r ? Math.round(r.minutes / 60 * 1e3) / 1e3 : 24) };
-    }
-    function lastDrill() {
-      try {
-        return JSON.parse(db3.getSetting("dr_last_drill", "null"));
-      } catch {
-        return null;
-      }
-    }
-    var current2 = null;
-    function status() {
-      return {
-        running: current2 ? { started_at: current2.started_at, by: current2.by, steps: current2.steps.slice() } : null,
-        last: lastDrill(),
-        monthly: db3.getSetting("dr_drill_monthly", "0") === "1",
-        targets: targets(),
-        reports: listReports().slice(-12).reverse()
-      };
-    }
-    function listReports() {
-      try {
-        return fs.readdirSync(backupsDir()).filter((f) => /^dr-drill-.*\.json$/.test(f)).sort();
-      } catch {
-        return [];
-      }
-    }
-    var { canonical } = require_dr_report();
-    function seal(report, key = config.indexKey) {
-      const body = canonical(report);
-      const signing = require_signing();
-      const pub = signing.publicInfo();
-      return {
-        sha256: crypto3.createHash("sha256").update(body).digest("hex"),
-        hmac_sha256: crypto3.createHmac("sha256", key).update(body).digest("hex"),
-        ed25519_signature: signing.sign(body),
-        signing_key_id: pub.key_id,
-        public_key_pem: pub.public_key_pem,
-        algorithm: 'SHA-256, HMAC-SHA256 (index key) and an Ed25519 signature (signing key) over the canonical JSON of "report" (keys sorted)'
-      };
-    }
-    function verifyReport(doc, key = config.indexKey) {
-      if (!doc || !doc.integrity) return false;
-      const s = seal(doc.report, key);
-      const signed = require_dr_report().verifyDoc(doc, { publicKeyPem: require_signing().publicInfo().public_key_pem });
-      return s.sha256 === doc.integrity.sha256 && s.hmac_sha256 === doc.integrity.hmac_sha256 && signed.ok;
-    }
-    function runChild(tmp, dbFile, onStep, keys = { enc: config.encryptionKey, idx: config.indexKey }) {
-      const { fork } = (init_empty(), __toCommonJS(empty_exports));
-      return new Promise((resolve2) => {
-        const env = {
-          PATH: proc.env.PATH || "",
-          SUDS_ENV: config.isTest ? "test" : "production",
-          SUDS_DATA_DIR: tmp,
-          SUDS_DB_PATH: dbFile,
-          SUDS_SKIP_SETUP: "1",
-          TZ: proc.env.TZ || "",
-          LOG_FORMAT: "text",
-          LOGIN_RATE_LIMIT: "1000",
-          // The live server's anchor directory, read (never written) by the copy's anchor check. Named here so the
-          // copy's /api/health does not report the placement of its own (unused) default directory.
-          AUDIT_ANCHOR_DIR: config.auditAnchorDir
-        };
-        if (!env.TZ) delete env.TZ;
-        const child = fork(path.join("/", "dr-drill-child.js"), [], { cwd: tmp, env, execArgv: ["--no-warnings=ExperimentalWarning"], stdio: ["ignore", "pipe", "pipe", "ipc"] });
-        let result = null;
-        let stderr = "";
-        child.stdout.on("data", () => {
-        });
-        child.stderr.on("data", (b) => {
-          stderr = (stderr + b.toString()).slice(-4e3);
-        });
-        const timer = setTimeout(() => {
-          try {
-            child.kill("SIGKILL");
-          } catch {
-          }
-        }, CHILD_TIMEOUT_MS);
-        child.on("message", (m) => {
-          if (m && m.type === "progress") onStep(m.step);
-          else if (m && m.type === "result") result = m;
-        });
-        child.on("exit", (code, signal) => {
-          clearTimeout(timer);
-          resolve2(result || { ok: false, error: signal === "SIGKILL" ? `the restored copy did not finish within ${Math.round(CHILD_TIMEOUT_MS / 6e4)} minutes` : `the drill process exited (${code ?? signal})${stderr ? ": " + stderr.trim().split("\n").slice(-3).join(" ") : ""}`, checks: [] });
-        });
-        child.send({ keys: { enc: keys.enc.toString("hex"), idx: keys.idx.toString("hex"), sig: config.signingKey.toString("hex") }, anchorDir: config.auditAnchorDir });
-      });
-    }
-    async function run2({ backupFile = null, fresh = false, by = "system", trigger = "manual", record = true, keysFile = null, keysText = null, keysLabel = null, copy = "auto" } = {}) {
-      if (current2) {
-        const e = new Error("A recovery drill is already running");
-        e.code = "EBUSY";
-        throw e;
-      }
-      const job = current2 = { started_at: (/* @__PURE__ */ new Date()).toISOString(), by, steps: [] };
-      const step = (s) => {
-        job.steps.push({ at: (/* @__PURE__ */ new Date()).toISOString(), step: s });
-      };
-      const started = Date.now();
-      const tmpRoot = path.join(config.dataDir, ".dr-drill");
-      const tmp = path.join(tmpRoot, `drill-${started}-${crypto3.randomBytes(4).toString("hex")}`);
-      const failures = [];
-      let result = { checks: [] };
-      let file = backupFile;
-      let madeBackup = false;
-      let restoreStarted = null;
-      let restoreBytes = 0;
-      const sched = require_scheduled_backup().settings();
-      let source = { copy: backupFile ? "given" : null, dir: backupFile ? path.dirname(backupFile) : null, offsite_configured: !!sched.offsiteDir };
-      let keyInfo = { source: "server memory", note: "the keys this server process holds; run with an escrowed key file to prove the offline copy of the keys" };
-      let escrow = null;
-      try {
-        try {
-          sweepStale({ except: tmp });
-        } catch (e) {
-          console.error("[suds] could not sweep stale drill copies:", e && e.message);
-        }
-        if (keysFile || keysText !== null && keysText !== void 0) {
-          const uploaded = keysText !== null && keysText !== void 0;
-          escrow = parseKeysFile(uploaded ? keysText : fs.readFileSync(keysFile, "utf8"));
-          keyInfo = {
-            source: uploaded ? "uploaded escrow file" : "escrow file",
-            file: keysLabel || (keysFile ? path.basename(keysFile) : null),
-            encryption_key_fingerprint: fingerprint(escrow.encryptionKey),
-            index_key_fingerprint: fingerprint(escrow.indexKey),
-            backup_key: !!escrow.backupKey,
-            same_as_running_server: escrow.encryptionKey.equals(config.encryptionKey) && escrow.indexKey.equals(config.indexKey)
-          };
-          step(`Using the escrowed keys from ${keyInfo.file || "the uploaded file"}, not the keys in this server's memory`);
-        }
-        if (!file && !fresh) {
-          if (copy === "offsite" || copy === "auto" && sched.offsiteDir) {
-            let st = null;
-            try {
-              st = sched.offsiteDir ? fs.statSync(sched.offsiteDir) : null;
-            } catch {
-            }
-            const off = st && st.isDirectory() ? latestBackup(sched.offsiteDir) : null;
-            if (off) {
-              file = off;
-              source = { ...source, copy: "offsite", dir: sched.offsiteDir };
-            } else {
-              failures.push(!sched.offsiteDir ? "an offsite copy was asked for but no offsite directory is configured" : !st ? `the offsite directory ${sched.offsiteDir} is not reachable (is the share mounted?), so the offsite copy could not be restored` : `the offsite directory ${sched.offsiteDir} holds no backup`);
-              step("The offsite copy is not available; restoring the local copy instead");
-            }
-          }
-          if (!file) {
-            file = latestBackup();
-            if (file) source = { ...source, copy: "local", dir: backupsDir() };
-          }
-        }
-        if (!file) {
-          step("No backup on disk; taking one first");
-          const made = await require_scheduled_backup().run({ retain: sched.retain, offsiteDir: sched.offsiteDir });
-          if (!made.file) throw new Error(`a backup could not be taken: ${made.error}`);
-          madeBackup = true;
-          if (made.offsiteFile && copy !== "local") {
-            file = made.offsiteFile;
-            source = { ...source, copy: "offsite", dir: sched.offsiteDir };
-          } else {
-            file = made.file;
-            source = { ...source, copy: "local", dir: backupsDir() };
-          }
-        }
-        step(`Restoring ${path.basename(file)} (${source.copy} copy)`);
-        restoreStarted = Date.now();
-        const enc2 = fs.readFileSync(file);
-        const plain = require_backup().decrypt(enc2, escrow ? { escrow } : {});
-        restoreBytes = plain.length;
-        fs.mkdirSync(tmp, { recursive: true, mode: 448 });
-        try {
-          fs.chmodSync(tmpRoot, 448);
-        } catch {
-        }
-        fs.writeFileSync(path.join(tmp, "owner.json"), JSON.stringify({ pid: proc.pid, started_at: new Date(started).toISOString() }), { mode: 384 });
-        const dbFile = path.join(tmp, "suds.db");
-        fs.writeFileSync(dbFile, plain, { mode: 384 });
-        plain.fill(0);
-        result = await runChild(tmp, dbFile, step, escrow ? { enc: escrow.encryptionKey, idx: escrow.indexKey } : void 0);
-        if (result.error) failures.push(result.error);
-      } catch (e) {
-        failures.push(String(e && e.message || e));
-      } finally {
-        try {
-          require_backup().secureRemoveDir(tmp);
-          if (fs.existsSync(tmp)) throw new Error("it is still there");
-        } catch (e) {
-          failures.push(`the drill copy could not be removed from ${tmp}: ${e.message}`);
-        }
-      }
-      const extraChecks = [];
-      if (escrow) extraChecks.push({ name: "The escrowed key file opens the backup", ok: restoreBytes > 0, detail: `${keyInfo.source}${keyInfo.file ? ` ${keyInfo.file}` : ""}; encryption key ${keyInfo.encryption_key_fingerprint}, index key ${keyInfo.index_key_fingerprint}` });
-      if (source.offsite_configured && copy !== "local") extraChecks.push({ name: "The offsite copy was restored", ok: source.copy === "offsite" || source.copy === "given", detail: source.copy === "offsite" ? source.dir : source.copy === "given" ? "a backup file was named explicitly" : "the local copy was restored instead" });
-      if (extraChecks.length) result.checks = [...extraChecks, ...result.checks || []];
-      const finished = Date.now();
-      const checks = result.checks || [];
-      for (const c of checks) if (!c.ok) failures.push(`${c.name}${c.detail ? ` \u2014 ${c.detail}` : ""}`);
-      const taken = file ? backupTime(file) : null;
-      const t = targets();
-      const rtoSeconds = restoreStarted && result.ready_at ? Math.round((result.ready_at - restoreStarted) / 100) / 10 : null;
-      const rpoSeconds = taken ? Math.round(((restoreStarted || started) - taken) / 1e3) : null;
-      const exposure = {};
-      if (result.source_counts) for (const tname of ["clients", "notes", "interventions", "referrals", "tasks", "audit_log"]) {
-        try {
-          exposure[tname] = db3.one(`SELECT COUNT(*) n FROM "${tname}"`).n - (result.source_counts[tname] || 0);
-        } catch {
-        }
-      }
-      const report = {
-        kind: "suds-dr-drill",
-        version: 1,
-        signed_by: { algorithm: "Ed25519", key_id: require_signing().publicInfo().key_id },
-        ok: failures.length === 0 && checks.length > 0,
-        started_at: new Date(started).toISOString(),
-        finished_at: new Date(finished).toISOString(),
-        trigger,
-        by,
-        server: { version: config.version, host: (init_os(), __toCommonJS(os_exports)).hostname(), schema_version: db3.LATEST_SCHEMA_VERSION },
-        backup: { file: file ? path.basename(file) : null, copy: source.copy, dir: source.dir, offsite_configured: source.offsite_configured, taken_at: taken ? new Date(taken).toISOString() : null, made_for_drill: madeBackup, decrypted_bytes: restoreBytes, latest_record_at: result.latest_audit_at || null },
-        keys: keyInfo,
-        rto: { seconds: rtoSeconds, target_minutes: t.rto_minutes, met: rtoSeconds === null ? null : rtoSeconds <= t.rto_minutes * 60, measures: "from starting the restore (reading and decrypting the backup) to the restored copy answering /api/health" },
-        rpo: { seconds: rpoSeconds, target_hours: t.rpo_hours, met: rpoSeconds === null ? null : rpoSeconds <= t.rpo_hours * 3600, measures: "age of the newest backup at the time of the drill: what a loss at that moment would have cost" },
-        elapsed_seconds: Math.round((finished - started) / 100) / 10,
-        schema: { restored_from: result.source_schema_version ?? null, now: result.schema_version ?? null },
-        counts: { restored: result.restored_counts || null, live_minus_backup: exposure },
-        audit: { entries_verified: result.audit_entries_verified ?? null, anchors: result.anchors || null },
-        decrypt_sample: result.decrypt_sample || null,
-        checks,
-        adjustments: result.adjustments || [],
-        failures,
-        live_database_untouched: true
-      };
-      const doc = { report, integrity: seal(report) };
-      const files = {};
-      try {
-        const dir = backupsDir();
-        fs.mkdirSync(dir, { recursive: true, mode: 448 });
-        const stamp2 = report.started_at.replace(/[:.]/g, "-");
-        files.json = `dr-drill-${stamp2}.json`;
-        files.text = `dr-drill-${stamp2}.txt`;
-        fs.writeFileSync(path.join(dir, files.json), JSON.stringify(doc, null, 2) + "\n", { mode: 384 });
-        fs.writeFileSync(path.join(dir, files.text), textReport(doc), { mode: 384 });
-      } catch (e) {
-        report.failures.push(`the report could not be written: ${e.message}`);
-      }
-      if (record) {
-        const summary = { at: report.finished_at, ok: report.ok, rto_seconds: rtoSeconds, rpo_seconds: rpoSeconds, rto_target_minutes: t.rto_minutes, rpo_target_hours: t.rpo_hours, backup_file: report.backup.file, backup_copy: source.copy, keys_source: keyInfo.source, backup_taken_at: report.backup.taken_at, report_file: files.json || null, sha256: doc.integrity.sha256, failures: failures.slice(0, 5), checks_passed: checks.filter((c) => c.ok).length, checks_total: checks.length, trigger };
-        db3.setSetting("dr_last_drill", JSON.stringify(summary));
-        audit3.log({ user: typeof by === "object" ? by : { username: String(by) }, action: "dr.drill", success: report.ok, details: { trigger, backup: report.backup.file, copy: source.copy, keys: keyInfo.source, rto_seconds: rtoSeconds, rpo_seconds: rpoSeconds, checks_passed: summary.checks_passed, checks_total: summary.checks_total, report: files.json || null, sha256: doc.integrity.sha256 } });
-      }
-      if (current2 === job) current2 = null;
-      return { ...doc, files };
-    }
-    function fmtDur(s) {
-      if (s === null || s === void 0) return "n/a";
-      if (s < 120) return `${s} s`;
-      if (s < 7200) return `${(s / 60).toFixed(1)} min`;
-      return `${(s / 3600).toFixed(1)} h`;
-    }
-    function textReport({ report: r, integrity }) {
-      const L = [];
-      L.push(`SUDS disaster-recovery drill \u2014 ${r.ok ? "PASSED" : "FAILED"}`);
-      L.push(`Started ${r.started_at}, finished ${r.finished_at} (${r.trigger}, by ${typeof r.by === "object" ? r.by.username : r.by}) on ${r.server.host}, SUDS ${r.server.version}`);
-      L.push("");
-      L.push(`Backup restored: ${r.backup.file || "none"}${r.backup.copy ? ` \u2014 the ${r.backup.copy} copy${r.backup.dir ? ` in ${r.backup.dir}` : ""}` : ""}${r.backup.taken_at ? ` (taken ${r.backup.taken_at})` : ""}${r.backup.made_for_drill ? " \u2014 made for this drill, no earlier backup was on disk" : ""}`);
-      if (r.keys) L.push(`Keys used: ${r.keys.source}${r.keys.file ? ` (${r.keys.file})` : ""}${r.keys.source === "server memory" ? " \u2014 this does not prove the escrowed key backup works; run the drill with the key file (--keys-file)" : ""}`);
-      L.push(`RTO (restore to serving): ${fmtDur(r.rto.seconds)} \u2014 target ${r.rto.target_minutes} min \u2014 ${r.rto.met === null ? "not measured" : r.rto.met ? "met" : "NOT MET"}`);
-      L.push(`RPO (age of that backup): ${fmtDur(r.rpo.seconds)} \u2014 target ${r.rpo.target_hours} h \u2014 ${r.rpo.met === null ? "not measured" : r.rpo.met ? "met" : "NOT MET"}`);
-      L.push("");
-      L.push("Checks:");
-      for (const c of r.checks) L.push(`  [${c.ok ? "PASS" : "FAIL"}] ${c.name}${c.detail ? ` \u2014 ${c.detail}` : ""}`);
-      for (const f of r.failures.filter((f2) => !r.checks.some((c) => f2.startsWith(c.name)))) L.push(`  [FAIL] ${f}`);
-      if (r.adjustments.length) {
-        L.push("");
-        L.push("Changed in the throwaway copy only: " + r.adjustments.join("; "));
-      }
-      if (r.counts.live_minus_backup && Object.keys(r.counts.live_minus_backup).length) {
-        L.push("");
-        L.push("Rows the live server holds beyond this backup: " + Object.entries(r.counts.live_minus_backup).map(([k, v]) => `${k} ${v}`).join(", "));
-      }
-      L.push("");
-      L.push("The backup was restored into a temporary directory, checked by a separate process that was never given the live database's path, and deleted afterwards. The live database received only this result (a settings row and an audit entry).");
-      L.push(`Integrity: SHA-256 ${integrity.sha256}`);
-      L.push(`           HMAC-SHA256 ${integrity.hmac_sha256}`);
-      if (integrity.ed25519_signature) {
-        L.push(`           Ed25519 signature ${integrity.ed25519_signature}`);
-        L.push(`           signing key ${integrity.signing_key_id} (public key published at GET /api/admin/security/signing-key)`);
-        L.push("Verify with the public key only: npm run verify-dr-report -- <the .json report> --public-key <signing-key.pem>");
-      }
-      L.push("The JSON report beside this file is the record of the drill; this text is a convenience copy.");
-      return L.join("\n") + "\n";
-    }
-    function start2(opts) {
-      if (current2) {
-        const e = new Error("A recovery drill is already running");
-        e.code = "EBUSY";
-        throw e;
-      }
-      const p = run2(opts).catch((e) => {
-        console.error("[suds] recovery drill:", e && e.message || e);
-      });
-      return p;
-    }
-    function runIfDue(now = Date.now()) {
-      if (db3.getSetting("dr_drill_monthly", "0") !== "1" || current2) return null;
-      const last = lastDrill();
-      if (last && last.at && now - Date.parse(last.at) < MONTH_MS) return null;
-      return start2({ by: "system", trigger: "monthly" });
-    }
-    module.exports = { run: run2, start: start2, runIfDue, status, lastDrill, latestBackup, backupTime, verifyReport, canonical, seal, textReport, targets, parseKeysFile, sweepStale };
-  }
-});
-
-// server/security-status.js
-var require_security_status = __commonJS({
-  "server/security-status.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var fs = (init_fs(), __toCommonJS(fs_exports));
-    var path = (init_path(), __toCommonJS(path_exports));
-    var config = require_config();
-    var db3 = require_db();
-    var auth3 = require_auth();
-    var ROLES = ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"];
-    var DAY = 864e5;
-    var ageDays = (iso) => iso ? (Date.now() - Date.parse(iso)) / DAY : null;
-    function validateSettings() {
-      const { badRequest } = require_http();
-      const pol = auth3.policy();
-      if (!pol.ssoRequiredSetting) return;
-      if (!config.oidc.enabled) throw badRequest("Single sign-on cannot be required until it is configured (OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_REDIRECT_URI; docs/DEPLOYMENT.md)");
-      if (!pol.ssoEmergencyAccounts.length) throw badRequest("Name at least one emergency (break-glass) administrator account that may still sign in with a password, or an identity-provider outage would lock everyone out");
-      for (const u of pol.ssoEmergencyAccounts) {
-        const row = db3.one(`SELECT role, is_active FROM users WHERE username=?`, u);
-        if (!row) throw badRequest(`Emergency account "${u}" does not exist`);
-        if (row.role !== "admin" || !row.is_active) throw badRequest(`Emergency account "${u}" must be an active administrator`);
-      }
-    }
-    function mfaReport() {
-      const pol = auth3.policy();
-      const users = db3.all(`SELECT id, username, display_name, role, mfa_enabled, created_at, last_login_at, oidc_subject FROM users WHERE is_active=1 ORDER BY display_name`);
-      const without = users.filter((u) => !u.mfa_enabled).map((u) => {
-        const deadline = auth3.mfaDeadline(u);
-        return { id: u.id, username: u.username, display_name: u.display_name, role: u.role, required: pol.mfaRequiredRoles.includes(u.role), deadline, overdue: !!deadline && Date.now() > Date.parse(deadline), sso_linked: !!u.oidc_subject, emergency_account: pol.ssoEmergencyAccounts.includes(String(u.username).toLowerCase()), last_login_at: u.last_login_at };
-      });
-      return { active: users.length, with_mfa: users.length - without.length, coverage_pct: users.length ? Math.round((users.length - without.length) / users.length * 1e3) / 10 : 100, required_roles: pol.mfaRequiredRoles, require_all: pol.mfaRequireAll, grace_days: pol.mfaGraceDays, without };
-    }
-    function lastAudit(action) {
-      return db3.one(`SELECT at, details FROM audit_log WHERE action=? ORDER BY id DESC LIMIT 1`, action) || null;
-    }
-    function settingUpdatedAt(key) {
-      const r = db3.one(`SELECT updated_at FROM settings WHERE key=?`, key);
-      return r ? r.updated_at : null;
-    }
-    function status() {
-      const items = [];
-      const add = (group, name, level, value, detail = "", evidence = "") => items.push({ group, name, level, value, detail, evidence });
-      const pol = auth3.policy();
-      const mfa = mfaReport();
-      const overdue = mfa.without.filter((u) => u.overdue).length;
-      add(
-        "Identity",
-        "Two-step verification coverage",
-        mfa.coverage_pct === 100 ? "ok" : overdue ? "bad" : "warn",
-        `${mfa.coverage_pct}% (${mfa.with_mfa} of ${mfa.active} active accounts)`,
-        mfa.without.length ? `${mfa.without.length} without it${overdue ? `, ${overdue} past their enrolment deadline (locked out of everything but enrolment)` : ""} \u2014 see "Accounts without two-step verification" below.` : "Every active account has enrolled.",
-        "server/auth.js requireAuth, mfaDeadline"
-      );
-      const allRoles = ROLES.every((r) => pol.mfaRequiredRoles.includes(r));
-      add(
-        "Identity",
-        "Two-step verification required for",
-        allRoles ? "ok" : "warn",
-        pol.mfaRequireAll ? 'every role (enforced by the "all roles" switch)' : allRoles ? "every role" : pol.mfaRequiredRoles.join(", ") || "no role",
-        `New accounts have ${pol.mfaGraceDays} day${pol.mfaGraceDays === 1 ? "" : "s"} to enrol, then are blocked until they do.${pol.mfaRequireAll ? "" : ' Turn on "Require two-step verification for every role" in Settings to make this explicit.'}`,
-        "Settings \u2192 Security policy; server/auth.js policy()"
-      );
-      const linked = db3.one(`SELECT COUNT(*) n FROM users WHERE is_active=1 AND oidc_subject IS NOT NULL AND oidc_subject <> ''`).n;
-      add(
-        "Identity",
-        "Single sign-on (OIDC)",
-        config.oidc.enabled ? "ok" : "warn",
-        config.oidc.enabled ? `configured (${config.oidc.issuer.replace(/^https?:\/\//, "")}); ${linked} account${linked === 1 ? "" : "s"} linked` : "not configured",
-        config.oidc.enabled ? "" : "Set OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET and OIDC_REDIRECT_URI to sign in through the county identity provider (docs/DEPLOYMENT.md).",
-        "server/oidc.js, server/routes/oidc.js"
-      );
-      if (config.oidc.enabled || db3.getSetting("sso_trust_idp_mfa", "0") === "1") {
-        const trusted = db3.getSetting("sso_trust_idp_mfa", "0") === "1";
-        const acr = db3.getSetting("sso_mfa_acr_values", "") || "";
-        const since = new Date(Date.now() - 30 * DAY).toISOString();
-        const viaIdp = trusted ? db3.one(`SELECT COUNT(*) n FROM audit_log WHERE action='auth.oidc.login' AND at >= ? AND details LIKE '%"mfa":"idp"%'`, since).n : 0;
-        add(
-          "Identity",
-          "Identity provider's multi-factor sign-in",
-          trusted ? "info" : "ok",
-          trusted ? `trusted in place of SUDS two-step verification (amr mfa or two factor kinds such as pwd+otp${acr ? `, or acr ${acr}` : ""}); ${viaIdp} sign-in${viaIdp === 1 ? "" : "s"} in 30 days` : "not trusted: SSO sign-ins still need the SUDS second factor",
-          trusted ? 'A sign-in the provider does not mark as multi-factor still needs the SUDS code. Every trusted sign-in is audited (auth.oidc.login with mfa "idp"). Make sure the provider enforces MFA for this application (conditional access).' : `Settings \u2192 Security policy \u2192 "Trust the identity provider's multi-factor sign-in" (off by default).`,
-          "server/routes/oidc.js mfaTrust; server/oidc.js idpMfa"
-        );
-      }
-      {
-        const dp = require_deprovision().report();
-        const scimTokens = db3.one(`SELECT COUNT(*) n FROM api_keys WHERE scopes='scim' AND revoked_at IS NULL`).n;
-        add(
-          "Identity",
-          "Deprovisioning",
-          dp.days || scimTokens ? dp.due.length ? "warn" : "ok" : config.oidc.enabled ? "warn" : "info",
-          [scimTokens ? `SCIM provisioning on (${scimTokens} token${scimTokens === 1 ? "" : "s"})` : "no SCIM provisioning", dp.days ? `SSO accounts not seen for ${dp.days} days are disabled` : "accounts not seen at the identity provider are not disabled automatically"].join("; "),
-          `${dp.linked_active} active account${dp.linked_active === 1 ? "" : "s"} linked to the identity provider${dp.due.length ? `, ${dp.due.length} due to be disabled at the next daily run` : ""}${dp.recent.length ? `; ${dp.recent.length} disabled in the last 90 days` : ""}. ${dp.days || scimTokens ? "" : 'Create a SCIM token (Provisioning below) or set "Disable single sign-on accounts not seen for (days)".'}`.trim(),
-          "server/deprovision.js; server/routes/scim.js"
-        );
-      }
-      add(
-        "Identity",
-        "Password sign-in",
-        pol.ssoRequired ? "ok" : pol.ssoRequiredSetting ? "bad" : "info",
-        pol.ssoRequired ? `disabled except for emergency account${pol.ssoEmergencyAccounts.length === 1 ? "" : "s"} ${pol.ssoEmergencyAccounts.join(", ")}` : pol.ssoRequiredSetting ? "SSO is set as required, but OIDC is not configured, so passwords are still accepted" : "allowed for every account",
-        pol.ssoRequired ? "Every emergency sign-in is audited (auth.login with emergency_account) and logged." : 'Settings \u2192 Security policy \u2192 "Require single sign-on" turns password sign-in off for everyone but named break-glass administrators.',
-        "server/auth.js login()"
-      );
-      add("Identity", "Password policy", "info", `${config.password.minLength}+ characters with upper, lower, digit and symbol; expires after ${pol.passwordMaxAgeDays} days; locked for ${config.lockout.minutes} min after ${config.lockout.maxAttempts} failures`, "Hashed with scrypt (N=32768).", "server/auth.js passwordPolicy, server/crypto.js");
-      add("Identity", "Session timeouts", pol.idleMinutes <= 15 ? "ok" : "warn", `signed out after ${pol.idleMinutes} min idle; ${pol.absoluteHours} h maximum`, pol.idleMinutes <= 15 ? "" : "HIPAA automatic logoff: 15 minutes or less is typical.", "Settings \u2192 Security policy; server/auth.js resolveSession");
-      const hours = Number(db3.getSetting("backup_schedule_hours", "0")) || 0;
-      const lastBackup = db3.getSetting("last_scheduled_backup_at", null);
-      const lastStatus = db3.getSetting("last_scheduled_backup_status", "") || "";
-      const stale = hours && (!lastBackup || ageDays(lastBackup) * 24 > 2 * hours);
-      const sb = require_scheduled_backup();
-      const sched = sb.settings();
-      add("Backups and recovery", "Scheduled encrypted backups", !hours ? "bad" : stale || !/^ok/.test(lastStatus) ? "bad" : "ok", hours ? `every ${hours} h; last ${lastBackup || "never"}` : "off", hours ? lastStatus : `${config.isProd ? "This is a production server with nothing backing it up. " : ""}Turn on under Settings \u2192 Scheduled backups (every 4 hours is the production default).`, "server/scheduled-backup.js");
-      const lastSnap = db3.getSetting("last_snapshot_at", null);
-      const snapStatus = db3.getSetting("last_snapshot_status", "") || "";
-      const snapStale = sched.minutes && (!lastSnap || ageDays(lastSnap) * 1440 > 3 * sched.minutes);
-      add(
-        "Backups and recovery",
-        "Frequent online snapshots",
-        !sched.minutes ? "info" : snapStale || /^failed/.test(snapStatus) ? "bad" : "ok",
-        sched.minutes ? `every ${sched.minutes} min to ${sched.offsiteDir ? "the offsite directory" : "the local backups directory"}, newest ${sched.snapshotRetain} kept; last ${lastSnap || "never"}` : "off",
-        sched.minutes ? `${snapStatus}${!sched.offsiteDir ? " Snapshots stay on this disk until an offsite directory is set." : ""}` : "Turn on under Settings \u2192 Scheduled backups to bring the recovery point down to minutes (SQLite online backup; measured cost in docs/security/BACKUP-AND-DR.md).",
-        "server/scheduled-backup.js snapshot"
-      );
-      const rpo = sb.rpo(sched);
-      const rpoTarget = require_dr_drill().targets().rpo_hours;
-      add(
-        "Backups and recovery",
-        "Recovery point objective (worst case)",
-        !rpo ? "bad" : rpo.minutes > rpoTarget * 60 ? "warn" : "ok",
-        rpo ? `${rpo.minutes < 120 ? `${rpo.minutes} min` : `${Math.round(rpo.minutes / 6) / 10} h`} (${rpo.by}); target ${rpoTarget < 2 ? `${Math.round(rpoTarget * 60)} min` : `${rpoTarget} h`}` : "unbounded: nothing is scheduled",
-        rpo ? "A loss just before the next copy runs costs one whole interval. The last recovery drill measures the age of the copy it restored." : "With no schedule, everything since the last manual backup would be lost.",
-        "server/scheduled-backup.js rpo"
-      );
-      const offsite = db3.getSetting("backup_offsite_dir", "") || "";
-      add("Backups and recovery", "Offsite copy", !offsite ? "warn" : /offsite copy failed/.test(lastStatus) ? "bad" : "ok", offsite ? offsite : "not configured", offsite ? /offsite copy failed/.test(lastStatus) ? lastStatus : "Each scheduled backup is copied here after it is verified." : "Set an offsite directory (a mounted share on another host or site).", "server/scheduled-backup.js");
-      const drill = require_dr_drill().lastDrill();
-      const drillAge = drill ? ageDays(drill.at) : null;
-      add(
-        "Backups and recovery",
-        "Last recovery drill",
-        !drill ? "bad" : !drill.ok ? "bad" : drillAge > 95 ? "warn" : "ok",
-        drill ? `${drill.ok ? "passed" : "FAILED"} ${drill.at.slice(0, 10)} \u2014 RTO ${drill.rto_seconds ?? "?"} s (target ${drill.rto_target_minutes} min), RPO ${drill.rpo_seconds != null ? Math.round(drill.rpo_seconds / 360) / 10 + " h" : "?"} (target ${drill.rpo_target_hours} h)` : "never run",
-        drill ? drill.ok ? `${drill.checks_passed}/${drill.checks_total} checks; restored the ${drill.backup_copy || "local"} copy with keys from ${drill.keys_source || "server memory"}; report ${drill.report_file || "(not written)"}.${drill.keys_source && drill.keys_source !== "server memory" ? "" : " Run one with the escrowed key file to prove it opens the backups."}` : (drill.failures || []).join("; ") : "Run one from System & backups, or npm run dr-drill.",
-        "server/dr-drill.js; report in <data>/backups/dr-drill-*.json"
-      );
-      add("Backups and recovery", "Monthly recovery drill", db3.getSetting("dr_drill_monthly", "0") === "1" ? "ok" : "info", db3.getSetting("dr_drill_monthly", "0") === "1" ? "on" : "off", "Settings \u2192 Scheduled backups.", "server/dr-drill.js runIfDue");
-      add("Backups and recovery", "Backup encryption key", config.backupKey ? "ok" : "info", config.backupKey ? "separate SUDS_BACKUP_KEY" : "derived from the PHI encryption key", config.backupKey ? "" : "Setting SUDS_BACKUP_KEY lets the PHI key rotate without re-keying the backup set.", "server/backup.js");
-      const verifiedAt = db3.getSetting("audit_verified_at", null);
-      const fullAt = db3.getSetting("audit_full_verified_at", null);
-      const failedAt = db3.getSetting("audit_verify_failed_at", null);
-      add(
-        "Audit",
-        "Audit chain verification",
-        failedAt ? "bad" : !verifiedAt || ageDays(verifiedAt) > 2 ? "warn" : "ok",
-        failedAt ? `FAILED ${failedAt}` : verifiedAt ? `verified ${verifiedAt}${fullAt ? `; last full walk ${fullAt}` : ""}` : "not yet verified",
-        "Hash chain keyed with the index key; verified daily (incremental) and weekly (full).",
-        "server/audit.js scheduledVerify"
-      );
-      const ad = require_audit_anchor().dirStatus();
-      const anchors = require_audit_anchor().list().length;
-      const lastAnchor = db3.getSetting("audit_anchor_last_at", null);
-      const anchorWrite = db3.getSetting("audit_anchor_last_status", "") || "";
-      const anchorVerify = db3.getSetting("audit_anchor_verify_status", "") || "";
-      const placement = require_audit_anchor().placementProblem();
-      add(
-        "Audit",
-        "Audit anchors outside the database",
-        /^failed/.test(anchorWrite) || /^FAILED/.test(anchorVerify) || placement ? "bad" : !ad.configured || ad.inside_data_dir ? "warn" : !anchors ? "warn" : "ok",
-        `${anchors} anchor${anchors === 1 ? "" : "s"} in ${ad.dir}${lastAnchor ? `; last ${lastAnchor}` : ""}${config.auditAnchorHours > 0 ? `; every ${config.auditAnchorHours} h and at each backup` : "; at each backup only"}`,
-        [placement || "", anchorVerify ? `Last check: ${anchorVerify}.` : "Not yet checked (runs with the daily audit verification).", /^failed/.test(anchorWrite) ? `Last write ${anchorWrite}.` : "", placement ? "" : !ad.configured || ad.inside_data_dir ? "Set AUDIT_ANCHOR_DIR to write-once storage outside the data directory (WORM/immutable share) so a rewrite of the whole data directory is also caught." : "", config.auditSyslog ? `Also sent to syslog ${config.auditSyslog}.` : ""].filter(Boolean).join(" "),
-        "server/audit-anchor.js"
-      );
-      {
-        const min = config.AUDIT_RETENTION_MIN_DAYS || 2190;
-        const low = config.auditRetentionDaysConfigured != null && config.auditRetentionDaysConfigured < min;
-        const p = lastAudit("audit.purge");
-        add(
-          "Audit",
-          "Audit retention",
-          low || config.auditRetentionDays < min ? "bad" : "ok",
-          `${Math.round(config.auditRetentionDays / 365 * 10) / 10} years (${config.auditRetentionDays} days)`,
-          [low ? `AUDIT_RETENTION_DAYS=${config.auditRetentionDaysConfigured} is below the six-year minimum (${min} days, 45 CFR \xA7164.316(b)(2)); SUDS keeps ${config.auditRetentionDays} days instead. Raise or remove the setting.` : "", p ? `Last purge ${p.at}.` : "No audit entries old enough to purge yet."].filter(Boolean).join(" "),
-          "AUDIT_RETENTION_DAYS (minimum 2190); server/config.js; server/audit.js purge"
-        );
-      }
-      const keyAt = settingUpdatedAt("key_fingerprint");
-      const rotated = lastAudit("security.key_rotated");
-      const idxRotated = lastAudit("security.index_key_rotated");
-      const keyAge = ageDays(rotated ? rotated.at : keyAt);
-      add(
-        "Encryption and keys",
-        "PHI encryption key",
-        keyAge !== null && keyAge > 400 ? "warn" : "ok",
-        `AES-256-GCM; keys from ${config.keySource === "env" ? "the environment / secrets manager" : config.keySource === "file" ? "data/keys.json (0600)" : "development key files in the data directory"}`,
-        `${rotated ? `Last rotated ${rotated.at}` : `In use since ${keyAt || "unknown"}`}${keyAge !== null ? ` (${Math.round(keyAge)} days)` : ""}. Rotate annually: npm run rotate-key.`,
-        "server/crypto.js; scripts/rotate-key.js"
-      );
-      try {
-        const sk = require_signing().publicInfo();
-        add(
-          "Encryption and keys",
-          "Evidence signing key (Ed25519)",
-          "ok",
-          `key id ${sk.key_id}; private key in ${config.signingKeySource === "env" ? "the environment (SUDS_SIGNING_KEY)" : config.signingKeySource === "file" ? "data/keys.json" : config.signingKeySource === "devfile" ? "a development key file in the data directory" : "the test configuration"}, never in the database`,
-          "Signs recovery-drill reports and audit-export manifests; anyone with the public key (GET /api/admin/security/signing-key) can verify them: npm run verify-dr-report, npm run verify-audit-export -- --public-key.",
-          "server/signing.js"
-        );
-      } catch (e) {
-        add("Encryption and keys", "Evidence signing key (Ed25519)", "bad", "unavailable", String(e.message || e), "server/signing.js");
-      }
-      add("Encryption and keys", "Index key (blind indexes, audit chain)", "info", idxRotated ? `last rotated ${idxRotated.at}` : "not rotated since install", "npm run rotate-index-key re-derives the indexes and re-signs the audit chain.", "scripts/rotate-index-key.js");
-      if (config.keySource === "file") {
-        const kb = db3.getSetting("keys_backup_at", null);
-        add("Encryption and keys", "Key backup", kb ? "ok" : "bad", kb ? `downloaded ${kb}` : "never downloaded", "Keep it apart from the database backups (a password manager or safe).", "Settings \u2192 System & backups");
-      }
-      const years = (() => {
-        const v = Number(db3.getSetting("client_retention_years", ""));
-        return Number.isFinite(v) && v > 0 ? v : config.clientRetentionYears;
-      })();
-      const ran = db3.getSetting("client_retention_ran_at", null);
-      add("Data lifecycle", "Client record retention", "info", `${years} years after last activity, then deleted from every table (legal hold exempts)`, ran ? `Retention job last ran ${ran}.` : "The retention job has not run yet.", "server/retention.js");
-      const tls = config.tls.cert ? `served by SUDS (${config.tls.mode === "selfsigned" ? "self-signed certificate" : "certificate from TLS_CERT_PATH"})` : config.trustProxy ? "terminated by a reverse proxy (TRUST_PROXY)" : "not configured";
-      let certNote = "";
-      try {
-        const crt = config.tls.cert || path.join(config.dataDir, "certs", "suds.crt");
-        if (fs.existsSync(crt)) certNote = `Certificate valid until ${new (init_crypto2(), __toCommonJS(crypto_exports)).X509Certificate(fs.readFileSync(crt)).validTo}.`;
-      } catch {
-      }
-      add("Platform", "HTTPS", config.tls.cert || config.trustProxy ? "ok" : config.isProd ? "bad" : "warn", tls, certNote || (config.tls.cert || config.trustProxy ? "" : "Enable HTTPS under Network & devices, or run behind a TLS proxy."), "server/listener.js; Caddyfile");
-      add("Platform", "Local mode (offline copies on devices)", config.localModeEnabled ? "warn" : "ok", config.localModeEnabled ? "on" : "off", config.localModeEnabled ? `Records are copied to devices${pol.ssoRequired ? "; with SSO required only emergency accounts can sync a device" : ""}. Only for a documented field-work need (docs/PLATFORM.md).` : "The office server is the only copy.", "LOCAL_MODE_ENABLED / server.json");
-      add("Platform", "Version", "info", `SUDS ${config.version}, schema ${db3.getSetting("schema_version", "?")}, Node ${proc.versions.node}`, config.updateFeedUrl ? "Update checks are configured (System & backups \u2192 Check for updates)." : "UPDATE_FEED_URL is not set, so this server cannot check for updates itself.", "package.json; server/update.js");
-      const ixp = db3.indexProblems();
-      add(
-        "Platform",
-        "Database indexes",
-        ixp.length ? "bad" : "ok",
-        ixp.length ? `${ixp.length} missing: ${ixp.map((x) => x.index).join(", ")}` : "every index in schema.sql is present",
-        ixp.length ? `Could not be created at startup: ${ixp.map((x) => `${x.index} (${x.error})`).join("; ")}. A missing UNIQUE index usually means duplicate rows it would have prevented; resolve them, then restart.` : "Checked at every start.",
-        "server/db.js ensureIndexes"
-      );
-      add("Platform", "Monitoring", config.metricsToken || config.logFormat === "json" ? "ok" : "info", [config.metricsToken ? "Prometheus metrics on" : "metrics off", `logs ${config.logFormat}`].join("; "), "/api/health answers 503 on a failed audit check, stale backups or an expiring certificate.", "server/metrics.js, server/log.js, server/routes/app.js");
-      const counts = { ok: 0, warn: 0, bad: 0, info: 0 };
-      for (const i of items) counts[i.level]++;
-      return { generated_at: db3.now(), version: config.version, counts, items, mfa, attestation: "SUDS holds no SOC 2, ISO 27001, HITRUST, StateRAMP or FedRAMP attestation. This page reports the technical controls in this installation; independent attestation requires an auditor (docs/security/SOC2-READINESS.md)." };
-    }
-    module.exports = { status, mfaReport, validateSettings };
-  }
-});
-
 // server/update.js
 var require_update = __commonJS({
   "server/update.js"(exports, module) {
@@ -16190,7 +14056,7 @@ var require_admin = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var config = require_config();
     var { badRequest, notFound, forbidden, HttpError: HttpError3 } = require_http();
@@ -16213,6 +14079,8 @@ var require_admin = __commonJS({
       "backup_offsite_dir",
       "client_retention_years",
       "org_timezone",
+      // Minutes after proving identity during which a note is signed with a confirmation alone (auth.verifySigner).
+      "sign_reauth_minutes",
       // Identity and recovery controls (server/security-status.js validates them together).
       "mfa_require_all",
       "sso_required",
@@ -16263,6 +14131,7 @@ var require_admin = __commonJS({
             if (["mfa_require_all", "sso_required", "dr_drill_monthly"].includes(k) && v !== "" && !["0", "1"].includes(v)) throw badRequest(`${k} must be 1 (on) or 0 (off)`);
             if (["dr_rto_target_minutes", "dr_rpo_target_hours"].includes(k) && v !== "" && !(Number(v) > 0)) throw badRequest(`${k} must be a positive number`);
             if (k === "mfa_required_roles") v = v.split(",").map((x) => x.trim()).filter((x) => ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"].includes(x)).join(",");
+            if (k === "sign_reauth_minutes" && v !== "" && !(Number.isInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 60)) throw badRequest("sign_reauth_minutes must be a whole number of minutes from 0 (always ask) to 60");
             if (k === "session_idle_minutes" && v !== "" && Number(v) > 60) throw badRequest("Idle timeout may not exceed 60 minutes (HIPAA automatic logoff)");
             if (k === "backup_schedule_minutes" && v !== "" && !(Number.isInteger(Number(v)) && (Number(v) === 0 || Number(v) >= 5 && Number(v) <= 1440))) throw badRequest("backup_schedule_minutes must be 0 (off) or a whole number of minutes from 5 to 1440");
             if (k === "backup_snapshot_retain" && v !== "" && !(Number.isInteger(Number(v)) && Number(v) >= 1 && Number(v) <= 1e3)) throw badRequest("backup_snapshot_retain must be a whole number from 1 to 1000");
@@ -16562,7 +14431,7 @@ var require_app = __commonJS({
     var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
     var db3 = require_db();
     var config = require_config();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var listener = (init_listener(), __toCommonJS(listener_exports));
     var { notFound, unauthorized } = require_http();
     function certFingerprint() {
@@ -16672,7 +14541,7 @@ var require_exports = __commonJS({
     init_globals_inject();
     var { randomBytes: randomBytes3 } = (init_crypto2(), __toCommonJS(crypto_exports));
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var C = require_constants();
     var M = require_clients_model();
     var { decrypt: decrypt3 } = require_crypto();
@@ -17344,7 +15213,7 @@ var require_assessments = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var C = require_constants();
     var CL = require_clinical();
@@ -17819,7 +15688,7 @@ var require_assignments = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var { badRequest, notFound } = require_http();
     var { validate } = require_validate();
@@ -17863,12 +15732,12 @@ var require_assignments = __commonJS({
 });
 
 // server/routes/auth.js
-var require_auth2 = __commonJS({
+var require_auth = __commonJS({
   "server/routes/auth.js"(exports, module) {
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var { rateLimit, rateLimited } = require_app2();
     var { HttpError: HttpError3, badRequest, unauthorized } = require_http();
@@ -17948,6 +15817,10 @@ var require_auth2 = __commonJS({
         const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
         return { user: auth3.publicUser(u), mfaPending: !!ctx.session.mfa_pending, org_name: db3.getSetting("org_name", "SUDS"), idle_minutes: auth3.policy().idleMinutes, setup_needed: false };
       });
+      r.get("/api/auth/reauth", (ctx) => {
+        auth3.requireAuth(ctx);
+        return auth3.reauthStatus(ctx);
+      });
       r.post("/api/auth/password", async (ctx) => {
         auth3.requireAuth(ctx);
         const { current_password, new_password } = validate(ctx.body, { current_password: { type: "string", required: true, maxLen: 500 }, new_password: { type: "string", required: true, maxLen: 500 } });
@@ -18011,7 +15884,7 @@ var require_client_name = __commonJS({
   "server/client-name.js"(exports, module) {
     "use strict";
     init_globals_inject();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var M = require_clients_model();
     var SELECT = "c.first_name_enc AS c_first_name_enc, c.last_name_enc AS c_last_name_enc";
     function withClientName(ctx, x) {
@@ -19006,7 +16879,7 @@ var require_caloms2 = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var C = require_caloms();
     var S = require_caloms_spec();
@@ -19228,7 +17101,7 @@ var require_careplan = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var CL = require_clinical();
     var { badRequest, notFound, forbidden } = require_http();
@@ -19656,7 +17529,7 @@ var require_client_errors = __commonJS({
   "server/routes/client-errors.js"(exports, module) {
     "use strict";
     init_globals_inject();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var { HttpError: HttpError3 } = require_http();
     var PER_MINUTE = 10;
     var clean2 = (v, max2) => String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\d{5,}/g, (m) => "#".repeat(Math.min(m.length, 8))).slice(0, max2);
@@ -19730,10 +17603,10 @@ var require_consents = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var C = require_constants();
-    var { badRequest, notFound } = require_http();
+    var { badRequest, notFound, forbidden } = require_http();
     var { validate } = require_validate();
     var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
     var disclosure = require_disclosure();
@@ -19797,8 +17670,28 @@ var require_consents = __commonJS({
         const disclosures = db3.all(`SELECT d.*, u.display_name AS disclosed_by_name FROM disclosures d JOIN users u ON u.id=d.disclosed_by WHERE client_id=? ORDER BY disclosed_at DESC`, ctx.params.id).map(disclosure.present);
         const orders = auth3.hasPerm(ctx.user, "court-orders:read") ? db3.all(`SELECT * FROM court_orders WHERE client_id=? ORDER BY issued_at DESC`, ctx.params.id).map(presentOrder) : null;
         const notices = db3.all(`SELECT n.*, u.display_name AS given_by_name FROM part2_notices n JOIN users u ON u.id=n.given_by WHERE n.client_id=? ORDER BY n.given_at DESC`, ctx.params.id).map((n) => ({ ...n, notes: n.notes_enc ? decrypt3(n.notes_enc) : null, notes_enc: void 0 }));
+        let suggested;
+        const resourceId = ctx.query.get("resource_id");
+        if (resourceId) {
+          const res = db3.one(`SELECT name, organization FROM resources WHERE id=?`, resourceId);
+          const names = res ? disclosure.recipientNames([res.name, res.organization].filter(Boolean)) : [];
+          for (const c of consents) c.names_resource = !!names.length && disclosure.consentNamesRecipient(c, names);
+          const live = consents.filter((c) => c.names_resource && c.can_disclose);
+          suggested = live.length === 1 ? live[0].id : null;
+        }
         audit3.log({ user: ctx.user, action: "consent.list", entity: "client", entityId: ctx.params.id, clientId: ctx.params.id, ip: ctx.ip, details: { consents: consents.length, disclosures: disclosures.length, court_orders: orders ? orders.length : void 0, notices: notices.length } });
-        return { consents, disclosures, court_orders: orders, notices, restrictions: disclosure.agreedRestrictions(ctx.params.id), part2_program: disclosure.part2Program(), notice: disclosure.notice() };
+        return { consents, disclosures, court_orders: orders, notices, restrictions: disclosure.agreedRestrictions(ctx.params.id), part2_program: disclosure.part2Program(), notice: disclosure.notice(), suggested_consent_id: suggested };
+      });
+      r.post("/api/clients/:id/consents/duplicates", auth3.requireAuth, auth3.requirePerm("consents:write"), (ctx) => {
+        if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id)) throw notFound();
+        auth3.assertClientAccess(ctx, ctx.params.id);
+        const v = validate(ctx.body, { type: { type: "string", required: true, enum: C.CONSENT_TYPES }, recipient: { type: "string", maxLen: 300 }, signed_at: { type: "date" }, expires_at: { type: "date" } });
+        const from = v.signed_at || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        const to = v.expires_at || "9999-12-31";
+        const want = disclosure.normalise(v.recipient);
+        const duplicates = db3.all(`SELECT c.*, u.display_name AS created_by_name FROM consents c JOIN users u ON u.id=c.created_by WHERE c.client_id=? AND c.type=? AND c.revoked_at IS NULL ORDER BY c.signed_at DESC`, ctx.params.id, v.type).map(presentConsent).filter((c) => c.active && disclosure.normalise(c.recipient) === want && c.signed_at <= to && (!c.expires_at || c.expires_at >= from));
+        audit3.log({ user: ctx.user, action: "consent.duplicate_check", entity: "client", entityId: ctx.params.id, clientId: ctx.params.id, ip: ctx.ip, details: { type: v.type, duplicates: duplicates.length } });
+        return { duplicates };
       });
       r.post("/api/clients/:id/consents", auth3.requireAuth, auth3.requirePerm("consents:write"), (ctx) => {
         if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id)) throw notFound();
@@ -19863,6 +17756,33 @@ var require_consents = __commonJS({
         audit3.log({ user: ctx.user, action: "consent.create", entity: "consent", entityId: id, clientId: ctx.params.id, ip: ctx.ip, details: { type: v.type, rule_version: part2 ? "2024" : void 0, info_categories: infoCategories || void 0 } });
         ctx.status = 201;
         return { id };
+      });
+      const TEMPLATE_SHAPE = {
+        type: { type: "string", required: true, enum: C.CONSENT_TYPES },
+        recipient: { type: "string", maxLen: 300 },
+        purpose: { type: "string", maxLen: 500 },
+        scope: { type: "string", maxLen: 1e3 },
+        expires_event: { type: "string", maxLen: 200 },
+        expires_days: { type: "number", integer: true, min: 1, max: 3660 }
+      };
+      const readTemplate = () => {
+        try {
+          return JSON.parse(db3.getSetting("consent_template", "null"));
+        } catch {
+          return null;
+        }
+      };
+      r.get("/api/consent-template", auth3.requireAuth, auth3.requirePerm("consents:read", "consents:write"), () => ({ template: readTemplate() }));
+      r.put("/api/consent-template", auth3.requireAuth, auth3.requirePerm("consents:write"), (ctx) => {
+        if (!auth3.hasPerm(ctx.user, "disclosures:override")) throw forbidden("A supervisor or administrator sets the programme's usual consent");
+        const v = validate(ctx.body, TEMPLATE_SHAPE);
+        const rawCats = ctx.body.info_categories;
+        const cats = [...new Set((Array.isArray(rawCats) ? rawCats : []).map(String))];
+        if (cats.some((x) => !C.CONSENT_INFO_CATEGORIES.includes(x))) throw badRequest("Validation failed", { fields: { info_categories: `choose from ${C.CONSENT_INFO_CATEGORIES.join(", ")}` } });
+        const template = { type: v.type, recipient: v.recipient || null, purpose: v.purpose || null, scope: v.scope || null, expires_event: v.expires_event || null, expires_days: v.expires_days || null, info_categories: cats, saved_by: ctx.user.display_name, saved_at: db3.now() };
+        db3.setSetting("consent_template", JSON.stringify(template));
+        audit3.log({ user: ctx.user, action: "consent.template.save", ip: ctx.ip, details: { type: v.type } });
+        return { ok: true, template };
       });
       r.post("/api/consents/:id/revoke", auth3.requireAuth, auth3.requirePerm("consents:write"), (ctx) => {
         const c = db3.one(`SELECT * FROM consents WHERE id=?`, ctx.params.id);
@@ -19991,7 +17911,7 @@ var require_part2 = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var C = require_constants();
     var disclosure = require_disclosure();
@@ -20297,7 +18217,7 @@ var require_clients = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var { badRequest, notFound, forbidden, conflict, HttpError: HttpError3 } = require_http();
     var { validate, paging } = require_validate();
@@ -20759,7 +18679,7 @@ var require_compliance = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var crud = require_crud();
     var incidents = require_incidents();
@@ -21224,7 +19144,7 @@ var require_dataimport2 = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var S = require_spreadsheet();
     var DI = require_dataimport();
@@ -21561,7 +19481,7 @@ var require_documents = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var C = require_constants();
     var { badRequest, notFound, contentDisposition } = require_http();
@@ -21717,7 +19637,7 @@ var require_episodes = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var C = require_constants();
     var { badRequest, notFound, forbidden } = require_http();
@@ -23634,7 +21554,7 @@ var require_fhir = __commonJS({
   "server/routes/fhir.js"(exports, module) {
     "use strict";
     init_globals_inject();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var config = require_config();
     var disclosure = require_disclosure();
@@ -24159,7 +22079,7 @@ var require_forms = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var C = require_constants();
     var { badRequest, notFound, contentDisposition } = require_http();
@@ -24545,7 +22465,7 @@ var require_reports = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var { sendJson, badRequest } = require_http();
     var M = require_clients_model();
@@ -24933,7 +22853,7 @@ var require_handoff = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var { badRequest } = require_http();
     var { decrypt: decrypt3 } = require_crypto();
@@ -25307,7 +23227,7 @@ var require_imports = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var config = require_config();
     var { badRequest, notFound, forbidden, HttpError: HttpError3 } = require_http();
@@ -25588,7 +23508,7 @@ var require_supplies = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var { badRequest, notFound } = require_http();
     var { validate } = require_validate();
@@ -25665,7 +23585,7 @@ var require_interventions = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var crud = require_crud();
     var C = require_constants();
     var O = require_options();
@@ -25891,7 +23811,7 @@ var require_tasks = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var crud = require_crud();
     var { encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
     var audit3 = require_audit();
@@ -26003,7 +23923,7 @@ var require_me = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var { badRequest } = require_http();
     var M = require_clients_model();
     var MAX_PREF_BYTES = 8e3;
@@ -26069,7 +23989,7 @@ var require_notes = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var C = require_constants();
     var { badRequest, notFound, forbidden } = require_http();
@@ -26123,14 +24043,9 @@ var require_notes = __commonJS({
     function checkCounseling(kind, counseling) {
       if (counseling && kind !== "clinical") throw badRequest("Only a clinical note can be a SUD counseling note");
     }
-    async function verifyIdentity(ctx) {
-      const { password } = validate(ctx.body, { password: { type: "string", required: true, maxLen: 500 } }, { partial: true });
-      if (!password) throw badRequest("Your password is required to sign");
-      const u = db3.one(`SELECT password_hash FROM users WHERE id=?`, ctx.user.id);
-      if (!await require_crypto().verifyPasswordAsync(password, u.password_hash)) {
-        audit3.log({ user: ctx.user, action: "note.sign.failed", ip: ctx.ip, success: false });
-        throw forbidden("Password verification failed");
-      }
+    function verifyIdentity(ctx) {
+      const body = validate(ctx.body || {}, { password: { type: "string", maxLen: 500 }, code: { type: "string", maxLen: 10 }, confirm: { type: "boolean" } }, { partial: true });
+      return auth3.verifySigner(ctx, body);
     }
     var BREAK_GLASS_MIN = 15;
     function breakGlassReason(ctx) {
@@ -26347,24 +24262,61 @@ var require_notes = __commonJS({
         if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
         if (n.status !== "draft") throw badRequest("Note is already signed");
         if (n.author_id !== ctx.user.id) throw forbidden("Only the author can sign a note. Supervisors countersign instead.");
-        await verifyIdentity(ctx);
+        const identity = await verifyIdentity(ctx);
         const hash2 = sha2562(`${n.id}|${ctx.user.id}|${n.content_enc}|${n.structured_enc || ""}`);
         db3.run(`UPDATE notes SET status='signed', signed_at=?, signed_by=?, signature_hash=?, updated_at=? WHERE id=?`, db3.now(), ctx.user.id, hash2, db3.now(), n.id);
-        audit3.log({ user: ctx.user, action: "note.sign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { hash: hash2, cosign_required: !!n.cosign_required } });
+        audit3.log({ user: ctx.user, action: "note.sign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { hash: hash2, cosign_required: !!n.cosign_required, identity } });
         return { ok: true, signature_hash: hash2, awaiting_cosign: !!n.cosign_required };
       });
-      r.post("/api/notes/:id/cosign", auth3.requireAuth, auth3.requirePerm("notes:cosign"), async (ctx) => {
-        const n = load(ctx, ctx.params.id);
-        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "read")) && !auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden(`You cannot read ${n.kind} notes`);
-        if (n.status === "draft") throw badRequest("The author has not signed this note yet");
-        if (n.author_id === ctx.user.id) throw badRequest("A note cannot be countersigned by its own author");
-        if (n.cosigned_at) throw badRequest("This note has already been countersigned");
-        const { note } = validate(ctx.body, { password: { type: "string", required: true, maxLen: 500 }, note: { type: "string", maxLen: 1e3 } });
-        await verifyIdentity(ctx);
+      function cosignRefusal(ctx, n) {
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "read")) && !auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) return `You cannot read ${n.kind} notes`;
+        if (n.status === "draft") return "The author has not signed this note yet";
+        if (n.author_id === ctx.user.id) return "A note cannot be countersigned by its own author";
+        if (n.cosigned_at) return "This note has already been countersigned";
+        return null;
+      }
+      function applyCosign(ctx, n, note, identity, batch) {
         const hash2 = sha2562(`${n.id}|${ctx.user.id}|cosign|${n.content_enc}|${n.structured_enc || ""}`);
         db3.run(`UPDATE notes SET cosigned_by=?, cosigned_at=?, cosignature_hash=?, cosign_note_enc=?, updated_at=? WHERE id=?`, ctx.user.id, db3.now(), hash2, note ? encrypt3(note) : null, db3.now(), n.id);
-        audit3.log({ user: ctx.user, action: "note.cosign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { author_id: n.author_id, hash: hash2, note_recorded: note ? true : void 0 } });
-        return { ok: true, cosignature_hash: hash2 };
+        audit3.log({ user: ctx.user, action: "note.cosign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { author_id: n.author_id, hash: hash2, note_recorded: note ? true : void 0, identity, batch: batch || void 0 } });
+        return hash2;
+      }
+      r.post("/api/notes/:id/cosign", auth3.requireAuth, auth3.requirePerm("notes:cosign"), async (ctx) => {
+        const n = load(ctx, ctx.params.id);
+        const why = cosignRefusal(ctx, n);
+        if (why) {
+          if (/cannot read/.test(why)) throw forbidden(why);
+          throw badRequest(why);
+        }
+        const { note } = validate(ctx.body, { password: { type: "string", maxLen: 500 }, code: { type: "string", maxLen: 10 }, confirm: { type: "boolean" }, note: { type: "string", maxLen: 1e3 } });
+        const identity = await verifyIdentity(ctx);
+        return { ok: true, cosignature_hash: applyCosign(ctx, n, note, identity, false) };
+      });
+      r.post("/api/notes/cosign-batch", auth3.requireAuth, auth3.requirePerm("notes:cosign"), async (ctx) => {
+        const v = validate(ctx.body, { ids: { type: "array", required: true, maxLen: 100, of: "string" }, password: { type: "string", maxLen: 500 }, code: { type: "string", maxLen: 10 }, confirm: { type: "boolean" }, note: { type: "string", maxLen: 1e3 } });
+        if (!v.ids.length) throw badRequest("Choose at least one note to countersign");
+        const identity = await verifyIdentity(ctx);
+        const cosigned = [];
+        const skipped = [];
+        for (const id of [...new Set(v.ids)]) {
+          const n = db3.one(`SELECT * FROM notes WHERE id=? AND deleted_at IS NULL`, id);
+          if (!n) {
+            skipped.push({ id, reason: "Note not found" });
+            continue;
+          }
+          if (!auth3.canAccessClient(ctx.user, n.client_id)) {
+            skipped.push({ id, reason: "This client is not on your caseload" });
+            continue;
+          }
+          const why = cosignRefusal(ctx, n);
+          if (why) {
+            skipped.push({ id, reason: why });
+            continue;
+          }
+          applyCosign(ctx, n, v.note, identity, true);
+          cosigned.push(id);
+        }
+        return { ok: true, cosigned, skipped };
       });
       r.post("/api/notes/:id/addenda", auth3.requireAuth, (ctx) => {
         const n = load(ctx, ctx.params.id);
@@ -26601,7 +24553,7 @@ var require_oidc2 = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var config = require_config();
     var oidc = require_oidc();
@@ -26686,7 +24638,7 @@ var require_options2 = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var config = require_config();
     var O = require_options();
@@ -26818,7 +24770,7 @@ var require_overdose = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var crud = require_crud();
     var { decrypt: decrypt3, encrypt: encrypt3 } = require_crypto();
@@ -26972,7 +24924,7 @@ var require_patient_requests = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var crud = require_crud();
     var { encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
     var KINDS = ["access", "amendment", "restriction", "accounting"];
@@ -27255,10 +25207,10 @@ var require_referrals = __commonJS({
         },
         canEdit: crud.ownerOrManager()
       });
-      r.post("/api/referrals/:id/outcome", require_auth().requireAuth, require_auth().requirePerm("referrals:write"), (ctx) => {
+      r.post("/api/referrals/:id/outcome", require_auth2().requireAuth, require_auth2().requirePerm("referrals:write"), (ctx) => {
         const row = db3.one(`SELECT * FROM referrals WHERE id=?`, ctx.params.id);
         if (!row) throw require_http().notFound("Referral not found");
-        require_auth().assertClientAccess(ctx, row.client_id);
+        require_auth2().assertClientAccess(ctx, row.client_id);
         const { validate } = require_validate();
         const v = validate(ctx.body, {
           status: { type: "string", required: true, list: "REFERRAL_STATUSES" },
@@ -30886,7 +28838,7 @@ var require_regions2 = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var region = require_region();
     var { badRequest, notFound } = require_http();
@@ -30936,7 +28888,7 @@ var require_resources2 = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var { notFound } = require_http();
     var { validate, paging } = require_validate();
@@ -31184,7 +29136,7 @@ var require_scim2 = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var scim = require_scim();
     var { rateLimit } = require_app2();
@@ -31458,7 +29410,7 @@ var require_security = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var config = require_config();
     var { badRequest, HttpError: HttpError3 } = require_http();
@@ -31610,7 +29562,7 @@ var require_setup = __commonJS({
     var db3 = require_db();
     var config = require_config();
     var audit3 = require_audit();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var listener = (init_listener(), __toCommonJS(listener_exports));
     var { badRequest, HttpError: HttpError3 } = require_http();
     var { validate } = require_validate();
@@ -31717,7 +29669,7 @@ var require_supervision = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var { badRequest, notFound, forbidden } = require_http();
     var { validate } = require_validate();
@@ -31732,6 +29684,15 @@ var require_supervision = __commonJS({
       if (!ids.length) return { sql: "1=0", params: [] };
       return { sql: `${col} IN (${ids.map(() => "?").join(",")})`, params: ids };
     }
+    var { withClientName, SELECT: NAME_COLS } = require_client_name();
+    function named(ctx, rows) {
+      return rows.map((x) => {
+        const mayOpen = x.client_id && auth3.canAccessClient(ctx.user, x.client_id);
+        const out2 = withClientName(ctx, mayOpen ? x : { ...x, c_first_name_enc: null, c_last_name_enc: null });
+        return out2;
+      });
+    }
+    var AWAITING_OUTCOME = ["contacted", "accepted", "waitlisted", "scheduled"];
     module.exports = (r) => {
       r.get("/api/supervision/queue", auth3.requireAuth, auth3.requirePerm("notes:cosign", "time:approve", "assignments:manage"), (ctx) => {
         const sf = staffFilter(ctx.user, "n.author_id");
@@ -31740,28 +29701,28 @@ var require_supervision = __commonJS({
         const staleBefore = new Date(Date.now() - lockDays * 864e5).toISOString();
         const out2 = {};
         if (auth3.hasPerm(ctx.user, "notes:cosign")) {
-          out2.awaiting_cosignature = db3.all(`SELECT n.id, n.client_id, n.kind, n.occurred_at, n.signed_at, n.title_enc, n.cosign_requested, u.display_name AS author, c.client_code
+          out2.awaiting_cosignature = named(ctx, db3.all(`SELECT n.id, n.client_id, n.kind, n.occurred_at, n.signed_at, n.title_enc, n.cosign_requested, u.display_name AS author, c.client_code, ${NAME_COLS}
         FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id
         WHERE n.deleted_at IS NULL AND n.status<>'draft' AND n.cosigned_at IS NULL AND n.author_id<>? AND ((n.cosign_required=1 AND ${sf.sql}) OR n.cosign_requested=1)
-        ORDER BY n.signed_at LIMIT 100`, ctx.user.id, ...sf.params).map((x) => ({ ...x, title: x.title_enc ? decrypt3(x.title_enc) : null, title_enc: void 0 }));
-          out2.unsigned_notes = db3.all(`SELECT n.id, n.client_id, n.kind, n.occurred_at, n.created_at, u.display_name AS author, c.client_code,
+        ORDER BY n.signed_at LIMIT 100`, ctx.user.id, ...sf.params)).map((x) => ({ ...x, title: x.title_enc ? decrypt3(x.title_enc) : null, title_enc: void 0 }));
+          out2.unsigned_notes = named(ctx, db3.all(`SELECT n.id, n.client_id, n.kind, n.occurred_at, n.created_at, u.display_name AS author, c.client_code, ${NAME_COLS},
           (n.created_at < ?) AS overdue
         FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id
         WHERE n.deleted_at IS NULL AND n.status='draft' AND ${sf.sql}
-        ORDER BY n.created_at LIMIT 100`, staleBefore, ...sf.params);
+        ORDER BY n.created_at LIMIT 100`, staleBefore, ...sf.params));
         }
         if (auth3.hasPerm(ctx.user, "time:approve")) {
-          out2.time_awaiting_approval = db3.all(`SELECT t.id, t.user_id, t.work_date, t.minutes, t.category, t.billable, t.submitted_at, u.display_name AS worker, c.client_code, f.name AS funding_source
+          out2.time_awaiting_approval = named(ctx, db3.all(`SELECT t.id, t.user_id, t.client_id, t.work_date, t.minutes, t.category, t.billable, t.submitted_at, u.display_name AS worker, c.client_code, ${NAME_COLS}, f.name AS funding_source
         FROM time_entries t JOIN users u ON u.id=t.user_id LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN funding_sources f ON f.id=t.funding_source_id
-        WHERE t.status='submitted' AND t.user_id<>? AND ${tf.sql} ORDER BY t.work_date LIMIT 200`, ctx.user.id, ...tf.params);
+        WHERE t.status='submitted' AND t.user_id<>? AND ${tf.sql} ORDER BY t.work_date LIMIT 200`, ctx.user.id, ...tf.params));
           out2.time_totals = db3.one(`SELECT COUNT(*) entries, COALESCE(SUM(minutes),0) minutes FROM time_entries t WHERE t.status='submitted' AND t.user_id<>? AND ${tf.sql}`, ctx.user.id, ...tf.params);
         }
         if (auth3.hasPerm(ctx.user, "referrals:read")) {
           const cf = auth3.caseloadFilter(ctx.user, "r.client_id");
-          out2.referrals_awaiting_outcome = db3.all(`SELECT r.id, r.client_id, r.referred_at, r.status, res.name AS resource, c.client_code
+          out2.referrals_awaiting_outcome = named(ctx, db3.all(`SELECT r.id, r.client_id, r.referred_at, r.status, res.name AS resource, c.client_code, ${NAME_COLS}
         FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id
-        WHERE r.outcome_recorded_at IS NULL AND r.status NOT IN ('pending','closed') AND ${cf.sql} ORDER BY r.referred_at LIMIT 100`, ...cf.params);
-          out2.referrals_consent_revoked = db3.all(`SELECT r.id, r.client_id, res.name AS resource, c.client_code FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id WHERE r.consent_revoked=1 AND r.status NOT IN ('closed','declined_by_client','declined_by_provider') AND ${cf.sql} LIMIT 100`, ...cf.params);
+        WHERE r.outcome_recorded_at IS NULL AND r.status IN (${AWAITING_OUTCOME.map(() => "?").join(",")}) AND c.deleted_at IS NULL AND ${cf.sql} ORDER BY r.referred_at LIMIT 100`, ...AWAITING_OUTCOME, ...cf.params));
+          out2.referrals_consent_revoked = named(ctx, db3.all(`SELECT r.id, r.client_id, res.name AS resource, c.client_code, ${NAME_COLS} FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id WHERE r.consent_revoked=1 AND r.status NOT IN ('closed','declined_by_client','declined_by_provider') AND ${cf.sql} LIMIT 100`, ...cf.params));
         }
         if (auth3.hasPerm(ctx.user, "audit:read")) out2.breakglass_unacknowledged = db3.one(`SELECT COUNT(*) n FROM breakglass_events WHERE acknowledged_at IS NULL`).n;
         audit3.log({ user: ctx.user, action: "supervision.queue", ip: ctx.ip, details: { cosign: out2.awaiting_cosignature?.length || 0, time: out2.time_awaiting_approval?.length || 0 } });
@@ -31858,13 +29819,268 @@ var require_supervision = __commonJS({
   }
 });
 
+// server/sync-tables.js
+var require_sync_tables = __commonJS({
+  "server/sync-tables.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    module.exports = {
+      // caloms_*: whether this programme reports CalOMS Tx (which turns on the CalOMS questions in the admission
+      // and discharge forms) and its provider IDs — a device needs both to offer the same forms offline.
+      settings_keys: ["org_name", "county_name", "program_contact", "note_lock_days", "caloms_enabled", "caloms_providers", "caloms_start_date"],
+      tables: [
+        // supervisor_id points at another user: a supervisor must land before the people who report to them.
+        { name: "users", enc: ["mfa_secret_enc"], scope: "users", cols: null, selfParent: "supervisor_id" },
+        { name: "resources", enc: [], scope: "all", writePerm: "resources:write" },
+        { name: "resource_photos", enc: [], scope: "all", writePerm: "resources:write", parent: ["resources", "resource_id"], blob: ["data_b64"] },
+        { name: "policy_documents", enc: [], scope: "all", writePerm: "documents:write", blob: ["file_b64"] },
+        // Grant structure is budget:manage over REST; a device holding only budget:write must not restructure it by sync.
+        { name: "funding_sources", enc: [], scope: "all", writePerm: "budget:manage" },
+        { name: "budget_lines", enc: [], scope: "all", writePerm: "budget:manage", parent: ["funding_sources", "funding_source_id"], selfParent: "parent_id" },
+        // merged_into points at another client: the record that was kept must land before its duplicate.
+        { name: "clients", enc: ["first_name_enc", "last_name_enc", "preferred_name_enc", "dob_enc", "phone_enc", "alt_phone_enc", "email_enc", "address_enc", "medicaid_id_enc", "emergency_contact_enc", "goals_enc", "flags_enc", "legal_hold_reason_enc", "legal_hold_cleared_reason_enc", "removed_reason_enc", "contact_preferences_enc"], legacy: { legal_hold_reason: "legal_hold_reason_enc", contact_preferences: "contact_preferences_enc" }, scope: "client", clientCol: "id", idx: true, writePerm: "clients:write", selfParent: "merged_into" },
+        { name: "assignments", enc: ["notes_enc"], legacy: { notes: "notes_enc" }, scope: "client", clientCol: "client_id", writePerm: "assignments:manage", parent: ["clients", "client_id"] },
+        { name: "episodes", enc: ["presenting_problem_enc", "discharge_summary_enc", "reopen_reason_enc"], scope: "client", clientCol: "client_id", writePerm: "episodes:write", parent: ["clients", "client_id"] },
+        // CalOMS Tx records hang off an episode: the episode must land first.
+        { name: "caloms_records", enc: ["answers_enc"], scope: "client", clientCol: "client_id", writePerm: "episodes:write", parent: ["episodes", "episode_id"] },
+        { name: "interventions", enc: ["summary_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "interventions:write", parent: ["clients", "client_id"] },
+        { name: "overdose_events", enc: ["notes_enc", "substances_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "overdose:write", parent: ["clients", "client_id"] },
+        { name: "calls", enc: ["contact_name_enc", "phone_enc", "summary_enc", "purpose_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "calls:write", parent: ["clients", "client_id"] },
+        { name: "time_entries", enc: ["description_enc", "approval_note_enc"], legacy: { description: "description_enc", approval_note: "approval_note_enc" }, scope: "client-or-null", clientCol: "client_id", writePerm: "time:write", parent: ["clients", "client_id"] },
+        // A referral may cite the consent it was made under, so consents come first.
+        { name: "consents", enc: ["recipient_enc", "purpose_enc", "scope_enc", "signer_name_enc", "revoked_reason_enc", "witness_enc"], legacy: { revoked_reason: "revoked_reason_enc", witness: "witness_enc" }, scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
+        // A disclosure made under a subpart E court order cites it, so orders travel before disclosures.
+        { name: "court_orders", enc: ["court_enc", "case_ref_enc", "recipient_enc", "purpose_enc", "scope_enc", "vacated_reason_enc"], legacy: { vacated_reason: "vacated_reason_enc" }, scope: "client", clientCol: "client_id", writePerm: "court-orders:write", parent: ["clients", "client_id"] },
+        { name: "part2_notices", enc: ["notes_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
+        { name: "referrals", enc: ["outcome_enc", "barrier_enc", "notes_enc"], scope: "client", clientCol: "client_id", writePerm: "referrals:write", parent: ["clients", "client_id"] },
+        // Migration 39 moved consents.witness and import_items.metadata into witness_enc and metadata_enc.
+        // Migration 37 moved the free text on assignments, time entries, consents (revocation), expenditures, notes
+        // (countersignature), addenda, client forms and clients (contact preferences) into _enc columns likewise.
+        // Migration 24 moved tasks.description into description_enc; kernels before 1.9.3 still push `description`.
+        { name: "tasks", enc: ["title_enc", "description_enc"], legacy: { description: "description_enc" }, scope: "client-or-null", clientCol: "client_id", writePerm: "tasks:write", parent: ["clients", "client_id"] },
+        { name: "expenditures", enc: ["description_enc", "approval_note_enc"], legacy: { description: "description_enc", approval_note: "approval_note_enc" }, scope: "client-or-null", clientCol: "client_id", writePerm: "budget:write", parent: ["clients", "client_id"] },
+        { name: "notes", enc: ["content_enc", "structured_enc", "title_enc", "cosign_note_enc"], legacy: { cosign_note: "cosign_note_enc" }, scope: "client", clientCol: "client_id", writePerm: "notes:admin:write", parent: ["clients", "client_id"] },
+        { name: "note_addenda", enc: ["content_enc", "reason_enc"], legacy: { reason: "reason_enc" }, scope: "via-note", writePerm: "notes:admin:write", parent: ["notes", "note_id"] },
+        { name: "disclosures", enc: ["recipient_enc", "purpose_enc", "what_enc", "justification_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
+        // An import (a OneNote page, a Pocket AI transcript) is its importer's until it is filed against a client:
+        // the REST routes show it only to them (or to clients:all), and a device gets the same -- scope 'importer'.
+        { name: "imports", enc: [], scope: "importer", writePerm: "imports:write" },
+        { name: "import_items", enc: ["content_enc", "title_enc", "metadata_enc"], legacy: { metadata: "metadata_enc" }, scope: "via-import", writePerm: "imports:write", parent: ["imports", "import_id"] },
+        { name: "form_templates", enc: [], scope: "all", writePerm: "forms:manage", blob: ["file_b64"] },
+        { name: "client_forms", enc: ["values_enc", "notes_enc"], legacy: { notes: "notes_enc" }, scope: "client", clientCol: "client_id", writePerm: "forms:write", parent: ["clients", "client_id"] },
+        { name: "client_form_files", enc: ["data_enc"], scope: "client", clientCol: "client_id", writePerm: "forms:write", parent: ["client_forms", "client_form_id"], blob: ["data_enc"] },
+        { name: "patient_requests", enc: ["notes_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
+        // Clinical documentation (CalAIM): the problem list and its history, the care plan, ASAM assessments and
+        // outcome measures. readPerm: a device whose role cannot read them (an ASAM rating on a navigator's
+        // phone) is never sent them, the same minimum-necessary rule clinical notes follow.
+        { name: "problems", enc: ["problem_enc", "icd10_code_enc", "icd10_description_enc", "z_codes_enc"], scope: "client", clientCol: "client_id", writePerm: "careplan:write", readPerm: "careplan:read", parent: ["clients", "client_id"] },
+        { name: "problem_history", enc: ["changes_enc"], scope: "client", clientCol: "client_id", writePerm: "careplan:write", readPerm: "careplan:read", parent: ["problems", "problem_id"] },
+        { name: "care_plan_goals", enc: ["goal_enc"], scope: "client", clientCol: "client_id", writePerm: "careplan:write", readPerm: "careplan:read", parent: ["clients", "client_id"] },
+        { name: "care_plan_steps", enc: ["step_enc"], scope: "client", clientCol: "client_id", writePerm: "careplan:write", readPerm: "careplan:read", parent: ["care_plan_goals", "goal_id"] },
+        { name: "asam_assessments", enc: ["dimension_notes_enc", "discrepancy_notes_enc", "summary_enc"], scope: "client", clientCol: "client_id", writePerm: "assessments:write", readPerm: "assessments:read", parent: ["clients", "client_id"] },
+        { name: "outcome_measures", enc: ["responses_enc", "notes_enc"], scope: "client", clientCol: "client_id", writePerm: "assessments:write", readPerm: "assessments:read", parent: ["clients", "client_id"] },
+        // Harm-reduction supply counts: shared program state. Pull-only (serverOwned): the office copy is the
+        // one shelf count, drawn down there when a pushed visit lands (server/routes/sync.js calls the same
+        // draw-down the REST route does). A device's absolute count is never accepted — two phones each
+        // subtracting from their own stale copy would otherwise leave whichever synced last as the truth.
+        { name: "supply_stock", enc: [], scope: "all", writePerm: "interventions:write", serverOwned: true },
+        // Settings → Lists (the wording and order of documentation choices): the office's configuration,
+        // pull-only like supply counts. A device needs it to offer the same choices and show the same labels
+        // offline; it can never change it (server/routes/options.js refuses writes in the local kernel).
+        { name: "option_overrides", enc: [], scope: "all", writePerm: "settings:manage", serverOwned: true },
+        // The QSOA / research / audit register the non-consent disclosure bases rest on (server/disclosure.js):
+        // the office's, pull-only, so a device can offer the same agreements on its disclosure form offline.
+        { name: "disclosure_agreements", enc: [], scope: "all", writePerm: "agreements:write", serverOwned: true }
+      ],
+      // Push rejection reasons that will never succeed on a retry: the office has ruled, and the device must
+      // mark the row as exchanged (office wins) rather than resend it every sync forever. Anything else
+      // (network, a 5xx, an unknown SQL error) is transient and is retried. Reasons are matched as prefixes.
+      permanent_reasons: [
+        "immutable",
+        "purged",
+        "merged into another record",
+        "conflicts with an existing record",
+        "not on caseload",
+        "not permitted",
+        "server-owned",
+        "your role cannot",
+        "clinical notes not permitted",
+        "you do not have permission",
+        "is missing a required field",
+        "refers to a record the office server does not have",
+        "attributed to",
+        "would create a cycle",
+        "parent allocation does not belong",
+        "its ",
+        "has a value the office does not accept",
+        "needs a lawful basis for disclosure"
+      ],
+      // Server-side only, never synchronised: breakglass_events is the office supervisor's review queue for
+      // emergency access, and a device has no supervisor to review it.
+      // complaints and the privacy incident register are the privacy officer's, kept at the office likewise.
+      // fhir_jwt_assertions is the FHIR token endpoint's replay guard for client assertions (office server only).
+      // caloms_submissions holds each CalOMS Tx file as produced for DHCS, which only the office sends.
+      server_only: ["breakglass_events", "complaints", "privacy_incidents", "privacy_incident_clients", "fhir_jwt_assertions", "caloms_submissions"],
+      // Kept by each database for itself and never synchronised in either direction: idempotency_keys holds
+      // the answers to retried POSTs made against that database (server/idempotency.js). A device's retry is
+      // answered by the device; the office never sees the key, only the rows the request created.
+      per_database: ["idempotency_keys"],
+      // Rows a device may create but never change once they exist (a consent may only be revoked). The legal
+      // record of what was agreed to and what was shared cannot be rewritten by whichever phone syncs last.
+      immutable: ["consents", "disclosures", "note_addenda", "problem_history"],
+      // Columns that reference users(id) somewhere in the schema. A device's local account id is meaningless on the
+      // office server (and vice versa), so every one of these has to be remapped on both sides of a sync.
+      user_refs: [
+        ["clients", "created_by"],
+        ["assignments", "user_id"],
+        ["assignments", "created_by"],
+        ["interventions", "user_id"],
+        ["calls", "user_id"],
+        ["time_entries", "user_id"],
+        ["time_entries", "approved_by"],
+        ["referrals", "user_id"],
+        ["tasks", "assigned_to"],
+        ["tasks", "created_by"],
+        ["expenditures", "user_id"],
+        ["expenditures", "approved_by"],
+        ["episodes", "opened_by"],
+        ["episodes", "closed_by"],
+        ["overdose_events", "reported_by"],
+        ["consents", "revoked_by"],
+        ["notes", "author_id"],
+        ["notes", "signed_by"],
+        ["notes", "cosigned_by"],
+        ["note_addenda", "author_id"],
+        ["consents", "created_by"],
+        ["disclosures", "disclosed_by"],
+        ["imports", "imported_by"],
+        ["client_forms", "created_by"],
+        ["client_forms", "completed_by"],
+        ["client_form_files", "uploaded_by"],
+        ["resource_photos", "uploaded_by"],
+        ["form_templates", "uploaded_by"],
+        ["policy_documents", "uploaded_by"],
+        ["breakglass_events", "user_id"],
+        ["breakglass_events", "acknowledged_by"],
+        ["patient_requests", "handled_by"],
+        ["patient_requests", "created_by"],
+        ["audit_log", "user_id"],
+        ["sessions", "user_id"],
+        ["user_prefs", "user_id"],
+        ["api_keys", "created_by"],
+        ["users", "supervisor_id"],
+        ["devices", "user_id"],
+        ["supply_stock", "updated_by"],
+        ["option_overrides", "updated_by"],
+        ["problems", "added_by"],
+        ["problems", "updated_by"],
+        ["problem_history", "changed_by"],
+        ["care_plan_goals", "created_by"],
+        ["care_plan_goals", "updated_by"],
+        ["care_plan_steps", "owner_user_id"],
+        ["care_plan_steps", "created_by"],
+        ["asam_assessments", "assessed_by"],
+        ["outcome_measures", "administered_by"],
+        ["caloms_records", "created_by"],
+        ["caloms_records", "updated_by"],
+        ["court_orders", "recorded_by"],
+        ["part2_notices", "given_by"],
+        ["complaints", "handled_by"],
+        ["complaints", "created_by"],
+        ["privacy_incidents", "determined_by"],
+        ["privacy_incidents", "reported_by"],
+        ["disclosure_agreements", "created_by"],
+        ["caloms_submissions", "created_by"]
+      ]
+    };
+    module.exports.user_ref_cols = [...new Set(module.exports.user_refs.map(([, c]) => c))];
+    var crypto3 = require_crypto();
+    function exportRow2(t, r) {
+      const o = { ...r };
+      for (const c of t.enc) {
+        if (!o[c]) continue;
+        try {
+          o[c] = crypto3.decrypt(o[c]);
+        } catch {
+          return null;
+        }
+      }
+      for (const k of Object.keys(o)) if (k.endsWith("_idx")) delete o[k];
+      for (const c of t.blob || []) delete o[c];
+      if (t.name === "users") {
+        delete o.failed_attempts;
+        delete o.locked_until;
+        delete o.access_note;
+      }
+      return o;
+    }
+    function importRow2(t, r, existingCols) {
+      const o = {};
+      for (const [k, v] of Object.entries(r)) if (existingCols.includes(k) && !k.endsWith("_idx") && v !== void 0) o[k] = v;
+      for (const c of t.enc) if (o[c] !== void 0 && o[c] !== null) o[c] = crypto3.encrypt(o[c]);
+      if (t.name === "clients") {
+        const M = require_clients_model();
+        if (r.last_name_enc !== void 0) {
+          o.last_name_idx = crypto3.blindIndex(r.last_name_enc || "");
+          o.name_prefix_idx = M.namePrefixIndex(r.last_name_enc || "");
+          o.name_phonetic_idx = M.namePhoneticIndex(r.last_name_enc || "");
+        }
+        if (r.last_name_enc !== void 0 || r.first_name_enc !== void 0) o.full_name_idx = crypto3.blindIndex((r.last_name_enc || "") + (r.first_name_enc || ""));
+        if (r.first_name_enc !== void 0) {
+          o.first_name_idx = crypto3.blindIndex(String(r.first_name_enc || "").trim().toLowerCase());
+          o.first_name_prefix_idx = M.namePrefixIndex(r.first_name_enc || "");
+        }
+        if (r.preferred_name_enc !== void 0) o.preferred_name_idx = M.preferredNameIndex(r.preferred_name_enc || "");
+        if (r.dob_enc !== void 0) o.dob_idx = crypto3.blindIndex(r.dob_enc || "");
+        if (r.phone_enc !== void 0) o.phone_idx = crypto3.blindIndex(String(r.phone_enc || "").replace(/\D/g, ""));
+      }
+      return o;
+    }
+    function upgradeLegacyRow(t, r) {
+      for (const [from, to] of Object.entries(t.legacy || {})) {
+        if (!(from in r)) continue;
+        if (r[to] === void 0 && r[from] !== null && r[from] !== "") r[to] = r[from];
+        delete r[from];
+      }
+      return r;
+    }
+    function purgeClient(d, clientId, depth = 0) {
+      let n = 0;
+      const has = (t) => !!d.one(`SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name=?`, t);
+      const seenTable = has("sync_seen");
+      const drop = (table, id) => {
+        const r = d.run(`DELETE FROM ${table} WHERE id=?`, id);
+        n += Number(r && r.changes || 0);
+        if (seenTable) d.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, table, id);
+      };
+      if (depth < 25) for (const m of d.all(`SELECT id FROM clients WHERE merged_into=?`, clientId)) n += purgeClient(d, m.id, depth + 1);
+      for (const t of [...module.exports.tables].reverse()) {
+        if (!has(t.name)) continue;
+        if (t.scope === "via-note") {
+          for (const r of d.all(`SELECT id FROM ${t.name} WHERE note_id IN (SELECT id FROM notes WHERE client_id=?)`, clientId)) drop(t.name, r.id);
+          continue;
+        }
+        if (!t.clientCol || t.name === "clients") continue;
+        for (const r of d.all(`SELECT id FROM ${t.name} WHERE ${t.clientCol}=?`, clientId)) drop(t.name, r.id);
+      }
+      drop("clients", clientId);
+      return n;
+    }
+    module.exports.isPermanentReason = (reason) => module.exports.permanent_reasons.some((p) => String(reason || "").startsWith(p));
+    module.exports.exportRow = exportRow2;
+    module.exports.importRow = importRow2;
+    module.exports.upgradeLegacyRow = upgradeLegacyRow;
+    module.exports.purgeClient = purgeClient;
+  }
+});
+
 // server/routes/sync.js
 var require_sync = __commonJS({
   "server/routes/sync.js"(exports, module) {
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var { badRequest, forbidden } = require_http();
     var { encrypt: encrypt3, decrypt: decrypt3, blindIndex: blindIndex2 } = require_crypto();
@@ -32512,7 +30728,7 @@ var require_time = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var crud = require_crud();
     var C = require_constants();
     var { withClientName, SELECT: NAME_COLS } = require_client_name();
@@ -32611,13 +30827,76 @@ var require_time = __commonJS({
   }
 });
 
+// server/devices.js
+var require_devices = __commonJS({
+  "server/devices.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var { sha256: sha2562, randomToken } = require_crypto();
+    function labelFrom(userAgent) {
+      const ua = userAgent || "";
+      if (/android/i.test(ua)) return "Android phone";
+      if (/ipad/i.test(ua)) return "iPad";
+      if (/iphone/i.test(ua)) return "iPhone";
+      return "Device";
+    }
+    function touch(user, deviceId2, ctx) {
+      const existing = db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
+      const label = labelFrom(ctx.headers["user-agent"]);
+      const now = db3.now();
+      if (existing) db3.run(`UPDATE devices SET user_id=?, last_seen_at=?, last_ip=?, sync_count=sync_count+1, label=COALESCE(label, ?) WHERE id=?`, user.id, now, ctx.ip, label, deviceId2);
+      else db3.run(`INSERT INTO devices(id,user_id,label,first_seen_at,last_seen_at,last_ip,sync_count) VALUES(?,?,?,?,?,?,1)`, deviceId2, user.id, label, now, now, ctx.ip);
+      return db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
+    }
+    function markWiped(deviceId2) {
+      db3.run(`UPDATE devices SET revoked_at=COALESCE(revoked_at, ?) WHERE id=?`, db3.now(), deviceId2);
+      db3.run(`DELETE FROM settings WHERE key=?`, ackKey(deviceId2));
+    }
+    var ACK_TTL_MS = 15 * 6e4;
+    var ackKey = (deviceId2) => `device_wipe_ack:${deviceId2}`;
+    function issueWipeToken(deviceId2) {
+      const token2 = randomToken(32);
+      db3.setSetting(ackKey(deviceId2), JSON.stringify({ hash: sha2562(token2), expires: new Date(Date.now() + ACK_TTL_MS).toISOString() }));
+      return token2;
+    }
+    function ackWipe(deviceId2, token2) {
+      const raw = db3.getSetting(ackKey(deviceId2), null);
+      if (!raw || typeof token2 !== "string" || !token2) return false;
+      let rec;
+      try {
+        rec = JSON.parse(raw);
+      } catch {
+        return false;
+      }
+      if (!rec.hash || Date.parse(rec.expires || 0) < Date.now()) {
+        db3.run(`DELETE FROM settings WHERE key=?`, ackKey(deviceId2));
+        return false;
+      }
+      const given = sha2562(token2);
+      if (given.length !== rec.hash.length || !(init_crypto2(), __toCommonJS(crypto_exports)).timingSafeEqual(import_buffer.Buffer.from(given), import_buffer.Buffer.from(rec.hash))) return false;
+      markWiped(deviceId2);
+      return true;
+    }
+    function requestWipeForUser(userId, { actor, ip, reason } = {}) {
+      const rows = db3.all(`SELECT id FROM devices WHERE user_id=? AND revoked_at IS NULL AND wipe_requested_at IS NULL`, userId);
+      if (!rows.length) return [];
+      const now = db3.now();
+      for (const d of rows) db3.run(`UPDATE devices SET wipe_requested_at=? WHERE id=?`, now, d.id);
+      require_audit().log({ user: actor, action: "device.wipe.requested", entity: "user", entityId: userId, ip, details: { reason, devices: rows.map((d) => d.id) } });
+      return rows.map((d) => d.id);
+    }
+    module.exports = { touch, markWiped, requestWipeForUser, labelFrom, issueWipeToken, ackWipe };
+  }
+});
+
 // server/routes/users.js
 var require_users = __commonJS({
   "server/routes/users.js"(exports, module) {
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var audit3 = require_audit();
     var devices = require_devices();
     var { badRequest, notFound, HttpError: HttpError3 } = require_http();
@@ -32790,7 +31069,7 @@ var init_ = __esm({
       "./routes/app.js": () => require_app(),
       "./routes/assessments.js": () => require_assessments(),
       "./routes/assignments.js": () => require_assignments(),
-      "./routes/auth.js": () => require_auth2(),
+      "./routes/auth.js": () => require_auth(),
       "./routes/budget.js": () => require_budget(),
       "./routes/calls.js": () => require_calls(),
       "./routes/caloms.js": () => require_caloms2(),
@@ -32832,6 +31111,100 @@ var init_ = __esm({
   }
 });
 
+// server/idempotency.js
+var require_idempotency = __commonJS({
+  "server/idempotency.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var { HttpError: HttpError3 } = require_http();
+    var { sha256: sha2562, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
+    var TTL_MS = 24 * 3600 * 1e3;
+    var MAX_STORED_BYTES = 512 * 1024;
+    var EXEMPT = [/^\/api\/auth\//, /^\/api\/sync\//, /^\/api\/local\//, /^\/api\/setup(\/|$)/, /^\/api\/users(\/|$)/, /^\/api\/admin\/(api-keys|restore|keys-backup)/, /^\/api\/me\/(password|mfa)/];
+    var inflight2 = /* @__PURE__ */ new Map();
+    var lastPurge = 0;
+    function applies(ctx) {
+      if (ctx.method !== "POST" || !ctx.user) return false;
+      if (!ctx.headers || ctx.headers["idempotency-key"] === void 0) return false;
+      return !EXEMPT.some((re) => re.test(ctx.path));
+    }
+    function requestHash(ctx) {
+      const body = ctx.rawBody && ctx.rawBody.length ? sha2562(ctx.rawBody) : JSON.stringify(ctx.body ?? null);
+      return sha2562(`${ctx.method} ${ctx.path}?${ctx.query ? ctx.query.toString() : ""}
+${body}`);
+    }
+    async function run2(ctx, exec) {
+      if (!applies(ctx)) return exec();
+      const key = String(ctx.headers["idempotency-key"]);
+      if (!key || key.length > 255 || !/^[\x21-\x7e]+$/.test(key)) throw new HttpError3(400, "Idempotency-Key must be 1-255 printable characters");
+      maybePurge();
+      const id = sha2562(`${ctx.user.id}|${key}`);
+      const hash2 = requestHash(ctx);
+      while (inflight2.has(id)) {
+        try {
+          await inflight2.get(id);
+        } catch {
+        }
+      }
+      const prior = db3.one(`SELECT * FROM idempotency_keys WHERE id=? AND created_at > ?`, id, new Date(Date.now() - TTL_MS).toISOString());
+      if (prior) {
+        if (prior.request_hash !== hash2 || prior.user_id !== ctx.user.id) {
+          audit3.log({ user: ctx.user, action: "idempotency.mismatch", ip: ctx.ip, success: false, details: { path: ctx.path } });
+          throw new HttpError3(422, "This request was already sent with the same Idempotency-Key and different content. Reload the form and try again.");
+        }
+        audit3.log({ user: ctx.user, action: "idempotency.replay", ip: ctx.ip, details: { path: ctx.path, status: prior.status, first_at: prior.created_at } });
+        ctx.status = prior.status;
+        ctx.idempotentReplay = true;
+        return prior.response_enc ? JSON.parse(decrypt3(prior.response_enc)) : void 0;
+      }
+      let done;
+      const gate = new Promise((resolve2) => {
+        done = resolve2;
+      });
+      inflight2.set(id, gate);
+      try {
+        const result = await exec();
+        const status = result === void 0 ? 204 : ctx.status || 200;
+        if (!(ctx.res && ctx.res.headersSent) && status >= 200 && status < 300) {
+          const json = result === void 0 ? null : JSON.stringify(result);
+          if (json === null || json.length <= MAX_STORED_BYTES) {
+            db3.run(
+              `INSERT OR REPLACE INTO idempotency_keys(id,user_id,method,path,request_hash,status,response_enc,created_at) VALUES(?,?,?,?,?,?,?,?)`,
+              id,
+              ctx.user.id,
+              ctx.method,
+              ctx.path,
+              hash2,
+              status,
+              json === null ? null : encrypt3(json),
+              db3.now()
+            );
+          }
+        }
+        return result;
+      } finally {
+        inflight2.delete(id);
+        done();
+      }
+    }
+    function purge(now = Date.now()) {
+      lastPurge = now;
+      return db3.run(`DELETE FROM idempotency_keys WHERE created_at <= ?`, new Date(now - TTL_MS).toISOString()).changes;
+    }
+    function maybePurge() {
+      if (Date.now() - lastPurge > 3600 * 1e3) {
+        try {
+          purge();
+        } catch {
+        }
+      }
+    }
+    module.exports = { run: run2, purge, TTL_MS };
+  }
+});
+
 // server/app.js
 var require_app2 = __commonJS({
   "server/app.js"(exports, module) {
@@ -32842,7 +31215,7 @@ var require_app2 = __commonJS({
     var config = require_config();
     var db3 = require_db();
     var audit3 = require_audit();
-    var auth3 = require_auth();
+    var auth3 = require_auth2();
     var idempotency2 = require_idempotency();
     var { Router: Router2, HttpError: HttpError3, parseCookies, parseRequestUrl, readBody, securityHeaders, sendJson, serveStatic } = require_http();
     var buckets = /* @__PURE__ */ new Map();
@@ -33061,19 +31434,1799 @@ var require_app2 = __commonJS({
   }
 });
 
+// server/auth.js
+var require_auth2 = __commonJS({
+  "server/auth.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var config = require_config();
+    var audit3 = require_audit();
+    var { sha256: sha2562, randomToken, verifyPassword, verifyPasswordAsync, verifyTotp, decrypt: decrypt3 } = require_crypto();
+    var { unauthorized, forbidden, badRequest, HttpError: HttpError3 } = require_http();
+    function policy() {
+      const num = (k, d, { zero = false } = {}) => {
+        const raw = db3.getSetting(k, null);
+        if (raw === null || String(raw).trim() === "") return d;
+        const v = Number(raw);
+        return Number.isFinite(v) && (v > 0 || zero && v === 0) ? v : d;
+      };
+      const roles = db3.getSetting("mfa_required_roles", null);
+      const mfaAll = db3.getSetting("mfa_require_all", "0") === "1";
+      return {
+        idleMinutes: num("session_idle_minutes", config.session.idleMinutes),
+        absoluteHours: num("session_absolute_hours", config.session.absoluteHours),
+        passwordMaxAgeDays: num("password_max_age_days", config.password.maxAgeDays),
+        mfaRequiredRoles: mfaAll ? Object.keys(PERMS) : roles === null ? config.mfaRequiredRoles : roles.split(",").map((x) => x.trim()).filter(Boolean),
+        mfaRequireAll: mfaAll,
+        // How long a new account in a role that requires two-step verification has to set it up. Without this
+        // the very first administrator would be locked out the moment the setup wizard created them.
+        mfaGraceDays: num("mfa_grace_days", config.mfaGraceDays, { zero: true }),
+        // How long after proving who they are (signing in, or giving the password or code again) a person may
+        // sign a note with a confirmation alone. 0: the password (or code) every time. At most an hour.
+        signReauthMinutes: Math.min(60, num("sign_reauth_minutes", 10, { zero: true })),
+        ...ssoPolicy()
+      };
+    }
+    function ssoPolicy() {
+      const wanted = db3.getSetting("sso_required", "0") === "1";
+      const emergency = String(db3.getSetting("sso_emergency_accounts", "") || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+      return { ssoRequiredSetting: wanted, ssoRequired: wanted && !config.local && !!(config.oidc && config.oidc.enabled), ssoEmergencyAccounts: emergency };
+    }
+    var PERMS = {
+      admin: [
+        "users:manage",
+        "settings:manage",
+        "audit:read",
+        "apikeys:manage",
+        "clients:read",
+        "clients:write",
+        "clients:all",
+        "interventions:*",
+        "calls:*",
+        "time:read",
+        "time:write",
+        "time:all",
+        "time:approve",
+        "resources:*",
+        "referrals:*",
+        "tasks:*",
+        "budget:read",
+        "budget:write",
+        "budget:approve",
+        "budget:manage",
+        "notes:admin:read",
+        "notes:admin:write",
+        "notes:clinical:breakglass",
+        "consents:*",
+        "imports:*",
+        "reports:read",
+        "assignments:manage",
+        "export:read",
+        "export:identified",
+        "forms:*",
+        "notes:cosign",
+        "time:approve",
+        "episodes:*",
+        "overdose:*",
+        "clients:merge",
+        "documents:read",
+        "documents:write",
+        "disclosures:override",
+        "clients:legal-hold",
+        "patient-requests:*",
+        "careplan:read",
+        "complaints:*",
+        "incidents:*",
+        "court-orders:*",
+        "agreements:*"
+      ],
+      supervisor: [
+        "clients:read",
+        "clients:write",
+        "clients:all",
+        "interventions:*",
+        "calls:*",
+        "time:read",
+        "time:write",
+        "time:all",
+        "time:approve",
+        "resources:*",
+        "referrals:*",
+        "tasks:*",
+        "budget:read",
+        "budget:write",
+        "budget:approve",
+        "budget:manage",
+        "notes:admin:read",
+        "notes:admin:write",
+        "notes:clinical:read",
+        "notes:clinical:write",
+        "consents:*",
+        "imports:*",
+        "reports:read",
+        "assignments:manage",
+        "audit:read",
+        "export:read",
+        "export:identified",
+        "users:read",
+        "forms:*",
+        "notes:cosign",
+        "time:approve",
+        "episodes:*",
+        "overdose:*",
+        "clients:merge",
+        "documents:read",
+        "documents:write",
+        "disclosures:override",
+        "patient-requests:*",
+        "careplan:*",
+        "assessments:*",
+        "complaints:*",
+        "incidents:*",
+        "court-orders:*",
+        "agreements:*"
+      ],
+      // Front-line staff hold export:read so the Export buttons on their own screens work; without
+      // export:identified every file they can produce is de-identified (Safe Harbor) and caseload-scoped.
+      clinician: [
+        "clients:read",
+        "clients:write",
+        "interventions:*",
+        "calls:*",
+        "time:read",
+        "time:write",
+        "resources:read",
+        "referrals:*",
+        "tasks:*",
+        "notes:admin:read",
+        "notes:admin:write",
+        "notes:clinical:read",
+        "notes:clinical:write",
+        "consents:*",
+        "imports:*",
+        "reports:read",
+        "users:read",
+        "forms:read",
+        "forms:write",
+        "episodes:*",
+        "overdose:*",
+        "documents:read",
+        "patient-requests:*",
+        "export:read",
+        "careplan:*",
+        "assessments:*",
+        "court-orders:read",
+        "agreements:read"
+      ],
+      navigator: [
+        "clients:read",
+        "clients:write",
+        "interventions:*",
+        "calls:*",
+        "time:read",
+        "time:write",
+        "resources:*",
+        "referrals:*",
+        "tasks:*",
+        "budget:read",
+        "budget:write",
+        "notes:admin:read",
+        "notes:admin:write",
+        "consents:*",
+        "imports:*",
+        "reports:read",
+        "users:read",
+        "forms:read",
+        "forms:write",
+        "episodes:*",
+        "overdose:*",
+        "documents:read",
+        "patient-requests:*",
+        "export:read",
+        "careplan:*",
+        "court-orders:read",
+        "agreements:read"
+      ],
+      // finance sees money, not people: export:read without export:identified means every export it can run
+      // comes out keyed by client_code. Do not add 'export:identified' here — docs/HIPAA.md promises otherwise.
+      finance: ["clients:list-deidentified", "budget:read", "budget:write", "budget:approve", "budget:manage", "time:read", "time:all", "time:approve", "reports:read", "export:read", "users:read", "documents:read", "documents:write"],
+      // readonly is for oversight (a county analyst, an auditor's dashboard): aggregate reports and the resource
+      // directory, keyed by client code. It holds neither clients:read nor export:read, so it can identify nobody
+      // and take nothing off the system.
+      readonly: ["clients:list-deidentified", "resources:read", "reports:read", "users:read", "forms:read", "documents:read"]
+    };
+    function hasPerm(user, perm) {
+      if (!user) return false;
+      const perms = PERMS[user.role] || [];
+      if (perms.includes(perm)) return true;
+      const [ns] = perm.split(":");
+      if (perms.includes(`${ns}:*`)) return true;
+      if (perm.endsWith(":read") && perms.includes(perm.replace(/:read$/, ":write"))) return true;
+      return false;
+    }
+    function requirePerm(...perms) {
+      return (ctx) => {
+        if (!ctx.user) throw unauthorized();
+        if (!perms.some((p) => hasPerm(ctx.user, p))) {
+          audit3.log({ user: ctx.user, action: "authz.denied", ip: ctx.ip, success: false, details: { perms, path: ctx.path } });
+          throw forbidden("You do not have permission for this action");
+        }
+      };
+    }
+    function caseloadRestricted(user) {
+      if (hasPerm(user, "clients:all") || hasPerm(user, "clients:list-deidentified")) return false;
+      return db3.getSetting("caseload_restriction", "1") === "1";
+    }
+    var ACTIVE_ASSIGNMENT = `((end_date IS NULL OR end_date >= date('now')) AND (ended_at IS NULL OR ended_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')))`;
+    var activeAssignment = (prefix = "") => ACTIVE_ASSIGNMENT.replace(/\b(end_date|ended_at)\b/g, `${prefix}$1`);
+    function canAccessClient(user, clientId) {
+      if (!caseloadRestricted(user)) return true;
+      const r = db3.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND ${activeAssignment()}`, clientId, user.id);
+      return !!r;
+    }
+    function assertClientAccess(ctx, clientId) {
+      if (!canAccessClient(ctx.user, clientId)) {
+        audit3.log({ user: ctx.user, action: "authz.denied", entity: "client", entityId: clientId, clientId, ip: ctx.ip, success: false, details: { reason: "not on caseload" } });
+        throw forbidden("This client is not on your caseload");
+      }
+    }
+    function caseloadFilter(user, col = "c.id") {
+      if (!caseloadRestricted(user)) return { sql: "1=1", params: [] };
+      return { sql: `${col} IN (SELECT client_id FROM assignments WHERE user_id=? AND ${activeAssignment()})`, params: [user.id] };
+    }
+    var COOKIE = "suds_session";
+    function createSession(user, ctx, { mfaPending = false, mfaSource = null } = {}) {
+      const token2 = randomToken(32);
+      const now = /* @__PURE__ */ new Date();
+      const expires = new Date(now.getTime() + policy().absoluteHours * 3600 * 1e3);
+      db3.run(
+        `INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,mfa_source,reauth_at) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+        sha2562(token2),
+        user.id,
+        now.toISOString(),
+        now.toISOString(),
+        expires.toISOString(),
+        mfaPending ? 1 : 0,
+        ctx.ip,
+        (ctx.headers["user-agent"] || "").slice(0, 200),
+        mfaSource,
+        now.toISOString()
+      );
+      return token2;
+    }
+    function markReauth(ctx) {
+      if (ctx.session) {
+        const at = db3.now();
+        db3.run(`UPDATE sessions SET reauth_at=? WHERE id=?`, at, ctx.session.id);
+        ctx.session.reauth_at = at;
+      }
+    }
+    function reauthStatus(ctx) {
+      const minutes = policy().signReauthMinutes;
+      const at = ctx.session && ctx.session.reauth_at ? Date.parse(ctx.session.reauth_at) : NaN;
+      const until = Number.isFinite(at) && minutes > 0 ? at + minutes * 6e4 : 0;
+      return { recent: until > Date.now(), until: until ? new Date(until).toISOString() : null, window_minutes: minutes, method: ctx.user && ctx.user.mfa_enabled ? "totp" : "password" };
+    }
+    async function verifySigner(ctx, body, { action = "note.sign.failed" } = {}) {
+      const password = typeof body.password === "string" && body.password ? body.password : null;
+      const code = typeof body.code === "string" && body.code.trim() ? body.code.trim() : null;
+      if (password) {
+        const u = db3.one(`SELECT password_hash FROM users WHERE id=?`, ctx.user.id);
+        if (!await verifyPasswordAsync(password, u.password_hash)) {
+          audit3.log({ user: ctx.user, action, ip: ctx.ip, success: false });
+          throw forbidden("Password verification failed");
+        }
+        markReauth(ctx);
+        return "password";
+      }
+      if (code) {
+        const u = db3.one(`SELECT mfa_enabled, mfa_secret_enc FROM users WHERE id=?`, ctx.user.id);
+        if (!u.mfa_enabled || !u.mfa_secret_enc) throw badRequest("Two-step verification is not set up for your account; give your password instead");
+        if (!require_app2().rateLimit(`mfa:${ctx.user.id}`, 10, 10 * 6e4)) throw new HttpError3(429, "Too many attempts");
+        if (!verifyTotp(decrypt3(u.mfa_secret_enc), code)) {
+          audit3.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { method: "totp" } });
+          throw forbidden("That code is not right. Enter the current code from your authenticator app.");
+        }
+        markReauth(ctx);
+        return "totp";
+      }
+      const st = reauthStatus(ctx);
+      if (body.confirm !== true && body.confirm !== 1) throw badRequest(st.recent ? "Confirm the attestation to sign" : st.method === "totp" ? "Enter the code from your authenticator app to sign" : "Your password is required to sign");
+      if (!st.recent) throw new HttpError3(403, st.method === "totp" ? "It has been a while since you last confirmed it is you. Enter the code from your authenticator app to sign." : "It has been a while since you last confirmed it is you. Enter your password to sign.", { reauthRequired: true, method: st.method });
+      return "recent_auth";
+    }
+    function cookieHeader(token2, { clear = false } = {}) {
+      const secure = config.tls.cert || config.isProd ? "; Secure" : "";
+      if (clear) return `${COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`;
+      return `${COOKIE}=${token2}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${policy().absoluteHours * 3600}${secure}`;
+    }
+    function revokeSession(token2) {
+      if (token2) db3.run(`UPDATE sessions SET revoked_at=? WHERE id=?`, db3.now(), sha2562(token2));
+    }
+    function revokeAllForUser(userId) {
+      db3.run(`UPDATE sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL`, db3.now(), userId);
+    }
+    function resolveSession(ctx) {
+      let token2 = ctx.cookies[COOKIE];
+      const authz = ctx.headers["authorization"];
+      if (!token2 && authz && authz.startsWith("Bearer ")) token2 = authz.slice(7).trim();
+      if (!token2) return null;
+      const s = db3.one(`SELECT * FROM sessions WHERE id=? AND revoked_at IS NULL`, sha2562(token2));
+      if (!s) return null;
+      const now = Date.now();
+      if (Date.parse(s.expires_at) < now) return null;
+      const idleMs = policy().idleMinutes * 60 * 1e3;
+      if (now - Date.parse(s.last_seen_at) > idleMs) {
+        db3.run(`UPDATE sessions SET revoked_at=? WHERE id=?`, db3.now(), s.id);
+        return null;
+      }
+      const user = db3.one(`SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,must_change_password,password_changed_at,hourly_cost,created_at,requires_cosign,supervisor_id FROM users WHERE id=?`, s.user_id);
+      if (!user || !user.is_active) return null;
+      if (ctx.headers["x-background"] !== "1" && now - Date.parse(s.last_seen_at) > 6e4) db3.run(`UPDATE sessions SET last_seen_at=? WHERE id=?`, new Date(now).toISOString(), s.id);
+      ctx.sessionToken = token2;
+      ctx.session = s;
+      return user;
+    }
+    function requireAuth(ctx) {
+      if (!ctx.user) throw unauthorized();
+      if (ctx.session?.mfa_pending) throw new HttpError3(401, "MFA verification required", { mfaRequired: true });
+      if (!ctx.path.startsWith("/api/auth/")) {
+        const shellOnly = ctx.method === "GET" && (ctx.path === "/api/meta/constants" || ctx.path === "/api/me/prefs");
+        const due = ctx.session?.mfa_source === "idp" ? null : mfaDeadline(ctx.user);
+        if (due && Date.now() > Date.parse(due) && !shellOnly) {
+          throw new HttpError3(403, "Two-step verification must be set up for your role before you can continue", { mfaSetupRequired: true, mfaSetupDeadline: due });
+        }
+        if (ctx.user.must_change_password && !shellOnly) throw new HttpError3(403, "Password change required", { passwordChangeRequired: true });
+        const age = ctx.user.password_changed_at ? (Date.now() - Date.parse(ctx.user.password_changed_at)) / 864e5 : Infinity;
+        const maxAge = policy().passwordMaxAgeDays;
+        if (age > maxAge && !shellOnly) throw new HttpError3(403, `Password is older than ${maxAge} days and must be changed`, { passwordChangeRequired: true });
+      }
+    }
+    function mfaDeadline(user) {
+      if (!user || user.mfa_enabled) return null;
+      if (!policy().mfaRequiredRoles.includes(user.role)) return null;
+      const created = Date.parse(user.created_at || 0) || Date.now();
+      return new Date(created + policy().mfaGraceDays * 864e5).toISOString();
+    }
+    function auditUsername(username) {
+      const u = String(username || "");
+      return `unknown:${u.slice(0, 8)}${u.length > 8 ? "\u2026" : ""}#${sha2562(u).slice(0, 12)}`;
+    }
+    async function login({ username, password, ctx }) {
+      const user = db3.one(`SELECT * FROM users WHERE username=?`, String(username || "").trim());
+      const devices = require_devices();
+      const deviceId2 = ctx.headers["x-sync-client"] && ctx.headers["x-device-id"] ? String(ctx.headers["x-device-id"]).slice(0, 100) : null;
+      const who = user ? { id: user.id, username: user.username } : { username: auditUsername(username) };
+      let pendingWipe = null;
+      if (deviceId2) {
+        const known = db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
+        if (known && known.revoked_at) {
+          audit3.log({ user: who, action: "auth.login.device_revoked", entity: "device", entityId: known.id, ip: ctx.ip, success: false, details: { device_user: known.user_id, wipe_requested: !!known.wipe_requested_at } });
+          throw new HttpError3(403, "This device has been revoked and can no longer sync. Contact your administrator.", { deviceRevoked: true, wipeRequested: !!known.wipe_requested_at, deviceWipeRequired: !!known.wipe_requested_at || void 0 });
+        }
+        if (known && known.wipe_requested_at) pendingWipe = known;
+      }
+      const wipeRequired = (verified) => {
+        const extra = { deviceWipeRequired: true };
+        if (verified) {
+          devices.markWiped(pendingWipe.id);
+          audit3.log({ user: who, action: "auth.login.device_wiped", entity: "device", entityId: pendingWipe.id, ip: ctx.ip, success: false, details: { device_user: pendingWipe.user_id } });
+        } else {
+          extra.wipeAckToken = devices.issueWipeToken(pendingWipe.id);
+          audit3.log({ user: who, action: "auth.login.device_wipe_pending", entity: "device", entityId: pendingWipe.id, ip: ctx.ip, success: false, details: { device_user: pendingWipe.user_id } });
+        }
+        throw new HttpError3(403, "An administrator has remotely wiped this device. It must be set up again before it can sync.", extra);
+      };
+      const fail = (reason) => {
+        audit3.log({ user: who, action: "auth.login.failed", ip: ctx.ip, success: false, details: { reason } });
+        if (pendingWipe) wipeRequired(false);
+        throw unauthorized("Invalid username or password");
+      };
+      if (!user) {
+        await verifyPasswordAsync(password || "", "scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AA==");
+        fail("unknown user");
+      }
+      if (!user.is_active && (user.access_status === "pending" || user.access_status === "declined") && !pendingWipe) {
+        if (!await verifyPasswordAsync(password || "", user.password_hash)) fail("bad password");
+        audit3.log({ user: who, action: "auth.login.access_" + user.access_status, ip: ctx.ip, success: false });
+        throw new HttpError3(403, user.access_status === "pending" ? "Your request is waiting for an administrator to approve it. You can sign in once it has been approved." : "Your request for an account was not approved. Ask your administrator if you think this is a mistake.", { accessPending: user.access_status === "pending", accessDeclined: user.access_status === "declined" });
+      }
+      if (!user.is_active) {
+        if (pendingWipe && await verifyPasswordAsync(password || "", user.password_hash)) wipeRequired(true);
+        fail("inactive");
+      }
+      if (user.locked_until && Date.parse(user.locked_until) > Date.now()) {
+        audit3.log({ user, action: "auth.login.locked", ip: ctx.ip, success: false });
+        if (pendingWipe) wipeRequired(false);
+        throw new HttpError3(423, "Account locked. Try again later or contact an administrator.");
+      }
+      if (!await verifyPasswordAsync(password || "", user.password_hash)) {
+        const attempts = user.failed_attempts + 1;
+        const lock = attempts >= config.lockout.maxAttempts ? new Date(Date.now() + config.lockout.minutes * 6e4).toISOString() : null;
+        db3.run(`UPDATE users SET failed_attempts=?, locked_until=? WHERE id=?`, lock ? 0 : attempts, lock, user.id);
+        fail(lock ? "locked after failures" : "bad password");
+      }
+      if (pendingWipe) wipeRequired(true);
+      const pol = policy();
+      const emergency = pol.ssoRequired && pol.ssoEmergencyAccounts.includes(String(user.username).toLowerCase());
+      if (pol.ssoRequired && !emergency) {
+        audit3.log({ user, action: "auth.login.sso_required", ip: ctx.ip, success: false });
+        throw new HttpError3(403, "This organisation requires single sign-on. Use the county sign-in button instead of a password.", { ssoRequired: true });
+      }
+      db3.run(`UPDATE users SET failed_attempts=0, locked_until=NULL, last_login_at=? WHERE id=?`, db3.now(), user.id);
+      if (deviceId2) {
+        const device = devices.touch(user, deviceId2, ctx);
+        if (device.revoked_at) {
+          audit3.log({ user, action: "auth.login.device_revoked", entity: "device", entityId: device.id, ip: ctx.ip, success: false, details: { wipe_requested: !!device.wipe_requested_at } });
+          throw new HttpError3(403, "This device has been revoked and can no longer sync. Contact your administrator.", { deviceRevoked: true, wipeRequested: !!device.wipe_requested_at, deviceWipeRequired: !!device.wipe_requested_at || void 0 });
+        }
+        if (device.wipe_requested_at) {
+          pendingWipe = device;
+          wipeRequired(true);
+        }
+      }
+      const mfaRequiredForRole = policy().mfaRequiredRoles.includes(user.role);
+      const mfaPending = !!user.mfa_enabled;
+      const token2 = createSession(user, ctx, { mfaPending });
+      if (emergency) console.warn(`[suds] emergency (break-glass) password sign-in by ${user.username} while single sign-on is required`);
+      audit3.log({ user, action: mfaPending ? "auth.login.mfa_pending" : "auth.login", ip: ctx.ip, details: emergency ? { emergency_account: true } : void 0 });
+      const deadline = mfaDeadline(user);
+      return { token: token2, user: publicUser(user), mfaPending, mfaSetupRequired: mfaRequiredForRole && !user.mfa_enabled, mfaSetupDeadline: deadline };
+    }
+    function verifyMfa(ctx, code) {
+      if (!ctx.session) throw unauthorized();
+      const user = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
+      const secret = decrypt3(user.mfa_secret_enc);
+      if (!verifyTotp(secret, code)) {
+        audit3.log({ user, action: "auth.mfa.failed", ip: ctx.ip, success: false });
+        throw unauthorized("Invalid verification code");
+      }
+      db3.run(`UPDATE sessions SET mfa_pending=0, reauth_at=? WHERE id=?`, db3.now(), ctx.session.id);
+      audit3.log({ user, action: "auth.login", ip: ctx.ip, details: { mfa: true } });
+      return publicUser(user);
+    }
+    function publicUser(u) {
+      const perms = PERMS[u.role] || [];
+      return {
+        id: u.id,
+        username: u.username,
+        display_name: u.display_name,
+        email: u.email,
+        title: u.title,
+        role: u.role,
+        mfa_enabled: !!u.mfa_enabled,
+        must_change_password: !!u.must_change_password,
+        permissions: perms,
+        mfa_required: policy().mfaRequiredRoles.includes(u.role),
+        mfa_setup_deadline: mfaDeadline(u),
+        caseload_restricted: caseloadRestricted(u)
+      };
+    }
+    function passwordPolicy(pw) {
+      const errors = [];
+      if (typeof pw !== "string" || pw.length < config.password.minLength) errors.push(`at least ${config.password.minLength} characters`);
+      if (!/[a-z]/.test(pw) || !/[A-Z]/.test(pw)) errors.push("upper and lower case letters");
+      if (!/[0-9]/.test(pw)) errors.push("a number");
+      if (!/[^A-Za-z0-9]/.test(pw)) errors.push("a symbol");
+      return errors;
+    }
+    module.exports = {
+      auditUsername,
+      policy,
+      PERMS,
+      hasPerm,
+      activeAssignment,
+      requirePerm,
+      requireAuth,
+      mfaDeadline,
+      canAccessClient,
+      assertClientAccess,
+      caseloadFilter,
+      caseloadRestricted,
+      createSession,
+      markReauth,
+      reauthStatus,
+      verifySigner,
+      cookieHeader,
+      revokeSession,
+      revokeAllForUser,
+      resolveSession,
+      login,
+      verifyMfa,
+      publicUser,
+      passwordPolicy,
+      COOKIE
+    };
+  }
+});
+
+// server/disclosure.js
+var require_disclosure = __commonJS({
+  "server/disclosure.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var C = require_constants();
+    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
+    var { badRequest, forbidden, HttpError: HttpError3 } = require_http();
+    var BASES = ["consent", "court_order", "medical_emergency", "qsoa", "audit_evaluation", "research", "crime_on_premises", "child_abuse_report", "other"];
+    var NEEDS_JUSTIFICATION = ["other", "medical_emergency", "crime_on_premises", "child_abuse_report"];
+    var OVERRIDE_BASES = ["other", "research", "audit_evaluation", "crime_on_premises", "child_abuse_report"];
+    var AGREEMENT_KINDS = { qsoa: "qualified service organization agreement", research: "research approval", audit_evaluation: "audit or evaluation approval" };
+    var REFERRAL_BASES = ["consent", "medical_emergency", "court_order", "other"];
+    var LEGACY_CONSENT_CUTOFF = "2026-02-16";
+    var SYSTEM_BASES = ["export", "state_reporting"];
+    var STATE_REPORTING = {
+      basis: "state_reporting",
+      recipient: "California Department of Health Care Services (DHCS) \u2014 CalOMS Tx",
+      purpose: "State reporting (CalOMS Tx): treatment admission, discharge and annual update data required by law (HIPAA \xA7164.512(a); 42 CFR \xA72.53)"
+    };
+    var MIN_JUSTIFICATION = 20;
+    var EXPORT_BASES = ["consent", "audit_evaluation", "research", "qsoa", "internal"];
+    var RESTRICTION_EXEMPT = ["court_order", "medical_emergency", "child_abuse_report", "crime_on_premises", "state_reporting"];
+    function part2Program() {
+      return db3.getSetting("part2_program", "1") !== "0";
+    }
+    function notice() {
+      return { version: C.PART2_NOTICE_VERSION, text: C.PART2_REDISCLOSURE_NOTICE, short: C.PART2_NOTICE_SHORT };
+    }
+    function disclosingConsentTypes() {
+      return part2Program() ? C.PART2_CONSENT_TYPES : [...C.PART2_CONSENT_TYPES, "roi", "research"];
+    }
+    function fileConsentTypes() {
+      return disclosingConsentTypes().filter((t) => t !== "part2_proceedings" && t !== "part2_counseling_notes");
+    }
+    function fileNotice({ short = false } = {}) {
+      if (!part2Program()) return null;
+      const n = notice();
+      return short ? n.short : `${n.short} NOTICE TO RECIPIENT (42 CFR \xA72.32): ${n.text}`;
+    }
+    function missingPart2Elements(v) {
+      const missing = [];
+      if (!v.discloser) missing.push("who may make the disclosure");
+      if (!v.recipient) missing.push("the recipient (a name, or a class of recipients)");
+      if (!v.purpose) missing.push("the purpose");
+      if (!v.scope) missing.push("what information is covered (scope)");
+      if (!v.expires_at && !v.expires_event) missing.push("an expiration date or event");
+      if (!v.document_ref && !v.signed_on_paper && !v.witness) missing.push('evidence it was signed (a document reference, a witness, or "signed on paper")');
+      if (v.signer_relationship !== "patient" && !v.signer_name) missing.push("the name of the person who signed for the patient");
+      if (!v.revocation_right_given) missing.push("confirmation that the consent states the right to revoke it and how");
+      if (!v.redisclosure_notice_given) missing.push("confirmation that the redisclosure statement was given (\xA72.32)");
+      if (!v.refusal_consequences_given) missing.push("confirmation that the consent states the consequences of refusing to sign");
+      return missing;
+    }
+    function missingLegacyElements(v) {
+      const missing = [];
+      if (!v.recipient) missing.push("the recipient");
+      if (!v.purpose) missing.push("the purpose");
+      if (!v.scope) missing.push("what information is covered (scope)");
+      if (!v.expires_at && !v.expires_event) missing.push("an expiration date or event");
+      if (!v.document_ref && !v.signed_on_paper && !v.witness) missing.push('evidence it was signed (a document reference, a witness, or "signed on paper")');
+      if (String(v.signed_at || "") >= LEGACY_CONSENT_CUTOFF) missing.push(`the 2024 elements (it was signed on or after ${LEGACY_CONSENT_CUTOFF}, when the 2024 rule's element list became mandatory)`);
+      return missing;
+    }
+    var dec2 = (v) => {
+      if (!v) return "";
+      try {
+        return decrypt3(v);
+      } catch {
+        return "";
+      }
+    };
+    function consentValues(row) {
+      return {
+        discloser: row.discloser,
+        recipient: dec2(row.recipient_enc),
+        purpose: dec2(row.purpose_enc),
+        scope: dec2(row.scope_enc),
+        expires_at: row.expires_at,
+        expires_event: row.expires_event,
+        document_ref: row.document_ref,
+        signed_on_paper: row.signed_on_paper,
+        witness: dec2(row.witness_enc),
+        signer_relationship: row.signer_relationship,
+        signer_name: dec2(row.signer_name_enc),
+        revocation_right_given: row.revocation_right_given,
+        redisclosure_notice_given: row.redisclosure_notice_given,
+        refusal_consequences_given: row.refusal_consequences_given,
+        signed_at: row.signed_at
+      };
+    }
+    function consentElementProblems(row) {
+      if (!C.PART2_CONSENT_TYPES.includes(row.type)) return [];
+      const v = consentValues(row);
+      return row.rule_version === "2024" ? missingPart2Elements(v) : missingLegacyElements(v);
+    }
+    function activeConsent(clientId, consentId, { elements = true } = {}) {
+      if (!consentId) return null;
+      const row = db3.one(`SELECT * FROM consents WHERE id=? AND client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, consentId, clientId) || null;
+      if (row && elements && consentElementProblems(row).length) return null;
+      return row;
+    }
+    function courtOrderProblems(o) {
+      const out2 = [];
+      if (o.status !== "active") out2.push("it has been vacated");
+      if (o.expires_at && o.expires_at < (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)) out2.push("it has expired");
+      if (!o.findings_recorded) out2.push("it does not record the good-cause findings the regulation requires (\xA72.64(d))");
+      if (!o.notice_requirement_met) out2.push("the notice and opportunity to respond the regulation requires was not given");
+      return out2;
+    }
+    function agreedRestrictions(clientId) {
+      return db3.one(`SELECT COUNT(*) n FROM patient_requests WHERE client_id=? AND kind='restriction' AND status='fulfilled'`, clientId).n;
+    }
+    var normalise = (s) => String(s || "").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    var splitAliases = (s) => String(s || "").split(/[;\n]/).map((x) => x.trim()).filter(Boolean);
+    function aliasGroups() {
+      const groups = db3.all(`SELECT organisation, aliases FROM disclosure_agreements`).map((a) => [a.organisation, ...splitAliases(a.aliases)]);
+      for (const r of db3.all(`SELECT value FROM settings WHERE key LIKE 'fhir_client:%'`)) {
+        try {
+          const reg = JSON.parse(r.value);
+          if (reg && reg.recipient) groups.push([reg.recipient, ...Array.isArray(reg.aliases) ? reg.aliases : []]);
+        } catch {
+        }
+      }
+      return groups;
+    }
+    function recipientNames(recipient) {
+      const given = (Array.isArray(recipient) ? recipient : [recipient]).map((x) => String(x || "").trim()).filter(Boolean);
+      const seen2 = new Set(given.map(normalise));
+      const out2 = [...given];
+      for (const group of aliasGroups()) {
+        if (!group.some((n) => seen2.has(normalise(n)))) continue;
+        for (const n of group) if (!seen2.has(normalise(n))) {
+          seen2.add(normalise(n));
+          out2.push(n);
+        }
+      }
+      return out2;
+    }
+    function consentNamesRecipient({ type, recipient }, names) {
+      const r = normalise(recipient);
+      const ns = names.map(normalise).filter(Boolean);
+      if (!r || !ns.length) return false;
+      if (type === "part2_tpo") return ns.some((n) => ` ${r} `.includes(` ${n} `));
+      return ns.includes(r);
+    }
+    function isInternalRecipient(recipient) {
+      const r = normalise(recipient);
+      if (!r) return false;
+      if (r === normalise(db3.getSetting("org_name", ""))) return true;
+      return db3.all(`SELECT username, display_name FROM users WHERE is_active=1`).some((u) => normalise(u.username) === r || normalise(u.display_name) === r);
+    }
+    function agreementProblems(a) {
+      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const out2 = [];
+      if (a.status !== "active") out2.push("it has been ended");
+      if (a.expires_at && a.expires_at < today) out2.push("it has expired");
+      if (a.agreement_date > today) out2.push("it is not in force yet");
+      if (a.kind !== "qsoa" && !a.approving_body) out2.push("it does not name the IRB or approving body");
+      return out2;
+    }
+    function agreementNames(a) {
+      return [a.organisation, ...splitAliases(a.aliases)];
+    }
+    function requireAgreement(basis, agreementId, recipient) {
+      const label = AGREEMENT_KINDS[basis];
+      let a = agreementId ? db3.one(`SELECT * FROM disclosure_agreements WHERE id=?`, agreementId) : null;
+      if (!agreementId) {
+        const names2 = new Set(recipientNames(recipient).map(normalise));
+        a = db3.all(`SELECT * FROM disclosure_agreements WHERE kind=? AND status='active' ORDER BY agreement_date DESC, created_at DESC`, basis).find((x) => !agreementProblems(x).length && agreementNames(x).some((n) => names2.has(normalise(n)))) || null;
+      }
+      if (!a) {
+        throw badRequest(basis === "qsoa" ? "A disclosure to a qualified service organization needs the qualified service organization agreement on file (\xA72.11, \xA72.12(c)(4)): register it under Privacy & Part 2 \u2192 Agreements, and choose it." : `A ${basis === "research" ? "research (\xA72.52)" : "audit or evaluation (\xA72.53)"} disclosure needs the ${label} on file \u2014 the IRB, privacy board or approving body, and its dates: register it under Privacy & Part 2 \u2192 Agreements, and choose it.`, { agreementRequired: basis });
+      }
+      if (a.kind !== basis) throw badRequest(`That is a ${AGREEMENT_KINDS[a.kind]}, not a ${label}.`);
+      const problems = agreementProblems(a);
+      if (problems.length) throw badRequest(`That ${label} cannot authorise a disclosure: ${problems.join("; ")}.`);
+      const names = recipientNames(recipient);
+      if (!names.length) throw badRequest("Name the recipient of the disclosure.");
+      const theirs = new Set(agreementNames(a).map(normalise));
+      if (!names.some((n) => theirs.has(normalise(n)))) {
+        throw new HttpError3(409, `This ${label} is with "${a.organisation}"; it only covers disclosures to that organisation. Name it as the recipient, or choose the agreement with the organisation you are disclosing to.`, { agreementOrganisation: a.organisation });
+      }
+      return a;
+    }
+    function requireBasis(clientId, { consent_id, basis, justification, user, court_order_id, legal_proceeding, counseling_notes, restriction_reviewed, recipient, agreement_id, recipient_override, allowed } = {}) {
+      const b = basis || "consent";
+      if (!BASES.includes(b)) throw badRequest(`"${b}" is not a lawful basis for disclosure`);
+      if (allowed && !allowed.includes(b)) throw badRequest(`A referral can only be made with the client's consent, in a medical emergency, under a court order, or on a supervisor's justified override \u2014 not on a "${b.replace(/_/g, " ")}" basis. Record that disclosure on the client's Consents tab instead.`);
+      const canOverride = require_auth2().hasPerm(user, "disclosures:override");
+      if (OVERRIDE_BASES.includes(b) && !canOverride) {
+        throw forbidden(b === "other" ? 'Only a supervisor or administrator can record a disclosure on an "other" basis' : `Only a supervisor or administrator can record a disclosure on a "${b.replace(/_/g, " ")}" basis`);
+      }
+      const proceeding = !!legal_proceeding;
+      const notes = !!counseling_notes;
+      if (proceeding && !["consent", "court_order"].includes(b)) throw badRequest("Information for use in a proceeding against the patient may only be disclosed under a court order issued under 42 CFR \xA72.64/\xA72.65, or the patient's written consent given for that proceeding alone (\xA72.12(d), \xA72.31(d)). A subpoena on its own is not enough.");
+      if (notes && !["consent", "court_order"].includes(b)) throw badRequest("SUD counseling notes may only be disclosed under a consent given for counseling notes alone (\xA72.31(b)), or a court order that expressly covers them.");
+      const why = String(justification || "").trim();
+      let consent = null;
+      let order = null;
+      let agreement = null;
+      let override = false;
+      if (b === "consent") {
+        consent = activeConsent(clientId, consent_id, { elements: false });
+        if (!consent) throw badRequest("A valid, unexpired consent must be selected before information can be shared. Record the consent first, or choose another lawful basis.");
+        if (!disclosingConsentTypes().includes(consent.type)) {
+          throw badRequest(consent.type === "roi" ? "A general release of information is not a 42 CFR Part 2 consent (\xA72.31, \xA72.32). Record a Part 2 consent with every required element, or choose another lawful basis." : `A "${consent.type.replace(/_/g, " ")}" consent does not authorise sharing information. Record a Part 2 consent, or choose another lawful basis.`);
+        }
+        const missing = consentElementProblems(consent);
+        if (missing.length) throw badRequest(`This consent cannot authorise a disclosure: it does not record ${missing.join("; ")}. Record a new consent with every \xA72.31 element.`, { consentIncomplete: missing });
+        if (proceeding && consent.type !== "part2_proceedings") throw badRequest("Information for use in a proceeding against the patient needs a court order, or a consent given for that proceeding alone (\xA72.31(d)); this consent does not cover it.");
+        if (!proceeding && consent.type === "part2_proceedings") throw badRequest("A consent for use in a legal proceeding cannot be combined with any other purpose (\xA72.31(d)); use it only for the proceeding it names.");
+        if (notes && consent.type !== "part2_counseling_notes") throw badRequest("SUD counseling notes need a separate consent given for counseling notes alone (\xA72.31(b)); a treatment, payment and operations consent or a general Part 2 consent does not cover them.");
+        if (!notes && consent.type === "part2_counseling_notes") throw badRequest('A consent for SUD counseling notes covers counseling notes only (\xA72.31(b)); tick "includes SUD counseling notes", or rely on a different consent for other information.');
+        const names = recipientNames(recipient);
+        if (!names.length) throw badRequest("Name the recipient of the disclosure: the consent is checked against it.");
+        const named = dec2(consent.recipient_enc);
+        if (!consentNamesRecipient({ type: consent.type, recipient: named }, names)) {
+          if (!recipient_override) {
+            throw new HttpError3(409, `This consent covers disclosures to "${named}" only; it does not name ${names[0]}. Choose a consent that names this recipient, record a new one, or ask a supervisor to override with a written justification.`, { consentRecipient: named, recipientNotCovered: true });
+          }
+          if (!canOverride) throw forbidden("Only a supervisor or administrator can rely on a consent for a recipient it does not name");
+          if (why.length < MIN_JUSTIFICATION) throw badRequest(`Relying on a consent for a recipient it does not name needs a written justification of at least ${MIN_JUSTIFICATION} characters, which is kept with the disclosure record.`);
+          override = true;
+        }
+      }
+      if (b === "court_order") {
+        order = court_order_id ? db3.one(`SELECT * FROM court_orders WHERE id=? AND client_id=?`, court_order_id, clientId) : null;
+        if (!order) throw badRequest("A disclosure under a court order must name the order: record it on the client's Consents tab (42 CFR subpart E) and choose it. A subpoena on its own does not authorise disclosing a Part 2 record.");
+        const problems = courtOrderProblems(order);
+        if (problems.length) throw badRequest(`That court order cannot authorise a disclosure: ${problems.join("; ")}.`);
+        if (notes && !order.covers_counseling_notes) throw badRequest("That court order does not expressly cover SUD counseling notes.");
+      }
+      if (AGREEMENT_KINDS[b]) agreement = requireAgreement(b, agreement_id, recipient);
+      if (!RESTRICTION_EXEMPT.includes(b) && !restriction_reviewed && agreedRestrictions(clientId)) {
+        throw badRequest("This client has an agreed restriction on how their information is shared (see their Requests tab). Check that this disclosure respects it, then confirm.", { restrictionReview: true });
+      }
+      if (NEEDS_JUSTIFICATION.includes(b) && why.length < MIN_JUSTIFICATION) {
+        throw badRequest(b === "other" ? `Sharing without consent on an "other" basis needs a written justification of at least ${MIN_JUSTIFICATION} characters, which is kept with the disclosure record.` : b === "medical_emergency" ? `A medical emergency disclosure (42 CFR \xA72.51) needs a written justification of at least ${MIN_JUSTIFICATION} characters: the nature of the emergency and who was told.` : `A ${b === "crime_on_premises" ? "report of a crime on the premises or against staff (\xA72.12(c)(5))" : "mandated report of suspected child abuse or neglect (\xA72.12(c)(6))"} needs a written justification of at least ${MIN_JUSTIFICATION} characters: what happened, and what was reported to whom.`);
+      }
+      const kept = override ? `Recipient override (the consent names "${dec2(consent.recipient_enc)}"): ${why}` : why || null;
+      return { basis: b, consent, court_order: order, agreement, justification: kept, legal_proceeding: proceeding, counseling_notes: notes, recipient_override: override };
+    }
+    function requireExportBasis(clientIds, { basis, restriction_reviewed, legal_proceeding, recipient, agreement_id, user } = {}) {
+      if (legal_proceeding) throw badRequest("Records for use in a legal proceeding against a patient are disclosed one client at a time, under a recorded court order or a proceedings-only consent (Consents tab \u2192 Record a disclosure), never as a bulk export.");
+      if (!basis) throw badRequest(`An identified export must state its lawful basis (basis=${EXPORT_BASES.join("|")}); it is written to the accounting of disclosures for every client in the file`);
+      if (!EXPORT_BASES.includes(basis)) throw badRequest(`"${basis}" is not a basis an identified export can be made under (${EXPORT_BASES.join(", ")})`);
+      if (OVERRIDE_BASES.includes(basis) && !require_auth2().hasPerm(user, "disclosures:override")) throw forbidden(`Only a supervisor or administrator can make an export on a "${basis.replace(/_/g, " ")}" basis`);
+      if (basis === "internal" && !isInternalRecipient(recipient)) {
+        throw badRequest(`An "internal" export stays within this program (\xA72.12(c)(3)): the recipient must be ${db3.getSetting("org_name", "") || "this program"} or one of its staff (their name or username). A file for anyone else needs another basis.`);
+      }
+      const agreement = AGREEMENT_KINDS[basis] ? requireAgreement(basis, agreement_id, recipient) : null;
+      const consentOf = /* @__PURE__ */ new Map();
+      const excluded = [];
+      if (basis === "consent") {
+        const names = recipientNames(recipient);
+        for (const id of clientIds) {
+          const c = fileConsentFor(id, names);
+          if (c) consentOf.set(id, c.id);
+          else excluded.push(id);
+        }
+      }
+      const out2 = new Set(excluded);
+      requireRestrictionReview(clientIds.filter((id) => !out2.has(id)), restriction_reviewed);
+      return { basis, agreement, consentOf, excluded };
+    }
+    function fileConsentFor(clientId, names) {
+      const types = fileConsentTypes();
+      if (!names.length || !types.length) return null;
+      const rows = db3.all(`SELECT * FROM consents WHERE client_id=? AND type IN (${types.map(() => "?").join(",")}) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now')) ORDER BY signed_at DESC, created_at DESC`, clientId, ...types);
+      return rows.find((c) => !consentElementProblems(c).length && consentNamesRecipient({ type: c.type, recipient: dec2(c.recipient_enc) }, names)) || null;
+    }
+    function requireRestrictionReview(clientIds, restriction_reviewed) {
+      if (restriction_reviewed || !clientIds.length) return;
+      const restricted = new Set(db3.all(`SELECT DISTINCT client_id FROM patient_requests WHERE kind='restriction' AND status='fulfilled'`).map((r) => r.client_id));
+      const n = clientIds.filter((id) => restricted.has(id)).length;
+      if (n) throw badRequest(`${n} client${n === 1 ? "" : "s"} in this export ${n === 1 ? "has" : "have"} an agreed restriction on how their information is shared. Check the export respects it, then confirm (restriction_reviewed=1).`, { restrictionReview: true, restrictedClients: n });
+    }
+    function record({ id: givenId = null, clientId, consentId = null, courtOrderId = null, agreementId = null, recipientOverride = false, legalProceeding = false, counselingNotes = false, recipient, purpose, what, method = null, basis = "consent", justification = null, source = "manual", sourceRef = null, disclosedAt = null, user, ip }) {
+      const id = givenId || uuid2();
+      const at = disclosedAt || db3.now();
+      const noticeVersion = part2Program() ? C.PART2_NOTICE_VERSION : null;
+      db3.run(
+        `INSERT INTO disclosures(id,client_id,consent_id,recipient_enc,purpose_enc,what_enc,method,disclosed_at,disclosed_by,basis,justification_enc,source,source_ref,court_order_id,legal_proceeding,counseling_notes,notice_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        id,
+        clientId,
+        consentId,
+        encrypt3(String(recipient)),
+        encrypt3(String(purpose)),
+        encrypt3(String(what)),
+        method,
+        at,
+        user.id,
+        basis,
+        justification ? encrypt3(String(justification)) : null,
+        source,
+        sourceRef,
+        courtOrderId,
+        legalProceeding ? 1 : 0,
+        counselingNotes ? 1 : 0,
+        noticeVersion
+      );
+      audit3.log({ user, action: "disclosure.record", entity: "disclosure", entityId: id, clientId, ip, details: {
+        basis,
+        source,
+        consent_id: consentId || void 0,
+        court_order_id: courtOrderId || void 0,
+        agreement_id: agreementId || void 0,
+        recipient_override: recipientOverride ? true : void 0,
+        justified: justification ? true : void 0,
+        legal_proceeding: legalProceeding ? true : void 0,
+        counseling_notes: counselingNotes ? true : void 0,
+        notice: noticeVersion || void 0
+      } });
+      return id;
+    }
+    function recordStateReport({ clientIds, what, sourceRef, user, ip }) {
+      return clientIds.map((clientId) => record({ clientId, recipient: STATE_REPORTING.recipient, purpose: STATE_REPORTING.purpose, what, method: "export", basis: STATE_REPORTING.basis, source: "caloms", sourceRef, user, ip }));
+    }
+    function present(row) {
+      if (!row) return null;
+      const out2 = { ...row };
+      out2.recipient = row.recipient_enc ? decrypt3(row.recipient_enc) : null;
+      out2.purpose = row.purpose_enc ? decrypt3(row.purpose_enc) : null;
+      out2.what = row.what_enc ? decrypt3(row.what_enc) : null;
+      out2.justification = row.justification_enc ? decrypt3(row.justification_enc) : null;
+      delete out2.recipient_enc;
+      delete out2.purpose_enc;
+      delete out2.what_enc;
+      delete out2.justification_enc;
+      return out2;
+    }
+    function accounting(clientId) {
+      const client = db3.one(`SELECT id, client_code FROM clients WHERE id=?`, clientId);
+      const disclosures = db3.all(`SELECT d.*, u.display_name AS disclosed_by_name, u.username AS disclosed_by_username, co.order_type AS court_order_type FROM disclosures d JOIN users u ON u.id=d.disclosed_by LEFT JOIN court_orders co ON co.id=d.court_order_id WHERE d.client_id=? ORDER BY d.disclosed_at`, clientId).map(present);
+      const consents = db3.all(`SELECT id, type, recipient_enc, purpose_enc, signed_at, expires_at, expires_event, revoked_at, rule_version FROM consents WHERE client_id=? ORDER BY signed_at`, clientId).map((c) => ({ id: c.id, type: c.type, recipient: c.recipient_enc ? decrypt3(c.recipient_enc) : null, purpose: c.purpose_enc ? decrypt3(c.purpose_enc) : null, signed_at: c.signed_at, expires_at: c.expires_at, expires_event: c.expires_event, revoked_at: c.revoked_at, rule_version: c.rule_version }));
+      return { client_id: client?.id, client_code: client?.client_code, generated_at: db3.now(), part2_program: part2Program(), notice: part2Program() ? notice() : null, disclosures, consents };
+    }
+    var FHIR_PURPOSES = {
+      TREAT: { display: "Treatment", words: ["treatment", "care coordination", "coordination of care", "continuity of care"] },
+      HPAYMT: { display: "Payment", words: ["payment", "billing", "claims"] },
+      HOPERAT: { display: "Health care operations", words: ["operations"] }
+    };
+    var FHIR_CONSENT_TYPES = ["part2_disclosure", "part2_tpo", "roi"];
+    function fhirConsentTypes() {
+      const ok = disclosingConsentTypes();
+      return FHIR_CONSENT_TYPES.filter((t) => ok.includes(t));
+    }
+    function isTpo(purpose) {
+      const p = ` ${normalise(purpose)} `;
+      return / tpo /.test(p) || p.includes("treatment") && p.includes("payment") && p.includes("operations");
+    }
+    function consentCovers({ type, recipient, purpose, categories }, { recipients, purposeOfUse, category }) {
+      if (type !== void 0 && !fhirConsentTypes().includes(type)) return false;
+      if (category !== void 0 && !categoriesCover(categories, category)) return false;
+      if (!consentNamesRecipient({ type, recipient }, recipients)) return false;
+      if (type === "part2_tpo") return !!FHIR_PURPOSES[purposeOfUse];
+      if (isTpo(purpose)) return true;
+      const p = ` ${normalise(purpose)} `;
+      return (FHIR_PURPOSES[purposeOfUse]?.words || []).some((w) => p.includes(` ${normalise(w)} `));
+    }
+    var CATEGORY_OF_FHIR_TYPE = {
+      Patient: "demographics",
+      EpisodeOfCare: "encounters",
+      Encounter: "encounters",
+      ServiceRequest: "referrals",
+      Task: "tasks",
+      Observation: "risk_overdose",
+      DocumentReference: "documents",
+      // The Consent resource is the authorisation itself: listed for any client whose consent covers something.
+      Consent: "*"
+    };
+    function parseCategories(v) {
+      const list = Array.isArray(v) ? v : String(v || "").split(",");
+      return new Set(list.map((x) => String(x).trim()).filter((x) => C.CONSENT_INFO_CATEGORIES.includes(x)));
+    }
+    function categoriesCover(stored, category) {
+      const cats = parseCategories(stored);
+      if (!cats.size) return false;
+      return category === "*" || cats.has("all") || cats.has(category);
+    }
+    function generalScope(text) {
+      const t = normalise(text).replace(/\b(my|of|the|information|records?|in|sud|substance use|treatment|and|file|chart|client|patient)\b/g, " ").replace(/\s+/g, " ").trim();
+      return ["all", "everything", "entire", "complete", "whole", "full", "general", "any and all"].includes(t);
+    }
+    function consentPurposeCodes({ type, purpose }) {
+      return Object.keys(FHIR_PURPOSES).filter((code) => type === "part2_tpo" || consentCovers({ recipient: "x", purpose }, { recipients: ["x"], purposeOfUse: code }));
+    }
+    var coverageCache = /* @__PURE__ */ new Map();
+    function fhirCoverage({ cacheKey, recipients, purposeOfUse, resourceType }) {
+      const category = CATEGORY_OF_FHIR_TYPE[resourceType] || "*";
+      const stamp2 = db3.one(`SELECT (SELECT COUNT(*) FROM consents) n, (SELECT MAX(updated_at) FROM consents) u,
+    (SELECT COUNT(*) FROM patient_requests) rn, (SELECT MAX(updated_at) FROM patient_requests) ru`);
+      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const types = fhirConsentTypes();
+      const key = `${stamp2.n}|${stamp2.u}|${stamp2.rn}|${stamp2.ru}|${types.join(",")}|${today}|${recipients.join("")}|${purposeOfUse}|${category}`;
+      const hit = coverageCache.get(`${cacheKey}|${category}`);
+      if (hit && hit.key === key) return hit.map;
+      const map = /* @__PURE__ */ new Map();
+      const restricted = new Set(db3.all(`SELECT DISTINCT client_id FROM patient_requests WHERE kind='restriction' AND status='fulfilled'`).map((r) => r.client_id));
+      const rows = types.length ? db3.all(`SELECT k.* FROM consents k JOIN clients c ON c.id=k.client_id
+    WHERE k.type IN (${types.map(() => "?").join(",")}) AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= date('now'))
+      AND c.deleted_at IS NULL AND c.merged_into IS NULL ORDER BY k.signed_at, k.created_at`, ...types) : [];
+      for (const row of rows) {
+        if (restricted.has(row.client_id)) continue;
+        if (consentElementProblems(row).length) continue;
+        let plain;
+        try {
+          plain = { type: row.type, recipient: row.recipient_enc ? decrypt3(row.recipient_enc) : "", purpose: row.purpose_enc ? decrypt3(row.purpose_enc) : "", categories: row.info_categories };
+        } catch {
+          continue;
+        }
+        if (consentCovers(plain, { recipients, purposeOfUse, category })) map.set(row.client_id, row.id);
+      }
+      if (coverageCache.size > 100) coverageCache.clear();
+      coverageCache.set(`${cacheKey}|${category}`, { key, map });
+      return map;
+    }
+    function recordFhir({ perClient, recipient, purposeOfUse, sourceRef, user, ip }) {
+      if (!perClient.size) return 0;
+      const purpose = `${FHIR_PURPOSES[purposeOfUse]?.display || purposeOfUse} (FHIR purpose of use ${purposeOfUse})`;
+      db3.transaction(() => {
+        for (const [clientId, { consentId, what }] of perClient) {
+          record({ clientId, consentId, recipient, purpose, what, method: "FHIR API", basis: "consent", source: "fhir", sourceRef, user, ip });
+        }
+      });
+      return perClient.size;
+    }
+    module.exports = {
+      BASES,
+      EXPORT_BASES,
+      SYSTEM_BASES,
+      STATE_REPORTING,
+      NEEDS_JUSTIFICATION,
+      OVERRIDE_BASES,
+      REFERRAL_BASES,
+      AGREEMENT_KINDS,
+      LEGACY_CONSENT_CUTOFF,
+      MIN_JUSTIFICATION,
+      part2Program,
+      notice,
+      fileNotice,
+      disclosingConsentTypes,
+      fileConsentTypes,
+      activeConsent,
+      courtOrderProblems,
+      agreedRestrictions,
+      missingPart2Elements,
+      missingLegacyElements,
+      consentElementProblems,
+      consentValues,
+      normalise,
+      recipientNames,
+      consentNamesRecipient,
+      isInternalRecipient,
+      agreementProblems,
+      agreementNames,
+      requireAgreement,
+      fileConsentFor,
+      requireBasis,
+      requireExportBasis,
+      requireRestrictionReview,
+      record,
+      recordStateReport,
+      present,
+      accounting,
+      FHIR_PURPOSES,
+      FHIR_CONSENT_TYPES,
+      fhirConsentTypes,
+      consentCovers,
+      consentPurposeCodes,
+      fhirCoverage,
+      recordFhir,
+      CATEGORY_OF_FHIR_TYPE,
+      parseCategories,
+      categoriesCover,
+      generalScope
+    };
+  }
+});
+
+// server/db.js
+var require_db = __commonJS({
+  "server/db.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var path = (init_path(), __toCommonJS(path_exports));
+    var { DatabaseSync: DatabaseSync2 } = (init_sqlite(), __toCommonJS(sqlite_exports));
+    var config = require_config();
+    var db3;
+    function open2(dbPath = config.dbPath) {
+      if (db3) return db3;
+      if (dbPath !== ":memory:") fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+      db3 = new DatabaseSync2(dbPath);
+      try {
+        db3.exec("PRAGMA busy_timeout = 5000");
+        initialise(db3, fs.readFileSync(path.join("/", "schema.sql"), "utf8"), dbPath);
+      } catch (e) {
+        try {
+          db3.close();
+        } catch {
+        }
+        db3 = void 0;
+        throw e;
+      }
+      if (dbPath !== ":memory:") for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+        try {
+          fs.chmodSync(f, 384);
+        } catch {
+        }
+      }
+      return db3;
+    }
+    function openWith(bytes3) {
+      if (db3) {
+        try {
+          db3.close();
+        } catch {
+        }
+        db3 = void 0;
+      }
+      db3 = bytes3 ? new DatabaseSync2(":memory:", bytes3) : new DatabaseSync2(":memory:");
+      try {
+        db3.exec("PRAGMA busy_timeout = 5000");
+      } catch {
+      }
+      initialise(db3, safeSchema());
+      return db3;
+    }
+    function safeSchema() {
+      try {
+        return fs.readFileSync(path.join("/", "schema.sql"), "utf8");
+      } catch {
+        return require_schema_text();
+      }
+    }
+    var addColumn = (d, table, col, def) => {
+      const cols2 = d.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+      if (!cols2.includes(col)) d.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+    };
+    var tableCols = (d, table) => d.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+    var tableExists = (d, table) => !!d.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(table);
+    function encryptColumn(d, table, oldCol, newCol) {
+      if (!tableExists(d, table)) return;
+      const cols2 = tableCols(d, table);
+      if (!cols2.includes(oldCol)) return;
+      const { encrypt: encrypt3 } = require_crypto();
+      addColumn(d, table, newCol, "TEXT");
+      const rows = d.prepare(`SELECT id, ${oldCol} AS v FROM ${table} WHERE ${oldCol} IS NOT NULL AND ${oldCol} <> ''`).all();
+      const upd = d.prepare(`UPDATE ${table} SET ${newCol}=? WHERE id=?`);
+      for (const r of rows) upd.run(encrypt3(String(r.v)), r.id);
+      d.exec(`ALTER TABLE ${table} DROP COLUMN ${oldCol}`);
+    }
+    function rebuildTable(d, schemaText, table, coalesce = {}) {
+      if (!tableExists(d, table)) return;
+      const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\(([\\s\\S]*?)\\n\\);`));
+      if (!m) throw new Error(`rebuildTable: no definition for ${table} in schema`);
+      const tmp = `__new_${table}`;
+      d.exec(`DROP TABLE IF EXISTS ${tmp}`);
+      d.exec(`CREATE TABLE ${tmp} (${m[1]}
+)`);
+      const oldCols = tableCols(d, table), newCols = tableCols(d, tmp);
+      const shared = newCols.filter((c) => oldCols.includes(c));
+      const select = shared.map((c) => coalesce[c] ? `COALESCE(${c}, ${coalesce[c]})` : c).join(", ");
+      d.exec(`INSERT INTO ${tmp}(${shared.join(", ")}) SELECT ${select} FROM ${table}`);
+      d.exec(`DROP TABLE ${table}`);
+      d.exec(`ALTER TABLE ${tmp} RENAME TO ${table}`);
+      for (const line of schemaText.split("\n")) {
+        const im = line.match(new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${table}\\(`));
+        if (im) d.exec(line.trim());
+      }
+    }
+    var migrations = [
+      // 1: initial schema (created by schema.sql)
+      () => {
+      },
+      // 2: sync support — updated_at on tables that lacked it, tombstones for hard deletes
+      (d) => {
+        for (const t of ["assignments", "consents", "disclosures", "budget_lines", "note_addenda", "imports", "import_items"]) {
+          addColumn(d, t, "updated_at", "TEXT");
+          d.exec(`UPDATE ${t} SET updated_at = created_at WHERE updated_at IS NULL`);
+        }
+        d.exec(`CREATE TABLE IF NOT EXISTS tombstones (table_name TEXT NOT NULL, id TEXT NOT NULL, deleted_at TEXT NOT NULL, PRIMARY KEY (table_name, id))`);
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_tombstones_at ON tombstones(deleted_at)`);
+      },
+      // 3: treatment center profiles — summary/service tags on resources, photo gallery table
+      (d) => {
+        for (const [c, t] of [["summary", "TEXT"], ["service_tags", "TEXT"], ["levels_of_care", "TEXT"], ["populations", "TEXT"], ["intake_process", "TEXT"], ["cost_notes", "TEXT"]]) addColumn(d, "resources", c, t);
+        d.exec(`CREATE TABLE IF NOT EXISTS resource_photos (id TEXT PRIMARY KEY, resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE, caption TEXT, content_type TEXT NOT NULL, bytes INTEGER NOT NULL DEFAULT 0, width INTEGER, height INTEGER, data_b64 TEXT NOT NULL, thumb_b64 TEXT, sort_order INTEGER NOT NULL DEFAULT 0, uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_resource_photos ON resource_photos(resource_id, sort_order)`);
+      },
+      // 4: county form library
+      (d) => {
+        d.exec(`CREATE TABLE IF NOT EXISTS form_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, category TEXT NOT NULL DEFAULT 'other', version TEXT, filename TEXT, content_type TEXT, bytes INTEGER NOT NULL DEFAULT 0, file_b64 TEXT, fields_json TEXT NOT NULL DEFAULT '[]', instructions TEXT, is_active INTEGER NOT NULL DEFAULT 1, uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
+        d.exec(`CREATE TABLE IF NOT EXISTS client_forms (id TEXT PRIMARY KEY, client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE, template_id TEXT REFERENCES form_templates(id) ON DELETE SET NULL, template_name TEXT NOT NULL, fields_json TEXT NOT NULL DEFAULT '[]', values_enc TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','completed','void')), completed_at TEXT, completed_by TEXT REFERENCES users(id), created_by TEXT NOT NULL REFERENCES users(id), notes TEXT, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), deleted_at TEXT)`);
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_client_forms_client ON client_forms(client_id)`);
+        d.exec(`CREATE TABLE IF NOT EXISTS client_form_files (id TEXT PRIMARY KEY, client_form_id TEXT NOT NULL REFERENCES client_forms(id) ON DELETE CASCADE, client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE, filename TEXT NOT NULL, content_type TEXT NOT NULL, bytes INTEGER NOT NULL DEFAULT 0, data_enc TEXT NOT NULL, uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_client_form_files ON client_form_files(client_form_id)`);
+      },
+      // 5: PHI that was still in plaintext moves into _enc columns; co-signature, time approval, episodes,
+      //    overdose events, coded race, client-less interventions, and the updated_at indexes sync needs.
+      (d) => {
+        const schemaText = safeSchema();
+        for (const [t, from, to] of [
+          ["clients", "goals", "goals_enc"],
+          ["clients", "flags", "flags_enc"],
+          ["notes", "title", "title_enc"],
+          ["interventions", "summary", "summary_enc"],
+          ["import_items", "title", "title_enc"],
+          ["consents", "recipient", "recipient_enc"],
+          ["consents", "purpose", "purpose_enc"],
+          ["consents", "scope", "scope_enc"],
+          ["disclosures", "disclosed_to", "recipient_enc"],
+          ["disclosures", "purpose", "purpose_enc"],
+          ["disclosures", "info_disclosed", "what_enc"]
+        ]) encryptColumn(d, t, from, to);
+        addColumn(d, "clients", "race_codes", "TEXT");
+        addColumn(d, "users", "requires_cosign", "INTEGER NOT NULL DEFAULT 0");
+        addColumn(d, "users", "supervisor_id", "TEXT REFERENCES users(id)");
+        for (const [c, def] of [["cosign_required", "INTEGER NOT NULL DEFAULT 0"], ["cosigned_by", "TEXT REFERENCES users(id)"], ["cosigned_at", "TEXT"], ["cosignature_hash", "TEXT"], ["cosign_note", "TEXT"]]) addColumn(d, "notes", c, def);
+        for (const [c, def] of [["status", "TEXT NOT NULL DEFAULT 'draft'"], ["submitted_at", "TEXT"], ["approved_by", "TEXT REFERENCES users(id)"], ["approved_at", "TEXT"], ["approval_note", "TEXT"]]) addColumn(d, "time_entries", c, def);
+        addColumn(d, "consents", "revoked_by", "TEXT REFERENCES users(id)");
+        for (const [c, def] of [["consent_revoked", "INTEGER NOT NULL DEFAULT 0"], ["outcome_recorded_at", "TEXT"], ["episode_id", "TEXT REFERENCES episodes(id)"]]) addColumn(d, "referrals", c, def);
+        for (const [c, def] of [["source", "TEXT"], ["source_ref", "TEXT"]]) addColumn(d, "disclosures", c, def);
+        for (const t of ["assignments", "budget_lines", "note_addenda", "imports", "import_items", "consents", "disclosures"])
+          rebuildTable(d, schemaText, t, { updated_at: "created_at" });
+        rebuildTable(d, schemaText, "interventions", { updated_at: "created_at" });
+        for (const t of ["episodes", "overdose_events"]) {
+          const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
+          if (m) d.exec(m[0]);
+        }
+        for (const line of schemaText.split("\n")) if (/^CREATE( UNIQUE)? INDEX IF NOT EXISTS /.test(line.trim())) {
+          try {
+            d.exec(line.trim());
+          } catch {
+          }
+        }
+        if (tableExists(d, "episodes")) {
+          const { uuid: uuid2 } = require_crypto();
+          const open3 = d.prepare(`SELECT id, intake_date, created_at, created_by, referral_source, status, discharge_date, discharge_reason FROM clients WHERE deleted_at IS NULL`).all();
+          const ins = d.prepare(`INSERT INTO episodes(id,client_id,opened_at,opened_by,referral_source,closed_at,discharge_reason,status) VALUES(?,?,?,?,?,?,?,?)`);
+          const has = d.prepare(`SELECT 1 FROM episodes WHERE client_id=?`);
+          for (const c of open3) {
+            if (has.get(c.id)) continue;
+            const closed = c.status === "closed" || c.status === "deceased";
+            ins.run(uuid2(), c.id, c.intake_date || String(c.created_at).slice(0, 10), c.created_by, c.referral_source, closed ? c.discharge_date || c.created_at : null, closed ? c.discharge_reason : null, closed ? "closed" : "open");
+          }
+        }
+      },
+      // 6: coarse blind indexes so search tolerates typos and partial surnames, and duplicate detection has
+      //    something to match on, without putting any name in the clear.
+      (d) => {
+        const schemaText = safeSchema();
+        addColumn(d, "clients", "merged_into", "TEXT REFERENCES clients(id)");
+        addColumn(d, "clients", "name_prefix_idx", "TEXT");
+        addColumn(d, "clients", "name_phonetic_idx", "TEXT");
+        const { decrypt: decrypt3 } = require_crypto();
+        const M = require_clients_model();
+        const upd = d.prepare(`UPDATE clients SET name_prefix_idx=?, name_phonetic_idx=? WHERE id=?`);
+        for (const c of d.prepare(`SELECT id, last_name_enc FROM clients`).all()) {
+          let last = "";
+          try {
+            last = c.last_name_enc ? decrypt3(c.last_name_enc) : "";
+          } catch {
+            continue;
+          }
+          upd.run(M.namePrefixIndex(last), M.namePhoneticIndex(last), c.id);
+        }
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_clients_name_/.test(line.trim())) d.exec(line.trim());
+      },
+      // 7: attachment bytes become nullable. Rows now reach a device before their bytes do — a sync payload
+      //    carrying every photo and scan inline was tens of megabytes the phone could not parse — so an
+      //    attachment row has to be insertable while its content is still on its way.
+      (d) => {
+        const schemaText = safeSchema();
+        for (const t of ["resource_photos", "client_form_files"]) rebuildTable(d, schemaText, t);
+      },
+      // 8: assignments record the instant they were ended. Ending one used to leave the worker with the client
+      //    for the rest of the day, because access was decided by date alone — not what a supervisor taking
+      //    somebody off a case expects to happen.
+      (d) => {
+        addColumn(d, "assignments", "ended_at", "TEXT");
+      },
+      // 9: a logged contact says whether it was a phone call or a text message. Everything already recorded
+      //    was a call, which is what the default says.
+      (d) => {
+        addColumn(d, "calls", "method", `TEXT NOT NULL DEFAULT 'phone' CHECK (method IN ('phone','text'))`);
+      },
+      // 10: referral and engagement dates on clients, so time-to-engagement (a common navigator KPI) can be
+      //     tracked per client instead of only inferred from intake_date.
+      (d) => {
+        addColumn(d, "clients", "referral_date", "TEXT");
+        addColumn(d, "clients", "engagement_date", "TEXT");
+      },
+      // 11: optional single sign-on. An administrator links an existing account to the county identity
+      //     provider's 'sub' claim; OIDC login only ever signs in to an already-linked account.
+      (d) => {
+        addColumn(d, "users", "oidc_subject", "TEXT");
+        d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_subject ON users(oidc_subject) WHERE oidc_subject IS NOT NULL`);
+      },
+      // 12: device tracking for local-mode phones/tablets, so a lost device can be revoked or wiped the next
+      //     time it tries to sync (server/devices.js).
+      (d) => {
+        d.exec(`CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, label TEXT,
+      first_seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), last_seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+      last_ip TEXT, sync_count INTEGER NOT NULL DEFAULT 0, wipe_requested_at TEXT, revoked_at TEXT)`);
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id)`);
+      },
+      // 13: nested budget allocations — a budget line can now sit inside a larger one instead of every line
+      //     being a flat peer under the fund (server/routes/budget.js enforces same-fund + no cycles).
+      (d) => {
+        addColumn(d, "budget_lines", "parent_id", "TEXT REFERENCES budget_lines(id) ON DELETE CASCADE");
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_budget_lines_parent ON budget_lines(parent_id)`);
+      },
+      // 14: an intervention with a direct cost against a fund can now name the specific allocation it draws
+      //     down — interventions already had funding_source_id and cost, but nothing to point at which budget
+      //     line, so recording a service never actually reduced a budget. server/routes/interventions.js now
+      //     auto-posts a matching (pending) expenditure from these three columns.
+      (d) => {
+        addColumn(d, "interventions", "budget_line_id", "TEXT REFERENCES budget_lines(id) ON DELETE SET NULL");
+      },
+      // 15: county policies, procedures and contracts — an uploaded-file library (server/routes/documents.js),
+      //     searched by title/category/metadata only, the same shape as the existing form template library.
+      (d) => {
+        d.exec(`CREATE TABLE IF NOT EXISTS policy_documents (id TEXT PRIMARY KEY, title TEXT NOT NULL, category TEXT NOT NULL CHECK (category IN ('policy','procedure','contract')),
+      description TEXT, effective_date TEXT, expires_at TEXT, filename TEXT, content_type TEXT, bytes INTEGER NOT NULL DEFAULT 0, file_b64 TEXT, is_active INTEGER NOT NULL DEFAULT 1,
+      uploaded_by TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`);
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_policy_documents_cat ON policy_documents(category)`);
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_policy_documents_updated ON policy_documents(updated_at)`);
+      },
+      // 16: at most one expenditure per intervention — a second one would double-count that service's cost.
+      //     Before this, intervention_id was a writable field on the generic expenditures POST, so a database
+      //     that saw any traffic on that route could already have duplicates; keep the most recently updated
+      //     row's link and unlink the rest (they stay, just as ordinary expenditures with no linked service)
+      //     rather than deleting real financial records during a migration.
+      (d) => {
+        const dupes = d.prepare(`SELECT intervention_id, id FROM expenditures WHERE intervention_id IS NOT NULL
+      AND id NOT IN (SELECT id FROM expenditures e2 WHERE e2.intervention_id=expenditures.intervention_id ORDER BY e2.updated_at DESC LIMIT 1)`).all();
+        const unlink = d.prepare(`UPDATE expenditures SET intervention_id=NULL WHERE id=?`);
+        for (const row of dupes) unlink.run(row.id);
+        d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_exp_intervention_unique ON expenditures(intervention_id) WHERE intervention_id IS NOT NULL`);
+      },
+      // 17: why an expenditure was rejected. Time entries have carried this since their approval step was
+      //     added; expenditures accepted a note on the approve route and then dropped it on the floor.
+      (d) => {
+        addColumn(d, "expenditures", "approval_note", "TEXT");
+      },
+      // 18: a first name on its own finds the person (the search box always said it would), and the policy
+      //     library keeps the words inside each file so a policy can be found by what it says, not only its
+      //     title. Existing documents are indexed by server/routes/documents.js the next time they are saved.
+      (d) => {
+        const schemaText = safeSchema();
+        addColumn(d, "clients", "first_name_idx", "TEXT");
+        addColumn(d, "clients", "first_name_prefix_idx", "TEXT");
+        const { decrypt: decrypt3, blindIndex: blindIndex2 } = require_crypto();
+        const M = require_clients_model();
+        const upd = d.prepare(`UPDATE clients SET first_name_idx=?, first_name_prefix_idx=? WHERE id=?`);
+        for (const c of d.prepare(`SELECT id, first_name_enc FROM clients`).all()) {
+          let first = "";
+          try {
+            first = c.first_name_enc ? decrypt3(c.first_name_enc) : "";
+          } catch {
+            continue;
+          }
+          upd.run(blindIndex2(String(first || "").trim().toLowerCase()), M.namePrefixIndex(first), c.id);
+        }
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_clients_first_name/.test(line.trim())) d.exec(line.trim());
+        addColumn(d, "policy_documents", "search_text", "TEXT");
+      },
+      // 19: compliance review. Free text that reveals a named person's diagnosis moves into _enc columns
+      //     (call purposes, referral outcomes/barriers/notes, task titles, overdose substances); Part 2 consents
+      //     record their expiry event, paper signature and redisclosure notice; disclosures made without consent
+      //     carry an encrypted justification; clients can be placed on legal hold; break-glass events queue
+      //     for supervisor review; patient-rights requests get a table with a 30-day clock.
+      (d) => {
+        const schemaText = safeSchema();
+        for (const [t, from, to] of [
+          ["calls", "purpose", "purpose_enc"],
+          ["referrals", "outcome", "outcome_enc"],
+          ["referrals", "barrier", "barrier_enc"],
+          ["referrals", "notes", "notes_enc"],
+          ["overdose_events", "substances", "substances_enc"]
+        ]) encryptColumn(d, t, from, to);
+        encryptColumn(d, "tasks", "description", "description_enc");
+        if (tableExists(d, "tasks") && tableCols(d, "tasks").includes("title")) {
+          const { encrypt: encrypt3 } = require_crypto();
+          addColumn(d, "tasks", "title_enc", "TEXT");
+          const upd = d.prepare(`UPDATE tasks SET title_enc=? WHERE id=?`);
+          for (const r of d.prepare(`SELECT id, title FROM tasks`).all()) upd.run(encrypt3(String(r.title ?? "")), r.id);
+          d.exec(`ALTER TABLE tasks DROP COLUMN title`);
+          rebuildTable(d, schemaText, "tasks");
+        }
+        addColumn(d, "clients", "legal_hold", "INTEGER NOT NULL DEFAULT 0");
+        addColumn(d, "clients", "legal_hold_reason", "TEXT");
+        addColumn(d, "consents", "expires_event", "TEXT");
+        addColumn(d, "consents", "signed_on_paper", "INTEGER NOT NULL DEFAULT 0");
+        addColumn(d, "consents", "redisclosure_notice_given", "INTEGER NOT NULL DEFAULT 0");
+        addColumn(d, "disclosures", "justification_enc", "TEXT");
+        for (const t of ["breakglass_events", "patient_requests"]) {
+          const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
+          if (m) d.exec(m[0]);
+        }
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_(breakglass|patient_requests)/.test(line.trim())) d.exec(line.trim());
+      },
+      // 20: navigator field tools — a preferred name / alias finds the person too; an author can ask a
+      //     supervisor to review/co-sign a note; and a harm-reduction supply inventory that visits draw down.
+      (d) => {
+        const schemaText = safeSchema();
+        addColumn(d, "clients", "preferred_name_idx", "TEXT");
+        const { decrypt: decrypt3 } = require_crypto();
+        const M = require_clients_model();
+        const upd = d.prepare(`UPDATE clients SET preferred_name_idx=? WHERE id=?`);
+        for (const c of d.prepare(`SELECT id, preferred_name_enc FROM clients WHERE preferred_name_enc IS NOT NULL`).all()) {
+          let pref = "";
+          try {
+            pref = decrypt3(c.preferred_name_enc);
+          } catch {
+            continue;
+          }
+          upd.run(M.preferredNameIndex(pref), c.id);
+        }
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_clients_preferred_name/.test(line.trim())) d.exec(line.trim());
+        addColumn(d, "notes", "cosign_requested", "INTEGER NOT NULL DEFAULT 0");
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS supply_stock \([\s\S]*?\n\);/);
+        if (m) d.exec(m[0]);
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_supply_stock/.test(line.trim())) d.exec(line.trim());
+      },
+      // 21: a client whose status is NULL or blank (rows written before the value was enforced end to end,
+      //     including through sync) showed no status at all in the header and Overview. The column's default
+      //     is 'active', so that is what an empty value has always meant.
+      (d) => {
+        d.exec(`UPDATE clients SET status='active' WHERE status IS NULL OR TRIM(status)=''`);
+      },
+      // 22: spreadsheet import idempotency — a hash per imported row (import_rows), so the same file imported
+      //     twice does not double every visit, call, hour and expenditure it holds.
+      (d) => {
+        const schemaText = safeSchema();
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS import_rows \([\s\S]*?\n\);/);
+        if (m) d.exec(m[0]);
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_import_rows/.test(line.trim())) d.exec(line.trim());
+      },
+      // 23: a referral's follow-up to-do remembers which referral it belongs to. Recording one referral's
+      //     outcome used to close every "Follow up on referral…" to-do on the client, by title prefix.
+      (d) => {
+        addColumn(d, "tasks", "referral_id", "TEXT REFERENCES referrals(id) ON DELETE SET NULL");
+      },
+      // 24: a to-do's details ("detox bed at Granite on Tuesday; bring the MAT letter") reveal as much as its
+      //     title, which has been encrypted since 19. tasks.description moves into description_enc and the
+      //     plaintext column goes; the table is rebuilt from schema.sql so it matches a fresh install.
+      (d) => {
+        if (!tableExists(d, "tasks") || !tableCols(d, "tasks").includes("description")) return;
+        encryptColumn(d, "tasks", "description", "description_enc");
+        rebuildTable(d, safeSchema(), "tasks");
+      },
+      // 25: self sign-up. A request for an account is a users row that cannot sign in until an administrator
+      //     approves it (access_status 'pending'); every existing account is 'active'.
+      (d) => {
+        addColumn(d, "users", "access_status", `TEXT NOT NULL DEFAULT 'active' CHECK (access_status IN ('active','pending','declined'))`);
+        addColumn(d, "users", "access_note", "TEXT");
+        addColumn(d, "users", "requested_at", "TEXT");
+      },
+      // 26: name search and duplicate detection work in every script. Blind indexes used to keep only a-z and
+      //     0-9, so an Arabic or Cyrillic name indexed as nothing (unsearchable, never flagged as a duplicate)
+      //     and "Øster"/"Łecki" lost a letter; they now fold accents, transliterate Ø/Ł/ß/Æ… and keep every
+      //     Unicode letter (server/crypto.js foldText). Every client's indexes are re-derived from the decrypted
+      //     values with the same function key rotation uses (clients-model clientIndexes). A migration can
+      //     decrypt: the keys are loaded (config) before the database is opened, here and in the local kernel.
+      //     A row that cannot be decrypted keeps the indexes it had. No schema change.
+      (d) => {
+        const { decrypt: decrypt3 } = require_crypto();
+        const M = require_clients_model();
+        const cols2 = ["last_name_idx", "full_name_idx", "name_prefix_idx", "name_phonetic_idx", "first_name_idx", "first_name_prefix_idx", "preferred_name_idx", "dob_idx", "phone_idx"];
+        const upd = d.prepare(`UPDATE clients SET ${cols2.map((c) => `${c}=?`).join(", ")} WHERE id=?`);
+        for (const c of d.prepare(`SELECT id, first_name_enc, last_name_enc, preferred_name_enc, dob_enc, phone_enc FROM clients`).all()) {
+          let plain;
+          try {
+            plain = { first_name: decrypt3(c.first_name_enc), last_name: decrypt3(c.last_name_enc), preferred_name: decrypt3(c.preferred_name_enc), dob: decrypt3(c.dob_enc), phone: decrypt3(c.phone_enc) };
+          } catch {
+            continue;
+          }
+          const idx = M.clientIndexes(plain);
+          upd.run(...cols2.map((k) => idx[k]), c.id);
+        }
+      },
+      // 27:
+      //     idempotency_keys, so a retried POST is answered once instead of creating everything twice; and
+      //     breakglass_events.kind, because the supervisors' review queue now also receives re-admissions of
+      //     discharged clients by a worker whose caseload they were not on (POST /api/clients/:id/readmit).
+      (d) => {
+        addColumn(d, "breakglass_events", "kind", "TEXT NOT NULL DEFAULT 'clinical_note'");
+        const schemaText = safeSchema();
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS idempotency_keys \([\s\S]*?\n\);/);
+        if (m) d.exec(m[0]);
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_idempotency/.test(line.trim())) d.exec(line.trim());
+      },
+      // 28: Settings → Lists. An administrator's changes to the choices on documentation forms (a renamed,
+      //     reordered or retired choice, or a programme's own addition) are kept in option_overrides; the
+      //     built-in choices stay in code (server/options.js). An existing database starts with none.
+      (d) => {
+        const schemaText = safeSchema();
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS option_overrides \([\s\S]*?\n\);/);
+        if (m) d.exec(m[0]);
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_option_overrides/.test(line.trim())) d.exec(line.trim());
+      },
+      // 29: clinical depth for CalAIM documentation — the problem list
+      //     and its change history, the care coordination plan (goals and steps), ASAM six-dimension
+      //     assessments and scored outcome measures; and notes.problem_ids, the problems a note addresses.
+      //     New tables only, plus one nullable column, so an existing database starts with none of them.
+      (d) => {
+        addColumn(d, "notes", "problem_ids", "TEXT");
+        const schemaText = safeSchema();
+        for (const t of ["problems", "problem_history", "care_plan_goals", "care_plan_steps", "asam_assessments", "outcome_measures"]) {
+          const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
+          if (!m) throw new Error(`migration 29: no definition for ${t} in schema`);
+          d.exec(m[0]);
+          for (const line of schemaText.split("\n")) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
+        }
+      },
+      // 30: CalOMS Tx state reporting. caloms_records holds each episode's
+      //     admission, discharge and annual update records (answers encrypted); an existing database starts
+      //     with none and with CalOMS reporting switched off (settings caloms_enabled / caloms_providers).
+      (d) => {
+        const schemaText = safeSchema();
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS caloms_records \([\s\S]*?\n\);/);
+        if (m) d.exec(m[0]);
+        for (const line of schemaText.split("\n")) if (/^CREATE (UNIQUE )?INDEX IF NOT EXISTS idx_caloms_records/.test(line.trim())) d.exec(line.trim());
+      },
+      // 31: 42 CFR Part 2 (2024 final rule). Consents record the rest of the §2.31 elements (who may disclose,
+      //     who signed if not the patient, the revocation and refusal statements, which rule version they were
+      //     taken against); subpart E court orders get a table that disclosures point at; a disclosure says
+      //     whether it is for a proceeding against the patient, includes SUD counseling notes, and which §2.32
+      //     notice went with it; notes can be SUD counseling notes (§2.11); the §2.22 patient notice is
+      //     recorded per client; and a complaint log (§2.4) and a breach/incident register. Existing consents
+      //     keep rule_version NULL (recorded before the 2024 element list) and are shown as such.
+      (d) => {
+        const schemaText = safeSchema();
+        for (const [c, def] of [
+          ["discloser", "TEXT"],
+          ["signer_relationship", "TEXT"],
+          ["signer_name_enc", "TEXT"],
+          ["revocation_right_given", "INTEGER NOT NULL DEFAULT 0"],
+          ["refusal_consequences_given", "INTEGER NOT NULL DEFAULT 0"],
+          ["rule_version", "TEXT"]
+        ]) addColumn(d, "consents", c, def);
+        addColumn(d, "notes", "counseling_note", "INTEGER NOT NULL DEFAULT 0");
+        for (const t of ["court_orders", "part2_notices", "complaints", "privacy_incidents", "privacy_incident_clients"]) {
+          const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
+          if (m) d.exec(m[0]);
+        }
+        for (const [c, def] of [
+          ["court_order_id", "TEXT REFERENCES court_orders(id) ON DELETE SET NULL"],
+          ["legal_proceeding", "INTEGER NOT NULL DEFAULT 0"],
+          ["counseling_notes", "INTEGER NOT NULL DEFAULT 0"],
+          ["notice_version", "TEXT"]
+        ]) addColumn(d, "disclosures", c, def);
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_(court_orders|part2_notices|complaints|privacy_incident)/.test(line.trim())) d.exec(line.trim());
+      },
+      // 32: FHIR SMART Backend Services (private_key_jwt). fhir_jwt_assertions remembers each client assertion's
+      //     jti until it expires, so an assertion cannot be replayed (server/fhir/jwt.js). A new table only; an
+      //     existing database starts with it empty.
+      (d) => {
+        const schemaText = safeSchema();
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS fhir_jwt_assertions \([\s\S]*?\n\);/);
+        if (!m) throw new Error("migration 32: no definition for fhir_jwt_assertions in schema");
+        d.exec(m[0]);
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_fhir_jwt_assertions/.test(line.trim())) d.exec(line.trim());
+      },
+      // 33: the audit log becomes append-only in the database (triggers that refuse UPDATE
+      //     and DELETE outside the sanctioned maintenance window, server/audit.js maintenance()); accounts
+      //     remember when the identity provider last vouched for them and SCIM's id for them; a session records
+      //     whether its second factor came from the identity provider.
+      (d) => {
+        const schemaText = safeSchema();
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS audit_maintenance \([\s\S]*?\n\);/);
+        if (m) d.exec(m[0]);
+        for (const t of schemaText.match(/CREATE TRIGGER IF NOT EXISTS audit_log_no_\w+ [\s\S]*?END;/g) || []) d.exec(t);
+        addColumn(d, "users", "idp_seen_at", "TEXT");
+        addColumn(d, "users", "scim_external_id", "TEXT");
+        d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_scim_external_id ON users(scim_external_id) WHERE scim_external_id IS NOT NULL`);
+        addColumn(d, "sessions", "mfa_source", "TEXT");
+      },
+      // 34: the disclosure gate closed where a review found it open (docs/compliance/PART2.md). A register of the
+      //     QSOAs and research / audit approvals the non-consent bases rest on (disclosure_agreements); an
+      //     incident's title is encrypted, and an incident can be opened by switching the Part 2 programme off;
+      //     an incident's link to a client survives the client's purge as a snapshot (code, encrypted name)
+      //     instead of being deleted with the record — breach documentation is kept six years.
+      (d) => {
+        const schemaText = safeSchema();
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS disclosure_agreements \([\s\S]*?\n\);/);
+        if (m) d.exec(m[0]);
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_disclosure_agreements/.test(line.trim())) d.exec(line.trim());
+        if (tableExists(d, "privacy_incidents")) {
+          if (tableCols(d, "privacy_incidents").includes("title")) {
+            const { encrypt: encrypt3 } = require_crypto();
+            addColumn(d, "privacy_incidents", "title_enc", "TEXT");
+            const upd = d.prepare(`UPDATE privacy_incidents SET title_enc=? WHERE id=?`);
+            for (const r of d.prepare(`SELECT id, title FROM privacy_incidents`).all()) upd.run(encrypt3(String(r.title ?? "")), r.id);
+            d.exec(`ALTER TABLE privacy_incidents DROP COLUMN title`);
+          }
+          rebuildTable(d, schemaText, "privacy_incidents");
+        }
+        if (tableExists(d, "privacy_incident_clients")) {
+          for (const c of ["client_code", "client_name_enc", "client_purged_at"]) addColumn(d, "privacy_incident_clients", c, "TEXT");
+          const { snapshotOf } = require_incidents();
+          const upd = d.prepare(`UPDATE privacy_incident_clients SET client_code=?, client_name_enc=? WHERE id=?`);
+          for (const x of d.prepare(`SELECT x.id, c.client_code, c.first_name_enc, c.last_name_enc FROM privacy_incident_clients x JOIN clients c ON c.id=x.client_id WHERE x.client_code IS NULL`).all()) {
+            const snap = snapshotOf(x);
+            upd.run(snap.client_code, snap.client_name_enc, x.id);
+          }
+          rebuildTable(d, schemaText, "privacy_incident_clients");
+        }
+      },
+      // 35: a further disclosure review (docs/compliance/PART2.md). A consent records the categories of
+      //     information it covers (consents.info_categories), which the FHIR API honours; and a CalOMS Tx
+      //     submission is produced once and kept (caloms_submissions), so the file sent is the file accounted.
+      //     An existing consent's scope is free text: it is given the 'all' category only when that text says
+      //     plainly that it covers everything (GENERAL_SCOPE below); every other one stays NULL and covers nothing
+      //     automated until a new consent is recorded with its categories — the conservative reading.
+      (d) => {
+        const schemaText = safeSchema();
+        addColumn(d, "consents", "info_categories", "TEXT");
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS caloms_submissions \([\s\S]*?\n\);/);
+        if (!m) throw new Error("migration 35: no definition for caloms_submissions in schema");
+        d.exec(m[0]);
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_caloms_submissions/.test(line.trim())) d.exec(line.trim());
+        const { decrypt: decrypt3 } = require_crypto();
+        const { generalScope } = require_disclosure();
+        const upd = d.prepare(`UPDATE consents SET info_categories='all' WHERE id=?`);
+        for (const r of d.prepare(`SELECT id, scope_enc FROM consents WHERE scope_enc IS NOT NULL AND info_categories IS NULL`).all()) {
+          let scope = "";
+          try {
+            scope = decrypt3(r.scope_enc);
+          } catch {
+            continue;
+          }
+          if (generalScope(scope)) upd.run(r.id);
+        }
+      },
+      // 36: free-text reasons out of plaintext. A court order's vacated reason and a legal hold's reason move into
+      //     encrypted columns; a record's delete/merge reason, a legal hold's clearing reason and an episode's
+      //     reopen reason get encrypted columns of their own, and the audit entry records only that a reason was
+      //     given. (Existing audit entries are hash-chained and append-only, so they are left as they are.)
+      (d) => {
+        encryptColumn(d, "court_orders", "vacated_reason", "vacated_reason_enc");
+        if (tableExists(d, "court_orders")) addColumn(d, "court_orders", "vacated_reason_enc", "TEXT");
+        encryptColumn(d, "clients", "legal_hold_reason", "legal_hold_reason_enc");
+        for (const c of ["legal_hold_reason_enc", "legal_hold_cleared_reason_enc", "removed_reason_enc"]) addColumn(d, "clients", c, "TEXT");
+        if (tableExists(d, "episodes")) addColumn(d, "episodes", "reopen_reason_enc", "TEXT");
+      },
+      // 37: the rest of the free text typed about a client or a note leaves plaintext: an addendum's reason, a
+      //     consent's revocation reason, a countersignature note, an assignment's notes (a caseload transfer's
+      //     reason), a time entry's or expenditure's description and reviewer's note, a client form's notes and
+      //     a client's contact preferences ("safe contact" notes). Staff-only text with no client (a fund's notes,
+      //     a list label, a template's description) stays as it is.
+      (d) => {
+        for (const [t, from, to] of [
+          ["note_addenda", "reason", "reason_enc"],
+          ["consents", "revoked_reason", "revoked_reason_enc"],
+          ["notes", "cosign_note", "cosign_note_enc"],
+          ["assignments", "notes", "notes_enc"],
+          ["time_entries", "description", "description_enc"],
+          ["time_entries", "approval_note", "approval_note_enc"],
+          ["expenditures", "description", "description_enc"],
+          ["expenditures", "approval_note", "approval_note_enc"],
+          ["client_forms", "notes", "notes_enc"],
+          ["clients", "contact_preferences", "contact_preferences_enc"]
+        ]) encryptColumn(d, t, from, to);
+      },
+      // 38: PLACEHOLDER for another change stream's migration 38 (funding attribution); replace this no-op with
+      //     it when the branches are merged. It exists only so migration 39 keeps its number on this branch.
+      () => {
+      },
+      // 39: the last free text about a person held in plaintext. A consent's witness is usually someone the
+      //     client knows (a parent, a partner), and an imported note's metadata carries the client-name hints
+      //     sniffed from its text ("Met with J. Smith").
+      (d) => {
+        encryptColumn(d, "consents", "witness", "witness_enc");
+        encryptColumn(d, "import_items", "metadata", "metadata_enc");
+      },
+      // 40: a session remembers when it last proved who is using it (sessions.reauth_at), so signing a note
+      //     shortly after the sign-in, or after the last password given, needs a confirmation rather than the
+      //     password typed again. Existing sessions have none and ask for the password the first time.
+      (d) => {
+        addColumn(d, "sessions", "reauth_at", "TEXT");
+      }
+    ];
+    function initialise(d, schemaText, dbPath) {
+      const fresh = !d.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings'`).get();
+      if (fresh) {
+        d.exec(schemaText);
+        d.prepare(`INSERT INTO settings(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(String(migrations.length));
+      } else migrate(d, dbPath);
+      ensureIndexes(d, schemaText);
+    }
+    var lastIndexProblems = [];
+    function ensureIndexes(d, schemaText) {
+      const problems = [];
+      for (const raw of schemaText.split("\n")) {
+        const line = raw.trim();
+        const m = line.match(/^CREATE (?:UNIQUE )?INDEX IF NOT EXISTS (\S+) ON /);
+        if (!m) continue;
+        if (d.prepare(`SELECT 1 FROM sqlite_master WHERE type='index' AND name=?`).get(m[1])) continue;
+        try {
+          d.exec(line);
+        } catch (e) {
+          const error = String(e && e.message || e).slice(0, 200);
+          problems.push({ index: m[1], error });
+          console.warn(`[suds] ${JSON.stringify({ event: "db.index_missing", index: m[1], error })}`);
+        }
+      }
+      lastIndexProblems = problems;
+      return problems;
+    }
+    function indexProblems() {
+      return lastIndexProblems.slice();
+    }
+    var SNAPSHOTS_KEPT = 5;
+    function snapshotBeforeMigration(d, dbPath, fromVersion) {
+      if (!dbPath || dbPath === ":memory:") return "";
+      const dir = path.join(path.dirname(dbPath), "pre-migration");
+      const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+      const file = path.join(dir, `${path.basename(dbPath)}.v${fromVersion}.${stamp2}.db`);
+      fs.mkdirSync(dir, { recursive: true });
+      try {
+        fs.unlinkSync(file);
+      } catch {
+      }
+      d.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
+      try {
+        fs.chmodSync(file, 384);
+      } catch {
+      }
+      try {
+        const old = fs.readdirSync(dir).filter((f) => f.startsWith(path.basename(dbPath) + ".v")).sort();
+        for (const f of old.slice(0, Math.max(0, old.length - SNAPSHOTS_KEPT))) fs.unlinkSync(path.join(dir, f));
+      } catch {
+      }
+      return file;
+    }
+    function fkViolationKeys(d) {
+      return new Set(d.prepare("PRAGMA foreign_key_check").all().map((r) => `${r.table}:${r.rowid}:${r.parent}:${r.fkid}`));
+    }
+    function migrate(d, dbPath) {
+      const row = d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get();
+      let v = row ? Number(row.value) : 0;
+      if (v > migrations.length) throw new Error(`This database was created by a newer version of SUDS (schema ${v}; this build understands ${migrations.length}). Upgrade SUDS before opening it.`);
+      if (v < migrations.length) {
+        let snapshot = "";
+        try {
+          snapshot = snapshotBeforeMigration(d, dbPath, v);
+        } catch (e) {
+          throw new Error(`Could not snapshot the database before upgrading it from schema ${v} to ${migrations.length}: ${e.message}. Free up disk space or back up ${dbPath} by hand, then start SUDS again.`);
+        }
+        if (snapshot) console.log(`[suds] upgrading schema ${v} -> ${migrations.length}; snapshot saved to ${snapshot}`);
+      }
+      let remaining = [];
+      for (let i = v; i < migrations.length; i++) {
+        d.exec("PRAGMA foreign_keys = OFF");
+        d.exec("BEGIN");
+        try {
+          const before = fkViolationKeys(d);
+          migrations[i](d);
+          const after = d.prepare("PRAGMA foreign_key_check").all();
+          const introduced = after.filter((r) => !before.has(`${r.table}:${r.rowid}:${r.parent}:${r.fkid}`));
+          if (introduced.length) throw new Error(`migration ${i + 1} introduced ${introduced.length} new orphaned row(s), first in table ${introduced[0].table}`);
+          remaining = after;
+          d.prepare(`INSERT INTO settings(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`).run(String(i + 1));
+          d.exec("COMMIT");
+        } catch (e) {
+          try {
+            d.exec("ROLLBACK");
+          } catch {
+          }
+          throw e;
+        } finally {
+          d.exec("PRAGMA foreign_keys = ON");
+        }
+      }
+      if (remaining.length) {
+        const byTable = {};
+        for (const r of remaining) byTable[r.table] = (byTable[r.table] || 0) + 1;
+        console.warn(`[suds] this database has ${remaining.length} pre-existing orphaned reference(s), not introduced by this upgrade, by table: ${Object.entries(byTable).map(([t, n]) => `${t}=${n}`).join(", ")}. Records are otherwise intact; anything joined through the missing reference may just be absent from a report until it is repaired.`);
+      }
+    }
+    function get() {
+      if (!db3) open2();
+      return db3;
+    }
+    function close() {
+      if (db3) {
+        db3.close();
+        db3 = void 0;
+      }
+    }
+    function now() {
+      return (/* @__PURE__ */ new Date()).toISOString();
+    }
+    function all(sql, ...params) {
+      return get().prepare(sql).all(...params);
+    }
+    function one(sql, ...params) {
+      return get().prepare(sql).get(...params);
+    }
+    function run2(sql, ...params) {
+      return get().prepare(sql).run(...params);
+    }
+    var txDepth = 0;
+    function transaction(fn) {
+      const d = get();
+      const depth = txDepth++;
+      const sp = `sp_tx_${depth}`;
+      d.exec(depth === 0 ? "BEGIN" : `SAVEPOINT ${sp}`);
+      try {
+        const r = fn();
+        d.exec(depth === 0 ? "COMMIT" : `RELEASE ${sp}`);
+        txDepth--;
+        return r;
+      } catch (e) {
+        txDepth--;
+        try {
+          d.exec(depth === 0 ? "ROLLBACK" : `ROLLBACK TO ${sp}; RELEASE ${sp}`);
+        } catch (rollbackError) {
+          if (depth === 0) txDepth = 0;
+          console.error("[suds] rollback failed:", rollbackError.message);
+        }
+        throw e;
+      }
+    }
+    function savepoint(fn, onError) {
+      const d = get();
+      const sp = `sp_${txDepth}_${savepoint.n = (savepoint.n || 0) + 1}`;
+      d.exec(`SAVEPOINT ${sp}`);
+      try {
+        const r = fn();
+        d.exec(`RELEASE ${sp}`);
+        return r;
+      } catch (e) {
+        try {
+          d.exec(`ROLLBACK TO ${sp}`);
+          d.exec(`RELEASE ${sp}`);
+        } catch {
+        }
+        if (onError) onError(e);
+        else throw e;
+      }
+    }
+    function checkKeyFingerprint() {
+      const fp = require_crypto().keyFingerprint();
+      const stored = getSetting("key_fingerprint", null);
+      if (!stored) {
+        setSetting("key_fingerprint", fp);
+        return { first: true };
+      }
+      if (stored !== fp) throw new Error("The encryption key this server was started with is not the key this database was written with. Nothing has been changed. Restore the key backup (keys.json) saved at setup or set SUDS_ENCRYPTION_KEY to the original key, then start again. If the key was deliberately rotated with scripts/rotate-key.js, that script records the new key; a database this happened to some other way needs the original key back.");
+      return { first: false };
+    }
+    function getSetting(key, def = null) {
+      const r = one(`SELECT value FROM settings WHERE key=?`, key);
+      return r ? r.value : def;
+    }
+    function setSetting(key, value) {
+      run2(`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, key, String(value));
+    }
+    function tombstone(table, id) {
+      run2(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now());
+    }
+    module.exports = { open: open2, openWith, get, close, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, now, all, one, run: run2, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint };
+  }
+});
+
 // local/kernel.js
 init_globals_inject();
 init_sqlite();
 var import_db2 = __toESM(require_db());
 var import_http2 = __toESM(require_http());
-var import_auth2 = __toESM(require_auth());
+var import_auth2 = __toESM(require_auth2());
 var import_audit2 = __toESM(require_audit());
 var import_idempotency = __toESM(require_idempotency());
 
 // local/sync.js
 init_globals_inject();
 var import_db = __toESM(require_db());
-var import_auth = __toESM(require_auth());
+var import_auth = __toESM(require_auth2());
 var import_audit = __toESM(require_audit());
 var import_http = __toESM(require_http());
 var import_crypto2 = __toESM(require_crypto());
@@ -33654,7 +33807,7 @@ async function open(file, passphrase) {
 // local/kernel.js
 var import_app = __toESM(require_app2());
 var routeLoaders = {
-  auth: () => Promise.resolve().then(() => __toESM(require_auth2())),
+  auth: () => Promise.resolve().then(() => __toESM(require_auth())),
   me: () => Promise.resolve().then(() => __toESM(require_me())),
   users: () => Promise.resolve().then(() => __toESM(require_users())),
   clients: () => Promise.resolve().then(() => __toESM(require_clients())),
@@ -33778,7 +33931,8 @@ async function start({ wasmUrl, onSaveError: onSaveError2, onLockLost: onLockLos
   router.post("/api/local/signup", (ctx) => {
     if (userCount() === 0) return createFirstAccount(ctx.body);
     if (!signupEnabled()) throw new import_http2.HttpError(403, isStaticHost() ? "Sign-ups are turned off on this device. Ask the person who manages it to turn them back on." : "This device is already set up. Accounts come from the office SUDS.", { signupDisabled: true });
-    const v = validate(ctx.body, { display_name: accountShape.display_name, username: accountShape.username, password: accountShape.password });
+    const v = validate(ctx.body, { display_name: accountShape.display_name, username: accountShape.username, password: accountShape.password, role: accountShape.role });
+    if (v.role && v.role !== "navigator") throw new import_http2.HttpError(403, "A new account on this device starts as a navigator. The person who manages this device can change its role afterwards.", { roleNotAllowed: true });
     const errs = import_auth2.default.passwordPolicy(v.password);
     if (errs.length) throw new import_http2.HttpError(400, "Password must contain " + errs.join(", "));
     if (import_db2.default.one(`SELECT 1 FROM users WHERE username=?`, v.username)) throw new import_http2.HttpError(400, "That username cannot be used here. Choose another.");
@@ -33790,6 +33944,29 @@ async function start({ wasmUrl, onSaveError: onSaveError2, onLockLost: onLockLos
     });
     import_audit2.default.log({ user: { id, username: v.username }, action: "local.signup", entity: "user", entityId: id });
     return { ok: true, role: "navigator" };
+  });
+  const DEVICE_ROLES = ["navigator", "clinician", "supervisor", "admin"];
+  const deviceAccounts = () => import_db2.default.all(`SELECT id, username, display_name, role, created_at FROM users WHERE password_hash NOT LIKE 'scrypt$0$%' ORDER BY created_at, rowid`);
+  const mayManageAccounts = (ctx) => {
+    if (!ctx.user) throw new import_http2.HttpError(401, "Sign in first");
+    if (!isStaticHost()) throw new import_http2.HttpError(404, "Accounts on this copy come from the office SUDS.");
+    if (!isDeviceAdmin(ctx.user)) throw new import_http2.HttpError(403, "Only the person who manages this device can change accounts.");
+  };
+  router.get("/api/local/accounts", (ctx) => {
+    mayManageAccounts(ctx);
+    const admin = deviceAdminId();
+    return { rows: deviceAccounts().map((u) => ({ ...u, device_admin: u.id === admin })), roles: DEVICE_ROLES };
+  });
+  router.put("/api/local/accounts/:id", (ctx) => {
+    mayManageAccounts(ctx);
+    const v = validate(ctx.body, { role: { type: "string", required: true, enum: DEVICE_ROLES } });
+    const u = deviceAccounts().find((x) => x.id === ctx.params.id);
+    if (!u) throw new import_http2.HttpError(404, "No such account on this device");
+    if (u.id === ctx.user.id) throw new import_http2.HttpError(400, "You cannot change your own role here.");
+    import_db2.default.run(`UPDATE users SET role=?, updated_at=? WHERE id=?`, v.role, import_db2.default.now(), u.id);
+    import_auth2.default.revokeAllForUser(u.id);
+    import_audit2.default.log({ user: ctx.user, action: "local.account.role", entity: "user", entityId: u.id, details: { from: u.role, to: v.role } });
+    return { ok: true, role: v.role };
   });
   router.get("/api/local/device", (ctx) => {
     if (!ctx.user) throw new import_http2.HttpError(401, "Sign in first");
