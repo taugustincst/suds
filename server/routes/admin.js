@@ -94,6 +94,7 @@ module.exports = (r) => {
     // catches a chain rebuilt wholesale by someone holding the database and its key.
     if (!config.local) { const a = require('../audit-anchor').verifyAndRecord(); res.anchors = { ok: a.ok, total: a.total, matched: a.matched, other_key: a.other_key, purged: a.purged, bad: a.bad.slice(0, 20) }; }
     audit.log({ user: ctx.user, action: 'audit.verify', ip: ctx.ip, details: res });
+    if (!res.ok) require('../incidents').chainFailure(res, ctx.user);
     return res;
   });
 

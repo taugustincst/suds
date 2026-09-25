@@ -377,6 +377,8 @@ function readme({ from, to, counts, excluded, activity, generatedBy, missing }) 
     '     any month with no admissions, discharges or annual updates.',
     '  4. Resolve any errors DHCS returns in SUDS and resubmit.',
     '',
+    // The same §2.32 notice every identified file from SUDS carries (server/disclosure.js fileNotice).
+    ...(require('./disclosure').part2Program() ? ['42 CFR Part 2', '-------------', require('./disclosure').fileNotice(), ''] : []),
   ].join('\r\n');
 }
 

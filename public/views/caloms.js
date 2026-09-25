@@ -5,6 +5,8 @@
 // needs, and this page lists every edit-check problem by client code and field, then produces the extract
 // for DHCS. The county EHR hand-off is the billing boundary: SUDS does not bill, it hands encounters over.
 import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog, downloadCsv, stat, kv } from '../app.js';
+import { withRestrictionCheck } from './part2.js';
+import { fetchDownload } from './reports.js';
 
 let cached = null;
 /** The CalOMS switch, provider IDs and layout (GET /api/caloms/config), fetched once per page load. */
@@ -172,7 +174,7 @@ route('caloms', async (r) => {
     if (!can('export:identified')) return h('div', { class: 'card mb', 'data-handoff': '1' }, h('h3', {}, 'County EHR hand-off'), intro, h('p', { class: 'small muted' }, 'A supervisor or administrator produces this file.'));
     const summary = h('div', { class: 'small muted', 'data-handoff-summary': '1' }, 'Checking the period…');
     get(`/api/handoff/summary?from=${from}&to=${to}`).then(s => {
-      summary.textContent = `${s.rows} encounter row(s) for ${s.clients} client(s), ${fmt.mins(s.minutes)} in total.${s.without_consent.length ? ` No consent (Part 2 disclosure or release of information) on file for: ${s.without_consent.join(', ')} — with the consent basis they are left out.` : ''}`;
+      summary.textContent = `${s.rows} encounter row(s) for ${s.clients} client(s), ${fmt.mins(s.minutes)} in total.${s.without_consent.length ? ` No consent that can authorise the hand-off (a 42 CFR Part 2 consent, such as the single treatment, payment and operations consent) on file for: ${s.without_consent.join(', ')} — with the consent basis they are left out.` : ''}${s.restricted ? ` ${s.restricted} client(s) have an agreed restriction: you will be asked to confirm the file respects it.` : ''}`;
     }).catch(e => { summary.textContent = e.message; });
     const f = form([
       { name: 'recipient', label: 'Recipient', required: true, value: 'County EHR / billing unit', span: true },
@@ -184,7 +186,10 @@ route('caloms', async (r) => {
       if (!await confirmDialog('County EHR hand-off', 'This file includes client names, dates of birth and Medi-Cal IDs. Each client in it gets an entry in their accounting of disclosures. Continue?', { okText: 'Download' })) return;
       const q = new URLSearchParams({ from, to, recipient: d.recipient, purpose: d.purpose, basis: d.basis, format: d.format });
       if (d.justification) q.set('justification', d.justification);
-      downloadCsv(`/api/handoff/export?${q}`);
+      // Fetched rather than followed as a link, so a refusal (an agreed restriction to confirm, a missing
+      // justification) is shown as a message instead of being saved as a file.
+      await withRestrictionCheck((extra) => fetchDownload(`/api/handoff/export?${q}${extra.restriction_reviewed ? '&restriction_reviewed=1' : ''}`));
+      toast('Hand-off file downloaded. It carries the 42 CFR Part 2 notice.', 'ok');
     } });
     return h('div', { class: 'card mb', 'data-handoff': '1' }, h('h3', {}, 'County EHR hand-off (encounters for billing)'), intro, summary, f);
   };

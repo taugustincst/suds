@@ -1,8 +1,10 @@
 'use strict';
 // The read-only FHIR R4 API (server/routes/fhir.js, docs/integration/FHIR.md): resource shapes, search,
 // paging, bulk export, scopes, and — above all — 42 CFR Part 2: a client's data leaves only under a live
-// consent that names the FHIR client's organisation, every such answer is labelled and carries the §2.32
-// notice, and each one is written to the accounting of disclosures.
+// consent that names the FHIR client's organisation (a Part 2 consent or the 2024 single TPO consent; a
+// general release only outside a Part 2 programme), never for a client with an agreed restriction, never
+// SUD counseling notes; every such answer is labelled and carries the 2024 §2.32 notice, and each one is
+// written to the accounting of disclosures.
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -71,9 +73,22 @@ before(async () => {
   ids.revoked = await newClient('Rhea', 'Revoked'); consent(ids.revoked, { revoked: iso(Date.now() - 86400000) });
   ids.expired = await newClient('Ezra', 'Expired'); consent(ids.expired, { signed: '2019-01-01', expires: '2020-01-01' });
   ids.otherOrg = await newClient('Otto', 'Otherorg'); consent(ids.otherOrg, { recipient: 'Probation Department' });
-  ids.tpo = await newClient('Tia', 'Tpo'); consent(ids.tpo, { type: 'roi', recipient: 'county behavioral health', purpose: 'TPO' });
+  // The 2024 single TPO consent: a recipient list/class that names the organisation covers every purpose of use.
+  ids.tpo = await newClient('Tia', 'Tpo'); consent(ids.tpo, { type: 'part2_tpo', recipient: 'county behavioral health, and my other treating providers and health plans', purpose: 'My treatment, payment and health care operations' });
+  // Withheld while this is a Part 2 programme: a general release is not a Part 2 consent (§2.31, §2.32).
+  ids.roi = await newClient('Rory', 'Generalrelease'); consent(ids.roi, { type: 'roi', recipient: RECIPIENT, purpose: 'TPO' });
+  // Withheld: a TPO consent whose class names no organisation cannot be matched by a machine.
+  ids.tpoClass = await newClient('Cass', 'Classonly'); consent(ids.tpoClass, { type: 'part2_tpo', recipient: 'My treating providers', purpose: 'Treatment, payment and health care operations' });
+  // Withheld: a counseling-notes-only consent never covers FHIR, even naming the organisation.
+  ids.cnOnly = await newClient('Cleo', 'Notesonly'); consent(ids.cnOnly, { type: 'part2_counseling_notes', recipient: RECIPIENT, purpose: 'Treatment' });
+  // Withheld: an agreed restriction (§2.26) needs a worker's confirmation, which an automated answer cannot give.
+  ids.restricted = await newClient('Reese', 'Restricted'); consent(ids.restricted);
+  H.db.run(`INSERT INTO patient_requests(id,client_id,kind,received_at,due_at,status,created_by,closed_at) VALUES(?,?,?,?,?,?,?,?)`, randomUUID(), ids.restricted, 'restriction', '2026-01-05', '2026-02-04', 'fulfilled', adminId, '2026-01-06');
   ids.wrongPurpose = await newClient('Walt', 'Wrongpurpose'); consent(ids.wrongPurpose, { purpose: 'Research study enrolment' });
   ids.data = clinicalData(ids.consented, 'A');
+  // A signed SUD counseling note (§2.11) for the consented client: never listed over FHIR, not even as metadata.
+  ids.counselingNote = randomUUID();
+  H.db.run(`INSERT INTO notes(id,client_id,author_id,kind,format,content_enc,occurred_at,status,signed_at,signed_by,counseling_note) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, ids.counselingNote, ids.consented, adminId, 'clinical', 'SOAP', encrypt('COUNSELING NOTE ANALYSIS'), '2026-03-06T17:00:00.000Z', 'signed', iso(Date.now()), adminId, 1);
   ids.dataNone = clinicalData(ids.none, 'B');
   const c = await admin.post('/api/admin/fhir-clients', { name: 'County EHR', recipient: RECIPIENT, purpose: 'TREAT', scopes: ['system/*.read'], rate_limit: 5000 });
   assert.equal(c.status, 201, JSON.stringify(c.data));
@@ -167,9 +182,13 @@ test('Patient search returns only consented patients, labelled, with omissions c
   assert.ok(codes.includes('R') && codes.includes('42CFRPart2'), 'Bundle carries the Part 2 labels');
   const oo = outcomeOf(b);
   assert.ok(oo, 'an OperationOutcome entry');
-  assert.ok(oo.issue.some(i => /42 CFR part 2/.test(i.diagnostics) && /prohibit you from making any further disclosure/.test(i.diagnostics)), 'the §2.32 notice');
+  // The one §2.32 notice SUDS uses everywhere, in the 2024 final rule's wording.
+  const notice = require('../server/constants').PART2_REDISCLOSURE_NOTICE;
+  assert.ok(oo.issue.some(i => i.diagnostics === `42 CFR §2.32 notice: ${notice}`), 'the §2.32 notice');
+  assert.ok(oo.issue.some(i => /prohibit you from making any other use or disclosure of this record unless at least one of the following applies/.test(i.diagnostics)), 'in the 2024 wording');
   const omitted = oo.issue.find(i => i.code === 'suppressed');
-  assert.match(omitted.diagnostics, /^5 patient\(s\)/, 'none, revoked, expired, other org, wrong purpose');
+  assert.match(omitted.diagnostics, /^9 patient\(s\)/, 'none, revoked, expired, other org, wrong purpose, general release, unnamed TPO class, counseling-notes-only, restricted');
+  for (const id of [ids.roi, ids.tpoClass, ids.cnOnly, ids.restricted]) assert.ok(!got.includes(id));
   const p = entriesOf(b, 'Patient').find(x => x.id === ids.consented);
   assert.ok(p.meta.security.some(s => s.code === '42CFRPart2'));
   assert.ok(p.meta.profile[0].endsWith('us-core-patient'));
@@ -184,13 +203,14 @@ test('Patient search returns only consented patients, labelled, with omissions c
   assert.equal(H.db.one(`SELECT COUNT(*) n FROM disclosures WHERE source='fhir'`).n - before, 2);
   const mine = rows.find(x => x.client_id === ids.consented);
   assert.equal(mine.consent_id, ids.consentId); assert.equal(mine.basis, 'consent'); assert.equal(mine.method, 'FHIR API');
+  assert.equal(mine.notice_version, '2024', 'the notice version that went with it'); assert.equal(mine.legal_proceeding, 0); assert.equal(mine.counseling_notes, 0);
   const d = require('../server/disclosure').present(mine);
   assert.equal(d.recipient, RECIPIENT); assert.match(d.what, /FHIR search Patient: 1 resource/); assert.match(d.purpose, /Treatment/);
   assert.equal(H.db.one(`SELECT COUNT(*) n FROM disclosures WHERE client_id=?`, ids.none).n, 0, 'nothing is recorded (or sent) for the unconsented');
   // The audit trail has the request, with parameter names only.
   const a = H.db.one(`SELECT * FROM audit_log WHERE action='fhir.search' AND entity='Patient' ORDER BY id DESC LIMIT 1`);
   assert.equal(a.username, 'fhir:County EHR');
-  assert.equal(JSON.parse(a.details).omitted_patients, 5);
+  assert.equal(JSON.parse(a.details).omitted_patients, 9);
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='disclosure.record' AND client_id=?`, ids.consented));
 });
 
@@ -246,6 +266,10 @@ test('every patient resource type: valid shape, labelled, only the consented pat
   assert.equal(consentRes[0].policyRule.coding[0].code, '42CFRPart2');
   assert.equal(consentRes[0].provision.actor[0].reference.display, RECIPIENT);
   assert.ok(consentRes[0].provision.purpose.some(p => p.code === 'TREAT'));
+  // The single TPO consent is a Part 2 consent covering all three purposes of use.
+  const tpoRes = seen.Consent.find(c => c.patient.reference === `Patient/${ids.tpo}`);
+  assert.equal(tpoRes.policyRule.coding[0].code, '42CFRPart2');
+  assert.deepEqual(tpoRes.provision.purpose.map(p => p.code).sort(), ['HOPERAT', 'HPAYMT', 'TREAT']);
   const sr = seen.ServiceRequest[0];
   assert.equal(sr.status, 'active'); assert.equal(sr.intent, 'order'); assert.equal(sr.priority, 'urgent');
   assert.equal(sr.performer[0].reference, `Organization/${ids.resource}`);
@@ -254,7 +278,8 @@ test('every patient resource type: valid shape, labelled, only the consented pat
   assert.ok(seen.Observation.some(o => o.id === `od-${ids.data.od}` && o.component.some(c => c.code.coding[0].code === 'naloxone-doses' && c.valueInteger === 2)));
   assert.ok(seen.Observation.some(o => o.id === `risk-${ids.consented}` && o.valueCodeableConcept.coding[0].code === 'high'));
   const docs = seen.DocumentReference;
-  assert.deepEqual(docs.map(d => d.id), [ids.data.note], 'signed notes only, not drafts');
+  assert.deepEqual(docs.map(d => d.id), [ids.data.note], 'signed notes only, not drafts, and never a SUD counseling note');
+  assert.equal((await fhirGet(`/fhir/R4/DocumentReference/${ids.counselingNote}`, ehr.key)).status, 404, 'a counseling note cannot be read by id either');
   assert.ok(!JSON.stringify(docs).includes('SECRET COUNSELING CONTENT'), 'never the note text');
   assert.ok(!JSON.stringify(docs).includes('Title A'));
   assert.ok(!docs[0].content[0].attachment.data && !docs[0].content[0].attachment.url);
@@ -325,6 +350,25 @@ test('paging: _count, next and previous links, and the cap', async () => {
   assert.equal(seen.size, 2, 'both encounters across the pages, the unconsented ones never');
   const capped = await fhirGet('/fhir/R4/Patient?_count=100000', ehr.key);
   assert.match(capped.data.link[0].url, /_count=200/);
+});
+
+test('a general release covers FHIR only outside a Part 2 programme, and lifting a restriction restores the flow', async () => {
+  assert.equal((await fhirGet(`/fhir/R4/Patient/${ids.roi}`, ehr.key)).status, 404, 'a general release is not a Part 2 consent');
+  H.db.setSetting('part2_program', '0');
+  try {
+    assert.equal((await fhirGet(`/fhir/R4/Patient/${ids.roi}`, ehr.key)).status, 200, 'outside Part 2 a release naming the organisation for TPO is enough');
+    const c = entriesOf((await fhirGet(`/fhir/R4/Consent?patient=${ids.roi}`, ehr.key)).data, 'Consent');
+    assert.equal(c.length, 1); assert.equal(c[0].policyRule.coding[0].code, 'hipaa-auth');
+    const row = H.db.one(`SELECT * FROM disclosures WHERE client_id=? AND source='fhir' ORDER BY rowid DESC LIMIT 1`, ids.roi);
+    assert.equal(row.notice_version, null, 'no §2.32 notice version outside a Part 2 programme');
+    assert.equal((await fhirGet(`/fhir/R4/Patient/${ids.cnOnly}`, ehr.key)).status, 404, 'a counseling-notes consent still does not cover FHIR');
+  } finally { H.db.setSetting('part2_program', '1'); }
+  assert.equal((await fhirGet(`/fhir/R4/Patient/${ids.roi}`, ehr.key)).status, 404, 'and the setting takes effect on the next request');
+  assert.equal((await fhirGet(`/fhir/R4/Patient/${ids.restricted}`, ehr.key)).status, 404);
+  H.db.run(`UPDATE patient_requests SET status='denied', updated_at=? WHERE client_id=?`, new Date().toISOString(), ids.restricted);
+  try { assert.equal((await fhirGet(`/fhir/R4/Patient/${ids.restricted}`, ehr.key)).status, 200, 'with no agreed restriction the consent covers the client again'); }
+  finally { H.db.run(`UPDATE patient_requests SET status='fulfilled', updated_at=? WHERE client_id=?`, new Date().toISOString(), ids.restricted); }
+  assert.equal((await fhirGet(`/fhir/R4/Patient/${ids.restricted}`, ehr.key)).status, 404);
 });
 
 test('revoking the consent stops the flow at once', async () => {

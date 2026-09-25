@@ -80,7 +80,9 @@ await page.selectOption('.modal select[name=type]', 'part2_disclosure'); await p
 // A Part 2 consent is refused until every §2.31 element is on it: what is covered, evidence it was signed,
 // and the redisclosure notice. The form marks them; this fills them the way a navigator would.
 ok(await page.$('.modal textarea[name=scope]') && await page.$('.modal input[name=redisclosure_notice_given]') && await page.$('.modal input[name=signed_on_paper]'), 'the consent form carries the Part 2 elements (scope, signature evidence, redisclosure notice)');
-await page.fill('.modal textarea[name=scope]', 'Referral summary and MAT status'); await page.check('.modal input[name=signed_on_paper]'); await page.check('.modal input[name=redisclosure_notice_given]'); await page.click('.modal button[type=submit]');
+await page.fill('.modal textarea[name=scope]', 'Referral summary and MAT status'); await page.check('.modal input[name=signed_on_paper]'); await page.check('.modal input[name=redisclosure_notice_given]');
+// The 2024 rule's additions: the consent states the right to revoke, and the consequences of refusing.
+await page.check('.modal input[name=revocation_right_given]'); await page.check('.modal input[name=refusal_consequences_given]'); await page.click('.modal button[type=submit]');
 ok(await toastSays(/saved|recorded|✓/i), 'a 42 CFR Part 2 release is recorded once every element is present');
 await page.waitForURL(/[?&]_=\d+/, { timeout: 5000 }).catch(() => {});
 // 7. referral with consent

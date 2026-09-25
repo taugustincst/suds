@@ -198,7 +198,7 @@ test('episodes, overdose events, client forms and disclosures export as single t
   assert.match(ep.split('\r\n')[0], /Client Code/);
   assert.ok(!/Episode Listed|Listed, Episode/.test(ep), 'no names in a de-identified export');
   // Asking for identified without the permission still gets a de-identified file.
-  const sneaky = await fin.get('/api/reports/export/episodes?from=2026-01-01&to=2026-12-31&identified=1&recipient=x&purpose=y');
+  const sneaky = await fin.get('/api/reports/export/episodes?from=2026-01-01&to=2026-12-31&identified=1&basis=audit_evaluation&recipient=x&purpose=y');
   assert.match(String(sneaky.headers.get('content-disposition')), /deidentified/);
 });
 

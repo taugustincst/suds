@@ -87,7 +87,7 @@ const nav = await session('mrivera', 'Navigator2026!!');
 
   // L2. a client whose only consent has expired: the referral form says so and points at the Consents tab
   const exp = (await api('POST', '/api/clients', { first_name: 'Expired', last_name: 'Consent' + stamp, confirm_duplicate: true })).data;
-  await api('POST', `/api/clients/${exp.id}/consents`, { type: 'part2_disclosure', recipient: 'Granite Detox', purpose: 'referral', scope: 'dates of service', signed_at: day(-400), expires_at: day(-1), signed_on_paper: true, redisclosure_notice_given: true });
+  await api('POST', `/api/clients/${exp.id}/consents`, { type: 'part2_disclosure', recipient: 'Granite Detox', purpose: 'referral', scope: 'dates of service', signed_at: day(-400), expires_at: day(-1), signed_on_paper: true, redisclosure_notice_given: true, revocation_right_given: true, refusal_consequences_given: true });
   await go(page, `client/${exp.id}/referrals`);
   await page.click('button:has-text("+ New referral")'); await page.waitForSelector('.modal select[name=consent_id]');
   eq(await page.$$eval('.modal select[name=consent_id] option', o => o.filter(x => x.value).length), 0, 'the expired consent is not offered');
@@ -482,6 +482,83 @@ const phone = await session('mrivera', 'Navigator2026!!', { width: 390, height: 
   ok(!(await page.$('[data-episodes-report]')), 'and Reports shows finance no episode list');
   ok(await page.$('button:has-text("Episodes (Excel)")'), 'though the de-identified Episodes export is there');
   await fin.close();
+}
+
+// ---------------- 42 CFR Part 2 (docs/compliance/PART2.md) ----------------
+{
+  const { page, api } = nav;
+  const p2 = (await api('POST', '/api/clients', { first_name: 'Part', last_name: 'Two' + stamp, confirm_duplicate: true })).data;
+  await go(page, `client/${p2.id}/overview`);
+  ok(await until(() => page.$('[data-part2-label]')), 'the client header carries the 42 CFR Part 2 label');
+  ok(await page.$('[data-notice-missing]'), 'the Overview says no Part 2 notice (§2.22) is on record');
+  // §2.22: record the notice given; the Overview then says when.
+  await go(page, `client/${p2.id}/consents`);
+  await page.click('button[data-add-notice]'); await page.waitForSelector('.modal select[name=method]');
+  await page.check('.modal input[name=acknowledged]'); await page.click('.modal button[type=submit]');
+  ok(await until(() => page.$('.toast:has-text("Notice recorded")')), 'recording the notice given says so');
+  await go(page, `client/${p2.id}/overview`);
+  ok(await until(() => page.$('[data-notice-given]')), 'and the Overview now shows when it was given');
+  // §2.31: the consent form starts on the single TPO consent and carries the 2024 elements.
+  await go(page, `client/${p2.id}/consents`);
+  await page.click('text=+ Consent'); await page.waitForSelector('.modal select[name=type]');
+  eq(await page.inputValue('.modal select[name=type]'), 'part2_tpo', 'the consent form starts on the single treatment, payment & operations consent');
+  ok(/treatment, payment, and health care operations/i.test(await page.inputValue('.modal input[name=purpose]')), 'with the rule\'s own TPO purpose wording');
+  ok(await page.$('.modal input[name=revocation_right_given]') && await page.$('.modal input[name=refusal_consequences_given]') && await page.$('.modal select[name=signer_relationship]') && await page.$('.modal input[name=discloser]'), 'and every 2024 §2.31 element');
+  await page.fill('.modal textarea[name=scope]', 'Treatment records and MAT status'); await page.fill('.modal input[name=expires_at]', day(365));
+  await page.check('.modal input[name=signed_on_paper]'); await page.check('.modal input[name=redisclosure_notice_given]');
+  await page.click('.modal button[type=submit]');
+  const refused = await until(() => page.$('.modal .banner.danger:not(.hidden)'));
+  ok(refused && /revoke/.test(await refused.textContent()), 'a consent without the right-to-revoke and refusal statements is refused, and says which');
+  await page.check('.modal input[name=revocation_right_given]'); await page.check('.modal input[name=refusal_consequences_given]');
+  await page.click('.modal button[type=submit]');
+  ok(await until(() => page.$('.toast:has-text("Consent recorded")')), 'with them it is recorded');
+  await settle(page);
+  ok(await until(() => page.$('[data-consent-pdf]')), 'a recorded consent can be printed');
+  ok(await page.$('[data-court-orders]') && !(await page.$('[data-add-order]')), 'court orders on file are shown; only a supervisor records one');
+  // §2.31(b): counseling notes need their own consent; the TPO consent is refused for them.
+  await page.click('text=+ Disclosure'); await page.waitForSelector('.modal select[name=consent_id]');
+  const cid = await page.$eval('.modal select[name=consent_id] option:not([value=""])', o => o.value);
+  await page.selectOption('.modal select[name=consent_id]', cid);
+  await page.fill('.modal input[name=disclosed_to]', 'Riverbend OTP'); await page.fill('.modal input[name=purpose]', 'Treatment coordination'); await page.fill('.modal textarea[name=info_disclosed]', 'MAT status');
+  await page.check('.modal input[name=counseling_notes]'); await page.click('.modal button[type=submit]');
+  const noNotes = await until(() => page.$('.modal .banner.danger:not(.hidden)'));
+  ok(noNotes && /counseling notes/i.test(await noNotes.textContent()), 'counseling notes are refused under a TPO consent');
+  await page.uncheck('.modal input[name=counseling_notes]'); await page.click('.modal button[type=submit]');
+  const notice = await until(() => page.$('.modal textarea[data-notice-text]'));
+  ok(notice && /42 CFR part 2/.test(await notice.inputValue()), 'a disclosure with consent hands back the §2.32 notice to send with it');
+  await closeModal(page);
+  // The Privacy & Part 2 page: a navigator sees the notice tabs, not the registers.
+  await go(page, 'compliance');
+  ok(await until(() => page.$('[data-tab=notices]')) && !(await page.$('[data-tab=complaints]')) && !(await page.$('[data-tab=incidents]')), 'a navigator sees the notice tabs of Privacy & Part 2 but not the complaint or incident registers');
+}
+{
+  const { page } = sup;
+  await go(page, 'compliance');
+  ok(await until(() => page.$('a[href="#/compliance"]')), 'Privacy & Part 2 is in the supervisor\'s menu');
+  ok(/Open incidents/.test(await page.$eval('.main', e => e.textContent)), 'the overview counts open incidents');
+  await go(page, 'compliance?tab=notice');
+  ok(/NOTICE OF PRIVACY PRACTICES/.test(await (await until(() => page.$('[data-notice-rendered]'))).textContent()), 'the §2.22 notice is shown ready to print');
+  // §2.4: an anonymous complaint, with the HHS referral recorded.
+  await go(page, 'compliance?tab=complaints');
+  await page.click('button[data-add-complaint]'); await page.waitForSelector('.modal textarea[name=summary]');
+  await page.selectOption('.modal select[name=complainant]', 'anonymous'); await page.fill('.modal textarea[name=summary]', 'Overheard staff discussing a client ' + stamp);
+  await page.check('.modal input[name=hhs_referral_given]'); await page.click('.modal button[type=submit]');
+  ok(await until(() => page.$(`td:has-text("Overheard staff discussing a client ${stamp}")`)), 'a complaint is logged');
+  // The incident register: a new incident opens with its 60-day clock.
+  await go(page, 'compliance?tab=incidents');
+  await page.click('button[data-add-incident]'); await page.waitForSelector('.modal input[name=title]');
+  await page.fill('.modal input[name=title]', 'Misdirected fax ' + stamp); await page.click('.modal button[type=submit]');
+  const ob = await until(() => page.$('.modal [data-obligations]'));
+  ok(ob && /Notification deadline/.test(await page.$eval('.modal', m => m.textContent)), 'a new incident opens with its notification deadline');
+  await closeModal(page);
+  await go(page, 'dashboard');
+  ok(await until(() => page.$('a.badge:has-text("privacy incident")')), 'Home tells the supervisor an incident needs a determination');
+  ok(await page.$('a.badge:has-text("privacy complaint")'), 'and that a complaint is open');
+  // An identified export asks for its lawful basis.
+  await go(page, 'reports');
+  await page.click('button[data-identified-export]'); await page.waitForSelector('.modal select[name=basis]');
+  eq(await page.$$eval('.modal select[name=basis] option', o => o.length), 5, 'an identified export asks which of the five lawful bases it relies on');
+  await closeModal(page);
 }
 
 await phone.close(); await adm.close(); await sup.close(); await nav.close();

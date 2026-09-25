@@ -1,4 +1,37 @@
-import { h, route, get, state, fmt, can, pageHead, bars, stat, table, downloadCsv, nav, sparkline, confirmDialog } from '../app.js';
+import { h, route, get, state, fmt, can, pageHead, bars, stat, table, downloadCsv, nav, sparkline, form, modal, toast } from '../app.js';
+import { withRestrictionCheck } from './part2.js';
+
+// An identified export is a disclosure: fetched here rather than followed as a link, so a refusal (no lawful
+// basis, a client without consent, an agreed restriction to check) is shown as a message, not saved as a file.
+export async function fetchDownload(path) {
+  let status, body, headers;
+  if (state.local && window.SUDS_LOCAL) { const r = await window.SUDS_LOCAL.handle('GET', path, undefined, {}); status = r.status; body = r.body; headers = r.headers || {}; }
+  else { const res = await fetch(path, { credentials: 'same-origin', headers: { 'X-Requested-With': 'suds' } }); status = res.status; body = await res.arrayBuffer(); headers = { 'content-disposition': res.headers.get('content-disposition') || '', 'content-type': res.headers.get('content-type') || '' }; }
+  if (status >= 400) {
+    let j = {}; try { j = JSON.parse(typeof body === 'string' ? body : new TextDecoder().decode(body)); } catch { /* not JSON */ }
+    const err = new Error(j.error || 'The export was refused'); err.status = status; err.data = j; throw err;
+  }
+  const name = (/filename="([^"]+)"/.exec(headers['content-disposition'] || '') || [])[1] || 'export';
+  const u = URL.createObjectURL(new Blob([body], { type: headers['content-type'] || 'application/octet-stream' }));
+  const a = h('a', { href: u, download: name }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 5000);
+}
+const EXPORT_BASES = [
+  { value: 'audit_evaluation', label: 'Audit or program evaluation (42 CFR §2.53)' }, { value: 'research', label: 'Research (42 CFR §2.52)' },
+  { value: 'qsoa', label: 'Qualified service organization agreement (§2.12(c)(4))' }, { value: 'internal', label: 'Within this program only (§2.12(c)(3))' },
+  { value: 'consent', label: "Each client's Part 2 consent (every client in the file must have one)" },
+];
+function openIdentifiedExport(from, to) {
+  const f = form([
+    { name: 'recipient', label: 'Who receives this file', required: true, span: true, help: "Written to each client's accounting of disclosures." },
+    { name: 'purpose', label: 'Purpose of the disclosure', required: true, span: true },
+    { name: 'basis', label: 'Lawful basis', type: 'select', options: EXPORT_BASES, required: true, noBlank: true, span: true, help: "A file for a legal proceeding against a client is never a bulk export: record it on that client's Consents tab under a court order." },
+  ], { submitText: 'Export (names included, audited)', onCancel: () => m.close(), onSubmit: async (v) => {
+    const url = `/api/reports/export/workbook?from=${from}&to=${to}&identified=1&recipient=${encodeURIComponent(v.recipient)}&purpose=${encodeURIComponent(v.purpose)}&basis=${encodeURIComponent(v.basis)}`;
+    await withRestrictionCheck((extra) => fetchDownload(url + (extra.restriction_reviewed ? '&restriction_reviewed=1' : '')));
+    m.close(); toast('Exported. The file carries the 42 CFR Part 2 notice on its About sheet.', 'ok');
+  } });
+  const m = modal('Identified export', h('div', {}, h('div', { class: 'banner warn small' }, 'This export includes client names, dates of birth and contact details. It is a disclosure: it is recorded in the audit log and in the accounting of disclosures of every client it contains, and it needs a lawful basis under 42 CFR Part 2.'), f));
+}
 
 route('reports', async (r) => {
   const to = r.query.get('to') || fmt.today(); const from = r.query.get('from') || new Date(Date.parse(to) - 89 * 86400000).toISOString().slice(0, 10);
@@ -60,10 +93,5 @@ route('reports', async (r) => {
     can('export:read') ? h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Export to Excel or CSV'), h('button', { class: 'btn primary', onClick: () => downloadCsv(`/api/reports/export/workbook?from=${from}&to=${to}`) }, 'Everything as one Excel workbook')),
       h('p', { class: 'small muted' }, 'Exports use client codes instead of names and carry only the columns a de-identified file may hold. Dates follow the range above (clients, resources and to-dos are complete lists).'),
       h('div', { class: 'row' }, exportRow('clients', 'Clients'), exportRow('interventions', 'Visits & services'), exportRow('calls', 'Calls'), exportRow('referrals', 'Referrals'), exportRow('time', 'Time'), exportRow('tasks', 'To-dos'), exportRow('resources', 'Resources'), exportRow('consents', 'Consents'), exportRow('episodes', 'Episodes'), exportRow('overdose_events', 'Overdose events'), exportRow('forms', 'Client forms'), exportRow('disclosures', 'Disclosures'), can('budget:read') ? [exportRow('expenditures', 'Expenditures'), exportRow('funds', 'Funding'), exportRow('budget_lines', 'Budget lines')] : null),
-      can('export:identified') ? h('div', { class: 'mt' }, h('button', { class: 'btn sm danger', onClick: async () => {
-        if (!await confirmDialog('Identified export', 'This export includes client names, dates of birth and contact details. It is a disclosure: it is recorded in the audit log and in the accounting of disclosures of every client it contains. Continue?', { danger: true, okText: 'Continue' })) return;
-        const recipient = (window.prompt('Who receives this file? (recipient, written to each client\'s accounting of disclosures)') || '').trim(); if (!recipient) return;
-        const purpose = (window.prompt('Purpose of the disclosure') || '').trim(); if (!purpose) return;
-        downloadCsv(`/api/reports/export/workbook?from=${from}&to=${to}&identified=1&recipient=${encodeURIComponent(recipient)}&purpose=${encodeURIComponent(purpose)}`);
-      } }, 'Identified Excel workbook (names included, audited)')) : null) : null);
+      can('export:identified') ? h('div', { class: 'mt' }, h('button', { class: 'btn sm danger', 'data-identified-export': '1', onClick: () => openIdentifiedExport(from, to) }, 'Identified Excel workbook (names included, audited)')) : null) : null);
 });

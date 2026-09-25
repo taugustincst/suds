@@ -1,4 +1,7 @@
 import { h, route, get, pagedList, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, listFilterOptions } from '../app.js';
+// A court order is recorded, and disclosed under, on the client's Consents tab (it has to name the order),
+// so it is not one of the bases offered here.
+import { withRestrictionCheck, consentTypeLabel } from './part2.js';
 
 export async function openReferralForm(values, { clientId, clientDisplay, resourceId, onDone } = {}) {
   const C = state.constants; const isNew = !values;
@@ -28,7 +31,7 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
     const valid = all.filter(c => !c.expires_at || c.expires_at >= today);
     return { clientId, all, valid, expiredOnly: !!(clientId && !valid.length && all.length) };
   };
-  const consentOption = (c) => ({ value: c.id, label: `${fmt.label(c.type)} → ${c.recipient || '—'} (signed ${fmt.date(c.signed_at)}${c.expires_at ? `, expires ${fmt.date(c.expires_at)}` : ''})` });
+  const consentOption = (c) => ({ value: c.id, label: `${consentTypeLabel(c.type)} → ${c.recipient || '—'} (signed ${fmt.date(c.signed_at)}${c.expires_at ? `, expires ${fmt.date(c.expires_at)}` : ''})` });
   const consentHelpContent = ({ clientId, all, valid, expiredOnly }) => valid.length ? ['Required before the provider is told who this client is. A referral left as "pending" with no warm handoff — just a phone number handed to the client — needs none.']
     : clientId ? [expiredOnly ? `${all.length === 1 ? 'The consent on file has' : 'All consents on file have'} expired. ` : 'No consent is on file. ', h('a', { href: `#/client/${clientId}/consents`, 'data-add-consent': '1', onClick: () => m.close() }, 'Record a new release on the Consents tab'), ' before the provider is told who this client is.']
     : ['Choose the client first to see their consents on file.'];
@@ -48,7 +51,7 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
     { name: 'consent_id', label: 'Consent / ROI on file (42 CFR Part 2)', type: 'select', placeholder: expiredOnly ? '(expired)' : undefined, options: consents.map(consentOption),
       help: consentHelp },
     { name: '_disclosure_basis', label: 'If there is no consent, the lawful basis', type: 'select',
-      options: [{ value: 'medical_emergency', label: 'Medical emergency' }, { value: 'court_order', label: 'Court order' }, { value: 'qsoa', label: 'Qualified service organisation agreement' }, { value: 'child_abuse_report', label: 'Mandated child abuse report' }, { value: 'crime_on_premises', label: 'Crime on the premises' }, { value: 'other', label: 'Other (explain in notes)' }],
+      options: [{ value: 'medical_emergency', label: 'Medical emergency' }, { value: 'qsoa', label: 'Qualified service organisation agreement' }, { value: 'child_abuse_report', label: 'Mandated child abuse report' }, { value: 'crime_on_premises', label: 'Crime on the premises' }, { value: 'other', label: 'Other (explain in notes)' }],
       help: 'Leave empty unless you are relying on something other than the client\'s written consent. Whatever you choose is recorded in the accounting of disclosures.' },
     { name: '_disclosure_justification', label: 'Why sharing without consent is lawful', type: 'textarea', rows: 2, span: true, help: 'Required (at least 20 characters) for a medical emergency, and for "other" — which only a supervisor or administrator may use. Kept, encrypted, with the disclosure record.' },
     { name: '_disclosure_what', label: 'What is being shared', placeholder: 'Referral information (name, contact details and presenting need)', span: true },
@@ -56,7 +59,8 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
     { name: 'outcome', label: 'Outcome', span: true }, { name: 'notes', label: 'Notes', type: 'textarea', span: true },
   ], { values: values || {}, submitText: isNew ? 'Create referral' : 'Save', draftKey: isNew ? 'referral:new' : `referral:${values.id}`, onCancel: () => m.close(), onSubmit: async (d) => {
     try {
-      if (isNew) await post('/api/referrals', d); else await put(`/api/referrals/${values.id}`, { ...d, if_updated_at: values.updated_at });
+      // An agreed restriction on the client's record is checked with the worker before anything is sent.
+      await withRestrictionCheck((extra) => (isNew ? post('/api/referrals', { ...d, ...extra }) : put(`/api/referrals/${values.id}`, { ...d, ...extra, if_updated_at: values.updated_at })), '_restriction_reviewed');
     } catch (e) {
       // The commonest failure by far is sharing without a consent; say what to do about it, once (the
       // server's message already ends in its own advice, and appending ours repeated it).
@@ -122,14 +126,14 @@ export async function openOutcomeForm(r, onDone) {
     { name: 'status', label: 'What happened', type: 'select', noBlank: true, required: true, value: r.status, current: r.status, list: 'REFERRAL_STATUSES' },
     { name: 'admitted_at', label: 'Admitted / started on', type: 'datetime', value: r.admitted_at || '' },
     ...(r.consent_id ? [] : [
-      { name: 'consent_id', label: 'Consent / ROI on file (42 CFR Part 2)', type: 'select', options: consents.map(c => ({ value: c.id, label: `${fmt.label(c.type)} → ${c.recipient || '—'} (signed ${fmt.date(c.signed_at)})` })), help: 'Needed once the provider has been told who this client is (contacted, scheduled, admitted…).' },
-      { name: '_disclosure_basis', label: 'If there is no consent, the lawful basis', type: 'select', options: [{ value: 'medical_emergency', label: 'Medical emergency' }, { value: 'court_order', label: 'Court order' }, { value: 'qsoa', label: 'Qualified service organisation agreement' }, { value: 'child_abuse_report', label: 'Mandated child abuse report' }, { value: 'crime_on_premises', label: 'Crime on program premises' }, { value: 'audit_evaluation', label: 'Audit or evaluation' }, { value: 'research', label: 'Research' }, { value: 'other', label: 'Other (supervisor override, must be justified)' }] },
+      { name: 'consent_id', label: 'Consent / ROI on file (42 CFR Part 2)', type: 'select', options: consents.map(c => ({ value: c.id, label: `${consentTypeLabel(c.type)} → ${c.recipient || '—'} (signed ${fmt.date(c.signed_at)})` })), help: 'Needed once the provider has been told who this client is (contacted, scheduled, admitted…).' },
+      { name: '_disclosure_basis', label: 'If there is no consent, the lawful basis', type: 'select', options: [{ value: 'medical_emergency', label: 'Medical emergency' }, { value: 'qsoa', label: 'Qualified service organisation agreement' }, { value: 'child_abuse_report', label: 'Mandated child abuse report' }, { value: 'crime_on_premises', label: 'Crime on program premises' }, { value: 'audit_evaluation', label: 'Audit or evaluation' }, { value: 'research', label: 'Research' }, { value: 'other', label: 'Other (supervisor override, must be justified)' }] },
       { name: '_disclosure_justification', label: 'Why sharing without consent is lawful', type: 'textarea', rows: 2, span: true },
     ]),
     { name: 'barrier', label: 'If it did not happen, why', type: 'select', list: 'REFERRAL_BARRIERS', value: r.barrier || '', current: r.barrier || undefined },
     { name: 'outcome', label: 'Outcome in your words', type: 'textarea', span: true, value: r.outcome || '' },
   ], { submitText: 'Record outcome', onCancel: () => m.close(), onSubmit: async (d) => {
-    const res = await post(`/api/referrals/${r.id}/outcome`, d);
+    const res = await withRestrictionCheck((extra) => post(`/api/referrals/${r.id}/outcome`, { ...d, ...extra }), '_restriction_reviewed');
     toast(res.admitted ? 'Recorded — counted as an admission' : 'Outcome recorded', 'ok');
     m.close(); onDone && onDone();
   } });

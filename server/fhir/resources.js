@@ -144,17 +144,13 @@ function mapCall(c) {
 
 // ---- Consent ----
 const today = () => new Date().toISOString().slice(0, 10);
-function consentPurposes(purposeText) {
-  const out = [];
-  for (const [code, p] of Object.entries(disclosure.FHIR_PURPOSES)) {
-    if (disclosure.consentCovers({ recipient: 'x', purpose: purposeText }, { recipients: ['x'], purposeOfUse: code })) out.push({ system: SYS.actReason, code, display: p.display });
-  }
-  return out;
+function consentPurposes(type, purposeText) {
+  return disclosure.consentPurposeCodes({ type, purpose: purposeText }).map(code => ({ system: SYS.actReason, code, display: disclosure.FHIR_PURPOSES[code].display }));
 }
 function mapConsent(k) {
   const recipient = dec(k.recipient_enc), purpose = dec(k.purpose_enc);
   const active = !k.revoked_at && (!k.expires_at || k.expires_at >= today());
-  const part2 = k.type === 'part2_disclosure';
+  const part2 = k.type.startsWith('part2_');
   return prune({
     resourceType: 'Consent', id: k.id, meta: meta(k.updated_at),
     status: active ? 'active' : 'inactive',
@@ -167,7 +163,7 @@ function mapConsent(k) {
       type: 'permit',
       period: { start: dt(k.signed_at), end: k.revoked_at ? dt(k.revoked_at) : dt(k.expires_at) },
       actor: recipient ? [{ role: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ParticipationType', code: 'IRCP', display: 'information recipient' }] }, reference: { display: recipient } }] : undefined,
-      purpose: consentPurposes(purpose),
+      purpose: consentPurposes(k.type, purpose),
     },
   });
 }
@@ -237,6 +233,8 @@ function mapOverdose(o) {
 }
 
 // ---- DocumentReference (signed notes: metadata only, never the text) ----
+// SUD counseling notes (§2.11) are left out altogether, not even listed: they are disclosed only under a
+// consent given for them alone, which never covers FHIR (server/disclosure.js).
 const NOTE_LOINC = { discharge: ['18842-5', 'Discharge summary'] };
 function mapNote(n) {
   const loinc = NOTE_LOINC[n.format] || ['11506-3', 'Progress note'];
@@ -348,9 +346,10 @@ const DEFS = {
       FROM consents k JOIN clients c ON c.id=k.client_id WHERE ${LIVE_CLIENT} AND k.type IN (${disclosure.FHIR_CONSENT_TYPES.map(t => `'${t}'`).join(',')})`,
     load: (kind, id) => db.one(`SELECT * FROM consents WHERE id=?`, id), map: mapConsent, date: true,
     params: { status: statusParam({ active: 'active', inactive: 'inactive' }) },
-    // Only the consents that name this recipient for this purpose: which other organisations a client has
+    // Only the consents that cover this recipient for this purpose, of a type that may cover it now (a
+    // general release is listed only outside a Part 2 programme): which other organisations a client has
     // agreed to share with is none of this recipient's business.
-    keep: (row, client) => disclosure.consentCovers({ recipient: dec(row.recipient_enc), purpose: dec(row.purpose_enc) }, { recipients: client.recipients, purposeOfUse: client.purpose }),
+    keep: (row, client) => disclosure.consentCovers({ type: row.type, recipient: dec(row.recipient_enc), purpose: dec(row.purpose_enc) }, { recipients: client.recipients, purposeOfUse: client.purpose }),
   },
   ServiceRequest: {
     src: `SELECT r.id _fid, 'referral' _kind, r.id _rid, r.client_id _cid, r.updated_at _upd, r.referred_at _date, r.status _st FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${LIVE_CLIENT}`,
@@ -370,7 +369,7 @@ const DEFS = {
   },
   DocumentReference: {
     src: `SELECT n.id _fid, 'note' _kind, n.id _rid, n.client_id _cid, n.updated_at _upd, COALESCE(n.signed_at, n.occurred_at) _date FROM notes n JOIN clients c ON c.id=n.client_id
-      WHERE ${LIVE_CLIENT} AND n.deleted_at IS NULL AND n.status IN ('signed','amended') AND n.format <> 'supervision'`,
+      WHERE ${LIVE_CLIENT} AND n.deleted_at IS NULL AND n.status IN ('signed','amended') AND n.format <> 'supervision' AND n.counseling_note = 0`,
     load: (kind, id) => db.one(`SELECT * FROM notes WHERE id=?`, id), map: mapNote, date: true,
     params: {},
   },

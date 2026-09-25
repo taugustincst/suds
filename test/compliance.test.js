@@ -10,7 +10,7 @@ const { randomUUID } = require('node:crypto');
 
 let admin, sup, nav, fin, ro, clin, navId, supId, clientId, resourceId;
 const iso = (ms) => new Date(ms).toISOString();
-const PART2 = { type: 'part2_disclosure', recipient: 'County OTP', purpose: 'MAT intake', signed_at: '2026-09-01', scope: 'Referral summary and MAT status', expires_at: '2027-09-01', signed_on_paper: true, redisclosure_notice_given: true };
+const PART2 = { type: 'part2_disclosure', recipient: 'County OTP', purpose: 'MAT intake', signed_at: '2026-09-01', scope: 'Referral summary and MAT status', expires_at: '2027-09-01', signed_on_paper: true, redisclosure_notice_given: true, revocation_right_given: true, refusal_consequences_given: true };
 async function push(client, body) { return client.post('/api/sync/push', { device_now: iso(Date.now()), ...body }); }
 
 before(async () => {
@@ -113,7 +113,7 @@ test('exports need export:read; de-identified exports meet Safe Harbor', async (
   assert.equal((await ro.get('/api/reports/export/workbook')).status, 403);
   // Front-line roles export, de-identified only: identified=1 is ignored without export:identified
   for (const [who, c] of [['navigator', nav], ['clinician', clin]]) {
-    const r = await c.get('/api/reports/export/clients?identified=1&recipient=x&purpose=y');
+    const r = await c.get('/api/reports/export/clients?identified=1&basis=audit_evaluation&recipient=x&purpose=y');
     assert.equal(r.status, 200, `${who}: export:read`);
     assert.ok(!String(r.data).includes('Cora') && !String(r.data).includes('1980-04-12'), `${who}: never identified`);
     assert.match(r.headers.get('x-suds-export'), /^De-identified/);
@@ -143,7 +143,7 @@ test('exports need export:read; de-identified exports meet Safe Harbor', async (
   assert.match(iv, /\n2026-09,/, 'intervention dates reduced to the month');
 
   // Identified: full dates, full ZIP, and accounted for.
-  const id = String((await sup.get('/api/reports/export/clients?identified=1&recipient=County%20counsel&purpose=Subpoena%20response')).data);
+  const id = String((await sup.get('/api/reports/export/clients?identified=1&basis=audit_evaluation&recipient=County%20counsel&purpose=Subpoena%20response')).data);
   assert.ok(id.includes('Cora') && id.includes('1980-04-12') && id.includes('95814'));
   assert.ok(!id.startsWith('#') && !id.startsWith('\uFEFF#'), 'no comment line');
   // Workbook carries an About sheet naming the classification.
@@ -160,7 +160,7 @@ test('a de-identified export carries exactly its allow-listed columns, whatever 
   await seeded(1, nav, '/api/interventions', { client_id: clientId, type: 'outreach', occurred_at: '2026-09-12T10:00:00Z', duration_minutes: 20, location: 'community', summary: 'Met Cora at her camp under the 5th St bridge by the blue tent' });
   await seeded(1, nav, '/api/calls', { client_id: clientId, direction: 'outbound', started_at: '2026-09-12T11:00:00Z', contact_name: 'Cora Compliance', purpose: 'Check in on Cora', summary: 'Cora sounded well' });
   await seeded(1, nav, `/api/clients/${clientId}/consents`, { ...PART2, document_ref: 'ROI-CORA-2026' });
-  await seeded(1, sup, `/api/clients/${clientId}/disclosures`, { disclosed_to: 'Riverbend OTP', purpose: 'Cora intake', info_disclosed: 'MAT status of Cora', disclosed_at: '2026-09-12T12:00:00Z', basis: 'court_order' });
+  await seeded(1, sup, `/api/clients/${clientId}/disclosures`, { disclosed_to: 'Riverbend OTP', purpose: 'Cora intake', info_disclosed: 'MAT status of Cora', disclosed_at: '2026-09-12T12:00:00Z', basis: 'qsoa' });
   await seeded(1, nav, '/api/tasks', { client_id: clientId, title: 'Call Cora about housing', description: 'Cora prefers mornings', due_at: '2026-09-20' });
   await seeded(1, nav, '/api/referrals', { client_id: clientId, resource_id: resourceId, referred_at: '2026-09-12T09:00:00Z', notes: 'Cora asked for a female counsellor' });
   const fundId = (await seeded(1, sup, '/api/budget/funds', { name: 'Deid Fund', source_type: 'sor_grant', fiscal_year_start: '2026-07-01', fiscal_year_end: '2027-06-30', total_amount: 1000 })).data.id;
@@ -191,7 +191,7 @@ test('a de-identified export carries exactly its allow-listed columns, whatever 
     for (const leak of ['Cora', 'bridge', 'blue tent', 'ROI-CORA', 'RCPT-CORA', 'Cora Cabs', 'housing', 'counsellor', 'mornings', '[redacted]']) assert.ok(!text.includes(leak), `${kind}: "${leak}" must not appear`);
   }
   // The same datasets identified still carry the full column set.
-  const ivr = await sup.get('/api/reports/export/interventions?identified=1&recipient=County%20counsel&purpose=Subpoena&from=2026-01-01&to=2026-12-31');
+  const ivr = await sup.get('/api/reports/export/interventions?identified=1&basis=audit_evaluation&recipient=County%20counsel&purpose=Subpoena&from=2026-01-01&to=2026-12-31');
   const iv = String(ivr.data);
   assert.equal(ivr.status, 200, iv.slice(0, 200));
   assert.ok(iv.includes('Location') && iv.includes('blue tent'), iv.slice(0, 600));
@@ -199,7 +199,7 @@ test('a de-identified export carries exactly its allow-listed columns, whatever 
 
 test('an identified workbook writes one disclosure per client, not one per sheet, and does not account for itself', async () => {
   const before = H.db.one(`SELECT COUNT(*) n FROM disclosures WHERE source='export' AND client_id=?`, clientId).n;
-  const wbRes = await fetch(`${await H.start()}/api/reports/export/workbook?identified=1&recipient=State%20auditor&purpose=Grant%20audit&from=2026-01-01&to=2026-12-31`, { headers: { Authorization: `Bearer ${(await H.client().post('/api/auth/login', { username: 'csup', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' })).data.token}` } });
+  const wbRes = await fetch(`${await H.start()}/api/reports/export/workbook?identified=1&basis=audit_evaluation&recipient=State%20auditor&purpose=Grant%20audit&from=2026-01-01&to=2026-12-31`, { headers: { Authorization: `Bearer ${(await H.client().post('/api/auth/login', { username: 'csup', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' })).data.token}` } });
   assert.equal(wbRes.status, 200);
   assert.match(wbRes.headers.get('x-suds-export'), /^Identified export - PHI\. Disclosed to: State auditor/);
   const rows = H.db.all(`SELECT * FROM disclosures WHERE source='export' AND client_id=? ORDER BY created_at`, clientId);
@@ -218,13 +218,13 @@ test('an identified workbook writes one disclosure per client, not one per sheet
 test('CSV cells that a spreadsheet would run as formulas are neutralised', async () => {
   await nav.post('/api/interventions', { client_id: clientId, type: 'outreach', occurred_at: '2026-09-13T10:00:00Z', duration_minutes: 5, summary: '=HYPERLINK("http://evil.example/x","click")' });
   await nav.post('/api/calls', { client_id: clientId, direction: 'outbound', started_at: '2026-09-13T11:00:00Z', purpose: '+cmd|\' /C calc\'!A0' });
-  const id = String((await sup.get('/api/reports/export/interventions?identified=1&recipient=County%20counsel&purpose=Subpoena&from=2026-01-01&to=2026-12-31')).data);
+  const id = String((await sup.get('/api/reports/export/interventions?identified=1&basis=audit_evaluation&recipient=County%20counsel&purpose=Subpoena&from=2026-01-01&to=2026-12-31')).data);
   assert.ok(id.includes(`"'=HYPERLINK(""http://evil.example/x"",""click"")"`), id.split('\n').find(l => l.includes('HYPERLINK')));
-  const calls = String((await sup.get('/api/reports/export/calls?identified=1&recipient=County%20counsel&purpose=Subpoena&from=2026-01-01&to=2026-12-31')).data);
+  const calls = String((await sup.get('/api/reports/export/calls?identified=1&basis=audit_evaluation&recipient=County%20counsel&purpose=Subpoena&from=2026-01-01&to=2026-12-31')).data);
   assert.ok(calls.includes(`"'+cmd|' /C calc'!A0"`), calls.split('\n').find(l => l.includes('cmd')));
   assert.ok(!/(^|,)=HYPERLINK/m.test(id), 'no cell starts with =');
   // Excel: the same text is an inline string, never a formula
-  const wb = await fetch(`${await H.start()}/api/reports/export/interventions?identified=1&recipient=County%20counsel&purpose=Subpoena&from=2026-01-01&to=2026-12-31&format=xlsx`, { headers: { Authorization: `Bearer ${(await H.client().post('/api/auth/login', { username: 'csup', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' })).data.token}` } });
+  const wb = await fetch(`${await H.start()}/api/reports/export/interventions?identified=1&basis=audit_evaluation&recipient=County%20counsel&purpose=Subpoena&from=2026-01-01&to=2026-12-31&format=xlsx`, { headers: { Authorization: `Bearer ${(await H.client().post('/api/auth/login', { username: 'csup', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' })).data.token}` } });
   const files = require('../server/importers/text').unzip(Buffer.from(await wb.arrayBuffer()));
   const xml = String(files.get([...files.keys()].find(k => k.includes('worksheets/sheet1.xml'))));
   assert.ok(!xml.includes('<f>'), 'no formula cells');
@@ -264,8 +264,11 @@ test('a disclosure without consent on an "other" basis needs a supervisor and a 
   const em = { ...body, basis: 'medical_emergency', disclosed_to: 'Mercy General ED' };
   assert.equal((await nav.post(`/api/clients/${clientId}/disclosures`, em)).status, 400);
   assert.equal((await nav.post(`/api/clients/${clientId}/disclosures`, { ...em, justification: 'Unresponsive after overdose; ED needed current buprenorphine dose.' })).status, 201);
+  // A court order is a basis only when the order itself is on file (42 CFR subpart E): naming the basis
+  // is no longer enough (test/part2.test.js covers what makes an order qualify).
+  assert.equal((await nav.post(`/api/clients/${clientId}/disclosures`, { ...body, basis: 'court_order' })).status, 400);
   // Other Part 2 exceptions keep working as before.
-  assert.equal((await nav.post(`/api/clients/${clientId}/disclosures`, { ...body, basis: 'court_order' })).status, 201);
+  assert.equal((await nav.post(`/api/clients/${clientId}/disclosures`, { ...body, basis: 'qsoa' })).status, 201);
   // A referral cannot use 'other' without justification either.
   const c3 = (await nav.post('/api/clients', { first_name: 'Ref', last_name: 'Other' })).data.id;
   assert.equal((await sup.post('/api/referrals', { client_id: c3, resource_id: resourceId, referred_at: '2026-09-03T09:00:00Z', warm_handoff: true, _disclosure_basis: 'other' })).status, 400);
@@ -276,13 +279,13 @@ test('a disclosure without consent on an "other" basis needs a supervisor and a 
 test('an identified export writes one disclosure per client it contains', async () => {
   const before = H.db.one(`SELECT COUNT(*) n FROM disclosures WHERE source='export' AND client_id=?`, clientId).n;
   assert.equal((await sup.get('/api/reports/export/interventions?identified=1&from=2026-01-01&to=2026-12-31')).status, 400, 'recipient and purpose are required');
-  assert.equal((await sup.get('/api/reports/export/interventions?identified=1&recipient=x&from=2026-01-01&to=2026-12-31')).status, 400);
-  const r = await sup.get('/api/reports/export/interventions?identified=1&recipient=State%20auditor&purpose=SOR%20grant%20audit&from=2026-01-01&to=2026-12-31');
+  assert.equal((await sup.get('/api/reports/export/interventions?identified=1&basis=audit_evaluation&recipient=x&from=2026-01-01&to=2026-12-31')).status, 400);
+  const r = await sup.get('/api/reports/export/interventions?identified=1&basis=audit_evaluation&recipient=State%20auditor&purpose=SOR%20grant%20audit&from=2026-01-01&to=2026-12-31');
   assert.equal(r.status, 200);
   const rows = H.db.all(`SELECT * FROM disclosures WHERE source='export' AND client_id=? ORDER BY created_at`, clientId);
   assert.equal(rows.length, before + 1, 'exactly one accounting row for this client');
   const d = require('../server/disclosure').present(rows[rows.length - 1]);
-  assert.equal(d.basis, 'export'); assert.equal(d.recipient, 'State auditor'); assert.equal(d.purpose, 'SOR grant audit'); assert.match(d.what, /interventions/);
+  assert.equal(d.basis, 'audit_evaluation', 'the lawful basis the export stated'); assert.equal(d.source, 'export'); assert.equal(d.recipient, 'State auditor'); assert.equal(d.purpose, 'SOR grant audit'); assert.match(d.what, /interventions/);
   assert.equal(d.source_ref, 'interventions');
   // A de-identified export of the same data records nothing: nobody is identified.
   const n2 = H.db.one(`SELECT COUNT(*) n FROM disclosures WHERE source='export'`).n;
@@ -291,7 +294,7 @@ test('an identified export writes one disclosure per client it contains', async 
   // And it shows up in the client's printable accounting.
   const acct = await nav.get(`/api/clients/${clientId}/disclosures/accounting`);
   assert.equal(acct.status, 200);
-  assert.ok(acct.data.disclosures.some(x => x.basis === 'export' && x.recipient === 'State auditor'));
+  assert.ok(acct.data.disclosures.some(x => x.source === 'export' && x.recipient === 'State auditor'));
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='disclosure.accounting' AND client_id=?`, clientId), 'producing the accounting is audited');
   assert.equal((await ro.get(`/api/clients/${clientId}/disclosures/accounting`)).status, 403);
 });
@@ -300,9 +303,9 @@ test('an identified export writes one disclosure per client it contains', async 
 test('a Part 2 consent must carry every §2.31 element', async () => {
   const base = { type: 'part2_disclosure', recipient: 'County OTP', purpose: 'MAT intake', signed_at: '2026-09-01' };
   const post = (b) => nav.post(`/api/clients/${clientId}/consents`, b);
-  const full = { ...base, scope: 'MAT status', expires_at: '2027-01-01', witness: 'J. Walker', redisclosure_notice_given: true };
+  const full = { ...base, scope: 'MAT status', expires_at: '2027-01-01', witness: 'J. Walker', redisclosure_notice_given: true, revocation_right_given: true, refusal_consequences_given: true };
   assert.equal((await post(full)).status, 201);
-  for (const [k, why] of [['scope', 'scope'], ['expires_at', 'expiration'], ['witness', 'signature evidence'], ['redisclosure_notice_given', 'redisclosure notice']]) {
+  for (const [k, why] of [['scope', 'scope'], ['expires_at', 'expiration'], ['witness', 'signature evidence'], ['redisclosure_notice_given', 'redisclosure notice'], ['revocation_right_given', 'right-to-revoke statement'], ['refusal_consequences_given', 'refusal statement']]) {
     const b = { ...full }; delete b[k];
     const r = await post(b);
     assert.equal(r.status, 400, `missing ${why} is refused`);

@@ -140,6 +140,9 @@ pre.note { white-space: pre-wrap; font-family: var(--font); background: var(--pa
 .idle-warn { position: fixed; top: 0; left: 0; right: 0; background: var(--warn); color: #fff; text-align: center; padding: .4rem; z-index: 200; font-weight: 600; }
 .qr { font-family: var(--mono); font-size: .8em; word-break: break-all; background: var(--panel-2); padding: .5rem; border-radius: 6px; }
 @media print { .sidebar, .topbar, .btn, .tabs { display: none !important; } .layout { display: block; } .card { box-shadow: none; } }
+/* Shown only on paper: the 42 CFR Part 2 label a printed record carries. */
+.print-only { display: none; }
+@media print { .print-only { display: block !important; border: 1px solid #000; padding: .3rem .5rem; margin: .5rem 0; } }
 .row > select, .row > input:not([type="checkbox"]) { width: auto; }
 
 /* Mobile navigation */

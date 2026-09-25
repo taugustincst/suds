@@ -98,7 +98,7 @@ test('the API keeps `description`, stores it encrypted, and exports and sync tre
     const q = 'from=2000-01-01&to=2100-12-31';
     const deid = String((await admin.get(`/api/reports/export/tasks?${q}`)).data);
     assert.ok(!deid.includes('Granite') && !/description/i.test(deid.split('\n')[0]), 'a de-identified export has no details column');
-    const ident = await admin.get(`/api/reports/export/tasks?${q}&identified=1&recipient=Auditor&purpose=Audit`);
+    const ident = await admin.get(`/api/reports/export/tasks?${q}&identified=1&basis=audit_evaluation&recipient=Auditor&purpose=Audit`);
     assert.equal(ident.status, 200);
     assert.ok(String(ident.data).includes('Granite'), 'an identified export carries the details');
 

@@ -132,8 +132,8 @@ async function run(job, client, ip) {
     // What was withheld, and the redisclosure notice, travel with the export as an OperationOutcome file.
     const phi = job.types.some(t => R.DEFS[t].phi);
     if (phi) {
-      const issues = [{ severity: 'information', code: 'informational', diagnostics: `42 CFR §2.32 notice: ${disclosure.PART2_NOTICE}` }];
-      if (omitted.size) issues.push({ severity: 'warning', code: 'suppressed', diagnostics: `${omitted.size} patient(s) were left out of this export: no active consent names ${client.recipient} for this purpose of use.` });
+      const issues = [{ severity: 'information', code: 'informational', diagnostics: `42 CFR §2.32 notice: ${disclosure.notice().text}` }];
+      if (omitted.size) issues.push({ severity: 'warning', code: 'suppressed', diagnostics: `${omitted.size} patient(s) were left out of this export: no active consent covers ${client.recipient} for this purpose of use, or the patient has an agreed restriction.` });
       const oo = { ...outcome(issues), meta: { security: PART2_SECURITY } };
       fs.writeFileSync(path.join(jobDir, 'OperationOutcome.ndjson.enc'), encrypt(JSON.stringify(oo) + '\n'), { mode: 0o600 });
       job.errors.push({ type: 'OperationOutcome', file: 'OperationOutcome.ndjson', count: 1 });
@@ -141,6 +141,8 @@ async function run(job, client, ip) {
     // One accounting-of-disclosures row per patient for the whole export.
     for (const e of perClient.values()) e.what = `FHIR bulk export ${job.id}: ${Object.entries(e.counts).map(([t, n]) => `${t} (${n})`).join(', ')}`;
     disclosure.recordFhir({ perClient, recipient: client.recipient, purposeOfUse: client.purpose, sourceRef: `fhir-export:${job.id}`, user: client.actor, ip });
+    // A bulk export naming a great many people is a mass identified export like any other (server/incidents.js).
+    require('../incidents').maybeMassExport({ clients: perClient.size, kind: 'fhir-bulk', user: client.actor });
     audit.log({ user: client.actor, action: 'fhir.export.complete', entity: 'fhir_export', entityId: job.id, ip, details: { client: client.prefix, types: job.types, resources: total, patients: perClient.size, omitted_patients: omitted.size } });
     job.status = 'complete'; job.progress = 'complete'; job.expiresAt = Date.now() + TTL_MS;
   } catch (e) {
@@ -168,7 +170,7 @@ function status(ctx, client) {
     transactionTime: j.transactionTime, request: j.request, requiresAccessToken: true,
     output: j.outputs.map(f => ({ type: f.type, url: url(f), count: f.count })),
     error: j.errors.map(f => ({ type: f.type, url: url(f) })),
-    extension: { 'urn:suds:part2': { security: j.types.some(t => R.DEFS[t].phi) ? PART2_SECURITY : [], notice: j.types.some(t => R.DEFS[t].phi) ? disclosure.PART2_NOTICE : undefined, expires: new Date(j.expiresAt).toISOString() } },
+    extension: { 'urn:suds:part2': { security: j.types.some(t => R.DEFS[t].phi) ? PART2_SECURITY : [], notice: j.types.some(t => R.DEFS[t].phi) ? disclosure.notice().text : undefined, expires: new Date(j.expiresAt).toISOString() } },
   };
   const body = JSON.stringify(manifest);
   ctx.res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(body), Expires: new Date(j.expiresAt).toUTCString() });

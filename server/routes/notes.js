@@ -10,7 +10,7 @@ const { encrypt, decrypt, sha256, uuid } = require('../crypto');
 const shape = {
   client_id: { type: 'string', required: true }, kind: { type: 'string', required: true, enum: ['clinical', 'admin'] }, format: { type: 'string', list: 'NOTE_FORMATS' },
   title: { type: 'string', maxLen: 200 }, content: { type: 'string', required: true, maxLen: 50000 }, structured: { type: 'object' }, occurred_at: { type: 'datetime', required: true },
-  intervention_id: { type: 'string' }, call_id: { type: 'string' }, part2_protected: { type: 'boolean' }, cosign_requested: { type: 'boolean' }, source: { type: 'string', enum: ['manual', 'pocket_ai', 'onenote', 'import', 'api'] }, source_ref: { type: 'string', maxLen: 300 },
+  intervention_id: { type: 'string' }, call_id: { type: 'string' }, part2_protected: { type: 'boolean' }, counseling_note: { type: 'boolean' }, cosign_requested: { type: 'boolean' }, source: { type: 'string', enum: ['manual', 'pocket_ai', 'onenote', 'import', 'api'] }, source_ref: { type: 'string', maxLen: 300 },
   // The problem-list entries this note addresses (CalAIM: a progress note ties the service to the problem list).
   problem_ids: { type: 'array', maxLen: 30, of: 'string' },
 };
@@ -32,6 +32,9 @@ function linkedProblems(ctx, n) {
 }
 
 function kindPerm(kind, rw) { return `notes:${kind}:${rw}`; }
+// A SUD counseling note (42 CFR §2.11) is a clinician's own analysis of a counselling session: it can only
+// be a clinical note, and is disclosed only under a consent given for counseling notes alone (disclosure.js).
+function checkCounseling(kind, counseling) { if (counseling && kind !== 'clinical') throw badRequest('Only a clinical note can be a SUD counseling note'); }
 
 // Re-entering the password is the electronic-signature act itself, so it is checked the same way for a
 // signature and a countersignature.
@@ -116,7 +119,7 @@ module.exports = (r) => {
     if (ctx.query.get('to')) { where.push('n.occurred_at <= ?'); params.push(ctx.query.get('to') + 'T23:59:59.999Z'); }
     const w = 'WHERE ' + where.join(' AND ');
     const rows = db.all(`SELECT n.id,n.client_id,n.kind,n.format,n.title_enc,n.occurred_at,n.status,n.signed_at,n.source,n.author_id,n.created_at,n.updated_at,
-      n.cosign_required,n.cosign_requested,n.cosigned_at,n.cosigned_by,u.display_name AS author,cs.display_name AS cosigner,c.client_code,
+      n.cosign_required,n.cosign_requested,n.cosigned_at,n.cosigned_by,n.counseling_note,u.display_name AS author,cs.display_name AS cosigner,c.client_code,
       (SELECT COUNT(*) FROM note_addenda a WHERE a.note_id=n.id) AS addenda
       FROM notes n JOIN users u ON u.id=n.author_id LEFT JOIN users cs ON cs.id=n.cosigned_by JOIN clients c ON c.id=n.client_id ${w} ORDER BY n.occurred_at DESC LIMIT ? OFFSET ?`, ...params, limit, offset);
     const out = rows.map(x => ({ ...x, title: x.title_enc ? decrypt(x.title_enc) : null, title_enc: undefined, ...signatureState(x) }));
@@ -130,13 +133,14 @@ module.exports = (r) => {
     if (!auth.hasPerm(ctx.user, kindPerm(v.kind, 'write'))) throw forbidden(`You cannot author ${v.kind} notes`);
     if (!db.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, v.client_id)) throw notFound('Client not found');
     auth.assertClientAccess(ctx, v.client_id);
+    checkCounseling(v.kind, v.counseling_note);
     const id = uuid();
     const linked = problemIds(v.problem_ids, v.client_id) ?? null;
     const author = db.one(`SELECT requires_cosign FROM users WHERE id=?`, ctx.user.id);
-    db.run(`INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,structured_enc,occurred_at,intervention_id,call_id,part2_protected,source,source_ref,cosign_required,cosign_requested,problem_ids) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    db.run(`INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,structured_enc,occurred_at,intervention_id,call_id,part2_protected,source,source_ref,cosign_required,cosign_requested,problem_ids,counseling_note) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       id, v.client_id, ctx.user.id, v.kind, v.format || 'narrative', v.title ? encrypt(v.title) : null, encrypt(v.content), v.structured ? encrypt(JSON.stringify(v.structured)) : null, v.occurred_at,
-      v.intervention_id || null, v.call_id || null, v.part2_protected ?? 1, v.source || 'manual', v.source_ref || null, author?.requires_cosign ? 1 : 0, v.cosign_requested ? 1 : 0, linked);
-    audit.log({ user: ctx.user, action: 'note.create', entity: 'note', entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format, cosign_requested: v.cosign_requested ? true : undefined } });
+      v.intervention_id || null, v.call_id || null, v.part2_protected ?? 1, v.source || 'manual', v.source_ref || null, author?.requires_cosign ? 1 : 0, v.cosign_requested ? 1 : 0, linked, v.counseling_note ? 1 : 0);
+    audit.log({ user: ctx.user, action: 'note.create', entity: 'note', entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format, cosign_requested: v.cosign_requested ? true : undefined, counseling_note: v.counseling_note ? true : undefined } });
     // updated_at: the version the editor's next autosave sends as if_updated_at.
     ctx.status = 201; return { id, updated_at: db.one(`SELECT updated_at FROM notes WHERE id=?`, id).updated_at };
   });
@@ -157,9 +161,10 @@ module.exports = (r) => {
     if (n.status !== 'draft') throw badRequest('Signed notes cannot be edited; add an addendum instead');
     if (n.author_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'clients:all')) throw forbidden('Only the author can edit a draft');
     require('../crud').assertFresh(ctx, n, 'note');
-    const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, cosign_requested: shape.cosign_requested, problem_ids: shape.problem_ids }, { partial: true, existing: n });
+    const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, counseling_note: shape.counseling_note, cosign_requested: shape.cosign_requested, problem_ids: shape.problem_ids }, { partial: true, existing: n });
+    checkCounseling(n.kind, v.counseling_note);
     const sets = []; const params = [];
-    for (const k of ['format', 'occurred_at', 'intervention_id', 'call_id', 'part2_protected', 'cosign_requested']) if (v[k] !== undefined) { sets.push(`${k}=?`); params.push(v[k]); }
+    for (const k of ['format', 'occurred_at', 'intervention_id', 'call_id', 'part2_protected', 'counseling_note', 'cosign_requested']) if (v[k] !== undefined) { sets.push(`${k}=?`); params.push(v[k]); }
     if (v.title !== undefined) { sets.push('title_enc=?'); params.push(v.title ? encrypt(v.title) : null); }
     if (v.content !== undefined) { sets.push('content_enc=?'); params.push(encrypt(v.content)); }
     const linked = problemIds(v.problem_ids, n.client_id);

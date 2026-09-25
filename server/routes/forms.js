@@ -106,6 +106,15 @@ const SERVABLE_TYPES = new Set(['application/pdf', 'image/png', 'image/jpeg', 'i
   'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']);
 function safeContentType(t) { return SERVABLE_TYPES.has(String(t || '').toLowerCase().split(';')[0].trim()) ? String(t).split(';')[0].trim() : 'application/octet-stream'; }
 
+// A printed client form is a Part 2 record wherever it goes next: in a Part 2 programme it carries the label
+// and the §2.32 notice (the full text, so it can accompany the page if it is sent on).
+function printFooter() {
+  const disclosure = require('../disclosure'); const n = disclosure.notice();
+  const printed = `Printed from SUDS ${new Date().toISOString().slice(0, 10)}.`;
+  return disclosure.part2Program() ? `${printed} PROTECTED BY 42 CFR PART 2. ${n.short} If this record is disclosed, this notice must accompany it (42 CFR §2.32): ${n.text}`
+    : `${printed} Contains protected health information; handle per HIPAA.`;
+}
+
 module.exports = (r) => {
   // ---------- template library ----------
   // Starter templates, so a new installation is not left with an empty form library and no consent form.
@@ -226,7 +235,7 @@ module.exports = (r) => {
     const f = loadForm(ctx, ctx.params.id); const client = M.decryptRow(db.one(`SELECT * FROM clients WHERE id=?`, f.client_id));
     const values = parseJson(decrypt(f.values_enc), {}); const by = f.completed_by ? db.one(`SELECT display_name FROM users WHERE id=?`, f.completed_by) : null;
     audit.log({ user: ctx.user, action: 'client_form.print', entity: 'client_form', entityId: f.id, clientId: f.client_id, ip: ctx.ip });
-    const body = pdf.renderForm({ title: f.template_name, org: db.getSetting('org_name', 'SUDS'), meta: [`Client: ${client.first_name} ${client.last_name} (${client.client_code})`, f.status === 'completed' ? `Completed ${f.completed_at.slice(0, 10)}${by ? ' by ' + by.display_name : ''}` : 'DRAFT'], fields: parseJson(f.fields_json, []), values, footer: `Printed from SUDS ${new Date().toISOString().slice(0, 10)}. Contains protected health information; handle per 42 CFR Part 2 and HIPAA.` });
+    const body = pdf.renderForm({ title: f.template_name, org: db.getSetting('org_name', 'SUDS'), meta: [`Client: ${client.first_name} ${client.last_name} (${client.client_code})`, f.status === 'completed' ? `Completed ${f.completed_at.slice(0, 10)}${by ? ' by ' + by.display_name : ''}` : 'DRAFT'], fields: parseJson(f.fields_json, []), values, footer: printFooter() });
     ctx.res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `${ctx.query.get('download') === '1' ? 'attachment' : 'inline'}; filename="${client.client_code}-${f.template_name.replace(/[^\w.-]+/g, '_')}.pdf"` }); ctx.res.end(body); return null;
   });
   // Signed / scanned copies attached to the filled form (stored encrypted)

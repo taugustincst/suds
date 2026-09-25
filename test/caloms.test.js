@@ -272,10 +272,15 @@ test('the extract is identified-export only, holds back fatal records, and is ac
   assert.ok(act.some(l => l.startsWith(`${PROVIDER},`) && l.endsWith(',N')));
   assert.match(files['README.txt'], /NOT been verified against the current DHCS CalOMS Tx data dictionary/);
   assert.match(files['README.txt'], /held back because of fatal errors: [1-9]/);
+  // The same 2024 §2.32 notice every identified file carries, in the README and (abbreviated) the header.
+  const C = require('../server/constants');
+  assert.ok(files['README.txt'].includes(`NOTICE TO RECIPIENT (42 CFR §2.32): ${C.PART2_REDISCLOSURE_NOTICE}`), 'the README carries the §2.32 notice');
+  assert.ok(x.headers.get('x-suds-export').includes(C.PART2_NOTICE_SHORT));
   // The accounting of disclosures: one state-reporting row per client in the file, none for the one held back.
   const d = db.one(`SELECT * FROM disclosures WHERE client_id=? AND source='caloms'`, goodClient);
   assert.ok(d, 'the disclosure is accounted for');
   assert.equal(d.basis, 'state_reporting'); assert.equal(d.consent_id, null);
+  assert.equal(d.notice_version, '2024'); assert.equal(d.legal_proceeding, 0); assert.equal(d.counseling_notes, 0);
   assert.match(require('../server/crypto').decrypt(d.recipient_enc), /DHCS/);
   assert.ok(!db.one(`SELECT 1 FROM disclosures WHERE client_id=? AND source='caloms'`, badClient));
   const acct = await sup.get(`/api/clients/${goodClient}/disclosures/accounting`);
@@ -302,18 +307,24 @@ test('no extract while CalOMS is off', async () => {
 test('the county EHR hand-off: identified, consent-checked, accounted, and not a claim', async () => {
   const withConsent = await newClient(sup, { status: 'active', medicaid_id: '91234567A' });
   const without = await newClient(sup, { status: 'active' });
-  for (const [cid, mins] of [[withConsent, 30], [withConsent, 45], [without, 20]]) {
+  const roiOnly = await newClient(sup, { status: 'active' });
+  for (const [cid, mins] of [[withConsent, 30], [withConsent, 45], [without, 20], [roiOnly, 15]]) {
     const r = await sup.post('/api/interventions', { client_id: cid, type: 'case_management', occurred_at: `${day(-3)}T18:00:00.000Z`, duration_minutes: mins, location: 'office', modality: 'in_person' });
     assert.equal(r.status, 201, JSON.stringify(r.data));
   }
-  const c = await sup.post(`/api/clients/${withConsent}/consents`, { type: 'roi', recipient: 'County EHR billing unit', purpose: 'Billing', signed_at: day(-10) });
+  // The 2024 single consent for treatment, payment and operations is what a billing hand-off rests on.
+  const c = await sup.post(`/api/clients/${withConsent}/consents`, { type: 'part2_tpo', recipient: 'County EHR billing unit', purpose: 'Treatment, payment and health care operations', signed_at: day(-10),
+    signed_on_paper: true, redisclosure_notice_given: true, revocation_right_given: true, refusal_consequences_given: true, scope: 'Service dates, types and minutes', expires_at: '2099-01-01' });
   assert.equal(c.status, 201, JSON.stringify(c.data));
+  // A general release is not a Part 2 consent while this is a Part 2 programme: that client is left out.
+  assert.equal((await sup.post(`/api/clients/${roiOnly}/consents`, { type: 'roi', recipient: 'County EHR billing unit', purpose: 'Billing', signed_at: day(-10) })).status, 201);
   const q = `from=${day(-7)}&to=${TODAY}`;
   assert.equal((await clin.get(`/api/handoff/summary?${q}`)).status, 403);
   assert.equal((await fin.get(`/api/handoff/export?${q}&recipient=x&purpose=y`)).status, 403, 'finance never gets names');
   const sum = await sup.get(`/api/handoff/summary?${q}`);
   assert.equal(sum.status, 200);
   assert.ok(sum.data.without_consent.includes(codeOf(without)) && !sum.data.without_consent.includes(codeOf(withConsent)));
+  assert.ok(sum.data.without_consent.includes(codeOf(roiOnly)), 'a general release does not count as consent');
   assert.match(sum.data.not_a_claim, /does not submit Drug Medi-Cal/);
   assert.equal((await sup.get(`/api/handoff/export?${q}`)).status, 400, 'recipient and purpose are required');
   const other = await sup.get(`/api/handoff/export?${q}&recipient=County%20EHR&purpose=Billing&basis=other&justification=short`);
@@ -321,7 +332,11 @@ test('the county EHR hand-off: identified, consent-checked, accounted, and not a
   const x = await sup.get(`/api/handoff/export?${q}&recipient=County%20EHR%20billing&purpose=Encounter%20entry%20for%20billing`);
   assert.equal(x.status, 200);
   assert.match(x.headers.get('x-suds-export'), /Not a claim/);
-  assert.equal(x.headers.get('x-suds-handoff-excluded'), codeOf(without), 'the client with no consent is left out, and named by code');
+  assert.equal(x.headers.get('x-suds-handoff-excluded'), [codeOf(without), codeOf(roiOnly)].sort().join(','), 'the clients with no Part 2 consent are left out, and named by code');
+  assert.match(x.headers.get('x-suds-export'), /42 CFR part 2 prohibits/);
+  const C = require('../server/constants');
+  const lastRow = x.data.trimEnd().split('\r\n').pop();
+  assert.ok(lastRow.includes(`NOTICE TO RECIPIENT (42 CFR §2.32): ${C.PART2_REDISCLOSURE_NOTICE}`), 'the CSV carries the §2.32 notice as its last row');
   const lines = x.data.replace(/^﻿/, '').split('\r\n');
   assert.match(lines[0], /^Service Date,Client Code,Last Name,First Name,Date Of Birth,Medi-Cal ID/);
   const mine = lines.filter(l => l.includes(codeOf(withConsent)));
@@ -329,13 +344,26 @@ test('the county EHR hand-off: identified, consent-checked, accounted, and not a
   assert.match(mine[0], /91234567A/); assert.match(mine[0], /,2,75,/, 'two contacts, 75 minutes');
   assert.ok(!x.data.includes(codeOf(without)));
   const d = db.one(`SELECT * FROM disclosures WHERE client_id=? AND source='ehr_handoff'`, withConsent);
-  assert.ok(d); assert.equal(d.basis, 'consent'); assert.ok(d.consent_id, 'the consent relied on is recorded');
+  assert.ok(d); assert.equal(d.basis, 'consent'); assert.equal(d.consent_id, c.data.id, 'the consent relied on is recorded');
+  assert.equal(d.notice_version, '2024'); assert.equal(d.legal_proceeding, 0); assert.equal(d.counseling_notes, 0);
+  assert.equal((await sup.get(`/api/handoff/export?${q}&recipient=County%20EHR&purpose=Billing&legal_proceeding=1`)).status, 400, 'never a file for a legal proceeding');
   assert.ok(!db.one(`SELECT 1 FROM disclosures WHERE client_id=? AND source='ehr_handoff'`, without));
   // A QSOA covers the whole file, so nobody is left out.
   const qsoa = await sup.get(`/api/handoff/export?${q}&recipient=County%20EHR&purpose=Billing&basis=qsoa&format=xlsx`);
   assert.equal(qsoa.status, 200); assert.equal(qsoa.headers.get('x-suds-handoff-excluded'), '');
   assert.ok(db.one(`SELECT 1 FROM disclosures WHERE client_id=? AND source='ehr_handoff' AND basis='qsoa'`, without));
   assert.ok(db.one(`SELECT 1 FROM audit_log WHERE action='handoff.export'`));
+  // An agreed restriction must be confirmed before the file is made, as for any identified export; and a
+  // file past the mass-export threshold opens a draft incident.
+  db.run(`INSERT INTO patient_requests(id,client_id,kind,received_at,due_at,status,created_by) VALUES(?,?,?,?,?,?,?)`, require('node:crypto').randomUUID(), without, 'restriction', day(-5), day(25), 'fulfilled', db.one(`SELECT id FROM users WHERE username='admin'`).id);
+  const refused = await sup.get(`/api/handoff/export?${q}&recipient=County%20EHR&purpose=Billing&basis=qsoa`);
+  assert.equal(refused.status, 400); assert.equal(refused.data.restrictionReview, true);
+  assert.equal((await sup.get(`/api/handoff/summary?${q}`)).data.restricted, 1);
+  db.setSetting('mass_export_threshold', '2');
+  try {
+    assert.equal((await sup.get(`/api/handoff/export?${q}&recipient=County%20EHR&purpose=Billing&basis=qsoa&restriction_reviewed=1`)).status, 200);
+    assert.ok(db.one(`SELECT 1 FROM privacy_incidents WHERE source='mass_export' AND source_ref LIKE 'ehr-handoff:%'`), 'a draft incident for review');
+  } finally { db.setSetting('mass_export_threshold', ''); }
 });
 
 test('CalOMS records are client data everywhere else too: synced, merged, purged', () => {

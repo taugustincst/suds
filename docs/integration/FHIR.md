@@ -4,7 +4,7 @@ SUDS is a navigation and case-management tool for a county SUD programme. It is 
 
 - **Read-only.** Nothing can be created or changed over FHIR. Inbound referrals are a later design (see [below](#inbound-referral-intake-design-placeholder)).
 - **Office server only.** SUDS on this device (the GitHub Pages build) and a local-mode copy do not serve it. The route module is left out of `LOCAL_ROUTE_MODULES` in `server/app.js`.
-- **Consent-gated.** A response includes a client's records only while that client has a live consent that names the calling organisation for its purpose of use. The accounting of disclosures records every response that names a client.
+- **Consent-gated.** A response includes a client's records only while that client has a live Part 2 consent that names the calling organisation for its purpose of use, and no agreed restriction (see *42 CFR Part 2* below). The accounting of disclosures records every response that names a client.
 - Code: `server/routes/fhir.js` (routes), `server/fhir/resources.js` (mappings and search), `server/fhir/bulk.js` (`$export`), `server/fhir/clients.js` (clients, tokens, scopes), `server/disclosure.js` (`fhirCoverage`, `recordFhir`, the §2.32 notice). Tests: `test/fhir.test.js`.
 
 ## Endpoints
@@ -53,19 +53,32 @@ The intake keys and the FHIR clients are kept apart. An intake key cannot read F
 
 Every FHIR answer that identifies a client is a disclosure from a Part 2 programme to the organisation the FHIR client stands for. SUDS enforces the rule on every request.
 
-**Coverage.** A client is *covered* when they have a consent that meets all of these conditions:
+**Coverage.** FHIR answers are made with no worker in the loop, so a client is included only when `requireBasis` (`server/disclosure.js`, the gate every other disclosure passes) would let a worker make the same disclosure without asking anything further. A client is *covered* when they have a consent that meets all of these conditions:
 
-- its type is `part2_disclosure` or `roi`
+- its type can authorise a disclosure in this programme (`disclosingConsentTypes()`), and is one that can name a recipient for treatment, payment or operations:
+  - `part2_disclosure` (a Part 2 consent to a named recipient);
+  - `part2_tpo`, the 2024 rule's single consent for all future treatment, payment and health care operations (§2.31(a)(4)(iii));
+  - `roi` (a general release of information) **only when this programme is not a Part 2 programme** (Privacy & Part 2 → Overview, `part2_program` off). While `part2_program` is on — the default — a general release is not a Part 2 consent (§2.31, §2.32) and never covers FHIR, exactly as `requireBasis` refuses it for a referral.
+  - A consent for SUD counseling notes only (`part2_counseling_notes`) or for a legal proceeding only (`part2_proceedings`) never covers FHIR: FHIR is always treatment, payment or operations, and never sends note text.
 - it has not been revoked and has not expired (`expires_at` is empty or on or after today)
-- its recipient matches the FHIR client's recipient or one of its aliases. The comparison ignores case, accents and punctuation.
-- its purpose covers the FHIR client's purpose of use. The purpose text must contain *treatment* (or *care coordination*) for `TREAT`, *payment* (or *billing*/*claims*) for `HPAYMT`, or *operations* for `HOPERAT`. A consent that says *TPO*, or *treatment, payment and health care operations*, covers all three.
+- its recipient names the FHIR client's organisation. The comparison ignores case, accents and punctuation.
+  - `part2_disclosure` / `roi`: the recipient must *be* the organisation's recipient name or one of its aliases.
+  - `part2_tpo`: the recipient may be a list or a class of recipients (the 2024 rule allows "my treating providers" wording); it covers the organisation when the name or an alias appears in it as whole words, e.g. "County Behavioral Health and my other treating providers". A class with no name in it ("my health plans") cannot be matched mechanically and is **not** honoured over FHIR — record the organisation's name on the consent.
+- its purpose covers the FHIR client's purpose of use.
+  - `part2_tpo` covers `TREAT`, `HPAYMT` and `HOPERAT` by definition.
+  - Otherwise the purpose text must contain *treatment* (or *care coordination*) for `TREAT`, *payment* (or *billing*/*claims*) for `HPAYMT`, or *operations* for `HOPERAT`. A consent that says *TPO*, or *treatment, payment and health care operations*, covers all three.
+- the client has **no agreed restriction** (a fulfilled `restriction` request on their Requests tab, §2.26 / §164.522). `requireBasis` makes a worker confirm that a disclosure respects an agreed restriction; there is no worker to confirm a FHIR answer, so a client with one is withheld entirely until the restriction is lifted.
 
-A general TPO consent that names no organisation is **not** honoured over FHIR. The organisation has to be named on the consent. This is the conservative reading, and it keeps the match mechanical and auditable. `fhirCoverage()` in `server/disclosure.js` holds the rule, and its result is cached until any consent changes or the date turns. A revocation therefore takes effect on the very next request.
+A general TPO wording that names no organisation is **not** honoured over FHIR: the organisation has to be named on the consent. This is the conservative reading, and it keeps the match mechanical and auditable. `fhirCoverage()` in `server/disclosure.js` holds the rule, and its result is cached until any consent or patient request changes, the Part 2 programme setting changes, or the date turns. A revocation or a newly agreed restriction therefore takes effect on the very next request.
+
+FHIR is never used for a legal proceeding against the patient (§2.12(d)); that disclosure needs a subpart E court order or a proceedings-only consent and is recorded one client at a time on the Consents tab. A client's retention *legal hold* keeps their record from being purged and does not change what FHIR discloses.
+
+**SUD counseling notes** (`notes.counseling_note`, §2.11) are not listed as DocumentReference at all — not even as metadata — since they may be disclosed only under a consent given for counseling notes alone. A note's links to the problem list (`notes.problem_ids`) are not sent and do not affect this.
 
 **Omission, not refusal.** A search never fails with a 403 because some clients are not covered. Their resources are left out. An `OperationOutcome` entry (`search.mode = outcome`) always carries the §2.32 notice, and for a broad search it adds a warning with the count:
 
 ```
-"5 patient(s) (7 Encounter resource(s)) on this page were withheld: no active consent names County Behavioral Health for this purpose of use."
+"5 patient(s) (7 Encounter resource(s)) on this page were withheld: no active consent covers County Behavioral Health for this purpose of use, or the patient has an agreed restriction."
 ```
 
 A search that names one person (`identifier`, `family`, `given`, `birthdate`, `_id`, `patient`) never gives a count. For those searches the OperationOutcome has the same wording whether or not anyone was withheld. Otherwise "1 withheld" in reply to `identifier=X` would itself disclose that X is a client of the programme. For the same reason, reading a client who is not covered returns `404`, identical to the answer for a record that does not exist. The refusal is still audited internally (`fhir.read.withheld`).
@@ -74,19 +87,20 @@ A search that names one person (`identifier`, `family`, `given`, `birthdate`, `_
 
 - Every Bundle and every client resource carries `meta.security` with three codes. `R` (restricted, `v3-Confidentiality`). `42CFRPart2` (`v3-ActCode`). `NORDSLCD` (no redisclosure without consent directive, `v3-ActCode`).
 - DocumentReference also carries these in `securityLabel`.
-- The §2.32(a)(1) notice text is in the Bundle's OperationOutcome, in the bulk export's `OperationOutcome.ndjson` and in its manifest (`extension["urn:suds:part2"]`).
+- The §2.32(a)(1) notice, in the 2024 final rule's wording, is in the Bundle's OperationOutcome, in the bulk export's `OperationOutcome.ndjson` and in its manifest (`extension["urn:suds:part2"]`). It is the one notice text SUDS uses everywhere (`PART2_REDISCLOSURE_NOTICE` in `server/constants.js`, via `disclosure.notice()`): identified exports, the CalOMS README, the county EHR hand-off, form and consent PDFs.
 - The resource directory (Organization, Location, HealthcareService) is not PHI. It carries no labels, needs no consent and is not recorded as a disclosure.
 
 **Accounting of disclosures.** SUDS writes one `disclosures` row per client for each request, all in one transaction. Each row has:
 
 - `source = 'fhir'`, `method = 'FHIR API'` and `basis = 'consent'`
+- `legal_proceeding = 0`, `counseling_notes = 0`, and `notice_version` (the §2.32 notice version the response carried, `2024`; empty outside a Part 2 programme)
 - `consent_id`: the covering consent
 - the recipient
 - the purpose, e.g. "Treatment (FHIR purpose of use TREAT)"
 - what was sent, e.g. "FHIR search Encounter: 3 resources"
 - `source_ref = fhir:<request id>`
 
-A bulk export writes one row per client for the whole export (`source_ref = fhir-export:<job id>`). It is recorded when the export completes, conservatively, whether or not the files are ever downloaded. `disclosed_by` is the administrator who created the FHIR client, because disclosures must name a user. The audit rows name the client as `fhir:<name>`. These rows appear in the client's accounting (`GET /api/clients/:id/disclosures/accounting`) like any other disclosure.
+A bulk export writes one row per client for the whole export (`source_ref = fhir-export:<job id>`); one naming more clients than the mass-export threshold opens a draft privacy incident, like any identified export. It is recorded when the export completes, conservatively, whether or not the files are ever downloaded. `disclosed_by` is the administrator who created the FHIR client, because disclosures must name a user. The audit rows name the client as `fhir:<name>`. These rows appear in the client's accounting (`GET /api/clients/:id/disclosures/accounting`) like any other disclosure.
 
 **Audit.** Each request writes one `fhir.search`, `fhir.read`, `fhir.export.*` or `fhir.token.*` row. The row records the client, the parameter *names* (never their values, which can be PHI), and how many results were returned, covered and withheld. Each disclosed client also gets a `disclosure.record` row, and every refusal is written as `fhir.denied`.
 
@@ -99,11 +113,11 @@ Profiles are declared in `meta.profile` only where the resource conforms: US Cor
 | **Patient** (US Core) | `clients` (not deleted or merged) | `identifier`: the client code (`urn:suds:client-code`, type MR) and the Medicaid ID (type MA) if recorded. `name`: official name and, as `usual`, the preferred name. `birthDate`, `gender` (female/male, transgender female→female, transgender male→male, non-binary/other→other, otherwise unknown), `telecom`, `address`, `communication`. The US Core race and ethnicity extensions come from `race_codes` (OMB codes; declined → ASKU, unknown → UNK). `active` is false for closed/inactive/deceased, and a deceased client has `deceasedBoolean`. Goals, flags and emergency contact are **not** shared. |
 | **EpisodeOfCare** | `episodes` | `status` active/finished, `period` from opened/closed, `managingOrganization` = the programme. The presenting problem and discharge summary text are **not** shared. |
 | **Encounter** (US Core) | `interventions` (id `iv-<id>`), `calls` (id `call-<id>`) | The intervention type becomes `type` (`urn:suds:codesystem:intervention-type`). `class`: VR for phone/video/text or telehealth, HH for home, FLD for field locations, otherwise AMB. A call is always VR, and a crisis call has priority EM. `period`/`length` come from the duration. No-show, declined and similar outcomes → `cancelled`. Visit and call summaries are **not** shared. |
-| **Consent** | `consents` of type `part2_disclosure`/`roi` that name *this* recipient for this purpose | `status` active/inactive. `category`: LOINC 59284-0 plus the SUDS type. `policyRule`: 42CFRPart2 (Part 2) or `hipaa-auth` (ROI). `provision`: permit, `period`, `actor` IRCP (the recipient, as display) and `purpose` (ActReason codes derived from the purpose text). A client's consents to *other* organisations are never shown. |
+| **Consent** | `consents` of type `part2_disclosure`, `part2_tpo` (or `roi` outside a Part 2 programme) that cover *this* recipient for this purpose, by the coverage rule above | `status` active/inactive. `category`: LOINC 59284-0 plus the SUDS type. `policyRule`: 42CFRPart2 (Part 2 types) or `hipaa-auth` (ROI). `provision`: permit, `period`, `actor` IRCP (the recipient, as display) and `purpose` (ActReason codes derived from the purpose text). A client's consents to *other* organisations are never shown. |
 | **ServiceRequest** | `referrals` | `intent` order. Category is SNOMED 3457005 "Patient referral". `code`: the resource category plus "Referral to <provider>". `status`: pending/contacted/accepted/scheduled → active, waitlisted → on-hold, admitted/completed/closed → completed, declined/no-show → revoked. `priority`: routine/urgent/stat. `requester` is the programme. `performer` is `Organization/<resource>` and `HealthcareService/<resource>`. Outcome, barrier and notes are **not** shared. |
 | **Task** | `tasks` that belong to a client | `status`: requested, in-progress, completed or cancelled. `priority`, `description` (the to-do's title), `for`, `focus` (ServiceRequest, when the task follows up a referral), `restriction.period.end` (due date). The task's details text is **not** shared. Staff to-dos with no client are never exposed. |
 | **Observation** | `clients.risk_level` (id `risk-<client>`) and `overdose_events` (id `od-<id>`) | Risk level: category survey, code `overdose-risk-level`, valueCodeableConcept low/moderate/high. Overdose event: code `overdose-event`, value overdose/reversal/fatal, plus components for naloxone used, naloxone doses, EMS called, hospitalized and survived. Substances and notes are **not** shared. |
-| **DocumentReference** | signed or amended `notes` (not drafts, deleted notes or supervision notes) | **Metadata only.** Type is LOINC 11506-3 Progress note (18842-5 for discharge) plus the SUDS format. Also `category`, `date` (signed), `context.period` and `context.encounter`. The attachment has no data and no URL, and its title says the text is not shared. Note titles and text, including SUD counselling content, are **never** sent over FHIR. |
+| **DocumentReference** | signed or amended `notes` (not drafts, deleted notes, supervision notes or SUD counseling notes) | **Metadata only.** Type is LOINC 11506-3 Progress note (18842-5 for discharge) plus the SUDS format. Also `category`, `date` (signed), `context.period` and `context.encounter`. The attachment has no data and no URL, and its title says the text is not shared. Note titles and text, including SUD counselling content, are **never** sent over FHIR. |
 | **Organization** (US Core) | `resources` (one per directory entry) and `Organization/suds-program` (this programme, `org_name`) | Name (the resource's organisation, else its name), type `prov`, telecom and address. |
 | **Location** (US Core) | `resources` | Name, status, telecom, address, `managingOrganization`. |
 | **HealthcareService** | `resources` | Category, service tags (as `type`), `providedBy`, `location`, eligibility and populations, languages, hours, Medicaid/uninsured characteristics, and services/levels of care/MAT/intake/cost in `extraDetails`. The internal staff `notes` are not shared. |
@@ -139,7 +153,7 @@ The export follows the [FHIR Bulk Data Access IG](https://hl7.org/fhir/uv/bulkda
 - Kick-off needs `Prefer: respond-async`. The accepted parameters are `_type` (a comma-separated list), `_since` (an instant) and `_outputFormat` (`application/fhir+ndjson`). Any other parameter gets a 400.
 - System level exports every type the client may read. Patient level exports only the Patient compartment types.
 - Each client may run at most two exports at once.
-- Output: one NDJSON file per type with results, and an `OperationOutcome.ndjson` in `error[]`. That file carries the §2.32 notice and how many clients were left out for lack of consent.
+- Output: one NDJSON file per type with results, and an `OperationOutcome.ndjson` in `error[]`. That file carries the §2.32 notice and how many clients were left out (no covering consent, or an agreed restriction).
 - `requiresAccessToken` is `true`. Files are downloaded with the same bearer token, and only by the client that started the export (another client's job answers 404).
 - **At rest:** the files are written to `<data dir>/fhir-export/<job>/`, encrypted with the database key (AES-256-GCM, `server/crypto.js`). They are deleted when the job is deleted or expires (`FHIR_EXPORT_TTL_MINUTES`, default 60; the manifest carries `Expires`). A sweep also removes files a previous server process left behind. Job state is in memory, so after a restart the client starts again. If the encryption key is rotated while a job's files still exist, those files answer 410.
 
@@ -182,7 +196,7 @@ A search Bundle, shortened:
     { "fullUrl": ".../Patient/1f5a…", "resource": { "resourceType": "Patient", "id": "1f5a…", "...": "..." }, "search": { "mode": "match" } },
     { "resource": { "resourceType": "OperationOutcome", "issue": [
         { "severity": "information", "code": "informational", "diagnostics": "42 CFR §2.32 notice: This record which has been disclosed to you is protected by Federal confidentiality rules (42 CFR part 2). …" },
-        { "severity": "warning", "code": "suppressed", "diagnostics": "5 patient(s) (5 Patient resource(s)) on this page were withheld: no active consent names County Behavioral Health for this purpose of use." } ] },
+        { "severity": "warning", "code": "suppressed", "diagnostics": "5 patient(s) (5 Patient resource(s)) on this page were withheld: no active consent covers County Behavioral Health for this purpose of use, or the patient has an agreed restriction." } ] },
       "search": { "mode": "outcome" } } ] }
 ```
 

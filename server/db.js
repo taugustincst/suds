@@ -388,7 +388,7 @@ const migrations = [
     const schemaText = safeSchema();
     for (const t of ['problems', 'problem_history', 'care_plan_goals', 'care_plan_steps', 'asam_assessments', 'outcome_measures']) {
       const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
-      if (!m) throw new Error(`migration 30: no definition for ${t} in schema`);
+      if (!m) throw new Error(`migration 29: no definition for ${t} in schema`);
       d.exec(m[0]);
       for (const line of schemaText.split('\n')) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
     }
@@ -401,6 +401,27 @@ const migrations = [
     const m = schemaText.match(/CREATE TABLE IF NOT EXISTS caloms_records \([\s\S]*?\n\);/);
     if (m) d.exec(m[0]);
     for (const line of schemaText.split('\n')) if (/^CREATE (UNIQUE )?INDEX IF NOT EXISTS idx_caloms_records/.test(line.trim())) d.exec(line.trim());
+  },
+  // 31: 42 CFR Part 2 (2024 final rule). Consents record the rest of the §2.31 elements (who may disclose,
+  //     who signed if not the patient, the revocation and refusal statements, which rule version they were
+  //     taken against); subpart E court orders get a table that disclosures point at; a disclosure says
+  //     whether it is for a proceeding against the patient, includes SUD counseling notes, and which §2.32
+  //     notice went with it; notes can be SUD counseling notes (§2.11); the §2.22 patient notice is
+  //     recorded per client; and a complaint log (§2.4) and a breach/incident register. Existing consents
+  //     keep rule_version NULL (recorded before the 2024 element list) and are shown as such.
+  (d) => {
+    const schemaText = safeSchema();
+    for (const [c, def] of [['discloser', 'TEXT'], ['signer_relationship', 'TEXT'], ['signer_name_enc', 'TEXT'],
+      ['revocation_right_given', 'INTEGER NOT NULL DEFAULT 0'], ['refusal_consequences_given', 'INTEGER NOT NULL DEFAULT 0'], ['rule_version', 'TEXT']]) addColumn(d, 'consents', c, def);
+    addColumn(d, 'notes', 'counseling_note', 'INTEGER NOT NULL DEFAULT 0');
+    for (const t of ['court_orders', 'part2_notices', 'complaints', 'privacy_incidents', 'privacy_incident_clients']) {
+      const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
+      if (m) d.exec(m[0]);
+    }
+    // After court_orders exists: ADD COLUMN may carry a REFERENCES clause as long as its default is NULL.
+    for (const [c, def] of [['court_order_id', 'TEXT REFERENCES court_orders(id) ON DELETE SET NULL'], ['legal_proceeding', 'INTEGER NOT NULL DEFAULT 0'],
+      ['counseling_notes', 'INTEGER NOT NULL DEFAULT 0'], ['notice_version', 'TEXT']]) addColumn(d, 'disclosures', c, def);
+    for (const line of schemaText.split('\n')) if (/^CREATE INDEX IF NOT EXISTS idx_(court_orders|part2_notices|complaints|privacy_incident)/.test(line.trim())) d.exec(line.trim());
   },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.

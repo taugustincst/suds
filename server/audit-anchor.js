@@ -204,6 +204,12 @@ function verifyAndRecord() {
   if (!r.ok) {
     console.error(`[suds] AUDIT ANCHOR MISMATCH: ${r.bad.length} anchor(s) do not match the audit log — ${r.bad[0].reason}`);
     try { require('./audit').log({ user: { username: 'system' }, action: 'audit.anchor.verify.failed', success: false, details: { bad: r.bad.slice(0, 20), total: r.total } }); } catch {}
+    // As with a broken hash chain, an audit log that no longer matches its anchors may hide who read what:
+    // a possible breach until someone has looked (server/incidents.js). One open draft, however often checked.
+    try {
+      require('./incidents').draft({ source: 'audit_chain', sourceRef: 'audit_anchor', title: 'Audit log does not match its external anchors',
+        description: `${r.bad.length} audit anchor(s) written outside the database do not match the audit log (${r.bad[0].reason}). Establish whether audit entries were altered, rebuilt or removed, and whether that concealed access to client records.` });
+    } catch (e) { console.error('[suds] could not open an incident for the anchor mismatch:', e.message); }
   }
   return r;
 }

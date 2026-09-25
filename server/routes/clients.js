@@ -298,6 +298,8 @@ module.exports = (r) => {
     // one episode of care at a time.
     const sourceOpenEpisodes = db.all(`SELECT id FROM episodes WHERE client_id=? AND status='open'`, source.id).map(e => e.id);
     db.transaction(() => {
+      // An incident that already lists both records lists the person once (UNIQUE incident_id, client_id).
+      db.run(`DELETE FROM privacy_incident_clients WHERE client_id=? AND incident_id IN (SELECT incident_id FROM privacy_incident_clients WHERE client_id=?)`, source.id, keep.id);
       for (const [table, col] of links) {
         const cols = db.all(`PRAGMA table_info(${table})`).map(c => c.name);
         const touch = cols.includes('updated_at') ? ', updated_at=?' : '';
@@ -371,6 +373,9 @@ module.exports = (r) => {
     const kinds = ['admin', 'clinical'].filter(k => auth.hasPerm(ctx.user, `notes:${k}:read`) || auth.hasPerm(ctx.user, `notes:${k}:write`));
     const sp = kinds.length ? db.one(`SELECT id, occurred_at, status FROM notes WHERE client_id=? AND format='safety_plan' AND deleted_at IS NULL AND status IN ('signed','amended') AND kind IN (${kinds.map(() => '?').join(',')}) ORDER BY occurred_at DESC LIMIT 1`, row.id, ...kinds) : null;
     client.safety_plan = sp || null;
+    // 42 CFR Part 2: whether the record carries the Part 2 label, and when the client was last given the
+    // §2.22 notice (the Overview says so, or says it is missing).
+    client.part2 = { program: require('../disclosure').part2Program(), notice: require('./part2').latestNotice(row.id) };
     audit.log({ user: ctx.user, action: 'client.view', entity: 'client', entityId: row.id, clientId: row.id, ip: ctx.ip });
     return { client };
   });

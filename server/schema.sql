@@ -479,6 +479,9 @@ CREATE TABLE IF NOT EXISTS notes (
   intervention_id TEXT REFERENCES interventions(id) ON DELETE SET NULL,
   call_id TEXT REFERENCES calls(id) ON DELETE SET NULL,
   part2_protected INTEGER NOT NULL DEFAULT 1,
+  -- A SUD counseling note (42 CFR §2.11, 2024 rule): a clinician's notes analysing a counselling session,
+  -- kept apart from the rest of the record. Disclosed only under a consent given for counseling notes alone.
+  counseling_note INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   deleted_at TEXT,
@@ -518,6 +521,16 @@ CREATE TABLE IF NOT EXISTS consents (
   signed_on_paper INTEGER NOT NULL DEFAULT 0,
   -- The client was told that what is disclosed under this consent may not be redisclosed (§2.32).
   redisclosure_notice_given INTEGER NOT NULL DEFAULT 0,
+  -- The rest of the 42 CFR §2.31 (2024 rule) elements (migration 29): who may make the disclosure, who
+  -- signed when it was not the patient (a parent, guardian or personal representative, §2.14/§2.15; the
+  -- name is PHI), and that the consent stated the right to revoke and the consequences of refusing to sign.
+  -- rule_version is '2024' for a consent recorded against that element list; NULL is an earlier record.
+  discloser TEXT,
+  signer_relationship TEXT,
+  signer_name_enc TEXT,
+  revocation_right_given INTEGER NOT NULL DEFAULT 0,
+  refusal_consequences_given INTEGER NOT NULL DEFAULT 0,
+  rule_version TEXT,
   revoked_by TEXT REFERENCES users(id),
   created_by TEXT NOT NULL REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -526,6 +539,35 @@ CREATE TABLE IF NOT EXISTS consents (
 CREATE INDEX IF NOT EXISTS idx_consents_client ON consents(client_id);
 CREATE INDEX IF NOT EXISTS idx_consents_updated ON consents(updated_at);
 CREATE INDEX IF NOT EXISTS idx_consents_client ON consents(client_id);
+
+-- Court orders authorising disclosure under 42 CFR Part 2 subpart E (§§2.61-2.67). A subpoena alone never
+-- authorises disclosure of a Part 2 record; an order recorded here is what the 'court_order' basis, and any
+-- disclosure for use in a proceeding against the patient, must point at (server/disclosure.js). Every
+-- descriptive field names the patient's legal matter, so it is encrypted.
+CREATE TABLE IF NOT EXISTS court_orders (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  order_type TEXT NOT NULL CHECK (order_type IN ('noncriminal_2_64','criminal_patient_2_65','program_investigation_2_66','undercover_2_67')),
+  court_enc TEXT NOT NULL,
+  case_ref_enc TEXT,
+  issued_at TEXT NOT NULL,
+  expires_at TEXT,
+  recipient_enc TEXT,
+  purpose_enc TEXT NOT NULL,
+  scope_enc TEXT NOT NULL,             -- what the order permits: limited to the parts of the record essential to its purpose (§2.64(e))
+  findings_recorded INTEGER NOT NULL DEFAULT 0,       -- the order states the good-cause findings (§2.64(d))
+  notice_requirement_met INTEGER NOT NULL DEFAULT 0,  -- the patient/program had the notice and chance to respond the section requires
+  covers_counseling_notes INTEGER NOT NULL DEFAULT 0,
+  document_ref TEXT,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','vacated')),
+  vacated_at TEXT,
+  vacated_reason TEXT,
+  recorded_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_court_orders_client ON court_orders(client_id);
+CREATE INDEX IF NOT EXISTS idx_court_orders_updated ON court_orders(updated_at);
 
 CREATE TABLE IF NOT EXISTS disclosures (
   id TEXT PRIMARY KEY,
@@ -542,6 +584,13 @@ CREATE TABLE IF NOT EXISTS disclosures (
   justification_enc TEXT,
   source TEXT,                         -- referral, export, manual: what caused the disclosure to be recorded
   source_ref TEXT,
+  -- Migration 29: the subpart E order relied on, whether the information is for use in a proceeding
+  -- against the patient (§2.12(d)), whether it includes SUD counseling notes (§2.31(b)), and which
+  -- wording of the §2.32 notice went with it.
+  court_order_id TEXT REFERENCES court_orders(id) ON DELETE SET NULL,
+  legal_proceeding INTEGER NOT NULL DEFAULT 0,
+  counseling_notes INTEGER NOT NULL DEFAULT 0,
+  notice_version TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -980,3 +1029,90 @@ CREATE TABLE IF NOT EXISTS outcome_measures (
 );
 CREATE INDEX IF NOT EXISTS idx_outcome_measures_client ON outcome_measures(client_id, instrument, administered_at);
 CREATE INDEX IF NOT EXISTS idx_outcome_measures_updated ON outcome_measures(updated_at);
+
+-- 42 CFR §2.22 (2024 rule): each patient is given the program's notice of privacy practices. One row per
+-- time it was given — when, how, by whom, which version of the notice, and whether the patient signed an
+-- acknowledgement (or declined to). The notice text itself is a setting (Privacy & Part 2 page).
+CREATE TABLE IF NOT EXISTS part2_notices (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  given_at TEXT NOT NULL,
+  method TEXT NOT NULL CHECK (method IN ('in_person_paper','electronic','mail','verbal_with_copy')),
+  notice_version TEXT,
+  acknowledged INTEGER NOT NULL DEFAULT 0,
+  ack_refused INTEGER NOT NULL DEFAULT 0,
+  notes_enc TEXT,
+  given_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_part2_notices_client ON part2_notices(client_id);
+CREATE INDEX IF NOT EXISTS idx_part2_notices_updated ON part2_notices(updated_at);
+
+-- Privacy complaints (42 CFR §2.4; HIPAA §164.530(d)): anyone may complain to the program or to HHS, and
+-- nobody may be retaliated against for it. client_id is null for an anonymous complaint or one from
+-- someone who is not a client. Server-side only (a supervisor's register), not synchronised.
+CREATE TABLE IF NOT EXISTS complaints (
+  id TEXT PRIMARY KEY,
+  client_id TEXT REFERENCES clients(id) ON DELETE SET NULL,
+  received_at TEXT NOT NULL,
+  channel TEXT NOT NULL DEFAULT 'in_person' CHECK (channel IN ('in_person','phone','mail','email','web','other')),
+  complainant TEXT NOT NULL DEFAULT 'client' CHECK (complainant IN ('client','representative','staff','anonymous','other')),
+  summary_enc TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','investigating','resolved','closed')),
+  resolution_enc TEXT,
+  resolved_at TEXT,
+  hhs_referral_given INTEGER NOT NULL DEFAULT 0,      -- told they may also complain to the HHS Secretary (OCR)
+  retaliation_reviewed INTEGER NOT NULL DEFAULT 0,    -- someone checked no adverse action followed the complaint
+  handled_by TEXT REFERENCES users(id),
+  created_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_complaints_status ON complaints(status, received_at);
+CREATE INDEX IF NOT EXISTS idx_complaints_client ON complaints(client_id);
+
+-- Privacy / security incident register. The 2024 Part 2 rule applies the HIPAA Breach Notification Rule
+-- (45 CFR §§164.400-414) to Part 2 records: a breach is presumed unless a four-factor risk assessment shows
+-- a low probability of compromise, and notice is due without unreasonable delay and within 60 days of
+-- discovery. Deadlines are computed from discovered_at (server/incidents.js). Server-side only.
+CREATE TABLE IF NOT EXISTS privacy_incidents (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,                 -- a short label with no client information in it
+  discovered_at TEXT NOT NULL,
+  occurred_at TEXT,
+  source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','audit_chain','breakglass','mass_export')),
+  source_ref TEXT,
+  description_enc TEXT,
+  part2_records INTEGER NOT NULL DEFAULT 1,
+  affected_count INTEGER NOT NULL DEFAULT 0,
+  max_in_one_state INTEGER NOT NULL DEFAULT 0,
+  risk_nature_enc TEXT,                -- factor 1: nature and extent of the information, likelihood of re-identification
+  risk_recipient_enc TEXT,             -- factor 2: the unauthorised person who used it or to whom it went
+  risk_acquired_enc TEXT,              -- factor 3: whether it was actually acquired or viewed
+  risk_mitigation_enc TEXT,            -- factor 4: the extent to which the risk has been mitigated
+  determination TEXT NOT NULL DEFAULT 'pending' CHECK (determination IN ('pending','breach','not_breach')),
+  determination_reason_enc TEXT,
+  determined_by TEXT REFERENCES users(id),
+  determined_at TEXT,
+  law_enforcement_delay_until TEXT,    -- §164.412: a law-enforcement request to delay notice
+  individuals_notified_at TEXT,
+  hhs_notified_at TEXT,
+  media_notified_at TEXT,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed')),
+  closed_at TEXT,
+  reported_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_privacy_incidents_status ON privacy_incidents(status, discovered_at);
+CREATE TABLE IF NOT EXISTS privacy_incident_clients (
+  id TEXT PRIMARY KEY,
+  incident_id TEXT NOT NULL REFERENCES privacy_incidents(id) ON DELETE CASCADE,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  notified_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (incident_id, client_id)
+);
+CREATE INDEX IF NOT EXISTS idx_privacy_incident_clients_client ON privacy_incident_clients(client_id);

@@ -19,8 +19,6 @@ before(async () => {
   await H.start();
   supId = H.makeUser('flt_sup', 'supervisor').id;
   navId = H.makeUser('flt_nav', 'navigator').id;
-  sup = H.client(); await sup.login('flt_sup', 'StaffPassw0rd!x');
-  nav = H.client(); await nav.login('flt_nav', 'StaffPassw0rd!x');
   const recent = new Date(Date.now() - 3 * 86400000).toISOString();
   const old = new Date(Date.now() - 90 * 86400000).toISOString();
   const soon = new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10);
@@ -42,6 +40,11 @@ before(async () => {
       if (i % 11 === 0) db.run(`INSERT INTO consents(id,client_id,type,signed_at,expires_at,created_by,recipient_enc) VALUES(?,?,?,?,?,?,?)`, uuid(), id, 'roi', '2025-01-01', soon, supId, encrypt('Clinic'));
     }
   });
+  // Signed in after the fixture, not before: loading 2,000 clients can take longer than the server's
+  // keep-alive timeout when the whole suite runs in parallel, and the first request then went out on a
+  // connection the server had already closed ("fetch failed").
+  sup = H.client(); await sup.login('flt_sup', 'StaffPassw0rd!x');
+  nav = H.client(); await nav.login('flt_nav', 'StaffPassw0rd!x');
 });
 after(async () => { await H.stop(); });
 

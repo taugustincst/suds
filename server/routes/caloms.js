@@ -153,10 +153,13 @@ module.exports = (r) => {
       disclosure.recordStateReport({ clientIds: x.clientIds, what: `CalOMS Tx records (${from} to ${to}): ${x.counts.admission} admission, ${x.counts.discharge} discharge, ${x.counts.annual_update} annual update`, sourceRef: `caloms:${from}_${to}`, user: ctx.user, ip: ctx.ip });
       for (const rec of x.ready) db.run(`UPDATE caloms_records SET extracted_at=?, updated_at=? WHERE id=?`, stamp, stamp, rec.id);
     });
+    // A file naming a great many people at once is reviewed like any other mass identified export, required by
+    // law or not (server/incidents.js); the review is a formality when it went to DHCS as recorded.
+    require('../incidents').maybeMassExport({ clients: x.clientIds.length, kind: 'caloms', user: ctx.user });
     audit.log({ user: ctx.user, action: 'caloms.extract', ip: ctx.ip, details: { from, to, ...x.counts, held_back: x.excluded, provider_months: x.activity_rows, no_activity_months: x.no_activity_months, clients_disclosed: x.clientIds.length } });
     const body = require('../spreadsheet').zip(x.files);
     ctx.res.writeHead(200, { 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="caloms-tx-${from}_${to}.zip"`,
-      'X-SUDS-Export': `Identified - PHI. CalOMS Tx submission for DHCS (state reporting, required by law). ${x.clientIds.length} client(s). Generated ${stamp}.`,
+      'X-SUDS-Export': `Identified - PHI. CalOMS Tx submission for DHCS (state reporting, required by law). ${x.clientIds.length} client(s).${disclosure.fileNotice({ short: true }) ? ` ${disclosure.fileNotice({ short: true })}` : ''} Generated ${stamp}.`,
       'X-SUDS-CalOMS-Counts': `admission=${x.counts.admission}; discharge=${x.counts.discharge}; annual_update=${x.counts.annual_update}; held_back=${x.excluded}` });
     ctx.res.end(body);
   });

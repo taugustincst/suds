@@ -94,11 +94,11 @@ function search(ctx, client) {
   const bundle = { resourceType: 'Bundle', id: uuid(), meta: { lastUpdated: new Date().toISOString() }, type: 'searchset', link: links, entry: entries };
   if (d.phi) {
     bundle.meta.security = PART2_SECURITY;
-    const issues = [{ severity: 'information', code: 'informational', diagnostics: `42 CFR §2.32 notice: ${disclosure.PART2_NOTICE}` }];
+    const issues = [{ severity: 'information', code: 'informational', diagnostics: `42 CFR §2.32 notice: ${disclosure.notice().text}` }];
     // A search that names one person gets the same words whether or not anyone was withheld: "1 withheld"
     // in answer to identifier=X would itself tell the recipient that X is a client of this programme.
-    if (R.identifying(type, ctx.query)) issues.push({ severity: 'information', code: 'suppressed', diagnostics: `Results include only patients whose active consent names ${client.recipient} for this purpose of use.` });
-    else if (omitted.size) issues.push({ severity: 'warning', code: 'suppressed', diagnostics: `${omitted.size} patient(s) (${omittedRows} ${type} resource(s)) on this page were withheld: no active consent names ${client.recipient} for this purpose of use.` });
+    if (R.identifying(type, ctx.query)) issues.push({ severity: 'information', code: 'suppressed', diagnostics: `Results include only patients whose active consent covers ${client.recipient} for this purpose of use.` });
+    else if (omitted.size) issues.push({ severity: 'warning', code: 'suppressed', diagnostics: `${omitted.size} patient(s) (${omittedRows} ${type} resource(s)) on this page were withheld: no active consent covers ${client.recipient} for this purpose of use, or the patient has an agreed restriction.` });
     bundle.entry.push({ resource: { ...outcome(issues), id: uuid() }, search: { mode: 'outcome' } });
     const reqId = requestId();
     account({ ctx, client, type, interaction: 'search', perClient, returned: entries.length, omittedPatients: R.identifying(type, ctx.query) ? undefined : omitted.size, reqId });

@@ -417,7 +417,7 @@ function push(user, payload) {
       if (t.writePerm && !auth.hasPerm(user, t.writePerm)) { reject(t.name, ts.id, `your role cannot delete ${t.name}`); continue; }
       const existing = db.one(`SELECT * FROM ${t.name} WHERE id=?`, ts.id);
       if (!existing) continue;
-      if (t.name === 'clients' || t.name === 'notes' || t.name === 'consents' || t.name === 'disclosures' || t.name === 'note_addenda') continue; // never hard-deleted through sync (legal record)
+      if (['clients', 'notes', 'consents', 'disclosures', 'note_addenda', 'court_orders', 'part2_notices'].includes(t.name)) continue; // never hard-deleted through sync (legal record)
       const clientId = t.clientCol ? existing[t.clientCol] : null;
       if (clientId && !auth.canAccessClient(user, clientId)) { reject(t.name, ts.id, 'not on caseload'); continue; }
       if (t.scope === 'all' && !auth.hasPerm(user, 'clients:all')) continue; // shared reference data is not deleted from devices
