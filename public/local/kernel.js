@@ -13286,15 +13286,23 @@ var require_audit_anchor = __commonJS({
         install = require_crypto().uuid();
         db3.setSetting("audit_anchor_install", install);
       }
-      const prev = list(d).filter((x) => x.anchor && x.anchor.install === install).pop();
-      const a = { v: 1, kind: "suds-audit-anchor", at: db3.now(), reason, install, gen: generation(), prev_gen: prevGen, head_id: head.id, head_hash: head.hash, first_id: first, rows, host: (init_os(), __toCommonJS(os_exports)).hostname(), key_id: keyId(key), prev_mac: prev ? prev.anchor.mac || null : null };
-      a.mac = macOf(a, key);
-      const file = path.join(d, `anchor-${a.at.replace(/[:.]/g, "-")}-${String(head.id).padStart(12, "0")}.json`);
-      try {
-        fs.writeFileSync(file, JSON.stringify(a) + "\n", { flag: "wx", mode: 384 });
-      } catch (e) {
-        if (e.code === "EEXIST") return a;
-        throw e;
+      const all = list(d);
+      const prev = all.filter((x) => x.anchor && x.anchor.install === install).pop();
+      const newest = all.filter((x) => x.anchor && typeof x.anchor.at === "string").map((x) => Date.parse(x.anchor.at)).filter(Number.isFinite);
+      const floor = newest.length ? Math.max(...newest) + 1 : 0;
+      let atMs = Math.max(Date.now(), floor);
+      let a;
+      let file;
+      for (let attempt = 0; ; attempt++, atMs++) {
+        a = { v: 1, kind: "suds-audit-anchor", at: new Date(atMs).toISOString(), reason, install, gen: generation(), prev_gen: prevGen, head_id: head.id, head_hash: head.hash, first_id: first, rows, host: (init_os(), __toCommonJS(os_exports)).hostname(), key_id: keyId(key), prev_mac: prev ? prev.anchor.mac || null : null };
+        a.mac = macOf(a, key);
+        file = path.join(d, `anchor-${a.at.replace(/[:.]/g, "-")}-${String(head.id).padStart(12, "0")}.json`);
+        try {
+          fs.writeFileSync(file, JSON.stringify(a) + "\n", { flag: "wx", mode: 384 });
+          break;
+        } catch (e) {
+          if (e.code !== "EEXIST" || attempt >= 50) throw e;
+        }
       }
       try {
         fs.chmodSync(file, 256);

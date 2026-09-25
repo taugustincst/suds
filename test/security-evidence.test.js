@@ -73,6 +73,21 @@ test('anchors: written to the configured directory, write-once, and they verify'
   assert.equal(v.matched, 2);
 });
 
+test('two anchors of the same head in the same millisecond are both written, in order', () => {
+  cleanAnchors();
+  audit.log({ user: { username: 'system' }, action: 'test.same-ms' });
+  // Many back-to-back pairs: before the fix, a pair landing in one millisecond shared a file name and the
+  // second anchor (a restore's, in the flaky case) was silently dropped.
+  for (let i = 0; i < 50; i++) { anchor.write('manual'); anchor.write('restore'); }
+  const files = anchor.list();
+  assert.equal(files.length, 100);
+  const ats = files.map((f) => Date.parse(f.anchor.at));
+  assert.ok(ats.every((t, i) => i === 0 || t > ats[i - 1]), 'anchor times strictly increase in file order');
+  assert.equal(files.filter((f) => f.anchor.reason === 'restore').length, 50);
+  assert.equal(anchor.verify().ok, true);
+  cleanAnchors();
+});
+
 test('anchors catch a chain rewritten wholesale with the key, which the in-database checks cannot', () => {
   cleanAnchors();
   for (let i = 0; i < 3; i++) audit.log({ user: { username: 'system' }, action: 'test.fill', details: { i } });
