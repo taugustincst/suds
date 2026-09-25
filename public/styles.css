@@ -379,3 +379,7 @@ input, select, textarea { max-width: 100%; }
 .quick-list { grid-template-columns: minmax(0, 1fr); } .quick-list .btn { min-width: 0; overflow-wrap: anywhere; }
 /* The closed drawer's shadow bled 40px into the left edge of every phone screen. */
 @media (max-width: 900px) { .sidebar:not(.open) { box-shadow: none; } }
+
+/* Client header badges are a list (screen readers meet each on its own); look unchanged. */
+ul.badge-list { list-style: none; margin: 0; padding: 0; }
+ul.badge-list > li { display: contents; }

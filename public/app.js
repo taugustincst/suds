@@ -318,7 +318,8 @@ export function modal(title, content, { wide = false, onClose = null } = {}) {
     if (history.state && history.state.sudsClosed) history.replaceState(st, ''); else history.pushState(st, '');
     syncHere(); modalStack.push({ id: historyId, bg, close });
   } catch { /* no history API: Back leaves the page as before */ }
-  announce(title);
+  // No announce(title): the dialog is named by its heading (aria-labelledby) and screen readers read it when
+  // focus moves in; copying the title into the live region put a second "Add resource" in the page.
   const first = box.querySelector('input,select,textarea,button.primary') || box.querySelector(FOCUSABLE);
   if (first) first.focus();
   return { close, el: box };
@@ -902,13 +903,20 @@ export function bars(items, { max, valueKey = 'n', labelKey = 'k', format = fmt.
   const show = (v) => (Number.isFinite(Number(v)) ? format(v) : String(v ?? ''));
   const m = max || Math.max(1, ...items.map(numOf));
   if (!items.length) return h('div', { class: 'muted small' }, 'No data');
-  return h('div', {}, items.map(i => { const href = link ? link(i) : null; const row = [h('div', { class: 'lbl', title: fmt.label(i[labelKey], list) }, fmt.label(i[labelKey], list)), h('div', { class: 'trk' }, h('div', { class: 'fil', style: { width: `${(numOf(i) / m) * 100}%` } })), h('div', { class: 'n' }, show(i[valueKey]))];
+  return h('div', {}, items.map(i => { const href = link && link(i) && reachable(link(i)) ? link(i) : null; const row = [h('div', { class: 'lbl', title: fmt.label(i[labelKey], list) }, fmt.label(i[labelKey], list)), h('div', { class: 'trk' }, h('div', { class: 'fil', style: { width: `${(numOf(i) / m) * 100}%` } })), h('div', { class: 'n' }, show(i[valueKey]))];
     return href ? h('a', { class: 'bar link', href: href.startsWith('#') ? href : '#/' + href, title: 'Show these' }, row) : h('div', { class: 'bar' }, row); }));
 }
 export function sparkline(values) { const m = Math.max(1, ...values); return h('div', { class: 'spark' }, values.map(v => h('div', { style: { height: `${(v / m) * 100}%` }, title: String(v) }))); }
+// A number or bar on Home links to the page it counts only for someone who may open that page: for a
+// read-only oversight account every "Active clients ›" used to land on "Not available for your role".
+function reachable(href) {
+  const name = String(href).replace(/^#?\/?/, '').split(/[/?]/)[0];
+  const item = NAV.find(n => n.name === name);
+  return !item || !item.perm || canAny(item.perm);
+}
 export function stat(label, value, kind = '', href = null, title = 'Open') {
   const body = [h('div', { class: 'v' }, value), h('div', { class: 'l' }, label)];
-  return href ? h('a', { class: `card stat link ${kind}`, href: href.startsWith('#') ? href : '#/' + href, title }, body) : h('div', { class: `card stat ${kind}` }, body);
+  return href && reachable(href) ? h('a', { class: `card stat link ${kind}`, href: href.startsWith('#') ? href : '#/' + href, title }, body) : h('div', { class: `card stat ${kind}` }, body);
 }
 export function kv(pairs) { return h('dl', { class: 'kv' }, pairs.filter(p => p).map(([k, v]) => [h('dt', {}, k), h('dd', {}, v ?? '—')])); }
 export function pageHead(title, ...actions) {
