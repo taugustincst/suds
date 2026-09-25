@@ -6678,7 +6678,7 @@ var require_config = __commonJS({
   "local/shims/config.js"(exports, module) {
     init_globals_inject();
     var config2 = {
-      version: true ? "1.11.0" : "local",
+      version: true ? "1.12.0" : "local",
       env: "local",
       isProd: true,
       isTest: false,
@@ -9292,14 +9292,14 @@ var require_options = __commonJS({
     var LISTS = [
       {
         key: "INTERVENTION_TYPES",
-        group: "Visits & services",
+        group: "Visits",
         name: "What did you do?",
         codes: C.INTERVENTION_TYPES,
         protect: { outreach: "can be recorded without a client", naloxone_distribution: "can be recorded without a client" }
       },
-      { key: "LOCATIONS", group: "Visits & services", name: "Location", codes: C.LOCATIONS },
-      { key: "MODALITIES", group: "Visits & services", name: "Modality", codes: C.MODALITIES },
-      { key: "OUTCOMES", group: "Visits & services", name: "Outcome", codes: C.OUTCOMES },
+      { key: "LOCATIONS", group: "Visits", name: "Location", codes: C.LOCATIONS },
+      { key: "MODALITIES", group: "Visits", name: "Modality", codes: C.MODALITIES },
+      { key: "OUTCOMES", group: "Visits", name: "Outcome", codes: C.OUTCOMES },
       { key: "CALL_CONTACT_TYPES", group: "Calls & texts", name: "Who", codes: C.CALL_CONTACT_TYPES },
       {
         key: "CALL_OUTCOMES",
@@ -9640,6 +9640,75 @@ var require_validate = __commonJS({
       return { limit: limit2, offset };
     }
     module.exports = { validate, paging };
+  }
+});
+
+// server/programme.js
+var require_programme = __commonJS({
+  "server/programme.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var { HttpError: HttpError3 } = require_http();
+    var PROFILES = {
+      harm_reduction: { label: "Harm reduction & outreach", help: "Outreach, visits, supplies, calls, referrals and grant reporting. The clinical modules are hidden until you switch one on." },
+      treatment: { label: "Treatment-adjacent", help: "Everything above plus the clinical modules: care plan and problem list, assessments, CalOMS Tx, the FHIR API and the county EHR hand-off." }
+    };
+    var DEFAULT_PROFILE = "harm_reduction";
+    var MODULES = [
+      { key: "careplan", label: "Care plan & problem list", help: "The CalAIM problem list and care coordination plan on each client record." },
+      { key: "assessments", label: "Assessments", help: "ASAM six-dimension assessments and scored screenings (PHQ-9, GAD-7, AUDIT-C, DAST-10), with the outcome measures report." },
+      { key: "caloms", label: "CalOMS Tx state reporting", help: "Admission, discharge and annual update records for DHCS, their validation report and the extract." },
+      { key: "fhir", label: "FHIR API", help: "Read access for outside systems (a county EHR or data warehouse) through registered FHIR clients." },
+      { key: "handoff", label: "County EHR hand-off", help: "The encounter file a biller keys or imports into the county EHR. Not a claim." }
+    ];
+    var MODULE_KEYS = MODULES.map((m) => m.key);
+    var SETTING_KEYS = ["programme_profile", ...MODULE_KEYS.map((k) => `module_${k}`)];
+    function profile() {
+      const v = db3.getSetting("programme_profile", null);
+      return PROFILES[v] ? v : DEFAULT_PROFILE;
+    }
+    function moduleOn(key) {
+      const v = db3.getSetting(`module_${key}`, null);
+      if (v === "1") return true;
+      if (v === "0") return false;
+      return profile() === "treatment";
+    }
+    function modules() {
+      return Object.fromEntries(MODULE_KEYS.map((k) => [k, moduleOn(k)]));
+    }
+    function describe2() {
+      return {
+        profile: profile(),
+        modules: modules(),
+        overrides: Object.fromEntries(MODULE_KEYS.map((k) => [k, db3.getSetting(`module_${k}`, null)])),
+        profiles: Object.entries(PROFILES).map(([value, p]) => ({ value, label: p.label, help: p.help })),
+        module_list: MODULES
+      };
+    }
+    function moduleLabel(key) {
+      return (MODULES.find((m) => m.key === key) || { label: key }).label;
+    }
+    function offMessage(key) {
+      return `${moduleLabel(key)} is switched off for this programme. An administrator can switch it on in Settings \u203A Programme \u203A Modules.`;
+    }
+    function requireModule(key) {
+      return () => {
+        if (!moduleOn(key)) throw new HttpError3(403, offMessage(key), { module: key, module_off: true });
+      };
+    }
+    function defaultForExisting(d) {
+      const has = (sql) => {
+        try {
+          return !!d.prepare(sql).get();
+        } catch {
+          return false;
+        }
+      };
+      const clinical = has(`SELECT 1 FROM problems LIMIT 1`) || has(`SELECT 1 FROM care_plan_goals LIMIT 1`) || has(`SELECT 1 FROM asam_assessments LIMIT 1`) || has(`SELECT 1 FROM outcome_measures LIMIT 1`) || has(`SELECT 1 FROM caloms_records LIMIT 1`) || has(`SELECT 1 FROM caloms_submissions LIMIT 1`) || has(`SELECT 1 FROM api_keys WHERE scopes LIKE 'fhir%' LIMIT 1`) || has(`SELECT 1 FROM disclosures WHERE source='ehr_handoff' LIMIT 1`) || has(`SELECT 1 FROM settings WHERE key='caloms_enabled' AND value='1'`);
+      return clinical ? "treatment" : "harm_reduction";
+    }
+    module.exports = { PROFILES, DEFAULT_PROFILE, MODULES, MODULE_KEYS, SETTING_KEYS, profile, moduleOn, modules, describe: describe2, requireModule, offMessage, defaultForExisting };
   }
 });
 
@@ -14276,7 +14345,9 @@ var require_admin = __commonJS({
       // funder report's small-cell threshold, and how many naloxone doses one distributed kit holds.
       "default_fund_id",
       "small_cell_threshold",
-      "naloxone_doses_per_kit"
+      "naloxone_doses_per_kit",
+      // The programme profile and its module switches (server/programme.js): presentation, not permissions.
+      ...require_programme().SETTING_KEYS
     ];
     var ROLES = ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"];
     var listener = (init_listener(), __toCommonJS(listener_exports));
@@ -14291,6 +14362,7 @@ var require_admin = __commonJS({
         }
         const pol = auth3.policy();
         out2.policy = pol;
+        out2.programme = require_programme().describe();
         const budget = require_budget();
         out2.timezone = { effective: budget.orgTimezone(), fallback: config2.orgTimezone || null, from_env: !!proc.env.ORG_TIMEZONE };
         out2.env = { env: config2.env, tls: !!config2.tls.cert, tls_mode: config2.tls.mode, key_source: config2.keySource, idle_minutes: pol.idleMinutes, absolute_hours: pol.absoluteHours, mfa_required_roles: pol.mfaRequiredRoles, listener: listener.describe(), ms_graph_configured: !!(config2.msGraph.tenantId && config2.msGraph.clientId && config2.msGraph.clientSecret && config2.msGraph.user), oidc_configured: config2.oidc.enabled, oidc_label: config2.oidc.label };
@@ -14323,6 +14395,8 @@ var require_admin = __commonJS({
             if (k === "sso_deprovision_days" && v !== "" && !(Number.isInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 3650)) throw badRequest("sso_deprovision_days must be 0 (off) or a whole number of days");
             if (k === "scim_default_role" && v !== "" && !ROLES.includes(v)) throw badRequest(`scim_default_role must be one of ${ROLES.join(", ")}`);
             if (k === "scim_group_roles" && v !== "") v = require_scim().normaliseGroupRoles(v);
+            if (k === "programme_profile" && !require_programme().PROFILES[v]) throw badRequest(`programme_profile must be one of ${Object.keys(require_programme().PROFILES).join(", ")}`, { fields: { programme_profile: "choose a programme profile" } });
+            if (k.startsWith("module_") && v !== "" && !["0", "1"].includes(v)) throw badRequest(`${k} must be 1 (on), 0 (off) or blank (as the profile has it)`);
             if (k === "default_fund_id" && v !== "" && !db3.one(`SELECT 1 FROM funding_sources WHERE id=? AND is_active=1`, v)) throw badRequest("default_fund_id must be an active funding source");
             if (k === "small_cell_threshold" && v !== "" && !(Number.isInteger(Number(v)) && Number(v) >= 2 && Number(v) <= 50)) throw badRequest("small_cell_threshold must be a whole number from 2 to 50");
             if (k === "naloxone_doses_per_kit" && v !== "" && !(Number.isInteger(Number(v)) && Number(v) >= 1 && Number(v) <= 20)) throw badRequest("naloxone_doses_per_kit must be a whole number from 1 to 20");
@@ -14333,6 +14407,8 @@ var require_admin = __commonJS({
           if (!config2.local && [db3.getSetting("sso_required", "0"), db3.getSetting("sso_emergency_accounts", "")].join("|") !== ssoBefore) require_security_status().validateSettings();
         });
         audit3.log({ user: ctx.user, action: "settings.update", ip: ctx.ip, details: { changed } });
+        const P2 = require_programme();
+        if (changed.some((k) => P2.SETTING_KEYS.includes(k))) audit3.log({ user: ctx.user, action: "settings.programme", ip: ctx.ip, details: { profile: P2.profile(), modules: P2.modules() } });
         if (changed.includes("sso_trust_idp_mfa") || changed.includes("sso_mfa_acr_values")) audit3.log({ user: ctx.user, action: "security.idp_mfa_trust", ip: ctx.ip, details: { trusted: db3.getSetting("sso_trust_idp_mfa", "0") === "1", acr_values: db3.getSetting("sso_mfa_acr_values", "") || null } });
         return { ok: true };
       });
@@ -15394,6 +15470,7 @@ var require_assessments = __commonJS({
   "server/routes/assessments.js"(exports, module) {
     "use strict";
     init_globals_inject();
+    var { requireModule } = require_programme();
     var db3 = require_db();
     var auth3 = require_auth2();
     var audit3 = require_audit();
@@ -15632,7 +15709,7 @@ var require_assessments = __commonJS({
         audit3.log({ user: ctx.user, action: "asam.list", clientId: ctx.params.id, ip: ctx.ip, details: { count: rows.length } });
         return { rows, dimensions: CL.ASAM_DIMENSIONS };
       });
-      r.post("/api/clients/:id/asam", auth3.requireAuth, auth3.requirePerm("assessments:write"), (ctx) => {
+      r.post("/api/clients/:id/asam", auth3.requireAuth, auth3.requirePerm("assessments:write"), requireModule("assessments"), (ctx) => {
         clientFor(ctx, ctx.params.id);
         const v = validate(ctx.body, asamShape);
         const notes = cleanDimensionNotes(v.dimension_notes);
@@ -15670,7 +15747,7 @@ var require_assessments = __commonJS({
         audit3.log({ user: ctx.user, action: "asam.view", entity: "asam_assessment", entityId: a.id, clientId: a.client_id, ip: ctx.ip });
         return { assessment: presentAsam(a), dimensions: CL.ASAM_DIMENSIONS };
       });
-      r.put("/api/asam/:id", auth3.requireAuth, auth3.requirePerm("assessments:write"), (ctx) => {
+      r.put("/api/asam/:id", auth3.requireAuth, auth3.requirePerm("assessments:write"), requireModule("assessments"), (ctx) => {
         const a = loadAsam(ctx, ctx.params.id);
         if (!mayChange(ctx, a, "assessed_by")) throw forbidden("Only the person who completed this assessment, or a supervisor, can change it");
         assertFresh(ctx, a, "asam_assessment");
@@ -15705,7 +15782,7 @@ var require_assessments = __commonJS({
         audit3.log({ user: ctx.user, action: "asam.update", entity: "asam_assessment", entityId: a.id, clientId: a.client_id, ip: ctx.ip, details: { fields: Object.keys(v).filter((k) => v[k] !== void 0) } });
         return { ok: true, updated_at: sets.length ? stamp2 : a.updated_at };
       });
-      r.delete("/api/asam/:id", auth3.requireAuth, auth3.requirePerm("assessments:write"), (ctx) => {
+      r.delete("/api/asam/:id", auth3.requireAuth, auth3.requirePerm("assessments:write"), requireModule("assessments"), (ctx) => {
         const a = loadAsam(ctx, ctx.params.id);
         if (!mayChange(ctx, a, "assessed_by")) throw forbidden("Only the person who completed this assessment, or a supervisor, can delete it");
         db3.run(`DELETE FROM asam_assessments WHERE id=?`, a.id);
@@ -15746,7 +15823,7 @@ var require_assessments = __commonJS({
         audit3.log({ user: ctx.user, action: "outcome.list", clientId: ctx.params.id, ip: ctx.ip, details: { count: rows.length } });
         return { rows, series };
       });
-      r.post("/api/clients/:id/outcomes", auth3.requireAuth, auth3.requirePerm("assessments:write"), (ctx) => {
+      r.post("/api/clients/:id/outcomes", auth3.requireAuth, auth3.requirePerm("assessments:write"), requireModule("assessments"), (ctx) => {
         clientFor(ctx, ctx.params.id);
         const v = validate(ctx.body, outcomeShape);
         assertInstrumentEnabled(v.instrument);
@@ -15785,7 +15862,7 @@ var require_assessments = __commonJS({
         audit3.log({ user: ctx.user, action: "outcome.view", entity: "outcome_measure", entityId: m.id, clientId: m.client_id, ip: ctx.ip });
         return { measure: presentOutcome(m) };
       });
-      r.put("/api/outcomes/:id", auth3.requireAuth, auth3.requirePerm("assessments:write"), (ctx) => {
+      r.put("/api/outcomes/:id", auth3.requireAuth, auth3.requirePerm("assessments:write"), requireModule("assessments"), (ctx) => {
         const m = loadOutcome(ctx, ctx.params.id);
         if (!mayChange(ctx, m, "administered_by")) throw forbidden("Only the person who gave this questionnaire, or a supervisor, can change it");
         assertFresh(ctx, m, "outcome_measure");
@@ -15820,7 +15897,7 @@ var require_assessments = __commonJS({
         audit3.log({ user: ctx.user, action: "outcome.update", entity: "outcome_measure", entityId: m.id, clientId: m.client_id, ip: ctx.ip, details: { fields: Object.keys(v).filter((k) => v[k] !== void 0) } });
         return { ok: true, updated_at: stamp2, total: s.total, band: s.band, safety_alert: s.safety_flag && !m.safety_flag ? { task_id: taskId, safety_plan: safetyPlanFor(ctx, m.client_id) } : null };
       });
-      r.delete("/api/outcomes/:id", auth3.requireAuth, auth3.requirePerm("assessments:write"), (ctx) => {
+      r.delete("/api/outcomes/:id", auth3.requireAuth, auth3.requirePerm("assessments:write"), requireModule("assessments"), (ctx) => {
         const m = loadOutcome(ctx, ctx.params.id);
         if (!mayChange(ctx, m, "administered_by")) throw forbidden("Only the person who gave this questionnaire, or a supervisor, can delete it");
         db3.run(`DELETE FROM outcome_measures WHERE id=?`, m.id);
@@ -16022,7 +16099,9 @@ var require_auth = __commonJS({
           org_name: db3.getSetting("org_name", "SUDS"),
           idle_minutes: auth3.policy().idleMinutes,
           setup_needed: false,
-          default_fund_id: require_budget().defaultFundFor(u.id)
+          default_fund_id: require_budget().defaultFundFor(u.id),
+          // The programme profile and the modules in force (server/programme.js): what the navigation shows.
+          programme: { profile: require_programme().profile(), modules: require_programme().modules() }
         };
       });
       r.get("/api/auth/reauth", (ctx) => {
@@ -16462,7 +16541,7 @@ var require_caloms = __commonJS({
     var S = require_caloms_spec();
     var { encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
     function enabled() {
-      return db3.getSetting("caloms_enabled", "0") === "1";
+      return db3.getSetting("caloms_enabled", "0") === "1" && require_programme().moduleOn("caloms");
     }
     function providers() {
       try {
@@ -17086,6 +17165,7 @@ var require_caloms2 = __commonJS({
   "server/routes/caloms.js"(exports, module) {
     "use strict";
     init_globals_inject();
+    var { requireModule } = require_programme();
     var db3 = require_db();
     var auth3 = require_auth2();
     var audit3 = require_audit();
@@ -17147,7 +17227,7 @@ var require_caloms2 = __commonJS({
           if (!C.PROVIDER_ID.test(p.id)) fields[`providers.${i}.id`] = "must be 4 to 10 letters or digits (the CalOMS provider ID DHCS assigned)";
         });
         if (new Set(provs.map((p) => p.id)).size !== provs.length) fields.providers = "lists the same provider ID twice";
-        const on = v.enabled === void 0 ? C.enabled() : !!v.enabled;
+        const on = v.enabled === void 0 ? db3.getSetting("caloms_enabled", "0") === "1" : !!v.enabled;
         if (on && !provs.length) fields.providers = "add at least one CalOMS provider ID before turning CalOMS reporting on";
         if (Object.keys(fields).length) throw badRequest("Validation failed", { fields });
         db3.transaction(() => {
@@ -17166,13 +17246,13 @@ var require_caloms2 = __commonJS({
         audit3.log({ user: ctx.user, action: "caloms.record.view", entity: "episode", entityId: e.id, clientId: e.client_id, ip: ctx.ip, details: { count: records.length } });
         return { enabled: C.enabled(), records, expected: expectedFor(e, records) };
       });
-      r.post("/api/episodes/:id/caloms", auth3.requireAuth, auth3.requirePerm("episodes:write"), (ctx) => {
+      r.post("/api/episodes/:id/caloms", auth3.requireAuth, auth3.requirePerm("episodes:write"), requireModule("caloms"), (ctx) => {
         const e = episodeFor(ctx, ctx.params.id);
         const res = saveRecord(ctx, e, validate(ctx.body, RECORD_SHAPE));
         ctx.status = res.updated ? 200 : 201;
         return { id: res.id, updated: res.updated, warnings: res.warnings };
       });
-      r.put("/api/caloms/records/:id", auth3.requireAuth, auth3.requirePerm("episodes:write"), (ctx) => {
+      r.put("/api/caloms/records/:id", auth3.requireAuth, auth3.requirePerm("episodes:write"), requireModule("caloms"), (ctx) => {
         const rec = db3.one(`SELECT * FROM caloms_records WHERE id=?`, ctx.params.id);
         if (!rec) throw notFound("CalOMS record not found");
         const e = episodeFor(ctx, rec.episode_id);
@@ -17181,7 +17261,7 @@ var require_caloms2 = __commonJS({
         const res = saveRecord(ctx, e, v, rec.id);
         return { id: res.id, updated: true, warnings: res.warnings };
       });
-      r.delete("/api/caloms/records/:id", auth3.requireAuth, auth3.requirePerm("episodes:write"), (ctx) => {
+      r.delete("/api/caloms/records/:id", auth3.requireAuth, auth3.requirePerm("episodes:write"), requireModule("caloms"), (ctx) => {
         const rec = db3.one(`SELECT id, client_id, episode_id, record_type, extracted_at FROM caloms_records WHERE id=?`, ctx.params.id);
         if (!rec) throw notFound("CalOMS record not found");
         episodeFor(ctx, rec.episode_id);
@@ -17228,7 +17308,7 @@ var require_caloms2 = __commonJS({
         });
         ctx.res.end(body);
       });
-      r.post("/api/caloms/submissions", auth3.requireAuth, auth3.requirePerm("export:identified"), (ctx) => {
+      r.post("/api/caloms/submissions", auth3.requireAuth, auth3.requirePerm("export:identified"), requireModule("caloms"), (ctx) => {
         const v = validate(ctx.body || {}, { from: { type: "date", required: true }, to: { type: "date", required: true } });
         ctx.query.set("from", v.from);
         ctx.query.set("to", v.to);
@@ -17308,6 +17388,7 @@ var require_careplan = __commonJS({
   "server/routes/careplan.js"(exports, module) {
     "use strict";
     init_globals_inject();
+    var { requireModule } = require_programme();
     var db3 = require_db();
     var auth3 = require_auth2();
     var audit3 = require_audit();
@@ -17464,7 +17545,7 @@ var require_careplan = __commonJS({
         audit3.log({ user: ctx.user, action: "problem.list", clientId: ctx.params.id, ip: ctx.ip, details: { count: out2.length } });
         return { rows: out2 };
       });
-      r.post("/api/clients/:id/problems", auth3.requireAuth, auth3.requirePerm("careplan:write"), (ctx) => {
+      r.post("/api/clients/:id/problems", auth3.requireAuth, auth3.requirePerm("careplan:write"), requireModule("careplan"), (ctx) => {
         clientFor(ctx, ctx.params.id);
         const v = cleanCodes(validate(ctx.body, problemShape));
         const status = v.status || "active";
@@ -17502,7 +17583,7 @@ var require_careplan = __commonJS({
         audit3.log({ user: ctx.user, action: "problem.view", entity: "problem", entityId: row.id, clientId: row.client_id, ip: ctx.ip });
         return { problem: presentProblem(row) };
       });
-      r.put("/api/problems/:id", auth3.requireAuth, auth3.requirePerm("careplan:write"), (ctx) => {
+      r.put("/api/problems/:id", auth3.requireAuth, auth3.requirePerm("careplan:write"), requireModule("careplan"), (ctx) => {
         const row = loadProblem(ctx, ctx.params.id);
         assertFresh(ctx, row, "problem");
         const v = cleanCodes(validate(ctx.body, Object.fromEntries(Object.entries(problemShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true }));
@@ -17559,7 +17640,7 @@ var require_careplan = __commonJS({
         audit3.log({ user: ctx.user, action: "careplan.view", clientId: ctx.params.id, ip: ctx.ip, details: { goals: goals.length } });
         return { goals, review_overdue: goals.filter((g) => g.review_overdue).length, today: today() };
       });
-      r.post("/api/clients/:id/goals", auth3.requireAuth, auth3.requirePerm("careplan:write"), (ctx) => {
+      r.post("/api/clients/:id/goals", auth3.requireAuth, auth3.requirePerm("careplan:write"), requireModule("careplan"), (ctx) => {
         clientFor(ctx, ctx.params.id);
         const v = validate(ctx.body, goalShape);
         checkProblemOnClient(v.problem_id, ctx.params.id);
@@ -17581,7 +17662,7 @@ var require_careplan = __commonJS({
         ctx.status = 201;
         return { id, updated_at: db3.one(`SELECT updated_at FROM care_plan_goals WHERE id=?`, id).updated_at };
       });
-      r.put("/api/goals/:id", auth3.requireAuth, auth3.requirePerm("careplan:write"), (ctx) => {
+      r.put("/api/goals/:id", auth3.requireAuth, auth3.requirePerm("careplan:write"), requireModule("careplan"), (ctx) => {
         const g = loadGoal(ctx, ctx.params.id);
         assertFresh(ctx, g, "care_plan_goal");
         const v = validate(ctx.body, { ...Object.fromEntries(Object.entries(goalShape).map(([k, s]) => [k, { ...s, required: false }])), reviewed: { type: "boolean" } }, { partial: true });
@@ -17606,7 +17687,7 @@ var require_careplan = __commonJS({
         audit3.log({ user: ctx.user, action: "careplan.goal.update", entity: "care_plan_goal", entityId: g.id, clientId: g.client_id, ip: ctx.ip, details: { fields: Object.keys(v).filter((k) => v[k] !== void 0) } });
         return { ok: true, updated_at: sets.length ? stamp2 : g.updated_at };
       });
-      r.delete("/api/goals/:id", auth3.requireAuth, auth3.requirePerm("careplan:write"), (ctx) => {
+      r.delete("/api/goals/:id", auth3.requireAuth, auth3.requirePerm("careplan:write"), requireModule("careplan"), (ctx) => {
         const g = loadGoal(ctx, ctx.params.id);
         if (!canChange(ctx, g, "created_by")) throw forbidden("Only the person who added this goal, or a supervisor, can delete it. Mark it discontinued instead.");
         const stepIds = db3.all(`SELECT id FROM care_plan_steps WHERE goal_id=?`, g.id).map((s) => s.id);
@@ -17619,7 +17700,7 @@ var require_careplan = __commonJS({
         audit3.log({ user: ctx.user, action: "careplan.goal.delete", entity: "care_plan_goal", entityId: g.id, clientId: g.client_id, ip: ctx.ip, details: { steps: stepIds.length } });
         return { ok: true };
       });
-      r.post("/api/goals/:id/steps", auth3.requireAuth, auth3.requirePerm("careplan:write"), (ctx) => {
+      r.post("/api/goals/:id/steps", auth3.requireAuth, auth3.requirePerm("careplan:write"), requireModule("careplan"), (ctx) => {
         const g = loadGoal(ctx, ctx.params.id);
         const v = validate(ctx.body, { ...stepShape, create_task: { type: "boolean" } });
         checkOwner(v.owner_user_id);
@@ -17662,7 +17743,7 @@ var require_careplan = __commonJS({
         ctx.status = 201;
         return { id, task_id: taskId };
       });
-      r.put("/api/steps/:id", auth3.requireAuth, auth3.requirePerm("careplan:write"), (ctx) => {
+      r.put("/api/steps/:id", auth3.requireAuth, auth3.requirePerm("careplan:write"), requireModule("careplan"), (ctx) => {
         const s = loadStep(ctx, ctx.params.id);
         assertFresh(ctx, s, "care_plan_step");
         const v = validate(ctx.body, Object.fromEntries(Object.entries(stepShape).map(([k, x]) => [k, { ...x, required: false }])), { partial: true });
@@ -17694,7 +17775,7 @@ var require_careplan = __commonJS({
         audit3.log({ user: ctx.user, action: "careplan.step.update", entity: "care_plan_step", entityId: s.id, clientId: s.client_id, ip: ctx.ip, details: { fields: Object.keys(v).filter((k) => v[k] !== void 0) } });
         return { ok: true, updated_at: sets.length ? stamp2 : s.updated_at };
       });
-      r.delete("/api/steps/:id", auth3.requireAuth, auth3.requirePerm("careplan:write"), (ctx) => {
+      r.delete("/api/steps/:id", auth3.requireAuth, auth3.requirePerm("careplan:write"), requireModule("careplan"), (ctx) => {
         const s = loadStep(ctx, ctx.params.id);
         if (!canChange(ctx, s, "created_by")) throw forbidden("Only the person who added this step, or a supervisor, can delete it. Mark it cancelled instead.");
         db3.run(`DELETE FROM care_plan_steps WHERE id=?`, s.id);
@@ -19245,7 +19326,7 @@ var require_dataimport = __commonJS({
         F("cost_notes", "Cost / payment", ["cost", "payment", "fees"], str(1e3)),
         F("notes", "Notes", [], str(2e3))
       ] },
-      interventions: { label: "Visits & services", table: "interventions", fields: [
+      interventions: { label: "Visits", table: "interventions", fields: [
         clientRef,
         F("occurred_at", "Date", ["date of service", "service date", "when", "occurred"], datetimeOf, { required: true }),
         F("type", "Type", ["service", "intervention", "service type", "intervention type"], enumOf("INTERVENTION_TYPES"), { required: true, help: C.INTERVENTION_TYPES.join(", ") }),
@@ -21771,12 +21852,14 @@ var require_fhir = __commonJS({
     var { validate } = require_validate();
     var { uuid: uuid2 } = require_crypto();
     var C = require_clients2();
+    var P2 = require_programme();
     var R = require_resources();
     var bulk = require_bulk();
     var { FhirError, FHIR_VERSION, PART2_SECURITY, outcome, send, sendError, baseUrl } = require_common();
-    function fhir(fn, { open: open3 = false } = {}) {
+    function fhir(fn, { open: open3 = false, always = false } = {}) {
       return async (ctx) => {
         try {
+          if (!always && !P2.moduleOn("fhir")) throw new FhirError(403, P2.offMessage("fhir"), { code: "forbidden" });
           let client = null;
           if (!open3) {
             client = C.authenticate(ctx);
@@ -22049,7 +22132,7 @@ var require_fhir = __commonJS({
       return out2;
     }
     module.exports = (r) => {
-      r.get("/fhir/R4/metadata", fhir((ctx) => send(ctx.res, 200, capability(ctx)), { open: true }));
+      r.get("/fhir/R4/metadata", fhir((ctx) => send(ctx.res, 200, capability(ctx)), { open: true, always: true }));
       r.get("/fhir/R4/.well-known/smart-configuration", fhir((ctx) => {
         const base = baseUrl(ctx);
         const body = {
@@ -22079,9 +22162,9 @@ var require_fhir = __commonJS({
         token_path: "/fhir/R4/auth/token",
         base_path: "/fhir/R4"
       }));
-      r.post("/api/admin/fhir-clients", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), adminCreate);
+      r.post("/api/admin/fhir-clients", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), P2.requireModule("fhir"), adminCreate);
       r.post("/api/admin/fhir-clients/alias-preview", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), adminAliasPreview);
-      r.patch("/api/admin/fhir-clients/:id", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), adminUpdate);
+      r.patch("/api/admin/fhir-clients/:id", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), P2.requireModule("fhir"), adminUpdate);
       r.delete("/api/admin/fhir-clients/:id", auth3.requireAuth, auth3.requirePerm("apikeys:manage"), (ctx) => {
         if (!C.revoke(ctx.params.id)) throw notFound();
         audit3.log({ user: ctx.user, action: "fhir_client.revoke", entity: "api_key", entityId: ctx.params.id, ip: ctx.ip });
@@ -23379,6 +23462,7 @@ var require_handoff = __commonJS({
   "server/routes/handoff.js"(exports, module) {
     "use strict";
     init_globals_inject();
+    var { requireModule } = require_programme();
     var db3 = require_db();
     var auth3 = require_auth2();
     var audit3 = require_audit();
@@ -23482,7 +23566,7 @@ var require_handoff = __commonJS({
           consent_types: require_disclosure().fileConsentTypes()
         };
       });
-      r.get("/api/handoff/export", auth3.requireAuth, auth3.requirePerm("export:identified"), async (ctx) => {
+      r.get("/api/handoff/export", auth3.requireAuth, auth3.requirePerm("export:identified"), requireModule("handoff"), async (ctx) => {
         const p = require_reports().range(ctx);
         const recipient = (ctx.query.get("recipient") || "").trim().slice(0, 200);
         const purpose = (ctx.query.get("purpose") || "").trim().slice(0, 500);
@@ -30141,7 +30225,9 @@ var require_setup = __commonJS({
           https: { type: "boolean" },
           extra_hosts: { type: "string", maxLen: 300 },
           // "Allow staff to keep an offline copy on their devices?" — omitted means No, the recommended answer.
-          local_mode: { type: "boolean" }
+          local_mode: { type: "boolean" },
+          // What kind of programme this is (server/programme.js); omitted means harm reduction & outreach.
+          programme_profile: { type: "string", enum: Object.keys(require_programme().PROFILES) }
           // port omitted → 'auto' (standard port with fallback)
         });
         const errs = auth3.passwordPolicy(v.admin_password);
@@ -30160,6 +30246,7 @@ var require_setup = __commonJS({
           if (v.county_name) db3.setSetting("county_name", v.county_name);
           if (v.program_contact) db3.setSetting("program_contact", v.program_contact);
           db3.setSetting("caseload_restriction", "1");
+          db3.setSetting("programme_profile", v.programme_profile || require_programme().DEFAULT_PROFILE);
         });
         const defaults = applyProductionDefaults();
         const port = proc.env.PORT ? config2.port : v.port || "auto";
@@ -30178,7 +30265,7 @@ var require_setup = __commonJS({
         } else if (proc.env.TLS_CERT_PATH) tls = "custom";
         const localMode = v.local_mode === true;
         if (!config2.localModeFromEnv) config2.localModeEnabled = localMode;
-        audit3.log({ user: { username: v.admin_username }, action: "setup.complete", ip: ctx.ip, details: { network: v.network, port, tls, local_mode: config2.localModeEnabled, defaults } });
+        audit3.log({ user: { username: v.admin_username }, action: "setup.complete", ip: ctx.ip, details: { network: v.network, port, tls, local_mode: config2.localModeEnabled, programme_profile: require_programme().profile(), defaults } });
         let desc;
         try {
           desc = await listener.relisten({ host, port, certPath: tls === "selfsigned" ? path.join(config2.dataDir, "certs", "suds.crt") : config2.tls.cert || "", keyPath: tls === "selfsigned" ? path.join(config2.dataDir, "certs", "suds.key") : config2.tls.key || "" });
@@ -30360,7 +30447,18 @@ var require_sync_tables = __commonJS({
       // caloms_*: whether this programme reports CalOMS Tx (which turns on the CalOMS questions in the admission
       // and discharge forms) and its provider IDs — a device needs both to offer the same forms offline.
       // default_fund_id: the fund a visit recorded on the device is charged to when the worker has none of their own.
-      settings_keys: ["org_name", "county_name", "program_contact", "note_lock_days", "caloms_enabled", "caloms_providers", "caloms_start_date", "default_fund_id"],
+      settings_keys: [
+        "org_name",
+        "county_name",
+        "program_contact",
+        "note_lock_days",
+        "caloms_enabled",
+        "caloms_providers",
+        "caloms_start_date",
+        "default_fund_id",
+        // The programme profile and module switches (server/programme.js): a device shows what its office shows.
+        ...require_programme().SETTING_KEYS
+      ],
       tables: [
         // supervisor_id points at another user: a supervisor must land before the people who report to them.
         { name: "users", enc: ["mfa_secret_enc"], scope: "users", cols: null, selfParent: "supervisor_id" },
@@ -33615,7 +33713,13 @@ var require_db = __commonJS({
       if (fresh) {
         d.exec(schemaText);
         d.prepare(`INSERT INTO settings(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(String(migrations.length));
-      } else migrate(d, dbPath);
+        d.prepare(`INSERT OR IGNORE INTO settings(key,value) VALUES('programme_profile',?)`).run(require_programme().DEFAULT_PROFILE);
+      } else {
+        migrate(d, dbPath);
+        if (!d.prepare(`SELECT 1 FROM settings WHERE key='programme_profile'`).get()) {
+          d.prepare(`INSERT INTO settings(key,value) VALUES('programme_profile',?)`).run(require_programme().defaultForExisting(d));
+        }
+      }
       ensureIndexes(d, schemaText);
     }
     var lastIndexProblems = [];

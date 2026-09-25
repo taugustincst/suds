@@ -2,6 +2,58 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## 1.12.0 — 2026-09-26
+
+Answers the critical evaluation. The owner chose to commit (its option B) and to reposition SUDS around
+what it does best (option C): the operations system for harm-reduction and prevention programmes —
+outreach, naloxone and supply distribution, and grant reporting — with Part 2-grade privacy. The clinical
+modules stay, as options. Point-by-point response: `docs/market/EVALUATION-RESPONSE.md`.
+
+- **Programme profile.** "Harm reduction & outreach" (new installs) or "Treatment-adjacent" (an upgraded
+  database that holds any clinical record keeps everything visible). Care plan, assessments, CalOMS Tx, the
+  FHIR API and the EHR hand-off can each be switched on or off in Settings › Programme; an off module refuses
+  new work on the server and the FHIR API closes. Records already made stay readable.
+- **Front-line screens.** Navigators and clinicians get a ten-item menu; programme pages sit in a Programme
+  section for the roles that run it. One word per concept: Visit, To-do. On a phone the client page puts its
+  actions under one "Add…" button and shows five tabs. Settings folds into sections; Reports groups its exports.
+- **Notes and supervision.** "Save & sign" in the note editor; within 10 minutes of signing in (a setting)
+  signing needs only a confirmation, otherwise the password or authenticator code. Supervisors see client
+  names they may already open, rows open the record, and several notes can be countersigned at once.
+- **Consent and referral.** A referral pre-selects the one live consent that names the provider; a duplicate
+  consent is flagged; a programme can save its usual consent as a template.
+- **Grant reporting.** The funder report runs about ten times faster (4.9 s to under 0.5 s at 20,000
+  clients) and no longer stalls the server. Small cells are suppressed by default; the programme's own
+  submission may use exact counts (`reports:exact`). Visits take the worker's or programme's default fund;
+  unfunded visits and logged-but-unapproved hours are shown with warnings. New: a naloxone distribution and
+  reversal log in the shape of the DHCS Naloxone Distribution Project's reporting, and opioid settlement
+  spending by allowable-use and High Impact Abatement Activity category — both marked for checking against
+  the current templates (`docs/compliance/HARM-REDUCTION-REPORTING.md`).
+- **On-device records are encrypted at rest.** The device database and its field keys are sealed with
+  AES-256-GCM under a key each device account's password unlocks (PBKDF2, 600,000 iterations); the app is
+  locked after every reload until someone signs in; existing devices are sealed at the next sign-in and the
+  plain copies erased. A forgotten password on a standalone device is unrecoverable without another account
+  or a backup, and the app says so (`docs/architecture/ADR-0008-device-encryption.md`).
+- **Release gate and recovery evidence.** A release is refused unless CI — tests, Node 24, the full browser
+  suite and a backup-and-restore drill — passed on that exact commit. CI restores a 20,000-client backup
+  into a fresh server on every push; a development-environment drill report is in `docs/evidence/`.
+- **Reliability.** The instance lock no longer refuses to start after a crash when the server is process 1
+  (Docker) or after a reboot; scheduled backups no longer block the server (longest pause 16 ms on a 311 MB
+  database); a missing index is rebuilt or reported; a browser window frozen in the middle of a save can no
+  longer hang another window that takes over (the intermittent multitab failure, including 1.11.0's CI).
+- **Security.** Two sync leaks closed (staged imports went to every device; ending an assignment never left
+  the device) and a newly assigned client now arrives with its whole history; one guard for every outbound
+  fetch (region pictures, OIDC, FHIR JWKS) closes an IPv4-mapped-IPv6 bypass; the service worker never caches
+  FHIR or SCIM; download names with non-Latin characters no longer fail; HSTS behind a TLS proxy; a consent's
+  witness and imported name hints are encrypted; new accounts have 3 days, not 14, to set up two-step
+  verification; a later device sign-up cannot make itself administrator.
+- **Honest documents.** Pitch rewritten around harm reduction; the software is MIT-licensed and free, paid
+  offers are services priced as unvalidated hypotheses; a realistic business-hours support template; a
+  hosting model saying who is called at 2am (`docs/market/HOSTING.md`); unmeasured time savings turned into
+  a pilot measurement plan; development described as AI-assisted with automated gates. Architecture decision
+  records for a new maintainer in `docs/architecture/`; feature releases at most monthly.
+- Schema migrations 38 (default funds, settlement categories), 39 (witness and import hints encrypted),
+  40 (recent re-authentication).
+
 ## 1.11.0 — 2026-09-25
 
 Answers the California county marketability review: SUDS as the operations system for grant-funded,

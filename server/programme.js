@@ -12,6 +12,8 @@
 // answer 403 with a message saying where to switch it on (requireModule below) — and the FHIR API, which is
 // an outside system's way in, is closed while its module is off. Reads of records already made stay open,
 // so nothing recorded before a module was switched off becomes unreachable.
+// Records a device pushes through sync are accepted even while their module is off: the device may have
+// recorded them offline while it was on, and refusing the push would lose that work without a trace.
 //
 // Settings: programme_profile ('harm_reduction' | 'treatment') and module_<key> ('1' on, '0' off; absent
 // means the profile's default). All are synchronised to device copies (server/sync-tables.js).
