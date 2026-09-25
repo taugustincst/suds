@@ -55,8 +55,12 @@ affects and what we plan to do about it.
    supervisors have header rows but have not been assessed on their own. (WCAG 1.3.1)
 4. **Date fields** use the browser's own date picker, whose accessibility depends on the browser; a date can
    always be typed instead.
-5. **Screen reader testing.** The automatic checks run in Chromium. Testing with NVDA, JAWS, VoiceOver and
-   TalkBack is planned before each release but has not yet been done for this version.
+5. **Screen reader testing has not been done yet.** The evidence so far is automated checks (in Chromium),
+   scripted keyboard testing and review of the source. Those confirm that controls carry names, roles and
+   states and that status messages are written to live regions, but not that NVDA, JAWS, VoiceOver and
+   TalkBack present them as intended, so the conformance report lists Name, Role, Value and Status Messages as
+   partially supported until that testing is done; it is planned before the next release. Speech-recognition
+   (voice control) testing is pending too. (WCAG 4.1.2, 4.1.3)
 
 ## Compatibility
 
@@ -90,5 +94,7 @@ file a complaint with the U.S. Department of Justice, Civil Rights Division (<ht
 
 The assessment was made by the SUDS project using automated testing (axe-core 4.x with all WCAG 2.0/2.1 A and
 AA rules, plus the checks in `scripts/ui/accessibility.mjs`) and scripted keyboard-only testing of the main
-tasks, on the office-server build and the SUDS-on-this-device build. It will be reviewed at every release and
+tasks, on the office-server build and the SUDS-on-this-device build, with manual review of the source for
+what automated tools cannot judge. It has not yet included testing with screen readers or speech recognition;
+the conformance report says, criterion by criterion, which of these methods each result rests on. It will be reviewed at every release and
 at least once a year.
