@@ -143,3 +143,41 @@ test('the device-side purge removes the client and everything that hangs off it'
   assert.equal(count(`SELECT COUNT(*) n FROM clients WHERE id=?`, kept), 1);
   assert.equal(count(`SELECT COUNT(*) n FROM tasks WHERE client_id=?`, kept), 1);
 });
+
+test('a client newly assigned after the last sync arrives whole on the next pull, and so does one assigned again', async () => {
+  const active = require('../server/auth').activeAssignment;
+  const first = await pullAll(navA);
+  // One of the other navigator's clients with a history: notes, consents and visits all written long before
+  // this device's cursor. Assigning it changes no client row, so a pull by updated_at alone missed all of it.
+  const count = (t, id) => H.db.one(`SELECT COUNT(*) n FROM ${t} WHERE client_id=?`, id).n;
+  const theirs = [...onCaseload(bId)].filter(id => !onCaseload(aId).has(id))
+    .find(id => count('notes', id) && count('consents', id) && count('interventions', id));
+  assert.ok(theirs, 'the sample data has a client of the other navigator with notes, consents and visits');
+  // And one navA is taken off now, to be put back on after the device has synced without it.
+  const asg = H.db.one(`SELECT id, client_id FROM assignments WHERE user_id=? AND ${active()} ORDER BY client_id LIMIT 1`, aId);
+  assert.equal((await admin.post(`/api/assignments/${asg.id}/end`, {})).status, 200);
+  const offAgain = asg.client_id;
+  assert.ok(!onCaseload(aId).has(offAgain));
+  const mid = await pullAll(navA, first.cursor);
+  assert.ok(mid.dropped.includes(offAgain), 'the device is told to remove the client taken off');
+  await new Promise(r => setTimeout(r, 5));
+  for (const id of [theirs, offAgain]) assert.equal((await admin.post(`/api/clients/${id}/assignments`, { user_id: aId, role_on_case: 'secondary' })).status, 201);
+  const next = await pullAll(navA, mid.cursor, 50);
+  const ids = (t) => new Set((next.tables[t] || []).map(r => r.id));
+  for (const id of [theirs, offAgain]) {
+    assert.ok(ids('clients').has(id), `client ${id} arrives on the next pull`);
+    for (const t of ['notes', 'consents', 'interventions', 'referrals', 'episodes', 'tasks', 'calls']) {
+      let want = H.db.all(`SELECT * FROM ${t} WHERE client_id=?`, id);
+      if (t === 'notes') want = want.filter(n => n.kind !== 'clinical'); // a navigator never gets clinical notes
+      for (const r of want) assert.ok(ids(t).has(r.id), `${t} ${r.id} recorded before the assignment arrives with client ${id}`);
+    }
+    const notes = H.db.all(`SELECT id FROM notes WHERE client_id=? AND kind<>'clinical'`, id).map(n => n.id);
+    for (const a of H.db.all(`SELECT id, note_id FROM note_addenda`)) if (notes.includes(a.note_id)) assert.ok(ids('note_addenda').has(a.id), 'addenda of its notes arrive too');
+  }
+  assert.ok(H.db.all(`SELECT id FROM notes WHERE client_id IN (?,?)`, theirs, offAgain).length > 0, 'the test covers old notes');
+  assert.ok(!next.dropped.includes(theirs) && !next.dropped.includes(offAgain), 'neither is on the purge list');
+  assertScoped(next, aId);
+  // Once delivered, an unchanged client is not sent again.
+  const after = await pullAll(navA, next.cursor);
+  assert.ok(!(after.tables.clients || []).some(c => c.id === theirs || c.id === offAgain), 'the next pull does not resend them');
+});

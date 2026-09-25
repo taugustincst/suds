@@ -59,6 +59,37 @@ function droppedClients(user, since) {
   return ids.filter(id => !db.one(`SELECT 1 FROM clients c WHERE c.id=? AND ${sc.sql}`, id, ...sc.params));
 }
 
+// Clients that came onto this person's caseload after the device's cursor: an active assignment of theirs was
+// created (or re-opened, or otherwise changed) in this page's window (since, cursor], and no assignment of
+// theirs that was already active before `since` kept the client in scope then. Assigning an existing client
+// changes no client row, so a pull by updated_at alone sent the assignment and nothing else: the client, and
+// every note, consent and visit recorded before the assignment, never reached the device. The page that
+// carries the assignment carries the client's whole current record set too (pull, below). Detected per page
+// window, not against the first `since`, because the device's cursor moves on after every page.
+function newlyInScope(user, since, cursor) {
+  if (!auth.caseloadRestricted(user) || since === NEVER) return [];
+  return db.all(`SELECT DISTINCT a.client_id FROM assignments a WHERE a.user_id=? AND ${auth.activeAssignment('a.')} AND a.updated_at > ? AND a.updated_at <= ?
+    AND NOT EXISTS (SELECT 1 FROM assignments b WHERE b.client_id=a.client_id AND b.user_id=? AND b.updated_at <= ? AND ${auth.activeAssignment('b.')})`,
+  user.id, since, cursor, user.id, since).map(r => r.client_id);
+}
+// The rows of `t` that belong to `clientIds` and are not newer than `since` (anything newer is in the page
+// already, or in a later one), still limited by the table's own scope.
+function backfillRows(t, user, clientIds, since) {
+  let col;
+  if (t.name === 'clients') col = 'x.id';
+  else if ((t.scope === 'client' || t.scope === 'client-or-null') && t.clientCol) col = `x.${t.clientCol}`;
+  else if (t.scope === 'via-note') col = null;
+  else return [];
+  const sc = scopeSql(t, user, 'x');
+  const out = [];
+  for (let i = 0; i < clientIds.length; i += 400) {
+    const chunk = clientIds.slice(i, i + 400); const marks = chunk.map(() => '?').join(',');
+    const where = col ? `${col} IN (${marks})` : `x.note_id IN (SELECT n.id FROM notes n WHERE n.client_id IN (${marks}))`;
+    out.push(...db.all(`SELECT x.* FROM ${t.name} x WHERE ${where} AND x.updated_at <= ? AND ${sc.sql} ORDER BY x.updated_at`, ...chunk, since, ...sc.params));
+  }
+  return out;
+}
+
 // Pull everything changed since `since` that the user may see, in bounded pages.
 //
 // Paging is by updated_at, which is not unique: a bulk import can stamp thousands of rows with the same
@@ -90,6 +121,10 @@ function pull(user, since, { limit = PULL_LIMIT } = {}) {
   // Every table stops at the same instant, so the cursor stays a single point in time.
   const cursor = capped.length ? capped.reduce((a, b) => (a < b ? a : b)) : serverNow;
   const complete = capped.length === 0;
+
+  // Newly assigned clients arrive whole: everything recorded about them before `since` as well.
+  const arrived = newlyInScope(user, since, cursor);
+  if (arrived.length) for (const t of SYNC.tables) { const extra = backfillRows(t, user, arrived, since); if (extra.length) raw[t.name] = raw[t.name].concat(extra); }
 
   // db_generation changes when the office database is restored from a backup (server/backup.js). A device
   // that sees a value it did not expect knows the office may have lost rows it had already accepted, forgets
