@@ -26,7 +26,7 @@ Answers to the questions county IT typically sends (HECVAT-Lite and CSA CAIQ sty
 | 13 | Data retention and deletion? | Configurable client-record retention (default 7 years after last activity, minimum 6) with daily hard delete across all tables and legal hold; audit log 7 years; logs 30 days. [DATA-LIFECYCLE.md](DATA-LIFECYCLE.md) |
 | 14 | Can data be exported/returned at contract end? | The county holds the database and keys at all times; exports built in. |
 | 15 | Is production data used in test/dev? | No; development uses fictional seed data. |
-| 16 | De-identification? | Safe Harbor de-identified exports by default; identified exports require a recipient/purpose and are accounted. |
+| 16 | De-identification? | Exports are de-identified to HIPAA Safe Harbor by default: dates reduced to the year, `90+` for ages over 89, ZIP3 (`000` for restricted areas), an allow-list of columns with no free text, coded fields held to their lists, and a random record id for each export instead of the client code. Identified exports require a recipient/purpose and are accounted. The funder report suppresses cells under 11; other aggregate reports do not ([HIPAA.md](../HIPAA.md)). |
 
 ## Identity and access
 

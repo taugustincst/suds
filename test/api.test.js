@@ -653,7 +653,7 @@ test('reports, exports, and audit chain', async () => {
   // Exports need export:read; a navigator's is de-identified and caseload-scoped, finance and supervisors export too.
   assert.equal((await nav.get('/api/reports/export/interventions?from=2026-08-01&to=2026-09-30')).status, 200);
   const csv = await fin.get('/api/reports/export/interventions?from=2026-08-01&to=2026-09-30');
-  assert.equal(csv.status, 200); assert.match(csv.data, /^\uFEFF?Occurred At,Client Code/, 'the header is row 1: no comment line');
+  assert.equal(csv.status, 200); assert.match(csv.data, /^\uFEFF?Occurred At,Record Id/, 'the header is row 1: no comment line');
   assert.match(csv.headers.get('x-suds-export'), /^De-identified \(HIPAA Safe Harbor\)/, 'the classification travels in a header');
   const cl = await fin.get('/api/reports/export/clients?identified=1');
   assert.ok(!cl.data.includes('Jane')); // finance lacks export:identified → de-identified

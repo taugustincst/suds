@@ -30,16 +30,19 @@ decision tree in [PILOT-KIT.md](PILOT-KIT.md) settles the grey cases (Part 2 rec
 
 - **Funder report**: unduplicated people served (people, not services) by fiscal period and funding source;
   admissions, discharges and median length of stay; demographics with race/ethnicity codes a funder can count;
-  overdose and naloxone figures including community distribution. Rows counting fewer than 11 people are
-  suppressed (`<11`) while totals stay exact.
+  overdose and naloxone figures including community distribution. Breakdown rows counting fewer than 11 people
+  are suppressed (`<11`) while totals stay exact. (Only the funder report suppresses small cells; the other
+  reports show exact counts.)
 - **Programme summary and monthly trends** for any date range, by calendar day in your time zone.
 - **Episodes of care**: admissions and discharges by reason.
 - **Referral outcomes**: how many warm handoffs led to an admission, and what got in the way.
 - **Outcome measures** (PHQ-9, GAD-7, AUDIT-C, and the DAST-10 where enabled) over time, where your programme collects them.
 - **CalOMS Tx** capture, validation and extract, where your programme is required to report it
   ([docs/compliance/CALOMS.md](../compliance/CALOMS.md)). Built, but the layout and code sets are NOT verified against the DHCS data dictionary; do not submit until verified with DHCS/county.
-- **Excel / CSV** of every table or one workbook, de-identified (HIPAA Safe Harbor) by default. Identified
-  exports are for supervisors, name a recipient and purpose, and are recorded as disclosures.
+- **Excel / CSV** of every table or one workbook, de-identified (HIPAA Safe Harbor) by default: dates to the
+  year, ages over 89 as 90+, three-digit ZIPs, no free text, and a random record id in place of the client code,
+  new with every file. Identified exports are for supervisors, name a recipient and purpose, and are recorded as
+  disclosures.
 
 ## A day in the life
 

@@ -1,7 +1,9 @@
 'use strict';
-// Table exports shared by CSV/Excel endpoints. De-identified (client codes) unless `identified` is allowed.
+// Table exports shared by CSV/Excel endpoints. De-identified (HIPAA Safe Harbor) unless `identified` is allowed.
+const { randomBytes } = require('node:crypto');
 const db = require('./db');
 const auth = require('./auth');
+const C = require('./constants');
 const M = require('./clients-model');
 const { decrypt } = require('./crypto');
 
@@ -9,13 +11,28 @@ const { decrypt } = require('./crypto');
 // needs more than this should narrow the date range; silently truncating is worse than saying so.
 const MAX_ROWS = 50000;
 
-// ---- HIPAA Safe Harbor (§164.514(b)(2)) ----
-// A de-identified export may carry none of the eighteen identifiers. Client codes are not one, but the rest
-// of what a service record naturally holds is: every date but the year, ZIP codes beyond the first three
-// digits, town names, and an age once it passes 89. So a de-identified dataset has every date reduced to
-// its month, every ZIP cut to three digits, its city column dropped, and its date of birth replaced by an
-// age band. Free text was already redacted.
-const DEID_LABEL = 'De-identified (HIPAA Safe Harbor): dates reduced to year-month, ZIP codes to the first three digits, city omitted, ages banded, free text redacted.';
+// ---- HIPAA Safe Harbor (45 CFR §164.514(b)(2)) ----
+// A de-identified export may carry none of the eighteen identifiers of the client or of their relatives,
+// employers or household members. What a service record naturally holds, and what is done with it here:
+//   (B) geography: a ZIP code is cut to its first three digits, and to 000 where that three-digit area
+//       holds 20,000 people or fewer (RESTRICTED_ZIP3). City is never written.
+//   (C) dates: every element of a date except the year is removed ("2026", never "2026-07"), and an age
+//       over 89 goes out only as "90+". Date of birth is never exported, only an age band. Durations
+//       worked out from two dates (days to engagement, minutes of service) are kept: a duration is not
+//       an element of a date, and with both ends cut to the year it does not reveal one. The only
+//       duration Safe Harbor restricts is an age over 89, which the band already folds into 90+.
+//   (R) any other unique identifying number or code: the programme's client code and the row id are
+//       never written. Each row carries a record id instead, drawn at random for each export and never
+//       stored. It links one client's rows within a file, is not derived from anything about the person
+//       (§164.514(c)), and neither the recipient nor the programme can trace it back to the client.
+//   Free text (notes, names, places, a referral source or discharge reason typed in by hand) is never
+//   written. DEID_COLUMNS gives the reasoning column by column, and DEID_CODED lists the coded columns,
+//   which may only carry a value from their list ("other" otherwise).
+const DEID_LABEL = 'De-identified (HIPAA Safe Harbor): dates reduced to the year, ages over 89 reported as 90+, ZIP codes cut to the first three digits (000 for sparsely populated areas), city omitted, free text left out, coded fields limited to their lists, and client codes replaced by a random record id drawn for each export.';
+// The three-digit ZIP areas with 20,000 or fewer residents in the 2000 Census. HHS's de-identification
+// guidance on §164.514(b)(2)(i)(B) says these are reported as 000. This is the standard list; HHS has not
+// published a newer one.
+const RESTRICTED_ZIP3 = new Set(['036', '059', '063', '102', '203', '556', '692', '790', '821', '823', '830', '831', '878', '879', '884', '890', '893']);
 const AGE_BANDS = [[0, 17, '0-17'], [18, 24, '18-24'], [25, 34, '25-34'], [35, 44, '35-44'], [45, 54, '45-54'], [55, 64, '55-64'], [65, 89, '65-89']];
 function ageBand(dob, now = new Date()) {
   if (!dob) return '';
@@ -26,40 +43,125 @@ function ageBand(dob, now = new Date()) {
   const band = AGE_BANDS.find(([lo, hi]) => age >= lo && age <= hi);
   return band ? band[2] : '';
 }
-const isDateCol = (k) => /(_at|_date|_due|_on)$/.test(k) || k === 'date';
-const toMonth = (v) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 7) : v);
-const zip3 = (v) => (v ? String(v).replace(/\D/g, '').slice(0, 3) : v);
-/** Apply Safe Harbor to one row of a client-linked dataset. */
+// Anything shaped like a date or a timestamp keeps only its year, whatever its column is called.
+const DATE_LIKE = /^\d{4}-\d{2}(-\d{2})?([T ].*)?$/;
+const toYear = (v) => (typeof v === 'string' && DATE_LIKE.test(v) ? v.slice(0, 4) : v);
+function zip3(v) {
+  if (v === null || v === undefined || v === '') return '';
+  const z = String(v).replace(/\D/g, '').slice(0, 3);
+  if (z.length < 3) return '';
+  return RESTRICTED_ZIP3.has(z) ? '000' : z;
+}
+/** Apply Safe Harbor's date and geography rules to one row of a client-linked dataset. */
 function deidentifyRow(r) {
   const o = {};
   for (const [k, v] of Object.entries(r)) {
     if (k === 'city') continue;
     if (k === 'zip') { o[k] = zip3(v); continue; }
-    o[k] = isDateCol(k) ? toMonth(v) : v;
+    o[k] = toYear(v);
   }
   return o;
 }
+/**
+ * A new pseudonymiser for each export. A client keeps the same record id throughout the file (on every
+ * sheet of a workbook) and gets a different one in the next file. The ids are random and held in memory
+ * only for the one request.
+ */
+function pseudonymizer() {
+  const ids = new Map(); const used = new Set();
+  return (clientId) => {
+    if (!clientId) return '';
+    if (!ids.has(clientId)) { let p; do p = `R-${randomBytes(5).toString('hex').toUpperCase()}`; while (used.has(p)); used.add(p); ids.set(clientId, p); }
+    return ids.get(clientId);
+  };
+}
+
+// ---- Coded columns ----
+// A coded column goes out only as one of its codes. Anything else in it (a value typed in before the
+// field became a list, or sent by an older client that did not check) goes out as "other", so free text
+// cannot reach a de-identified file through a column meant to be coded. The codes come from one of three
+// places: a documentation list (Settings → Lists, including every code it has ever had), an enum the
+// server validates, or, for fields the server stores as short strings, the choices the client form
+// offers (public/views/clients.js).
+const FORM_CHOICES = {
+  gender: ['female', 'male', 'non_binary', 'transgender_female', 'transgender_male', 'other', 'declined'],
+  referral_source: ['self', 'family', 'emergency_dept', 'hospital', 'ems', 'law_enforcement', 'jail', 'court_probation', 'treatment_provider', 'primary_care', 'shelter', 'outreach', 'hotline', 'school', 'other'],
+  housing_status: ['stable', 'doubled_up', 'shelter', 'unsheltered', 'transitional', 'sober_living', 'incarcerated', 'treatment_facility', 'unknown'],
+  insurance: ['medicaid', 'medicare', 'private', 'uninsured', 'va', 'pending', 'unknown'],
+  mat_medication: ['buprenorphine', 'buprenorphine_xr', 'methadone', 'naltrexone_xr', 'naltrexone_oral', 'other'],
+};
+const DEID_CODED = {
+  clients: { ...FORM_CHOICES, status: ['waitlist', 'active', 'inactive', 'closed', 'deceased'], primary_substance: 'SUBSTANCES', secondary_substances: { each: 'SUBSTANCES' },
+    discharge_reason: 'DISCHARGE_REASONS', asam_level: C.ASAM, mat_status: ['none', 'interested', 'referred', 'active', 'discontinued', 'unknown'], risk_level: ['low', 'moderate', 'high', 'critical'] },
+  interventions: { type: 'INTERVENTION_TYPES', modality: 'MODALITIES', outcome: 'OUTCOMES', stage_of_change: C.STAGES },
+  calls: { direction: ['inbound', 'outbound'], contact_type: 'CALL_CONTACT_TYPES', outcome: (r) => (r.method === 'text' ? 'TEXT_OUTCOMES' : 'CALL_OUTCOMES') },
+  time: { category: 'TIME_CATEGORIES' },
+  referrals: { category: C.RESOURCE_CATEGORIES, status: 'REFERRAL_STATUSES', urgency: ['routine', 'urgent', 'emergent'] },
+  tasks: { priority: ['low', 'normal', 'high', 'urgent'], status: ['open', 'in_progress', 'done', 'cancelled'] },
+  forms: { status: ['draft', 'completed', 'void'] },
+  consents: { type: C.CONSENT_TYPES },
+  disclosures: { basis: () => require('./disclosure').BASES },
+  episodes: { status: ['open', 'closed'], referral_source: FORM_CHOICES.referral_source, discharge_reason: 'DISCHARGE_REASONS' },
+  overdose_events: { kind: 'OVERDOSE_KINDS', administered_by: 'ADMINISTERED_BY' },
+  expenditures: { category: C.BUDGET_CATEGORIES, status: ['pending', 'approved', 'rejected', 'reimbursed'] },
+};
+/** Hold every coded column of a de-identified dataset to its codes (DEID_CODED); anything else is "other". */
+function codeRows(kind, rows) {
+  const cols = DEID_CODED[kind]; if (!cols) return rows;
+  const O = require('./options'); const known = {};
+  const codesFor = (spec, r) => {
+    if (typeof spec === 'function') spec = spec(r);
+    if (Array.isArray(spec)) return spec;
+    return (known[spec] = known[spec] || O.known(spec));
+  };
+  const one = (v, codes) => (codes.includes(v) ? v : 'other');
+  return rows.map(r => {
+    const o = { ...r };
+    for (const [col, spec] of Object.entries(cols)) {
+      const v = o[col];
+      if (v === null || v === undefined || v === '') continue;
+      if (spec && spec.each) { const codes = codesFor(spec.each, r); o[col] = [...new Set(String(v).split(/[,;]/).map(s => s.trim()).filter(Boolean).map(s => one(s, codes)))].join(', '); continue; }
+      o[col] = one(String(v), codesFor(spec, r));
+    }
+    return o;
+  });
+}
 
 // ---- De-identified column allow-list ----
-// Safe Harbor used to be applied by column *name* (dates, zip, city) with free text "redacted" in place —
-// which left every column whose name did not match: a visit's location, a consent's document reference,
-// an expenditure's vendor and receipt number, a call's contact name. A de-identified export now carries
-// only the columns listed here for its dataset, and nothing else survives to the file. Free text, names,
-// references and locations are not on the list. Datasets with no client link (resource directory,
-// funding sources, budget lines) are not PHI and are unaffected.
+// A de-identified export carries only the columns listed here for its dataset; nothing else reaches the
+// file. Each column was checked against Safe Harbor's identifiers and for free text:
+//   record_id       random for each export (see pseudonymizer), never the client code or row id.
+//   dates           *_at, *_date, *_due: reduced to the year.
+//   zip             ZIP3, or 000 for a restricted area.
+//   age_band        bands, with everyone over 89 in 90+.
+//   coded columns   only a code from DEID_CODED, otherwise "other": statuses, types, outcomes, reasons,
+//                   substances, gender, housing, insurance, referral source, ASAM level, MAT status and
+//                   medication, and the rest.
+//   numbers, yes/no durations, counts, minutes, amounts, flags. None of these is an identifier.
+//   source          (disclosures) set by SUDS itself (manual, referral, export, caloms, fhir…), never typed.
+//   programme names worker, assignee, completed_by, created_by, disclosed_by, approver, funding_source,
+//                   fund, line, resource, template_name: the programme's own staff, funds, budget lines,
+//                   provider directory and form templates. None identifies the client, a relative, an
+//                   employer or a household member.
+// Left out because they are free text or identify someone: names, contact names, addresses, city, phone,
+// email, notes, summaries, purposes, recipients, document and receipt references, vendors, visit location,
+// preferred language, a consent's expiry event, a disclosure's method, an episode's discharge disposition,
+// an overdose's location and substances, and goals and flags. Most of these are typed in by hand.
+// Datasets with no client link (resource directory, funding sources, budget lines) hold no PHI and are
+// exported as they are.
 const DEID_COLUMNS = {
-  clients: ['client_code', 'age_band', 'status', 'intake_date', 'discharge_date', 'discharge_reason', 'referral_source', 'referral_date', 'engagement_date', 'days_to_engagement', 'primary_substance', 'secondary_substances', 'asam_level', 'mat_status', 'mat_medication', 'risk_level', 'housing_status', 'insurance', 'overdose_history', 'naloxone_provided', 'naloxone_last_date', 'co_occurring_mh', 'justice_involved', 'pregnant_or_parenting', 'zip', 'gender', 'preferred_language'],
-  interventions: ['occurred_at', 'client_code', 'type', 'duration_minutes', 'modality', 'outcome', 'stage_of_change', 'naloxone_kits', 'fentanyl_strips', 'worker', 'funding_source', 'cost', 'follow_up_due'],
-  calls: ['started_at', 'client_code', 'direction', 'contact_type', 'duration_minutes', 'outcome', 'crisis', 'follow_up_needed', 'follow_up_due', 'worker'],
-  time: ['work_date', 'worker', 'client_code', 'category', 'minutes', 'billable', 'funding_source'],
-  referrals: ['referred_at', 'client_code', 'resource', 'category', 'status', 'urgency', 'warm_handoff', 'appointment_at', 'admitted_at', 'closed_at', 'worker'],
-  tasks: ['client_code', 'assignee', 'due_at', 'priority', 'status', 'is_milestone', 'completed_at'],
-  forms: ['created_at', 'client_code', 'template_name', 'status', 'completed_at', 'completed_by', 'created_by', 'attachments'],
-  consents: ['client_code', 'type', 'signed_at', 'expires_at', 'expires_event', 'revoked_at', 'redisclosure_notice_given'],
-  disclosures: ['client_code', 'disclosed_at', 'method', 'basis', 'source', 'disclosed_by'],
-  episodes: ['client_code', 'opened_at', 'closed_at', 'status', 'referral_source', 'discharge_reason', 'discharge_disposition', 'funding_source'],
-  overdose_events: ['occurred_at', 'client_code', 'kind', 'naloxone_used', 'naloxone_doses', 'administered_by', 'ems_called', 'hospitalized', 'survived', 'location_type'],
-  expenditures: ['spent_at', 'fund', 'line', 'category', 'amount', 'status', 'client_code', 'worker', 'approver'],
+  clients: ['record_id', 'age_band', 'status', 'intake_date', 'discharge_date', 'discharge_reason', 'referral_source', 'referral_date', 'engagement_date', 'days_to_engagement', 'primary_substance', 'secondary_substances', 'asam_level', 'mat_status', 'mat_medication', 'risk_level', 'housing_status', 'insurance', 'overdose_history', 'naloxone_provided', 'naloxone_last_date', 'co_occurring_mh', 'justice_involved', 'pregnant_or_parenting', 'zip', 'gender'],
+  interventions: ['occurred_at', 'record_id', 'type', 'duration_minutes', 'modality', 'outcome', 'stage_of_change', 'naloxone_kits', 'fentanyl_strips', 'worker', 'funding_source', 'cost', 'follow_up_due'],
+  calls: ['started_at', 'record_id', 'direction', 'contact_type', 'duration_minutes', 'outcome', 'crisis', 'follow_up_needed', 'follow_up_due', 'worker'],
+  time: ['work_date', 'worker', 'record_id', 'category', 'minutes', 'billable', 'funding_source'],
+  referrals: ['referred_at', 'record_id', 'resource', 'category', 'status', 'urgency', 'warm_handoff', 'appointment_at', 'admitted_at', 'closed_at', 'worker'],
+  tasks: ['record_id', 'assignee', 'due_at', 'priority', 'status', 'is_milestone', 'completed_at'],
+  forms: ['created_at', 'record_id', 'template_name', 'status', 'completed_at', 'completed_by', 'created_by', 'attachments'],
+  consents: ['record_id', 'type', 'signed_at', 'expires_at', 'revoked_at', 'redisclosure_notice_given'],
+  disclosures: ['record_id', 'disclosed_at', 'basis', 'source', 'disclosed_by'],
+  episodes: ['record_id', 'opened_at', 'closed_at', 'status', 'referral_source', 'discharge_reason', 'funding_source'],
+  overdose_events: ['occurred_at', 'record_id', 'kind', 'naloxone_used', 'naloxone_doses', 'administered_by', 'ems_called', 'hospitalized', 'survived'],
+  expenditures: ['spent_at', 'fund', 'line', 'category', 'amount', 'status', 'record_id', 'worker', 'approver'],
 };
 // ---- Documentation choices, in words ----
 // A coded column that comes from a documentation list goes out with the label the programme gave it under
@@ -140,15 +242,18 @@ function datasets(ctx, { from, to, ts, tsP, identified }) {
   }
   // Safe Harbor is applied to every client-linked dataset, uniformly, on the way out — not per column in
   // each query, where one new date column would quietly slip through. A de-identified dataset is also cut
-  // down to its allow-listed columns (DEID_COLUMNS), both in the column list and in the row objects.
+  // down to its allow-listed columns (DEID_COLUMNS), both in the column list and in the row objects, its
+  // coded columns are held to their codes (DEID_CODED), and its client code becomes a record id that is
+  // random for this export and shared by every dataset in it, so a workbook's sheets still link up.
+  const pseudo = pseudonymizer();
   for (const [kind, d] of Object.entries(D)) {
-    const coded = d.rows;
-    const raw = () => labelRows(kind, coded());
-    if (identified || d.noClients) { d.rows = raw; continue; }
+    const read = d.rows;
+    if (identified || d.noClients) { d.rows = () => labelRows(kind, read()); continue; }
     const allowed = DEID_COLUMNS[kind];
     if (!allowed) throw new Error(`No de-identified column list is defined for the ${kind} dataset`);
-    d.columns = d.columns.filter(c => allowed.includes(c));
-    d.rows = () => raw().map(r => projectRow(deidentifyRow(r), allowed));
+    d.columns = d.columns.map(c => (c === 'client_code' ? 'record_id' : c)).filter(c => allowed.includes(c));
+    d.rows = () => labelRows(kind, codeRows(kind, read()))
+      .map(r => projectRow({ ...deidentifyRow(r), record_id: pseudo(r._client_id) }, allowed));
   }
   return D;
 }
@@ -157,4 +262,4 @@ function clientIdsOf(rows) { return [...new Set(rows.map(r => r._client_id).filt
 /** Drop the internal columns before anything is written to a file. */
 function publicRows(rows) { return rows.map(r => { const o = { ...r }; delete o._client_id; return o; }); }
 
-module.exports = { LIST_COLUMNS, labelRows, datasets, ageBand, deidentifyRow, clientIdsOf, publicRows, DEID_LABEL, DEID_COLUMNS, cents };
+module.exports = { LIST_COLUMNS, labelRows, datasets, ageBand, deidentifyRow, pseudonymizer, zip3, toYear, codeRows, clientIdsOf, publicRows, DEID_LABEL, DEID_COLUMNS, DEID_CODED, RESTRICTED_ZIP3, cents };

@@ -190,9 +190,11 @@ test('report periods are local calendar days in ORG_TIMEZONE, not UTC days', asy
     assert.equal(d.data.interventions.total, 2, 'the dashboard\'s June 30th has the 5:30pm visit and the bare-day one');
     const julyFirst = (await admin.get('/api/reports/dashboard?from=2026-07-01&to=2026-07-01')).data;
     assert.equal(julyFirst.interventions.total, 0, 'and July 1st does not');
-    // The de-identified export coarsens dates to the month, so tell the rows apart by client code.
+    // A de-identified export carries neither the day nor the client code, so tell the rows apart in an
+    // identified one (which applies the same period).
     const code = (id) => H.db.one(`SELECT client_code FROM clients WHERE id=?`, id).client_code;
-    const inFy = String((await admin.get('/api/reports/export/interventions?from=2025-07-01&to=2026-06-30')).data);
+    await H.agreement(admin, 'Fiscal auditor');
+    const inFy = String((await admin.get('/api/reports/export/interventions?from=2025-07-01&to=2026-06-30&identified=1&basis=audit_evaluation&recipient=Fiscal%20auditor&purpose=Year-end%20audit')).data);
     assert.ok(inFy.includes(code(c)) && inFy.includes(code(bare)), 'the export uses the same local days');
     assert.ok(!inFy.includes(code(prior)), 'and leaves out the previous fiscal year\'s last evening');
     // The FY count includes both late-June visits and not the prior-year evening.
