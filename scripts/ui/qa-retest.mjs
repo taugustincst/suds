@@ -313,7 +313,9 @@ for (const [label, base] of surfaces) {
       await page.keyboard.press('Escape').catch(() => {}); await page.waitForTimeout(100);
       if (!(await page.$('.modal'))) { await press(page.getByRole('button', { name: '+ Add a reminder' })); await page.waitForSelector('.modal'); }
       await page.getByRole('textbox', { name: 'Title' }).fill('QATEST task');
-      if (kind === 'desktop') {
+      // Typing into the date's day/month/year segments is Chrome's desktop date field; Safari and a phone pick
+      // from a calendar or wheel, so there the garbled value is put in directly and only the refusal is checked.
+      if (kind === 'desktop' && (process.env.SUDS_BROWSER || 'chromium') === 'chromium') {
         await due.click({ position: { x: 12, y: 12 } }); await page.keyboard.type('09052026');
         eq(await due.inputValue(), '2026-09-05', `${L}: typing 09052026 into the date segments gives 2026-09-05`);
         // One digit too many: the year segment starts again (Chrome) and the date comes out as 0260-09-05 —
