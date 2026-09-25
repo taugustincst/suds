@@ -6677,7 +6677,10 @@ CREATE TABLE IF NOT EXISTS users (
   -- active); an SSO-linked account not seen for sso_deprovision_days is disabled. scim_external_id: the
   -- provider's own id for the person (Entra objectId / Okta user id), set when SCIM provisions the account.
   idp_seen_at TEXT,
-  scim_external_id TEXT
+  scim_external_id TEXT,
+  -- The fund this worker's visits are charged to unless they choose another (migration 38). Blank: the
+  -- programme's default (settings.default_fund_id). No REFERENCES: users sync to a device before funds do.
+  default_fund_id TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_subject ON users(oidc_subject) WHERE oidc_subject IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_scim_external_id ON users(scim_external_id) WHERE scim_external_id IS NOT NULL;
@@ -6846,6 +6849,11 @@ CREATE TABLE IF NOT EXISTS funding_sources (
   restrictions TEXT,
   notes TEXT,
   is_active INTEGER NOT NULL DEFAULT 1,
+  -- Opioid settlement funds (migration 38): the allowable use (constants.SETTLEMENT_USES \u2014 national
+  -- settlement Exhibit E) and the California High Impact Abatement Activity (constants.SETTLEMENT_HIAA, or
+  -- 'none') that spending from this fund counts toward, unless an expenditure says otherwise.
+  settlement_use TEXT,
+  settlement_hiaa TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -6893,7 +6901,9 @@ CREATE TABLE IF NOT EXISTS interventions (
 );
 CREATE INDEX IF NOT EXISTS idx_interventions_client ON interventions(client_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_interventions_user ON interventions(user_id, occurred_at);
-CREATE INDEX IF NOT EXISTS idx_interventions_occurred ON interventions(occurred_at);
+-- The report period's index (migration 38 replaced idx_interventions_occurred with it): the date leads, and
+-- the columns the funder report counts ride along, so a year of visits is read from the index alone.
+CREATE INDEX IF NOT EXISTS idx_interventions_period ON interventions(occurred_at, funding_source_id, client_id, naloxone_kits, fentanyl_strips);
 CREATE INDEX IF NOT EXISTS idx_interventions_updated ON interventions(updated_at);
 
 CREATE TABLE IF NOT EXISTS calls (
@@ -7085,6 +7095,9 @@ CREATE TABLE IF NOT EXISTS expenditures (
   -- What was bought, for whom, and the reviewer's note: free text that can name the client, so encrypted.
   description_enc TEXT,
   receipt_ref TEXT,
+  -- This expenditure's own opioid settlement category, when it differs from its fund's (migration 38).
+  settlement_use TEXT,
+  settlement_hiaa TEXT,
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','reimbursed')),
   approved_by TEXT REFERENCES users(id),
   approved_at TEXT,
@@ -8806,9 +8819,43 @@ var require_constants = __commonJS({
       { code: "declined", label: "Declined to answer" },
       { code: "unknown", label: "Unknown" }
     ];
+    var SETTLEMENT_USES = [
+      { code: "core_a", schedule: "Exhibit E, Schedule A (Core Strategies)", label: "A. Naloxone or other FDA-approved drug to reverse opioid overdoses" },
+      { code: "core_b", schedule: "Exhibit E, Schedule A (Core Strategies)", label: "B. Medication for opioid use disorder (MOUD) distribution and other opioid-related treatment" },
+      { code: "core_c", schedule: "Exhibit E, Schedule A (Core Strategies)", label: "C. Pregnant and postpartum women" },
+      { code: "core_d", schedule: "Exhibit E, Schedule A (Core Strategies)", label: "D. Expanding treatment for neonatal abstinence syndrome (NAS)" },
+      { code: "core_e", schedule: "Exhibit E, Schedule A (Core Strategies)", label: "E. Expansion of warm hand-off programs and recovery services" },
+      { code: "core_f", schedule: "Exhibit E, Schedule A (Core Strategies)", label: "F. Treatment for incarcerated population" },
+      { code: "core_g", schedule: "Exhibit E, Schedule A (Core Strategies)", label: "G. Prevention programs" },
+      { code: "core_h", schedule: "Exhibit E, Schedule A (Core Strategies)", label: "H. Expanding syringe service programs" },
+      { code: "core_i", schedule: "Exhibit E, Schedule A (Core Strategies)", label: "I. Evidence-based data collection and research on abatement strategies" },
+      { code: "approved_a", schedule: "Exhibit E, Schedule B (Approved Uses) \u2014 Treatment", label: "A. Treat opioid use disorder (OUD)" },
+      { code: "approved_b", schedule: "Exhibit E, Schedule B (Approved Uses) \u2014 Treatment", label: "B. Support people in treatment and recovery" },
+      { code: "approved_c", schedule: "Exhibit E, Schedule B (Approved Uses) \u2014 Treatment", label: "C. Connect people who need help to the help they need (connections to care)" },
+      { code: "approved_d", schedule: "Exhibit E, Schedule B (Approved Uses) \u2014 Treatment", label: "D. Address the needs of criminal justice-involved persons" },
+      { code: "approved_e", schedule: "Exhibit E, Schedule B (Approved Uses) \u2014 Treatment", label: "E. Address the needs of pregnant or parenting women and their families, including babies with NAS" },
+      { code: "approved_f", schedule: "Exhibit E, Schedule B (Approved Uses) \u2014 Prevention", label: "F. Prevent over-prescribing and ensure appropriate prescribing and dispensing of opioids" },
+      { code: "approved_g", schedule: "Exhibit E, Schedule B (Approved Uses) \u2014 Prevention", label: "G. Prevent misuse of opioids" },
+      { code: "approved_h", schedule: "Exhibit E, Schedule B (Approved Uses) \u2014 Prevention", label: "H. Prevent overdose deaths and other harms (harm reduction)" },
+      { code: "approved_i", schedule: "Exhibit E, Schedule B (Approved Uses) \u2014 Other strategies", label: "I. First responders" },
+      { code: "approved_j", schedule: "Exhibit E, Schedule B (Approved Uses) \u2014 Other strategies", label: "J. Leadership, planning and coordination" },
+      { code: "approved_k", schedule: "Exhibit E, Schedule B (Approved Uses) \u2014 Other strategies", label: "K. Training" },
+      { code: "approved_l", schedule: "Exhibit E, Schedule B (Approved Uses) \u2014 Other strategies", label: "L. Research" },
+      { code: "none", schedule: "Not an opioid remediation use", label: "Not an opioid remediation use (for example, administrative cost)" }
+    ];
+    var SETTLEMENT_HIAA = [
+      { code: "hiaa_1", label: "1. Matching funds or operating costs for SUD facilities with an approved Behavioral Health Continuum Infrastructure Program (BHCIP) project" },
+      { code: "hiaa_2", label: "2. Creating new or expanded substance use disorder (SUD) treatment infrastructure" },
+      { code: "hiaa_3", label: "3. Addressing the needs of communities of color and vulnerable populations (including sheltered and unsheltered homeless populations) disproportionately impacted by SUD" },
+      { code: "hiaa_4", label: "4. Diversion of people with SUD from the justice system into treatment, including training and resources for first and early responders, and outreach, diversion, deflection and harm reduction" },
+      { code: "hiaa_5", label: "5. Interventions to prevent drug addiction in vulnerable youth" },
+      { code: "hiaa_6", label: "6. The purchase of naloxone for distribution and efforts to expand access to naloxone for opioid overdose reversals" }
+    ];
     module.exports = {
       RACE_CODES,
       ETHNICITY_CODES,
+      SETTLEMENT_USES,
+      SETTLEMENT_HIAA,
       INTERVENTION_TYPES: ["outreach", "screening_sbirt", "assessment", "intake", "care_coordination", "warm_handoff", "referral", "case_management", "harm_reduction", "naloxone_distribution", "peer_support", "crisis_response", "post_overdose_follow_up", "transport", "housing_assistance", "benefits_enrollment", "employment_support", "family_support", "education", "court_or_probation", "hospital_or_ed_visit", "jail_in_reach", "recovery_check_in", "discharge_planning", "other"],
       // The services that can be recorded with no identified client: street outreach and community naloxone
       // distribution (a kit handed to a stranger). Every other type is work with a person on the caseload, and
@@ -9732,7 +9779,10 @@ var require_budget = __commonJS({
       total_amount: { type: "number", required: true, min: 0 },
       restrictions: { type: "string", maxLen: 2e3 },
       notes: { type: "string", maxLen: 2e3 },
-      is_active: { type: "boolean" }
+      is_active: { type: "boolean" },
+      // Opioid settlement categories (constants.SETTLEMENT_USES / SETTLEMENT_HIAA); blank for any other fund.
+      settlement_use: { type: "string", enum: C.SETTLEMENT_USES.map((x) => x.code) },
+      settlement_hiaa: { type: "string", enum: [...C.SETTLEMENT_HIAA.map((x) => x.code), "none"] }
     };
     var lineShape = { category: { type: "string", required: true, enum: C.BUDGET_CATEGORIES }, label: { type: "string", maxLen: 200 }, allocated_amount: { type: "number", required: true, min: 0 }, notes: { type: "string", maxLen: 1e3 }, parent_id: { type: "string" } };
     function buildLineTree(flat) {
@@ -9925,7 +9975,10 @@ var require_budget = __commonJS({
           category: { type: "string", required: true, enum: C.BUDGET_CATEGORIES },
           vendor: { type: "string", maxLen: 200 },
           description: { type: "string", maxLen: 1e3 },
-          receipt_ref: { type: "string", maxLen: 200 }
+          receipt_ref: { type: "string", maxLen: 200 },
+          // Only when this expenditure's opioid settlement category differs from its fund's.
+          settlement_use: fundShape.settlement_use,
+          settlement_hiaa: fundShape.settlement_hiaa
         },
         filters: (ctx, where, params) => {
           const f = ctx.query.get("fund");
@@ -10019,6 +10072,12 @@ var require_budget = __commonJS({
         };
       });
     };
+    function defaultFundFor(userId) {
+      const u = userId ? db3.one(`SELECT default_fund_id FROM users WHERE id=?`, userId) : null;
+      for (const id of [u && u.default_fund_id, db3.getSetting("default_fund_id", null)]) if (id && db3.one(`SELECT 1 FROM funding_sources WHERE id=? AND is_active=1`, id)) return id;
+      return null;
+    }
+    module.exports.defaultFundFor = defaultFundFor;
     module.exports.wouldCycle = wouldCycle;
     module.exports.assertInPeriod = assertInPeriod;
     module.exports.localDate = localDate;
@@ -14097,7 +14156,12 @@ var require_admin = __commonJS({
       "sso_mfa_acr_values",
       "sso_deprovision_days",
       "scim_group_roles",
-      "scim_default_role"
+      "scim_default_role",
+      // Reporting (server/routes/reports.js, server/harm-reduction-reports.js): the programme's default fund, the
+      // funder report's small-cell threshold, and how many naloxone doses one distributed kit holds.
+      "default_fund_id",
+      "small_cell_threshold",
+      "naloxone_doses_per_kit"
     ];
     var ROLES = ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"];
     var listener = (init_listener(), __toCommonJS(listener_exports));
@@ -14144,6 +14208,9 @@ var require_admin = __commonJS({
             if (k === "sso_deprovision_days" && v !== "" && !(Number.isInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 3650)) throw badRequest("sso_deprovision_days must be 0 (off) or a whole number of days");
             if (k === "scim_default_role" && v !== "" && !ROLES.includes(v)) throw badRequest(`scim_default_role must be one of ${ROLES.join(", ")}`);
             if (k === "scim_group_roles" && v !== "") v = require_scim().normaliseGroupRoles(v);
+            if (k === "default_fund_id" && v !== "" && !db3.one(`SELECT 1 FROM funding_sources WHERE id=? AND is_active=1`, v)) throw badRequest("default_fund_id must be an active funding source");
+            if (k === "small_cell_threshold" && v !== "" && !(Number.isInteger(Number(v)) && Number(v) >= 2 && Number(v) <= 50)) throw badRequest("small_cell_threshold must be a whole number from 2 to 50");
+            if (k === "naloxone_doses_per_kit" && v !== "" && !(Number.isInteger(Number(v)) && Number(v) >= 1 && Number(v) <= 20)) throw badRequest("naloxone_doses_per_kit must be a whole number from 1 to 20");
             if (v === "") db3.run(`DELETE FROM settings WHERE key=?`, k);
             else db3.setSetting(k, v);
             changed.push(k);
@@ -15815,7 +15882,14 @@ var require_auth = __commonJS({
       r.get("/api/auth/me", (ctx) => {
         if (!ctx.user) throw unauthorized();
         const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
-        return { user: auth3.publicUser(u), mfaPending: !!ctx.session.mfa_pending, org_name: db3.getSetting("org_name", "SUDS"), idle_minutes: auth3.policy().idleMinutes, setup_needed: false };
+        return {
+          user: auth3.publicUser(u),
+          mfaPending: !!ctx.session.mfa_pending,
+          org_name: db3.getSetting("org_name", "SUDS"),
+          idle_minutes: auth3.policy().idleMinutes,
+          setup_needed: false,
+          default_fund_id: require_budget().defaultFundFor(u.id)
+        };
       });
       r.get("/api/auth/reauth", (ctx) => {
         auth3.requireAuth(ctx);
@@ -22459,6 +22533,383 @@ var require_forms = __commonJS({
   }
 });
 
+// server/funder-report.js
+var require_funder_report = __commonJS({
+  "server/funder-report.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth2();
+    var { badRequest, forbidden } = require_http();
+    var { uuid: uuid2 } = require_crypto();
+    var { defer } = require_spreadsheet();
+    var breathe = () => new Promise((resolve2) => defer(resolve2));
+    var SMALL_CELL_DEFAULT = 11;
+    var PURPOSES = ["publication", "submission"];
+    function countingMode(ctx) {
+      const purpose = ctx.query.get("purpose") || "publication";
+      if (!PURPOSES.includes(purpose)) throw badRequest("purpose must be publication (to publish or share) or submission (the programme's own report to its funder)");
+      const mode = ctx.query.get("counts") || "suppressed";
+      if (!["suppressed", "exact"].includes(mode)) throw badRequest("counts must be suppressed or exact");
+      if (mode === "exact") {
+        if (purpose !== "submission") throw badRequest("Exact counts are only for the programme's own submission to its funder (purpose=submission). A report to publish or share keeps small cells suppressed.");
+        if (!auth3.hasPerm(ctx.user, "reports:exact")) throw forbidden("Only a supervisor, an administrator or finance can run the funder report with exact counts");
+      }
+      const threshold = Number(db3.getSetting("small_cell_threshold", "")) || SMALL_CELL_DEFAULT;
+      return { mode, threshold, purpose };
+    }
+    function countingStatement(s) {
+      return s.mode === "exact" ? `Exact counts: every figure is the true number, including groups of fewer than ${s.threshold} people. For the programme's own submission to its funder; not for publication or sharing.` : `Small cells suppressed: a breakdown row counting fewer than ${s.threshold} people is shown as "<${s.threshold}" so nobody can be picked out of a small group; totals are exact. Suitable for publication or sharing.`;
+    }
+    var DIMENSIONS = [["by_gender", "gender", "gender"], ["by_language", "preferred_language", "language"], ["by_housing", "housing_status", "housing"], ["by_insurance", "insurance", "insurance"], ["by_ethnicity", "race_ethnicity", "ethnicity"]];
+    var byCount = (a, b) => b.n - a.n || String(a.k).localeCompare(String(b.k));
+    async function build(ctx, { from, to, ts, tsP }) {
+      const counting = countingMode(ctx);
+      const cf = auth3.caseloadFilter(ctx.user, "c.id");
+      const fund = ctx.query.get("funding_source_id") || null;
+      const fundJoin = fund ? "AND i.funding_source_id=?" : "";
+      const fundP = fund ? [fund] : [];
+      const table = `report_served_${uuid2().replace(/-/g, "").slice(0, 16)}`;
+      const served = `temp.${table}`;
+      db3.run(`CREATE TEMP TABLE ${table} (id TEXT PRIMARY KEY) WITHOUT ROWID`);
+      try {
+        db3.run(`INSERT OR IGNORE INTO ${served}(id) SELECT i.client_id FROM interventions i WHERE ${ts("i.occurred_at")} AND i.client_id IS NOT NULL ${fundJoin}`, ...tsP, ...fundP);
+        if (!fund) db3.run(`INSERT OR IGNORE INTO ${served}(id) SELECT ca.client_id FROM calls ca WHERE ${ts("ca.started_at")} AND ca.client_id IS NOT NULL`, ...tsP);
+        db3.run(`DELETE FROM ${served} WHERE id NOT IN (SELECT c.id FROM clients c WHERE c.deleted_at IS NULL AND ${cf.sql})`, ...cf.params);
+        await breathe();
+        const people = db3.all(`SELECT c.gender, c.preferred_language, c.housing_status, c.insurance, c.race_ethnicity, c.race_codes, c.mat_status FROM clients c WHERE c.id IN (SELECT id FROM ${served})`);
+        const demographics = {};
+        for (const [key, col, label] of DIMENSIONS) {
+          const n = /* @__PURE__ */ new Map();
+          for (const p of people) {
+            const k = p[col] === null || p[col] === "" ? "unknown" : p[col];
+            n.set(k, (n.get(k) || 0) + 1);
+          }
+          demographics[key] = [...n].map(([k, v]) => ({ k, n: v, dimension: label })).sort(byCount);
+        }
+        const byRace = /* @__PURE__ */ new Map();
+        for (const p of people) {
+          const codes = String(p.race_codes || "").split(",").map((x) => x.trim()).filter(Boolean);
+          for (const code of codes.length ? codes : ["unknown"]) byRace.set(code, (byRace.get(code) || 0) + 1);
+        }
+        demographics.by_race_code = [...byRace].map(([k, n]) => ({ k, n })).sort(byCount);
+        await breathe();
+        const unduplicated = {
+          served: people.length,
+          new_admissions: db3.one(`SELECT COUNT(DISTINCT c.id) n FROM clients c WHERE c.deleted_at IS NULL AND c.intake_date BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
+          // Of the people served: how many were referred on, admitted somewhere, and are on MAT.
+          with_a_referral: db3.one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN ${served} s ON s.id=r.client_id WHERE ${ts("r.referred_at")}`, ...tsP).n,
+          admitted_after_referral: db3.one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN ${served} s ON s.id=r.client_id WHERE ${ts("r.admitted_at")}`, ...tsP).n,
+          on_mat: people.filter((p) => p.mat_status === "active").length
+        };
+        const episodes = {
+          admissions: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.opened_at BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
+          discharges: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
+          open_at_end: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.opened_at <= ? AND (e.closed_at IS NULL OR e.closed_at > ?) AND ${cf.sql}`, to, to, ...cf.params).n,
+          by_discharge_reason: db3.all(`SELECT COALESCE(e.discharge_reason,'unknown') k, COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql} GROUP BY k ORDER BY n DESC`, from, to, ...cf.params),
+          median_length_of_stay_days: (() => {
+            const d = db3.all(`SELECT (julianday(e.closed_at)-julianday(e.opened_at)) d FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY d`, from, to, ...cf.params).map((x) => x.d);
+            return d.length ? Math.round(d[Math.floor(d.length / 2)]) : null;
+          })()
+        };
+        const od = db3.one(`SELECT COUNT(*) events, COALESCE(SUM(CASE WHEN o.naloxone_used=1 AND o.survived=1 THEN 1 ELSE 0 END),0) reversals,
+        COALESCE(SUM(CASE WHEN o.kind='fatal' OR o.survived=0 THEN 1 ELSE 0 END),0) fatal, COALESCE(SUM(CASE WHEN o.client_id IS NULL THEN 1 ELSE 0 END),0) community_reported,
+        COALESCE(SUM(o.naloxone_doses),0) naloxone_doses FROM overdose_events o WHERE ${ts("o.occurred_at")}`, ...tsP);
+        const overdose = {
+          ...od,
+          by_month: db3.all(`SELECT substr(o.occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN o.naloxone_used=1 AND o.survived=1 THEN 1 ELSE 0 END) reversals FROM overdose_events o WHERE ${ts("o.occurred_at")} GROUP BY month ORDER BY month`, ...tsP),
+          by_administered_by: db3.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND o.naloxone_used=1 GROUP BY k ORDER BY n DESC`, ...tsP)
+        };
+        const svc = new Map(db3.all(`SELECT i.funding_source_id f, COUNT(*) services, COUNT(DISTINCT i.client_id) clients_served,
+        COALESCE(SUM(i.naloxone_kits),0) kits, COALESCE(SUM(i.fentanyl_strips),0) strips, COALESCE(SUM(CASE WHEN i.client_id IS NULL THEN i.naloxone_kits ELSE 0 END),0) community_kits
+      FROM interventions i WHERE ${ts("i.occurred_at")} GROUP BY i.funding_source_id`, ...tsP).map((x) => [x.f, x]));
+        for (const x of db3.all(`SELECT i.funding_source_id f, COUNT(DISTINCT i.client_id) n FROM interventions i WHERE i.client_id IN (SELECT id FROM clients WHERE deleted_at IS NOT NULL) AND ${ts("i.occurred_at")} GROUP BY i.funding_source_id`, ...tsP)) {
+          if (svc.has(x.f)) svc.get(x.f).clients_served -= x.n;
+        }
+        await breathe();
+        const distribution = { kits: 0, strips: 0, community_kits: 0 };
+        for (const x of svc.values()) if (!fund || x.f === fund) for (const k of Object.keys(distribution)) distribution[k] += x[k];
+        const hrs = new Map(db3.all(`SELECT t.funding_source_id f, COALESCE(SUM(CASE WHEN t.status='approved' THEN t.minutes END),0) approved_minutes,
+      COALESCE(SUM(CASE WHEN t.status IN ('draft','submitted') THEN t.minutes END),0) unapproved_minutes FROM time_entries t WHERE t.work_date BETWEEN ? AND ? GROUP BY t.funding_source_id`, from, to).map((x) => [x.f, x]));
+        const figures = (id) => ({ clients_served: svc.get(id)?.clients_served || 0, services: svc.get(id)?.services || 0, approved_minutes: hrs.get(id)?.approved_minutes || 0, unapproved_minutes: hrs.get(id)?.unapproved_minutes || 0 });
+        const byFund = db3.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end FROM funding_sources f WHERE f.is_active=1 ORDER BY f.name`).map((f) => ({ ...f, ...figures(f.id) }));
+        const none = { id: null, name: "No funding source", grant_number: null, fiscal_year_start: null, fiscal_year_end: null, ...figures(null) };
+        byFund.push(none);
+        let approved = 0, unapproved = 0;
+        for (const x of hrs.values()) {
+          approved += x.approved_minutes;
+          unapproved += x.unapproved_minutes;
+        }
+        const attribution = {
+          unattributed_services: none.services,
+          unattributed_clients: none.clients_served,
+          approved_minutes: approved,
+          unapproved_minutes: unapproved,
+          // Where to fix it: the visits in this period with no fund (public/views/interventions.js), and the time
+          // sheets waiting for approval.
+          fix_link: `#/interventions?from=${from}&to=${to}&funding=none`,
+          approve_link: `#/time?from=${from}&to=${to}`
+        };
+        const suppress = (rows) => counting.mode === "exact" ? rows : rows.map((x) => typeof x.n === "number" && x.n > 0 && x.n < counting.threshold ? { ...x, n: `<${counting.threshold}`, suppressed: true } : x);
+        return {
+          from,
+          to,
+          funding_source_id: fund,
+          suppression: counting,
+          // Kept for the screens and files that read it: the threshold applied, or null when counts are exact.
+          small_cell_threshold: counting.mode === "exact" ? null : counting.threshold,
+          counting_statement: countingStatement(counting),
+          unduplicated,
+          demographics: Object.fromEntries(["by_gender", "by_language", "by_housing", "by_insurance", "by_race_code", "by_ethnicity"].map((k) => [k, suppress(demographics[k])])),
+          episodes: { ...episodes, by_discharge_reason: suppress(episodes.by_discharge_reason) },
+          overdose: { ...overdose, by_administered_by: suppress(overdose.by_administered_by) },
+          naloxone_distribution: distribution,
+          by_funding_source: byFund,
+          attribution
+        };
+      } finally {
+        db3.run(`DROP TABLE IF EXISTS ${served}`);
+      }
+    }
+    function sheets(d, ctx, fundName) {
+      const hours = (m) => Math.round(m / 6) / 10;
+      const about = [
+        { k: "Report", v: "Funder report (unduplicated people served)" },
+        { k: "Period", v: `${d.from} to ${d.to}` },
+        { k: "Funding source", v: fundName || "All funding sources" },
+        { k: "Purpose", v: d.suppression.purpose === "submission" ? "The programme's own submission to its funder" : "Publication or sharing" },
+        { k: "Counts", v: d.counting_statement },
+        { k: "Classification", v: "Aggregate counts: no names, client codes or dates of service." },
+        { k: "Generated", v: db3.now() },
+        { k: "Generated by", v: ctx.user.display_name || ctx.user.username }
+      ];
+      const u = d.unduplicated;
+      const summary = [
+        ["People served", "Unduplicated clients served", u.served],
+        ["People served", "New admissions", u.new_admissions],
+        ["People served", "Received a referral", u.with_a_referral],
+        ["People served", "Admitted after a referral", u.admitted_after_referral],
+        ["People served", "On medication for opioid use disorder", u.on_mat],
+        ["Episodes", "Opened", d.episodes.admissions],
+        ["Episodes", "Closed", d.episodes.discharges],
+        ["Episodes", "Open at end of period", d.episodes.open_at_end],
+        ["Episodes", "Median length of stay (days)", d.episodes.median_length_of_stay_days ?? ""],
+        ["Overdose & naloxone", "Overdose events recorded", d.overdose.events],
+        ["Overdose & naloxone", "Reversed with naloxone", d.overdose.reversals],
+        ["Overdose & naloxone", "Fatal", d.overdose.fatal],
+        ["Overdose & naloxone", "Reported from the community", d.overdose.community_reported],
+        ["Overdose & naloxone", "Naloxone doses used", d.overdose.naloxone_doses],
+        ["Overdose & naloxone", "Naloxone kits distributed", d.naloxone_distribution.kits],
+        ["Overdose & naloxone", "Of those, community distribution", d.naloxone_distribution.community_kits],
+        ["Overdose & naloxone", "Fentanyl test strips", d.naloxone_distribution.strips],
+        ["Funding attribution", "Services with no funding source", d.attribution.unattributed_services],
+        ["Funding attribution", "Approved staff hours", hours(d.attribution.approved_minutes)],
+        ["Funding attribution", "Staff hours logged, not yet approved", hours(d.attribution.unapproved_minutes)]
+      ].map(([section, measure, value]) => ({ section, measure, value }));
+      const who = [];
+      for (const [key, label] of [["by_race_code", "Race"], ["by_ethnicity", "Ethnicity"], ["by_gender", "Gender"], ["by_language", "Language"], ["by_housing", "Housing"], ["by_insurance", "Insurance"]]) for (const x of d.demographics[key]) who.push({ section: label, measure: x.k, value: x.n });
+      for (const x of d.episodes.by_discharge_reason) who.push({ section: "Discharge reason", measure: x.k, value: x.n });
+      for (const x of d.overdose.by_administered_by) who.push({ section: "Naloxone given by", measure: x.k, value: x.n });
+      const funds = d.by_funding_source.map((f) => ({ fund: f.name, grant_number: f.grant_number || "", fiscal_year: [f.fiscal_year_start, f.fiscal_year_end].filter(Boolean).join(" to "), people: f.clients_served, services: f.services, approved_hours: hours(f.approved_minutes), unapproved_hours: hours(f.unapproved_minutes) }));
+      const long = [{ key: "section", label: "Section" }, { key: "measure", label: "Measure" }, { key: "value", label: "Value" }];
+      return {
+        about,
+        summary,
+        who,
+        funds,
+        workbook: [
+          { name: "About", columns: [{ key: "k", label: "Field" }, { key: "v", label: "Value" }], rows: about },
+          { name: "Summary", columns: long, rows: summary },
+          { name: "Who was served", columns: long, rows: who },
+          { name: "By funding source", columns: [{ key: "fund", label: "Fund" }, { key: "grant_number", label: "Grant number" }, { key: "fiscal_year", label: "Fiscal year" }, { key: "people", label: "People served" }, { key: "services", label: "Services" }, { key: "approved_hours", label: "Approved staff hours" }, { key: "unapproved_hours", label: "Staff hours logged, not yet approved" }], rows: funds }
+        ],
+        // CSV has no cover sheet: one long table whose first rows are the About fields, so the counting mode
+        // travels with the numbers.
+        csv: [...about.map((x) => ({ section: "About", measure: x.k, value: x.v })), ...summary, ...who, ...funds.flatMap((f) => [
+          { section: "By funding source", measure: `${f.fund}: people served`, value: f.people },
+          { section: "By funding source", measure: `${f.fund}: services`, value: f.services },
+          { section: "By funding source", measure: `${f.fund}: approved staff hours`, value: f.approved_hours },
+          { section: "By funding source", measure: `${f.fund}: staff hours logged, not yet approved`, value: f.unapproved_hours }
+        ])],
+        csvColumns: long
+      };
+    }
+    module.exports = { build, sheets, countingMode, countingStatement, SMALL_CELL_DEFAULT };
+  }
+});
+
+// server/harm-reduction-reports.js
+var require_harm_reduction_reports = __commonJS({
+  "server/harm-reduction-reports.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth2();
+    var audit3 = require_audit();
+    var C = require_constants();
+    var O = require_options();
+    var NDP_TEMPLATE_NOTE = "The column layout follows the fields the DHCS Naloxone Distribution Project (NDP) asks distributors to report, as SUDS understands them (date, site type, recipient type, kits and doses distributed, overdose reversals reported). It is not the official NDP template: it must be checked against the current NDP reporting template before it is submitted.";
+    var SETTLEMENT_SOURCE_NOTE = `Categories follow Exhibit E ("List of Opioid Remediation Uses") of the national opioid settlement agreements and California's High Impact Abatement Activities list, as summarised by DHCS. Both need verification against the agreement governing each fund before the report is submitted; SUDS does not decide whether a cost is allowable.`;
+    var dosesPerKit = () => Number(db3.getSetting("naloxone_doses_per_kit", "")) || 2;
+    function dayOf(at) {
+      if (!at) return null;
+      if (String(at).length === 10) return at;
+      return require_budget().localDate(at);
+    }
+    function ndp(ctx, { from, to, ts, tsP }) {
+      const cf = auth3.caseloadFilter(ctx.user, "c.id");
+      const perKit = dosesPerKit();
+      const rows = /* @__PURE__ */ new Map();
+      const add = (key, init2, fn) => {
+        if (!rows.has(key)) rows.set(key, init2);
+        fn(rows.get(key));
+      };
+      for (const x of db3.all(`SELECT i.occurred_at, i.location, i.client_id IS NULL AS anon, i.naloxone_kits kits FROM interventions i LEFT JOIN clients c ON c.id=i.client_id
+      WHERE ${ts("i.occurred_at")} AND i.naloxone_kits > 0 AND (i.client_id IS NULL OR ${cf.sql})`, ...tsP, ...cf.params)) {
+        const date = dayOf(x.occurred_at);
+        const site = x.location || "unknown";
+        const recipient = x.anon ? "Community member (anonymous)" : "Programme participant";
+        add(`d|${date}|${site}|${recipient}`, { date, entry: "distribution", site_type: site, recipient_type: recipient, kits: 0, doses: 0, reversals: null, reversal_doses: null, administered_by: null }, (r) => {
+          r.kits += x.kits;
+          r.doses += x.kits * perKit;
+        });
+      }
+      for (const x of db3.all(`SELECT o.occurred_at, o.location_type, o.naloxone_doses, o.administered_by FROM overdose_events o LEFT JOIN clients c ON c.id=o.client_id
+      WHERE ${ts("o.occurred_at")} AND o.naloxone_used=1 AND o.survived=1 AND (o.client_id IS NULL OR ${cf.sql})`, ...tsP, ...cf.params)) {
+        const date = dayOf(x.occurred_at);
+        const site = x.location_type || "unknown";
+        const by = x.administered_by || "unknown";
+        add(`r|${date}|${site}|${by}`, { date, entry: "reversal", site_type: site, recipient_type: null, kits: null, doses: null, reversals: 0, reversal_doses: 0, administered_by: by }, (r) => {
+          r.reversals += 1;
+          r.reversal_doses += x.naloxone_doses || 0;
+        });
+      }
+      const list = [...rows.values()].sort((a, b) => a.date.localeCompare(b.date) || a.entry.localeCompare(b.entry) || String(a.site_type).localeCompare(String(b.site_type)));
+      const sum = (k) => list.reduce((n, r) => n + (r[k] || 0), 0);
+      return {
+        from,
+        to,
+        county: db3.getSetting("county_name", "") || null,
+        doses_per_kit: perKit,
+        template_note: NDP_TEMPLATE_NOTE,
+        rows: list,
+        totals: { kits: sum("kits"), doses: sum("doses"), reversals: sum("reversals"), reversal_doses: sum("reversal_doses"), community_kits: list.filter((r) => r.recipient_type === "Community member (anonymous)").reduce((n, r) => n + r.kits, 0) }
+      };
+    }
+    var money = (n) => Math.round((n || 0) * 100) / 100;
+    var USE_LABEL = Object.fromEntries(C.SETTLEMENT_USES.map((x) => [x.code, x]));
+    var HIAA_LABEL = Object.fromEntries([...C.SETTLEMENT_HIAA.map((x) => [x.code, x.label]), ["none", "Not a High Impact Abatement Activity"]]);
+    function settlement(ctx, { from, to, ts, tsP }) {
+      const isFund = `(f.source_type='opioid_settlement' OR f.settlement_use IS NOT NULL OR f.settlement_hiaa IS NOT NULL)`;
+      const funds = db3.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end, f.total_amount, f.settlement_use, f.settlement_hiaa FROM funding_sources f WHERE ${isFund} ORDER BY f.name`);
+      const exps = db3.all(`SELECT e.amount, e.status, COALESCE(e.settlement_use, f.settlement_use) AS use_code, COALESCE(e.settlement_hiaa, f.settlement_hiaa) AS hiaa_code, f.id AS fund_id
+    FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE ${isFund} AND e.spent_at BETWEEN ? AND ? AND e.status IN ('pending','approved','reimbursed')`, from, to);
+      const bucket = () => ({ approved_amount: 0, pending_amount: 0, expenditures: 0 });
+      const byUse = new Map([...C.SETTLEMENT_USES.map((x) => [x.code, bucket()]), ["uncategorised", bucket()]]);
+      const byHiaa = new Map([...C.SETTLEMENT_HIAA.map((x) => [x.code, bucket()]), ["none", bucket()], ["uncategorised", bucket()]]);
+      const detail = /* @__PURE__ */ new Map();
+      for (const e of exps) {
+        const use = e.use_code && byUse.has(e.use_code) ? e.use_code : "uncategorised";
+        const hiaa = e.hiaa_code && byHiaa.has(e.hiaa_code) ? e.hiaa_code : "uncategorised";
+        const key = `${use}|${hiaa}`;
+        if (!detail.has(key)) detail.set(key, { use, hiaa, ...bucket() });
+        for (const b of [byUse.get(use), byHiaa.get(hiaa), detail.get(key)]) {
+          if (e.status === "pending") b.pending_amount += e.amount;
+          else b.approved_amount += e.amount;
+          b.expenditures += 1;
+        }
+      }
+      const services = db3.all(`SELECT COALESCE(f.settlement_use,'uncategorised') AS use_code, COUNT(*) services, COUNT(DISTINCT i.client_id) people, COALESCE(SUM(i.naloxone_kits),0) naloxone_kits
+    FROM interventions i JOIN funding_sources f ON f.id=i.funding_source_id WHERE ${isFund} AND ${ts("i.occurred_at")} GROUP BY use_code`, ...tsP);
+      const fix = (m) => [...m].map(([code, b]) => ({ code, ...b, approved_amount: money(b.approved_amount), pending_amount: money(b.pending_amount) }));
+      const useRows = fix(byUse).map((x) => ({ ...x, schedule: USE_LABEL[x.code]?.schedule || "Uncategorised", label: USE_LABEL[x.code]?.label || "No settlement category recorded" }));
+      const hiaaRows = fix(byHiaa).map((x) => ({ ...x, label: HIAA_LABEL[x.code] || "No High Impact Abatement Activity recorded" }));
+      const approved = money(exps.filter((e) => e.status !== "pending").reduce((n, e) => n + e.amount, 0));
+      const hiaaAmount = money(hiaaRows.filter((x) => /^hiaa_/.test(x.code)).reduce((n, x) => n + x.approved_amount, 0));
+      return {
+        from,
+        to,
+        source_note: SETTLEMENT_SOURCE_NOTE,
+        funds,
+        by_use: useRows,
+        by_hiaa: hiaaRows,
+        detail: [...detail.values()].map((x) => ({ ...x, approved_amount: money(x.approved_amount), pending_amount: money(x.pending_amount), schedule: USE_LABEL[x.use]?.schedule || "Uncategorised", use_label: USE_LABEL[x.use]?.label || "No settlement category recorded", hiaa_label: HIAA_LABEL[x.hiaa] || "No High Impact Abatement Activity recorded" })).sort((a, b) => a.schedule.localeCompare(b.schedule) || a.use.localeCompare(b.use) || a.hiaa.localeCompare(b.hiaa)),
+        services_by_use: services.map((x) => ({ ...x, label: USE_LABEL[x.use_code]?.label || "No settlement category recorded" })),
+        totals: {
+          approved_amount: approved,
+          pending_amount: money(exps.filter((e) => e.status === "pending").reduce((n, e) => n + e.amount, 0)),
+          hiaa_amount: hiaaAmount,
+          hiaa_share: approved ? Math.round(1e3 * hiaaAmount / approved) / 10 : null,
+          uncategorised_amount: byUse.get("uncategorised").approved_amount + byUse.get("uncategorised").pending_amount
+        }
+      };
+    }
+    function send(ctx, { body, filename, xlsx, classification }) {
+      ctx.res.writeHead(200, { "Content-Type": xlsx ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${filename}"`, "X-SUDS-Export": classification });
+      ctx.res.end(body);
+    }
+    var aboutSheet = (ctx, rows) => ({ name: "About", columns: [{ key: "k", label: "Field" }, { key: "v", label: "Value" }], rows: [...rows, { k: "Generated", v: db3.now() }, { k: "Generated by", v: ctx.user.display_name || ctx.user.username }] });
+    function routes(r, range) {
+      const S = require_spreadsheet();
+      const NDP_COLUMNS = [["date", "Date"], ["entry", "Entry"], ["site_type", "Site type"], ["recipient_type", "Recipient type"], ["kits", "Kits distributed"], ["doses", "Naloxone doses distributed"], ["reversals", "Reversals reported"], ["reversal_doses", "Doses used in reversals"], ["administered_by", "Naloxone given by"]].map(([key, label]) => ({ key, label }));
+      const ndpRows = (d) => d.rows.map((x) => ({
+        ...x,
+        entry: x.entry === "distribution" ? "Distribution" : "Reversal reported",
+        site_type: x.entry === "distribution" ? O.labelOf("LOCATIONS", x.site_type) : x.site_type,
+        administered_by: x.administered_by ? O.labelOf("ADMINISTERED_BY", x.administered_by) : null
+      }));
+      r.get("/api/reports/naloxone-ndp", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
+        const d = ndp(ctx, range(ctx));
+        audit3.log({ user: ctx.user, action: "report.naloxone_ndp", ip: ctx.ip, details: { from: d.from, to: d.to, rows: d.rows.length } });
+        return d;
+      });
+      r.get("/api/reports/naloxone-ndp/export", auth3.requireAuth, auth3.requirePerm("reports:read"), auth3.requirePerm("export:read"), (ctx) => {
+        const d = ndp(ctx, range(ctx));
+        const xlsx = ctx.query.get("format") === "xlsx";
+        const rows = ndpRows(d);
+        audit3.log({ user: ctx.user, action: "report.naloxone_ndp.export", ip: ctx.ip, details: { from: d.from, to: d.to, rows: rows.length, format: xlsx ? "xlsx" : "csv" } });
+        const body = xlsx ? S.writeWorkbook([{ name: "NDP log", columns: NDP_COLUMNS, rows }, aboutSheet(ctx, [
+          { k: "Report", v: "Naloxone distribution and reversal log (NDP-style)" },
+          { k: "Template", v: d.template_note },
+          { k: "Period", v: `${d.from} to ${d.to}` },
+          { k: "County", v: d.county || "" },
+          { k: "Doses per kit", v: `${d.doses_per_kit} (Settings: naloxone doses per kit)` },
+          { k: "Totals", v: `${d.totals.kits} kits, ${d.totals.doses} doses distributed (${d.totals.community_kits} kits to anonymous community members); ${d.totals.reversals} reversals reported` },
+          { k: "Classification", v: "Aggregate counts by day, site type and recipient type: no names, client codes or record ids." }
+        ])]) : S.toCsv(rows, NDP_COLUMNS);
+        send(ctx, { body, xlsx, filename: `suds-naloxone-ndp-log-${d.from}_${d.to}.${xlsx ? "xlsx" : "csv"}`, classification: "NDP-style log (not the official NDP template; check it against the current NDP reporting template). Aggregate, no identifiers." });
+      });
+      r.get("/api/reports/opioid-settlement", auth3.requireAuth, auth3.requirePerm("budget:read"), (ctx) => {
+        const d = settlement(ctx, range(ctx));
+        audit3.log({ user: ctx.user, action: "report.opioid_settlement", ip: ctx.ip, details: { from: d.from, to: d.to, funds: d.funds.length } });
+        return d;
+      });
+      r.get("/api/reports/opioid-settlement/export", auth3.requireAuth, auth3.requirePerm("budget:read"), auth3.requirePerm("export:read"), (ctx) => {
+        const d = settlement(ctx, range(ctx));
+        const xlsx = ctx.query.get("format") === "xlsx";
+        audit3.log({ user: ctx.user, action: "report.opioid_settlement.export", ip: ctx.ip, details: { from: d.from, to: d.to, format: xlsx ? "xlsx" : "csv" } });
+        const detailCols = [["schedule", "Schedule"], ["use_label", "Category"], ["hiaa_label", "High Impact Abatement Activity"], ["approved_amount", "Approved or reimbursed ($)"], ["pending_amount", "Pending ($)"], ["expenditures", "Expenditures"]].map(([key, label]) => ({ key, label }));
+        const body = xlsx ? S.writeWorkbook([
+          aboutSheet(ctx, [
+            { k: "Report", v: "Opioid settlement expenditures by allowable use" },
+            { k: "Period", v: `${d.from} to ${d.to}` },
+            { k: "Funds", v: d.funds.map((f) => f.name).join("; ") || "No settlement funds" },
+            { k: "Approved or reimbursed", v: d.totals.approved_amount },
+            { k: "Of which High Impact Abatement Activities", v: `${d.totals.hiaa_amount} (${d.totals.hiaa_share ?? 0}%)` },
+            { k: "Sources and verification", v: d.source_note }
+          ]),
+          { name: "By allowable use", columns: [["schedule", "Schedule"], ["label", "Category"], ["approved_amount", "Approved or reimbursed ($)"], ["pending_amount", "Pending ($)"], ["expenditures", "Expenditures"]].map(([key, label]) => ({ key, label })), rows: d.by_use },
+          { name: "By HIAA", columns: [["label", "High Impact Abatement Activity"], ["approved_amount", "Approved or reimbursed ($)"], ["pending_amount", "Pending ($)"], ["expenditures", "Expenditures"]].map(([key, label]) => ({ key, label })), rows: d.by_hiaa },
+          { name: "Detail", columns: detailCols, rows: d.detail },
+          { name: "Services", columns: [["label", "Category"], ["services", "Services"], ["people", "People served"], ["naloxone_kits", "Naloxone kits"]].map(([key, label]) => ({ key, label })), rows: d.services_by_use }
+        ]) : S.toCsv(d.detail, detailCols);
+        send(ctx, { body, xlsx, filename: `suds-opioid-settlement-${d.from}_${d.to}.${xlsx ? "xlsx" : "csv"}`, classification: "Opioid settlement expenditures by category (categories need verification against the governing agreement). No client information." });
+      });
+    }
+    module.exports = { ndp, settlement, routes, NDP_TEMPLATE_NOTE, SETTLEMENT_SOURCE_NOTE };
+  }
+});
+
 // server/routes/reports.js
 var require_reports = __commonJS({
   "server/routes/reports.js"(exports, module) {
@@ -22471,6 +22922,7 @@ var require_reports = __commonJS({
     var M = require_clients_model();
     var CFX = require_client_filters();
     var { defer } = require_spreadsheet();
+    var FR = require_funder_report();
     var DAY = /^\d{4}-\d{2}-\d{2}$/;
     var addDays = (date, n) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
     function range(ctx) {
@@ -22480,8 +22932,10 @@ var require_reports = __commonJS({
       if (!DAY.test(to) || !DAY.test(from) || !Number.isFinite(Date.parse(to)) || !Number.isFinite(Date.parse(from))) throw badRequest("from and to must be dates (YYYY-MM-DD)");
       const fromTs = localMidnight(from);
       const toEnd = new Date(Date.parse(localMidnight(addDays(to, 1))) - 1).toISOString();
-      const ts = (col) => `((length(${col})>10 AND ${col} BETWEEN ? AND ?) OR (length(${col})=10 AND ${col} BETWEEN ? AND ?))`;
-      return { from, to, fromTs, toEnd, ts, tsP: [fromTs, toEnd, from, to] };
+      const lo = fromTs < from ? fromTs : from;
+      const hi = toEnd > to ? toEnd : to;
+      const ts = (col) => `(${col} BETWEEN ? AND ? AND ((length(${col})>10 AND ${col} BETWEEN ? AND ?) OR (length(${col})=10 AND ${col} BETWEEN ? AND ?)))`;
+      return { from, to, fromTs, toEnd, ts, tsP: [lo, hi, fromTs, toEnd, from, to] };
     }
     module.exports = (r) => {
       r.get("/api/reports/dashboard", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
@@ -22522,13 +22976,12 @@ var require_reports = __commonJS({
             by_substance: scoped(`SELECT COALESCE(primary_substance,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k ORDER BY n DESC`),
             mat: scoped(`SELECT COALESCE(mat_status,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k`)
           },
+          // The period's totals in one pass over its visits, not one pass per figure.
           interventions: {
-            total: scoped1(`SELECT COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP).n,
-            minutes: scoped1(`SELECT COALESCE(SUM(duration_minutes),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP).n,
+            ...scoped1(`SELECT COUNT(*) total, COALESCE(SUM(duration_minutes),0) minutes, COALESCE(SUM(naloxone_kits),0) naloxone_kits, COALESCE(SUM(fentanyl_strips),0) fentanyl_strips
+          FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP),
             by_type: db3.all(`SELECT i.type k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${cf.sql} GROUP BY i.type ORDER BY n DESC`, ...tsP, ...cf.params),
             by_week: db3.all(`SELECT strftime('%Y-%W', i.occurred_at) k, COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${cf.sql} GROUP BY k ORDER BY k`, ...tsP, ...cf.params),
-            naloxone_kits: scoped1(`SELECT COALESCE(SUM(naloxone_kits),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP).n,
-            fentanyl_strips: scoped1(`SELECT COALESCE(SUM(fentanyl_strips),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP).n,
             by_worker: db3.all(`SELECT u.display_name k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN users u ON u.id=i.user_id JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${cf.sql} GROUP BY u.id ORDER BY n DESC`, ...tsP, ...cf.params)
           },
           calls: {
@@ -22630,89 +23083,29 @@ var require_reports = __commonJS({
           time: db3.all(`SELECT substr(work_date,1,7) month, SUM(minutes) minutes FROM time_entries WHERE work_date >= ? GROUP BY month ORDER BY month`, s)
         };
       });
-      r.get("/api/reports/funder", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
-        const { from, to, ts, tsP } = range(ctx);
-        const cf = auth3.caseloadFilter(ctx.user, "c.id");
-        const fund = ctx.query.get("funding_source_id") || null;
-        const fundJoin = fund ? "AND i.funding_source_id=?" : "";
-        const fundP = fund ? [fund] : [];
-        const servedSql = `SELECT DISTINCT i.client_id AS id FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND c.deleted_at IS NULL AND ${cf.sql} ${fundJoin}` + (fund ? "" : ` UNION SELECT ca.client_id FROM calls ca JOIN clients c ON c.id=ca.client_id WHERE ${ts("ca.started_at")} AND c.deleted_at IS NULL AND ${cf.sql}`);
-        const servedP = fund ? [...tsP, ...cf.params, ...fundP] : [...tsP, ...cf.params, ...tsP, ...cf.params];
-        const inServed = (sql, ...p) => [`WITH served(id) AS (${servedSql}) ${sql}`, ...servedP, ...p];
-        const one = (sql, ...p) => {
-          const [q, ...a] = inServed(sql, ...p);
-          return db3.one(q, ...a);
-        };
-        const all = (sql, ...p) => {
-          const [q, ...a] = inServed(sql, ...p);
-          return db3.all(q, ...a);
-        };
-        const served = one(`SELECT COUNT(*) n FROM served`).n;
-        const demographics = (col, label) => all(`SELECT COALESCE(NULLIF(c.${col},''),'unknown') k, COUNT(*) n
-      FROM clients c JOIN served s ON s.id=c.id GROUP BY k ORDER BY n DESC`).map((x) => ({ ...x, dimension: label }));
-        const raceRows = all(`SELECT c.race_codes FROM clients c JOIN served s ON s.id=c.id`);
-        const byRace = {};
-        for (const row of raceRows) {
-          const codes = String(row.race_codes || "").split(",").map((x) => x.trim()).filter(Boolean);
-          for (const code of codes.length ? codes : ["unknown"]) byRace[code] = (byRace[code] || 0) + 1;
-        }
-        const episodes = {
-          admissions: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.opened_at BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
-          discharges: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
-          open_at_end: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.opened_at <= ? AND (e.closed_at IS NULL OR e.closed_at > ?) AND ${cf.sql}`, to, to, ...cf.params).n,
-          by_discharge_reason: db3.all(`SELECT COALESCE(e.discharge_reason,'unknown') k, COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql} GROUP BY k ORDER BY n DESC`, from, to, ...cf.params),
-          median_length_of_stay_days: (() => {
-            const d = db3.all(`SELECT (julianday(e.closed_at)-julianday(e.opened_at)) d FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY d`, from, to, ...cf.params).map((x) => x.d);
-            return d.length ? Math.round(d[Math.floor(d.length / 2)]) : null;
-          })()
-        };
-        const overdose = {
-          events: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")}`, ...tsP).n,
-          reversals: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND o.naloxone_used=1 AND o.survived=1`, ...tsP).n,
-          fatal: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND (o.kind='fatal' OR o.survived=0)`, ...tsP).n,
-          community_reported: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND o.client_id IS NULL`, ...tsP).n,
-          naloxone_doses: db3.one(`SELECT COALESCE(SUM(o.naloxone_doses),0) n FROM overdose_events o WHERE ${ts("o.occurred_at")}`, ...tsP).n,
-          by_month: db3.all(`SELECT substr(o.occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN o.naloxone_used=1 AND o.survived=1 THEN 1 ELSE 0 END) reversals FROM overdose_events o WHERE ${ts("o.occurred_at")} GROUP BY month ORDER BY month`, ...tsP),
-          by_administered_by: db3.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND o.naloxone_used=1 GROUP BY k ORDER BY n DESC`, ...tsP)
-        };
-        const distribution = db3.one(`SELECT COALESCE(SUM(i.naloxone_kits),0) kits, COALESCE(SUM(i.fentanyl_strips),0) strips,
-      COALESCE(SUM(CASE WHEN i.client_id IS NULL THEN i.naloxone_kits ELSE 0 END),0) community_kits
-      FROM interventions i WHERE ${ts("i.occurred_at")} ${fundJoin}`, ...tsP, ...fundP);
-        const SMALL_CELL = 11;
-        const suppress = (rows) => rows.map((x) => typeof x.n === "number" && x.n > 0 && x.n < SMALL_CELL ? { ...x, n: "<11", suppressed: true } : x);
-        const out2 = {
-          from,
-          to,
-          funding_source_id: fund,
-          small_cell_threshold: SMALL_CELL,
-          unduplicated: {
-            served,
-            new_admissions: db3.one(`SELECT COUNT(DISTINCT c.id) n FROM clients c WHERE c.deleted_at IS NULL AND c.intake_date BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
-            // Of the people served: how many were referred on, admitted somewhere, and are on MAT.
-            with_a_referral: one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN served s ON s.id=r.client_id WHERE ${ts("r.referred_at")}`, ...tsP).n,
-            admitted_after_referral: one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN served s ON s.id=r.client_id WHERE ${ts("r.admitted_at")}`, ...tsP).n,
-            on_mat: one(`SELECT COUNT(*) n FROM clients c JOIN served s ON s.id=c.id WHERE c.mat_status='active'`).n
-          },
-          demographics: {
-            by_gender: suppress(demographics("gender", "gender")),
-            by_language: suppress(demographics("preferred_language", "language")),
-            by_housing: suppress(demographics("housing_status", "housing")),
-            by_insurance: suppress(demographics("insurance", "insurance")),
-            by_race_code: suppress(Object.entries(byRace).map(([k, n]) => ({ k, n })).sort((a, b) => b.n - a.n)),
-            by_ethnicity: suppress(demographics("race_ethnicity", "ethnicity"))
-          },
-          episodes: { ...episodes, by_discharge_reason: suppress(episodes.by_discharge_reason) },
-          overdose: { ...overdose, by_administered_by: suppress(overdose.by_administered_by) },
-          naloxone_distribution: distribution,
-          by_funding_source: db3.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end,
-          (SELECT COUNT(DISTINCT i.client_id) FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.funding_source_id=f.id AND c.deleted_at IS NULL AND ${ts("i.occurred_at")}) AS clients_served,
-          (SELECT COUNT(*) FROM interventions i WHERE i.funding_source_id=f.id AND ${ts("i.occurred_at")}) AS services,
-          (SELECT COALESCE(SUM(t.minutes),0) FROM time_entries t WHERE t.funding_source_id=f.id AND t.work_date BETWEEN ? AND ? AND t.status='approved') AS approved_minutes
-        FROM funding_sources f WHERE f.is_active=1 ORDER BY f.name`, ...tsP, ...tsP, from, to)
-        };
-        audit3.log({ user: ctx.user, action: "report.funder", ip: ctx.ip, details: { from, to, funding_source_id: fund || void 0, served } });
+      r.get("/api/reports/funder", auth3.requireAuth, auth3.requirePerm("reports:read"), async (ctx) => {
+        const out2 = await FR.build(ctx, range(ctx));
+        audit3.log({ user: ctx.user, action: "report.funder", ip: ctx.ip, details: { from: out2.from, to: out2.to, funding_source_id: out2.funding_source_id || void 0, served: out2.unduplicated.served, counts: out2.suppression.mode, purpose: out2.suppression.purpose } });
         return out2;
       });
+      r.get("/api/reports/funder/export", auth3.requireAuth, auth3.requirePerm("reports:read"), auth3.requirePerm("export:read"), async (ctx) => {
+        const d = await FR.build(ctx, range(ctx));
+        const fundName = d.funding_source_id ? db3.one(`SELECT name FROM funding_sources WHERE id=?`, d.funding_source_id)?.name : null;
+        const sh = FR.sheets(d, ctx, fundName);
+        const S = require_spreadsheet();
+        const xlsx = ctx.query.get("format") === "xlsx";
+        const mode = d.suppression.mode === "exact" ? "exact-counts" : "suppressed";
+        const filename = `suds-funder-report-${d.from}_${d.to}-${mode}.${xlsx ? "xlsx" : "csv"}`;
+        const body = xlsx ? S.writeWorkbook(sh.workbook) : S.toCsv(sh.csv, sh.csvColumns);
+        audit3.log({ user: ctx.user, action: "report.funder.export", ip: ctx.ip, details: { from: d.from, to: d.to, funding_source_id: d.funding_source_id || void 0, counts: d.suppression.mode, purpose: d.suppression.purpose, format: xlsx ? "xlsx" : "csv" } });
+        ctx.res.writeHead(200, {
+          "Content-Type": xlsx ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "text/csv; charset=utf-8",
+          "Content-Disposition": `attachment; filename="${filename}"`,
+          "X-SUDS-Report-Counts": d.suppression.mode === "exact" ? "exact" : `suppressed (threshold ${d.suppression.threshold})`
+        });
+        ctx.res.end(body);
+      });
+      require_harm_reduction_reports().routes(r, range);
       r.get("/api/reports/export/:kind", auth3.requireAuth, auth3.requirePerm("export:read"), async (ctx) => {
         const period = range(ctx);
         const { from, to } = period;
@@ -23720,6 +24113,7 @@ var require_interventions = __commonJS({
             where.push("interventions.type=?");
             params.push(t);
           }
+          if (ctx.query.get("funding") === "none") where.push("interventions.funding_source_id IS NULL");
         },
         afterLoad: (ctx, row) => decodeSummary(row),
         beforeInsert: (ctx, v) => {
@@ -23733,6 +24127,10 @@ var require_interventions = __commonJS({
           if (v.cost !== void 0 && v.cost !== null) v.cost = cents(v.cost);
           encodeSummary(v);
           checkCost(ctx, v);
+          if (!("funding_source_id" in v)) {
+            const f = require_budget().defaultFundFor(v.user_id || ctx.user.id);
+            if (f) v.funding_source_id = f;
+          }
         },
         beforeUpdate: (ctx, v, row) => {
           if ("type" in v || "client_id" in v) checkClient(v.type ?? row.type, "client_id" in v ? v.client_id : row.client_id);
@@ -29827,7 +30225,8 @@ var require_sync_tables = __commonJS({
     module.exports = {
       // caloms_*: whether this programme reports CalOMS Tx (which turns on the CalOMS questions in the admission
       // and discharge forms) and its provider IDs — a device needs both to offer the same forms offline.
-      settings_keys: ["org_name", "county_name", "program_contact", "note_lock_days", "caloms_enabled", "caloms_providers", "caloms_start_date"],
+      // default_fund_id: the fund a visit recorded on the device is charged to when the worker has none of their own.
+      settings_keys: ["org_name", "county_name", "program_contact", "note_lock_days", "caloms_enabled", "caloms_providers", "caloms_start_date", "default_fund_id"],
       tables: [
         // supervisor_id points at another user: a supervisor must land before the people who report to them.
         { name: "users", enc: ["mfa_secret_enc"], scope: "users", cols: null, selfParent: "supervisor_id" },
@@ -30917,6 +31316,8 @@ var require_users = __commonJS({
       // existed with no way to set them short of SQL, so the countersignature workflow could never start.
       requires_cosign: { type: "boolean" },
       supervisor_id: { type: "string", maxLen: 64 },
+      // The fund this person's visits are charged to unless they choose another (blank: the programme's default).
+      default_fund_id: { type: "string", maxLen: 64 },
       // Whether deactivating the account or resetting its password also tells every phone it syncs from to
       // erase itself. On by default: the admin UI shows the checkbox with the device count so it is a choice
       // made knowingly, not a side effect discovered afterwards.
@@ -30925,7 +31326,7 @@ var require_users = __commonJS({
     module.exports = (r) => {
       r.get("/api/users", auth3.requireAuth, auth3.requirePerm("users:read", "users:manage"), (ctx) => {
         const full = auth3.hasPerm(ctx.user, "users:manage");
-        const rows = db3.all(full ? `SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,last_login_at,locked_until,hourly_cost,created_at,oidc_subject,requires_cosign,supervisor_id,access_status FROM users WHERE access_status<>'pending' ORDER BY display_name` : `SELECT id,display_name,title,role,is_active FROM users WHERE is_active=1 ORDER BY display_name`);
+        const rows = db3.all(full ? `SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,last_login_at,locked_until,hourly_cost,created_at,oidc_subject,requires_cosign,supervisor_id,access_status,default_fund_id FROM users WHERE access_status<>'pending' ORDER BY display_name` : `SELECT id,display_name,title,role,is_active FROM users WHERE is_active=1 ORDER BY display_name`);
         return { users: rows };
       });
       const caseloadCounts = (userId) => {
@@ -30958,10 +31359,11 @@ var require_users = __commonJS({
         if (errs.length) throw badRequest("Password must contain " + errs.join(", "));
         const id = uuid2();
         if (v.supervisor_id && !db3.one(`SELECT 1 FROM users WHERE id=? AND role IN ('supervisor','admin')`, v.supervisor_id)) throw badRequest("The supervisor must be a supervisor or administrator account");
+        if (v.default_fund_id && !db3.one(`SELECT 1 FROM funding_sources WHERE id=? AND is_active=1`, v.default_fund_id)) throw badRequest("The default fund must be an active funding source");
         const hash2 = await hashPasswordAsync(temp);
         if (db3.one(`SELECT 1 FROM users WHERE username=?`, v.username)) throw badRequest("Username already exists");
         db3.run(
-          `INSERT INTO users(id,username,password_hash,display_name,email,title,role,is_active,hourly_cost,requires_cosign,supervisor_id,must_change_password,password_changed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,1,?)`,
+          `INSERT INTO users(id,username,password_hash,display_name,email,title,role,is_active,hourly_cost,requires_cosign,supervisor_id,default_fund_id,must_change_password,password_changed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1,?)`,
           id,
           v.username,
           hash2,
@@ -30973,6 +31375,7 @@ var require_users = __commonJS({
           v.hourly_cost ?? null,
           v.requires_cosign ?? 0,
           v.supervisor_id || null,
+          v.default_fund_id || null,
           db3.now()
         );
         audit3.log({ user: ctx.user, action: "user.create", entity: "user", entityId: id, ip: ctx.ip, details: { username: v.username, role: v.role } });
@@ -30986,9 +31389,11 @@ var require_users = __commonJS({
         if (u.id === ctx.user.id && (v.role && v.role !== "admin" || v.is_active === 0)) throw badRequest("You cannot demote or deactivate your own account");
         if (v.oidc_subject && db3.one(`SELECT 1 FROM users WHERE oidc_subject=? AND id<>?`, v.oidc_subject, u.id)) throw badRequest("That single sign-on identity is already linked to a different account");
         if (v.supervisor_id && !db3.one(`SELECT 1 FROM users WHERE id=? AND id<>? AND role IN ('supervisor','admin')`, v.supervisor_id, u.id)) throw badRequest("The supervisor must be a different supervisor or administrator account");
+        if (v.default_fund_id && !db3.one(`SELECT 1 FROM funding_sources WHERE id=? AND is_active=1`, v.default_fund_id)) throw badRequest("The default fund must be an active funding source");
+        if (v.default_fund_id === "") v.default_fund_id = null;
         const sets = [];
         const params = [];
-        for (const k of ["username", "display_name", "email", "title", "role", "is_active", "hourly_cost", "oidc_subject", "requires_cosign", "supervisor_id"]) if (v[k] !== void 0) {
+        for (const k of ["username", "display_name", "email", "title", "role", "is_active", "hourly_cost", "oidc_subject", "requires_cosign", "supervisor_id", "default_fund_id"]) if (v[k] !== void 0) {
           sets.push(`${k}=?`);
           params.push(v[k]);
         }
@@ -31519,7 +31924,8 @@ var require_auth2 = __commonJS({
         "complaints:*",
         "incidents:*",
         "court-orders:*",
-        "agreements:*"
+        "agreements:*",
+        "reports:exact"
       ],
       supervisor: [
         "clients:read",
@@ -31565,7 +31971,8 @@ var require_auth2 = __commonJS({
         "complaints:*",
         "incidents:*",
         "court-orders:*",
-        "agreements:*"
+        "agreements:*",
+        "reports:exact"
       ],
       // Front-line staff hold export:read so the Export buttons on their own screens work; without
       // export:identified every file they can produce is de-identified (Safe Harbor) and caseload-scoped.
@@ -31630,7 +32037,7 @@ var require_auth2 = __commonJS({
       ],
       // finance sees money, not people: export:read without export:identified means every export it can run
       // comes out keyed by client_code. Do not add 'export:identified' here — docs/HIPAA.md promises otherwise.
-      finance: ["clients:list-deidentified", "budget:read", "budget:write", "budget:approve", "budget:manage", "time:read", "time:all", "time:approve", "reports:read", "export:read", "users:read", "documents:read", "documents:write"],
+      finance: ["clients:list-deidentified", "budget:read", "budget:write", "budget:approve", "budget:manage", "time:read", "time:all", "time:approve", "reports:read", "export:read", "users:read", "documents:read", "documents:write", "reports:exact"],
       // readonly is for oversight (a county analyst, an auditor's dashboard): aggregate reports and the resource
       // directory, keyed by client code. It holds neither clients:read nor export:read, so it can identify nobody
       // and take nothing off the system.
@@ -33012,9 +33419,15 @@ var require_db = __commonJS({
           ["clients", "contact_preferences", "contact_preferences_enc"]
         ]) encryptColumn(d, t, from, to);
       },
-      // 38: PLACEHOLDER for another change stream's migration 38 (funding attribution); replace this no-op with
-      //     it when the branches are merged. It exists only so migration 39 keeps its number on this branch.
-      () => {
+      // 38: funding attribution and harm-reduction reporting (docs/compliance/HARM-REDUCTION-REPORTING.md). A
+      //     worker's default fund (users.default_fund_id; the programme's is the default_fund_id setting), and the
+      //     opioid settlement allowable-use and High Impact Abatement Activity categories on a fund and on an
+      //     expenditure. Nothing to backfill: every existing row stays uncategorised until someone chooses.
+      (d) => {
+        addColumn(d, "users", "default_fund_id", "TEXT");
+        for (const t of ["funding_sources", "expenditures"]) for (const c of ["settlement_use", "settlement_hiaa"]) addColumn(d, t, c, "TEXT");
+        d.exec(`DROP INDEX IF EXISTS idx_interventions_occurred`);
+        d.exec(`CREATE INDEX IF NOT EXISTS idx_interventions_period ON interventions(occurred_at, funding_source_id, client_id, naloxone_kits, fentanyl_strips)`);
       },
       // 39: the last free text about a person held in plaintext. A consent's witness is usually someone the
       //     client knows (a parent, a partner), and an imported note's metadata carries the client-name hints
