@@ -183,8 +183,15 @@ const selected = (page) => page.$eval('[role=tablist] [aria-selected=true]', b =
   await logout();
   eq(await selected(page), 'login', 'once the device has an account, the page opens on Log in');
   await page.click('[data-mode-tab=signup]'); await page.waitForSelector('[data-device-signup]');
+  // The records are encrypted with a key only an account's password opens, so a new person is let in by
+  // someone who can already log in here (ADR-0008): the form asks for them, and refuses without them.
+  ok(await page.isVisible('[data-device-signup] input[name=sponsor_username]') && await page.isVisible('[data-device-signup] input[name=sponsor_password]'), 'signing up on a locked device asks for someone who can already log in here');
   await page.fill('input[name=display_name]', 'Sam Second'); await page.fill('input[name=username]', 'second');
-  await page.fill('input[name=password]', PW); await page.fill('input[name=confirm]', PW); await page.click('button[type=submit]');
+  await page.fill('input[name=password]', PW); await page.fill('input[name=confirm]', PW); await page.click('button[type=submit]'); await settle(page);
+  ok(!(await page.$('.layout')) && /already has an account on this device/.test(await page.textContent('[data-device-signup]')), 'without them the sign-up is refused, saying why');
+  await page.fill('input[name=sponsor_username]', 'owner'); await page.fill('input[name=sponsor_password]', 'Wrong-Password-1!'); await page.click('button[type=submit]'); await settle(page);
+  ok(!(await page.$('.layout')), 'with a wrong password for that person it is refused too');
+  await page.fill('input[name=sponsor_password]', PW); await page.click('button[type=submit]');
   await page.waitForSelector('.layout', { timeout: 15000 }); await dismissTour(page);
   const me2 = (await kernel('GET', '/api/auth/me')).data.user;
   eq(me2.role, 'navigator', 'a later sign-up is a navigator account');

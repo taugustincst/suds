@@ -35,7 +35,8 @@ If you change one of these areas, update its record in the same change.
                                │ local mode, off by    │ OAuth2 client credentials    │ CalOMS extract — all through the
                                ▼ default               ▼ (consent-enforced)           ▼ disclosure gate
  Device: local/kernel.js = the same server modules bundled for the browser (ADR-0002), sql.js in IndexedDB,
-         fenced single writer; also published alone as "SUDS on this device" (GitHub Pages, no sync).
+         sealed under a password-wrapped key (ADR-0008), fenced single writer; also published alone as
+         "SUDS on this device" (GitHub Pages, no sync).
 ```
 
 ## Decision records
@@ -49,6 +50,7 @@ If you change one of these areas, update its record in the same change.
 | [ADR-0005](ADR-0005-encryption-and-blind-indexes.md) | Field-level encryption and blind indexes | accepted |
 | [ADR-0006](ADR-0006-append-only-audit.md) | Append-only, hash-chained audit with external anchors | accepted |
 | [ADR-0007](ADR-0007-migrations.md) | Schema migrations policy | accepted |
+| [ADR-0008](ADR-0008-device-encryption.md) | The device database sealed under a key only an account password opens | accepted |
 
 New decisions: copy the shape (status, date, context, decision, consequences, read, tests), number the next
 one, and link it here. Supersede rather than delete.

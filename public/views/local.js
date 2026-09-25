@@ -48,7 +48,7 @@ export function openBackupDialog(onDone) {
   } });
   const m = modal('Download a backup', h('div', {},
     h('p', {}, 'The backup holds every record on this device, encrypted with a passphrase you choose. Store the file somewhere other than this device — a county drive, or a USB stick kept securely.'),
-    h('p', { class: 'small muted' }, 'Without the passphrase the file cannot be opened by anyone, including you.'), f));
+    h('p', { class: 'small muted' }, 'Without the passphrase the file cannot be opened by anyone, including you. It is separate from your password: if you forget your password, this file and its passphrase are the only way back to the records.'), f));
   return m;
 }
 export const backupButton = (onDone) => h('button', { type: 'button', class: 'btn primary', 'data-backup-download': '1', onClick: () => openBackupDialog(onDone) }, 'Download a backup');
@@ -79,9 +79,12 @@ export function openRestoreDialog() {
           go.disabled = true;
           try {
             const r = await post('/api/local/restore', { file_b64: fileB64, passphrase: pass.value, confirm: typed.value.trim() });
-            toast(`Restored ${r.clients} client record${r.clients === 1 ? '' : 's'}. Log in with an account from the backup.`, 'ok');
-            state.user = null;
-            setTimeout(() => { location.hash = '#/login?mode=login'; location.reload(); }, 600);
+            // The restored records are open in this page under a new key that no account can unlock yet: the
+            // first person from the backup to log in, now, gets one. So no reload here (local/kernel.js).
+            toast(`Restored ${r.clients} client record${r.clients === 1 ? '' : 's'}. Log in now with an account from the backup.`, 'ok');
+            state.user = null; m.close();
+            if (r.reload === false) { nav('login?mode=login'); render(); }
+            else setTimeout(() => { location.hash = '#/login?mode=login'; location.reload(); }, 600);
           } catch (e) { go.disabled = false; toast(e.message, 'error'); }
         } }, 'Replace everything on this device')));
     } catch (e) { clear(out).append(h('div', { class: 'banner error', role: 'alert', 'data-restore-error': '1' }, e.message)); }
@@ -241,20 +244,19 @@ route('sync', async () => {
       h('div', { class: 'grid cols-2' },
         h('div', { class: 'card', 'data-static-status': '1' }, h('h2', {}, 'Status'),
           kv([['This device', badge('SUDS on this device', 'info')], ['Where your records are', 'In this browser on this device only'], ['Clients', dev ? String(dev.clients) : '—']]),
-          h('p', { class: 'small muted mt' }, 'Your records stay in this browser and are never sent anywhere. Clearing this browser’s site data erases them, so keep a recent backup.')),
+          h('p', { class: 'small muted mt' }, 'Your records stay in this browser, encrypted with the passwords of the accounts on this device, and are never sent anywhere. Clearing this browser’s site data erases them, and a forgotten password with no other account here locks them away for good, so keep a recent backup.')),
         await safetyCard(dev, refresh),
         accountsCard(dev, refresh),
         h('div', { class: 'card' }, h('h2', {}, 'Office server'), h('div', { class: 'banner info', 'data-static-no-sync': '1' }, h('div', {}, STATIC_HOST_MESSAGE)), h('div', { class: 'btn-row mt' }, eraseDeviceButton())),
         await sampleDataCard(refresh)));
   }
-  // A browser has no Keystore or Keychain, so the local kernel keeps its encryption keys in this profile's
-  // localStorage, beside the data they protect. Say so where someone is about to put real client
-  // information into it, not only in the documentation.
+  // The copy is encrypted under a key only a device account's password opens (local/vault.js); what that
+  // does and does not protect is said here, where someone is about to put real client information into it.
   return h('div', {}, pageHead('Sync with the office'),
-    h('div', { class: 'banner warn mb' }, h('b', {}, 'This is an offline copy of the office SUDS. '),
-      'Its encryption keys are stored in this browser profile alongside the data, so anyone who can use this browser profile can read what is in it — a lost device is protected only by its own disk encryption and screen lock. Keep real client information on the office SUDS unless your administrator has approved this device for field work.'),
+    h('div', { class: 'banner warn mb', 'data-device-protection': '1' }, h('b', {}, 'This is an offline copy of the office SUDS. '),
+      'Its records are encrypted with your device password and locked whenever you log out or step away, so a lost device does not give them up without that password. While you are logged in they are open on this device: log out when you put it down. If you forget the password, the records here cannot be opened; anything not yet synced is lost and the rest comes back from the office when the device is set up again. Keep real client information on the office SUDS unless your administrator has approved this device for field work.'),
     h('div', { class: 'grid cols-2' },
-      h('div', { class: 'card' }, h('h2', {}, 'Status'), kv([['This device', badge('Local copy', 'info')], ['Data protection', badge('Keys kept in this browser', 'warn')], ['Last sync', st.last_sync_at ? fmt.dt(st.last_sync_at) : 'never'], ['Changes waiting to send', String(st.pending)], ['Office server', st.server || 'not set yet']]),
+      h('div', { class: 'card' }, h('h2', {}, 'Status'), kv([['This device', badge('Local copy', 'info')], ['Data protection', badge('Encrypted, opened by your password', 'ok')], ['Last sync', st.last_sync_at ? fmt.dt(st.last_sync_at) : 'never'], ['Changes waiting to send', String(st.pending)], ['Office server', st.server || 'not set yet']]),
         h('p', { class: 'small muted mt' }, 'Sync exchanges clients, visits, calls, notes, reminders, referrals and everything else in both directions. The office SUDS decides: the newest change wins, a change it rejects for good is not sent again, and a record the office has purged or merged does not come back.')),
       h('div', { class: 'card' }, h('h2', {}, 'Sync now'), h('p', { class: 'small muted' }, 'Connect this device to the office Wi-Fi (or the address IT gave you), then sign in with your office account.'), f, log,
         h('div', { class: 'btn-row' }, eraseDeviceButton())),

@@ -4,7 +4,7 @@
 // phone, so it gets the same end-to-end proof the office app and the phone apps get.
 import * as pw from 'playwright';
 const { devices } = pw;
-import { makeChecks, until, settle } from './assert.mjs';
+import { makeChecks, until, settle, signInAgain } from './assert.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -54,8 +54,11 @@ await page.click('button:has-text("New client")'); await page.waitForSelector('.
 await page.fill('.modal input[name=first_name]', 'Offline'); await page.fill('.modal input[name=last_name]', 'Test');
 await page.click('.modal button[type=submit]'); await settle(page);
 ok(/\/client\//.test(page.url()), 'a client can be created with no network connection at all');
-await page.reload(); await settle(page);
-ok(await page.$('.layout'), 'the session survives a reload without signing in again');
+// The records are sealed under a key only an account password opens (ADR-0008): a reload locks the device.
+await page.reload(); await page.waitForSelector('.layout, .login input[name=username]', { timeout: 15000 });
+ok(!(await page.$('.layout')) && await page.$('.login input[name=username]'), 'a reload locks the device: it asks for the password again');
+await signInAgain(page, 'staticnav', 'Navigator2026!!'); await settle(page);
+ok(await page.$('.layout'), 'and signing in opens it again');
 await page.goto(base + '/#/clients'); await settle(page);
 eq(await page.$$eval('tbody tr', r => r.length), 1, 'and the client entered offline is still there');
 
@@ -92,7 +95,7 @@ ok(await page.$eval('#static-local', el => !el.classList.contains('hidden') && /
 eq(await page.$eval('#static-local a', a => a.getAttribute('href')), './', 'and its link opens this site');
 ok(await page.$eval('#static-url', el => /127\.0\.0\.1/.test(el.textContent) && !/get-app/.test(el.textContent)), 'the address shown is this site\'s, not a server\'s', await page.$eval('#static-url', el => el.textContent));
 // every way into that page uses the file name: the login screen's tip, the offline banner, the admin card
-await page.goto(base + '/'); await page.waitForSelector('.layout', { timeout: 10000 });
+await page.goto(base + '/'); await signInAgain(page, 'staticnav', 'Navigator2026!!');
 await page.evaluate(async () => (await import('./app.js')).logout());
 await page.waitForSelector('input[name=username]', { timeout: 10000 });
 eq(await page.$eval('.login-wrap a[href="get-app.html"]', a => a.textContent), 'Use SUDS on your phone or tablet', 'the login screen links the page by file name');
@@ -252,7 +255,8 @@ eq(await page.evaluate(async () => (await fetch('views/no-such-view.js')).status
 await ctx.setOffline(true);
 await page.reload().catch(() => {});
 await until(() => page.$('.layout, input[name=username], input[name=display_name]'), { timeout: 20000 });
-ok(await page.$('.layout'), 'with no connection at all the installed app still opens, signed in', (await page.textContent('body')).slice(0, 120));
+await signInAgain(page, 'staticnav', 'Navigator2026!!');
+ok(await page.$('.layout'), 'with no connection at all the installed app still opens and unlocks with the password', (await page.textContent('body')).slice(0, 120));
 ok(await page.evaluate(() => fetch('views/no-such-view.js').then(r => r.status !== 200 && !/<!doctype/i.test(r.headers.get('content-type') || ''), () => true)), 'offline, a missing script is a failure, not index.html served as a 200');
 const offlineGetApp = await page.evaluate(async () => {
   // Diagnostics for engines where this has failed (WebKit): what the worker holds, and what fetch() saw.
