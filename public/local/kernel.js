@@ -6563,7 +6563,7 @@ var require_config = __commonJS({
       return import_buffer.Buffer.from(hex2, "hex");
     }
     var config = {
-      version: true ? "1.10.2" : "local",
+      version: true ? "1.11.0" : "local",
       env: "local",
       isProd: true,
       isTest: false,
@@ -6788,7 +6788,7 @@ CREATE TABLE IF NOT EXISTS clients (
   co_occurring_mh INTEGER DEFAULT 0,
   goals_enc TEXT,
   flags_enc TEXT,                      -- comma separated safety flags, encrypted
-  contact_preferences TEXT,
+  contact_preferences_enc TEXT,             -- "safe contact" notes (who must not be told, when to call): encrypted
   ok_to_text INTEGER DEFAULT 0,
   ok_to_voicemail INTEGER DEFAULT 0,
   created_by TEXT REFERENCES users(id),
@@ -6822,7 +6822,7 @@ CREATE TABLE IF NOT EXISTS assignments (
   -- Set only when somebody ends the assignment there and then (a supervisor taking a worker off a case).
   -- Access stops at this instant; a plain end_date runs out at the end of that day instead.
   ended_at TEXT,
-  notes TEXT,
+  notes_enc TEXT,                      -- free text about the client (a transfer's reason): encrypted
   created_by TEXT REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -6930,12 +6930,13 @@ CREATE TABLE IF NOT EXISTS time_entries (
   funding_source_id TEXT REFERENCES funding_sources(id),
   intervention_id TEXT REFERENCES interventions(id) ON DELETE SET NULL,
   call_id TEXT REFERENCES calls(id) ON DELETE SET NULL,
-  description TEXT,
+  -- What the time was spent on and the reviewer's note: free text that can name the client, so encrypted.
+  description_enc TEXT,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','submitted','approved','rejected')),
   submitted_at TEXT,
   approved_by TEXT REFERENCES users(id),
   approved_at TEXT,
-  approval_note TEXT,
+  approval_note_enc TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -7077,12 +7078,13 @@ CREATE TABLE IF NOT EXISTS expenditures (
   amount REAL NOT NULL,
   category TEXT NOT NULL,
   vendor TEXT,
-  description TEXT,
+  -- What was bought, for whom, and the reviewer's note: free text that can name the client, so encrypted.
+  description_enc TEXT,
   receipt_ref TEXT,
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','reimbursed')),
   approved_by TEXT REFERENCES users(id),
   approved_at TEXT,
-  approval_note TEXT,
+  approval_note_enc TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -7112,7 +7114,7 @@ CREATE TABLE IF NOT EXISTS notes (
   cosigned_by TEXT REFERENCES users(id),
   cosigned_at TEXT,
   cosignature_hash TEXT,
-  cosign_note TEXT,
+  cosign_note_enc TEXT,                -- the countersigner's comment on the note: encrypted
   -- The author asked a supervisor to review/co-sign this note (a navigator flagging a difficult contact),
   -- separate from cosign_required, which the account's supervision setting imposes on every note.
   cosign_requested INTEGER NOT NULL DEFAULT 0,
@@ -7140,7 +7142,7 @@ CREATE TABLE IF NOT EXISTS note_addenda (
   note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
   author_id TEXT NOT NULL REFERENCES users(id),
   content_enc TEXT NOT NULL,
-  reason TEXT,
+  reason_enc TEXT,                     -- why the addendum was needed (free text): encrypted
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -7158,7 +7160,7 @@ CREATE TABLE IF NOT EXISTS consents (
   -- 42 CFR \xA72.31 lets a consent expire on an event ("on discharge from the program") instead of a date.
   expires_event TEXT,
   revoked_at TEXT,
-  revoked_reason TEXT,
+  revoked_reason_enc TEXT,             -- why the client revoked it (free text): encrypted
   document_ref TEXT,
   witness TEXT,
   signed_on_paper INTEGER NOT NULL DEFAULT 0,
@@ -7276,7 +7278,7 @@ CREATE TABLE IF NOT EXISTS client_forms (
   completed_at TEXT,
   completed_by TEXT REFERENCES users(id),
   created_by TEXT NOT NULL REFERENCES users(id),
-  notes TEXT,
+  notes_enc TEXT,                      -- free text about this client's form: encrypted
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   deleted_at TEXT
@@ -8049,7 +8051,7 @@ var require_clients_model = __commonJS({
     init_globals_inject();
     var db3 = require_db();
     var { encrypt: encrypt3, decrypt: decrypt3, blindIndex: blindIndex2, foldText, uuid: uuid2 } = require_crypto();
-    var ENC_FIELDS = ["first_name", "last_name", "preferred_name", "dob", "phone", "alt_phone", "email", "address", "medicaid_id", "emergency_contact", "goals", "flags"];
+    var ENC_FIELDS = ["first_name", "last_name", "preferred_name", "dob", "phone", "alt_phone", "email", "address", "medicaid_id", "emergency_contact", "goals", "flags", "contact_preferences"];
     var PLAIN_FIELDS = [
       "city",
       "zip",
@@ -8082,7 +8084,6 @@ var require_clients_model = __commonJS({
       "pregnant_or_parenting",
       "co_occurring_mh",
       "race_codes",
-      "contact_preferences",
       "ok_to_text",
       "ok_to_voicemail"
     ];
@@ -10673,6 +10674,25 @@ var require_db = __commonJS({
         encryptColumn(d, "clients", "legal_hold_reason", "legal_hold_reason_enc");
         for (const c of ["legal_hold_reason_enc", "legal_hold_cleared_reason_enc", "removed_reason_enc"]) addColumn(d, "clients", c, "TEXT");
         if (tableExists(d, "episodes")) addColumn(d, "episodes", "reopen_reason_enc", "TEXT");
+      },
+      // 37: the rest of the free text typed about a client or a note leaves plaintext: an addendum's reason, a
+      //     consent's revocation reason, a countersignature note, an assignment's notes (a caseload transfer's
+      //     reason), a time entry's or expenditure's description and reviewer's note, a client form's notes and
+      //     a client's contact preferences ("safe contact" notes). Staff-only text with no client (a fund's notes,
+      //     a list label, a template's description) stays as it is.
+      (d) => {
+        for (const [t, from, to] of [
+          ["note_addenda", "reason", "reason_enc"],
+          ["consents", "revoked_reason", "revoked_reason_enc"],
+          ["notes", "cosign_note", "cosign_note_enc"],
+          ["assignments", "notes", "notes_enc"],
+          ["time_entries", "description", "description_enc"],
+          ["time_entries", "approval_note", "approval_note_enc"],
+          ["expenditures", "description", "description_enc"],
+          ["expenditures", "approval_note", "approval_note_enc"],
+          ["client_forms", "notes", "notes_enc"],
+          ["clients", "contact_preferences", "contact_preferences_enc"]
+        ]) encryptColumn(d, t, from, to);
       }
     ];
     function initialise(d, schemaText, dbPath) {
@@ -10951,31 +10971,33 @@ var require_sync_tables = __commonJS({
         { name: "funding_sources", enc: [], scope: "all", writePerm: "budget:manage" },
         { name: "budget_lines", enc: [], scope: "all", writePerm: "budget:manage", parent: ["funding_sources", "funding_source_id"], selfParent: "parent_id" },
         // merged_into points at another client: the record that was kept must land before its duplicate.
-        { name: "clients", enc: ["first_name_enc", "last_name_enc", "preferred_name_enc", "dob_enc", "phone_enc", "alt_phone_enc", "email_enc", "address_enc", "medicaid_id_enc", "emergency_contact_enc", "goals_enc", "flags_enc", "legal_hold_reason_enc", "legal_hold_cleared_reason_enc", "removed_reason_enc"], legacy: { legal_hold_reason: "legal_hold_reason_enc" }, scope: "client", clientCol: "id", idx: true, writePerm: "clients:write", selfParent: "merged_into" },
-        { name: "assignments", enc: [], scope: "client", clientCol: "client_id", writePerm: "assignments:manage", parent: ["clients", "client_id"] },
+        { name: "clients", enc: ["first_name_enc", "last_name_enc", "preferred_name_enc", "dob_enc", "phone_enc", "alt_phone_enc", "email_enc", "address_enc", "medicaid_id_enc", "emergency_contact_enc", "goals_enc", "flags_enc", "legal_hold_reason_enc", "legal_hold_cleared_reason_enc", "removed_reason_enc", "contact_preferences_enc"], legacy: { legal_hold_reason: "legal_hold_reason_enc", contact_preferences: "contact_preferences_enc" }, scope: "client", clientCol: "id", idx: true, writePerm: "clients:write", selfParent: "merged_into" },
+        { name: "assignments", enc: ["notes_enc"], legacy: { notes: "notes_enc" }, scope: "client", clientCol: "client_id", writePerm: "assignments:manage", parent: ["clients", "client_id"] },
         { name: "episodes", enc: ["presenting_problem_enc", "discharge_summary_enc", "reopen_reason_enc"], scope: "client", clientCol: "client_id", writePerm: "episodes:write", parent: ["clients", "client_id"] },
         // CalOMS Tx records hang off an episode: the episode must land first.
         { name: "caloms_records", enc: ["answers_enc"], scope: "client", clientCol: "client_id", writePerm: "episodes:write", parent: ["episodes", "episode_id"] },
         { name: "interventions", enc: ["summary_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "interventions:write", parent: ["clients", "client_id"] },
         { name: "overdose_events", enc: ["notes_enc", "substances_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "overdose:write", parent: ["clients", "client_id"] },
         { name: "calls", enc: ["contact_name_enc", "phone_enc", "summary_enc", "purpose_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "calls:write", parent: ["clients", "client_id"] },
-        { name: "time_entries", enc: [], scope: "client-or-null", clientCol: "client_id", writePerm: "time:write", parent: ["clients", "client_id"] },
+        { name: "time_entries", enc: ["description_enc", "approval_note_enc"], legacy: { description: "description_enc", approval_note: "approval_note_enc" }, scope: "client-or-null", clientCol: "client_id", writePerm: "time:write", parent: ["clients", "client_id"] },
         // A referral may cite the consent it was made under, so consents come first.
-        { name: "consents", enc: ["recipient_enc", "purpose_enc", "scope_enc", "signer_name_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
+        { name: "consents", enc: ["recipient_enc", "purpose_enc", "scope_enc", "signer_name_enc", "revoked_reason_enc"], legacy: { revoked_reason: "revoked_reason_enc" }, scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
         // A disclosure made under a subpart E court order cites it, so orders travel before disclosures.
         { name: "court_orders", enc: ["court_enc", "case_ref_enc", "recipient_enc", "purpose_enc", "scope_enc", "vacated_reason_enc"], legacy: { vacated_reason: "vacated_reason_enc" }, scope: "client", clientCol: "client_id", writePerm: "court-orders:write", parent: ["clients", "client_id"] },
         { name: "part2_notices", enc: ["notes_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
         { name: "referrals", enc: ["outcome_enc", "barrier_enc", "notes_enc"], scope: "client", clientCol: "client_id", writePerm: "referrals:write", parent: ["clients", "client_id"] },
+        // Migration 37 moved the free text on assignments, time entries, consents (revocation), expenditures, notes
+        // (countersignature), addenda, client forms and clients (contact preferences) into _enc columns likewise.
         // Migration 24 moved tasks.description into description_enc; kernels before 1.9.3 still push `description`.
         { name: "tasks", enc: ["title_enc", "description_enc"], legacy: { description: "description_enc" }, scope: "client-or-null", clientCol: "client_id", writePerm: "tasks:write", parent: ["clients", "client_id"] },
-        { name: "expenditures", enc: [], scope: "client-or-null", clientCol: "client_id", writePerm: "budget:write", parent: ["clients", "client_id"] },
-        { name: "notes", enc: ["content_enc", "structured_enc", "title_enc"], scope: "client", clientCol: "client_id", writePerm: "notes:admin:write", parent: ["clients", "client_id"] },
-        { name: "note_addenda", enc: ["content_enc"], scope: "via-note", writePerm: "notes:admin:write", parent: ["notes", "note_id"] },
+        { name: "expenditures", enc: ["description_enc", "approval_note_enc"], legacy: { description: "description_enc", approval_note: "approval_note_enc" }, scope: "client-or-null", clientCol: "client_id", writePerm: "budget:write", parent: ["clients", "client_id"] },
+        { name: "notes", enc: ["content_enc", "structured_enc", "title_enc", "cosign_note_enc"], legacy: { cosign_note: "cosign_note_enc" }, scope: "client", clientCol: "client_id", writePerm: "notes:admin:write", parent: ["clients", "client_id"] },
+        { name: "note_addenda", enc: ["content_enc", "reason_enc"], legacy: { reason: "reason_enc" }, scope: "via-note", writePerm: "notes:admin:write", parent: ["notes", "note_id"] },
         { name: "disclosures", enc: ["recipient_enc", "purpose_enc", "what_enc", "justification_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
         { name: "imports", enc: [], scope: "all", writePerm: "imports:write" },
         { name: "import_items", enc: ["content_enc", "title_enc"], scope: "all", writePerm: "imports:write", parent: ["imports", "import_id"] },
         { name: "form_templates", enc: [], scope: "all", writePerm: "forms:manage", blob: ["file_b64"] },
-        { name: "client_forms", enc: ["values_enc"], scope: "client", clientCol: "client_id", writePerm: "forms:write", parent: ["clients", "client_id"] },
+        { name: "client_forms", enc: ["values_enc", "notes_enc"], legacy: { notes: "notes_enc" }, scope: "client", clientCol: "client_id", writePerm: "forms:write", parent: ["clients", "client_id"] },
         { name: "client_form_files", enc: ["data_enc"], scope: "client", clientCol: "client_id", writePerm: "forms:write", parent: ["client_forms", "client_form_id"], blob: ["data_enc"] },
         { name: "patient_requests", enc: ["notes_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
         // Clinical documentation (CalAIM): the problem list and its history, the care plan, ASAM assessments and
@@ -12817,7 +12839,7 @@ var require_demo = __commonJS({
               rand() < 0.3 ? day(-Math.floor(rand() * 10)) : null,
               d(off, 16)
             );
-            db3.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,funding_source_id,intervention_id,description) VALUES(?,?,?,?,?,?,?,?,?)`, track("time_entries", uuid2()), c.worker, c.id, day(off), dur, type === "transport" ? "travel" : type === "care_coordination" ? "care_coordination" : type === "outreach" ? "outreach" : "direct_service", day(off) >= fundStart ? fund : null, iid, type.replace(/_/g, " "));
+            db3.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,funding_source_id,intervention_id,description_enc) VALUES(?,?,?,?,?,?,?,?,?)`, track("time_entries", uuid2()), c.worker, c.id, day(off), dur, type === "transport" ? "travel" : type === "care_coordination" ? "care_coordination" : type === "outreach" ? "outreach" : "direct_service", day(off) >= fundStart ? fund : null, iid, encrypt3(type.replace(/_/g, " ")));
             counts.interventions++;
           }
           const nc = c.cstatus === "waitlist" ? 1 : 3 + Math.floor(rand() * 4);
@@ -12905,7 +12927,7 @@ P: ${P2} (Sample data)`), encrypt3(JSON.stringify(i % 4 === 0 ? { S, O, A, P: P2
           for (let k = 0; k < ne; k++) {
             const [cat, vendor, desc, amt] = EXP[(i + k * 3) % EXP.length];
             const st = k === 0 ? "approved" : pick(["pending", "approved", "reimbursed"]);
-            db3.run(`INSERT INTO expenditures(id,funding_source_id,budget_line_id,client_id,user_id,spent_at,amount,category,vendor,description,status,approved_by,approved_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, track("expenditures", uuid2()), fund, lineIds[cat] || lineIds.client_assistance, c.id, c.worker, day(5 + Math.floor(rand() * 80)), amt, cat, vendor, desc, st, st === "pending" ? null : supervisor, st === "pending" ? null : d(3));
+            db3.run(`INSERT INTO expenditures(id,funding_source_id,budget_line_id,client_id,user_id,spent_at,amount,category,vendor,description_enc,status,approved_by,approved_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, track("expenditures", uuid2()), fund, lineIds[cat] || lineIds.client_assistance, c.id, c.worker, day(5 + Math.floor(rand() * 80)), amt, cat, vendor, encrypt3(desc), st, st === "pending" ? null : supervisor, st === "pending" ? null : d(3));
           }
         });
         const pdf = require_pdf();
@@ -12999,9 +13021,9 @@ P: ${P2} (Sample data)`), encrypt3(JSON.stringify(i % 4 === 0 ? { S, O, A, P: P2
         for (const w of workers) for (let k = 0; k < 10; k++) {
           const cat = pick(["documentation", "meeting", "travel", "training", "supervision", "admin", "outreach"]);
           const wd = day(Math.floor(rand() * 60));
-          db3.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,funding_source_id,description) VALUES(?,?,?,?,?,?,?,?)`, track("time_entries", uuid2()), w, null, wd, 30 + Math.floor(rand() * 6) * 15, cat, cat === "training" ? fund2 : wd >= fundStart ? fund : null, { documentation: "Charting and note sign-off", meeting: "Weekly team huddle", travel: "Drive between sites", training: "Naloxone train-the-trainer", supervision: "Supervision with program manager", admin: "Data entry for monthly report", outreach: "Encampment outreach walk" }[cat]);
+          db3.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,funding_source_id,description_enc) VALUES(?,?,?,?,?,?,?,?)`, track("time_entries", uuid2()), w, null, wd, 30 + Math.floor(rand() * 6) * 15, cat, cat === "training" ? fund2 : wd >= fundStart ? fund : null, encrypt3({ documentation: "Charting and note sign-off", meeting: "Weekly team huddle", travel: "Drive between sites", training: "Naloxone train-the-trainer", supervision: "Supervision with program manager", admin: "Data entry for monthly report", outreach: "Encampment outreach walk" }[cat]));
         }
-        for (const [cat, vendor, desc, amt] of [["naloxone_supplies", "Harm Reduction Coalition", "Naloxone kits (50)", 1500], ["outreach_materials", "PrintPro", "Outreach flyers and cards", 220], ["training", "State Peer Academy", "Peer certification course", 650]]) db3.run(`INSERT INTO expenditures(id,funding_source_id,budget_line_id,user_id,spent_at,amount,category,vendor,description,status,approved_by,approved_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, track("expenditures", uuid2()), fund, lineIds[cat], workers[0], day(20 + Math.floor(rand() * 60)), amt, cat, vendor, desc, "approved", supervisor, d(15));
+        for (const [cat, vendor, desc, amt] of [["naloxone_supplies", "Harm Reduction Coalition", "Naloxone kits (50)", 1500], ["outreach_materials", "PrintPro", "Outreach flyers and cards", 220], ["training", "State Peer Academy", "Peer certification course", 650]]) db3.run(`INSERT INTO expenditures(id,funding_source_id,budget_line_id,user_id,spent_at,amount,category,vendor,description_enc,status,approved_by,approved_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, track("expenditures", uuid2()), fund, lineIds[cat], workers[0], day(20 + Math.floor(rand() * 60)), amt, cat, vendor, encrypt3(desc), "approved", supervisor, d(15));
         for (const [item, qty] of [["Naloxone kit", 42], ["Fentanyl test strips", 180], ["Xylazine test strips", 60], ["Wound care kit", 25]]) {
           if (!db3.one(`SELECT 1 FROM supply_stock WHERE item=? COLLATE NOCASE`, item)) db3.run(`INSERT INTO supply_stock(id,item,quantity,updated_by) VALUES(?,?,?,?)`, track("supply_stock", uuid2()), item, qty, workers[0]);
         }
@@ -13589,7 +13611,26 @@ var require_budget = __commonJS({
     var config = require_config();
     var { badRequest, notFound, HttpError: HttpError3 } = require_http();
     var { validate } = require_validate();
-    var { uuid: uuid2 } = require_crypto();
+    var { uuid: uuid2, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
+    function encDescription(v) {
+      if (v.description !== void 0) {
+        v.description_enc = v.description ? encrypt3(String(v.description)) : null;
+        delete v.description;
+      }
+    }
+    function presentExpenditure(e) {
+      if (!e) return e;
+      const o = { ...e };
+      if ("description_enc" in e) {
+        o.description = e.description_enc ? decrypt3(e.description_enc) : null;
+        delete o.description_enc;
+      }
+      if ("approval_note_enc" in e) {
+        o.approval_note = e.approval_note_enc ? decrypt3(e.approval_note_enc) : null;
+        delete o.approval_note_enc;
+      }
+      return o;
+    }
     var cents = (v) => typeof v === "number" && Number.isFinite(v) ? Math.round(v * 100) / 100 : v;
     function validTimezone(tz) {
       if (typeof tz !== "string" || !tz.trim() || tz.length > 64) return false;
@@ -13857,6 +13898,7 @@ var require_budget = __commonJS({
             if (!l) throw badRequest("Budget line does not belong to fund");
             if (!v.category) v.category = l.category;
           }
+          encDescription(v);
         },
         beforeUpdate: (ctx, v, row) => {
           if (v.amount !== void 0 && v.amount !== null) v.amount = cents(v.amount);
@@ -13870,7 +13912,9 @@ var require_budget = __commonJS({
               if (!l) throw badRequest("Budget line does not belong to fund");
             }
           }
+          encDescription(v);
         },
+        afterLoad: (ctx, x) => presentExpenditure(x),
         canEdit: (ctx, row) => row.status === "pending" && (row.user_id === ctx.user.id || auth3.hasPerm(ctx.user, "budget:approve"))
       });
       const TRANSITIONS = { pending: ["approved", "rejected"], approved: ["reimbursed"] };
@@ -13884,7 +13928,7 @@ var require_budget = __commonJS({
         }
         if (e.user_id === ctx.user.id && status === "approved") throw badRequest("Separation of duties: you cannot approve your own expenditure; another approver must review it");
         if (status === "rejected" && !note) throw badRequest("Say why this expenditure is being rejected, so the person who submitted it knows what to fix");
-        const details = { note, amount: e.amount };
+        const details = { note_recorded: note ? true : void 0, amount: e.amount };
         if (status === "approved" && e.budget_line_id) {
           const available = lineAvailable(e.budget_line_id, { excluding: e.id });
           if (available !== null && cents(e.amount) > available) {
@@ -13903,10 +13947,10 @@ var require_budget = __commonJS({
           }
         }
         if (status === "reimbursed") {
-          db3.run(`UPDATE expenditures SET status=?, approval_note=COALESCE(?, approval_note), updated_at=? WHERE id=?`, status, note || null, db3.now(), e.id);
+          db3.run(`UPDATE expenditures SET status=?, approval_note_enc=COALESCE(?, approval_note_enc), updated_at=? WHERE id=?`, status, note ? encrypt3(note) : null, db3.now(), e.id);
           details.reimbursed_by = ctx.user.id;
         } else {
-          db3.run(`UPDATE expenditures SET status=?, approved_by=?, approved_at=?, approval_note=?, updated_at=? WHERE id=?`, status, ctx.user.id, db3.now(), note || null, db3.now(), e.id);
+          db3.run(`UPDATE expenditures SET status=?, approved_by=?, approved_at=?, approval_note_enc=?, updated_at=? WHERE id=?`, status, ctx.user.id, db3.now(), note ? encrypt3(note) : null, db3.now(), e.id);
         }
         audit3.log({ user: ctx.user, action: `expenditure.${status}`, entity: "expenditure", entityId: e.id, clientId: e.client_id, ip: ctx.ip, details });
         return { ok: true, status };
@@ -13932,6 +13976,7 @@ var require_budget = __commonJS({
     module.exports.validTimezone = validTimezone;
     module.exports.cents = cents;
     module.exports.lineAvailable = lineAvailable;
+    module.exports.presentExpenditure = presentExpenditure;
   }
 });
 
@@ -16558,7 +16603,7 @@ var require_exports = __commonJS({
         time: {
           label: "Time",
           columns: ["work_date", "worker", "client_code", "category", "minutes", "billable", "funding_source", "description"],
-          rows: () => db3.all(`SELECT t.*, u.display_name worker, c.client_code, t.client_id AS _client_id, f.name funding_source FROM time_entries t JOIN users u ON u.id=t.user_id LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN funding_sources f ON f.id=t.funding_source_id WHERE t.work_date BETWEEN ? AND ? AND (t.user_id=? OR ?) ORDER BY t.work_date LIMIT ?`, from, to, ctx.user.id, all, MAX_ROWS)
+          rows: () => db3.all(`SELECT t.*, u.display_name worker, c.client_code, t.client_id AS _client_id, f.name funding_source FROM time_entries t JOIN users u ON u.id=t.user_id LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN funding_sources f ON f.id=t.funding_source_id WHERE t.work_date BETWEEN ? AND ? AND (t.user_id=? OR ?) ORDER BY t.work_date LIMIT ?`, from, to, ctx.user.id, all, MAX_ROWS).map((r) => ({ ...r, description: phi(r.description_enc) }))
         },
         referrals: {
           label: "Referrals",
@@ -16608,7 +16653,7 @@ var require_exports = __commonJS({
         D.expenditures = {
           label: "Expenditures",
           columns: ["spent_at", "fund", "line", "category", "amount", "status", "client_code", "vendor", "description", "receipt_ref", "worker", "approver"],
-          rows: () => db3.all(`SELECT e.*, f.name fund, b.label line, c.client_code, e.client_id AS _client_id, u.display_name worker, a.display_name approver FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id LEFT JOIN budget_lines b ON b.id=e.budget_line_id LEFT JOIN clients c ON c.id=e.client_id JOIN users u ON u.id=e.user_id LEFT JOIN users a ON a.id=e.approved_by WHERE e.spent_at BETWEEN ? AND ? ORDER BY e.spent_at`, from, to).map((r) => ({ ...r, amount: cents(r.amount) }))
+          rows: () => db3.all(`SELECT e.*, f.name fund, b.label line, c.client_code, e.client_id AS _client_id, u.display_name worker, a.display_name approver FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id LEFT JOIN budget_lines b ON b.id=e.budget_line_id LEFT JOIN clients c ON c.id=e.client_id JOIN users u ON u.id=e.user_id LEFT JOIN users a ON a.id=e.approved_by WHERE e.spent_at BETWEEN ? AND ? ORDER BY e.spent_at`, from, to).map((r) => ({ ...r, amount: cents(r.amount), description: phi(r.description_enc) }))
         };
       }
       const pseudo = pseudonymizer();
@@ -17527,7 +17572,7 @@ var require_assignments = __commonJS({
     var audit3 = require_audit();
     var { badRequest, notFound } = require_http();
     var { validate } = require_validate();
-    var { uuid: uuid2 } = require_crypto();
+    var { uuid: uuid2, encrypt: encrypt3 } = require_crypto();
     module.exports = (r) => {
       r.post("/api/clients/:id/assignments", auth3.requireAuth, auth3.requirePerm("assignments:manage"), (ctx) => {
         const c = db3.one(`SELECT id FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id);
@@ -17538,7 +17583,7 @@ var require_assignments = __commonJS({
         const id = uuid2();
         db3.transaction(() => {
           if ((v.role_on_case || "primary") === "primary") db3.run(`UPDATE assignments SET end_date=date('now'), updated_at=? WHERE client_id=? AND role_on_case='primary' AND end_date IS NULL`, db3.now(), c.id);
-          db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,notes,created_by) VALUES(?,?,?,?,?,?,?)`, id, c.id, v.user_id, v.role_on_case || "primary", v.start_date || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), v.notes || null, ctx.user.id);
+          db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,notes_enc,created_by) VALUES(?,?,?,?,?,?,?)`, id, c.id, v.user_id, v.role_on_case || "primary", v.start_date || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), v.notes ? encrypt3(v.notes) : null, ctx.user.id);
         });
         audit3.log({ user: ctx.user, action: "assignment.create", entity: "assignment", entityId: id, clientId: c.id, ip: ctx.ip, details: { user_id: v.user_id, role: v.role_on_case } });
         ctx.status = 201;
@@ -17801,7 +17846,7 @@ var require_calls = __commonJS({
         afterInsert: (ctx, row) => {
           const what = row.method === "text" ? "text message" : "call";
           if (row._log_time && row.duration_minutes > 0) db3.run(
-            `INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,call_id,description) VALUES(?,?,?,?,?,?,?,?)`,
+            `INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,call_id,description_enc) VALUES(?,?,?,?,?,?,?,?)`,
             uuid2(),
             row.user_id,
             row.client_id || null,
@@ -17809,7 +17854,7 @@ var require_calls = __commonJS({
             row.duration_minutes,
             "direct_service",
             row.id,
-            `${row.direction} ${what}`
+            encrypt3(`${row.direction} ${what}`)
           );
           if (row.follow_up_needed && row.follow_up_due) db3.run(
             `INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority) VALUES(?,?,?,?,?,?,?)`,
@@ -19456,12 +19501,14 @@ var require_consents = __commonJS({
         purpose: c.purpose_enc ? decrypt3(c.purpose_enc) : null,
         scope: c.scope_enc ? decrypt3(c.scope_enc) : null,
         signer_name: c.signer_name_enc ? decrypt3(c.signer_name_enc) : null,
+        revoked_reason: c.revoked_reason_enc ? decrypt3(c.revoked_reason_enc) : null,
         // The coded categories it covers, as a list ([] when none were recorded: it covers nothing automated).
         info_categories: [...disclosure.parseCategories(c.info_categories)],
         recipient_enc: void 0,
         purpose_enc: void 0,
         scope_enc: void 0,
         signer_name_enc: void 0,
+        revoked_reason_enc: void 0,
         // A consent that lacks the §2.31 elements (one that arrived by sync or by hand, or a legacy one) is shown,
         // but cannot be chosen to authorise a disclosure: incomplete says why.
         active,
@@ -19572,10 +19619,10 @@ var require_consents = __commonJS({
         const { reason } = validate(ctx.body, { reason: { type: "string", maxLen: 300 } });
         const dependent = db3.all(`SELECT id, resource_id FROM referrals WHERE consent_id=? AND status NOT IN ('closed','declined')`, c.id);
         db3.transaction(() => {
-          db3.run(`UPDATE consents SET revoked_at=?, revoked_reason=?, revoked_by=?, updated_at=? WHERE id=?`, db3.now(), reason || null, ctx.user.id, db3.now(), c.id);
+          db3.run(`UPDATE consents SET revoked_at=?, revoked_reason_enc=?, revoked_by=?, updated_at=? WHERE id=?`, db3.now(), reason ? encrypt3(reason) : null, ctx.user.id, db3.now(), c.id);
           for (const ref of dependent) db3.run(`UPDATE referrals SET consent_revoked=1, updated_at=? WHERE id=?`, db3.now(), ref.id);
         });
-        audit3.log({ user: ctx.user, action: "consent.revoke", entity: "consent", entityId: c.id, clientId: c.client_id, ip: ctx.ip, details: { dependent_referrals: dependent.length } });
+        audit3.log({ user: ctx.user, action: "consent.revoke", entity: "consent", entityId: c.id, clientId: c.client_id, ip: ctx.ip, details: { dependent_referrals: dependent.length, reason_recorded: reason ? true : void 0 } });
         return { ok: true, dependent_referrals: dependent.length };
       });
       r.get("/api/consents/:id/pdf", auth3.requireAuth, auth3.requirePerm("consents:read", "consents:write"), (ctx) => {
@@ -20310,7 +20357,7 @@ var require_clients = __commonJS({
             if (n) moved[`${table}.${col}`] = (moved[`${table}.${col}`] || 0) + n;
           }
           const fills = {};
-          for (const col of ["dob_enc", "phone_enc", "alt_phone_enc", "email_enc", "address_enc", "medicaid_id_enc", "emergency_contact_enc", "preferred_name_enc", "goals_enc", "flags_enc"]) {
+          for (const col of ["dob_enc", "phone_enc", "alt_phone_enc", "email_enc", "address_enc", "medicaid_id_enc", "emergency_contact_enc", "preferred_name_enc", "goals_enc", "flags_enc", "contact_preferences_enc"]) {
             if (!keep[col] && source[col]) fills[col] = source[col];
           }
           for (const col of M.PLAIN_FIELDS) if ((keep[col] === null || keep[col] === "" || keep[col] === void 0) && source[col]) fills[col] = source[col];
@@ -20353,7 +20400,7 @@ var require_clients = __commonJS({
         const row = loadClient(ctx, ctx.params.id);
         const client = M.decryptRow(row);
         client.days_to_engagement = M.daysToEngagement(client);
-        client.assignments = db3.all(`SELECT a.*, u.display_name, u.role AS user_role FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=? ORDER BY a.end_date IS NOT NULL, a.start_date DESC`, row.id);
+        client.assignments = db3.all(`SELECT a.*, u.display_name, u.role AS user_role FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=? ORDER BY a.end_date IS NOT NULL, a.start_date DESC`, row.id).map((a) => ({ ...a, notes: a.notes_enc ? decrypt3(a.notes_enc) : null, notes_enc: void 0 }));
         client.active_consents = db3.all(`SELECT id,type,recipient_enc,purpose_enc,signed_at,expires_at FROM consents WHERE client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, row.id).map((x) => ({ id: x.id, type: x.type, recipient: x.recipient_enc ? decrypt3(x.recipient_enc) : null, purpose: x.purpose_enc ? decrypt3(x.purpose_enc) : null, signed_at: x.signed_at, expires_at: x.expires_at }));
         client.counts = {
           interventions: db3.one(`SELECT COUNT(*) n FROM interventions WHERE client_id=?`, row.id).n,
@@ -20438,7 +20485,7 @@ var require_clients = __commonJS({
           events.push({ kind: "consent", id: x.id, at: x.signed_at, title: `Consent: ${x.type.replace(/_/g, " ")}${x.recipient_enc ? " \u2192 " + decrypt3(x.recipient_enc) : ""}`, detail: x.purpose_enc ? decrypt3(x.purpose_enc) : null, meta: { expires_at: x.expires_at, revoked_at: x.revoked_at } });
         if (auth3.hasPerm(ctx.user, "budget:read"))
           for (const x of db3.all(`SELECT e.*, f.name AS fund FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE client_id=? ORDER BY e.spent_at DESC LIMIT ?`, id, per))
-            events.push({ kind: "expense", id: x.id, at: x.spent_at, title: `$${x.amount.toFixed(2)} ${x.category.replace(/_/g, " ")}`, detail: x.description, meta: { fund: x.fund, status: x.status } });
+            events.push({ kind: "expense", id: x.id, at: x.spent_at, title: `$${x.amount.toFixed(2)} ${x.category.replace(/_/g, " ")}`, detail: x.description_enc ? decrypt3(x.description_enc) : null, meta: { fund: x.fund, status: x.status } });
         events.push({ kind: "milestone", id: "intake", at: row.intake_date, title: "Program intake", meta: {} });
         if (row.referral_date) events.push({ kind: "milestone", id: "referral", at: row.referral_date, title: "Referred in", meta: {} });
         if (row.engagement_date) events.push({ kind: "milestone", id: "engagement", at: row.engagement_date, title: "Engaged with services", meta: {} });
@@ -21061,7 +21108,7 @@ var require_dataimport2 = __commonJS({
                 }
                 case "time_entries": {
                   if (!rec.work_date || !rec.minutes) throw new Error("date and minutes are required");
-                  db3.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,billable,description) VALUES(?,?,?,?,?,?,?,?)`, id, ctx.user.id, rec.client_id || null, rec.work_date, Math.round(rec.minutes), rec.category || "direct_service", rec.billable ? 1 : 0, rec.description || null);
+                  db3.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,billable,description_enc) VALUES(?,?,?,?,?,?,?,?)`, id, ctx.user.id, rec.client_id || null, rec.work_date, Math.round(rec.minutes), rec.category || "direct_service", rec.billable ? 1 : 0, rec.description ? encrypt3(String(rec.description)) : null);
                   break;
                 }
                 case "tasks": {
@@ -21072,7 +21119,7 @@ var require_dataimport2 = __commonJS({
                 case "expenditures": {
                   const f = rec.funding_source_id ? db3.one(`SELECT id FROM funding_sources WHERE id=?`, rec.funding_source_id) : db3.one(`SELECT id FROM funding_sources WHERE name=? COLLATE NOCASE AND is_active=1`, rec.fund);
                   if (!f || !rec.spent_at || !rec.amount || !rec.category) throw new Error("date, amount, funding source and category are required");
-                  db3.run(`INSERT INTO expenditures(id,funding_source_id,client_id,user_id,spent_at,amount,category,vendor,description,receipt_ref) VALUES(?,?,?,?,?,?,?,?,?,?)`, id, f.id, rec.client_id || null, ctx.user.id, rec.spent_at, rec.amount, rec.category, rec.vendor || null, rec.description || null, rec.receipt_ref || null);
+                  db3.run(`INSERT INTO expenditures(id,funding_source_id,client_id,user_id,spent_at,amount,category,vendor,description_enc,receipt_ref) VALUES(?,?,?,?,?,?,?,?,?,?)`, id, f.id, rec.client_id || null, ctx.user.id, rec.spent_at, rec.amount, rec.category, rec.vendor || null, rec.description ? encrypt3(String(rec.description)) : null, rec.receipt_ref || null);
                   break;
                 }
               }
@@ -21662,13 +21709,13 @@ var require_episodes = __commonJS({
             }
             db3.run(`UPDATE assignments SET end_date=?, updated_at=? WHERE id=?`, lastDay, db3.now(), a.id);
             db3.run(
-              `INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,notes,created_by) VALUES(?,?,?,?,?,?,?)`,
+              `INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,notes_enc,created_by) VALUES(?,?,?,?,?,?,?)`,
               uuid2(),
               a.client_id,
               to.id,
               v.role_on_case || a.role_on_case,
               when,
-              v.reason ? `Transferred from ${from.display_name}: ${v.reason}` : `Transferred from ${from.display_name}`,
+              encrypt3(v.reason ? `Transferred from ${from.display_name}: ${v.reason}` : `Transferred from ${from.display_name}`),
               ctx.user.id
             );
             moved++;
@@ -27275,7 +27322,8 @@ var require_forms = __commonJS({
       auth3.assertClientAccess(ctx, f.client_id);
       return f;
     }
-    var formOut = (f, { values = true } = {}) => ({ ...f, fields: parseJson(f.fields_json, []), fields_json: void 0, values: values ? parseJson(decrypt3(f.values_enc), {}) : void 0, values_enc: void 0 });
+    var formNotes = (f) => f.notes_enc ? decrypt3(f.notes_enc) : null;
+    var formOut = (f, { values = true } = {}) => ({ ...f, fields: parseJson(f.fields_json, []), fields_json: void 0, values: values ? parseJson(decrypt3(f.values_enc), {}) : void 0, values_enc: void 0, notes: formNotes(f), notes_enc: void 0 });
     var SERVABLE_TYPES = /* @__PURE__ */ new Set([
       "application/pdf",
       "image/png",
@@ -27379,7 +27427,8 @@ var require_forms = __commonJS({
       });
       r.get("/api/clients/:id/forms", auth3.requireAuth, auth3.requirePerm("forms:read", "forms:write"), (ctx) => {
         auth3.assertClientAccess(ctx, ctx.params.id);
-        const rows = db3.all(`SELECT f.id, f.template_id, f.template_name, f.status, f.completed_at, f.created_at, f.updated_at, f.notes, cu.display_name completed_by_name, cr.display_name created_by_name, (SELECT COUNT(*) FROM client_form_files x WHERE x.client_form_id=f.id) attachments FROM client_forms f LEFT JOIN users cu ON cu.id=f.completed_by JOIN users cr ON cr.id=f.created_by WHERE f.client_id=? AND f.deleted_at IS NULL ORDER BY f.updated_at DESC`, ctx.params.id);
+        const rows = db3.all(`SELECT f.id, f.template_id, f.template_name, f.status, f.completed_at, f.created_at, f.updated_at, f.notes_enc, cu.display_name completed_by_name, cr.display_name created_by_name, (SELECT COUNT(*) FROM client_form_files x WHERE x.client_form_id=f.id) attachments FROM client_forms f LEFT JOIN users cu ON cu.id=f.completed_by JOIN users cr ON cr.id=f.created_by WHERE f.client_id=? AND f.deleted_at IS NULL ORDER BY f.updated_at DESC`, ctx.params.id).map((f) => ({ ...f, notes: formNotes(f), notes_enc: void 0 }));
+        audit3.log({ user: ctx.user, action: "client_form.list", entity: "client", entityId: ctx.params.id, clientId: ctx.params.id, ip: ctx.ip, details: { count: rows.length } });
         return { forms: rows };
       });
       r.post("/api/clients/:id/forms", auth3.requireAuth, auth3.requirePerm("forms:write"), (ctx) => {
@@ -27416,8 +27465,8 @@ var require_forms = __commonJS({
         const sets = ["values_enc=?", "updated_at=?"];
         const params = [encrypt3(JSON.stringify(values)), stamp2];
         if (v.notes !== void 0) {
-          sets.push("notes=?");
-          params.push(v.notes);
+          sets.push("notes_enc=?");
+          params.push(v.notes ? encrypt3(v.notes) : null);
         }
         if (v.status) {
           if (v.status === "completed") {
@@ -28618,7 +28667,7 @@ var require_interventions = __commonJS({
     var C = require_constants();
     var O = require_options();
     var { badRequest, forbidden } = require_http();
-    var { uuid: uuid2 } = require_crypto();
+    var { uuid: uuid2, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
     var supplies = require_supplies();
     var { localDate, cents } = require_budget();
     function serviceDate(v) {
@@ -28653,19 +28702,19 @@ var require_interventions = __commonJS({
       const desc = `Auto-recorded from ${row.type.replace(/_/g, " ")}`;
       const spentAt = serviceDate(row);
       if (existing) db3.run(
-        `UPDATE expenditures SET funding_source_id=?, budget_line_id=?, client_id=?, spent_at=?, amount=?, category=?, description=?, updated_at=? WHERE id=?`,
+        `UPDATE expenditures SET funding_source_id=?, budget_line_id=?, client_id=?, spent_at=?, amount=?, category=?, description_enc=?, updated_at=? WHERE id=?`,
         row.funding_source_id,
         row.budget_line_id,
         row.client_id || null,
         spentAt,
         cents(row.cost),
         line.category,
-        desc,
+        encrypt3(desc),
         db3.now(),
         existing.id
       );
       else db3.run(
-        `INSERT INTO expenditures(id,funding_source_id,budget_line_id,client_id,user_id,intervention_id,spent_at,amount,category,description) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO expenditures(id,funding_source_id,budget_line_id,client_id,user_id,intervention_id,spent_at,amount,category,description_enc) VALUES(?,?,?,?,?,?,?,?,?,?)`,
         uuid2(),
         row.funding_source_id,
         row.budget_line_id,
@@ -28675,7 +28724,7 @@ var require_interventions = __commonJS({
         spentAt,
         cents(row.cost),
         line.category,
-        desc
+        encrypt3(desc)
       );
     }
     function syncTimeEntry(row, prev) {
@@ -28775,7 +28824,7 @@ var require_interventions = __commonJS({
         afterInsert: (ctx, row) => {
           if (row._log_time && row.duration_minutes > 0) {
             db3.run(
-              `INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,funding_source_id,intervention_id,description) VALUES(?,?,?,?,?,?,?,?,?)`,
+              `INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,funding_source_id,intervention_id,description_enc) VALUES(?,?,?,?,?,?,?,?,?)`,
               uuid2(),
               row.user_id,
               row.client_id ?? null,
@@ -28784,7 +28833,7 @@ var require_interventions = __commonJS({
               row._time_category || "direct_service",
               row.funding_source_id || null,
               row.id,
-              O.labelOf("INTERVENTION_TYPES", row.type)
+              encrypt3(O.labelOf("INTERVENTION_TYPES", row.type))
             );
           }
           if (row.naloxone_kits > 0 && row.client_id) db3.run(`UPDATE clients SET naloxone_provided=1, naloxone_last_date=?, updated_at=? WHERE id=?`, serviceDate(row), db3.now(), row.client_id);
@@ -28819,7 +28868,7 @@ var require_interventions = __commonJS({
           if (te && (te.status === "draft" || te.status === "submitted")) {
             db3.run(`DELETE FROM time_entries WHERE id=?`, te.id);
             db3.tombstone("time_entries", te.id);
-          } else if (te) db3.run(`UPDATE time_entries SET intervention_id=NULL, description=?, updated_at=? WHERE id=?`, `${te.description || ""} (the visit this was logged from was deleted)`.trim(), db3.now(), te.id);
+          } else if (te) db3.run(`UPDATE time_entries SET intervention_id=NULL, description_enc=?, updated_at=? WHERE id=?`, encrypt3(`${te.description_enc ? decrypt3(te.description_enc) : ""} (the visit this was logged from was deleted)`.trim()), db3.now(), te.id);
           supplies.restore(ctx, row);
         },
         canEdit: crud.ownerOrManager()
@@ -29104,6 +29153,10 @@ var require_notes = __commonJS({
       delete out2.structured_enc;
       delete out2.title_enc;
       out2.title = row.title_enc ? decrypt3(row.title_enc) : null;
+      if ("cosign_note_enc" in row) {
+        out2.cosign_note = row.cosign_note_enc ? decrypt3(row.cosign_note_enc) : null;
+        delete out2.cosign_note_enc;
+      }
       if (withContent) {
         out2.content = decrypt3(row.content_enc);
         out2.structured = row.structured_enc ? JSON.parse(decrypt3(row.structured_enc)) : null;
@@ -29213,7 +29266,7 @@ var require_notes = __commonJS({
           audit3.log({ user: ctx.user, action: "note.view.denied", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, success: false });
           throw forbidden("You do not have access to this note");
         }
-        const addenda = db3.all(`SELECT a.id,a.reason,a.created_at,a.content_enc,u.display_name AS author FROM note_addenda a JOIN users u ON u.id=a.author_id WHERE a.note_id=? ORDER BY a.created_at`, n.id).map((a) => ({ ...a, content: decrypt3(a.content_enc), content_enc: void 0 }));
+        const addenda = db3.all(`SELECT a.id,a.reason_enc,a.created_at,a.content_enc,u.display_name AS author FROM note_addenda a JOIN users u ON u.id=a.author_id WHERE a.note_id=? ORDER BY a.created_at`, n.id).map((a) => ({ ...a, content: decrypt3(a.content_enc), reason: a.reason_enc ? decrypt3(a.reason_enc) : null, content_enc: void 0, reason_enc: void 0 }));
         const event = access === "breakglass" ? recordBreakGlass(ctx, { clientId: n.client_id, noteId: n.id, reason: breakGlassReason(ctx) }) : null;
         audit3.log({ user: ctx.user, action: access === "breakglass" ? "note.view.breakglass" : "note.view", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: access === "breakglass" ? { reason_recorded: true, breakglass_event: event } : { kind: n.kind } });
         return { note: { ...present(n), ...signatureState(n), addenda, problems: linkedProblems(ctx, n) } };
@@ -29306,8 +29359,8 @@ var require_notes = __commonJS({
         const { note } = validate(ctx.body, { password: { type: "string", required: true, maxLen: 500 }, note: { type: "string", maxLen: 1e3 } });
         await verifyIdentity(ctx);
         const hash2 = sha2562(`${n.id}|${ctx.user.id}|cosign|${n.content_enc}|${n.structured_enc || ""}`);
-        db3.run(`UPDATE notes SET cosigned_by=?, cosigned_at=?, cosignature_hash=?, cosign_note=?, updated_at=? WHERE id=?`, ctx.user.id, db3.now(), hash2, note || null, db3.now(), n.id);
-        audit3.log({ user: ctx.user, action: "note.cosign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { author_id: n.author_id, hash: hash2 } });
+        db3.run(`UPDATE notes SET cosigned_by=?, cosigned_at=?, cosignature_hash=?, cosign_note_enc=?, updated_at=? WHERE id=?`, ctx.user.id, db3.now(), hash2, note ? encrypt3(note) : null, db3.now(), n.id);
+        audit3.log({ user: ctx.user, action: "note.cosign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { author_id: n.author_id, hash: hash2, note_recorded: note ? true : void 0 } });
         return { ok: true, cosignature_hash: hash2 };
       });
       r.post("/api/notes/:id/addenda", auth3.requireAuth, (ctx) => {
@@ -29315,9 +29368,9 @@ var require_notes = __commonJS({
         if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
         const { content, reason } = validate(ctx.body, { content: { type: "string", required: true, maxLen: 2e4 }, reason: { type: "string", maxLen: 300 } });
         const id = uuid2();
-        db3.run(`INSERT INTO note_addenda(id,note_id,author_id,content_enc,reason) VALUES(?,?,?,?,?)`, id, n.id, ctx.user.id, encrypt3(content), reason || null);
+        db3.run(`INSERT INTO note_addenda(id,note_id,author_id,content_enc,reason_enc) VALUES(?,?,?,?,?)`, id, n.id, ctx.user.id, encrypt3(content), reason ? encrypt3(reason) : null);
         if (n.status === "signed") db3.run(`UPDATE notes SET status='amended', updated_at=? WHERE id=?`, db3.now(), n.id);
-        audit3.log({ user: ctx.user, action: "note.addendum", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip });
+        audit3.log({ user: ctx.user, action: "note.addendum", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: reason ? { reason_recorded: true } : void 0 });
         ctx.status = 201;
         return { id };
       });
@@ -31320,7 +31373,7 @@ var require_supervision = __commonJS({
     var audit3 = require_audit();
     var { badRequest, notFound, forbidden } = require_http();
     var { validate } = require_validate();
-    var { decrypt: decrypt3 } = require_crypto();
+    var { decrypt: decrypt3, encrypt: encrypt3 } = require_crypto();
     function supervisedIds(user, allPerm = "clients:all") {
       if (auth3.hasPerm(user, allPerm)) return null;
       return db3.all(`SELECT id FROM users WHERE supervisor_id=?`, user.id).map((u) => u.id);
@@ -31421,8 +31474,9 @@ var require_supervision = __commonJS({
         if (t.user_id === ctx.user.id) throw forbidden("You cannot approve your own time");
         if (t.status !== "submitted") throw badRequest("Only submitted time can be approved or returned");
         if (v.decision === "rejected" && !v.note) throw badRequest(NO_REASON);
-        db3.run(`UPDATE time_entries SET status=?, approved_by=?, approved_at=?, approval_note=?, updated_at=? WHERE id=?`, v.decision, ctx.user.id, db3.now(), v.note || null, db3.now(), t.id);
-        audit3.log({ user: ctx.user, action: `time.${v.decision}`, entity: "time_entry", entityId: t.id, clientId: t.client_id, ip: ctx.ip, details: { worker: t.user_id, minutes: t.minutes } });
+        const note = v.note ? encrypt3(v.note) : null;
+        db3.run(`UPDATE time_entries SET status=?, approved_by=?, approved_at=?, approval_note_enc=?, updated_at=? WHERE id=?`, v.decision, ctx.user.id, db3.now(), note, db3.now(), t.id);
+        audit3.log({ user: ctx.user, action: `time.${v.decision}`, entity: "time_entry", entityId: t.id, clientId: t.client_id, ip: ctx.ip, details: { worker: t.user_id, minutes: t.minutes, note_recorded: v.note ? true : void 0 } });
         return { ok: true };
       });
       r.post("/api/time/approve-batch", auth3.requireAuth, auth3.requirePerm("time:approve"), (ctx) => {
@@ -31445,7 +31499,7 @@ var require_supervision = __commonJS({
               skipped.push({ id, reason: "not awaiting approval" });
               continue;
             }
-            db3.run(`UPDATE time_entries SET status=?, approved_by=?, approved_at=?, approval_note=?, updated_at=? WHERE id=?`, v.decision, ctx.user.id, db3.now(), v.note || null, db3.now(), t.id);
+            db3.run(`UPDATE time_entries SET status=?, approved_by=?, approved_at=?, approval_note_enc=?, updated_at=? WHERE id=?`, v.decision, ctx.user.id, db3.now(), v.note ? encrypt3(v.note) : null, db3.now(), t.id);
             n++;
           }
         });
@@ -31757,13 +31811,13 @@ var require_sync = __commonJS({
               let revocation = false;
               if (existing && SYNC2.immutable.includes(t.name)) {
                 const changed = changedColumns2(t, existing, raw, existingCols);
-                const onlyRevocation = t.name === "consents" && !existing.revoked_at && raw.revoked_at && changed.every((c) => ["revoked_at", "revoked_reason", "revoked_by"].includes(c));
+                const onlyRevocation = t.name === "consents" && !existing.revoked_at && raw.revoked_at && changed.every((c) => ["revoked_at", "revoked_reason_enc", "revoked_by"].includes(c));
                 if (!onlyRevocation) {
                   if (changed.length) reject(t.name, raw.id, "immutable");
                   return false;
                 }
                 revocation = true;
-                for (const k of Object.keys(raw)) if (!["id", "revoked_at", "revoked_reason"].includes(k)) delete raw[k];
+                for (const k of Object.keys(raw)) if (!["id", "revoked_at", "revoked_reason_enc"].includes(k)) delete raw[k];
                 raw.revoked_by = user.id;
               }
               if (t.name === "consents" && !existing) {
@@ -31847,7 +31901,7 @@ var require_sync = __commonJS({
                   raw.status = existing.status;
                   raw.approved_by = existing.approved_by;
                   raw.approved_at = existing.approved_at;
-                  raw.approval_note = existing.approval_note;
+                  raw.approval_note_enc = void 0;
                 }
               }
               if (t.name === "time_entries") {
@@ -31859,6 +31913,7 @@ var require_sync = __commonJS({
                   raw.status = existing.status === "approved" || existing.status === "rejected" ? existing.status : raw.status;
                   raw.approved_by = existing.approved_by;
                   raw.approved_at = existing.approved_at;
+                  raw.approval_note_enc = void 0;
                 }
               }
               if (t.name === "notes" && existing) {
@@ -31874,6 +31929,7 @@ var require_sync = __commonJS({
                 raw.cosigned_by = existing.cosigned_by;
                 raw.cosigned_at = existing.cosigned_at;
                 raw.cosignature_hash = existing.cosignature_hash;
+                raw.cosign_note_enc = void 0;
               }
               if (t.name === "outcome_measures") {
                 try {
@@ -32098,6 +32154,26 @@ var require_time = __commonJS({
     var crud = require_crud();
     var C = require_constants();
     var { withClientName, SELECT: NAME_COLS } = require_client_name();
+    var { encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
+    function encDescription(v) {
+      if (v.description !== void 0) {
+        v.description_enc = v.description ? encrypt3(String(v.description)) : null;
+        delete v.description;
+      }
+    }
+    function presentTime(t) {
+      if (!t) return t;
+      const o = { ...t };
+      if ("description_enc" in t) {
+        o.description = t.description_enc ? decrypt3(t.description_enc) : null;
+        delete o.description_enc;
+      }
+      if ("approval_note_enc" in t) {
+        o.approval_note = t.approval_note_enc ? decrypt3(t.approval_note_enc) : null;
+        delete o.approval_note_enc;
+      }
+      return o;
+    }
     function checkPeriod(v) {
       const fund = v.funding_source_id ? db3.one(`SELECT * FROM funding_sources WHERE id=?`, v.funding_source_id) : null;
       require_budget().assertInPeriod(fund, v.work_date, "Work date");
@@ -32114,7 +32190,7 @@ var require_time = __commonJS({
         ownerOnly: "time:all",
         joins: "JOIN users u ON u.id=time_entries.user_id LEFT JOIN clients c ON c.id=time_entries.client_id LEFT JOIN funding_sources f ON f.id=time_entries.funding_source_id",
         select: `time_entries.*, u.display_name AS worker, c.client_code, f.name AS funding_source, ${NAME_COLS}`,
-        afterLoad: withClientName,
+        afterLoad: (ctx, x) => presentTime(withClientName(ctx, x)),
         shape: {
           client_id: { type: "string" },
           user_id: { type: "string" },
@@ -32141,6 +32217,7 @@ var require_time = __commonJS({
         beforeInsert: (ctx, v) => {
           if (v.user_id && v.user_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "time:all")) v.user_id = ctx.user.id;
           checkPeriod(v);
+          encDescription(v);
         },
         // Reassigning whose hours these are is a time:all action (see public/views/time.js, which only shows the
         // Worker picker when can('time:all')) -- without this, a worker who owns the row (canEdit below) could
@@ -32148,6 +32225,7 @@ var require_time = __commonJS({
         beforeUpdate: (ctx, v, row) => {
           if (v.user_id && v.user_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "time:all")) delete v.user_id;
           if ("work_date" in v || "funding_source_id" in v) checkPeriod({ work_date: row.work_date, funding_source_id: row.funding_source_id, ...v });
+          encDescription(v);
         },
         canEdit: (ctx, row) => row.user_id === ctx.user.id || auth3.hasPerm(ctx.user, "time:all")
       });
@@ -32167,6 +32245,7 @@ var require_time = __commonJS({
         };
       });
     };
+    module.exports.presentTime = presentTime;
   }
 });
 

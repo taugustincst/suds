@@ -2,7 +2,7 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.11.0 — 2026-09-25
 
 Answers the California county marketability review: SUDS as the operations system for grant-funded,
 non-billing prevention, harm-reduction and outreach programmes, beside the county EHR. Market pack in
@@ -54,7 +54,8 @@ BAA/QSOA, DPA, SLA and pricing for counsel review).
     are swept at startup. Snapshots every few minutes (`backup_schedule_minutes`); a warning when backups are off.
   - Audit retention cannot be set below six years (a lower setting is raised and reported). Reasons typed
     when deleting, merging, holding or reopening a record, or vacating a court order, are stored encrypted and
-    kept out of the audit log.
+    kept out of the audit log; so are addendum and revocation reasons, countersignature and reviewer notes,
+    transfer notes, time and expenditure descriptions, form notes and safe-contact notes.
   - Identity: trust the identity provider's MFA claim (opt-in; `mfa`, two factors of different kinds, or a
     configured `acr` — a lone one-time code is not enough), deprovision accounts not seen at the IdP for N
     days, and SCIM 2.0 user provisioning at `/scim/v2`. SAML is not supported (OIDC only).
@@ -109,7 +110,7 @@ BAA/QSOA, DPA, SLA and pricing for counsel review).
 - **Market documents say only what is true:** claims qualified throughout `docs/market/` and `docs/security/`.
 - Reference lists (funding types and the like) no longer go empty for a moment while they reload.
 - Schema migrations 29 (clinical depth), 30 (CalOMS), 31 (Part 2), 32 (FHIR sign-in), 33 (append-only audit and
-  identity), 34 (disclosure gate), 35 (consent categories, CalOMS submissions), 36 (encrypted reasons).
+  identity), 34 (disclosure gate), 35 (consent categories, CalOMS submissions), 36 and 37 (typed text encrypted).
 
 ## 1.10.2 — 2026-09-25
 
