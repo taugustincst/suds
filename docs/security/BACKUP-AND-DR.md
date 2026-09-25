@@ -72,6 +72,12 @@ The only writes to the live database are that settings row and the audit entries
 
 A failed drill (wrong key, damaged file, failed check) is recorded exactly like a passed one, shows as "Action needed" on Security status, and its report says which check failed.
 
+## Exercised on every push, and the evidence
+
+Backup and restore are not only tested by unit tests: the `dr-drill` CI job (`.github/workflows/ci.yml`) runs `scripts/dr-exercise.js` (`npm run dr-exercise`) on every push — seed a throwaway database, seal an audit anchor, take an encrypted backup through the scheduled-backup path, run this drill against it with an escrowed key file, restore it again with the host procedure (`scripts/backup.js --restore`) into a **fresh data directory**, start the server there and wait for `/api/health`, compare every table's row count with the source, verify the whole audit chain, and verify the signed drill report with the public key only. The signed report is printed in the job log (the repository uses no Actions at all, so no artifact upload). The release gate refuses a release whose `dr-drill` job did not pass ([RELEASE.md](../RELEASE.md#release-gate)).
+
+A recorded run on a 20,000-client database (128 MB backup): [docs/evidence/dr-drill-2026-09-25.md](../evidence/dr-drill-2026-09-25.md) — drill RTO 3.3 s, host-procedure RTO 3.8 s, 11/11 checks. That is a **development-environment exercise on fictional data**, not a production drill: a county's own drill, on its production server with its offsite copy and escrowed keys, is what shows its recovery works.
+
 ## Restore procedures
 
 * **In the browser:** Settings → System & backups → *Restore from a backup*: preview first, administrator password and "REPLACE" to confirm; the replaced database is kept beside it (`suds.db.before-restore-<time>`); a restore writes a new database generation (devices re-offer what the backup lacks) and a `restore` audit anchor.

@@ -59,12 +59,12 @@ jobs:
           SUDS_REGION_PICTURES: 'off'
         run: npm run build:local && scripts/ui/run-all.sh
   # Node 22 leaves maintenance in April 2027 and node:sqlite is still experimental, so the suite also runs on
-  # the next LTS line to catch breakage early (docs/DEPLOYMENT.md, "Node.js support and the move to 24").
-  # Advisory only: a failure here does not fail the build until .nvmrc moves to 24. There is no setup-node
+  # the next LTS line (docs/DEPLOYMENT.md, "Node.js support and the move to 24"). Required (it passed on the
+  # 1.11.0 release commit); the release gate (scripts/release-gate.js) refuses a commit where it
+  # failed, so a Node 24 break is fixed before the move rather than discovered by it. There is no setup-node
   # action (marketplace actions are off), so the official tarball is downloaded and checked against SHASUMS.
   node24:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - name: Check out
         run: git clone --depth 1 "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
@@ -85,6 +85,32 @@ jobs:
       - name: Test on Node 24
         working-directory: src
         run: npm test
+  # Backup and restore, exercised on every push: seed a throwaway database, take an encrypted backup through
+  # the scheduled-backup path, run the recovery drill with an escrowed key file (restore into a temporary
+  # directory, separate process, schema/row counts/audit chain/anchors/decrypt/sign-in checks), restore again
+  # with the host procedure into a fresh data directory and start the server on it, compare row counts and
+  # verify the audit chain, and verify the signed drill report with the public key only
+  # (scripts/dr-exercise.js; docs/security/BACKUP-AND-DR.md). Required by the release gate. The repository
+  # uses no actions at all (not even actions/upload-artifact), so the signed report is printed into this log.
+  dr-drill:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        run: git clone --depth 1 "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
+      - name: Node major matches .nvmrc
+        working-directory: src
+        run: |
+          want="$(tr -d '[:space:]' < .nvmrc)"; have="$(node -p 'process.versions.node.split(".")[0]')"
+          node --version; [ "$have" = "$want" ] || { echo "::error::The runner has Node $have but .nvmrc pins major $want"; exit 1; }
+      - name: Backup, recovery drill and restore into a fresh data directory
+        working-directory: src
+        run: node --no-warnings=ExperimentalWarning scripts/dr-exercise.js --out "$RUNNER_TEMP/dr-evidence"
+      - name: Drill summary
+        if: always()
+        run: |
+          f="$RUNNER_TEMP/dr-evidence/summary.json"
+          [ -f "$f" ] || exit 0
+          { echo "### Recovery drill (development exercise, fictional data)"; echo '```json'; cat "$f"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
   # The browser suite drives Chromium; iPhones run WebKit. This smoke subset runs the two phone-shaped
   # scripts (the static build and the tester's retest, both on an iPhone 13 profile) in Playwright's WebKit.
   # Advisory while it beds in (continue-on-error). Playwright's WebKit on Linux is not iOS Safari, so the
