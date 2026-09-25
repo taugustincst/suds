@@ -93,5 +93,6 @@ for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => {
   if (stopping) process.exit(0);
   stopping = true;
   console.log('[suds] shutting down…');
-  listener.stop(() => { try { db.close(); } catch {} process.exit(0); });
+  // Flush the log file before exiting, so the last lines (often the reason for the stop) are not lost.
+  listener.stop(() => { try { db.close(); } catch {} require('./log').flush().finally(() => process.exit(0)); });
 });

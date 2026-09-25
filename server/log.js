@@ -83,4 +83,19 @@ function start(dataDir) {
   console.log(`[suds] logging to ${fileFor(currentDay)}${config.logFormat === 'json' ? ' (JSON)' : ''}`);
 }
 
-module.exports = { start, purge, formatLine, redacted, MAX_BYTES, KEEP_DAYS };
+/** The file the most recent line went to (null before start()). Named by the logger's own clock (UTC day). */
+function currentFile() { return dir && currentDay ? fileFor(currentDay) : null; }
+
+/**
+ * Resolves once every line written so far has reached the file. A write's callback runs only after the
+ * writes queued before it (and the asynchronous open of the file) have completed, so an empty write is a
+ * barrier. For tests and for a clean shutdown; never rejects.
+ */
+function flush() {
+  return new Promise((resolve) => {
+    if (!stream) return resolve();
+    try { stream.write('', () => resolve()); } catch { resolve(); }
+  });
+}
+
+module.exports = { start, purge, flush, currentFile, formatLine, redacted, MAX_BYTES, KEEP_DAYS };
