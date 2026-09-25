@@ -113,7 +113,7 @@ ok(await page.$('.layout'), 'with the app still there');
 await go(page, 'clients');
 const clientsUrl = page.url();
 await page.tap('.fab button'); await page.waitForSelector('.modal');
-await page.tap('.modal .quick-list button:has-text("Reminder")');
+await page.tap('.modal .quick-list button:has-text("To-do")');
 await page.waitForSelector('.modal input[name=title]');
 await page.goBack(); await settle(page);
 ok(!(await page.$('.modal-bg')), 'Back closes a form opened from the + Log sheet');
