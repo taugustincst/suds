@@ -2,7 +2,7 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.10.1 — 2026-09-25
 
 - **Signing out no longer draws the sign-in page twice.** The second draw blanked the screen for a moment (or,
   on a slow device, showed two sign-in forms); it is also what made the local-mode browser check fail
