@@ -128,12 +128,12 @@ function caseloadFilter(user, col = 'c.id') {
 
 // ---- Sessions ----
 const COOKIE = 'suds_session';
-function createSession(user, ctx, { mfaPending = false } = {}) {
+function createSession(user, ctx, { mfaPending = false, mfaSource = null } = {}) {
   const token = randomToken(32);
   const now = new Date();
   const expires = new Date(now.getTime() + policy().absoluteHours * 3600 * 1000);
-  db.run(`INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent) VALUES(?,?,?,?,?,?,?,?)`,
-    sha256(token), user.id, now.toISOString(), now.toISOString(), expires.toISOString(), mfaPending ? 1 : 0, ctx.ip, (ctx.headers['user-agent'] || '').slice(0, 200));
+  db.run(`INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,mfa_source) VALUES(?,?,?,?,?,?,?,?,?)`,
+    sha256(token), user.id, now.toISOString(), now.toISOString(), expires.toISOString(), mfaPending ? 1 : 0, ctx.ip, (ctx.headers['user-agent'] || '').slice(0, 200), mfaSource);
   return token;
 }
 function cookieHeader(token, { clear = false } = {}) {
@@ -177,7 +177,9 @@ function requireAuth(ctx) {
     // period has run out. This used to be advisory — the login response said so and nothing stopped the
     // user from ignoring it — but enforcing it from the first second would lock out the administrator the
     // setup wizard just created, before they had any chance to enrol.
-    const due = mfaDeadline(ctx.user);
+    // A session whose second factor the identity provider asserted (and the administrator trusts) has had
+    // one: the SUDS enrolment deadline is about SUDS's own authenticator and does not apply to it.
+    const due = ctx.session?.mfa_source === 'idp' ? null : mfaDeadline(ctx.user);
     if (due && Date.now() > Date.parse(due)) {
       throw new HttpError(403, 'Two-step verification must be set up for your role before you can continue', { mfaSetupRequired: true, mfaSetupDeadline: due });
     }

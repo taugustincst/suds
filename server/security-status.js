@@ -56,6 +56,21 @@ function status() {
   const linked = db.one(`SELECT COUNT(*) n FROM users WHERE is_active=1 AND oidc_subject IS NOT NULL AND oidc_subject <> ''`).n;
   add('Identity', 'Single sign-on (OIDC)', config.oidc.enabled ? 'ok' : 'warn', config.oidc.enabled ? `configured (${config.oidc.issuer.replace(/^https?:\/\//, '')}); ${linked} account${linked === 1 ? '' : 's'} linked` : 'not configured',
     config.oidc.enabled ? '' : 'Set OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET and OIDC_REDIRECT_URI to sign in through the county identity provider (docs/DEPLOYMENT.md).', 'server/oidc.js, server/routes/oidc.js');
+  if (config.oidc.enabled || db.getSetting('sso_trust_idp_mfa', '0') === '1') {
+    const trusted = db.getSetting('sso_trust_idp_mfa', '0') === '1';
+    const acr = db.getSetting('sso_mfa_acr_values', '') || '';
+    const since = new Date(Date.now() - 30 * DAY).toISOString();
+    const viaIdp = trusted ? db.one(`SELECT COUNT(*) n FROM audit_log WHERE action='auth.oidc.login' AND at >= ? AND details LIKE '%"mfa":"idp"%'`, since).n : 0;
+    add('Identity', "Identity provider's multi-factor sign-in", trusted ? 'info' : 'ok', trusted ? `trusted in place of SUDS two-step verification (amr mfa/otp/hwk/swk${acr ? `, or acr ${acr}` : ''}); ${viaIdp} sign-in${viaIdp === 1 ? '' : 's'} in 30 days` : 'not trusted: SSO sign-ins still need the SUDS second factor',
+      trusted ? 'A sign-in the provider does not mark as multi-factor still needs the SUDS code. Every trusted sign-in is audited (auth.oidc.login with mfa "idp"). Make sure the provider enforces MFA for this application (conditional access).' : 'Settings → Security policy → "Trust the identity provider\'s multi-factor sign-in" (off by default).', 'server/routes/oidc.js mfaTrust; server/oidc.js idpMfa');
+  }
+  {
+    const dp = require('./deprovision').report();
+    const scimTokens = db.one(`SELECT COUNT(*) n FROM api_keys WHERE scopes='scim' AND revoked_at IS NULL`).n;
+    add('Identity', 'Deprovisioning', dp.days || scimTokens ? (dp.due.length ? 'warn' : 'ok') : config.oidc.enabled ? 'warn' : 'info',
+      [scimTokens ? `SCIM provisioning on (${scimTokens} token${scimTokens === 1 ? '' : 's'})` : 'no SCIM provisioning', dp.days ? `SSO accounts not seen for ${dp.days} days are disabled` : 'accounts not seen at the identity provider are not disabled automatically'].join('; '),
+      `${dp.linked_active} active account${dp.linked_active === 1 ? '' : 's'} linked to the identity provider${dp.due.length ? `, ${dp.due.length} due to be disabled at the next daily run` : ''}${dp.recent.length ? `; ${dp.recent.length} disabled in the last 90 days` : ''}. ${dp.days || scimTokens ? '' : 'Create a SCIM token (Provisioning below) or set "Disable single sign-on accounts not seen for (days)".'}`.trim(), 'server/deprovision.js; server/routes/scim.js');
+  }
   add('Identity', 'Password sign-in', pol.ssoRequired ? 'ok' : pol.ssoRequiredSetting ? 'bad' : 'info',
     pol.ssoRequired ? `disabled except for emergency account${pol.ssoEmergencyAccounts.length === 1 ? '' : 's'} ${pol.ssoEmergencyAccounts.join(', ')}` : pol.ssoRequiredSetting ? 'SSO is set as required, but OIDC is not configured, so passwords are still accepted' : 'allowed for every account',
     pol.ssoRequired ? 'Every emergency sign-in is audited (auth.login with emergency_account) and logged.' : 'Settings → Security policy → "Require single sign-on" turns password sign-in off for everyone but named break-glass administrators.', 'server/auth.js login()');

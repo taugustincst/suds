@@ -41,6 +41,20 @@ module.exports = (r) => {
     return { alerts: out };
   });
 
+  // ---- Deprovisioning by absence (server/deprovision.js) ----
+  r.get('/api/admin/security/deprovisioning', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
+    const rep = require('../deprovision').report();
+    audit.log({ user: ctx.user, action: 'security.deprovision_report', ip: ctx.ip, details: { due: rep.due.length, soon: rep.soon.length } });
+    return rep;
+  });
+  r.post('/api/admin/security/deprovisioning/run', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
+    const d = require('../deprovision');
+    if (!d.days()) throw badRequest('Set "Disable single sign-on accounts not seen for (days)" first (Settings → Security policy)');
+    const out = d.run({ by: ctx.user });
+    audit.log({ user: ctx.user, action: 'security.deprovision_run', ip: ctx.ip, details: { disabled: out.disabled.length } });
+    return out;
+  });
+
   // ---- Recovery drill (server/dr-drill.js) ----
   r.get('/api/admin/dr-drill', auth.requireAuth, auth.requirePerm('settings:manage'), () => require('../dr-drill').status());
   // Optional `keys_file`: the text of the escrowed key backup (keys.json), uploaded from the Settings page so

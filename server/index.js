@@ -56,6 +56,9 @@ function housekeeping() {
     // Record retention: discharged clients past the county's retention period are hard-deleted, every
     // table at once, unless the record is on legal hold (server/retention.js). Once a day.
     require('./retention').runIfDue();
+    // Accounts linked to the identity provider that it has not vouched for in sso_deprovision_days are
+    // disabled, their sessions and devices revoked (server/deprovision.js). Off unless set; once a day.
+    require('./deprovision').runIfDue();
     // Verify the audit chain once a day. Tamper-evidence that nobody checks is not evidence of anything.
     // Incremental from the last verified entry (the whole chain weekly), in batches that yield to other
     // requests — it runs on after this pass returns, and never twice at once.
