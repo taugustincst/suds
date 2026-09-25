@@ -344,6 +344,122 @@ const phone = await session('mrivera', 'Navigator2026!!', { width: 390, height: 
   for (const label of ['Episodes (Excel)', 'Overdose events (Excel)', 'Client forms (Excel)', 'Disclosures (Excel)']) ok(await page.$(`button:has-text("${label}")`), `an export button for ${label}`);
 }
 {
+  // CalAIM clinical depth: a problem on the problem list, a care plan goal with a step, an ASAM assessment and
+  // a PHQ-9 whose score is shown — and item 9 raising the safety alert — all through the forms, as a
+  // supervisor (a clinical role). Then the Overview's clinical card, the navigator's tabs, and Reports.
+  const { page, api } = sup;
+  const c = (await api('POST', '/api/clients', { first_name: 'Careplan', last_name: 'Browser' + stamp, confirm_duplicate: true })).data;
+
+  // Problem list
+  await go(page, `client/${c.id}/problems`);
+  await (await until(() => page.$('[data-add-problem]'))).click();
+  await page.waitForSelector('.modal textarea[name=problem]');
+  await page.fill('.modal textarea[name=problem]', 'Unsheltered, wants housing ' + stamp);
+  await page.fill('.modal input[name=icd10_code]', 'f1120');
+  await page.fill('.modal input[name=onset_date]', day(-20));
+  await page.click('.modal [data-zcodes] summary');
+  await page.check('.modal [data-zcodes] input[value="Z59.02"]');
+  await page.click('.modal button[type=submit]');
+  await until(async () => !(await page.$('.modal-bg')));
+  const probRow = await until(() => page.$(`[data-problem-row]:has-text("wants housing ${stamp}")`));
+  ok(probRow, 'the new problem is on the Problems tab');
+  const probText = probRow ? await probRow.textContent() : '';
+  ok(/F11\.20/.test(probText) && /Z59\.02/.test(probText), 'with its ICD-10 code normalised and its Z code', probText);
+  const problems = (await api('GET', `/api/clients/${c.id}/problems`)).data.rows;
+  eq(problems.length, 1, 'one problem was saved');
+  // A code that is not ICD-10 shaped is flagged under its field, not saved.
+  await (await until(() => page.$('[data-add-problem]'))).click();
+  await page.waitForSelector('.modal textarea[name=problem]');
+  await page.fill('.modal textarea[name=problem]', 'Bad code');
+  await page.fill('.modal input[name=icd10_code]', '12345');
+  await page.click('.modal button[type=submit]'); await settle(page);
+  ok(await until(() => page.$('.modal .field[data-field=icd10_code].error')), 'an impossible ICD-10 code is flagged under the field');
+  await closeModal(page);
+
+  // Care plan: a goal tied to the problem, review date passed, and a step that goes on the to-do list
+  await go(page, `client/${c.id}/careplan`);
+  await (await until(() => page.$('[data-add-goal]'))).click();
+  await page.waitForSelector('.modal textarea[name=goal]');
+  await page.fill('.modal textarea[name=goal]', 'I want my own place by winter ' + stamp);
+  await page.selectOption('.modal select[name=problem_id]', problems[0].id);
+  await page.fill('.modal input[name=review_date]', day(-1));
+  await page.click('.modal button[type=submit]');
+  const goal = await until(() => page.$(`[data-goal]:has-text("own place by winter ${stamp}")`));
+  ok(goal, 'the goal is on the care plan');
+  ok(goal && /Review overdue/.test(await goal.textContent()), 'a review date in the past shows as overdue');
+  ok(goal && /Addresses: Unsheltered/.test(await goal.textContent()), 'and names the problem it addresses');
+  await (await until(() => page.$('[data-add-step]'))).click();
+  await page.waitForSelector('.modal textarea[name=step]');
+  await page.fill('.modal textarea[name=step]', 'Apply for coordinated entry');
+  await page.fill('.modal input[name=target_date]', day(7));
+  await page.check('.modal input[name=create_task]');
+  await page.click('.modal button[type=submit]');
+  ok(await until(() => page.$('[data-step]:has-text("Apply for coordinated entry")')), 'the step is listed under the goal');
+  const plan = (await api('GET', `/api/clients/${c.id}/care-plan`)).data;
+  ok(plan.goals[0] && plan.goals[0].steps[0] && plan.goals[0].steps[0].task_id, 'and a to-do was made for it');
+  ok(await page.$('[data-print-careplan]'), 'the care plan has a Print button');
+
+  // ASAM: six ratings and the level of care
+  await go(page, `client/${c.id}/assessments`);
+  await (await until(() => page.$('[data-add-asam]'))).click();
+  await page.waitForSelector('.modal select[name=d1_rating]');
+  for (const [k, v] of [['d1', '1'], ['d2', '0'], ['d3', '2'], ['d4', '3'], ['d5', '3'], ['d6', '4']]) await page.selectOption(`.modal select[name=${k}_rating]`, v);
+  await page.fill('.modal textarea[name=note_d6]', 'Sleeping outside; partner still using');
+  await page.selectOption('.modal select[name=recommended_loc]', '3.5');
+  await page.selectOption('.modal select[name=actual_loc]', '2.1');
+  await page.click('.modal button[type=submit]'); await settle(page);
+  ok(await until(() => page.$('.modal .field[data-field=discrepancy_reason].error')), 'a different level referred to needs a reason');
+  await page.selectOption('.modal select[name=discrepancy_reason]', 'waitlist');
+  await page.click('.modal button[type=submit]');
+  await until(async () => !(await page.$('.modal-bg')));
+  const asamRow = await until(() => page.$('[data-asam] tbody tr'));
+  const asamText = asamRow ? await asamRow.textContent() : '';
+  ok(/3\.5/.test(asamText) && /2\.1/.test(asamText) && /Waitlist/.test(asamText), 'the ASAM assessment is listed with both levels and the reason', asamText);
+  eq((await api('GET', `/api/clients/${c.id}`)).data.client.asam_level, '2.1', 'and the client\'s level of care follows it');
+
+  // PHQ-9: the score is shown while answering and after saving; item 9 raises the safety alert
+  await (await until(() => page.$('[data-add-outcome=phq9]'))).click();
+  await page.waitForSelector('.modal select[name=q0]');
+  const answers = ['2', '2', '1', '1', '1', '1', '0', '0', '1']; // 9
+  for (let i = 0; i < answers.length; i++) await page.selectOption(`.modal select[name=q${i}]`, answers[i]);
+  const preview = await until(async () => { const t = await page.$eval('[data-outcome-preview]', e => e.textContent); return /Score: 9 of 27/.test(t) ? t : null; });
+  ok(preview && /Mild/.test(preview), 'the form shows the score and band before saving', preview);
+  ok(preview && /safety alert/.test(preview), 'and warns that question 9 will raise a safety alert');
+  await page.click('.modal button[type=submit]');
+  ok(await until(() => page.$('[data-safety-alert-dialog]')), 'saving raises the safety alert');
+  ok(await page.$('[data-safety-alert-dialog] [data-write-safety-plan], [data-safety-alert-dialog] [data-open-safety-plan]'), 'which offers the safety plan');
+  await page.click('[data-safety-alert-dialog] button:has-text("Close")');
+  await until(async () => !(await page.$('.modal-bg')));
+  await settle(page);
+  const scoreCell = await until(() => page.$('[data-outcomes] [data-outcome-score]'));
+  eq(scoreCell ? (await scoreCell.textContent()).trim() : '', '9', 'the saved PHQ-9 score is in the table');
+  const urgent = (await api('GET', `/api/tasks?client_id=${c.id}&limit=50`)).data.rows.filter(t => t.priority === 'urgent');
+  eq(urgent.length, 1, 'an urgent safety follow-up to-do was created');
+
+  // The Overview sums it up
+  await go(page, `client/${c.id}/overview`);
+  const card = await until(() => page.$('[data-clinical-card]'));
+  ok(card, 'the Overview has a Clinical picture card');
+  ok(await page.$('[data-clinical-card] [data-safety-alert]'), 'with the PHQ-9 safety alert');
+  ok(/wants housing/.test(await page.$eval('[data-overview-problems]', e => e.textContent).catch(() => '')), 'the active problem');
+  ok(await page.$('[data-overview-careplan] [data-review-overdue]'), 'the overdue care plan review');
+  ok(await page.$('[data-overview-asam]:not([data-overview-asam=""])'), 'the latest ASAM assessment');
+  eq((await page.$eval('[data-latest-score=phq9]', e => e.textContent).catch(() => '')).trim(), '9 · Mild', 'and the latest PHQ-9 score');
+
+  // Reports: the programme outcomes card
+  await go(page, 'reports');
+  ok(await until(() => page.$('[data-outcomes-report]')), 'Reports has an Outcome measures card');
+  ok(await page.$('[data-export-outcomes]'), 'with a de-identified export');
+}
+{
+  // A navigator keeps the problem list and care plan, but not ASAM ratings or screening answers.
+  const { page } = nav;
+  await go(page, `client/${createdId}`);
+  await until(() => page.$('[data-tab=overview]'));
+  ok(await page.$('[data-tab=problems]') && await page.$('[data-tab=careplan]'), 'a navigator has the Problems and Care plan tabs');
+  ok(!(await page.$('[data-tab=assessments]')), 'but no Assessments tab');
+}
+{
   // Finance: client codes are plain text where it cannot open the client, and a direct link says why.
   const fin = await session('afinance', 'Navigator2026!!');
   const { page, api } = fin;

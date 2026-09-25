@@ -11,7 +11,25 @@ const shape = {
   client_id: { type: 'string', required: true }, kind: { type: 'string', required: true, enum: ['clinical', 'admin'] }, format: { type: 'string', list: 'NOTE_FORMATS' },
   title: { type: 'string', maxLen: 200 }, content: { type: 'string', required: true, maxLen: 50000 }, structured: { type: 'object' }, occurred_at: { type: 'datetime', required: true },
   intervention_id: { type: 'string' }, call_id: { type: 'string' }, part2_protected: { type: 'boolean' }, cosign_requested: { type: 'boolean' }, source: { type: 'string', enum: ['manual', 'pocket_ai', 'onenote', 'import', 'api'] }, source_ref: { type: 'string', maxLen: 300 },
+  // The problem-list entries this note addresses (CalAIM: a progress note ties the service to the problem list).
+  problem_ids: { type: 'array', maxLen: 30, of: 'string' },
 };
+
+// Problem ids must be on this client's problem list; stored as a JSON array (ids only), or null for none.
+function problemIds(ids, clientId) {
+  if (ids === undefined) return undefined;
+  if (ids === null || !ids.length) return null;
+  const uniq = [...new Set(ids)];
+  for (const id of uniq) { const p = db.one(`SELECT client_id FROM problems WHERE id=?`, id); if (!p || p.client_id !== clientId) throw badRequest('Validation failed', { fields: { problem_ids: 'names a problem that is not on this client\'s problem list' } }); }
+  return JSON.stringify(uniq);
+}
+// The problems a note is linked to, with their wording for a role that may read the problem list.
+function linkedProblems(ctx, n) {
+  let ids = []; try { ids = n.problem_ids ? JSON.parse(n.problem_ids) : []; } catch { ids = []; }
+  if (!Array.isArray(ids) || !ids.length) return [];
+  if (!auth.hasPerm(ctx.user, 'careplan:read')) return ids.map(id => ({ id }));
+  return ids.map(id => { const p = db.one(`SELECT id, problem_enc, status FROM problems WHERE id=?`, id); return p ? { id: p.id, problem: decrypt(p.problem_enc), status: p.status } : { id }; });
+}
 
 function kindPerm(kind, rw) { return `notes:${kind}:${rw}`; }
 
@@ -113,10 +131,11 @@ module.exports = (r) => {
     if (!db.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, v.client_id)) throw notFound('Client not found');
     auth.assertClientAccess(ctx, v.client_id);
     const id = uuid();
+    const linked = problemIds(v.problem_ids, v.client_id) ?? null;
     const author = db.one(`SELECT requires_cosign FROM users WHERE id=?`, ctx.user.id);
-    db.run(`INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,structured_enc,occurred_at,intervention_id,call_id,part2_protected,source,source_ref,cosign_required,cosign_requested) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    db.run(`INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,structured_enc,occurred_at,intervention_id,call_id,part2_protected,source,source_ref,cosign_required,cosign_requested,problem_ids) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       id, v.client_id, ctx.user.id, v.kind, v.format || 'narrative', v.title ? encrypt(v.title) : null, encrypt(v.content), v.structured ? encrypt(JSON.stringify(v.structured)) : null, v.occurred_at,
-      v.intervention_id || null, v.call_id || null, v.part2_protected ?? 1, v.source || 'manual', v.source_ref || null, author?.requires_cosign ? 1 : 0, v.cosign_requested ? 1 : 0);
+      v.intervention_id || null, v.call_id || null, v.part2_protected ?? 1, v.source || 'manual', v.source_ref || null, author?.requires_cosign ? 1 : 0, v.cosign_requested ? 1 : 0, linked);
     audit.log({ user: ctx.user, action: 'note.create', entity: 'note', entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format, cosign_requested: v.cosign_requested ? true : undefined } });
     // updated_at: the version the editor's next autosave sends as if_updated_at.
     ctx.status = 201; return { id, updated_at: db.one(`SELECT updated_at FROM notes WHERE id=?`, id).updated_at };
@@ -129,7 +148,7 @@ module.exports = (r) => {
     const addenda = db.all(`SELECT a.id,a.reason,a.created_at,a.content_enc,u.display_name AS author FROM note_addenda a JOIN users u ON u.id=a.author_id WHERE a.note_id=? ORDER BY a.created_at`, n.id).map(a => ({ ...a, content: decrypt(a.content_enc), content_enc: undefined }));
     audit.log({ user: ctx.user, action: access === 'breakglass' ? 'note.view.breakglass' : 'note.view', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: access === 'breakglass' ? { reason: breakGlassReason(ctx) } : { kind: n.kind } });
     if (access === 'breakglass') recordBreakGlass(ctx, { clientId: n.client_id, noteId: n.id, reason: breakGlassReason(ctx) });
-    return { note: { ...present(n), ...signatureState(n), addenda } };
+    return { note: { ...present(n), ...signatureState(n), addenda, problems: linkedProblems(ctx, n) } };
   });
 
   r.put('/api/notes/:id', auth.requireAuth, (ctx) => {
@@ -138,11 +157,13 @@ module.exports = (r) => {
     if (n.status !== 'draft') throw badRequest('Signed notes cannot be edited; add an addendum instead');
     if (n.author_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'clients:all')) throw forbidden('Only the author can edit a draft');
     require('../crud').assertFresh(ctx, n, 'note');
-    const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, cosign_requested: shape.cosign_requested }, { partial: true, existing: n });
+    const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, cosign_requested: shape.cosign_requested, problem_ids: shape.problem_ids }, { partial: true, existing: n });
     const sets = []; const params = [];
     for (const k of ['format', 'occurred_at', 'intervention_id', 'call_id', 'part2_protected', 'cosign_requested']) if (v[k] !== undefined) { sets.push(`${k}=?`); params.push(v[k]); }
     if (v.title !== undefined) { sets.push('title_enc=?'); params.push(v.title ? encrypt(v.title) : null); }
     if (v.content !== undefined) { sets.push('content_enc=?'); params.push(encrypt(v.content)); }
+    const linked = problemIds(v.problem_ids, n.client_id);
+    if (linked !== undefined) { sets.push('problem_ids=?'); params.push(linked); }
     if (v.structured !== undefined) { sets.push('structured_enc=?'); params.push(v.structured ? encrypt(JSON.stringify(v.structured)) : null); }
     const stamp = sets.length ? db.now() : n.updated_at;
     if (sets.length) db.run(`UPDATE notes SET ${sets.join(', ')}, updated_at=? WHERE id=?`, ...params, stamp, n.id);

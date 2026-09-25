@@ -80,6 +80,7 @@ function pull(user, since, { limit = PULL_LIMIT } = {}) {
     let rows = raw[t.name].filter(r => r.updated_at <= cursor);
     if (t.name === 'users') rows = rows.map(r => ({ ...(r.id === user.id ? r : { ...r, password_hash: 'scrypt$0$0$0$AA==$AA==' }), mfa_secret_enc: null, mfa_enabled: 0 })); // devices get own password hash for offline login; never MFA secrets
     if (t.name === 'notes' && !auth.hasPerm(user, 'notes:clinical:read')) rows = rows.filter(r => r.kind !== 'clinical'); // minimum necessary
+    if (t.readPerm && !auth.hasPerm(user, t.readPerm)) rows = []; // minimum necessary (clinical assessments, the care plan)
     if (t.name === 'note_addenda' && !auth.hasPerm(user, 'notes:clinical:read')) rows = rows.filter(r => db.one(`SELECT kind FROM notes WHERE id=?`, r.note_id)?.kind !== 'clinical');
     const exported = [];
     for (const r of rows) {
@@ -342,9 +343,17 @@ function push(user, payload) {
           if (t.name === 'expenditures') { if (!existing) { raw.status = 'pending'; raw.approved_by = null; raw.approved_at = null; } else if (!auth.hasPerm(user, 'budget:approve')) { raw.status = existing.status; raw.approved_by = existing.approved_by; raw.approved_at = existing.approved_at; raw.approval_note = existing.approval_note; } }
           if (t.name === 'time_entries') { if (!existing) { raw.status = raw.status === 'submitted' ? 'submitted' : 'draft'; raw.approved_by = null; raw.approved_at = null; } else if (!auth.hasPerm(user, 'time:approve')) { raw.status = existing.status === 'approved' || existing.status === 'rejected' ? existing.status : raw.status; raw.approved_by = existing.approved_by; raw.approved_at = existing.approved_at; } }
           if (t.name === 'notes' && existing) {
-            if (existing.status !== 'draft') { raw.content_enc = undefined; raw.structured_enc = undefined; raw.status = existing.status; raw.signed_by = existing.signed_by; raw.signed_at = existing.signed_at; raw.signature_hash = existing.signature_hash; } // signed notes are immutable
+            if (existing.status !== 'draft') { raw.content_enc = undefined; raw.structured_enc = undefined; raw.problem_ids = existing.problem_ids; raw.status = existing.status; raw.signed_by = existing.signed_by; raw.signed_at = existing.signed_at; raw.signature_hash = existing.signature_hash; } // signed notes are immutable
             // A countersignature is the supervisor's act on the office server; a device can never assert one.
             raw.cosigned_by = existing.cosigned_by; raw.cosigned_at = existing.cosigned_at; raw.cosignature_hash = existing.cosignature_hash;
+          }
+          // A score is recomputed from the answers, as POST /api/clients/:id/outcomes computes it: a device's
+          // total, band or safety flag is never taken on trust.
+          if (t.name === 'outcome_measures') {
+            try {
+              const sc = require('../clinical').score(raw.instrument, JSON.parse(raw.responses_enc), { variant: raw.variant });
+              raw.total_score = sc.total; raw.band = sc.band; raw.positive = sc.positive; raw.safety_flag = sc.safety_flag; raw.variant = sc.variant;
+            } catch { reject(t.name, raw.id, 'has a value the office does not accept (the answers do not score)'); return false; }
           }
           if (t.name === 'notes' && !existing) { raw.cosigned_by = null; raw.cosigned_at = null; raw.cosignature_hash = null; }
           if (db.one(`SELECT 1 FROM tombstones WHERE table_name=? AND id=? AND deleted_at > ?`, t.name, raw.id, incomingAt)) return false; // deleted on server after device edit

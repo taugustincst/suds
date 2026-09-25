@@ -70,6 +70,8 @@ const BY_KEY = new Map(LISTS.map(l => [l.key, l]));
 const EXCLUDED = [
   { name: 'Race and ethnicity', why: 'Federal (OMB) reporting categories that funder reports count as they are.' },
   { name: 'ASAM level of care', why: 'The ASAM criteria levels: a national standard, not a programme choice.' },
+  { name: 'Screening instruments (PHQ-9, GAD-7, AUDIT-C, DAST-10)', why: 'Validated questionnaires: their wording and scoring cannot change without making the score meaningless.' },
+  { name: 'ASAM dimensions and ratings', why: 'The six ASAM dimensions and the 0–4 risk scale: a national standard.' },
   { name: 'Stage of change', why: 'The stages of the transtheoretical model: a clinical standard.' },
   { name: 'Consent type', why: 'Each type is a different legal authority under 42 CFR Part 2 and HIPAA.' },
   { name: 'Patient-rights request', why: 'The four HIPAA rights (access, amendment, restriction, accounting), each with its own legal deadline.' },

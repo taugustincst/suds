@@ -7105,7 +7105,10 @@ CREATE TABLE IF NOT EXISTS notes (
   part2_protected INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  deleted_at TEXT
+  deleted_at TEXT,
+  -- The problem-list entries this note addresses: a JSON array of problems.id (CalAIM progress notes tie
+  -- each service to the problem list). Ids only, never the problem text.
+  problem_ids TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_notes_client ON notes(client_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_notes_author ON notes(author_id);
@@ -7448,6 +7451,132 @@ CREATE TABLE IF NOT EXISTS option_overrides (
   UNIQUE (list_key, code)
 );
 CREATE INDEX IF NOT EXISTS idx_option_overrides_updated ON option_overrides(updated_at);
+
+-- CalAIM problem list: the client's current problems and needs, kept up to date as they change. The text
+-- and any code are PHI (a diagnosis code says as much as the words), so all of it is encrypted; status,
+-- dates and source are what the list is sorted and counted by. Never deleted: a problem that no longer
+-- applies is resolved or made inactive, and problem_history keeps who changed what.
+CREATE TABLE IF NOT EXISTS problems (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  problem_enc TEXT NOT NULL,           -- the problem or need, in words
+  icd10_code_enc TEXT,                 -- optional ICD-10-CM code (format-checked, no bundled code set)
+  icd10_description_enc TEXT,
+  z_codes_enc TEXT,                    -- optional social determinant codes (Z55-Z65), comma separated
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','resolved','inactive')),
+  onset_date TEXT,
+  resolved_date TEXT,
+  source TEXT NOT NULL DEFAULT 'self_report' CHECK (source IN ('self_report','assessment','referral','other')),
+  added_by TEXT REFERENCES users(id),
+  updated_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_problems_client ON problems(client_id, status);
+CREATE INDEX IF NOT EXISTS idx_problems_updated ON problems(updated_at);
+
+-- Every change to a problem-list entry: who, when, and each field's old and new value (encrypted JSON,
+-- because the values are the problem text and codes). Append-only.
+CREATE TABLE IF NOT EXISTS problem_history (
+  id TEXT PRIMARY KEY,
+  problem_id TEXT NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  action TEXT NOT NULL CHECK (action IN ('created','updated')),
+  changes_enc TEXT,
+  changed_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_problem_history_problem ON problem_history(problem_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_problem_history_updated ON problem_history(updated_at);
+
+-- Care coordination plan: goals in the client's own words, each tied (optionally) to a problem, with a
+-- review date that shows as overdue once it passes; and the steps toward each goal, with who does them
+-- and by when. A step can create a to-do (task_id) so it lands on someone's list.
+CREATE TABLE IF NOT EXISTS care_plan_goals (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  problem_id TEXT REFERENCES problems(id) ON DELETE SET NULL,
+  goal_enc TEXT NOT NULL,              -- the goal as the client puts it
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','met','partially_met','not_met','discontinued')),
+  start_date TEXT,
+  target_date TEXT,
+  review_date TEXT,
+  reviewed_at TEXT,
+  created_by TEXT REFERENCES users(id),
+  updated_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_care_plan_goals_client ON care_plan_goals(client_id, status);
+CREATE INDEX IF NOT EXISTS idx_care_plan_goals_updated ON care_plan_goals(updated_at);
+
+CREATE TABLE IF NOT EXISTS care_plan_steps (
+  id TEXT PRIMARY KEY,
+  goal_id TEXT NOT NULL REFERENCES care_plan_goals(id) ON DELETE CASCADE,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  step_enc TEXT NOT NULL,              -- the step or intervention
+  owner_role TEXT NOT NULL DEFAULT 'staff' CHECK (owner_role IN ('client','staff','family_support','other_provider')),
+  owner_user_id TEXT REFERENCES users(id),
+  target_date TEXT,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','done','cancelled')),
+  completed_at TEXT,
+  task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+  created_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_care_plan_steps_goal ON care_plan_steps(goal_id);
+CREATE INDEX IF NOT EXISTS idx_care_plan_steps_updated ON care_plan_steps(updated_at);
+
+-- ASAM multidimensional assessment: a 0-4 risk rating for each of the six dimensions, with the reasoning
+-- (encrypted), the level of care recommended and the level actually referred to, and why they differ.
+-- Only the dimension names and ratings are stored; the ASAM Criteria text is not reproduced.
+CREATE TABLE IF NOT EXISTS asam_assessments (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  assessed_at TEXT NOT NULL,
+  assessed_by TEXT REFERENCES users(id),
+  d1_rating INTEGER NOT NULL CHECK (d1_rating BETWEEN 0 AND 4),
+  d2_rating INTEGER NOT NULL CHECK (d2_rating BETWEEN 0 AND 4),
+  d3_rating INTEGER NOT NULL CHECK (d3_rating BETWEEN 0 AND 4),
+  d4_rating INTEGER NOT NULL CHECK (d4_rating BETWEEN 0 AND 4),
+  d5_rating INTEGER NOT NULL CHECK (d5_rating BETWEEN 0 AND 4),
+  d6_rating INTEGER NOT NULL CHECK (d6_rating BETWEEN 0 AND 4),
+  dimension_notes_enc TEXT,            -- JSON {d1..d6: reasoning}
+  recommended_loc TEXT,
+  actual_loc TEXT,
+  discrepancy_reason TEXT,
+  discrepancy_notes_enc TEXT,
+  summary_enc TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_asam_client ON asam_assessments(client_id, assessed_at);
+CREATE INDEX IF NOT EXISTS idx_asam_updated ON asam_assessments(updated_at);
+
+-- Outcome measures: standardized screening instruments (PHQ-9, GAD-7, AUDIT-C, DAST-10, a 0-10 wellbeing
+-- rating) scored automatically (server/clinical.js). The answers are encrypted; the total and band stay
+-- readable so a trend and the programme outcomes report can be computed. safety_flag marks a PHQ-9 whose
+-- item 9 was answered above "Not at all".
+CREATE TABLE IF NOT EXISTS outcome_measures (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  instrument TEXT NOT NULL CHECK (instrument IN ('phq9','gad7','auditc','dast10','wellbeing')),
+  administered_at TEXT NOT NULL,
+  administered_by TEXT REFERENCES users(id),
+  responses_enc TEXT NOT NULL,         -- JSON array of the answers
+  total_score INTEGER NOT NULL,
+  band TEXT,
+  positive INTEGER,
+  variant TEXT,
+  safety_flag INTEGER NOT NULL DEFAULT 0,
+  notes_enc TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_outcome_measures_client ON outcome_measures(client_id, instrument, administered_at);
+CREATE INDEX IF NOT EXISTS idx_outcome_measures_updated ON outcome_measures(updated_at);
 `;
   }
 });
@@ -8220,6 +8349,20 @@ var require_db = __commonJS({
         const m = schemaText.match(/CREATE TABLE IF NOT EXISTS option_overrides \([\s\S]*?\n\);/);
         if (m) d.exec(m[0]);
         for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_option_overrides/.test(line.trim())) d.exec(line.trim());
+      },
+      // 30 (assigned number; renumbered at merge): clinical depth for CalAIM documentation — the problem list
+      //     and its change history, the care coordination plan (goals and steps), ASAM six-dimension
+      //     assessments and scored outcome measures; and notes.problem_ids, the problems a note addresses.
+      //     New tables only, plus one nullable column, so an existing database starts with none of them.
+      (d) => {
+        addColumn(d, "notes", "problem_ids", "TEXT");
+        const schemaText = safeSchema();
+        for (const t of ["problems", "problem_history", "care_plan_goals", "care_plan_steps", "asam_assessments", "outcome_measures"]) {
+          const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
+          if (!m) throw new Error(`migration 30: no definition for ${t} in schema`);
+          d.exec(m[0]);
+          for (const line of schemaText.split("\n")) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
+        }
       }
     ];
     function initialise(d, schemaText, dbPath) {
@@ -8946,7 +9089,8 @@ var require_auth = __commonJS({
         "documents:write",
         "disclosures:override",
         "clients:legal-hold",
-        "patient-requests:*"
+        "patient-requests:*",
+        "careplan:read"
       ],
       supervisor: [
         "clients:read",
@@ -8986,7 +9130,9 @@ var require_auth = __commonJS({
         "documents:read",
         "documents:write",
         "disclosures:override",
-        "patient-requests:*"
+        "patient-requests:*",
+        "careplan:*",
+        "assessments:*"
       ],
       // Front-line staff hold export:read so the Export buttons on their own screens work; without
       // export:identified every file they can produce is de-identified (Safe Harbor) and caseload-scoped.
@@ -9014,7 +9160,9 @@ var require_auth = __commonJS({
         "overdose:*",
         "documents:read",
         "patient-requests:*",
-        "export:read"
+        "export:read",
+        "careplan:*",
+        "assessments:*"
       ],
       navigator: [
         "clients:read",
@@ -9040,7 +9188,8 @@ var require_auth = __commonJS({
         "overdose:*",
         "documents:read",
         "patient-requests:*",
-        "export:read"
+        "export:read",
+        "careplan:*"
       ],
       // finance sees money, not people: export:read without export:identified means every export it can run
       // comes out keyed by client_code. Do not add 'export:identified' here — docs/HIPAA.md promises otherwise.
@@ -9435,6 +9584,15 @@ var require_sync_tables = __commonJS({
         { name: "client_forms", enc: ["values_enc"], scope: "client", clientCol: "client_id", writePerm: "forms:write", parent: ["clients", "client_id"] },
         { name: "client_form_files", enc: ["data_enc"], scope: "client", clientCol: "client_id", writePerm: "forms:write", parent: ["client_forms", "client_form_id"], blob: ["data_enc"] },
         { name: "patient_requests", enc: ["notes_enc"], scope: "client", clientCol: "client_id", writePerm: "consents:write", parent: ["clients", "client_id"] },
+        // Clinical documentation (CalAIM): the problem list and its history, the care plan, ASAM assessments and
+        // outcome measures. readPerm: a device whose role cannot read them (an ASAM rating on a navigator's
+        // phone) is never sent them, the same minimum-necessary rule clinical notes follow.
+        { name: "problems", enc: ["problem_enc", "icd10_code_enc", "icd10_description_enc", "z_codes_enc"], scope: "client", clientCol: "client_id", writePerm: "careplan:write", readPerm: "careplan:read", parent: ["clients", "client_id"] },
+        { name: "problem_history", enc: ["changes_enc"], scope: "client", clientCol: "client_id", writePerm: "careplan:write", readPerm: "careplan:read", parent: ["problems", "problem_id"] },
+        { name: "care_plan_goals", enc: ["goal_enc"], scope: "client", clientCol: "client_id", writePerm: "careplan:write", readPerm: "careplan:read", parent: ["clients", "client_id"] },
+        { name: "care_plan_steps", enc: ["step_enc"], scope: "client", clientCol: "client_id", writePerm: "careplan:write", readPerm: "careplan:read", parent: ["care_plan_goals", "goal_id"] },
+        { name: "asam_assessments", enc: ["dimension_notes_enc", "discrepancy_notes_enc", "summary_enc"], scope: "client", clientCol: "client_id", writePerm: "assessments:write", readPerm: "assessments:read", parent: ["clients", "client_id"] },
+        { name: "outcome_measures", enc: ["responses_enc", "notes_enc"], scope: "client", clientCol: "client_id", writePerm: "assessments:write", readPerm: "assessments:read", parent: ["clients", "client_id"] },
         // Harm-reduction supply counts: shared program state. Pull-only (serverOwned): the office copy is the
         // one shelf count, drawn down there when a pushed visit lands (server/routes/sync.js calls the same
         // draw-down the REST route does). A device's absolute count is never accepted — two phones each
@@ -9476,7 +9634,7 @@ var require_sync_tables = __commonJS({
       per_database: ["idempotency_keys"],
       // Rows a device may create but never change once they exist (a consent may only be revoked). The legal
       // record of what was agreed to and what was shared cannot be rewritten by whichever phone syncs last.
-      immutable: ["consents", "disclosures", "note_addenda"],
+      immutable: ["consents", "disclosures", "note_addenda", "problem_history"],
       // Columns that reference users(id) somewhere in the schema. A device's local account id is meaningless on the
       // office server (and vice versa), so every one of these has to be remapped on both sides of a sync.
       user_refs: [
@@ -9520,7 +9678,16 @@ var require_sync_tables = __commonJS({
         ["users", "supervisor_id"],
         ["devices", "user_id"],
         ["supply_stock", "updated_by"],
-        ["option_overrides", "updated_by"]
+        ["option_overrides", "updated_by"],
+        ["problems", "added_by"],
+        ["problems", "updated_by"],
+        ["problem_history", "changed_by"],
+        ["care_plan_goals", "created_by"],
+        ["care_plan_goals", "updated_by"],
+        ["care_plan_steps", "owner_user_id"],
+        ["care_plan_steps", "created_by"],
+        ["asam_assessments", "assessed_by"],
+        ["outcome_measures", "administered_by"]
       ]
     };
     module.exports.user_ref_cols = [...new Set(module.exports.user_refs.map(([, c]) => c))];
@@ -9581,11 +9748,243 @@ var require_sync_tables = __commonJS({
   }
 });
 
+// server/clinical.js
+var require_clinical = __commonJS({
+  "server/clinical.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var ICD10_RE = /^[A-Z][0-9][0-9A-Z](\.[0-9A-Z]{1,4})?$/;
+    function normalizeIcd10(raw) {
+      if (raw === null || raw === void 0) return null;
+      let s = String(raw).trim().toUpperCase().replace(/\s+/g, "");
+      if (!s) return null;
+      if (!s.includes(".") && s.length > 3) s = `${s.slice(0, 3)}.${s.slice(3)}`;
+      return ICD10_RE.test(s) ? s : null;
+    }
+    var Z_RANGE_RE = /^Z(5[5-9]|6[0-5])(\.[0-9A-Z]{1,4})?$/;
+    var isZCode = (code) => Z_RANGE_RE.test(code || "");
+    var Z_CODES = [
+      { code: "Z55.0", label: "Illiteracy and low-level literacy" },
+      { code: "Z55.9", label: "Problems related to education and literacy, unspecified" },
+      { code: "Z56.0", label: "Unemployment, unspecified" },
+      { code: "Z56.9", label: "Unspecified problems related to employment" },
+      { code: "Z59.00", label: "Homelessness, unspecified" },
+      { code: "Z59.01", label: "Sheltered homelessness" },
+      { code: "Z59.02", label: "Unsheltered homelessness" },
+      { code: "Z59.1", label: "Inadequate housing" },
+      { code: "Z59.41", label: "Food insecurity" },
+      { code: "Z59.6", label: "Low income" },
+      { code: "Z59.7", label: "Insufficient social insurance and welfare support" },
+      { code: "Z59.811", label: "Housing instability, housed, with risk of homelessness" },
+      { code: "Z59.82", label: "Transportation insecurity" },
+      { code: "Z59.86", label: "Financial insecurity" },
+      { code: "Z60.2", label: "Problems related to living alone" },
+      { code: "Z60.4", label: "Social exclusion and rejection" },
+      { code: "Z60.5", label: "Target of (perceived) adverse discrimination and persecution" },
+      { code: "Z62.9", label: "Problem related to upbringing, unspecified" },
+      { code: "Z63.0", label: "Problems in relationship with spouse or partner" },
+      { code: "Z63.4", label: "Disappearance and death of family member" },
+      { code: "Z63.72", label: "Alcoholism and drug addiction in family" },
+      { code: "Z63.8", label: "Other specified problems related to primary support group" },
+      { code: "Z64.4", label: "Discord with counselors" },
+      { code: "Z65.1", label: "Imprisonment and other incarceration" },
+      { code: "Z65.2", label: "Problems related to release from prison" },
+      { code: "Z65.3", label: "Problems related to other legal circumstances" },
+      { code: "Z65.4", label: "Victim of crime and terrorism" },
+      { code: "Z65.8", label: "Other specified problems related to psychosocial circumstances" }
+    ];
+    var PROBLEM_STATUSES = ["active", "resolved", "inactive"];
+    var PROBLEM_SOURCES = ["self_report", "assessment", "referral", "other"];
+    var GOAL_STATUSES = ["active", "met", "partially_met", "not_met", "discontinued"];
+    var STEP_OWNERS = ["client", "staff", "family_support", "other_provider"];
+    var STEP_STATUSES = ["open", "done", "cancelled"];
+    var ASAM_DIMENSIONS = [
+      { key: "d1", label: "Dimension 1: Acute intoxication and/or withdrawal potential" },
+      { key: "d2", label: "Dimension 2: Biomedical conditions and complications" },
+      { key: "d3", label: "Dimension 3: Emotional, behavioral, or cognitive conditions and complications" },
+      { key: "d4", label: "Dimension 4: Readiness to change" },
+      { key: "d5", label: "Dimension 5: Relapse, continued use, or continued problem potential" },
+      { key: "d6", label: "Dimension 6: Recovery/living environment" }
+    ];
+    var ASAM_RATINGS = [
+      { value: 0, label: "0 \u2014 No risk / no current problem" },
+      { value: 1, label: "1 \u2014 Mild" },
+      { value: 2, label: "2 \u2014 Moderate" },
+      { value: 3, label: "3 \u2014 Significant" },
+      { value: 4, label: "4 \u2014 Severe" }
+    ];
+    var ASAM_DISCREPANCY_REASONS = ["client_preference", "level_not_available", "waitlist", "geographic_accessibility", "family_responsibilities", "legal_issues", "language_or_cultural", "clinical_judgment", "payment_or_coverage", "other"];
+    var FREQ4 = [{ value: 0, label: "Not at all" }, { value: 1, label: "Several days" }, { value: 2, label: "More than half the days" }, { value: 3, label: "Nearly every day" }];
+    var YES_NO = [{ value: 1, label: "Yes" }, { value: 0, label: "No" }];
+    var INSTRUMENTS = {
+      phq9: {
+        code: "phq9",
+        name: "PHQ-9",
+        title: "Patient Health Questionnaire (depression)",
+        better: "lower",
+        max: 27,
+        stem: "Over the last 2 weeks, how often have you been bothered by any of the following problems?",
+        credit: "PHQ-9 \xA9 Pfizer Inc. Developed by Drs. Robert L. Spitzer, Janet B.W. Williams, Kurt Kroenke and colleagues. No permission required to reproduce, translate, display or distribute.",
+        items: [
+          "Little interest or pleasure in doing things",
+          "Feeling down, depressed, or hopeless",
+          "Trouble falling or staying asleep, or sleeping too much",
+          "Feeling tired or having little energy",
+          "Poor appetite or overeating",
+          "Feeling bad about yourself \u2014 or that you are a failure or have let yourself or your family down",
+          "Trouble concentrating on things, such as reading the newspaper or watching television",
+          "Moving or speaking so slowly that other people could have noticed? Or the opposite \u2014 being so fidgety or restless that you have been moving around a lot more than usual",
+          "Thoughts that you would be better off dead or of hurting yourself in some way"
+        ].map((text) => ({ text, options: FREQ4 })),
+        bands: [[0, 4, "Minimal"], [5, 9, "Mild"], [10, 14, "Moderate"], [15, 19, "Moderately severe"], [20, 27, "Severe"]],
+        positiveAt: 10,
+        // Item 9 (index 8) above "Not at all" is a safety alert whatever the total.
+        safetyItem: 8
+      },
+      gad7: {
+        code: "gad7",
+        name: "GAD-7",
+        title: "Generalized Anxiety Disorder scale",
+        better: "lower",
+        max: 21,
+        stem: "Over the last 2 weeks, how often have you been bothered by the following problems?",
+        credit: "GAD-7 \xA9 Pfizer Inc. Developed by Drs. Robert L. Spitzer, Janet B.W. Williams, Kurt Kroenke and colleagues. No permission required to reproduce, translate, display or distribute.",
+        items: [
+          "Feeling nervous, anxious, or on edge",
+          "Not being able to stop or control worrying",
+          "Worrying too much about different things",
+          "Trouble relaxing",
+          "Being so restless that it is hard to sit still",
+          "Becoming easily annoyed or irritable",
+          "Feeling afraid, as if something awful might happen"
+        ].map((text) => ({ text, options: FREQ4 })),
+        bands: [[0, 4, "Minimal"], [5, 9, "Mild"], [10, 14, "Moderate"], [15, 21, "Severe"]],
+        positiveAt: 10
+      },
+      auditc: {
+        code: "auditc",
+        name: "AUDIT-C",
+        title: "Alcohol Use Disorders Identification Test \u2014 consumption",
+        better: "lower",
+        max: 12,
+        stem: "Think about your drinking over the past year.",
+        credit: "AUDIT-C: the first three questions of the AUDIT (World Health Organization); public domain.",
+        items: [
+          { text: "How often do you have a drink containing alcohol?", options: [{ value: 0, label: "Never" }, { value: 1, label: "Monthly or less" }, { value: 2, label: "2\u20134 times a month" }, { value: 3, label: "2\u20133 times a week" }, { value: 4, label: "4 or more times a week" }] },
+          { text: "How many standard drinks containing alcohol do you have on a typical day?", options: [{ value: 0, label: "1 or 2" }, { value: 1, label: "3 or 4" }, { value: 2, label: "5 or 6" }, { value: 3, label: "7 to 9" }, { value: 4, label: "10 or more" }] },
+          { text: "How often do you have six or more drinks on one occasion?", options: [{ value: 0, label: "Never" }, { value: 1, label: "Less than monthly" }, { value: 2, label: "Monthly" }, { value: 3, label: "Weekly" }, { value: 4, label: "Daily or almost daily" }] }
+        ],
+        // A positive screen is 4 or more for men and 3 or more for women. When the variant is not given the
+        // lower cut-off is used, so nobody is screened negative by a missing answer.
+        variants: [{ value: "men", label: "Cut-off for men (4 or more)", positiveAt: 4 }, { value: "women", label: "Cut-off for women (3 or more)", positiveAt: 3 }, { value: "unspecified", label: "Not specified (3 or more)", positiveAt: 3 }],
+        positiveAt: 3
+      },
+      dast10: {
+        code: "dast10",
+        name: "DAST-10",
+        title: "Drug Abuse Screening Test",
+        better: "lower",
+        max: 10,
+        stem: 'These questions refer to the past 12 months. "Drug use" means use of prescribed or over-the-counter drugs in excess of the directions, and any non-medical use of drugs. Do not include alcohol or tobacco.',
+        credit: "DAST-10 \xA9 1982 Harvey A. Skinner, PhD. Reproduced for non-commercial clinical use with credit.",
+        items: [
+          { text: "Have you used drugs other than those required for medical reasons?", options: YES_NO },
+          { text: "Do you abuse more than one drug at a time?", options: YES_NO },
+          // Reverse scored: "No" is the answer that counts.
+          { text: "Are you always able to stop using drugs when you want to?", options: [{ value: 0, label: "Yes" }, { value: 1, label: "No" }] },
+          { text: 'Have you had "blackouts" or "flashbacks" as a result of drug use?', options: YES_NO },
+          { text: "Do you ever feel bad or guilty about your drug use?", options: YES_NO },
+          { text: "Does your spouse (or parents) ever complain about your involvement with drugs?", options: YES_NO },
+          { text: "Have you neglected your family because of your use of drugs?", options: YES_NO },
+          { text: "Have you engaged in illegal activities in order to obtain drugs?", options: YES_NO },
+          { text: "Have you ever experienced withdrawal symptoms (felt sick) when you stopped taking drugs?", options: YES_NO },
+          { text: "Have you had medical problems as a result of your drug use (e.g., memory loss, hepatitis, convulsions, bleeding)?", options: YES_NO }
+        ],
+        bands: [[0, 0, "No problems reported"], [1, 2, "Low level"], [3, 5, "Moderate level"], [6, 8, "Substantial level"], [9, 10, "Severe level"]],
+        positiveAt: 3
+      },
+      wellbeing: {
+        code: "wellbeing",
+        name: "Wellbeing (0\u201310)",
+        title: "Self-rated wellbeing",
+        better: "higher",
+        max: 10,
+        stem: "A single question, answered by the person in their own words and numbers.",
+        credit: "A single self-rating item written for SUDS; not a validated instrument.",
+        items: [{ text: "Overall, how are things going for you right now? (0 = the worst they could be, 10 = the best they could be)", options: Array.from({ length: 11 }, (_, i) => ({ value: i, label: String(i) })) }],
+        bands: [[0, 3, "Low"], [4, 6, "Moderate"], [7, 10, "Good"]]
+      }
+    };
+    var INSTRUMENT_CODES = Object.keys(INSTRUMENTS);
+    function score(code, responses, { variant } = {}) {
+      const ins = INSTRUMENTS[code];
+      if (!ins) {
+        const e = new Error(`Unknown instrument ${code}`);
+        e.fields = { instrument: `must be one of ${INSTRUMENT_CODES.join(", ")}` };
+        throw e;
+      }
+      if (!Array.isArray(responses) || responses.length !== ins.items.length) {
+        const e = new Error(`${ins.name} needs an answer to each of its ${ins.items.length} questions`);
+        e.fields = { responses: `must have ${ins.items.length} answers` };
+        throw e;
+      }
+      const values = responses.map((raw, i) => {
+        const v = typeof raw === "string" && raw.trim() !== "" ? Number(raw) : raw;
+        if (typeof v !== "number" || !Number.isInteger(v) || !ins.items[i].options.some((o) => o.value === v)) {
+          const e = new Error(`${ins.name} question ${i + 1} has no valid answer`);
+          e.fields = { responses: `question ${i + 1} is missing or out of range` };
+          throw e;
+        }
+        return v;
+      });
+      const total = values.reduce((a, b) => a + b, 0);
+      let positiveAt = ins.positiveAt;
+      let usedVariant = null;
+      if (ins.variants) {
+        const vv = ins.variants.find((x) => x.value === variant) || ins.variants.find((x) => x.value === "unspecified");
+        positiveAt = vv.positiveAt;
+        usedVariant = vv.value;
+      }
+      let band;
+      if (ins.bands) band = (ins.bands.find(([lo, hi]) => total >= lo && total <= hi) || [])[2] || null;
+      else band = total >= positiveAt ? "Positive screen" : "Negative screen";
+      const positive = positiveAt === void 0 ? null : total >= positiveAt ? 1 : 0;
+      const safety = ins.safetyItem !== void 0 && values[ins.safetyItem] > 0 ? 1 : 0;
+      return { total, band, positive, safety_flag: safety, responses: values, variant: usedVariant };
+    }
+    function direction(code, baseline, latest) {
+      const ins = INSTRUMENTS[code];
+      if (!ins || baseline === null || latest === null) return 0;
+      if (latest === baseline) return 0;
+      return (ins.better === "higher" ? latest > baseline : latest < baseline) ? 1 : -1;
+    }
+    module.exports = {
+      ICD10_RE,
+      normalizeIcd10,
+      isZCode,
+      Z_CODES,
+      PROBLEM_STATUSES,
+      PROBLEM_SOURCES,
+      GOAL_STATUSES,
+      STEP_OWNERS,
+      STEP_STATUSES,
+      ASAM_DIMENSIONS,
+      ASAM_RATINGS,
+      ASAM_DISCREPANCY_REASONS,
+      INSTRUMENTS,
+      INSTRUMENT_CODES,
+      score,
+      direction
+    };
+  }
+});
+
 // server/constants.js
 var require_constants = __commonJS({
   "server/constants.js"(exports, module) {
     "use strict";
     init_globals_inject();
+    var CL = require_clinical();
     var RACE_CODES = [
       { code: "american_indian_alaska_native", label: "American Indian or Alaska Native" },
       { code: "asian", label: "Asian" },
@@ -9644,7 +10043,18 @@ var require_constants = __commonJS({
       DISCHARGE_REASONS: ["completed", "transferred", "incarcerated", "moved", "lost_contact", "declined", "deceased", "administrative", "other"],
       // A referral outcome's "If it did not happen, why" (stored encrypted in referrals.barrier_enc).
       REFERRAL_BARRIERS: ["none", "transportation", "insurance", "waitlist", "no_beds", "client_declined", "childcare", "documentation", "legal", "phone_access", "other"],
-      ASAM: ["0.5", "1.0", "2.1", "2.5", "3.1", "3.3", "3.5", "3.7", "4.0", "OTP", "unknown"]
+      ASAM: ["0.5", "1.0", "2.1", "2.5", "3.1", "3.3", "3.5", "3.7", "4.0", "OTP", "unknown"],
+      // Problem list, care plan, ASAM dimensions and the screening instruments (server/clinical.js).
+      Z_CODES: CL.Z_CODES,
+      PROBLEM_STATUSES: CL.PROBLEM_STATUSES,
+      PROBLEM_SOURCES: CL.PROBLEM_SOURCES,
+      GOAL_STATUSES: CL.GOAL_STATUSES,
+      STEP_OWNERS: CL.STEP_OWNERS,
+      STEP_STATUSES: CL.STEP_STATUSES,
+      ASAM_DIMENSIONS: CL.ASAM_DIMENSIONS,
+      ASAM_RATINGS: CL.ASAM_RATINGS,
+      ASAM_DISCREPANCY_REASONS: CL.ASAM_DISCREPANCY_REASONS,
+      INSTRUMENTS: CL.INSTRUMENTS
     };
   }
 });
@@ -11659,6 +12069,8 @@ var require_options = __commonJS({
     var EXCLUDED = [
       { name: "Race and ethnicity", why: "Federal (OMB) reporting categories that funder reports count as they are." },
       { name: "ASAM level of care", why: "The ASAM criteria levels: a national standard, not a programme choice." },
+      { name: "Screening instruments (PHQ-9, GAD-7, AUDIT-C, DAST-10)", why: "Validated questionnaires: their wording and scoring cannot change without making the score meaningless." },
+      { name: "ASAM dimensions and ratings", why: "The six ASAM dimensions and the 0\u20134 risk scale: a national standard." },
       { name: "Stage of change", why: "The stages of the transtheoretical model: a clinical standard." },
       { name: "Consent type", why: "Each type is a different legal authority under 42 CFR Part 2 and HIPAA." },
       { name: "Patient-rights request", why: "The four HIPAA rights (access, amendment, restriction, accounting), each with its own legal deadline." },
@@ -13161,6 +13573,1022 @@ var require_app = __commonJS({
   }
 });
 
+// server/exports.js
+var require_exports = __commonJS({
+  "server/exports.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var M = require_clients_model();
+    var { decrypt: decrypt3 } = require_crypto();
+    var MAX_ROWS = 5e4;
+    var DEID_LABEL = "De-identified (HIPAA Safe Harbor): dates reduced to year-month, ZIP codes to the first three digits, city omitted, ages banded, free text redacted.";
+    var AGE_BANDS = [[0, 17, "0-17"], [18, 24, "18-24"], [25, 34, "25-34"], [35, 44, "35-44"], [45, 54, "45-54"], [55, 64, "55-64"], [65, 89, "65-89"]];
+    function ageBand(dob, now = /* @__PURE__ */ new Date()) {
+      if (!dob) return "";
+      const born = new Date(dob);
+      if (!Number.isFinite(born.getTime())) return "";
+      let age = now.getUTCFullYear() - born.getUTCFullYear();
+      if (now.getUTCMonth() < born.getUTCMonth() || now.getUTCMonth() === born.getUTCMonth() && now.getUTCDate() < born.getUTCDate()) age--;
+      if (age >= 90) return "90+";
+      const band = AGE_BANDS.find(([lo, hi]) => age >= lo && age <= hi);
+      return band ? band[2] : "";
+    }
+    var isDateCol = (k) => /(_at|_date|_due|_on)$/.test(k) || k === "date";
+    var toMonth = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 7) : v;
+    var zip3 = (v) => v ? String(v).replace(/\D/g, "").slice(0, 3) : v;
+    function deidentifyRow(r) {
+      const o = {};
+      for (const [k, v] of Object.entries(r)) {
+        if (k === "city") continue;
+        if (k === "zip") {
+          o[k] = zip3(v);
+          continue;
+        }
+        o[k] = isDateCol(k) ? toMonth(v) : v;
+      }
+      return o;
+    }
+    var DEID_COLUMNS = {
+      clients: ["client_code", "age_band", "status", "intake_date", "discharge_date", "discharge_reason", "referral_source", "referral_date", "engagement_date", "days_to_engagement", "primary_substance", "secondary_substances", "asam_level", "mat_status", "mat_medication", "risk_level", "housing_status", "insurance", "overdose_history", "naloxone_provided", "naloxone_last_date", "co_occurring_mh", "justice_involved", "pregnant_or_parenting", "zip", "gender", "preferred_language"],
+      interventions: ["occurred_at", "client_code", "type", "duration_minutes", "modality", "outcome", "stage_of_change", "naloxone_kits", "fentanyl_strips", "worker", "funding_source", "cost", "follow_up_due"],
+      calls: ["started_at", "client_code", "direction", "contact_type", "duration_minutes", "outcome", "crisis", "follow_up_needed", "follow_up_due", "worker"],
+      time: ["work_date", "worker", "client_code", "category", "minutes", "billable", "funding_source"],
+      referrals: ["referred_at", "client_code", "resource", "category", "status", "urgency", "warm_handoff", "appointment_at", "admitted_at", "closed_at", "worker"],
+      tasks: ["client_code", "assignee", "due_at", "priority", "status", "is_milestone", "completed_at"],
+      forms: ["created_at", "client_code", "template_name", "status", "completed_at", "completed_by", "created_by", "attachments"],
+      consents: ["client_code", "type", "signed_at", "expires_at", "expires_event", "revoked_at", "redisclosure_notice_given"],
+      disclosures: ["client_code", "disclosed_at", "method", "basis", "source", "disclosed_by"],
+      episodes: ["client_code", "opened_at", "closed_at", "status", "referral_source", "discharge_reason", "discharge_disposition", "funding_source"],
+      overdose_events: ["occurred_at", "client_code", "kind", "naloxone_used", "naloxone_doses", "administered_by", "ems_called", "hospitalized", "survived", "location_type"],
+      expenditures: ["spent_at", "fund", "line", "category", "amount", "status", "client_code", "worker", "approver"]
+    };
+    var LIST_COLUMNS = {
+      interventions: { type: "INTERVENTION_TYPES", location: "LOCATIONS", modality: "MODALITIES", outcome: "OUTCOMES" },
+      calls: { contact_type: "CALL_CONTACT_TYPES", outcome: (r) => r.method === "text" ? "TEXT_OUTCOMES" : "CALL_OUTCOMES" },
+      time: { category: "TIME_CATEGORIES" },
+      referrals: { status: "REFERRAL_STATUSES", barrier: "REFERRAL_BARRIERS" },
+      episodes: { discharge_reason: "DISCHARGE_REASONS" },
+      overdose_events: { kind: "OVERDOSE_KINDS", administered_by: "ADMINISTERED_BY" },
+      clients: { primary_substance: "SUBSTANCES", discharge_reason: "DISCHARGE_REASONS" }
+    };
+    function labelRows(kind, rows) {
+      const cols2 = LIST_COLUMNS[kind];
+      if (!cols2) return rows;
+      const O = require_options();
+      const maps = {};
+      const mapFor = (key) => maps[key] = maps[key] || O.labelMap(key);
+      return rows.map((r) => {
+        const o = { ...r };
+        for (const [col, list] of Object.entries(cols2)) {
+          const v = o[col];
+          if (typeof v !== "string" || !v) continue;
+          const key = typeof list === "function" ? list(r) : list;
+          o[col] = mapFor(key)[v] || (/^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(v) ? O.humanize(v) : v);
+        }
+        return o;
+      });
+    }
+    function projectRow(r, cols2) {
+      const o = {};
+      for (const c of cols2) if (c in r) o[c] = r[c];
+      if (r._client_id !== void 0) o._client_id = r._client_id;
+      return o;
+    }
+    var cents = (v) => typeof v === "number" && Number.isFinite(v) ? Math.round(v * 100) / 100 : v;
+    function datasets(ctx, { from, to, ts, tsP, identified }) {
+      const cf = auth3.caseloadFilter(ctx.user, "c.id");
+      const all = auth3.hasPerm(ctx.user, "time:all") ? 1 : 0;
+      const phi = (v) => identified && v ? decrypt3(v) : v ? "[redacted]" : "";
+      const idCols = identified ? ["last_name", "first_name", "dob", "phone", "email", "address"] : ["age_band"];
+      const strip = (cols2) => identified ? cols2 : cols2.filter((c) => c !== "city");
+      const D = {
+        clients: {
+          label: "Clients",
+          columns: strip(["client_code", ...idCols, "status", "intake_date", "discharge_date", "discharge_reason", "referral_source", "referral_date", "engagement_date", "days_to_engagement", "primary_substance", "secondary_substances", "asam_level", "mat_status", "mat_medication", "risk_level", "housing_status", "insurance", "overdose_history", "naloxone_provided", "naloxone_last_date", "co_occurring_mh", "justice_involved", "pregnant_or_parenting", "city", "zip", "gender", "preferred_language", "goals", "flags"]),
+          rows: () => db3.all(`SELECT c.* FROM clients c WHERE c.deleted_at IS NULL AND ${cf.sql} ORDER BY c.client_code LIMIT ?`, ...cf.params, MAX_ROWS).map((x) => ({ ...M.decryptRow(x, { deidentify: !identified }), _client_id: x.id, age_band: identified ? void 0 : ageBand(x.dob_enc ? decrypt3(x.dob_enc) : null) })).map((x) => ({ ...x, days_to_engagement: M.daysToEngagement(x), goals: identified ? x.goals : x.goals_enc ? "[redacted]" : "", flags: identified ? x.flags : x.flags_enc ? "[redacted]" : "" }))
+        },
+        interventions: {
+          label: "Visits & services",
+          columns: ["occurred_at", "client_code", "type", "duration_minutes", "location", "modality", "outcome", "stage_of_change", "naloxone_kits", "fentanyl_strips", "worker", "funding_source", "cost", "summary", "follow_up_due"],
+          rows: () => db3.all(`SELECT i.*, c.client_code, i.client_id AS _client_id, u.display_name worker, f.name funding_source FROM interventions i LEFT JOIN clients c ON c.id=i.client_id JOIN users u ON u.id=i.user_id LEFT JOIN funding_sources f ON f.id=i.funding_source_id WHERE ${ts("i.occurred_at")} AND (i.client_id IS NULL OR ${cf.sql}) ORDER BY i.occurred_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, summary: phi(r.summary_enc) }))
+        },
+        calls: {
+          label: "Calls",
+          columns: ["started_at", "client_code", "direction", "contact_type", "contact_name", "duration_minutes", "outcome", "crisis", "purpose", "summary", "follow_up_needed", "follow_up_due", "worker"],
+          rows: () => db3.all(`SELECT ca.*, c.client_code, ca.client_id AS _client_id, u.display_name worker FROM calls ca LEFT JOIN clients c ON c.id=ca.client_id JOIN users u ON u.id=ca.user_id WHERE ${ts("ca.started_at")} AND (ca.client_id IS NULL OR ${cf.sql}) ORDER BY ca.started_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, contact_name: phi(r.contact_name_enc), summary: phi(r.summary_enc), purpose: phi(r.purpose_enc) }))
+        },
+        time: {
+          label: "Time",
+          columns: ["work_date", "worker", "client_code", "category", "minutes", "billable", "funding_source", "description"],
+          rows: () => db3.all(`SELECT t.*, u.display_name worker, c.client_code, t.client_id AS _client_id, f.name funding_source FROM time_entries t JOIN users u ON u.id=t.user_id LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN funding_sources f ON f.id=t.funding_source_id WHERE t.work_date BETWEEN ? AND ? AND (t.user_id=? OR ?) ORDER BY t.work_date LIMIT ?`, from, to, ctx.user.id, all, MAX_ROWS)
+        },
+        referrals: {
+          label: "Referrals",
+          columns: ["referred_at", "client_code", "resource", "category", "status", "urgency", "warm_handoff", "appointment_at", "admitted_at", "closed_at", "outcome", "barrier", "worker", "notes"],
+          rows: () => db3.all(`SELECT r.*, c.client_code, r.client_id AS _client_id, res.name resource, res.category, u.display_name worker FROM referrals r JOIN clients c ON c.id=r.client_id JOIN resources res ON res.id=r.resource_id JOIN users u ON u.id=r.user_id WHERE ${ts("r.referred_at")} AND ${cf.sql} ORDER BY r.referred_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, outcome: phi(r.outcome_enc), barrier: phi(r.barrier_enc), notes: phi(r.notes_enc) }))
+        },
+        tasks: {
+          label: "To-dos",
+          columns: ["title", "client_code", "assignee", "due_at", "priority", "status", "is_milestone", "completed_at", "description"],
+          rows: () => db3.all(`SELECT t.*, c.client_code, t.client_id AS _client_id, u.display_name assignee FROM tasks t LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN users u ON u.id=t.assigned_to WHERE ${ts("t.created_at")} AND (t.client_id IS NULL OR ${cf.sql}) ORDER BY t.due_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, title: phi(r.title_enc), description: phi(r.description_enc) }))
+        },
+        forms: {
+          label: "Client forms",
+          columns: ["created_at", "client_code", "template_name", "status", "completed_at", "completed_by", "created_by", "attachments"],
+          rows: () => db3.all(`SELECT f.created_at, c.client_code, f.client_id AS _client_id, f.template_name, f.status, f.completed_at, cu.display_name completed_by, cr.display_name created_by, (SELECT COUNT(*) FROM client_form_files x WHERE x.client_form_id=f.id) attachments FROM client_forms f JOIN clients c ON c.id=f.client_id LEFT JOIN users cu ON cu.id=f.completed_by JOIN users cr ON cr.id=f.created_by WHERE f.deleted_at IS NULL AND ${ts("f.created_at")} AND ${cf.sql} ORDER BY f.created_at DESC LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS)
+        },
+        resources: {
+          label: "Resource directory",
+          noClients: true,
+          columns: ["name", "category", "organization", "phone", "fax", "email", "website", "address", "city", "zip", "hours", "eligibility", "services", "languages", "accepts_medicaid", "accepts_uninsured", "mat_offered", "capacity_notes", "contact_person", "summary", "service_tags", "levels_of_care", "populations", "intake_process", "cost_notes", "is_active", "last_verified_at", "notes"],
+          rows: () => db3.all(`SELECT * FROM resources ORDER BY category, name LIMIT ?`, MAX_ROWS)
+        },
+        consents: {
+          label: "Consents",
+          columns: ["client_code", "type", "recipient", "purpose", "scope", "signed_at", "expires_at", "expires_event", "revoked_at", "document_ref", "redisclosure_notice_given"],
+          rows: () => db3.all(`SELECT co.*, c.client_code, co.client_id AS _client_id FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.signed_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY co.signed_at LIMIT ?`, from, to, ...cf.params, MAX_ROWS).map((r) => ({ ...r, recipient: phi(r.recipient_enc), purpose: phi(r.purpose_enc), scope: phi(r.scope_enc) }))
+        },
+        disclosures: {
+          label: "Accounting of disclosures",
+          columns: ["client_code", "disclosed_at", "recipient", "purpose", "what", "method", "basis", "justification", "source", "disclosed_by"],
+          rows: () => db3.all(`SELECT d.*, c.client_code, d.client_id AS _client_id, u.display_name disclosed_by FROM disclosures d JOIN clients c ON c.id=d.client_id JOIN users u ON u.id=d.disclosed_by WHERE ${ts("d.disclosed_at")} AND ${cf.sql} ORDER BY d.disclosed_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, recipient: phi(r.recipient_enc), purpose: phi(r.purpose_enc), what: phi(r.what_enc), justification: phi(r.justification_enc) }))
+        },
+        episodes: {
+          label: "Episodes of care",
+          columns: ["client_code", "opened_at", "closed_at", "status", "referral_source", "discharge_reason", "discharge_disposition", "funding_source"],
+          rows: () => db3.all(`SELECT e.*, c.client_code, e.client_id AS _client_id, f.name funding_source FROM episodes e JOIN clients c ON c.id=e.client_id LEFT JOIN funding_sources f ON f.id=e.funding_source_id WHERE e.opened_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY e.opened_at LIMIT ?`, from, to, ...cf.params, MAX_ROWS)
+        },
+        overdose_events: {
+          label: "Overdose & reversal events",
+          columns: strip(["occurred_at", "client_code", "kind", "substances", "naloxone_used", "naloxone_doses", "administered_by", "ems_called", "hospitalized", "survived", "location_type", "city"]),
+          rows: () => db3.all(`SELECT o.*, c.client_code, o.client_id AS _client_id FROM overdose_events o LEFT JOIN clients c ON c.id=o.client_id WHERE ${ts("o.occurred_at")} AND (o.client_id IS NULL OR ${cf.sql}) ORDER BY o.occurred_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, substances: phi(r.substances_enc) }))
+        }
+      };
+      if (auth3.hasPerm(ctx.user, "budget:read")) {
+        D.funds = { label: "Funding sources", noClients: true, columns: ["name", "source_type", "grant_number", "fiscal_year_start", "fiscal_year_end", "total_amount", "restrictions", "is_active"], rows: () => db3.all(`SELECT * FROM funding_sources ORDER BY fiscal_year_start DESC`) };
+        D.budget_lines = { label: "Budget lines", noClients: true, columns: ["fund", "category", "label", "allocated_amount", "notes"], rows: () => db3.all(`SELECT b.*, f.name fund FROM budget_lines b JOIN funding_sources f ON f.id=b.funding_source_id ORDER BY f.name, b.category`) };
+        D.expenditures = {
+          label: "Expenditures",
+          columns: ["spent_at", "fund", "line", "category", "amount", "status", "client_code", "vendor", "description", "receipt_ref", "worker", "approver"],
+          rows: () => db3.all(`SELECT e.*, f.name fund, b.label line, c.client_code, e.client_id AS _client_id, u.display_name worker, a.display_name approver FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id LEFT JOIN budget_lines b ON b.id=e.budget_line_id LEFT JOIN clients c ON c.id=e.client_id JOIN users u ON u.id=e.user_id LEFT JOIN users a ON a.id=e.approved_by WHERE e.spent_at BETWEEN ? AND ? ORDER BY e.spent_at`, from, to).map((r) => ({ ...r, amount: cents(r.amount) }))
+        };
+      }
+      for (const [kind, d] of Object.entries(D)) {
+        const coded = d.rows;
+        const raw = () => labelRows(kind, coded());
+        if (identified || d.noClients) {
+          d.rows = raw;
+          continue;
+        }
+        const allowed = DEID_COLUMNS[kind];
+        if (!allowed) throw new Error(`No de-identified column list is defined for the ${kind} dataset`);
+        d.columns = d.columns.filter((c) => allowed.includes(c));
+        d.rows = () => raw().map((r) => projectRow(deidentifyRow(r), allowed));
+      }
+      return D;
+    }
+    function clientIdsOf(rows) {
+      return [...new Set(rows.map((r) => r._client_id).filter(Boolean))];
+    }
+    function publicRows(rows) {
+      return rows.map((r) => {
+        const o = { ...r };
+        delete o._client_id;
+        return o;
+      });
+    }
+    module.exports = { LIST_COLUMNS, labelRows, datasets, ageBand, deidentifyRow, clientIdsOf, publicRows, DEID_LABEL, DEID_COLUMNS, cents };
+  }
+});
+
+// server/importers/text.js
+var require_text = __commonJS({
+  "server/importers/text.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var zlib = (init_zlib(), __toCommonJS(zlib_exports));
+    function decodeEntities(s) {
+      const map = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", ndash: "\u2013", mdash: "\u2014", hellip: "\u2026", rsquo: "\u2019", lsquo: "\u2018", rdquo: "\u201D", ldquo: "\u201C" };
+      return s.replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z]+);/g, (m, e) => {
+        if (e[0] === "#") {
+          const code = e[1].toLowerCase() === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+          return Number.isFinite(code) ? String.fromCodePoint(code) : m;
+        }
+        return map[e] ?? m;
+      });
+    }
+    function htmlToText(html) {
+      let s = String(html);
+      s = s.replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, "");
+      s = s.replace(/<!--[\s\S]*?-->/g, "");
+      s = s.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li|h[1-6]|tr|blockquote|pre)>/gi, "\n").replace(/<li[^>]*>/gi, "\u2022 ").replace(/<\/td>/gi, "	");
+      s = s.replace(/<[^>]+>/g, "");
+      s = decodeEntities(s);
+      return s.replace(/\r/g, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    }
+    function extractTitle(html) {
+      const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html) || /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html);
+      return m ? htmlToText(m[1]).trim() : "";
+    }
+    function quotedPrintableDecode(s) {
+      return import_buffer.Buffer.from(String(s).replace(/=\r?\n/g, "").replace(/=([0-9A-F]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16))), "binary").toString("utf8");
+    }
+    function parseMime(raw) {
+      const text = import_buffer.Buffer.isBuffer(raw) ? raw.toString("latin1") : String(raw);
+      const headerEnd = text.search(/\r?\n\r?\n/);
+      const headers = text.slice(0, headerEnd);
+      const bm = /boundary="?([^"\r\n;]+)"?/i.exec(headers);
+      if (!bm) {
+        return [{ contentType: (/content-type:\s*([^;\r\n]+)/i.exec(headers) || [, "text/html"])[1].trim(), body: decodePart(headers, text.slice(headerEnd).trim()) }];
+      }
+      const parts = text.split(new RegExp("--" + bm[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?:--)?\\r?\\n"));
+      const out2 = [];
+      for (const p of parts.slice(1)) {
+        const he = p.search(/\r?\n\r?\n/);
+        if (he < 0) continue;
+        const h = p.slice(0, he);
+        const b = p.slice(he).replace(/^\r?\n\r?\n/, "");
+        const ct = (/content-type:\s*([^;\r\n]+)/i.exec(h) || [, ""])[1].trim().toLowerCase();
+        const loc = (/content-location:\s*([^\r\n]+)/i.exec(h) || [, ""])[1].trim();
+        if (!ct) continue;
+        out2.push({ contentType: ct, location: loc, body: decodePart(h, b) });
+      }
+      return out2;
+    }
+    function decodePart(headers, body) {
+      const enc2 = (/content-transfer-encoding:\s*([^\r\n]+)/i.exec(headers) || [, "7bit"])[1].trim().toLowerCase();
+      if (enc2 === "quoted-printable") return quotedPrintableDecode(body);
+      if (enc2 === "base64") return import_buffer.Buffer.from(body.replace(/\s+/g, ""), "base64");
+      return import_buffer.Buffer.from(body, "latin1").toString("utf8");
+    }
+    function unzip(buf) {
+      const files = /* @__PURE__ */ new Map();
+      const eocd = buf.lastIndexOf(import_buffer.Buffer.from([80, 75, 5, 6]));
+      if (eocd < 0) throw new Error("Not a ZIP archive");
+      const count = buf.readUInt16LE(eocd + 10);
+      let off = buf.readUInt32LE(eocd + 16);
+      for (let i = 0; i < count; i++) {
+        if (buf.readUInt32LE(off) !== 33639248) break;
+        const method = buf.readUInt16LE(off + 10);
+        const csize = buf.readUInt32LE(off + 20);
+        const nlen = buf.readUInt16LE(off + 28), elen = buf.readUInt16LE(off + 30), clen2 = buf.readUInt16LE(off + 32);
+        const lho = buf.readUInt32LE(off + 42);
+        const name = buf.toString("utf8", off + 46, off + 46 + nlen);
+        const lnlen = buf.readUInt16LE(lho + 26), lelen = buf.readUInt16LE(lho + 28);
+        const dataStart = lho + 30 + lnlen + lelen;
+        const data = buf.subarray(dataStart, dataStart + csize);
+        files.set(name, method === 8 ? zlib.inflateRawSync(data) : import_buffer.Buffer.from(data));
+        off += 46 + nlen + elen + clen2;
+      }
+      return files;
+    }
+    function docxToText(buf) {
+      const files = unzip(buf);
+      const xml = files.get("word/document.xml");
+      if (!xml) throw new Error("Not a DOCX file (word/document.xml missing)");
+      let s = xml.toString("utf8");
+      s = s.replace(/<w:tab\/>/g, "	").replace(/<w:br\/>|<w:cr\/>/g, "\n").replace(/<\/w:p>/g, "\n").replace(/<[^>]+>/g, "");
+      return decodeEntities(s).replace(/\n{3,}/g, "\n\n").trim();
+    }
+    function sniffDate(text) {
+      const s = String(text || "");
+      let m = /(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?))?/.exec(s);
+      if (m) {
+        const d = /* @__PURE__ */ new Date(m[1] + (m[2] ? "T" + m[2] : "T12:00:00"));
+        if (!isNaN(d)) return d.toISOString();
+      }
+      m = /\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b(?:,?\s+(\d{1,2}:\d{2}\s*(?:AM|PM)?))?/i.exec(s);
+      if (m) {
+        const y = m[3].length === 2 ? "20" + m[3] : m[3];
+        const d = /* @__PURE__ */ new Date(`${y}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}T12:00:00`);
+        if (!isNaN(d)) return d.toISOString();
+      }
+      m = /\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+(\d{1,2}),?\s+(\d{4})/i.exec(s);
+      if (m) {
+        const d = /* @__PURE__ */ new Date(`${m[1].slice(0, 3)} ${m[2]}, ${m[3]} 12:00:00`);
+        if (!isNaN(d)) return d.toISOString();
+      }
+      return null;
+    }
+    function sniffClientHints(text) {
+      const s = String(text || "");
+      const hints = { codes: [], names: [] };
+      for (const m of s.matchAll(/\b([CM]\d{2}-\d{4})\b/gi)) hints.codes.push(m[1].toUpperCase());
+      const kw = /\b(?:(?:client|participant|pt|patient|re|name|regarding)\s*[:\-]\s*|(?:with|for|regarding)\s+)/gi;
+      const nameRe = /^([A-Z][a-zA-Z'\-]+(?:,\s*|\s+)[A-Z][a-zA-Z'\-]+)/;
+      for (const m of s.matchAll(kw)) {
+        const nm = nameRe.exec(s.slice(m.index + m[0].length));
+        if (nm) hints.names.push(nm[1].trim());
+      }
+      hints.codes = [...new Set(hints.codes)];
+      hints.names = [...new Set(hints.names)].slice(0, 5);
+      return hints;
+    }
+    module.exports = { htmlToText, extractTitle, quotedPrintableDecode, parseMime, unzip, docxToText, sniffDate, sniffClientHints, decodeEntities };
+  }
+});
+
+// server/spreadsheet.js
+var require_spreadsheet = __commonJS({
+  "server/spreadsheet.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var zlib = (init_zlib(), __toCommonJS(zlib_exports));
+    var { unzip, decodeEntities } = require_text();
+    function parseCsv(text) {
+      const s = String(text).replace(/^﻿/, "");
+      const rows = [];
+      let row = [];
+      let field = "";
+      let q = false;
+      for (let i = 0; i < s.length; i++) {
+        const c = s[i];
+        if (q) {
+          if (c === '"') {
+            if (s[i + 1] === '"') {
+              field += '"';
+              i++;
+            } else q = false;
+          } else field += c;
+        } else if (c === '"') q = true;
+        else if (c === ",") {
+          row.push(field);
+          field = "";
+        } else if (c === "\n" || c === "\r") {
+          if (c === "\r" && s[i + 1] === "\n") i++;
+          row.push(field);
+          rows.push(row);
+          row = [];
+          field = "";
+        } else field += c;
+      }
+      if (field !== "" || row.length) {
+        row.push(field);
+        rows.push(row);
+      }
+      return rows.filter((r) => r.some((v) => String(v).trim() !== ""));
+    }
+    var FORMULA_START = /^[=+\-@\t\r]/;
+    function toCsv(rows, columns) {
+      const esc = (v) => {
+        if (v === null || v === void 0) return "";
+        if (typeof v === "number") return Number.isFinite(v) ? String(v) : "";
+        let t = typeof v === "object" ? JSON.stringify(v) : String(v);
+        if (FORMULA_START.test(t)) return `"'` + t.replace(/"/g, '""') + '"';
+        return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+      };
+      return "\uFEFF" + [columns.map((c) => esc(c.label || c.key || c)).join(","), ...rows.map((r) => columns.map((c) => esc(r[c.key || c])).join(","))].join("\r\n");
+    }
+    function crc32(buf) {
+      let c, crc = 4294967295;
+      for (let n = 0; n < buf.length; n++) {
+        c = (crc ^ buf[n]) & 255;
+        for (let k = 0; k < 8; k++) c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
+        crc = crc >>> 8 ^ c;
+      }
+      return (crc ^ 4294967295) >>> 0;
+    }
+    function zipEntry(name, content, comp, off, local, central) {
+      const data = import_buffer.Buffer.isBuffer(content) ? content : import_buffer.Buffer.from(content, "utf8");
+      const n = import_buffer.Buffer.from(name);
+      const crc = crc32(data);
+      const lh = import_buffer.Buffer.alloc(30);
+      lh.writeUInt32LE(67324752, 0);
+      lh.writeUInt16LE(20, 4);
+      lh.writeUInt16LE(2048, 6);
+      lh.writeUInt16LE(8, 8);
+      lh.writeUInt32LE(crc, 14);
+      lh.writeUInt32LE(comp.length, 18);
+      lh.writeUInt32LE(data.length, 22);
+      lh.writeUInt16LE(n.length, 26);
+      local.push(lh, n, comp);
+      const ch = import_buffer.Buffer.alloc(46);
+      ch.writeUInt32LE(33639248, 0);
+      ch.writeUInt16LE(20, 4);
+      ch.writeUInt16LE(20, 6);
+      ch.writeUInt16LE(2048, 8);
+      ch.writeUInt16LE(8, 10);
+      ch.writeUInt32LE(crc, 16);
+      ch.writeUInt32LE(comp.length, 20);
+      ch.writeUInt32LE(data.length, 24);
+      ch.writeUInt16LE(n.length, 28);
+      ch.writeUInt32LE(off, 42);
+      central.push(ch, n);
+      return off + 30 + n.length + comp.length;
+    }
+    function zipEnd(entries, local, central, off) {
+      const cd = import_buffer.Buffer.concat(central);
+      const eocd = import_buffer.Buffer.alloc(22);
+      eocd.writeUInt32LE(101010256, 0);
+      eocd.writeUInt16LE(entries.length, 8);
+      eocd.writeUInt16LE(entries.length, 10);
+      eocd.writeUInt32LE(cd.length, 12);
+      eocd.writeUInt32LE(off, 16);
+      return import_buffer.Buffer.concat([...local, cd, eocd]);
+    }
+    var defer = globalThis.setImmediate ? (f) => setImmediate(f) : (f) => setTimeout(f, 0);
+    async function zipAsync(entries) {
+      const local = [], central = [];
+      let off = 0;
+      const deflate = (buf) => typeof zlib.deflateRaw === "function" ? new Promise((resolve2, reject) => zlib.deflateRaw(buf, (err2, out2) => err2 ? reject(err2) : resolve2(out2))) : new Promise((resolve2) => defer(resolve2)).then(() => zlib.deflateRawSync(buf));
+      for (const [name, content] of entries) {
+        const data = import_buffer.Buffer.isBuffer(content) ? content : import_buffer.Buffer.from(content, "utf8");
+        off = zipEntry(name, data, await deflate(data), off, local, central);
+      }
+      return zipEnd(entries, local, central, off);
+    }
+    function zip(entries) {
+      const local = [], central = [];
+      let off = 0;
+      for (const [name, content] of entries) {
+        const data = import_buffer.Buffer.isBuffer(content) ? content : import_buffer.Buffer.from(content, "utf8");
+        const comp = zlib.deflateRawSync(data);
+        const n = import_buffer.Buffer.from(name);
+        const crc = crc32(data);
+        const lh = import_buffer.Buffer.alloc(30);
+        lh.writeUInt32LE(67324752, 0);
+        lh.writeUInt16LE(20, 4);
+        lh.writeUInt16LE(2048, 6);
+        lh.writeUInt16LE(8, 8);
+        lh.writeUInt32LE(crc, 14);
+        lh.writeUInt32LE(comp.length, 18);
+        lh.writeUInt32LE(data.length, 22);
+        lh.writeUInt16LE(n.length, 26);
+        local.push(lh, n, comp);
+        const ch = import_buffer.Buffer.alloc(46);
+        ch.writeUInt32LE(33639248, 0);
+        ch.writeUInt16LE(20, 4);
+        ch.writeUInt16LE(20, 6);
+        ch.writeUInt16LE(2048, 8);
+        ch.writeUInt16LE(8, 10);
+        ch.writeUInt32LE(crc, 16);
+        ch.writeUInt32LE(comp.length, 20);
+        ch.writeUInt32LE(data.length, 24);
+        ch.writeUInt16LE(n.length, 28);
+        ch.writeUInt32LE(off, 42);
+        central.push(ch, n);
+        off += 30 + n.length + comp.length;
+      }
+      return zipEnd(entries, local, central, off);
+    }
+    var EXCEL_EPOCH = Date.UTC(1899, 11, 30);
+    var xmlEsc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
+    function colRef(i) {
+      let s = "";
+      i++;
+      while (i > 0) {
+        const m = (i - 1) % 26;
+        s = String.fromCharCode(65 + m) + s;
+        i = Math.floor((i - 1) / 26);
+      }
+      return s;
+    }
+    function writeSheetXml(sh) {
+      const cols2 = sh.columns.map((c) => typeof c === "string" ? { key: c, label: c } : c);
+      const cell = (r, i, v) => {
+        const ref = colRef(i) + r;
+        if (v === null || v === void 0 || v === "") return "";
+        if (typeof v === "number" && Number.isFinite(v)) return `<c r="${ref}"><v>${v}</v></c>`;
+        if (typeof v === "boolean") return `<c r="${ref}" t="b"><v>${v ? 1 : 0}</v></c>`;
+        if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
+          const t = Date.parse(v + "T00:00:00Z");
+          if (Number.isFinite(t)) return `<c r="${ref}" s="2"><v>${(t - EXCEL_EPOCH) / 864e5}</v></c>`;
+        }
+        if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)) {
+          const t = Date.parse(v);
+          if (Number.isFinite(t)) return `<c r="${ref}" s="3"><v>${(t - EXCEL_EPOCH) / 864e5}</v></c>`;
+        }
+        return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${xmlEsc(typeof v === "object" ? JSON.stringify(v) : v)}</t></is></c>`;
+      };
+      const header = `<row r="1">${cols2.map((c, i) => `<c r="${colRef(i)}1" t="inlineStr" s="1"><is><t>${xmlEsc(c.label)}</t></is></c>`).join("")}</row>`;
+      const body = sh.rows.map((row, ri) => `<row r="${ri + 2}">${cols2.map((c, i) => cell(ri + 2, i, row[c.key])).join("")}</row>`).join("");
+      const widths = `<cols>${cols2.map((c, i) => `<col min="${i + 1}" max="${i + 1}" width="${Math.min(60, Math.max(10, c.width || String(c.label).length + 4))}" customWidth="1"/>`).join("")}</cols>`;
+      return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>${widths}<sheetData>${header}${body}</sheetData><autoFilter ref="A1:${colRef(cols2.length - 1)}${sh.rows.length + 1}"/></worksheet>`;
+    }
+    function writeWorkbookParts(sheets) {
+      const files = [];
+      const safeName = (n, i) => String(n).replace(/[\\/*?:\[\]]/g, " ").slice(0, 31) || `Sheet${i + 1}`;
+      files.push(["[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`]);
+      files.push(["_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`]);
+      files.push(["xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((s, i) => `<sheet name="${xmlEsc(safeName(s.name, i))}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("")}</sheets></workbook>`]);
+      files.push(["xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("")}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`]);
+      files.push(["xl/styles.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" applyFont="1"/><xf numFmtId="14" fontId="0" fillId="0" borderId="0" applyNumberFormat="1"/><xf numFmtId="22" fontId="0" fillId="0" borderId="0" applyNumberFormat="1"/></cellXfs></styleSheet>`]);
+      sheets.forEach((s, i) => files.push([`xl/worksheets/sheet${i + 1}.xml`, writeSheetXml(s)]));
+      return new Map(files);
+    }
+    function writeWorkbook(sheets) {
+      return zip([...writeWorkbookParts(sheets).entries()]);
+    }
+    async function writeWorkbookAsync(sheets) {
+      const breathe = () => new Promise((resolve2) => defer(resolve2));
+      const parts = writeWorkbookParts(sheets.map((s) => ({ name: s.name, columns: s.columns, rows: [] })));
+      for (let i = 0; i < sheets.length; i++) {
+        parts.set(`xl/worksheets/sheet${i + 1}.xml`, writeSheetXml(sheets[i]));
+        await breathe();
+      }
+      const out2 = await zipAsync([...parts.entries()]);
+      return out2;
+    }
+    function readWorkbook(buf) {
+      const files = unzip(buf);
+      const get = (n) => {
+        const f = files.get(n);
+        return f ? f.toString("utf8") : null;
+      };
+      const wb = get("xl/workbook.xml");
+      if (!wb) throw new Error("Not an Excel (.xlsx) file");
+      const rels = get("xl/_rels/workbook.xml.rels") || "";
+      const relMap = {};
+      for (const m of rels.matchAll(/<Relationship\b[^>]*>/g)) {
+        const id = /Id="([^"]+)"/.exec(m[0])?.[1];
+        const t = /Target="([^"]+)"/.exec(m[0])?.[1];
+        if (id && t) relMap[id] = t.replace(/^\/?xl\//, "").replace(/^\//, "");
+      }
+      const shared = [];
+      const ss = get("xl/sharedStrings.xml");
+      if (ss) for (const m of ss.matchAll(/<si>([\s\S]*?)<\/si>/g)) shared.push(decodeEntities([...m[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((x) => x[1]).join("")));
+      const sheets = [];
+      for (const m of wb.matchAll(/<sheet\b[^>]*>/g)) {
+        const name = decodeEntities(/name="([^"]*)"/.exec(m[0])?.[1] || "");
+        const rid = /r:id="([^"]+)"/.exec(m[0])?.[1];
+        const target = relMap[rid] || `worksheets/sheet${sheets.length + 1}.xml`;
+        const xml = get("xl/" + target) || get(target);
+        if (!xml) continue;
+        const rows = [];
+        for (const rm of xml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
+          const row = [];
+          for (const cm of rm[1].matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
+            const attrs = cm[1];
+            const inner = cm[2] || "";
+            const ref = /r="([A-Z]+)\d+"/.exec(attrs)?.[1];
+            const type = /t="([^"]+)"/.exec(attrs)?.[1];
+            const idx = ref ? colIndex(ref) : row.length;
+            let v = null;
+            const vm = /<v>([\s\S]*?)<\/v>/.exec(inner);
+            if (type === "s") v = shared[Number(vm?.[1])] ?? "";
+            else if (type === "inlineStr") v = decodeEntities([...inner.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((x) => x[1]).join(""));
+            else if (type === "b") v = vm?.[1] === "1";
+            else if (vm) {
+              const n = Number(vm[1]);
+              v = Number.isFinite(n) ? n : decodeEntities(vm[1]);
+            }
+            while (row.length < idx) row.push(null);
+            row[idx] = v;
+          }
+          if (row.some((x) => x !== null && x !== "")) rows.push(row);
+        }
+        sheets.push({ name, rows });
+      }
+      return sheets;
+    }
+    function colIndex(letters) {
+      let n = 0;
+      for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64);
+      return n - 1;
+    }
+    function excelDate(n) {
+      if (typeof n !== "number" || !Number.isFinite(n) || n < 1) return null;
+      const d = new Date(Math.round((n - 25569) * 864e5));
+      return isNaN(d) ? null : d.toISOString().slice(0, 10);
+    }
+    function parseFile(buf, filename = "") {
+      const isZip = buf[0] === 80 && buf[1] === 75;
+      const sheets = isZip ? readWorkbook(buf) : [{ name: filename.replace(/\.[^.]+$/, "") || "Sheet1", rows: parseCsv(buf.toString("utf8")) }];
+      return { sheets: sheets.map((s) => {
+        const [h, ...rest] = s.rows;
+        const headers = (h || []).map((x) => String(x ?? "").trim());
+        return { name: s.name, headers, rows: rest.map((r) => Object.fromEntries(headers.map((k, i) => [k, r[i] === void 0 ? null : r[i]]))) };
+      }) };
+    }
+    module.exports = { parseCsv, toCsv, writeWorkbook, writeWorkbookAsync, readWorkbook, parseFile, excelDate, zip, defer };
+  }
+});
+
+// server/routes/assessments.js
+var require_assessments = __commonJS({
+  "server/routes/assessments.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var C = require_constants();
+    var CL = require_clinical();
+    var { badRequest, notFound, forbidden } = require_http();
+    var { validate } = require_validate();
+    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
+    var { assertFresh } = require_crud();
+    var dec2 = (v) => v ? decrypt3(v) : null;
+    var today = () => require_budget().localDate();
+    var DAY = /^\d{4}-\d{2}-\d{2}$/;
+    function clientFor(ctx, clientId) {
+      if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, clientId)) throw notFound("Client not found");
+      auth3.assertClientAccess(ctx, clientId);
+    }
+    var fieldError = (field, message) => badRequest("Validation failed", { fields: { [field]: message } });
+    var mayChange = (ctx, row, col) => row[col] === ctx.user.id || auth3.hasPerm(ctx.user, "clients:all");
+    var ratingRule = { type: "number", integer: true, min: 0, max: 4 };
+    var asamShape = {
+      assessed_at: { type: "date", required: true },
+      d1_rating: { ...ratingRule, required: true },
+      d2_rating: { ...ratingRule, required: true },
+      d3_rating: { ...ratingRule, required: true },
+      d4_rating: { ...ratingRule, required: true },
+      d5_rating: { ...ratingRule, required: true },
+      d6_rating: { ...ratingRule, required: true },
+      dimension_notes: { type: "object" },
+      recommended_loc: { type: "string", enum: C.ASAM },
+      actual_loc: { type: "string", enum: C.ASAM },
+      discrepancy_reason: { type: "string", enum: CL.ASAM_DISCREPANCY_REASONS },
+      discrepancy_notes: { type: "string", maxLen: 2e3 },
+      summary: { type: "string", maxLen: 5e3 },
+      update_client_level: { type: "boolean" }
+    };
+    function cleanDimensionNotes(notes) {
+      if (notes === void 0 || notes === null) return notes;
+      if (Array.isArray(notes)) throw fieldError("dimension_notes", "must be an object keyed d1 to d6");
+      const out2 = {};
+      for (const d of CL.ASAM_DIMENSIONS) {
+        const v = notes[d.key];
+        if (v === void 0 || v === null || v === "") continue;
+        if (typeof v !== "string" || v.length > 4e3) throw fieldError("dimension_notes", `${d.key} must be text of at most 4000 characters`);
+        out2[d.key] = v.trim();
+      }
+      return out2;
+    }
+    function checkDiscrepancy(rec, act, reason) {
+      if (rec && act && rec !== act && rec !== "unknown" && act !== "unknown" && !reason) throw fieldError("discrepancy_reason", "is required when the level referred to differs from the level recommended");
+    }
+    function presentAsam(a) {
+      let notes = {};
+      try {
+        notes = a.dimension_notes_enc ? JSON.parse(dec2(a.dimension_notes_enc)) : {};
+      } catch {
+        notes = {};
+      }
+      const out2 = { ...a, dimension_notes: notes, discrepancy_notes: dec2(a.discrepancy_notes_enc), summary: dec2(a.summary_enc) };
+      delete out2.dimension_notes_enc;
+      delete out2.discrepancy_notes_enc;
+      delete out2.summary_enc;
+      out2.ratings = CL.ASAM_DIMENSIONS.map((d) => a[`${d.key}_rating`]);
+      out2.discrepancy = !!(a.recommended_loc && a.actual_loc && a.recommended_loc !== a.actual_loc);
+      return out2;
+    }
+    function loadAsam(ctx, id) {
+      const a = db3.one(`SELECT a.*, u.display_name AS assessed_by_name FROM asam_assessments a LEFT JOIN users u ON u.id=a.assessed_by WHERE a.id=?`, id);
+      if (!a) throw notFound("Assessment not found");
+      auth3.assertClientAccess(ctx, a.client_id);
+      return a;
+    }
+    function syncClientLevel(ctx, clientId) {
+      const latest = db3.one(`SELECT recommended_loc, actual_loc FROM asam_assessments WHERE client_id=? ORDER BY assessed_at DESC, created_at DESC LIMIT 1`, clientId);
+      if (!latest) return null;
+      const level = latest.actual_loc && latest.actual_loc !== "unknown" ? latest.actual_loc : latest.recommended_loc;
+      if (!level || level === "unknown") return null;
+      const c = db3.one(`SELECT asam_level FROM clients WHERE id=?`, clientId);
+      if (c && c.asam_level !== level) {
+        db3.run(`UPDATE clients SET asam_level=?, updated_at=? WHERE id=?`, level, db3.now(), clientId);
+        audit3.log({ user: ctx.user, action: "client.update", entity: "client", entityId: clientId, clientId, ip: ctx.ip, details: { fields: ["asam_level"], from: "asam_assessment" } });
+      }
+      return level;
+    }
+    var outcomeShape = {
+      instrument: { type: "string", required: true, enum: CL.INSTRUMENT_CODES },
+      administered_at: { type: "date", required: true },
+      responses: { type: "array", required: true, maxLen: 20 },
+      variant: { type: "string", enum: ["men", "women", "unspecified"] },
+      notes: { type: "string", maxLen: 2e3 }
+    };
+    function scoreOrReject(instrument, responses, variant) {
+      try {
+        return CL.score(instrument, responses, { variant });
+      } catch (e) {
+        throw badRequest(e.message, { fields: e.fields || { responses: "invalid" } });
+      }
+    }
+    function presentOutcome(m) {
+      let responses = [];
+      try {
+        responses = JSON.parse(dec2(m.responses_enc) || "[]");
+      } catch {
+        responses = [];
+      }
+      const out2 = { ...m, responses, notes: dec2(m.notes_enc), name: CL.INSTRUMENTS[m.instrument]?.name || m.instrument };
+      delete out2.responses_enc;
+      delete out2.notes_enc;
+      return out2;
+    }
+    function loadOutcome(ctx, id) {
+      const m = db3.one(`SELECT m.*, u.display_name AS administered_by_name FROM outcome_measures m LEFT JOIN users u ON u.id=m.administered_by WHERE m.id=?`, id);
+      if (!m) throw notFound("Measure not found");
+      auth3.assertClientAccess(ctx, m.client_id);
+      return m;
+    }
+    function safetyPlanFor(ctx, clientId) {
+      const kinds = ["admin", "clinical"].filter((k) => auth3.hasPerm(ctx.user, `notes:${k}:read`) || auth3.hasPerm(ctx.user, `notes:${k}:write`));
+      if (!kinds.length) return null;
+      return db3.one(`SELECT id, occurred_at, status FROM notes WHERE client_id=? AND format='safety_plan' AND deleted_at IS NULL AND status IN ('signed','amended') AND kind IN (${kinds.map(() => "?").join(",")}) ORDER BY occurred_at DESC LIMIT 1`, clientId, ...kinds) || null;
+    }
+    function raiseSafetyAlert(ctx, clientId, measureId) {
+      const taskId = uuid2();
+      db3.run(
+        `INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority,status) VALUES(?,?,?,?,?,?,?,?,?)`,
+        taskId,
+        clientId,
+        ctx.user.id,
+        ctx.user.id,
+        encrypt3('Safety follow-up: PHQ-9 question 9 answered above "Not at all"'),
+        encrypt3("Assess risk today and review or write the safety plan with the client. Follow your programme's crisis protocol; for imminent danger call 988 or 911."),
+        today(),
+        "urgent",
+        "open"
+      );
+      audit3.log({ user: ctx.user, action: "outcome.safety_alert", entity: "outcome_measure", entityId: measureId, clientId, ip: ctx.ip, details: { task_id: taskId } });
+      return taskId;
+    }
+    function outcomePairs(ctx, { from, to } = {}) {
+      const cf = auth3.caseloadFilter(ctx.user, "m.client_id");
+      const where = ["c.deleted_at IS NULL", cf.sql];
+      const params = [...cf.params];
+      if (from) {
+        where.push("substr(m.administered_at,1,10) >= ?");
+        params.push(from);
+      }
+      if (to) {
+        where.push("substr(m.administered_at,1,10) <= ?");
+        params.push(to);
+      }
+      const rows = db3.all(`SELECT m.client_id, c.client_code, m.instrument, m.administered_at, m.total_score, m.band, m.positive, m.safety_flag
+    FROM outcome_measures m JOIN clients c ON c.id=m.client_id WHERE ${where.join(" AND ")} ORDER BY m.administered_at, m.created_at`, ...params);
+      const by = /* @__PURE__ */ new Map();
+      for (const r of rows) {
+        const k = `${r.instrument}|${r.client_id}`;
+        if (!by.has(k)) by.set(k, []);
+        by.get(k).push(r);
+      }
+      const pairs = [];
+      for (const list of by.values()) {
+        const b = list[0], l = list[list.length - 1];
+        pairs.push({
+          instrument: b.instrument,
+          client_id: b.client_id,
+          client_code: b.client_code,
+          administrations: list.length,
+          baseline: b,
+          latest: l,
+          safety_flags: list.filter((x) => x.safety_flag).length,
+          change: list.length > 1 ? l.total_score - b.total_score : null,
+          direction: list.length > 1 ? CL.direction(b.instrument, b.total_score, l.total_score) : null
+        });
+      }
+      return pairs;
+    }
+    function summarise(pairs) {
+      const round = (n) => Math.round(n * 10) / 10;
+      const mean = (a) => a.length ? round(a.reduce((x, y) => x + y, 0) / a.length) : null;
+      return CL.INSTRUMENT_CODES.map((code) => {
+        const all = pairs.filter((p) => p.instrument === code);
+        const paired = all.filter((p) => p.administrations > 1);
+        const improved = paired.filter((p) => p.direction === 1).length, worse = paired.filter((p) => p.direction === -1).length;
+        const ins = CL.INSTRUMENTS[code];
+        return {
+          instrument: code,
+          name: ins.name,
+          better: ins.better,
+          clients_screened: all.length,
+          clients_with_followup: paired.length,
+          mean_baseline: mean(paired.map((p) => p.baseline.total_score)),
+          mean_latest: mean(paired.map((p) => p.latest.total_score)),
+          mean_change: mean(paired.map((p) => p.change)),
+          improved,
+          worse,
+          unchanged: paired.length - improved - worse,
+          pct_improved: paired.length ? Math.round(improved / paired.length * 100) : null,
+          positive_at_baseline: paired.filter((p) => p.baseline.positive === 1).length,
+          positive_at_latest: paired.filter((p) => p.latest.positive === 1).length,
+          safety_flags: all.reduce((n, p) => n + p.safety_flags, 0)
+        };
+      });
+    }
+    function period(ctx) {
+      const from = ctx.query.get("from") || null;
+      const to = ctx.query.get("to") || null;
+      for (const [k, v] of [["from", from], ["to", to]]) if (v && (!DAY.test(v) || !Number.isFinite(Date.parse(v)))) throw badRequest(`${k} must be a date (YYYY-MM-DD)`);
+      return { from, to };
+    }
+    module.exports = (r) => {
+      r.get("/api/clients/:id/asam", auth3.requireAuth, auth3.requirePerm("assessments:read", "assessments:write"), (ctx) => {
+        clientFor(ctx, ctx.params.id);
+        const rows = db3.all(`SELECT a.*, u.display_name AS assessed_by_name FROM asam_assessments a LEFT JOIN users u ON u.id=a.assessed_by WHERE a.client_id=? ORDER BY a.assessed_at DESC, a.created_at DESC`, ctx.params.id).map(presentAsam);
+        audit3.log({ user: ctx.user, action: "asam.list", clientId: ctx.params.id, ip: ctx.ip, details: { count: rows.length } });
+        return { rows, dimensions: CL.ASAM_DIMENSIONS };
+      });
+      r.post("/api/clients/:id/asam", auth3.requireAuth, auth3.requirePerm("assessments:write"), (ctx) => {
+        clientFor(ctx, ctx.params.id);
+        const v = validate(ctx.body, asamShape);
+        const notes = cleanDimensionNotes(v.dimension_notes);
+        checkDiscrepancy(v.recommended_loc, v.actual_loc, v.discrepancy_reason);
+        const id = uuid2();
+        let level = null;
+        db3.transaction(() => {
+          db3.run(
+            `INSERT INTO asam_assessments(id,client_id,assessed_at,assessed_by,d1_rating,d2_rating,d3_rating,d4_rating,d5_rating,d6_rating,dimension_notes_enc,recommended_loc,actual_loc,discrepancy_reason,discrepancy_notes_enc,summary_enc) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            id,
+            ctx.params.id,
+            v.assessed_at,
+            ctx.user.id,
+            v.d1_rating,
+            v.d2_rating,
+            v.d3_rating,
+            v.d4_rating,
+            v.d5_rating,
+            v.d6_rating,
+            notes && Object.keys(notes).length ? encrypt3(JSON.stringify(notes)) : null,
+            v.recommended_loc || null,
+            v.actual_loc || null,
+            v.discrepancy_reason || null,
+            v.discrepancy_notes ? encrypt3(v.discrepancy_notes) : null,
+            v.summary ? encrypt3(v.summary) : null
+          );
+          if (v.update_client_level !== 0) level = syncClientLevel(ctx, ctx.params.id);
+        });
+        audit3.log({ user: ctx.user, action: "asam.create", entity: "asam_assessment", entityId: id, clientId: ctx.params.id, ip: ctx.ip });
+        ctx.status = 201;
+        return { id, client_asam_level: level, updated_at: db3.one(`SELECT updated_at FROM asam_assessments WHERE id=?`, id).updated_at };
+      });
+      r.get("/api/asam/:id", auth3.requireAuth, auth3.requirePerm("assessments:read", "assessments:write"), (ctx) => {
+        const a = loadAsam(ctx, ctx.params.id);
+        audit3.log({ user: ctx.user, action: "asam.view", entity: "asam_assessment", entityId: a.id, clientId: a.client_id, ip: ctx.ip });
+        return { assessment: presentAsam(a), dimensions: CL.ASAM_DIMENSIONS };
+      });
+      r.put("/api/asam/:id", auth3.requireAuth, auth3.requirePerm("assessments:write"), (ctx) => {
+        const a = loadAsam(ctx, ctx.params.id);
+        if (!mayChange(ctx, a, "assessed_by")) throw forbidden("Only the person who completed this assessment, or a supervisor, can change it");
+        assertFresh(ctx, a, "asam_assessment");
+        const v = validate(ctx.body, Object.fromEntries(Object.entries(asamShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
+        for (const k of ["assessed_at", ...CL.ASAM_DIMENSIONS.map((d) => `${d.key}_rating`)]) if (v[k] === null) throw fieldError(k, "is required");
+        const notes = cleanDimensionNotes(v.dimension_notes);
+        const rec = v.recommended_loc !== void 0 ? v.recommended_loc : a.recommended_loc, act = v.actual_loc !== void 0 ? v.actual_loc : a.actual_loc;
+        checkDiscrepancy(rec, act, v.discrepancy_reason !== void 0 ? v.discrepancy_reason : a.discrepancy_reason);
+        const sets = [];
+        const params = [];
+        for (const k of ["assessed_at", "d1_rating", "d2_rating", "d3_rating", "d4_rating", "d5_rating", "d6_rating", "recommended_loc", "actual_loc", "discrepancy_reason"]) if (v[k] !== void 0) {
+          sets.push(`${k}=?`);
+          params.push(v[k]);
+        }
+        if (notes !== void 0) {
+          sets.push("dimension_notes_enc=?");
+          params.push(notes && Object.keys(notes).length ? encrypt3(JSON.stringify(notes)) : null);
+        }
+        if (v.discrepancy_notes !== void 0) {
+          sets.push("discrepancy_notes_enc=?");
+          params.push(v.discrepancy_notes ? encrypt3(v.discrepancy_notes) : null);
+        }
+        if (v.summary !== void 0) {
+          sets.push("summary_enc=?");
+          params.push(v.summary ? encrypt3(v.summary) : null);
+        }
+        const stamp2 = db3.now();
+        db3.transaction(() => {
+          if (sets.length) db3.run(`UPDATE asam_assessments SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, stamp2, a.id);
+          if (v.update_client_level !== 0 && (v.recommended_loc !== void 0 || v.actual_loc !== void 0 || v.assessed_at !== void 0)) syncClientLevel(ctx, a.client_id);
+        });
+        audit3.log({ user: ctx.user, action: "asam.update", entity: "asam_assessment", entityId: a.id, clientId: a.client_id, ip: ctx.ip, details: { fields: Object.keys(v).filter((k) => v[k] !== void 0) } });
+        return { ok: true, updated_at: sets.length ? stamp2 : a.updated_at };
+      });
+      r.delete("/api/asam/:id", auth3.requireAuth, auth3.requirePerm("assessments:write"), (ctx) => {
+        const a = loadAsam(ctx, ctx.params.id);
+        if (!mayChange(ctx, a, "assessed_by")) throw forbidden("Only the person who completed this assessment, or a supervisor, can delete it");
+        db3.run(`DELETE FROM asam_assessments WHERE id=?`, a.id);
+        db3.tombstone("asam_assessments", a.id);
+        audit3.log({ user: ctx.user, action: "asam.delete", entity: "asam_assessment", entityId: a.id, clientId: a.client_id, ip: ctx.ip });
+        return { ok: true };
+      });
+      r.get("/api/clients/:id/outcomes", auth3.requireAuth, auth3.requirePerm("assessments:read", "assessments:write"), (ctx) => {
+        clientFor(ctx, ctx.params.id);
+        const rows = db3.all(`SELECT m.*, u.display_name AS administered_by_name FROM outcome_measures m LEFT JOIN users u ON u.id=m.administered_by WHERE m.client_id=? ORDER BY m.administered_at DESC, m.created_at DESC`, ctx.params.id).map(presentOutcome);
+        const series = {};
+        for (const m of [...rows].reverse()) (series[m.instrument] = series[m.instrument] || []).push({ id: m.id, at: m.administered_at, score: m.total_score, band: m.band });
+        audit3.log({ user: ctx.user, action: "outcome.list", clientId: ctx.params.id, ip: ctx.ip, details: { count: rows.length } });
+        return { rows, series };
+      });
+      r.post("/api/clients/:id/outcomes", auth3.requireAuth, auth3.requirePerm("assessments:write"), (ctx) => {
+        clientFor(ctx, ctx.params.id);
+        const v = validate(ctx.body, outcomeShape);
+        const s = scoreOrReject(v.instrument, v.responses, v.variant);
+        const id = uuid2();
+        let taskId = null;
+        db3.transaction(() => {
+          db3.run(
+            `INSERT INTO outcome_measures(id,client_id,instrument,administered_at,administered_by,responses_enc,total_score,band,positive,variant,safety_flag,notes_enc) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+            id,
+            ctx.params.id,
+            v.instrument,
+            v.administered_at,
+            ctx.user.id,
+            encrypt3(JSON.stringify(s.responses)),
+            s.total,
+            s.band,
+            s.positive,
+            s.variant,
+            s.safety_flag,
+            v.notes ? encrypt3(v.notes) : null
+          );
+          if (s.safety_flag && auth3.hasPerm(ctx.user, "tasks:write")) taskId = raiseSafetyAlert(ctx, ctx.params.id, id);
+        });
+        audit3.log({ user: ctx.user, action: "outcome.create", entity: "outcome_measure", entityId: id, clientId: ctx.params.id, ip: ctx.ip, details: { instrument: v.instrument } });
+        ctx.status = 201;
+        const alert = s.safety_flag ? {
+          message: 'PHQ-9 question 9 was answered above "Not at all". Assess risk today and review the safety plan with the client. For imminent danger, follow your crisis protocol (988 / 911).',
+          task_id: taskId,
+          safety_plan: safetyPlanFor(ctx, ctx.params.id)
+        } : null;
+        return { id, total: s.total, band: s.band, positive: s.positive, safety_alert: alert };
+      });
+      r.get("/api/outcomes/:id", auth3.requireAuth, auth3.requirePerm("assessments:read", "assessments:write"), (ctx) => {
+        const m = loadOutcome(ctx, ctx.params.id);
+        audit3.log({ user: ctx.user, action: "outcome.view", entity: "outcome_measure", entityId: m.id, clientId: m.client_id, ip: ctx.ip });
+        return { measure: presentOutcome(m) };
+      });
+      r.put("/api/outcomes/:id", auth3.requireAuth, auth3.requirePerm("assessments:write"), (ctx) => {
+        const m = loadOutcome(ctx, ctx.params.id);
+        if (!mayChange(ctx, m, "administered_by")) throw forbidden("Only the person who gave this questionnaire, or a supervisor, can change it");
+        assertFresh(ctx, m, "outcome_measure");
+        const v = validate(ctx.body, { administered_at: { type: "date" }, responses: { type: "array", maxLen: 20 }, variant: outcomeShape.variant, notes: outcomeShape.notes }, { partial: true });
+        if (v.administered_at === null) throw fieldError("administered_at", "is required");
+        let responses;
+        try {
+          responses = JSON.parse(dec2(m.responses_enc) || "[]");
+        } catch {
+          responses = [];
+        }
+        const s = scoreOrReject(m.instrument, v.responses || responses, v.variant !== void 0 ? v.variant : m.variant);
+        const stamp2 = db3.now();
+        let taskId = null;
+        db3.transaction(() => {
+          db3.run(
+            `UPDATE outcome_measures SET administered_at=?, responses_enc=?, total_score=?, band=?, positive=?, variant=?, safety_flag=?, notes_enc=?, updated_at=? WHERE id=?`,
+            v.administered_at || m.administered_at,
+            encrypt3(JSON.stringify(s.responses)),
+            s.total,
+            s.band,
+            s.positive,
+            s.variant,
+            s.safety_flag,
+            v.notes !== void 0 ? v.notes ? encrypt3(v.notes) : null : m.notes_enc,
+            stamp2,
+            m.id
+          );
+          if (s.safety_flag && !m.safety_flag && auth3.hasPerm(ctx.user, "tasks:write")) taskId = raiseSafetyAlert(ctx, m.client_id, m.id);
+        });
+        audit3.log({ user: ctx.user, action: "outcome.update", entity: "outcome_measure", entityId: m.id, clientId: m.client_id, ip: ctx.ip, details: { fields: Object.keys(v).filter((k) => v[k] !== void 0) } });
+        return { ok: true, updated_at: stamp2, total: s.total, band: s.band, safety_alert: s.safety_flag && !m.safety_flag ? { task_id: taskId, safety_plan: safetyPlanFor(ctx, m.client_id) } : null };
+      });
+      r.delete("/api/outcomes/:id", auth3.requireAuth, auth3.requirePerm("assessments:write"), (ctx) => {
+        const m = loadOutcome(ctx, ctx.params.id);
+        if (!mayChange(ctx, m, "administered_by")) throw forbidden("Only the person who gave this questionnaire, or a supervisor, can delete it");
+        db3.run(`DELETE FROM outcome_measures WHERE id=?`, m.id);
+        db3.tombstone("outcome_measures", m.id);
+        audit3.log({ user: ctx.user, action: "outcome.delete", entity: "outcome_measure", entityId: m.id, clientId: m.client_id, ip: ctx.ip, details: { instrument: m.instrument } });
+        return { ok: true };
+      });
+      r.get("/api/reports/outcomes", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
+        const p = period(ctx);
+        const instruments = summarise(outcomePairs(ctx, p));
+        audit3.log({ user: ctx.user, action: "report.outcomes", ip: ctx.ip, details: { from: p.from, to: p.to } });
+        return { ...p, instruments };
+      });
+      r.get("/api/reports/outcomes/export", auth3.requireAuth, auth3.requirePerm("export:read"), (ctx) => {
+        const p = period(ctx);
+        const X = require_exports();
+        const S = require_spreadsheet();
+        const month = (v) => v ? String(v).slice(0, 7) : "";
+        const rows = outcomePairs(ctx, p).map((x) => ({
+          client_code: x.client_code,
+          instrument: CL.INSTRUMENTS[x.instrument].name,
+          administrations: x.administrations,
+          baseline_month: month(x.baseline.administered_at),
+          baseline_score: x.baseline.total_score,
+          baseline_band: x.baseline.band || "",
+          latest_month: x.administrations > 1 ? month(x.latest.administered_at) : "",
+          latest_score: x.administrations > 1 ? x.latest.total_score : "",
+          latest_band: x.administrations > 1 ? x.latest.band || "" : "",
+          change: x.change === null ? "" : x.change,
+          direction: x.direction === null ? "" : x.direction === 1 ? "improved" : x.direction === -1 ? "worse" : "unchanged"
+        }));
+        const columns = ["client_code", "instrument", "administrations", "baseline_month", "baseline_score", "baseline_band", "latest_month", "latest_score", "latest_band", "change", "direction"].map((k) => ({ key: k, label: k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) }));
+        audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: "outcomes", rows: rows.length, identified: false, from: p.from, to: p.to, format: "csv" } });
+        const filename = `suds-outcomes-${p.from || "all"}_${p.to || "all"}-deidentified.csv`;
+        ctx.res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${filename}"`, "X-SUDS-Export": `${X.DEID_LABEL} Generated ${db3.now()}.`.replace(/[^\x20-\x7e]/g, "?") });
+        ctx.res.end(S.toCsv(rows, columns));
+      });
+    };
+    module.exports.summarise = summarise;
+  }
+});
+
 // server/routes/assignments.js
 var require_assignments = __commonJS({
   "server/routes/assignments.js"(exports, module) {
@@ -13488,6 +14916,435 @@ var require_calls = __commonJS({
         delete v.log_time;
       }
     };
+  }
+});
+
+// server/routes/careplan.js
+var require_careplan = __commonJS({
+  "server/routes/careplan.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var CL = require_clinical();
+    var { badRequest, notFound, forbidden } = require_http();
+    var { validate } = require_validate();
+    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
+    var { assertFresh } = require_crud();
+    var dec2 = (v) => v ? decrypt3(v) : null;
+    var today = () => require_budget().localDate();
+    function clientFor(ctx, clientId) {
+      if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, clientId)) throw notFound("Client not found");
+      auth3.assertClientAccess(ctx, clientId);
+    }
+    function fieldError(field, message) {
+      return badRequest("Validation failed", { fields: { [field]: message } });
+    }
+    var problemShape = {
+      problem: { type: "string", required: true, maxLen: 500 },
+      icd10_code: { type: "string", maxLen: 12 },
+      icd10_description: { type: "string", maxLen: 300 },
+      z_codes: { type: "array", maxLen: 12 },
+      status: { type: "string", enum: CL.PROBLEM_STATUSES },
+      onset_date: { type: "date" },
+      resolved_date: { type: "date" },
+      source: { type: "string", enum: CL.PROBLEM_SOURCES }
+    };
+    var TRACKED = ["problem", "icd10_code", "icd10_description", "z_codes", "status", "onset_date", "resolved_date", "source"];
+    function cleanCodes(v) {
+      if (v.icd10_code !== void 0 && v.icd10_code !== null) {
+        const code = CL.normalizeIcd10(v.icd10_code);
+        if (!code) throw fieldError("icd10_code", "is not an ICD-10-CM code (a letter, two characters, then optionally a dot and up to four more, e.g. F11.20)");
+        v.icd10_code = code;
+      }
+      if (v.z_codes !== void 0 && v.z_codes !== null) {
+        const out2 = [];
+        for (const raw of v.z_codes) {
+          const code = CL.normalizeIcd10(typeof raw === "string" ? raw : "");
+          if (!code || !CL.isZCode(code)) throw fieldError("z_codes", `${String(raw).slice(0, 12)} is not a social determinant code (Z55\u2013Z65)`);
+          if (!out2.includes(code)) out2.push(code);
+        }
+        v.z_codes = out2.length ? out2.join(",") : null;
+      }
+      return v;
+    }
+    function presentProblem(row) {
+      return {
+        id: row.id,
+        client_id: row.client_id,
+        status: row.status,
+        onset_date: row.onset_date,
+        resolved_date: row.resolved_date,
+        source: row.source,
+        added_by: row.added_by,
+        updated_by: row.updated_by,
+        added_by_name: row.added_by_name || null,
+        updated_by_name: row.updated_by_name || null,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        problem: dec2(row.problem_enc),
+        icd10_code: dec2(row.icd10_code_enc),
+        icd10_description: dec2(row.icd10_description_enc),
+        z_codes: row.z_codes_enc ? dec2(row.z_codes_enc).split(",").filter(Boolean) : []
+      };
+    }
+    function loadProblem(ctx, id) {
+      const row = db3.one(`SELECT p.*, a.display_name AS added_by_name, u.display_name AS updated_by_name FROM problems p LEFT JOIN users a ON a.id=p.added_by LEFT JOIN users u ON u.id=p.updated_by WHERE p.id=?`, id);
+      if (!row) throw notFound("Problem not found");
+      auth3.assertClientAccess(ctx, row.client_id);
+      return row;
+    }
+    function recordHistory(problem, clientId, userId, action, changes) {
+      db3.run(`INSERT INTO problem_history(id,problem_id,client_id,action,changes_enc,changed_by) VALUES(?,?,?,?,?,?)`, uuid2(), problem, clientId, action, encrypt3(JSON.stringify(changes)), userId);
+    }
+    function noteCounts(ctx, clientId) {
+      const kinds = ["admin", "clinical"].filter((k) => auth3.hasPerm(ctx.user, `notes:${k}:read`) || auth3.hasPerm(ctx.user, `notes:${k}:write`));
+      const counts = {};
+      if (!kinds.length) return counts;
+      for (const n of db3.all(`SELECT problem_ids FROM notes WHERE client_id=? AND deleted_at IS NULL AND problem_ids IS NOT NULL AND kind IN (${kinds.map(() => "?").join(",")})`, clientId, ...kinds)) {
+        let ids = [];
+        try {
+          ids = JSON.parse(n.problem_ids);
+        } catch {
+          ids = [];
+        }
+        if (Array.isArray(ids)) for (const id of ids) counts[id] = (counts[id] || 0) + 1;
+      }
+      return counts;
+    }
+    var goalShape = {
+      goal: { type: "string", required: true, maxLen: 1e3 },
+      problem_id: { type: "string", maxLen: 60 },
+      status: { type: "string", enum: CL.GOAL_STATUSES },
+      start_date: { type: "date" },
+      target_date: { type: "date" },
+      review_date: { type: "date" }
+    };
+    var stepShape = {
+      step: { type: "string", required: true, maxLen: 1e3 },
+      owner_role: { type: "string", enum: CL.STEP_OWNERS },
+      owner_user_id: { type: "string", maxLen: 60 },
+      target_date: { type: "date" },
+      status: { type: "string", enum: CL.STEP_STATUSES }
+    };
+    function checkProblemOnClient(problemId, clientId) {
+      if (!problemId) return;
+      const p = db3.one(`SELECT client_id FROM problems WHERE id=?`, problemId);
+      if (!p || p.client_id !== clientId) throw fieldError("problem_id", "is not on this client's problem list");
+    }
+    function checkOwner(userId) {
+      if (userId && !db3.one(`SELECT 1 FROM users WHERE id=?`, userId)) throw fieldError("owner_user_id", "is not a staff account");
+    }
+    function loadGoal(ctx, id) {
+      const g = db3.one(`SELECT * FROM care_plan_goals WHERE id=?`, id);
+      if (!g) throw notFound("Goal not found");
+      auth3.assertClientAccess(ctx, g.client_id);
+      return g;
+    }
+    function loadStep(ctx, id) {
+      const s = db3.one(`SELECT * FROM care_plan_steps WHERE id=?`, id);
+      if (!s) throw notFound("Step not found");
+      auth3.assertClientAccess(ctx, s.client_id);
+      return s;
+    }
+    var canChange = (ctx, row, col) => row[col] === ctx.user.id || auth3.hasPerm(ctx.user, "clients:all");
+    function carePlan(clientId) {
+      const now = today();
+      const problems = new Map(db3.all(`SELECT id, problem_enc, status FROM problems WHERE client_id=?`, clientId).map((p) => [p.id, { problem: dec2(p.problem_enc), status: p.status }]));
+      const steps = db3.all(`SELECT s.*, u.display_name AS owner_name, t.status AS task_status FROM care_plan_steps s LEFT JOIN users u ON u.id=s.owner_user_id LEFT JOIN tasks t ON t.id=s.task_id WHERE s.client_id=? ORDER BY COALESCE(s.target_date,'9999'), s.created_at`, clientId);
+      const goals = db3.all(`SELECT g.*, u.display_name AS created_by_name FROM care_plan_goals g LEFT JOIN users u ON u.id=g.created_by WHERE g.client_id=? ORDER BY CASE g.status WHEN 'active' THEN 0 ELSE 1 END, COALESCE(g.review_date,'9999'), g.created_at`, clientId);
+      return goals.map((g) => {
+        const out2 = { ...g, goal: dec2(g.goal_enc), goal_enc: void 0, problem: g.problem_id && problems.get(g.problem_id) ? problems.get(g.problem_id).problem : null };
+        out2.review_overdue = g.status === "active" && !!g.review_date && g.review_date < now;
+        out2.steps = steps.filter((s) => s.goal_id === g.id).map((s) => ({ ...s, step: dec2(s.step_enc), step_enc: void 0, overdue: s.status === "open" && !!s.target_date && s.target_date < now }));
+        return out2;
+      });
+    }
+    module.exports = (r) => {
+      r.get("/api/clients/:id/problems", auth3.requireAuth, auth3.requirePerm("careplan:read", "careplan:write"), (ctx) => {
+        clientFor(ctx, ctx.params.id);
+        const status = ctx.query.get("status");
+        const where = ["p.client_id=?"];
+        const params = [ctx.params.id];
+        if (status && status !== "all") {
+          where.push("p.status=?");
+          params.push(status);
+        }
+        const rows = db3.all(`SELECT p.*, a.display_name AS added_by_name, u.display_name AS updated_by_name FROM problems p LEFT JOIN users a ON a.id=p.added_by LEFT JOIN users u ON u.id=p.updated_by
+      WHERE ${where.join(" AND ")} ORDER BY CASE p.status WHEN 'active' THEN 0 WHEN 'inactive' THEN 1 ELSE 2 END, COALESCE(p.onset_date, p.created_at) DESC`, ...params);
+        const counts = noteCounts(ctx, ctx.params.id);
+        const goals = {};
+        for (const g of db3.all(`SELECT problem_id, COUNT(*) n FROM care_plan_goals WHERE client_id=? AND problem_id IS NOT NULL GROUP BY problem_id`, ctx.params.id)) goals[g.problem_id] = g.n;
+        const out2 = rows.map((x) => ({ ...presentProblem(x), notes: counts[x.id] || 0, goals: goals[x.id] || 0 }));
+        audit3.log({ user: ctx.user, action: "problem.list", clientId: ctx.params.id, ip: ctx.ip, details: { count: out2.length } });
+        return { rows: out2 };
+      });
+      r.post("/api/clients/:id/problems", auth3.requireAuth, auth3.requirePerm("careplan:write"), (ctx) => {
+        clientFor(ctx, ctx.params.id);
+        const v = cleanCodes(validate(ctx.body, problemShape));
+        const status = v.status || "active";
+        const resolved = status === "resolved" ? v.resolved_date || today() : v.resolved_date || null;
+        const id = uuid2();
+        db3.transaction(() => {
+          db3.run(
+            `INSERT INTO problems(id,client_id,problem_enc,icd10_code_enc,icd10_description_enc,z_codes_enc,status,onset_date,resolved_date,source,added_by,updated_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+            id,
+            ctx.params.id,
+            encrypt3(v.problem),
+            v.icd10_code ? encrypt3(v.icd10_code) : null,
+            v.icd10_description ? encrypt3(v.icd10_description) : null,
+            v.z_codes ? encrypt3(v.z_codes) : null,
+            status,
+            v.onset_date || null,
+            resolved,
+            v.source || "self_report",
+            ctx.user.id,
+            ctx.user.id
+          );
+          const initial = {};
+          for (const k of TRACKED) {
+            const val = k === "status" ? status : k === "resolved_date" ? resolved : k === "source" ? v.source || "self_report" : v[k];
+            if (val !== void 0 && val !== null) initial[k] = { from: null, to: val };
+          }
+          recordHistory(id, ctx.params.id, ctx.user.id, "created", initial);
+        });
+        audit3.log({ user: ctx.user, action: "problem.create", entity: "problem", entityId: id, clientId: ctx.params.id, ip: ctx.ip, details: { status, coded: !!v.icd10_code, z_codes: v.z_codes ? v.z_codes.split(",").length : 0 } });
+        ctx.status = 201;
+        return { id, updated_at: db3.one(`SELECT updated_at FROM problems WHERE id=?`, id).updated_at };
+      });
+      r.get("/api/problems/:id", auth3.requireAuth, auth3.requirePerm("careplan:read", "careplan:write"), (ctx) => {
+        const row = loadProblem(ctx, ctx.params.id);
+        audit3.log({ user: ctx.user, action: "problem.view", entity: "problem", entityId: row.id, clientId: row.client_id, ip: ctx.ip });
+        return { problem: presentProblem(row) };
+      });
+      r.put("/api/problems/:id", auth3.requireAuth, auth3.requirePerm("careplan:write"), (ctx) => {
+        const row = loadProblem(ctx, ctx.params.id);
+        assertFresh(ctx, row, "problem");
+        const v = cleanCodes(validate(ctx.body, Object.fromEntries(Object.entries(problemShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true }));
+        if (v.problem === null) throw fieldError("problem", "is required");
+        const before = presentProblem(row);
+        before.z_codes = before.z_codes.length ? before.z_codes.join(",") : null;
+        const next = { ...before };
+        for (const k of TRACKED) if (v[k] !== void 0) next[k] = v[k];
+        if (!next.status) next.status = before.status;
+        if (!next.source) next.source = before.source;
+        if (next.status === "resolved" && !next.resolved_date) next.resolved_date = today();
+        if (v.status === "active" && before.status !== "active" && v.resolved_date === void 0) next.resolved_date = null;
+        const changes = {};
+        for (const k of TRACKED) if ((before[k] ?? null) !== (next[k] ?? null)) changes[k] = { from: before[k] ?? null, to: next[k] ?? null };
+        if (!Object.keys(changes).length) return { ok: true, updated_at: row.updated_at, changed: [] };
+        const stamp2 = db3.now();
+        db3.transaction(() => {
+          db3.run(
+            `UPDATE problems SET problem_enc=?, icd10_code_enc=?, icd10_description_enc=?, z_codes_enc=?, status=?, onset_date=?, resolved_date=?, source=?, updated_by=?, updated_at=? WHERE id=?`,
+            encrypt3(next.problem),
+            next.icd10_code ? encrypt3(next.icd10_code) : null,
+            next.icd10_description ? encrypt3(next.icd10_description) : null,
+            next.z_codes ? encrypt3(next.z_codes) : null,
+            next.status,
+            next.onset_date || null,
+            next.resolved_date || null,
+            next.source,
+            ctx.user.id,
+            stamp2,
+            row.id
+          );
+          recordHistory(row.id, row.client_id, ctx.user.id, "updated", changes);
+        });
+        audit3.log({ user: ctx.user, action: "problem.update", entity: "problem", entityId: row.id, clientId: row.client_id, ip: ctx.ip, details: { fields: Object.keys(changes) } });
+        return { ok: true, updated_at: stamp2, changed: Object.keys(changes) };
+      });
+      r.get("/api/problems/:id/history", auth3.requireAuth, auth3.requirePerm("careplan:read", "careplan:write"), (ctx) => {
+        const row = loadProblem(ctx, ctx.params.id);
+        const rows = db3.all(`SELECT h.id, h.action, h.changes_enc, h.changed_by, h.created_at, u.display_name AS changed_by_name FROM problem_history h LEFT JOIN users u ON u.id=h.changed_by WHERE h.problem_id=? ORDER BY h.created_at, h.rowid`, row.id).map((h) => {
+          let changes = {};
+          try {
+            changes = JSON.parse(dec2(h.changes_enc) || "{}");
+          } catch {
+            changes = {};
+          }
+          return { id: h.id, action: h.action, changed_by: h.changed_by, changed_by_name: h.changed_by_name, created_at: h.created_at, changes };
+        });
+        audit3.log({ user: ctx.user, action: "problem.history.view", entity: "problem", entityId: row.id, clientId: row.client_id, ip: ctx.ip, details: { count: rows.length } });
+        return { rows };
+      });
+      r.get("/api/clients/:id/care-plan", auth3.requireAuth, auth3.requirePerm("careplan:read", "careplan:write"), (ctx) => {
+        clientFor(ctx, ctx.params.id);
+        const goals = carePlan(ctx.params.id);
+        audit3.log({ user: ctx.user, action: "careplan.view", clientId: ctx.params.id, ip: ctx.ip, details: { goals: goals.length } });
+        return { goals, review_overdue: goals.filter((g) => g.review_overdue).length, today: today() };
+      });
+      r.post("/api/clients/:id/goals", auth3.requireAuth, auth3.requirePerm("careplan:write"), (ctx) => {
+        clientFor(ctx, ctx.params.id);
+        const v = validate(ctx.body, goalShape);
+        checkProblemOnClient(v.problem_id, ctx.params.id);
+        const id = uuid2();
+        db3.run(
+          `INSERT INTO care_plan_goals(id,client_id,problem_id,goal_enc,status,start_date,target_date,review_date,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+          id,
+          ctx.params.id,
+          v.problem_id || null,
+          encrypt3(v.goal),
+          v.status || "active",
+          v.start_date || today(),
+          v.target_date || null,
+          v.review_date || null,
+          ctx.user.id,
+          ctx.user.id
+        );
+        audit3.log({ user: ctx.user, action: "careplan.goal.create", entity: "care_plan_goal", entityId: id, clientId: ctx.params.id, ip: ctx.ip });
+        ctx.status = 201;
+        return { id, updated_at: db3.one(`SELECT updated_at FROM care_plan_goals WHERE id=?`, id).updated_at };
+      });
+      r.put("/api/goals/:id", auth3.requireAuth, auth3.requirePerm("careplan:write"), (ctx) => {
+        const g = loadGoal(ctx, ctx.params.id);
+        assertFresh(ctx, g, "care_plan_goal");
+        const v = validate(ctx.body, { ...Object.fromEntries(Object.entries(goalShape).map(([k, s]) => [k, { ...s, required: false }])), reviewed: { type: "boolean" } }, { partial: true });
+        if (v.goal === null) throw fieldError("goal", "is required");
+        if (v.problem_id) checkProblemOnClient(v.problem_id, g.client_id);
+        const sets = [];
+        const params = [];
+        if (v.goal !== void 0) {
+          sets.push("goal_enc=?");
+          params.push(encrypt3(v.goal));
+        }
+        for (const k of ["problem_id", "status", "start_date", "target_date", "review_date"]) if (v[k] !== void 0) {
+          sets.push(`${k}=?`);
+          params.push(v[k]);
+        }
+        if (v.reviewed) {
+          sets.push("reviewed_at=?");
+          params.push(today());
+        }
+        const stamp2 = db3.now();
+        if (sets.length) db3.run(`UPDATE care_plan_goals SET ${sets.join(", ")}, updated_by=?, updated_at=? WHERE id=?`, ...params, ctx.user.id, stamp2, g.id);
+        audit3.log({ user: ctx.user, action: "careplan.goal.update", entity: "care_plan_goal", entityId: g.id, clientId: g.client_id, ip: ctx.ip, details: { fields: Object.keys(v).filter((k) => v[k] !== void 0) } });
+        return { ok: true, updated_at: sets.length ? stamp2 : g.updated_at };
+      });
+      r.delete("/api/goals/:id", auth3.requireAuth, auth3.requirePerm("careplan:write"), (ctx) => {
+        const g = loadGoal(ctx, ctx.params.id);
+        if (!canChange(ctx, g, "created_by")) throw forbidden("Only the person who added this goal, or a supervisor, can delete it. Mark it discontinued instead.");
+        const stepIds = db3.all(`SELECT id FROM care_plan_steps WHERE goal_id=?`, g.id).map((s) => s.id);
+        db3.transaction(() => {
+          db3.run(`DELETE FROM care_plan_steps WHERE goal_id=?`, g.id);
+          for (const id of stepIds) db3.tombstone("care_plan_steps", id);
+          db3.run(`DELETE FROM care_plan_goals WHERE id=?`, g.id);
+          db3.tombstone("care_plan_goals", g.id);
+        });
+        audit3.log({ user: ctx.user, action: "careplan.goal.delete", entity: "care_plan_goal", entityId: g.id, clientId: g.client_id, ip: ctx.ip, details: { steps: stepIds.length } });
+        return { ok: true };
+      });
+      r.post("/api/goals/:id/steps", auth3.requireAuth, auth3.requirePerm("careplan:write"), (ctx) => {
+        const g = loadGoal(ctx, ctx.params.id);
+        const v = validate(ctx.body, { ...stepShape, create_task: { type: "boolean" } });
+        checkOwner(v.owner_user_id);
+        if (v.create_task && !auth3.hasPerm(ctx.user, "tasks:write")) throw forbidden("Your role cannot create to-dos");
+        const id = uuid2();
+        let taskId = null;
+        db3.transaction(() => {
+          if (v.create_task) {
+            taskId = uuid2();
+            db3.run(
+              `INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority,status) VALUES(?,?,?,?,?,?,?,?,?)`,
+              taskId,
+              g.client_id,
+              v.owner_user_id || ctx.user.id,
+              ctx.user.id,
+              encrypt3(`Care plan: ${v.step}`.slice(0, 200)),
+              encrypt3(`Step toward the goal: ${dec2(g.goal_enc)}`.slice(0, 2e3)),
+              v.target_date || null,
+              "normal",
+              "open"
+            );
+          }
+          db3.run(
+            `INSERT INTO care_plan_steps(id,goal_id,client_id,step_enc,owner_role,owner_user_id,target_date,status,task_id,created_by) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+            id,
+            g.id,
+            g.client_id,
+            encrypt3(v.step),
+            v.owner_role || "staff",
+            v.owner_user_id || null,
+            v.target_date || null,
+            v.status || "open",
+            taskId,
+            ctx.user.id
+          );
+          db3.run(`UPDATE care_plan_goals SET updated_at=? WHERE id=?`, db3.now(), g.id);
+        });
+        audit3.log({ user: ctx.user, action: "careplan.step.create", entity: "care_plan_step", entityId: id, clientId: g.client_id, ip: ctx.ip, details: { task_created: !!taskId } });
+        if (taskId) audit3.log({ user: ctx.user, action: "task.create", entity: "task", entityId: taskId, clientId: g.client_id, ip: ctx.ip, details: { from: "care_plan_step" } });
+        ctx.status = 201;
+        return { id, task_id: taskId };
+      });
+      r.put("/api/steps/:id", auth3.requireAuth, auth3.requirePerm("careplan:write"), (ctx) => {
+        const s = loadStep(ctx, ctx.params.id);
+        assertFresh(ctx, s, "care_plan_step");
+        const v = validate(ctx.body, Object.fromEntries(Object.entries(stepShape).map(([k, x]) => [k, { ...x, required: false }])), { partial: true });
+        if (v.step === null) throw fieldError("step", "is required");
+        checkOwner(v.owner_user_id);
+        const sets = [];
+        const params = [];
+        if (v.step !== void 0) {
+          sets.push("step_enc=?");
+          params.push(encrypt3(v.step));
+        }
+        for (const k of ["owner_role", "owner_user_id", "target_date", "status"]) if (v[k] !== void 0) {
+          sets.push(`${k}=?`);
+          params.push(v[k]);
+        }
+        if (v.status === "done" && s.status !== "done") {
+          sets.push("completed_at=?");
+          params.push(db3.now());
+        }
+        if (v.status && v.status !== "done") {
+          sets.push("completed_at=?");
+          params.push(null);
+        }
+        const stamp2 = db3.now();
+        db3.transaction(() => {
+          if (sets.length) db3.run(`UPDATE care_plan_steps SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, stamp2, s.id);
+          if (s.task_id && (v.status === "done" || v.status === "cancelled")) db3.run(`UPDATE tasks SET status=?, completed_at=?, updated_at=? WHERE id=? AND status IN ('open','in_progress')`, v.status, v.status === "done" ? db3.now() : null, stamp2, s.task_id);
+        });
+        audit3.log({ user: ctx.user, action: "careplan.step.update", entity: "care_plan_step", entityId: s.id, clientId: s.client_id, ip: ctx.ip, details: { fields: Object.keys(v).filter((k) => v[k] !== void 0) } });
+        return { ok: true, updated_at: sets.length ? stamp2 : s.updated_at };
+      });
+      r.delete("/api/steps/:id", auth3.requireAuth, auth3.requirePerm("careplan:write"), (ctx) => {
+        const s = loadStep(ctx, ctx.params.id);
+        if (!canChange(ctx, s, "created_by")) throw forbidden("Only the person who added this step, or a supervisor, can delete it. Mark it cancelled instead.");
+        db3.run(`DELETE FROM care_plan_steps WHERE id=?`, s.id);
+        db3.tombstone("care_plan_steps", s.id);
+        audit3.log({ user: ctx.user, action: "careplan.step.delete", entity: "care_plan_step", entityId: s.id, clientId: s.client_id, ip: ctx.ip });
+        return { ok: true };
+      });
+      r.get("/api/clients/:id/clinical-summary", auth3.requireAuth, auth3.requirePerm("clients:read"), (ctx) => {
+        clientFor(ctx, ctx.params.id);
+        const id = ctx.params.id;
+        const out2 = { today: today() };
+        if (auth3.hasPerm(ctx.user, "careplan:read")) {
+          out2.problems = db3.all(`SELECT * FROM problems WHERE client_id=? AND status='active' ORDER BY COALESCE(onset_date, created_at) DESC`, id).map(presentProblem);
+          const goals = carePlan(id);
+          out2.care_plan = {
+            active_goals: goals.filter((g) => g.status === "active").length,
+            overdue_reviews: goals.filter((g) => g.review_overdue).map((g) => ({ id: g.id, goal: g.goal, review_date: g.review_date })),
+            next_review: goals.filter((g) => g.status === "active" && g.review_date && !g.review_overdue).map((g) => g.review_date).sort()[0] || null
+          };
+        }
+        if (auth3.hasPerm(ctx.user, "assessments:read")) {
+          const a = db3.one(`SELECT a.*, u.display_name AS assessed_by_name FROM asam_assessments a LEFT JOIN users u ON u.id=a.assessed_by WHERE a.client_id=? ORDER BY a.assessed_at DESC, a.created_at DESC LIMIT 1`, id);
+          out2.asam = a ? { id: a.id, assessed_at: a.assessed_at, assessed_by_name: a.assessed_by_name, ratings: CL.ASAM_DIMENSIONS.map((d) => a[`${d.key}_rating`]), recommended_loc: a.recommended_loc, actual_loc: a.actual_loc, discrepancy_reason: a.discrepancy_reason } : null;
+          const series = {};
+          for (const m of db3.all(`SELECT id, instrument, administered_at, total_score, band, positive, safety_flag FROM outcome_measures WHERE client_id=? ORDER BY administered_at, created_at`, id)) (series[m.instrument] = series[m.instrument] || []).push(m);
+          out2.outcomes = Object.entries(series).map(([instrument, rows]) => ({ instrument, name: CL.INSTRUMENTS[instrument]?.name || instrument, better: CL.INSTRUMENTS[instrument]?.better, max: CL.INSTRUMENTS[instrument]?.max, latest: rows[rows.length - 1], baseline: rows[0], series: rows.map((x) => ({ at: x.administered_at, score: x.total_score })) }));
+          const phq = series.phq9 && series.phq9[series.phq9.length - 1];
+          out2.safety_alert = phq && phq.safety_flag ? { at: phq.administered_at, measure_id: phq.id } : null;
+        }
+        audit3.log({ user: ctx.user, action: "client.clinical_summary.view", entity: "client", entityId: id, clientId: id, ip: ctx.ip, details: { parts: Object.keys(out2).filter((k) => k !== "today") } });
+        return out2;
+      });
+    };
+    module.exports.carePlan = carePlan;
   }
 });
 
@@ -14234,409 +16091,6 @@ var require_consents = __commonJS({
         return out2;
       });
     };
-  }
-});
-
-// server/importers/text.js
-var require_text = __commonJS({
-  "server/importers/text.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var zlib = (init_zlib(), __toCommonJS(zlib_exports));
-    function decodeEntities(s) {
-      const map = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", ndash: "\u2013", mdash: "\u2014", hellip: "\u2026", rsquo: "\u2019", lsquo: "\u2018", rdquo: "\u201D", ldquo: "\u201C" };
-      return s.replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z]+);/g, (m, e) => {
-        if (e[0] === "#") {
-          const code = e[1].toLowerCase() === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
-          return Number.isFinite(code) ? String.fromCodePoint(code) : m;
-        }
-        return map[e] ?? m;
-      });
-    }
-    function htmlToText(html) {
-      let s = String(html);
-      s = s.replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, "");
-      s = s.replace(/<!--[\s\S]*?-->/g, "");
-      s = s.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li|h[1-6]|tr|blockquote|pre)>/gi, "\n").replace(/<li[^>]*>/gi, "\u2022 ").replace(/<\/td>/gi, "	");
-      s = s.replace(/<[^>]+>/g, "");
-      s = decodeEntities(s);
-      return s.replace(/\r/g, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-    }
-    function extractTitle(html) {
-      const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html) || /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html);
-      return m ? htmlToText(m[1]).trim() : "";
-    }
-    function quotedPrintableDecode(s) {
-      return import_buffer.Buffer.from(String(s).replace(/=\r?\n/g, "").replace(/=([0-9A-F]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16))), "binary").toString("utf8");
-    }
-    function parseMime(raw) {
-      const text = import_buffer.Buffer.isBuffer(raw) ? raw.toString("latin1") : String(raw);
-      const headerEnd = text.search(/\r?\n\r?\n/);
-      const headers = text.slice(0, headerEnd);
-      const bm = /boundary="?([^"\r\n;]+)"?/i.exec(headers);
-      if (!bm) {
-        return [{ contentType: (/content-type:\s*([^;\r\n]+)/i.exec(headers) || [, "text/html"])[1].trim(), body: decodePart(headers, text.slice(headerEnd).trim()) }];
-      }
-      const parts = text.split(new RegExp("--" + bm[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?:--)?\\r?\\n"));
-      const out2 = [];
-      for (const p of parts.slice(1)) {
-        const he = p.search(/\r?\n\r?\n/);
-        if (he < 0) continue;
-        const h = p.slice(0, he);
-        const b = p.slice(he).replace(/^\r?\n\r?\n/, "");
-        const ct = (/content-type:\s*([^;\r\n]+)/i.exec(h) || [, ""])[1].trim().toLowerCase();
-        const loc = (/content-location:\s*([^\r\n]+)/i.exec(h) || [, ""])[1].trim();
-        if (!ct) continue;
-        out2.push({ contentType: ct, location: loc, body: decodePart(h, b) });
-      }
-      return out2;
-    }
-    function decodePart(headers, body) {
-      const enc2 = (/content-transfer-encoding:\s*([^\r\n]+)/i.exec(headers) || [, "7bit"])[1].trim().toLowerCase();
-      if (enc2 === "quoted-printable") return quotedPrintableDecode(body);
-      if (enc2 === "base64") return import_buffer.Buffer.from(body.replace(/\s+/g, ""), "base64");
-      return import_buffer.Buffer.from(body, "latin1").toString("utf8");
-    }
-    function unzip(buf) {
-      const files = /* @__PURE__ */ new Map();
-      const eocd = buf.lastIndexOf(import_buffer.Buffer.from([80, 75, 5, 6]));
-      if (eocd < 0) throw new Error("Not a ZIP archive");
-      const count = buf.readUInt16LE(eocd + 10);
-      let off = buf.readUInt32LE(eocd + 16);
-      for (let i = 0; i < count; i++) {
-        if (buf.readUInt32LE(off) !== 33639248) break;
-        const method = buf.readUInt16LE(off + 10);
-        const csize = buf.readUInt32LE(off + 20);
-        const nlen = buf.readUInt16LE(off + 28), elen = buf.readUInt16LE(off + 30), clen2 = buf.readUInt16LE(off + 32);
-        const lho = buf.readUInt32LE(off + 42);
-        const name = buf.toString("utf8", off + 46, off + 46 + nlen);
-        const lnlen = buf.readUInt16LE(lho + 26), lelen = buf.readUInt16LE(lho + 28);
-        const dataStart = lho + 30 + lnlen + lelen;
-        const data = buf.subarray(dataStart, dataStart + csize);
-        files.set(name, method === 8 ? zlib.inflateRawSync(data) : import_buffer.Buffer.from(data));
-        off += 46 + nlen + elen + clen2;
-      }
-      return files;
-    }
-    function docxToText(buf) {
-      const files = unzip(buf);
-      const xml = files.get("word/document.xml");
-      if (!xml) throw new Error("Not a DOCX file (word/document.xml missing)");
-      let s = xml.toString("utf8");
-      s = s.replace(/<w:tab\/>/g, "	").replace(/<w:br\/>|<w:cr\/>/g, "\n").replace(/<\/w:p>/g, "\n").replace(/<[^>]+>/g, "");
-      return decodeEntities(s).replace(/\n{3,}/g, "\n\n").trim();
-    }
-    function sniffDate(text) {
-      const s = String(text || "");
-      let m = /(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?))?/.exec(s);
-      if (m) {
-        const d = /* @__PURE__ */ new Date(m[1] + (m[2] ? "T" + m[2] : "T12:00:00"));
-        if (!isNaN(d)) return d.toISOString();
-      }
-      m = /\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b(?:,?\s+(\d{1,2}:\d{2}\s*(?:AM|PM)?))?/i.exec(s);
-      if (m) {
-        const y = m[3].length === 2 ? "20" + m[3] : m[3];
-        const d = /* @__PURE__ */ new Date(`${y}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}T12:00:00`);
-        if (!isNaN(d)) return d.toISOString();
-      }
-      m = /\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+(\d{1,2}),?\s+(\d{4})/i.exec(s);
-      if (m) {
-        const d = /* @__PURE__ */ new Date(`${m[1].slice(0, 3)} ${m[2]}, ${m[3]} 12:00:00`);
-        if (!isNaN(d)) return d.toISOString();
-      }
-      return null;
-    }
-    function sniffClientHints(text) {
-      const s = String(text || "");
-      const hints = { codes: [], names: [] };
-      for (const m of s.matchAll(/\b([CM]\d{2}-\d{4})\b/gi)) hints.codes.push(m[1].toUpperCase());
-      const kw = /\b(?:(?:client|participant|pt|patient|re|name|regarding)\s*[:\-]\s*|(?:with|for|regarding)\s+)/gi;
-      const nameRe = /^([A-Z][a-zA-Z'\-]+(?:,\s*|\s+)[A-Z][a-zA-Z'\-]+)/;
-      for (const m of s.matchAll(kw)) {
-        const nm = nameRe.exec(s.slice(m.index + m[0].length));
-        if (nm) hints.names.push(nm[1].trim());
-      }
-      hints.codes = [...new Set(hints.codes)];
-      hints.names = [...new Set(hints.names)].slice(0, 5);
-      return hints;
-    }
-    module.exports = { htmlToText, extractTitle, quotedPrintableDecode, parseMime, unzip, docxToText, sniffDate, sniffClientHints, decodeEntities };
-  }
-});
-
-// server/spreadsheet.js
-var require_spreadsheet = __commonJS({
-  "server/spreadsheet.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var zlib = (init_zlib(), __toCommonJS(zlib_exports));
-    var { unzip, decodeEntities } = require_text();
-    function parseCsv(text) {
-      const s = String(text).replace(/^﻿/, "");
-      const rows = [];
-      let row = [];
-      let field = "";
-      let q = false;
-      for (let i = 0; i < s.length; i++) {
-        const c = s[i];
-        if (q) {
-          if (c === '"') {
-            if (s[i + 1] === '"') {
-              field += '"';
-              i++;
-            } else q = false;
-          } else field += c;
-        } else if (c === '"') q = true;
-        else if (c === ",") {
-          row.push(field);
-          field = "";
-        } else if (c === "\n" || c === "\r") {
-          if (c === "\r" && s[i + 1] === "\n") i++;
-          row.push(field);
-          rows.push(row);
-          row = [];
-          field = "";
-        } else field += c;
-      }
-      if (field !== "" || row.length) {
-        row.push(field);
-        rows.push(row);
-      }
-      return rows.filter((r) => r.some((v) => String(v).trim() !== ""));
-    }
-    var FORMULA_START = /^[=+\-@\t\r]/;
-    function toCsv(rows, columns) {
-      const esc = (v) => {
-        if (v === null || v === void 0) return "";
-        if (typeof v === "number") return Number.isFinite(v) ? String(v) : "";
-        let t = typeof v === "object" ? JSON.stringify(v) : String(v);
-        if (FORMULA_START.test(t)) return `"'` + t.replace(/"/g, '""') + '"';
-        return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
-      };
-      return "\uFEFF" + [columns.map((c) => esc(c.label || c.key || c)).join(","), ...rows.map((r) => columns.map((c) => esc(r[c.key || c])).join(","))].join("\r\n");
-    }
-    function crc32(buf) {
-      let c, crc = 4294967295;
-      for (let n = 0; n < buf.length; n++) {
-        c = (crc ^ buf[n]) & 255;
-        for (let k = 0; k < 8; k++) c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
-        crc = crc >>> 8 ^ c;
-      }
-      return (crc ^ 4294967295) >>> 0;
-    }
-    function zipEntry(name, content, comp, off, local, central) {
-      const data = import_buffer.Buffer.isBuffer(content) ? content : import_buffer.Buffer.from(content, "utf8");
-      const n = import_buffer.Buffer.from(name);
-      const crc = crc32(data);
-      const lh = import_buffer.Buffer.alloc(30);
-      lh.writeUInt32LE(67324752, 0);
-      lh.writeUInt16LE(20, 4);
-      lh.writeUInt16LE(2048, 6);
-      lh.writeUInt16LE(8, 8);
-      lh.writeUInt32LE(crc, 14);
-      lh.writeUInt32LE(comp.length, 18);
-      lh.writeUInt32LE(data.length, 22);
-      lh.writeUInt16LE(n.length, 26);
-      local.push(lh, n, comp);
-      const ch = import_buffer.Buffer.alloc(46);
-      ch.writeUInt32LE(33639248, 0);
-      ch.writeUInt16LE(20, 4);
-      ch.writeUInt16LE(20, 6);
-      ch.writeUInt16LE(2048, 8);
-      ch.writeUInt16LE(8, 10);
-      ch.writeUInt32LE(crc, 16);
-      ch.writeUInt32LE(comp.length, 20);
-      ch.writeUInt32LE(data.length, 24);
-      ch.writeUInt16LE(n.length, 28);
-      ch.writeUInt32LE(off, 42);
-      central.push(ch, n);
-      return off + 30 + n.length + comp.length;
-    }
-    function zipEnd(entries, local, central, off) {
-      const cd = import_buffer.Buffer.concat(central);
-      const eocd = import_buffer.Buffer.alloc(22);
-      eocd.writeUInt32LE(101010256, 0);
-      eocd.writeUInt16LE(entries.length, 8);
-      eocd.writeUInt16LE(entries.length, 10);
-      eocd.writeUInt32LE(cd.length, 12);
-      eocd.writeUInt32LE(off, 16);
-      return import_buffer.Buffer.concat([...local, cd, eocd]);
-    }
-    var defer = globalThis.setImmediate ? (f) => setImmediate(f) : (f) => setTimeout(f, 0);
-    async function zipAsync(entries) {
-      const local = [], central = [];
-      let off = 0;
-      const deflate = (buf) => typeof zlib.deflateRaw === "function" ? new Promise((resolve2, reject) => zlib.deflateRaw(buf, (err2, out2) => err2 ? reject(err2) : resolve2(out2))) : new Promise((resolve2) => defer(resolve2)).then(() => zlib.deflateRawSync(buf));
-      for (const [name, content] of entries) {
-        const data = import_buffer.Buffer.isBuffer(content) ? content : import_buffer.Buffer.from(content, "utf8");
-        off = zipEntry(name, data, await deflate(data), off, local, central);
-      }
-      return zipEnd(entries, local, central, off);
-    }
-    function zip(entries) {
-      const local = [], central = [];
-      let off = 0;
-      for (const [name, content] of entries) {
-        const data = import_buffer.Buffer.isBuffer(content) ? content : import_buffer.Buffer.from(content, "utf8");
-        const comp = zlib.deflateRawSync(data);
-        const n = import_buffer.Buffer.from(name);
-        const crc = crc32(data);
-        const lh = import_buffer.Buffer.alloc(30);
-        lh.writeUInt32LE(67324752, 0);
-        lh.writeUInt16LE(20, 4);
-        lh.writeUInt16LE(2048, 6);
-        lh.writeUInt16LE(8, 8);
-        lh.writeUInt32LE(crc, 14);
-        lh.writeUInt32LE(comp.length, 18);
-        lh.writeUInt32LE(data.length, 22);
-        lh.writeUInt16LE(n.length, 26);
-        local.push(lh, n, comp);
-        const ch = import_buffer.Buffer.alloc(46);
-        ch.writeUInt32LE(33639248, 0);
-        ch.writeUInt16LE(20, 4);
-        ch.writeUInt16LE(20, 6);
-        ch.writeUInt16LE(2048, 8);
-        ch.writeUInt16LE(8, 10);
-        ch.writeUInt32LE(crc, 16);
-        ch.writeUInt32LE(comp.length, 20);
-        ch.writeUInt32LE(data.length, 24);
-        ch.writeUInt16LE(n.length, 28);
-        ch.writeUInt32LE(off, 42);
-        central.push(ch, n);
-        off += 30 + n.length + comp.length;
-      }
-      return zipEnd(entries, local, central, off);
-    }
-    var EXCEL_EPOCH = Date.UTC(1899, 11, 30);
-    var xmlEsc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
-    function colRef(i) {
-      let s = "";
-      i++;
-      while (i > 0) {
-        const m = (i - 1) % 26;
-        s = String.fromCharCode(65 + m) + s;
-        i = Math.floor((i - 1) / 26);
-      }
-      return s;
-    }
-    function writeSheetXml(sh) {
-      const cols2 = sh.columns.map((c) => typeof c === "string" ? { key: c, label: c } : c);
-      const cell = (r, i, v) => {
-        const ref = colRef(i) + r;
-        if (v === null || v === void 0 || v === "") return "";
-        if (typeof v === "number" && Number.isFinite(v)) return `<c r="${ref}"><v>${v}</v></c>`;
-        if (typeof v === "boolean") return `<c r="${ref}" t="b"><v>${v ? 1 : 0}</v></c>`;
-        if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
-          const t = Date.parse(v + "T00:00:00Z");
-          if (Number.isFinite(t)) return `<c r="${ref}" s="2"><v>${(t - EXCEL_EPOCH) / 864e5}</v></c>`;
-        }
-        if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)) {
-          const t = Date.parse(v);
-          if (Number.isFinite(t)) return `<c r="${ref}" s="3"><v>${(t - EXCEL_EPOCH) / 864e5}</v></c>`;
-        }
-        return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${xmlEsc(typeof v === "object" ? JSON.stringify(v) : v)}</t></is></c>`;
-      };
-      const header = `<row r="1">${cols2.map((c, i) => `<c r="${colRef(i)}1" t="inlineStr" s="1"><is><t>${xmlEsc(c.label)}</t></is></c>`).join("")}</row>`;
-      const body = sh.rows.map((row, ri) => `<row r="${ri + 2}">${cols2.map((c, i) => cell(ri + 2, i, row[c.key])).join("")}</row>`).join("");
-      const widths = `<cols>${cols2.map((c, i) => `<col min="${i + 1}" max="${i + 1}" width="${Math.min(60, Math.max(10, c.width || String(c.label).length + 4))}" customWidth="1"/>`).join("")}</cols>`;
-      return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>${widths}<sheetData>${header}${body}</sheetData><autoFilter ref="A1:${colRef(cols2.length - 1)}${sh.rows.length + 1}"/></worksheet>`;
-    }
-    function writeWorkbookParts(sheets) {
-      const files = [];
-      const safeName = (n, i) => String(n).replace(/[\\/*?:\[\]]/g, " ").slice(0, 31) || `Sheet${i + 1}`;
-      files.push(["[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`]);
-      files.push(["_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`]);
-      files.push(["xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((s, i) => `<sheet name="${xmlEsc(safeName(s.name, i))}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("")}</sheets></workbook>`]);
-      files.push(["xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("")}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`]);
-      files.push(["xl/styles.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" applyFont="1"/><xf numFmtId="14" fontId="0" fillId="0" borderId="0" applyNumberFormat="1"/><xf numFmtId="22" fontId="0" fillId="0" borderId="0" applyNumberFormat="1"/></cellXfs></styleSheet>`]);
-      sheets.forEach((s, i) => files.push([`xl/worksheets/sheet${i + 1}.xml`, writeSheetXml(s)]));
-      return new Map(files);
-    }
-    function writeWorkbook(sheets) {
-      return zip([...writeWorkbookParts(sheets).entries()]);
-    }
-    async function writeWorkbookAsync(sheets) {
-      const breathe = () => new Promise((resolve2) => defer(resolve2));
-      const parts = writeWorkbookParts(sheets.map((s) => ({ name: s.name, columns: s.columns, rows: [] })));
-      for (let i = 0; i < sheets.length; i++) {
-        parts.set(`xl/worksheets/sheet${i + 1}.xml`, writeSheetXml(sheets[i]));
-        await breathe();
-      }
-      const out2 = await zipAsync([...parts.entries()]);
-      return out2;
-    }
-    function readWorkbook(buf) {
-      const files = unzip(buf);
-      const get = (n) => {
-        const f = files.get(n);
-        return f ? f.toString("utf8") : null;
-      };
-      const wb = get("xl/workbook.xml");
-      if (!wb) throw new Error("Not an Excel (.xlsx) file");
-      const rels = get("xl/_rels/workbook.xml.rels") || "";
-      const relMap = {};
-      for (const m of rels.matchAll(/<Relationship\b[^>]*>/g)) {
-        const id = /Id="([^"]+)"/.exec(m[0])?.[1];
-        const t = /Target="([^"]+)"/.exec(m[0])?.[1];
-        if (id && t) relMap[id] = t.replace(/^\/?xl\//, "").replace(/^\//, "");
-      }
-      const shared = [];
-      const ss = get("xl/sharedStrings.xml");
-      if (ss) for (const m of ss.matchAll(/<si>([\s\S]*?)<\/si>/g)) shared.push(decodeEntities([...m[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((x) => x[1]).join("")));
-      const sheets = [];
-      for (const m of wb.matchAll(/<sheet\b[^>]*>/g)) {
-        const name = decodeEntities(/name="([^"]*)"/.exec(m[0])?.[1] || "");
-        const rid = /r:id="([^"]+)"/.exec(m[0])?.[1];
-        const target = relMap[rid] || `worksheets/sheet${sheets.length + 1}.xml`;
-        const xml = get("xl/" + target) || get(target);
-        if (!xml) continue;
-        const rows = [];
-        for (const rm of xml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
-          const row = [];
-          for (const cm of rm[1].matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
-            const attrs = cm[1];
-            const inner = cm[2] || "";
-            const ref = /r="([A-Z]+)\d+"/.exec(attrs)?.[1];
-            const type = /t="([^"]+)"/.exec(attrs)?.[1];
-            const idx = ref ? colIndex(ref) : row.length;
-            let v = null;
-            const vm = /<v>([\s\S]*?)<\/v>/.exec(inner);
-            if (type === "s") v = shared[Number(vm?.[1])] ?? "";
-            else if (type === "inlineStr") v = decodeEntities([...inner.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((x) => x[1]).join(""));
-            else if (type === "b") v = vm?.[1] === "1";
-            else if (vm) {
-              const n = Number(vm[1]);
-              v = Number.isFinite(n) ? n : decodeEntities(vm[1]);
-            }
-            while (row.length < idx) row.push(null);
-            row[idx] = v;
-          }
-          if (row.some((x) => x !== null && x !== "")) rows.push(row);
-        }
-        sheets.push({ name, rows });
-      }
-      return sheets;
-    }
-    function colIndex(letters) {
-      let n = 0;
-      for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64);
-      return n - 1;
-    }
-    function excelDate(n) {
-      if (typeof n !== "number" || !Number.isFinite(n) || n < 1) return null;
-      const d = new Date(Math.round((n - 25569) * 864e5));
-      return isNaN(d) ? null : d.toISOString().slice(0, 10);
-    }
-    function parseFile(buf, filename = "") {
-      const isZip = buf[0] === 80 && buf[1] === 75;
-      const sheets = isZip ? readWorkbook(buf) : [{ name: filename.replace(/\.[^.]+$/, "") || "Sheet1", rows: parseCsv(buf.toString("utf8")) }];
-      return { sheets: sheets.map((s) => {
-        const [h, ...rest] = s.rows;
-        const headers = (h || []).map((x) => String(x ?? "").trim());
-        return { name: s.name, headers, rows: rest.map((r) => Object.fromEntries(headers.map((k, i) => [k, r[i] === void 0 ? null : r[i]]))) };
-      }) };
-    }
-    module.exports = { parseCsv, toCsv, writeWorkbook, writeWorkbookAsync, readWorkbook, parseFile, excelDate, zip, defer };
   }
 });
 
@@ -17144,8 +18598,34 @@ var require_notes = __commonJS({
       part2_protected: { type: "boolean" },
       cosign_requested: { type: "boolean" },
       source: { type: "string", enum: ["manual", "pocket_ai", "onenote", "import", "api"] },
-      source_ref: { type: "string", maxLen: 300 }
+      source_ref: { type: "string", maxLen: 300 },
+      // The problem-list entries this note addresses (CalAIM: a progress note ties the service to the problem list).
+      problem_ids: { type: "array", maxLen: 30, of: "string" }
     };
+    function problemIds(ids, clientId) {
+      if (ids === void 0) return void 0;
+      if (ids === null || !ids.length) return null;
+      const uniq = [...new Set(ids)];
+      for (const id of uniq) {
+        const p = db3.one(`SELECT client_id FROM problems WHERE id=?`, id);
+        if (!p || p.client_id !== clientId) throw badRequest("Validation failed", { fields: { problem_ids: "names a problem that is not on this client's problem list" } });
+      }
+      return JSON.stringify(uniq);
+    }
+    function linkedProblems(ctx, n) {
+      let ids = [];
+      try {
+        ids = n.problem_ids ? JSON.parse(n.problem_ids) : [];
+      } catch {
+        ids = [];
+      }
+      if (!Array.isArray(ids) || !ids.length) return [];
+      if (!auth3.hasPerm(ctx.user, "careplan:read")) return ids.map((id) => ({ id }));
+      return ids.map((id) => {
+        const p = db3.one(`SELECT id, problem_enc, status FROM problems WHERE id=?`, id);
+        return p ? { id: p.id, problem: decrypt3(p.problem_enc), status: p.status } : { id };
+      });
+    }
     function kindPerm(kind, rw) {
       return `notes:${kind}:${rw}`;
     }
@@ -17254,9 +18734,10 @@ var require_notes = __commonJS({
         if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, v.client_id)) throw notFound("Client not found");
         auth3.assertClientAccess(ctx, v.client_id);
         const id = uuid2();
+        const linked = problemIds(v.problem_ids, v.client_id) ?? null;
         const author = db3.one(`SELECT requires_cosign FROM users WHERE id=?`, ctx.user.id);
         db3.run(
-          `INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,structured_enc,occurred_at,intervention_id,call_id,part2_protected,source,source_ref,cosign_required,cosign_requested) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,structured_enc,occurred_at,intervention_id,call_id,part2_protected,source,source_ref,cosign_required,cosign_requested,problem_ids) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           id,
           v.client_id,
           ctx.user.id,
@@ -17272,7 +18753,8 @@ var require_notes = __commonJS({
           v.source || "manual",
           v.source_ref || null,
           author?.requires_cosign ? 1 : 0,
-          v.cosign_requested ? 1 : 0
+          v.cosign_requested ? 1 : 0,
+          linked
         );
         audit3.log({ user: ctx.user, action: "note.create", entity: "note", entityId: id, clientId: v.client_id, ip: ctx.ip, details: { kind: v.kind, format: v.format, cosign_requested: v.cosign_requested ? true : void 0 } });
         ctx.status = 201;
@@ -17288,7 +18770,7 @@ var require_notes = __commonJS({
         const addenda = db3.all(`SELECT a.id,a.reason,a.created_at,a.content_enc,u.display_name AS author FROM note_addenda a JOIN users u ON u.id=a.author_id WHERE a.note_id=? ORDER BY a.created_at`, n.id).map((a) => ({ ...a, content: decrypt3(a.content_enc), content_enc: void 0 }));
         audit3.log({ user: ctx.user, action: access === "breakglass" ? "note.view.breakglass" : "note.view", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: access === "breakglass" ? { reason: breakGlassReason(ctx) } : { kind: n.kind } });
         if (access === "breakglass") recordBreakGlass(ctx, { clientId: n.client_id, noteId: n.id, reason: breakGlassReason(ctx) });
-        return { note: { ...present(n), ...signatureState(n), addenda } };
+        return { note: { ...present(n), ...signatureState(n), addenda, problems: linkedProblems(ctx, n) } };
       });
       r.put("/api/notes/:id", auth3.requireAuth, (ctx) => {
         const n = load(ctx, ctx.params.id);
@@ -17296,7 +18778,7 @@ var require_notes = __commonJS({
         if (n.status !== "draft") throw badRequest("Signed notes cannot be edited; add an addendum instead");
         if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "clients:all")) throw forbidden("Only the author can edit a draft");
         require_crud().assertFresh(ctx, n, "note");
-        const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, cosign_requested: shape.cosign_requested }, { partial: true, existing: n });
+        const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, cosign_requested: shape.cosign_requested, problem_ids: shape.problem_ids }, { partial: true, existing: n });
         const sets = [];
         const params = [];
         for (const k of ["format", "occurred_at", "intervention_id", "call_id", "part2_protected", "cosign_requested"]) if (v[k] !== void 0) {
@@ -17310,6 +18792,11 @@ var require_notes = __commonJS({
         if (v.content !== void 0) {
           sets.push("content_enc=?");
           params.push(encrypt3(v.content));
+        }
+        const linked = problemIds(v.problem_ids, n.client_id);
+        if (linked !== void 0) {
+          sets.push("problem_ids=?");
+          params.push(linked);
         }
         if (v.structured !== void 0) {
           sets.push("structured_enc=?");
@@ -21855,196 +23342,6 @@ var require_regions2 = __commonJS({
   }
 });
 
-// server/exports.js
-var require_exports = __commonJS({
-  "server/exports.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth();
-    var M = require_clients_model();
-    var { decrypt: decrypt3 } = require_crypto();
-    var MAX_ROWS = 5e4;
-    var DEID_LABEL = "De-identified (HIPAA Safe Harbor): dates reduced to year-month, ZIP codes to the first three digits, city omitted, ages banded, free text redacted.";
-    var AGE_BANDS = [[0, 17, "0-17"], [18, 24, "18-24"], [25, 34, "25-34"], [35, 44, "35-44"], [45, 54, "45-54"], [55, 64, "55-64"], [65, 89, "65-89"]];
-    function ageBand(dob, now = /* @__PURE__ */ new Date()) {
-      if (!dob) return "";
-      const born = new Date(dob);
-      if (!Number.isFinite(born.getTime())) return "";
-      let age = now.getUTCFullYear() - born.getUTCFullYear();
-      if (now.getUTCMonth() < born.getUTCMonth() || now.getUTCMonth() === born.getUTCMonth() && now.getUTCDate() < born.getUTCDate()) age--;
-      if (age >= 90) return "90+";
-      const band = AGE_BANDS.find(([lo, hi]) => age >= lo && age <= hi);
-      return band ? band[2] : "";
-    }
-    var isDateCol = (k) => /(_at|_date|_due|_on)$/.test(k) || k === "date";
-    var toMonth = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 7) : v;
-    var zip3 = (v) => v ? String(v).replace(/\D/g, "").slice(0, 3) : v;
-    function deidentifyRow(r) {
-      const o = {};
-      for (const [k, v] of Object.entries(r)) {
-        if (k === "city") continue;
-        if (k === "zip") {
-          o[k] = zip3(v);
-          continue;
-        }
-        o[k] = isDateCol(k) ? toMonth(v) : v;
-      }
-      return o;
-    }
-    var DEID_COLUMNS = {
-      clients: ["client_code", "age_band", "status", "intake_date", "discharge_date", "discharge_reason", "referral_source", "referral_date", "engagement_date", "days_to_engagement", "primary_substance", "secondary_substances", "asam_level", "mat_status", "mat_medication", "risk_level", "housing_status", "insurance", "overdose_history", "naloxone_provided", "naloxone_last_date", "co_occurring_mh", "justice_involved", "pregnant_or_parenting", "zip", "gender", "preferred_language"],
-      interventions: ["occurred_at", "client_code", "type", "duration_minutes", "modality", "outcome", "stage_of_change", "naloxone_kits", "fentanyl_strips", "worker", "funding_source", "cost", "follow_up_due"],
-      calls: ["started_at", "client_code", "direction", "contact_type", "duration_minutes", "outcome", "crisis", "follow_up_needed", "follow_up_due", "worker"],
-      time: ["work_date", "worker", "client_code", "category", "minutes", "billable", "funding_source"],
-      referrals: ["referred_at", "client_code", "resource", "category", "status", "urgency", "warm_handoff", "appointment_at", "admitted_at", "closed_at", "worker"],
-      tasks: ["client_code", "assignee", "due_at", "priority", "status", "is_milestone", "completed_at"],
-      forms: ["created_at", "client_code", "template_name", "status", "completed_at", "completed_by", "created_by", "attachments"],
-      consents: ["client_code", "type", "signed_at", "expires_at", "expires_event", "revoked_at", "redisclosure_notice_given"],
-      disclosures: ["client_code", "disclosed_at", "method", "basis", "source", "disclosed_by"],
-      episodes: ["client_code", "opened_at", "closed_at", "status", "referral_source", "discharge_reason", "discharge_disposition", "funding_source"],
-      overdose_events: ["occurred_at", "client_code", "kind", "naloxone_used", "naloxone_doses", "administered_by", "ems_called", "hospitalized", "survived", "location_type"],
-      expenditures: ["spent_at", "fund", "line", "category", "amount", "status", "client_code", "worker", "approver"]
-    };
-    var LIST_COLUMNS = {
-      interventions: { type: "INTERVENTION_TYPES", location: "LOCATIONS", modality: "MODALITIES", outcome: "OUTCOMES" },
-      calls: { contact_type: "CALL_CONTACT_TYPES", outcome: (r) => r.method === "text" ? "TEXT_OUTCOMES" : "CALL_OUTCOMES" },
-      time: { category: "TIME_CATEGORIES" },
-      referrals: { status: "REFERRAL_STATUSES", barrier: "REFERRAL_BARRIERS" },
-      episodes: { discharge_reason: "DISCHARGE_REASONS" },
-      overdose_events: { kind: "OVERDOSE_KINDS", administered_by: "ADMINISTERED_BY" },
-      clients: { primary_substance: "SUBSTANCES", discharge_reason: "DISCHARGE_REASONS" }
-    };
-    function labelRows(kind, rows) {
-      const cols2 = LIST_COLUMNS[kind];
-      if (!cols2) return rows;
-      const O = require_options();
-      const maps = {};
-      const mapFor = (key) => maps[key] = maps[key] || O.labelMap(key);
-      return rows.map((r) => {
-        const o = { ...r };
-        for (const [col, list] of Object.entries(cols2)) {
-          const v = o[col];
-          if (typeof v !== "string" || !v) continue;
-          const key = typeof list === "function" ? list(r) : list;
-          o[col] = mapFor(key)[v] || (/^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(v) ? O.humanize(v) : v);
-        }
-        return o;
-      });
-    }
-    function projectRow(r, cols2) {
-      const o = {};
-      for (const c of cols2) if (c in r) o[c] = r[c];
-      if (r._client_id !== void 0) o._client_id = r._client_id;
-      return o;
-    }
-    var cents = (v) => typeof v === "number" && Number.isFinite(v) ? Math.round(v * 100) / 100 : v;
-    function datasets(ctx, { from, to, ts, tsP, identified }) {
-      const cf = auth3.caseloadFilter(ctx.user, "c.id");
-      const all = auth3.hasPerm(ctx.user, "time:all") ? 1 : 0;
-      const phi = (v) => identified && v ? decrypt3(v) : v ? "[redacted]" : "";
-      const idCols = identified ? ["last_name", "first_name", "dob", "phone", "email", "address"] : ["age_band"];
-      const strip = (cols2) => identified ? cols2 : cols2.filter((c) => c !== "city");
-      const D = {
-        clients: {
-          label: "Clients",
-          columns: strip(["client_code", ...idCols, "status", "intake_date", "discharge_date", "discharge_reason", "referral_source", "referral_date", "engagement_date", "days_to_engagement", "primary_substance", "secondary_substances", "asam_level", "mat_status", "mat_medication", "risk_level", "housing_status", "insurance", "overdose_history", "naloxone_provided", "naloxone_last_date", "co_occurring_mh", "justice_involved", "pregnant_or_parenting", "city", "zip", "gender", "preferred_language", "goals", "flags"]),
-          rows: () => db3.all(`SELECT c.* FROM clients c WHERE c.deleted_at IS NULL AND ${cf.sql} ORDER BY c.client_code LIMIT ?`, ...cf.params, MAX_ROWS).map((x) => ({ ...M.decryptRow(x, { deidentify: !identified }), _client_id: x.id, age_band: identified ? void 0 : ageBand(x.dob_enc ? decrypt3(x.dob_enc) : null) })).map((x) => ({ ...x, days_to_engagement: M.daysToEngagement(x), goals: identified ? x.goals : x.goals_enc ? "[redacted]" : "", flags: identified ? x.flags : x.flags_enc ? "[redacted]" : "" }))
-        },
-        interventions: {
-          label: "Visits & services",
-          columns: ["occurred_at", "client_code", "type", "duration_minutes", "location", "modality", "outcome", "stage_of_change", "naloxone_kits", "fentanyl_strips", "worker", "funding_source", "cost", "summary", "follow_up_due"],
-          rows: () => db3.all(`SELECT i.*, c.client_code, i.client_id AS _client_id, u.display_name worker, f.name funding_source FROM interventions i LEFT JOIN clients c ON c.id=i.client_id JOIN users u ON u.id=i.user_id LEFT JOIN funding_sources f ON f.id=i.funding_source_id WHERE ${ts("i.occurred_at")} AND (i.client_id IS NULL OR ${cf.sql}) ORDER BY i.occurred_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, summary: phi(r.summary_enc) }))
-        },
-        calls: {
-          label: "Calls",
-          columns: ["started_at", "client_code", "direction", "contact_type", "contact_name", "duration_minutes", "outcome", "crisis", "purpose", "summary", "follow_up_needed", "follow_up_due", "worker"],
-          rows: () => db3.all(`SELECT ca.*, c.client_code, ca.client_id AS _client_id, u.display_name worker FROM calls ca LEFT JOIN clients c ON c.id=ca.client_id JOIN users u ON u.id=ca.user_id WHERE ${ts("ca.started_at")} AND (ca.client_id IS NULL OR ${cf.sql}) ORDER BY ca.started_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, contact_name: phi(r.contact_name_enc), summary: phi(r.summary_enc), purpose: phi(r.purpose_enc) }))
-        },
-        time: {
-          label: "Time",
-          columns: ["work_date", "worker", "client_code", "category", "minutes", "billable", "funding_source", "description"],
-          rows: () => db3.all(`SELECT t.*, u.display_name worker, c.client_code, t.client_id AS _client_id, f.name funding_source FROM time_entries t JOIN users u ON u.id=t.user_id LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN funding_sources f ON f.id=t.funding_source_id WHERE t.work_date BETWEEN ? AND ? AND (t.user_id=? OR ?) ORDER BY t.work_date LIMIT ?`, from, to, ctx.user.id, all, MAX_ROWS)
-        },
-        referrals: {
-          label: "Referrals",
-          columns: ["referred_at", "client_code", "resource", "category", "status", "urgency", "warm_handoff", "appointment_at", "admitted_at", "closed_at", "outcome", "barrier", "worker", "notes"],
-          rows: () => db3.all(`SELECT r.*, c.client_code, r.client_id AS _client_id, res.name resource, res.category, u.display_name worker FROM referrals r JOIN clients c ON c.id=r.client_id JOIN resources res ON res.id=r.resource_id JOIN users u ON u.id=r.user_id WHERE ${ts("r.referred_at")} AND ${cf.sql} ORDER BY r.referred_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, outcome: phi(r.outcome_enc), barrier: phi(r.barrier_enc), notes: phi(r.notes_enc) }))
-        },
-        tasks: {
-          label: "To-dos",
-          columns: ["title", "client_code", "assignee", "due_at", "priority", "status", "is_milestone", "completed_at", "description"],
-          rows: () => db3.all(`SELECT t.*, c.client_code, t.client_id AS _client_id, u.display_name assignee FROM tasks t LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN users u ON u.id=t.assigned_to WHERE ${ts("t.created_at")} AND (t.client_id IS NULL OR ${cf.sql}) ORDER BY t.due_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, title: phi(r.title_enc), description: phi(r.description_enc) }))
-        },
-        forms: {
-          label: "Client forms",
-          columns: ["created_at", "client_code", "template_name", "status", "completed_at", "completed_by", "created_by", "attachments"],
-          rows: () => db3.all(`SELECT f.created_at, c.client_code, f.client_id AS _client_id, f.template_name, f.status, f.completed_at, cu.display_name completed_by, cr.display_name created_by, (SELECT COUNT(*) FROM client_form_files x WHERE x.client_form_id=f.id) attachments FROM client_forms f JOIN clients c ON c.id=f.client_id LEFT JOIN users cu ON cu.id=f.completed_by JOIN users cr ON cr.id=f.created_by WHERE f.deleted_at IS NULL AND ${ts("f.created_at")} AND ${cf.sql} ORDER BY f.created_at DESC LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS)
-        },
-        resources: {
-          label: "Resource directory",
-          noClients: true,
-          columns: ["name", "category", "organization", "phone", "fax", "email", "website", "address", "city", "zip", "hours", "eligibility", "services", "languages", "accepts_medicaid", "accepts_uninsured", "mat_offered", "capacity_notes", "contact_person", "summary", "service_tags", "levels_of_care", "populations", "intake_process", "cost_notes", "is_active", "last_verified_at", "notes"],
-          rows: () => db3.all(`SELECT * FROM resources ORDER BY category, name LIMIT ?`, MAX_ROWS)
-        },
-        consents: {
-          label: "Consents",
-          columns: ["client_code", "type", "recipient", "purpose", "scope", "signed_at", "expires_at", "expires_event", "revoked_at", "document_ref", "redisclosure_notice_given"],
-          rows: () => db3.all(`SELECT co.*, c.client_code, co.client_id AS _client_id FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.signed_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY co.signed_at LIMIT ?`, from, to, ...cf.params, MAX_ROWS).map((r) => ({ ...r, recipient: phi(r.recipient_enc), purpose: phi(r.purpose_enc), scope: phi(r.scope_enc) }))
-        },
-        disclosures: {
-          label: "Accounting of disclosures",
-          columns: ["client_code", "disclosed_at", "recipient", "purpose", "what", "method", "basis", "justification", "source", "disclosed_by"],
-          rows: () => db3.all(`SELECT d.*, c.client_code, d.client_id AS _client_id, u.display_name disclosed_by FROM disclosures d JOIN clients c ON c.id=d.client_id JOIN users u ON u.id=d.disclosed_by WHERE ${ts("d.disclosed_at")} AND ${cf.sql} ORDER BY d.disclosed_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, recipient: phi(r.recipient_enc), purpose: phi(r.purpose_enc), what: phi(r.what_enc), justification: phi(r.justification_enc) }))
-        },
-        episodes: {
-          label: "Episodes of care",
-          columns: ["client_code", "opened_at", "closed_at", "status", "referral_source", "discharge_reason", "discharge_disposition", "funding_source"],
-          rows: () => db3.all(`SELECT e.*, c.client_code, e.client_id AS _client_id, f.name funding_source FROM episodes e JOIN clients c ON c.id=e.client_id LEFT JOIN funding_sources f ON f.id=e.funding_source_id WHERE e.opened_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY e.opened_at LIMIT ?`, from, to, ...cf.params, MAX_ROWS)
-        },
-        overdose_events: {
-          label: "Overdose & reversal events",
-          columns: strip(["occurred_at", "client_code", "kind", "substances", "naloxone_used", "naloxone_doses", "administered_by", "ems_called", "hospitalized", "survived", "location_type", "city"]),
-          rows: () => db3.all(`SELECT o.*, c.client_code, o.client_id AS _client_id FROM overdose_events o LEFT JOIN clients c ON c.id=o.client_id WHERE ${ts("o.occurred_at")} AND (o.client_id IS NULL OR ${cf.sql}) ORDER BY o.occurred_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, substances: phi(r.substances_enc) }))
-        }
-      };
-      if (auth3.hasPerm(ctx.user, "budget:read")) {
-        D.funds = { label: "Funding sources", noClients: true, columns: ["name", "source_type", "grant_number", "fiscal_year_start", "fiscal_year_end", "total_amount", "restrictions", "is_active"], rows: () => db3.all(`SELECT * FROM funding_sources ORDER BY fiscal_year_start DESC`) };
-        D.budget_lines = { label: "Budget lines", noClients: true, columns: ["fund", "category", "label", "allocated_amount", "notes"], rows: () => db3.all(`SELECT b.*, f.name fund FROM budget_lines b JOIN funding_sources f ON f.id=b.funding_source_id ORDER BY f.name, b.category`) };
-        D.expenditures = {
-          label: "Expenditures",
-          columns: ["spent_at", "fund", "line", "category", "amount", "status", "client_code", "vendor", "description", "receipt_ref", "worker", "approver"],
-          rows: () => db3.all(`SELECT e.*, f.name fund, b.label line, c.client_code, e.client_id AS _client_id, u.display_name worker, a.display_name approver FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id LEFT JOIN budget_lines b ON b.id=e.budget_line_id LEFT JOIN clients c ON c.id=e.client_id JOIN users u ON u.id=e.user_id LEFT JOIN users a ON a.id=e.approved_by WHERE e.spent_at BETWEEN ? AND ? ORDER BY e.spent_at`, from, to).map((r) => ({ ...r, amount: cents(r.amount) }))
-        };
-      }
-      for (const [kind, d] of Object.entries(D)) {
-        const coded = d.rows;
-        const raw = () => labelRows(kind, coded());
-        if (identified || d.noClients) {
-          d.rows = raw;
-          continue;
-        }
-        const allowed = DEID_COLUMNS[kind];
-        if (!allowed) throw new Error(`No de-identified column list is defined for the ${kind} dataset`);
-        d.columns = d.columns.filter((c) => allowed.includes(c));
-        d.rows = () => raw().map((r) => projectRow(deidentifyRow(r), allowed));
-      }
-      return D;
-    }
-    function clientIdsOf(rows) {
-      return [...new Set(rows.map((r) => r._client_id).filter(Boolean))];
-    }
-    function publicRows(rows) {
-      return rows.map((r) => {
-        const o = { ...r };
-        delete o._client_id;
-        return o;
-      });
-    }
-    module.exports = { LIST_COLUMNS, labelRows, datasets, ageBand, deidentifyRow, clientIdsOf, publicRows, DEID_LABEL, DEID_COLUMNS, cents };
-  }
-});
-
 // server/routes/reports.js
 var require_reports = __commonJS({
   "server/routes/reports.js"(exports, module) {
@@ -22915,6 +24212,7 @@ var require_sync = __commonJS({
         let rows = raw[t.name].filter((r) => r.updated_at <= cursor);
         if (t.name === "users") rows = rows.map((r) => ({ ...r.id === user.id ? r : { ...r, password_hash: "scrypt$0$0$0$AA==$AA==" }, mfa_secret_enc: null, mfa_enabled: 0 }));
         if (t.name === "notes" && !auth3.hasPerm(user, "notes:clinical:read")) rows = rows.filter((r) => r.kind !== "clinical");
+        if (t.readPerm && !auth3.hasPerm(user, t.readPerm)) rows = [];
         if (t.name === "note_addenda" && !auth3.hasPerm(user, "notes:clinical:read")) rows = rows.filter((r) => db3.one(`SELECT kind FROM notes WHERE id=?`, r.note_id)?.kind !== "clinical");
         const exported = [];
         for (const r of rows) {
@@ -23189,6 +24487,7 @@ var require_sync = __commonJS({
                 if (existing.status !== "draft") {
                   raw.content_enc = void 0;
                   raw.structured_enc = void 0;
+                  raw.problem_ids = existing.problem_ids;
                   raw.status = existing.status;
                   raw.signed_by = existing.signed_by;
                   raw.signed_at = existing.signed_at;
@@ -23197,6 +24496,19 @@ var require_sync = __commonJS({
                 raw.cosigned_by = existing.cosigned_by;
                 raw.cosigned_at = existing.cosigned_at;
                 raw.cosignature_hash = existing.cosignature_hash;
+              }
+              if (t.name === "outcome_measures") {
+                try {
+                  const sc = require_clinical().score(raw.instrument, JSON.parse(raw.responses_enc), { variant: raw.variant });
+                  raw.total_score = sc.total;
+                  raw.band = sc.band;
+                  raw.positive = sc.positive;
+                  raw.safety_flag = sc.safety_flag;
+                  raw.variant = sc.variant;
+                } catch {
+                  reject(t.name, raw.id, "has a value the office does not accept (the answers do not score)");
+                  return false;
+                }
               }
               if (t.name === "notes" && !existing) {
                 raw.cosigned_by = null;
@@ -23643,10 +24955,12 @@ var init_ = __esm({
     globRequire_routes = __glob({
       "./routes/admin.js": () => require_admin(),
       "./routes/app.js": () => require_app(),
+      "./routes/assessments.js": () => require_assessments(),
       "./routes/assignments.js": () => require_assignments(),
       "./routes/auth.js": () => require_auth2(),
       "./routes/budget.js": () => require_budget(),
       "./routes/calls.js": () => require_calls(),
+      "./routes/careplan.js": () => require_careplan(),
       "./routes/client-errors.js": () => require_client_errors(),
       "./routes/clients.js": () => require_clients(),
       "./routes/consents.js": () => require_consents(),
@@ -23736,6 +25050,8 @@ var require_app2 = __commonJS({
       "notes",
       "consents",
       "patient-requests",
+      "careplan",
+      "assessments",
       "forms",
       "documents",
       "imports",
@@ -24490,6 +25806,8 @@ var routeLoaders = {
   notes: () => Promise.resolve().then(() => __toESM(require_notes())),
   consents: () => Promise.resolve().then(() => __toESM(require_consents())),
   "patient-requests": () => Promise.resolve().then(() => __toESM(require_patient_requests())),
+  careplan: () => Promise.resolve().then(() => __toESM(require_careplan())),
+  assessments: () => Promise.resolve().then(() => __toESM(require_assessments())),
   forms: () => Promise.resolve().then(() => __toESM(require_forms())),
   documents: () => Promise.resolve().then(() => __toESM(require_documents())),
   regions: () => Promise.resolve().then(() => __toESM(require_regions2())),
