@@ -101,9 +101,17 @@ module.exports = (r) => {
       // Optional: the calendar date the service belongs to, when it is not the org-timezone date of occurred_at.
       service_date: { type: 'date' },
     },
-    filters: (ctx, where, params) => { const t = ctx.query.get('type'); if (t) { where.push('interventions.type=?'); params.push(t); } },
+    filters: (ctx, where, params) => {
+      const t = ctx.query.get('type'); if (t) { where.push('interventions.type=?'); params.push(t); }
+      // The funder report's "No funding source" warning links here, to the visits that need one.
+      if (ctx.query.get('funding') === 'none') where.push('interventions.funding_source_id IS NULL');
+    },
     afterLoad: (ctx, row) => decodeSummary(row),
-    beforeInsert: (ctx, v) => { checkClient(v.type, v.client_id); v._log_time = v.log_time; delete v.log_time; v._time_category = v.time_category; delete v.time_category; v._service_date = v.service_date || null; delete v.service_date; if (v.cost !== undefined && v.cost !== null) v.cost = cents(v.cost); encodeSummary(v); checkCost(ctx, v); },
+    beforeInsert: (ctx, v) => { checkClient(v.type, v.client_id); v._log_time = v.log_time; delete v.log_time; v._time_category = v.time_category; delete v.time_category; v._service_date = v.service_date || null; delete v.service_date; if (v.cost !== undefined && v.cost !== null) v.cost = cents(v.cost); encodeSummary(v); checkCost(ctx, v);
+      // Nobody chose a fund (the field was not on the form: a role not shown it, or an API client): the
+      // worker's default fund, else the programme's. An explicit "none" (null) is left as chosen.
+      if (!('funding_source_id' in v)) { const f = require('./budget').defaultFundFor(v.user_id || ctx.user.id); if (f) v.funding_source_id = f; }
+    },
     beforeUpdate: (ctx, v, row) => {
       if ('type' in v || 'client_id' in v) checkClient(v.type ?? row.type, 'client_id' in v ? v.client_id : row.client_id);
       delete v.log_time; delete v.time_category; v._service_date = v.service_date || null; delete v.service_date; if (v.cost !== undefined && v.cost !== null) v.cost = cents(v.cost); encodeSummary(v);

@@ -20,8 +20,52 @@ const ETHNICITY_CODES = [
   { code: 'unknown', label: 'Unknown' },
 ];
 
+// Opioid settlement allowable uses, for the settlement expenditure report (server/harm-reduction-reports.js).
+// NEEDS VERIFICATION against the current agreements before a programme relies on the wording or the codes:
+//  * SETTLEMENT_USES follows Exhibit E, "List of Opioid Remediation Uses", of the national opioid settlement
+//    agreements (Distributors / Janssen, 2021, and the later agreements that reuse it): Schedule A, Core
+//    Strategies (A–I), and Schedule B, Approved Uses (A–L, grouped as Treatment, Prevention and Other
+//    Strategies). Labels are abbreviated here; Exhibit E itself is the authority on what each covers.
+//  * SETTLEMENT_HIAA is California's list of High Impact Abatement Activities from the California
+//    State-Subdivision Agreement (as summarised by DHCS on its Opioid Settlements pages), toward which a
+//    share of a participating subdivision's funds must go. The share and the list should be checked
+//    against the agreement in force for the fund being reported.
+// 'none' on either means "not one of these" (administrative cost, or not a High Impact Abatement Activity).
+const SETTLEMENT_USES = [
+  { code: 'core_a', schedule: 'Exhibit E, Schedule A (Core Strategies)', label: 'A. Naloxone or other FDA-approved drug to reverse opioid overdoses' },
+  { code: 'core_b', schedule: 'Exhibit E, Schedule A (Core Strategies)', label: 'B. Medication for opioid use disorder (MOUD) distribution and other opioid-related treatment' },
+  { code: 'core_c', schedule: 'Exhibit E, Schedule A (Core Strategies)', label: 'C. Pregnant and postpartum women' },
+  { code: 'core_d', schedule: 'Exhibit E, Schedule A (Core Strategies)', label: 'D. Expanding treatment for neonatal abstinence syndrome (NAS)' },
+  { code: 'core_e', schedule: 'Exhibit E, Schedule A (Core Strategies)', label: 'E. Expansion of warm hand-off programs and recovery services' },
+  { code: 'core_f', schedule: 'Exhibit E, Schedule A (Core Strategies)', label: 'F. Treatment for incarcerated population' },
+  { code: 'core_g', schedule: 'Exhibit E, Schedule A (Core Strategies)', label: 'G. Prevention programs' },
+  { code: 'core_h', schedule: 'Exhibit E, Schedule A (Core Strategies)', label: 'H. Expanding syringe service programs' },
+  { code: 'core_i', schedule: 'Exhibit E, Schedule A (Core Strategies)', label: 'I. Evidence-based data collection and research on abatement strategies' },
+  { code: 'approved_a', schedule: 'Exhibit E, Schedule B (Approved Uses) — Treatment', label: 'A. Treat opioid use disorder (OUD)' },
+  { code: 'approved_b', schedule: 'Exhibit E, Schedule B (Approved Uses) — Treatment', label: 'B. Support people in treatment and recovery' },
+  { code: 'approved_c', schedule: 'Exhibit E, Schedule B (Approved Uses) — Treatment', label: 'C. Connect people who need help to the help they need (connections to care)' },
+  { code: 'approved_d', schedule: 'Exhibit E, Schedule B (Approved Uses) — Treatment', label: 'D. Address the needs of criminal justice-involved persons' },
+  { code: 'approved_e', schedule: 'Exhibit E, Schedule B (Approved Uses) — Treatment', label: 'E. Address the needs of pregnant or parenting women and their families, including babies with NAS' },
+  { code: 'approved_f', schedule: 'Exhibit E, Schedule B (Approved Uses) — Prevention', label: 'F. Prevent over-prescribing and ensure appropriate prescribing and dispensing of opioids' },
+  { code: 'approved_g', schedule: 'Exhibit E, Schedule B (Approved Uses) — Prevention', label: 'G. Prevent misuse of opioids' },
+  { code: 'approved_h', schedule: 'Exhibit E, Schedule B (Approved Uses) — Prevention', label: 'H. Prevent overdose deaths and other harms (harm reduction)' },
+  { code: 'approved_i', schedule: 'Exhibit E, Schedule B (Approved Uses) — Other strategies', label: 'I. First responders' },
+  { code: 'approved_j', schedule: 'Exhibit E, Schedule B (Approved Uses) — Other strategies', label: 'J. Leadership, planning and coordination' },
+  { code: 'approved_k', schedule: 'Exhibit E, Schedule B (Approved Uses) — Other strategies', label: 'K. Training' },
+  { code: 'approved_l', schedule: 'Exhibit E, Schedule B (Approved Uses) — Other strategies', label: 'L. Research' },
+  { code: 'none', schedule: 'Not an opioid remediation use', label: 'Not an opioid remediation use (for example, administrative cost)' },
+];
+const SETTLEMENT_HIAA = [
+  { code: 'hiaa_1', label: '1. Matching funds or operating costs for SUD facilities with an approved Behavioral Health Continuum Infrastructure Program (BHCIP) project' },
+  { code: 'hiaa_2', label: '2. Creating new or expanded substance use disorder (SUD) treatment infrastructure' },
+  { code: 'hiaa_3', label: '3. Addressing the needs of communities of color and vulnerable populations (including sheltered and unsheltered homeless populations) disproportionately impacted by SUD' },
+  { code: 'hiaa_4', label: '4. Diversion of people with SUD from the justice system into treatment, including training and resources for first and early responders, and outreach, diversion, deflection and harm reduction' },
+  { code: 'hiaa_5', label: '5. Interventions to prevent drug addiction in vulnerable youth' },
+  { code: 'hiaa_6', label: '6. The purchase of naloxone for distribution and efforts to expand access to naloxone for opioid overdose reversals' },
+];
+
 module.exports = {
-  RACE_CODES, ETHNICITY_CODES,
+  RACE_CODES, ETHNICITY_CODES, SETTLEMENT_USES, SETTLEMENT_HIAA,
   INTERVENTION_TYPES: ['outreach', 'screening_sbirt', 'assessment', 'intake', 'care_coordination', 'warm_handoff', 'referral', 'case_management', 'harm_reduction', 'naloxone_distribution', 'peer_support', 'crisis_response', 'post_overdose_follow_up', 'transport', 'housing_assistance', 'benefits_enrollment', 'employment_support', 'family_support', 'education', 'court_or_probation', 'hospital_or_ed_visit', 'jail_in_reach', 'recovery_check_in', 'discharge_planning', 'other'],
   // The services that can be recorded with no identified client: street outreach and community naloxone
   // distribution (a kit handed to a stranger). Every other type is work with a person on the caseload, and

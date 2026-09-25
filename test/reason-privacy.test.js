@@ -68,7 +68,7 @@ test('migration 37: plaintext addendum, revocation, cosign, assignment, time, ex
   try {
     db.open(file);
     const latest = db.LATEST_SCHEMA_VERSION;
-    assert.equal(latest, 37);
+    assert.ok(latest >= 37, 'migration 37 exists');
     const d = db.get();
     const cols = (t) => d.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
     // Put the database back the way migration 36 left it: the plaintext columns, not the encrypted ones.
@@ -95,7 +95,8 @@ test('migration 37: plaintext addendum, revocation, cosign, assignment, time, ex
       .run(form, client, 'Intake', encrypt('{}'), user, `Signed at ${SECRET}'s house`);
     // Blank text stays blank rather than becoming an encrypted empty string.
     d.prepare(`INSERT INTO assignments(id,client_id,user_id,start_date,notes) VALUES(?,?,?,?,?)`).run(uuid(), client, user, '2026-01-02', '');
-    d.prepare(`UPDATE settings SET value=? WHERE key='schema_version'`).run(String(latest - 1));
+    // Back to the version before 37, so reopening runs 37 (and anything after it).
+    d.prepare(`UPDATE settings SET value=? WHERE key='schema_version'`).run('36');
     db.close();
     db.open(file);
     assert.equal(db.getSetting('schema_version'), String(latest));

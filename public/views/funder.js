@@ -8,10 +8,19 @@ route('funder', async (r) => {
   const to = r.query.get('to') || fmt.today();
   const from = r.query.get('from') || `${to.slice(0, 4)}-01-01`;
   const fund = r.query.get('funding_source_id') || '';
-  const d = await get(`/api/reports/funder?from=${from}&to=${to}${fund ? `&funding_source_id=${fund}` : ''}`);
+  // Small-cell suppression is on unless this is the programme's own submission to its funder and someone
+  // allowed to (supervisor, administrator, finance: reports:exact) asks for exact counts.
+  const exact = r.query.get('counts') === 'exact' && can('reports:exact');
+  const countQs = exact ? '&purpose=submission&counts=exact' : '';
+  const qs = `from=${from}&to=${to}${fund ? `&funding_source_id=${fund}` : ''}${countQs}`;
+  const d = await get(`/api/reports/funder?${qs}`);
 
   const fromI = h('input', { type: 'date', value: from, 'aria-label': 'From' });
   const toI = h('input', { type: 'date', value: to, 'aria-label': 'To' });
+  const countsI = can('reports:exact') ? h('select', { 'aria-label': 'Counts', 'data-counts': '1' },
+    h('option', { value: '', selected: !exact }, 'Small cells suppressed (to publish or share)'),
+    h('option', { value: 'exact', selected: exact }, 'Exact counts (our own submission to the funder)')) : null;
+  const go = (f, t) => nav(`funder?from=${f}&to=${t}${fundI.value ? `&funding_source_id=${fundI.value}` : ''}${countsI && countsI.value === 'exact' ? '&counts=exact' : ''}`);
   const fundI = h('select', { 'aria-label': 'Funding source' },
     h('option', { value: '' }, 'All funding sources'),
     state.funds.map(f => h('option', { value: f.id, selected: f.id === fund }, f.name)));
@@ -30,18 +39,31 @@ route('funder', async (r) => {
 
   return h('div', {},
     pageHead('Funder report',
+      can('export:read') ? h('button', { class: 'btn', 'data-funder-export': 'xlsx', onClick: () => downloadCsv(`/api/reports/funder/export?${qs}&format=xlsx`) }, 'This report (Excel)') : null,
+      can('export:read') ? h('button', { class: 'btn ghost', 'data-funder-export': 'csv', onClick: () => downloadCsv(`/api/reports/funder/export?${qs}`) }, 'CSV') : null,
       can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv(`/api/reports/export/workbook?from=${from}&to=${to}`) }, 'Export everything to Excel') : null),
-    h('p', { class: 'muted' }, 'Counts of people, each counted once however many times they were served. This is the shape most grant reporting asks for. It is not a CalOMS Tx submission: CalOMS records are collected, checked and extracted under Reports → State reporting.',
-      d.small_cell_threshold ? ` Breakdown rows with fewer than ${d.small_cell_threshold} people are shown as "<${d.small_cell_threshold}" so nobody can be picked out of a small group; totals are exact.` : ''),
+    h('p', { class: 'muted' }, 'Counts of people, each counted once however many times they were served. This is the shape most grant reporting asks for. It is not a CalOMS Tx submission: CalOMS records are collected, checked and extracted under Reports → State reporting.'),
+    // Which counting this run used; the exported file says the same on its About sheet.
+    h('div', { class: `banner small ${d.suppression.mode === 'exact' ? 'warn' : 'info'}`, 'data-counting-mode': d.suppression.mode }, d.counting_statement),
 
     h('div', { class: 'filters' },
       h('div', { class: 'field' }, h('label', {}, 'From'), fromI),
       h('div', { class: 'field' }, h('label', {}, 'To'), toI),
       h('div', { class: 'field' }, h('label', {}, 'Funding source'), fundI),
-      h('button', { class: 'btn primary', onClick: () => nav(`funder?from=${fromI.value}&to=${toI.value}${fundI.value ? `&funding_source_id=${fundI.value}` : ''}`) }, 'Apply'),
-      h('button', { class: 'btn ghost sm', onClick: () => { const [s, e] = fy(7); nav(`funder?from=${s}&to=${e}`); } }, 'Fiscal year (Jul–Jun)'),
-      h('button', { class: 'btn ghost sm', onClick: () => { const [s, e] = fy(10); nav(`funder?from=${s}&to=${e}`); } }, 'Fiscal year (Oct–Sep)'),
-      h('button', { class: 'btn ghost sm', onClick: () => nav(`funder?from=${to.slice(0, 4)}-01-01&to=${to}`) }, 'Calendar year')),
+      countsI ? h('div', { class: 'field' }, h('label', {}, 'Counts'), countsI) : null,
+      h('button', { class: 'btn primary', onClick: () => go(fromI.value, toI.value) }, 'Apply'),
+      h('button', { class: 'btn ghost sm', onClick: () => { const [s, e] = fy(7); go(s, e); } }, 'Fiscal year (Jul–Jun)'),
+      h('button', { class: 'btn ghost sm', onClick: () => { const [s, e] = fy(10); go(s, e); } }, 'Fiscal year (Oct–Sep)'),
+      h('button', { class: 'btn ghost sm', onClick: () => go(`${to.slice(0, 4)}-01-01`, to) }, 'Calendar year')),
+
+    // What would otherwise be missing without a word: services charged to no fund, and staff time nobody
+    // has approved yet (approved hours are what a county would invoice, so unapproved time counts as none).
+    d.attribution.unattributed_services ? h('div', { class: 'banner warn small', 'data-unattributed': String(d.attribution.unattributed_services) },
+      `${num(d.attribution.unattributed_services)} service${d.attribution.unattributed_services === 1 ? '' : 's'} in this period ${d.attribution.unattributed_services === 1 ? 'has' : 'have'} no funding source, so no fund reports ${d.attribution.unattributed_services === 1 ? 'it' : 'them'} (the "No funding source" row below). `,
+      h('a', { href: d.attribution.fix_link }, 'Review those visits')) : null,
+    d.attribution.unapproved_minutes ? h('div', { class: 'banner warn small', 'data-unapproved-hours': String(d.attribution.unapproved_minutes) },
+      `${(d.attribution.unapproved_minutes / 60).toFixed(1)} staff hours logged in this period are not yet approved (${(d.attribution.approved_minutes / 60).toFixed(1)} approved). Only approved hours count toward a fund. `,
+      can('time:approve') ? h('a', { href: d.attribution.approve_link }, 'Review time sheets') : null) : null,
 
     h('section', { class: 'card' },
       h('h2', {}, 'People served'),
@@ -95,12 +117,13 @@ route('funder', async (r) => {
     h('section', { class: 'card' },
       h('h2', {}, 'By funding source'),
       table([
-        { label: 'Fund', key: 'name' },
+        { label: 'Fund', render: f => (f.id ? f.name : h('span', { class: 'muted', 'data-no-fund-row': '1' }, f.name)) },
         { label: 'Grant number', render: f => f.grant_number || '—' },
         { label: 'Fiscal year', render: f => [f.fiscal_year_start, f.fiscal_year_end].filter(Boolean).map(fmt.date).join(' – ') || '—' },
         { label: 'People served', render: f => num(f.clients_served), num: true },
         { label: 'Services', render: f => num(f.services), num: true },
         { label: 'Approved staff hours', render: f => (f.approved_minutes / 60).toFixed(1), num: true },
+        { label: 'Logged, not yet approved', render: f => (f.unapproved_minutes / 60).toFixed(1), num: true },
       ], d.by_funding_source, { empty: 'No active funding sources.' }),
-      h('p', { class: 'small muted' }, 'Staff hours count only time that has been approved, so this matches what a county would invoice.')));
+      h('p', { class: 'small muted' }, 'Staff hours count only time that has been approved, so this matches what a county would invoice; time logged but still waiting for approval is shown beside it. A visit is charged to the worker\'s default fund (Settings → Users) or the programme\'s (Settings → Program) unless another is chosen.')));
 });

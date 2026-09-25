@@ -17,7 +17,8 @@
 module.exports = {
   // caloms_*: whether this programme reports CalOMS Tx (which turns on the CalOMS questions in the admission
   // and discharge forms) and its provider IDs — a device needs both to offer the same forms offline.
-  settings_keys: ['org_name', 'county_name', 'program_contact', 'note_lock_days', 'caloms_enabled', 'caloms_providers', 'caloms_start_date'],
+  // default_fund_id: the fund a visit recorded on the device is charged to when the worker has none of their own.
+  settings_keys: ['org_name', 'county_name', 'program_contact', 'note_lock_days', 'caloms_enabled', 'caloms_providers', 'caloms_start_date', 'default_fund_id'],
   tables: [
     // supervisor_id points at another user: a supervisor must land before the people who report to them.
     { name: 'users', enc: ['mfa_secret_enc'], scope: 'users', cols: null, selfParent: 'supervisor_id' },

@@ -1474,6 +1474,8 @@ export async function loadSession() {
   try {
     const me = await get('/api/auth/me', { quiet: true });
     state.user = me.user; state.org = me.org_name; state.mfaPending = me.mfaPending; state.idleMinutes = me.idle_minutes || 15;
+    // The fund a new visit is pre-filled with (the worker's own default, else the programme's).
+    state.defaultFundId = me.default_fund_id || null;
     await Promise.all([loadRefData(), prefs.load()]);
     // Two-step verification is required of this role but not set up yet. There is a grace period, after which
     // the server refuses every request until it is done -- so say when that is, and where to do it, instead of

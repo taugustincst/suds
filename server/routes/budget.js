@@ -71,6 +71,8 @@ const fundShape = {
   name: { type: 'string', required: true, maxLen: 200 }, source_type: { type: 'string', enum: C.FUNDING_TYPES }, grant_number: { type: 'string', maxLen: 100 },
   fiscal_year_start: { type: 'date', required: true }, fiscal_year_end: { type: 'date', required: true }, total_amount: { type: 'number', required: true, min: 0 },
   restrictions: { type: 'string', maxLen: 2000 }, notes: { type: 'string', maxLen: 2000 }, is_active: { type: 'boolean' },
+  // Opioid settlement categories (constants.SETTLEMENT_USES / SETTLEMENT_HIAA); blank for any other fund.
+  settlement_use: { type: 'string', enum: C.SETTLEMENT_USES.map(x => x.code) }, settlement_hiaa: { type: 'string', enum: [...C.SETTLEMENT_HIAA.map(x => x.code), 'none'] },
 };
 const lineShape = { category: { type: 'string', required: true, enum: C.BUDGET_CATEGORIES }, label: { type: 'string', maxLen: 200 }, allocated_amount: { type: 'number', required: true, min: 0 }, notes: { type: 'string', maxLen: 1000 }, parent_id: { type: 'string' } };
 
@@ -259,6 +261,8 @@ module.exports = (r) => {
       client_id: { type: 'string' }, user_id: { type: 'string' }, funding_source_id: { type: 'string', required: true }, budget_line_id: { type: 'string' },
       spent_at: { type: 'date', required: true }, amount: { type: 'number', required: true, min: 0.01 }, category: { type: 'string', required: true, enum: C.BUDGET_CATEGORIES },
       vendor: { type: 'string', maxLen: 200 }, description: { type: 'string', maxLen: 1000 }, receipt_ref: { type: 'string', maxLen: 200 },
+      // Only when this expenditure's opioid settlement category differs from its fund's.
+      settlement_use: fundShape.settlement_use, settlement_hiaa: fundShape.settlement_hiaa,
     },
     filters: (ctx, where, params) => {
       const f = ctx.query.get('fund'); if (f) { where.push('expenditures.funding_source_id=?'); params.push(f); }
@@ -344,6 +348,16 @@ module.exports = (r) => {
     };
   });
 };
+/**
+ * The fund a new visit by `userId` is charged to when nobody chose one: the worker's own default, else the
+ * programme's (the default_fund_id setting) — either only while it is an active fund.
+ */
+function defaultFundFor(userId) {
+  const u = userId ? db.one(`SELECT default_fund_id FROM users WHERE id=?`, userId) : null;
+  for (const id of [u && u.default_fund_id, db.getSetting('default_fund_id', null)]) if (id && db.one(`SELECT 1 FROM funding_sources WHERE id=? AND is_active=1`, id)) return id;
+  return null;
+}
+module.exports.defaultFundFor = defaultFundFor;
 // Reused by server/routes/sync.js: the REST route validates a re-parent through this, but a sync push
 // applies budget_lines rows straight through importRow() with no such check — see that file for why.
 module.exports.wouldCycle = wouldCycle;
