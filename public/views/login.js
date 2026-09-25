@@ -191,11 +191,11 @@ function firstRun() {
   // localStorage (local/shims/config.js), beside the data.
   const notice = stat
     ? h('div', { class: 'banner info mb', 'data-storage-notice': '1' }, h('div', {}, h('b', {}, 'Where your records are kept. '),
-      'Everything you record is stored encrypted in this browser on this device, and nowhere else. The keys that unlock it are kept in the same browser. ',
+      'Everything you record is stored in this browser on this device, and nowhere else. Names, contact details and notes are encrypted, but the keys are kept in the same browser and the rest of each record (dates, substance use, risk) is not, so anyone who can open this browser on this device can read it all: use a device with disk encryption and a screen lock. ',
       'If this browser’s site data is cleared, or the device is lost or replaced, the records are gone for good unless you have a backup — download one regularly from ', h('b', {}, 'This device'), '.'))
     : h('div', {},
-      h('div', { class: 'banner warn mb', 'data-browser-copy-warning': '1' }, h('div', {}, h('b', {}, 'This is an offline copy of the office SUDS. '), 'Its encryption keys stay in this browser profile beside the data. Keep real client information on the office SUDS unless your administrator has approved this device for field work.')),
-      h('p', { class: 'small muted' }, 'Everything you record is stored encrypted on this device. Whenever you are near the office, tap Sync to exchange changes with the office SUDS — both directions.'));
+      h('div', { class: 'banner warn mb', 'data-browser-copy-warning': '1' }, h('div', {}, h('b', {}, 'This is an offline copy of the office SUDS. '), 'Its encryption keys stay in this browser profile beside the data, so anyone who can open this browser on this device (a lost laptop that is unlocked or has no disk encryption) can read every record in it. Keep real client information on the office SUDS unless your administrator has approved this device for field work.')),
+      h('p', { class: 'small muted' }, 'Everything you record is kept in this browser on this device. Whenever you are near the office, tap Sync to exchange changes with the office SUDS — both directions.'));
   return h('div', { 'data-first-run': '1' },
     h('p', { class: 'small' }, stat ? 'Create the first account on this device. You will manage it: backups, and whether other people may sign up here.' : 'Set up SUDS on this device.'),
     notice, f, tryIt,

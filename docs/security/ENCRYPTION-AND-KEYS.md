@@ -12,11 +12,38 @@
 | Passwords | scrypt (N=32768, r=8, p=1), per-user salt; computed off the event loop | — | `server/crypto.js` `hashPasswordAsync` |
 | API keys, session tokens | Only SHA-256 hashes stored; raw values shown once | — | `server/routes/admin.js`, `server/auth.js` |
 | Database file, logs, keys.json | File mode 0600 (process umask 077 in production); the host volume should be encrypted (BitLocker / LUKS / cloud disk with KMS) | County-managed volume key | `server/index.js`, `server/db.js` |
-| Local-mode / on-device copies | Same AES-256-GCM scheme in the browser; keys in the browser profile; device backups keyed by PBKDF2-SHA256 (600,000 iterations) from a passphrase | Per device | `local/`, `../WEB_APP.md` |
+| Local-mode / on-device copies | Same AES-256-GCM scheme for `*_enc` columns in the browser, but the database file itself is stored unencrypted in IndexedDB and the keys sit beside it in the same profile, so a lost device is protected only by its own disk encryption and lock (see "On-device build" below); device backups keyed by PBKDF2-SHA256 (600,000 iterations) from a passphrase | Per device | `local/`, `../WEB_APP.md` |
 
 The field-level scheme means a stolen database file, a stolen backup, or a database administrator reading tables without the keys sees ciphertext. The known residual leak is equality/frequency of blind-indexed values (documented in `../HIPAA.md`, risk register).
 
 At startup the server compares a fingerprint of the key it was given with the one recorded in the database and refuses to start on a mismatch rather than writing records under two keys (`server/db.js` `checkKeyFingerprint`).
+
+### Blind indexes and key separation
+
+A blind index is `HMAC-SHA256(SUDS_INDEX_KEY, normalised value)`: deterministic, so equal values can be found without decrypting anything. That is also its limit. For a low-entropy value anyone who holds the **index key** can recover the value by trying every candidate — there are about 36,500 dates of birth in a century (`dob_idx`), a few thousand three-letter surname prefixes and Soundex codes (`name_prefix_idx`, `name_phonetic_idx`), and at most ten billion phone digit strings (`phone_idx`). `test/blind-index-keys.test.js` recovers a DOB from its index in well under a second to keep that fact visible. ZIP code and city are not indexed; they are plaintext columns (`../HIPAA.md`, the table of what each table stores).
+
+What keeps this acceptable:
+
+* **Two keys.** `SUDS_INDEX_KEY` is a separate 256-bit key from `SUDS_ENCRYPTION_KEY`; the index key cannot decrypt a record, and the encryption key does not reproduce an index. A production server whose two keys (or `SUDS_BACKUP_KEY` and either of them) are the same value says so in the startup log, `/api/health` and Security status (`server/startup-checks.js` `keySeparationProblem`).
+* **Where each lives.** Both come from the environment (the county's secret store) or, on a setup-wizard install, `<data>/keys.json` (mode 0600) — never the database. The index key has to be present wherever indexes are computed or the audit chain is verified (the office server, `scripts/rotate-index-key.js`, `scripts/verify-audit-export.js` with the key), so it is handed to more places than the encryption key; treat it as a secret of the same class.
+* **Per install.** Each install generates its own index key, so an index value from one county (or one device) says nothing about the same person at another (`test/blind-index-keys.test.js`).
+* **Rotation** re-derives every index under the new key (`npm run rotate-index-key`).
+
+Someone with the database file **and** the index key can therefore learn dates of birth and phone numbers of every client, and test guesses at surnames, without the encryption key. Someone with the database file alone learns only which records share a value.
+
+### On-device build (SUDS on this device, and a navigator's offline copy)
+
+What a lost or stolen laptop or phone exposes, precisely. Code: `local/shims/sqlite.js`, `local/shims/config.js`, `local/shims/crypto.js`, `local/kernel.js`.
+
+* **The database is not encrypted as a whole.** The kernel runs SQLite in the page (sql.js) and saves the complete database file, as ordinary SQLite bytes, to IndexedDB (database `suds-local`, object store `kv`, key `db2:<epoch>`) after each write.
+* **PHI columns inside it are encrypted** with the same AES-256-GCM scheme as the office server (every `*_enc` column), and blind indexes use the same HMAC scheme.
+* **The keys sit beside the data.** The encryption key (`suds.local.enc`) and the index key (`suds.local.idx`) are 256-bit random values generated on first run and stored as hex in the same browser profile's `localStorage`. They are **not derived from the device password or any passphrase**, and nothing wraps them: a browser has no Keystore or Keychain for a web page. The session token (`suds.local.session`) is in `localStorage` too.
+* **So the field encryption does not protect a lost device.** Anyone who can open that browser profile — the device unlocked, or its disk readable because it is not encrypted, or the operating-system account's password known — can copy IndexedDB and `localStorage` and decrypt every record. Browsers do not encrypt IndexedDB or `localStorage` at rest themselves. The protection is the device's: full-disk encryption (BitLocker, FileVault, Android/iOS device encryption), a screen lock, and an operating-system account nobody else uses.
+* **In plain text even without the keys:** every column that does not end in `_enc` — the client code; city and ZIP; gender, pronouns, race and ethnicity, language, veteran status; housing and insurance; status, risk level, and intake/referral/engagement/discharge dates; primary and secondary substance, route of use, ASAM level, MAT status and medication, overdose history and dates, naloxone dates; the justice-involved, pregnant-or-parenting and co-occurring flags; dates, types and durations of visits, calls, referrals and tasks; assignments; staff usernames, display names, roles and scrypt password hashes; and the device's audit log (who did what to which record id, and when). Combined, these identify a person and say they are in SUD treatment.
+* **What the device does not keep:** the office password (typed at each sync; the sync session is signed out at the end of the run), MFA secrets (never sent to a device), and other staff members' password hashes (a placeholder is sent).
+* **Removing it:** "Erase this device" deletes the IndexedDB store and the keys; an administrator's remote wipe takes effect the next time the device signs in to sync (`local/sync.js`). A client taken off the navigator's caseload at the office is removed from the device at its next sync (`server/routes/sync.js` `dropped_clients`). Device backups (`local/backup.js`) are the exception to all of the above: the whole database and both keys are encrypted with AES-256-GCM under a key derived from a passphrase (PBKDF2-SHA256, 600,000 iterations), so a backup file on its own is protected by that passphrase.
+
+The device-setup screen and the Sync page say this in plain words before any record is entered (`public/views/login.js`, `public/views/local.js`).
 
 ## In transit
 
