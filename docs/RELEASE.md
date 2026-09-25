@@ -1,7 +1,7 @@
 # Releasing SUDS
 
 ## Production readiness checklist (per release)
-- [ ] `npm test` passes and the browser suite (`scripts/ui/run-all.sh`, twenty-one scripts including the first-run wizard, local mode, sync and the static build) exits 0
+- [ ] `npm test` passes and the browser suite (`scripts/ui/run-all.sh`, twenty-six scripts including the first-run wizard, local mode, sync, device encryption and the static build) exits 0
 - [ ] `CHANGELOG.md` has a section for the version, `package.json` version matches
 - [ ] Docs updated (`README.md`, `docs/INSTALL.md`, `docs/DEPLOYMENT.md`, `docs/HIPAA.md`)
 - [ ] No secrets, databases or `data/` contents in the tree (`git status`, `.gitignore`)

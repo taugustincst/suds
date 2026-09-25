@@ -24,12 +24,14 @@ Open the published address on any phone, tablet or computer. There is nothing to
    they understand before the account is created. That first account **manages the device**: it can
    download and restore backups and decide whether anyone else may sign up here. It is asked for its SUDS role
    (navigator, clinician, supervisor, administrator), which decides what it can open.
-2. **Other people on the same device** (a shared office tablet) choose **Sign up** too. Each gets a navigator
-   account at once and, from then on, every navigator and clinician on the device sees only the clients they
+2. **Other people on the same device** (a shared office tablet) choose **Sign up** too, with someone who
+   already has an account here typing their own username and password to let them in (the records are
+   encrypted, and a new account gets the key to them). Each gets a navigator account at once and, from then on, every navigator and clinician on the device sees only the clients they
    recorded or are assigned — not each other's. The device's manager turns further sign-ups off under
    **This device → Accounts on this device** once everyone has an account; Sign up then says so.
 3. **Log in** is the other option on the same page. `#/login?mode=signup` and `#/login?mode=login` link
-   straight to either one.
+   straight to either one. SUDS asks for it every time the page is opened, and after signing out or 15 minutes
+   idle: until then the records stay locked (below).
 4. **Add it to the home screen** for something that opens like an app: on iPhone, Safari's Share sheet →
    *Add to Home Screen*; on Android and desktop Chrome/Edge, the address bar offers *Install*. The step-by-step
    page is `get-app.html` next to the site (the office server's `/app` is a rewrite a static host does not
@@ -52,12 +54,19 @@ Read this before using the on-device app for real client information, and record
 register (`HIPAA.md`, *Risk register notes*).
 
 - **In this browser, on this device, and nowhere else.** Everything recorded is kept in the browser's own
-  storage (IndexedDB), encrypted with AES-256-GCM exactly as the office server encrypts it. Nothing is sent to
-  GitHub, to an office server or anywhere else; the app makes no network requests with record data at all.
-- **The encryption keys are in the same browser.** A browser has no protected key store, so the keys that
-  unlock the records are kept in that browser profile's `localStorage`, beside the data. Encryption protects a
-  copy of the storage taken off the device; it does not protect against someone who can use the browser
-  profile itself. Use a device with a passcode, disk encryption and (for county devices) MDM, and sign out.
+  storage (IndexedDB). Nothing is sent to GitHub, to an office server or anywhere else; the app makes no
+  network requests with record data at all.
+- **Encrypted with your password, and locked when you are not using it.** The whole database is sealed with
+  AES-256-GCM under a key that only the password of an account on this device opens (PBKDF2-SHA-256,
+  600,000 iterations; `security/ENCRYPTION-AND-KEYS.md`, *On-device build*). Every time the page is opened, and
+  after signing out or 15 minutes idle, SUDS is locked until someone signs in; nothing in the browser's storage
+  is readable without a password. While you are signed in the records are open on the device, so sign out
+  when you put it down, and still use a device with a passcode and disk encryption.
+- **A forgotten password cannot be recovered** — not by anyone — unless another account on this device can
+  set a new one, or you have a backup. Choose a password you will remember, and keep backups.
+- **Someone new is let in by someone already here.** On a device that is locked, **Sign up** asks for the
+  username and password of a person who already has an account on it: a new account gets the key to every
+  record, so it cannot be created by whoever happens to pick the device up.
 - **Clearing the browser's site data, or losing the device, loses the records.** So does a browser that evicts
   the site's storage when the device runs short of space. The app asks the browser to keep its storage
   ("persistent storage") when the first account is created; **This device** shows the answer —
