@@ -16,14 +16,14 @@ export async function securityTab() {
   return h('div', { 'data-security-status': '1' },
     h('div', { class: 'banner small mb' }, 'Read-only. Each line is read from where the control is enforced or recorded in this installation, not from a document. ', h('b', {}, s.attestation)),
     h('div', { class: 'grid cols-4 mb' }, stat('OK', s.counts.ok, 'ok'), stat('Attention', s.counts.warn, s.counts.warn ? 'warn' : ''), stat('Action needed', s.counts.bad, s.counts.bad ? 'danger' : ''), stat('Two-step verification', `${s.mfa.coverage_pct}%`, s.mfa.coverage_pct === 100 ? 'ok' : 'warn')),
-    groups.map(g => h('div', { class: 'card mb', 'data-group': g }, h('h3', {}, g),
+    groups.map(g => h('div', { class: 'card mb', 'data-group': g }, h('h2', {}, g),
       table([
         { label: 'Control', render: i => h('b', {}, i.name) },
         { label: 'Status', render: i => badge(LABEL[i.level], KIND[i.level]) },
         { label: 'In this installation', render: i => h('div', {}, i.value, i.detail ? h('div', { class: 'small muted' }, i.detail) : null) },
         { label: 'Where', render: i => h('span', { class: 'small mono' }, i.evidence) },
       ], s.items.filter(i => i.group === g)))),
-    h('div', { class: 'card mb', 'data-mfa-report': '1' }, h('h3', {}, 'Accounts without two-step verification'),
+    h('div', { class: 'card mb', 'data-mfa-report': '1' }, h('h2', {}, 'Accounts without two-step verification'),
       s.mfa.without.length ? table([
         { label: 'Name', render: u => h('div', {}, h('b', {}, u.display_name), h('div', { class: 'small muted' }, u.username)) },
         { label: 'Role', render: u => fmt.label(u.role) },
@@ -32,7 +32,7 @@ export async function securityTab() {
         { label: 'SSO linked', render: u => u.sso_linked ? 'Yes' : 'No' },
         { label: 'Last sign-in', render: u => u.last_login_at ? fmt.dt(u.last_login_at) : 'never' },
       ], s.mfa.without) : h('p', {}, badge('Every active account has enrolled', 'ok'))),
-    h('div', { class: 'card' }, h('h3', {}, 'Evidence for an auditor'),
+    h('div', { class: 'card' }, h('h2', {}, 'Evidence for an auditor'),
       h('p', { class: 'small' }, 'The audit export is the hash chain as NDJSON with a manifest (digest, MAC and the anchors in range). It is verified away from this server with ', h('code', {}, 'npm run verify-audit-export -- <file>'), '. Anchors seal the chain head outside the database; the recovery drill report is on System & backups. The evidence package for county IT is docs/security/.'),
       h('div', { class: 'row' }, exportLink, h('button', { class: 'btn sm', onClick: anchorNow }, 'Anchor the audit log now'), anchorMsg)));
 }
@@ -48,7 +48,7 @@ export async function drillCard() {
       btn.disabled = true;
       try { await post('/api/admin/dr-drill', {}); toast('Recovery drill started', 'ok'); poll(); } catch (e) { toast(e.message, 'error'); btn.disabled = false; }
     } }, running ? 'Drill running…' : 'Run a recovery drill now');
-    box.replaceChildren(h('h3', {}, 'Recovery drill'),
+    box.replaceChildren(h('h2', {}, 'Recovery drill'),
       h('p', { class: 'small muted' }, 'Restores the newest backup into a temporary copy (never the live database), starts SUDS against it, verifies the schema, row counts, the audit chain and its anchors, decrypts a sample of encrypted fields and signs in with a second factor. RTO is the time from starting the restore to the copy serving; RPO is the age of the backup it restored.'),
       l ? h('div', { 'data-drill-last': l.ok ? 'passed' : 'failed' },
         h('p', {}, l.ok ? badge('Last drill passed', 'ok') : badge('Last drill failed', 'danger'), ` ${fmt.dt(l.at)} — ${l.checks_passed}/${l.checks_total} checks`),

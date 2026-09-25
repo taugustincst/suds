@@ -15,7 +15,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '
 function printNotice(n) {
   const w = window.open('', '_blank');
   if (!w) { toast('Allow pop-ups to print the notice', 'error'); return; }
-  w.document.open(); w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Notice of privacy practices</title><style>body{font-family:system-ui,sans-serif;margin:2rem;color:#111;white-space:pre-wrap;line-height:1.45}</style></head><body>${esc(n.rendered)}\n\nVersion ${esc(n.version)}</body></html>`);
+  w.document.open(); w.document.write(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Notice of privacy practices</title><style>body{font-family:system-ui,sans-serif;margin:2rem;color:#111;white-space:pre-wrap;line-height:1.45}</style></head><body>${esc(n.rendered)}\n\nVersion ${esc(n.version)}</body></html>`);
   w.document.close(); w.focus(); setTimeout(() => w.print(), 300);
 }
 
@@ -33,7 +33,7 @@ route('compliance', async (r) => {
   const T = {
     async overview() {
       const [s, cfg] = await Promise.all([get('/api/part2/summary'), get('/api/part2/settings')]);
-      const settingsCard = can('settings:manage') ? h('div', { class: 'card mt' }, h('h3', {}, 'Programme settings'),
+      const settingsCard = can('settings:manage') ? h('div', { class: 'card mt' }, h('h2', {}, 'Programme settings'),
         form([
           { name: 'part2_program', label: 'This is a 42 CFR Part 2 programme (label records, attach the §2.32 notice, refuse general releases)', type: 'checkbox', value: cfg.part2_program, span: true },
           { name: 'mass_export_threshold', label: 'Open a draft incident when one identified export names this many clients', type: 'number', min: 1, step: 1, value: cfg.mass_export_threshold },
@@ -61,14 +61,14 @@ route('compliance', async (r) => {
         ], { submitText: 'Save new version', onSubmit: async (v) => { await put('/api/part2/settings', v); toast('Notice saved as a new version', 'ok'); refresh(); } }),
         n.is_default ? null : h('button', { class: 'btn sm ghost', onClick: async () => { if (await confirmDialog('Restore the built-in notice', 'Replace your wording with the built-in starting text? This is a new version.', { okText: 'Restore' })) { await put('/api/part2/settings', { reset_notice: true }); refresh(); } } }, 'Restore the built-in wording')) : null;
       return h('div', {},
-        h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Notice of privacy practices (42 CFR §2.22)'), h('div', { class: 'row' }, badge(`Version ${n.version}`, 'info'), n.is_default ? badge('Built-in starting text', 'warn') : null, h('button', { class: 'btn sm', 'data-print-notice': '1', onClick: () => printNotice(n) }, 'Print'))),
+        h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Notice of privacy practices (42 CFR §2.22)'), h('div', { class: 'row' }, badge(`Version ${n.version}`, 'info'), n.is_default ? badge('Built-in starting text', 'warn') : null, h('button', { class: 'btn sm', 'data-print-notice': '1', onClick: () => printNotice(n) }, 'Print'))),
           h('p', { class: 'small muted' }, 'Give every client this notice when they start, and record it on their Consents tab (+ Notice given).'),
           h('pre', { class: 'note', 'data-notice-rendered': '1', style: { whiteSpace: 'pre-wrap' } }, n.rendered)),
         editor);
     },
     async notices() {
       const d = await get('/api/part2/notices/missing');
-      return h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Active clients with no Part 2 notice on record'), badge(String(d.total), d.total ? 'warn' : 'ok')),
+      return h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Active clients with no Part 2 notice on record'), badge(String(d.total), d.total ? 'warn' : 'ok')),
         h('p', { class: 'small muted' }, 'Open the client, give them the notice, and record it on their Consents tab.'),
         table([{ label: 'Client', render: x => h('a', { href: `#/client/${x.id}/consents` }, x.display_name || x.client_code) }, { label: 'Code', key: 'client_code' }, { label: 'Intake', render: x => fmt.date(x.intake_date) }], d.rows,
           { empty: 'Every active client on your caseload has been given the notice.', onRow: x => nav(`client/${x.id}/consents`) }));
@@ -97,7 +97,7 @@ route('compliance', async (r) => {
       };
       return h('div', {},
         h('div', { class: 'grid cols-4 mb' }, stat(`Complaints in ${year}`, rep.total), stat('Still open', rep.open, rep.open ? 'warn' : ''), stat('Told about HHS', rep.hhs_referral_given), stat('Median days to resolve', rep.median_days_to_resolve ?? '—')),
-        h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Complaint log (42 CFR §2.4)'), can('complaints:write') ? h('button', { class: 'btn sm primary', 'data-add-complaint': '1', onClick: () => edit(null) }, '+ Complaint') : null),
+        h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Complaint log (42 CFR §2.4)'), can('complaints:write') ? h('button', { class: 'btn sm primary', 'data-add-complaint': '1', onClick: () => edit(null) }, '+ Complaint') : null),
           h('p', { class: 'small muted' }, 'Anyone may complain to the programme and to the HHS Secretary about a privacy violation, and may not be retaliated against for it. A complaint is closed with its resolution, never deleted.'),
           table([{ label: 'Received', render: x => fmt.date(x.received_at) }, { label: 'From', render: x => fmt.label(x.complainant) }, { label: 'Client', render: x => x.client_code || '—' }, { label: 'Channel', render: x => fmt.label(x.channel) },
             { label: 'Summary', render: x => String(x.summary || '').slice(0, 120) }, { label: 'Status', render: x => badge(fmt.label(x.status), ['open', 'investigating'].includes(x.status) ? 'warn' : 'ok') }, { label: 'HHS told', render: x => (x.hhs_referral_given ? '✓' : '') }],
@@ -115,7 +115,7 @@ route('compliance', async (r) => {
         ], { submitText: 'Open incident', onCancel: () => m.close(), onSubmit: async (v) => { const res = await post('/api/incidents', v); m.close(); openIncident(res.id, refresh); } });
         const m = modal('Record a privacy or security incident', f);
       };
-      return h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Incident & breach register'), can('incidents:write') ? h('button', { class: 'btn sm primary', 'data-add-incident': '1', onClick: add }, '+ Incident') : null),
+      return h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Incident & breach register'), can('incidents:write') ? h('button', { class: 'btn sm primary', 'data-add-incident': '1', onClick: add }, '+ Incident') : null),
         h('p', { class: 'small muted' }, `The 2024 Part 2 rule applies HIPAA breach notification to Part 2 records: a breach is presumed unless a four-factor risk assessment shows a low probability of compromise, and notices are due within ${d.thresholds.notice_days} days of discovery — to each person, to HHS (at once for ${d.thresholds.hhs_immediate_at} or more; otherwise in the annual log), and to the media for more than ${d.thresholds.media_over} in one state. Security events (a failed audit-chain check, a flagged emergency access, a very large identified export) open a draft here automatically.`),
         d.rows.length ? table([{ label: 'Discovered', render: i => fmt.date(i.discovered_at) }, { label: 'Title', key: 'title' }, { label: 'Source', render: i => fmt.label(i.source) }, { label: 'People', render: i => i.affected_count }, { label: 'Determination', render: i => DET[i.determination] || i.determination }, { label: 'Clock', render: due }],
           d.rows, { onRow: i => openIncident(i.id, refresh) }) : emptyState('No incidents recorded', 'Record anything that may have exposed client information: a lost phone, a misdirected fax, an email to the wrong person, a stolen laptop.'));
@@ -148,7 +148,7 @@ async function openIncident(id, onDone) {
     { name: 'status', label: 'Status', type: 'select', options: ['open', 'closed'], noBlank: true, value: i.status },
   ], { submitText: 'Save', onCancel: () => m.close(), onSubmit: async (v) => { await put(`/api/incidents/${i.id}`, v); toast('Saved', 'ok'); m.close(); onDone && onDone(); } }) : null;
   const picker = w ? clientPicker('incident_client', '', { placeholder: 'Find an affected client…' }) : null;
-  const clients = h('div', { class: 'card tight mt', 'data-incident-clients': '1' }, h('h4', {}, `Affected clients on record (${i.clients.length})`),
+  const clients = h('div', { class: 'card tight mt', 'data-incident-clients': '1' }, h('h3', {}, `Affected clients on record (${i.clients.length})`),
     table([{ label: 'Client', render: x => h('a', { href: `#/client/${x.client_id}` }, x.client_code) }, { label: 'Notified', render: x => x.notified_at ? fmt.date(x.notified_at) : '—' },
       { label: '', render: x => w ? h('div', { class: 'row nowrap' }, !x.notified_at ? h('button', { class: 'btn sm', onClick: async () => { await put(`/api/incidents/${i.id}/clients/${x.client_id}`, { notified_at: fmt.today() }); m.close(); openIncident(id, onDone); } }, 'Notified today') : null,
         h('button', { class: 'btn sm ghost', onClick: async () => { await del(`/api/incidents/${i.id}/clients/${x.client_id}`); m.close(); openIncident(id, onDone); } }, 'Remove')) : null }], i.clients, { empty: 'None linked.' }),

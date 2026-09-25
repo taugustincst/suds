@@ -107,7 +107,7 @@ export async function calomsEpisodeDialog(episode, { onChange } = {}) {
       { label: 'Sent', render: r => (r.extracted_at ? fmt.date(r.extracted_at) : '—') },
       { label: '', render: r => can('episodes:write') && (r.record_type !== 'discharge' || episode.status === 'closed') ? h('button', { class: 'btn sm', 'data-caloms-edit': r.record_type, onClick: (e) => { e.stopPropagation(); editRecord(r.record_type, r); } }, 'Edit') : null },
     ], rows, { rowLabel: r => `${RECORD_LABEL[r.record_type]} ${r.record_date}` }) : emptyState('No CalOMS records yet', 'Complete the admission record below.'),
-    d.expected.length ? h('div', { class: 'mt' }, h('h4', {}, 'Still needed'), h('ul', {}, d.expected.map(x => h('li', {}, x.message, ' ',
+    d.expected.length ? h('div', { class: 'mt' }, h('h3', {}, 'Still needed'), h('ul', {}, d.expected.map(x => h('li', {}, x.message, ' ',
       can('episodes:write') && x.record_type !== 'discharge' ? h('button', { class: 'btn sm primary', 'data-caloms-add': x.record_type, onClick: () => editRecord(x.record_type, null, x.record_type === 'annual_update' ? fmt.today() : null) }, x.record_type === 'admission' ? 'Complete admission record' : 'Record annual update') : null,
       x.record_type === 'discharge' ? h('span', { class: 'small muted' }, '(recorded with the discharge: reopen and discharge again, or ask a supervisor)') : null)))) : null,
     can('episodes:write') && rows.some(r => r.record_type === 'admission') ? h('div', { class: 'btn-row' }, h('button', { class: 'btn sm', 'data-caloms-add': 'annual_update', onClick: () => editRecord('annual_update') }, '+ Annual update')) : null);
@@ -136,7 +136,7 @@ route('caloms', async (r) => {
       await put('/api/caloms/settings', { enabled: !!d.enabled, providers, start_date: d.start_date || null });
       toast('CalOMS settings saved', 'ok'); cached = null; go(from, to);
     } });
-    return h('div', { class: 'card', 'data-caloms-settings': '1' }, h('h3', {}, 'Settings'), h('p', { class: 'small muted' }, 'Off by default: a prevention, outreach or navigation program that does not report CalOMS is never asked these questions.'), f);
+    return h('div', { class: 'card', 'data-caloms-settings': '1' }, h('h2', {}, 'Settings'), h('p', { class: 'small muted' }, 'Off by default: a prevention, outreach or navigation program that does not report CalOMS is never asked these questions.'), f);
   };
 
   const validationCard = () => {
@@ -144,7 +144,7 @@ route('caloms', async (r) => {
     const s = v.summary;
     const clientCell = (x) => (can('clients:read') ? h('a', { href: `#/client/${x.client_id}/episodes` }, x.client_code) : h('span', { class: 'mono' }, x.client_code));
     return h('div', { class: 'card mb', 'data-caloms-validation': '1' },
-      h('div', { class: 'card-head' }, h('h3', {}, 'Validation report'), h('button', { class: 'btn sm', onClick: () => downloadCsv(`/api/caloms/validation?from=${from}&to=${to}&format=csv`) }, 'Download CSV')),
+      h('div', { class: 'card-head' }, h('h2', {}, 'Validation report'), h('button', { class: 'btn sm', onClick: () => downloadCsv(`/api/caloms/validation?from=${from}&to=${to}&format=csv`) }, 'Download CSV')),
       h('p', { class: 'small muted' }, 'Every CalOMS record dated in the period, checked against the edit rules, and every episode checked for the records it should have. A record with a fatal error is held back from the extract.'),
       h('div', { class: 'grid cols-4 mb' }, stat('Records in period', s.records), stat('Ready to submit', s.ready), stat('Fatal errors', s.fatal, s.fatal ? 'danger' : ''), stat('Warnings', s.warnings, s.warnings ? 'warn' : '')),
       v.rows.length ? table([
@@ -159,7 +159,7 @@ route('caloms', async (r) => {
 
   const extractCard = () => {
     if (!can('export:identified')) return null;
-    return h('div', { class: 'card mb', 'data-caloms-extract': '1' }, h('h3', {}, 'Extract for DHCS'),
+    return h('div', { class: 'card mb', 'data-caloms-extract': '1' }, h('h2', {}, 'Extract for DHCS'),
       h('p', { class: 'small' }, 'A zip of CSV files — admissions, discharges, annual updates and the monthly provider activity report (with "no activity" months) — for the period above. Records with fatal errors are held back. It names clients, so it is a disclosure: each client in it gets a "State reporting (CalOMS)" entry in their accounting of disclosures.'),
       h('p', { class: 'small muted' }, 'The layout has not been verified against the current DHCS CalOMS Tx data dictionary; see the README in the zip and docs/compliance/CALOMS.md before the first submission.'),
       h('button', { class: 'btn primary', disabled: !cfg.enabled, 'data-caloms-download': '1', onClick: async () => {
@@ -171,7 +171,7 @@ route('caloms', async (r) => {
 
   const handoffCard = () => {
     const intro = h('p', { class: 'small', 'data-not-a-claim': '1' }, h('b', {}, 'SUDS does not submit Drug Medi-Cal claims'), ' (no 837 or Short-Doyle/Medi-Cal files). Where a service must be billed, the county EHR (SmartCare or its equivalent) is where the claim is made. This file hands the encounters over for entry there: one row per client, per service day, per kind of service and worker, with minutes, place, modality and funding source.');
-    if (!can('export:identified')) return h('div', { class: 'card mb', 'data-handoff': '1' }, h('h3', {}, 'County EHR hand-off'), intro, h('p', { class: 'small muted' }, 'A supervisor or administrator produces this file.'));
+    if (!can('export:identified')) return h('div', { class: 'card mb', 'data-handoff': '1' }, h('h2', {}, 'County EHR hand-off'), intro, h('p', { class: 'small muted' }, 'A supervisor or administrator produces this file.'));
     const summary = h('div', { class: 'small muted', 'data-handoff-summary': '1' }, 'Checking the period…');
     get(`/api/handoff/summary?from=${from}&to=${to}`).then(s => {
       summary.textContent = `${s.rows} encounter row(s) for ${s.clients} client(s), ${fmt.mins(s.minutes)} in total.${s.without_consent.length ? ` No consent that can authorise the hand-off (a 42 CFR Part 2 consent, such as the single treatment, payment and operations consent) on file for: ${s.without_consent.join(', ')} — with the consent basis they are left out.` : ''}${s.restricted ? ` ${s.restricted} client(s) have an agreed restriction: you will be asked to confirm the file respects it.` : ''}`;
@@ -191,7 +191,7 @@ route('caloms', async (r) => {
       await withRestrictionCheck((extra) => fetchDownload(`/api/handoff/export?${q}${extra.restriction_reviewed ? '&restriction_reviewed=1' : ''}`));
       toast('Hand-off file downloaded. It carries the 42 CFR Part 2 notice.', 'ok');
     } });
-    return h('div', { class: 'card mb', 'data-handoff': '1' }, h('h3', {}, 'County EHR hand-off (encounters for billing)'), intro, summary, f);
+    return h('div', { class: 'card mb', 'data-handoff': '1' }, h('h2', {}, 'County EHR hand-off (encounters for billing)'), intro, summary, f);
   };
 
   return h('div', {},

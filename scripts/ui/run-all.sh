@@ -1,6 +1,8 @@
 #!/bin/bash
 # Runs the browser regression suite against a freshly seeded SUDS server. Usage (repo root): scripts/ui/run-all.sh
-# Requires: npm i -D playwright && npx playwright install chromium   (not project dependencies)
+# Requires: npm i --no-save playwright@1.56.1 axe-core@4.13.0 && npx playwright install chromium   (test-only, never in
+# package.json; both in ONE command: a second --no-save install prunes what the first added). axe-core is
+# installed below if it is missing, keeping the Playwright already there.
 # SCRIPTS="a b" runs a subset, in that order (the servers are still started the same way).
 set -u
 # SUDS_UI_TMP (default /tmp) holds the servers' data directories and logs, and SETUP_BOOT_PORT (default 8095)
@@ -67,9 +69,18 @@ export SUDS_STATIC_URL="http://127.0.0.1:$STATIC_PORT"
 # then this build (SUDS_STATIC_DIR) at the same origin, on its own port.
 export SUDS_STATIC_DIR=$T/suds-static-site SUDS_UPGRADE_PORT=${SUDS_UPGRADE_PORT:-8879}
 
+# The accessibility script needs axe-core. Installed test-only when missing, in the same command as the
+# Playwright version already present, so npm does not prune Playwright as it adds axe-core.
+AXE_VERSION=4.13.0
+if [[ " ${SCRIPTS:-accessibility} " == *" accessibility "* ]] && ! node -e "require.resolve('axe-core/axe.min.js')" 2>/dev/null; then
+  PW_VERSION=$(node -p "require('playwright/package.json').version" 2>/dev/null || echo 1.56.1)
+  echo "installing axe-core@$AXE_VERSION (test-only) alongside playwright@$PW_VERSION"
+  npm i --no-save --no-audit --no-fund "playwright@$PW_VERSION" "axe-core@$AXE_VERSION" >/dev/null || { echo "could not install axe-core" >&2; exit 2; }
+fi
+
 fail=0; office_dirty=0; reset_secs=0; suite_start=$SECONDS
 rows=()
-for s in ${SCRIPTS:-desktop review-fixes navigator-flow navigator-fixes ux-features local-mode multitab sync-two-way device-audit spreadsheets sample-data resource-profiles forms region dates setup static-site qa-retest clinical-audit ux-polish signup load-review a11y-round4 caloms}; do
+for s in ${SCRIPTS:-desktop review-fixes navigator-flow navigator-fixes ux-features local-mode multitab sync-two-way device-audit spreadsheets sample-data resource-profiles forms region dates setup static-site qa-retest clinical-audit ux-polish signup load-review a11y-round4 caloms accessibility}; do
   echo "=== $s"
   if [ ! -f "scripts/ui/$s.mjs" ]; then echo "FAILED: no such script scripts/ui/$s.mjs"; rows+=("$s|-|FAIL|0"); fail=1; continue; fi
   # A script that uses the office server starts from the seed, whatever ran before it.

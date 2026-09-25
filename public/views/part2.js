@@ -2,7 +2,7 @@
 // basis, a subpart E court order, proceedings and counseling notes), the §2.22 patient notice and the court
 // orders on file. The server (server/disclosure.js, routes/consents.js, routes/part2.js) is the gate; these
 // forms say up front what it will ask for. docs/compliance/PART2.md.
-import { h, get, post, state, form, modal, toast, table, badge, fmt, can, confirmDialog } from '../app.js';
+import { h, get, post, state, form, modal, toast, table, badge, fmt, can, confirmDialog, flag } from '../app.js';
 
 const C = () => state.constants || {};
 const PART2_TYPES = () => C().PART2_CONSENT_TYPES || ['part2_disclosure', 'part2_tpo', 'part2_counseling_notes', 'part2_proceedings'];
@@ -95,10 +95,10 @@ export function openDisclosureForm(clientId, d, { onDone } = {}) {
 
 /** The §2.32 notice, to send with a written disclosure. */
 export function showNotice(n, onClose) {
-  const text = h('textarea', { readonly: true, rows: 8, style: { width: '100%' }, 'data-notice-text': '1' }, n.text);
+  const text = h('textarea', { id: 'disclosure-notice-text', readonly: true, rows: 8, style: { width: '100%' }, 'data-notice-text': '1' }, n.text);
   const m = modal('Send this notice with the disclosure', h('div', {},
     h('p', {}, 'Disclosure recorded. 42 CFR §2.32 requires this notice to accompany every disclosure made with the client\'s consent — include it on the fax cover, letter or email.'),
-    text,
+    h('label', { for: 'disclosure-notice-text' }, 'Notice to send with it'), text,
     h('div', { class: 'btn-row' }, h('button', { class: 'btn', onClick: async () => { try { await navigator.clipboard.writeText(n.text); toast('Copied', 'ok'); } catch { text.select(); } } }, 'Copy'), h('button', { class: 'btn primary', onClick: () => m.close() }, 'Done'))), { onClose: () => onClose && onClose() });
 }
 
@@ -134,12 +134,12 @@ function openOrderForm(clientId, onDone) {
 /** The §2.22 notice and subpart E court-order cards for a client's Consents tab. */
 export function part2Cards(clientId, d, { refresh }) {
   const notices = d.notices || [];
-  const noticeCard = h('div', { class: 'card', 'data-part2-notices': '1' }, h('div', { class: 'card-head' }, h('h3', {}, 'Patient notice (§2.22)'), can('consents:write') ? h('button', { class: 'btn sm primary', 'data-add-notice': '1', onClick: () => openNoticeForm(clientId, refresh) }, '+ Notice given') : null),
-    notices.length ? null : h('p', { class: 'small', style: { color: 'var(--warn)' } }, 'No record that this client was given the program\'s notice of privacy practices.'),
+  const noticeCard = h('div', { class: 'card', 'data-part2-notices': '1' }, h('div', { class: 'card-head' }, h('h2', {}, 'Patient notice (§2.22)'), can('consents:write') ? h('button', { class: 'btn sm primary', 'data-add-notice': '1', onClick: () => openNoticeForm(clientId, refresh) }, '+ Notice given') : null),
+    notices.length ? null : h('p', { class: 'small' }, flag('No record that this client was given the program\'s notice of privacy practices.', true, 'the §2.22 notice is required', 'warn')),
     table([{ label: 'Given', render: x => fmt.date(x.given_at) }, { label: 'How', render: x => METHODS[x.method] || fmt.label(x.method) }, { label: 'Version', key: 'notice_version' }, { label: 'Acknowledged', render: x => x.acknowledged ? badge('Signed', 'ok') : x.ack_refused ? badge('Declined to sign', 'warn') : '—' }, { label: 'By', key: 'given_by_name' }, { label: 'Notes', key: 'notes' }], notices, { empty: 'None recorded.' }));
   if (!d.court_orders) return [noticeCard];
   const vacate = async (o) => { const reason = await confirmDialog('Vacate court order', 'Record that this order was vacated, withdrawn or reversed. It can no longer authorise a disclosure.', { danger: true, okText: 'Vacate', requireReason: true }); if (!reason) return; await post(`/api/court-orders/${o.id}/vacate`, { reason }); toast('Order vacated', 'ok'); refresh(); };
-  const orderCard = h('div', { class: 'card', 'data-court-orders': '1' }, h('div', { class: 'card-head' }, h('h3', {}, 'Court orders (subpart E)'), can('court-orders:write') ? h('button', { class: 'btn sm', 'data-add-order': '1', onClick: () => openOrderForm(clientId, refresh) }, '+ Court order') : null),
+  const orderCard = h('div', { class: 'card', 'data-court-orders': '1' }, h('div', { class: 'card-head' }, h('h2', {}, 'Court orders (subpart E)'), can('court-orders:write') ? h('button', { class: 'btn sm', 'data-add-order': '1', onClick: () => openOrderForm(clientId, refresh) }, '+ Court order') : null),
     table([{ label: 'Kind', render: o => ORDER_TYPES[o.order_type] || o.order_type }, { label: 'Court / case', render: o => `${o.court || ''}${o.case_ref ? ' · ' + o.case_ref : ''}` }, { label: 'Issued', render: o => fmt.date(o.issued_at) }, { label: 'Permits', key: 'scope' },
       { label: 'Status', render: o => o.problems.length ? h('span', {}, badge('Cannot be relied on', 'danger'), h('div', { class: 'small muted' }, o.problems.join('; '))) : badge('In force', 'ok') },
       { label: '', render: o => o.status === 'active' && can('court-orders:write') ? h('button', { class: 'btn sm ghost', onClick: () => vacate(o) }, 'Vacate') : null }], d.court_orders, { empty: 'No court orders on file. Records are never disclosed for a legal proceeding against the client without one (or the client\'s consent for that proceeding alone).' }));

@@ -46,8 +46,10 @@ affects and what we plan to do about it.
 2. **Pictures uploaded without a caption** are described only as "Picture 2 of 5", and **documents people
    upload** — scanned consents, signed forms, county policies — are only as accessible as the file itself.
    Add a caption to each picture, and upload tagged PDFs where you can. (WCAG 1.1.1)
-3. **Spreadsheet and PDF exports** produced for funders and supervisors have header rows but have not been
-   assessed on their own.
+3. **PDFs SUDS produces** — a consent printed for the client to sign, and county forms — are text in reading
+   order but are not tagged, so a screen reader gets no headings or field labels in them. The same
+   information is on the client's Consents tab and the Forms page. **Spreadsheet exports** for funders and
+   supervisors have header rows but have not been assessed on their own. (WCAG 1.3.1)
 4. **Date fields** use the browser's own date picker, whose accessibility depends on the browser; a date can
    always be typed instead.
 5. **Screen reader testing.** The automatic checks run in Chromium. Testing with NVDA, JAWS, VoiceOver and

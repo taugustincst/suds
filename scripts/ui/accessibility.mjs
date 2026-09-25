@@ -8,8 +8,14 @@
 // 1. axe-core, with every rule tagged wcag2a, wcag2aa, wcag21a or wcag21aa plus the structural rules that
 //    back 1.3.1/2.4.1/2.4.6 (one main landmark, heading order, a level-one heading, named dialogs), on every
 //    page in the navigation, the profile, the second views of tabbed pages, every client tab, a resource
-//    profile, every Settings tab and the key dialogs (+ Log and each thing it records, new client, referral,
-//    consent, resource, overdose, expenditure) — for every seeded role on the office server, and for a fresh
+//    profile, every Settings tab (Security status, FHIR clients, System & backups with the recovery drill
+//    card, Lists, an access request waiting), State reporting (#/caloms), each section of Privacy & Part 2
+//    (the notice and its editor, complaints, incidents) and the key dialogs (+ Log and each thing it records,
+//    new client, referral, consent with the §2.31 elements, disclosure and its §2.32 notice, Part 2 notice,
+//    court order, problem, goal, step, ASAM and each outcome measure, the CalOMS admission, discharge and
+//    episode records, complaint, incident, FHIR client, access request approval, identified export, resource,
+//    overdose, expenditure). The seed has none of the clinical, CalOMS or Part 2 records, so prepareOffice()
+//    makes them through the API before the passes start. For every seeded role on the office server, and for a fresh
 //    Sign up on SUDS on this device (the static build) — at desktop (1280) and phone (390) widths, in the
 //    light and dark themes, and at 200% text. Any violation fails the run; the report lists every one by
 //    page, rule, impact and element, and a summary by rule at the end.
@@ -162,7 +168,19 @@ async function focusCheck(page, where, stops = 30) {
 }
 
 // ---------------------------------------------------------------------------------------------- helpers
+// The office server allows 600 API requests a minute from one address (server/app.js), and four passes in
+// parallel ask for more than that. Every office API request is counted, and a pass waits before its next page
+// or dialog while the last minute is near the limit, rather than being refused part-way through a page.
+const apiTimes = [];
+async function pace() {
+  for (;;) {
+    const now = Date.now(); while (apiTimes.length && apiTimes[0] < now - 61000) apiTimes.shift();
+    if (apiTimes.length < 480) return;
+    await new Promise(r => setTimeout(r, 400));
+  }
+}
 const watch = (page, who) => {
+  page.on('request', r => { if (r.url().startsWith(office + '/api/')) apiTimes.push(Date.now()); });
   page.on('pageerror', e => errors.push(`${who}: PAGEERROR ${e.message}`));
   page.on('response', r => { if (r.status() >= 500) errors.push(`${who}: HTTP ${r.status()} ${r.url()}`); });
 };
@@ -172,12 +190,14 @@ async function dismissTour(p) {
   await p.evaluate(async () => { const a = await import('./app.js'); a.prefs.set('tour_done', true); document.querySelectorAll('.modal-bg').forEach(m => m.remove()); });
 }
 async function signIn(page, base, username, password) {
+  if (base === office) await pace();
   await page.goto(base + '/#/login'); await page.waitForSelector('input[name=username]'); await settle(page);
   await page.fill('input[name=username]', username); await page.fill('input[name=password]', password);
   await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 15000 }); await settle(page);
   await dismissTour(page);
 }
 async function go(page, base, hash) {
+  if (base === office) await pace();
   await page.goto(`${base}/#/${hash}`); await settle(page);
   await page.waitForSelector('.main .boot', { state: 'detached', timeout: 10000 }).catch(() => {});
   await settle(page);
@@ -198,6 +218,8 @@ async function pagesFor(page) {
     if (out.includes('budget')) out.push('budget?tab=expenditures', 'budget?tab=analysis');
     if (out.includes('supervision') && a.can('audit:read')) out.push('supervision?tab=breakglass');
     if (a.state.local) out.push('sync');
+    // State reporting (CalOMS Tx and the county EHR hand-off) is reached from Reports, not the navigation.
+    if (a.can('episodes:read') || a.can('episodes:write') || a.can('export:identified')) out.push('caloms');
     return out;
   });
 }
@@ -206,6 +228,62 @@ async function firstId(page, path, key) {
     if (window.SUDS_LOCAL) { const r = await window.SUDS_LOCAL.handle('GET', path, undefined, { 'X-Requested-With': 'suds' }); return ((r.json && r.json[key]) || [])[0]?.id || null; }
     const r = await fetch(path, { headers: { 'X-Requested-With': 'suds' } }); if (!r.ok) return null; const j = await r.json(); return ((j[key] || [])[0] || {}).id || null;
   }, { path, key });
+}
+
+// ------------------------------------------------------------------ records for the newer views
+// The seed has no problem list, care plan, ASAM or outcome measures, CalOMS records, Part 2 notices, court
+// orders, complaints, incidents, FHIR clients or access requests. Without them those views would only be
+// audited empty, so they are made here, once, through the API: on the first client each role's audit opens
+// (a caseload-scoped role's first client is not the administrator's), plus one client with no episode for
+// the CalOMS admission dialog.
+const prepared = { freshClient: null, firstClient: {} };
+const day = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+const CALOMS_ADMISSION = {
+  admission_transaction: '1', service_type: '01', referral_source: '01', days_waited: 3, prior_episodes: 0, mat_planned: 'N', calworks: 'N',
+  sex_at_birth: 'F', gender_identity: '2', race: ['01'], ethnicity: '05', veteran: 'N', disability: ['1'], zip_code: '95814', education_grade: 12,
+  children_under_18: 1, children_cps: 0, pregnant: 'N', primary_drug: '05', primary_route: '2', primary_age_first_use: 19, secondary_drug: '00', iv_use_12m: 'N',
+  primary_days_used: 10, alcohol_days: 0, iv_use_30: 'N', employment_status: '3', paid_work_days: 0, school_enrolled: 'N', job_training: 'N', living_arrangement: '2',
+  arrests_30: 0, jail_days_30: 0, prison_days_30: 0, er_visits_30: 0, hospital_nights_30: 0, physical_health_days_30: 2, mh_diagnosis: 'N', mh_er_visits_30: 0,
+  psych_inpatient_days_30: 0, psych_meds: 'N', family_conflict_days_30: 1, social_support_days_30: 4, lives_with_user: 'N',
+};
+async function prepareOffice() {
+  const { ctx, page } = await newPage(CONFIGS[0]); watch(page, 'prepare');
+  const P = 'prepare';
+  const must = (r, what) => { ok(r.status >= 200 && r.status < 300, `${P}: ${what}`, r.status >= 300 ? r : undefined); return r.data || {}; };
+  // An access request waiting for an administrator (Settings → Users & roles), sent the way Sign up sends it.
+  await page.goto(office + '/#/login'); await page.waitForSelector('input[name=username]');
+  must(await api(page, 'POST', '/api/auth/signup', { display_name: 'Riley Request', username: `riley${Date.now().toString(36)}`, password: 'Request2026!!x', reason: 'New outreach worker' }), 'an access request is waiting');
+  const ids = new Set();
+  const as = async (user, pw) => { if (await page.$('.layout')) { await page.evaluate(async () => (await import('./app.js')).logout()); await page.waitForSelector('input[name=username]'); } await signIn(page, office, user, pw); };
+  for (const [user, pw] of ROLES) { await as(user, pw); const id = await firstId(page, '/api/clients?limit=1', 'clients'); if (id) { ids.add(id); prepared.firstClient[user] = id; } }
+  // The administrator: CalOMS Tx on (so the episode dialogs ask its questions) and a FHIR client.
+  await as('admin', ROLES[0][1]);
+  must(await api(page, 'PUT', '/api/caloms/settings', { enabled: true, providers: [{ id: '123456', name: 'Main clinic' }, { id: '654321', name: 'Satellite' }], start_date: '2020-01-01' }), 'CalOMS Tx reporting is on');
+  must(await api(page, 'POST', '/api/admin/fhir-clients', { name: 'County EHR', recipient: 'County Behavioral Health', purpose: 'TREAT', scopes: ['system/*.read'] }), 'a FHIR client exists');
+  // A supervisor (clients:all, care plan, assessments, Part 2 registers) records the clinical and Part 2 records.
+  await as('jwalker', PW);
+  const fresh = must(await api(page, 'POST', '/api/clients', { first_name: 'Ada', last_name: 'Audit', status: 'waitlist', confirm_duplicate: true }), 'a client with no episode');
+  prepared.freshClient = fresh.id;
+  for (const id of ids) {
+    const prob = must(await api(page, 'POST', `/api/clients/${id}/problems`, { problem: 'Opioid use disorder, seeking MOUD', icd10_code: 'F11.20', icd10_description: 'Opioid dependence, uncomplicated', z_codes: ['Z59.02'], onset_date: day(-60), source: 'assessment' }), 'a problem on the list');
+    const goal = must(await api(page, 'POST', `/api/clients/${id}/goals`, { goal: 'I want my ID back so I can get a job', problem_id: prob.id, target_date: day(60), review_date: day(-1) }), 'a care plan goal, its review overdue');
+    must(await api(page, 'POST', `/api/goals/${goal.id}/steps`, { step: 'Request a birth certificate from the county clerk', owner_role: 'staff', target_date: day(7) }), 'a step toward it');
+    must(await api(page, 'POST', `/api/clients/${id}/asam`, { assessed_at: day(-10), d1_rating: 1, d2_rating: 0, d3_rating: 2, d4_rating: 3, d5_rating: 3, d6_rating: 4, recommended_loc: '3.5', actual_loc: '2.1', discrepancy_reason: 'waitlist', summary: 'Residential recommended; waitlisted.' }), 'an ASAM assessment');
+    must(await api(page, 'POST', `/api/clients/${id}/outcomes`, { instrument: 'phq9', administered_at: day(-30), responses: [2, 2, 2, 2, 2, 2, 2, 2, 0] }), 'a PHQ-9');
+    must(await api(page, 'POST', `/api/clients/${id}/outcomes`, { instrument: 'phq9', administered_at: day(-1), responses: [1, 1, 1, 1, 1, 1, 1, 1, 1] }), 'a second PHQ-9, with a safety alert');
+    must(await api(page, 'POST', `/api/clients/${id}/outcomes`, { instrument: 'gad7', administered_at: day(-1), responses: [2, 2, 1, 1, 0, 0, 1] }), 'a GAD-7');
+    must(await api(page, 'POST', `/api/clients/${id}/consents`, { type: 'part2_tpo', signed_at: day(-5), discloser: 'This program', recipient: 'County Behavioral Health', purpose: 'For treatment, payment, and health care operations', scope: 'Assessment, care plan and attendance', expires_event: 'end of treatment', signed_on_paper: true, revocation_right_given: true, redisclosure_notice_given: true, refusal_consequences_given: true }), 'a §2.31 consent');
+    must(await api(page, 'POST', `/api/clients/${id}/court-orders`, { order_type: 'noncriminal_2_64', court: 'Superior Court, Dept 4', case_ref: '26-FL-0042', issued_at: day(-3), purpose: 'Custody hearing', scope: 'Attendance dates only', findings_recorded: true, notice_requirement_met: true }), 'a court order');
+    const eps = (await api(page, 'GET', `/api/clients/${id}/episodes`)).data?.episodes || [];
+    const open = eps.find(e => e.status === 'open');
+    if (open) must(await api(page, 'POST', `/api/episodes/${open.id}/caloms`, { record_type: 'admission', provider_id: '123456', answers: CALOMS_ADMISSION }), 'a CalOMS admission record');
+    else must(await api(page, 'POST', `/api/clients/${id}/episodes`, { opened_at: day(-20), caloms: { provider_id: '123456', answers: CALOMS_ADMISSION } }), 'an episode with its CalOMS admission');
+  }
+  const [cid] = ids;
+  must(await api(page, 'POST', '/api/complaints', { client_id: cid, received_at: day(-4), channel: 'in_person', complainant: 'client', summary: 'My information went to my employer' }), 'a privacy complaint');
+  const inc = must(await api(page, 'POST', '/api/incidents', { title: 'Misdirected fax', discovered_at: day(-2), description: 'A referral fax went to the wrong clinic', affected_count: 1 }), 'an incident');
+  must(await api(page, 'POST', `/api/incidents/${inc.id}/clients`, { client_ids: [cid] }), 'with an affected client linked');
+  await ctx.close();
 }
 
 // Dialogs opened the way the page opens them (the same exported functions the buttons call).
@@ -221,11 +299,13 @@ const DIALOGS = [
   ['New referral', 'referrals:write', async (p) => p.evaluate(async () => (await import('./views/referrals.js')).openReferralForm(null, {}))],
   ['New resource', 'resources:write', async (p) => p.evaluate(async () => (await import('./views/resources.js')).openResourceForm(null))],
   ['Overdose report', 'overdose:write', async (p) => p.evaluate(async () => (await import('./views/overdose.js')).openOverdoseForm(null, {}))],
+  ['§2.32 notice with a disclosure', 'consents:write', async (p) => p.evaluate(async () => (await import('./views/part2.js')).showNotice({ text: 'This record which has been disclosed to you is protected by Federal confidentiality rules (42 CFR part 2).' }))],
   ['Expenditure', 'budget:write', async (p) => p.evaluate(async () => (await import('./views/budget.js')).openExpenditureForm(null, {}))],
 ];
 async function auditDialogs(page, base, tag, clientId) {
   await go(page, base, 'dashboard');
   for (const [name, perm, open] of DIALOGS) {
+    if (base === office) await pace();
     const allowed = await page.evaluate(async (perm) => { const a = await import('./app.js'); return !perm || [].concat(perm).some(x => a.can(x)); }, perm);
     if (!allowed) continue;
     if (name === '+ Log menu' && !(await page.$('.appbar .quick:visible, .fab .quick:visible'))) continue;
@@ -234,15 +314,38 @@ async function auditDialogs(page, base, tag, clientId) {
     await axe(page, `${tag} dialog: ${name}`);
     await closeDialogs(page);
   }
-  // Dialogs opened from a button on a page, where the role has that button.
-  for (const [hash, text] of BUTTON_DIALOGS) {
+  // Dialogs opened from a button on a page, where the role has that button. A list of texts is a dialog
+  // opened from inside another one (CalOMS records → + Annual update).
+  for (const [hash, spec] of BUTTON_DIALOGS) {
+    if (hash.includes(':client') && !clientId) continue;
+    if (hash.includes(':fresh') && (!prepared.freshClient || base !== office)) continue;
+    const texts = [].concat(spec);
+    await go(page, base, hash.replace(':client', clientId).replace(':fresh', prepared.freshClient));
+    const btn = page.locator(`.main button:visible:has-text("${texts[0]}")`).first();
+    // A button the page shows but has switched off (the extract, with CalOMS off on the device) opens nothing.
+    if (!(await btn.count()) || await btn.isDisabled()) continue;
+    try {
+      await btn.click(); await page.waitForSelector('.modal', { timeout: 8000 }); await settle(page);
+      for (const text of texts.slice(1)) {
+        const n = await page.$$eval('.modal', m => m.length);
+        const inner = page.locator('.modal').last().locator(`button:visible:has-text("${text}")`).first();
+        try { await inner.waitFor({ state: 'visible', timeout: 8000 }); }
+        catch { throw new Error(`no "${text}" button in the dialog "${await page.locator('.modal h2').last().textContent().catch(() => '?')}"`); }
+        await inner.click(); await until(async () => (await page.$$eval('.modal', m => m.length)) > n, { timeout: 8000 }); await settle(page);
+      }
+    } catch (e) { fail(`${tag} dialog "${texts.join(' → ')}" did not open: ${e.message.split('\n')[0]}`); await closeDialogs(page); continue; }
+    await axe(page, `${tag} dialog: ${texts.join(' → ')} (#/${hash})`);
+    await closeDialogs(page);
+  }
+  // Dialogs a list row opens (the row's own button, as the keyboard reaches it).
+  for (const [hash, list, name] of ROW_DIALOGS) {
     if (hash.includes(':client') && !clientId) continue;
     await go(page, base, hash.replace(':client', clientId));
-    const btn = page.locator(`.main button:visible:has-text("${text}")`).first();
-    if (!(await btn.count())) continue;
-    try { await btn.click(); await page.waitForSelector('.modal', { timeout: 8000 }); await settle(page); }
-    catch (e) { fail(`${tag} dialog "${text}" did not open: ${e.message.split('\n')[0]}`); await closeDialogs(page); continue; }
-    await axe(page, `${tag} dialog: ${text} (#/${hash})`);
+    const row = page.locator(`.main ${list} tbody tr.click .row-open:visible, .main ${list} tbody tr.click .row-open-extra:visible`).first();
+    if (!(await row.count())) continue;
+    try { await row.click(); await page.waitForSelector('.modal', { timeout: 8000 }); await settle(page); }
+    catch (e) { fail(`${tag} dialog "${name}" did not open: ${e.message.split('\n')[0]}`); await closeDialogs(page); continue; }
+    await axe(page, `${tag} dialog: ${name} (#/${hash})`);
     await closeDialogs(page);
   }
   // A note, opened from the list, and its signature dialog.
@@ -262,6 +365,30 @@ const BUTTON_DIALOGS = [
   ['admin?tab=users', '+ New user'], ['admin?tab=apikeys', '+ New API key'], ['budget', '+ Funding source'], ['budget', '+ Line'],
   ['forms', '+ Add a county form'], ['forms', '+ Fill out a form'], ['documents', '+ Upload'], ['supplies', '+ Add item'],
   ['overdose', '+ Record an event'], ['resources', '+ Add resource'],
+  // Clinical depth: the problem list, the care plan, ASAM and each outcome measure.
+  ['client/:client/problems', '+ Problem'], ['client/:client/problems', 'Edit'], ['client/:client/problems', 'History'],
+  ['client/:client/careplan', '+ Goal'], ['client/:client/careplan', '+ Step'], ['client/:client/careplan', 'Reviewed'],
+  ['client/:client/assessments', '+ ASAM assessment'], ['client/:client/assessments', '+ PHQ-9'], ['client/:client/assessments', '+ GAD-7'],
+  ['client/:client/assessments', '+ AUDIT-C'], ['client/:client/assessments', '+ DAST-10'],
+  // CalOMS Tx on the Episodes tab (it is switched on for the audit), and the extract's confirmation.
+  ['client/:client/episodes', 'CalOMS records'], ['client/:client/episodes', ['CalOMS records', '+ Annual update']], ['client/:client/episodes', 'Discharge'],
+  ['client/:fresh/episodes', '+ Start an episode'], ['caloms', 'Download CalOMS Tx extract'],
+  // 42 CFR Part 2 on the client record and on Privacy & Part 2.
+  ['client/:client/consents', '+ Notice given'], ['client/:client/consents', '+ Court order'], ['client/:client/consents', 'Vacate'],
+  ['compliance?tab=complaints', '+ Complaint'], ['compliance?tab=incidents', '+ Incident'],
+  // Settings: an access request, a FHIR client, the recovery drill.
+  ['admin?tab=users', 'Approve'], ['admin?tab=fhir', '+ New FHIR client'],
+  ['reports', 'Identified Excel workbook'], ['admin?tab=lists', '+ Add funding source'],
+];
+// [page, the <summary> that unfolds it, name]
+const EXPANDED = [
+  ['compliance?tab=notice', 'details[data-notice-editor] > summary', 'notice editor open'],
+  ['admin?tab=lists', 'details.list-card > summary', 'a list open'],
+];
+// [page, the list's container, name]: the first row's own button opens the record in a dialog.
+const ROW_DIALOGS = [
+  ['client/:client/assessments', '[data-asam]', 'an ASAM assessment'], ['client/:client/assessments', '[data-outcomes]', 'an outcome measure'],
+  ['compliance?tab=complaints', '.card', 'a complaint'], ['compliance?tab=incidents', '.card', 'an incident'],
 ];
 
 // What each pass checks beyond axe, so a matrix of 5 passes × 7 roles does not repeat the slow ones.
@@ -279,7 +406,8 @@ async function checkPage(page, cfg, tag, hash, extra = {}) {
   }
 }
 async function auditPages(page, base, cfg, tag, { clientId, resourceId, settingsTabs }) {
-  for (const hash of await pagesFor(page)) { await go(page, base, hash); await checkPage(page, cfg, tag, hash); }
+  const pages = await pagesFor(page);
+  for (const hash of pages) { await go(page, base, hash); await checkPage(page, cfg, tag, hash); }
   if (clientId) {
     await go(page, base, `client/${clientId}`);
     const clientName = await page.evaluate(() => document.querySelector('.main h1')?.firstChild?.textContent.trim());
@@ -291,6 +419,25 @@ async function auditPages(page, base, cfg, tag, { clientId, resourceId, settings
     for (const t of tabs) { await go(page, base, `client/${clientId}/${t}`); await checkPage(page, cfg, tag, `client/${clientId}/${t}`, { clientName }); }
   }
   if (resourceId) { await go(page, base, `resource/${resourceId}`); await checkPage(page, cfg, tag, `resource/${resourceId}`); }
+  // Privacy & Part 2: each of its sections the role may open, and the notice editor opened.
+  if (pages.includes('compliance')) {
+    await go(page, base, 'compliance');
+    const tabs = await page.$$eval('.main nav.tabs [data-tab]', els => els.map(e => e.dataset.tab));
+    for (const t of tabs.slice(1)) { await go(page, base, `compliance?tab=${t}`); await checkPage(page, cfg, tag, `compliance?tab=${t}`); }
+  }
+  // Content that is on the page but folded away until it is opened.
+  for (const [hash, summary, name] of EXPANDED) {
+    if (hash.startsWith('admin') && !settingsTabs) continue;
+    if (hash.startsWith('compliance') && !pages.includes('compliance')) continue;
+    await go(page, base, hash);
+    const el = await page.$(summary);
+    if (!el) continue;
+    if (!(await el.evaluate(x => x.parentElement.open))) { await el.click(); await settle(page); }
+    const where = `${tag} #/${hash} (${name})`;
+    await axe(page, where);
+    if (cfg.mobile) await reflowCheck(page, where, 320);
+    if (cfg.text200) await reflowCheck(page, where);
+  }
   if (settingsTabs) {
     await go(page, base, 'admin');
     const tabs = await page.$$eval('.main nav.tabs [data-tab]', els => els.map(e => e.dataset.tab));
@@ -338,7 +485,8 @@ async function officeRun(cfg, roles) {
     if (await page.$('.layout')) { await page.evaluate(async () => (await import('./app.js')).logout()); await page.waitForSelector('input[name=username]'); }
     await signIn(page, office, user, pw);
     const tag = `office ${cfg.id} ${user}`;
-    const clientId = await firstId(page, '/api/clients?limit=1', 'clients');
+    // The client prepared for this role (the keyboard pass adds clients, which would change "the first one").
+    const clientId = prepared.firstClient[user] || await firstId(page, '/api/clients?limit=1', 'clients');
     const resourceId = await firstId(page, '/api/resources?limit=1', 'rows');
     const settingsTabs = await page.evaluate(async () => { const a = await import('./app.js'); return a.can('users:manage') || a.can('assignments:manage'); });
     ok(await page.$('.sidebar a[data-accessibility-statement]'), `${tag}: the menu links to the accessibility statement`);
@@ -551,11 +699,13 @@ const configs = quick ? CONFIGS.slice(0, 1) : CONFIGS;
 const jobs = [];
 for (const cfg of configs) {
   // Every role in the light desktop pass (each role sees different pages and buttons); the other passes
-  // use the two roles that between them reach every page and dialog: the administrator and a navigator.
-  jobs.push(['office ' + cfg.id, () => officeRun(cfg, cfg.id === 'desktop-light' ? roles : roles.filter(([u]) => u === 'admin' || u === 'mrivera'))]);
+  // use the three roles that between them reach every page and dialog: the administrator, a navigator, and a
+  // supervisor (the only one of the three with ASAM and the outcome measures, which are clinical content).
+  jobs.push(['office ' + cfg.id, () => officeRun(cfg, cfg.id === 'desktop-light' ? roles : roles.filter(([u]) => u === 'admin' || u === 'mrivera' || u === 'jwalker'))]);
   if (!process.env.A11Y_SKIP_STATIC) jobs.push(['device ' + cfg.id, () => deviceRun(cfg)]);
 }
 jobs.push(['keyboard', () => keyboardRun()]);
+await prepareOffice().catch(e => fail(`preparing the records for the newer views failed: ${e.message.split('\n').slice(0, 3).join(' / ')}`));
 const LIMIT = Number(process.env.A11Y_PARALLEL || 4);
 const running = new Set();
 for (const [name, job] of jobs) {

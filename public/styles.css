@@ -427,7 +427,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--focus); out
 .row-open:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
 tr.click:focus-within td { background: var(--panel-2); }
 /* flag() in app.js: an at-risk value carries ⚠ and a reason, not only a colour (1.4.1). */
-.flag.danger { color: var(--danger); font-weight: 600; } .flag.warn { color: var(--warn); font-weight: 600; }
+.flag.danger { color: var(--danger); font-weight: 600; } .flag.warn { color: var(--warn); font-weight: 600; } .flag.ok { color: var(--ok); font-weight: 600; }
 /* The sign-in and first-run screens name the product in their level-one heading, sized as the brand. */
 .brand .brand-title { font-size: 1.05rem; margin: 0; font-weight: 700; line-height: 1.25; }
 .a11y-link { margin: .75rem 0 0; }

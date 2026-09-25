@@ -9,18 +9,24 @@ the rules a view has to follow to pass it. Most of them are already done for you
 ## Run the audit
 
 ```sh
-npm i --no-save playwright axe-core && npx playwright install chromium   # test-only; never in package.json
-scripts/ui/run-all.sh                     # the suite starts the servers the audit needs
+npm i --no-save playwright@1.56.1 axe-core@4.13.0 && npx playwright install chromium   # test-only; never in package.json
+scripts/ui/run-all.sh                     # the default suite includes the audit (SCRIPTS=accessibility for it alone)
 # while iterating on one page (servers already running, see run-all.sh for the environment):
 A11Y_SCOPE=quick SUDS_URL=http://127.0.0.1:8090 SUDS_STATIC_URL=http://127.0.0.1:8878 node scripts/ui/accessibility.mjs
 ```
 
 Install `playwright` and `axe-core` in **one** `npm i --no-save` command: a second `--no-save` install prunes
-the package the first one added. The audit visits every page listed in `NAV` (so a new navigation entry is
-audited automatically, for every role that can open it), the client tabs, the Settings tabs and the dialogs
-listed in the script — `DIALOGS` (opened through the function the button calls) and `BUTTON_DIALOGS` (a
-page and the text of the button that opens it). **Add a new dialog to one of those lists.** `A11Y_REPORT=out.json` writes the findings as
-JSON; the console report lists every finding by page, rule and element, then a summary by rule.
+the package the first one added. (`run-all.sh` installs axe-core that way, next to the Playwright already
+there, when it is missing; CI installs both in its one install step.) The audit visits every page listed in
+`NAV` (so a new navigation entry is audited automatically, for every role that can open it), State reporting,
+each section of Privacy & Part 2, the client tabs, the Settings tabs and the dialogs listed in the script —
+`DIALOGS` (opened through the function the button calls), `BUTTON_DIALOGS` (a page and the text of the button
+that opens it, or a list of texts for a dialog opened from inside another), `ROW_DIALOGS` (the record a list
+row opens) and `EXPANDED` (a `<details>` section folded away until opened). **Add a new dialog or folded
+section to one of those lists**, and when a new view shows records the seed does not have, make them in
+`prepareOffice()` so the audit sees the view with rows in it, not only its empty state. `A11Y_REPORT=out.json`
+writes the findings as JSON; the console report lists every finding by page, rule and element, then a summary
+by rule.
 
 ## The rules
 
@@ -51,7 +57,8 @@ JSON; the console report lists every finding by page, rule and element, then a s
 8. **Reflow.** Nothing may need sideways scrolling at 320 CSS px or 200% text, except a data table inside
    `table()`'s wrapper. No fixed widths over 320px, `min-width: 0` on flex/grid children that hold text, wrap
    long words (`overflow-wrap: anywhere`), no `white-space: nowrap` on sentences, no `overflow: hidden` that cuts
-   off text (it must survive the WCAG text-spacing overrides).
+   off text (it must survive the WCAG text-spacing overrides). A box that scrolls on its own (`pre.note`, a
+   table's wrapper, anything marked `data-scroll-region`) is made keyboard-focusable and named by app.js.
 9. **Clickable rows only through `table({ onRow })`.** The row opens on a click anywhere; for the keyboard the
    first cell with plain content becomes a `<button class="row-open">` (the row stays a table row, so screen
    readers keep the column headings). Put links and buttons of a row's own in later columns. `rowLabel` is
@@ -69,7 +76,8 @@ JSON; the console report lists every finding by page, rule and element, then a s
     uses `banner()`. Never rely on a colour change or an icon appearing.
 13. **Page titles.** `document.title` is set on every navigation from the `NAV` label (or `TITLES` in app.js
     for pages outside the navigation) plus the current section. Never put a client's name in a title: it
-    ends up in browser history. A new page outside `NAV` needs a `TITLES` entry.
+    ends up in browser history. A new page outside `NAV` needs a `TITLES` entry. A print window written with
+    `document.write` (care plan, notice, accounting of disclosures) starts `<html lang="en">` and has a `<title>`.
 14. **Hidden file inputs.** A file input opened by a visible button is `tabindex: '-1', 'aria-hidden': 'true'`
     (the button is the control); or lay it over its label with `.file-btn`, which shows the ring on the label.
 15. **Images.** Informative pictures have `alt` text (a caption, or "Picture 2 of 5" at least); decorative ones

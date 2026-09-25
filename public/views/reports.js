@@ -43,7 +43,7 @@ route('reports', async (r) => {
   // Outcome measures (PHQ-9, GAD-7, AUDIT-C, DAST-10, wellbeing): each client's first score in the period
   // against their last. Aggregate only; the export is one de-identified row per client and measure.
   const outcomesCard = () => h('div', { class: 'card mb', 'data-outcomes-report': '1' },
-    h('div', { class: 'card-head' }, h('h3', {}, 'Outcome measures'), can('export:read') ? h('button', { class: 'btn sm', 'data-export-outcomes': '1', onClick: () => downloadCsv(`/api/reports/outcomes/export?from=${from}&to=${to}`) }, 'Export (de-identified CSV)') : null),
+    h('div', { class: 'card-head' }, h('h2', {}, 'Outcome measures'), can('export:read') ? h('button', { class: 'btn sm', 'data-export-outcomes': '1', onClick: () => downloadCsv(`/api/reports/outcomes/export?from=${from}&to=${to}`) }, 'Export (de-identified CSV)') : null),
     h('p', { class: 'small muted' }, 'Baseline is each client\'s first administration in the period and latest their last; only clients screened at least twice count toward change. Improved means the score moved in the better direction (lower for PHQ-9, GAD-7, AUDIT-C and DAST-10; higher for wellbeing).'),
     table([{ label: 'Measure', key: 'name' }, { label: 'Clients screened', key: 'clients_screened', num: true }, { label: 'Screened twice or more', key: 'clients_with_followup', num: true },
       { label: 'Mean baseline', render: x => x.mean_baseline ?? '—', num: true }, { label: 'Mean latest', render: x => x.mean_latest ?? '—', num: true }, { label: 'Mean change', render: x => x.mean_change ?? '—', num: true },

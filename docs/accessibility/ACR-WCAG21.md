@@ -5,7 +5,9 @@
 ## Name of Product/Version
 
 SUDS — SUD Navigator Services Tracker, version 1.10.2 with the accessibility changes that accompany this
-report (the next release). Both ways SUDS is run are covered: the **office server** (the web application an
+report (the next release), including the clinical documentation (problem list, care plan, ASAM and outcome
+measures), CalOMS Tx state reporting, the FHIR interface settings, the security evidence pages and the
+42 CFR Part 2 controls that release adds. Both ways SUDS is run are covered: the **office server** (the web application an
 administrator installs for a programme) and **SUDS on this device** (the same web application published as a
 static site, keeping its records in the browser).
 
@@ -31,16 +33,29 @@ shown in the application as **Accessibility** (`accessibility.html`).
 
 * **Scope.** Every page in the application's navigation (Home, My clients, Waitlist, To-do list, Supervision,
   Visits & services, Calls & texts, Forms, Notes, My time, Import, Overdose & reversals, Supplies, Referrals,
-  Resource directory, Funding & spending, Policies & contracts, Reports, Funder report, Settings), the profile,
-  every section of a client record (Overview, Timeline, Interventions, Calls, Notes, Referrals, Forms, Tasks,
-  Episodes, Consents & ROI, Requests, Time, Assistance $, Care team), a resource profile, every Settings section,
-  the sign-in, sign-up, first-run, two-step-verification and "use SUDS on your phone" pages, the accessibility
-  statement, and the dialogs used for daily work (+ Log and everything it records, new client, referral,
-  consent, disclosure, request, care-team assignment, client assistance, resource, overdose event,
-  expenditure, funding source and budget line, county form design and filling, document upload, supply item,
-  new user, API key, a note and its electronic signature).
+  Resource directory, Funding & spending, Policies & contracts, Reports, Privacy & Part 2 and each of its
+  sections — overview, patient notice with its editor open, notice not given, complaints, incidents & breaches —
+  Funder report, Settings), State reporting (CalOMS Tx and the county EHR hand-off), the profile, every section
+  of a client record (Overview with its clinical summary, Timeline, Interventions, Calls, Notes, Problems, Care
+  plan, Assessments, Referrals, Forms, Tasks, Episodes, Consents & ROI with the Part 2 notice and court orders,
+  Requests, Time, Assistance $, Care team), a resource profile, every Settings section (including Lists with a
+  list open, FHIR clients, System & backups with the recovery-drill card, Security status, and Users & roles
+  with an access request waiting), the sign-in, sign-up, first-run, two-step-verification and "use SUDS on your
+  phone" pages, the accessibility statement, and the dialogs used for daily work (+ Log and everything it
+  records, new client, referral, consent with every §2.31 element, disclosure and the §2.32 notice shown after
+  it, patient notice given, court order and vacating one, request, care-team assignment, client assistance, a
+  problem and its history, a care-plan goal, step and review, an ASAM assessment (new and opened), each outcome
+  measure (PHQ-9, GAD-7, AUDIT-C, DAST-10) new and opened, starting and discharging an episode with the CalOMS
+  questions, an episode's CalOMS records and an annual update, the CalOMS extract confirmation, the identified
+  export, a privacy complaint and an incident (new and opened), a FHIR client, approving an access request,
+  resource, overdose event, expenditure, funding source and budget line, county form design and filling,
+  document upload, supply item, new user, API key, a note and its electronic signature). The seed data has no
+  clinical, CalOMS or Part 2 records, so the audit creates them first and every one of these views is tested
+  with rows in it, not only empty.
 * **Roles.** The audit signs in as each of the six roles (administrator, supervisor, clinician, navigator,
-  finance, read-only oversight) on the office server, and as a new account created through Sign up on SUDS on
+  finance, read-only oversight) on the office server in the light desktop configuration, and as the
+  administrator, a supervisor and a navigator (who between them reach every page and dialog, the clinical
+  assessments included) in the other four, and as a new account created through Sign up on SUDS on
   this device, because each role sees different pages and controls.
 * **Content the programme supplies** — uploaded PDF and Word documents, scanned consents and signed forms,
   resource photos, and free text staff type — is outside what the software can make accessible. SUDS provides
@@ -56,7 +71,8 @@ shown in the application as **Accessibility** (`accessibility.html`).
   `heading-order`, `empty-heading`, `empty-table-header`, `aria-dialog-name`). Every page and dialog in the
   scope above is tested in five configurations: desktop 1280 CSS px light theme (all six roles), phone 390 CSS
   px light and dark, desktop dark, and desktop with the text size doubled (200%) — on both builds.
-  Script: `scripts/ui/accessibility.mjs`; it fails on any finding.
+  Script: `scripts/ui/accessibility.mjs`; it fails on any finding, and it is part of the browser suite that
+  runs in continuous integration on every change (several thousand checks).
 * **Scripted checks for what axe cannot judge**, in the same script and on the same pages: a descriptive title
   per page that never names a client (2.4.2); no sideways scrolling or clipped content at 320 CSS px and at 200%
   text (1.4.10, 1.4.4); no clipped text with the WCAG 1.4.12 text-spacing overrides; Tab through each page with
@@ -97,14 +113,14 @@ shown in the application as **Accessibility** (`accessibility.html`).
 
 | Criteria | Conformance Level | Remarks and Explanations |
 | --- | --- | --- |
-| [1.1.1 Non-text Content](https://www.w3.org/TR/WCAG21/#non-text-content) (Level A) | Partially Supports | Icons that carry meaning have text (icon buttons have spoken names: "Close", "Choose the date from a calendar", "What is this?", "Menu", "Reminders due"); decorative icons and logos are hidden (`alt=""`, `aria-hidden`). The Home trend chart has a text alternative listing its values; bar charts print each value as text. Every resource photo has alternative text, but a photo uploaded **without a caption** is described only as "Picture 2 of 5" (or the resource's name): SUDS cannot describe a picture nobody has captioned. Uploaded documents (PDFs, scans) are only as accessible as the file. |
+| [1.1.1 Non-text Content](https://www.w3.org/TR/WCAG21/#non-text-content) (Level A) | Partially Supports | Icons that carry meaning have text (icon buttons have spoken names: "Close", "Choose the date from a calendar", "What is this?", "Menu", "Reminders due"); decorative icons and logos are hidden (`alt=""`, `aria-hidden`). The Home trend chart and the outcome-measure trends have a text alternative listing their values; bar charts print each value as text. Every resource photo has alternative text, but a photo uploaded **without a caption** is described only as "Picture 2 of 5" (or the resource's name): SUDS cannot describe a picture nobody has captioned. Uploaded documents (PDFs, scans) are only as accessible as the file. |
 | [1.2.1 Audio-only and Video-only (Prerecorded)](https://www.w3.org/TR/WCAG21/#audio-only-and-video-only-prerecorded) (Level A) | Not Applicable | SUDS has no audio or video content. |
 | [1.2.2 Captions (Prerecorded)](https://www.w3.org/TR/WCAG21/#captions-prerecorded) (Level A) | Not Applicable | No synchronized media. |
 | [1.2.3 Audio Description or Media Alternative (Prerecorded)](https://www.w3.org/TR/WCAG21/#audio-description-or-media-alternative-prerecorded) (Level A) | Not Applicable | No synchronized media. |
-| [1.3.1 Info and Relationships](https://www.w3.org/TR/WCAG21/#info-and-relationships) (Level A) | Supports | Pages have one `main` landmark, a navigation landmark, one `h1` and headings that step down one level at a time; every form control has a programmatic label (tied by `for`, including the filter bars, through a shared pass in `app.js`), required fields are marked `aria-required`, help and error text is tied with `aria-describedby`; data tables have column headers with `scope`, including a hidden "Actions" header over button columns; client-header flags are a list; section navigation is a labelled `nav` with `aria-current`. A list row that opens a record keeps its table semantics: the keyboard control is a button made of the row's first cell (a name or a date), so the other cells are still read with their column headings. |
+| [1.3.1 Info and Relationships](https://www.w3.org/TR/WCAG21/#info-and-relationships) (Level A) | Partially Supports | Pages have one `main` landmark, a navigation landmark, one `h1` and headings that step down one level at a time; every form control has a programmatic label (tied by `for`, including the filter bars, through a shared pass in `app.js`), required fields are marked `aria-required`, help and error text is tied with `aria-describedby`; data tables have column headers with `scope`, including a hidden "Actions" header over button columns; client-header flags are a list; section navigation is a labelled `nav` with `aria-current`. A list row that opens a record keeps its table semantics: the keyboard control is a button made of the row's first cell (a name or a date), so the other cells are still read with their column headings. Print windows (care plan, patient notice, accounting of disclosures) are HTML with headings, table headers and a language. **Remaining:** the PDFs SUDS itself generates — a consent to print for the client's signature, and completed or blank county forms — are real text in reading order but are **not tagged** (no structure tree, headings or document language). The consent's details are on its client's Consents tab and every form's answers on its Forms page, both of which conform. |
 | [1.3.2 Meaningful Sequence](https://www.w3.org/TR/WCAG21/#meaningful-sequence) (Level A) | Supports | DOM order is reading order; layout is CSS grid/flex without reordering. While a dialog is open the page behind it is `inert`, so the reading order is the dialog's. |
 | [1.3.3 Sensory Characteristics](https://www.w3.org/TR/WCAG21/#sensory-characteristics) (Level A) | Supports | Instructions name controls by their text ("+ Log", "Sign & lock"); the welcome tour's mention of where + Log sits is accompanied by its name. |
-| [1.4.1 Use of Color](https://www.w3.org/TR/WCAG21/#use-of-color) (Level A) | Supports | Links in text are underlined. Overdue, at-risk and over-budget values carry ⚠ and a reason (visible, and read out), or words such as "— overdue", "— needs verification", "— ahead of the period"; red and amber summary figures carry ⚠; status badges contain words; the timeline's coloured dots repeat what each entry's title says. |
+| [1.4.1 Use of Color](https://www.w3.org/TR/WCAG21/#use-of-color) (Level A) | Supports | Links in text are underlined. Overdue, at-risk and over-budget values carry ⚠ and a reason (visible, and read out), or words such as "— overdue", "— needs verification", "— ahead of the period" — including ASAM dimension ratings of 3 or more ("high risk"), overdue care-plan steps and reviews, expired consents, a client with no Part 2 notice, and an outcome score's change, which says "better" or "worse"; red and amber summary figures carry ⚠; status badges contain words; the timeline's coloured dots repeat what each entry's title says. |
 | [1.4.2 Audio Control](https://www.w3.org/TR/WCAG21/#audio-control) (Level A) | Not Applicable | SUDS plays no audio. |
 | [2.1.1 Keyboard](https://www.w3.org/TR/WCAG21/#keyboard) (Level A) | Supports | All functionality is operable by keyboard: buttons and links are native; clickable list rows take Tab, Enter and Space; the client search is a combobox (arrow keys, Enter, Escape); the section "More" menu uses arrow keys; file drop zones open the file picker with Enter/Space; a picture opens its viewer from a button; tables that scroll get keyboard focus. Verified by the keyboard-only task scripts listed above. A list row opens from the button in its first cell. Phone rows that contain their own control (a to-do's done box on a phone) have a separate "Open" button. |
 | [2.1.2 No Keyboard Trap](https://www.w3.org/TR/WCAG21/#no-keyboard-trap) (Level A) | Supports | Dialogs keep Tab inside them by design and always close with Escape (and the Back button), returning focus to the control that opened them; the phone menu closes with Escape. Tested with 70 Tab presses inside a dialog. |
@@ -149,9 +165,9 @@ shown in the application as **Accessibility** (`accessibility.html`).
 | [3.1.2 Language of Parts](https://www.w3.org/TR/WCAG21/#language-of-parts) (Level AA) | Supports | The interface is in English only. Text staff enter in another language is their content. |
 | [3.2.3 Consistent Navigation](https://www.w3.org/TR/WCAG21/#consistent-navigation) (Level AA) | Supports | The same sidebar (a menu on phones), search, reminders bell and + Log appear in the same order on every page; items a role may not open are left out, never reordered. |
 | [3.2.4 Consistent Identification](https://www.w3.org/TR/WCAG21/#consistent-identification) (Level AA) | Supports | Shared helpers give the same function the same name and look everywhere (+ Log, Close ✕, Edit, the calendar button, Load more). |
-| [3.3.3 Error Suggestion](https://www.w3.org/TR/WCAG21/#error-suggestion) (Level AA) | Supports | Messages say how to fix the problem: which field, the valid date range ("the year must be four digits, between 1900 and 2100"), the password rule, the reason length, how to search for a client, what a Part 2 consent must contain. |
-| [3.3.4 Error Prevention (Legal, Financial, Data)](https://www.w3.org/TR/WCAG21/#error-prevention-legal-financial-data) (Level AA) | Supports | Signing a note (a legal attestation) needs the password and states that signed notes cannot be changed; deleting, revoking, erasing a device and restoring a backup ask for confirmation (a typed word for the irreversible ones); records are not truly deleted and every change is in the audit log; a record changed by someone else since it was opened is not overwritten silently. |
-| [4.1.3 Status Messages](https://www.w3.org/TR/WCAG21/#status-messages) (Level AA 2.1 only) | Supports | Saved/done messages are in a polite live region (`role="status"`), errors in `role="alert"`; search results ("3 matching clients"), autosave state, and the idle warning are announced without moving focus. |
+| [3.3.3 Error Suggestion](https://www.w3.org/TR/WCAG21/#error-suggestion) (Level AA) | Supports | Messages say how to fix the problem: which field, the valid date range ("the year must be four digits, between 1900 and 2100"), the password rule, the reason length, how to search for a client, what a Part 2 consent must contain; a CalOMS record lists each edit-check problem by field and says whether it is fatal. |
+| [3.3.4 Error Prevention (Legal, Financial, Data)](https://www.w3.org/TR/WCAG21/#error-prevention-legal-financial-data) (Level AA) | Supports | Signing a note (a legal attestation) needs the password and states that signed notes cannot be changed; deleting, revoking, erasing a device and restoring a backup ask for confirmation (a typed word for the irreversible ones); records are not truly deleted and every change is in the audit log; a record changed by someone else since it was opened is not overwritten silently. Disclosures are checked before they happen: a Part 2 consent must have every §2.31 element, a disclosure needs its lawful basis (a court order is checked for the findings subpart E requires), an agreed restriction on the record is shown for confirmation, and the CalOMS extract, county EHR hand-off and identified export each state that they identify clients and ask for confirmation. |
+| [4.1.3 Status Messages](https://www.w3.org/TR/WCAG21/#status-messages) (Level AA 2.1 only) | Supports | Saved/done messages are in a polite live region (`role="status"`), errors in `role="alert"`; search results ("3 matching clients"), autosave state, a screening's running score while it is filled in, and the idle warning are announced without moving focus. |
 
 ### Table 3: Success Criteria, Level AAA
 
@@ -161,6 +177,7 @@ Not evaluated.
 
 | Criterion | Remaining issue | Plan |
 | --- | --- | --- |
+| 1.3.1 | PDFs SUDS generates (a consent to print for signature, county forms) are untagged. | Write a structure tree (headings, paragraphs, form-field labels), the document language and title into the PDFs `server/pdf.js` produces, and check them with PAC or veraPDF (PDF/UA). Until then the same information is on screen in conforming pages. |
 | 1.1.1 | Photos uploaded without a caption get a generic description. | Ask for a short description when a picture is added (required for new uploads), and list captionless pictures on the resource page for editing. |
 | 2.2.1 | The maximum session length ends a session without warning or extension. | Warn five minutes before the maximum session length and offer to sign in again in place without losing the page, or document the security exception with the county. |
 

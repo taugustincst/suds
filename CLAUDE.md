@@ -10,6 +10,7 @@
 * Password hashing in a request path uses `hashPasswordAsync`/`verifyPasswordAsync`; the sync versions are for CLI scripts only, because scrypt blocks the event loop for ~90ms.
 * Every PHI read/write must call `audit.log`. The audit table is hash-chained — never UPDATE or DELETE rows except via the retention purge.
 * Frontend: `public/` vanilla ES modules, no build step. `app.js` has the DOM/form helpers; views register with `route()` and are imported in `main.js`. CSP forbids inline scripts.
+* UI changes must follow docs/accessibility/DEVELOPERS.md; the browser suite's accessibility script fails on any WCAG 2.1 AA finding.
 * Tests: `npm test` (node:test). Add an API test for every new permission or route. Run the browser suite (`scripts/ui/run-all.sh`) after UI changes — its scripts must assert with the `ok()`/`eq()` helpers in `scripts/ui/assert.mjs`, not `console.log` values nobody compares.
 * Dev data: `npm run seed` (fictional clients). Never seed production.
 * Local mode is off by default on an office server (`LOCAL_MODE_ENABLED`, or the setup wizard's answer in `server.json`); `scripts/ui/run-all.sh` exports `LOCAL_MODE_ENABLED=true` for the suite's dev server. esbuild and sql.js are ignored by Dependabot and updated by hand with `npm run build:local` (docs/RELEASE.md).

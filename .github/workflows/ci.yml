@@ -46,9 +46,11 @@ jobs:
         run: |
           want="$(tr -d '[:space:]' < .nvmrc)"; have="$(node -p 'process.versions.node.split(".")[0]')"
           node --version; [ "$have" = "$want" ] || { echo "::error::The runner has Node $have but .nvmrc pins major $want"; exit 1; }
-      - name: Install Playwright (test-only)
+      # Playwright and axe-core (the accessibility script's engine) are test-only and never in package.json.
+      # They go in ONE --no-save install: a second one prunes the package the first added.
+      - name: Install Playwright and axe-core (test-only)
         working-directory: src
-        run: npm ci --no-audit --no-fund && npm i --no-save --no-audit --no-fund playwright@1.56.1 && npx playwright install --with-deps chromium
+        run: npm ci --no-audit --no-fund && npm i --no-save --no-audit --no-fund playwright@1.56.1 axe-core@4.13.0 && npx playwright install --with-deps chromium
       - name: Browser regression suite
         working-directory: src
         # The suite's static build must not download 80 providers' pictures from the internet on every push;
