@@ -132,7 +132,7 @@ module.exports = (r) => {
     const body = require('../pdf').renderForm({ title: `Consent to disclose: ${String(c.type).replace(/_/g, ' ')}`, org: db.getSetting('org_name', 'SUDS'),
       meta: [`Recorded by ${row.created_by_name}`, c.legacy_elements ? 'Recorded before the 2024 element list' : null], fields, values,
       footer: disclosure.part2Program() ? `${n.short} NOTICE TO RECIPIENT (42 CFR §2.32): ${n.text}` : 'Contains protected health information; handle per HIPAA.' });
-    ctx.res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="${client.client_code}-consent-${c.id.slice(0, 8)}.pdf"` }); ctx.res.end(body); return null;
+    ctx.res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': require('../http').contentDisposition('inline', `${client.client_code}-consent-${c.id.slice(0, 8)}.pdf`) }); ctx.res.end(body); return null;
   });
   // Accounting of disclosures (HIPAA §164.528 / 42 CFR §2.25). Recording one runs the same gate as a
   // referral or an export: disclosure.requireBasis.
