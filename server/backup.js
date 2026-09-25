@@ -117,7 +117,12 @@ function restore(plainBytes) {
   // not catch, a migration that fails on its data), the server must come back on the database it had.
   try { db.open(); }
   catch (e) { rollBack(e); throw new Error(`The backup could not be opened after it was restored, so the previous database was put back: ${e.message}`); }
+  const restoredGen = db.getSetting('db_generation', null) || 'initial';
   db.setSetting('db_generation', require('./crypto').uuid()); // a new lineage: devices see it on their next pull and re-offer what the backup lacks (server/routes/sync.js)
+  // Anchor the restored chain at once: anchors written since the backup was taken no longer match it, and
+  // this one (reason 'restore', the new generation) is what tells verification that the change was a
+  // restore rather than a rewrite (server/audit-anchor.js).
+  if (!config.local) require('./audit-anchor').safeWrite('restore', { prevGen: restoredGen });
   return { ...info, previous_database_kept_at: aside };
 }
 

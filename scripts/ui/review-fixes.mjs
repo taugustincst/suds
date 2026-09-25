@@ -415,6 +415,31 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   await page.screenshot({ path: '/tmp/suds-shots/lists.png', fullPage: true }).catch(() => {});
 }
 
+// ---- administrator: Security status is what a county IT reviewer is shown; the recovery drill runs from System ----
+{
+  const { page } = admin;
+  await go(page, 'admin?tab=security');
+  ok(await until(() => page.$('[data-security-status]')), 'Settings → Security status loads');
+  const groups = await page.$$eval('[data-group]', (els) => els.map((e) => e.getAttribute('data-group')));
+  for (const g of ['Identity', 'Backups and recovery', 'Audit', 'Encryption and keys', 'Data lifecycle', 'Platform']) ok(groups.includes(g), `Security status reports ${g}`, groups);
+  const text = await page.textContent('.main');
+  ok(/Two-step verification coverage/.test(text) && /Last recovery drill/.test(text) && /Audit anchors outside the database/.test(text), 'with MFA coverage, the last recovery drill and the audit anchors');
+  ok(/no SOC 2/.test(text), 'and says plainly that it is not an attestation');
+  ok(await page.$('[data-mfa-report]'), 'and lists the accounts without two-step verification');
+  await go(page, 'admin?tab=system');
+  const card = await until(() => page.$('[data-dr-drill]'));
+  ok(card, 'System & backups has the recovery drill card');
+  ok(/No drill has been run|Last drill/.test(await card.textContent()), 'showing the last drill (or that there has been none)');
+  await page.click('[data-dr-drill] button:has-text("Run a recovery drill now")');
+  const done = await until(() => page.$('[data-drill-last]'), { timeout: 60000 });
+  ok(done, 'running a drill from the page reports its result');
+  eq(done ? await done.getAttribute('data-drill-last') : null, 'passed', 'and the drill of the seeded server passes');
+  ok(/RTO/.test(await page.textContent('[data-dr-drill]')) && /RPO/.test(await page.textContent('[data-dr-drill]')), 'with its RTO and RPO');
+  const st = (await admin.api('GET', '/api/admin/dr-drill')).data;
+  eq(st.last && st.last.ok, true, 'the API records the same result');
+  await page.screenshot({ path: '/tmp/suds-shots/security-status.png', fullPage: true }).catch(() => {});
+}
+
 await admin.close();
 await browser.close();
 if (errors.length) { console.log('ERRORS:'); errors.forEach(e => console.log('  ' + e)); } else console.log('NO ERRORS');

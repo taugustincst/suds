@@ -1,6 +1,7 @@
 import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, stat, kv, loadRefData, downloadCsv, clear } from '../app.js';
 import { qrSvg } from '../qr.js';
 import { listsTab } from './lists.js';
+import { securityTab, drillCard } from './security.js';
 
 let oidcStatusPromise;
 function oidcStatusCached() {
@@ -181,6 +182,11 @@ route('admin', async (r) => {
         { name: 'session_idle_minutes', label: 'Auto sign-out after inactivity (minutes, max 60)', type: 'number', min: 1, max: 60, step: 1, value: s.policy.idleMinutes }, { name: 'session_absolute_hours', label: 'Maximum session length (hours)', type: 'number', min: 1, max: 24, step: 1, value: s.policy.absoluteHours },
         { name: 'password_max_age_days', label: 'Password expires after (days)', type: 'number', min: 1, step: 1, value: s.policy.passwordMaxAgeDays },
         { name: 'mfa_required_roles', label: 'Roles that must use MFA (comma separated)', value: s.policy.mfaRequiredRoles.join(','), help: 'admin, supervisor, clinician, navigator, finance, readonly — recommended: all', span: true },
+        ...(state.local ? [] : [
+          { name: 'mfa_require_all', label: 'Require two-step verification for every role', type: 'select', noBlank: true, value: s.mfa_require_all === '1' ? '1' : '0', options: [{ value: '1', label: 'On — every role, whatever the list above says (recommended)' }, { value: '0', label: 'Off — the roles listed above' }], span: true },
+          { name: 'sso_required', label: 'Require single sign-on', type: 'select', noBlank: true, value: s.sso_required === '1' ? '1' : '0', options: [{ value: '0', label: 'Off — passwords and SSO both work' }, { value: '1', label: 'On — password sign-in only for the emergency accounts below' }], span: true, help: s.env.oidc_configured ? 'Staff sign in through the county identity provider; leavers are cut off there.' : 'Needs single sign-on to be configured first (OIDC_* settings, docs/DEPLOYMENT.md).' },
+          { name: 'sso_emergency_accounts', label: 'Emergency (break-glass) administrator accounts that keep a password', value: s.sso_emergency_accounts || '', placeholder: 'e.g. admin', span: true, help: 'Usernames, comma separated. Keep their passwords sealed; every use is audited.' },
+        ]),
         { name: 'mfa_grace_days', label: 'Days a new account has to set up MFA', type: 'number', min: 0, step: 1, value: s.policy.mfaGraceDays, help: 'Counted from when the account is created (or its access request approved). 0 = at first sign-in.' },
         { name: 'self_signup', label: 'Sign up on the sign-in page', type: 'select', noBlank: true, value: s.self_signup === '0' ? '0' : '1', options: [{ value: '1', label: 'On — people can request an account; an administrator approves each one' }, { value: '0', label: 'Off — the sign-in page says to ask an administrator' }], span: true },
         { type: 'section', label: 'Record retention' },
@@ -196,6 +202,9 @@ route('admin', async (r) => {
             help: Number(s.backup_schedule_hours) > 0 ? `On: a backup is made every ${s.backup_schedule_hours} hour${Number(s.backup_schedule_hours) === 1 ? '' : 's'}, and the newest ${s.backup_retain_count || 14} are kept.` : 'Off: no backups are made automatically. Enter a number of hours (24 = daily) to turn them on.' },
           { name: 'backup_retain_count', label: 'Keep this many recent backups on disk', type: 'number', min: 1, step: 1, value: s.backup_retain_count || '14' },
           { name: 'backup_offsite_dir', label: 'Also copy each backup to (a mounted network share or drive path; blank = local only)', span: true, value: s.backup_offsite_dir || '' },
+          { name: 'dr_drill_monthly', label: 'Recovery drill every month', type: 'select', noBlank: true, value: s.dr_drill_monthly === '1' ? '1' : '0', options: [{ value: '0', label: 'Off — run drills by hand (System & backups)' }, { value: '1', label: 'On — restore the newest backup into a temporary copy monthly and check it' }], span: true },
+          { name: 'dr_rto_target_minutes', label: 'Recovery time objective (minutes)', type: 'number', min: 1, step: 1, value: s.dr_rto_target_minutes || '60' },
+          { name: 'dr_rpo_target_hours', label: 'Recovery point objective (hours)', type: 'number', min: 1, step: 1, value: s.dr_rpo_target_hours || '', placeholder: 'the backup interval, else 24' },
         ]),
       ], { values: s, submitText: 'Save settings', onSubmit: async (d) => { await put('/api/admin/settings', d); toast('Settings saved', 'ok'); },
         extra: state.local ? null : h('p', { class: 'small', 'data-backup-link': '1' }, 'To back up now, download a backup or restore one, open ', h('a', { href: '#/admin?tab=system' }, 'System & backups'), '.') });
@@ -210,7 +219,7 @@ route('admin', async (r) => {
       const actionI = h('input', { value: r.query.get('action') || '', placeholder: 'e.g. note.view, auth., client.' }), fromI = h('input', { type: 'date', value: r.query.get('from') || '' }), toI = h('input', { type: 'date', value: r.query.get('to') || '' }), userSel = h('select', {}, h('option', { value: '' }, 'Any user'), state.users.map(u => h('option', { value: u.id, selected: u.id === r.query.get('user_id') }, u.display_name))), failI = h('input', { type: 'checkbox', checked: r.query.get('failures') === '1' });
       const apply = () => nav(`admin?tab=audit&action=${encodeURIComponent(actionI.value)}&user_id=${userSel.value}&from=${fromI.value}&to=${toI.value}${failI.checked ? '&failures=1' : ''}`);
       return h('div', {},
-        h('div', { class: 'row mb' }, v.ok ? badge(`Audit chain intact (${v.checked} entries verified)`, 'ok') : badge(`AUDIT CHAIN BROKEN at entry #${v.firstBadId} — investigate immediately`, 'danger')),
+        h('div', { class: 'row mb' }, v.ok ? badge(`Audit chain intact (${v.checked} entries verified)`, 'ok') : badge(`AUDIT CHAIN BROKEN at entry #${v.firstBadId} — investigate immediately`, 'danger'), v.anchors ? (v.anchors.ok ? badge(`Matches ${v.anchors.matched} anchor${v.anchors.matched === 1 ? '' : 's'} outside the database`, v.anchors.matched ? 'ok' : '') : badge(`DOES NOT MATCH its anchors outside the database: ${v.anchors.bad[0].reason}`, 'danger')) : null),
         h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'Action prefix'), actionI), h('div', { class: 'field' }, h('label', {}, 'User'), userSel), h('div', { class: 'field' }, h('label', {}, 'From'), fromI), h('div', { class: 'field' }, h('label', {}, 'To'), toI), h('label', { class: 'check', style: { marginTop: 0 } }, failI, 'Failures only'), h('button', { class: 'btn', onClick: apply }, 'Filter'),
           h('button', { class: 'btn sm', onClick: () => nav('admin?tab=audit&action=note.view.breakglass') }, 'Break-glass events'), h('button', { class: 'btn sm', onClick: () => nav('admin?tab=audit&action=authz.denied') }, 'Access denials'), h('button', { class: 'btn sm', onClick: () => nav('admin?tab=audit&action=report.export') }, 'Exports')),
         h('div', { class: 'muted small mb' }, `${a.total} entries`),
@@ -266,9 +275,11 @@ route('admin', async (r) => {
           h('div', { class: 'row' }, h('a', { class: 'btn primary', href: '/api/admin/backup', download: '' }, 'Download encrypted backup'), s.key_source === 'file' ? h('a', { class: 'btn danger', href: '/api/admin/keys-backup', download: '' }, 'Download key backup (keep secret)') : null),
           h('p', { class: 'small mt' }, 'Scheduled backups: ', s.last_scheduled_backup_at ? [badge(/^ok/.test(s.last_scheduled_backup_status || '') ? 'Configured' : 'Attention needed', /^ok/.test(s.last_scheduled_backup_status || '') ? 'ok' : 'danger'), ` last ran ${fmt.dt(s.last_scheduled_backup_at)}${s.last_scheduled_backup_status ? ` — ${s.last_scheduled_backup_status}` : ''}`] : badge('Off — turn on under Settings → Program settings'), ' ', h('button', { class: 'btn sm', onClick: runBackupNow }, 'Run a backup now'), ' ', runNow),
           restoreCard(),
+          h('div', { class: 'mt' }, await drillCard()),
           h('h3', { class: 'mt' }, 'About this server'), kv([['SUDS version', s.version], ['Database', h('code', {}, s.db_path)], ['Keys', s.key_source === 'file' ? 'data/keys.json (generated by setup)' : 'Environment variables'], ['Key backup last downloaded', s.key_source !== 'file' ? 'Not applicable — keys come from the environment' : s.keys_backup_at ? fmt.dt(s.keys_backup_at) : badge('Never — download it below', 'danger')], ['Addresses', (s.listener?.urls || []).join(', ')], ['Retention', 'Audit logs are kept 7 years by default. Client records are soft-deleted only.']]),
           h('div', { class: 'row mt' }, h('button', { class: 'btn sm', onClick: checkForUpdate }, 'Check for updates'), updateStatus)));
     },
+    async security() { return securityTab(); },
     async caseload() { return transferCard(r.query.get('from')); },
     async lists() { return listsTab(r.query.get('list')); },
     async devices() {
@@ -296,7 +307,7 @@ route('admin', async (r) => {
   const pending = full && !state.local ? await get('/api/users/access-requests', { quiet: true }).then(x => x.requests.length).catch(() => 0) : 0;
   let tabs = !full ? [['caseload', 'Move a caseload'], ...(can('audit:read') ? [['audit', 'Audit log']] : [])]
     : state.local ? [['users', 'Users & roles'], ['settings', 'Settings'], ['caseload', 'Move a caseload'], ['audit', 'Audit log']]
-    : [['users', pending ? `Users & roles (${pending})` : 'Users & roles'], ['settings', 'Settings'], ['network', 'Network & devices'], ['devices', 'Synced devices'], ['caseload', 'Move a caseload'], ['audit', 'Audit log'], ['apikeys', 'API keys (intake)'], ['system', 'System & backups']];
+    : [['users', pending ? `Users & roles (${pending})` : 'Users & roles'], ['settings', 'Settings'], ['network', 'Network & devices'], ['devices', 'Synced devices'], ['caseload', 'Move a caseload'], ['audit', 'Audit log'], ['apikeys', 'API keys (intake)'], ['system', 'System & backups'], ['security', 'Security status']];
   // Moving a caseload needs assignments:manage; a role that manages users without it does not get a tab
   // whose form it could not submit (the deactivate dialog tells it a supervisor must move the clients).
   if (!can('assignments:manage')) tabs = tabs.filter(([k]) => k !== 'caseload');

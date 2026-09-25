@@ -6608,6 +6608,10 @@ var require_config = __commonJS({
       logFormat: "text",
       metricsToken: "",
       updateFeedUrl: "",
+      auditAnchorDir: "",
+      auditAnchorDirConfigured: false,
+      auditAnchorHours: 0,
+      auditSyslog: "",
       saveServerJson() {
       }
     };
@@ -8895,15 +8899,23 @@ var require_auth = __commonJS({
         return Number.isFinite(v) && (v > 0 || zero && v === 0) ? v : d;
       };
       const roles = db3.getSetting("mfa_required_roles", null);
+      const mfaAll = db3.getSetting("mfa_require_all", "0") === "1";
       return {
         idleMinutes: num("session_idle_minutes", config.session.idleMinutes),
         absoluteHours: num("session_absolute_hours", config.session.absoluteHours),
         passwordMaxAgeDays: num("password_max_age_days", config.password.maxAgeDays),
-        mfaRequiredRoles: roles === null ? config.mfaRequiredRoles : roles.split(",").map((x) => x.trim()).filter(Boolean),
+        mfaRequiredRoles: mfaAll ? Object.keys(PERMS) : roles === null ? config.mfaRequiredRoles : roles.split(",").map((x) => x.trim()).filter(Boolean),
+        mfaRequireAll: mfaAll,
         // How long a new account in a role that requires two-step verification has to set it up. Without this
         // the very first administrator would be locked out the moment the setup wizard created them.
-        mfaGraceDays: num("mfa_grace_days", config.mfaGraceDays, { zero: true })
+        mfaGraceDays: num("mfa_grace_days", config.mfaGraceDays, { zero: true }),
+        ...ssoPolicy()
       };
+    }
+    function ssoPolicy() {
+      const wanted = db3.getSetting("sso_required", "0") === "1";
+      const emergency = String(db3.getSetting("sso_emergency_accounts", "") || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+      return { ssoRequiredSetting: wanted, ssoRequired: wanted && !config.local && !!(config.oidc && config.oidc.enabled), ssoEmergencyAccounts: emergency };
     }
     var PERMS = {
       admin: [
@@ -9219,6 +9231,12 @@ var require_auth = __commonJS({
         fail(lock ? "locked after failures" : "bad password");
       }
       if (pendingWipe) wipeRequired(true);
+      const pol = policy();
+      const emergency = pol.ssoRequired && pol.ssoEmergencyAccounts.includes(String(user.username).toLowerCase());
+      if (pol.ssoRequired && !emergency) {
+        audit3.log({ user, action: "auth.login.sso_required", ip: ctx.ip, success: false });
+        throw new HttpError3(403, "This organisation requires single sign-on. Use the county sign-in button instead of a password.", { ssoRequired: true });
+      }
       db3.run(`UPDATE users SET failed_attempts=0, locked_until=NULL, last_login_at=? WHERE id=?`, db3.now(), user.id);
       if (deviceId2) {
         const device = devices.touch(user, deviceId2, ctx);
@@ -9234,7 +9252,8 @@ var require_auth = __commonJS({
       const mfaRequiredForRole = policy().mfaRequiredRoles.includes(user.role);
       const mfaPending = !!user.mfa_enabled;
       const token2 = createSession(user, ctx, { mfaPending });
-      audit3.log({ user, action: mfaPending ? "auth.login.mfa_pending" : "auth.login", ip: ctx.ip });
+      if (emergency) console.warn(`[suds] emergency (break-glass) password sign-in by ${user.username} while single sign-on is required`);
+      audit3.log({ user, action: mfaPending ? "auth.login.mfa_pending" : "auth.login", ip: ctx.ip, details: emergency ? { emergency_account: true } : void 0 });
       const deadline = mfaDeadline(user);
       return { token: token2, user: publicUser(user), mfaPending, mfaSetupRequired: mfaRequiredForRole && !user.mfa_enabled, mfaSetupDeadline: deadline };
     }
@@ -12416,6 +12435,19 @@ var require_budget = __commonJS({
   }
 });
 
+// local/shims/empty.js
+var empty_exports = {};
+__export(empty_exports, {
+  default: () => empty_default
+});
+var empty_default;
+var init_empty = __esm({
+  "local/shims/empty.js"() {
+    init_globals_inject();
+    empty_default = {};
+  }
+});
+
 // local/shims/os.js
 var os_exports = {};
 __export(os_exports, {
@@ -12437,16 +12469,263 @@ var init_os = __esm({
   }
 });
 
-// local/shims/empty.js
-var empty_exports = {};
-__export(empty_exports, {
-  default: () => empty_default
-});
-var empty_default;
-var init_empty = __esm({
-  "local/shims/empty.js"() {
+// server/audit-anchor.js
+var require_audit_anchor = __commonJS({
+  "server/audit-anchor.js"(exports, module) {
+    "use strict";
     init_globals_inject();
-    empty_default = {};
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var path = (init_path(), __toCommonJS(path_exports));
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    var config = require_config();
+    var db3 = require_db();
+    var FILE_RE = /^anchor-.*\.json$/;
+    var keyId = (key = config.indexKey) => crypto3.createHmac("sha256", key).update("suds-audit-anchor-key-id").digest("hex").slice(0, 16);
+    var FIELDS = ["v", "kind", "at", "reason", "install", "gen", "prev_gen", "head_id", "head_hash", "first_id", "rows", "host", "key_id", "prev_mac"];
+    var installId = () => db3.getSetting("audit_anchor_install", null);
+    var generation = () => db3.getSetting("db_generation", null) || "initial";
+    function canonical(a) {
+      const o = {};
+      for (const k of FIELDS) o[k] = a[k] === void 0 ? null : a[k];
+      return JSON.stringify(o);
+    }
+    function macOf(a, key = config.indexKey) {
+      return crypto3.createHmac("sha256", key).update(canonical(a)).digest("hex");
+    }
+    function macOk(a, key = config.indexKey) {
+      if (typeof a.mac !== "string") return false;
+      const want = macOf(a, key);
+      return want.length === a.mac.length && crypto3.timingSafeEqual(import_buffer.Buffer.from(want), import_buffer.Buffer.from(a.mac));
+    }
+    function dir() {
+      return config.auditAnchorDir;
+    }
+    function list(d = dir()) {
+      let names = [];
+      try {
+        names = fs.readdirSync(d).filter((f) => FILE_RE.test(f)).sort();
+      } catch {
+        return [];
+      }
+      return names.map((file) => {
+        try {
+          return { file, anchor: JSON.parse(fs.readFileSync(path.join(d, file), "utf8")) };
+        } catch (e) {
+          return { file, error: String(e.message || e) };
+        }
+      });
+    }
+    function dirStatus(d = dir()) {
+      let exists3 = false;
+      let writable = false;
+      try {
+        exists3 = fs.statSync(d).isDirectory();
+      } catch {
+      }
+      if (exists3) {
+        try {
+          fs.accessSync(d, fs.constants.W_OK);
+          writable = true;
+        } catch {
+        }
+      }
+      return { dir: d, configured: config.auditAnchorDirConfigured, exists: exists3, writable, inside_data_dir: path.resolve(d).startsWith(path.resolve(config.dataDir) + path.sep) };
+    }
+    function write(reason = "manual", { key = config.indexKey, d = dir(), prevGen = null } = {}) {
+      const head = db3.one(`SELECT id, hash FROM audit_log ORDER BY id DESC LIMIT 1`);
+      if (!head) return null;
+      const first = db3.one(`SELECT MIN(id) m FROM audit_log`).m;
+      const rows = db3.one(`SELECT COUNT(*) n FROM audit_log WHERE id <= ?`, head.id).n;
+      if (!config.auditAnchorDirConfigured || d !== config.auditAnchorDir) fs.mkdirSync(d, { recursive: true, mode: 448 });
+      else if (!dirStatus(d).exists) throw new Error(`the audit anchor directory ${d} does not exist (is the share mounted?)`);
+      let install = installId();
+      if (!install) {
+        install = require_crypto().uuid();
+        db3.setSetting("audit_anchor_install", install);
+      }
+      const prev = list(d).filter((x) => x.anchor && x.anchor.install === install).pop();
+      const a = { v: 1, kind: "suds-audit-anchor", at: db3.now(), reason, install, gen: generation(), prev_gen: prevGen, head_id: head.id, head_hash: head.hash, first_id: first, rows, host: (init_os(), __toCommonJS(os_exports)).hostname(), key_id: keyId(key), prev_mac: prev ? prev.anchor.mac || null : null };
+      a.mac = macOf(a, key);
+      const file = path.join(d, `anchor-${a.at.replace(/[:.]/g, "-")}-${String(head.id).padStart(12, "0")}.json`);
+      try {
+        fs.writeFileSync(file, JSON.stringify(a) + "\n", { flag: "wx", mode: 384 });
+      } catch (e) {
+        if (e.code === "EEXIST") return a;
+        throw e;
+      }
+      try {
+        fs.chmodSync(file, 256);
+      } catch {
+      }
+      db3.setSetting("audit_anchor_last_at", a.at);
+      db3.setSetting("audit_anchor_last_status", "ok");
+      console.log(`[suds] audit anchor id=${a.head_id} rows=${a.rows} hash=${a.head_hash} mac=${a.mac} reason=${reason}`);
+      sendSyslog(a);
+      return { ...a, file: path.basename(file) };
+    }
+    function sendSyslog(a) {
+      if (!config.auditSyslog) return;
+      try {
+        const m = String(config.auditSyslog).match(/^(?:udp:\/\/)?\[?([^\]]+?)\]?(?::(\d+))?$/);
+        if (!m) return;
+        const host = m[1];
+        const port = Number(m[2] || 514);
+        const dgram = (init_empty(), __toCommonJS(empty_exports));
+        const sock = dgram.createSocket(host.includes(":") ? "udp6" : "udp4");
+        const msg = import_buffer.Buffer.from(`<110>1 ${a.at} ${a.host} suds - audit-anchor - ${JSON.stringify(a)}`);
+        sock.send(msg, port, host, () => {
+          try {
+            sock.close();
+          } catch {
+          }
+        });
+        if (sock.unref) sock.unref();
+      } catch (e) {
+        console.error("[suds] audit anchor syslog send failed:", e.message);
+      }
+    }
+    function runIfDue(now = Date.now()) {
+      const hours = config.auditAnchorHours;
+      if (!(hours > 0)) return null;
+      const last = db3.getSetting("audit_anchor_last_at", null);
+      if (last && now - Date.parse(last) < hours * 36e5) return null;
+      return safeWrite("schedule");
+    }
+    function safeWrite(reason, opts = {}) {
+      try {
+        return write(reason, opts);
+      } catch (e) {
+        const msg = String(e.message || e);
+        console.error("[suds] audit anchor could not be written:", msg);
+        db3.setSetting("audit_anchor_last_status", `failed: ${msg}`);
+        try {
+          require_audit().log({ user: { username: "system" }, action: "audit.anchor.failed", success: false, details: { reason, error: msg.slice(0, 300) } });
+        } catch {
+        }
+        return null;
+      }
+    }
+    function verify({ key = config.indexKey, d = dir(), tolerateNewer = false } = {}) {
+      const files = list(d);
+      const out2 = { dir: d, total: files.length, matched: 0, other_key: 0, other_install: 0, other_generation: 0, purged: 0, newer: 0, bad: [], last_anchor_at: null };
+      const install = installId();
+      const gen = generation();
+      const kid = keyId(key);
+      const bounds = db3.one(`SELECT MIN(id) mn, MAX(id) mx FROM audit_log`);
+      const minId = bounds.mn || 0;
+      const maxId = bounds.mx || 0;
+      let purgedThrough = null;
+      const purged = () => {
+        if (purgedThrough === null) {
+          purgedThrough = 0;
+          for (const r of db3.all(`SELECT details FROM audit_log WHERE action='audit.purge'`)) {
+            try {
+              purgedThrough = Math.max(purgedThrough, Number(JSON.parse(r.details).last_purged_id) || 0);
+            } catch {
+            }
+          }
+        }
+        return purgedThrough;
+      };
+      const mine = files.filter((f) => f.anchor && f.anchor.install === install);
+      const newest = mine.filter((f) => f.anchor.key_id === kid && f.anchor.gen === gen).pop();
+      const restores = /* @__PURE__ */ new Map();
+      for (const f of mine) if (f.anchor.reason === "restore" && f.anchor.key_id === kid && macOk(f.anchor, key) && !restores.has(f.anchor.gen)) restores.set(f.anchor.gen, f.anchor);
+      const boundFor = (g) => {
+        let bound = Infinity;
+        let cur = gen;
+        const seen2 = /* @__PURE__ */ new Set();
+        while (cur !== g) {
+          const r = restores.get(cur);
+          if (!r || seen2.has(cur)) return null;
+          seen2.add(cur);
+          bound = Math.min(bound, r.head_id);
+          cur = r.prev_gen || "initial";
+        }
+        return bound;
+      };
+      let prevMac = null;
+      let first = true;
+      for (const f of files) {
+        const bad = (reason) => out2.bad.push({ file: f.file, head_id: f.anchor ? f.anchor.head_id : null, reason });
+        if (!f.anchor) {
+          bad(`unreadable: ${f.error}`);
+          prevMac = void 0;
+          first = false;
+          continue;
+        }
+        const a = f.anchor;
+        if (!install || a.install !== install) {
+          out2.other_install++;
+          continue;
+        }
+        out2.last_anchor_at = a.at || out2.last_anchor_at;
+        if (!first && prevMac !== void 0 && a.prev_mac !== prevMac) bad("the anchor before this one is missing or was replaced (the sequence of anchor files is broken)");
+        first = false;
+        prevMac = a.mac;
+        if (a.key_id !== kid) {
+          out2.other_key++;
+          continue;
+        }
+        if (!macOk(a, key)) {
+          bad("the anchor file does not verify (it was altered, or was not written by this server)");
+          continue;
+        }
+        if (a.gen !== gen) {
+          const bound = boundFor(a.gen);
+          if (bound === null && !tolerateNewer) {
+            bad("the database has been replaced since this anchor (its generation changed) but no restore was anchored");
+            continue;
+          }
+          if (bound === null || a.head_id > bound) {
+            out2.other_generation++;
+            continue;
+          }
+        }
+        const row = db3.one(`SELECT id, hash FROM audit_log WHERE id=?`, a.head_id);
+        if (!row) {
+          if (a.head_id > maxId) {
+            if (tolerateNewer) out2.newer++;
+            else bad(`the audit log now ends at entry ${maxId}, before this anchor's entry ${a.head_id}: newer entries were removed`);
+            continue;
+          }
+          if (a.head_id < minId && a.head_id <= purged()) {
+            out2.purged++;
+            continue;
+          }
+          bad(`entry ${a.head_id} recorded by this anchor is missing${a.head_id < minId ? " and no retention purge accounts for it" : ""}`);
+          continue;
+        }
+        if (row.hash !== a.head_hash) {
+          bad(`entry ${a.head_id} no longer has the hash this anchor recorded: the chain was rewritten`);
+          continue;
+        }
+        if (f === newest && a.first_id === minId) {
+          const n = db3.one(`SELECT COUNT(*) n FROM audit_log WHERE id <= ?`, a.head_id).n;
+          if (n !== a.rows) {
+            bad(`${a.rows - n} entr${Math.abs(a.rows - n) === 1 ? "y" : "ies"} at or before entry ${a.head_id} ${n < a.rows ? "were removed" : "were inserted"} since this anchor`);
+            continue;
+          }
+        }
+        out2.matched++;
+      }
+      out2.ok = out2.bad.length === 0;
+      return out2;
+    }
+    function verifyAndRecord() {
+      const r = verify();
+      db3.setSetting("audit_anchor_verified_at", db3.now());
+      db3.setSetting("audit_anchor_verify_status", r.ok ? `ok: ${r.matched} matched${r.purged ? `, ${r.purged} before a retention purge` : ""}${r.other_key ? `, ${r.other_key} under an earlier index key` : ""}${r.other_generation ? `, ${r.other_generation} from before a restore` : ""}${r.other_install ? `, ${r.other_install} from another installation` : ""} of ${r.total}` : `FAILED: ${r.bad[0].reason} (${r.bad[0].file})`);
+      if (!r.ok) {
+        console.error(`[suds] AUDIT ANCHOR MISMATCH: ${r.bad.length} anchor(s) do not match the audit log \u2014 ${r.bad[0].reason}`);
+        try {
+          require_audit().log({ user: { username: "system" }, action: "audit.anchor.verify.failed", success: false, details: { bad: r.bad.slice(0, 20), total: r.total } });
+        } catch {
+        }
+      }
+      return r;
+    }
+    module.exports = { write, safeWrite, runIfDue, verify, verifyAndRecord, list, dirStatus, keyId, macOf, macOk, canonical, FIELDS };
   }
 });
 
@@ -12589,7 +12868,9 @@ var require_backup = __commonJS({
         rollBack(e);
         throw new Error(`The backup could not be opened after it was restored, so the previous database was put back: ${e.message}`);
       }
+      const restoredGen = db3.getSetting("db_generation", null) || "initial";
       db3.setSetting("db_generation", require_crypto().uuid());
+      if (!config.local) require_audit_anchor().safeWrite("restore", { prevGen: restoredGen });
       return { ...info, previous_database_kept_at: aside };
     }
     module.exports = { create: create2, decrypt: decrypt3, inspect: inspect2, restore, backupKey };
@@ -12672,6 +12953,7 @@ var require_scheduled_backup = __commonJS({
           console.error("[suds] offsite backup copy failed:", offsiteError);
         }
       }
+      if (!config.local) require_audit_anchor().safeWrite("backup");
       kept = prune(dir, retain);
       db3.setSetting("last_scheduled_backup_at", db3.now());
       db3.setSetting("last_scheduled_backup_status", !verified ? `backup written but could not be read back \u2014 ${verifyError}` : offsiteDir && offsiteOk === false ? `ok (verified) \u2014 offsite copy failed: ${offsiteError}; local backup kept` : "ok (verified)");
@@ -12690,6 +12972,454 @@ var require_scheduled_backup = __commonJS({
       return Math.min(files.length, retain);
     }
     module.exports = { runIfDue, run: run2, settings };
+  }
+});
+
+// server/dr-drill.js
+var require_dr_drill = __commonJS({
+  "server/dr-drill.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var path = (init_path(), __toCommonJS(path_exports));
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    var config = require_config();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var BACKUP_RE = /^suds-.*\.db\.enc$/;
+    var MONTH_MS = 30 * 864e5;
+    var CHILD_TIMEOUT_MS = Number(proc.env.DR_DRILL_TIMEOUT_MS || 15 * 6e4);
+    function backupsDir() {
+      return path.join(config.dataDir, "backups");
+    }
+    function backupTime(file) {
+      const m = path.basename(file).match(/^suds-(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z/);
+      if (m) {
+        const t = Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`);
+        if (Number.isFinite(t)) return t;
+      }
+      try {
+        return fs.statSync(file).mtimeMs;
+      } catch {
+        return null;
+      }
+    }
+    function latestBackup(dir = backupsDir()) {
+      let names = [];
+      try {
+        names = fs.readdirSync(dir).filter((f) => BACKUP_RE.test(f)).sort();
+      } catch {
+        return null;
+      }
+      return names.length ? path.join(dir, names[names.length - 1]) : null;
+    }
+    function targets() {
+      const num = (k, d) => {
+        const v = Number(db3.getSetting(k, ""));
+        return Number.isFinite(v) && v > 0 ? v : d;
+      };
+      const schedule = Number(db3.getSetting("backup_schedule_hours", "0")) || 0;
+      return { rto_minutes: num("dr_rto_target_minutes", 60), rpo_hours: num("dr_rpo_target_hours", schedule || 24) };
+    }
+    function lastDrill() {
+      try {
+        return JSON.parse(db3.getSetting("dr_last_drill", "null"));
+      } catch {
+        return null;
+      }
+    }
+    var current2 = null;
+    function status() {
+      return {
+        running: current2 ? { started_at: current2.started_at, by: current2.by, steps: current2.steps.slice() } : null,
+        last: lastDrill(),
+        monthly: db3.getSetting("dr_drill_monthly", "0") === "1",
+        targets: targets(),
+        reports: listReports().slice(-12).reverse()
+      };
+    }
+    function listReports() {
+      try {
+        return fs.readdirSync(backupsDir()).filter((f) => /^dr-drill-.*\.json$/.test(f)).sort();
+      } catch {
+        return [];
+      }
+    }
+    function canonical(v) {
+      if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+      if (v && typeof v === "object") return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(",")}}`;
+      return JSON.stringify(v === void 0 ? null : v);
+    }
+    function seal(report, key = config.indexKey) {
+      const body = canonical(report);
+      return { sha256: crypto3.createHash("sha256").update(body).digest("hex"), hmac_sha256: crypto3.createHmac("sha256", key).update(body).digest("hex"), algorithm: 'SHA-256 and HMAC-SHA256 (index key) over the canonical JSON of "report" (keys sorted)' };
+    }
+    function verifyReport(doc, key = config.indexKey) {
+      const s = seal(doc.report, key);
+      return !!doc.integrity && s.sha256 === doc.integrity.sha256 && s.hmac_sha256 === doc.integrity.hmac_sha256;
+    }
+    function runChild(tmp, dbFile, onStep) {
+      const { fork } = (init_empty(), __toCommonJS(empty_exports));
+      return new Promise((resolve2) => {
+        const env = { PATH: proc.env.PATH || "", SUDS_ENV: config.isTest ? "test" : "production", SUDS_DATA_DIR: tmp, SUDS_DB_PATH: dbFile, SUDS_SKIP_SETUP: "1", TZ: proc.env.TZ || "", LOG_FORMAT: "text", LOGIN_RATE_LIMIT: "1000" };
+        if (!env.TZ) delete env.TZ;
+        const child = fork(path.join("/", "dr-drill-child.js"), [], { cwd: tmp, env, execArgv: ["--no-warnings=ExperimentalWarning"], stdio: ["ignore", "pipe", "pipe", "ipc"] });
+        let result = null;
+        let stderr = "";
+        child.stdout.on("data", () => {
+        });
+        child.stderr.on("data", (b) => {
+          stderr = (stderr + b.toString()).slice(-4e3);
+        });
+        const timer = setTimeout(() => {
+          try {
+            child.kill("SIGKILL");
+          } catch {
+          }
+        }, CHILD_TIMEOUT_MS);
+        child.on("message", (m) => {
+          if (m && m.type === "progress") onStep(m.step);
+          else if (m && m.type === "result") result = m;
+        });
+        child.on("exit", (code, signal) => {
+          clearTimeout(timer);
+          resolve2(result || { ok: false, error: signal === "SIGKILL" ? `the restored copy did not finish within ${Math.round(CHILD_TIMEOUT_MS / 6e4)} minutes` : `the drill process exited (${code ?? signal})${stderr ? ": " + stderr.trim().split("\n").slice(-3).join(" ") : ""}`, checks: [] });
+        });
+        child.send({ keys: { enc: config.encryptionKey.toString("hex"), idx: config.indexKey.toString("hex") }, anchorDir: config.auditAnchorDir });
+      });
+    }
+    async function run2({ backupFile = null, fresh = false, by = "system", trigger = "manual", record = true } = {}) {
+      if (current2) {
+        const e = new Error("A recovery drill is already running");
+        e.code = "EBUSY";
+        throw e;
+      }
+      const job = current2 = { started_at: (/* @__PURE__ */ new Date()).toISOString(), by, steps: [] };
+      const step = (s) => {
+        job.steps.push({ at: (/* @__PURE__ */ new Date()).toISOString(), step: s });
+      };
+      const started = Date.now();
+      const tmpRoot = path.join(config.dataDir, ".dr-drill");
+      const tmp = path.join(tmpRoot, `drill-${started}-${crypto3.randomBytes(4).toString("hex")}`);
+      const failures = [];
+      let result = { checks: [] };
+      let file = backupFile;
+      let madeBackup = false;
+      let restoreStarted = null;
+      let restoreBytes = 0;
+      try {
+        if (!file) file = fresh ? null : latestBackup();
+        if (!file) {
+          step("No backup on disk; taking one first");
+          const s = require_scheduled_backup().settings();
+          const made = require_scheduled_backup().run({ retain: s.retain, offsiteDir: s.offsiteDir });
+          if (!made.file) throw new Error(`a backup could not be taken: ${made.error}`);
+          file = made.file;
+          madeBackup = true;
+        }
+        step(`Restoring ${path.basename(file)}`);
+        restoreStarted = Date.now();
+        const enc2 = fs.readFileSync(file);
+        const plain = require_backup().decrypt(enc2);
+        restoreBytes = plain.length;
+        fs.mkdirSync(tmp, { recursive: true, mode: 448 });
+        try {
+          fs.chmodSync(tmpRoot, 448);
+        } catch {
+        }
+        const dbFile = path.join(tmp, "suds.db");
+        fs.writeFileSync(dbFile, plain, { mode: 384 });
+        result = await runChild(tmp, dbFile, step);
+        if (result.error) failures.push(result.error);
+      } catch (e) {
+        failures.push(String(e && e.message || e));
+      } finally {
+        try {
+          fs.rmSync(tmp, { recursive: true, force: true });
+        } catch (e) {
+          failures.push(`the drill copy could not be removed from ${tmp}: ${e.message}`);
+        }
+      }
+      const finished = Date.now();
+      const checks = result.checks || [];
+      for (const c of checks) if (!c.ok) failures.push(`${c.name}${c.detail ? ` \u2014 ${c.detail}` : ""}`);
+      const taken = file ? backupTime(file) : null;
+      const t = targets();
+      const rtoSeconds = restoreStarted && result.ready_at ? Math.round((result.ready_at - restoreStarted) / 100) / 10 : null;
+      const rpoSeconds = taken ? Math.round(((restoreStarted || started) - taken) / 1e3) : null;
+      const exposure = {};
+      if (result.source_counts) for (const tname of ["clients", "notes", "interventions", "referrals", "tasks", "audit_log"]) {
+        try {
+          exposure[tname] = db3.one(`SELECT COUNT(*) n FROM "${tname}"`).n - (result.source_counts[tname] || 0);
+        } catch {
+        }
+      }
+      const report = {
+        kind: "suds-dr-drill",
+        version: 1,
+        ok: failures.length === 0 && checks.length > 0,
+        started_at: new Date(started).toISOString(),
+        finished_at: new Date(finished).toISOString(),
+        trigger,
+        by,
+        server: { version: config.version, host: (init_os(), __toCommonJS(os_exports)).hostname(), schema_version: db3.LATEST_SCHEMA_VERSION },
+        backup: { file: file ? path.basename(file) : null, taken_at: taken ? new Date(taken).toISOString() : null, made_for_drill: madeBackup, decrypted_bytes: restoreBytes, latest_record_at: result.latest_audit_at || null },
+        rto: { seconds: rtoSeconds, target_minutes: t.rto_minutes, met: rtoSeconds === null ? null : rtoSeconds <= t.rto_minutes * 60, measures: "from starting the restore (reading and decrypting the backup) to the restored copy answering /api/health" },
+        rpo: { seconds: rpoSeconds, target_hours: t.rpo_hours, met: rpoSeconds === null ? null : rpoSeconds <= t.rpo_hours * 3600, measures: "age of the newest backup at the time of the drill: what a loss at that moment would have cost" },
+        elapsed_seconds: Math.round((finished - started) / 100) / 10,
+        schema: { restored_from: result.source_schema_version ?? null, now: result.schema_version ?? null },
+        counts: { restored: result.restored_counts || null, live_minus_backup: exposure },
+        audit: { entries_verified: result.audit_entries_verified ?? null, anchors: result.anchors || null },
+        decrypt_sample: result.decrypt_sample || null,
+        checks,
+        adjustments: result.adjustments || [],
+        failures,
+        live_database_untouched: true
+      };
+      const doc = { report, integrity: seal(report) };
+      const files = {};
+      try {
+        const dir = backupsDir();
+        fs.mkdirSync(dir, { recursive: true, mode: 448 });
+        const stamp2 = report.started_at.replace(/[:.]/g, "-");
+        files.json = `dr-drill-${stamp2}.json`;
+        files.text = `dr-drill-${stamp2}.txt`;
+        fs.writeFileSync(path.join(dir, files.json), JSON.stringify(doc, null, 2) + "\n", { mode: 384 });
+        fs.writeFileSync(path.join(dir, files.text), textReport(doc), { mode: 384 });
+      } catch (e) {
+        report.failures.push(`the report could not be written: ${e.message}`);
+      }
+      if (record) {
+        const summary = { at: report.finished_at, ok: report.ok, rto_seconds: rtoSeconds, rpo_seconds: rpoSeconds, rto_target_minutes: t.rto_minutes, rpo_target_hours: t.rpo_hours, backup_file: report.backup.file, backup_taken_at: report.backup.taken_at, report_file: files.json || null, sha256: doc.integrity.sha256, failures: failures.slice(0, 5), checks_passed: checks.filter((c) => c.ok).length, checks_total: checks.length, trigger };
+        db3.setSetting("dr_last_drill", JSON.stringify(summary));
+        audit3.log({ user: typeof by === "object" ? by : { username: String(by) }, action: "dr.drill", success: report.ok, details: { trigger, backup: report.backup.file, rto_seconds: rtoSeconds, rpo_seconds: rpoSeconds, checks_passed: summary.checks_passed, checks_total: summary.checks_total, report: files.json || null, sha256: doc.integrity.sha256 } });
+      }
+      if (current2 === job) current2 = null;
+      return { ...doc, files };
+    }
+    function fmtDur(s) {
+      if (s === null || s === void 0) return "n/a";
+      if (s < 120) return `${s} s`;
+      if (s < 7200) return `${(s / 60).toFixed(1)} min`;
+      return `${(s / 3600).toFixed(1)} h`;
+    }
+    function textReport({ report: r, integrity }) {
+      const L = [];
+      L.push(`SUDS disaster-recovery drill \u2014 ${r.ok ? "PASSED" : "FAILED"}`);
+      L.push(`Started ${r.started_at}, finished ${r.finished_at} (${r.trigger}, by ${typeof r.by === "object" ? r.by.username : r.by}) on ${r.server.host}, SUDS ${r.server.version}`);
+      L.push("");
+      L.push(`Backup restored: ${r.backup.file || "none"}${r.backup.taken_at ? ` (taken ${r.backup.taken_at})` : ""}${r.backup.made_for_drill ? " \u2014 made for this drill, no earlier backup was on disk" : ""}`);
+      L.push(`RTO (restore to serving): ${fmtDur(r.rto.seconds)} \u2014 target ${r.rto.target_minutes} min \u2014 ${r.rto.met === null ? "not measured" : r.rto.met ? "met" : "NOT MET"}`);
+      L.push(`RPO (age of that backup): ${fmtDur(r.rpo.seconds)} \u2014 target ${r.rpo.target_hours} h \u2014 ${r.rpo.met === null ? "not measured" : r.rpo.met ? "met" : "NOT MET"}`);
+      L.push("");
+      L.push("Checks:");
+      for (const c of r.checks) L.push(`  [${c.ok ? "PASS" : "FAIL"}] ${c.name}${c.detail ? ` \u2014 ${c.detail}` : ""}`);
+      for (const f of r.failures.filter((f2) => !r.checks.some((c) => f2.startsWith(c.name)))) L.push(`  [FAIL] ${f}`);
+      if (r.adjustments.length) {
+        L.push("");
+        L.push("Changed in the throwaway copy only: " + r.adjustments.join("; "));
+      }
+      if (r.counts.live_minus_backup && Object.keys(r.counts.live_minus_backup).length) {
+        L.push("");
+        L.push("Rows the live server holds beyond this backup: " + Object.entries(r.counts.live_minus_backup).map(([k, v]) => `${k} ${v}`).join(", "));
+      }
+      L.push("");
+      L.push("The backup was restored into a temporary directory, checked by a separate process that was never given the live database's path, and deleted afterwards. The live database received only this result (a settings row and an audit entry).");
+      L.push(`Integrity: SHA-256 ${integrity.sha256}`);
+      L.push(`           HMAC-SHA256 ${integrity.hmac_sha256}`);
+      L.push("The JSON report beside this file is the record of the drill; this text is a convenience copy.");
+      return L.join("\n") + "\n";
+    }
+    function start2(opts) {
+      if (current2) {
+        const e = new Error("A recovery drill is already running");
+        e.code = "EBUSY";
+        throw e;
+      }
+      const p = run2(opts).catch((e) => {
+        console.error("[suds] recovery drill:", e && e.message || e);
+      });
+      return p;
+    }
+    function runIfDue(now = Date.now()) {
+      if (db3.getSetting("dr_drill_monthly", "0") !== "1" || current2) return null;
+      const last = lastDrill();
+      if (last && last.at && now - Date.parse(last.at) < MONTH_MS) return null;
+      return start2({ by: "system", trigger: "monthly" });
+    }
+    module.exports = { run: run2, start: start2, runIfDue, status, lastDrill, latestBackup, backupTime, verifyReport, canonical, seal, textReport, targets };
+  }
+});
+
+// server/security-status.js
+var require_security_status = __commonJS({
+  "server/security-status.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var path = (init_path(), __toCommonJS(path_exports));
+    var config = require_config();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var ROLES = ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"];
+    var DAY = 864e5;
+    var ageDays = (iso) => iso ? (Date.now() - Date.parse(iso)) / DAY : null;
+    function validateSettings() {
+      const { badRequest } = require_http();
+      const pol = auth3.policy();
+      if (!pol.ssoRequiredSetting) return;
+      if (!config.oidc.enabled) throw badRequest("Single sign-on cannot be required until it is configured (OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_REDIRECT_URI; docs/DEPLOYMENT.md)");
+      if (!pol.ssoEmergencyAccounts.length) throw badRequest("Name at least one emergency (break-glass) administrator account that may still sign in with a password, or an identity-provider outage would lock everyone out");
+      for (const u of pol.ssoEmergencyAccounts) {
+        const row = db3.one(`SELECT role, is_active FROM users WHERE username=?`, u);
+        if (!row) throw badRequest(`Emergency account "${u}" does not exist`);
+        if (row.role !== "admin" || !row.is_active) throw badRequest(`Emergency account "${u}" must be an active administrator`);
+      }
+    }
+    function mfaReport() {
+      const pol = auth3.policy();
+      const users = db3.all(`SELECT id, username, display_name, role, mfa_enabled, created_at, last_login_at, oidc_subject FROM users WHERE is_active=1 ORDER BY display_name`);
+      const without = users.filter((u) => !u.mfa_enabled).map((u) => {
+        const deadline = auth3.mfaDeadline(u);
+        return { id: u.id, username: u.username, display_name: u.display_name, role: u.role, required: pol.mfaRequiredRoles.includes(u.role), deadline, overdue: !!deadline && Date.now() > Date.parse(deadline), sso_linked: !!u.oidc_subject, emergency_account: pol.ssoEmergencyAccounts.includes(String(u.username).toLowerCase()), last_login_at: u.last_login_at };
+      });
+      return { active: users.length, with_mfa: users.length - without.length, coverage_pct: users.length ? Math.round((users.length - without.length) / users.length * 1e3) / 10 : 100, required_roles: pol.mfaRequiredRoles, require_all: pol.mfaRequireAll, grace_days: pol.mfaGraceDays, without };
+    }
+    function lastAudit(action) {
+      return db3.one(`SELECT at, details FROM audit_log WHERE action=? ORDER BY id DESC LIMIT 1`, action) || null;
+    }
+    function settingUpdatedAt(key) {
+      const r = db3.one(`SELECT updated_at FROM settings WHERE key=?`, key);
+      return r ? r.updated_at : null;
+    }
+    function status() {
+      const items = [];
+      const add = (group, name, level, value, detail = "", evidence = "") => items.push({ group, name, level, value, detail, evidence });
+      const pol = auth3.policy();
+      const mfa = mfaReport();
+      const overdue = mfa.without.filter((u) => u.overdue).length;
+      add(
+        "Identity",
+        "Two-step verification coverage",
+        mfa.coverage_pct === 100 ? "ok" : overdue ? "bad" : "warn",
+        `${mfa.coverage_pct}% (${mfa.with_mfa} of ${mfa.active} active accounts)`,
+        mfa.without.length ? `${mfa.without.length} without it${overdue ? `, ${overdue} past their enrolment deadline (locked out of everything but enrolment)` : ""} \u2014 see "Accounts without two-step verification" below.` : "Every active account has enrolled.",
+        "server/auth.js requireAuth, mfaDeadline"
+      );
+      const allRoles = ROLES.every((r) => pol.mfaRequiredRoles.includes(r));
+      add(
+        "Identity",
+        "Two-step verification required for",
+        allRoles ? "ok" : "warn",
+        pol.mfaRequireAll ? 'every role (enforced by the "all roles" switch)' : allRoles ? "every role" : pol.mfaRequiredRoles.join(", ") || "no role",
+        `New accounts have ${pol.mfaGraceDays} day${pol.mfaGraceDays === 1 ? "" : "s"} to enrol, then are blocked until they do.${pol.mfaRequireAll ? "" : ' Turn on "Require two-step verification for every role" in Settings to make this explicit.'}`,
+        "Settings \u2192 Security policy; server/auth.js policy()"
+      );
+      const linked = db3.one(`SELECT COUNT(*) n FROM users WHERE is_active=1 AND oidc_subject IS NOT NULL AND oidc_subject <> ''`).n;
+      add(
+        "Identity",
+        "Single sign-on (OIDC)",
+        config.oidc.enabled ? "ok" : "warn",
+        config.oidc.enabled ? `configured (${config.oidc.issuer.replace(/^https?:\/\//, "")}); ${linked} account${linked === 1 ? "" : "s"} linked` : "not configured",
+        config.oidc.enabled ? "" : "Set OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET and OIDC_REDIRECT_URI to sign in through the county identity provider (docs/DEPLOYMENT.md).",
+        "server/oidc.js, server/routes/oidc.js"
+      );
+      add(
+        "Identity",
+        "Password sign-in",
+        pol.ssoRequired ? "ok" : pol.ssoRequiredSetting ? "bad" : "info",
+        pol.ssoRequired ? `disabled except for emergency account${pol.ssoEmergencyAccounts.length === 1 ? "" : "s"} ${pol.ssoEmergencyAccounts.join(", ")}` : pol.ssoRequiredSetting ? "SSO is set as required, but OIDC is not configured, so passwords are still accepted" : "allowed for every account",
+        pol.ssoRequired ? "Every emergency sign-in is audited (auth.login with emergency_account) and logged." : 'Settings \u2192 Security policy \u2192 "Require single sign-on" turns password sign-in off for everyone but named break-glass administrators.',
+        "server/auth.js login()"
+      );
+      add("Identity", "Password policy", "info", `${config.password.minLength}+ characters with upper, lower, digit and symbol; expires after ${pol.passwordMaxAgeDays} days; locked for ${config.lockout.minutes} min after ${config.lockout.maxAttempts} failures`, "Hashed with scrypt (N=32768).", "server/auth.js passwordPolicy, server/crypto.js");
+      add("Identity", "Session timeouts", pol.idleMinutes <= 15 ? "ok" : "warn", `signed out after ${pol.idleMinutes} min idle; ${pol.absoluteHours} h maximum`, pol.idleMinutes <= 15 ? "" : "HIPAA automatic logoff: 15 minutes or less is typical.", "Settings \u2192 Security policy; server/auth.js resolveSession");
+      const hours = Number(db3.getSetting("backup_schedule_hours", "0")) || 0;
+      const lastBackup = db3.getSetting("last_scheduled_backup_at", null);
+      const lastStatus = db3.getSetting("last_scheduled_backup_status", "") || "";
+      const stale = hours && (!lastBackup || ageDays(lastBackup) * 24 > 2 * hours);
+      add("Backups and recovery", "Scheduled encrypted backups", !hours ? "bad" : stale || !/^ok/.test(lastStatus) ? "bad" : "ok", hours ? `every ${hours} h; last ${lastBackup || "never"}` : "off", hours ? lastStatus : "Turn on under Settings \u2192 Scheduled backups.", "server/scheduled-backup.js");
+      const offsite = db3.getSetting("backup_offsite_dir", "") || "";
+      add("Backups and recovery", "Offsite copy", !offsite ? "warn" : /offsite copy failed/.test(lastStatus) ? "bad" : "ok", offsite ? offsite : "not configured", offsite ? /offsite copy failed/.test(lastStatus) ? lastStatus : "Each scheduled backup is copied here after it is verified." : "Set an offsite directory (a mounted share on another host or site).", "server/scheduled-backup.js");
+      const drill = require_dr_drill().lastDrill();
+      const drillAge = drill ? ageDays(drill.at) : null;
+      add(
+        "Backups and recovery",
+        "Last recovery drill",
+        !drill ? "bad" : !drill.ok ? "bad" : drillAge > 95 ? "warn" : "ok",
+        drill ? `${drill.ok ? "passed" : "FAILED"} ${drill.at.slice(0, 10)} \u2014 RTO ${drill.rto_seconds ?? "?"} s (target ${drill.rto_target_minutes} min), RPO ${drill.rpo_seconds != null ? Math.round(drill.rpo_seconds / 360) / 10 + " h" : "?"} (target ${drill.rpo_target_hours} h)` : "never run",
+        drill ? drill.ok ? `${drill.checks_passed}/${drill.checks_total} checks; report ${drill.report_file || "(not written)"}.` : (drill.failures || []).join("; ") : "Run one from System & backups, or npm run dr-drill.",
+        "server/dr-drill.js; report in <data>/backups/dr-drill-*.json"
+      );
+      add("Backups and recovery", "Monthly recovery drill", db3.getSetting("dr_drill_monthly", "0") === "1" ? "ok" : "info", db3.getSetting("dr_drill_monthly", "0") === "1" ? "on" : "off", "Settings \u2192 Scheduled backups.", "server/dr-drill.js runIfDue");
+      add("Backups and recovery", "Backup encryption key", config.backupKey ? "ok" : "info", config.backupKey ? "separate SUDS_BACKUP_KEY" : "derived from the PHI encryption key", config.backupKey ? "" : "Setting SUDS_BACKUP_KEY lets the PHI key rotate without re-keying the backup set.", "server/backup.js");
+      const verifiedAt = db3.getSetting("audit_verified_at", null);
+      const fullAt = db3.getSetting("audit_full_verified_at", null);
+      const failedAt = db3.getSetting("audit_verify_failed_at", null);
+      add(
+        "Audit",
+        "Audit chain verification",
+        failedAt ? "bad" : !verifiedAt || ageDays(verifiedAt) > 2 ? "warn" : "ok",
+        failedAt ? `FAILED ${failedAt}` : verifiedAt ? `verified ${verifiedAt}${fullAt ? `; last full walk ${fullAt}` : ""}` : "not yet verified",
+        "Hash chain keyed with the index key; verified daily (incremental) and weekly (full).",
+        "server/audit.js scheduledVerify"
+      );
+      const ad = require_audit_anchor().dirStatus();
+      const anchors = require_audit_anchor().list().length;
+      const lastAnchor = db3.getSetting("audit_anchor_last_at", null);
+      const anchorWrite = db3.getSetting("audit_anchor_last_status", "") || "";
+      const anchorVerify = db3.getSetting("audit_anchor_verify_status", "") || "";
+      add(
+        "Audit",
+        "Audit anchors outside the database",
+        /^failed/.test(anchorWrite) || /^FAILED/.test(anchorVerify) ? "bad" : !ad.configured || ad.inside_data_dir ? "warn" : !anchors ? "warn" : "ok",
+        `${anchors} anchor${anchors === 1 ? "" : "s"} in ${ad.dir}${lastAnchor ? `; last ${lastAnchor}` : ""}${config.auditAnchorHours > 0 ? `; every ${config.auditAnchorHours} h and at each backup` : "; at each backup only"}`,
+        [anchorVerify ? `Last check: ${anchorVerify}.` : "Not yet checked (runs with the daily audit verification).", /^failed/.test(anchorWrite) ? `Last write ${anchorWrite}.` : "", !ad.configured || ad.inside_data_dir ? "Set AUDIT_ANCHOR_DIR to write-once storage outside the data directory (WORM/immutable share) so a rewrite of the whole data directory is also caught." : "", config.auditSyslog ? `Also sent to syslog ${config.auditSyslog}.` : ""].filter(Boolean).join(" "),
+        "server/audit-anchor.js"
+      );
+      add("Audit", "Audit retention", "info", `${Math.round(config.auditRetentionDays / 365 * 10) / 10} years (${config.auditRetentionDays} days)`, (() => {
+        const p = lastAudit("audit.purge");
+        return p ? `Last purge ${p.at}.` : "No audit entries old enough to purge yet.";
+      })(), "AUDIT_RETENTION_DAYS; server/audit.js purge");
+      const keyAt = settingUpdatedAt("key_fingerprint");
+      const rotated = lastAudit("security.key_rotated");
+      const idxRotated = lastAudit("security.index_key_rotated");
+      const keyAge = ageDays(rotated ? rotated.at : keyAt);
+      add(
+        "Encryption and keys",
+        "PHI encryption key",
+        keyAge !== null && keyAge > 400 ? "warn" : "ok",
+        `AES-256-GCM; keys from ${config.keySource === "env" ? "the environment / secrets manager" : config.keySource === "file" ? "data/keys.json (0600)" : "development key files in the data directory"}`,
+        `${rotated ? `Last rotated ${rotated.at}` : `In use since ${keyAt || "unknown"}`}${keyAge !== null ? ` (${Math.round(keyAge)} days)` : ""}. Rotate annually: npm run rotate-key.`,
+        "server/crypto.js; scripts/rotate-key.js"
+      );
+      add("Encryption and keys", "Index key (blind indexes, audit chain)", "info", idxRotated ? `last rotated ${idxRotated.at}` : "not rotated since install", "npm run rotate-index-key re-derives the indexes and re-signs the audit chain.", "scripts/rotate-index-key.js");
+      if (config.keySource === "file") {
+        const kb = db3.getSetting("keys_backup_at", null);
+        add("Encryption and keys", "Key backup", kb ? "ok" : "bad", kb ? `downloaded ${kb}` : "never downloaded", "Keep it apart from the database backups (a password manager or safe).", "Settings \u2192 System & backups");
+      }
+      const years = (() => {
+        const v = Number(db3.getSetting("client_retention_years", ""));
+        return Number.isFinite(v) && v > 0 ? v : config.clientRetentionYears;
+      })();
+      const ran = db3.getSetting("client_retention_ran_at", null);
+      add("Data lifecycle", "Client record retention", "info", `${years} years after last activity, then deleted from every table (legal hold exempts)`, ran ? `Retention job last ran ${ran}.` : "The retention job has not run yet.", "server/retention.js");
+      const tls = config.tls.cert ? `served by SUDS (${config.tls.mode === "selfsigned" ? "self-signed certificate" : "certificate from TLS_CERT_PATH"})` : config.trustProxy ? "terminated by a reverse proxy (TRUST_PROXY)" : "not configured";
+      let certNote = "";
+      try {
+        const crt = config.tls.cert || path.join(config.dataDir, "certs", "suds.crt");
+        if (fs.existsSync(crt)) certNote = `Certificate valid until ${new (init_crypto2(), __toCommonJS(crypto_exports)).X509Certificate(fs.readFileSync(crt)).validTo}.`;
+      } catch {
+      }
+      add("Platform", "HTTPS", config.tls.cert || config.trustProxy ? "ok" : config.isProd ? "bad" : "warn", tls, certNote || (config.tls.cert || config.trustProxy ? "" : "Enable HTTPS under Network & devices, or run behind a TLS proxy."), "server/listener.js; Caddyfile");
+      add("Platform", "Local mode (offline copies on devices)", config.localModeEnabled ? "warn" : "ok", config.localModeEnabled ? "on" : "off", config.localModeEnabled ? `Records are copied to devices${pol.ssoRequired ? "; with SSO required only emergency accounts can sync a device" : ""}. Only for a documented field-work need (docs/PLATFORM.md).` : "The office server is the only copy.", "LOCAL_MODE_ENABLED / server.json");
+      add("Platform", "Version", "info", `SUDS ${config.version}, schema ${db3.getSetting("schema_version", "?")}, Node ${proc.versions.node}`, config.updateFeedUrl ? "Update checks are configured (System & backups \u2192 Check for updates)." : "UPDATE_FEED_URL is not set, so this server cannot check for updates itself.", "package.json; server/update.js");
+      add("Platform", "Monitoring", config.metricsToken || config.logFormat === "json" ? "ok" : "info", [config.metricsToken ? "Prometheus metrics on" : "metrics off", `logs ${config.logFormat}`].join("; "), "/api/health answers 503 on a failed audit check, stale backups or an expiring certificate.", "server/metrics.js, server/log.js, server/routes/app.js");
+      const counts = { ok: 0, warn: 0, bad: 0, info: 0 };
+      for (const i of items) counts[i.level]++;
+      return { generated_at: db3.now(), version: config.version, counts, items, mfa, attestation: "SUDS holds no SOC 2, ISO 27001, HITRUST, StateRAMP or FedRAMP attestation. This page reports the technical controls in this installation; independent attestation requires an auditor (docs/security/SOC2-READINESS.md)." };
+    }
+    module.exports = { status, mfaReport, validateSettings };
   }
 });
 
@@ -12756,7 +13486,14 @@ var require_admin = __commonJS({
       "backup_retain_count",
       "backup_offsite_dir",
       "client_retention_years",
-      "org_timezone"
+      "org_timezone",
+      // Identity and recovery controls (server/security-status.js validates them together).
+      "mfa_require_all",
+      "sso_required",
+      "sso_emergency_accounts",
+      "dr_drill_monthly",
+      "dr_rto_target_minutes",
+      "dr_rpo_target_hours"
     ];
     var listener = (init_listener(), __toCommonJS(listener_exports));
     var fs = (init_fs(), __toCommonJS(fs_exports));
@@ -12777,6 +13514,7 @@ var require_admin = __commonJS({
       });
       r.put("/api/admin/settings", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
         const changed = [];
+        const ssoBefore = [db3.getSetting("sso_required", "0"), db3.getSetting("sso_emergency_accounts", "")].join("|");
         db3.transaction(() => {
           for (const k of SETTING_KEYS) if (ctx.body[k] !== void 0) {
             let v = ctx.body[k] === null ? "" : String(ctx.body[k]).slice(0, 500);
@@ -12785,12 +13523,15 @@ var require_admin = __commonJS({
             if (k === "client_retention_years" && v !== "" && Number(v) < 6) throw badRequest("Client records must be kept at least 6 years (45 CFR \xA7164.316(b)(2)); most SUD programs keep 7 or more");
             if (k === "self_signup" && v !== "" && !["0", "1"].includes(v)) throw badRequest("self_signup must be 1 (on) or 0 (off)");
             if (k === "org_timezone" && v !== "" && !require_budget().validTimezone(v)) throw badRequest("org_timezone must be a time zone name such as America/Los_Angeles");
+            if (["mfa_require_all", "sso_required", "dr_drill_monthly"].includes(k) && v !== "" && !["0", "1"].includes(v)) throw badRequest(`${k} must be 1 (on) or 0 (off)`);
+            if (["dr_rto_target_minutes", "dr_rpo_target_hours"].includes(k) && v !== "" && !(Number(v) > 0)) throw badRequest(`${k} must be a positive number`);
             if (k === "mfa_required_roles") v = v.split(",").map((x) => x.trim()).filter((x) => ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"].includes(x)).join(",");
             if (k === "session_idle_minutes" && v !== "" && Number(v) > 60) throw badRequest("Idle timeout may not exceed 60 minutes (HIPAA automatic logoff)");
             if (v === "") db3.run(`DELETE FROM settings WHERE key=?`, k);
             else db3.setSetting(k, v);
             changed.push(k);
           }
+          if (!config.local && [db3.getSetting("sso_required", "0"), db3.getSetting("sso_emergency_accounts", "")].join("|") !== ssoBefore) require_security_status().validateSettings();
         });
         audit3.log({ user: ctx.user, action: "settings.update", ip: ctx.ip, details: { changed } });
         return { ok: true };
@@ -12823,6 +13564,10 @@ var require_admin = __commonJS({
       });
       r.get("/api/admin/audit/verify", auth3.requireAuth, auth3.requirePerm("audit:read"), async (ctx) => {
         const res = await audit3.verifyChainAsync();
+        if (!config.local) {
+          const a = require_audit_anchor().verifyAndRecord();
+          res.anchors = { ok: a.ok, total: a.total, matched: a.matched, other_key: a.other_key, purged: a.purged, bad: a.bad.slice(0, 20) };
+        }
         audit3.log({ user: ctx.user, action: "audit.verify", ip: ctx.ip, details: res });
         return res;
       });
@@ -13117,6 +13862,7 @@ var require_app = __commonJS({
         const warnings = [];
         try {
           if (db3.getSetting("audit_verify_failed_at", null)) warnings.push(`The audit log failed its integrity check at ${db3.getSetting("audit_verify_failed_at")}. Investigate before anything else.`);
+          if (/^FAILED/.test(db3.getSetting("audit_anchor_verify_status", "") || "")) warnings.push(`The audit log no longer matches the anchors written outside the database (checked ${db3.getSetting("audit_anchor_verified_at")}). Investigate before anything else.`);
           const hours = Number(db3.getSetting("backup_schedule_hours", "0")) || 0;
           const last = db3.getSetting("last_scheduled_backup_at", null);
           const status = db3.getSetting("last_scheduled_backup_status", "") || "";
@@ -22613,6 +23359,239 @@ var require_resources = __commonJS({
   }
 });
 
+// server/audit-export.js
+var require_audit_export = __commonJS({
+  "server/audit-export.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    var FORMAT2 = "suds-audit-export";
+    var KEYED_PREFIX = "v2:";
+    var payloadOf = (r) => [r.at, r.user_id || "", r.username || "", r.action, r.entity || "", r.entity_id || "", r.client_id || "", r.ip || "", r.success ? 1 : 0, r.details || "", r.prev_hash].join("|");
+    var ENTRY_FIELDS = ["id", "at", "user_id", "username", "action", "entity", "entity_id", "client_id", "ip", "success", "details", "prev_hash", "hash"];
+    function entryLine(r) {
+      const o = { type: "entry" };
+      for (const k of ENTRY_FIELDS) o[k] = r[k] === void 0 ? null : r[k];
+      return JSON.stringify(o);
+    }
+    var hmac2 = (key, s) => crypto3.createHmac("sha256", key).update(s).digest("hex");
+    var safeEq = (a, b) => typeof a === "string" && typeof b === "string" && a.length === b.length && crypto3.timingSafeEqual(import_buffer.Buffer.from(a), import_buffer.Buffer.from(b));
+    function manifestMac(m, key) {
+      const { mac, ...rest } = m;
+      return hmac2(key, JSON.stringify(rest));
+    }
+    var ANCHOR_FIELDS = ["v", "kind", "at", "reason", "install", "gen", "prev_gen", "head_id", "head_hash", "first_id", "rows", "host", "key_id", "prev_mac"];
+    function anchorMac(a, key) {
+      const o = {};
+      for (const k of ANCHOR_FIELDS) o[k] = a[k] === void 0 ? null : a[k];
+      return hmac2(key, JSON.stringify(o));
+    }
+    var keyIdOf = (key) => hmac2(key, "suds-audit-anchor-key-id").slice(0, 16);
+    function verifyExport(text, { key = null, extraAnchors = [] } = {}) {
+      const errors = [];
+      const warn = [];
+      const lines = String(text).split("\n");
+      if (lines[lines.length - 1] === "") lines.pop();
+      const out2 = { ok: false, level: key ? "cryptographic (entries, manifest and anchors checked with the index key)" : "structural (linkage, digest and anchors; keyed entry hashes not checked without the index key)", entries: 0, keyed_checked: 0, keyed_unchecked: 0, legacy_checked: 0, anchors_checked: 0, anchors_matched: 0, anchors_outside_range: 0, errors, warnings: warn };
+      if (!lines.length) {
+        errors.push("the file is empty");
+        return out2;
+      }
+      let manifest;
+      try {
+        manifest = JSON.parse(lines[lines.length - 1]);
+      } catch {
+        manifest = null;
+      }
+      if (!manifest || manifest.type !== "manifest") {
+        errors.push("the last line is not a manifest: the file is incomplete or was cut short");
+        return out2;
+      }
+      let header;
+      try {
+        header = JSON.parse(lines[0]);
+      } catch {
+        header = null;
+      }
+      if (!header || header.type !== "header" || header.format !== FORMAT2) errors.push("the first line is not a SUDS audit export header");
+      out2.header = header;
+      out2.manifest = { entries: manifest.entries, first_id: manifest.first_id, last_id: manifest.last_id, generated_at: header && header.generated_at };
+      const body = lines.slice(0, -1).map((l) => l + "\n").join("");
+      const digest = crypto3.createHash("sha256").update(body).digest("hex");
+      if (digest !== manifest.sha256) errors.push("the SHA-256 of the file does not match its manifest: lines were changed, added or removed");
+      if (key) {
+        if (!safeEq(manifestMac(manifest, key), manifest.mac)) errors.push("the manifest MAC does not verify with this index key (the manifest was altered, or the key is not the one this server used)");
+        if (manifest.key_id && manifest.key_id !== keyIdOf(key)) warn.push("the manifest names a different index key than the one supplied");
+      }
+      const byId = /* @__PURE__ */ new Map();
+      let prev = null;
+      let lastId = 0;
+      for (let i = 1; i < lines.length - 1; i++) {
+        let e;
+        try {
+          e = JSON.parse(lines[i]);
+        } catch {
+          errors.push(`line ${i + 1} is not JSON`);
+          continue;
+        }
+        if (e.type !== "entry") {
+          errors.push(`line ${i + 1} is not an entry`);
+          continue;
+        }
+        out2.entries++;
+        if (e.id <= lastId) errors.push(`entry ${e.id} is out of order`);
+        lastId = e.id;
+        if (prev === null) {
+          if (manifest.first_prev_hash !== void 0 && e.prev_hash !== manifest.first_prev_hash) errors.push(`the first entry's prev_hash does not match the manifest`);
+        } else if (e.prev_hash !== prev) errors.push(`entry ${e.id} does not follow the entry before it (prev_hash mismatch): the chain is broken here`);
+        const p = payloadOf(e);
+        if (String(e.hash).startsWith(KEYED_PREFIX)) {
+          if (key) {
+            out2.keyed_checked++;
+            if (!safeEq(KEYED_PREFIX + hmac2(key, p), e.hash)) errors.push(`entry ${e.id}: its hash does not verify with the index key (the entry was altered)`);
+          } else out2.keyed_unchecked++;
+        } else {
+          out2.legacy_checked++;
+          if (crypto3.createHash("sha256").update(p).digest("hex") !== e.hash) errors.push(`entry ${e.id}: its (unkeyed) hash does not match its contents`);
+        }
+        byId.set(e.id, e.hash);
+        prev = e.hash;
+      }
+      if (out2.entries !== manifest.entries) errors.push(`the manifest lists ${manifest.entries} entries but the file holds ${out2.entries}`);
+      if (prev !== null && manifest.last_hash !== prev) errors.push("the last entry does not match the manifest");
+      const anchors = [...(manifest.anchors || []).map((a) => ({ a, src: "embedded" })), ...extraAnchors.map((a) => ({ a, src: "supplied" }))];
+      for (const { a, src } of anchors) {
+        if (!a || a.kind !== "suds-audit-anchor") continue;
+        if (!byId.has(a.head_id)) {
+          out2.anchors_outside_range++;
+          continue;
+        }
+        out2.anchors_checked++;
+        if (key && a.key_id === keyIdOf(key) && !safeEq(anchorMac(a, key), a.mac)) {
+          errors.push(`${src} anchor for entry ${a.head_id} (${a.at}) does not verify with the index key`);
+          continue;
+        }
+        if (byId.get(a.head_id) !== a.head_hash) {
+          errors.push(`${src} anchor written ${a.at} recorded a different hash for entry ${a.head_id}: the chain was rewritten after it was anchored`);
+          continue;
+        }
+        out2.anchors_matched++;
+      }
+      if (!out2.anchors_checked) warn.push("no anchor falls inside this range, so a wholesale rewrite before the export was made cannot be ruled out from this file alone; supply the anchor files (--anchors)");
+      if (!key && out2.keyed_unchecked) warn.push(`${out2.keyed_unchecked} keyed entries were checked for linkage only; their HMACs need the index key (--key)`);
+      out2.ok = errors.length === 0;
+      return out2;
+    }
+    module.exports = { FORMAT: FORMAT2, payloadOf, entryLine, manifestMac, anchorMac, keyIdOf, verifyExport, ENTRY_FIELDS };
+  }
+});
+
+// server/routes/security.js
+var require_security = __commonJS({
+  "server/routes/security.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var config = require_config();
+    var { badRequest, HttpError: HttpError3 } = require_http();
+    module.exports = (r) => {
+      r.get("/api/admin/security/status", auth3.requireAuth, auth3.requirePerm("settings:manage"), () => require_security_status().status());
+      r.get("/api/admin/security/mfa-report", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
+        const rep = require_security_status().mfaReport();
+        audit3.log({ user: ctx.user, action: "security.mfa_report", ip: ctx.ip, details: { without: rep.without.length } });
+        return rep;
+      });
+      r.get("/api/admin/dr-drill", auth3.requireAuth, auth3.requirePerm("settings:manage"), () => require_dr_drill().status());
+      r.post("/api/admin/dr-drill", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+        const drill = require_dr_drill();
+        if (drill.status().running) throw new HttpError3(409, "A recovery drill is already running");
+        audit3.log({ user: ctx.user, action: "dr.drill.start", ip: ctx.ip, details: { fresh: !!(ctx.body && ctx.body.fresh) } });
+        drill.start({ by: { id: ctx.user.id, username: ctx.user.username }, trigger: "manual", fresh: !!(ctx.body && ctx.body.fresh) });
+        ctx.status = 202;
+        return { started: true };
+      });
+      r.post("/api/admin/audit/anchor", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+        let a;
+        try {
+          a = require_audit_anchor().write("manual");
+        } catch (e) {
+          throw badRequest(`The anchor could not be written: ${e.message}`);
+        }
+        audit3.log({ user: ctx.user, action: "audit.anchor", ip: ctx.ip, details: a ? { head_id: a.head_id, file: a.file } : { empty: true } });
+        return { ok: true, anchor: a };
+      });
+      r.get("/api/admin/audit/export", auth3.requireAuth, auth3.requirePerm("audit:read"), async (ctx) => {
+        const ex = require_audit_export();
+        const q = ctx.query;
+        const num = (k) => {
+          const v = q.get(k);
+          if (v === null || v === "") return null;
+          if (!/^\d+$/.test(v)) throw badRequest(`${k} must be an entry id`);
+          return Number(v);
+        };
+        const date = (k) => {
+          const v = q.get(k);
+          if (!v) return null;
+          if (!/^\d{4}-\d{2}-\d{2}/.test(v) || !Number.isFinite(Date.parse(v))) throw badRequest(`${k} must be a date (YYYY-MM-DD)`);
+          return v;
+        };
+        let fromId = num("from_id");
+        let toId = num("to_id");
+        const from = date("from");
+        const to = date("to");
+        if (from) fromId = Math.max(fromId || 0, db3.one(`SELECT MIN(id) m FROM audit_log WHERE at >= ?`, from).m || Number.MAX_SAFE_INTEGER);
+        if (to) toId = Math.min(toId || Number.MAX_SAFE_INTEGER, db3.one(`SELECT MAX(id) m FROM audit_log WHERE at <= ?`, to.length === 10 ? to + "T23:59:59.999Z" : to).m || 0);
+        const bounds = db3.one(`SELECT MIN(id) mn, MAX(id) mx FROM audit_log`);
+        fromId = Math.max(fromId || 0, bounds.mn || 0);
+        toId = Math.min(toId === null ? Number.MAX_SAFE_INTEGER : toId, bounds.mx || 0);
+        const count = toId >= fromId ? db3.one(`SELECT COUNT(*) n FROM audit_log WHERE id BETWEEN ? AND ?`, fromId, toId).n : 0;
+        audit3.log({ user: ctx.user, action: "audit.export", ip: ctx.ip, details: { from_id: fromId, to_id: toId, entries: count } });
+        const anchorMod = require_audit_anchor();
+        const anchors = anchorMod.list().filter((f) => f.anchor && f.anchor.head_id >= fromId && f.anchor.head_id <= toId).map((f) => f.anchor);
+        const head = audit3.checkHead();
+        const crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+        const hash2 = crypto3.createHash("sha256");
+        const res = ctx.res;
+        const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+        res.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", "Content-Disposition": `attachment; filename="suds-audit-${fromId}-${toId}-${stamp2}.ndjson"`, "Cache-Control": "no-store" });
+        const write = (line) => {
+          const s = line + "\n";
+          hash2.update(s);
+          return res.write(s);
+        };
+        const drained = () => new Promise((resolve2) => {
+          res.once("drain", resolve2);
+          res.once("close", resolve2);
+        });
+        const header = { type: "header", format: ex.FORMAT, version: 1, generated_at: db3.now(), server_version: config.version, org_name: db3.getSetting("org_name", null), first_id: count ? fromId : null, last_id: count ? toId : null, chain: 'each entry: hash = "v2:" + HMAC-SHA256(index key, payload) (or plain SHA-256 for entries before keyed hashing); payload = at|user_id|username|action|entity|entity_id|client_id|ip|success|details|prev_hash' };
+        write(JSON.stringify(header));
+        let after = fromId - 1;
+        let n = 0;
+        let firstPrev = null;
+        let lastHash = null;
+        for (; ; ) {
+          const rows = count ? db3.all(`SELECT * FROM audit_log WHERE id > ? AND id <= ? ORDER BY id ASC LIMIT 5000`, after, toId) : [];
+          if (!rows.length) break;
+          if (res.destroyed) return;
+          for (const row of rows) {
+            if (firstPrev === null) firstPrev = row.prev_hash;
+            lastHash = row.hash;
+            n++;
+            if (!write(ex.entryLine(row))) await drained();
+          }
+          after = rows[rows.length - 1].id;
+          await new Promise((resolve2) => globalThis.setImmediate ? globalThis.setImmediate(resolve2) : setTimeout(resolve2, 0));
+        }
+        const manifest = { type: "manifest", entries: n, first_id: n ? fromId : null, last_id: n ? after : null, first_prev_hash: firstPrev, last_hash: lastHash, sha256: hash2.digest("hex"), key_id: anchorMod.keyId(), anchors, head_checkpoint: head, verify_with: "npm run verify-audit-export -- <this file> [--key <SUDS_INDEX_KEY>] [--anchors <anchor dir>]" };
+        manifest.mac = ex.manifestMac(manifest, config.indexKey);
+        res.end(JSON.stringify(manifest) + "\n");
+      });
+    };
+  }
+});
+
 // server/routes/setup.js
 var require_setup = __commonJS({
   "server/routes/setup.js"(exports, module) {
@@ -23667,6 +24646,7 @@ var init_ = __esm({
       "./routes/regions.js": () => require_regions2(),
       "./routes/reports.js": () => require_reports(),
       "./routes/resources.js": () => require_resources(),
+      "./routes/security.js": () => require_security(),
       "./routes/setup.js": () => require_setup(),
       "./routes/supervision.js": () => require_supervision(),
       "./routes/supplies.js": () => require_supplies(),
@@ -23741,12 +24721,13 @@ var require_app2 = __commonJS({
       "imports",
       "reports",
       "admin",
+      "security",
       "options",
       "regions",
       "intake",
       "client-errors"
     ];
-    var LOCAL_ROUTE_MODULES2 = ROUTE_MODULES.filter((m) => !["setup", "app", "sync", "intake", "oidc", "client-errors"].includes(m));
+    var LOCAL_ROUTE_MODULES2 = ROUTE_MODULES.filter((m) => !["setup", "app", "sync", "intake", "oidc", "client-errors", "security"].includes(m));
     var LOCAL_DISABLED_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SUDS \u2014 local mode is off</title>
 <style>body{font-family:system-ui,sans-serif;max-width:36rem;margin:4rem auto;padding:0 1rem;color:#222;line-height:1.5}h1{font-size:1.4rem}a{color:#0b5}</style></head>
 <body><h1>Local mode is turned off on this server</h1>

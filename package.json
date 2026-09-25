@@ -17,6 +17,8 @@
     "backup": "node --no-warnings=ExperimentalWarning scripts/backup.js",
     "rotate-key": "node --no-warnings=ExperimentalWarning scripts/rotate-key.js",
     "rotate-index-key": "node --no-warnings=ExperimentalWarning scripts/rotate-index-key.js",
+    "dr-drill": "node --no-warnings=ExperimentalWarning scripts/dr-drill.js",
+    "verify-audit-export": "node scripts/verify-audit-export.js",
     "update": "node --no-warnings=ExperimentalWarning scripts/update.js",
     "package": "node scripts/package.js",
     "build:local": "node scripts/build-local.js",

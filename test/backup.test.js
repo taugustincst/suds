@@ -174,3 +174,21 @@ test('restoring replaces the live database and keeps the previous one aside', ()
   // The server is still usable straight afterwards.
   assert.equal(db.one(`SELECT 1 AS ok`).ok, 1);
 });
+
+test('a restore is anchored, so the audit anchors written since the backup are not read as tampering', () => {
+  const audit = require('../server/audit');
+  const anchor = require('../server/audit-anchor');
+  audit.log({ user: { username: 'system' }, action: 'test.before-backup' });
+  anchor.write('manual');
+  const bytes = backup.create();
+  audit.log({ user: { username: 'system' }, action: 'test.after-backup' });
+  audit.log({ user: { username: 'system' }, action: 'test.after-backup' });
+  anchor.write('manual');
+  assert.equal(anchor.verify().ok, true);
+  backup.restore(backup.decrypt(bytes));
+  const v = anchor.verify();
+  assert.equal(v.ok, true, JSON.stringify(v.bad));
+  assert.ok(v.other_generation >= 1, 'the anchor written after the backup is counted, not failed');
+  assert.ok(v.matched >= 2, 'the anchor inside the restored chain still matches, and so does the restore anchor');
+  assert.ok(anchor.list().some((f) => f.anchor.reason === 'restore'));
+});

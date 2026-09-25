@@ -31,12 +31,13 @@ function rateLimitReset(key) { buckets.delete(key); }
 // out of the local-mode kernel.
 const ROUTE_MODULES = ['setup', 'auth', 'oidc', 'me', 'app', 'sync', 'dataimport', 'users', 'clients', 'assignments', 'episodes',
   'interventions', 'overdose', 'calls', 'time', 'supervision', 'resources', 'referrals', 'tasks', 'budget', 'notes',
-  'consents', 'patient-requests', 'forms', 'documents', 'imports', 'reports', 'admin', 'options', 'regions', 'intake', 'client-errors'];
+  'consents', 'patient-requests', 'forms', 'documents', 'imports', 'reports', 'admin', 'security', 'options', 'regions', 'intake', 'client-errors'];
 
 // Not on a device: setup and app are office-server concerns (first-run wizard, connection info), sync is the
 // device's own runner, intake is an inbound API for other systems to call, and oidc needs a live identity
 // provider to redirect to — meaningless (and always disabled) on a device with no office server behind it.
-const LOCAL_ROUTE_MODULES = ROUTE_MODULES.filter(m => !['setup', 'app', 'sync', 'intake', 'oidc', 'client-errors'].includes(m));
+// security is the office server's recovery drill, audit anchors and Security status (server/routes/security.js).
+const LOCAL_ROUTE_MODULES = ROUTE_MODULES.filter(m => !['setup', 'app', 'sync', 'intake', 'oidc', 'client-errors', 'security'].includes(m));
 
 // Served in place of the app shell when local mode is off (the wizard's answer in server.json, or LOCAL_MODE_ENABLED). No scripts, nothing to configure.
 const LOCAL_DISABLED_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SUDS — local mode is off</title>

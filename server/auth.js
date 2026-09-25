@@ -12,15 +12,31 @@ function policy() {
   // Settings route refuses to store it so nobody is told "0" and given 15.
   const num = (k, d, { zero = false } = {}) => { const raw = db.getSetting(k, null); if (raw === null || String(raw).trim() === '') return d; const v = Number(raw); return Number.isFinite(v) && (v > 0 || (zero && v === 0)) ? v : d; };
   const roles = db.getSetting('mfa_required_roles', null);
+  // "Every role, whatever the list says": an explicit switch an auditor can point at, rather than a list
+  // someone has to read and compare with the role table (Settings → Security policy, mfa_require_all).
+  const mfaAll = db.getSetting('mfa_require_all', '0') === '1';
   return {
     idleMinutes: num('session_idle_minutes', config.session.idleMinutes),
     absoluteHours: num('session_absolute_hours', config.session.absoluteHours),
     passwordMaxAgeDays: num('password_max_age_days', config.password.maxAgeDays),
-    mfaRequiredRoles: roles === null ? config.mfaRequiredRoles : roles.split(',').map(x => x.trim()).filter(Boolean),
+    mfaRequiredRoles: mfaAll ? Object.keys(PERMS) : roles === null ? config.mfaRequiredRoles : roles.split(',').map(x => x.trim()).filter(Boolean),
+    mfaRequireAll: mfaAll,
     // How long a new account in a role that requires two-step verification has to set it up. Without this
     // the very first administrator would be locked out the moment the setup wizard created them.
     mfaGraceDays: num('mfa_grace_days', config.mfaGraceDays, { zero: true }),
+    ...ssoPolicy(),
   };
+}
+
+// Single sign-on required: password sign-in is refused for every account except the named emergency
+// (break-glass) administrators, so leavers are cut off at the county's identity provider and password
+// policy lives there. Only in force while OIDC is actually configured — with no identity provider to send
+// people to, enforcing it would lock everyone out, so it falls open and the Security status page says so.
+// Never on a device (local mode has no identity provider).
+function ssoPolicy() {
+  const wanted = db.getSetting('sso_required', '0') === '1';
+  const emergency = String(db.getSetting('sso_emergency_accounts', '') || '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
+  return { ssoRequiredSetting: wanted, ssoRequired: wanted && !config.local && !!(config.oidc && config.oidc.enabled), ssoEmergencyAccounts: emergency };
 }
 
 // ---- Role-based permissions (minimum necessary) ----
@@ -271,6 +287,13 @@ async function login({ username, password, ctx }) {
     fail(lock ? 'locked after failures' : 'bad password');
   }
   if (pendingWipe) wipeRequired(true);
+  // Checked only once the password is right, so the answer says nothing about accounts to someone guessing.
+  const pol = policy();
+  const emergency = pol.ssoRequired && pol.ssoEmergencyAccounts.includes(String(user.username).toLowerCase());
+  if (pol.ssoRequired && !emergency) {
+    audit.log({ user, action: 'auth.login.sso_required', ip: ctx.ip, success: false });
+    throw new HttpError(403, 'This organisation requires single sign-on. Use the county sign-in button instead of a password.', { ssoRequired: true });
+  }
   db.run(`UPDATE users SET failed_attempts=0, locked_until=NULL, last_login_at=? WHERE id=?`, db.now(), user.id);
   // Only a device that has just proven who holds it is recorded (or reattributed) as that person's. The
   // flags are read again from the row touch() returns: an administrator acting between the check above
@@ -286,7 +309,9 @@ async function login({ username, password, ctx }) {
   const mfaRequiredForRole = policy().mfaRequiredRoles.includes(user.role);
   const mfaPending = !!user.mfa_enabled;
   const token = createSession(user, ctx, { mfaPending });
-  audit.log({ user, action: mfaPending ? 'auth.login.mfa_pending' : 'auth.login', ip: ctx.ip });
+  // A password sign-in while SSO is required is the break-glass path: said so in the audit trail and the log.
+  if (emergency) console.warn(`[suds] emergency (break-glass) password sign-in by ${user.username} while single sign-on is required`);
+  audit.log({ user, action: mfaPending ? 'auth.login.mfa_pending' : 'auth.login', ip: ctx.ip, details: emergency ? { emergency_account: true } : undefined });
   const deadline = mfaDeadline(user);
   return { token, user: publicUser(user), mfaPending, mfaSetupRequired: mfaRequiredForRole && !user.mfa_enabled, mfaSetupDeadline: deadline };
 }

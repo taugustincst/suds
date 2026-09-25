@@ -78,6 +78,8 @@ function run({ retain = 14, offsiteDir = '' } = {}) {
     }
   }
 
+  // Every backup is also an audit anchor: the chain head it contains, sealed outside the database.
+  if (!config.local) require('./audit-anchor').safeWrite('backup');
   kept = prune(dir, retain);
   db.setSetting('last_scheduled_backup_at', db.now());
   db.setSetting('last_scheduled_backup_status', !verified ? `backup written but could not be read back — ${verifyError}` : offsiteDir && offsiteOk === false ? `ok (verified) — offsite copy failed: ${offsiteError}; local backup kept` : 'ok (verified)');

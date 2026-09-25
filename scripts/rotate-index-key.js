@@ -90,6 +90,10 @@ if (require.main === module) {
   let result;
   try { result = rotateIndexKey(Buffer.from(newHex, 'hex')); }
   catch (e) { console.error(`[suds] ${e.message}`); db.close(); process.exit(1); }
+  // The re-signed chain no longer matches the anchors sealed under the old key (they stay on file, counted
+  // as "under an earlier index key"); a new anchor under the new key restarts the evidence from here.
+  try { const a = require('../server/audit-anchor').write('index-key-rotation', { key: Buffer.from(newHex, 'hex') }); if (a) console.log(`Audit anchor written for entry ${a.head_id} under the new key.`); }
+  catch (e) { console.error(`[suds] warning: no audit anchor could be written after the rotation: ${e.message}`); }
   db.close();
   // Where the key came from decides who updates it. From the environment: the operator does (the value
   // is theirs). From keys.json (setup-wizard installs) or the development key file: this script does,
