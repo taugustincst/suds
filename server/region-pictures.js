@@ -66,7 +66,8 @@ function describeNetworkError(e) {
   return null;
 }
 
-async function get(url, { timeoutMs, maxBytes, hops = 4 }) {
+// Follows redirects by hand (each hop checked) and resolves to the body and the address it came from.
+async function fetchChecked(url, { timeoutMs, maxBytes, hops = 4 }) {
   let target = assertPublicHttps(url);
   let res;
   for (let i = 0; i <= hops; i++) {
@@ -86,7 +87,15 @@ async function get(url, { timeoutMs, maxBytes, hops = 4 }) {
   if (Number(res.headers.get('content-length') || 0) > maxBytes) throw soft('file is too large');
   const buf = Buffer.from(await res.arrayBuffer());
   if (buf.length > maxBytes) throw soft('file is too large');
-  return buf;
+  return { buf, url: target };
+}
+async function get(url, opts) { return (await fetchChecked(url, opts)).buf; }
+
+// A thrown download error as the { ok: false } result callers show to staff.
+function failure(e) {
+  if (e && e.soft) return { ok: false, error: e.message, ...(e.network ? { network: true } : {}) };
+  if (e && e.name === 'TimeoutError') return { ok: false, error: 'timed out' };
+  return { ok: false, error: (e && e.message) || 'could not connect' };
 }
 
 /**
@@ -113,11 +122,28 @@ async function downloadPicture(target, { timeoutMs = 12000, deadline = 0 } = {})
     const buf = await get(url, { timeoutMs: budget(), maxBytes: MAX_PICTURE_BYTES });
     const type = sniff(buf); if (!type) return { ok: false, error: 'not a JPEG, PNG or WebP picture' };
     return { ok: true, buf, type, url };
-  } catch (e) {
-    if (e && e.soft) return { ok: false, error: e.message, ...(e.network ? { network: true } : {}) };
-    if (e && e.name === 'TimeoutError') return { ok: false, error: 'timed out' };
-    return { ok: false, error: (e && e.message) || 'could not connect' };
-  }
+  } catch (e) { return failure(e); }
+}
+
+/**
+ * Downloads the picture at an address someone pasted into a resource profile ("Add from a web address").
+ * The address may be the picture itself or a web page, in which case the picture that page advertises
+ * (its social preview image, then its touch icon) is taken, exactly as for provider pictures. Every hop
+ * goes through the same checks. Resolves to { ok: true, buf, type, url } or { ok: false, error, network? }.
+ */
+async function downloadFromAddress(address, { timeoutMs = 12000 } = {}) {
+  try {
+    const first = await fetchChecked(address, { timeoutMs, maxBytes: Math.max(MAX_PICTURE_BYTES, MAX_PAGE_BYTES) });
+    let type = sniff(first.buf);
+    if (type) return { ok: true, buf: first.buf, type, url: first.url };
+    const text = first.buf.subarray(0, 512 * 1024).toString('utf8');
+    if (!/<(html|head|meta|link)\b/i.test(text)) return { ok: false, error: 'not a JPEG, PNG or WebP picture' };
+    const url = pickImageUrl(text, first.url);
+    if (!url) return { ok: false, error: 'that page does not advertise a picture; open the picture itself and copy its address' };
+    const buf = await get(url, { timeoutMs, maxBytes: MAX_PICTURE_BYTES });
+    type = sniff(buf); if (!type) return { ok: false, error: 'not a JPEG, PNG or WebP picture' };
+    return { ok: true, buf, type, url };
+  } catch (e) { return failure(e); }
 }
 
 /** Every provider in a region file that has somewhere to look for a picture (no database needed). */
@@ -126,4 +152,4 @@ function regionTargets(regionId) {
   return region.providers.filter(p => p.image_url || p.website).map(p => ({ key: p.key, name: p.name, category: p.category, url: p.image_url || null, website: p.website || null }));
 }
 
-module.exports = { REGIONS, MAX_PICTURE_BYTES, EXT, sniff, pickImageUrl, assertPublicHttps, get, downloadPicture, regionTargets, describeNetworkError, _setFetchForTests };
+module.exports = { REGIONS, MAX_PICTURE_BYTES, EXT, sniff, pickImageUrl, assertPublicHttps, get, downloadPicture, downloadFromAddress, regionTargets, describeNetworkError, _setFetchForTests };

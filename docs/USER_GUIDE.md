@@ -42,6 +42,13 @@ The **Resource Directory** holds treatment providers, MAT clinics, shelters, har
 
 **Provider pictures.** After adding a starter directory, **Download provider pictures** replaces each program's generated card with the picture from the provider's own website: on an office server it downloads them (the server needs internet access), on SUDS on this device it uses the copies the site was published with. When it finishes it says how many pictures it got — on screen and in a pop-up message — and, under "Why some had no picture", why the rest keep their generated card. On a phone or tablet that syncs with an office server the button is not shown: the office's pictures arrive with the next sync. You can always add your own photos on a program's page (**+ Add pictures**).
 
+**Pictures on a program's page.** A program can have up to 12 pictures; the first is its main picture and the directory card's cover. There are four ways to add one, and all of them save the picture the same way (shrunk on your device first):
+* **+ Add pictures** opens your computer's or phone's file window. That window belongs to the operating system and can open behind the browser; the card says when one has opened.
+* **Drag** picture files from a folder or another window onto the Pictures card (it is outlined while you drag), or **paste** a copied picture (Ctrl+V / ⌘V) anywhere on the program's page outside a text box.
+* **Add from a web address** takes the address of a picture (https:// only), with an optional caption. On an office server the server downloads it — or, given the address of a web page, the preview picture that page advertises — with the same safety checks as provider pictures: never an address on the office network, JPEG, PNG or WebP only, 2 MB at most. The audit log records the site's name, not the full address. On SUDS on this device, and on a phone or tablet copy, your browser fetches the picture itself, and most websites do not allow that: you then see *That site does not allow its pictures to be copied from a browser* — save the picture to the device and use **+ Add pictures**, or drag it onto the card. (On a device, a plain http:// address is accepted only for the site SUDS itself is served from, or for this computer.)
+
+Do not add pictures of clients.
+
 ## Notes
 * **Administrative / contact notes** — visible to the whole care team; use for contacts, coordination, logistics.
 * **Clinical notes** — only clinicians and supervisors can write or read them; use SOAP/DAP/BIRP/GIRP formats (sections auto-build the narrative).

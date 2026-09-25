@@ -16,7 +16,8 @@ const shape = {
   summary: { type: 'string', maxLen: 3000 }, service_tags: { type: 'string', maxLen: 1000 }, levels_of_care: { type: 'string', maxLen: 200 }, populations: { type: 'string', maxLen: 500 }, intake_process: { type: 'string', maxLen: 2000 }, cost_notes: { type: 'string', maxLen: 1000 },
 };
 const MAX_PHOTOS = 12, MAX_PHOTO_BYTES = 2 * 1024 * 1024, MAX_THUMB_BYTES = 96 * 1024;
-const { badRequest } = require('../http');
+const { badRequest, HttpError } = require('../http');
+const pictures = require('../region-pictures');
 // Accept only real picture bytes (magic numbers), never trusting the declared type.
 function sniff(buf) {
   if (buf.length > 3 && buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return 'image/jpeg';
@@ -98,6 +99,32 @@ module.exports = (r) => {
     db.run(`INSERT INTO resource_photos(id,resource_id,caption,content_type,bytes,width,height,data_b64,thumb_b64,sort_order,uploaded_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, id, res.id, v.caption || null, pic.type, pic.buf.length, v.width || null, v.height || null, pic.b64, thumb ? thumb.b64 : null, order, ctx.user.id);
     db.run(`UPDATE resources SET updated_at=? WHERE id=?`, db.now(), res.id);
     audit.log({ user: ctx.user, action: 'resource.photo.add', entity: 'resource', entityId: res.id, ip: ctx.ip, details: { photo_id: id, bytes: pic.buf.length, type: pic.type } });
+    ctx.status = 201; return { id, photo: photoRows(res.id).find(p => p.id === id) };
+  });
+  // "Add from a web address": the office server downloads a picture (or the picture a web page advertises)
+  // for someone who cannot use a file window. Same address checks, size cap and byte sniffing as provider
+  // pictures (server/region-pictures.js). The browser makes the thumbnail afterwards (PUT thumb_url), as
+  // it does for a downloaded provider picture. A copy running in the browser cannot fetch other sites from
+  // its kernel (no CORS), so the page fetches the picture itself there and uses the ordinary upload.
+  r.post('/api/resources/:id/photos/from-url', auth.requireAuth, auth.requirePerm('resources:write'), async (ctx) => {
+    const res = db.one(`SELECT id FROM resources WHERE id=?`, ctx.params.id); if (!res) throw notFound();
+    if (require('../config').local) throw new HttpError(501, 'On this device a picture from a web address is fetched by the page itself; this route runs on the office server only');
+    const v = validate(ctx.body, { url: { type: 'string', required: true, maxLen: 2000 }, caption: { type: 'string', maxLen: 200 } });
+    let parsed; try { parsed = new URL(v.url.trim()); } catch { throw badRequest('Enter the full address of the picture, starting with https://'); }
+    if (parsed.protocol !== 'https:') throw badRequest('Only https:// addresses can be used');
+    try { pictures.assertPublicHttps(parsed.href); } catch (e) { throw badRequest(`That address cannot be used: ${e.message}`); }
+    if (db.one(`SELECT COUNT(*) n FROM resource_photos WHERE resource_id=?`, res.id).n >= MAX_PHOTOS) throw badRequest(`A resource can have at most ${MAX_PHOTOS} pictures; remove one first`);
+    const got = await pictures.downloadFromAddress(parsed.href);
+    if (!got.ok) throw new HttpError(got.network ? 502 : 400, `Could not add that picture: ${got.error}`);
+    // Counted again: another upload may have landed while this one was downloading.
+    if (db.one(`SELECT COUNT(*) n FROM resource_photos WHERE resource_id=?`, res.id).n >= MAX_PHOTOS) throw badRequest(`A resource can have at most ${MAX_PHOTOS} pictures; remove one first`);
+    // Only the host is kept (caption, audit): a copied address's path and query can carry someone's token.
+    const host = new URL(got.url).hostname;
+    const id = uuid(); const order = (db.one(`SELECT COALESCE(MAX(sort_order), -1) m FROM resource_photos WHERE resource_id=?`, res.id).m) + 1;
+    db.run(`INSERT INTO resource_photos(id,resource_id,caption,content_type,bytes,data_b64,thumb_b64,sort_order,uploaded_by) VALUES(?,?,?,?,?,?,?,?,?)`,
+      id, res.id, (v.caption || '').trim() || `From ${host}`, got.type, got.buf.length, got.buf.toString('base64'), got.buf.length <= MAX_THUMB_BYTES ? got.buf.toString('base64') : null, order, ctx.user.id);
+    db.run(`UPDATE resources SET updated_at=? WHERE id=?`, db.now(), res.id);
+    audit.log({ user: ctx.user, action: 'resource.photo.add', entity: 'resource', entityId: res.id, ip: ctx.ip, details: { photo_id: id, bytes: got.buf.length, type: got.type, source: 'web_address', host } });
     ctx.status = 201; return { id, photo: photoRows(res.id).find(p => p.id === id) };
   });
   r.put('/api/resources/:id/photos/:pid', auth.requireAuth, auth.requirePerm('resources:write'), (ctx) => {

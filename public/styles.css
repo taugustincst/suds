@@ -379,3 +379,5 @@ input, select, textarea { max-width: 100%; }
 .quick-list { grid-template-columns: minmax(0, 1fr); } .quick-list .btn { min-width: 0; overflow-wrap: anywhere; }
 /* The closed drawer's shadow bled 40px into the left edge of every phone screen. */
 @media (max-width: 900px) { .sidebar:not(.open) { box-shadow: none; } }
+/* A picture dragged over a resource profile's Pictures card (public/views/resources.js). */
+.card.drop-over { outline: 2px dashed var(--primary); outline-offset: -4px; background: var(--primary-soft); }

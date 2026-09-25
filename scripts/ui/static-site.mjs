@@ -22,8 +22,9 @@ page.on('pageerror', e => errors.push('PAGEERROR ' + e.message));
 // /app and views/no-such-view.js are requested on purpose below, to prove they are real 404s.
 // A build published without provider pictures answers 404 for region-pictures/…/manifest.json, which is how
 // the kernel learns there are none (checked below).
-const probe = (u) => /\/app$|no-such-view|region-pictures\//.test(u);
-page.on('console', m => { if (m.type() === 'error' && !probe(m.location()?.url || '') && !/404/.test(m.text())) errors.push('CONSOLE ' + m.text().slice(0, 250)); });
+// The web-address check below asks for the office server's health check from this origin, which it refuses (no CORS).
+const probe = (u) => /\/app$|no-such-view|region-pictures\/|\/api\/health$/.test(u);
+page.on('console', m => { if (m.type() === 'error' && !probe(m.location()?.url || '') && !/404/.test(m.text()) && !/\/api\/health' from origin .* has been blocked by CORS/.test(m.text())) errors.push('CONSOLE ' + m.text().slice(0, 250)); });
 page.on('response', r => { if (r.status() >= 400 && !probe(r.url())) errors.push(`HTTP ${r.status()} ${r.url()}`); });
 
 await page.goto(base + '/'); await settle(page);
@@ -176,6 +177,58 @@ eq(await page.evaluate(() => [...document.querySelectorAll('a[href]')].map(a => 
     ok(again, 'pressing it again reports the programs this build has no picture for', again);
   }
   await page.screenshot({ path: '/tmp/suds-shots/static-site-provider-pictures.png' }).catch(() => {});
+}
+
+// "Add from a web address" on this build: the page fetches the picture itself (the kernel is this page and
+// no provider site sends CORS headers), then saves it like any upload. A picture on this site's own origin
+// can always be read; an address on another origin with no CORS headers gets the explanation instead.
+// Only getByRole clicks: the way a person, or an automated tester that cannot use a file window, adds one.
+if (process.env.SUDS_STATIC_DIR) {
+  const require = createRequire(import.meta.url);
+  const png = require('../../server/png');
+  const px = Buffer.alloc(400 * 300 * 3); for (let i = 0; i < px.length; i += 3) { px[i] = 20; px[i + 1] = 40; px[i + 2] = 240; }
+  fs.writeFileSync(path.join(process.env.SUDS_STATIC_DIR, 'web-picture.png'), png.encode(400, 300, px));
+  const rid = await page.evaluate(() => window.SUDS_LOCAL.handle('POST', '/api/resources', { name: 'Web Picture House', category: 'residential' }, {}).then(r => r.json.id));
+  await page.goto(`${base}/#/resource/${rid}`); await settle(page);
+  const count = () => page.evaluate((id) => window.SUDS_LOCAL.handle('GET', `/api/resources/${id}/photos`, undefined, {}).then(r => r.json.photos), rid);
+  eq((await count()).length, 0, 'web address: the new program starts with no pictures');
+  await page.getByRole('button', { name: 'Add from a web address' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add a picture from a web address' });
+  await dialog.waitFor({ timeout: 5000 });
+  await dialog.getByLabel('Address of the picture').fill(`${base}/web-picture.png`);
+  await dialog.getByLabel('Caption (optional)').fill('Blue door');
+  await dialog.getByRole('button', { name: 'Add picture', exact: true }).click();
+  const added = await until(async () => { const p = await count(); return p.length === 1 ? p : null; }, { timeout: 15000 });
+  ok(added && added[0].caption === 'Blue door' && added[0].content_type === 'image/png', 'web address: the picture at an address on this site is saved, with its caption', added);
+  ok(await until(() => dialog.count().then(n => n === 0)), 'web address: and the dialog closes');
+  const heroBlue = await until(() => page.evaluate(() => { const im = document.querySelector('.gallery .hero img'); if (!im || !im.complete || im.naturalWidth < 2) return null; const c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight; const x = c.getContext('2d'); x.drawImage(im, 0, 0); const d = x.getImageData(5, 5, 1, 1).data; return d[2] > 200 && d[0] < 60 ? [d[0], d[1], d[2]] : null; }), { timeout: 10000 });
+  ok(heroBlue, 'web address: the gallery shows it', heroBlue);
+  await page.goto(base + '/#/resources'); await settle(page);
+  const cover = await until(() => page.evaluate(async () => {
+    const card = [...document.querySelectorAll('.res-card')].find(c => c.querySelector('b')?.textContent === 'Web Picture House');
+    const im = card && card.querySelector('img.res-cover'); if (!im) return null; im.scrollIntoView();
+    if (!(im.complete && im.naturalWidth > 1)) return null;
+    const c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight; const x = c.getContext('2d'); x.drawImage(im, 0, 0);
+    const d = x.getImageData(Math.floor(c.width / 2), Math.floor(c.height / 2), 1, 1).data; return d[2] > 200 && d[0] < 60 ? [d[0], d[1], d[2]] : null;
+  }), { timeout: 15000 });
+  ok(cover, 'web address: and it is the directory card\'s cover picture', cover);
+  // Another origin with no CORS headers (the office server's health check): the browser will not hand the
+  // page its bytes, and the dialog says what to do instead of failing silently.
+  await page.goto(`${base}/#/resource/${rid}`); await settle(page);
+  await page.getByRole('button', { name: 'Add from a web address' }).click();
+  await dialog.waitFor({ timeout: 5000 });
+  const other = `${process.env.SUDS_URL || 'http://127.0.0.1:8090'}/api/health`;
+  await dialog.getByLabel('Address of the picture').fill(other);
+  await dialog.getByRole('button', { name: 'Add picture', exact: true }).click();
+  const why = await until(() => dialog.locator('.banner.danger').textContent().then(t => /does not allow its pictures to be copied/.test(t) ? t : null).catch(() => null), { timeout: 15000 });
+  ok(why && /\+ Add pictures/.test(why) && /drag it onto this card/.test(why), 'web address: a site that does not allow copying gets the explanation and the other ways in', why);
+  ok(/does not allow its pictures/.test(await page.textContent('#toasts')), 'web address: in a toast as well');
+  eq((await count()).length, 1, 'web address: and nothing is added');
+  // https only, apart from this site and this computer
+  await dialog.getByLabel('Address of the picture').fill('http://pictures.example.org/a.png');
+  await dialog.getByRole('button', { name: 'Add picture', exact: true }).click();
+  ok(await until(() => dialog.locator('.banner.danger').textContent().then(t => /Only https/.test(t)).catch(() => false)), 'web address: a plain-http address elsewhere is refused before anything is fetched');
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
 }
 
 // The on-device app never syncs (docs/WEB_APP.md): its device page says so instead of offering a form that
