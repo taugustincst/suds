@@ -39,7 +39,9 @@ modules stay, as options. Point-by-point response: `docs/market/EVALUATION-RESPO
 - **Reliability.** The instance lock no longer refuses to start after a crash when the server is process 1
   (Docker) or after a reboot; scheduled backups no longer block the server (longest pause 16 ms on a 311 MB
   database); a missing index is rebuilt or reported; a browser window frozen in the middle of a save can no
-  longer hang another window that takes over (the intermittent multitab failure, including 1.11.0's CI).
+  longer hang another window that takes over. The browser job that failed on 1.11.0's main-branch CI was the
+  multitab script unable to fetch the 1.9.0 build in a shallow clone; it now fetches that release's tag, and
+  the suite repeats each failed script's last lines at the end of its log.
 - **Security.** Two sync leaks closed (staged imports went to every device; ending an assignment never left
   the device) and a newly assigned client now arrives with its whole history; one guard for every outbound
   fetch (region pictures, OIDC, FHIR JWKS) closes an IPv4-mapped-IPv6 bypass; the service worker never caches
