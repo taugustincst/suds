@@ -663,7 +663,7 @@ test('reports, exports, and audit chain', async () => {
   const a = await admin.get('/api/admin/audit?action=note.'); assert.ok(a.data.total > 0);
   assert.equal((await nav.get('/api/admin/audit')).status, 403);
   const v = await admin.get('/api/admin/audit/verify'); assert.equal(v.data.ok, true);
-  H.db.run(`UPDATE audit_log SET details='tampered' WHERE id=(SELECT MIN(id) FROM audit_log WHERE details IS NOT NULL)`);
+  H.asAttacker(() => H.db.run(`UPDATE audit_log SET details='tampered' WHERE id=(SELECT MIN(id) FROM audit_log WHERE details IS NOT NULL)`));
   assert.equal((await admin.get('/api/admin/audit/verify')).data.ok, false);
 });
 
@@ -726,7 +726,7 @@ test('audit retention purge keeps the chain verifiable', async () => {
   const audit = require('../server/audit');
   // make the earliest rows look old, then purge
   // re-date everything up to and including the row tampered in the earlier test; purge must remove them all
-  H.db.run(`UPDATE audit_log SET at='2015-01-01T00:00:00.000Z' WHERE id <= (SELECT MAX(id) FROM audit_log WHERE details='tampered')`);
+  H.asAttacker(() => H.db.run(`UPDATE audit_log SET at='2015-01-01T00:00:00.000Z' WHERE id <= (SELECT MAX(id) FROM audit_log WHERE details='tampered')`));
   const n = audit.purge(3650);
   assert.ok(n >= 3);
   const v = audit.verifyChain();

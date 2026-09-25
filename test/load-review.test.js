@@ -246,22 +246,22 @@ test('the scheduled audit check is incremental and yields; tampering after the m
   audit.log({ user: { username: 'system' }, action: 'test.after' });
   const after = H.db.one(`SELECT id, details FROM audit_log WHERE action='test.after' ORDER BY id DESC LIMIT 1`);
   assert.ok(after.id > markerNow);
-  H.db.run(`UPDATE audit_log SET action='test.edited' WHERE id=?`, after.id);
+  H.asAttacker(() => H.db.run(`UPDATE audit_log SET action='test.edited' WHERE id=?`, after.id));
   const r1 = await audit.scheduledVerify();
   assert.equal(r1.mode, 'incremental'); assert.equal(r1.ok, false); assert.equal(r1.firstBadId, after.id);
-  H.db.run(`UPDATE audit_log SET action='test.after' WHERE id=?`, after.id);
+  H.asAttacker(() => H.db.run(`UPDATE audit_log SET action='test.after' WHERE id=?`, after.id));
   assert.equal((await audit.scheduledVerify()).ok, true, 'restored: clean again');
 
   // Tampered before the marker: an incremental check does not re-read it; a full check does.
   const early = H.db.one(`SELECT id, details FROM audit_log WHERE action='test.fill' ORDER BY id ASC LIMIT 1`);
   assert.ok(early.id < audit.verifiedMarker().id);
-  H.db.run(`UPDATE audit_log SET details='{"i":99}' WHERE id=?`, early.id);
+  H.asAttacker(() => H.db.run(`UPDATE audit_log SET details='{"i":99}' WHERE id=?`, early.id));
   assert.equal((await audit.verifyChainAsync({ incremental: true })).mode, 'incremental');
   const full = await audit.scheduledVerify({ full: true });
   assert.equal(full.ok, false); assert.equal(full.mode, 'full'); assert.equal(full.firstBadId, early.id);
   assert.equal(audit.verifyChain().firstBadId, early.id, 'the synchronous full check (CLI, rotation) agrees');
   assert.equal((await admin.get('/api/admin/audit/verify')).data.firstBadId, early.id, 'and so does the Verify button');
-  H.db.run(`UPDATE audit_log SET details=? WHERE id=?`, early.details, early.id);
+  H.asAttacker(() => H.db.run(`UPDATE audit_log SET details=? WHERE id=?`, early.details, early.id));
   assert.equal(audit.verifyChain().ok, true);
   // A marker moved by editing settings is not trusted: the next check walks everything.
   H.db.run(`UPDATE settings SET value=? WHERE key='audit_verified_id'`, String(early.id));

@@ -88,7 +88,7 @@ test('rotation succeeds once the audit head has been checkpointed, and re-seals 
 });
 
 test('a chain that already fails is not re-signed', () => {
-  H.db.run(`UPDATE audit_log SET details='tampered' WHERE id=(SELECT MIN(id) FROM audit_log WHERE details IS NOT NULL)`);
+  H.asAttacker(() => H.db.run(`UPDATE audit_log SET details='tampered' WHERE id=(SELECT MIN(id) FROM audit_log WHERE details IS NOT NULL)`));
   const another = require('node:crypto').createHash('sha256').update('third-key').digest();
   const keyBefore = config.indexKey;
   assert.throws(() => rotateIndexKey(another), /does not verify under the current key/);

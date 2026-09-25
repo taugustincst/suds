@@ -423,6 +423,20 @@ const migrations = [
       ['counseling_notes', 'INTEGER NOT NULL DEFAULT 0'], ['notice_version', 'TEXT']]) addColumn(d, 'disclosures', c, def);
     for (const line of schemaText.split('\n')) if (/^CREATE INDEX IF NOT EXISTS idx_(court_orders|part2_notices|complaints|privacy_incident)/.test(line.trim())) d.exec(line.trim());
   },
+  // 33 (renumbered at merge): the audit log becomes append-only in the database (triggers that refuse UPDATE
+  //     and DELETE outside the sanctioned maintenance window, server/audit.js maintenance()); accounts
+  //     remember when the identity provider last vouched for them and SCIM's id for them; a session records
+  //     whether its second factor came from the identity provider.
+  (d) => {
+    const schemaText = safeSchema();
+    const m = schemaText.match(/CREATE TABLE IF NOT EXISTS audit_maintenance \([\s\S]*?\n\);/);
+    if (m) d.exec(m[0]);
+    for (const t of schemaText.match(/CREATE TRIGGER IF NOT EXISTS audit_log_no_\w+ [\s\S]*?END;/g) || []) d.exec(t);
+    addColumn(d, 'users', 'idp_seen_at', 'TEXT');
+    addColumn(d, 'users', 'scim_external_id', 'TEXT');
+    d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_scim_external_id ON users(scim_external_id) WHERE scim_external_id IS NOT NULL`);
+    addColumn(d, 'sessions', 'mfa_source', 'TEXT');
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

@@ -43,9 +43,16 @@ CREATE TABLE IF NOT EXISTS users (
   access_note TEXT,
   requested_at TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  -- Identity-provider lifecycle (server/deprovision.js, server/routes/scim.js). idp_seen_at: the last time the
+  -- county identity provider vouched for this account (an SSO sign-in, or a SCIM create/update that left it
+  -- active); an SSO-linked account not seen for sso_deprovision_days is disabled. scim_external_id: the
+  -- provider's own id for the person (Entra objectId / Okta user id), set when SCIM provisions the account.
+  idp_seen_at TEXT,
+  scim_external_id TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_subject ON users(oidc_subject) WHERE oidc_subject IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_scim_external_id ON users(scim_external_id) WHERE scim_external_id IS NOT NULL;
 
 -- One row per physical phone/tablet running local mode, identified by a UUID the device itself generates
 -- once and sends on every sync call (never by the short-lived sync session, which starts and ends within a
@@ -75,7 +82,10 @@ CREATE TABLE IF NOT EXISTS sessions (
   mfa_pending INTEGER NOT NULL DEFAULT 0,
   ip TEXT,
   user_agent TEXT,
-  revoked_at TEXT
+  revoked_at TEXT,
+  -- How this session's second factor was satisfied: NULL (none or SUDS's own TOTP) or 'idp' — the identity
+  -- provider asserted multi-factor sign-in (amr/acr) and the administrator chose to trust it (server/routes/oidc.js).
+  mfa_source TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
@@ -707,6 +717,22 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log(at);
 CREATE INDEX IF NOT EXISTS idx_audit_client ON audit_log(client_id);
 CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id);
+-- The audit log is append-only in the database itself. An UPDATE or DELETE of audit_log is refused unless
+-- a row in audit_maintenance says a sanctioned maintenance step is running — the retention purge and the
+-- index-key re-signing (server/audit.js maintenance()), which insert that row and delete it again inside
+-- the same transaction, so it is never committed and no other connection ever sees it. Anyone who can drop
+-- these triggers can also edit the file; the keyed hash chain and the anchors written outside the database
+-- (server/audit-anchor.js) are what catch that.
+CREATE TABLE IF NOT EXISTS audit_maintenance (
+  purpose TEXT NOT NULL,
+  started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TRIGGER IF NOT EXISTS audit_log_no_update BEFORE UPDATE ON audit_log
+  WHEN NOT EXISTS (SELECT 1 FROM audit_maintenance)
+  BEGIN SELECT RAISE(ABORT, 'audit_log is append-only: entries cannot be changed'); END;
+CREATE TRIGGER IF NOT EXISTS audit_log_no_delete BEFORE DELETE ON audit_log
+  WHEN NOT EXISTS (SELECT 1 FROM audit_maintenance)
+  BEGIN SELECT RAISE(ABORT, 'audit_log is append-only: entries are removed only by the retention purge'); END;
 
 CREATE TABLE IF NOT EXISTS user_prefs (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

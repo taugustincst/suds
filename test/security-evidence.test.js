@@ -13,7 +13,7 @@ process.env.AUDIT_ANCHOR_DIR = path.join(dir, 'worm');
 fs.mkdirSync(process.env.AUDIT_ANCHOR_DIR);
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
-const { start, stop, client, makeUser, db } = require('./helpers');
+const { start, stop, client, makeUser, db, asAttacker } = require('./helpers');
 const config = require('../server/config');
 const audit = require('../server/audit');
 const anchor = require('../server/audit-anchor');
@@ -43,7 +43,7 @@ function rewriteChainFrom(fromId, change) {
   for (const r of rows) {
     const row = { ...r, prev_hash: prev, ...(r.id === fromId ? change : {}) };
     const hash = 'v2:' + crypto.createHmac('sha256', config.indexKey).update(ex.payloadOf(row)).digest('hex');
-    db.run(`UPDATE audit_log SET details=?, prev_hash=?, hash=? WHERE id=?`, row.details, prev, hash, r.id);
+    asAttacker(() => db.run(`UPDATE audit_log SET details=?, prev_hash=?, hash=? WHERE id=?`, row.details, prev, hash, r.id));
     prev = hash;
   }
   audit.checkpoint();
@@ -126,7 +126,7 @@ test('anchors catch truncation, a removed anchor file and a forged one; a retent
   assert.ok(a2.head_id > a1.head_id);
   // Truncation of the newest entries (the head checkpoint is re-sealed, as a key holder could).
   const max = db.one(`SELECT MAX(id) m FROM audit_log`).m;
-  db.run(`DELETE FROM audit_log WHERE id > ?`, a2.head_id - 1);
+  asAttacker(() => db.run(`DELETE FROM audit_log WHERE id > ?`, a2.head_id - 1));
   audit.checkpoint();
   const t = anchor.verify();
   assert.equal(t.ok, false);
@@ -134,7 +134,7 @@ test('anchors catch truncation, a removed anchor file and a forged one; a retent
   assert.equal(anchor.verify({ tolerateNewer: true }).bad.some((b) => /ends at entry/.test(b.reason)), false);
   assert.ok(max > a2.head_id - 1);
   // Put a consistent state back for the tests after this one.
-  db.run(`DELETE FROM audit_log`); audit.log({ user: { username: 'system' }, action: 'test.reset' }); audit.checkpoint(); cleanAnchors();
+  asAttacker(() => db.run(`DELETE FROM audit_log`)); audit.log({ user: { username: 'system' }, action: 'test.reset' }); audit.checkpoint(); cleanAnchors();
   // A retention purge removes anchored entries legitimately, and records that it did.
   audit.log({ user: { username: 'system' }, action: 'test.old' });
   anchor.write('manual');
