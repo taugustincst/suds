@@ -22,7 +22,9 @@ const SETTING_KEYS = ['org_name', 'caseload_restriction', 'county_name', 'progra
   'sso_trust_idp_mfa', 'sso_mfa_acr_values', 'sso_deprovision_days', 'scim_group_roles', 'scim_default_role',
   // Reporting (server/routes/reports.js, server/harm-reduction-reports.js): the programme's default fund, the
   // funder report's small-cell threshold, and how many naloxone doses one distributed kit holds.
-  'default_fund_id', 'small_cell_threshold', 'naloxone_doses_per_kit'];
+  'default_fund_id', 'small_cell_threshold', 'naloxone_doses_per_kit',
+  // The programme profile and its module switches (server/programme.js): presentation, not permissions.
+  ...require('../programme').SETTING_KEYS];
 const ROLES = ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'];
 const listener = require('../listener');
 const fs = require('node:fs');
@@ -37,6 +39,7 @@ module.exports = (r) => {
     for (const k of SETTING_KEYS) { const v = db.getSetting(k, null); out[k] = v === '' ? null : v; }
     const pol = auth.policy();
     out.policy = pol;
+    out.programme = require('../programme').describe();
     // The zone in force (the setting, else ORG_TIMEZONE, else the machine's) and the fallback a blank
     // setting returns to, so the form can say what "not set" means.
     const budget = require('./budget');
@@ -78,6 +81,10 @@ module.exports = (r) => {
         if (k === 'sso_deprovision_days' && v !== '' && !(Number.isInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 3650)) throw badRequest('sso_deprovision_days must be 0 (off) or a whole number of days');
         if (k === 'scim_default_role' && v !== '' && !ROLES.includes(v)) throw badRequest(`scim_default_role must be one of ${ROLES.join(', ')}`);
         if (k === 'scim_group_roles' && v !== '') v = require('../scim').normaliseGroupRoles(v);
+        // The profile always has a value: a blank one would be decided again from the data at the next start.
+        if (k === 'programme_profile' && !require('../programme').PROFILES[v]) throw badRequest(`programme_profile must be one of ${Object.keys(require('../programme').PROFILES).join(', ')}`, { fields: { programme_profile: 'choose a programme profile' } });
+        // A module switch is on (1), off (0), or blank for "as the profile has it".
+        if (k.startsWith('module_') && v !== '' && !['0', '1'].includes(v)) throw badRequest(`${k} must be 1 (on), 0 (off) or blank (as the profile has it)`);
         if (k === 'default_fund_id' && v !== '' && !db.one(`SELECT 1 FROM funding_sources WHERE id=? AND is_active=1`, v)) throw badRequest('default_fund_id must be an active funding source');
         // Under 2 would suppress nothing at all; over 50 would suppress nearly every breakdown a small programme has.
         if (k === 'small_cell_threshold' && v !== '' && !(Number.isInteger(Number(v)) && Number(v) >= 2 && Number(v) <= 50)) throw badRequest('small_cell_threshold must be a whole number from 2 to 50');
@@ -93,6 +100,8 @@ module.exports = (r) => {
       if (!config.local && [db.getSetting('sso_required', '0'), db.getSetting('sso_emergency_accounts', '')].join('|') !== ssoBefore) require('../security-status').validateSettings();
     });
     audit.log({ user: ctx.user, action: 'settings.update', ip: ctx.ip, details: { changed } });
+    const P = require('../programme');
+    if (changed.some(k => P.SETTING_KEYS.includes(k))) audit.log({ user: ctx.user, action: 'settings.programme', ip: ctx.ip, details: { profile: P.profile(), modules: P.modules() } });
     // Trusting the identity provider's second factor changes who can reach records without SUDS's own: its
     // own audit entry, so it stands out from routine settings changes.
     if (changed.includes('sso_trust_idp_mfa') || changed.includes('sso_mfa_acr_values')) audit.log({ user: ctx.user, action: 'security.idp_mfa_trust', ip: ctx.ip, details: { trusted: db.getSetting('sso_trust_idp_mfa', '0') === '1', acr_values: db.getSetting('sso_mfa_acr_values', '') || null } });

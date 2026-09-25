@@ -19,6 +19,7 @@
 // release of information only when this is not a Part 2 programme — never one limited to counseling notes or
 // a proceeding) and must name the recipient (disclosure.fileConsentFor); it is never for a legal proceeding; clients with an agreed restriction need the worker's confirmation; the file
 // carries the §2.32 notice; and a file naming very many clients opens a draft incident.
+const { requireModule } = require('../programme');
 const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
@@ -93,7 +94,7 @@ module.exports = (r) => {
       restricted: clients.filter(([id]) => restricted.has(id)).length, not_a_claim: NOT_A_CLAIM, consent_types: require('../disclosure').fileConsentTypes() };
   });
 
-  r.get('/api/handoff/export', auth.requireAuth, auth.requirePerm('export:identified'), async (ctx) => {
+  r.get('/api/handoff/export', auth.requireAuth, auth.requirePerm('export:identified'), requireModule('handoff'), async (ctx) => {
     const p = require('./reports').range(ctx);
     const recipient = (ctx.query.get('recipient') || '').trim().slice(0, 200); const purpose = (ctx.query.get('purpose') || '').trim().slice(0, 500);
     if (!recipient || !purpose) throw badRequest('The hand-off names clients: say who receives it and why (recipient= and purpose=); both go into each client\'s accounting of disclosures');

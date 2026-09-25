@@ -91,13 +91,13 @@ The wizard route above is production mode (`SUDS_ENV=production`) with keys in `
 | Area | Details |
 | --- | --- |
 | Clients | Encrypted demographics and contact info, substance use profile, ASAM level, MAT status, overdose / naloxone history, risk level, housing, insurance, safety flags, program status and intake/discharge |
-| Interventions | 25 SUD-navigation intervention types, duration, location/modality, outcome, stage of change, naloxone kits and fentanyl test strips, funding source, cost, follow-up task creation, automatic time entry |
+| Visits | 25 SUD-navigation visit (intervention) types, duration, location/modality, outcome, stage of change, naloxone kits and fentanyl test strips, funding source, cost, follow-up to-do creation, automatic time entry |
 | Calls | Direction, contact type, duration, outcome, crisis flag, encrypted summary, follow-up scheduling |
 | Time | Per-worker time entries by category and funding source, billable flag, summaries by worker / category / day / fund |
 | Starter directories | One-click load of a whole region's programs (81 across the eight Sacramento-area counties), flagged unverified until your staff confirm each one |
 | County forms | Form library of the program's own forms (PDF/Word/picture) with fillable fields, pre-filled from the client record, saved encrypted to the client, printable as PDF, with the signed copy attached |
 | Resources & referrals | Community resource directory (detox, residential, OTP/OBOT, housing, harm reduction, legal, …) with treatment center profiles: services-offered tags, plain-language summary, levels of care, how to refer, cost and a picture gallery; verification dates; referrals with status pipeline, urgency, warm handoff, consent linkage, barriers, days-to-admit |
-| Tasks & timelines | Tasks with priorities, due dates, milestones; unified per-client timeline of every event |
+| To-dos & timelines | To-dos with priorities, due dates, milestones; unified per-client timeline of every event |
 | Budget | Funding sources (opioid settlement, SOR, SAMHSA, county…), budget lines, expenditures with approval workflow and separation of duties, burn-rate vs. period elapsed, staff-cost allocation |
 | Notes | Clinical vs. administrative notes with role-based visibility, SOAP / DAP / BIRP / GIRP structured formats, electronic signature with tamper-evident hash, addenda, break-glass access for administrators |
 | Consents | 42 CFR Part 2 disclosure consents, releases of information, expirations/revocations, and an accounting of disclosures |
@@ -111,8 +111,8 @@ The wizard route above is production mode (`SUDS_ENV=production`) with keys in `
 
 | Role | Sees | Can |
 | --- | --- | --- |
-| navigator | Assigned caseload | Clients, interventions, calls, time, referrals, tasks, admin notes, consents, imports, de-identified exports of their own caseload; records expenditures (grant structure itself is `budget:manage`: supervisor, finance, admin) |
-| clinician | Assigned caseload | Clients, interventions, calls, time, referrals, tasks, admin and **clinical notes**, consents, imports, de-identified exports of their own caseload; reads the resource directory (no budget entry) |
+| navigator | Assigned caseload | Clients, visits, calls, time, referrals, to-dos, admin notes, consents, imports, de-identified exports of their own caseload; records expenditures (grant structure itself is `budget:manage`: supervisor, finance, admin) |
+| clinician | Assigned caseload | Clients, visits, calls, time, referrals, to-dos, admin and **clinical notes**, consents, imports, de-identified exports of their own caseload; reads the resource directory (no budget entry) |
 | supervisor | All clients | Everything, plus assignments, approvals, audit log, break-glass review, de-identified and identified exports, consent overrides |
 | finance | De-identified list | Funding, budget lines, expenditure approval, staff time approval (every submitted entry, on the Supervision page), time summaries, de-identified exports |
 | readonly | De-identified list | Reports and summaries, resource directory; no client records, no notes, no exports |

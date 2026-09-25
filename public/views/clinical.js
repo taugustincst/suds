@@ -4,7 +4,7 @@
 // that sums them up on the Overview. The instrument wording, scoring bands, ASAM dimension names and Z codes
 // come from the server (GET /api/meta/constants, built from server/clinical.js), so the score shown while
 // the form is filled in is the one the server saves.
-import { h, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, confirmDialog, kv, emptyState, clear, flag } from '../app.js';
+import { h, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, confirmDialog, kv, emptyState, clear, flag, moduleOn } from '../app.js';
 
 const C = () => state.constants || {};
 // SUDS stores only the six dimension names and 0-4 ratings. The ASAM Criteria are copyrighted and "ASAM" is a
@@ -29,6 +29,10 @@ export async function overviewCard(clientId, { refresh } = {}) {
   if (!can('careplan:read') && !can('assessments:read')) return null;
   let s;
   try { s = await get(`/api/clients/${clientId}/clinical-summary`); } catch { return null; }
+  // A module the programme does not use (server/programme.js) stays off the Overview. The PHQ-9 safety
+  // alert is shown whatever the switches say: it is about someone's safety, not a module.
+  if (!moduleOn('careplan')) { delete s.problems; delete s.care_plan; }
+  if (!moduleOn('assessments')) { delete s.asam; delete s.outcomes; }
   const parts = [];
   if (s.safety_alert) parts.push(h('div', { class: 'banner danger', role: 'alert', 'data-safety-alert': '1' },
     `PHQ-9 on ${fmt.date(s.safety_alert.at)}: question 9 (thoughts of self-harm) was answered above "Not at all". Assess risk and review the safety plan with the client.`));

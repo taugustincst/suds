@@ -41,6 +41,21 @@ export async function saved(page, { timeout = 15000 } = {}) {
 }
 
 /**
+ * Put the first-visit welcome tour away the way a person does, deterministically. Home schedules the tour
+ * 400 ms after it renders (app.js maybeTour, counted as busy), so after settle() it is either showing or
+ * not coming. Its own Skip records tour_done (on a device copy, in the kernel — waited for until it is on
+ * disk, so a reload does not bring the tour back over the next click). Removing the dialog from the DOM
+ * instead, as scripts used to, left the tour free to open again after a reload and take a click meant for
+ * the page: device-audit and forms failed that way now and then.
+ */
+export async function skipTour(page) {
+  await settle(page);
+  const skip = await page.$('.modal-bg .modal .btn-row button.ghost:has-text("Skip")');
+  if (skip) { await skip.click(); await until(async () => !(await page.$('.modal-bg')), { timeout: 5000 }); await settle(page); }
+  if (await page.evaluate(() => !!(window.SUDS_LOCAL && window.SUDS_LOCAL.isDirty))) await saved(page);
+}
+
+/**
  * The on-device app is locked after every page load until an account signs in (local/kernel.js,
  * docs/architecture/ADR-0008-device-encryption.md). Wait for the page to finish booting and, if it is
  * showing the sign-in form, sign in; resolves once the app is showing (on the page it was on before).

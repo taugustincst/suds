@@ -250,7 +250,7 @@ const nav = await session('mrivera', 'Navigator2026!!');
   const { page, ctx } = nav;
   const cid = (await nav.api('GET', '/api/clients?limit=1')).data.clients[0].id;
   await go(page, `client/${cid}`);
-  await page.click('button:has-text("+ Task")'); await page.waitForSelector('.modal input[name=title]');
+  await page.click('button:has-text("+ To-do")'); await page.waitForSelector('.modal input[name=title]');
   await page.fill('.modal input[name=title]', 'Typed while the signal dropped');
   await ctx.setOffline(true);
   await page.click('.modal button[type=submit]');

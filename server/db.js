@@ -560,7 +560,17 @@ function initialise(d, schemaText, dbPath) {
   if (fresh) {
     d.exec(schemaText);
     d.prepare(`INSERT INTO settings(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(String(migrations.length));
-  } else migrate(d, dbPath);
+    // A new install is a harm-reduction & outreach programme until someone says otherwise (the setup
+    // wizard asks; Settings › Programme changes it). server/programme.js.
+    d.prepare(`INSERT OR IGNORE INTO settings(key,value) VALUES('programme_profile',?)`).run(require('./programme').DEFAULT_PROFILE);
+  } else {
+    migrate(d, dbPath);
+    // A database from before programme profiles: decided once from what it holds, so an upgrade never hides
+    // a module the programme was using (server/programme.js defaultForExisting). Data, not schema.
+    if (!d.prepare(`SELECT 1 FROM settings WHERE key='programme_profile'`).get()) {
+      d.prepare(`INSERT INTO settings(key,value) VALUES('programme_profile',?)`).run(require('./programme').defaultForExisting(d));
+    }
+  }
   ensureIndexes(d, schemaText);
 }
 

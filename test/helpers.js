@@ -17,6 +17,10 @@ async function start() {
   db.open(':memory:');
   ensureBootstrap();
   db.run(`UPDATE users SET must_change_password=0`);
+  // A new database is a harm-reduction programme with the clinical modules switched off (server/programme.js).
+  // The suite exercises every module, so it runs as a treatment-adjacent programme; test/programme.test.js
+  // covers the default and the module switches.
+  db.setSetting('programme_profile', 'treatment');
   const handler = createHandler();
   server = http.createServer(handler);
   await new Promise(res => server.listen(0, '127.0.0.1', res));

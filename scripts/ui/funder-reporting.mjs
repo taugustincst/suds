@@ -29,7 +29,7 @@ eq(await admin.$eval('select[name=default_fund_id]', s => s.value), fund.id, 'Se
 
 const sup = await signIn('jwalker', 'Navigator2026!!');
 await sup.goto(base + '/#/interventions'); await settle(sup);
-await sup.click('text=+ Log a visit or service'); await sup.waitForSelector('.modal select[name=funding_source_id]');
+await sup.click('text=+ Log a visit'); await sup.waitForSelector('.modal select[name=funding_source_id]');
 eq(await sup.$eval('.modal select[name=funding_source_id]', s => s.value), fund.id, 'a new visit is pre-filled with the default fund');
 await sup.keyboard.press('Escape'); await settle(sup);
 

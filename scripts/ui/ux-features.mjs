@@ -69,7 +69,7 @@ await rowBtn.focus(); await page.keyboard.press('Enter'); await settle(page);
 ok(/#\/client\//.test(page.url()), 'pressing Enter on a row opens it', page.url());
 
 await page.goto(base + '/#/interventions'); await settle(page);
-await page.click('text=+ Log a visit or service'); await page.waitForSelector('.modal');
+await page.click('text=+ Log a visit'); await page.waitForSelector('.modal');
 ok(await page.$eval('.modal', el => el.getAttribute('aria-modal') === 'true' && !!el.getAttribute('aria-labelledby')), 'a dialog is announced with its title');
 // Tab all the way round; focus must stay inside the dialog.
 for (let i = 0; i < 25; i++) await page.keyboard.press('Tab');
@@ -78,7 +78,7 @@ await page.keyboard.press('Escape'); await settle(page);
 ok(!(await page.$('.modal')), 'Escape closes the dialog');
 
 // The client picker is a combobox: type, arrow down, Enter.
-await page.click('text=+ Log a visit or service'); await page.waitForSelector('.modal');
+await page.click('text=+ Log a visit'); await page.waitForSelector('.modal');
 const picker = await page.$('.modal [role=combobox]');
 ok(picker, 'the client picker is a combobox');
 if (picker) {

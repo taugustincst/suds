@@ -39,6 +39,8 @@ eq(await page.$eval('select[name=network]', e => e.value), 'lan', 'phones on the
 eq(status.local_mode_env, false, 'LOCAL_MODE_ENABLED is not set for the wizard server, so the wizard decides local mode');
 eq(await page.$eval('select[name=local_mode]', e => e.value).catch(() => null), 'no', 'the wizard asks about offline copies and defaults to No');
 ok(/offline copy on their devices\? Recommended: No/.test(await page.textContent('#app')), 'with the recommendation in the question');
+// The programme profile: harm reduction & outreach unless the county says it is treatment-adjacent.
+eq(await page.$eval('select[name=programme_profile]', e => e.value).catch(() => null), 'harm_reduction', 'the wizard asks what kind of programme this is and defaults to harm reduction & outreach');
 await page.click('button[type=submit]');
 ok(await until(() => page.textContent('#app').then(t => /Setup complete/.test(t)), { timeout: 20000 }), 'the wizard completes');
 const done = (await page.textContent('#app')).replace(/\s+/g, ' ');
@@ -53,6 +55,11 @@ await page.goto(after + '/#/login'); await settle(page);
 await page.fill('input[name=username]', 'padmin'); await page.fill('input[name=password]', 'SetupPassw0rd!x'); await page.click('button[type=submit]');
 await page.waitForSelector('.layout', { timeout: 10000 }).catch(() => {});
 ok(await page.$('.layout'), 'the administrator signs in over HTTPS at the new address');
+{
+  const me = await page.evaluate(() => fetch('/api/auth/me', { headers: { 'X-Requested-With': 'suds' } }).then(r => r.json()));
+  eq(me.programme && me.programme.profile, 'harm_reduction', 'the new install is a harm-reduction programme');
+  eq(Object.values((me.programme && me.programme.modules) || { x: true }).some(Boolean), false, 'with every clinical module switched off');
+}
 // The wizard's No is honoured straight away: the server serves the explanation, not the kernel.
 {
   const lp = await ctx.newPage(); await lp.goto(after + '/?local=1'); await lp.waitForSelector('h1', { timeout: 10000 }).catch(() => {}); // a static page: no app to settle

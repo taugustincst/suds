@@ -24,7 +24,7 @@ ok(await page.$('input[name=username]'), 'the local kernel booted and offered fi
   await page.click('text=+ Log'); await page.waitForSelector('.quick-list button:has-text("New client")'); await page.click('.quick-list button:has-text("New client")'); await page.waitForSelector('.modal input[name=first_name]');
   await page.fill('.modal input[name=first_name]', 'Local'); await page.fill('.modal input[name=last_name]', 'Phoneclient'); await page.click('.modal button[type=submit]'); await page.waitForURL(/#\/client\//, { timeout: 10000 }).catch(() => {});
   ok(/^\/client\//.test(page.url().split('#')[1] || ''), 'a client created on the device opens its own page', page.url().split('#')[1]);
-  await page.click('text=+ Intervention'); await page.waitForSelector('.modal select[name=type]'); await page.selectOption('.modal select[name=type]', 'outreach'); await page.click('.modal button[type=submit]');
+  await page.click('text=+ Visit'); await page.waitForSelector('.modal select[name=type]'); await page.selectOption('.modal select[name=type]', 'outreach'); await page.click('.modal button[type=submit]');
   const toasts = await until(async () => { const t = await page.$$eval('.toast', e => e.map(x => x.textContent)); return t.length ? t : null; }) || [];
   ok(toasts.length > 0 && !toasts.some(t => /error|failed|could not/i.test(t)), 'recording a visit on the device confirms it saved', toasts);
   // persistence across reload: the local kernel's writes flush to IndexedDB asynchronously, and reloading

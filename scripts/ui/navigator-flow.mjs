@@ -31,7 +31,7 @@ await page.click('.modal button[type=submit]'); await page.waitForURL(/#\/client
 const cid = page.url().split('/client/')[1]?.split('/')[0];
 ok(!!cid, 'creating a client opens their record', page.url());
 // 2. log intervention with time + follow-up
-await page.click('text=+ Intervention'); await page.waitForSelector('.modal');
+await page.click('text=+ Visit'); await page.waitForSelector('.modal');
 await page.selectOption('.modal select[name=type]', 'naloxone_distribution'); await page.fill('.modal input[name=naloxone_kits]', '1'); await page.fill('.modal input[name=follow_up_due]', '2026-10-01'); await page.fill('.modal textarea[name=summary]', 'Gave kit');
 await page.click('.modal button[type=submit]');
 ok(await toastSays(/saved|logged|✓/i), 'a naloxone hand-out is logged');
@@ -75,7 +75,7 @@ await page.click('.modal [data-signature-dialog] button[type=submit]');
 ok(await toastSays(/sign|lock|✓/i), 'signing the note locks it');
 await page.waitForURL(/[?&]_=\d+/, { timeout: 5000 }).catch(() => {});
 // 5. task
-await page.goto(`${base}/#/client/${cid}/overview`); await page.waitForSelector('text=+ Task', { timeout: 10000 }).catch(() => {}); await page.click('text=+ Task'); await page.waitForSelector('.modal'); await page.fill('.modal input[name=title]', 'Bring ID docs'); await page.click('.modal button[type=submit]');
+await page.goto(`${base}/#/client/${cid}/overview`); await page.waitForSelector('text=+ To-do', { timeout: 10000 }).catch(() => {}); await page.click('text=+ To-do'); await page.waitForSelector('.modal'); await page.fill('.modal input[name=title]', 'Bring ID docs'); await page.click('.modal button[type=submit]');
 ok(await toastSays(/saved|added|✓/i), 'a reminder is added');
 await page.waitForURL(/[?&]_=\d+/, { timeout: 5000 }).catch(() => {});
 // 6. consent

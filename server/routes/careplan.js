@@ -8,6 +8,7 @@
 // once it passes; and the steps toward each goal, with who does them and by when (optionally a to-do).
 //
 // Permissions: careplan:read / careplan:write (server/auth.js). Everything is caseload scoped and audited.
+const { requireModule } = require('../programme');
 const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
@@ -155,7 +156,7 @@ module.exports = (r) => {
     return { rows: out };
   });
 
-  r.post('/api/clients/:id/problems', auth.requireAuth, auth.requirePerm('careplan:write'), (ctx) => {
+  r.post('/api/clients/:id/problems', auth.requireAuth, auth.requirePerm('careplan:write'), requireModule('careplan'), (ctx) => {
     clientFor(ctx, ctx.params.id);
     const v = cleanCodes(validate(ctx.body, problemShape));
     const status = v.status || 'active';
@@ -179,7 +180,7 @@ module.exports = (r) => {
     return { problem: presentProblem(row) };
   });
 
-  r.put('/api/problems/:id', auth.requireAuth, auth.requirePerm('careplan:write'), (ctx) => {
+  r.put('/api/problems/:id', auth.requireAuth, auth.requirePerm('careplan:write'), requireModule('careplan'), (ctx) => {
     const row = loadProblem(ctx, ctx.params.id);
     assertFresh(ctx, row, 'problem');
     const v = cleanCodes(validate(ctx.body, Object.fromEntries(Object.entries(problemShape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true }));
@@ -223,7 +224,7 @@ module.exports = (r) => {
     return { goals, review_overdue: goals.filter(g => g.review_overdue).length, today: today() };
   });
 
-  r.post('/api/clients/:id/goals', auth.requireAuth, auth.requirePerm('careplan:write'), (ctx) => {
+  r.post('/api/clients/:id/goals', auth.requireAuth, auth.requirePerm('careplan:write'), requireModule('careplan'), (ctx) => {
     clientFor(ctx, ctx.params.id);
     const v = validate(ctx.body, goalShape);
     checkProblemOnClient(v.problem_id, ctx.params.id);
@@ -235,7 +236,7 @@ module.exports = (r) => {
     return { id, updated_at: db.one(`SELECT updated_at FROM care_plan_goals WHERE id=?`, id).updated_at };
   });
 
-  r.put('/api/goals/:id', auth.requireAuth, auth.requirePerm('careplan:write'), (ctx) => {
+  r.put('/api/goals/:id', auth.requireAuth, auth.requirePerm('careplan:write'), requireModule('careplan'), (ctx) => {
     const g = loadGoal(ctx, ctx.params.id);
     assertFresh(ctx, g, 'care_plan_goal');
     const v = validate(ctx.body, { ...Object.fromEntries(Object.entries(goalShape).map(([k, s]) => [k, { ...s, required: false }])), reviewed: { type: 'boolean' } }, { partial: true });
@@ -252,7 +253,7 @@ module.exports = (r) => {
     return { ok: true, updated_at: sets.length ? stamp : g.updated_at };
   });
 
-  r.delete('/api/goals/:id', auth.requireAuth, auth.requirePerm('careplan:write'), (ctx) => {
+  r.delete('/api/goals/:id', auth.requireAuth, auth.requirePerm('careplan:write'), requireModule('careplan'), (ctx) => {
     const g = loadGoal(ctx, ctx.params.id);
     if (!canChange(ctx, g, 'created_by')) throw forbidden('Only the person who added this goal, or a supervisor, can delete it. Mark it discontinued instead.');
     const stepIds = db.all(`SELECT id FROM care_plan_steps WHERE goal_id=?`, g.id).map(s => s.id);
@@ -265,7 +266,7 @@ module.exports = (r) => {
     return { ok: true };
   });
 
-  r.post('/api/goals/:id/steps', auth.requireAuth, auth.requirePerm('careplan:write'), (ctx) => {
+  r.post('/api/goals/:id/steps', auth.requireAuth, auth.requirePerm('careplan:write'), requireModule('careplan'), (ctx) => {
     const g = loadGoal(ctx, ctx.params.id);
     const v = validate(ctx.body, { ...stepShape, create_task: { type: 'boolean' } });
     checkOwner(v.owner_user_id);
@@ -287,7 +288,7 @@ module.exports = (r) => {
     return { id, task_id: taskId };
   });
 
-  r.put('/api/steps/:id', auth.requireAuth, auth.requirePerm('careplan:write'), (ctx) => {
+  r.put('/api/steps/:id', auth.requireAuth, auth.requirePerm('careplan:write'), requireModule('careplan'), (ctx) => {
     const s = loadStep(ctx, ctx.params.id);
     assertFresh(ctx, s, 'care_plan_step');
     const v = validate(ctx.body, Object.fromEntries(Object.entries(stepShape).map(([k, x]) => [k, { ...x, required: false }])), { partial: true });
@@ -308,7 +309,7 @@ module.exports = (r) => {
     return { ok: true, updated_at: sets.length ? stamp : s.updated_at };
   });
 
-  r.delete('/api/steps/:id', auth.requireAuth, auth.requirePerm('careplan:write'), (ctx) => {
+  r.delete('/api/steps/:id', auth.requireAuth, auth.requirePerm('careplan:write'), requireModule('careplan'), (ctx) => {
     const s = loadStep(ctx, ctx.params.id);
     if (!canChange(ctx, s, 'created_by')) throw forbidden('Only the person who added this step, or a supervisor, can delete it. Mark it cancelled instead.');
     db.run(`DELETE FROM care_plan_steps WHERE id=?`, s.id); db.tombstone('care_plan_steps', s.id);

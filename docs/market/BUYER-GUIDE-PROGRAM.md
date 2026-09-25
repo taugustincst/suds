@@ -17,7 +17,7 @@ grey cases (Part 2 records, CalOMS, DMC).
 
 | Workflow | In SUDS |
 | --- | --- |
-| **Outreach encounters** | **+ Log** (one button, bottom-right on a phone): visit, call, text, note, reminder or time. Outreach, naloxone distribution, post-overdose follow-up, warm hand-off and the other navigation service types. A follow-up date creates a reminder; time is logged automatically. |
+| **Outreach encounters** | **+ Log** (one button, bottom-right on a phone): visit, call, text, note, to-do or time. Outreach, naloxone distribution, post-overdose follow-up, warm hand-off and the other navigation service types. A follow-up date creates a reminder; time is logged automatically. |
 | **Anonymous and community work** | Outreach and naloxone distribution can be recorded with no client named, and still count in the funder report. Overdose and reversal events, including community ones. |
 | **Naloxone and supplies** | A supply cupboard (naloxone kits, fentanyl test strips and the other items you list) that each encounter draws down; stock counts on the office server. |
 | **Grants and budget** | Funding sources (opioid settlement, SOR, SABG, county…), budget lines, burn rate against time elapsed, client assistance (bus passes, IDs, motel nights) charged to the right line, staff time by funding source. |

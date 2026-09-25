@@ -24,11 +24,11 @@ function humanize(s) {
 // only. The note is shown next to it on the Lists page as "Used by SUDS: …".
 const OPEN_SHARED = 'the provider has been told who the client is (consent check), and the referral counts as open';
 const LISTS = [
-  { key: 'INTERVENTION_TYPES', group: 'Visits & services', name: 'What did you do?', codes: C.INTERVENTION_TYPES,
+  { key: 'INTERVENTION_TYPES', group: 'Visits', name: 'What did you do?', codes: C.INTERVENTION_TYPES,
     protect: { outreach: 'can be recorded without a client', naloxone_distribution: 'can be recorded without a client' } },
-  { key: 'LOCATIONS', group: 'Visits & services', name: 'Location', codes: C.LOCATIONS },
-  { key: 'MODALITIES', group: 'Visits & services', name: 'Modality', codes: C.MODALITIES },
-  { key: 'OUTCOMES', group: 'Visits & services', name: 'Outcome', codes: C.OUTCOMES },
+  { key: 'LOCATIONS', group: 'Visits', name: 'Location', codes: C.LOCATIONS },
+  { key: 'MODALITIES', group: 'Visits', name: 'Modality', codes: C.MODALITIES },
+  { key: 'OUTCOMES', group: 'Visits', name: 'Outcome', codes: C.OUTCOMES },
   { key: 'CALL_CONTACT_TYPES', group: 'Calls & texts', name: 'Who', codes: C.CALL_CONTACT_TYPES },
   { key: 'CALL_OUTCOMES', group: 'Calls & texts', name: 'Outcome (phone call)', codes: C.CALL_OUTCOMES,
     protect: { reached: 'counts as contact with the client (last contact, "no contact in 30 days")', crisis_escalated: 'marks the call as a crisis' } },

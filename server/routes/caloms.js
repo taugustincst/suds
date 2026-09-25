@@ -6,6 +6,7 @@
 // administrator (settings:manage) sets it up; whoever can write episodes records the answers for clients on
 // their caseload; whoever can read episodes sees the validation report for their caseload; and only a role
 // that may make an identified export (export:identified) produces the state extract, which is a disclosure.
+const { requireModule } = require('../programme');
 const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
@@ -74,7 +75,7 @@ module.exports = (r) => {
     const fields = {};
     provs.forEach((p, i) => { if (!C.PROVIDER_ID.test(p.id)) fields[`providers.${i}.id`] = 'must be 4 to 10 letters or digits (the CalOMS provider ID DHCS assigned)'; });
     if (new Set(provs.map(p => p.id)).size !== provs.length) fields.providers = 'lists the same provider ID twice';
-    const on = v.enabled === undefined ? C.enabled() : !!v.enabled;
+    const on = v.enabled === undefined ? db.getSetting('caloms_enabled', '0') === '1' : !!v.enabled;
     if (on && !provs.length) fields.providers = 'add at least one CalOMS provider ID before turning CalOMS reporting on';
     if (Object.keys(fields).length) throw badRequest('Validation failed', { fields });
     db.transaction(() => {
@@ -97,14 +98,14 @@ module.exports = (r) => {
     return { enabled: C.enabled(), records, expected: expectedFor(e, records) };
   });
 
-  r.post('/api/episodes/:id/caloms', auth.requireAuth, auth.requirePerm('episodes:write'), (ctx) => {
+  r.post('/api/episodes/:id/caloms', auth.requireAuth, auth.requirePerm('episodes:write'), requireModule('caloms'), (ctx) => {
     const e = episodeFor(ctx, ctx.params.id);
     const res = saveRecord(ctx, e, validate(ctx.body, RECORD_SHAPE));
     ctx.status = res.updated ? 200 : 201;
     return { id: res.id, updated: res.updated, warnings: res.warnings };
   });
 
-  r.put('/api/caloms/records/:id', auth.requireAuth, auth.requirePerm('episodes:write'), (ctx) => {
+  r.put('/api/caloms/records/:id', auth.requireAuth, auth.requirePerm('episodes:write'), requireModule('caloms'), (ctx) => {
     const rec = db.one(`SELECT * FROM caloms_records WHERE id=?`, ctx.params.id);
     if (!rec) throw notFound('CalOMS record not found');
     const e = episodeFor(ctx, rec.episode_id);
@@ -114,7 +115,7 @@ module.exports = (r) => {
     return { id: res.id, updated: true, warnings: res.warnings };
   });
 
-  r.delete('/api/caloms/records/:id', auth.requireAuth, auth.requirePerm('episodes:write'), (ctx) => {
+  r.delete('/api/caloms/records/:id', auth.requireAuth, auth.requirePerm('episodes:write'), requireModule('caloms'), (ctx) => {
     const rec = db.one(`SELECT id, client_id, episode_id, record_type, extracted_at FROM caloms_records WHERE id=?`, ctx.params.id);
     if (!rec) throw notFound('CalOMS record not found');
     episodeFor(ctx, rec.episode_id);
@@ -171,7 +172,7 @@ module.exports = (r) => {
     ctx.res.end(body);
   });
 
-  r.post('/api/caloms/submissions', auth.requireAuth, auth.requirePerm('export:identified'), (ctx) => {
+  r.post('/api/caloms/submissions', auth.requireAuth, auth.requirePerm('export:identified'), requireModule('caloms'), (ctx) => {
     const v = validate(ctx.body || {}, { from: { type: 'date', required: true }, to: { type: 'date', required: true } });
     ctx.query.set('from', v.from); ctx.query.set('to', v.to);
     const id = require('../crypto').uuid();

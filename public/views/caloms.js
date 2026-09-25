@@ -4,7 +4,7 @@
 // client's Episodes tab carry the CalOMS questions, each episode shows which CalOMS records it has and
 // needs, and this page lists every edit-check problem by client code and field, previews the file, and
 // produces the submission for DHCS (the disclosure; the file downloaded is the one accounted). The county EHR hand-off is the billing boundary: SUDS does not bill, it hands encounters over.
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog, downloadCsv, stat, kv } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog, downloadCsv, stat, kv, moduleOn } from '../app.js';
 import { withRestrictionCheck } from './part2.js';
 import { fetchDownload, downloadedMessage } from './reports.js';
 
@@ -221,6 +221,11 @@ route('caloms', async (r) => {
     return h('div', { class: 'card mb', 'data-handoff': '1' }, h('h2', {}, 'County EHR hand-off (encounters for billing)'), intro, summary, f);
   };
 
+  // Each half of this page is a module of the programme profile (server/programme.js); one switched off is
+  // left out, and says where it is switched on.
+  const calOn = moduleOn('caloms'), hoOn = moduleOn('handoff');
+  const offNote = (what) => h('p', { class: 'small muted', 'data-module-off': what }, `${what === 'caloms' ? 'CalOMS Tx state reporting' : 'The county EHR hand-off'} is switched off for this programme.${can('settings:manage') ? ' Switch it on in Settings › Programme › Modules.' : ' An administrator can switch it on in Settings › Programme.'}`);
+  if (!calOn) return h('div', {}, pageHead('State reporting'), offNote('caloms'), hoOn ? handoffCard() : offNote('handoff'));
   return h('div', {},
     pageHead('State reporting'),
     h('div', { class: `banner ${cfg && cfg.enabled ? '' : 'warn'}`, 'data-caloms-status': cfg && cfg.enabled ? 'on' : 'off' }, cfg && cfg.enabled
@@ -229,6 +234,6 @@ route('caloms', async (r) => {
     h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'From'), fromI), h('div', { class: 'field' }, h('label', {}, 'To'), toI), h('button', { class: 'btn', onClick: () => go(fromI.value, toI.value) }, 'Apply'),
       h('button', { class: 'btn ghost sm', onClick: () => { const d = new Date(); d.setDate(0); const last = fmt.isoLocal(d).slice(0, 10); go(`${last.slice(0, 7)}-01`, last); } }, 'Last month')),
     h('h2', {}, `CalOMS Tx · ${fmt.date(from)} – ${fmt.date(to)}`),
-    validationCard(), extractCard(), handoffCard(), settingsCard(),
+    validationCard(), extractCard(), hoOn ? handoffCard() : offNote('handoff'), settingsCard(),
     cfg ? h('p', { class: 'small muted' }, `Layout: ${cfg.spec.version}.`) : null);
 });
