@@ -1,4 +1,4 @@
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, stat, kv, loadRefData, downloadCsv, clear } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, stat, kv, loadRefData, downloadCsv, clear, pageTabs } from '../app.js';
 import { qrSvg } from '../qr.js';
 import { listsTab } from './lists.js';
 import { securityTab, drillCard } from './security.js';
@@ -104,7 +104,7 @@ function caseloadStaff() { return state.users.filter(u => u.is_active !== 0 && [
 // static host (the published on-device app) has no rewrite, so there the page is linked by its file name.
 function useOnDevicesCard(primary) {
   const appUrl = window.SUDS_STATIC_HOST || state.local ? 'get-app.html' : primary.replace(/\/$/, '') + '/app';
-  return h('div', { class: 'card' }, h('h3', {}, 'Use SUDS on phones and tablets'),
+  return h('div', { class: 'card' }, h('h2', {}, 'Use SUDS on phones and tablets'),
     h('p', { class: 'small' }, 'There is no separate app to install: staff open SUDS in the browser at the address on the left and add it to their home screen. The step-by-step page for that is ', h('a', { href: appUrl, target: '_blank', rel: 'noopener' }, appUrl), '.'),
     h('p', { class: 'small muted' }, 'The web application on this server is the system of record. The former Android and iOS apps and the desktop launchers were removed in SUDS 1.9.3; a phone that still has one should sync one last time and uninstall it — see docs/PLATFORM.md.'));
 }
@@ -124,7 +124,7 @@ export async function sampleDataCard(onChange) {
     busy.textContent = 'Removing…';
     const r = await del(path); toast(`Removed ${r.removed} sample records`, 'ok'); state.funds = null; await loadRefData(); onChange && onChange();
   };
-  return h('div', { class: 'card', 'data-sample': st.loaded ? 'loaded' : 'empty' }, h('h3', {}, 'Sample data'),
+  return h('div', { class: 'card', 'data-sample': st.loaded ? 'loaded' : 'empty' }, h('h2', {}, 'Sample data'),
     st.loaded ? [h('p', { class: 'small' }, badge('Sample data loaded', 'info'), ' ', `${st.counts.clients} fictional clients and ${st.total} records added ${fmt.dt(st.loaded_at)}. Client codes start with DEMO-.`),
       h('p', { class: 'small muted' }, state.local ? 'Sample data is removed automatically before this device syncs with the office, so it never mixes with real records.' : 'Remove it before entering real clients.'),
       h('div', { class: 'btn-row' }, h('button', { class: 'btn danger', onClick: remove }, 'Remove sample data'), busy)]
@@ -157,7 +157,7 @@ function timezoneField(s) {
 // and staff reach SUDS on a phone or tablet through get-app.html (not /app, which only an office has).
 function deviceSettingsCard() {
   const onStatic = !!window.SUDS_STATIC_HOST;
-  return h('div', { class: 'card', 'data-device-settings': '1' }, h('h3', {}, 'Backups and other devices'),
+  return h('div', { class: 'card', 'data-device-settings': '1' }, h('h2', {}, 'Backups and other devices'),
     h('p', { class: 'small' }, onStatic ? 'SUDS on this device keeps its records only in this browser. Back them up, and restore a backup, on ' : 'This copy syncs with the office SUDS, which makes the backups. Sync, and erase this device, on ', h('a', { href: '#/sync', 'data-device-page-link': '1' }, 'This device'), '.'),
     h('p', { class: 'small' }, h('a', { href: 'get-app.html', target: '_blank', rel: 'noopener', 'data-get-app-link': '1' }, 'Use SUDS on your phone or tablet'), ' — how to add SUDS to a home screen.'),
     h('p', { class: 'small muted' }, onStatic ? 'There is no server here, so there is no backup schedule, network setting or certificate to download: those belong to an office SUDS server.' : 'The backup schedule, network settings and certificate are managed on the office SUDS server.'));
@@ -208,8 +208,8 @@ route('admin', async (r) => {
         ]),
       ], { values: s, submitText: 'Save settings', onSubmit: async (d) => { await put('/api/admin/settings', d); toast('Settings saved', 'ok'); },
         extra: state.local ? null : h('p', { class: 'small', 'data-backup-link': '1' }, 'To back up now, download a backup or restore one, open ', h('a', { href: '#/admin?tab=system' }, 'System & backups'), '.') });
-      return h('div', { class: 'grid cols-2' }, h('div', { class: 'card' }, h('h3', {}, 'Program settings'), f), state.local ? deviceSettingsCard() : null, await sampleDataCard(refresh),
-        h('div', { class: 'card' }, h('h3', {}, 'Server security configuration'), h('p', { class: 'small muted' }, 'Set via environment variables (see .env.example and docs/DEPLOYMENT.md).'),
+      return h('div', { class: 'grid cols-2' }, h('div', { class: 'card' }, h('h2', {}, 'Program settings'), f), state.local ? deviceSettingsCard() : null, await sampleDataCard(refresh),
+        h('div', { class: 'card' }, h('h2', {}, 'Server security configuration'), h('p', { class: 'small muted' }, 'Set via environment variables (see .env.example and docs/DEPLOYMENT.md).'),
           kv([['Environment', s.env.env], ['HTTPS', s.env.tls ? badge(s.env.tls_mode === 'selfsigned' ? 'Self-signed certificate' : 'Enabled', 'ok') : badge('Off — enable under Network', 'danger')], ['Encryption keys', s.env.key_source === 'file' ? 'data/keys.json (back it up under System)' : s.env.key_source === 'devfile' ? 'Development key files in data/' : 'Environment variables'], ['Addresses', (s.env.listener?.urls || []).join(', ')], ['OneNote (Graph) sync', s.env.ms_graph_configured ? badge('Configured', 'ok') : badge('Not configured', 'warn')],
             ['Single sign-on (OIDC)', s.env.oidc_configured ? badge(`Configured — "${s.env.oidc_label}"`, 'ok') : badge('Not configured — set OIDC_ISSUER etc. (see docs/DEPLOYMENT.md)', 'warn')]])));
     },
@@ -244,11 +244,11 @@ route('admin', async (r) => {
       ], { submitText: 'Apply network settings', onSubmit: async (d) => { if (d.network === 'lan' && !d.https) throw new Error('HTTPS is required when other devices can connect'); const r = await put('/api/admin/network', d); toast('Applied. If the address changed, open the new address now.', 'ok'); const u = r.listener.urls.find(x => !/localhost/.test(x)) || r.listener.urls[0]; if (!location.href.startsWith(u.split('//')[0]) || Number(location.port || (location.protocol === 'https:' ? 443 : 80)) !== r.listener.port) setTimeout(() => { location.href = u + '#/admin?tab=network'; }, 1500); else refresh(); } });
       f.querySelectorAll('.form-grid').forEach(g => g.style.gridTemplateColumns = '1fr');
       return h('div', { class: 'grid cols-2' },
-        h('div', { class: 'card' }, h('h3', {}, 'Connect a phone, tablet or another computer'), h('p', {}, 'On the office Wi-Fi, open ', h('b', {}, primary), L.mdns ? ' — no setup needed on the device.' : '.', ' Or scan this code. Then add it to the home screen: ', h('b', {}, 'iPhone'), ' Share → Add to Home Screen; ', h('b', {}, 'Android'), ' ⋮ → Install app. Everything staff do on the phone is instantly on the computer and vice versa.'),
+        h('div', { class: 'card' }, h('h2', {}, 'Connect a phone, tablet or another computer'), h('p', {}, 'On the office Wi-Fi, open ', h('b', {}, primary), L.mdns ? ' — no setup needed on the device.' : '.', ' Or scan this code. Then add it to the home screen: ', h('b', {}, 'iPhone'), ' Share → Add to Home Screen; ', h('b', {}, 'Android'), ' ⋮ → Install app. Everything staff do on the phone is instantly on the computer and vice versa.'),
           h('div', { class: 'center' }, qrSvg(primary, { size: 200 }), h('div', { class: 'mono' }, primary)),
           h('ul', { class: 'small mt' }, L.urls.map(u => h('li', {}, u))),
           L.tls ? h('div', { class: 'mt small' }, h('p', {}, `SUDS made its own certificate${n.cert_expires ? ` (valid until ${fmt.date(n.cert_expires)})` : ''}. Browsers show a one-time warning; choose Advanced → Proceed, or install SUDS's certificate authority on the device to remove it for good (Android: Settings → Security → Install a certificate → CA certificate; iPhone: install, then Settings → General → About → Certificate Trust Settings). Android browsers cannot use the suds.local name — give them the numeric address below, or the QR code.`), h('a', { class: 'btn sm', href: '/api/admin/certificate', download: '' }, 'Download certificate (CA)')) : h('div', { class: 'banner danger mt' }, 'HTTPS is off. Enable it before allowing other devices to connect.')),
-        h('div', { class: 'card' }, h('h3', {}, 'Network settings'), locked ? h('div', { class: 'banner' }, 'Network settings are controlled by environment variables on this server (see docs/DEPLOYMENT.md).') : f),
+        h('div', { class: 'card' }, h('h2', {}, 'Network settings'), locked ? h('div', { class: 'banner' }, 'Network settings are controlled by environment variables on this server (see docs/DEPLOYMENT.md).') : f),
         useOnDevicesCard(primary));
     },
     async system() {
@@ -271,12 +271,12 @@ route('admin', async (r) => {
         } catch (e) { updateStatus.textContent = e.message; }
       };
       return h('div', { class: 'grid cols-2' }, h('div', { class: 'grid cols-2' }, stat('Active users', s.users, '', 'admin?tab=users'), stat('Clients', s.clients, '', 'clients?status=all'), stat('Notes', s.notes, '', 'notes'), stat('Audit entries', s.audit_rows, '', 'admin?tab=audit'), stat('Active sessions', s.active_sessions)),
-        h('div', { class: 'card' }, h('h3', {}, 'Backups'), h('p', { class: 'small muted' }, 'Download an encrypted copy of the database at least weekly and store it off this computer. Backups can only be opened with the encryption keys, so keep the key backup somewhere separate (e.g. the county password manager).'),
+        h('div', { class: 'card' }, h('h2', {}, 'Backups'), h('p', { class: 'small muted' }, 'Download an encrypted copy of the database at least weekly and store it off this computer. Backups can only be opened with the encryption keys, so keep the key backup somewhere separate (e.g. the county password manager).'),
           h('div', { class: 'row' }, h('a', { class: 'btn primary', href: '/api/admin/backup', download: '' }, 'Download encrypted backup'), s.key_source === 'file' ? h('a', { class: 'btn danger', href: '/api/admin/keys-backup', download: '' }, 'Download key backup (keep secret)') : null),
           h('p', { class: 'small mt' }, 'Scheduled backups: ', s.last_scheduled_backup_at ? [badge(/^ok/.test(s.last_scheduled_backup_status || '') ? 'Configured' : 'Attention needed', /^ok/.test(s.last_scheduled_backup_status || '') ? 'ok' : 'danger'), ` last ran ${fmt.dt(s.last_scheduled_backup_at)}${s.last_scheduled_backup_status ? ` — ${s.last_scheduled_backup_status}` : ''}`] : badge('Off — turn on under Settings → Program settings'), ' ', h('button', { class: 'btn sm', onClick: runBackupNow }, 'Run a backup now'), ' ', runNow),
           restoreCard(),
           h('div', { class: 'mt' }, await drillCard()),
-          h('h3', { class: 'mt' }, 'About this server'), kv([['SUDS version', s.version], ['Database', h('code', {}, s.db_path)], ['Keys', s.key_source === 'file' ? 'data/keys.json (generated by setup)' : 'Environment variables'], ['Key backup last downloaded', s.key_source !== 'file' ? 'Not applicable — keys come from the environment' : s.keys_backup_at ? fmt.dt(s.keys_backup_at) : badge('Never — download it below', 'danger')], ['Addresses', (s.listener?.urls || []).join(', ')], ['Retention', 'Audit logs are kept 7 years by default. Client records are soft-deleted only.']]),
+          h('h2', { class: 'mt' }, 'About this server'), kv([['SUDS version', s.version], ['Database', h('code', {}, s.db_path)], ['Keys', s.key_source === 'file' ? 'data/keys.json (generated by setup)' : 'Environment variables'], ['Key backup last downloaded', s.key_source !== 'file' ? 'Not applicable — keys come from the environment' : s.keys_backup_at ? fmt.dt(s.keys_backup_at) : badge('Never — download it below', 'danger')], ['Addresses', (s.listener?.urls || []).join(', ')], ['Retention', 'Audit logs are kept 7 years by default. Client records are soft-deleted only.']]),
           h('div', { class: 'row mt' }, h('button', { class: 'btn sm', onClick: checkForUpdate }, 'Check for updates'), updateStatus)));
     },
     async security() { return securityTab(); },
@@ -318,7 +318,7 @@ route('admin', async (r) => {
   if (full && !state.local && can('apikeys:manage')) { T.fhir = () => fhirClientsTab(refresh); const at = tabs.findIndex(([k]) => k === 'apikeys'); tabs.splice(at < 0 ? tabs.length : at + 1, 0, ['fhir', 'FHIR clients']); }
   const allowed = tabs.some(([k]) => k === tab) ? tab : tabs[0][0];
   body.append(await (T[allowed] || T[tabs[0][0]])());
-  return h('div', {}, pageHead(full ? 'Settings' : 'Supervision tools'), state.local ? h('div', { class: 'banner small' }, window.SUDS_STATIC_HOST ? 'This is SUDS on this device. Backups, and who may sign up here, are on the This device page.' : 'This is the copy of SUDS on this device. Network, API keys and backups are managed on the office SUDS; use Sync to exchange data.') : null, h('div', { class: 'tabs' }, tabs.map(([k, l]) => h('button', { class: k === tab ? 'active' : '', onClick: () => nav(`admin?tab=${k}`) }, l))), body);
+  return h('div', {}, pageHead(full ? 'Settings' : 'Supervision tools'), state.local ? h('div', { class: 'banner small' }, window.SUDS_STATIC_HOST ? 'This is SUDS on this device. Backups, and who may sign up here, are on the This device page.' : 'This is the copy of SUDS on this device. Network, API keys and backups are managed on the office SUDS; use Sync to exchange data.') : null, pageTabs(tabs, allowed, (k) => nav(`admin?tab=${k}`), { label: full ? 'Settings sections' : 'Supervision tools sections' }), body);
 });
 
 // ---------------------------------------------------------------------------
@@ -341,7 +341,7 @@ async function accessRequestsCard(onDone) {
     if (!await confirmDialog('Decline this request', `${q.display_name} (${q.username}) will not be able to sign in. They are told the request was not approved when they next try.`, { danger: true, okText: 'Decline' })) return;
     await post(`/api/users/${q.id}/decline`, {}); toast('Request declined', 'ok'); onDone();
   };
-  return h('div', { class: 'card mb', 'data-access-requests': String(requests.length) }, h('h3', {}, `Access requests (${requests.length})`),
+  return h('div', { class: 'card mb', 'data-access-requests': String(requests.length) }, h('h2', {}, `Access requests (${requests.length})`),
     requests.length
       ? table([
         { label: 'Name', render: q => h('div', {}, h('b', {}, q.display_name), h('div', { class: 'small muted' }, q.username, q.email ? ` · ${q.email}` : '')) },
@@ -416,7 +416,7 @@ export function restoreCard() {
   };
 
   return h('div', { class: 'card mt' },
-    h('h3', {}, 'Restore from a backup'),
+    h('h2', {}, 'Restore from a backup'),
     h('p', { class: 'small muted' }, 'Put a backup back onto this server. It can only be opened with this server\'s encryption keys, so a backup from a different installation will be refused.'),
     h('div', { class: 'row' }, fileInput, h('button', { class: 'btn', onClick: preview }, 'Check this backup')),
     summary);
@@ -454,7 +454,7 @@ export async function transferCard(fromId) {
     toast('Caseload transferred', 'ok');
   } });
   return h('div', { class: 'card' },
-    h('h3', {}, 'Move a caseload to another worker'),
+    h('h2', {}, 'Move a caseload to another worker'),
     h('p', { class: 'small muted' }, 'When someone leaves or goes on extended leave, this ends every one of their current assignments and gives those clients to another worker in one step. Their last day is the day before the transfer takes effect, so nobody holds a client twice.'),
     f, result);
 }

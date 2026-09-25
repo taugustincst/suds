@@ -1,4 +1,4 @@
-import { h, route, get, post, state, form, offerDeviceReset, nav, render, loadRefData, loadSession, toast, clear, replaceHash } from '../app.js';
+import { h, route, get, post, state, form, offerDeviceReset, nav, render, loadRefData, loadSession, toast, clear, replaceHash, accessibilityLink } from '../app.js';
 import { restoreBackupButton, requestPersistentStorage } from './local.js';
 
 const OIDC_ERRORS = {
@@ -18,7 +18,7 @@ const PASSWORD_HELP = '12+ characters with upper and lower case, a number and a 
 // before it is used: the password is printed here, so it is for looking around, not for real records.
 const SAMPLE_ACCOUNT = { username: 'sample', password: 'Sample-SUDS-2026', display_name: 'Sample User', role: 'admin', org_name: 'SUDS sample data' };
 
-const brand = (subtitle) => h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('b', {}, state.local ? 'SUDS on this device' : 'SUDS'), h('small', {}, subtitle)));
+const brand = (subtitle) => h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('h1', { class: 'brand-title' }, state.local ? 'SUDS on this device' : 'SUDS'), h('small', {}, subtitle)));
 const oneColumn = (f) => { f.querySelectorAll('.form-grid').forEach(g => { g.style.gridTemplateColumns = '1fr'; }); return f; };
 const fieldError = (name, message) => { const e = new Error(message); e.labelled = true; e.data = { fields: { [name]: message } }; return e; };
 async function signInAs(username, password) {
@@ -43,6 +43,7 @@ async function accountPage(r) {
   const tabs = {};
   const select = async (m, { focus = false } = {}) => {
     mode = m; panel.dataset.accountMode = m;
+    document.title = `${m === 'signup' ? 'Sign up' : 'Log in'} — ${state.local ? 'SUDS on this device' : 'SUDS'}`;
     for (const [k, b] of Object.entries(tabs)) { const on = k === m; b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; b.classList.toggle('active', on); }
     panel.setAttribute('aria-labelledby', `account-tab-${m}`);
     const content = m === 'signup' ? await signupPanel(status, noAccount) : await loginPanel(r, noAccount);
@@ -68,7 +69,7 @@ async function accountPage(r) {
     contact,
     h('div', { class: 'small muted center mt' }, 'Contains protected health information (HIPAA, 42 CFR Part 2). Authorized staff only; all activity is logged.'));
   await select(mode);
-  return h('div', { class: 'login-wrap' }, card);
+  return h('main', { class: 'login-wrap', id: 'main', tabindex: '-1' }, card, accessibilityLink());
 }
 
 async function loginPanel(r, noAccount) {
@@ -227,6 +228,6 @@ route('mfa', async () => {
     await post('/api/auth/mfa/verify', d);
     state.mfaPending = false; await loadRefData(); nav('dashboard'); render();
   } });
-  return h('div', { class: 'login-wrap' }, h('div', { class: 'card login' }, h('h2', {}, 'Two-factor verification'), h('p', { class: 'muted' }, 'Enter the 6-digit code from your authenticator app.'), f,
+  return h('main', { class: 'login-wrap', id: 'main', tabindex: '-1' }, h('div', { class: 'card login' }, h('h1', {}, 'Two-factor verification'), h('p', { class: 'muted' }, 'Enter the 6-digit code from your authenticator app.'), f,
     h('p', { class: 'small center mt' }, h('a', { href: '#', onClick: async (e) => { e.preventDefault(); await post('/api/auth/logout', {}); state.user = null; state.mfaPending = false; nav('login'); render(); } }, 'Cancel and sign out'))));
 });

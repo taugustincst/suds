@@ -87,7 +87,7 @@ const selected = (page) => page.$eval('[role=tablist] [aria-selected=true]', b =
   await admin.goto(office + '/#/dashboard?_=' + Date.now()); await settle(admin);
   ok(await admin.$('a.badge[href="#/admin?tab=users"]') && /1 access request waiting/.test(await admin.textContent('.main')), 'Home tells the administrator a request is waiting');
   await admin.goto(office + '/#/admin?tab=users'); await admin.waitForSelector('[data-access-requests]'); await settle(admin);
-  eq(await admin.$eval('[data-access-requests] h3', e => e.textContent), 'Access requests (1)', 'Settings → Users & roles shows "Access requests (1)"');
+  eq(await admin.$eval('[data-access-requests] h2', e => e.textContent), 'Access requests (1)', 'Settings → Users & roles shows "Access requests (1)"');
   ok(/Users & roles \(1\)/.test(await admin.textContent('.tabs')), 'and the tab carries the count');
   ok(/Peer navigator, north county team/.test(await admin.textContent('[data-access-requests]')), 'with the reason the person gave');
   await admin.click('[data-approve=rrequest]'); await admin.waitForSelector('.modal select[name=role]');

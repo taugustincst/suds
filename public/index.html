@@ -24,17 +24,17 @@
     whichever screen (sign-in, or straight to their dashboard if already signed in) that turns out to be.
   -->
   <div id="app" class="app" aria-busy="true">
-    <div class="login-wrap">
+    <main class="login-wrap" id="main">
       <div class="card login">
-        <div class="brand"><img src="favicon.svg" alt=""><div><b>SUDS</b><small>SUD Navigator Services Tracker</small></div></div>
+        <div class="brand"><img src="favicon.svg" alt=""><div><h1 class="brand-title">SUDS</h1><small>SUD Navigator Services Tracker</small></div></div>
         <div class="form-grid" style="grid-template-columns:1fr">
-          <div class="field"><label>Username</label><input disabled></div>
-          <div class="field"><label>Password</label><input type="password" disabled></div>
+          <div class="field"><label for="boot-username">Username</label><input id="boot-username" disabled></div>
+          <div class="field"><label for="boot-password">Password</label><input id="boot-password" type="password" disabled></div>
         </div>
         <button class="btn primary" disabled style="width:100%">Sign in</button>
-        <p class="small muted center mt">Loading…</p>
+        <p class="small muted center mt" role="status">Loading…</p>
       </div>
-    </div>
+    </main>
   </div>
   <div id="toasts" class="toasts" aria-live="polite"></div>
   <div id="modal-root"></div>

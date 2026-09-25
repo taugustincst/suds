@@ -1,7 +1,7 @@
 // What is waiting on a supervisor: notes to countersign, drafts the team has left, time to approve, and
 // referrals with no outcome recorded. Before this, the dashboard only counted the signed-in user's own
 // unsigned notes, so none of this was visible to the person responsible for it.
-import { h, route, get, post, state, toast, table, badge, fmt, can, pageHead, nav, emptyState, modal, form, announce, confirmDialog } from '../app.js';
+import { h, route, get, post, state, toast, table, badge, fmt, can, pageHead, nav, emptyState, modal, form, announce, confirmDialog, pageTabs } from '../app.js';
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const hoursOf = (m) => fmt.mins(m);
@@ -17,9 +17,7 @@ route('supervision', async (r) => {
   // Every emergency access to a clinical note waits here until someone with audit rights has looked at it.
   // Acknowledging records that the review happened; it does not make the access retroactively ordinary.
   const glassCount = q.breakglass_unacknowledged || 0;
-  const tabs = can('audit:read') ? h('div', { class: 'tabs' },
-    h('button', { class: tab === 'queue' ? 'active' : '', onClick: () => nav('supervision') }, 'Queue'),
-    h('button', { class: tab === 'breakglass' ? 'active' : '', 'data-tab-breakglass': '1', onClick: () => nav('supervision?tab=breakglass') }, `Access to review${glassCount ? ` (${glassCount})` : ''}`)) : null;
+  const tabs = can('audit:read') ? pageTabs([['queue', 'Queue'], ['breakglass', `Access to review${glassCount ? ` (${glassCount})` : ''}`, { 'data-tab-breakglass': '1' }]], tab, (k) => nav(k === 'queue' ? 'supervision' : 'supervision?tab=breakglass'), { label: 'Supervision sections' }) : null;
   if (tab === 'breakglass') {
     const g = await get('/api/supervision/breakglass');
     const ack = async (row) => {
@@ -98,7 +96,7 @@ route('supervision', async (r) => {
       { label: 'Client', key: 'client_code' },
       { label: 'Author', key: 'author' },
       { label: 'Kind', render: r => fmt.label(r.kind) },
-      { label: 'Started', render: r => h('span', { style: r.overdue ? { color: 'var(--danger)' } : {} }, fmt.date(r.created_at)) },
+      { label: 'Started', render: r => h('span', { style: r.overdue ? { color: 'var(--danger)' } : {} }, fmt.date(r.created_at), r.overdue ? ' — overdue' : '') },
     ], drafts, { onRow: (r) => nav(`notes/${r.id}`), rowLabel: (r) => `Draft by ${r.author} for ${r.client_code}` })
       : emptyState('Everything is signed', 'Draft notes left by your team would show here.')));
 
@@ -176,7 +174,7 @@ route('supervision', async (r) => {
       revoked.length ? table([
         { label: 'Client', key: 'client_code' }, { label: 'Referred to', key: 'resource' },
       ], revoked, { onRow: (r) => nav(`referrals?client_id=${r.client_id}`) }) : null,
-      open.length ? h('div', {}, h('h3', { class: 'mt' }, 'No outcome recorded yet'),
+      open.length ? h('div', {}, h('h2', { class: 'mt' }, 'No outcome recorded yet'),
         table([
           { label: 'Client', key: 'client_code' }, { label: 'Referred to', key: 'resource' },
           { label: 'Sent', render: r => fmt.date(r.referred_at) }, { label: 'Status', render: r => badge(fmt.label(r.status, 'REFERRAL_STATUSES')) },

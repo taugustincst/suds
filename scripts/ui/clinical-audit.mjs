@@ -202,7 +202,7 @@ const adm = await session('admin', 'AdminPassw0rd!x');
     ok(/at least 15 characters/.test(await page.$eval('.modal .err', e => e.textContent)), 'and says why', await page.$eval('.modal .err', e => e.textContent).catch(() => ''));
     await page.fill('.modal input', 'Client in ED, treating physician needs the plan');
     await page.click('.modal button:has-text("Show clinical notes")');
-    const shown = await until(() => page.$('#breakglass-notes h4'));
+    const shown = await until(() => page.$('#breakglass-notes h3'));
     ok(shown, 'a proper reason opens the clinical notes');
     ok(!(await page.$('.modal')), 'and the dialog has closed');
   }

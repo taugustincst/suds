@@ -1,6 +1,6 @@
 // Episodes of care: admitting someone, discharging them, and the waitlist. Before this a client entered
 // once stayed "active" forever, because there was no step that ended anything.
-import { h, route, get, pagedList, post, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog, kv } from '../app.js';
+import { h, route, get, pagedList, post, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog, kv, flag } from '../app.js';
 import { calomsConfig, calomsFields, splitCaloms, calomsDefaults, calomsEpisodeDialog } from './caloms.js';
 
 // The discharge reasons are a documentation list (Settings → Lists): offered and worded as the office set
@@ -115,7 +115,7 @@ route('waitlist', async () => {
     first.rows.length ? pagedList({ first, url: '/api/waitlist', limit: PAGE, summary: (rows, total) => h('div', { class: 'muted small mb' }, `${total} waiting`), render: (rows) => table([
       { label: 'Client', render: r => r.display_name },
       { label: 'Code', key: 'client_code' },
-      { label: 'Waiting', render: r => h('span', { style: r.days_waiting > 30 ? { color: 'var(--danger)' } : {} }, `${r.days_waiting} day${r.days_waiting === 1 ? '' : 's'}`), num: true },
+      { label: 'Waiting', render: r => flag(`${r.days_waiting} day${r.days_waiting === 1 ? '' : 's'}`, r.days_waiting > 30, 'waiting more than 30 days'), num: true },
       { label: 'Risk', render: r => badge(fmt.label(r.risk_level || 'unknown'), r.risk_level === 'critical' || r.risk_level === 'high' ? 'danger' : '') },
       { label: 'Substance', render: r => fmt.label(r.primary_substance || 'unknown', 'SUBSTANCES') },
       { label: 'Level of care', render: r => r.asam_level || '—' },
