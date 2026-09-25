@@ -356,7 +356,7 @@ for (const [label, base] of surfaces) {
       await press(page.getByRole('button', { name: /^Edit/ }).first()); await page.waitForSelector('.modal');
       await page.getByRole('combobox', { name: /^Status/ }).selectOption('inactive');
       await page.click('.modal button[type=submit]'); await until(async () => !(await page.$('.modal')), { timeout: 6000 }); await settle(page);
-      const statusShown = () => page.evaluate(() => { const dt = [...document.querySelectorAll('#main dt, #main .k, #main th')].find(e => e.textContent.trim() === 'Status'); return [[...document.querySelectorAll('#main .badge')].some(b => b.textContent === 'Inactive'), dt ? (dt.nextElementSibling?.textContent || '').trim() : 'no Status row']; });
+      const statusShown = () => page.evaluate(() => { const dt = [...document.querySelectorAll('#main dt, #main .k, #main th')].find(e => e.textContent.trim() === 'Status'); return [[...document.querySelectorAll('#main .badge')].some(b => b.textContent.replace(/^Status: /, '') === 'Inactive'), dt ? (dt.nextElementSibling?.textContent || '').trim() : 'no Status row']; });
       eq((await statusShown()).join('|'), 'true|Inactive', `${L}: after Edit → Inactive the profile shows the Inactive badge and Status "Inactive"`);
       await page.reload(); await page.waitForSelector('.layout'); await settle(page);
       eq((await statusShown()).join('|'), 'true|Inactive', `${L}: and still does after a reload`);
@@ -487,7 +487,8 @@ else if (buildOldSite()) {
     ok(/^Good (morning|afternoon|evening), QATEST$/.test(h1), `${label}: the greeting shows the old build's display name whole`, h1);
     // item 3: the inactive client from the old database
     await page.goto(clientUrl); await until(async () => /M26-0001/.test((await page.textContent('#main')) || ''), { timeout: 10000 });
-    const badges = await page.$$eval('#main .badge', b => b.map(x => x.textContent.trim()));
+    // The status badge reads "Status: Inactive" to a screen reader (the prefix is visually hidden).
+    const badges = await page.$$eval('#main .badge', b => b.map(x => x.textContent.trim().replace(/^Status: /, '')));
     ok(badges.includes('Inactive'), `${label}: M26-0001's header shows the Inactive badge after the upgrade`, badges);
     ok(/Status\s*Inactive/.test((await page.textContent('#main')).replace(/\s+/g, ' ')), `${label}: and the Overview's Status row says Inactive`);
     const stored = await page.evaluate(async (id) => { const r = await window.SUDS_LOCAL.handle('GET', '/api/clients/' + id, null, { 'X-Requested-With': 'suds' }); const c = r.json && r.json.client; return c && [c.client_code, c.status]; }, clientUrl.split('/client/')[1].split(/[/?]/)[0]);
