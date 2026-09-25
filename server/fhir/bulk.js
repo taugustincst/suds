@@ -52,7 +52,8 @@ let restored = false;
 /**
  * Bring back the jobs a previous server process left: finished ones carry on where they were; one that was
  * mid-build is marked failed and its partial files removed; a directory with no readable state (written by
- * an older SUDS, or under a key since rotated) or past its expiry is removed. Runs once per process.
+ * an older SUDS, or under a key since rotated) or past its expiry is removed. Runs once per process, at
+ * startup (server/index.js), when this process is the only one using the data directory (instance-lock.js).
  */
 function restore() {
   if (restored) return;
@@ -77,11 +78,10 @@ function restore() {
 }
 
 function sweep() {
-  restore();
   const now = Date.now();
   for (const [id, j] of jobs) if (j.expiresAt && j.expiresAt < now) removeJob(id);
-  // Anything else in the directory that no job owns (a crash between mkdir and the first save) goes once
-  // it is past the TTL.
+  // Anything else in the directory that no job owns (a crash between mkdir and the first save, or a
+  // process that never ran restore()) goes once it is past the TTL.
   let entries = [];
   try { entries = fs.readdirSync(dir()); } catch { return; }
   for (const e of entries) {

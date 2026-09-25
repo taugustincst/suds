@@ -3,6 +3,10 @@
 // (private_key_jwt), the client secret working only at the token endpoint, aliases that cannot widen a FHIR
 // client to most TPO consents, bulk export checked and accounted when it is downloaded rather than when it is
 // built, and export job state that survives a restart.
+// A data directory of its own: the restart test runs the startup restore over <data dir>/fhir-export, which
+// must not see the exports other test files are building at the same time in the shared ./data.
+const os = require('node:os');
+process.env.SUDS_DATA_DIR = require('node:fs').mkdtempSync(require('node:path').join(os.tmpdir(), 'suds-fhir-hardening-'));
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -86,6 +90,7 @@ after(async () => {
   const bulk = require('../server/fhir/bulk');
   for (const id of bulk._jobs.keys()) fs.rmSync(path.join(config.dataDir, 'fhir-export', id), { recursive: true, force: true });
   await H.stop();
+  fs.rmSync(config.dataDir, { recursive: true, force: true });
 });
 
 // ---------------------------------------------------------------------------------------------------------

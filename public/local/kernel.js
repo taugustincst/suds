@@ -24470,7 +24470,6 @@ var require_bulk = __commonJS({
       }
     }
     function sweep() {
-      restore();
       const now = Date.now();
       for (const [id, j] of jobs) if (j.expiresAt && j.expiresAt < now) removeJob(id);
       let entries = [];

@@ -429,8 +429,11 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   // (counts only) and saving refuses it, on the field.
   await page.fill('.modal textarea[name=aliases]', 'county');
   await page.click('.modal button:has-text("Check aliases")');
-  const previewRow = await until(() => page.$('.modal [data-alias-preview] tr:has-text("county")'));
-  ok(previewRow && /No/.test(await previewRow.textContent()), 'the alias preview marks a one-word generic alias as not accepted');
+  // Rows are [name, clients covered, accepted, why not]; has-text() ignores case, so read the cells.
+  const previewRows = await until(async () => { const rows = await page.$$eval('.modal [data-alias-preview] tbody tr', trs => trs.map(t => [...t.cells].map(c => c.textContent.trim()))); return rows.length >= 2 ? rows : null; });
+  const countyRow = (previewRows || []).find(r => r[0] === 'county');
+  ok(countyRow && /^(⚠\s*)?No/.test(countyRow[2]) && /generic/.test(countyRow[3]), 'the alias preview marks a one-word generic alias as not accepted', JSON.stringify(previewRows));
+  ok((previewRows || []).some(r => /\(recipient\)$/.test(r[0]) && /^\d+$/.test(r[1])), 'and gives the recipient\'s count', JSON.stringify(previewRows));
   ok(await page.$('.modal [data-alias-preview]:has-text("Only counts are shown")'), 'the preview shows counts, not names');
   await page.check('.modal input[name=scope_Patient]'); await page.check('.modal input[name=scope_HealthcareService]');
   await page.click('.modal button[type=submit]');
