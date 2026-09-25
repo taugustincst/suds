@@ -24,7 +24,11 @@ self.addEventListener('install', (e) => { e.waitUntil(caches.open(VERSION).then(
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
-  if (e.request.method !== 'GET' || url.pathname.includes('/api/')) return; // network only, never cached
+  // Network only, never cached: anything but a GET; every data route (the app's API, and FHIR and SCIM,
+  // which a person may open in a tab); and any other origin -- the office server a device syncs with, or a
+  // site a page links to. The shell is this origin's own files. (test/sw-phi.test.js)
+  if (e.request.method !== 'GET' || /\/(api|fhir|scim)\//.test(url.pathname)) return;
+  if (self.location && url.origin !== self.location.origin) return;
   // version.json is how an open page learns a release is out (app.js checkVersion): never from a cache.
   if (/\/version\.json$/.test(url.pathname)) return;
   const versioned = /^\/local\//.test(url.pathname) && url.searchParams.has('v');

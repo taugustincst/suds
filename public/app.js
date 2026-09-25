@@ -129,6 +129,8 @@ async function apiCall(method, path, body, opts) {
     const data = r.json !== undefined ? r.json : (r.body ? (String(r.headers['content-type'] || '').includes('json') ? JSON.parse(r.body.toString()) : r.body.toString()) : null);
     if (r.status === 401 && state.user && !opts.quiet) { if (data && data.mfaRequired) location.hash = '#/mfa'; else { state.user = null; render(); } }
     if (r.status === 403 && data && data.passwordChangeRequired) location.hash = '#/profile?force=1';
+    // The enrolment deadline passed (possibly mid-session): go to enrolment, rather than failing every page.
+    if (r.status === 403 && data && data.mfaSetupRequired && !location.hash.startsWith('#/profile')) location.hash = '#/profile?mfa=1';
     if (r.status === 409 && data && data.frozen) showPausedScreen();
     if (r.status >= 400) { const err = new Error((data && data.error) || `Request failed (${r.status})`); err.status = r.status; err.data = data; throw err; }
     return data;
@@ -151,6 +153,7 @@ async function apiCall(method, path, body, opts) {
   const data = ct.includes('json') ? await res.json() : await res.text();
   if (res.status === 401 && state.user && !opts.quiet) { if (data && data.mfaRequired) { location.hash = '#/mfa'; } else { state.user = null; render(); toast('Session expired. Please sign in again.', 'error'); } }
   if (res.status === 403 && data && data.passwordChangeRequired) { location.hash = '#/profile?force=1'; }
+  if (res.status === 403 && data && data.mfaSetupRequired && !location.hash.startsWith('#/profile')) { location.hash = '#/profile?mfa=1'; }
   if (!res.ok) { const err = new Error((data && data.error) || `Request failed (${res.status})`); err.status = res.status; err.data = data; throw err; }
   return data;
 }
@@ -197,7 +200,7 @@ export function h(tag, attrs = {}, ...children) {
     if (k === 'class') el.className = v;
     else if (k === 'style' && typeof v === 'object') Object.assign(el.style, v);
     else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2).toLowerCase(), v);
-    else if (k === 'html') el.innerHTML = v;
+    // No `html` attribute: markup from a string is how stored text becomes script (scripts/check-html-sinks.js).
     else if (k in el && k !== 'list' && typeof v !== 'string') el[k] = v;
     else el.setAttribute(k, v === true ? '' : v);
   }
@@ -1525,6 +1528,8 @@ export async function loadSession() {
   try {
     const me = await get('/api/auth/me', { quiet: true });
     state.user = me.user; state.org = me.org_name; state.mfaPending = me.mfaPending; state.idleMinutes = me.idle_minutes || 15; state.programme = me.programme || null;
+    // The fund a new visit is pre-filled with (the worker's own default, else the programme's).
+    state.defaultFundId = me.default_fund_id || null;
     await Promise.all([loadRefData(), prefs.load()]);
     // Two-step verification is required of this role but not set up yet. There is a grace period, after which
     // the server refuses every request until it is done -- so say when that is, and where to do it, instead of

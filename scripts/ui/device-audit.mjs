@@ -6,7 +6,7 @@
 // raw column names (LOW).
 import { chromium } from 'playwright';
 import { createHmac } from 'node:crypto';
-import { makeChecks, until, settle } from './assert.mjs';
+import { makeChecks, until, settle, skipTour } from './assert.mjs';
 
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const { ok, eq, fail, finish } = makeChecks('device-audit');
@@ -75,6 +75,8 @@ try {
     const pollReq = op.waitForRequest(r => /\/api\/tasks\/due/.test(r.url()), { timeout: 15000 }).catch(() => null);
     await op.fill('input[name=username]', 'mrivera'); await op.fill('input[name=password]', 'Navigator2026!!'); await op.click('button[type=submit]');
     await op.waitForSelector('.layout', { timeout: 15000 });
+    // The welcome tour opens over Home a moment after sign-in; put it away before clicking the sidebar.
+    await skipTour(op);
     const poll = await pollReq;
     ok(poll && poll.headers()['x-background'] === '1', 'the reminder bell polls the office as a background request (X-Background: 1)', poll && poll.headers());
     const userReq = op.waitForRequest(r => /\/api\/clients\?/.test(r.url()), { timeout: 15000 }).catch(() => null);

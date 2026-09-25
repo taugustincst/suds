@@ -7,6 +7,10 @@ services:
   suds:
     build: .
     restart: unless-stopped
+    # Docker's built-in init (tini, shipped with the engine — not an image dependency) runs as PID 1, forwards
+    # SIGTERM to node for a clean shutdown and reaps orphaned children. The instance lock copes without it
+    # (server/instance-lock.js), but a clean stop that releases the lock is better than a stale one.
+    init: true
     env_file: .env
     environment:
       SUDS_ENV: production

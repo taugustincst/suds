@@ -298,16 +298,16 @@ for (const [label, base] of surfaces) {
 
       });
       await step('date picker', async () => {
-      // DATE PICKER: New task and Edit task. Nothing may cover the field or the calendar button, a toast
+      // DATE PICKER: New to-do and Edit to-do. Nothing may cover the field or the calendar button, a toast
       // included; the year takes four digits; a garbled date is refused, not saved.
       await page.goto(base + '/#/tasks'); await settle(page);
       await press(page.getByRole('button', { name: '+ Add a to-do' })); await page.waitForSelector('.modal');
       const due = page.getByRole('dialog').locator('input[type=date]');
-      eq(await due.evaluate(i => `${i.min}..${i.max}`), '1900-01-01..2100-12-31', `${L}: New task: the due date is limited to four-digit years (min/max set)`);
-      eq(await hitAt(due, 'right'), 'self', `${L}: New task: the field's own "Show date picker" region is the field itself`);
+      eq(await due.evaluate(i => `${i.min}..${i.max}`), '1900-01-01..2100-12-31', `${L}: New to-do: the due date is limited to four-digit years (min/max set)`);
+      eq(await hitAt(due, 'right'), 'self', `${L}: New to-do: the field's own "Show date picker" region is the field itself`);
       const cal = page.getByRole('button', { name: /Choose Due from a calendar/ });
-      eq(await cal.count(), 1, `${L}: New task: there is a separate calendar button for the due date`);
-      eq(await hitAt(cal), 'self', `${L}: New task: and nothing covers it`);
+      eq(await cal.count(), 1, `${L}: New to-do: there is a separate calendar button for the due date`);
+      eq(await hitAt(cal), 'self', `${L}: New to-do: and nothing covers it`);
       await press(cal); await page.waitForTimeout(200);
       ok(await page.$('.modal'), `${L}: pressing it opens the calendar without closing or breaking the dialog`);
       await page.keyboard.press('Escape').catch(() => {}); await page.waitForTimeout(100);

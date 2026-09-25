@@ -3,7 +3,7 @@ const db = require('./db');
 const config = require('./config');
 const audit = require('./audit');
 const { sha256, randomToken, verifyPassword, verifyPasswordAsync, verifyTotp, decrypt } = require('./crypto');
-const { unauthorized, forbidden, HttpError } = require('./http');
+const { unauthorized, forbidden, badRequest, HttpError } = require('./http');
 
 // Security policy: settings table (editable in Administration) overrides environment defaults.
 function policy() {
@@ -24,6 +24,9 @@ function policy() {
     // How long a new account in a role that requires two-step verification has to set it up. Without this
     // the very first administrator would be locked out the moment the setup wizard created them.
     mfaGraceDays: num('mfa_grace_days', config.mfaGraceDays, { zero: true }),
+    // How long after proving who they are (signing in, or giving the password or code again) a person may
+    // sign a note with a confirmation alone. 0: the password (or code) every time. At most an hour.
+    signReauthMinutes: Math.min(60, num('sign_reauth_minutes', 10, { zero: true })),
     ...ssoPolicy(),
   };
 }
@@ -46,17 +49,19 @@ function ssoPolicy() {
 // every role that works with clients, as clients:write is; an administrator may read it. assessments (ASAM
 // ratings and scored screening instruments such as the PHQ-9) are clinical content, held like clinical
 // notes by clinicians and supervisors only.
+// reports:exact lets the funder report be run with exact counts instead of small-cell suppression, for the
+// programme's own submission to its funder (server/routes/reports.js); publication always suppresses.
 const PERMS = {
   admin:      ['users:manage','settings:manage','audit:read','apikeys:manage','clients:read','clients:write','clients:all',
                'interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*','budget:read','budget:write','budget:approve','budget:manage',
                'notes:admin:read','notes:admin:write','notes:clinical:breakglass','consents:*','imports:*','reports:read','assignments:manage','export:read','export:identified','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge','documents:read','documents:write','disclosures:override','clients:legal-hold','patient-requests:*','careplan:read',
-               'complaints:*','incidents:*','court-orders:*','agreements:*'],
+               'complaints:*','incidents:*','court-orders:*','agreements:*','reports:exact'],
   supervisor: ['clients:read','clients:write','clients:all','interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*',
                'budget:read','budget:write','budget:approve','budget:manage','notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write',
                'consents:*','imports:*','reports:read','assignments:manage','audit:read','export:read','export:identified','users:read','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge','documents:read','documents:write','disclosures:override','patient-requests:*',
-               'careplan:*','assessments:*','complaints:*','incidents:*','court-orders:*','agreements:*'],
+               'careplan:*','assessments:*','complaints:*','incidents:*','court-orders:*','agreements:*','reports:exact'],
   // Front-line staff hold export:read so the Export buttons on their own screens work; without
   // export:identified every file they can produce is de-identified (Safe Harbor) and caseload-scoped.
   clinician:  ['clients:read','clients:write','interventions:*','calls:*','time:read','time:write','resources:read','referrals:*','tasks:*',
@@ -67,7 +72,7 @@ const PERMS = {
                'episodes:*','overdose:*','documents:read','patient-requests:*','export:read','careplan:*','court-orders:read','agreements:read'],
   // finance sees money, not people: export:read without export:identified means every export it can run
   // comes out keyed by client_code. Do not add 'export:identified' here — docs/HIPAA.md promises otherwise.
-  finance:    ['clients:list-deidentified','budget:read','budget:write','budget:approve','budget:manage','time:read','time:all','time:approve','reports:read','export:read','users:read','documents:read','documents:write'],
+  finance:    ['clients:list-deidentified','budget:read','budget:write','budget:approve','budget:manage','time:read','time:all','time:approve','reports:read','export:read','users:read','documents:read','documents:write','reports:exact'],
   // readonly is for oversight (a county analyst, an auditor's dashboard): aggregate reports and the resource
   // directory, keyed by client code. It holds neither clients:read nor export:read, so it can identify nobody
   // and take nothing off the system.
@@ -132,9 +137,55 @@ function createSession(user, ctx, { mfaPending = false, mfaSource = null } = {})
   const token = randomToken(32);
   const now = new Date();
   const expires = new Date(now.getTime() + policy().absoluteHours * 3600 * 1000);
-  db.run(`INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,mfa_source) VALUES(?,?,?,?,?,?,?,?,?)`,
-    sha256(token), user.id, now.toISOString(), now.toISOString(), expires.toISOString(), mfaPending ? 1 : 0, ctx.ip, (ctx.headers['user-agent'] || '').slice(0, 200), mfaSource);
+  // Creating a session is the moment its user proved who they are (a password, or the identity provider).
+  db.run(`INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,mfa_source,reauth_at) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+    sha256(token), user.id, now.toISOString(), now.toISOString(), expires.toISOString(), mfaPending ? 1 : 0, ctx.ip, (ctx.headers['user-agent'] || '').slice(0, 200), mfaSource, now.toISOString());
   return token;
+}
+// ---- recent re-authentication (the electronic-signature step) ----
+// A signature is the signer's deliberate act, attested each time; proving identity again for every note is
+// what made signing take eleven steps. A session that proved who is using it within signReauthMinutes
+// (sign-in, second factor, or the password or code given for the last signature) needs only the
+// confirmation; after that, the password again — or the authenticator code for an account with two-step
+// verification on.
+function markReauth(ctx) { if (ctx.session) { const at = db.now(); db.run(`UPDATE sessions SET reauth_at=? WHERE id=?`, at, ctx.session.id); ctx.session.reauth_at = at; } }
+function reauthStatus(ctx) {
+  const minutes = policy().signReauthMinutes;
+  const at = ctx.session && ctx.session.reauth_at ? Date.parse(ctx.session.reauth_at) : NaN;
+  const until = Number.isFinite(at) && minutes > 0 ? at + minutes * 60000 : 0;
+  return { recent: until > Date.now(), until: until ? new Date(until).toISOString() : null, window_minutes: minutes, method: ctx.user && ctx.user.mfa_enabled ? 'totp' : 'password' };
+}
+/**
+ * Establish who is signing: the password (or, with two-step verification on, the authenticator code) given
+ * with this request, or a recent re-authentication plus an explicit confirmation. Returns how, for the audit
+ * entry: 'password', 'totp' or 'recent_auth'. `action` names the failed-attempt audit entry.
+ */
+async function verifySigner(ctx, body, { action = 'note.sign.failed' } = {}) {
+  const password = typeof body.password === 'string' && body.password ? body.password : null;
+  const code = typeof body.code === 'string' && body.code.trim() ? body.code.trim() : null;
+  if (password) {
+    const u = db.one(`SELECT password_hash FROM users WHERE id=?`, ctx.user.id);
+    if (!(await verifyPasswordAsync(password, u.password_hash))) {
+      audit.log({ user: ctx.user, action, ip: ctx.ip, success: false });
+      throw forbidden('Password verification failed');
+    }
+    markReauth(ctx); return 'password';
+  }
+  if (code) {
+    const u = db.one(`SELECT mfa_enabled, mfa_secret_enc FROM users WHERE id=?`, ctx.user.id);
+    if (!u.mfa_enabled || !u.mfa_secret_enc) throw badRequest('Two-step verification is not set up for your account; give your password instead');
+    if (!require('./app').rateLimit(`mfa:${ctx.user.id}`, 10, 10 * 60_000)) throw new HttpError(429, 'Too many attempts');
+    if (!verifyTotp(decrypt(u.mfa_secret_enc), code)) {
+      audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { method: 'totp' } });
+      throw forbidden('That code is not right. Enter the current code from your authenticator app.');
+    }
+    markReauth(ctx); return 'totp';
+  }
+  const st = reauthStatus(ctx);
+  // validate() stores booleans as 1/0 (SQLite); either spelling is the confirmation.
+  if (body.confirm !== true && body.confirm !== 1) throw badRequest(st.recent ? 'Confirm the attestation to sign' : st.method === 'totp' ? 'Enter the code from your authenticator app to sign' : 'Your password is required to sign');
+  if (!st.recent) throw new HttpError(403, st.method === 'totp' ? 'It has been a while since you last confirmed it is you. Enter the code from your authenticator app to sign.' : 'It has been a while since you last confirmed it is you. Enter your password to sign.', { reauthRequired: true, method: st.method });
+  return 'recent_auth';
 }
 function cookieHeader(token, { clear = false } = {}) {
   const secure = config.tls.cert || config.isProd ? '; Secure' : '';
@@ -179,14 +230,15 @@ function requireAuth(ctx) {
     // setup wizard just created, before they had any chance to enrol.
     // A session whose second factor the identity provider asserted (and the administrator trusts) has had
     // one: the SUDS enrolment deadline is about SUDS's own authenticator and does not apply to it.
+    // The page that lets someone change their password (or enrol a second factor) still needs the reference
+    // data and preferences the app shell loads first; refusing those too meant a brand-new account (or an
+    // expired password) was bounced straight back to the sign-in form, forever. Reads of those two — no PHI
+    // — and nothing else, get through.
+    const shellOnly = ctx.method === 'GET' && (ctx.path === '/api/meta/constants' || ctx.path === '/api/me/prefs');
     const due = ctx.session?.mfa_source === 'idp' ? null : mfaDeadline(ctx.user);
-    if (due && Date.now() > Date.parse(due)) {
+    if (due && Date.now() > Date.parse(due) && !shellOnly) {
       throw new HttpError(403, 'Two-step verification must be set up for your role before you can continue', { mfaSetupRequired: true, mfaSetupDeadline: due });
     }
-    // The page that lets someone change their password still needs the reference data and preferences the
-    // app shell loads first; refusing those too meant a brand-new account (or an expired password) was
-    // bounced straight back to the sign-in form, forever. Reads of those two, and nothing else, get through.
-    const shellOnly = ctx.method === 'GET' && (ctx.path === '/api/meta/constants' || ctx.path === '/api/me/prefs');
     if (ctx.user.must_change_password && !shellOnly) throw new HttpError(403, 'Password change required', { passwordChangeRequired: true });
     const age = ctx.user.password_changed_at ? (Date.now() - Date.parse(ctx.user.password_changed_at)) / 86400000 : Infinity;
     const maxAge = policy().passwordMaxAgeDays; if (age > maxAge && !shellOnly) throw new HttpError(403, `Password is older than ${maxAge} days and must be changed`, { passwordChangeRequired: true });
@@ -332,7 +384,7 @@ function verifyMfa(ctx, code) {
     audit.log({ user, action: 'auth.mfa.failed', ip: ctx.ip, success: false });
     throw unauthorized('Invalid verification code');
   }
-  db.run(`UPDATE sessions SET mfa_pending=0 WHERE id=?`, ctx.session.id);
+  db.run(`UPDATE sessions SET mfa_pending=0, reauth_at=? WHERE id=?`, db.now(), ctx.session.id);
   audit.log({ user, action: 'auth.login', ip: ctx.ip, details: { mfa: true } });
   return publicUser(user);
 }
@@ -354,4 +406,4 @@ function passwordPolicy(pw) {
 }
 
 module.exports = { auditUsername, policy, PERMS, hasPerm, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted,
-  createSession, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };
+  createSession, markReauth, reauthStatus, verifySigner, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };

@@ -553,3 +553,45 @@ test('a consent covers only the information categories it names; one with none n
   assert.deepEqual(row && row.info_categories, ['encounters', 'risk_overdose'], 'returned as a list');
   assert.ok((await got(`Observation?patient=${only}`)).some(r => r.id === `od-${d.od}`), 'with risk and overdose now covered, the overdose event is shared');
 });
+
+test('guessing ids: no patient resource of an unconsented patient is readable, whatever its type or id form', async () => {
+  const d = ids.dataNone;
+  const guesses = [`Patient/${ids.none}`, `EpisodeOfCare/${d.ep}`, `Encounter/iv-${d.iv}`, `Encounter/call-${d.call}`, `ServiceRequest/${d.ref}`,
+    `Task/${d.task}`, `Observation/od-${d.od}`, `Observation/risk-${ids.none}`, `DocumentReference/${d.note}`, `DocumentReference/${d.draft}`,
+    // ids of the right shape for the wrong type, and of the revoked/expired patients
+    `Patient/${ids.revoked}`, `Patient/${ids.expired}`, `Observation/risk-${ids.revoked}`, `Encounter/${d.iv}`, `Encounter/iv-${d.call}`, `Task/${d.ref}`];
+  const sig = (r) => JSON.stringify([r.status, r.data.issue && r.data.issue.map(i => i.code)]);
+  const missing = sig(await fhirGet(`/fhir/R4/Patient/${randomUUID()}`, ehr.token));
+  for (const g of guesses) {
+    const r = await fhirGet(`/fhir/R4/${g}`, ehr.token);
+    assert.equal(r.status, 404, g);
+    assert.equal(sig(r), missing, `${g} answers exactly like a record that does not exist`);
+    assert.ok(!JSON.stringify(r.data).includes('Noconsent') && !JSON.stringify(r.data).includes('Visit summary B'), g);
+  }
+  // Search by _id cannot reach them either.
+  for (const [type, id] of [['Patient', ids.none], ['EpisodeOfCare', d.ep], ['Task', d.task], ['ServiceRequest', d.ref]]) {
+    const r = await fhirGet(`/fhir/R4/${type}?_id=${id}`, ehr.token);
+    assert.equal(entriesOf(r.data, type).length, 0, `${type}?_id`);
+  }
+});
+
+test('bulk export: a consent revoked while the job is building never lets that patient out, and another client cannot fetch the files', async () => {
+  const victim = await newClient('Mira', 'Midjob'); const cid = consent(victim);
+  const k = await fhirGet('/fhir/R4/$export?_type=Patient', ehr.token, { Prefer: 'respond-async' });
+  assert.equal(k.status, 202);
+  // Revoked straight after the kick-off: either the build leaves them out, or the download is refused.
+  assert.equal((await admin.post(`/api/consents/${cid}/revoke`, { reason: 'Client withdrew' })).status, 200);
+  const done = await poll(k.headers.get('content-location'), ehr.token);
+  assert.equal(done.status, 200);
+  const url = done.data.output.find(o => o.type === 'Patient').url.replace(/^https?:\/\/[^/]+/, '');
+  // The directory-only client guesses the file URL of someone else's export: 404, like a file that does not exist.
+  const other = await fhirGet(url, dirOnly.token);
+  assert.equal(other.status, 404);
+  assert.ok(!JSON.stringify(other.data).includes('Consented'));
+  const f = await fhirGet(url, ehr.token);
+  assert.ok([200, 410].includes(f.status), String(f.status));
+  assert.ok(!String(f.data).includes(victim) && !JSON.stringify(f.data).includes('Midjob'), 'the revoked patient is never released');
+  assert.ok(!H.db.one(`SELECT 1 FROM disclosures WHERE client_id=? AND source_ref LIKE 'fhir-export:%'`, victim), 'nor accounted as disclosed');
+  const jobId = k.headers.get('content-location').split('/').pop();
+  await fetch(base + `/fhir/R4/$export-status/${jobId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${ehr.token}` } });
+});

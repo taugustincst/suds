@@ -13,6 +13,10 @@ function referralBases() {
 /** The supervisor's override for a consent that covers this provider without naming it exactly. */
 const recipientOverrideField = (name) => (can('disclosures:override') ? [{ name, label: 'Rely on this consent although it does not name this provider (supervisor override; justify below)', type: 'checkbox', span: true }] : []);
 
+// A client's consents, marked with the ones that name this provider (names_resource) and, when exactly one
+// live consent does, that one as suggested_consent_id (server/routes/consents.js).
+const consentsUrl = (clientId, resourceId) => `/api/clients/${clientId}/consents${resourceId && !String(resourceId).startsWith('__') ? `?resource_id=${encodeURIComponent(resourceId)}` : ''}`;
+
 export async function openReferralForm(values, { clientId, clientDisplay, resourceId, onDone } = {}) {
   const C = state.constants; const isNew = !values;
   const theClientId = clientId || values?.client_id;
@@ -21,7 +25,7 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
   // round trip and two before the modal is usable.
   const [resResult, consentsResult] = await Promise.all([
     get('/api/resources?limit=1000'),
-    theClientId ? get(`/api/clients/${theClientId}/consents`) : Promise.resolve({ consents: [] }),
+    theClientId ? get(consentsUrl(theClientId, resourceId || values?.resource_id)) : Promise.resolve({ consents: [] }),
   ]);
   const res = resResult.rows;
   // A phone that has not synced yet has an empty directory, and a provider nobody has entered is not a
@@ -40,13 +44,13 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
     // A consent that lacks the §2.31 elements authorises nothing (can_disclose false), so it is not offered.
     const all = (list || []).filter(c => !c.revoked_at && !(c.incomplete && c.incomplete.length));
     const valid = all.filter(c => !c.expires_at || c.expires_at >= today);
-    return { clientId, all, valid, expiredOnly: !!(clientId && !valid.length && all.length) };
+    return { clientId, all, valid, expiredOnly: !!(clientId && !valid.length && all.length), suggested: (list && list.suggested_consent_id) || null };
   };
   const consentOption = (c) => ({ value: c.id, label: `${consentTypeLabel(c.type)} → ${c.recipient || '—'} (signed ${fmt.date(c.signed_at)}${c.expires_at ? `, expires ${fmt.date(c.expires_at)}` : ''})` });
   const consentHelpContent = ({ clientId, all, valid, expiredOnly }) => valid.length ? ['Required before the provider is told who this client is, and it must name this provider (or its organisation). A referral left as "pending" with no warm handoff — just a phone number handed to the client — needs none.']
     : clientId ? [expiredOnly ? `${all.length === 1 ? 'The consent on file has' : 'All consents on file have'} expired. ` : 'No consent is on file. ', h('a', { href: `#/client/${clientId}/consents`, 'data-add-consent': '1', onClick: () => m.close() }, 'Record a new release on the Consents tab'), ' before the provider is told who this client is.']
     : ['Choose the client first to see their consents on file.'];
-  consentState = consentStateFor(theClientId, consentsResult.consents);
+  consentState = consentStateFor(theClientId, Object.assign(consentsResult.consents || [], { suggested_consent_id: consentsResult.suggested_consent_id }));
   const consents = consentState.valid; const expiredOnly = consentState.expiredOnly;
   const consentHelp = h('span', { 'data-consent-help': '1' }, consentHelpContent(consentState));
   const f = form([
@@ -100,30 +104,54 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
       } catch { sel.insertBefore(h('option', { value: id }, 'New provider'), sel.querySelector(`option[value="${ADD}"]`)); }
       sel.value = id; last = id;
       sel.dispatchEvent(new Event('input', { bubbles: true }));
+      reloadConsents();
       toast('Provider added — carry on with the referral', 'ok');
     });
   });
-  // Picking (or changing) the client reloads that client's consents into the list and its help text.
+  // Picking (or changing) the client, or the provider, reloads that client's consents into the list and its
+  // help text. When exactly one live consent names the provider it is chosen, and the form says which
+  // consent the referral will rely on — the worker can still change it, or clear it for a referral that
+  // shares nothing (pending, no warm handoff). A consent the worker picked themselves is never replaced.
   const consentSel = f.inputs.consent_id;
-  const consentHelpEl = consentSel.closest('.field')?.querySelector('.help');
+  const consentField = consentSel.closest('.field');
+  const consentHelpEl = consentField?.querySelector('.help');
+  const usedLine = h('div', { class: 'small', role: 'status', 'data-consent-used': '1' });
+  if (consentField) consentField.append(usedLine);
+  let autoPicked = false;
+  const showUsed = () => {
+    const c = consentState.valid.find(x => x.id === consentSel.value);
+    usedLine.dataset.consentUsed = c ? c.id : '';
+    usedLine.replaceChildren(...(c
+      ? [h('b', {}, 'This referral will rely on: '), consentOption(c).label, autoPicked ? ' — the one consent on file that names this provider.' : '']
+      : consentState.valid.length ? ['No consent chosen. Choose one before the provider is told who this client is.'] : []));
+  };
   const rebuildConsents = (st) => {
     consentState = st;
     const keep = consentSel.value;
     while (consentSel.firstChild) consentSel.firstChild.remove();
     consentSel.append(h('option', { value: '' }, st.expiredOnly ? '(expired)' : '—'), ...st.valid.map(c => { const o = consentOption(c); return h('option', { value: o.value }, o.label); }));
-    // Never chosen for the worker: whether this referral discloses anything at all is their call.
-    consentSel.value = st.valid.some(c => c.id === keep) ? keep : '';
+    const kept = st.valid.some(c => c.id === keep) && !(autoPicked && keep !== st.suggested);
+    consentSel.value = kept ? keep : '';
+    if (!kept) autoPicked = false;
+    if (!consentSel.value && st.suggested && st.valid.some(c => c.id === st.suggested)) { consentSel.value = st.suggested; autoPicked = true; }
     if (consentHelpEl) { while (consentHelpEl.firstChild) consentHelpEl.firstChild.remove(); consentHelpEl.append(h('span', { 'data-consent-help': '1' }, consentHelpContent(st))); }
+    showUsed();
   };
+  consentSel.addEventListener('change', () => { autoPicked = false; showUsed(); });
+  // A new referral (or one with no consent yet) takes the suggestion the first read came back with.
+  if (!values?.consent_id && consentState.suggested) { consentSel.value = consentState.suggested; autoPicked = consentSel.value === consentState.suggested; }
+  showUsed();
   let seq = 0;
-  f.inputs.client_id.addEventListener('change', async () => {
+  const reloadConsents = async () => {
     const id = f.inputs.client_id.value; const mine = ++seq;
     if (!id) { rebuildConsents(consentStateFor(null, [])); return; }
     try {
-      const r = await get(`/api/clients/${id}/consents`);
-      if (mine === seq) rebuildConsents(consentStateFor(id, r.consents));
+      const r = await get(consentsUrl(id, sel.value));
+      if (mine === seq) rebuildConsents(consentStateFor(id, Object.assign(r.consents || [], { suggested_consent_id: r.suggested_consent_id })));
     } catch (e) { if (mine === seq) rebuildConsents(consentStateFor(id, [])); toast(e.message || 'Could not load this client\'s consents', 'error'); }
-  });
+  };
+  f.inputs.client_id.addEventListener('change', reloadConsents);
+  sel.addEventListener('change', () => { if (sel.value !== ADD) reloadConsents(); });
   const m = modal(isNew ? 'New referral' : 'Edit referral', f, { wide: true });
 }
 /** Close the loop: what happened, and were they admitted? This is what makes referrals reportable. */

@@ -13,9 +13,23 @@ const { encryptFields, uuid } = require('../server/clients-model');
 
 const CLIENTS = 1500;
 const INTERVENTIONS_PER_CLIENT = 8;
-// Generous enough that a normal, healthy run on slow CI hardware never flakes, tight enough that an O(n)
-// scan replacing an indexed lookup (the usual way this regresses) blows through it immediately.
-const BUDGET_MS = 800;
+// The budget is relative, not a fixed wall-clock number. A fixed 800 ms flaked on a loaded CI runner (every
+// request, not just the slow ones, gets slower when the machine is busy) while being loose enough on a fast
+// machine to let a 10x regression through. So, per run:
+//   * a BASELINE is measured first: the median of several GET /api/auth/me calls — the same HTTP, session,
+//     auth and JSON path as the endpoints under test, with no data work. Machine load slows it in proportion.
+//   * each endpoint is timed three times and the FASTEST is compared (a GC pause or a scheduler hiccup
+//     makes one run slow, never all three), against max(FLOOR_MS, RATIO x baseline).
+// Healthy: the heavy endpoints here run at ~5-26x the baseline (13-62 ms against ~2.4 ms on a 4-core
+// container; PERF_DEBUG=1 prints them). What this exists to catch — an indexed lookup turned into a scan
+// per row, an N+1 over the caseload, a blocking call in the request path — turns tens of milliseconds into
+// seconds at this data size, so RATIO = 150 leaves ample headroom for noise and still trips on it; FLOOR_MS keeps a very fast baseline from making the budget
+// unreasonably tight. CEILING_MS is an absolute backstop so a pathologically slow baseline cannot excuse
+// anything.
+const RATIO = 150;
+const FLOOR_MS = 400;
+const CEILING_MS = 5000;
+let budgetMs = FLOOR_MS; let baselineMs = null;
 
 let nav, workerId;
 before(async () => {
@@ -53,11 +67,26 @@ before(async () => {
 });
 after(async () => { await H.stop(); });
 
+async function ms(fn) { const t = performance.now(); await fn(); return performance.now() - t; }
+
+// Measured once, lazily from the first timed() call, after the seeding hook has finished.
+async function measureBaseline() {
+  if (baselineMs !== null) return;
+  for (let i = 0; i < 3; i++) await nav.get('/api/auth/me'); // warm up
+  const samples = [];
+  for (let i = 0; i < 9; i++) samples.push(await ms(async () => { const r = await nav.get('/api/auth/me'); assert.equal(r.status, 200); }));
+  samples.sort((x, y) => x - y);
+  baselineMs = samples[Math.floor(samples.length / 2)];
+  budgetMs = Math.min(CEILING_MS, Math.max(FLOOR_MS, RATIO * baselineMs));
+  if (process.env.PERF_DEBUG) console.log(`[perf] baseline ${baselineMs.toFixed(1)} ms, budget ${Math.round(budgetMs)} ms`);
+}
+
 async function timed(label, fn) {
-  const start = Date.now();
-  const result = await fn();
-  const ms = Date.now() - start;
-  assert.ok(ms < BUDGET_MS, `${label} took ${ms}ms, over the ${BUDGET_MS}ms budget`);
+  await measureBaseline();
+  let best = Infinity; let result;
+  for (let i = 0; i < 3; i++) { const t = performance.now(); result = await fn(); best = Math.min(best, performance.now() - t); }
+  if (process.env.PERF_DEBUG) console.log(`[perf] ${label}: ${Math.round(best)} ms`);
+  assert.ok(best < budgetMs, `${label}: fastest of 3 took ${Math.round(best)} ms, over the ${Math.round(budgetMs)} ms budget (${RATIO} x the ${baselineMs.toFixed(1)} ms baseline, floor ${FLOOR_MS} ms)`);
   return result;
 }
 

@@ -84,9 +84,18 @@ module.exports = (r) => {
   r.get('/api/auth/me', (ctx) => {
     if (!ctx.user) throw unauthorized();
     const u = db.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
+    // default_fund_id: what the visit form pre-fills its funding source with (the worker's, else the programme's).
     return { user: auth.publicUser(u), mfaPending: !!ctx.session.mfa_pending, org_name: db.getSetting('org_name', 'SUDS'), idle_minutes: auth.policy().idleMinutes, setup_needed: false,
+      default_fund_id: require('./budget').defaultFundFor(u.id),
       // The programme profile and the modules in force (server/programme.js): what the navigation shows.
       programme: { profile: require('../programme').profile(), modules: require('../programme').modules() } };
+  });
+
+  // Whether signing a note now needs the password (or authenticator code) again, or only a confirmation:
+  // the signature form asks for exactly what the server will want (auth.verifySigner).
+  r.get('/api/auth/reauth', (ctx) => {
+    auth.requireAuth(ctx);
+    return auth.reauthStatus(ctx);
   });
 
   r.post('/api/auth/password', async (ctx) => {

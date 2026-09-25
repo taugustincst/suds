@@ -150,6 +150,9 @@ function status() {
   add('Platform', 'HTTPS', config.tls.cert || config.trustProxy ? 'ok' : config.isProd ? 'bad' : 'warn', tls, certNote || (config.tls.cert || config.trustProxy ? '' : 'Enable HTTPS under Network & devices, or run behind a TLS proxy.'), 'server/listener.js; Caddyfile');
   add('Platform', 'Local mode (offline copies on devices)', config.localModeEnabled ? 'warn' : 'ok', config.localModeEnabled ? 'on' : 'off', config.localModeEnabled ? `Records are copied to devices${pol.ssoRequired ? '; with SSO required only emergency accounts can sync a device' : ''}. Only for a documented field-work need (docs/PLATFORM.md).` : 'The office server is the only copy.', 'LOCAL_MODE_ENABLED / server.json');
   add('Platform', 'Version', 'info', `SUDS ${config.version}, schema ${db.getSetting('schema_version', '?')}, Node ${process.versions.node}`, config.updateFeedUrl ? 'Update checks are configured (System & backups → Check for updates).' : 'UPDATE_FEED_URL is not set, so this server cannot check for updates itself.', 'package.json; server/update.js');
+  const ixp = db.indexProblems();
+  add('Platform', 'Database indexes', ixp.length ? 'bad' : 'ok', ixp.length ? `${ixp.length} missing: ${ixp.map((x) => x.index).join(', ')}` : 'every index in schema.sql is present',
+    ixp.length ? `Could not be created at startup: ${ixp.map((x) => `${x.index} (${x.error})`).join('; ')}. A missing UNIQUE index usually means duplicate rows it would have prevented; resolve them, then restart.` : 'Checked at every start.', 'server/db.js ensureIndexes');
   add('Platform', 'Monitoring', config.metricsToken || config.logFormat === 'json' ? 'ok' : 'info', [config.metricsToken ? 'Prometheus metrics on' : 'metrics off', `logs ${config.logFormat}`].join('; '), '/api/health answers 503 on a failed audit check, stale backups or an expiring certificate.', 'server/metrics.js, server/log.js, server/routes/app.js');
 
   const counts = { ok: 0, warn: 0, bad: 0, info: 0 };

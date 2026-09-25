@@ -34,7 +34,7 @@ Answers to the questions county IT typically sends (HECVAT-Lite and CSA CAIQ sty
 | --- | --- | --- |
 | 17 | SSO (SAML/OIDC)? | OIDC (Authorization Code + PKCE) with the county IdP. SAML: via an IdP that bridges to OIDC (Entra ID, Okta, ADFS, Keycloak all do). |
 | 18 | Can password login be disabled? | Yes — *Require single sign-on*, with named break-glass admin accounts; emergency use is audited. |
-| 19 | MFA? | TOTP for every role by default, enforced after a grace period; an explicit "every role" switch; a report of accounts without MFA. |
+| 19 | MFA? | TOTP for every role by default, enforced after a grace period of 3 days (configurable, 0 = at first sign-in; counted from creation or approval), after which the account can reach only enrolment; an explicit "every role" switch; a report of accounts without MFA. |
 | 20 | Password policy? | 12+ chars, complexity, 90-day expiry (configurable), scrypt hashing, lockout after 5 failures. |
 | 21 | Session timeout? | 15 min idle (max 60), 12 h absolute; configurable. |
 | 22 | RBAC / least privilege? | Six roles; caseload scoping; de-identified roles; break-glass for clinical notes. [IDENTITY.md](IDENTITY.md) |
@@ -67,6 +67,7 @@ Answers to the questions county IT typically sends (HECVAT-Lite and CSA CAIQ sty
 | 34 | Third-party dependencies? | Zero runtime npm dependencies; build-only dev dependencies watched by Dependabot. [VULNERABILITY-MANAGEMENT.md](VULNERABILITY-MANAGEMENT.md) |
 | 35 | OWASP Top 10 controls? | Parameterised SQL, validation, CSP without inline script, CSRF header, secure cookies, rate limits, RBAC on every route, no stack traces to clients. |
 | 36 | Automated tests / CI? | Yes — API/unit suite and browser suite on every push; migrations tested against a real old database. [SDLC.md](SDLC.md) |
+| 36a | How is code written and reviewed? | AI-assisted: most commits (171 of 202 up to 1.11.0) are written with an AI coding assistant under the project rules in `CLAUDE.md`, gated by the automated tests and CI above, and reviewed and merged by the owner. There is no second human reviewer today. Branch protection and independent review of what you deploy are the deployer's to configure ([../ADOPTION.md](../ADOPTION.md) §1). Design decisions: [../architecture/README.md](../architecture/README.md). [SDLC.md](SDLC.md) |
 | 37 | SAST/DAST? | Not in CI today (recommended: CodeQL/Semgrep); county may run DAST in its pen test. |
 | 38 | Penetration test? | None commissioned by the project; scope provided for the county's test. [PEN-TEST-SCOPE.md](PEN-TEST-SCOPE.md) |
 | 39 | Release integrity? | Releases built from tracked files with `git archive`, SHA-256 checksum published; not cryptographically signed yet. |

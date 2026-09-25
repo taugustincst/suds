@@ -1,7 +1,8 @@
 # Buying SUDS: a procurement guide for counties and CBOs
 
-How a California county (or a CBO it funds) can buy SUDS subscriptions, implementation and support, what the
-contract needs, and what the vendor still has to do to be buyable through each route.
+How a CBO (or a county sponsoring one) can buy implementation and support for SUDS, what the contract needs, and
+what the vendor still has to do to be buyable through each route. The software itself is MIT-licensed and free;
+only services are bought ([templates/PRICING.md](templates/PRICING.md)).
 
 > This is general guidance, not legal or procurement advice. Every county sets its own purchasing thresholds
 > and rules in its purchasing ordinance and policy manual. **Confirm local limits and required forms with the
@@ -15,8 +16,9 @@ Most counties let a department buy below a set dollar threshold with informal qu
 purchase order, instead of a formal RFP. Thresholds vary widely by county and by what is bought (goods,
 services, IT, professional services), and IT or software purchases often need IT approval regardless of amount.
 
-- **Fits:** a paid pilot ([PILOT-KIT.md](PILOT-KIT.md)), and small programmes (for example, 10 users at the
-  pricing hypothesis is roughly $4,200–5,900 a year, [templates/PRICING.md](templates/PRICING.md)).
+- **Fits:** a pilot ([PILOT-KIT.md](PILOT-KIT.md)), and a small programme's implementation plus a year of
+  support (at the unvalidated pricing hypothesis, roughly $5,500–13,500 in year one,
+  [templates/PRICING.md](templates/PRICING.md)).
 - **Watch for:** splitting a purchase to stay under a threshold is prohibited; multi-year terms count in full;
   software may still require an IT security review and a BAA whatever the amount.
 - **CBOs** buying with grant money follow their own procurement policy and the funder's rules (for federal
@@ -82,21 +84,24 @@ does not hold.
    Insurance: [general liability, professional/E&O, cyber — limits] (certificates on request)
 
 2. SOLUTION SUMMARY
-   SUDS is program-operations software for California's grant-funded, non-billing SUD programmes —
-   navigation, outreach, harm reduction, prevention and supply distribution. It tracks caseloads, services,
-   supplies, resources and referrals, grants and approvals, and produces unduplicated funder reports.
-   It complements the county EHR (SmartCare, Netsmart and others) and does not bill Drug Medi-Cal.
+   SUDS is the operations system for harm-reduction and prevention programmes: outreach encounters
+   (named or anonymous), naloxone and supply distribution, and grant/funder reporting, with privacy
+   controls built to the 42 CFR Part 2 standard. Clinical modules (care plan, assessments, CalOMS Tx,
+   FHIR, EHR hand-off) are optional. It is not an EHR and does not bill Drug Medi-Cal.
 
 3. DEPLOYMENT AND HOSTING
-   County-hosted (single server or container; Node.js 22, no third-party runtime packages) or
-   vendor-hosted [available from ___ / planned]. See docs/market/BUYER-GUIDE-IT.md.
+   Self-hosted by the programme's IT partner or county-hosted (single server or container; Node.js 22,
+   no third-party runtime packages). Vendor-hosted single-tenant: [planned, not offered / available
+   from ___ once docs/market/HOSTING.md is complete]. See docs/market/HOSTING.md.
 
 4. SECURITY
-   Field-level AES-256-GCM encryption of PHI; TLS 1.2+; MFA required for every role; OIDC SSO;
+   Field-level AES-256-GCM encryption of client identifiers and free text (coded fields on the
+   encrypted disk); TLS 1.2+; MFA required for every role; OIDC SSO;
    role-based access with caseload scoping; tamper-evident hash-chained audit log, append-only in the
    database, anchored every 6 hours (write-once when AUDIT_ANCHOR_DIR points at WORM storage).
-   Evidence: docs/HIPAA.md, docs/security/. Attestation: SOC 2 Type 1 [readiness complete; audit
-   planned for ___]; independent penetration test [planned for ___]. Security questionnaire: docs/security/.
+   Evidence: docs/HIPAA.md, docs/security/. Attestation: none. SOC 2: readiness self-assessment only
+   [audit planned for ___ / not planned]; independent penetration test [not yet commissioned / planned for
+   ___]. Security questionnaire: docs/security/QUESTIONNAIRE.md.
 
 5. PRIVACY AND 42 CFR PART 2
    Part 2 consent elements enforced; consent-gated referrals; accounting of disclosures; final-rule
@@ -114,11 +119,12 @@ does not hold.
 8. BACKUP, RECOVERY AND AVAILABILITY
    Scheduled encrypted backups with off-host copy; restore from the UI; DR drill with measured
    RTO/RPO ([docs/security/BACKUP-AND-DR.md](../security/BACKUP-AND-DR.md)). Single-instance architecture per programme (no clustering), stated as
-   a design choice. Uptime target for vendor-hosted: see templates/SUPPORT-SLA.md.
+   a design choice. Uptime is the operator's (programme IT partner or county); the vendor makes no
+   uptime commitment unless a hosted tier is contracted (templates/SUPPORT-SLA.md).
 
 9. SUPPORT AND IMPLEMENTATION
    Implementation: setup, spreadsheet import, configuration, training (docs/market/PILOT-KIT.md).
-   Support: severity-based response targets (docs/market/templates/SUPPORT-SLA.md).
+   Support: business hours, severity-based response targets (docs/market/templates/SUPPORT-SLA.md).
    Source code: open source (MIT) — no licence lock-in; full data export on exit.
 
 10. PRICING
@@ -135,7 +141,7 @@ does not hold.
 | **DGS IT general provisions / cloud computing SaaS special provisions** | Counties often borrow the state's terms; CMAS contracts include them. Read the current versions from DGS; they cover security, data location, breach notice, termination and transition. | DGS website (confirm current versions) |
 | **Accessibility (ADA / Section 508 / Gov. Code §7405 & §11135)** | State and many county contracts require conformance to WCAG 2.x AA / Section 508 and remediation of reported barriers. Offer an **accessibility warranty**: conformance as stated in the ACR, and remediation of confirmed barriers within an agreed time. | [docs/accessibility/ACR-WCAG21.md](../accessibility/ACR-WCAG21.md) |
 | **Insurance** | Commercial general liability, professional / technology errors and omissions, **cyber liability** (privacy breach, notification costs), workers' compensation, auto if on-site. County sets the limits; certificates naming the county as additional insured. | Vendor to-do |
-| **Support SLA** | Severity levels, response and resolution targets, uptime for vendor-hosted. | [templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md) |
+| **Support SLA** | Business-hours support, severity levels, response targets; hosted-tier terms only if that tier is offered. | [templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md) |
 | **Pricing schedule** | Tiers, implementation fee, pilot terms, price holds. | [templates/PRICING.md](templates/PRICING.md) |
 | **Exit / transition** | Data return format and timing, deletion certificate, transition assistance. | [PILOT-KIT.md](PILOT-KIT.md), section 6; DPA |
 | **County forms** | W-9 / Payee Data Record, conflict-of-interest, anti-discrimination, debarment, Iran/Darfur certifications as applicable. | County purchasing |
@@ -150,8 +156,8 @@ Owner: **vendor / company**. These are organisational tasks the software cannot 
 | 2 | **W-9, Payee Data Record, EIN**, county vendor registration | Required to be paid | Now |
 | 3 | **Insurance**: general liability, tech E&O, cyber liability (common county asks are $1M–$5M per claim; confirm) | Contract exhibit; also protects the company | Before first paid pilot |
 | 4 | **Signed-off BAA/QSOA and DPA templates**, reviewed by the vendor's own counsel | Every PHI contract needs them | Before first paid pilot |
-| 5 | **Support SLA** staffed: support mailbox/portal, on-call for Sev 1, named escalation | Contract exhibit | Before first paid pilot |
-| 6 | **Vendor-hosted environment** (US region, BAA with the cloud provider, one instance per customer, backups, monitoring) | CBOs without servers | Phase 1–2 (months 1–4) |
+| 5 | **Support SLA** in place: support mailbox, business-hours response targets the vendor can meet, named escalation; template reviewed by counsel ([templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md)) | Contract exhibit | Before first paid pilot |
+| 6 | **Vendor-hosted environment** — the full checklist in [HOSTING.md](HOSTING.md) (US region, cloud BAA, one instance per customer, offsite backups, monitoring, on-call, insurance, pen test) | CBOs without IT partners | After three pilots have measured support hours |
 | 7 | **Independent penetration test** of the application and the hosted environment, findings remediated, letter of attestation | County IT gate | Phase 1 (months 2–4) |
 | 8 | **SOC 2 Type 1** (from the readiness assessment in `docs/security/`), scoped to the hosted service | County IT gate | Months 4–8 |
 | 9 | **SOC 2 Type 2** (observation period typically 3–12 months after Type 1) | Larger counties, CalMHSA | Months 10–18 |

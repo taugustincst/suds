@@ -38,9 +38,10 @@ function rpo(s = settings()) {
   return c.sort((a, b) => a.minutes - b.minutes)[0];
 }
 
-/** Run a scheduled backup if one is due (schedule enabled and the interval has elapsed). No-op otherwise.
- *  Never throws: a failure is recorded in last_scheduled_backup_status (and audited) for the health check. */
-function runIfDue(now = Date.now()) {
+/** Run a scheduled backup if one is due (schedule enabled and the interval has elapsed). Resolves to null
+ *  otherwise. Never rejects: a failure is recorded in last_scheduled_backup_status (and audited) for the
+ *  health check. */
+async function runIfDue(now = Date.now()) {
   const { hours, retain, offsiteDir } = settings();
   if (!hours) return null;
   const last = db.getSetting('last_scheduled_backup_at', null);
@@ -48,23 +49,40 @@ function runIfDue(now = Date.now()) {
   return run({ retain, offsiteDir });
 }
 
-/** Take a backup now, prune old ones beyond `retain`, and copy offsite if `offsiteDir` is set. */
-function run({ retain = 14, offsiteDir = '' } = {}) {
+// One scheduled backup at a time: the hourly timer, "Back up now" and a recovery drill can all ask for one,
+// and the work spans many turns of the event loop.
+let inFlight = null;
+
+/**
+ * Take a backup now, prune old ones beyond `retain`, and copy offsite if `offsiteDir` is set. Asynchronous
+ * from end to end, because a scheduled backup runs while staff are working: the copy is SQLite's online
+ * backup API, the encryption and the read-back decryption stream 4 MB at a time between the database copy
+ * and the file (never the whole database in one Buffer), and the integrity check of the read-back copy runs
+ * in a worker thread (server/backup.js createToFileAsync, verifyFileAsync). The synchronous path this
+ * replaced held the server for 3.8 s on a 311 MB database. A call made while one is running shares its result.
+ */
+function run(opts = {}) {
+  if (inFlight) return inFlight;
+  inFlight = runOnce(opts).finally(() => { inFlight = null; });
+  return inFlight;
+}
+
+async function runOnce({ retain = 14, offsiteDir = '' } = {}) {
   const dir = path.join(config.dataDir, 'backups');
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const file = path.join(dir, `suds-${stamp}.db.enc`);
-  let bytes; let verified = false; let verifyError = null; let kept = 0;
+  let bytes; let verified = false; let verifyError = null; let kept = 0; let method = null;
   try {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     // Prune first: the oldest copies beyond the retention count go before the new one is written, so a
     // disk that is full of old backups has room for tonight's rather than failing on ENOSPC with all of
     // them still there. The new file is not on disk yet, so `retain` is the number of older ones to keep.
     prune(dir, Math.max(0, retain - 1));
-    bytes = backup.create();
-    fs.writeFileSync(file, bytes, { mode: 0o600 });
+    const made = await backup.createToFileAsync(file);
+    bytes = made.bytes; method = made.method;
     // A backup nobody has ever opened is a hope, not a backup. Read the file back, decrypt it with the live
     // key and open it read-only, the same way a restore would -- and record the answer where the admin looks.
-    try { const info = backup.inspect(backup.decrypt(fs.readFileSync(file))); verified = info.counts.clients >= 0; }
+    try { const info = await backup.verifyFileAsync(file); verified = info.counts.clients >= 0; }
     catch (e) { verifyError = String(e && e.message || e); console.error('[suds] backup written but could not be read back:', verifyError); }
   } catch (e) {
     // The failure that used to be invisible: an exception here propagated out of the housekeeping timer
@@ -86,10 +104,10 @@ function run({ retain = 14, offsiteDir = '' } = {}) {
     // never created here: an unmounted share is an empty mount point, and mkdir -p would quietly put the
     // "offsite" copy on the very disk it exists to survive losing.
     try {
-      let st = null; try { st = fs.statSync(offsiteDir); } catch {}
+      let st = null; try { st = await fs.promises.stat(offsiteDir); } catch {}
       if (!st || !st.isDirectory()) throw new Error(OFFSITE_MISSING);
       offsiteFile = path.join(offsiteDir, path.basename(file));
-      fs.copyFileSync(file, offsiteFile);
+      await fs.promises.copyFile(file, offsiteFile);
       offsiteOk = true;
     } catch (e) {
       offsiteOk = false; offsiteError = String(e && e.message || e);
@@ -102,13 +120,14 @@ function run({ retain = 14, offsiteDir = '' } = {}) {
   kept = prune(dir, retain);
   db.setSetting('last_scheduled_backup_at', db.now());
   db.setSetting('last_scheduled_backup_status', !verified ? `backup written but could not be read back — ${verifyError}` : offsiteDir && offsiteOk === false ? `ok (verified) — offsite copy failed: ${offsiteError}; local backup kept` : 'ok (verified)');
-  audit.log({ user: { username: 'system' }, action: 'backup.scheduled', details: { bytes: bytes.length, offsite: offsiteDir ? offsiteOk : null, offsite_error: offsiteError || undefined, kept, verified } });
-  return { file, bytes: bytes.length, offsiteOk, offsiteError, offsiteFile: offsiteOk ? offsiteFile : null, verified, verifyError };
+  audit.log({ user: { username: 'system' }, action: 'backup.scheduled', details: { bytes, method, offsite: offsiteDir ? offsiteOk : null, offsite_error: offsiteError || undefined, kept, verified } });
+  return { file, bytes, method, offsiteOk, offsiteError, offsiteFile: offsiteOk ? offsiteFile : null, verified, verifyError };
 }
 
 // ---- frequent online snapshots (lower RPO without new dependencies) ----
 // Every backup_schedule_minutes, an encrypted copy of the whole database taken with SQLite's online backup
-// API (server/backup.js createAsync: it yields between page batches, so requests keep being served) is
+// API (server/backup.js createToFileAsync: it yields between page batches and streams the encryption to the
+// file, so requests keep being served) is
 // written to the offsite directory when one is configured (else to <data>/backups), and the oldest beyond
 // backup_snapshot_retain are pruned. Each is a full copy, not a page-level increment: SQLite has no
 // incremental backup, and a full copy of a county-sized database takes seconds (measurements in
@@ -137,15 +156,14 @@ async function snapshot(s = settings()) {
       if (!st || !st.isDirectory()) throw new Error(OFFSITE_MISSING);
       target = s.offsiteDir; where = 'offsite';
     } else fs.mkdirSync(localDir, { recursive: true, mode: 0o700 });
-    const made = await backup.createAsync();
     file = path.join(target, `suds-snap-${stamp}.db.enc`);
-    await fs.promises.writeFile(file, made.bytes, { mode: 0o600, flag: 'wx' });
+    const made = await backup.createToFileAsync(file, { flag: 'wx' });
     const kept = pruneMatching(target, SNAP_RE, s.snapshotRetain);
     db.setSetting('last_snapshot_at', db.now());
-    db.setSetting('last_snapshot_status', `ok (${where}; ${made.method}; ${Math.round(made.bytes.length / 1024)} KB in ${made.copy_ms + made.encrypt_ms} ms)`);
+    db.setSetting('last_snapshot_status', `ok (${where}; ${made.method}; ${Math.round(made.bytes / 1024)} KB in ${made.copy_ms + made.encrypt_ms} ms)`);
     // Not audited one by one (every few minutes would drown the log); the hourly housekeeping pass notes a
     // failure, and the status is on Security status and /api/health.
-    return { file, where, kept, bytes: made.bytes.length, method: made.method, copy_ms: made.copy_ms, encrypt_ms: made.encrypt_ms };
+    return { file, where, kept, bytes: made.bytes, method: made.method, copy_ms: made.copy_ms, encrypt_ms: made.encrypt_ms };
   } catch (e) {
     const reason = e && e.code === 'ENOSPC' ? `no space left on the disk holding ${target}` : String(e && e.message || e);
     if (file) { try { fs.unlinkSync(file); } catch {} }

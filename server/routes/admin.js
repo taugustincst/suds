@@ -7,9 +7,12 @@ const { badRequest, notFound, forbidden, HttpError } = require('../http');
 const { validate, paging } = require('../validate');
 const { uuid, randomToken, sha256 } = require('../crypto');
 
-// default_funding_source_id used to be accepted here and was read by nothing; it is gone (1.9.5).
+// default_funding_source_id used to be accepted here and was read by nothing; it is gone (1.9.5). Its
+// successor, default_fund_id, is read: new visits are charged to it (server/routes/interventions.js).
 const SETTING_KEYS = ['org_name', 'caseload_restriction', 'county_name', 'program_contact', 'self_signup', 'note_lock_days', 'session_idle_minutes', 'session_absolute_hours', 'password_max_age_days', 'mfa_required_roles', 'mfa_grace_days',
   'backup_schedule_hours', 'backup_retain_count', 'backup_offsite_dir', 'client_retention_years', 'org_timezone',
+  // Minutes after proving identity during which a note is signed with a confirmation alone (auth.verifySigner).
+  'sign_reauth_minutes',
   // Identity and recovery controls (server/security-status.js validates them together).
   'mfa_require_all', 'sso_required', 'sso_emergency_accounts', 'dr_drill_monthly', 'dr_rto_target_minutes', 'dr_rpo_target_hours',
   // Frequent online snapshots (server/scheduled-backup.js snapshot).
@@ -17,6 +20,9 @@ const SETTING_KEYS = ['org_name', 'caseload_restriction', 'county_name', 'progra
   // Identity-provider trust and lifecycle: IdP MFA in place of SUDS TOTP (server/routes/oidc.js), disabling
   // SSO accounts the provider no longer vouches for (server/deprovision.js), SCIM provisioning (server/routes/scim.js).
   'sso_trust_idp_mfa', 'sso_mfa_acr_values', 'sso_deprovision_days', 'scim_group_roles', 'scim_default_role',
+  // Reporting (server/routes/reports.js, server/harm-reduction-reports.js): the programme's default fund, the
+  // funder report's small-cell threshold, and how many naloxone doses one distributed kit holds.
+  'default_fund_id', 'small_cell_threshold', 'naloxone_doses_per_kit',
   // The programme profile and its module switches (server/programme.js): presentation, not permissions.
   ...require('../programme').SETTING_KEYS];
 const ROLES = ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'];
@@ -65,6 +71,7 @@ module.exports = (r) => {
         if (['mfa_require_all', 'sso_required', 'dr_drill_monthly'].includes(k) && v !== '' && !['0', '1'].includes(v)) throw badRequest(`${k} must be 1 (on) or 0 (off)`);
         if (['dr_rto_target_minutes', 'dr_rpo_target_hours'].includes(k) && v !== '' && !(Number(v) > 0)) throw badRequest(`${k} must be a positive number`);
         if (k === 'mfa_required_roles') v = v.split(',').map(x => x.trim()).filter(x => ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'].includes(x)).join(',');
+        if (k === 'sign_reauth_minutes' && v !== '' && !(Number.isInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 60)) throw badRequest('sign_reauth_minutes must be a whole number of minutes from 0 (always ask) to 60');
         if (k === 'session_idle_minutes' && v !== '' && Number(v) > 60) throw badRequest('Idle timeout may not exceed 60 minutes (HIPAA automatic logoff)');
         // Snapshots every few minutes: 0 is off; under 5 would spend the server on copying itself.
         if (k === 'backup_schedule_minutes' && v !== '' && !(Number.isInteger(Number(v)) && (Number(v) === 0 || (Number(v) >= 5 && Number(v) <= 1440)))) throw badRequest('backup_schedule_minutes must be 0 (off) or a whole number of minutes from 5 to 1440');
@@ -78,6 +85,10 @@ module.exports = (r) => {
         if (k === 'programme_profile' && !require('../programme').PROFILES[v]) throw badRequest(`programme_profile must be one of ${Object.keys(require('../programme').PROFILES).join(', ')}`, { fields: { programme_profile: 'choose a programme profile' } });
         // A module switch is on (1), off (0), or blank for "as the profile has it".
         if (k.startsWith('module_') && v !== '' && !['0', '1'].includes(v)) throw badRequest(`${k} must be 1 (on), 0 (off) or blank (as the profile has it)`);
+        if (k === 'default_fund_id' && v !== '' && !db.one(`SELECT 1 FROM funding_sources WHERE id=? AND is_active=1`, v)) throw badRequest('default_fund_id must be an active funding source');
+        // Under 2 would suppress nothing at all; over 50 would suppress nearly every breakdown a small programme has.
+        if (k === 'small_cell_threshold' && v !== '' && !(Number.isInteger(Number(v)) && Number(v) >= 2 && Number(v) <= 50)) throw badRequest('small_cell_threshold must be a whole number from 2 to 50');
+        if (k === 'naloxone_doses_per_kit' && v !== '' && !(Number.isInteger(Number(v)) && Number(v) >= 1 && Number(v) <= 20)) throw badRequest('naloxone_doses_per_kit must be a whole number from 1 to 20');
         // Blank means "back to the default", so the row goes rather than an empty string being stored:
         // policy() read '' in mfa_required_roles as "no role needs MFA". Nothing here ever stores ''.
         if (v === '') db.run(`DELETE FROM settings WHERE key=?`, k); else db.setSetting(k, v);
@@ -195,9 +206,9 @@ module.exports = (r) => {
   // Unattended backups (server/scheduled-backup.js), run from the hourly housekeeping timer once an
   // administrator turns the schedule on under Settings → System & backups.
   const scheduledBackup = require('../scheduled-backup');
-  r.post('/api/admin/backup/run-now', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
+  r.post('/api/admin/backup/run-now', auth.requireAuth, auth.requirePerm('settings:manage'), async (ctx) => {
     const { retain, offsiteDir } = scheduledBackup.settings();
-    const out = scheduledBackup.run({ retain, offsiteDir });
+    const out = await scheduledBackup.run({ retain, offsiteDir });
     audit.log({ user: ctx.user, action: 'backup.run_now', ip: ctx.ip, details: { bytes: out.bytes, offsite: out.offsiteOk, verified: out.verified } });
     return { ok: true, file: path.basename(out.file), bytes: out.bytes, offsite_ok: out.offsiteOk, offsite_error: out.offsiteError || null, verified: out.verified, verify_error: out.verifyError || null };
   });

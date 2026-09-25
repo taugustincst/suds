@@ -2,7 +2,7 @@
 // basis, a subpart E court order, proceedings and counseling notes), the §2.22 patient notice and the court
 // orders on file. The server (server/disclosure.js, routes/consents.js, routes/part2.js) is the gate; these
 // forms say up front what it will ask for. docs/compliance/PART2.md.
-import { h, get, post, state, form, modal, toast, table, badge, fmt, can, confirmDialog, flag } from '../app.js';
+import { h, get, post, put, state, form, modal, toast, table, badge, fmt, can, confirmDialog, flag, kv } from '../app.js';
 
 const C = () => state.constants || {};
 const PART2_TYPES = () => C().PART2_CONSENT_TYPES || ['part2_disclosure', 'part2_tpo', 'part2_counseling_notes', 'part2_proceedings'];
@@ -70,6 +70,9 @@ export function openConsentForm(clientId, { onDone, discloser } = {}) {
   ], { submitText: 'Record consent', onCancel: () => m.close(), onSubmit: async (v) => {
     const body = { ...v, info_categories: INFO_CATEGORIES().filter(code => v[`cat_${code}`]) };
     for (const code of INFO_CATEGORIES()) delete body[`cat_${code}`];
+    // A live consent of the same type to the same recipient already covering these dates is most often the
+    // same signed form recorded twice: say so and offer it, but let a genuine renewal be recorded.
+    if (!(await confirmNotDuplicate(clientId, body, () => m.close()))) return;
     await post(`/api/clients/${clientId}/consents`, body); toast('Consent recorded', 'ok'); m.close(); onDone && onDone();
   } });
   // The TPO wording is only a default for a TPO consent: switching type clears it, switching back restores it.
@@ -78,9 +81,66 @@ export function openConsentForm(clientId, { onDone, discloser } = {}) {
     const tpo = typeSel.value === 'part2_tpo';
     for (const k of ['recipient', 'purpose']) { const i = f.querySelector(`[name=${k}]`); if (tpo && !i.value) i.value = TPO[k]; else if (!tpo && i.value === TPO[k]) i.value = ''; }
   });
+  // "Quick consent": the programme's usual consent fills the type, recipient, purpose, information and expiry
+  // in one step; a supervisor or administrator can save the form as filled in as that usual consent.
+  const quick = h('div', { class: 'row mb', 'data-consent-quick': '1', style: { flexWrap: 'wrap', gap: '.5rem' } });
+  const val = (n) => f.querySelector(`[name=${n}]`);
+  const setVal = (n, v) => { const i = val(n); if (i && v !== undefined && v !== null) i.value = v; };
+  const useTemplate = (t) => {
+    const typeEl = val('type'); typeEl.value = t.type; typeEl.dispatchEvent(new Event('change', { bubbles: true }));
+    for (const k of ['recipient', 'purpose', 'scope', 'expires_event']) setVal(k, t[k] || '');
+    if (t.expires_days) { const from = Date.parse(val('signed_at').value || fmt.today()) || Date.now(); setVal('expires_at', new Date(from + t.expires_days * 86400000).toISOString().slice(0, 10)); }
+    for (const code of INFO_CATEGORIES()) { const box = val(`cat_${code}`); if (box) box.checked = (t.info_categories || []).includes(code); }
+    toast('Filled in with the programme\'s usual consent. Check it against the signed form.', 'ok');
+  };
+  get('/api/consent-template', { quiet: true }).then(({ template }) => {
+    if (template) quick.append(h('button', { class: 'btn sm', type: 'button', 'data-use-template': '1', onClick: () => useTemplate(template) }, 'Fill in the programme\'s usual consent'));
+    if (can('disclosures:override')) quick.append(h('button', { class: 'btn sm ghost', type: 'button', 'data-save-template': '1', onClick: async () => {
+      const signed = Date.parse(val('signed_at').value || ''); const expires = Date.parse(val('expires_at').value || '');
+      const body = { type: val('type').value, recipient: val('recipient').value || undefined, purpose: val('purpose').value || undefined, scope: val('scope').value || undefined, expires_event: val('expires_event').value || undefined,
+        expires_days: Number.isFinite(signed) && Number.isFinite(expires) && expires > signed ? Math.round((expires - signed) / 86400000) : undefined,
+        info_categories: INFO_CATEGORIES().filter(code => val(`cat_${code}`)?.checked) };
+      try { await put('/api/consent-template', body); toast('Saved as the programme\'s usual consent', 'ok'); } catch (e) { toast(e.message, 'error'); }
+    } }, 'Save as the programme\'s usual consent'));
+  }).catch(() => {});
   const m = modal('Record consent / release of information', h('div', {},
     h('div', { class: 'banner small' }, '42 CFR §2.31: a Part 2 consent names the patient, who may disclose, what information, to whom (or a class), why, the right to revoke and how, when it expires (a date or an event), the signature and date, the redisclosure statement, and the consequences of refusing to sign. A general release is not enough.'),
-    f), { wide: true });
+    quick, f), { wide: true });
+}
+
+/** Resolves true to go on recording the consent, false to stop (the existing one was opened, or Cancel). */
+async function confirmNotDuplicate(clientId, body, closeForm) {
+  let dup = [];
+  try { dup = (await post(`/api/clients/${clientId}/consents/duplicates`, { type: body.type, recipient: body.recipient || undefined, signed_at: body.signed_at || undefined, expires_at: body.expires_at || undefined }, { quiet: true })).duplicates || []; }
+  catch { return true; }
+  if (!dup.length) return true;
+  return new Promise((resolve) => {
+    let answered = false;
+    const answer = (v) => { if (answered) return; answered = true; m.close(); resolve(v); };
+    const m = modal('This consent may already be on file', h('div', { 'data-consent-duplicate': dup[0].id },
+      h('p', {}, dup.length === 1 ? 'A live consent of the same type, to the same recipient, already covers these dates:' : `${dup.length} live consents of the same type, to the same recipient, already cover these dates:`),
+      h('ul', {}, dup.map(c => h('li', {}, `${consentTypeLabel(c.type)} → ${c.recipient || '—'}, signed ${fmt.date(c.signed_at)}${c.expires_at ? `, expires ${fmt.date(c.expires_at)}` : c.expires_event ? `, until ${c.expires_event}` : ''} (recorded by ${c.created_by_name || 'a colleague'})`))),
+      h('p', { class: 'small muted' }, 'Record another only if the client signed a new form — a renewal, or a change they asked for.'),
+      h('div', { class: 'btn-row' },
+        h('button', { class: 'btn', type: 'button', onClick: () => answer(false) }, 'Cancel'),
+        h('button', { class: 'btn', type: 'button', 'data-open-existing': '1', onClick: () => { answer(false); closeForm(); openConsentDetail(dup[0]); } }, 'Open the existing consent'),
+        h('button', { class: 'btn primary', type: 'button', 'data-record-anyway': '1', onClick: () => answer(true) }, 'Record it anyway'))),
+    { onClose: () => answer(false) });
+  });
+}
+
+/** A consent as recorded: every §2.31 element, what it covers, and where it stands. */
+export function openConsentDetail(c) {
+  const yes = (b) => (b ? 'Yes' : 'Not recorded');
+  const status = c.revoked_at ? `Revoked ${fmt.date(c.revoked_at)}` : c.active === false || (c.expires_at && c.expires_at < fmt.today()) ? 'Expired' : 'Active';
+  modal(`${consentTypeLabel(c.type)} → ${c.recipient || '—'}`, h('div', { 'data-consent-detail': c.id },
+    kv([
+      ['Status', status], ['Who may disclose', c.discloser || '—'], ['To whom', c.recipient || '—'], ['Purpose', c.purpose || '—'], ['Information covered', c.scope || '—'],
+      ['Categories', consentCategoriesLabel(c.info_categories)], ['Signed', fmt.date(c.signed_at)], ['Expires', c.expires_at ? fmt.date(c.expires_at) : (c.expires_event || '—')],
+      ['Signed by', c.signer_relationship && c.signer_relationship !== 'patient' ? `${c.signer_name || ''} (${SIGNERS[c.signer_relationship] || c.signer_relationship})` : 'The patient'],
+      ['Right to revoke stated', yes(c.revocation_right_given)], ['Redisclosure statement given', yes(c.redisclosure_notice_given)], ['Consequences of refusing stated', yes(c.refusal_consequences_given)],
+      ['Recorded by', c.created_by_name || '—'],
+    ])));
 }
 
 // The lawful bases a disclosure can be recorded under (server/disclosure.js), and which of them only a

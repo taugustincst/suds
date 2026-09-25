@@ -231,8 +231,11 @@ if (withConsent.length) {
   ok(n >= 1, 'H3: choosing the client loads their consents into the list', n);
   const help = await page.textContent('.modal [data-consent-help]');
   ok(!/Choose the client first/.test(help), 'H3: and the help text is about their consents now', help);
-  // Warm handoff with no consent chosen: refused, with the advice once.
+  // Warm handoff with no consent chosen: refused, with the advice once. The form chooses the one consent
+  // that names this provider for the worker (views/referrals.js suggested_consent_id); the worker clears it.
   await page.tap('.modal label.check:has-text("Warm handoff")');
+  await page.selectOption('.modal select[name=consent_id]', '');
+  eq(await page.$eval('.modal select[name=consent_id]', s => s.value), '', 'H3: the worker can clear the suggested consent');
   await page.tap('.modal button[type=submit]');
   const banner = await until(async () => { const b = await page.$('.modal .banner.danger:not(.hidden)'); return b ? b.textContent() : null; }, { timeout: 5000 });
   ok(banner && /Choose the client's consent/.test(banner), 'H3: without a consent chosen, it says to choose the consent on file (not to record one that exists)', banner);

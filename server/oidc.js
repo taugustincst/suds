@@ -14,12 +14,38 @@ const CACHE_MS = 3600_000;
 let discoveryCache = null; // { at, doc }
 let jwksCache = null; // { at, keys }
 
+// Outbound requests (server/outbound.js is the shared SSRF guard). The issuer is the operator's own setting
+// and may well be an identity provider on the county's network, so it is trusted as configured -- but only
+// over https (plain http only to this machine outside production, for development). Every other address
+// comes out of the discovery document, not from the operator: an endpoint on the issuer's own origin is
+// the issuer's, and anything else must be https on the public internet (never 169.254.169.254, this
+// machine or the county LAN). Redirects are never followed.
+const outbound = require('./outbound');
+const LOOPBACK = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/i;
+function checkIssuer() {
+  let iss; try { iss = new URL(config.oidc.issuer); } catch { throw new Error('OIDC_ISSUER is not a web address'); }
+  if (iss.protocol === 'https:') return iss;
+  if (iss.protocol === 'http:' && !config.isProd && LOOPBACK.test(iss.host.replace(/:\d+$/, ''))) return iss;
+  throw new Error('OIDC_ISSUER must be an https address');
+}
+async function checkEndpoint(u) {
+  const iss = checkIssuer();
+  let url; try { url = new URL(u); } catch { throw new Error('The identity provider named an endpoint that is not a web address'); }
+  if (url.origin === iss.origin) return url.href;
+  try { const href = outbound.assertPublicHttps(url.href); await outbound.assertResolvesPublic(href); return href; }
+  catch (e) { throw new Error(`The identity provider's discovery document names an endpoint SUDS will not contact (${url.host}): ${e.message}`); }
+}
+async function idpFetch(u, opts = {}) { return fetch(await checkEndpoint(u), { ...opts, redirect: 'error' }); }
+
 async function discover() {
   if (discoveryCache && Date.now() - discoveryCache.at < CACHE_MS) return discoveryCache.doc;
-  const res = await fetch(`${config.oidc.issuer}/.well-known/openid-configuration`);
+  const res = await idpFetch(`${config.oidc.issuer}/.well-known/openid-configuration`);
   if (!res.ok) throw new Error(`Could not reach the identity provider's discovery document (HTTP ${res.status})`);
   const doc = await res.json();
   if (!doc.authorization_endpoint || !doc.token_endpoint) throw new Error('The identity provider\'s discovery document is missing required fields');
+  // OpenID Connect Discovery 1.0 §4.3: the document must name the issuer it was fetched from.
+  if (doc.issuer !== undefined && String(doc.issuer).replace(/\/$/, '') !== config.oidc.issuer) throw new Error('The identity provider\'s discovery document names a different issuer');
+  for (const k of ['token_endpoint', 'jwks_uri']) if (doc[k]) await checkEndpoint(doc[k]);
   discoveryCache = { at: Date.now(), doc };
   return doc;
 }
@@ -27,7 +53,7 @@ async function discover() {
 async function jwks() {
   if (jwksCache && Date.now() - jwksCache.at < CACHE_MS) return jwksCache.keys;
   const doc = await discover();
-  const res = await fetch(doc.jwks_uri);
+  const res = await idpFetch(doc.jwks_uri);
   if (!res.ok) throw new Error(`Could not fetch the identity provider's signing keys (HTTP ${res.status})`);
   const { keys } = await res.json();
   jwksCache = { at: Date.now(), keys };
@@ -104,7 +130,7 @@ async function completeAuth({ code, state, cookieToken }) {
     grant_type: 'authorization_code', code, redirect_uri: config.oidc.redirectUri,
     client_id: config.oidc.clientId, client_secret: config.oidc.clientSecret, code_verifier: saved.verifier,
   });
-  const res = await fetch(doc.token_endpoint, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString() });
+  const res = await idpFetch(doc.token_endpoint, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString() });
   const tok = await res.json().catch(() => ({}));
   if (!res.ok || !tok.id_token) throw new Error(tok.error_description || tok.error || 'The identity provider refused the sign-in');
   const claims = await verifyIdToken(tok.id_token, doc);
@@ -168,4 +194,4 @@ function idpMfa(claims, { acrValues = [] } = {}) {
   return { ok: false, via: null, amr, acr };
 }
 
-module.exports = { startAuth, completeAuth, stateCookie, COOKIE, idpMfa, MFA_AMR, AMR_FACTOR_KIND, _resetCacheForTests: () => { discoveryCache = null; jwksCache = null; } };
+module.exports = { checkEndpoint, discover, startAuth, completeAuth, stateCookie, COOKIE, idpMfa, MFA_AMR, AMR_FACTOR_KIND, _resetCacheForTests: () => { discoveryCache = null; jwksCache = null; } };

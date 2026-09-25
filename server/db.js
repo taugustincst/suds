@@ -139,6 +139,8 @@ const migrations = [
       const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
       if (m) d.exec(m[0]);
     }
+    // Errors ignored here on purpose: some of these indexes name columns a later migration adds. Anything
+    // still missing once every migration has run is created, or reported, by ensureIndexes() below.
     for (const line of schemaText.split('\n')) if (/^CREATE( UNIQUE)? INDEX IF NOT EXISTS /.test(line.trim())) { try { d.exec(line.trim()); } catch {} }
 
     // Every existing client keeps being served until someone closes them out: open an episode so that
@@ -525,6 +527,29 @@ const migrations = [
       ['clients', 'contact_preferences', 'contact_preferences_enc'],
     ]) encryptColumn(d, t, from, to);
   },
+  // 38: funding attribution and harm-reduction reporting (docs/compliance/HARM-REDUCTION-REPORTING.md). A
+  //     worker's default fund (users.default_fund_id; the programme's is the default_fund_id setting), and the
+  //     opioid settlement allowable-use and High Impact Abatement Activity categories on a fund and on an
+  //     expenditure. Nothing to backfill: every existing row stays uncategorised until someone chooses.
+  (d) => {
+    addColumn(d, 'users', 'default_fund_id', 'TEXT');
+    for (const t of ['funding_sources', 'expenditures']) for (const c of ['settlement_use', 'settlement_hiaa']) addColumn(d, t, c, 'TEXT');
+    // The funder report read a year of visits through a date-only index and a table lookup per visit; the
+    // covering index answers it from the index alone (server/funder-report.js). It makes the old one redundant.
+    d.exec(`DROP INDEX IF EXISTS idx_interventions_occurred`);
+    d.exec(`CREATE INDEX IF NOT EXISTS idx_interventions_period ON interventions(occurred_at, funding_source_id, client_id, naloxone_kits, fentanyl_strips)`);
+  },
+  // 39: the last free text about a person held in plaintext. A consent's witness is usually someone the
+  //     client knows (a parent, a partner), and an imported note's metadata carries the client-name hints
+  //     sniffed from its text ("Met with J. Smith").
+  (d) => {
+    encryptColumn(d, 'consents', 'witness', 'witness_enc');
+    encryptColumn(d, 'import_items', 'metadata', 'metadata_enc');
+  },
+  // 40: a session remembers when it last proved who is using it (sessions.reauth_at), so signing a note
+  //     shortly after the sign-in, or after the last password given, needs a confirmation rather than the
+  //     password typed again. Existing sessions have none and ask for the password the first time.
+  (d) => { addColumn(d, 'sessions', 'reauth_at', 'TEXT'); },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's
@@ -538,15 +563,42 @@ function initialise(d, schemaText, dbPath) {
     // A new install is a harm-reduction & outreach programme until someone says otherwise (the setup
     // wizard asks; Settings › Programme changes it). server/programme.js.
     d.prepare(`INSERT OR IGNORE INTO settings(key,value) VALUES('programme_profile',?)`).run(require('./programme').DEFAULT_PROFILE);
-    return;
+  } else {
+    migrate(d, dbPath);
+    // A database from before programme profiles: decided once from what it holds, so an upgrade never hides
+    // a module the programme was using (server/programme.js defaultForExisting). Data, not schema.
+    if (!d.prepare(`SELECT 1 FROM settings WHERE key='programme_profile'`).get()) {
+      d.prepare(`INSERT INTO settings(key,value) VALUES('programme_profile',?)`).run(require('./programme').defaultForExisting(d));
+    }
   }
-  migrate(d, dbPath);
-  // A database from before programme profiles: decided once from what it holds, so an upgrade never hides
-  // a module the programme was using (server/programme.js defaultForExisting). Data, not schema.
-  if (!d.prepare(`SELECT 1 FROM settings WHERE key='programme_profile'`).get()) {
-    d.prepare(`INSERT INTO settings(key,value) VALUES('programme_profile',?)`).run(require('./programme').defaultForExisting(d));
-  }
+  ensureIndexes(d, schemaText);
 }
+
+// Every index schema.sql declares, checked at every open. Migration 5 creates them all with the errors
+// ignored (some index columns a later migration adds), so an index that could not be created at all — a
+// UNIQUE index over rows that already break it — used to vanish silently: slow queries, or the duplicates it
+// exists to prevent. Anything missing is created now; what still fails is logged (index name and SQLite's
+// message, never row values) and reported by /api/health and Security status (indexProblems()).
+let lastIndexProblems = [];
+function ensureIndexes(d, schemaText) {
+  const problems = [];
+  for (const raw of schemaText.split('\n')) {
+    const line = raw.trim();
+    const m = line.match(/^CREATE (?:UNIQUE )?INDEX IF NOT EXISTS (\S+) ON /);
+    if (!m) continue;
+    if (d.prepare(`SELECT 1 FROM sqlite_master WHERE type='index' AND name=?`).get(m[1])) continue;
+    try { d.exec(line); }
+    catch (e) {
+      const error = String(e && e.message || e).slice(0, 200);
+      problems.push({ index: m[1], error });
+      console.warn(`[suds] ${JSON.stringify({ event: 'db.index_missing', index: m[1], error })}`);
+    }
+  }
+  lastIndexProblems = problems;
+  return problems;
+}
+/** Indexes schema.sql declares that the open database lacks and could not be created: [{ index, error }]. */
+function indexProblems() { return lastIndexProblems.slice(); }
 
 // A migration is the one operation a county cannot retry: if it goes wrong the old database is already
 // rewritten. Take a consistent copy first (VACUUM INTO, so it is a real snapshot rather than a file copy
@@ -673,4 +725,4 @@ function setSetting(key, value) {
 }
 
 function tombstone(table, id) { run(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, table, id, now()); }
-module.exports = { open, openWith, get, close, LATEST_SCHEMA_VERSION: migrations.length, now, all, one, run, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint };
+module.exports = { open, openWith, get, close, indexProblems, LATEST_SCHEMA_VERSION: migrations.length, now, all, one, run, transaction, savepoint, getSetting, setSetting, tombstone, checkKeyFingerprint };

@@ -1,0 +1,1336 @@
+{
+ "fiscal year": {
+  "from": "2025-07-01",
+  "to": "2026-06-30",
+  "small_cell_threshold": 11,
+  "unduplicated": {
+   "served": 2963,
+   "new_admissions": 1910,
+   "with_a_referral": 1149,
+   "admitted_after_referral": 423,
+   "on_mat": 974
+  },
+  "demographics": {
+   "by_gender": [
+    {
+     "k": "female",
+     "n": 475,
+     "dimension": "gender"
+    },
+    {
+     "k": "male",
+     "n": 1013,
+     "dimension": "gender"
+    },
+    {
+     "k": "nonbinary",
+     "n": 501,
+     "dimension": "gender"
+    },
+    {
+     "k": "unknown",
+     "n": 974,
+     "dimension": "gender"
+    }
+   ],
+   "by_language": [
+    {
+     "k": "English",
+     "n": 1139,
+     "dimension": "language"
+    },
+    {
+     "k": "Spanish",
+     "n": 619,
+     "dimension": "language"
+    },
+    {
+     "k": "Tagalog",
+     "n": 607,
+     "dimension": "language"
+    },
+    {
+     "k": "Vietnamese",
+     "n": 598,
+     "dimension": "language"
+    }
+   ],
+   "by_housing": [
+    {
+     "k": "housed",
+     "n": 742,
+     "dimension": "housing"
+    },
+    {
+     "k": "unhoused",
+     "n": 752,
+     "dimension": "housing"
+    },
+    {
+     "k": "unknown",
+     "n": 718,
+     "dimension": "housing"
+    },
+    {
+     "k": "unstably_housed",
+     "n": 751,
+     "dimension": "housing"
+    }
+   ],
+   "by_insurance": [
+    {
+     "k": "medi_cal",
+     "n": 1162,
+     "dimension": "insurance"
+    },
+    {
+     "k": "medicare",
+     "n": 605,
+     "dimension": "insurance"
+    },
+    {
+     "k": "none",
+     "n": 601,
+     "dimension": "insurance"
+    },
+    {
+     "k": "private",
+     "n": 595,
+     "dimension": "insurance"
+    }
+   ],
+   "by_race_code": [
+    {
+     "k": "american_indian_alaska_native",
+     "n": 409
+    },
+    {
+     "k": "asian",
+     "n": 422
+    },
+    {
+     "k": "black_african_american",
+     "n": 422
+    },
+    {
+     "k": "other",
+     "n": 435
+    },
+    {
+     "k": "unknown",
+     "n": 863
+    },
+    {
+     "k": "white",
+     "n": 847
+    }
+   ],
+   "by_ethnicity": [
+    {
+     "k": "hispanic_latino",
+     "n": 983,
+     "dimension": "ethnicity"
+    },
+    {
+     "k": "not_hispanic_latino",
+     "n": 994,
+     "dimension": "ethnicity"
+    },
+    {
+     "k": "unknown",
+     "n": 986,
+     "dimension": "ethnicity"
+    }
+   ]
+  },
+  "episodes": {
+   "admissions": 750,
+   "discharges": 195,
+   "open_at_end": 555,
+   "by_discharge_reason": [
+    {
+     "k": "completed",
+     "n": 67
+    },
+    {
+     "k": "lost_contact",
+     "n": 71
+    },
+    {
+     "k": "transferred",
+     "n": 57
+    }
+   ],
+   "median_length_of_stay_days": 109
+  },
+  "overdose": {
+   "events": 300,
+   "reversals": 216,
+   "fatal": 102,
+   "community_reported": 156,
+   "naloxone_doses": 448,
+   "by_month": [
+    {
+     "month": "2025-07",
+     "n": 22,
+     "reversals": 17
+    },
+    {
+     "month": "2025-08",
+     "n": 25,
+     "reversals": 15
+    },
+    {
+     "month": "2025-09",
+     "n": 25,
+     "reversals": 17
+    },
+    {
+     "month": "2025-10",
+     "n": 22,
+     "reversals": 18
+    },
+    {
+     "month": "2025-11",
+     "n": 26,
+     "reversals": 18
+    },
+    {
+     "month": "2025-12",
+     "n": 24,
+     "reversals": 19
+    },
+    {
+     "month": "2026-01",
+     "n": 31,
+     "reversals": 25
+    },
+    {
+     "month": "2026-02",
+     "n": 22,
+     "reversals": 16
+    },
+    {
+     "month": "2026-03",
+     "n": 30,
+     "reversals": 22
+    },
+    {
+     "month": "2026-04",
+     "n": 27,
+     "reversals": 16
+    },
+    {
+     "month": "2026-05",
+     "n": 24,
+     "reversals": 19
+    },
+    {
+     "month": "2026-06",
+     "n": 22,
+     "reversals": 14
+    }
+   ],
+   "by_administered_by": [
+    {
+     "k": "bystander",
+     "n": 63
+    },
+    {
+     "k": "first_responder",
+     "n": 54
+    },
+    {
+     "k": "staff",
+     "n": 60
+    },
+    {
+     "k": "unknown",
+     "n": 56
+    }
+   ]
+  },
+  "naloxone_distribution": {
+   "kits": 6192,
+   "strips": 7440,
+   "community_kits": 224
+  },
+  "by_funding_source": [
+   {
+    "name": "County general 7",
+    "grant_number": null,
+    "fiscal_year_start": "2025-07-01",
+    "fiscal_year_end": "2026-06-30",
+    "clients_served": 2133,
+    "services": 3968,
+    "approved_minutes": 8340
+   },
+   {
+    "name": "Opioid settlement 7",
+    "grant_number": null,
+    "fiscal_year_start": "2025-07-01",
+    "fiscal_year_end": "2026-06-30",
+    "clients_served": 2153,
+    "services": 4006,
+    "approved_minutes": 7740
+   },
+   {
+    "name": "SOR 7",
+    "grant_number": null,
+    "fiscal_year_start": "2025-07-01",
+    "fiscal_year_end": "2026-06-30",
+    "clients_served": 2184,
+    "services": 4031,
+    "approved_minutes": 6540
+   }
+  ]
+ },
+ "a quarter": {
+  "from": "2026-01-01",
+  "to": "2026-03-31",
+  "small_cell_threshold": 11,
+  "unduplicated": {
+   "served": 2290,
+   "new_admissions": 481,
+   "with_a_referral": 271,
+   "admitted_after_referral": 82,
+   "on_mat": 759
+  },
+  "demographics": {
+   "by_gender": [
+    {
+     "k": "female",
+     "n": 370,
+     "dimension": "gender"
+    },
+    {
+     "k": "male",
+     "n": 778,
+     "dimension": "gender"
+    },
+    {
+     "k": "nonbinary",
+     "n": 393,
+     "dimension": "gender"
+    },
+    {
+     "k": "unknown",
+     "n": 749,
+     "dimension": "gender"
+    }
+   ],
+   "by_language": [
+    {
+     "k": "English",
+     "n": 886,
+     "dimension": "language"
+    },
+    {
+     "k": "Spanish",
+     "n": 474,
+     "dimension": "language"
+    },
+    {
+     "k": "Tagalog",
+     "n": 468,
+     "dimension": "language"
+    },
+    {
+     "k": "Vietnamese",
+     "n": 462,
+     "dimension": "language"
+    }
+   ],
+   "by_housing": [
+    {
+     "k": "housed",
+     "n": 568,
+     "dimension": "housing"
+    },
+    {
+     "k": "unhoused",
+     "n": 576,
+     "dimension": "housing"
+    },
+    {
+     "k": "unknown",
+     "n": 561,
+     "dimension": "housing"
+    },
+    {
+     "k": "unstably_housed",
+     "n": 585,
+     "dimension": "housing"
+    }
+   ],
+   "by_insurance": [
+    {
+     "k": "medi_cal",
+     "n": 900,
+     "dimension": "insurance"
+    },
+    {
+     "k": "medicare",
+     "n": 476,
+     "dimension": "insurance"
+    },
+    {
+     "k": "none",
+     "n": 458,
+     "dimension": "insurance"
+    },
+    {
+     "k": "private",
+     "n": 456,
+     "dimension": "insurance"
+    }
+   ],
+   "by_race_code": [
+    {
+     "k": "american_indian_alaska_native",
+     "n": 313
+    },
+    {
+     "k": "asian",
+     "n": 314
+    },
+    {
+     "k": "black_african_american",
+     "n": 336
+    },
+    {
+     "k": "other",
+     "n": 344
+    },
+    {
+     "k": "unknown",
+     "n": 662
+    },
+    {
+     "k": "white",
+     "n": 665
+    }
+   ],
+   "by_ethnicity": [
+    {
+     "k": "hispanic_latino",
+     "n": 740,
+     "dimension": "ethnicity"
+    },
+    {
+     "k": "not_hispanic_latino",
+     "n": 765,
+     "dimension": "ethnicity"
+    },
+    {
+     "k": "unknown",
+     "n": 785,
+     "dimension": "ethnicity"
+    }
+   ]
+  },
+  "episodes": {
+   "admissions": 199,
+   "discharges": 59,
+   "open_at_end": 436,
+   "by_discharge_reason": [
+    {
+     "k": "completed",
+     "n": 20
+    },
+    {
+     "k": "lost_contact",
+     "n": 25
+    },
+    {
+     "k": "transferred",
+     "n": 14
+    }
+   ],
+   "median_length_of_stay_days": 108
+  },
+  "overdose": {
+   "events": 83,
+   "reversals": 63,
+   "fatal": 29,
+   "community_reported": 46,
+   "naloxone_doses": 119,
+   "by_month": [
+    {
+     "month": "2026-01",
+     "n": 31,
+     "reversals": 25
+    },
+    {
+     "month": "2026-02",
+     "n": 22,
+     "reversals": 16
+    },
+    {
+     "month": "2026-03",
+     "n": 30,
+     "reversals": 22
+    }
+   ],
+   "by_administered_by": [
+    {
+     "k": "bystander",
+     "n": 16
+    },
+    {
+     "k": "first_responder",
+     "n": "<11",
+     "suppressed": true
+    },
+    {
+     "k": "staff",
+     "n": 14
+    },
+    {
+     "k": "unknown",
+     "n": 26
+    }
+   ]
+  },
+  "naloxone_distribution": {
+   "kits": 1566,
+   "strips": 2080,
+   "community_kits": 57
+  },
+  "by_funding_source": [
+   {
+    "name": "County general 7",
+    "grant_number": null,
+    "fiscal_year_start": "2025-07-01",
+    "fiscal_year_end": "2026-06-30",
+    "clients_served": 818,
+    "services": 1015,
+    "approved_minutes": 2580
+   },
+   {
+    "name": "Opioid settlement 7",
+    "grant_number": null,
+    "fiscal_year_start": "2025-07-01",
+    "fiscal_year_end": "2026-06-30",
+    "clients_served": 819,
+    "services": 1009,
+    "approved_minutes": 1380
+   },
+   {
+    "name": "SOR 7",
+    "grant_number": null,
+    "fiscal_year_start": "2025-07-01",
+    "fiscal_year_end": "2026-06-30",
+    "clients_served": 849,
+    "services": 1023,
+    "approved_minutes": 1440
+   }
+  ]
+ },
+ "one day": {
+  "from": "2026-02-14",
+  "to": "2026-02-14",
+  "small_cell_threshold": 11,
+  "unduplicated": {
+   "served": 40,
+   "new_admissions": 12,
+   "with_a_referral": 0,
+   "admitted_after_referral": 0,
+   "on_mat": 14
+  },
+  "demographics": {
+   "by_gender": [
+    {
+     "k": "female",
+     "n": "<11",
+     "dimension": "gender",
+     "suppressed": true
+    },
+    {
+     "k": "male",
+     "n": 11,
+     "dimension": "gender"
+    },
+    {
+     "k": "nonbinary",
+     "n": "<11",
+     "dimension": "gender",
+     "suppressed": true
+    },
+    {
+     "k": "unknown",
+     "n": 13,
+     "dimension": "gender"
+    }
+   ],
+   "by_language": [
+    {
+     "k": "English",
+     "n": 17,
+     "dimension": "language"
+    },
+    {
+     "k": "Spanish",
+     "n": "<11",
+     "dimension": "language",
+     "suppressed": true
+    },
+    {
+     "k": "Tagalog",
+     "n": 11,
+     "dimension": "language"
+    },
+    {
+     "k": "Vietnamese",
+     "n": "<11",
+     "dimension": "language",
+     "suppressed": true
+    }
+   ],
+   "by_housing": [
+    {
+     "k": "housed",
+     "n": "<11",
+     "dimension": "housing",
+     "suppressed": true
+    },
+    {
+     "k": "unhoused",
+     "n": 15,
+     "dimension": "housing"
+    },
+    {
+     "k": "unknown",
+     "n": "<11",
+     "dimension": "housing",
+     "suppressed": true
+    },
+    {
+     "k": "unstably_housed",
+     "n": 11,
+     "dimension": "housing"
+    }
+   ],
+   "by_insurance": [
+    {
+     "k": "medi_cal",
+     "n": 13,
+     "dimension": "insurance"
+    },
+    {
+     "k": "medicare",
+     "n": "<11",
+     "dimension": "insurance",
+     "suppressed": true
+    },
+    {
+     "k": "none",
+     "n": "<11",
+     "dimension": "insurance",
+     "suppressed": true
+    },
+    {
+     "k": "private",
+     "n": 12,
+     "dimension": "insurance"
+    }
+   ],
+   "by_race_code": [
+    {
+     "k": "american_indian_alaska_native",
+     "n": "<11",
+     "suppressed": true
+    },
+    {
+     "k": "asian",
+     "n": "<11",
+     "suppressed": true
+    },
+    {
+     "k": "black_african_american",
+     "n": "<11",
+     "suppressed": true
+    },
+    {
+     "k": "other",
+     "n": "<11",
+     "suppressed": true
+    },
+    {
+     "k": "unknown",
+     "n": "<11",
+     "suppressed": true
+    },
+    {
+     "k": "white",
+     "n": 15
+    }
+   ],
+   "by_ethnicity": [
+    {
+     "k": "hispanic_latino",
+     "n": 14,
+     "dimension": "ethnicity"
+    },
+    {
+     "k": "not_hispanic_latino",
+     "n": 19,
+     "dimension": "ethnicity"
+    },
+    {
+     "k": "unknown",
+     "n": "<11",
+     "dimension": "ethnicity",
+     "suppressed": true
+    }
+   ]
+  },
+  "episodes": {
+   "admissions": 3,
+   "discharges": 0,
+   "open_at_end": 377,
+   "by_discharge_reason": [],
+   "median_length_of_stay_days": null
+  },
+  "overdose": {
+   "events": 1,
+   "reversals": 1,
+   "fatal": 1,
+   "community_reported": 1,
+   "naloxone_doses": 1,
+   "by_month": [
+    {
+     "month": "2026-02",
+     "n": 1,
+     "reversals": 1
+    }
+   ],
+   "by_administered_by": [
+    {
+     "k": "bystander",
+     "n": "<11",
+     "suppressed": true
+    }
+   ]
+  },
+  "naloxone_distribution": {
+   "kits": 19,
+   "strips": 25,
+   "community_kits": 3
+  },
+  "by_funding_source": [
+   {
+    "name": "County general 7",
+    "grant_number": null,
+    "fiscal_year_start": "2025-07-01",
+    "fiscal_year_end": "2026-06-30",
+    "clients_served": 10,
+    "services": 10,
+    "approved_minutes": 60
+   },
+   {
+    "name": "Opioid settlement 7",
+    "grant_number": null,
+    "fiscal_year_start": "2025-07-01",
+    "fiscal_year_end": "2026-06-30",
+    "clients_served": 9,
+    "services": 9,
+    "approved_minutes": 0
+   },
+   {
+    "name": "SOR 7",
+    "grant_number": null,
+    "fiscal_year_start": "2025-07-01",
+    "fiscal_year_end": "2026-06-30",
+    "clients_served": 11,
+    "services": 12,
+    "approved_minutes": 0
+   }
+  ]
+ },
+ "one fund": {
+  "from": "2025-07-01",
+  "to": "2026-06-30",
+  "small_cell_threshold": 11,
+  "unduplicated": {
+   "served": 2153,
+   "new_admissions": 1910,
+   "with_a_referral": 827,
+   "admitted_after_referral": 305,
+   "on_mat": 702
+  },
+  "demographics": {
+   "by_gender": [
+    {
+     "k": "female",
+     "n": 337,
+     "dimension": "gender"
+    },
+    {
+     "k": "male",
+     "n": 739,
+     "dimension": "gender"
+    },
+    {
+     "k": "nonbinary",
+     "n": 368,
+     "dimension": "gender"
+    },
+    {
+     "k": "unknown",
+     "n": 709,
+     "dimension": "gender"
+    }
+   ],
+   "by_language": [
+    {
+     "k": "English",
+     "n": 846,
+     "dimension": "language"
+    },
+    {
+     "k": "Spanish",
+     "n": 435,
+     "dimension": "language"
+    },
+    {
+     "k": "Tagalog",
+     "n": 437,
+     "dimension": "language"
+    },
+    {
+     "k": "Vietnamese",
+     "n": 435,
+     "dimension": "language"
+    }
+   ],
+   "by_housing": [
+    {
+     "k": "housed",
+     "n": 557,
+     "dimension": "housing"
+    },
+    {
+     "k": "unhoused",
+     "n": 528,
+     "dimension": "housing"
+    },
+    {
+     "k": "unknown",
+     "n": 522,
+     "dimension": "housing"
+    },
+    {
+     "k": "unstably_housed",
+     "n": 546,
+     "dimension": "housing"
+    }
+   ],
+   "by_insurance": [
+    {
+     "k": "medi_cal",
+     "n": 840,
+     "dimension": "insurance"
+    },
+    {
+     "k": "medicare",
+     "n": 445,
+     "dimension": "insurance"
+    },
+    {
+     "k": "none",
+     "n": 449,
+     "dimension": "insurance"
+    },
+    {
+     "k": "private",
+     "n": 419,
+     "dimension": "insurance"
+    }
+   ],
+   "by_race_code": [
+    {
+     "k": "american_indian_alaska_native",
+     "n": 295
+    },
+    {
+     "k": "asian",
+     "n": 313
+    },
+    {
+     "k": "black_african_american",
+     "n": 297
+    },
+    {
+     "k": "other",
+     "n": 317
+    },
+    {
+     "k": "unknown",
+     "n": 632
+    },
+    {
+     "k": "white",
+     "n": 616
+    }
+   ],
+   "by_ethnicity": [
+    {
+     "k": "hispanic_latino",
+     "n": 726,
+     "dimension": "ethnicity"
+    },
+    {
+     "k": "not_hispanic_latino",
+     "n": 715,
+     "dimension": "ethnicity"
+    },
+    {
+     "k": "unknown",
+     "n": 712,
+     "dimension": "ethnicity"
+    }
+   ]
+  },
+  "episodes": {
+   "admissions": 750,
+   "discharges": 195,
+   "open_at_end": 555,
+   "by_discharge_reason": [
+    {
+     "k": "completed",
+     "n": 67
+    },
+    {
+     "k": "lost_contact",
+     "n": 71
+    },
+    {
+     "k": "transferred",
+     "n": 57
+    }
+   ],
+   "median_length_of_stay_days": 109
+  },
+  "overdose": {
+   "events": 300,
+   "reversals": 216,
+   "fatal": 102,
+   "community_reported": 156,
+   "naloxone_doses": 448,
+   "by_month": [
+    {
+     "month": "2025-07",
+     "n": 22,
+     "reversals": 17
+    },
+    {
+     "month": "2025-08",
+     "n": 25,
+     "reversals": 15
+    },
+    {
+     "month": "2025-09",
+     "n": 25,
+     "reversals": 17
+    },
+    {
+     "month": "2025-10",
+     "n": 22,
+     "reversals": 18
+    },
+    {
+     "month": "2025-11",
+     "n": 26,
+     "reversals": 18
+    },
+    {
+     "month": "2025-12",
+     "n": 24,
+     "reversals": 19
+    },
+    {
+     "month": "2026-01",
+     "n": 31,
+     "reversals": 25
+    },
+    {
+     "month": "2026-02",
+     "n": 22,
+     "reversals": 16
+    },
+    {
+     "month": "2026-03",
+     "n": 30,
+     "reversals": 22
+    },
+    {
+     "month": "2026-04",
+     "n": 27,
+     "reversals": 16
+    },
+    {
+     "month": "2026-05",
+     "n": 24,
+     "reversals": 19
+    },
+    {
+     "month": "2026-06",
+     "n": 22,
+     "reversals": 14
+    }
+   ],
+   "by_administered_by": [
+    {
+     "k": "bystander",
+     "n": 63
+    },
+    {
+     "k": "first_responder",
+     "n": 54
+    },
+    {
+     "k": "staff",
+     "n": 60
+    },
+    {
+     "k": "unknown",
+     "n": 56
+    }
+   ]
+  },
+  "naloxone_distribution": {
+   "kits": 1623,
+   "strips": 1955,
+   "community_kits": 63
+  },
+  "by_funding_source": [
+   {
+    "name": "County general 7",
+    "grant_number": null,
+    "fiscal_year_start": "2025-07-01",
+    "fiscal_year_end": "2026-06-30",
+    "clients_served": 2133,
+    "services": 3968,
+    "approved_minutes": 8340
+   },
+   {
+    "name": "Opioid settlement 7",
+    "grant_number": null,
+    "fiscal_year_start": "2025-07-01",
+    "fiscal_year_end": "2026-06-30",
+    "clients_served": 2153,
+    "services": 4006,
+    "approved_minutes": 7740
+   },
+   {
+    "name": "SOR 7",
+    "grant_number": null,
+    "fiscal_year_start": "2025-07-01",
+    "fiscal_year_end": "2026-06-30",
+    "clients_served": 2184,
+    "services": 4031,
+    "approved_minutes": 6540
+   }
+  ]
+ },
+ "fiscal year, Los Angeles": {
+  "from": "2025-07-01",
+  "to": "2026-06-30",
+  "small_cell_threshold": 11,
+  "unduplicated": {
+   "served": 2963,
+   "new_admissions": 1910,
+   "with_a_referral": 1147,
+   "admitted_after_referral": 422,
+   "on_mat": 974
+  },
+  "demographics": {
+   "by_gender": [
+    {
+     "k": "female",
+     "n": 475,
+     "dimension": "gender"
+    },
+    {
+     "k": "male",
+     "n": 1013,
+     "dimension": "gender"
+    },
+    {
+     "k": "nonbinary",
+     "n": 501,
+     "dimension": "gender"
+    },
+    {
+     "k": "unknown",
+     "n": 974,
+     "dimension": "gender"
+    }
+   ],
+   "by_language": [
+    {
+     "k": "English",
+     "n": 1139,
+     "dimension": "language"
+    },
+    {
+     "k": "Spanish",
+     "n": 619,
+     "dimension": "language"
+    },
+    {
+     "k": "Tagalog",
+     "n": 607,
+     "dimension": "language"
+    },
+    {
+     "k": "Vietnamese",
+     "n": 598,
+     "dimension": "language"
+    }
+   ],
+   "by_housing": [
+    {
+     "k": "housed",
+     "n": 742,
+     "dimension": "housing"
+    },
+    {
+     "k": "unhoused",
+     "n": 752,
+     "dimension": "housing"
+    },
+    {
+     "k": "unknown",
+     "n": 718,
+     "dimension": "housing"
+    },
+    {
+     "k": "unstably_housed",
+     "n": 751,
+     "dimension": "housing"
+    }
+   ],
+   "by_insurance": [
+    {
+     "k": "medi_cal",
+     "n": 1162,
+     "dimension": "insurance"
+    },
+    {
+     "k": "medicare",
+     "n": 605,
+     "dimension": "insurance"
+    },
+    {
+     "k": "none",
+     "n": 601,
+     "dimension": "insurance"
+    },
+    {
+     "k": "private",
+     "n": 595,
+     "dimension": "insurance"
+    }
+   ],
+   "by_race_code": [
+    {
+     "k": "american_indian_alaska_native",
+     "n": 409
+    },
+    {
+     "k": "asian",
+     "n": 422
+    },
+    {
+     "k": "black_african_american",
+     "n": 422
+    },
+    {
+     "k": "other",
+     "n": 435
+    },
+    {
+     "k": "unknown",
+     "n": 863
+    },
+    {
+     "k": "white",
+     "n": 847
+    }
+   ],
+   "by_ethnicity": [
+    {
+     "k": "hispanic_latino",
+     "n": 983,
+     "dimension": "ethnicity"
+    },
+    {
+     "k": "not_hispanic_latino",
+     "n": 994,
+     "dimension": "ethnicity"
+    },
+    {
+     "k": "unknown",
+     "n": 986,
+     "dimension": "ethnicity"
+    }
+   ]
+  },
+  "episodes": {
+   "admissions": 750,
+   "discharges": 195,
+   "open_at_end": 555,
+   "by_discharge_reason": [
+    {
+     "k": "completed",
+     "n": 67
+    },
+    {
+     "k": "lost_contact",
+     "n": 71
+    },
+    {
+     "k": "transferred",
+     "n": 57
+    }
+   ],
+   "median_length_of_stay_days": 109
+  },
+  "overdose": {
+   "events": 300,
+   "reversals": 216,
+   "fatal": 102,
+   "community_reported": 156,
+   "naloxone_doses": 448,
+   "by_month": [
+    {
+     "month": "2025-07",
+     "n": 22,
+     "reversals": 17
+    },
+    {
+     "month": "2025-08",
+     "n": 25,
+     "reversals": 15
+    },
+    {
+     "month": "2025-09",
+     "n": 25,
+     "reversals": 17
+    },
+    {
+     "month": "2025-10",
+     "n": 22,
+     "reversals": 18
+    },
+    {
+     "month": "2025-11",
+     "n": 26,
+     "reversals": 18
+    },
+    {
+     "month": "2025-12",
+     "n": 24,
+     "reversals": 19
+    },
+    {
+     "month": "2026-01",
+     "n": 31,
+     "reversals": 25
+    },
+    {
+     "month": "2026-02",
+     "n": 22,
+     "reversals": 16
+    },
+    {
+     "month": "2026-03",
+     "n": 30,
+     "reversals": 22
+    },
+    {
+     "month": "2026-04",
+     "n": 27,
+     "reversals": 16
+    },
+    {
+     "month": "2026-05",
+     "n": 24,
+     "reversals": 19
+    },
+    {
+     "month": "2026-06",
+     "n": 22,
+     "reversals": 14
+    }
+   ],
+   "by_administered_by": [
+    {
+     "k": "bystander",
+     "n": 63
+    },
+    {
+     "k": "first_responder",
+     "n": 54
+    },
+    {
+     "k": "staff",
+     "n": 60
+    },
+    {
+     "k": "unknown",
+     "n": 56
+    }
+   ]
+  },
+  "naloxone_distribution": {
+   "kits": 6192,
+   "strips": 7440,
+   "community_kits": 224
+  },
+  "by_funding_source": [
+   {
+    "name": "County general 7",
+    "grant_number": null,
+    "fiscal_year_start": "2025-07-01",
+    "fiscal_year_end": "2026-06-30",
+    "clients_served": 2132,
+    "services": 3966,
+    "approved_minutes": 8340
+   },
+   {
+    "name": "Opioid settlement 7",
+    "grant_number": null,
+    "fiscal_year_start": "2025-07-01",
+    "fiscal_year_end": "2026-06-30",
+    "clients_served": 2153,
+    "services": 4005,
+    "approved_minutes": 7740
+   },
+   {
+    "name": "SOR 7",
+    "grant_number": null,
+    "fiscal_year_start": "2025-07-01",
+    "fiscal_year_end": "2026-06-30",
+    "clients_served": 2182,
+    "services": 4028,
+    "approved_minutes": 6540
+   }
+  ]
+ },
+ "dashboard": {
+  "interventions": {
+   "total": 14373,
+   "minutes": 431190,
+   "naloxone_kits": 5968
+  },
+  "calls": {
+   "total": 3000
+  },
+  "referrals": {
+   "total": 1500
+  }
+ }
+}

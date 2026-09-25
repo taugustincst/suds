@@ -93,7 +93,7 @@ function sweepStale({ now = Date.now(), except = null } = {}) {
   }
   if (out.removed.length) {
     console.warn(`[suds] removed ${out.removed.length} stale decrypted copy(ies) left by an interrupted drill or backup: ${out.removed.join(', ')}`);
-    try { audit.log({ user: { username: 'system' }, action: 'dr.drill.swept', details: { removed: out.removed.slice(0, 20), files: out.files } }); } catch {}
+    try { audit.log({ user: { username: 'system' }, action: 'dr.drill.swept', details: { removed: out.removed.slice(0, 20), files: out.files } }); } catch (e) { console.error('[suds] the audit entry for the sweep could not be written:', e && e.message); }
   }
   return out;
 }
@@ -189,7 +189,8 @@ async function run({ backupFile = null, fresh = false, by = 'system', trigger = 
   let escrow = null;
   try {
     // Copies a previous drill left behind (a crash mid-drill) are removed before a new one is made.
-    try { sweepStale({ except: tmp }); } catch {}
+    // A failed sweep can leave a decrypted copy of the database on disk: say so, then carry on with the drill.
+    try { sweepStale({ except: tmp }); } catch (e) { console.error('[suds] could not sweep stale drill copies:', e && e.message); }
     if (keysFile || (keysText !== null && keysText !== undefined)) {
       const uploaded = keysText !== null && keysText !== undefined;
       escrow = parseKeysFile(uploaded ? keysText : fs.readFileSync(keysFile, 'utf8'));
@@ -215,7 +216,7 @@ async function run({ backupFile = null, fresh = false, by = 'system', trigger = 
     }
     if (!file) {
       step('No backup on disk; taking one first');
-      const made = require('./scheduled-backup').run({ retain: sched.retain, offsiteDir: sched.offsiteDir });
+      const made = await require('./scheduled-backup').run({ retain: sched.retain, offsiteDir: sched.offsiteDir });
       if (!made.file) throw new Error(`a backup could not be taken: ${made.error}`);
       madeBackup = true;
       if (made.offsiteFile && copy !== 'local') { file = made.offsiteFile; source = { ...source, copy: 'offsite', dir: sched.offsiteDir }; }

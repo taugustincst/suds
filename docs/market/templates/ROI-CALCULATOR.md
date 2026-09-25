@@ -2,7 +2,8 @@
 
 A simple worksheet a programme manager can fill in with their own numbers. Use the baselines from the pilot
 ([PILOT-KIT.md](../PILOT-KIT.md), section 5) where you have them; otherwise use honest estimates and say so.
-The example column is illustrative only, not a measured result.
+The example column is **invented to show the arithmetic** — not a measured result, and not a claim about what
+SUDS saves. No pilot has measured SUDS yet; do not show the example numbers to a funder or board.
 
 ## Inputs
 
@@ -20,8 +21,8 @@ The example column is illustrative only, not a measured result.
 | J | Supply spend per year (naloxone, test strips, hygiene kits) ($) | | 20,000 |
 | K | Share of supplies wasted today (expired, lost, uncounted) (%) | | 8 |
 | L | Share wasted with tracked stock (%) | | 4 |
-| M | SUDS annual cost (subscription; [PRICING.md](PRICING.md)) ($) | | 4,704 |
-| N | One-time implementation fee ($) | | 5,000 |
+| M | Annual cost: support subscription if bought ([PRICING.md](PRICING.md), unvalidated), plus your IT partner's hours to run the server | | 4,500 + 1,500 = 6,000 |
+| N | One-time implementation fee, if bought ($) | | 5,000 |
 
 ## Calculations
 
@@ -33,9 +34,9 @@ The example column is illustrative only, not a measured result.
 | 4. Value of line 3 | line 3 × I | 108 × $60 = **$6,480** |
 | 5. Supply waste avoided / year | J × (K − L) ÷ 100 | $20,000 × 4% = **$800** |
 | 6. Total annual value | 2 + 4 + 5 | **$36,080** |
-| 7. Year-one cost | M + N | **$9,704** |
-| 8. Year-one net | 6 − 7 | **$26,376** |
-| 9. Payback (months) | 7 ÷ (6 ÷ 12) | **3.2 months** |
+| 7. Year-one cost | M + N | **$11,000** |
+| 8. Year-one net | 6 − 7 | **$25,080** |
+| 9. Payback (months) | 7 ÷ (6 ÷ 12) | **3.7 months** |
 
 ## Read it carefully
 
@@ -44,6 +45,7 @@ The example column is illustrative only, not a measured result.
 - **Not counted but real:** fewer audit findings from incomplete records, referral loops closed, stock-outs
   avoided on the day someone overdoses, grant compliance (unduplicated counts, consent records), staff
   turnover handled by caseload transfer instead of lost spreadsheets.
-- **Costs not counted:** county IT time for a county-hosted install (0.25–0.5 FTE administrator,
-  `docs/ADOPTION.md`), training time, the parallel run.
+- **Costs not counted:** training time, the parallel run, and — for a county-hosted install — county IT time
+  (0.25–0.5 FTE administrator, `docs/ADOPTION.md`). Line M includes an example IT-partner cost for a self-hosted
+  install; use your partner's real quote ([../HOSTING.md](../HOSTING.md)).
 - Replace example numbers with measured pilot numbers before showing this to a funder or board.

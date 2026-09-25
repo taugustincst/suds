@@ -8,6 +8,8 @@ export function openExpenditureForm(values, { clientId, clientDisplay, onDone } 
     { name: 'spent_at', label: 'Date', type: 'date', required: true, value: values?.spent_at || fmt.today() }, { name: 'amount', label: 'Amount ($)', type: 'number', min: 0.01, step: 0.01, required: true },
     { name: 'category', label: 'Category', type: 'select', options: C.BUDGET_CATEGORIES, required: true }, { name: 'client_id', label: 'Client (for client assistance)', type: 'client', value: clientId || values?.client_id, display: clientDisplay },
     { name: 'vendor', label: 'Vendor / payee' }, { name: 'receipt_ref', label: 'Receipt / invoice #' }, { name: 'description', label: 'Description', type: 'textarea', span: true, rows: 2 },
+    // Only when this item's opioid settlement category differs from its fund's; blank takes the fund's.
+    ...settlementFields('if different from the fund\'s'),
   ], { values: values || {}, submitText: isNew ? 'Submit expenditure' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => {
     // Overspending a line is not blocked (the allocation may simply be out of date), but it must not be
     // frictionless either: say by how much, before the money is committed rather than after.
@@ -59,11 +61,23 @@ export function expenditureTable(rows, { showClient = true, onChange } = {}) {
       r.status === 'pending' && (r.user_id === state.user.id || can('budget:approve')) ? [h('button', { class: 'btn sm', onClick: () => openExpenditureForm(r, { onDone: onChange }) }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this expenditure', onClick: async () => { if (await confirmDialog('Delete', 'Delete this pending expenditure?', { danger: true, okText: 'Delete' })) { await del(`/api/budget/expenditures/${r.id}`); onChange && onChange(); } } }, '✕')] : null) },
   ].filter(Boolean), rows, { empty: 'No expenditures.' });
 }
+// The opioid settlement categories (server/constants.js SETTLEMENT_USES / SETTLEMENT_HIAA), for a settlement
+// fund and, when it differs from its fund's, for one expenditure. Blank on anything else.
+export function settlementFields(what) {
+  const C = state.constants;
+  const kind = (code) => (code.startsWith('core_') ? 'Core strategy ' : code.startsWith('approved_') ? 'Approved use ' : '');
+  return [
+    { name: 'settlement_use', label: `Opioid settlement allowable use (${what})`, type: 'select', placeholder: '— not settlement money —', options: (C.SETTLEMENT_USES || []).map(x => ({ value: x.code, label: `${kind(x.code)}${x.label}` })), span: true },
+    { name: 'settlement_hiaa', label: 'California High Impact Abatement Activity', type: 'select', placeholder: '— not recorded —', options: [...(C.SETTLEMENT_HIAA || []).map(x => ({ value: x.code, label: x.label })), { value: 'none', label: 'Not a High Impact Abatement Activity' }], span: true, help: 'Opioid settlement report (Reports). Check the category against the agreement that governs the fund.' },
+  ];
+}
 function openFundForm(values, onDone) {
   const C = state.constants; const isNew = !values;
   const f = form([{ name: 'name', label: 'Fund / grant name', required: true, span: true }, { name: 'source_type', label: 'Source type', type: 'select', options: C.FUNDING_TYPES, required: true }, { name: 'grant_number', label: 'Grant / award #' },
     { name: 'fiscal_year_start', label: 'Period start', type: 'date', required: true }, { name: 'fiscal_year_end', label: 'Period end', type: 'date', required: true }, { name: 'total_amount', label: 'Total award ($)', type: 'number', min: 0, step: 0.01, required: true },
-    { name: 'restrictions', label: 'Allowable uses / restrictions', type: 'textarea', span: true, rows: 2 }, { name: 'notes', label: 'Notes', type: 'textarea', span: true, rows: 2 }, { name: 'is_active', label: 'Active', type: 'checkbox', value: values ? values.is_active : true }],
+    { name: 'restrictions', label: 'Allowable uses / restrictions', type: 'textarea', span: true, rows: 2 }, { name: 'notes', label: 'Notes', type: 'textarea', span: true, rows: 2 },
+    // Opioid settlement funds: the category the settlement expenditure report files this fund's spending under.
+    ...settlementFields('this fund\'s spending'), { name: 'is_active', label: 'Active', type: 'checkbox', value: values ? values.is_active : true }],
     { values: values || {}, submitText: isNew ? 'Create fund' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => { if (isNew) await post('/api/budget/funds', d); else await put(`/api/budget/funds/${values.id}`, { ...d, if_updated_at: values.updated_at }); toast('Fund saved', 'ok'); m.close(); await loadRefData(); onDone(); } });
   const m = modal(isNew ? 'New funding source' : 'Edit funding source', f, { wide: true });
 }

@@ -17,7 +17,7 @@ await esbuild.build({
   inject: [shim('globals-inject.js')],
   bundle: true, format: 'esm', platform: 'browser', target: ['es2022'], outfile: path.join(out, 'kernel.js'), sourcemap: false, minify: false, logLevel: 'warning',
   define: { __dirname: '"/"', SUDS_VERSION: JSON.stringify(require(path.join(root, 'package.json')).version) },
-  alias: { fs: shim('fs.js'), path: shim('path.js'), crypto: shim('crypto.js'), 'node:crypto': shim('crypto.js'), 'node:sqlite': shim('sqlite.js'), 'node:zlib': shim('zlib.js'), 'node:fs': shim('fs.js'), 'node:path': shim('path.js'), 'node:os': shim('os.js'), 'node:url': shim('url.js'), 'node:http': shim('empty.js'), 'node:https': shim('empty.js'), 'node:dgram': shim('empty.js'), 'node:child_process': shim('empty.js') },
+  alias: { fs: shim('fs.js'), path: shim('path.js'), crypto: shim('crypto.js'), 'node:crypto': shim('crypto.js'), 'node:sqlite': shim('sqlite.js'), 'node:zlib': shim('zlib.js'), 'node:fs': shim('fs.js'), 'node:path': shim('path.js'), 'node:os': shim('os.js'), 'node:url': shim('url.js'), 'node:http': shim('empty.js'), 'node:https': shim('empty.js'), 'node:dgram': shim('empty.js'), 'node:child_process': shim('empty.js'), 'node:worker_threads': shim('empty.js') },
   plugins: [{
     name: 'suds-local', setup(b) {
       b.onResolve({ filter: /(^|[\\/])config(\.js)?$/ }, (a) => (a.importer.includes(path.join('server')) ? { path: shim('config.js') } : undefined));

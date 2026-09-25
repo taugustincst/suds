@@ -87,6 +87,14 @@ route('reports', async (r) => {
   // The exports, in three groups with what each is for, instead of one row of 17 buttons. What each button
   // exports is unchanged; only where it sits.
   const exportGroup = (title, text, attrs, ...content) => h('div', { class: 'export-group', ...attrs }, h('h3', { class: 'eyebrow' }, title), h('p', { class: 'small muted' }, text), h('div', { class: 'row' }, ...content));
+  // California harm-reduction reporting (docs/compliance/HARM-REDUCTION-REPORTING.md): the Naloxone
+  // Distribution Project log and the opioid settlement expenditure report, part of "Funder & programme".
+  const harmReduction = () => h('div', { class: 'mt', 'data-harm-reduction-reports': '1' }, h('h4', { class: 'small', style: { margin: '.75rem 0 .25rem' } }, 'Harm-reduction reporting'),
+      h('p', { class: 'small muted' }, 'For the range above. Aggregate counts and amounts only: no names or client codes.'),
+      h('div', { class: 'row mb' }, h('span', {}, h('b', {}, 'Naloxone distribution & reversal log (NDP-style)'), h('span', { class: 'small muted' }, ' — kits and doses by day, site and recipient type; reversals reported. Check the columns against the current NDP reporting template before submitting.')),
+        h('button', { class: 'btn sm', 'data-ndp-export': 'xlsx', onClick: () => downloadCsv(`/api/reports/naloxone-ndp/export?from=${from}&to=${to}&format=xlsx`) }, 'NDP log (Excel)'), h('button', { class: 'btn sm ghost', 'data-ndp-export': 'csv', onClick: () => downloadCsv(`/api/reports/naloxone-ndp/export?from=${from}&to=${to}`) }, 'CSV')),
+      can('budget:read') ? h('div', { class: 'row' }, h('span', {}, h('b', {}, 'Opioid settlement expenditures'), h('span', { class: 'small muted' }, ' — spending from settlement funds by allowable use (Exhibit E) and California High Impact Abatement Activity. Categories need verification against each fund\'s agreement.')),
+        h('button', { class: 'btn sm', 'data-settlement-export': 'xlsx', onClick: () => downloadCsv(`/api/reports/opioid-settlement/export?from=${from}&to=${to}&format=xlsx`) }, 'Settlement report (Excel)'), h('button', { class: 'btn sm ghost', 'data-settlement-export': 'csv', onClick: () => downloadCsv(`/api/reports/opioid-settlement/export?from=${from}&to=${to}`) }, 'CSV')) : null);
   const exportsCard = () => h('div', { class: 'card', 'data-exports': '1' }, h('div', { class: 'card-head' }, h('h2', {}, 'Export to Excel or CSV')),
     h('p', { class: 'small muted' }, 'The range above chooses the rows (clients, resources and to-dos are complete lists).'),
     exportGroup('Funder & programme', 'For grant reports and the programme\'s own books: everything in one workbook, staff time and the resource directory, and — for roles that see the budget — funding, budget lines and spending.', { 'data-export-group': 'programme' },
@@ -94,6 +102,7 @@ route('reports', async (r) => {
       h('a', { class: 'btn', href: '#/funder' }, 'Funder report (unduplicated counts)'),
       exportRow('time', 'Time'), exportRow('resources', 'Resources'),
       can('budget:read') ? [exportRow('expenditures', 'Expenditures'), exportRow('funds', 'Funding'), exportRow('budget_lines', 'Budget lines')] : null),
+    harmReduction(),
     exportGroup('De-identified records', 'One row per record, with only the columns a de-identified file may hold: no names or free text, dates reduced to the year, and a random record id in place of the client code, new with every file.', { 'data-export-group': 'deidentified' },
       exportRow('clients', 'Clients'), exportRow('interventions', 'Visits'), exportRow('calls', 'Calls'), exportRow('referrals', 'Referrals'), exportRow('tasks', 'To-dos'), exportRow('consents', 'Consents'), exportRow('episodes', 'Episodes'), exportRow('overdose_events', 'Overdose events'), exportRow('forms', 'Client forms'), exportRow('disclosures', 'Disclosures')),
     can('export:identified') ? exportGroup('Records (identified)', 'Names, dates of birth and contact details. A disclosure: it needs a lawful basis, and it is written to the audit log and to each client\'s accounting of disclosures.', { 'data-export-group': 'identified' },

@@ -106,7 +106,7 @@ function createHandler() {
   const staticHandler = serveStatic(path.join(__dirname, '..', 'public'));
 
   return async function handle(req, res) {
-    securityHeaders(res);
+    securityHeaders(res, req);
     // Parsed before the try below used to mean a target the parser refused hung the socket; see parseRequestUrl.
     let url;
     try { url = parseRequestUrl(req.url, 'http://localhost'); } catch (e) { sendJson(res, e.status || 400, { error: e.message }); return; }
@@ -180,7 +180,7 @@ function createHandler() {
         else res.destroy();
       } else {
         console.error(`[suds] ${req.method} ${url.pathname}:`, err);
-        try { audit.log({ user: ctx.user, action: 'server.error', ip: ctx.ip, success: false, details: { path: url.pathname, message: String(err.message).slice(0, 300) } }); } catch {}
+        try { audit.log({ user: ctx.user, action: 'server.error', ip: ctx.ip, success: false, details: { path: url.pathname, message: String(err.message).slice(0, 300) } }); } catch (e) { console.error('[suds] the audit entry for that error could not be written:', e && e.message); }
         if (!res.headersSent) sendJson(res, 500, { error: 'Internal server error' });
         else res.destroy();
       }

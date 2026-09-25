@@ -1,6 +1,6 @@
 // Form library + clickable cards: library cards, designer, fill from a client record with autofill, complete, PDF, attach a signed copy; office and phone-only mode.
 import { chromium } from 'playwright';
-import { makeChecks, until, settle } from './assert.mjs';
+import { makeChecks, until, settle, skipTour } from './assert.mjs';
 import fs from 'node:fs';
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const browser = await chromium.launch(); const errors = [];
@@ -17,7 +17,9 @@ async function dismissTour(p) {
     if (window.SUDS_LOCAL) await window.SUDS_LOCAL.handle('PUT', '/api/me/prefs', { tour_done: true }, { 'X-Requested-With': 'suds' });
     else await fetch('/api/me/prefs', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'suds' }, body: JSON.stringify({ tour_done: true }) });
   });
-  await settle(p); await p.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove()));
+  // The tour may already be showing (or about to): Skip it properly, and on a device wait until tour_done is
+  // saved, so the reload below does not bring it back over the next click.
+  await skipTour(p);
 }
 async function run(label, root, login) {
   const ctx = await browser.newContext({ viewport: { width: 1250, height: 900 } }); const page = await ctx.newPage(); let loggedIn = false;

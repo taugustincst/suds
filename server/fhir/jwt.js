@@ -68,7 +68,7 @@ function parseJwks(input) {
 
 /** An https JWKS URL on the public internet (the SSRF guard's first check; each fetch checks it again). */
 function checkJwksUrl(u) {
-  const { assertPublicHttps } = require('../region-pictures');
+  const { assertPublicHttps } = require('../outbound');
   try { return assertPublicHttps(String(u || '').trim()); } catch (e) { throw new JwtError(`The key set URL is not allowed: ${e.message}`); }
 }
 
@@ -79,9 +79,9 @@ async function fetchJwks(url, { force = false } = {}) {
   if (hit && !force && now - hit.at < JWKS_TTL_MS) return hit.keys;
   if (hit && force && now - hit.tried < JWKS_REFETCH_MS) return hit.keys;
   if (hit) hit.tried = now;
-  const { get } = require('../region-pictures');
+  const { fetchChecked } = require('../outbound');
   let set;
-  try { set = parseJwks((await get(url, { timeoutMs: 8000, maxBytes: JWKS_MAX_BYTES })).toString('utf8')); }
+  try { set = parseJwks((await fetchChecked(url, { timeoutMs: 8000, maxBytes: JWKS_MAX_BYTES, headers: { Accept: 'application/json' } })).buf.toString('utf8')); }
   catch (e) {
     if (hit) return hit.keys; // keep using the last good set if the host is briefly down
     throw new JwtError(`The client's key set could not be fetched: ${e.message}`);

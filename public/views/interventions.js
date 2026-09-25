@@ -10,6 +10,9 @@ export function openInterventionForm(values, { clientId, clientDisplay, onDone, 
   // default, so the parts of the template we do NOT want carried over — when it happened, how long it
   // took, what was written up — have to be scrubbed from the seed itself, not overridden per-field below.
   const seed = values || (template ? { ...template, occurred_at: new Date().toISOString(), duration_minutes: 30, summary: '', follow_up_due: '', user_id: undefined } : {});
+  // A new visit is charged to the worker's default fund (or the programme's) unless they choose another, so it
+  // is not left out of the funder report's "By funding source"; a repeated visit keeps the fund it had.
+  if (!values && !template && state.defaultFundId && state.funds?.some(x => x.id === state.defaultFundId)) seed.funding_source_id = state.defaultFundId;
   // Outreach and community naloxone distribution can be recorded with no client (a kit handed to someone who
   // gives no name); every other service needs one. The server enforces the same list.
   const clientless = (type) => (C.CLIENTLESS_INTERVENTION_TYPES || ['outreach', 'naloxone_distribution']).includes(type);
@@ -81,17 +84,20 @@ export function interventionTable(rows, { showClient = true, onChange } = {}) {
 
 route('interventions', async (r) => {
   const type = r.query.get('type') || ''; const from = r.query.get('from') || ''; const to = r.query.get('to') || ''; const mine = r.query.get('mine') === '1';
-  const qs = `${type ? '&type=' + type : ''}${from ? '&from=' + from : ''}${to ? '&to=' + to : ''}${mine ? '&mine=1' : ''}`.replace(/^&/, '');
+  // funding=none: the visits with no funding source (the funder report's warning links here).
+  const noFund = r.query.get('funding') === 'none';
+  const qs = `${type ? '&type=' + type : ''}${from ? '&from=' + from : ''}${to ? '&to=' + to : ''}${mine ? '&mine=1' : ''}${noFund ? '&funding=none' : ''}`.replace(/^&/, '');
   const PAGE = 200;
   const data = await get(`/api/interventions?limit=${PAGE}${qs ? '&' + qs : ''}`);
   const refresh = () => nav(`interventions?${qs}&_=${Date.now()}`);
   const C = state.constants;
-  const typeSel = h('select', { onChange: () => nav(`interventions?type=${typeSel.value}&from=${from}&to=${to}${mine ? '&mine=1' : ''}`) }, h('option', { value: '' }, 'All types'), listFilterOptions('INTERVENTION_TYPES').map(o => h('option', { value: o.value, selected: o.value === type }, o.label)));
+  const typeSel = h('select', { onChange: () => nav(`interventions?type=${typeSel.value}&from=${from}&to=${to}${mine ? '&mine=1' : ''}${noFund ? '&funding=none' : ''}`) }, h('option', { value: '' }, 'All types'), listFilterOptions('INTERVENTION_TYPES').map(o => h('option', { value: o.value, selected: o.value === type }, o.label)));
   const fromI = h('input', { type: 'date', value: from }), toI = h('input', { type: 'date', value: to });
   const mineI = h('input', { type: 'checkbox', checked: mine });
-  const apply = () => nav(`interventions?type=${type}&from=${fromI.value}&to=${toI.value}${mineI.checked ? '&mine=1' : ''}`);
+  const apply = () => nav(`interventions?type=${type}&from=${fromI.value}&to=${toI.value}${mineI.checked ? '&mine=1' : ''}${noFund ? '&funding=none' : ''}`);
   return h('div', {},
     pageHead('Visits', can('interventions:write') ? h('button', { class: 'btn primary', onClick: () => openInterventionForm(null, { onDone: refresh }) }, '+ Log a visit') : null, can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv(`/api/reports/export/interventions?from=${from || '2000-01-01'}&to=${to || fmt.today()}&format=xlsx`) }, 'Export to Excel') : null),
+    noFund ? h('div', { class: 'banner warn small', 'data-no-fund-filter': '1' }, 'Showing only visits with no funding source. Edit each one to choose the fund it was charged to. ', h('a', { href: `#/interventions?type=${type}&from=${from}&to=${to}${mine ? '&mine=1' : ''}` }, 'Show all visits')) : null,
     h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'Type'), typeSel), h('div', { class: 'field' }, h('label', {}, 'From'), fromI), h('div', { class: 'field' }, h('label', {}, 'To'), toI), h('label', { class: 'check', style: { marginTop: 0 } }, mineI, 'Mine only'), h('button', { class: 'btn', onClick: apply }, 'Apply')),
     pagedList({ first: data, url: `/api/interventions${qs ? '?' + qs : ''}`, limit: PAGE, render: (rows) => interventionTable(rows, { onChange: refresh }),
       summary: (rows, total) => h('div', { class: 'muted small mb' }, `${total} interventions · ${fmt.mins(rows.reduce((s, x) => s + (x.duration_minutes || 0), 0))} shown`) }));

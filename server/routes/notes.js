@@ -36,16 +36,12 @@ function kindPerm(kind, rw) { return `notes:${kind}:${rw}`; }
 // be a clinical note, and is disclosed only under a consent given for counseling notes alone (disclosure.js).
 function checkCounseling(kind, counseling) { if (counseling && kind !== 'clinical') throw badRequest('Only a clinical note can be a SUD counseling note'); }
 
-// Re-entering the password is the electronic-signature act itself, so it is checked the same way for a
-// signature and a countersignature.
-async function verifyIdentity(ctx) {
-  const { password } = validate(ctx.body, { password: { type: 'string', required: true, maxLen: 500 } }, { partial: true });
-  if (!password) throw badRequest('Your password is required to sign');
-  const u = db.one(`SELECT password_hash FROM users WHERE id=?`, ctx.user.id);
-  if (!(await require('../crypto').verifyPasswordAsync(password, u.password_hash))) {
-    audit.log({ user: ctx.user, action: 'note.sign.failed', ip: ctx.ip, success: false });
-    throw forbidden('Password verification failed');
-  }
+// The electronic-signature act: the signer's confirmation of the attestation, with their identity proved
+// by the password (or authenticator code) given now or within the last few minutes (auth.verifySigner).
+// Checked the same way for a signature and a countersignature; returns how identity was established.
+function verifyIdentity(ctx) {
+  const body = validate(ctx.body || {}, { password: { type: 'string', maxLen: 500 }, code: { type: 'string', maxLen: 10 }, confirm: { type: 'boolean' } }, { partial: true });
+  return auth.verifySigner(ctx, body);
 }
 
 // Emergency access needs a reason a privacy officer can act on. "x" is not one: the header has to carry a
@@ -220,27 +216,55 @@ module.exports = (r) => {
     // Only the person who wrote the note may sign it. A supervisor approving a trainee's work countersigns
     // (POST /cosign) — signing on their behalf would erase who actually provided the service.
     if (n.author_id !== ctx.user.id) throw forbidden('Only the author can sign a note. Supervisors countersign instead.');
-    await verifyIdentity(ctx);
+    const identity = await verifyIdentity(ctx);
     const hash = sha256(`${n.id}|${ctx.user.id}|${n.content_enc}|${n.structured_enc || ''}`);
     db.run(`UPDATE notes SET status='signed', signed_at=?, signed_by=?, signature_hash=?, updated_at=? WHERE id=?`, db.now(), ctx.user.id, hash, db.now(), n.id);
-    audit.log({ user: ctx.user, action: 'note.sign', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { hash, cosign_required: !!n.cosign_required } });
+    audit.log({ user: ctx.user, action: 'note.sign', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { hash, cosign_required: !!n.cosign_required, identity } });
     return { ok: true, signature_hash: hash, awaiting_cosign: !!n.cosign_required };
   });
 
   // Countersignature: a supervisor approves a note someone else wrote. Both names stay on the record.
-  r.post('/api/notes/:id/cosign', auth.requireAuth, auth.requirePerm('notes:cosign'), async (ctx) => {
-    const n = load(ctx, ctx.params.id);
-    if (!auth.hasPerm(ctx.user, kindPerm(n.kind, 'read')) && !auth.hasPerm(ctx.user, kindPerm(n.kind, 'write'))) throw forbidden(`You cannot read ${n.kind} notes`);
-    if (n.status === 'draft') throw badRequest('The author has not signed this note yet');
-    if (n.author_id === ctx.user.id) throw badRequest('A note cannot be countersigned by its own author');
-    if (n.cosigned_at) throw badRequest('This note has already been countersigned');
-    const { note } = validate(ctx.body, { password: { type: 'string', required: true, maxLen: 500 }, note: { type: 'string', maxLen: 1000 } });
-    await verifyIdentity(ctx);
+  // Why a note cannot be countersigned by this user, or null. Shared by the single and the batch route.
+  function cosignRefusal(ctx, n) {
+    if (!auth.hasPerm(ctx.user, kindPerm(n.kind, 'read')) && !auth.hasPerm(ctx.user, kindPerm(n.kind, 'write'))) return `You cannot read ${n.kind} notes`;
+    if (n.status === 'draft') return 'The author has not signed this note yet';
+    if (n.author_id === ctx.user.id) return 'A note cannot be countersigned by its own author';
+    if (n.cosigned_at) return 'This note has already been countersigned';
+    return null;
+  }
+  function applyCosign(ctx, n, note, identity, batch) {
     const hash = sha256(`${n.id}|${ctx.user.id}|cosign|${n.content_enc}|${n.structured_enc || ''}`);
     db.run(`UPDATE notes SET cosigned_by=?, cosigned_at=?, cosignature_hash=?, cosign_note_enc=?, updated_at=? WHERE id=?`, ctx.user.id, db.now(), hash, note ? encrypt(note) : null, db.now(), n.id);
     // The countersigner's comment is about the client's care: encrypted on the note, never in the audit entry.
-    audit.log({ user: ctx.user, action: 'note.cosign', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { author_id: n.author_id, hash, note_recorded: note ? true : undefined } });
-    return { ok: true, cosignature_hash: hash };
+    audit.log({ user: ctx.user, action: 'note.cosign', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { author_id: n.author_id, hash, note_recorded: note ? true : undefined, identity, batch: batch || undefined } });
+    return hash;
+  }
+  r.post('/api/notes/:id/cosign', auth.requireAuth, auth.requirePerm('notes:cosign'), async (ctx) => {
+    const n = load(ctx, ctx.params.id);
+    const why = cosignRefusal(ctx, n);
+    if (why) { if (/cannot read/.test(why)) throw forbidden(why); throw badRequest(why); }
+    const { note } = validate(ctx.body, { password: { type: 'string', maxLen: 500 }, code: { type: 'string', maxLen: 10 }, confirm: { type: 'boolean' }, note: { type: 'string', maxLen: 1000 } });
+    const identity = await verifyIdentity(ctx);
+    return { ok: true, cosignature_hash: applyCosign(ctx, n, note, identity, false) };
+  });
+
+  // Several countersignatures at once, from the supervision queue after reading each note: one proof of
+  // identity and one confirmation, then every note checked and signed on its own, each with its own hash
+  // and its own audit entry. A note that cannot be countersigned is skipped with the reason, not fatal.
+  r.post('/api/notes/cosign-batch', auth.requireAuth, auth.requirePerm('notes:cosign'), async (ctx) => {
+    const v = validate(ctx.body, { ids: { type: 'array', required: true, maxLen: 100, of: 'string' }, password: { type: 'string', maxLen: 500 }, code: { type: 'string', maxLen: 10 }, confirm: { type: 'boolean' }, note: { type: 'string', maxLen: 1000 } });
+    if (!v.ids.length) throw badRequest('Choose at least one note to countersign');
+    const identity = await verifyIdentity(ctx);
+    const cosigned = []; const skipped = [];
+    for (const id of [...new Set(v.ids)]) {
+      const n = db.one(`SELECT * FROM notes WHERE id=? AND deleted_at IS NULL`, id);
+      if (!n) { skipped.push({ id, reason: 'Note not found' }); continue; }
+      if (!auth.canAccessClient(ctx.user, n.client_id)) { skipped.push({ id, reason: 'This client is not on your caseload' }); continue; }
+      const why = cosignRefusal(ctx, n);
+      if (why) { skipped.push({ id, reason: why }); continue; }
+      applyCosign(ctx, n, v.note, identity, true); cosigned.push(id);
+    }
+    return { ok: true, cosigned, skipped };
   });
 
   r.post('/api/notes/:id/addenda', auth.requireAuth, (ctx) => {

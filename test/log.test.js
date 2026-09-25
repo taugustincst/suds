@@ -48,11 +48,12 @@ test('start() tees console output to a real file, in whichever format is configu
     console.log('an ordinary line after it');
   } finally { config.logFormat = 'text'; }
 
-  // fs.createWriteStream opens its file descriptor asynchronously; nothing here guarantees it has actually
-  // landed on disk yet, even though the writes above happened synchronously from this test's point of view.
-  await new Promise((res) => setTimeout(res, 100));
-
-  const file = path.join(dir, 'logs', `suds-${new Date().toISOString().slice(0, 10)}.log`);
+  // fs.createWriteStream opens its file descriptor and writes asynchronously: wait until everything written
+  // so far has reached the file (not a fixed sleep, which a loaded CI machine outruns), and take the file
+  // name from the logger itself (not today's date here, which is a different file across UTC midnight).
+  await log.flush();
+  const file = log.currentFile();
+  assert.equal(path.dirname(file), path.join(dir, 'logs'));
   const raw = fs.readFileSync(file, 'utf8');
   const lines = raw.trim().split('\n');
   // The first line is log.start()'s own "[suds] logging to ..." announcement.

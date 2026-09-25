@@ -155,7 +155,7 @@ route('client', async (r) => {
       const addConsent = () => openConsentForm(id, { onDone: refresh });
       const addDisclosure = () => openDisclosureForm(id, d, { onDone: refresh });
       // The accounting a client may ask for (§164.528): one printable page, produced (and audited) on demand.
-      const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+      const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
       const printAccounting = async () => {
         const a = await get(`/api/clients/${id}/disclosures/accounting`);
         const rows = a.disclosures.map(x => `<tr><td>${esc(fmt.dt(x.disclosed_at))}</td><td>${esc(x.recipient)}</td><td>${esc(x.purpose)}</td><td>${esc(x.what)}</td><td>${esc(fmt.label(x.basis))}${x.justification ? '<br><small>' + esc(x.justification) + '</small>' : ''}</td><td>${esc(x.method || '')}</td><td>${esc(x.disclosed_by_name)}</td></tr>`).join('');

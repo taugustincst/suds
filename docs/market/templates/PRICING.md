@@ -1,57 +1,57 @@
-# SUDS pricing (hypothesis)
+# SUDS pricing (unvalidated hypothesis)
 
-> **HYPOTHESIS TO VALIDATE — not a price list or an offer.** These numbers come from the market brief and are
-> to be tested with the first pilots and CBO references. Change them when evidence says so; record what was
-> learned in the table at the bottom.
+> **UNVALIDATED HYPOTHESIS — not a price list, a quote or an offer.** No programme has paid for SUDS yet. The
+> ranges below are the owner's starting guesses, to be tested with the **first 3 pilot customers** and changed
+> when evidence says so. Record what was learned in the table at the bottom. The owner must validate each
+> range before quoting it.
 
-## What is being sold
+## What is (and is not) being sold
 
-The SUDS software is open source (MIT); anyone may run it without paying. The subscription is for the
-**service around it**: hosting (vendor-hosted), implementation, spreadsheet migration, training, support with
-response targets, security releases, and the assurance work (audits, pen tests, questionnaires) that a county
-needs from a vendor.
+- **The software is free.** SUDS is MIT-licensed. Anyone — a CBO, its IT partner, a county — may download,
+  run, change and keep it without paying, forever. There is no licence fee and no per-user charge, and a
+  programme that hosts SUDS itself is never charged for the software.
+- **What is paid for is services**: getting a programme running, supporting it, and (planned) running the
+  server for programmes that cannot. Each is priced as a **flat annual amount per programme**, not per user, so
+  a grant budget can carry it as one line and adding a part-time outreach worker costs nothing.
 
-## Subscription tiers (per named user, per month, billed annually)
+An earlier draft priced SUDS at $35–49 per user per month, with a discount for county hosting. That draft was
+withdrawn: it included vendor hosting that does not exist, and it charged counties for MIT-licensed software
+they would run themselves.
 
-| Tier | Users | Price / user / month | Example annual cost |
+## Offers
+
+| Offer | What it covers | Price hypothesis | Status |
 | --- | --- | --- | --- |
-| Small | 1–10 | **$49** | 8 users: $4,704 |
-| Programme | 11–40 | **$42** | 25 users: $12,600 |
-| County | 41+ | **$35** | 60 users: $25,200 |
+| **Implementation and onboarding** (one-time) | Setup-wizard walk-through with the programme's IT partner or county IT; lists, supplies, funding sources and budget lines; spreadsheet import; training (navigators, supervisors, finance, administrator); one restore drill with IT; funder-report check against the programme's grants | **$2,500–7,500** per programme, by data volume and number of grants | Available (owner delivers) |
+| **Support subscription** (annual) | Business-hours support per [SUPPORT-SLA.md](SUPPORT-SLA.md); release notes and upgrade help; security-release notices; answers to security questionnaires from the evidence pack; one check-in a quarter | **$3,000–6,000 / year** for a programme of up to ~15 staff; **$6,000–10,000 / year** up to ~40 | Available, business hours only |
+| **Vendor-hosted single-tenant tier** (annual) | One isolated instance, backups, monitoring, upgrades — *plus* the support subscription | **$10,000–20,000 / year** per programme (must cover the costs in [../HOSTING.md](../HOSTING.md)) | **Planned — not offered** until the HOSTING.md checklist is done |
+| **Custom work** | Reports for a specific funder template, imports from another system | Quoted per job; contributed back to the open-source code | Available |
 
-- **Read-only and finance users**: hypothesis — count at 50% (they use reports, not the caseload).
-- **County-hosted** (county runs the server; vendor supplies support and releases): hypothesis — 20% below the
-  tier price, since the vendor carries no hosting cost or uptime commitment.
-- **Multi-year**: price held for the term; hypothesis — 5% off for a 3-year term.
+Self-hosted and county-hosted programmes buy only what they want: nothing, implementation only, or
+implementation plus support. There is no "county-hosted discount" because there is no licence to discount.
 
-## Pilot terms
+## Pilot terms (hypothesis)
 
 | | |
 | --- | --- |
-| Pilot subscription | **$0–25 / user / month** for 90 days ([PILOT-KIT.md](../PILOT-KIT.md)); $0 in exchange for a signed reference and case-study permission |
-| Implementation fee | **$3,000–8,000** one-time, depending on data volume, number of spreadsheets, CalOMS / EHR hand-off testing and training sessions |
-| Conversion | Pilot fee credited against year-one subscription if the county signs within 60 days of the pilot's end |
+| Pilot | 90 days ([PILOT-KIT.md](../PILOT-KIT.md)), self-hosted by the programme's IT partner or hosted by a sponsoring county |
+| Price | Implementation at the low end of the range (or waived for the first 3 pilots in exchange for measured results and case-study permission); support included for the pilot |
+| Conversion | The pilot's implementation fee is credited against the first year's support subscription if the programme signs within 60 days |
 
-## What is included
+## Where the money comes from (to check with each programme)
 
-| Included | Subscription | Implementation fee |
-| --- | --- | --- |
-| Hosting, backups, monitoring (vendor-hosted) | Yes | — |
-| Support desk per [SUPPORT-SLA.md](SUPPORT-SLA.md) | Yes | — |
-| Security and feature releases | Yes | — |
-| Security questionnaire answers, evidence pack | Yes | — |
-| Setup wizard, configuration, lists, funding sources | — | Yes |
-| Import of existing spreadsheets (clients, resources, visits, time, expenditures) | — | Yes |
-| Training: navigators, supervisors, finance, administrator | — | Yes (up to `[4]` sessions) |
-| CalOMS extract test / EHR hand-off / FHIR setup with county IT | — | Scoped per project |
-| Custom development | No — quoted separately, and contributed back to the open-source code | — |
+Programmes pay from grant budgets. Typical lines: data systems or administration in an opioid-settlement
+allocation (check the county's allowable-use list), SOR / Naloxone Distribution Project administration, SABG
+prevention set-aside administration or county general funds. Admin caps and allowability are the funder's
+rules — ask the programme's fiscal lead which line and whether the cost must be competitively procured.
 
-## Questions the pilots should answer
+## What the pilots must answer
 
 | Question | Evidence to collect | Learned |
 | --- | --- | --- |
-| Will a CBO pay $49/user from grant funds? Which grant line? | Pilot conversions; budget line used | |
-| Is per-user right, or per programme / per client served? | Buyer feedback; seat churn | |
-| Does county IT prefer county-hosted, and is the discount enough? | Hosting choices | |
-| Is $3k–8k implementation accepted, or should it be bundled? | Win/loss notes | |
-| Is the price under the county's small-purchase threshold for a typical programme? | Purchasing feedback | |
+| Will a small harm-reduction CBO pay a flat support fee from grant funds? From which line? | Pilot conversions; the budget line used | |
+| Is the implementation range right? How many hours did onboarding actually take? | Vendor time log per pilot | |
+| How many support hours does a programme need per month? | Ticket log per pilot (feeds the HOSTING.md cost model) | |
+| Is flat-per-programme right, or should it scale with clients served or grants reported? | Buyer feedback | |
+| Do programmes without IT want vendor hosting at $10,000–20,000 / year, or a county sponsor instead? | Hosting choices; win/loss notes | |
+| Is a year's price under the programme's (or county's) small-purchase threshold? | Purchasing feedback | |

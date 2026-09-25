@@ -10,7 +10,7 @@ const C = () => state.constants || {};
 // SUDS stores only the six dimension names and 0-4 ratings. The ASAM Criteria are copyrighted and "ASAM" is a
 // trademark of the American Society of Addiction Medicine; neither is included or licensed with SUDS.
 export const ASAM_NOTICE = 'SUDS records six-dimension risk ratings (0–4) and the level of care decision. It does not include the ASAM Criteria. "ASAM" is a trademark of the American Society of Addiction Medicine; this feature is not endorsed by ASAM. Your programme needs its own licence from ASAM to use the Criteria.';
-const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 const PROBLEM_STATUS_KIND = { active: 'warn', resolved: 'ok', inactive: '' };
 const GOAL_STATUS_KIND = { active: 'info', met: 'ok', partially_met: 'warn', not_met: 'danger', discontinued: '' };
 const users = () => (state.users || []).filter(u => u.is_active !== 0);

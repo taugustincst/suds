@@ -21,6 +21,21 @@ function staffFilter(user, col, allPerm) {
   return { sql: `${col} IN (${ids.map(() => '?').join(',')})`, params: ids };
 }
 
+// The client's display name on a queue row, for a role that could open that client (clients:read, and the
+// client on their caseload when caseload scoping applies to them); everyone else gets the code alone. The
+// encrypted name columns never leave this function.
+const { withClientName, SELECT: NAME_COLS } = require('../client-name');
+function named(ctx, rows) {
+  return rows.map((x) => {
+    const mayOpen = x.client_id && auth.canAccessClient(ctx.user, x.client_id);
+    const out = withClientName(ctx, mayOpen ? x : { ...x, c_first_name_enc: null, c_last_name_enc: null });
+    return out;
+  });
+}
+// A referral whose status is itself the outcome (admitted, completed, declined, no-show, closed) has closed
+// the loop; "no outcome recorded yet" is the ones still waiting to hear (contacted through scheduled).
+const AWAITING_OUTCOME = ['contacted', 'accepted', 'waitlisted', 'scheduled'];
+
 module.exports = (r) => {
   // One place that answers "what is waiting on me?" for a supervisor.
   r.get('/api/supervision/queue', auth.requireAuth, auth.requirePerm('notes:cosign', 'time:approve', 'assignments:manage'), (ctx) => {
@@ -37,29 +52,29 @@ module.exports = (r) => {
       // A note is here because the author's account requires countersignature, or because the author asked
       // for a review of this one (cosign_requested) -- a navigator flagging a hard contact is a request
       // to any supervisor, so the supervised-staff filter does not narrow those.
-      out.awaiting_cosignature = db.all(`SELECT n.id, n.client_id, n.kind, n.occurred_at, n.signed_at, n.title_enc, n.cosign_requested, u.display_name AS author, c.client_code
+      out.awaiting_cosignature = named(ctx, db.all(`SELECT n.id, n.client_id, n.kind, n.occurred_at, n.signed_at, n.title_enc, n.cosign_requested, u.display_name AS author, c.client_code, ${NAME_COLS}
         FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id
         WHERE n.deleted_at IS NULL AND n.status<>'draft' AND n.cosigned_at IS NULL AND n.author_id<>? AND ((n.cosign_required=1 AND ${sf.sql}) OR n.cosign_requested=1)
-        ORDER BY n.signed_at LIMIT 100`, ctx.user.id, ...sf.params)
+        ORDER BY n.signed_at LIMIT 100`, ctx.user.id, ...sf.params))
         .map(x => ({ ...x, title: x.title_enc ? decrypt(x.title_enc) : null, title_enc: undefined }));
-      out.unsigned_notes = db.all(`SELECT n.id, n.client_id, n.kind, n.occurred_at, n.created_at, u.display_name AS author, c.client_code,
+      out.unsigned_notes = named(ctx, db.all(`SELECT n.id, n.client_id, n.kind, n.occurred_at, n.created_at, u.display_name AS author, c.client_code, ${NAME_COLS},
           (n.created_at < ?) AS overdue
         FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id
         WHERE n.deleted_at IS NULL AND n.status='draft' AND ${sf.sql}
-        ORDER BY n.created_at LIMIT 100`, staleBefore, ...sf.params);
+        ORDER BY n.created_at LIMIT 100`, staleBefore, ...sf.params));
     }
     if (auth.hasPerm(ctx.user, 'time:approve')) {
-      out.time_awaiting_approval = db.all(`SELECT t.id, t.user_id, t.work_date, t.minutes, t.category, t.billable, t.submitted_at, u.display_name AS worker, c.client_code, f.name AS funding_source
+      out.time_awaiting_approval = named(ctx, db.all(`SELECT t.id, t.user_id, t.client_id, t.work_date, t.minutes, t.category, t.billable, t.submitted_at, u.display_name AS worker, c.client_code, ${NAME_COLS}, f.name AS funding_source
         FROM time_entries t JOIN users u ON u.id=t.user_id LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN funding_sources f ON f.id=t.funding_source_id
-        WHERE t.status='submitted' AND t.user_id<>? AND ${tf.sql} ORDER BY t.work_date LIMIT 200`, ctx.user.id, ...tf.params);
+        WHERE t.status='submitted' AND t.user_id<>? AND ${tf.sql} ORDER BY t.work_date LIMIT 200`, ctx.user.id, ...tf.params));
       out.time_totals = db.one(`SELECT COUNT(*) entries, COALESCE(SUM(minutes),0) minutes FROM time_entries t WHERE t.status='submitted' AND t.user_id<>? AND ${tf.sql}`, ctx.user.id, ...tf.params);
     }
     if (auth.hasPerm(ctx.user, 'referrals:read')) {
       const cf = auth.caseloadFilter(ctx.user, 'r.client_id');
-      out.referrals_awaiting_outcome = db.all(`SELECT r.id, r.client_id, r.referred_at, r.status, res.name AS resource, c.client_code
+      out.referrals_awaiting_outcome = named(ctx, db.all(`SELECT r.id, r.client_id, r.referred_at, r.status, res.name AS resource, c.client_code, ${NAME_COLS}
         FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id
-        WHERE r.outcome_recorded_at IS NULL AND r.status NOT IN ('pending','closed') AND ${cf.sql} ORDER BY r.referred_at LIMIT 100`, ...cf.params);
-      out.referrals_consent_revoked = db.all(`SELECT r.id, r.client_id, res.name AS resource, c.client_code FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id WHERE r.consent_revoked=1 AND r.status NOT IN ('closed','declined_by_client','declined_by_provider') AND ${cf.sql} LIMIT 100`, ...cf.params);
+        WHERE r.outcome_recorded_at IS NULL AND r.status IN (${AWAITING_OUTCOME.map(() => '?').join(',')}) AND c.deleted_at IS NULL AND ${cf.sql} ORDER BY r.referred_at LIMIT 100`, ...AWAITING_OUTCOME, ...cf.params));
+      out.referrals_consent_revoked = named(ctx, db.all(`SELECT r.id, r.client_id, res.name AS resource, c.client_code, ${NAME_COLS} FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id WHERE r.consent_revoked=1 AND r.status NOT IN ('closed','declined_by_client','declined_by_provider') AND ${cf.sql} LIMIT 100`, ...cf.params));
     }
     if (auth.hasPerm(ctx.user, 'audit:read')) out.breakglass_unacknowledged = db.one(`SELECT COUNT(*) n FROM breakglass_events WHERE acknowledged_at IS NULL`).n;
     audit.log({ user: ctx.user, action: 'supervision.queue', ip: ctx.ip, details: { cosign: out.awaiting_cosignature?.length || 0, time: out.time_awaiting_approval?.length || 0 } });
