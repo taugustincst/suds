@@ -203,12 +203,21 @@ await go(page, `resource/${res.id}`);
 ok(/Tap or click Edit/.test(await page.textContent('.main')), 'the empty summary says "Tap or click Edit"');
 
 // ---------------- H3: a referral started from the provider page ----------------
+// A consent covers only the recipients it names, so the client needs one naming this provider: a sample
+// client referred there has it; otherwise one is recorded for the first client.
 const withConsent = [];
+const names = (x) => String(x.recipient || '').toLowerCase().includes(res.name.toLowerCase());
 for (const c of clients.data.clients) {
-  const cs = (await kernel(page, 'GET', `/api/clients/${c.id}/consents`)).data.consents.filter(x => !x.revoked_at && (!x.expires_at || x.expires_at >= new Date().toISOString().slice(0, 10)));
+  const cs = (await kernel(page, 'GET', `/api/clients/${c.id}/consents`)).data.consents.filter(x => x.can_disclose && names(x));
   if (cs.length) { withConsent.push({ c, cs }); break; }
 }
-ok(withConsent.length, 'the sample data has a client with a valid Part 2 consent');
+if (!withConsent.length) {
+  const c = clients.data.clients[0];
+  const k = await kernel(page, 'POST', `/api/clients/${c.id}/consents`, { type: 'part2_tpo', recipient: `${res.name} and my other treating providers`, purpose: 'Treatment, payment and health care operations', scope: 'Referral summary', signed_at: new Date().toISOString().slice(0, 10), expires_at: '2099-01-01', signed_on_paper: true, revocation_right_given: true, redisclosure_notice_given: true, refusal_consequences_given: true });
+  eq(k.status, 201, 'a consent naming this provider is recorded for the client');
+  withConsent.push({ c, cs: [k.data] });
+}
+ok(withConsent.length, 'the sample data has a client with a valid Part 2 consent naming this provider');
 if (withConsent.length) {
   const { c } = withConsent[0];
   await page.tap('button:has-text("+ Refer a client")'); await page.waitForSelector('.modal .client-picker input[type=text]');
@@ -229,7 +238,7 @@ if (withConsent.length) {
   ok(banner && /Choose the client's consent/.test(banner), 'H3: without a consent chosen, it says to choose the consent on file (not to record one that exists)', banner);
   ok(banner && (banner.match(/lawful basis/g) || []).length === 1, 'H3: the advice is given once, not twice', banner);
   await shot(page, 'referral-consent');
-  await page.selectOption('.modal select[name=consent_id]', { index: 1 });
+  await page.selectOption('.modal select[name=consent_id]', withConsent[0].cs[0].id);
   await page.tap('.modal button[type=submit]');
   ok(await until(async () => !(await page.$('.modal-bg')), { timeout: 6000 }), 'H3: with the consent chosen the referral saves');
 }

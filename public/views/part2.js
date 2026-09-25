@@ -69,12 +69,32 @@ export function openConsentForm(clientId, { onDone, discloser } = {}) {
     f), { wide: true });
 }
 
-export function openDisclosureForm(clientId, d, { onDone } = {}) {
+// The lawful bases a disclosure can be recorded under (server/disclosure.js), and which of them only a
+// supervisor or administrator (disclosures:override) may use.
+const BASIS_LABELS = {
+  consent: 'The client\'s consent (it must name the recipient)', court_order: 'Court order (42 CFR subpart E)', medical_emergency: 'Medical emergency (§2.51)',
+  qsoa: 'Qualified service organization agreement (§2.12(c)(4))', audit_evaluation: 'Audit or evaluation (§2.53) — supervisor', research: 'Research (§2.52) — supervisor',
+  crime_on_premises: 'Crime on the premises or against staff (§2.12(c)(5)) — supervisor', child_abuse_report: 'Mandated report of child abuse or neglect (§2.12(c)(6)) — supervisor',
+  other: 'Other — supervisor override',
+};
+const OVERRIDE_BASES = ['other', 'research', 'audit_evaluation', 'crime_on_premises', 'child_abuse_report'];
+export const AGREEMENT_KIND_LABELS = { qsoa: 'QSOA', research: 'Research approval', audit_evaluation: 'Audit / evaluation approval' };
+
+export async function openDisclosureForm(clientId, d, { onDone } = {}) {
   const orders = (d.court_orders || []).filter(o => !o.problems.length);
+  // The QSOAs and research / audit approvals on file: a disclosure on one of those bases rests on one.
+  let agreements = [];
+  if (can('agreements:read')) { try { agreements = ((await get('/api/disclosure-agreements')).rows || []).filter(a => a.active); } catch { agreements = []; } }
+  const override = can('disclosures:override');
+  const bases = Object.keys(BASIS_LABELS).filter(b => override || !OVERRIDE_BASES.includes(b));
   const f = form([
-    { name: 'basis', label: 'Legal basis', type: 'select', options: ['consent', 'court_order', 'medical_emergency', 'qsoa', 'audit_evaluation', 'research', 'crime_on_premises', 'child_abuse_report', 'other'], value: 'consent', noBlank: true, required: true },
+    { name: 'basis', label: 'Legal basis', type: 'select', options: bases.map(value => ({ value, label: BASIS_LABELS[value] })), value: 'consent', noBlank: true, required: true,
+      help: override ? null : 'Research, audit, a report of a crime on the premises or of child abuse, and "other" are recorded by a supervisor or administrator.' },
     { name: 'consent_id', label: 'Consent relied on', type: 'select', options: d.consents.filter(x => x.can_disclose).map(x => ({ value: x.id, label: `${consentTypeLabel(x.type)} → ${x.recipient || '—'} (${fmt.date(x.signed_at)})` })),
-      help: 'Only live Part 2 consents are offered. The information must be within the consent\'s scope — no more than the purpose needs (§2.13).' },
+      help: 'Only live Part 2 consents with every §2.31 element are offered. The consent covers only the recipient it names, and the information must be within its scope — no more than the purpose needs (§2.13).' },
+    ...(override ? [{ name: 'recipient_override', label: 'Rely on this consent although it does not name the recipient exactly (supervisor override; justify below)', type: 'checkbox', span: true }] : []),
+    { name: 'agreement_id', label: 'Agreement or approval relied on', type: 'select', options: agreements.map(a => ({ value: a.id, label: `${AGREEMENT_KIND_LABELS[a.kind] || a.kind} — ${a.organisation}${a.expires_at ? ` (until ${fmt.date(a.expires_at)})` : ''}` })),
+      help: agreements.length ? 'For a QSOA, research or audit disclosure: the recipient must be the organisation it is with. Left empty, the one on file with the recipient is used.' : 'No QSOA or research / audit approval is on file. They are registered under Privacy & Part 2 → Agreements.' },
     { name: 'court_order_id', label: 'Court order relied on (42 CFR subpart E)', type: 'select', options: orders.map(o => ({ value: o.id, label: `${ORDER_TYPES[o.order_type] || o.order_type} — ${o.court || ''} ${o.case_ref || ''} (${fmt.date(o.issued_at)})` })),
       help: orders.length ? 'Required for the court order basis.' : 'No qualifying order on file — record it under Court orders first. A subpoena alone never authorises it.' },
     { name: 'legal_proceeding', label: 'For use in a legal proceeding against the client (needs a court order or a proceedings-only consent)', type: 'checkbox', span: true },
@@ -82,7 +102,7 @@ export function openDisclosureForm(clientId, d, { onDone } = {}) {
     { name: 'disclosed_at', label: 'Date disclosed', type: 'datetime', required: true, value: new Date().toISOString() }, { name: 'method', label: 'Method', type: 'select', options: ['verbal', 'phone', 'fax', 'secure_email', 'portal', 'paper', 'in_person'] },
     { name: 'disclosed_to', label: 'Disclosed to', required: true, span: true }, { name: 'purpose', label: 'Purpose', required: true, span: true },
     { name: 'info_disclosed', label: 'Information disclosed', type: 'textarea', required: true, span: true, rows: 2 },
-    { name: 'justification', label: 'Justification (required for a medical emergency, and for "other")', type: 'textarea', span: true, rows: 2, help: 'At least 20 characters. "Other" may only be recorded by a supervisor or administrator. Stored encrypted with the disclosure.' },
+    { name: 'justification', label: 'Justification (required for a medical emergency, a crime or child-abuse report, "other" and an override)', type: 'textarea', span: true, rows: 2, help: 'At least 20 characters. Stored encrypted with the disclosure.' },
   ], { submitText: 'Record disclosure', onCancel: () => m.close(), onSubmit: async (v) => {
     const r = await withRestrictionCheck((extra) => post(`/api/clients/${clientId}/disclosures`, { ...v, ...extra }));
     m.close();

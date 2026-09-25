@@ -1,7 +1,9 @@
 'use strict';
 // 42 CFR Part 2 programme controls that are not a disclosure in themselves: whether this is a Part 2
-// programme at all, the §2.22 patient notice (its text, and a record of each time it was given), and the
-// subpart E court orders a disclosure for legal proceedings has to rest on. docs/compliance/PART2.md.
+// programme at all, the §2.22 patient notice (its text, and a record of each time it was given), the
+// subpart E court orders a disclosure for legal proceedings has to rest on, and the register of QSOAs and
+// research / audit approvals the other non-consent bases rest on (disclosure_agreements).
+// docs/compliance/PART2.md.
 const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
@@ -75,6 +77,25 @@ function latestNotice(clientId) {
 /** SQL: active clients (alias c) with no notice on record. */
 const MISSING_NOTICE = `c.deleted_at IS NULL AND c.merged_into IS NULL AND c.status='active' AND NOT EXISTS (SELECT 1 FROM part2_notices n WHERE n.client_id=c.id)`;
 
+const AGREEMENT_SHAPE = {
+  kind: { type: 'string', required: true, enum: Object.keys(disclosure.AGREEMENT_KINDS) }, organisation: { type: 'string', required: true, maxLen: 200 }, aliases: { type: 'string', maxLen: 1000 },
+  services: { type: 'string', maxLen: 1000 }, approving_body: { type: 'string', maxLen: 200 }, reference: { type: 'string', maxLen: 120 },
+  agreement_date: { type: 'date', required: true }, expires_at: { type: 'date' }, document_ref: { type: 'string', maxLen: 300 },
+};
+function presentAgreement(a) {
+  const problems = disclosure.agreementProblems(a);
+  return { ...a, label: disclosure.AGREEMENT_KINDS[a.kind], problems, active: !problems.length };
+}
+// SUDS on this device (the published static build) keeps its own register; a device that syncs with an
+// office receives the office's (disclosure_agreements is pull-only, server/sync-tables.js).
+function assertAgreementsEditable() {
+  const staticHost = typeof window !== 'undefined' && window.SUDS_STATIC_HOST === true;
+  if (require('../config').local && !staticHost) throw require('../http').forbidden('Agreements are kept on the office SUDS. Changes made there reach this device when it syncs.');
+}
+// Switching the Part 2 programme off takes the §2.32 notice off every file, lets a general release stand as
+// a consent and stops the Part 2 labelling: a decision counsel makes, recorded with its reason.
+const MIN_OFF_REASON = 20;
+
 const ORDER_SHAPE = {
   order_type: { type: 'string', required: true, enum: C.COURT_ORDER_TYPES }, court: { type: 'string', required: true, maxLen: 200 }, case_ref: { type: 'string', maxLen: 120 },
   issued_at: { type: 'date', required: true }, expires_at: { type: 'date' }, recipient: { type: 'string', maxLen: 300 }, purpose: { type: 'string', required: true, maxLen: 500 },
@@ -87,10 +108,25 @@ module.exports = (r) => {
   r.get('/api/part2/settings', auth.requireAuth, () => settings());
   r.get('/api/part2/notice', auth.requireAuth, () => renderedNotice());
   r.put('/api/part2/settings', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
-    const v = validate(ctx.body, { part2_program: { type: 'boolean' }, notice_text: { type: 'string', maxLen: 20000 }, notice_effective_date: { type: 'date' }, reset_notice: { type: 'boolean' }, mass_export_threshold: { type: 'number', integer: true, min: 1, max: 1000000 } }, { partial: true });
+    const v = validate(ctx.body, { part2_program: { type: 'boolean' }, part2_off_reason: { type: 'string', maxLen: 2000 }, notice_text: { type: 'string', maxLen: 20000 }, notice_effective_date: { type: 'date' }, reset_notice: { type: 'boolean' }, mass_export_threshold: { type: 'number', integer: true, min: 1, max: 1000000 } }, { partial: true });
     const changed = [];
+    const wasOn = disclosure.part2Program();
+    const turningOff = v.part2_program !== undefined && v.part2_program !== null && !v.part2_program && wasOn;
+    const reason = String(v.part2_off_reason || '').trim();
+    if (turningOff && reason.length < MIN_OFF_REASON) throw badRequest(`Switching the Part 2 program off removes the §2.32 notice from every file, lets a general release stand as a consent and stops the Part 2 labelling. Record the reason (at least ${MIN_OFF_REASON} characters) — usually counsel's determination that this is not a federally assisted Part 2 program.`, { reasonRequired: true });
+    let incident = null;
     db.transaction(() => {
-      if (v.part2_program !== undefined && v.part2_program !== null) { db.setSetting('part2_program', v.part2_program ? '1' : '0'); changed.push('part2_program'); }
+      if (v.part2_program !== undefined && v.part2_program !== null) {
+        db.setSetting('part2_program', v.part2_program ? '1' : '0'); changed.push('part2_program');
+        if (turningOff) {
+          // Recorded with who and when for Home; the reason itself goes into the draft incident (encrypted),
+          // which a privacy officer reviews and closes — never into the audit log.
+          db.setSetting('part2_program_off', JSON.stringify({ since: db.now(), by: ctx.user.display_name || ctx.user.username }));
+          incident = require('../incidents').draft({ source: 'part2_program_off', sourceRef: db.now().slice(0, 10), title: 'Part 2 programme protections switched off',
+            description: `${ctx.user.display_name || ctx.user.username} switched this programme's 42 CFR Part 2 protections off. Reason given: ${reason}\n\nConfirm the determination with counsel. If it was a mistake, switch the programme back on and assess whether anything was disclosed without the Part 2 protections meanwhile.`, user: ctx.user });
+        }
+        if (v.part2_program) db.run(`DELETE FROM settings WHERE key='part2_program_off'`);
+      }
       if (v.reset_notice || (v.notice_text !== undefined && v.notice_text !== null)) {
         const text = v.reset_notice ? null : String(v.notice_text).trim();
         if (!v.reset_notice && text.length < 200) throw badRequest('The patient notice must say what 42 CFR §2.22 requires; this text is too short to');
@@ -103,7 +139,9 @@ module.exports = (r) => {
       if (v.mass_export_threshold) { db.setSetting('mass_export_threshold', String(v.mass_export_threshold)); changed.push('mass_export_threshold'); }
     });
     audit.log({ user: ctx.user, action: 'part2.settings.update', ip: ctx.ip, details: { changed, version: db.getSetting('part2_notice_version', '1') } });
-    return settings();
+    if (turningOff) audit.log({ user: ctx.user, action: 'part2.program.off', ip: ctx.ip, details: { reason_recorded: true, incident } });
+    if (v.part2_program && !wasOn) audit.log({ user: ctx.user, action: 'part2.program.on', ip: ctx.ip });
+    return { ...settings(), incident };
   });
 
   // ---- §2.22: the notice given to each client ----
@@ -171,6 +209,35 @@ module.exports = (r) => {
     const { reason } = validate(ctx.body, { reason: { type: 'string', required: true, maxLen: 300 } });
     db.run(`UPDATE court_orders SET status='vacated', vacated_at=?, vacated_reason=?, updated_at=? WHERE id=?`, db.now(), reason, db.now(), o.id);
     audit.log({ user: ctx.user, action: 'court_order.vacate', entity: 'court_order', entityId: o.id, clientId: o.client_id, ip: ctx.ip });
+    return { ok: true };
+  });
+
+  // ---- the QSOA / research / audit register ----
+  // Everyone who records disclosures reads it (the disclosure form offers its agreements); supervisors and
+  // administrators keep it. Organisations and agreements only: no client information, but audited all the same.
+  r.get('/api/disclosure-agreements', auth.requireAuth, auth.requirePerm('agreements:read', 'agreements:write'), (ctx) => {
+    const rows = db.all(`SELECT a.*, u.display_name AS created_by_name FROM disclosure_agreements a LEFT JOIN users u ON u.id=a.created_by ORDER BY a.status='active' DESC, a.kind, a.organisation`).map(presentAgreement);
+    return { rows, kinds: disclosure.AGREEMENT_KINDS, editable: auth.hasPerm(ctx.user, 'agreements:write') };
+  });
+  r.post('/api/disclosure-agreements', auth.requireAuth, auth.requirePerm('agreements:write'), (ctx) => {
+    assertAgreementsEditable();
+    const v = validate(ctx.body, AGREEMENT_SHAPE);
+    if (!String(v.organisation || '').trim()) throw badRequest('Name the organisation the agreement is with', { fields: { organisation: 'required' } });
+    if (v.kind !== 'qsoa' && !String(v.approving_body || '').trim()) throw badRequest(`A ${disclosure.AGREEMENT_KINDS[v.kind]} names the IRB, privacy board or body that approved it (§${v.kind === 'research' ? '2.52' : '2.53'})`, { fields: { approving_body: 'required' } });
+    if (v.expires_at && v.expires_at < v.agreement_date) throw badRequest('An agreement cannot expire before it was made');
+    const id = uuid();
+    db.run(`INSERT INTO disclosure_agreements(id,kind,organisation,aliases,services,approving_body,reference,agreement_date,expires_at,document_ref,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+      id, v.kind, v.organisation.trim(), v.aliases || null, v.services || null, v.approving_body || null, v.reference || null, v.agreement_date, v.expires_at || null, v.document_ref || null, ctx.user.id);
+    audit.log({ user: ctx.user, action: 'disclosure_agreement.create', entity: 'disclosure_agreement', entityId: id, ip: ctx.ip, details: { kind: v.kind } });
+    ctx.status = 201; return { id };
+  });
+  r.post('/api/disclosure-agreements/:id/end', auth.requireAuth, auth.requirePerm('agreements:write'), (ctx) => {
+    assertAgreementsEditable();
+    const a = db.one(`SELECT * FROM disclosure_agreements WHERE id=?`, ctx.params.id); if (!a) throw notFound();
+    if (a.status === 'ended') throw badRequest('This agreement has already been ended');
+    const { reason } = validate(ctx.body, { reason: { type: 'string', required: true, maxLen: 300 } });
+    db.run(`UPDATE disclosure_agreements SET status='ended', ended_at=?, ended_reason=?, updated_at=? WHERE id=?`, db.now(), reason, db.now(), a.id);
+    audit.log({ user: ctx.user, action: 'disclosure_agreement.end', entity: 'disclosure_agreement', entityId: a.id, ip: ctx.ip, details: { kind: a.kind } });
     return { ok: true };
   });
 

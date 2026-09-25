@@ -33,6 +33,11 @@ function existingDisclosure(referralId) {
 function resourceName(resourceId) {
   return db.one(`SELECT name FROM resources WHERE id=?`, resourceId)?.name || 'referral recipient';
 }
+/** Every name the receiving agency goes by — its name and its organisation — for the consent's recipient check. */
+function resourceNames(resourceId) {
+  const r = db.one(`SELECT name, organization FROM resources WHERE id=?`, resourceId);
+  return r ? [r.name, r.organization].filter(Boolean) : [];
+}
 
 function encFields(v) { for (const f of ENC) if (v[f] !== undefined) { v[`${f}_enc`] = v[f] === null || v[f] === '' ? null : encrypt(String(v[f])); delete v[f]; } }
 function present(row) {
@@ -42,9 +47,13 @@ function present(row) {
   return out;
 }
 
-/** What disclosure.requireBasis needs from a referral form: the consent, or the other basis and its order. */
+/**
+ * What disclosure.requireBasis needs from a referral form: the consent, or the other basis and its order —
+ * checked against the agency the referral goes to, and limited to the bases a referral may rest on.
+ */
 function gate(ctx, v, row = {}) {
   return { consent_id: v.consent_id || row.consent_id, basis: v._disclosure_basis, justification: v._disclosure_justification, court_order_id: v._court_order_id,
+    recipient: resourceNames(v.resource_id || row.resource_id), recipient_override: v._recipient_override, allowed: disclosure.REFERRAL_BASES,
     restriction_reviewed: v._restriction_reviewed, user: ctx.user };
 }
 
@@ -54,7 +63,7 @@ function gate(ctx, v, row = {}) {
  */
 function recordDisclosure(ctx, row, v = {}) {
   const basis = disclosure.requireBasis(row.client_id, gate(ctx, v, row));
-  disclosure.record({ clientId: row.client_id, consentId: basis.consent?.id || null, courtOrderId: basis.court_order?.id || null, recipient: resourceName(v.resource_id || row.resource_id),
+  disclosure.record({ clientId: row.client_id, consentId: basis.consent?.id || null, courtOrderId: basis.court_order?.id || null, recipientOverride: basis.recipient_override, recipient: resourceName(v.resource_id || row.resource_id),
     purpose: 'Referral for services', what: v._disclosure_what || 'Referral information (name, contact details and presenting need)',
     method: (v.warm_handoff ?? row.warm_handoff) ? 'warm handoff' : 'referral', basis: basis.basis, justification: basis.justification, source: 'referral', sourceRef: row.id, user: ctx.user, ip: ctx.ip });
 }
@@ -71,7 +80,7 @@ module.exports = (r) => {
       follow_up_due: { type: 'date' }, notes: { type: 'string', maxLen: 2000 }, episode_id: { type: 'string' },
       // Not columns: how this disclosure is justified, and what was actually sent.
       _disclosure_basis: { type: 'string', enum: BASES }, _disclosure_what: { type: 'string', maxLen: 1000 }, _disclosure_justification: { type: 'string', maxLen: 2000 },
-      _court_order_id: { type: 'string' }, _restriction_reviewed: { type: 'boolean' },
+      _court_order_id: { type: 'string' }, _restriction_reviewed: { type: 'boolean' }, _recipient_override: { type: 'boolean' },
     },
     filters: (ctx, where, params) => {
       const s = ctx.query.get('status'); if (s && s !== 'all') { where.push('referrals.status=?'); params.push(s); }
@@ -123,7 +132,7 @@ module.exports = (r) => {
       status: { type: 'string', required: true, list: 'REFERRAL_STATUSES' },
       outcome: { type: 'string', maxLen: 500 }, barrier: { type: 'string', maxLen: 300 }, admitted_at: { type: 'datetime' },
       consent_id: { type: 'string' }, _disclosure_basis: { type: 'string', enum: BASES }, _disclosure_what: { type: 'string', maxLen: 1000 }, _disclosure_justification: { type: 'string', maxLen: 2000 },
-      _court_order_id: { type: 'string' }, _restriction_reviewed: { type: 'boolean' },
+      _court_order_id: { type: 'string' }, _restriction_reviewed: { type: 'boolean' }, _recipient_override: { type: 'boolean' },
     }, { existing: row });
     if (v.consent_id && !db.one(`SELECT 1 FROM consents WHERE id=? AND client_id=?`, v.consent_id, row.client_id)) throw badRequest('That consent belongs to a different client');
     const admitted = v.status === 'admitted' || !!v.admitted_at;

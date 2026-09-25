@@ -53,7 +53,7 @@ The intake keys and the FHIR clients are kept apart. An intake key cannot read F
 
 Every FHIR answer that identifies a client is a disclosure from a Part 2 programme to the organisation the FHIR client stands for. SUDS enforces the rule on every request.
 
-**Coverage.** FHIR answers are made with no worker in the loop, so a client is included only when `requireBasis` (`server/disclosure.js`, the gate every other disclosure passes) would let a worker make the same disclosure without asking anything further. A client is *covered* when they have a consent that meets all of these conditions:
+**Coverage.** FHIR answers are made with no worker in the loop, so a client is included only when `requireBasis` (`server/disclosure.js`, the gate every other disclosure passes) would let a worker make the same disclosure, to the same organisation, without asking anything further. The recipient is matched by one function, `consentNamesRecipient`, on every path — a referral, a manual disclosure, an identified export, the county EHR hand-off and FHIR — so a worker can never disclose to a recipient FHIR would refuse. (Before schema migration 32 only FHIR compared the consent's recipient; the human paths accepted any live consent. docs/compliance/PART2.md, *The disclosure gate*, has the rules for every path, and the supervisor's written override that only a worker can use.) A client is *covered* when they have a consent that meets all of these conditions:
 
 - its type can authorise a disclosure in this programme (`disclosingConsentTypes()`), and is one that can name a recipient for treatment, payment or operations:
   - `part2_disclosure` (a Part 2 consent to a named recipient);
@@ -61,6 +61,7 @@ Every FHIR answer that identifies a client is a disclosure from a Part 2 program
   - `roi` (a general release of information) **only when this programme is not a Part 2 programme** (Privacy & Part 2 → Overview, `part2_program` off). While `part2_program` is on — the default — a general release is not a Part 2 consent (§2.31, §2.32) and never covers FHIR, exactly as `requireBasis` refuses it for a referral.
   - A consent for SUD counseling notes only (`part2_counseling_notes`) or for a legal proceeding only (`part2_proceedings`) never covers FHIR: FHIR is always treatment, payment or operations, and never sends note text.
 - it has not been revoked and has not expired (`expires_at` is empty or on or after today)
+- it records the §2.31 elements: every 2024 element for a consent on the current form, or — for a consent recorded before the 2024 element list — the pre-2024 elements and a signature before 16 February 2026 (`consentElementProblems`; the same re-check `requireBasis` makes)
 - its recipient names the FHIR client's organisation. The comparison ignores case, accents and punctuation.
   - `part2_disclosure` / `roi`: the recipient must *be* the organisation's recipient name or one of its aliases.
   - `part2_tpo`: the recipient may be a list or a class of recipients (the 2024 rule allows "my treating providers" wording); it covers the organisation when the name or an alias appears in it as whole words, e.g. "County Behavioral Health and my other treating providers". A class with no name in it ("my health plans") cannot be matched mechanically and is **not** honoured over FHIR — record the organisation's name on the consent.

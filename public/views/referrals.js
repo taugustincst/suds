@@ -1,7 +1,17 @@
 import { h, route, get, pagedList, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, listFilterOptions } from '../app.js';
 // A court order is recorded, and disclosed under, on the client's Consents tab (it has to name the order),
-// so it is not one of the bases offered here.
+// so it is not one of the bases offered here. A referral may rest only on the client's consent (which must
+// name the provider), a medical emergency, a court order or a supervisor's justified override — never a
+// QSOA, research, audit or a report to the authorities (server/disclosure.js REFERRAL_BASES).
 import { withRestrictionCheck, consentTypeLabel } from './part2.js';
+
+/** The lawful bases other than consent a referral form offers this user. */
+function referralBases() {
+  return [{ value: 'medical_emergency', label: 'Medical emergency (42 CFR §2.51)' },
+    ...(can('disclosures:override') ? [{ value: 'other', label: 'Other — supervisor override, must be justified' }] : [])];
+}
+/** The supervisor's override for a consent that covers this provider without naming it exactly. */
+const recipientOverrideField = (name) => (can('disclosures:override') ? [{ name, label: 'Rely on this consent although it does not name this provider (supervisor override; justify below)', type: 'checkbox', span: true }] : []);
 
 export async function openReferralForm(values, { clientId, clientDisplay, resourceId, onDone } = {}) {
   const C = state.constants; const isNew = !values;
@@ -27,12 +37,13 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
   // asked for a consent the client already had).
   let consentState;
   const consentStateFor = (clientId, list) => {
-    const all = (list || []).filter(c => !c.revoked_at);
+    // A consent that lacks the §2.31 elements authorises nothing (can_disclose false), so it is not offered.
+    const all = (list || []).filter(c => !c.revoked_at && !(c.incomplete && c.incomplete.length));
     const valid = all.filter(c => !c.expires_at || c.expires_at >= today);
     return { clientId, all, valid, expiredOnly: !!(clientId && !valid.length && all.length) };
   };
   const consentOption = (c) => ({ value: c.id, label: `${consentTypeLabel(c.type)} → ${c.recipient || '—'} (signed ${fmt.date(c.signed_at)}${c.expires_at ? `, expires ${fmt.date(c.expires_at)}` : ''})` });
-  const consentHelpContent = ({ clientId, all, valid, expiredOnly }) => valid.length ? ['Required before the provider is told who this client is. A referral left as "pending" with no warm handoff — just a phone number handed to the client — needs none.']
+  const consentHelpContent = ({ clientId, all, valid, expiredOnly }) => valid.length ? ['Required before the provider is told who this client is, and it must name this provider (or its organisation). A referral left as "pending" with no warm handoff — just a phone number handed to the client — needs none.']
     : clientId ? [expiredOnly ? `${all.length === 1 ? 'The consent on file has' : 'All consents on file have'} expired. ` : 'No consent is on file. ', h('a', { href: `#/client/${clientId}/consents`, 'data-add-consent': '1', onClick: () => m.close() }, 'Record a new release on the Consents tab'), ' before the provider is told who this client is.']
     : ['Choose the client first to see their consents on file.'];
   consentState = consentStateFor(theClientId, consentsResult.consents);
@@ -50,10 +61,10 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
     { name: 'warm_handoff', label: 'Warm handoff', type: 'checkbox' }, { name: 'appointment_at', label: 'Appointment', type: 'datetime' }, { name: 'admitted_at', label: 'Admitted / started', type: 'datetime' },
     { name: 'consent_id', label: 'Consent / ROI on file (42 CFR Part 2)', type: 'select', placeholder: expiredOnly ? '(expired)' : undefined, options: consents.map(consentOption),
       help: consentHelp },
-    { name: '_disclosure_basis', label: 'If there is no consent, the lawful basis', type: 'select',
-      options: [{ value: 'medical_emergency', label: 'Medical emergency' }, { value: 'qsoa', label: 'Qualified service organisation agreement' }, { value: 'child_abuse_report', label: 'Mandated child abuse report' }, { value: 'crime_on_premises', label: 'Crime on the premises' }, { value: 'other', label: 'Other (explain in notes)' }],
+    { name: '_disclosure_basis', label: 'If there is no consent, the lawful basis', type: 'select', options: referralBases(),
       help: 'Leave empty unless you are relying on something other than the client\'s written consent. Whatever you choose is recorded in the accounting of disclosures.' },
-    { name: '_disclosure_justification', label: 'Why sharing without consent is lawful', type: 'textarea', rows: 2, span: true, help: 'Required (at least 20 characters) for a medical emergency, and for "other" — which only a supervisor or administrator may use. Kept, encrypted, with the disclosure record.' },
+    ...recipientOverrideField('_recipient_override'),
+    { name: '_disclosure_justification', label: 'Why sharing without consent is lawful', type: 'textarea', rows: 2, span: true, help: 'Required (at least 20 characters) for a medical emergency, for "other" and for a supervisor override. Kept, encrypted, with the disclosure record.' },
     { name: '_disclosure_what', label: 'What is being shared', placeholder: 'Referral information (name, contact details and presenting need)', span: true },
     { name: 'follow_up_due', label: 'Follow-up due', type: 'date', help: 'A follow-up to-do is created either way; leave this empty and one is set for you based on urgency.' }, { name: 'barrier', label: 'Barrier (if any)', type: 'select', list: 'REFERRAL_BARRIERS' },
     { name: 'outcome', label: 'Outcome', span: true }, { name: 'notes', label: 'Notes', type: 'textarea', span: true },
@@ -121,14 +132,15 @@ export async function openOutcomeForm(r, onDone) {
   // "Admitted" or "scheduled" on a referral that was only pending is the moment the agency learns who this
   // person is, so the outcome form carries the same consent choice as the referral form.
   let consents = [];
-  if (!r.consent_id) { try { consents = ((await get(`/api/clients/${r.client_id}/consents`)).consents || []).filter(c => !c.revoked_at); } catch { consents = []; } }
+  if (!r.consent_id) { try { consents = ((await get(`/api/clients/${r.client_id}/consents`)).consents || []).filter(c => c.can_disclose); } catch { consents = []; } }
   const f = form([
     { name: 'status', label: 'What happened', type: 'select', noBlank: true, required: true, value: r.status, current: r.status, list: 'REFERRAL_STATUSES' },
     { name: 'admitted_at', label: 'Admitted / started on', type: 'datetime', value: r.admitted_at || '' },
     ...(r.consent_id ? [] : [
-      { name: 'consent_id', label: 'Consent / ROI on file (42 CFR Part 2)', type: 'select', options: consents.map(c => ({ value: c.id, label: `${consentTypeLabel(c.type)} → ${c.recipient || '—'} (signed ${fmt.date(c.signed_at)})` })), help: 'Needed once the provider has been told who this client is (contacted, scheduled, admitted…).' },
-      { name: '_disclosure_basis', label: 'If there is no consent, the lawful basis', type: 'select', options: [{ value: 'medical_emergency', label: 'Medical emergency' }, { value: 'qsoa', label: 'Qualified service organisation agreement' }, { value: 'child_abuse_report', label: 'Mandated child abuse report' }, { value: 'crime_on_premises', label: 'Crime on program premises' }, { value: 'audit_evaluation', label: 'Audit or evaluation' }, { value: 'research', label: 'Research' }, { value: 'other', label: 'Other (supervisor override, must be justified)' }] },
-      { name: '_disclosure_justification', label: 'Why sharing without consent is lawful', type: 'textarea', rows: 2, span: true },
+      { name: 'consent_id', label: 'Consent / ROI on file (42 CFR Part 2)', type: 'select', options: consents.map(c => ({ value: c.id, label: `${consentTypeLabel(c.type)} → ${c.recipient || '—'} (signed ${fmt.date(c.signed_at)})` })), help: `Needed once the provider has been told who this client is (contacted, scheduled, admitted…). It must name ${r.resource_name || 'this provider'}.` },
+      { name: '_disclosure_basis', label: 'If there is no consent, the lawful basis', type: 'select', options: referralBases() },
+      ...recipientOverrideField('_recipient_override'),
+      { name: '_disclosure_justification', label: 'Why sharing without consent is lawful', type: 'textarea', rows: 2, span: true, help: 'Required (at least 20 characters) for a medical emergency, for "other" and for a supervisor override.' },
     ]),
     { name: 'barrier', label: 'If it did not happen, why', type: 'select', list: 'REFERRAL_BARRIERS', value: r.barrier || '', current: r.barrier || undefined },
     { name: 'outcome', label: 'Outcome in your words', type: 'textarea', span: true, value: r.outcome || '' },

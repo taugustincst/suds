@@ -90,7 +90,7 @@ module.exports = (r) => {
     if (v.concern && String(v.note || '').trim().length < 10) throw badRequest('Say what is wrong with this access (at least 10 characters); it opens a draft incident');
     db.run(`UPDATE breakglass_events SET acknowledged_by=?, acknowledged_at=?, updated_at=? WHERE id=?`, ctx.user.id, db.now(), db.now(), b.id);
     const incident = v.concern ? require('../incidents').draft({ source: 'breakglass', sourceRef: b.id, title: 'Emergency access flagged at review', description: v.note, user: ctx.user }) : null;
-    if (incident) db.run(`INSERT OR IGNORE INTO privacy_incident_clients(id,incident_id,client_id) SELECT ?,?,? WHERE ? IS NOT NULL`, require('../crypto').uuid(), incident, b.client_id, b.client_id);
+    if (incident && b.client_id) require('../incidents').linkClient(incident, b.client_id);
     audit.log({ user: ctx.user, action: 'breakglass.acknowledge', entity: 'breakglass_event', entityId: b.id, clientId: b.client_id, ip: ctx.ip, details: { accessed_by: b.user_id, note_id: b.note_id || undefined, incident: incident || undefined } });
     return { ok: true, incident };
   });

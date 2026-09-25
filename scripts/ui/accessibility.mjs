@@ -283,6 +283,8 @@ async function prepareOffice() {
   must(await api(page, 'POST', '/api/complaints', { client_id: cid, received_at: day(-4), channel: 'in_person', complainant: 'client', summary: 'My information went to my employer' }), 'a privacy complaint');
   const inc = must(await api(page, 'POST', '/api/incidents', { title: 'Misdirected fax', discovered_at: day(-2), description: 'A referral fax went to the wrong clinic', affected_count: 1 }), 'an incident');
   must(await api(page, 'POST', `/api/incidents/${inc.id}/clients`, { client_ids: [cid] }), 'with an affected client linked');
+  must(await api(page, 'POST', '/api/disclosure-agreements', { kind: 'qsoa', organisation: 'Valley Lab Services', aliases: 'VLS', services: 'Toxicology testing', agreement_date: day(-90), expires_at: day(275) }), 'a QSOA on the agreements register');
+  must(await api(page, 'POST', '/api/disclosure-agreements', { kind: 'research', organisation: 'State University', services: 'Outcomes study', approving_body: 'State University IRB', reference: 'IRB-2026-14', agreement_date: day(-30) }), 'a research approval');
   await ctx.close();
 }
 
@@ -372,10 +374,10 @@ const BUTTON_DIALOGS = [
   ['client/:client/assessments', '+ AUDIT-C'], ['client/:client/assessments', '+ DAST-10'],
   // CalOMS Tx on the Episodes tab (it is switched on for the audit), and the extract's confirmation.
   ['client/:client/episodes', 'CalOMS records'], ['client/:client/episodes', ['CalOMS records', '+ Annual update']], ['client/:client/episodes', 'Discharge'],
-  ['client/:fresh/episodes', '+ Start an episode'], ['caloms', 'Download CalOMS Tx extract'],
+  ['client/:fresh/episodes', '+ Start an episode'], ['caloms', 'Download extract (test / preview)'], ['caloms', 'Mark as submitted'],
   // 42 CFR Part 2 on the client record and on Privacy & Part 2.
   ['client/:client/consents', '+ Notice given'], ['client/:client/consents', '+ Court order'], ['client/:client/consents', 'Vacate'],
-  ['compliance?tab=complaints', '+ Complaint'], ['compliance?tab=incidents', '+ Incident'],
+  ['compliance?tab=complaints', '+ Complaint'], ['compliance?tab=incidents', '+ Incident'], ['compliance?tab=agreements', '+ Agreement'],
   // Settings: an access request, a FHIR client, the recovery drill.
   ['admin?tab=users', 'Approve'], ['admin?tab=fhir', '+ New FHIR client'],
   ['reports', 'Identified Excel workbook'], ['admin?tab=lists', '+ Add funding source'],

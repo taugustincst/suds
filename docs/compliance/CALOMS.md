@@ -212,8 +212,13 @@ can be downloaded as CSV. Anyone who can read episodes sees it for their own cas
 - `provider_activity.csv` — ProviderID, ReportMonth (`YYYYMM`), counts, NoActivity.
 - `README.txt` — the period, counts, how many records were held back, the layout version and this warning.
 
-Every record with a fatal error is held back. Each included record gets `extracted_at`; each client in the
-file gets an accounting-of-disclosures row: basis **state_reporting**, source `caloms`, recipient *California
+Every record with a fatal error is held back. Downloading the extract (`GET /api/caloms/extract`) is a
+**test / preview**: it is audited (`caloms.extract`, `preview: true`) and its `X-SUDS-Export` header says
+so, but nothing is accounted and no record is marked as sent — a file that was only checked, or downloaded
+twice, is not a disclosure to DHCS. Once the file has been submitted, **Mark as submitted**
+(`POST /api/caloms/submissions` with the period, `export:identified`) rebuilds the extract for that period
+and records it: each included record gets `extracted_at`, and each client in the file gets an
+accounting-of-disclosures row: basis **state_reporting**, source `caloms`, recipient *California
 Department of Health Care Services (DHCS) — CalOMS Tx*, purpose *State reporting (CalOMS Tx)…* The audit log
 records the counts, never names. The legal characterisation used (`server/disclosure.js`): a disclosure
 required by law under HIPAA 45 CFR §164.512(a) (still subject to the §164.528 accounting), and under

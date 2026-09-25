@@ -159,6 +159,43 @@ function isSelfAssignment(raw, user, knownUsers, batchClients) {
   return !!inBatch && (!inBatch.created_by || inBatch.created_by === user.id || !knownUsers.has(inBatch.created_by));
 }
 
+/**
+ * Why a pushed consents row (enc columns in plain text, as they travel) cannot be accepted, or null. Only Part 2
+ * consent types carry the §2.31 element list; the reason is phrased as a permanent rejection (sync-tables.js).
+ */
+function consentPushProblem(raw) {
+  const disclosure = require('../disclosure');
+  if (!require('../constants').CONSENT_TYPES.includes(raw.type)) return `has a value the office does not accept (consent type "${String(raw.type).slice(0, 40)}")`;
+  if (!require('../constants').PART2_CONSENT_TYPES.includes(raw.type)) return null;
+  const v = { discloser: raw.discloser, recipient: raw.recipient_enc, purpose: raw.purpose_enc, scope: raw.scope_enc, expires_at: raw.expires_at, expires_event: raw.expires_event, document_ref: raw.document_ref,
+    signed_on_paper: raw.signed_on_paper, witness: raw.witness, signer_relationship: raw.signer_relationship, signer_name: raw.signer_name_enc, revocation_right_given: raw.revocation_right_given,
+    redisclosure_notice_given: raw.redisclosure_notice_given, refusal_consequences_given: raw.refusal_consequences_given, signed_at: raw.signed_at };
+  const missing = raw.rule_version === '2024' ? disclosure.missingPart2Elements(v) : disclosure.missingLegacyElements(v);
+  if (missing.length) return `is missing a required field: a 42 CFR Part 2 consent must record ${missing.join('; ')}`;
+  if (raw.expires_at && raw.signed_at && raw.expires_at < raw.signed_at) return 'has a value the office does not accept (it expires before it was signed)';
+  return null;
+}
+/**
+ * Is this screening instrument enabled at the office? An instrument is optional when server/clinical.js lists
+ * it in OPTIONAL_INSTRUMENTS (with the setting that turns it on); anything else is always enabled. Read
+ * defensively, so a build without optional instruments treats every instrument as enabled.
+ */
+function instrumentEnabledHere(code) {
+  const opt = (require('../clinical').OPTIONAL_INSTRUMENTS || {})[code];
+  return !opt || !opt.setting || db.getSetting(opt.setting, '0') === '1';
+}
+function instrumentName(code) { return (require('../clinical').INSTRUMENTS[code] || {}).name || String(code); }
+/** Why a pushed court order cannot be accepted, or null: the checks POST /api/clients/:id/court-orders makes. */
+function courtOrderPushProblem(raw, existing) {
+  const val = (k) => (raw[k] !== undefined ? raw[k] : existing ? existing[k] : undefined);
+  const blank = (k) => { const x = val(k); return x === undefined || x === null || String(x).trim() === ''; };
+  const missing = [['court_enc', 'the court'], ['purpose_enc', 'the purpose the order states'], ['scope_enc', 'what the order permits to be disclosed'], ['issued_at', 'when it was issued']].filter(([k]) => blank(k)).map(([, l]) => l);
+  if (missing.length) return `is missing a required field: a court order must record ${missing.join('; ')}`;
+  if (!require('../constants').COURT_ORDER_TYPES.includes(val('order_type'))) return `has a value the office does not accept (order type "${String(val('order_type')).slice(0, 40)}")`;
+  if (val('expires_at') && val('expires_at') < val('issued_at')) return 'has a value the office does not accept (the order expires before it was issued)';
+  return null;
+}
+
 function push(user, payload) {
   const applied = {}; const rejected = []; const conflicts = []; const warnings = [];
   // permanent: the office has ruled and a retry can never succeed, so the device stops resending the row.
@@ -284,6 +321,25 @@ function push(user, payload) {
             revocation = true;
             for (const k of Object.keys(raw)) if (!['id', 'revoked_at', 'revoked_reason'].includes(k)) delete raw[k];
             raw.revoked_by = user.id;
+          }
+          // A consent reaches the office by sync exactly as it would by the consent form: a new Part 2 consent
+          // must carry the §2.31 elements (2024, or the pre-2024 ones for a legacy row signed before the 2024
+          // rule's compliance date), or it is refused and the device shows why. A court order likewise needs
+          // what POST /api/clients/:id/court-orders requires. (disclosure.requireBasis re-checks a consent's
+          // elements whenever one is relied on, however it arrived.)
+          if (t.name === 'consents' && !existing) {
+            const problem = consentPushProblem(raw);
+            if (problem) { reject(t.name, raw.id, problem); return false; }
+          }
+          if (t.name === 'court_orders') {
+            const problem = courtOrderPushProblem(raw, existing);
+            if (problem) { reject(t.name, raw.id, problem); return false; }
+          }
+          // An optional screening instrument the office has not enabled (the DAST-10 until an administrator
+          // confirms the programme holds the rights to use it) takes no new results or edits by sync either,
+          // as over REST. A result already on file stays, and an unchanged copy of it is not refused.
+          if (t.name === 'outcome_measures' && !instrumentEnabledHere(raw.instrument || (existing && existing.instrument)) && (!existing || changedColumns(t, existing, raw, existingCols).length)) {
+            reject(t.name, raw.id, `has a value the office does not accept (${instrumentName(raw.instrument || existing.instrument)} is not enabled on the office server; an administrator can turn it on under Settings → Screening instruments)`); return false;
           }
           if (t.scope === 'via-note') { const note = db.one(`SELECT client_id, kind FROM notes WHERE id=?`, raw.note_id); if (!note || !auth.canAccessClient(user, note.client_id) || (note.kind === 'clinical' && !auth.hasPerm(user, 'notes:clinical:write'))) { reject(t.name, raw.id, 'not permitted'); return false; } }
           if (t.name === 'notes' && raw.kind === 'clinical' && !auth.hasPerm(user, 'notes:clinical:write')) { reject(t.name, raw.id, 'clinical notes not permitted for this role'); return false; }

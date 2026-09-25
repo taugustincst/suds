@@ -8,13 +8,14 @@
 // the minutes, place, modality and funding source a biller needs to key or import the encounter there.
 //
 // The file names clients (name, date of birth, Medi-Cal ID), so it is an identified disclosure outside the
-// programme: export:identified only, a named recipient and purpose, a lawful basis — a live consent on file
-// for each client (clients without one are left out and listed), or a QSOA / "other" basis for the whole
-// file — and one accounting-of-disclosures row per client it contains (server/disclosure.js). It follows the
-// identified-export rules (requireExportBasis): the consent must be one that can authorise a disclosure in
-// this programme (a Part 2 consent, the 2024 single TPO consent included — a general release of information
-// only when this is not a Part 2 programme — never one limited to counseling notes or a proceeding); it is
-// never for a legal proceeding; clients with an agreed restriction need the worker's confirmation; the file
+// programme: export:identified only, a named recipient and purpose, a lawful basis — for each client a live
+// consent on file that names the stated recipient (clients without one are left out and listed), or, for the
+// whole file, a registered QSOA with the recipient or the supervisor's "other" override — and one
+// accounting-of-disclosures row per client it contains (server/disclosure.js). It follows the identified-
+// export rules (requireExportBasis): the consent must be one that can authorise a disclosure in this
+// programme (a Part 2 consent with the §2.31 elements, the 2024 single TPO consent included — a general
+// release of information only when this is not a Part 2 programme — never one limited to counseling notes or
+// a proceeding) and must name the recipient (disclosure.fileConsentFor); it is never for a legal proceeding; clients with an agreed restriction need the worker's confirmation; the file
 // carries the §2.32 notice; and a file naming very many clients opens a draft incident.
 const db = require('../db');
 const auth = require('../auth');
@@ -60,10 +61,17 @@ function encounters(ctx, { tsP, ts }) {
   }).sort((a, b) => a.service_date.localeCompare(b.service_date) || a.client_code.localeCompare(b.client_code));
 }
 
-/** The newest live consent that can put a client in the file (disclosure.fileConsentTypes), if any. */
-function consentFor(clientId) {
-  const types = require('../disclosure').fileConsentTypes();
-  return db.one(`SELECT id FROM consents WHERE client_id=? AND type IN (${types.map(() => '?').join(',')}) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now')) ORDER BY signed_at DESC LIMIT 1`, clientId, ...types) || null;
+/**
+ * The newest live consent that can put a client in a file for this recipient (disclosure.fileConsentFor),
+ * if any. With no recipient named yet (the summary before the form is filled in), any consent of a file type
+ * with the §2.31 elements counts.
+ */
+function consentFor(clientId, recipient) {
+  const D = require('../disclosure');
+  if (recipient) return D.fileConsentFor(clientId, D.recipientNames(recipient));
+  const types = D.fileConsentTypes();
+  return db.all(`SELECT * FROM consents WHERE client_id=? AND type IN (${types.map(() => '?').join(',')}) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, clientId, ...types)
+    .find(c => !D.consentElementProblems(c).length) || null;
 }
 
 module.exports = (r) => {
@@ -73,7 +81,8 @@ module.exports = (r) => {
     const p = require('./reports').range(ctx);
     const rows = encounters(ctx, p);
     const clients = [...new Map(rows.map(x => [x._client_id, x.client_code])).entries()];
-    const without = clients.filter(([id]) => !consentFor(id)).map(([, code]) => code).sort();
+    const recipient = (ctx.query.get('recipient') || '').trim().slice(0, 200);
+    const without = clients.filter(([id]) => !consentFor(id, recipient)).map(([, code]) => code).sort();
     const restricted = new Set(db.all(`SELECT DISTINCT client_id FROM patient_requests WHERE kind='restriction' AND status='fulfilled'`).map(x => x.client_id));
     audit.log({ user: ctx.user, action: 'handoff.preview', ip: ctx.ip, details: { from: p.from, to: p.to, rows: rows.length, clients: clients.length } });
     return { from: p.from, to: p.to, rows: rows.length, clients: clients.length, minutes: rows.reduce((s, x) => s + x.minutes, 0), without_consent: without,
@@ -88,20 +97,21 @@ module.exports = (r) => {
     if (!BASES.includes(basis)) throw badRequest(`basis must be one of ${BASES.join(', ')}`);
     const disclosure = require('../disclosure');
     if (ctx.query.get('legal_proceeding') === '1') disclosure.requireExportBasis([], { basis: 'internal', legal_proceeding: true }); // always refuses: never a bulk file
-    // A QSOA or "other" basis covers the whole file; checked once, before anything is read. "Other" is the
-    // supervisor/administrator override and needs its written justification (disclosure.requireBasis). Agreed
-    // restrictions are checked below, against the clients actually in the file.
-    const fileBasis = basis === 'consent' ? null : disclosure.requireBasis(null, { basis, justification: ctx.query.get('justification'), user: ctx.user, restriction_reviewed: true });
+    // A QSOA or "other" basis covers the whole file; checked once, before anything is read. A QSOA must be
+    // registered and be with the recipient; "other" is the supervisor/administrator override and needs its
+    // written justification (disclosure.requireBasis). Agreed restrictions are checked below, against the
+    // clients actually in the file.
+    const fileBasis = basis === 'consent' ? null : disclosure.requireBasis(null, { basis, justification: ctx.query.get('justification'), agreement_id: ctx.query.get('agreement_id') || undefined, recipient, user: ctx.user, restriction_reviewed: true });
     const all = encounters(ctx, p);
     const consentOf = new Map(); const excluded = new Set();
-    if (basis === 'consent') for (const id of new Set(all.map(x => x._client_id))) { const c = consentFor(id); if (c) consentOf.set(id, c.id); else excluded.add(id); }
+    if (basis === 'consent') for (const id of new Set(all.map(x => x._client_id))) { const c = consentFor(id, recipient); if (c) consentOf.set(id, c.id); else excluded.add(id); }
     const rows = all.filter(x => !excluded.has(x._client_id));
     const excludedCodes = [...new Set(all.filter(x => excluded.has(x._client_id)).map(x => x.client_code))].sort();
     const clientIds = [...new Set(rows.map(x => x._client_id))];
     try { disclosure.requireRestrictionReview(clientIds, ctx.query.get('restriction_reviewed') === '1'); }
     catch (e) { audit.log({ user: ctx.user, action: 'handoff.export.refused', ip: ctx.ip, success: false, details: { basis, clients: clientIds.length, reason: 'restriction_review' } }); throw e; }
     db.transaction(() => {
-      for (const clientId of clientIds) disclosure.record({ clientId, consentId: consentOf.get(clientId) || null, recipient, purpose, what: `County EHR encounter hand-off (${p.from} to ${p.to}): service dates, types, minutes, staff and funding; name, date of birth, Medi-Cal ID`, method: 'export', basis, justification: fileBasis ? fileBasis.justification : null, source: 'ehr_handoff', sourceRef: `handoff:${p.from}_${p.to}`, user: ctx.user, ip: ctx.ip });
+      for (const clientId of clientIds) disclosure.record({ clientId, consentId: consentOf.get(clientId) || null, agreementId: fileBasis?.agreement?.id || null, recipient, purpose, what: `County EHR encounter hand-off (${p.from} to ${p.to}): service dates, types, minutes, staff and funding; name, date of birth, Medi-Cal ID`, method: 'export', basis, justification: fileBasis ? fileBasis.justification : null, source: 'ehr_handoff', sourceRef: `handoff:${p.from}_${p.to}`, user: ctx.user, ip: ctx.ip });
     });
     require('../incidents').maybeMassExport({ clients: clientIds.length, kind: 'ehr-handoff', user: ctx.user });
     audit.log({ user: ctx.user, action: 'handoff.export', ip: ctx.ip, details: { from: p.from, to: p.to, rows: rows.length, basis, clients_disclosed: clientIds.length, excluded_no_consent: excludedCodes.length || undefined } });
@@ -114,7 +124,7 @@ module.exports = (r) => {
       ? await S.writeWorkbookAsync([{ name: 'Encounters', columns: COLUMNS, rows: out }, { name: 'About', columns: [{ key: 'k', label: 'Field' }, { key: 'v', label: 'Value' }], rows: [
         { k: 'Not a claim', v: NOT_A_CLAIM }, { k: 'Classification', v: `Identified — PHI. Disclosed to: ${recipient}. Purpose: ${purpose}. Basis: ${basis}.` },
         { k: 'Period', v: `${p.from} to ${p.to}` }, { k: 'Generated', v: db.now() }, { k: 'Generated by', v: ctx.user.display_name || ctx.user.username },
-        { k: 'Left out (no consent on file)', v: excludedCodes.join(', ') || 'none' },
+        { k: 'Left out (no consent on file naming this recipient)', v: excludedCodes.join(', ') || 'none' },
         ...(part2 ? [{ k: 'Protected by 42 CFR Part 2', v: notice.short }, { k: 'Notice to recipient (42 CFR §2.32)', v: notice.text }] : [])] }])
       // CSV: the §2.32 notice as the last row, after a blank one, as the identified exports do (reports.js).
       : S.toCsv(out, COLUMNS) + (part2 ? '\r\n\r\n' + S.toCsv([{ n: disclosure.fileNotice() }], [{ key: 'n', label: '' }]).split('\r\n')[1] : '');

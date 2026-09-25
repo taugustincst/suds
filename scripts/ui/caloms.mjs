@@ -120,8 +120,13 @@ const sup = await session('jwalker', 'Navigator2026!!');
     (async () => { await page.click('[data-caloms-download]'); await page.click('.modal button:has-text("Download extract")'); })(),
   ]);
   ok(/^caloms-tx-\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2}\.zip$/.test(download.suggestedFilename()), 'the extract downloads as a zip', download.suggestedFilename());
+  // A download is a test / preview: nobody's accounting changes until the extract is marked as submitted.
+  const before = await api('GET', `/api/clients/${clientId}/disclosures/accounting`);
+  ok(!(before.data.disclosures || []).some(d => d.basis === 'state_reporting'), 'downloading the extract does not account it');
+  await page.click('[data-caloms-submitted]'); await page.click('.modal button:has-text("Mark as submitted")');
+  ok(await until(async () => /accounted for as submitted/.test(await page.textContent('body'))), 'the page confirms the submission was recorded');
   const acct = await api('GET', `/api/clients/${clientId}/disclosures/accounting`);
-  ok((acct.data.disclosures || []).some(d => d.basis === 'state_reporting'), 'and the admitted client\'s accounting of disclosures records it');
+  ok((acct.data.disclosures || []).some(d => d.basis === 'state_reporting'), 'marking it submitted records it in the admitted client\'s accounting of disclosures');
 }
 
 // ---------------- administrator: switch it off again ----------------

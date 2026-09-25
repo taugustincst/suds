@@ -50,4 +50,14 @@ function makeUser(username, role, password = 'StaffPassw0rd!x') {
   return { id, username, password };
 }
 
-module.exports = { start, stop, client, makeUser, db };
+/**
+ * Register a QSOA, research or audit/evaluation approval (server/disclosure.js: the non-consent bases rest on
+ * one whose organisation is the recipient) through `c`, a supervisor's or administrator's client. Returns its id.
+ */
+async function agreement(c, organisation, kind = 'audit_evaluation', extra = {}) {
+  const r = await c.post('/api/disclosure-agreements', { kind, organisation, services: 'Test', approving_body: kind === 'qsoa' ? undefined : 'Test approving body', agreement_date: '2026-01-01', ...extra });
+  if (r.status !== 201) throw new Error('agreement failed: ' + JSON.stringify(r.data));
+  return r.data.id;
+}
+
+module.exports = { start, stop, client, makeUser, agreement, db };

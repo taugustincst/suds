@@ -3,10 +3,12 @@ import { withRestrictionCheck } from './part2.js';
 
 // An identified export is a disclosure: fetched here rather than followed as a link, so a refusal (no lawful
 // basis, a client without consent, an agreed restriction to check) is shown as a message, not saved as a file.
+// Returns the client codes the server left out of the file (under consent, clients whose consent does not
+// name the recipient), so the caller can say so.
 export async function fetchDownload(path) {
   let status, body, headers;
   if (state.local && window.SUDS_LOCAL) { const r = await window.SUDS_LOCAL.handle('GET', path, undefined, {}); status = r.status; body = r.body; headers = r.headers || {}; }
-  else { const res = await fetch(path, { credentials: 'same-origin', headers: { 'X-Requested-With': 'suds' } }); status = res.status; body = await res.arrayBuffer(); headers = { 'content-disposition': res.headers.get('content-disposition') || '', 'content-type': res.headers.get('content-type') || '' }; }
+  else { const res = await fetch(path, { credentials: 'same-origin', headers: { 'X-Requested-With': 'suds' } }); status = res.status; body = await res.arrayBuffer(); headers = { 'content-disposition': res.headers.get('content-disposition') || '', 'content-type': res.headers.get('content-type') || '', 'x-suds-export-excluded': res.headers.get('x-suds-export-excluded') || '', 'x-suds-handoff-excluded': res.headers.get('x-suds-handoff-excluded') || '' }; }
   if (status >= 400) {
     let j = {}; try { j = JSON.parse(typeof body === 'string' ? body : new TextDecoder().decode(body)); } catch { /* not JSON */ }
     const err = new Error(j.error || 'The export was refused'); err.status = status; err.data = j; throw err;
@@ -14,11 +16,20 @@ export async function fetchDownload(path) {
   const name = (/filename="([^"]+)"/.exec(headers['content-disposition'] || '') || [])[1] || 'export';
   const u = URL.createObjectURL(new Blob([body], { type: headers['content-type'] || 'application/octet-stream' }));
   const a = h('a', { href: u, download: name }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 5000);
+  return { excluded: String(headers['x-suds-export-excluded'] || headers['x-suds-handoff-excluded'] || '').split(',').filter(Boolean) };
 }
+/** The message after an identified file is downloaded: what it carries, and who was left out of it. */
+export function downloadedMessage(done, what) {
+  const out = done && done.excluded && done.excluded.length ? ` Left out (no consent on file naming this recipient): ${done.excluded.join(', ')}.` : '';
+  return `${what}${out}`;
+}
+// What each basis needs (server/disclosure.js requireExportBasis): research, audit and a QSOA rest on the
+// agreement or approval on file with the recipient (Privacy & Part 2 → Agreements); "internal" is only for
+// this program or its own staff; under consent, a client whose consent does not name the recipient is left out.
 const EXPORT_BASES = [
-  { value: 'audit_evaluation', label: 'Audit or program evaluation (42 CFR §2.53)' }, { value: 'research', label: 'Research (42 CFR §2.52)' },
-  { value: 'qsoa', label: 'Qualified service organization agreement (§2.12(c)(4))' }, { value: 'internal', label: 'Within this program only (§2.12(c)(3))' },
-  { value: 'consent', label: "Each client's Part 2 consent (every client in the file must have one)" },
+  { value: 'audit_evaluation', label: 'Audit or program evaluation (42 CFR §2.53) — approval on file with the recipient' }, { value: 'research', label: 'Research (42 CFR §2.52) — IRB approval on file with the recipient' },
+  { value: 'qsoa', label: 'Qualified service organization agreement (§2.12(c)(4)) — agreement on file with the recipient' }, { value: 'internal', label: 'Within this program only (§2.12(c)(3)) — the recipient is this program or its staff' },
+  { value: 'consent', label: "Each client's Part 2 consent naming this recipient (clients without one are left out)" },
 ];
 function openIdentifiedExport(from, to) {
   const f = form([
@@ -27,8 +38,8 @@ function openIdentifiedExport(from, to) {
     { name: 'basis', label: 'Lawful basis', type: 'select', options: EXPORT_BASES, required: true, noBlank: true, span: true, help: "A file for a legal proceeding against a client is never a bulk export: record it on that client's Consents tab under a court order." },
   ], { submitText: 'Export (names included, audited)', onCancel: () => m.close(), onSubmit: async (v) => {
     const url = `/api/reports/export/workbook?from=${from}&to=${to}&identified=1&recipient=${encodeURIComponent(v.recipient)}&purpose=${encodeURIComponent(v.purpose)}&basis=${encodeURIComponent(v.basis)}`;
-    await withRestrictionCheck((extra) => fetchDownload(url + (extra.restriction_reviewed ? '&restriction_reviewed=1' : '')));
-    m.close(); toast('Exported. The file carries the 42 CFR Part 2 notice on its About sheet.', 'ok');
+    const done = await withRestrictionCheck((extra) => fetchDownload(url + (extra.restriction_reviewed ? '&restriction_reviewed=1' : '')));
+    m.close(); toast(downloadedMessage(done, 'Exported. The file carries the 42 CFR Part 2 notice on its About sheet.'), 'ok');
   } });
   const m = modal('Identified export', h('div', {}, h('div', { class: 'banner warn small' }, 'This export includes client names, dates of birth and contact details. It is a disclosure: it is recorded in the audit log and in the accounting of disclosures of every client it contains, and it needs a lawful basis under 42 CFR Part 2.'), f));
 }

@@ -65,10 +65,28 @@ function draft({ source, sourceRef = null, title, description = '', user = null 
   const existing = db.one(`SELECT id FROM privacy_incidents WHERE source=? AND COALESCE(source_ref,'')=? AND status='open' AND determination='pending'`, source, sourceRef || '');
   if (existing) return existing.id;
   const id = uuid();
-  db.run(`INSERT INTO privacy_incidents(id,title,discovered_at,source,source_ref,description_enc,reported_by) VALUES(?,?,?,?,?,?,?)`,
-    id, title, today(), source, sourceRef, description ? encrypt(description) : null, user && user.id && !String(user.id).startsWith('system') ? user.id : null);
+  db.run(`INSERT INTO privacy_incidents(id,title_enc,discovered_at,source,source_ref,description_enc,reported_by) VALUES(?,?,?,?,?,?,?)`,
+    id, encrypt(String(title)), today(), source, sourceRef, description ? encrypt(description) : null, user && user.id && !String(user.id).startsWith('system') ? user.id : null);
   audit.log({ user: user || { username: 'system' }, action: 'incident.draft', entity: 'privacy_incident', entityId: id, details: { source } });
   return id;
+}
+
+/**
+ * The snapshot an incident keeps of a client it affected, which outlives a retention purge of the record:
+ * the client code and the name (re-encrypted as its own value). `c` is a clients row (code and name columns).
+ */
+function snapshotOf(c) {
+  const { decrypt } = require('./crypto');
+  const d = (v) => { try { return v ? decrypt(v) : ''; } catch { return ''; } };
+  const name = [d(c.first_name_enc), d(c.last_name_enc)].filter(Boolean).join(' ');
+  return { client_code: c.client_code || null, client_name_enc: name ? encrypt(name) : null };
+}
+/** Link a client to an incident with its snapshot. Returns 1 when a new link was made, 0 when it existed. */
+function linkClient(incidentId, clientId) {
+  const c = db.one(`SELECT id, client_code, first_name_enc, last_name_enc FROM clients WHERE id=?`, clientId);
+  if (!c) return 0;
+  const snap = snapshotOf(c);
+  return db.run(`INSERT OR IGNORE INTO privacy_incident_clients(id,incident_id,client_id,client_code,client_name_enc) VALUES(?,?,?,?,?)`, uuid(), incidentId, clientId, snap.client_code, snap.client_name_enc).changes;
 }
 
 /** An identified export of this many clients or more opens a draft incident for review. */
@@ -85,4 +103,4 @@ function chainFailure(r, user = null) {
     description: `The audit log's hash chain did not verify (${r.truncated ? `truncated: ${r.reason || 'rows missing from the end'}` : `first bad entry ${r.firstBadId}`}). Establish whether audit entries were altered or removed, and whether that concealed access to client records.`, user });
 }
 
-module.exports = { obligations, draft, chainFailure, maybeMassExport, massExportThreshold, NOTICE_DAYS, HHS_IMMEDIATE_AT, MEDIA_OVER, WARN_DAYS };
+module.exports = { obligations, draft, snapshotOf, linkClient, chainFailure, maybeMassExport, massExportThreshold, NOTICE_DAYS, HHS_IMMEDIATE_AT, MEDIA_OVER, WARN_DAYS };

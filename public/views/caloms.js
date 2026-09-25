@@ -6,7 +6,7 @@
 // for DHCS. The county EHR hand-off is the billing boundary: SUDS does not bill, it hands encounters over.
 import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog, downloadCsv, stat, kv } from '../app.js';
 import { withRestrictionCheck } from './part2.js';
-import { fetchDownload } from './reports.js';
+import { fetchDownload, downloadedMessage } from './reports.js';
 
 let cached = null;
 /** The CalOMS switch, provider IDs and layout (GET /api/caloms/config), fetched once per page load. */
@@ -160,12 +160,18 @@ route('caloms', async (r) => {
   const extractCard = () => {
     if (!can('export:identified')) return null;
     return h('div', { class: 'card mb', 'data-caloms-extract': '1' }, h('h2', {}, 'Extract for DHCS'),
-      h('p', { class: 'small' }, 'A zip of CSV files — admissions, discharges, annual updates and the monthly provider activity report (with "no activity" months) — for the period above. Records with fatal errors are held back. It names clients, so it is a disclosure: each client in it gets a "State reporting (CalOMS)" entry in their accounting of disclosures.'),
+      h('p', { class: 'small' }, 'A zip of CSV files — admissions, discharges, annual updates and the monthly provider activity report (with "no activity" months) — for the period above. Records with fatal errors are held back. Downloading it is a test / preview: it is audited, but it is not a disclosure until the file goes to DHCS. When you have submitted it, choose "Mark as submitted": each client in it then gets a "State reporting (CalOMS)" entry in their accounting of disclosures, and its records are marked as sent.'),
       h('p', { class: 'small muted' }, 'The layout has not been verified against the current DHCS CalOMS Tx data dictionary; see the README in the zip and docs/compliance/CALOMS.md before the first submission.'),
-      h('button', { class: 'btn primary', disabled: !cfg.enabled, 'data-caloms-download': '1', onClick: async () => {
-        if (!await confirmDialog('CalOMS Tx extract', `This file identifies clients and is a disclosure to DHCS required by law. It is recorded in the audit log and in each included client's accounting of disclosures. ${v && v.summary.blocked ? `${v.summary.blocked} record(s) with fatal errors will be held back.` : ''} Continue?`, { okText: 'Download extract' })) return;
-        downloadCsv(`/api/caloms/extract?from=${from}&to=${to}`);
-      } }, 'Download CalOMS Tx extract'),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn', disabled: !cfg.enabled, 'data-caloms-download': '1', onClick: async () => {
+          if (!await confirmDialog('CalOMS Tx extract (test / preview)', `This file identifies clients. Downloading it is recorded in the audit log; nobody's accounting of disclosures changes until you mark the extract as submitted. ${v && v.summary.blocked ? `${v.summary.blocked} record(s) with fatal errors will be held back.` : ''} Continue?`, { okText: 'Download extract' })) return;
+          downloadCsv(`/api/caloms/extract?from=${from}&to=${to}`);
+        } }, 'Download extract (test / preview)'),
+        h('button', { class: 'btn primary', disabled: !cfg.enabled, 'data-caloms-submitted': '1', onClick: async () => {
+          if (!await confirmDialog('Mark as submitted to DHCS', `Record that the CalOMS Tx extract for ${fmt.date(from)} – ${fmt.date(to)} was submitted to DHCS. Each client in it gets an entry in their accounting of disclosures (a disclosure required by law), and its records are marked as sent. Do this once the file has actually been submitted.`, { okText: 'Mark as submitted' })) return;
+          try { const r = await post('/api/caloms/submissions', { from, to }); toast(`Recorded: ${r.clients_disclosed} client(s) accounted for as submitted to DHCS.`, 'ok'); }
+          catch (e) { toast(e.message, 'error'); }
+        } }, 'Mark as submitted')),
       cfg.enabled ? null : h('p', { class: 'small muted' }, 'CalOMS reporting is off for this program.'));
   };
 
@@ -173,13 +179,14 @@ route('caloms', async (r) => {
     const intro = h('p', { class: 'small', 'data-not-a-claim': '1' }, h('b', {}, 'SUDS does not submit Drug Medi-Cal claims'), ' (no 837 or Short-Doyle/Medi-Cal files). Where a service must be billed, the county EHR (SmartCare or its equivalent) is where the claim is made. This file hands the encounters over for entry there: one row per client, per service day, per kind of service and worker, with minutes, place, modality and funding source.');
     if (!can('export:identified')) return h('div', { class: 'card mb', 'data-handoff': '1' }, h('h2', {}, 'County EHR hand-off'), intro, h('p', { class: 'small muted' }, 'A supervisor or administrator produces this file.'));
     const summary = h('div', { class: 'small muted', 'data-handoff-summary': '1' }, 'Checking the period…');
-    get(`/api/handoff/summary?from=${from}&to=${to}`).then(s => {
-      summary.textContent = `${s.rows} encounter row(s) for ${s.clients} client(s), ${fmt.mins(s.minutes)} in total.${s.without_consent.length ? ` No consent that can authorise the hand-off (a 42 CFR Part 2 consent, such as the single treatment, payment and operations consent) on file for: ${s.without_consent.join(', ')} — with the consent basis they are left out.` : ''}${s.restricted ? ` ${s.restricted} client(s) have an agreed restriction: you will be asked to confirm the file respects it.` : ''}`;
+    // Checked against the recipient in the form: a consent covers only the recipient it names.
+    const check = (recipient) => get(`/api/handoff/summary?from=${from}&to=${to}&recipient=${encodeURIComponent(recipient || '')}`).then(s => {
+      summary.textContent = `${s.rows} encounter row(s) for ${s.clients} client(s), ${fmt.mins(s.minutes)} in total.${s.without_consent.length ? ` No consent that can authorise the hand-off to ${recipient || 'this recipient'} (a 42 CFR Part 2 consent naming it, such as the single treatment, payment and operations consent) on file for: ${s.without_consent.join(', ')} — with the consent basis they are left out.` : ''}${s.restricted ? ` ${s.restricted} client(s) have an agreed restriction: you will be asked to confirm the file respects it.` : ''}`;
     }).catch(e => { summary.textContent = e.message; });
     const f = form([
       { name: 'recipient', label: 'Recipient', required: true, value: 'County EHR / billing unit', span: true },
       { name: 'purpose', label: 'Purpose', required: true, value: 'Encounter entry in the county EHR for billing and claims', span: true },
-      { name: 'basis', label: 'Lawful basis', type: 'select', noBlank: true, value: 'consent', options: [{ value: 'consent', label: 'Each client\'s consent on file (clients without one are left out)' }, { value: 'qsoa', label: 'Qualified service organization agreement (whole file)' }, { value: 'other', label: 'Other — supervisor or administrator, with a written justification' }] },
+      { name: 'basis', label: 'Lawful basis', type: 'select', noBlank: true, value: 'consent', options: [{ value: 'consent', label: 'Each client\'s consent naming the recipient (clients without one are left out)' }, { value: 'qsoa', label: 'Qualified service organization agreement with the recipient, on file (whole file)' }, { value: 'other', label: 'Other — supervisor or administrator, with a written justification' }] },
       { name: 'justification', label: 'Justification (for "Other")', type: 'textarea', rows: 2, span: true },
       { name: 'format', label: 'Format', type: 'select', noBlank: true, value: 'csv', options: [{ value: 'csv', label: 'CSV' }, { value: 'xlsx', label: 'Excel' }] },
     ], { submitText: 'Download hand-off file', onSubmit: async (d) => {
@@ -188,9 +195,11 @@ route('caloms', async (r) => {
       if (d.justification) q.set('justification', d.justification);
       // Fetched rather than followed as a link, so a refusal (an agreed restriction to confirm, a missing
       // justification) is shown as a message instead of being saved as a file.
-      await withRestrictionCheck((extra) => fetchDownload(`/api/handoff/export?${q}${extra.restriction_reviewed ? '&restriction_reviewed=1' : ''}`));
-      toast('Hand-off file downloaded. It carries the 42 CFR Part 2 notice.', 'ok');
+      const done = await withRestrictionCheck((extra) => fetchDownload(`/api/handoff/export?${q}${extra.restriction_reviewed ? '&restriction_reviewed=1' : ''}`));
+      toast(downloadedMessage(done, 'Hand-off file downloaded. It carries the 42 CFR Part 2 notice.'), 'ok');
     } });
+    check(f.inputs.recipient.value);
+    f.inputs.recipient.addEventListener('change', () => check(f.inputs.recipient.value));
     return h('div', { class: 'card mb', 'data-handoff': '1' }, h('h2', {}, 'County EHR hand-off (encounters for billing)'), intro, summary, f);
   };
 

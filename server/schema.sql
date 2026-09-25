@@ -1078,10 +1078,13 @@ CREATE INDEX IF NOT EXISTS idx_complaints_client ON complaints(client_id);
 -- discovery. Deadlines are computed from discovered_at (server/incidents.js). Server-side only.
 CREATE TABLE IF NOT EXISTS privacy_incidents (
   id TEXT PRIMARY KEY,
-  title TEXT NOT NULL,                 -- a short label with no client information in it
+  -- A short label. Encrypted (migration 32): a title is typed by a person in a hurry, and "Fax about Jane
+  -- Doe sent to the wrong clinic" is exactly what one would type.
+  title_enc TEXT NOT NULL,
   discovered_at TEXT NOT NULL,
   occurred_at TEXT,
-  source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','audit_chain','breakglass','mass_export')),
+  -- part2_program_off: an administrator switched the programme's Part 2 protections off (routes/part2.js).
+  source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','audit_chain','breakglass','mass_export','part2_program_off')),
   source_ref TEXT,
   description_enc TEXT,
   part2_records INTEGER NOT NULL DEFAULT 1,
@@ -1106,13 +1109,46 @@ CREATE TABLE IF NOT EXISTS privacy_incidents (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_privacy_incidents_status ON privacy_incidents(status, discovered_at);
+-- The documentation of a breach is kept for six years (45 CFR §164.530(j)), which can outlast the client's
+-- record: when retention purges the client, the link is unset (never deleted) and the snapshot taken when
+-- the client was linked stays — the client code, the name (encrypted: the privacy officer must be able to
+-- show whom the incident affected and was notified, §164.414; a keyed hash would not survive an index-key
+-- rotation once the record it came from is gone) and when the record was purged (migration 32).
 CREATE TABLE IF NOT EXISTS privacy_incident_clients (
   id TEXT PRIMARY KEY,
   incident_id TEXT NOT NULL REFERENCES privacy_incidents(id) ON DELETE CASCADE,
-  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  client_id TEXT REFERENCES clients(id) ON DELETE SET NULL,
+  client_code TEXT,
+  client_name_enc TEXT,
+  client_purged_at TEXT,
   notified_at TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (incident_id, client_id)
 );
 CREATE INDEX IF NOT EXISTS idx_privacy_incident_clients_client ON privacy_incident_clients(client_id);
+
+-- The register of what the non-consent bases of 42 CFR Part 2 rest on (server/disclosure.js): qualified
+-- service organisation agreements (§2.11, §2.12(c)(4)), and the approvals behind research (§2.52: an IRB or
+-- privacy board) and audit or evaluation (§2.53: the oversight body). A disclosure on one of those bases
+-- names a row here whose organisation (or one of its aliases) is the recipient. Organisations and
+-- agreements, not clients: nothing here is PHI. Kept by supervisors and administrators; pulled to devices.
+CREATE TABLE IF NOT EXISTS disclosure_agreements (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('qsoa','research','audit_evaluation')),
+  organisation TEXT NOT NULL,
+  aliases TEXT,                        -- other names the organisation goes by, one per line
+  services TEXT,                       -- a QSOA's services; a study's or audit's title
+  approving_body TEXT,                 -- the IRB, privacy board or oversight body (research / audit)
+  reference TEXT,                      -- protocol or approval number
+  agreement_date TEXT NOT NULL,        -- signed / approved
+  expires_at TEXT,
+  document_ref TEXT,                   -- where the signed agreement or approval letter is kept
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','ended')),
+  ended_at TEXT,
+  ended_reason TEXT,
+  created_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_disclosure_agreements_updated ON disclosure_agreements(updated_at);

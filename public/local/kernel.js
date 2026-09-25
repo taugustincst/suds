@@ -7706,10 +7706,13 @@ CREATE INDEX IF NOT EXISTS idx_complaints_client ON complaints(client_id);
 -- discovery. Deadlines are computed from discovered_at (server/incidents.js). Server-side only.
 CREATE TABLE IF NOT EXISTS privacy_incidents (
   id TEXT PRIMARY KEY,
-  title TEXT NOT NULL,                 -- a short label with no client information in it
+  -- A short label. Encrypted (migration 32): a title is typed by a person in a hurry, and "Fax about Jane
+  -- Doe sent to the wrong clinic" is exactly what one would type.
+  title_enc TEXT NOT NULL,
   discovered_at TEXT NOT NULL,
   occurred_at TEXT,
-  source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','audit_chain','breakglass','mass_export')),
+  -- part2_program_off: an administrator switched the programme's Part 2 protections off (routes/part2.js).
+  source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','audit_chain','breakglass','mass_export','part2_program_off')),
   source_ref TEXT,
   description_enc TEXT,
   part2_records INTEGER NOT NULL DEFAULT 1,
@@ -7734,16 +7737,49 @@ CREATE TABLE IF NOT EXISTS privacy_incidents (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_privacy_incidents_status ON privacy_incidents(status, discovered_at);
+-- The documentation of a breach is kept for six years (45 CFR \xA7164.530(j)), which can outlast the client's
+-- record: when retention purges the client, the link is unset (never deleted) and the snapshot taken when
+-- the client was linked stays \u2014 the client code, the name (encrypted: the privacy officer must be able to
+-- show whom the incident affected and was notified, \xA7164.414; a keyed hash would not survive an index-key
+-- rotation once the record it came from is gone) and when the record was purged (migration 32).
 CREATE TABLE IF NOT EXISTS privacy_incident_clients (
   id TEXT PRIMARY KEY,
   incident_id TEXT NOT NULL REFERENCES privacy_incidents(id) ON DELETE CASCADE,
-  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  client_id TEXT REFERENCES clients(id) ON DELETE SET NULL,
+  client_code TEXT,
+  client_name_enc TEXT,
+  client_purged_at TEXT,
   notified_at TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (incident_id, client_id)
 );
 CREATE INDEX IF NOT EXISTS idx_privacy_incident_clients_client ON privacy_incident_clients(client_id);
+
+-- The register of what the non-consent bases of 42 CFR Part 2 rest on (server/disclosure.js): qualified
+-- service organisation agreements (\xA72.11, \xA72.12(c)(4)), and the approvals behind research (\xA72.52: an IRB or
+-- privacy board) and audit or evaluation (\xA72.53: the oversight body). A disclosure on one of those bases
+-- names a row here whose organisation (or one of its aliases) is the recipient. Organisations and
+-- agreements, not clients: nothing here is PHI. Kept by supervisors and administrators; pulled to devices.
+CREATE TABLE IF NOT EXISTS disclosure_agreements (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('qsoa','research','audit_evaluation')),
+  organisation TEXT NOT NULL,
+  aliases TEXT,                        -- other names the organisation goes by, one per line
+  services TEXT,                       -- a QSOA's services; a study's or audit's title
+  approving_body TEXT,                 -- the IRB, privacy board or oversight body (research / audit)
+  reference TEXT,                      -- protocol or approval number
+  agreement_date TEXT NOT NULL,        -- signed / approved
+  expires_at TEXT,
+  document_ref TEXT,                   -- where the signed agreement or approval letter is kept
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','ended')),
+  ended_at TEXT,
+  ended_reason TEXT,
+  created_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_disclosure_agreements_updated ON disclosure_agreements(updated_at);
 `;
   }
 });
@@ -8090,6 +8126,330 @@ var require_clients_model = __commonJS({
       return o;
     }
     module.exports = { ENC_FIELDS, PLAIN_FIELDS, decryptRow, encryptFields, nextClientCode, codeNumber, summary, daysToEngagement, uuid: uuid2, soundex, namePrefixIndex, namePhoneticIndex, preferredNameIndex, normaliseName, clientIndexes };
+  }
+});
+
+// server/audit.js
+var require_audit = __commonJS({
+  "server/audit.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var config = require_config();
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    var { sha256: sha2562 } = require_crypto();
+    var KEYED_PREFIX = "v2:";
+    function chainHash(payload, key = config.indexKey) {
+      return KEYED_PREFIX + crypto3.createHmac("sha256", key).update(payload).digest("hex");
+    }
+    function matches(stored, payload, key = config.indexKey) {
+      if (typeof stored !== "string") return false;
+      const expected = stored.startsWith(KEYED_PREFIX) ? chainHash(payload, key) : sha2562(payload);
+      return stored.length === expected.length && crypto3.timingSafeEqual(import_buffer.Buffer.from(stored), import_buffer.Buffer.from(expected));
+    }
+    var payloadOf = (r) => [r.at, r.user_id || "", r.username || "", r.action, r.entity || "", r.entity_id || "", r.client_id || "", r.ip || "", r.success ? 1 : 0, r.details || "", r.prev_hash].join("|");
+    function log({ user, action, entity, entityId, clientId, ip, success = true, details }) {
+      const prev = db3.one(`SELECT hash FROM audit_log ORDER BY id DESC LIMIT 1`);
+      const prevHash = prev ? prev.hash : "GENESIS";
+      const at = db3.now();
+      const detailsStr = details === void 0 ? null : JSON.stringify(details);
+      const payload = [at, user?.id || "", user?.username || "", action, entity || "", entityId || "", clientId || "", ip || "", success ? 1 : 0, detailsStr || "", prevHash].join("|");
+      const hash2 = chainHash(payload);
+      db3.run(
+        `INSERT INTO audit_log(at,user_id,username,action,entity,entity_id,client_id,ip,success,details,prev_hash,hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+        at,
+        user?.id || null,
+        user?.username || null,
+        action,
+        entity || null,
+        entityId || null,
+        clientId || null,
+        ip || null,
+        success ? 1 : 0,
+        detailsStr,
+        prevHash,
+        hash2
+      );
+    }
+    function headPayload(lastId, lastHash, rowCount) {
+      return `${lastId}|${lastHash}|${rowCount}`;
+    }
+    function sealHead(lastId, lastHash, rowCount, key = config.indexKey) {
+      return crypto3.createHmac("sha256", key).update(headPayload(lastId, lastHash, rowCount)).digest("hex");
+    }
+    function checkpoint({ key = config.indexKey } = {}) {
+      const last = db3.one(`SELECT id, hash FROM audit_log ORDER BY id DESC LIMIT 1`);
+      if (!last) return null;
+      const rowCount = db3.one(`SELECT COUNT(*) n FROM audit_log WHERE id <= ?`, last.id).n;
+      const head = sealHead(last.id, last.hash, rowCount, key);
+      db3.setSetting("audit_head", head);
+      db3.setSetting("audit_head_id", String(last.id));
+      db3.setSetting("audit_head_rows", String(rowCount));
+      db3.setSetting("audit_head_at", db3.now());
+      console.log(`[suds] audit checkpoint id=${last.id} rows=${rowCount} head=${head}`);
+      return { lastId: last.id, rowCount, head };
+    }
+    function checkHead({ key = config.indexKey } = {}) {
+      const head = db3.getSetting("audit_head", null);
+      const lastId = Number(db3.getSetting("audit_head_id", 0));
+      const rowCount = Number(db3.getSetting("audit_head_rows", 0));
+      if (!head || !lastId) return { checkpointed: false };
+      const out2 = { checkpointed: true, checkpointId: lastId, checkpointAt: db3.getSetting("audit_head_at", null) };
+      const max2 = db3.one(`SELECT MAX(id) m FROM audit_log`).m || 0;
+      if (lastId > max2) return { ...out2, truncated: true, reason: `the newest ${lastId - max2} entries since the checkpoint are gone` };
+      const row = db3.one(`SELECT hash FROM audit_log WHERE id=?`, lastId);
+      const nowCount = row ? db3.one(`SELECT COUNT(*) n FROM audit_log WHERE id <= ?`, lastId).n : 0;
+      const expected = sealHead(lastId, row ? row.hash : "", nowCount, key);
+      if (!row || expected.length !== head.length || !crypto3.timingSafeEqual(import_buffer.Buffer.from(expected), import_buffer.Buffer.from(head))) return { ...out2, truncated: true, reason: row ? "entries at or before the checkpoint were removed or altered" : "the checkpointed entry itself is gone" };
+      return { ...out2, truncated: false };
+    }
+    var VERIFY_BATCH = 5e3;
+    function* walk({ key, afterId = 0, prevHash = null, batch = VERIFY_BATCH }) {
+      let anchoredAt = null;
+      let checked = 0;
+      for (; ; ) {
+        const rows = db3.all(`SELECT * FROM audit_log WHERE id > ? ORDER BY id ASC LIMIT ?`, afterId, batch);
+        if (!rows.length) break;
+        if (prevHash === null) prevHash = rows[0].prev_hash;
+        if (anchoredAt === null) anchoredAt = rows[0].id;
+        for (const r of rows) {
+          checked++;
+          if (r.prev_hash !== prevHash || !matches(r.hash, payloadOf(r), key)) return { ok: false, checked, firstBadId: r.id, anchoredAt };
+          prevHash = r.hash;
+        }
+        afterId = rows[rows.length - 1].id;
+        if (rows.length < batch) break;
+        yield;
+      }
+      return { ok: true, checked, anchoredAt, lastId: afterId || null, lastHash: prevHash };
+    }
+    function verdict(res, { key, skipHead }) {
+      const { lastHash, ...out2 } = res;
+      if (!out2.ok) return { ...out2, ...skipHead ? {} : checkHead({ key }) };
+      const head = skipHead ? { checkpointed: false } : checkHead({ key });
+      if (head.truncated) return { ...out2, ok: false, ...head };
+      if (!out2.checked) return { ok: true, checked: 0, ...head, lastId: out2.lastId };
+      return { ...out2, ...head };
+    }
+    function verifyChain({ key = config.indexKey, skipHead = false, batch } = {}) {
+      const it = walk({ key, batch });
+      let step = it.next();
+      while (!step.done) step = it.next();
+      return verdict(step.value, { key, skipHead });
+    }
+    var defer = globalThis.setImmediate ? (f) => setImmediate(f) : (f) => setTimeout(f, 0);
+    var breathe = () => new Promise((resolve2) => defer(resolve2));
+    var FULL_EVERY_DAYS = 7;
+    function sealVerified(id, hash2, key = config.indexKey) {
+      return crypto3.createHmac("sha256", key).update(`verified|${id}|${hash2}`).digest("hex");
+    }
+    function setVerifiedMarker(id, hash2) {
+      if (!id) return;
+      db3.setSetting("audit_verified_id", String(id));
+      db3.setSetting("audit_verified_seal", sealVerified(id, hash2));
+    }
+    function clearVerifiedMarker() {
+      db3.run(`DELETE FROM settings WHERE key IN ('audit_verified_id','audit_verified_seal')`);
+    }
+    function verifiedMarker({ key = config.indexKey } = {}) {
+      const id = Number(db3.getSetting("audit_verified_id", 0));
+      const seal = db3.getSetting("audit_verified_seal", null);
+      if (!id || !seal) return null;
+      const row = db3.one(`SELECT id, hash FROM audit_log WHERE id=?`, id);
+      if (!row) return null;
+      const expected = sealVerified(row.id, row.hash, key);
+      if (expected.length !== seal.length || !crypto3.timingSafeEqual(import_buffer.Buffer.from(expected), import_buffer.Buffer.from(seal))) return null;
+      return { id: row.id, hash: row.hash };
+    }
+    async function verifyChainAsync({ key = config.indexKey, skipHead = false, incremental = false, batch } = {}) {
+      const marker = incremental ? verifiedMarker({ key }) : null;
+      const it = walk({ key, batch, ...marker ? { afterId: marker.id, prevHash: marker.hash } : {} });
+      let step = it.next();
+      while (!step.done) {
+        await breathe();
+        step = it.next();
+      }
+      const res = verdict(step.value, { key, skipHead });
+      if (res.ok) {
+        const last = step.value.lastId ? { id: step.value.lastId, hash: step.value.lastHash } : marker;
+        if (last) setVerifiedMarker(last.id, last.hash);
+      }
+      return { ...res, mode: marker ? "incremental" : "full", ...marker ? { from: marker.id } : {} };
+    }
+    function resignChain(newKey) {
+      const before = verifyChain();
+      if (!before.ok) throw new Error(`The audit chain does not verify under the current key (first bad entry ${before.firstBadId}); it will not be re-signed`);
+      const upd = db3.get().prepare(`UPDATE audit_log SET prev_hash=?, hash=? WHERE id=?`);
+      let prevHash = null;
+      let afterId = 0;
+      let resigned = 0;
+      for (; ; ) {
+        const rows = db3.all(`SELECT * FROM audit_log WHERE id > ? ORDER BY id ASC LIMIT ?`, afterId, VERIFY_BATCH);
+        if (!rows.length) break;
+        if (prevHash === null) prevHash = rows[0].prev_hash;
+        for (const r of rows) {
+          const row = { ...r, prev_hash: prevHash };
+          const hash2 = String(r.hash).startsWith(KEYED_PREFIX) ? chainHash(payloadOf(row), newKey) : prevHash === r.prev_hash ? r.hash : sha2562(payloadOf(row));
+          if (hash2 !== r.hash || prevHash !== r.prev_hash) {
+            upd.run(prevHash, hash2, r.id);
+            resigned++;
+          }
+          prevHash = hash2;
+        }
+        afterId = rows[rows.length - 1].id;
+        if (rows.length < VERIFY_BATCH) break;
+      }
+      const after = verifyChain({ key: newKey, skipHead: true });
+      if (!after.ok) throw new Error(`The audit chain does not verify under the new key after re-signing (first bad entry ${after.firstBadId})`);
+      const hadHead = db3.getSetting("audit_head", null);
+      if (hadHead) checkpoint({ key: newKey });
+      clearVerifiedMarker();
+      const pinned = verifyChain({ key: newKey });
+      if (!pinned.ok) throw new Error(`The audit head does not verify under the new key after re-sealing (${pinned.reason || `first bad entry ${pinned.firstBadId}`})`);
+      return { resigned, checked: after.checked };
+    }
+    function purgeTombstones(days) {
+      const cutoff = new Date(Date.now() - days * 864e5).toISOString();
+      const n = db3.run(`DELETE FROM tombstones WHERE deleted_at < ?`, cutoff).changes;
+      if (n) {
+        const prior = db3.getSetting("tombstone_purged_before", null);
+        if (!prior || prior < cutoff) db3.setSetting("tombstone_purged_before", cutoff);
+        log({ user: { username: "system" }, action: "tombstones.purge", details: { purged: n, before: cutoff } });
+      }
+      return n;
+    }
+    function purge(days) {
+      const cutoff = new Date(Date.now() - days * 864e5).toISOString();
+      const last = db3.one(`SELECT id, hash FROM audit_log WHERE at < ? ORDER BY id DESC LIMIT 1`, cutoff);
+      if (!last) return 0;
+      const n = db3.run(`DELETE FROM audit_log WHERE at < ?`, cutoff).changes;
+      log({ user: { username: "system" }, action: "audit.purge", details: { purged: n, before: cutoff, last_purged_id: last.id, last_purged_hash: last.hash } });
+      checkpoint();
+      return n;
+    }
+    async function scheduledVerify({ full = false, batch } = {}) {
+      const lastFull = db3.getSetting("audit_full_verified_at", null);
+      const fullDue = full || !lastFull || Date.now() - Date.parse(lastFull) > FULL_EVERY_DAYS * 864e5;
+      const r = await verifyChainAsync({ incremental: !fullDue, batch });
+      if (r.ok) {
+        db3.setSetting("audit_verified_at", db3.now());
+        if (r.mode === "full") db3.setSetting("audit_full_verified_at", db3.now());
+        checkpoint();
+        return r;
+      }
+      console.error(`[suds] AUDIT CHAIN BROKEN ${r.truncated ? `(truncated: ${r.reason})` : `at entry ${r.firstBadId}`} \u2014 investigate immediately`);
+      log({ user: { username: "system" }, action: "audit.verify.failed", success: false, details: { first_bad_id: r.firstBadId, checked: r.checked, truncated: r.truncated || void 0, reason: r.reason, mode: r.mode } });
+      db3.setSetting("audit_verify_failed_at", db3.now());
+      try {
+        require_incidents().chainFailure(r);
+      } catch (e) {
+        console.error("[suds] could not open an incident for the audit failure:", e.message);
+      }
+      return r;
+    }
+    module.exports = { log, verifyChain, verifyChainAsync, verifiedMarker, resignChain, scheduledVerify, purge, purgeTombstones, checkpoint, checkHead };
+  }
+});
+
+// server/incidents.js
+var require_incidents = __commonJS({
+  "server/incidents.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var { uuid: uuid2, encrypt: encrypt3 } = require_crypto();
+    var DAY = 864e5;
+    var NOTICE_DAYS = 60;
+    var HHS_IMMEDIATE_AT = 500;
+    var MEDIA_OVER = 500;
+    var WARN_DAYS = 14;
+    var addDays = (date, n) => new Date(Date.parse(String(date).slice(0, 10) + "T00:00:00Z") + n * DAY).toISOString().slice(0, 10);
+    var today = () => (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+    function obligations(i) {
+      const deadline = addDays(i.discovered_at, NOTICE_DAYS);
+      const due = i.law_enforcement_delay_until && i.law_enforcement_delay_until > deadline ? i.law_enforcement_delay_until.slice(0, 10) : deadline;
+      const breach = i.determination === "breach";
+      const live = i.determination !== "not_breach";
+      const t = today();
+      const ob = (required, when, doneAt) => ({ required, due: required ? when : null, done: !!doneAt, done_at: doneAt || null, overdue: required && !doneAt && when < t });
+      const year = Number(String(i.discovered_at).slice(0, 4));
+      const hhsDue = (i.affected_count || 0) >= HHS_IMMEDIATE_AT ? due : addDays(`${year}-12-31`, NOTICE_DAYS);
+      const out2 = {
+        deadline: due,
+        days_left: Math.round((Date.parse(due) - Date.parse(t)) / DAY),
+        determination_overdue: i.determination === "pending" && due < t,
+        individuals: ob(breach, due, i.individuals_notified_at),
+        hhs: ob(breach, hhsDue, i.hhs_notified_at),
+        hhs_route: (i.affected_count || 0) >= HHS_IMMEDIATE_AT ? "contemporaneous" : "annual_log",
+        media: ob(breach && (i.max_in_one_state || 0) > MEDIA_OVER, due, i.media_notified_at)
+      };
+      const open2 = [out2.individuals, out2.hhs, out2.media].filter((o) => o.required && !o.done);
+      out2.attention = i.status === "open" && live && (i.determination === "pending" || open2.length > 0);
+      out2.next_due = i.determination === "pending" ? due : open2.map((o) => o.due).sort()[0] || null;
+      out2.warn = out2.attention && out2.next_due && Math.round((Date.parse(out2.next_due) - Date.parse(t)) / DAY) <= WARN_DAYS;
+      out2.overdue = out2.determination_overdue || open2.some((o) => o.overdue);
+      return out2;
+    }
+    function draft({ source, sourceRef = null, title, description = "", user = null }) {
+      const existing = db3.one(`SELECT id FROM privacy_incidents WHERE source=? AND COALESCE(source_ref,'')=? AND status='open' AND determination='pending'`, source, sourceRef || "");
+      if (existing) return existing.id;
+      const id = uuid2();
+      db3.run(
+        `INSERT INTO privacy_incidents(id,title_enc,discovered_at,source,source_ref,description_enc,reported_by) VALUES(?,?,?,?,?,?,?)`,
+        id,
+        encrypt3(String(title)),
+        today(),
+        source,
+        sourceRef,
+        description ? encrypt3(description) : null,
+        user && user.id && !String(user.id).startsWith("system") ? user.id : null
+      );
+      audit3.log({ user: user || { username: "system" }, action: "incident.draft", entity: "privacy_incident", entityId: id, details: { source } });
+      return id;
+    }
+    function snapshotOf(c) {
+      const { decrypt: decrypt3 } = require_crypto();
+      const d = (v) => {
+        try {
+          return v ? decrypt3(v) : "";
+        } catch {
+          return "";
+        }
+      };
+      const name = [d(c.first_name_enc), d(c.last_name_enc)].filter(Boolean).join(" ");
+      return { client_code: c.client_code || null, client_name_enc: name ? encrypt3(name) : null };
+    }
+    function linkClient(incidentId, clientId) {
+      const c = db3.one(`SELECT id, client_code, first_name_enc, last_name_enc FROM clients WHERE id=?`, clientId);
+      if (!c) return 0;
+      const snap = snapshotOf(c);
+      return db3.run(`INSERT OR IGNORE INTO privacy_incident_clients(id,incident_id,client_id,client_code,client_name_enc) VALUES(?,?,?,?,?)`, uuid2(), incidentId, clientId, snap.client_code, snap.client_name_enc).changes;
+    }
+    function massExportThreshold() {
+      const v = Number(db3.getSetting("mass_export_threshold", ""));
+      return Number.isFinite(v) && v > 0 ? v : 500;
+    }
+    function maybeMassExport({ clients, kind, user }) {
+      if (clients < massExportThreshold()) return null;
+      return draft({
+        source: "mass_export",
+        sourceRef: `${kind}:${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}:${user.id}`,
+        title: `Identified export of ${clients} clients (${kind})`,
+        description: `An identified export (${kind}) naming ${clients} clients was made by ${user.display_name || user.username}. Confirm it was authorised and went where it was recorded as going; if so, determine "not a breach" with that reason.`,
+        user
+      });
+    }
+    function chainFailure(r, user = null) {
+      return draft({
+        source: "audit_chain",
+        sourceRef: "audit_log",
+        title: "Audit log failed its integrity check",
+        description: `The audit log's hash chain did not verify (${r.truncated ? `truncated: ${r.reason || "rows missing from the end"}` : `first bad entry ${r.firstBadId}`}). Establish whether audit entries were altered or removed, and whether that concealed access to client records.`,
+        user
+      });
+    }
+    module.exports = { obligations, draft, snapshotOf, linkClient, chainFailure, maybeMassExport, massExportThreshold, NOTICE_DAYS, HHS_IMMEDIATE_AT, MEDIA_OVER, WARN_DAYS };
   }
 });
 
@@ -8569,6 +8929,37 @@ var require_db = __commonJS({
           ["notice_version", "TEXT"]
         ]) addColumn(d, "disclosures", c, def);
         for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_(court_orders|part2_notices|complaints|privacy_incident)/.test(line.trim())) d.exec(line.trim());
+      },
+      // 32: the disclosure gate closed where a review found it open (docs/compliance/PART2.md). A register of the
+      //     QSOAs and research / audit approvals the non-consent bases rest on (disclosure_agreements); an
+      //     incident's title is encrypted, and an incident can be opened by switching the Part 2 programme off;
+      //     an incident's link to a client survives the client's purge as a snapshot (code, encrypted name)
+      //     instead of being deleted with the record — breach documentation is kept six years.
+      (d) => {
+        const schemaText = safeSchema();
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS disclosure_agreements \([\s\S]*?\n\);/);
+        if (m) d.exec(m[0]);
+        for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_disclosure_agreements/.test(line.trim())) d.exec(line.trim());
+        if (tableExists(d, "privacy_incidents")) {
+          if (tableCols(d, "privacy_incidents").includes("title")) {
+            const { encrypt: encrypt3 } = require_crypto();
+            addColumn(d, "privacy_incidents", "title_enc", "TEXT");
+            const upd = d.prepare(`UPDATE privacy_incidents SET title_enc=? WHERE id=?`);
+            for (const r of d.prepare(`SELECT id, title FROM privacy_incidents`).all()) upd.run(encrypt3(String(r.title ?? "")), r.id);
+            d.exec(`ALTER TABLE privacy_incidents DROP COLUMN title`);
+          }
+          rebuildTable(d, schemaText, "privacy_incidents");
+        }
+        if (tableExists(d, "privacy_incident_clients")) {
+          for (const c of ["client_code", "client_name_enc", "client_purged_at"]) addColumn(d, "privacy_incident_clients", c, "TEXT");
+          const { snapshotOf } = require_incidents();
+          const upd = d.prepare(`UPDATE privacy_incident_clients SET client_code=?, client_name_enc=? WHERE id=?`);
+          for (const x of d.prepare(`SELECT x.id, c.client_code, c.first_name_enc, c.last_name_enc FROM privacy_incident_clients x JOIN clients c ON c.id=x.client_id WHERE x.client_code IS NULL`).all()) {
+            const snap = snapshotOf(x);
+            upd.run(snap.client_code, snap.client_name_enc, x.id);
+          }
+          rebuildTable(d, schemaText, "privacy_incident_clients");
+        }
       }
     ];
     function initialise(d, schemaText, dbPath) {
@@ -8946,312 +9337,6 @@ var require_http = __commonJS({
   }
 });
 
-// server/incidents.js
-var require_incidents = __commonJS({
-  "server/incidents.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var audit3 = require_audit();
-    var { uuid: uuid2, encrypt: encrypt3 } = require_crypto();
-    var DAY = 864e5;
-    var NOTICE_DAYS = 60;
-    var HHS_IMMEDIATE_AT = 500;
-    var MEDIA_OVER = 500;
-    var WARN_DAYS = 14;
-    var addDays = (date, n) => new Date(Date.parse(String(date).slice(0, 10) + "T00:00:00Z") + n * DAY).toISOString().slice(0, 10);
-    var today = () => (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-    function obligations(i) {
-      const deadline = addDays(i.discovered_at, NOTICE_DAYS);
-      const due = i.law_enforcement_delay_until && i.law_enforcement_delay_until > deadline ? i.law_enforcement_delay_until.slice(0, 10) : deadline;
-      const breach = i.determination === "breach";
-      const live = i.determination !== "not_breach";
-      const t = today();
-      const ob = (required, when, doneAt) => ({ required, due: required ? when : null, done: !!doneAt, done_at: doneAt || null, overdue: required && !doneAt && when < t });
-      const year = Number(String(i.discovered_at).slice(0, 4));
-      const hhsDue = (i.affected_count || 0) >= HHS_IMMEDIATE_AT ? due : addDays(`${year}-12-31`, NOTICE_DAYS);
-      const out2 = {
-        deadline: due,
-        days_left: Math.round((Date.parse(due) - Date.parse(t)) / DAY),
-        determination_overdue: i.determination === "pending" && due < t,
-        individuals: ob(breach, due, i.individuals_notified_at),
-        hhs: ob(breach, hhsDue, i.hhs_notified_at),
-        hhs_route: (i.affected_count || 0) >= HHS_IMMEDIATE_AT ? "contemporaneous" : "annual_log",
-        media: ob(breach && (i.max_in_one_state || 0) > MEDIA_OVER, due, i.media_notified_at)
-      };
-      const open2 = [out2.individuals, out2.hhs, out2.media].filter((o) => o.required && !o.done);
-      out2.attention = i.status === "open" && live && (i.determination === "pending" || open2.length > 0);
-      out2.next_due = i.determination === "pending" ? due : open2.map((o) => o.due).sort()[0] || null;
-      out2.warn = out2.attention && out2.next_due && Math.round((Date.parse(out2.next_due) - Date.parse(t)) / DAY) <= WARN_DAYS;
-      out2.overdue = out2.determination_overdue || open2.some((o) => o.overdue);
-      return out2;
-    }
-    function draft({ source, sourceRef = null, title, description = "", user = null }) {
-      const existing = db3.one(`SELECT id FROM privacy_incidents WHERE source=? AND COALESCE(source_ref,'')=? AND status='open' AND determination='pending'`, source, sourceRef || "");
-      if (existing) return existing.id;
-      const id = uuid2();
-      db3.run(
-        `INSERT INTO privacy_incidents(id,title,discovered_at,source,source_ref,description_enc,reported_by) VALUES(?,?,?,?,?,?,?)`,
-        id,
-        title,
-        today(),
-        source,
-        sourceRef,
-        description ? encrypt3(description) : null,
-        user && user.id && !String(user.id).startsWith("system") ? user.id : null
-      );
-      audit3.log({ user: user || { username: "system" }, action: "incident.draft", entity: "privacy_incident", entityId: id, details: { source } });
-      return id;
-    }
-    function massExportThreshold() {
-      const v = Number(db3.getSetting("mass_export_threshold", ""));
-      return Number.isFinite(v) && v > 0 ? v : 500;
-    }
-    function maybeMassExport({ clients, kind, user }) {
-      if (clients < massExportThreshold()) return null;
-      return draft({
-        source: "mass_export",
-        sourceRef: `${kind}:${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}:${user.id}`,
-        title: `Identified export of ${clients} clients (${kind})`,
-        description: `An identified export (${kind}) naming ${clients} clients was made by ${user.display_name || user.username}. Confirm it was authorised and went where it was recorded as going; if so, determine "not a breach" with that reason.`,
-        user
-      });
-    }
-    function chainFailure(r, user = null) {
-      return draft({
-        source: "audit_chain",
-        sourceRef: "audit_log",
-        title: "Audit log failed its integrity check",
-        description: `The audit log's hash chain did not verify (${r.truncated ? `truncated: ${r.reason || "rows missing from the end"}` : `first bad entry ${r.firstBadId}`}). Establish whether audit entries were altered or removed, and whether that concealed access to client records.`,
-        user
-      });
-    }
-    module.exports = { obligations, draft, chainFailure, maybeMassExport, massExportThreshold, NOTICE_DAYS, HHS_IMMEDIATE_AT, MEDIA_OVER, WARN_DAYS };
-  }
-});
-
-// server/audit.js
-var require_audit = __commonJS({
-  "server/audit.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var config = require_config();
-    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
-    var { sha256: sha2562 } = require_crypto();
-    var KEYED_PREFIX = "v2:";
-    function chainHash(payload, key = config.indexKey) {
-      return KEYED_PREFIX + crypto3.createHmac("sha256", key).update(payload).digest("hex");
-    }
-    function matches(stored, payload, key = config.indexKey) {
-      if (typeof stored !== "string") return false;
-      const expected = stored.startsWith(KEYED_PREFIX) ? chainHash(payload, key) : sha2562(payload);
-      return stored.length === expected.length && crypto3.timingSafeEqual(import_buffer.Buffer.from(stored), import_buffer.Buffer.from(expected));
-    }
-    var payloadOf = (r) => [r.at, r.user_id || "", r.username || "", r.action, r.entity || "", r.entity_id || "", r.client_id || "", r.ip || "", r.success ? 1 : 0, r.details || "", r.prev_hash].join("|");
-    function log({ user, action, entity, entityId, clientId, ip, success = true, details }) {
-      const prev = db3.one(`SELECT hash FROM audit_log ORDER BY id DESC LIMIT 1`);
-      const prevHash = prev ? prev.hash : "GENESIS";
-      const at = db3.now();
-      const detailsStr = details === void 0 ? null : JSON.stringify(details);
-      const payload = [at, user?.id || "", user?.username || "", action, entity || "", entityId || "", clientId || "", ip || "", success ? 1 : 0, detailsStr || "", prevHash].join("|");
-      const hash2 = chainHash(payload);
-      db3.run(
-        `INSERT INTO audit_log(at,user_id,username,action,entity,entity_id,client_id,ip,success,details,prev_hash,hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-        at,
-        user?.id || null,
-        user?.username || null,
-        action,
-        entity || null,
-        entityId || null,
-        clientId || null,
-        ip || null,
-        success ? 1 : 0,
-        detailsStr,
-        prevHash,
-        hash2
-      );
-    }
-    function headPayload(lastId, lastHash, rowCount) {
-      return `${lastId}|${lastHash}|${rowCount}`;
-    }
-    function sealHead(lastId, lastHash, rowCount, key = config.indexKey) {
-      return crypto3.createHmac("sha256", key).update(headPayload(lastId, lastHash, rowCount)).digest("hex");
-    }
-    function checkpoint({ key = config.indexKey } = {}) {
-      const last = db3.one(`SELECT id, hash FROM audit_log ORDER BY id DESC LIMIT 1`);
-      if (!last) return null;
-      const rowCount = db3.one(`SELECT COUNT(*) n FROM audit_log WHERE id <= ?`, last.id).n;
-      const head = sealHead(last.id, last.hash, rowCount, key);
-      db3.setSetting("audit_head", head);
-      db3.setSetting("audit_head_id", String(last.id));
-      db3.setSetting("audit_head_rows", String(rowCount));
-      db3.setSetting("audit_head_at", db3.now());
-      console.log(`[suds] audit checkpoint id=${last.id} rows=${rowCount} head=${head}`);
-      return { lastId: last.id, rowCount, head };
-    }
-    function checkHead({ key = config.indexKey } = {}) {
-      const head = db3.getSetting("audit_head", null);
-      const lastId = Number(db3.getSetting("audit_head_id", 0));
-      const rowCount = Number(db3.getSetting("audit_head_rows", 0));
-      if (!head || !lastId) return { checkpointed: false };
-      const out2 = { checkpointed: true, checkpointId: lastId, checkpointAt: db3.getSetting("audit_head_at", null) };
-      const max2 = db3.one(`SELECT MAX(id) m FROM audit_log`).m || 0;
-      if (lastId > max2) return { ...out2, truncated: true, reason: `the newest ${lastId - max2} entries since the checkpoint are gone` };
-      const row = db3.one(`SELECT hash FROM audit_log WHERE id=?`, lastId);
-      const nowCount = row ? db3.one(`SELECT COUNT(*) n FROM audit_log WHERE id <= ?`, lastId).n : 0;
-      const expected = sealHead(lastId, row ? row.hash : "", nowCount, key);
-      if (!row || expected.length !== head.length || !crypto3.timingSafeEqual(import_buffer.Buffer.from(expected), import_buffer.Buffer.from(head))) return { ...out2, truncated: true, reason: row ? "entries at or before the checkpoint were removed or altered" : "the checkpointed entry itself is gone" };
-      return { ...out2, truncated: false };
-    }
-    var VERIFY_BATCH = 5e3;
-    function* walk({ key, afterId = 0, prevHash = null, batch = VERIFY_BATCH }) {
-      let anchoredAt = null;
-      let checked = 0;
-      for (; ; ) {
-        const rows = db3.all(`SELECT * FROM audit_log WHERE id > ? ORDER BY id ASC LIMIT ?`, afterId, batch);
-        if (!rows.length) break;
-        if (prevHash === null) prevHash = rows[0].prev_hash;
-        if (anchoredAt === null) anchoredAt = rows[0].id;
-        for (const r of rows) {
-          checked++;
-          if (r.prev_hash !== prevHash || !matches(r.hash, payloadOf(r), key)) return { ok: false, checked, firstBadId: r.id, anchoredAt };
-          prevHash = r.hash;
-        }
-        afterId = rows[rows.length - 1].id;
-        if (rows.length < batch) break;
-        yield;
-      }
-      return { ok: true, checked, anchoredAt, lastId: afterId || null, lastHash: prevHash };
-    }
-    function verdict(res, { key, skipHead }) {
-      const { lastHash, ...out2 } = res;
-      if (!out2.ok) return { ...out2, ...skipHead ? {} : checkHead({ key }) };
-      const head = skipHead ? { checkpointed: false } : checkHead({ key });
-      if (head.truncated) return { ...out2, ok: false, ...head };
-      if (!out2.checked) return { ok: true, checked: 0, ...head, lastId: out2.lastId };
-      return { ...out2, ...head };
-    }
-    function verifyChain({ key = config.indexKey, skipHead = false, batch } = {}) {
-      const it = walk({ key, batch });
-      let step = it.next();
-      while (!step.done) step = it.next();
-      return verdict(step.value, { key, skipHead });
-    }
-    var defer = globalThis.setImmediate ? (f) => setImmediate(f) : (f) => setTimeout(f, 0);
-    var breathe = () => new Promise((resolve2) => defer(resolve2));
-    var FULL_EVERY_DAYS = 7;
-    function sealVerified(id, hash2, key = config.indexKey) {
-      return crypto3.createHmac("sha256", key).update(`verified|${id}|${hash2}`).digest("hex");
-    }
-    function setVerifiedMarker(id, hash2) {
-      if (!id) return;
-      db3.setSetting("audit_verified_id", String(id));
-      db3.setSetting("audit_verified_seal", sealVerified(id, hash2));
-    }
-    function clearVerifiedMarker() {
-      db3.run(`DELETE FROM settings WHERE key IN ('audit_verified_id','audit_verified_seal')`);
-    }
-    function verifiedMarker({ key = config.indexKey } = {}) {
-      const id = Number(db3.getSetting("audit_verified_id", 0));
-      const seal = db3.getSetting("audit_verified_seal", null);
-      if (!id || !seal) return null;
-      const row = db3.one(`SELECT id, hash FROM audit_log WHERE id=?`, id);
-      if (!row) return null;
-      const expected = sealVerified(row.id, row.hash, key);
-      if (expected.length !== seal.length || !crypto3.timingSafeEqual(import_buffer.Buffer.from(expected), import_buffer.Buffer.from(seal))) return null;
-      return { id: row.id, hash: row.hash };
-    }
-    async function verifyChainAsync({ key = config.indexKey, skipHead = false, incremental = false, batch } = {}) {
-      const marker = incremental ? verifiedMarker({ key }) : null;
-      const it = walk({ key, batch, ...marker ? { afterId: marker.id, prevHash: marker.hash } : {} });
-      let step = it.next();
-      while (!step.done) {
-        await breathe();
-        step = it.next();
-      }
-      const res = verdict(step.value, { key, skipHead });
-      if (res.ok) {
-        const last = step.value.lastId ? { id: step.value.lastId, hash: step.value.lastHash } : marker;
-        if (last) setVerifiedMarker(last.id, last.hash);
-      }
-      return { ...res, mode: marker ? "incremental" : "full", ...marker ? { from: marker.id } : {} };
-    }
-    function resignChain(newKey) {
-      const before = verifyChain();
-      if (!before.ok) throw new Error(`The audit chain does not verify under the current key (first bad entry ${before.firstBadId}); it will not be re-signed`);
-      const upd = db3.get().prepare(`UPDATE audit_log SET prev_hash=?, hash=? WHERE id=?`);
-      let prevHash = null;
-      let afterId = 0;
-      let resigned = 0;
-      for (; ; ) {
-        const rows = db3.all(`SELECT * FROM audit_log WHERE id > ? ORDER BY id ASC LIMIT ?`, afterId, VERIFY_BATCH);
-        if (!rows.length) break;
-        if (prevHash === null) prevHash = rows[0].prev_hash;
-        for (const r of rows) {
-          const row = { ...r, prev_hash: prevHash };
-          const hash2 = String(r.hash).startsWith(KEYED_PREFIX) ? chainHash(payloadOf(row), newKey) : prevHash === r.prev_hash ? r.hash : sha2562(payloadOf(row));
-          if (hash2 !== r.hash || prevHash !== r.prev_hash) {
-            upd.run(prevHash, hash2, r.id);
-            resigned++;
-          }
-          prevHash = hash2;
-        }
-        afterId = rows[rows.length - 1].id;
-        if (rows.length < VERIFY_BATCH) break;
-      }
-      const after = verifyChain({ key: newKey, skipHead: true });
-      if (!after.ok) throw new Error(`The audit chain does not verify under the new key after re-signing (first bad entry ${after.firstBadId})`);
-      const hadHead = db3.getSetting("audit_head", null);
-      if (hadHead) checkpoint({ key: newKey });
-      clearVerifiedMarker();
-      const pinned = verifyChain({ key: newKey });
-      if (!pinned.ok) throw new Error(`The audit head does not verify under the new key after re-sealing (${pinned.reason || `first bad entry ${pinned.firstBadId}`})`);
-      return { resigned, checked: after.checked };
-    }
-    function purgeTombstones(days) {
-      const cutoff = new Date(Date.now() - days * 864e5).toISOString();
-      const n = db3.run(`DELETE FROM tombstones WHERE deleted_at < ?`, cutoff).changes;
-      if (n) {
-        const prior = db3.getSetting("tombstone_purged_before", null);
-        if (!prior || prior < cutoff) db3.setSetting("tombstone_purged_before", cutoff);
-        log({ user: { username: "system" }, action: "tombstones.purge", details: { purged: n, before: cutoff } });
-      }
-      return n;
-    }
-    function purge(days) {
-      const cutoff = new Date(Date.now() - days * 864e5).toISOString();
-      const last = db3.one(`SELECT id, hash FROM audit_log WHERE at < ? ORDER BY id DESC LIMIT 1`, cutoff);
-      if (!last) return 0;
-      const n = db3.run(`DELETE FROM audit_log WHERE at < ?`, cutoff).changes;
-      log({ user: { username: "system" }, action: "audit.purge", details: { purged: n, before: cutoff, last_purged_id: last.id, last_purged_hash: last.hash } });
-      checkpoint();
-      return n;
-    }
-    async function scheduledVerify({ full = false, batch } = {}) {
-      const lastFull = db3.getSetting("audit_full_verified_at", null);
-      const fullDue = full || !lastFull || Date.now() - Date.parse(lastFull) > FULL_EVERY_DAYS * 864e5;
-      const r = await verifyChainAsync({ incremental: !fullDue, batch });
-      if (r.ok) {
-        db3.setSetting("audit_verified_at", db3.now());
-        if (r.mode === "full") db3.setSetting("audit_full_verified_at", db3.now());
-        checkpoint();
-        return r;
-      }
-      console.error(`[suds] AUDIT CHAIN BROKEN ${r.truncated ? `(truncated: ${r.reason})` : `at entry ${r.firstBadId}`} \u2014 investigate immediately`);
-      log({ user: { username: "system" }, action: "audit.verify.failed", success: false, details: { first_bad_id: r.firstBadId, checked: r.checked, truncated: r.truncated || void 0, reason: r.reason, mode: r.mode } });
-      db3.setSetting("audit_verify_failed_at", db3.now());
-      try {
-        require_incidents().chainFailure(r);
-      } catch (e) {
-        console.error("[suds] could not open an incident for the audit failure:", e.message);
-      }
-      return r;
-    }
-    module.exports = { log, verifyChain, verifyChainAsync, verifiedMarker, resignChain, scheduledVerify, purge, purgeTombstones, checkpoint, checkHead };
-  }
-});
-
 // server/devices.js
 var require_devices = __commonJS({
   "server/devices.js"(exports, module) {
@@ -9396,7 +9481,8 @@ var require_auth = __commonJS({
         "careplan:read",
         "complaints:*",
         "incidents:*",
-        "court-orders:*"
+        "court-orders:*",
+        "agreements:*"
       ],
       supervisor: [
         "clients:read",
@@ -9441,7 +9527,8 @@ var require_auth = __commonJS({
         "assessments:*",
         "complaints:*",
         "incidents:*",
-        "court-orders:*"
+        "court-orders:*",
+        "agreements:*"
       ],
       // Front-line staff hold export:read so the Export buttons on their own screens work; without
       // export:identified every file they can produce is de-identified (Safe Harbor) and caseload-scoped.
@@ -9472,7 +9559,8 @@ var require_auth = __commonJS({
         "export:read",
         "careplan:*",
         "assessments:*",
-        "court-orders:read"
+        "court-orders:read",
+        "agreements:read"
       ],
       navigator: [
         "clients:read",
@@ -9500,7 +9588,8 @@ var require_auth = __commonJS({
         "patient-requests:*",
         "export:read",
         "careplan:*",
-        "court-orders:read"
+        "court-orders:read",
+        "agreements:read"
       ],
       // finance sees money, not people: export:read without export:identified means every export it can run
       // comes out keyed by client_code. Do not add 'export:identified' here — docs/HIPAA.md promises otherwise.
@@ -9926,7 +10015,10 @@ var require_sync_tables = __commonJS({
         // Settings → Lists (the wording and order of documentation choices): the office's configuration,
         // pull-only like supply counts. A device needs it to offer the same choices and show the same labels
         // offline; it can never change it (server/routes/options.js refuses writes in the local kernel).
-        { name: "option_overrides", enc: [], scope: "all", writePerm: "settings:manage", serverOwned: true }
+        { name: "option_overrides", enc: [], scope: "all", writePerm: "settings:manage", serverOwned: true },
+        // The QSOA / research / audit register the non-consent disclosure bases rest on (server/disclosure.js):
+        // the office's, pull-only, so a device can offer the same agreements on its disclosure form offline.
+        { name: "disclosure_agreements", enc: [], scope: "all", writePerm: "agreements:write", serverOwned: true }
       ],
       // Push rejection reasons that will never succeed on a retry: the office has ruled, and the device must
       // mark the row as exchanged (office wins) rather than resend it every sync forever. Anything else
@@ -10021,7 +10113,8 @@ var require_sync_tables = __commonJS({
         ["complaints", "handled_by"],
         ["complaints", "created_by"],
         ["privacy_incidents", "determined_by"],
-        ["privacy_incidents", "reported_by"]
+        ["privacy_incidents", "reported_by"],
+        ["disclosure_agreements", "created_by"]
       ]
     };
     module.exports.user_ref_cols = [...new Set(module.exports.user_refs.map(([, c]) => c))];
@@ -12099,8 +12192,13 @@ var require_demo = __commonJS({
             counts.calls++;
           }
           const nr = c.cstatus === "waitlist" ? 1 : 2 + Math.floor(rand() * 2);
+          const referredTo = [];
           for (let k = 0; k < nr; k++) {
             const rid = rids[(i * 3 + k * 5) % rids.length];
+            {
+              const rn = RESOURCES[rids.indexOf(rid)][0];
+              if (!referredTo.includes(rn)) referredTo.push(rn);
+            }
             const st = k === 0 ? pick(["admitted", "scheduled", "accepted", "completed"]) : pick(C.REFERRAL_STATUSES);
             const off = 10 + Math.floor(rand() * 100);
             db3.run(`INSERT INTO referrals(id,client_id,resource_id,user_id,referred_at,status,urgency,appointment_at,admitted_at,closed_at,outcome_enc,barrier_enc,warm_handoff,follow_up_due,notes_enc) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, track("referrals", uuid2()), c.id, rid, c.worker, d(off), st, c.risk === "critical" ? "urgent" : "routine", ["scheduled", "admitted", "completed"].includes(st) ? d(off - 3) : null, ["admitted", "completed"].includes(st) ? d(off - 5) : null, ["completed", "closed", "declined_by_client", "declined_by_provider"].includes(st) ? d(off - 12) : null, st === "completed" ? encrypt3("Completed program") : null, ["waitlisted", "declined_by_provider"].includes(st) ? encrypt3(pick(["no beds", "insurance", "transportation"])) : null, rand() < 0.5 ? 1 : 0, ["pending", "contacted", "waitlisted"].includes(st) ? day(-2) : null, null);
@@ -12139,10 +12237,11 @@ P: ${P2} (Sample data)`), encrypt3(JSON.stringify(i % 4 === 0 ? { S, O, A, P: P2
             counts.notes++;
           }
           const consentId = track("consents", uuid2());
-          db3.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,signed_on_paper,redisclosure_notice_given,revocation_right_given,refusal_consequences_given,signer_relationship,discloser,rule_version,document_ref,created_by) VALUES(?,?,?,?,?,?,?,?,1,1,1,1,'patient','Sample County Behavioral Health','2024',?,?)`, consentId, c.id, "part2_disclosure", encrypt3("County Opioid Treatment Program"), encrypt3("Treatment coordination and referral"), encrypt3("Referral summary, diagnosis, MAT status"), day(60 + i), day(i === 3 ? 5 : i === 5 ? -10 : -300 + i * 20), "Consent binder, tab " + (i + 1), c.worker);
+          const consentRecipient = `${referredTo.join(", ")} and my other treating providers`;
+          db3.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,signed_on_paper,redisclosure_notice_given,revocation_right_given,refusal_consequences_given,signer_relationship,discloser,rule_version,document_ref,created_by) VALUES(?,?,?,?,?,?,?,?,1,1,1,1,'patient','Sample County Behavioral Health','2024',?,?)`, consentId, c.id, "part2_tpo", encrypt3(consentRecipient), encrypt3("Treatment, payment and health care operations"), encrypt3("Referral summary, diagnosis, MAT status"), day(60 + i), day(i === 3 ? 5 : i === 5 ? -10 : -300 + i * 20), "Consent binder, tab " + (i + 1), c.worker);
           if (i % 4 !== 1) db3.run(`INSERT INTO part2_notices(id,client_id,given_at,method,notice_version,acknowledged,given_by) VALUES(?,?,?,?,?,?,?)`, track("part2_notices", uuid2()), c.id, day(60 + i), "in_person_paper", "1", 1, c.worker);
           if (i % 3 === 0) db3.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,created_by) VALUES(?,?,?,?,?,?,?,?,?)`, track("consents", uuid2()), c.id, "roi", encrypt3("Family member (mother)"), encrypt3("Care coordination with family"), encrypt3("Appointment dates and general progress"), day(50 + i), day(-315), c.worker);
-          if (i % 2 === 0) db3.run(`INSERT INTO disclosures(id,client_id,consent_id,recipient_enc,purpose_enc,what_enc,method,disclosed_at,disclosed_by,basis,source) VALUES(?,?,?,?,?,?,?,?,?,?,'manual')`, track("disclosures", uuid2()), c.id, consentId, encrypt3("County Opioid Treatment Program"), encrypt3("Referral for MAT intake"), encrypt3("Referral summary and MAT status"), "fax", d(40 + i), c.worker, "consent");
+          if (i % 2 === 0) db3.run(`INSERT INTO disclosures(id,client_id,consent_id,recipient_enc,purpose_enc,what_enc,method,disclosed_at,disclosed_by,basis,source) VALUES(?,?,?,?,?,?,?,?,?,?,'manual')`, track("disclosures", uuid2()), c.id, consentId, encrypt3(referredTo[0]), encrypt3("Referral for treatment intake"), encrypt3("Referral summary and MAT status"), "fax", d(40 + i), c.worker, "consent");
           const EXP = [["transportation", "Metro Transit", "Bus pass (monthly)", 45], ["client_assistance", "Walgreens", "Hygiene kit and phone charger", 32.18], ["housing_assistance", "Motel 6", "Emergency motel, 3 nights", 267], ["ids_documents", "DMV", "State ID fee", 28], ["client_assistance", "Uber", "Ride to intake appointment", 18.75], ["phones_communication", "Metro PCS", "Prepaid phone (recovery contact)", 40], ["naloxone_supplies", "Harm Reduction Coalition", "Naloxone kits (5)", 150]];
           const ne = c.cstatus === "waitlist" ? 0 : 1 + Math.floor(rand() * 3);
           for (let k = 0; k < ne; k++) {
@@ -16253,9 +16352,13 @@ var require_disclosure = __commonJS({
     var audit3 = require_audit();
     var C = require_constants();
     var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
-    var { badRequest, forbidden } = require_http();
+    var { badRequest, forbidden, HttpError: HttpError3 } = require_http();
     var BASES = ["consent", "court_order", "medical_emergency", "qsoa", "audit_evaluation", "research", "crime_on_premises", "child_abuse_report", "other"];
-    var NEEDS_JUSTIFICATION = ["other", "medical_emergency"];
+    var NEEDS_JUSTIFICATION = ["other", "medical_emergency", "crime_on_premises", "child_abuse_report"];
+    var OVERRIDE_BASES = ["other", "research", "audit_evaluation", "crime_on_premises", "child_abuse_report"];
+    var AGREEMENT_KINDS = { qsoa: "qualified service organization agreement", research: "research approval", audit_evaluation: "audit or evaluation approval" };
+    var REFERRAL_BASES = ["consent", "medical_emergency", "court_order", "other"];
+    var LEGACY_CONSENT_CUTOFF = "2026-02-16";
     var SYSTEM_BASES = ["export", "state_reporting"];
     var STATE_REPORTING = {
       basis: "state_reporting",
@@ -16282,9 +16385,67 @@ var require_disclosure = __commonJS({
       const n = notice();
       return short ? n.short : `${n.short} NOTICE TO RECIPIENT (42 CFR \xA72.32): ${n.text}`;
     }
-    function activeConsent(clientId, consentId) {
+    function missingPart2Elements(v) {
+      const missing = [];
+      if (!v.discloser) missing.push("who may make the disclosure");
+      if (!v.recipient) missing.push("the recipient (a name, or a class of recipients)");
+      if (!v.purpose) missing.push("the purpose");
+      if (!v.scope) missing.push("what information is covered (scope)");
+      if (!v.expires_at && !v.expires_event) missing.push("an expiration date or event");
+      if (!v.document_ref && !v.signed_on_paper && !v.witness) missing.push('evidence it was signed (a document reference, a witness, or "signed on paper")');
+      if (v.signer_relationship !== "patient" && !v.signer_name) missing.push("the name of the person who signed for the patient");
+      if (!v.revocation_right_given) missing.push("confirmation that the consent states the right to revoke it and how");
+      if (!v.redisclosure_notice_given) missing.push("confirmation that the redisclosure statement was given (\xA72.32)");
+      if (!v.refusal_consequences_given) missing.push("confirmation that the consent states the consequences of refusing to sign");
+      return missing;
+    }
+    function missingLegacyElements(v) {
+      const missing = [];
+      if (!v.recipient) missing.push("the recipient");
+      if (!v.purpose) missing.push("the purpose");
+      if (!v.scope) missing.push("what information is covered (scope)");
+      if (!v.expires_at && !v.expires_event) missing.push("an expiration date or event");
+      if (!v.document_ref && !v.signed_on_paper && !v.witness) missing.push('evidence it was signed (a document reference, a witness, or "signed on paper")');
+      if (String(v.signed_at || "") >= LEGACY_CONSENT_CUTOFF) missing.push(`the 2024 elements (it was signed on or after ${LEGACY_CONSENT_CUTOFF}, when the 2024 rule's element list became mandatory)`);
+      return missing;
+    }
+    var dec2 = (v) => {
+      if (!v) return "";
+      try {
+        return decrypt3(v);
+      } catch {
+        return "";
+      }
+    };
+    function consentValues(row) {
+      return {
+        discloser: row.discloser,
+        recipient: dec2(row.recipient_enc),
+        purpose: dec2(row.purpose_enc),
+        scope: dec2(row.scope_enc),
+        expires_at: row.expires_at,
+        expires_event: row.expires_event,
+        document_ref: row.document_ref,
+        signed_on_paper: row.signed_on_paper,
+        witness: row.witness,
+        signer_relationship: row.signer_relationship,
+        signer_name: dec2(row.signer_name_enc),
+        revocation_right_given: row.revocation_right_given,
+        redisclosure_notice_given: row.redisclosure_notice_given,
+        refusal_consequences_given: row.refusal_consequences_given,
+        signed_at: row.signed_at
+      };
+    }
+    function consentElementProblems(row) {
+      if (!C.PART2_CONSENT_TYPES.includes(row.type)) return [];
+      const v = consentValues(row);
+      return row.rule_version === "2024" ? missingPart2Elements(v) : missingLegacyElements(v);
+    }
+    function activeConsent(clientId, consentId, { elements = true } = {}) {
       if (!consentId) return null;
-      return db3.one(`SELECT * FROM consents WHERE id=? AND client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, consentId, clientId) || null;
+      const row = db3.one(`SELECT * FROM consents WHERE id=? AND client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, consentId, clientId) || null;
+      if (row && elements && consentElementProblems(row).length) return null;
+      return row;
     }
     function courtOrderProblems(o) {
       const out2 = [];
@@ -16297,25 +16458,118 @@ var require_disclosure = __commonJS({
     function agreedRestrictions(clientId) {
       return db3.one(`SELECT COUNT(*) n FROM patient_requests WHERE client_id=? AND kind='restriction' AND status='fulfilled'`, clientId).n;
     }
-    function requireBasis(clientId, { consent_id, basis, justification, user, court_order_id, legal_proceeding, counseling_notes, restriction_reviewed } = {}) {
+    var normalise = (s) => String(s || "").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    var splitAliases = (s) => String(s || "").split(/[;\n]/).map((x) => x.trim()).filter(Boolean);
+    function aliasGroups() {
+      const groups = db3.all(`SELECT organisation, aliases FROM disclosure_agreements`).map((a) => [a.organisation, ...splitAliases(a.aliases)]);
+      for (const r of db3.all(`SELECT value FROM settings WHERE key LIKE 'fhir_client:%'`)) {
+        try {
+          const reg = JSON.parse(r.value);
+          if (reg && reg.recipient) groups.push([reg.recipient, ...Array.isArray(reg.aliases) ? reg.aliases : []]);
+        } catch {
+        }
+      }
+      return groups;
+    }
+    function recipientNames(recipient) {
+      const given = (Array.isArray(recipient) ? recipient : [recipient]).map((x) => String(x || "").trim()).filter(Boolean);
+      const seen2 = new Set(given.map(normalise));
+      const out2 = [...given];
+      for (const group of aliasGroups()) {
+        if (!group.some((n) => seen2.has(normalise(n)))) continue;
+        for (const n of group) if (!seen2.has(normalise(n))) {
+          seen2.add(normalise(n));
+          out2.push(n);
+        }
+      }
+      return out2;
+    }
+    function consentNamesRecipient({ type, recipient }, names) {
+      const r = normalise(recipient);
+      const ns = names.map(normalise).filter(Boolean);
+      if (!r || !ns.length) return false;
+      if (type === "part2_tpo") return ns.some((n) => ` ${r} `.includes(` ${n} `));
+      return ns.includes(r);
+    }
+    function isInternalRecipient(recipient) {
+      const r = normalise(recipient);
+      if (!r) return false;
+      if (r === normalise(db3.getSetting("org_name", ""))) return true;
+      return db3.all(`SELECT username, display_name FROM users WHERE is_active=1`).some((u) => normalise(u.username) === r || normalise(u.display_name) === r);
+    }
+    function agreementProblems(a) {
+      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const out2 = [];
+      if (a.status !== "active") out2.push("it has been ended");
+      if (a.expires_at && a.expires_at < today) out2.push("it has expired");
+      if (a.agreement_date > today) out2.push("it is not in force yet");
+      if (a.kind !== "qsoa" && !a.approving_body) out2.push("it does not name the IRB or approving body");
+      return out2;
+    }
+    function agreementNames(a) {
+      return [a.organisation, ...splitAliases(a.aliases)];
+    }
+    function requireAgreement(basis, agreementId, recipient) {
+      const label = AGREEMENT_KINDS[basis];
+      let a = agreementId ? db3.one(`SELECT * FROM disclosure_agreements WHERE id=?`, agreementId) : null;
+      if (!agreementId) {
+        const names2 = new Set(recipientNames(recipient).map(normalise));
+        a = db3.all(`SELECT * FROM disclosure_agreements WHERE kind=? AND status='active' ORDER BY agreement_date DESC, created_at DESC`, basis).find((x) => !agreementProblems(x).length && agreementNames(x).some((n) => names2.has(normalise(n)))) || null;
+      }
+      if (!a) {
+        throw badRequest(basis === "qsoa" ? "A disclosure to a qualified service organization needs the qualified service organization agreement on file (\xA72.11, \xA72.12(c)(4)): register it under Privacy & Part 2 \u2192 Agreements, and choose it." : `A ${basis === "research" ? "research (\xA72.52)" : "audit or evaluation (\xA72.53)"} disclosure needs the ${label} on file \u2014 the IRB, privacy board or approving body, and its dates: register it under Privacy & Part 2 \u2192 Agreements, and choose it.`, { agreementRequired: basis });
+      }
+      if (a.kind !== basis) throw badRequest(`That is a ${AGREEMENT_KINDS[a.kind]}, not a ${label}.`);
+      const problems = agreementProblems(a);
+      if (problems.length) throw badRequest(`That ${label} cannot authorise a disclosure: ${problems.join("; ")}.`);
+      const names = recipientNames(recipient);
+      if (!names.length) throw badRequest("Name the recipient of the disclosure.");
+      const theirs = new Set(agreementNames(a).map(normalise));
+      if (!names.some((n) => theirs.has(normalise(n)))) {
+        throw new HttpError3(409, `This ${label} is with "${a.organisation}"; it only covers disclosures to that organisation. Name it as the recipient, or choose the agreement with the organisation you are disclosing to.`, { agreementOrganisation: a.organisation });
+      }
+      return a;
+    }
+    function requireBasis(clientId, { consent_id, basis, justification, user, court_order_id, legal_proceeding, counseling_notes, restriction_reviewed, recipient, agreement_id, recipient_override, allowed } = {}) {
       const b = basis || "consent";
       if (!BASES.includes(b)) throw badRequest(`"${b}" is not a lawful basis for disclosure`);
+      if (allowed && !allowed.includes(b)) throw badRequest(`A referral can only be made with the client's consent, in a medical emergency, under a court order, or on a supervisor's justified override \u2014 not on a "${b.replace(/_/g, " ")}" basis. Record that disclosure on the client's Consents tab instead.`);
+      const canOverride = require_auth().hasPerm(user, "disclosures:override");
+      if (OVERRIDE_BASES.includes(b) && !canOverride) {
+        throw forbidden(b === "other" ? 'Only a supervisor or administrator can record a disclosure on an "other" basis' : `Only a supervisor or administrator can record a disclosure on a "${b.replace(/_/g, " ")}" basis`);
+      }
       const proceeding = !!legal_proceeding;
       const notes = !!counseling_notes;
       if (proceeding && !["consent", "court_order"].includes(b)) throw badRequest("Information for use in a proceeding against the patient may only be disclosed under a court order issued under 42 CFR \xA72.64/\xA72.65, or the patient's written consent given for that proceeding alone (\xA72.12(d), \xA72.31(d)). A subpoena on its own is not enough.");
       if (notes && !["consent", "court_order"].includes(b)) throw badRequest("SUD counseling notes may only be disclosed under a consent given for counseling notes alone (\xA72.31(b)), or a court order that expressly covers them.");
+      const why = String(justification || "").trim();
       let consent = null;
       let order = null;
+      let agreement = null;
+      let override = false;
       if (b === "consent") {
-        consent = activeConsent(clientId, consent_id);
+        consent = activeConsent(clientId, consent_id, { elements: false });
         if (!consent) throw badRequest("A valid, unexpired consent must be selected before information can be shared. Record the consent first, or choose another lawful basis.");
         if (!disclosingConsentTypes().includes(consent.type)) {
           throw badRequest(consent.type === "roi" ? "A general release of information is not a 42 CFR Part 2 consent (\xA72.31, \xA72.32). Record a Part 2 consent with every required element, or choose another lawful basis." : `A "${consent.type.replace(/_/g, " ")}" consent does not authorise sharing information. Record a Part 2 consent, or choose another lawful basis.`);
         }
+        const missing = consentElementProblems(consent);
+        if (missing.length) throw badRequest(`This consent cannot authorise a disclosure: it does not record ${missing.join("; ")}. Record a new consent with every \xA72.31 element.`, { consentIncomplete: missing });
         if (proceeding && consent.type !== "part2_proceedings") throw badRequest("Information for use in a proceeding against the patient needs a court order, or a consent given for that proceeding alone (\xA72.31(d)); this consent does not cover it.");
         if (!proceeding && consent.type === "part2_proceedings") throw badRequest("A consent for use in a legal proceeding cannot be combined with any other purpose (\xA72.31(d)); use it only for the proceeding it names.");
         if (notes && consent.type !== "part2_counseling_notes") throw badRequest("SUD counseling notes need a separate consent given for counseling notes alone (\xA72.31(b)); a treatment, payment and operations consent or a general Part 2 consent does not cover them.");
         if (!notes && consent.type === "part2_counseling_notes") throw badRequest('A consent for SUD counseling notes covers counseling notes only (\xA72.31(b)); tick "includes SUD counseling notes", or rely on a different consent for other information.');
+        const names = recipientNames(recipient);
+        if (!names.length) throw badRequest("Name the recipient of the disclosure: the consent is checked against it.");
+        const named = dec2(consent.recipient_enc);
+        if (!consentNamesRecipient({ type: consent.type, recipient: named }, names)) {
+          if (!recipient_override) {
+            throw new HttpError3(409, `This consent covers disclosures to "${named}" only; it does not name ${names[0]}. Choose a consent that names this recipient, record a new one, or ask a supervisor to override with a written justification.`, { consentRecipient: named, recipientNotCovered: true });
+          }
+          if (!canOverride) throw forbidden("Only a supervisor or administrator can rely on a consent for a recipient it does not name");
+          if (why.length < MIN_JUSTIFICATION) throw badRequest(`Relying on a consent for a recipient it does not name needs a written justification of at least ${MIN_JUSTIFICATION} characters, which is kept with the disclosure record.`);
+          override = true;
+        }
       }
       if (b === "court_order") {
         order = court_order_id ? db3.one(`SELECT * FROM court_orders WHERE id=? AND client_id=?`, court_order_id, clientId) : null;
@@ -16324,28 +16578,44 @@ var require_disclosure = __commonJS({
         if (problems.length) throw badRequest(`That court order cannot authorise a disclosure: ${problems.join("; ")}.`);
         if (notes && !order.covers_counseling_notes) throw badRequest("That court order does not expressly cover SUD counseling notes.");
       }
+      if (AGREEMENT_KINDS[b]) agreement = requireAgreement(b, agreement_id, recipient);
       if (!RESTRICTION_EXEMPT.includes(b) && !restriction_reviewed && agreedRestrictions(clientId)) {
         throw badRequest("This client has an agreed restriction on how their information is shared (see their Requests tab). Check that this disclosure respects it, then confirm.", { restrictionReview: true });
       }
-      const why = String(justification || "").trim();
       if (NEEDS_JUSTIFICATION.includes(b) && why.length < MIN_JUSTIFICATION) {
-        throw badRequest(b === "other" ? `Sharing without consent on an "other" basis needs a written justification of at least ${MIN_JUSTIFICATION} characters, which is kept with the disclosure record.` : `A medical emergency disclosure (42 CFR \xA72.51) needs a written justification of at least ${MIN_JUSTIFICATION} characters: the nature of the emergency and who was told.`);
+        throw badRequest(b === "other" ? `Sharing without consent on an "other" basis needs a written justification of at least ${MIN_JUSTIFICATION} characters, which is kept with the disclosure record.` : b === "medical_emergency" ? `A medical emergency disclosure (42 CFR \xA72.51) needs a written justification of at least ${MIN_JUSTIFICATION} characters: the nature of the emergency and who was told.` : `A ${b === "crime_on_premises" ? "report of a crime on the premises or against staff (\xA72.12(c)(5))" : "mandated report of suspected child abuse or neglect (\xA72.12(c)(6))"} needs a written justification of at least ${MIN_JUSTIFICATION} characters: what happened, and what was reported to whom.`);
       }
-      if (b === "other" && !require_auth().hasPerm(user, "disclosures:override")) throw forbidden('Only a supervisor or administrator can record a disclosure on an "other" basis');
-      return { basis: b, consent, court_order: order, justification: why || null, legal_proceeding: proceeding, counseling_notes: notes };
+      const kept = override ? `Recipient override (the consent names "${dec2(consent.recipient_enc)}"): ${why}` : why || null;
+      return { basis: b, consent, court_order: order, agreement, justification: kept, legal_proceeding: proceeding, counseling_notes: notes, recipient_override: override };
     }
-    function requireExportBasis(clientIds, { basis, restriction_reviewed, legal_proceeding } = {}) {
+    function requireExportBasis(clientIds, { basis, restriction_reviewed, legal_proceeding, recipient, agreement_id, user } = {}) {
       if (legal_proceeding) throw badRequest("Records for use in a legal proceeding against a patient are disclosed one client at a time, under a recorded court order or a proceedings-only consent (Consents tab \u2192 Record a disclosure), never as a bulk export.");
       if (!basis) throw badRequest(`An identified export must state its lawful basis (basis=${EXPORT_BASES.join("|")}); it is written to the accounting of disclosures for every client in the file`);
       if (!EXPORT_BASES.includes(basis)) throw badRequest(`"${basis}" is not a basis an identified export can be made under (${EXPORT_BASES.join(", ")})`);
-      if (basis === "consent" && clientIds.length) {
-        const types = fileConsentTypes();
-        const covered = new Set(db3.all(`SELECT DISTINCT client_id FROM consents WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now')) AND type IN (${types.map(() => "?").join(",")})`, ...types).map((r) => r.client_id));
-        const missing = clientIds.filter((id) => !covered.has(id)).length;
-        if (missing) throw badRequest(`${missing} client${missing === 1 ? "" : "s"} in this export ${missing === 1 ? "has" : "have"} no active Part 2 consent. Narrow the export, or state another lawful basis.`, { clientsWithoutConsent: missing });
+      if (OVERRIDE_BASES.includes(basis) && !require_auth().hasPerm(user, "disclosures:override")) throw forbidden(`Only a supervisor or administrator can make an export on a "${basis.replace(/_/g, " ")}" basis`);
+      if (basis === "internal" && !isInternalRecipient(recipient)) {
+        throw badRequest(`An "internal" export stays within this program (\xA72.12(c)(3)): the recipient must be ${db3.getSetting("org_name", "") || "this program"} or one of its staff (their name or username). A file for anyone else needs another basis.`);
       }
-      requireRestrictionReview(clientIds, restriction_reviewed);
-      return basis;
+      const agreement = AGREEMENT_KINDS[basis] ? requireAgreement(basis, agreement_id, recipient) : null;
+      const consentOf = /* @__PURE__ */ new Map();
+      const excluded = [];
+      if (basis === "consent") {
+        const names = recipientNames(recipient);
+        for (const id of clientIds) {
+          const c = fileConsentFor(id, names);
+          if (c) consentOf.set(id, c.id);
+          else excluded.push(id);
+        }
+      }
+      const out2 = new Set(excluded);
+      requireRestrictionReview(clientIds.filter((id) => !out2.has(id)), restriction_reviewed);
+      return { basis, agreement, consentOf, excluded };
+    }
+    function fileConsentFor(clientId, names) {
+      const types = fileConsentTypes();
+      if (!names.length || !types.length) return null;
+      const rows = db3.all(`SELECT * FROM consents WHERE client_id=? AND type IN (${types.map(() => "?").join(",")}) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now')) ORDER BY signed_at DESC, created_at DESC`, clientId, ...types);
+      return rows.find((c) => !consentElementProblems(c).length && consentNamesRecipient({ type: c.type, recipient: dec2(c.recipient_enc) }, names)) || null;
     }
     function requireRestrictionReview(clientIds, restriction_reviewed) {
       if (restriction_reviewed || !clientIds.length) return;
@@ -16353,7 +16623,7 @@ var require_disclosure = __commonJS({
       const n = clientIds.filter((id) => restricted.has(id)).length;
       if (n) throw badRequest(`${n} client${n === 1 ? "" : "s"} in this export ${n === 1 ? "has" : "have"} an agreed restriction on how their information is shared. Check the export respects it, then confirm (restriction_reviewed=1).`, { restrictionReview: true, restrictedClients: n });
     }
-    function record({ clientId, consentId = null, courtOrderId = null, legalProceeding = false, counselingNotes = false, recipient, purpose, what, method = null, basis = "consent", justification = null, source = "manual", sourceRef = null, disclosedAt = null, user, ip }) {
+    function record({ clientId, consentId = null, courtOrderId = null, agreementId = null, recipientOverride = false, legalProceeding = false, counselingNotes = false, recipient, purpose, what, method = null, basis = "consent", justification = null, source = "manual", sourceRef = null, disclosedAt = null, user, ip }) {
       const id = uuid2();
       const at = disclosedAt || db3.now();
       const noticeVersion = part2Program() ? C.PART2_NOTICE_VERSION : null;
@@ -16382,6 +16652,8 @@ var require_disclosure = __commonJS({
         source,
         consent_id: consentId || void 0,
         court_order_id: courtOrderId || void 0,
+        agreement_id: agreementId || void 0,
+        recipient_override: recipientOverride ? true : void 0,
         justified: justification ? true : void 0,
         legal_proceeding: legalProceeding ? true : void 0,
         counseling_notes: counselingNotes ? true : void 0,
@@ -16421,20 +16693,14 @@ var require_disclosure = __commonJS({
       const ok = disclosingConsentTypes();
       return FHIR_CONSENT_TYPES.filter((t) => ok.includes(t));
     }
-    var normalise = (s) => String(s || "").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
     function isTpo(purpose) {
       const p = ` ${normalise(purpose)} `;
       return / tpo /.test(p) || p.includes("treatment") && p.includes("payment") && p.includes("operations");
     }
     function consentCovers({ type, recipient, purpose }, { recipients, purposeOfUse }) {
       if (type !== void 0 && !fhirConsentTypes().includes(type)) return false;
-      const r = normalise(recipient);
-      const names = recipients.map(normalise).filter(Boolean);
-      if (!r) return false;
-      if (type === "part2_tpo") {
-        return !!FHIR_PURPOSES[purposeOfUse] && names.some((n) => ` ${r} `.includes(` ${n} `));
-      }
-      if (!names.includes(r)) return false;
+      if (!consentNamesRecipient({ type, recipient }, recipients)) return false;
+      if (type === "part2_tpo") return !!FHIR_PURPOSES[purposeOfUse];
       if (isTpo(purpose)) return true;
       const p = ` ${normalise(purpose)} `;
       return (FHIR_PURPOSES[purposeOfUse]?.words || []).some((w) => p.includes(` ${normalise(w)} `));
@@ -16453,11 +16719,12 @@ var require_disclosure = __commonJS({
       if (hit && hit.key === key) return hit.map;
       const map = /* @__PURE__ */ new Map();
       const restricted = new Set(db3.all(`SELECT DISTINCT client_id FROM patient_requests WHERE kind='restriction' AND status='fulfilled'`).map((r) => r.client_id));
-      const rows = types.length ? db3.all(`SELECT k.id, k.type, k.client_id, k.recipient_enc, k.purpose_enc FROM consents k JOIN clients c ON c.id=k.client_id
+      const rows = types.length ? db3.all(`SELECT k.* FROM consents k JOIN clients c ON c.id=k.client_id
     WHERE k.type IN (${types.map(() => "?").join(",")}) AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= date('now'))
       AND c.deleted_at IS NULL AND c.merged_into IS NULL ORDER BY k.signed_at, k.created_at`, ...types) : [];
       for (const row of rows) {
         if (restricted.has(row.client_id)) continue;
+        if (consentElementProblems(row).length) continue;
         let plain;
         try {
           plain = { type: row.type, recipient: row.recipient_enc ? decrypt3(row.recipient_enc) : "", purpose: row.purpose_enc ? decrypt3(row.purpose_enc) : "" };
@@ -16486,6 +16753,10 @@ var require_disclosure = __commonJS({
       SYSTEM_BASES,
       STATE_REPORTING,
       NEEDS_JUSTIFICATION,
+      OVERRIDE_BASES,
+      REFERRAL_BASES,
+      AGREEMENT_KINDS,
+      LEGACY_CONSENT_CUTOFF,
       MIN_JUSTIFICATION,
       part2Program,
       notice,
@@ -16495,6 +16766,18 @@ var require_disclosure = __commonJS({
       activeConsent,
       courtOrderProblems,
       agreedRestrictions,
+      missingPart2Elements,
+      missingLegacyElements,
+      consentElementProblems,
+      consentValues,
+      normalise,
+      recipientNames,
+      consentNamesRecipient,
+      isInternalRecipient,
+      agreementProblems,
+      agreementNames,
+      requireAgreement,
+      fileConsentFor,
       requireBasis,
       requireExportBasis,
       requireRestrictionReview,
@@ -17087,11 +17370,32 @@ var require_caloms2 = __commonJS({
         }
         return { from, to, spec_version: rep.spec_version, enabled: rep.enabled, providers: rep.providers, start_date: rep.start_date, summary: rep.summary, rows };
       });
-      r.get("/api/caloms/extract", auth3.requireAuth, auth3.requirePerm("export:identified"), (ctx) => {
+      function extractFor(ctx) {
         const { from, to } = period(ctx);
         if (!C.enabled()) throw badRequest("CalOMS Tx reporting is switched off for this program (Reports \u2192 State reporting \u2192 Settings)");
         if (!C.providers().length) throw badRequest("Add this program's CalOMS provider ID first (Reports \u2192 State reporting \u2192 Settings)");
-        const x = C.buildExtract({ from, to, scope: scopeFor(ctx.user), generatedBy: ctx.user.display_name || ctx.user.username });
+        return { from, to, x: C.buildExtract({ from, to, scope: scopeFor(ctx.user), generatedBy: ctx.user.display_name || ctx.user.username }) };
+      }
+      r.get("/api/caloms/extract", auth3.requireAuth, auth3.requirePerm("export:identified"), (ctx) => {
+        const { from, to, x } = extractFor(ctx);
+        const disclosure = require_disclosure();
+        const stamp2 = db3.now();
+        audit3.log({ user: ctx.user, action: "caloms.extract", ip: ctx.ip, details: { from, to, preview: true, ...x.counts, held_back: x.excluded, provider_months: x.activity_rows, no_activity_months: x.no_activity_months, clients: x.clientIds.length } });
+        const body = require_spreadsheet().zip(x.files);
+        ctx.res.writeHead(200, {
+          "Content-Type": "application/zip",
+          "Content-Disposition": `attachment; filename="caloms-tx-${from}_${to}.zip"`,
+          "X-SUDS-Export": `Identified - PHI. CalOMS Tx submission for DHCS (state reporting, required by law). Test / preview - not accounted until marked as submitted. ${x.clientIds.length} client(s).${disclosure.fileNotice({ short: true }) ? ` ${disclosure.fileNotice({ short: true })}` : ""} Generated ${stamp2}.`,
+          "X-SUDS-CalOMS-Counts": `admission=${x.counts.admission}; discharge=${x.counts.discharge}; annual_update=${x.counts.annual_update}; held_back=${x.excluded}`
+        });
+        ctx.res.end(body);
+      });
+      r.post("/api/caloms/submissions", auth3.requireAuth, auth3.requirePerm("export:identified"), (ctx) => {
+        const v = validate(ctx.body || {}, { from: { type: "date", required: true }, to: { type: "date", required: true } });
+        ctx.query.set("from", v.from);
+        ctx.query.set("to", v.to);
+        const { from, to, x } = extractFor(ctx);
+        if (!x.clientIds.length) throw badRequest("There is nothing to submit for this period: no record passed the edit checks.");
         const disclosure = require_disclosure();
         const stamp2 = db3.now();
         db3.transaction(() => {
@@ -17099,15 +17403,8 @@ var require_caloms2 = __commonJS({
           for (const rec of x.ready) db3.run(`UPDATE caloms_records SET extracted_at=?, updated_at=? WHERE id=?`, stamp2, stamp2, rec.id);
         });
         require_incidents().maybeMassExport({ clients: x.clientIds.length, kind: "caloms", user: ctx.user });
-        audit3.log({ user: ctx.user, action: "caloms.extract", ip: ctx.ip, details: { from, to, ...x.counts, held_back: x.excluded, provider_months: x.activity_rows, no_activity_months: x.no_activity_months, clients_disclosed: x.clientIds.length } });
-        const body = require_spreadsheet().zip(x.files);
-        ctx.res.writeHead(200, {
-          "Content-Type": "application/zip",
-          "Content-Disposition": `attachment; filename="caloms-tx-${from}_${to}.zip"`,
-          "X-SUDS-Export": `Identified - PHI. CalOMS Tx submission for DHCS (state reporting, required by law). ${x.clientIds.length} client(s).${disclosure.fileNotice({ short: true }) ? ` ${disclosure.fileNotice({ short: true })}` : ""} Generated ${stamp2}.`,
-          "X-SUDS-CalOMS-Counts": `admission=${x.counts.admission}; discharge=${x.counts.discharge}; annual_update=${x.counts.annual_update}; held_back=${x.excluded}`
-        });
-        ctx.res.end(body);
+        audit3.log({ user: ctx.user, action: "caloms.submitted", ip: ctx.ip, details: { from, to, ...x.counts, held_back: x.excluded, clients_disclosed: x.clientIds.length } });
+        return { ok: true, from, to, submitted_at: stamp2, clients_disclosed: x.clientIds.length, counts: x.counts, held_back: x.excluded };
       });
     };
   }
@@ -17631,17 +17928,7 @@ var require_consents = __commonJS({
     var M = require_clients_model();
     var PART2_TYPES = C.PART2_CONSENT_TYPES;
     function requirePart2Elements(v) {
-      const missing = [];
-      if (!v.discloser) missing.push("who may make the disclosure");
-      if (!v.recipient) missing.push("the recipient (a name, or a class of recipients)");
-      if (!v.purpose) missing.push("the purpose");
-      if (!v.scope) missing.push("what information is covered (scope)");
-      if (!v.expires_at && !v.expires_event) missing.push("an expiration date or event");
-      if (!v.document_ref && !v.signed_on_paper && !v.witness) missing.push('evidence it was signed (a document reference, a witness, or "signed on paper")');
-      if (v.signer_relationship !== "patient" && !v.signer_name) missing.push("the name of the person who signed for the patient");
-      if (!v.revocation_right_given) missing.push("confirmation that the consent states the right to revoke it and how");
-      if (!v.redisclosure_notice_given) missing.push("confirmation that the redisclosure statement was given (\xA72.32)");
-      if (!v.refusal_consequences_given) missing.push("confirmation that the consent states the consequences of refusing to sign");
+      const missing = disclosure.missingPart2Elements(v);
       if (missing.length) throw badRequest(`A 42 CFR Part 2 consent must record ${missing.join("; ")}`, { missing });
     }
     function presentConsent(c) {
@@ -17657,9 +17944,12 @@ var require_consents = __commonJS({
         purpose_enc: void 0,
         scope_enc: void 0,
         signer_name_enc: void 0,
+        // A consent that lacks the §2.31 elements (one that arrived by sync or by hand, or a legacy one) is shown,
+        // but cannot be chosen to authorise a disclosure: incomplete says why.
         active,
         part2: PART2_TYPES.includes(c.type),
-        can_disclose: active && disclosure.disclosingConsentTypes().includes(c.type),
+        incomplete: disclosure.consentElementProblems(c),
+        can_disclose: active && disclosure.disclosingConsentTypes().includes(c.type) && !disclosure.consentElementProblems(c).length,
         // Recorded before the 2024 element list: still in force, but shown so it can be renewed on the new form.
         legacy_elements: PART2_TYPES.includes(c.type) && c.rule_version !== "2024"
       };
@@ -17827,15 +18117,19 @@ var require_consents = __commonJS({
           basis: { type: "string", enum: disclosure.BASES },
           justification: { type: "string", maxLen: 2e3 },
           court_order_id: { type: "string" },
+          agreement_id: { type: "string" },
+          recipient_override: { type: "boolean" },
           legal_proceeding: { type: "boolean" },
           counseling_notes: { type: "boolean" },
           restriction_reviewed: { type: "boolean" }
         });
-        const basis = disclosure.requireBasis(ctx.params.id, { ...v, user: ctx.user });
+        const basis = disclosure.requireBasis(ctx.params.id, { ...v, recipient: v.disclosed_to, user: ctx.user });
         const id = disclosure.record({
           clientId: ctx.params.id,
           consentId: basis.consent?.id || null,
           courtOrderId: basis.court_order?.id || null,
+          agreementId: basis.agreement?.id || null,
+          recipientOverride: basis.recipient_override,
           legalProceeding: basis.legal_proceeding,
           counselingNotes: basis.counseling_notes,
           recipient: v.disclosed_to,
@@ -17931,6 +18225,26 @@ Effective date: {effective}`;
       return n ? presentNotice(n) : null;
     }
     var MISSING_NOTICE = `c.deleted_at IS NULL AND c.merged_into IS NULL AND c.status='active' AND NOT EXISTS (SELECT 1 FROM part2_notices n WHERE n.client_id=c.id)`;
+    var AGREEMENT_SHAPE = {
+      kind: { type: "string", required: true, enum: Object.keys(disclosure.AGREEMENT_KINDS) },
+      organisation: { type: "string", required: true, maxLen: 200 },
+      aliases: { type: "string", maxLen: 1e3 },
+      services: { type: "string", maxLen: 1e3 },
+      approving_body: { type: "string", maxLen: 200 },
+      reference: { type: "string", maxLen: 120 },
+      agreement_date: { type: "date", required: true },
+      expires_at: { type: "date" },
+      document_ref: { type: "string", maxLen: 300 }
+    };
+    function presentAgreement(a) {
+      const problems = disclosure.agreementProblems(a);
+      return { ...a, label: disclosure.AGREEMENT_KINDS[a.kind], problems, active: !problems.length };
+    }
+    function assertAgreementsEditable() {
+      const staticHost = typeof window !== "undefined" && window.SUDS_STATIC_HOST === true;
+      if (require_config().local && !staticHost) throw require_http().forbidden("Agreements are kept on the office SUDS. Changes made there reach this device when it syncs.");
+    }
+    var MIN_OFF_REASON = 20;
     var ORDER_SHAPE = {
       order_type: { type: "string", required: true, enum: C.COURT_ORDER_TYPES },
       court: { type: "string", required: true, maxLen: 200 },
@@ -17949,12 +18263,30 @@ Effective date: {effective}`;
       r.get("/api/part2/settings", auth3.requireAuth, () => settings());
       r.get("/api/part2/notice", auth3.requireAuth, () => renderedNotice());
       r.put("/api/part2/settings", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
-        const v = validate(ctx.body, { part2_program: { type: "boolean" }, notice_text: { type: "string", maxLen: 2e4 }, notice_effective_date: { type: "date" }, reset_notice: { type: "boolean" }, mass_export_threshold: { type: "number", integer: true, min: 1, max: 1e6 } }, { partial: true });
+        const v = validate(ctx.body, { part2_program: { type: "boolean" }, part2_off_reason: { type: "string", maxLen: 2e3 }, notice_text: { type: "string", maxLen: 2e4 }, notice_effective_date: { type: "date" }, reset_notice: { type: "boolean" }, mass_export_threshold: { type: "number", integer: true, min: 1, max: 1e6 } }, { partial: true });
         const changed = [];
+        const wasOn = disclosure.part2Program();
+        const turningOff = v.part2_program !== void 0 && v.part2_program !== null && !v.part2_program && wasOn;
+        const reason = String(v.part2_off_reason || "").trim();
+        if (turningOff && reason.length < MIN_OFF_REASON) throw badRequest(`Switching the Part 2 program off removes the \xA72.32 notice from every file, lets a general release stand as a consent and stops the Part 2 labelling. Record the reason (at least ${MIN_OFF_REASON} characters) \u2014 usually counsel's determination that this is not a federally assisted Part 2 program.`, { reasonRequired: true });
+        let incident = null;
         db3.transaction(() => {
           if (v.part2_program !== void 0 && v.part2_program !== null) {
             db3.setSetting("part2_program", v.part2_program ? "1" : "0");
             changed.push("part2_program");
+            if (turningOff) {
+              db3.setSetting("part2_program_off", JSON.stringify({ since: db3.now(), by: ctx.user.display_name || ctx.user.username }));
+              incident = require_incidents().draft({
+                source: "part2_program_off",
+                sourceRef: db3.now().slice(0, 10),
+                title: "Part 2 programme protections switched off",
+                description: `${ctx.user.display_name || ctx.user.username} switched this programme's 42 CFR Part 2 protections off. Reason given: ${reason}
+
+Confirm the determination with counsel. If it was a mistake, switch the programme back on and assess whether anything was disclosed without the Part 2 protections meanwhile.`,
+                user: ctx.user
+              });
+            }
+            if (v.part2_program) db3.run(`DELETE FROM settings WHERE key='part2_program_off'`);
           }
           if (v.reset_notice || v.notice_text !== void 0 && v.notice_text !== null) {
             const text = v.reset_notice ? null : String(v.notice_text).trim();
@@ -17974,7 +18306,9 @@ Effective date: {effective}`;
           }
         });
         audit3.log({ user: ctx.user, action: "part2.settings.update", ip: ctx.ip, details: { changed, version: db3.getSetting("part2_notice_version", "1") } });
-        return settings();
+        if (turningOff) audit3.log({ user: ctx.user, action: "part2.program.off", ip: ctx.ip, details: { reason_recorded: true, incident } });
+        if (v.part2_program && !wasOn) audit3.log({ user: ctx.user, action: "part2.program.on", ip: ctx.ip });
+        return { ...settings(), incident };
       });
       r.get("/api/clients/:id/part2-notices", auth3.requireAuth, auth3.requirePerm("consents:read", "consents:write"), (ctx) => {
         if (!db3.one(`SELECT 1 FROM clients WHERE id=?`, ctx.params.id)) throw notFound();
@@ -18067,6 +18401,45 @@ Effective date: {effective}`;
         const { reason } = validate(ctx.body, { reason: { type: "string", required: true, maxLen: 300 } });
         db3.run(`UPDATE court_orders SET status='vacated', vacated_at=?, vacated_reason=?, updated_at=? WHERE id=?`, db3.now(), reason, db3.now(), o.id);
         audit3.log({ user: ctx.user, action: "court_order.vacate", entity: "court_order", entityId: o.id, clientId: o.client_id, ip: ctx.ip });
+        return { ok: true };
+      });
+      r.get("/api/disclosure-agreements", auth3.requireAuth, auth3.requirePerm("agreements:read", "agreements:write"), (ctx) => {
+        const rows = db3.all(`SELECT a.*, u.display_name AS created_by_name FROM disclosure_agreements a LEFT JOIN users u ON u.id=a.created_by ORDER BY a.status='active' DESC, a.kind, a.organisation`).map(presentAgreement);
+        return { rows, kinds: disclosure.AGREEMENT_KINDS, editable: auth3.hasPerm(ctx.user, "agreements:write") };
+      });
+      r.post("/api/disclosure-agreements", auth3.requireAuth, auth3.requirePerm("agreements:write"), (ctx) => {
+        assertAgreementsEditable();
+        const v = validate(ctx.body, AGREEMENT_SHAPE);
+        if (!String(v.organisation || "").trim()) throw badRequest("Name the organisation the agreement is with", { fields: { organisation: "required" } });
+        if (v.kind !== "qsoa" && !String(v.approving_body || "").trim()) throw badRequest(`A ${disclosure.AGREEMENT_KINDS[v.kind]} names the IRB, privacy board or body that approved it (\xA7${v.kind === "research" ? "2.52" : "2.53"})`, { fields: { approving_body: "required" } });
+        if (v.expires_at && v.expires_at < v.agreement_date) throw badRequest("An agreement cannot expire before it was made");
+        const id = uuid2();
+        db3.run(
+          `INSERT INTO disclosure_agreements(id,kind,organisation,aliases,services,approving_body,reference,agreement_date,expires_at,document_ref,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+          id,
+          v.kind,
+          v.organisation.trim(),
+          v.aliases || null,
+          v.services || null,
+          v.approving_body || null,
+          v.reference || null,
+          v.agreement_date,
+          v.expires_at || null,
+          v.document_ref || null,
+          ctx.user.id
+        );
+        audit3.log({ user: ctx.user, action: "disclosure_agreement.create", entity: "disclosure_agreement", entityId: id, ip: ctx.ip, details: { kind: v.kind } });
+        ctx.status = 201;
+        return { id };
+      });
+      r.post("/api/disclosure-agreements/:id/end", auth3.requireAuth, auth3.requirePerm("agreements:write"), (ctx) => {
+        assertAgreementsEditable();
+        const a = db3.one(`SELECT * FROM disclosure_agreements WHERE id=?`, ctx.params.id);
+        if (!a) throw notFound();
+        if (a.status === "ended") throw badRequest("This agreement has already been ended");
+        const { reason } = validate(ctx.body, { reason: { type: "string", required: true, maxLen: 300 } });
+        db3.run(`UPDATE disclosure_agreements SET status='ended', ended_at=?, ended_reason=?, updated_at=? WHERE id=?`, db3.now(), reason, db3.now(), a.id);
+        audit3.log({ user: ctx.user, action: "disclosure_agreement.end", entity: "disclosure_agreement", entityId: a.id, ip: ctx.ip, details: { kind: a.kind } });
         return { ok: true };
       });
       r.get("/api/part2/summary", auth3.requireAuth, auth3.requirePerm("complaints:read", "incidents:read", "settings:manage"), (ctx) => {
@@ -18577,7 +18950,7 @@ var require_compliance = __commonJS({
         delete v[f];
       }
     }
-    var INCIDENT_ENC = ["description", "risk_nature", "risk_recipient", "risk_acquired", "risk_mitigation", "determination_reason"];
+    var INCIDENT_ENC = ["title", "description", "risk_nature", "risk_recipient", "risk_acquired", "risk_mitigation", "determination_reason"];
     var INCIDENT_SHAPE = {
       title: { type: "string", maxLen: 200 },
       discovered_at: { type: "date" },
@@ -18601,7 +18974,7 @@ var require_compliance = __commonJS({
     function presentIncident(row, { full = false } = {}) {
       const out2 = { ...row };
       for (const f of INCIDENT_ENC) {
-        if (full) out2[f] = dec2(row[`${f}_enc`]);
+        if (full || f === "title") out2[f] = dec2(row[`${f}_enc`]);
         delete out2[`${f}_enc`];
       }
       out2.obligations = incidents.obligations(row);
@@ -18695,7 +19068,7 @@ var require_compliance = __commonJS({
       });
       r.get("/api/incidents/:id", auth3.requireAuth, auth3.requirePerm("incidents:read", "incidents:write"), (ctx) => {
         const i = loadIncident(ctx.params.id);
-        const clients = db3.all(`SELECT x.client_id, x.notified_at, c.client_code FROM privacy_incident_clients x JOIN clients c ON c.id=x.client_id WHERE x.incident_id=? ORDER BY c.client_code`, i.id);
+        const clients = db3.all(`SELECT x.client_id, x.notified_at, COALESCE(c.client_code, x.client_code) client_code, x.client_purged_at FROM privacy_incident_clients x LEFT JOIN clients c ON c.id=x.client_id WHERE x.incident_id=? ORDER BY 3`, i.id).map((x) => ({ ...x, purged: !x.client_id }));
         audit3.log({ user: ctx.user, action: "incident.view", entity: "privacy_incident", entityId: i.id, ip: ctx.ip, details: { linked_clients: clients.length } });
         return { row: { ...presentIncident(i, { full: true }), clients } };
       });
@@ -18705,7 +19078,6 @@ var require_compliance = __commonJS({
         const id = uuid2();
         const cols2 = {
           id,
-          title: v.title,
           discovered_at: v.discovered_at,
           occurred_at: v.occurred_at || null,
           part2_records: v.part2_records === void 0 ? 1 : v.part2_records,
@@ -18770,7 +19142,7 @@ var require_compliance = __commonJS({
           for (const cid of client_ids) {
             if (typeof cid !== "string" || !db3.one(`SELECT 1 FROM clients WHERE id=?`, cid)) throw badRequest("Unknown client");
             auth3.assertClientAccess(ctx, cid);
-            added += db3.run(`INSERT OR IGNORE INTO privacy_incident_clients(id,incident_id,client_id) VALUES(?,?,?)`, uuid2(), i.id, cid).changes;
+            added += incidents.linkClient(i.id, cid);
           }
           const linked = db3.one(`SELECT COUNT(*) n FROM privacy_incident_clients WHERE incident_id=?`, i.id).n;
           if (linked > (i.affected_count || 0)) db3.run(`UPDATE privacy_incidents SET affected_count=?, updated_at=? WHERE id=?`, linked, db3.now(), i.id);
@@ -21827,6 +22199,14 @@ var require_reports = __commonJS({
           part2_notice_missing: (auth3.hasPerm(ctx.user, "consents:read") || auth3.hasPerm(ctx.user, "consents:write")) && require_disclosure().part2Program() ? scoped1(`SELECT COUNT(*) n FROM clients c WHERE ${require_part2().MISSING_NOTICE} AND {CF}`).n : null,
           // The privacy officer's registers: open complaints, and incidents whose breach-notification clock
           // needs attention (a determination not made, or a notice owed) — how many are due within two weeks or late.
+          // The programme's Part 2 protections switched off (routes/part2.js): who did it and when, for administrators.
+          part2_program_off: auth3.hasPerm(ctx.user, "settings:manage") && !require_disclosure().part2Program() ? (() => {
+            try {
+              return JSON.parse(db3.getSetting("part2_program_off", "") || "null") || { since: null };
+            } catch {
+              return { since: null };
+            }
+          })() : null,
           complaints_open: auth3.hasPerm(ctx.user, "complaints:read") ? db3.one(`SELECT COUNT(*) n FROM complaints WHERE status IN ('open','investigating')`).n : null,
           incidents: auth3.hasPerm(ctx.user, "incidents:read") ? (() => {
             const ob = db3.all(`SELECT * FROM privacy_incidents WHERE status='open'`).map((i) => require_incidents().obligations(i));
@@ -21954,7 +22334,14 @@ var require_reports = __commonJS({
         const purpose = (ctx.query.get("purpose") || "").trim();
         if (identified && (!recipient || !purpose)) throw require_http().badRequest("An identified export must name its recipient and purpose (recipient= and purpose=); they are written to the accounting of disclosures for every client it contains");
         const disclosure = require_disclosure();
-        const gate = { basis: ctx.query.get("basis") || "", restriction_reviewed: ctx.query.get("restriction_reviewed") === "1", legal_proceeding: ctx.query.get("legal_proceeding") === "1" };
+        const gate = {
+          basis: ctx.query.get("basis") || "",
+          restriction_reviewed: ctx.query.get("restriction_reviewed") === "1",
+          legal_proceeding: ctx.query.get("legal_proceeding") === "1",
+          recipient,
+          agreement_id: ctx.query.get("agreement_id") || void 0,
+          user: ctx.user
+        };
         if (identified) disclosure.requireExportBasis([], gate);
         const part2 = identified && disclosure.part2Program();
         const notice = disclosure.notice();
@@ -21962,15 +22349,25 @@ var require_reports = __commonJS({
         const X = require_exports();
         const D = X.datasets(ctx, { ...period, identified });
         const S = require_spreadsheet();
-        const accountFor = (kind, ids) => {
-          if (!identified) return [];
+        let excludedCodes = [];
+        const admit = (kind, ids) => {
+          if (!identified) return { consentOf: /* @__PURE__ */ new Map(), excluded: [], agreement: null };
+          let g;
           try {
-            disclosure.requireExportBasis(ids, gate);
+            g = disclosure.requireExportBasis(ids, gate);
           } catch (e) {
             audit3.log({ user: ctx.user, action: "report.export.refused", ip: ctx.ip, success: false, details: { kind, basis: gate.basis, clients: ids.length, reason: String(e.message).slice(0, 200) } });
             throw e;
           }
-          const written = ids.map((clientId) => disclosure.record({ clientId, recipient, purpose, what: `Identified export: ${kind} (${from} to ${to})`, method: "export", basis: gate.basis, source: "export", sourceRef: kind, user: ctx.user, ip: ctx.ip }));
+          if (g.excluded.length) {
+            excludedCodes = db3.all(`SELECT client_code FROM clients WHERE id IN (${g.excluded.map(() => "?").join(",")})`, ...g.excluded).map((r2) => r2.client_code).sort();
+            aboutSheet.rows.push({ k: "Left out (no consent on file naming this recipient)", v: excludedCodes.join(", ") });
+          }
+          return g;
+        };
+        const accountFor = (kind, ids, g) => {
+          if (!identified) return [];
+          const written = ids.map((clientId) => disclosure.record({ clientId, consentId: g.consentOf.get(clientId) || null, agreementId: g.agreement?.id || null, recipient, purpose, what: `Identified export: ${kind} (${from} to ${to})`, method: "export", basis: gate.basis, source: "export", sourceRef: kind, user: ctx.user, ip: ctx.ip }));
           require_incidents().maybeMassExport({ clients: ids.length, kind, user: ctx.user });
           return written;
         };
@@ -21994,23 +22391,33 @@ var require_reports = __commonJS({
         const headerSafe = (s) => String(s).replace(/[^\x20-\x7e]/g, "?").slice(0, 900);
         let body, filename, type;
         if (ctx.params.kind === "workbook") {
-          const sheets = [aboutSheet];
+          const read = [];
           const clientIds = /* @__PURE__ */ new Set();
-          let disclosuresSlot = -1;
           for (const [kind, d] of Object.entries(D)) {
+            if (kind === "disclosures") {
+              read.push([kind, d, null]);
+              continue;
+            }
+            const rows = d.rows();
+            for (const id of X.clientIdsOf(rows)) clientIds.add(id);
+            read.push([kind, d, rows]);
+            await new Promise((resolve2) => defer(resolve2));
+          }
+          const g = admit("workbook", [...clientIds]);
+          const out2 = new Set(g.excluded);
+          const sheets = [aboutSheet];
+          let disclosuresSlot = -1;
+          for (const [kind, d, rows] of read) {
             if (kind === "disclosures") {
               disclosuresSlot = sheets.length;
               sheets.push(null);
               continue;
             }
-            const rows = d.rows();
-            for (const id of X.clientIdsOf(rows)) clientIds.add(id);
-            sheets.push({ name: d.label, columns: d.columns.map(label), rows: pretty(X.publicRows(rows), kind) });
-            await new Promise((resolve2) => defer(resolve2));
+            sheets.push({ name: d.label, columns: d.columns.map(label), rows: pretty(X.publicRows(rows.filter((r2) => !out2.has(r2._client_id))), kind) });
           }
-          const written = new Set(accountFor("workbook", [...clientIds]));
+          const written = new Set(accountFor("workbook", [...clientIds].filter((id) => !out2.has(id)), g));
           if (disclosuresSlot >= 0) {
-            const rows = D.disclosures.rows().filter((r2) => !written.has(r2.id));
+            const rows = D.disclosures.rows().filter((r2) => !written.has(r2.id) && !out2.has(r2._client_id));
             sheets[disclosuresSlot] = { name: D.disclosures.label, columns: D.disclosures.columns.map(label), rows: pretty(X.publicRows(rows), "disclosures") };
           }
           audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: "workbook", sheets: sheets.map((s) => [s.name, s.rows.length]), identified, from, to, clients_disclosed: identified ? clientIds.size : void 0 } });
@@ -22020,8 +22427,12 @@ var require_reports = __commonJS({
         } else {
           const d = D[ctx.params.kind === "clients" ? "clients" : ctx.params.kind];
           if (!d) throw require_http().notFound("Unknown export");
-          const raw = d.rows();
-          const clientsDisclosed = accountFor(ctx.params.kind, X.clientIdsOf(raw)).length;
+          const all = d.rows();
+          const ids = X.clientIdsOf(all);
+          const g = admit(ctx.params.kind, ids);
+          const out2 = new Set(g.excluded);
+          const raw = out2.size ? all.filter((r2) => !out2.has(r2._client_id)) : all;
+          const clientsDisclosed = accountFor(ctx.params.kind, ids.filter((id) => !out2.has(id)), g).length;
           const rows = pretty(X.publicRows(raw), ctx.params.kind);
           audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: ctx.params.kind, rows: rows.length, identified, from, to, format, clients_disclosed: identified ? clientsDisclosed : void 0 } });
           const suffix = identified ? "identified" : "deidentified";
@@ -22036,7 +22447,12 @@ var require_reports = __commonJS({
             type = "text/csv; charset=utf-8";
           }
         }
-        ctx.res.writeHead(200, { "Content-Type": type, "Content-Disposition": `attachment; filename="${filename}"`, "X-SUDS-Export": headerSafe(classification) });
+        ctx.res.writeHead(200, {
+          "Content-Type": type,
+          "Content-Disposition": `attachment; filename="${filename}"`,
+          "X-SUDS-Export": headerSafe(classification),
+          ...identified && gate.basis === "consent" ? { "X-SUDS-Export-Excluded": excludedCodes.join(",").slice(0, 900) } : {}
+        });
         ctx.res.end(body);
       });
     };
@@ -22125,16 +22541,19 @@ var require_handoff = __commonJS({
         return o;
       }).sort((a, b) => a.service_date.localeCompare(b.service_date) || a.client_code.localeCompare(b.client_code));
     }
-    function consentFor(clientId) {
-      const types = require_disclosure().fileConsentTypes();
-      return db3.one(`SELECT id FROM consents WHERE client_id=? AND type IN (${types.map(() => "?").join(",")}) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now')) ORDER BY signed_at DESC LIMIT 1`, clientId, ...types) || null;
+    function consentFor(clientId, recipient) {
+      const D = require_disclosure();
+      if (recipient) return D.fileConsentFor(clientId, D.recipientNames(recipient));
+      const types = D.fileConsentTypes();
+      return db3.all(`SELECT * FROM consents WHERE client_id=? AND type IN (${types.map(() => "?").join(",")}) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, clientId, ...types).find((c) => !D.consentElementProblems(c).length) || null;
     }
     module.exports = (r) => {
       r.get("/api/handoff/summary", auth3.requireAuth, auth3.requirePerm("export:identified"), (ctx) => {
         const p = require_reports().range(ctx);
         const rows = encounters(ctx, p);
         const clients = [...new Map(rows.map((x) => [x._client_id, x.client_code])).entries()];
-        const without = clients.filter(([id]) => !consentFor(id)).map(([, code]) => code).sort();
+        const recipient = (ctx.query.get("recipient") || "").trim().slice(0, 200);
+        const without = clients.filter(([id]) => !consentFor(id, recipient)).map(([, code]) => code).sort();
         const restricted = new Set(db3.all(`SELECT DISTINCT client_id FROM patient_requests WHERE kind='restriction' AND status='fulfilled'`).map((x) => x.client_id));
         audit3.log({ user: ctx.user, action: "handoff.preview", ip: ctx.ip, details: { from: p.from, to: p.to, rows: rows.length, clients: clients.length } });
         return {
@@ -22158,12 +22577,12 @@ var require_handoff = __commonJS({
         if (!BASES.includes(basis)) throw badRequest(`basis must be one of ${BASES.join(", ")}`);
         const disclosure = require_disclosure();
         if (ctx.query.get("legal_proceeding") === "1") disclosure.requireExportBasis([], { basis: "internal", legal_proceeding: true });
-        const fileBasis = basis === "consent" ? null : disclosure.requireBasis(null, { basis, justification: ctx.query.get("justification"), user: ctx.user, restriction_reviewed: true });
+        const fileBasis = basis === "consent" ? null : disclosure.requireBasis(null, { basis, justification: ctx.query.get("justification"), agreement_id: ctx.query.get("agreement_id") || void 0, recipient, user: ctx.user, restriction_reviewed: true });
         const all = encounters(ctx, p);
         const consentOf = /* @__PURE__ */ new Map();
         const excluded = /* @__PURE__ */ new Set();
         if (basis === "consent") for (const id of new Set(all.map((x) => x._client_id))) {
-          const c = consentFor(id);
+          const c = consentFor(id, recipient);
           if (c) consentOf.set(id, c.id);
           else excluded.add(id);
         }
@@ -22177,7 +22596,7 @@ var require_handoff = __commonJS({
           throw e;
         }
         db3.transaction(() => {
-          for (const clientId of clientIds) disclosure.record({ clientId, consentId: consentOf.get(clientId) || null, recipient, purpose, what: `County EHR encounter hand-off (${p.from} to ${p.to}): service dates, types, minutes, staff and funding; name, date of birth, Medi-Cal ID`, method: "export", basis, justification: fileBasis ? fileBasis.justification : null, source: "ehr_handoff", sourceRef: `handoff:${p.from}_${p.to}`, user: ctx.user, ip: ctx.ip });
+          for (const clientId of clientIds) disclosure.record({ clientId, consentId: consentOf.get(clientId) || null, agreementId: fileBasis?.agreement?.id || null, recipient, purpose, what: `County EHR encounter hand-off (${p.from} to ${p.to}): service dates, types, minutes, staff and funding; name, date of birth, Medi-Cal ID`, method: "export", basis, justification: fileBasis ? fileBasis.justification : null, source: "ehr_handoff", sourceRef: `handoff:${p.from}_${p.to}`, user: ctx.user, ip: ctx.ip });
         });
         require_incidents().maybeMassExport({ clients: clientIds.length, kind: "ehr-handoff", user: ctx.user });
         audit3.log({ user: ctx.user, action: "handoff.export", ip: ctx.ip, details: { from: p.from, to: p.to, rows: rows.length, basis, clients_disclosed: clientIds.length, excluded_no_consent: excludedCodes.length || void 0 } });
@@ -22197,7 +22616,7 @@ var require_handoff = __commonJS({
           { k: "Period", v: `${p.from} to ${p.to}` },
           { k: "Generated", v: db3.now() },
           { k: "Generated by", v: ctx.user.display_name || ctx.user.username },
-          { k: "Left out (no consent on file)", v: excludedCodes.join(", ") || "none" },
+          { k: "Left out (no consent on file naming this recipient)", v: excludedCodes.join(", ") || "none" },
           ...part2 ? [{ k: "Protected by 42 CFR Part 2", v: notice.short }, { k: "Notice to recipient (42 CFR \xA72.32)", v: notice.text }] : []
         ] }]) : S.toCsv(out2, COLUMNS) + (part2 ? "\r\n\r\n" + S.toCsv([{ n: disclosure.fileNotice() }], [{ key: "n", label: "" }]).split("\r\n")[1] : "");
         ctx.res.writeHead(200, {
@@ -24077,6 +24496,10 @@ var require_referrals = __commonJS({
     function resourceName(resourceId) {
       return db3.one(`SELECT name FROM resources WHERE id=?`, resourceId)?.name || "referral recipient";
     }
+    function resourceNames(resourceId) {
+      const r = db3.one(`SELECT name, organization FROM resources WHERE id=?`, resourceId);
+      return r ? [r.name, r.organization].filter(Boolean) : [];
+    }
     function encFields(v) {
       for (const f of ENC) if (v[f] !== void 0) {
         v[`${f}_enc`] = v[f] === null || v[f] === "" ? null : encrypt3(String(v[f]));
@@ -24098,6 +24521,9 @@ var require_referrals = __commonJS({
         basis: v._disclosure_basis,
         justification: v._disclosure_justification,
         court_order_id: v._court_order_id,
+        recipient: resourceNames(v.resource_id || row.resource_id),
+        recipient_override: v._recipient_override,
+        allowed: disclosure.REFERRAL_BASES,
         restriction_reviewed: v._restriction_reviewed,
         user: ctx.user
       };
@@ -24108,6 +24534,7 @@ var require_referrals = __commonJS({
         clientId: row.client_id,
         consentId: basis.consent?.id || null,
         courtOrderId: basis.court_order?.id || null,
+        recipientOverride: basis.recipient_override,
         recipient: resourceName(v.resource_id || row.resource_id),
         purpose: "Referral for services",
         what: v._disclosure_what || "Referral information (name, contact details and presenting need)",
@@ -24151,7 +24578,8 @@ var require_referrals = __commonJS({
           _disclosure_what: { type: "string", maxLen: 1e3 },
           _disclosure_justification: { type: "string", maxLen: 2e3 },
           _court_order_id: { type: "string" },
-          _restriction_reviewed: { type: "boolean" }
+          _restriction_reviewed: { type: "boolean" },
+          _recipient_override: { type: "boolean" }
         },
         filters: (ctx, where, params) => {
           const s = ctx.query.get("status");
@@ -24218,7 +24646,8 @@ var require_referrals = __commonJS({
           _disclosure_what: { type: "string", maxLen: 1e3 },
           _disclosure_justification: { type: "string", maxLen: 2e3 },
           _court_order_id: { type: "string" },
-          _restriction_reviewed: { type: "boolean" }
+          _restriction_reviewed: { type: "boolean" },
+          _recipient_override: { type: "boolean" }
         }, { existing: row });
         if (v.consent_id && !db3.one(`SELECT 1 FROM consents WHERE id=? AND client_id=?`, v.consent_id, row.client_id)) throw badRequest("That consent belongs to a different client");
         const admitted = v.status === "admitted" || !!v.admitted_at;
@@ -28623,7 +29052,7 @@ var require_supervision = __commonJS({
         if (v.concern && String(v.note || "").trim().length < 10) throw badRequest("Say what is wrong with this access (at least 10 characters); it opens a draft incident");
         db3.run(`UPDATE breakglass_events SET acknowledged_by=?, acknowledged_at=?, updated_at=? WHERE id=?`, ctx.user.id, db3.now(), db3.now(), b.id);
         const incident = v.concern ? require_incidents().draft({ source: "breakglass", sourceRef: b.id, title: "Emergency access flagged at review", description: v.note, user: ctx.user }) : null;
-        if (incident) db3.run(`INSERT OR IGNORE INTO privacy_incident_clients(id,incident_id,client_id) SELECT ?,?,? WHERE ? IS NOT NULL`, require_crypto().uuid(), incident, b.client_id, b.client_id);
+        if (incident && b.client_id) require_incidents().linkClient(incident, b.client_id);
         audit3.log({ user: ctx.user, action: "breakglass.acknowledge", entity: "breakglass_event", entityId: b.id, clientId: b.client_id, ip: ctx.ip, details: { accessed_by: b.user_id, note_id: b.note_id || void 0, incident: incident || void 0 } });
         return { ok: true, incident };
       });
@@ -28806,6 +29235,51 @@ var require_sync = __commonJS({
       const inBatch = batchClients.get(raw.client_id);
       return !!inBatch && (!inBatch.created_by || inBatch.created_by === user.id || !knownUsers.has(inBatch.created_by));
     }
+    function consentPushProblem(raw) {
+      const disclosure = require_disclosure();
+      if (!require_constants().CONSENT_TYPES.includes(raw.type)) return `has a value the office does not accept (consent type "${String(raw.type).slice(0, 40)}")`;
+      if (!require_constants().PART2_CONSENT_TYPES.includes(raw.type)) return null;
+      const v = {
+        discloser: raw.discloser,
+        recipient: raw.recipient_enc,
+        purpose: raw.purpose_enc,
+        scope: raw.scope_enc,
+        expires_at: raw.expires_at,
+        expires_event: raw.expires_event,
+        document_ref: raw.document_ref,
+        signed_on_paper: raw.signed_on_paper,
+        witness: raw.witness,
+        signer_relationship: raw.signer_relationship,
+        signer_name: raw.signer_name_enc,
+        revocation_right_given: raw.revocation_right_given,
+        redisclosure_notice_given: raw.redisclosure_notice_given,
+        refusal_consequences_given: raw.refusal_consequences_given,
+        signed_at: raw.signed_at
+      };
+      const missing = raw.rule_version === "2024" ? disclosure.missingPart2Elements(v) : disclosure.missingLegacyElements(v);
+      if (missing.length) return `is missing a required field: a 42 CFR Part 2 consent must record ${missing.join("; ")}`;
+      if (raw.expires_at && raw.signed_at && raw.expires_at < raw.signed_at) return "has a value the office does not accept (it expires before it was signed)";
+      return null;
+    }
+    function instrumentEnabledHere(code) {
+      const opt = (require_clinical().OPTIONAL_INSTRUMENTS || {})[code];
+      return !opt || !opt.setting || db3.getSetting(opt.setting, "0") === "1";
+    }
+    function instrumentName(code) {
+      return (require_clinical().INSTRUMENTS[code] || {}).name || String(code);
+    }
+    function courtOrderPushProblem(raw, existing) {
+      const val = (k) => raw[k] !== void 0 ? raw[k] : existing ? existing[k] : void 0;
+      const blank = (k) => {
+        const x = val(k);
+        return x === void 0 || x === null || String(x).trim() === "";
+      };
+      const missing = [["court_enc", "the court"], ["purpose_enc", "the purpose the order states"], ["scope_enc", "what the order permits to be disclosed"], ["issued_at", "when it was issued"]].filter(([k]) => blank(k)).map(([, l]) => l);
+      if (missing.length) return `is missing a required field: a court order must record ${missing.join("; ")}`;
+      if (!require_constants().COURT_ORDER_TYPES.includes(val("order_type"))) return `has a value the office does not accept (order type "${String(val("order_type")).slice(0, 40)}")`;
+      if (val("expires_at") && val("expires_at") < val("issued_at")) return "has a value the office does not accept (the order expires before it was issued)";
+      return null;
+    }
     function push(user, payload) {
       const applied = {};
       const rejected = [];
@@ -28941,6 +29415,24 @@ var require_sync = __commonJS({
                 revocation = true;
                 for (const k of Object.keys(raw)) if (!["id", "revoked_at", "revoked_reason"].includes(k)) delete raw[k];
                 raw.revoked_by = user.id;
+              }
+              if (t.name === "consents" && !existing) {
+                const problem = consentPushProblem(raw);
+                if (problem) {
+                  reject(t.name, raw.id, problem);
+                  return false;
+                }
+              }
+              if (t.name === "court_orders") {
+                const problem = courtOrderPushProblem(raw, existing);
+                if (problem) {
+                  reject(t.name, raw.id, problem);
+                  return false;
+                }
+              }
+              if (t.name === "outcome_measures" && !instrumentEnabledHere(raw.instrument || existing && existing.instrument) && (!existing || changedColumns2(t, existing, raw, existingCols).length)) {
+                reject(t.name, raw.id, `has a value the office does not accept (${instrumentName(raw.instrument || existing.instrument)} is not enabled on the office server; an administrator can turn it on under Settings \u2192 Screening instruments)`);
+                return false;
               }
               if (t.scope === "via-note") {
                 const note = db3.one(`SELECT client_id, kind FROM notes WHERE id=?`, raw.note_id);

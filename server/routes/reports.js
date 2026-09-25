@@ -99,6 +99,9 @@ module.exports = (r) => {
         ? scoped1(`SELECT COUNT(*) n FROM clients c WHERE ${require('./part2').MISSING_NOTICE} AND {CF}`).n : null,
       // The privacy officer's registers: open complaints, and incidents whose breach-notification clock
       // needs attention (a determination not made, or a notice owed) — how many are due within two weeks or late.
+      // The programme's Part 2 protections switched off (routes/part2.js): who did it and when, for administrators.
+      part2_program_off: auth.hasPerm(ctx.user, 'settings:manage') && !require('../disclosure').part2Program()
+        ? (() => { try { return JSON.parse(db.getSetting('part2_program_off', '') || 'null') || { since: null }; } catch { return { since: null }; } })() : null,
       complaints_open: auth.hasPerm(ctx.user, 'complaints:read') ? db.one(`SELECT COUNT(*) n FROM complaints WHERE status IN ('open','investigating')`).n : null,
       incidents: auth.hasPerm(ctx.user, 'incidents:read') ? (() => {
         const ob = db.all(`SELECT * FROM privacy_incidents WHERE status='open'`).map(i => require('../incidents').obligations(i));
@@ -248,21 +251,35 @@ module.exports = (r) => {
     if (identified && (!recipient || !purpose)) throw require('../http').badRequest('An identified export must name its recipient and purpose (recipient= and purpose=); they are written to the accounting of disclosures for every client it contains');
     const disclosure = require('../disclosure');
     // An identified export is a disclosure like any other and passes the same gate (server/disclosure.js):
-    // one lawful basis for the file, checked against every client in it once the rows are known.
-    const gate = { basis: ctx.query.get('basis') || '', restriction_reviewed: ctx.query.get('restriction_reviewed') === '1', legal_proceeding: ctx.query.get('legal_proceeding') === '1' };
+    // one lawful basis for the file, checked against every client in it once the rows are known. Under
+    // consent, a client whose consent does not name the stated recipient is left out of the file (and
+    // listed by code); a QSOA, research or audit basis names its registered agreement with the recipient.
+    const gate = { basis: ctx.query.get('basis') || '', restriction_reviewed: ctx.query.get('restriction_reviewed') === '1', legal_proceeding: ctx.query.get('legal_proceeding') === '1',
+      recipient, agreement_id: ctx.query.get('agreement_id') || undefined, user: ctx.user };
     if (identified) disclosure.requireExportBasis([], gate);
     const part2 = identified && disclosure.part2Program(); const notice = disclosure.notice();
     const format = ctx.query.get('format') === 'xlsx' || ctx.params.kind === 'workbook' ? 'xlsx' : 'csv';
     const X = require('../exports');
     const D = X.datasets(ctx, { ...period, identified });
     const S = require('../spreadsheet');
+    // Which of the file's clients it may name (all of them, except under consent), and why the rest cannot.
+    let excludedCodes = [];
+    const admit = (kind, ids) => {
+      if (!identified) return { consentOf: new Map(), excluded: [], agreement: null };
+      let g;
+      try { g = disclosure.requireExportBasis(ids, gate); }
+      catch (e) { audit.log({ user: ctx.user, action: 'report.export.refused', ip: ctx.ip, success: false, details: { kind, basis: gate.basis, clients: ids.length, reason: String(e.message).slice(0, 200) } }); throw e; }
+      if (g.excluded.length) {
+        excludedCodes = db.all(`SELECT client_code FROM clients WHERE id IN (${g.excluded.map(() => '?').join(',')})`, ...g.excluded).map(r => r.client_code).sort();
+        aboutSheet.rows.push({ k: 'Left out (no consent on file naming this recipient)', v: excludedCodes.join(', ') });
+      }
+      return g;
+    };
     // One accounting row per client per export file: the workbook is one disclosure of everything it
     // holds, not one per sheet, so the recipient's name does not appear a dozen times in a client's accounting.
-    const accountFor = (kind, ids) => {
+    const accountFor = (kind, ids, g) => {
       if (!identified) return [];
-      try { disclosure.requireExportBasis(ids, gate); }
-      catch (e) { audit.log({ user: ctx.user, action: 'report.export.refused', ip: ctx.ip, success: false, details: { kind, basis: gate.basis, clients: ids.length, reason: String(e.message).slice(0, 200) } }); throw e; }
-      const written = ids.map(clientId => disclosure.record({ clientId, recipient, purpose, what: `Identified export: ${kind} (${from} to ${to})`, method: 'export', basis: gate.basis, source: 'export', sourceRef: kind, user: ctx.user, ip: ctx.ip }));
+      const written = ids.map(clientId => disclosure.record({ clientId, consentId: g.consentOf.get(clientId) || null, agreementId: g.agreement?.id || null, recipient, purpose, what: `Identified export: ${kind} (${from} to ${to})`, method: 'export', basis: gate.basis, source: 'export', sourceRef: kind, user: ctx.user, ip: ctx.ip }));
       // A file naming a great many people at once is exactly what a privacy officer wants to look at, lawful
       // or not: past the threshold it opens a draft incident for review (server/incidents.js).
       require('../incidents').maybeMassExport({ clients: ids.length, kind, user: ctx.user });
@@ -290,25 +307,34 @@ module.exports = (r) => {
       // the event loop for several seconds and stall everyone else's requests. The accounting of
       // disclosures sheet is rendered last, after the workbook's own disclosure rows have been written,
       // and without them: a file should not account for itself.
-      const sheets = [aboutSheet]; const clientIds = new Set(); let disclosuresSlot = -1;
+      // The rows are read first, so the clients the file may name are known before any sheet is built.
+      const read = []; const clientIds = new Set();
       for (const [kind, d] of Object.entries(D)) {
-        if (kind === 'disclosures') { disclosuresSlot = sheets.length; sheets.push(null); continue; }
+        if (kind === 'disclosures') { read.push([kind, d, null]); continue; }
         const rows = d.rows();
         for (const id of X.clientIdsOf(rows)) clientIds.add(id);
-        sheets.push({ name: d.label, columns: d.columns.map(label), rows: pretty(X.publicRows(rows), kind) });
+        read.push([kind, d, rows]);
         await new Promise((resolve) => defer(resolve));
       }
-      const written = new Set(accountFor('workbook', [...clientIds]));
+      const g = admit('workbook', [...clientIds]); const out = new Set(g.excluded);
+      const sheets = [aboutSheet]; let disclosuresSlot = -1;
+      for (const [kind, d, rows] of read) {
+        if (kind === 'disclosures') { disclosuresSlot = sheets.length; sheets.push(null); continue; }
+        sheets.push({ name: d.label, columns: d.columns.map(label), rows: pretty(X.publicRows(rows.filter(r => !out.has(r._client_id))), kind) });
+      }
+      const written = new Set(accountFor('workbook', [...clientIds].filter(id => !out.has(id)), g));
       if (disclosuresSlot >= 0) {
-        const rows = D.disclosures.rows().filter(r => !written.has(r.id));
+        const rows = D.disclosures.rows().filter(r => !written.has(r.id) && !out.has(r._client_id));
         sheets[disclosuresSlot] = { name: D.disclosures.label, columns: D.disclosures.columns.map(label), rows: pretty(X.publicRows(rows), 'disclosures') };
       }
       audit.log({ user: ctx.user, action: 'report.export', ip: ctx.ip, details: { kind: 'workbook', sheets: sheets.map(s => [s.name, s.rows.length]), identified, from, to, clients_disclosed: identified ? clientIds.size : undefined } });
       body = await S.writeWorkbookAsync(sheets); filename = `suds-export-${from}_${to}-${identified ? 'identified' : 'deidentified'}.xlsx`; type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
     } else {
       const d = D[ctx.params.kind === 'clients' ? 'clients' : ctx.params.kind]; if (!d) throw require('../http').notFound('Unknown export');
-      const raw = d.rows();
-      const clientsDisclosed = accountFor(ctx.params.kind, X.clientIdsOf(raw)).length;
+      const all = d.rows(); const ids = X.clientIdsOf(all);
+      const g = admit(ctx.params.kind, ids); const out = new Set(g.excluded);
+      const raw = out.size ? all.filter(r => !out.has(r._client_id)) : all;
+      const clientsDisclosed = accountFor(ctx.params.kind, ids.filter(id => !out.has(id)), g).length;
       const rows = pretty(X.publicRows(raw), ctx.params.kind);
       audit.log({ user: ctx.user, action: 'report.export', ip: ctx.ip, details: { kind: ctx.params.kind, rows: rows.length, identified, from, to, format, clients_disclosed: identified ? clientsDisclosed : undefined } });
       const suffix = identified ? 'identified' : 'deidentified';
@@ -321,7 +347,8 @@ module.exports = (r) => {
         filename = `suds-${ctx.params.kind}-${from}_${to}-${suffix}.csv`; type = 'text/csv; charset=utf-8';
       }
     }
-    ctx.res.writeHead(200, { 'Content-Type': type, 'Content-Disposition': `attachment; filename="${filename}"`, 'X-SUDS-Export': headerSafe(classification) });
+    ctx.res.writeHead(200, { 'Content-Type': type, 'Content-Disposition': `attachment; filename="${filename}"`, 'X-SUDS-Export': headerSafe(classification),
+      ...(identified && gate.basis === 'consent' ? { 'X-SUDS-Export-Excluded': excludedCodes.join(',').slice(0, 900) } : {}) });
     ctx.res.end(body);
   });
 };

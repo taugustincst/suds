@@ -13,12 +13,14 @@ const audit = require('./audit');
 // staff-time bookkeeping (time_entries, expenditures) keep their rows with the client link removed:
 // the money was spent and the hours were worked whether or not the person's record still exists.
 // A disclosure cites the court order it relied on, so disclosures go before court_orders.
-const DELETE_TABLES = ['care_plan_steps', 'care_plan_goals', 'problem_history', 'problems', 'asam_assessments', 'outcome_measures', 'client_form_files', 'client_forms', 'disclosures', 'court_orders', 'part2_notices', 'consents', 'patient_requests', 'referrals', 'tasks', 'calls', 'overdose_events', 'interventions', 'caloms_records', 'episodes', 'assignments', 'breakglass_events', 'privacy_incident_clients'];
+const DELETE_TABLES = ['care_plan_steps', 'care_plan_goals', 'problem_history', 'problems', 'asam_assessments', 'outcome_measures', 'client_form_files', 'client_forms', 'disclosures', 'court_orders', 'part2_notices', 'consents', 'patient_requests', 'referrals', 'tasks', 'calls', 'overdose_events', 'interventions', 'caloms_records', 'episodes', 'assignments', 'breakglass_events'];
 // A complaint is the programme's record of how it answered one, and stays (unlinked) when the person's
-// record goes; the incident register keeps its counts when a linked client is purged.
+// record goes. So does an incident's link to the person: breach documentation is kept six years (45 CFR
+// §164.530(j)), longer than a record may be, so the link keeps the snapshot taken when the client was
+// linked (code, encrypted name) and records when the record was purged (purgeClient).
 const UNLINK_TABLES = ['time_entries', 'expenditures', 'complaints'];
 // Tables that never synchronise leave no tombstone behind.
-const NO_TOMBSTONE = ['breakglass_events', 'privacy_incident_clients'];
+const NO_TOMBSTONE = ['breakglass_events'];
 
 function retentionYears() {
   const v = Number(db.getSetting('client_retention_years', ''));
@@ -128,6 +130,9 @@ function purgeClient(client, { user = { username: 'system' }, reason = 'retentio
       if (!NO_TOMBSTONE.includes(t)) for (const id of ids) db.tombstone(t, id);
     }
     for (const t of UNLINK_TABLES) counts[t] = db.run(`UPDATE ${t} SET client_id=NULL, updated_at=? WHERE client_id=?`, db.now(), client.id).changes;
+    // The code is filled in for a link made before the snapshot existed (it is the same client's code).
+    counts.privacy_incident_clients = db.run(`UPDATE privacy_incident_clients SET client_code=COALESCE(client_code, ?), client_purged_at=?, client_id=NULL, updated_at=? WHERE client_id=?`,
+      client.client_code, db.now(), db.now(), client.id).changes;
     // An import item that was guessed to be this person keeps a plain (non-FK) pointer; it must not dangle.
     counts.import_items_unlinked = db.run(`UPDATE import_items SET suggested_client_id=NULL, updated_at=? WHERE suggested_client_id=?`, db.now(), client.id).changes;
     // Records merged into this one are the same person: they go with it, not on a clock of their own.
