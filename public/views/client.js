@@ -109,7 +109,7 @@ route('client', async (r) => {
     async time() { const d = await get(`/api/time?client_id=${id}&limit=500`); return h('div', {}, h('div', { class: 'row mb' }, can('time:write') ? h('button', { class: 'btn primary', onClick: () => openTimeForm(null, ctxOpts) }, '+ Log time') : null), timeTable(d.rows, { showClient: false, onChange: refresh })); },
     async budget() { const d = await get(`/api/budget/expenditures?client_id=${id}&limit=500`); return h('div', {}, h('div', { class: 'row mb' }, can('budget:write') ? h('button', { class: 'btn primary', onClick: () => openExpenditureForm(null, ctxOpts) }, '+ Record client assistance') : null, h('span', { class: 'muted' }, `Total approved: ${fmt.money(c.counts.spent)}`)), expenditureTable(d.rows, { showClient: false, onChange: refresh })); },
     async forms() { return (await import('./forms.js')).clientFormsTab(id, { refresh }); },
-    async episodes() { return (await import('./episodes.js')).episodesPanel(id, { onChange: refresh }); },
+    async episodes() { return (await import('./episodes.js')).episodesPanel(id, { onChange: refresh, client: c }); },
     async consents() {
       const d = await get(`/api/clients/${id}/consents`); const C = state.constants;
       // Every element 42 CFR §2.31 requires of a Part 2 consent is on the form and marked; the server refuses a

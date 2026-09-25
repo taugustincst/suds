@@ -379,6 +379,15 @@ const migrations = [
     if (m) d.exec(m[0]);
     for (const line of schemaText.split('\n')) if (/^CREATE INDEX IF NOT EXISTS idx_option_overrides/.test(line.trim())) d.exec(line.trim());
   },
+  // 31 (numbered at merge; positional here): CalOMS Tx state reporting. caloms_records holds each episode's
+  //     admission, discharge and annual update records (answers encrypted); an existing database starts
+  //     with none and with CalOMS reporting switched off (settings caloms_enabled / caloms_providers).
+  (d) => {
+    const schemaText = safeSchema();
+    const m = schemaText.match(/CREATE TABLE IF NOT EXISTS caloms_records \([\s\S]*?\n\);/);
+    if (m) d.exec(m[0]);
+    for (const line of schemaText.split('\n')) if (/^CREATE (UNIQUE )?INDEX IF NOT EXISTS idx_caloms_records/.test(line.trim())) d.exec(line.trim());
+  },
 ];
 // A new database is created from schema.sql, which is always current, and stamped at the latest version.
 // An existing one is only ever stepped forward by migrations: replaying today's schema over yesterday's

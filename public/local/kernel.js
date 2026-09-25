@@ -7331,6 +7331,33 @@ CREATE INDEX IF NOT EXISTS idx_episodes_client ON episodes(client_id, opened_at)
 CREATE INDEX IF NOT EXISTS idx_episodes_status ON episodes(status);
 CREATE INDEX IF NOT EXISTS idx_episodes_updated ON episodes(updated_at);
 
+-- CalOMS Tx state reporting (server/caloms.js, server/caloms-spec.js): one row per admission, discharge or
+-- annual update record of an episode of care. The answers (drug use, arrests, pregnancy, disability, ZIP\u2026)
+-- are PHI about a named person and are held encrypted as one JSON document; only the operational codes a
+-- list needs without decrypting are in the clear, like episodes.discharge_reason. At most one admission and
+-- one discharge per episode; annual updates repeat. extracted_at is when a record last went into a state
+-- extract (the accounting of that disclosure is in disclosures).
+CREATE TABLE IF NOT EXISTS caloms_records (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  episode_id TEXT NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+  record_type TEXT NOT NULL CHECK (record_type IN ('admission','discharge','annual_update')),
+  provider_id TEXT,                    -- the CalOMS provider ID (Settings -> State reporting) the record is reported under
+  record_date TEXT NOT NULL,           -- admission date, discharge date, or the annual update's date
+  service_type TEXT,                   -- admission only: CalOMS type of service code
+  discharge_status TEXT,               -- discharge only: CalOMS discharge status code
+  answers_enc TEXT,                    -- encrypted JSON of the coded answers
+  extracted_at TEXT,
+  created_by TEXT REFERENCES users(id),
+  updated_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_caloms_records_episode ON caloms_records(episode_id, record_type);
+CREATE INDEX IF NOT EXISTS idx_caloms_records_date ON caloms_records(record_date);
+CREATE INDEX IF NOT EXISTS idx_caloms_records_updated ON caloms_records(updated_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_caloms_records_one_per_episode ON caloms_records(episode_id, record_type) WHERE record_type IN ('admission','discharge');
+
 -- Overdose and reversal events. Every SUD funder asks for these counts; they were previously only
 -- inferable from two boolean columns on the client record, which cannot answer "how many this quarter".
 CREATE TABLE IF NOT EXISTS overdose_events (
@@ -8220,6 +8247,15 @@ var require_db = __commonJS({
         const m = schemaText.match(/CREATE TABLE IF NOT EXISTS option_overrides \([\s\S]*?\n\);/);
         if (m) d.exec(m[0]);
         for (const line of schemaText.split("\n")) if (/^CREATE INDEX IF NOT EXISTS idx_option_overrides/.test(line.trim())) d.exec(line.trim());
+      },
+      // 31 (numbered at merge; positional here): CalOMS Tx state reporting. caloms_records holds each episode's
+      //     admission, discharge and annual update records (answers encrypted); an existing database starts
+      //     with none and with CalOMS reporting switched off (settings caloms_enabled / caloms_providers).
+      (d) => {
+        const schemaText = safeSchema();
+        const m = schemaText.match(/CREATE TABLE IF NOT EXISTS caloms_records \([\s\S]*?\n\);/);
+        if (m) d.exec(m[0]);
+        for (const line of schemaText.split("\n")) if (/^CREATE (UNIQUE )?INDEX IF NOT EXISTS idx_caloms_records/.test(line.trim())) d.exec(line.trim());
       }
     ];
     function initialise(d, schemaText, dbPath) {
@@ -9402,7 +9438,9 @@ var require_sync_tables = __commonJS({
     "use strict";
     init_globals_inject();
     module.exports = {
-      settings_keys: ["org_name", "county_name", "program_contact", "note_lock_days"],
+      // caloms_*: whether this programme reports CalOMS Tx (which turns on the CalOMS questions in the admission
+      // and discharge forms) and its provider IDs — a device needs both to offer the same forms offline.
+      settings_keys: ["org_name", "county_name", "program_contact", "note_lock_days", "caloms_enabled", "caloms_providers", "caloms_start_date"],
       tables: [
         // supervisor_id points at another user: a supervisor must land before the people who report to them.
         { name: "users", enc: ["mfa_secret_enc"], scope: "users", cols: null, selfParent: "supervisor_id" },
@@ -9416,6 +9454,8 @@ var require_sync_tables = __commonJS({
         { name: "clients", enc: ["first_name_enc", "last_name_enc", "preferred_name_enc", "dob_enc", "phone_enc", "alt_phone_enc", "email_enc", "address_enc", "medicaid_id_enc", "emergency_contact_enc", "goals_enc", "flags_enc"], scope: "client", clientCol: "id", idx: true, writePerm: "clients:write", selfParent: "merged_into" },
         { name: "assignments", enc: [], scope: "client", clientCol: "client_id", writePerm: "assignments:manage", parent: ["clients", "client_id"] },
         { name: "episodes", enc: ["presenting_problem_enc", "discharge_summary_enc"], scope: "client", clientCol: "client_id", writePerm: "episodes:write", parent: ["clients", "client_id"] },
+        // CalOMS Tx records hang off an episode: the episode must land first.
+        { name: "caloms_records", enc: ["answers_enc"], scope: "client", clientCol: "client_id", writePerm: "episodes:write", parent: ["episodes", "episode_id"] },
         { name: "interventions", enc: ["summary_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "interventions:write", parent: ["clients", "client_id"] },
         { name: "overdose_events", enc: ["notes_enc", "substances_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "overdose:write", parent: ["clients", "client_id"] },
         { name: "calls", enc: ["contact_name_enc", "phone_enc", "summary_enc", "purpose_enc"], scope: "client-or-null", clientCol: "client_id", writePerm: "calls:write", parent: ["clients", "client_id"] },
@@ -9520,7 +9560,9 @@ var require_sync_tables = __commonJS({
         ["users", "supervisor_id"],
         ["devices", "user_id"],
         ["supply_stock", "updated_by"],
-        ["option_overrides", "updated_by"]
+        ["option_overrides", "updated_by"],
+        ["caloms_records", "created_by"],
+        ["caloms_records", "updated_by"]
       ]
     };
     module.exports.user_ref_cols = [...new Set(module.exports.user_refs.map(([, c]) => c))];
@@ -13491,6 +13533,1320 @@ var require_calls = __commonJS({
   }
 });
 
+// server/caloms-spec.js
+var require_caloms_spec = __commonJS({
+  "server/caloms-spec.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var SPEC_VERSION = "SUDS CalOMS Tx layout 2026.1 (unverified against the DHCS data dictionary)";
+    var SPEC_SOURCE = "DHCS CalOMS Tx Data Collection Guide (Aug 2024, v3) \u2014 not retrieved; code values to verify against the current DHCS data dictionary";
+    var set = (pairs) => pairs.map(([code, label]) => ({ code, label }));
+    var SETS = {
+      ADMISSION_TRANSACTION: set([["1", "Initial admission"], ["2", "Transfer or change in service (same provider)"]]),
+      SERVICE_TYPES: set([
+        ["01", "Outpatient (ASAM 1.0)"],
+        ["02", "Intensive outpatient (ASAM 2.1)"],
+        ["03", "Partial hospitalization (ASAM 2.5)"],
+        ["04", "Residential, clinically managed low intensity (ASAM 3.1)"],
+        ["05", "Residential, population-specific high intensity (ASAM 3.3)"],
+        ["06", "Residential, clinically managed high intensity (ASAM 3.5)"],
+        ["07", "Inpatient, medically monitored (ASAM 3.7)"],
+        ["08", "Withdrawal management, ambulatory (1-WM / 2-WM)"],
+        ["09", "Withdrawal management, residential (3.2-WM)"],
+        ["10", "Withdrawal management, inpatient (3.7-WM / 4-WM)"],
+        ["11", "Narcotic treatment program \u2014 maintenance"],
+        ["12", "Narcotic treatment program \u2014 detoxification"],
+        ["13", "Recovery services"]
+      ]),
+      REFERRAL_SOURCES: set([
+        ["01", "Individual (self)"],
+        ["02", "Alcohol or drug treatment provider"],
+        ["03", "Other health care provider"],
+        ["04", "School"],
+        ["05", "Employer / EAP"],
+        ["06", "Other community referral"],
+        ["07", "Court or criminal justice (not DUI)"],
+        ["08", "DUI / DWI"],
+        ["09", "Probation"],
+        ["10", "Parole"],
+        ["11", "Drug court"],
+        ["12", "PC 1000 (deferred entry of judgment)"],
+        ["13", "Dependency court / child welfare services"],
+        ["14", "CalWORKs / social services"],
+        ["15", "Mental health provider"],
+        ["16", "Hospital or emergency department"]
+      ]),
+      DRUGS: set([
+        ["00", "None"],
+        ["01", "Heroin"],
+        ["02", "Alcohol"],
+        ["03", "Barbiturates"],
+        ["04", "Other sedatives or hypnotics"],
+        ["05", "Methamphetamine"],
+        ["06", "Other amphetamines"],
+        ["07", "Other stimulants"],
+        ["08", "Cocaine / crack"],
+        ["09", "Marijuana / hashish"],
+        ["10", "PCP"],
+        ["11", "Other hallucinogens"],
+        ["12", "Tranquilizers (benzodiazepines)"],
+        ["13", "Other tranquilizers"],
+        ["14", "Non-prescription methadone"],
+        ["15", "Oxycodone / OxyContin"],
+        ["16", "Other opiates or synthetics"],
+        ["17", "Inhalants"],
+        ["18", "Over-the-counter"],
+        ["19", "Ecstasy (MDMA)"],
+        ["20", "Other club drugs"],
+        ["21", "Fentanyl"],
+        ["99", "Other"]
+      ]),
+      ROUTES: set([["1", "Oral"], ["2", "Smoking"], ["3", "Inhalation (nasal)"], ["4", "Injection"], ["5", "Other"]]),
+      YES_NO: set([["Y", "Yes"], ["N", "No"]]),
+      YES_NO_DECLINED: set([["Y", "Yes"], ["N", "No"], ["D", "Declined to state"]]),
+      YES_NO_UNKNOWN: set([["Y", "Yes"], ["N", "No"], ["U", "Unknown"]]),
+      SEX_AT_BIRTH: set([["M", "Male"], ["F", "Female"], ["X", "Intersex / another sex"], ["D", "Declined to state"]]),
+      GENDER_IDENTITY: set([
+        ["1", "Male"],
+        ["2", "Female"],
+        ["3", "Transgender man / trans masculine"],
+        ["4", "Transgender woman / trans feminine"],
+        ["5", "Genderqueer / non-binary"],
+        ["6", "Another gender identity"],
+        ["7", "Declined to state"]
+      ]),
+      RACES: set([
+        ["01", "White"],
+        ["02", "Black or African American"],
+        ["03", "American Indian"],
+        ["04", "Alaska Native"],
+        ["05", "Asian Indian"],
+        ["06", "Cambodian"],
+        ["07", "Chinese"],
+        ["08", "Filipino"],
+        ["09", "Guamanian"],
+        ["10", "Native Hawaiian"],
+        ["11", "Japanese"],
+        ["12", "Korean"],
+        ["13", "Laotian"],
+        ["14", "Samoan"],
+        ["15", "Vietnamese"],
+        ["16", "Other Asian"],
+        ["17", "Other Pacific Islander"],
+        ["18", "Other"],
+        ["19", "Declined to state"]
+      ]),
+      ETHNICITIES: set([
+        ["01", "Mexican / Mexican American / Chicano"],
+        ["02", "Puerto Rican"],
+        ["03", "Cuban"],
+        ["04", "Other Hispanic or Latino"],
+        ["05", "Not Hispanic or Latino"],
+        ["06", "Declined to state"]
+      ]),
+      DISABILITIES: set([
+        ["1", "None"],
+        ["2", "Visual"],
+        ["3", "Hearing"],
+        ["4", "Speech"],
+        ["5", "Mobility"],
+        ["6", "Mental"],
+        ["7", "Developmental"],
+        ["8", "Other"],
+        ["9", "Declined to state"]
+      ]),
+      EMPLOYMENT: set([
+        ["1", "Employed full time (35+ hours a week)"],
+        ["2", "Employed part time"],
+        ["3", "Unemployed, looking for work"],
+        ["4", "Unemployed, not looking for work"],
+        ["5", "Not in the labor force (student, homemaker, retired, disabled, incarcerated)"]
+      ]),
+      LIVING: set([["1", "Homeless"], ["2", "Dependent living (supervised, or with family)"], ["3", "Independent living"]]),
+      // 1-3 and 5 are "standard" discharges (the client answers the discharge questions); 4, 6, 7 and 8 are
+      // "administrative" (the client is not there to ask), which carry only the discharge elements.
+      DISCHARGE_STATUS: set([
+        ["1", "Completed treatment / recovery plan goals \u2014 referred"],
+        ["2", "Completed treatment / recovery plan goals \u2014 not referred"],
+        ["3", "Left before completion with satisfactory progress \u2014 standard questions"],
+        ["4", "Left before completion with satisfactory progress \u2014 administrative questions"],
+        ["5", "Left before completion with unsatisfactory progress \u2014 standard questions"],
+        ["6", "Left before completion with unsatisfactory progress \u2014 administrative questions"],
+        ["7", "Death"],
+        ["8", "Incarceration"]
+      ])
+    };
+    var ADMINISTRATIVE_DISCHARGE = ["4", "6", "7", "8"];
+    var RECORD_TYPES = ["admission", "discharge", "annual_update"];
+    var MULTI_MAX = 5;
+    var REP = ["admission", "discharge", "annual_update"];
+    var hasSecondary = (a, c) => {
+      const s = c.record_type === "admission" ? a.secondary_drug : (c.admission || {}).secondary_drug;
+      return !!s && s !== "00";
+    };
+    var FIELDS = [
+      // ---- admission: the episode ----
+      { key: "admission_transaction", name: "AdmissionTransactionType", label: "Admission type", set: "ADMISSION_TRANSACTION", in: ["admission"], req: "always", group: "Admission" },
+      { key: "service_type", name: "TypeOfService", label: "Type of service", set: "SERVICE_TYPES", in: ["admission"], req: "always", group: "Admission" },
+      { key: "referral_source", name: "ReferralSource", label: "Referral source", set: "REFERRAL_SOURCES", in: ["admission"], req: "always", group: "Admission" },
+      { key: "days_waited", name: "DaysWaitedToEnterTreatment", label: "Days waited to enter treatment", type: "int", min: 0, max: 999, in: ["admission"], req: "always", group: "Admission" },
+      { key: "prior_episodes", name: "NumberOfPriorTreatmentEpisodes", label: "Number of prior treatment episodes", type: "int", min: 0, max: 99, in: ["admission"], req: "always", group: "Admission" },
+      { key: "mat_planned", name: "MedicationAssistedTreatmentPlanned", label: "Medication-assisted treatment planned", set: "YES_NO", in: ["admission"], req: "always", group: "Admission" },
+      { key: "calworks", name: "CalWORKsRecipient", label: "CalWORKs recipient", set: "YES_NO", in: ["admission"], req: "always", group: "Admission" },
+      // ---- admission: about the client ----
+      { key: "sex_at_birth", name: "SexAtBirth", label: "Sex at birth", set: "SEX_AT_BIRTH", in: ["admission"], req: "always", group: "About the client" },
+      { key: "gender_identity", name: "GenderIdentity", label: "Gender identity", set: "GENDER_IDENTITY", in: ["admission"], req: "always", group: "About the client" },
+      { key: "race", name: "Race", label: `Race (up to ${MULTI_MAX})`, set: "RACES", multi: true, in: ["admission"], req: "always", group: "About the client" },
+      { key: "ethnicity", name: "Ethnicity", label: "Ethnicity", set: "ETHNICITIES", in: ["admission"], req: "always", group: "About the client" },
+      { key: "veteran", name: "VeteranStatus", label: "Veteran", set: "YES_NO_DECLINED", in: ["admission"], req: "always", group: "About the client" },
+      { key: "disability", name: "Disability", label: `Disability (up to ${MULTI_MAX})`, set: "DISABILITIES", multi: true, in: ["admission"], req: "always", group: "About the client" },
+      { key: "zip_code", name: "ZipCodeAtAdmission", label: "ZIP code of residence", type: "zip", in: ["admission"], req: "always", group: "About the client", help: "5 digits; 00000 when homeless or unknown (to verify)." },
+      { key: "education_grade", name: "HighestSchoolGradeCompleted", label: "Highest school grade completed (0-30)", type: "int", min: 0, max: 30, in: ["admission"], req: "always", group: "About the client" },
+      { key: "children_under_18", name: "NumberOfChildrenUnder18", label: "Number of children under 18", type: "int", min: 0, max: 99, in: ["admission"], req: "always", group: "About the client" },
+      { key: "children_cps", name: "ChildrenLivingWithOthersDueToCPS", label: "Of those, living with someone else by child protective order", type: "int", min: 0, max: 99, in: ["admission"], req: "always", group: "About the client" },
+      { key: "pregnant", name: "PregnantAtAdmission", label: "Pregnant at admission", set: "YES_NO", in: ["admission"], req: "always", group: "About the client" },
+      // ---- admission: substance use history ----
+      { key: "primary_drug", name: "PrimaryDrug", label: "Primary drug", set: "DRUGS", in: ["admission"], req: "always", group: "Substance use" },
+      { key: "primary_route", name: "PrimaryDrugRoute", label: "Primary drug \u2014 usual route", set: "ROUTES", in: ["admission"], req: "always", group: "Substance use" },
+      { key: "primary_age_first_use", name: "PrimaryDrugAgeOfFirstUse", label: "Primary drug \u2014 age of first use", type: "int", min: 0, max: 99, in: ["admission"], req: "always", group: "Substance use" },
+      { key: "secondary_drug", name: "SecondaryDrug", label: "Secondary drug (None if none)", set: "DRUGS", in: ["admission"], req: "always", group: "Substance use" },
+      { key: "secondary_route", name: "SecondaryDrugRoute", label: "Secondary drug \u2014 usual route", set: "ROUTES", in: ["admission"], req: hasSecondary, group: "Substance use" },
+      { key: "secondary_age_first_use", name: "SecondaryDrugAgeOfFirstUse", label: "Secondary drug \u2014 age of first use", type: "int", min: 0, max: 99, in: ["admission"], req: hasSecondary, group: "Substance use" },
+      { key: "iv_use_12m", name: "NeedleUsePast12Months", label: "Needle use in the past 12 months", set: "YES_NO", in: ["admission"], req: "always", group: "Substance use" },
+      // ---- discharge ----
+      { key: "discharge_status", name: "DischargeStatus", label: "CalOMS discharge status", set: "DISCHARGE_STATUS", in: ["discharge"], req: "always", group: "Discharge" },
+      { key: "last_service_date", name: "DateOfLastService", label: "Date of last face-to-face service", type: "date", in: ["discharge"], req: "always", group: "Discharge" },
+      // ---- the 30-day repeated measures: admission, standard discharge, annual update ----
+      { key: "primary_days_used", name: "PrimaryDrugFrequency", label: "Days primary drug used, past 30", type: "int", min: 0, max: 30, in: REP, req: "standard", group: "Past 30 days" },
+      { key: "secondary_days_used", name: "SecondaryDrugFrequency", label: "Days secondary drug used, past 30", type: "int", min: 0, max: 30, in: REP, req: (a, c) => c.standard && hasSecondary(a, c), group: "Past 30 days" },
+      { key: "alcohol_days", name: "AlcoholUseDays", label: "Days alcohol used, past 30", type: "int", min: 0, max: 30, in: REP, req: "standard", group: "Past 30 days" },
+      { key: "iv_use_30", name: "NeedleUsePast30Days", label: "Needle use, past 30 days", set: "YES_NO", in: REP, req: "standard", group: "Past 30 days" },
+      { key: "employment_status", name: "CurrentEmploymentStatus", label: "Employment status", set: "EMPLOYMENT", in: REP, req: "standard", group: "Past 30 days" },
+      { key: "paid_work_days", name: "DaysPaidForWorkPast30", label: "Days paid for work, past 30", type: "int", min: 0, max: 30, in: REP, req: "standard", group: "Past 30 days" },
+      { key: "school_enrolled", name: "EnrolledInSchool", label: "Enrolled in school", set: "YES_NO", in: REP, req: "standard", group: "Past 30 days" },
+      { key: "job_training", name: "EnrolledInJobTraining", label: "Enrolled in job training", set: "YES_NO", in: REP, req: "standard", group: "Past 30 days" },
+      { key: "living_arrangement", name: "LivingArrangement", label: "Living arrangement", set: "LIVING", in: REP, req: "standard", group: "Past 30 days" },
+      { key: "arrests_30", name: "ArrestsPast30Days", label: "Arrests, past 30 days", type: "int", min: 0, max: 99, in: REP, req: "standard", group: "Past 30 days" },
+      { key: "jail_days_30", name: "JailDaysPast30", label: "Days in jail, past 30", type: "int", min: 0, max: 30, in: REP, req: "standard", group: "Past 30 days" },
+      { key: "prison_days_30", name: "PrisonDaysPast30", label: "Days in prison, past 30", type: "int", min: 0, max: 30, in: REP, req: "standard", group: "Past 30 days" },
+      { key: "er_visits_30", name: "EmergencyRoomVisitsPast30", label: "Emergency room visits, past 30 days", type: "int", min: 0, max: 99, in: REP, req: "standard", group: "Past 30 days" },
+      { key: "hospital_nights_30", name: "HospitalOvernightStaysPast30", label: "Nights in hospital, past 30", type: "int", min: 0, max: 30, in: REP, req: "standard", group: "Past 30 days" },
+      { key: "physical_health_days_30", name: "PhysicalHealthProblemDaysPast30", label: "Days with physical health problems, past 30", type: "int", min: 0, max: 30, in: REP, req: "standard", group: "Past 30 days" },
+      { key: "mh_diagnosis", name: "DiagnosedMentalIllness", label: "Diagnosed with a mental illness", set: "YES_NO_UNKNOWN", in: REP, req: "standard", group: "Past 30 days" },
+      { key: "mh_er_visits_30", name: "MentalHealthERVisitsPast30", label: "Emergency visits for mental health, past 30 days", type: "int", min: 0, max: 99, in: REP, req: "standard", group: "Past 30 days" },
+      { key: "psych_inpatient_days_30", name: "PsychiatricInpatientDaysPast30", label: "Days in psychiatric inpatient care, past 30", type: "int", min: 0, max: 30, in: REP, req: "standard", group: "Past 30 days" },
+      { key: "psych_meds", name: "PrescribedPsychiatricMedication", label: "Prescribed psychiatric medication", set: "YES_NO", in: REP, req: "standard", group: "Past 30 days" },
+      { key: "family_conflict_days_30", name: "FamilyConflictDaysPast30", label: "Days of serious family conflict, past 30", type: "int", min: 0, max: 30, in: REP, req: "standard", group: "Past 30 days" },
+      { key: "social_support_days_30", name: "SocialSupportRecoveryDaysPast30", label: "Days at social support recovery activities, past 30", type: "int", min: 0, max: 30, in: REP, req: "standard", group: "Past 30 days" },
+      { key: "lives_with_user", name: "LivesWithSubstanceUser", label: "Lives with someone who uses alcohol or drugs", set: "YES_NO", in: REP, req: "standard", group: "Past 30 days" }
+    ];
+    var FIELD = Object.fromEntries(FIELDS.map((f) => [f.key, f]));
+    var fieldsFor = (type) => FIELDS.filter((f) => f.in.includes(type));
+    var FROM_SUDS = {
+      asam_level: { "1.0": "01", "2.1": "02", "2.5": "03", "3.1": "04", "3.3": "05", "3.5": "06", "3.7": "07", "4.0": "10", OTP: "11" },
+      substance: { opioids_fentanyl: "21", opioids_heroin: "01", opioids_rx: "16", alcohol: "02", methamphetamine: "05", cocaine: "08", benzodiazepines: "12", cannabis: "09", synthetic_cannabinoids: "99", xylazine: "99", other: "99" },
+      discharge_reason: { completed: "1", transferred: "1", incarcerated: "8", deceased: "7", lost_contact: "6", declined: "5", moved: "4" },
+      veteran: { 1: "Y", 0: "N" }
+    };
+    var ID_COLUMNS = [
+      { key: "record_type", name: "RecordType" },
+      { key: "provider_id", name: "ProviderID" },
+      { key: "client_id", name: "ProviderClientID" },
+      { key: "last_name", name: "ClientLastName" },
+      { key: "first_name", name: "ClientFirstName" },
+      { key: "dob", name: "DateOfBirth" },
+      { key: "admission_date", name: "AdmissionDate" }
+    ];
+    var RECORD_CODE = { admission: "A", discharge: "D", annual_update: "U" };
+    module.exports = { SPEC_VERSION, SPEC_SOURCE, SETS, FIELDS, FIELD, RECORD_TYPES, RECORD_CODE, ADMINISTRATIVE_DISCHARGE, MULTI_MAX, fieldsFor, FROM_SUDS, ID_COLUMNS };
+  }
+});
+
+// server/importers/text.js
+var require_text = __commonJS({
+  "server/importers/text.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var zlib = (init_zlib(), __toCommonJS(zlib_exports));
+    function decodeEntities(s) {
+      const map = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", ndash: "\u2013", mdash: "\u2014", hellip: "\u2026", rsquo: "\u2019", lsquo: "\u2018", rdquo: "\u201D", ldquo: "\u201C" };
+      return s.replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z]+);/g, (m, e) => {
+        if (e[0] === "#") {
+          const code = e[1].toLowerCase() === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+          return Number.isFinite(code) ? String.fromCodePoint(code) : m;
+        }
+        return map[e] ?? m;
+      });
+    }
+    function htmlToText(html) {
+      let s = String(html);
+      s = s.replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, "");
+      s = s.replace(/<!--[\s\S]*?-->/g, "");
+      s = s.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li|h[1-6]|tr|blockquote|pre)>/gi, "\n").replace(/<li[^>]*>/gi, "\u2022 ").replace(/<\/td>/gi, "	");
+      s = s.replace(/<[^>]+>/g, "");
+      s = decodeEntities(s);
+      return s.replace(/\r/g, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    }
+    function extractTitle(html) {
+      const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html) || /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html);
+      return m ? htmlToText(m[1]).trim() : "";
+    }
+    function quotedPrintableDecode(s) {
+      return import_buffer.Buffer.from(String(s).replace(/=\r?\n/g, "").replace(/=([0-9A-F]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16))), "binary").toString("utf8");
+    }
+    function parseMime(raw) {
+      const text = import_buffer.Buffer.isBuffer(raw) ? raw.toString("latin1") : String(raw);
+      const headerEnd = text.search(/\r?\n\r?\n/);
+      const headers = text.slice(0, headerEnd);
+      const bm = /boundary="?([^"\r\n;]+)"?/i.exec(headers);
+      if (!bm) {
+        return [{ contentType: (/content-type:\s*([^;\r\n]+)/i.exec(headers) || [, "text/html"])[1].trim(), body: decodePart(headers, text.slice(headerEnd).trim()) }];
+      }
+      const parts = text.split(new RegExp("--" + bm[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?:--)?\\r?\\n"));
+      const out2 = [];
+      for (const p of parts.slice(1)) {
+        const he = p.search(/\r?\n\r?\n/);
+        if (he < 0) continue;
+        const h = p.slice(0, he);
+        const b = p.slice(he).replace(/^\r?\n\r?\n/, "");
+        const ct = (/content-type:\s*([^;\r\n]+)/i.exec(h) || [, ""])[1].trim().toLowerCase();
+        const loc = (/content-location:\s*([^\r\n]+)/i.exec(h) || [, ""])[1].trim();
+        if (!ct) continue;
+        out2.push({ contentType: ct, location: loc, body: decodePart(h, b) });
+      }
+      return out2;
+    }
+    function decodePart(headers, body) {
+      const enc2 = (/content-transfer-encoding:\s*([^\r\n]+)/i.exec(headers) || [, "7bit"])[1].trim().toLowerCase();
+      if (enc2 === "quoted-printable") return quotedPrintableDecode(body);
+      if (enc2 === "base64") return import_buffer.Buffer.from(body.replace(/\s+/g, ""), "base64");
+      return import_buffer.Buffer.from(body, "latin1").toString("utf8");
+    }
+    function unzip(buf) {
+      const files = /* @__PURE__ */ new Map();
+      const eocd = buf.lastIndexOf(import_buffer.Buffer.from([80, 75, 5, 6]));
+      if (eocd < 0) throw new Error("Not a ZIP archive");
+      const count = buf.readUInt16LE(eocd + 10);
+      let off = buf.readUInt32LE(eocd + 16);
+      for (let i = 0; i < count; i++) {
+        if (buf.readUInt32LE(off) !== 33639248) break;
+        const method = buf.readUInt16LE(off + 10);
+        const csize = buf.readUInt32LE(off + 20);
+        const nlen = buf.readUInt16LE(off + 28), elen = buf.readUInt16LE(off + 30), clen2 = buf.readUInt16LE(off + 32);
+        const lho = buf.readUInt32LE(off + 42);
+        const name = buf.toString("utf8", off + 46, off + 46 + nlen);
+        const lnlen = buf.readUInt16LE(lho + 26), lelen = buf.readUInt16LE(lho + 28);
+        const dataStart = lho + 30 + lnlen + lelen;
+        const data = buf.subarray(dataStart, dataStart + csize);
+        files.set(name, method === 8 ? zlib.inflateRawSync(data) : import_buffer.Buffer.from(data));
+        off += 46 + nlen + elen + clen2;
+      }
+      return files;
+    }
+    function docxToText(buf) {
+      const files = unzip(buf);
+      const xml = files.get("word/document.xml");
+      if (!xml) throw new Error("Not a DOCX file (word/document.xml missing)");
+      let s = xml.toString("utf8");
+      s = s.replace(/<w:tab\/>/g, "	").replace(/<w:br\/>|<w:cr\/>/g, "\n").replace(/<\/w:p>/g, "\n").replace(/<[^>]+>/g, "");
+      return decodeEntities(s).replace(/\n{3,}/g, "\n\n").trim();
+    }
+    function sniffDate(text) {
+      const s = String(text || "");
+      let m = /(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?))?/.exec(s);
+      if (m) {
+        const d = /* @__PURE__ */ new Date(m[1] + (m[2] ? "T" + m[2] : "T12:00:00"));
+        if (!isNaN(d)) return d.toISOString();
+      }
+      m = /\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b(?:,?\s+(\d{1,2}:\d{2}\s*(?:AM|PM)?))?/i.exec(s);
+      if (m) {
+        const y = m[3].length === 2 ? "20" + m[3] : m[3];
+        const d = /* @__PURE__ */ new Date(`${y}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}T12:00:00`);
+        if (!isNaN(d)) return d.toISOString();
+      }
+      m = /\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+(\d{1,2}),?\s+(\d{4})/i.exec(s);
+      if (m) {
+        const d = /* @__PURE__ */ new Date(`${m[1].slice(0, 3)} ${m[2]}, ${m[3]} 12:00:00`);
+        if (!isNaN(d)) return d.toISOString();
+      }
+      return null;
+    }
+    function sniffClientHints(text) {
+      const s = String(text || "");
+      const hints = { codes: [], names: [] };
+      for (const m of s.matchAll(/\b([CM]\d{2}-\d{4})\b/gi)) hints.codes.push(m[1].toUpperCase());
+      const kw = /\b(?:(?:client|participant|pt|patient|re|name|regarding)\s*[:\-]\s*|(?:with|for|regarding)\s+)/gi;
+      const nameRe = /^([A-Z][a-zA-Z'\-]+(?:,\s*|\s+)[A-Z][a-zA-Z'\-]+)/;
+      for (const m of s.matchAll(kw)) {
+        const nm = nameRe.exec(s.slice(m.index + m[0].length));
+        if (nm) hints.names.push(nm[1].trim());
+      }
+      hints.codes = [...new Set(hints.codes)];
+      hints.names = [...new Set(hints.names)].slice(0, 5);
+      return hints;
+    }
+    module.exports = { htmlToText, extractTitle, quotedPrintableDecode, parseMime, unzip, docxToText, sniffDate, sniffClientHints, decodeEntities };
+  }
+});
+
+// server/spreadsheet.js
+var require_spreadsheet = __commonJS({
+  "server/spreadsheet.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var zlib = (init_zlib(), __toCommonJS(zlib_exports));
+    var { unzip, decodeEntities } = require_text();
+    function parseCsv(text) {
+      const s = String(text).replace(/^﻿/, "");
+      const rows = [];
+      let row = [];
+      let field = "";
+      let q = false;
+      for (let i = 0; i < s.length; i++) {
+        const c = s[i];
+        if (q) {
+          if (c === '"') {
+            if (s[i + 1] === '"') {
+              field += '"';
+              i++;
+            } else q = false;
+          } else field += c;
+        } else if (c === '"') q = true;
+        else if (c === ",") {
+          row.push(field);
+          field = "";
+        } else if (c === "\n" || c === "\r") {
+          if (c === "\r" && s[i + 1] === "\n") i++;
+          row.push(field);
+          rows.push(row);
+          row = [];
+          field = "";
+        } else field += c;
+      }
+      if (field !== "" || row.length) {
+        row.push(field);
+        rows.push(row);
+      }
+      return rows.filter((r) => r.some((v) => String(v).trim() !== ""));
+    }
+    var FORMULA_START = /^[=+\-@\t\r]/;
+    function toCsv(rows, columns) {
+      const esc = (v) => {
+        if (v === null || v === void 0) return "";
+        if (typeof v === "number") return Number.isFinite(v) ? String(v) : "";
+        let t = typeof v === "object" ? JSON.stringify(v) : String(v);
+        if (FORMULA_START.test(t)) return `"'` + t.replace(/"/g, '""') + '"';
+        return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+      };
+      return "\uFEFF" + [columns.map((c) => esc(c.label || c.key || c)).join(","), ...rows.map((r) => columns.map((c) => esc(r[c.key || c])).join(","))].join("\r\n");
+    }
+    function crc32(buf) {
+      let c, crc = 4294967295;
+      for (let n = 0; n < buf.length; n++) {
+        c = (crc ^ buf[n]) & 255;
+        for (let k = 0; k < 8; k++) c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
+        crc = crc >>> 8 ^ c;
+      }
+      return (crc ^ 4294967295) >>> 0;
+    }
+    function zipEntry(name, content, comp, off, local, central) {
+      const data = import_buffer.Buffer.isBuffer(content) ? content : import_buffer.Buffer.from(content, "utf8");
+      const n = import_buffer.Buffer.from(name);
+      const crc = crc32(data);
+      const lh = import_buffer.Buffer.alloc(30);
+      lh.writeUInt32LE(67324752, 0);
+      lh.writeUInt16LE(20, 4);
+      lh.writeUInt16LE(2048, 6);
+      lh.writeUInt16LE(8, 8);
+      lh.writeUInt32LE(crc, 14);
+      lh.writeUInt32LE(comp.length, 18);
+      lh.writeUInt32LE(data.length, 22);
+      lh.writeUInt16LE(n.length, 26);
+      local.push(lh, n, comp);
+      const ch = import_buffer.Buffer.alloc(46);
+      ch.writeUInt32LE(33639248, 0);
+      ch.writeUInt16LE(20, 4);
+      ch.writeUInt16LE(20, 6);
+      ch.writeUInt16LE(2048, 8);
+      ch.writeUInt16LE(8, 10);
+      ch.writeUInt32LE(crc, 16);
+      ch.writeUInt32LE(comp.length, 20);
+      ch.writeUInt32LE(data.length, 24);
+      ch.writeUInt16LE(n.length, 28);
+      ch.writeUInt32LE(off, 42);
+      central.push(ch, n);
+      return off + 30 + n.length + comp.length;
+    }
+    function zipEnd(entries, local, central, off) {
+      const cd = import_buffer.Buffer.concat(central);
+      const eocd = import_buffer.Buffer.alloc(22);
+      eocd.writeUInt32LE(101010256, 0);
+      eocd.writeUInt16LE(entries.length, 8);
+      eocd.writeUInt16LE(entries.length, 10);
+      eocd.writeUInt32LE(cd.length, 12);
+      eocd.writeUInt32LE(off, 16);
+      return import_buffer.Buffer.concat([...local, cd, eocd]);
+    }
+    var defer = globalThis.setImmediate ? (f) => setImmediate(f) : (f) => setTimeout(f, 0);
+    async function zipAsync(entries) {
+      const local = [], central = [];
+      let off = 0;
+      const deflate = (buf) => typeof zlib.deflateRaw === "function" ? new Promise((resolve2, reject) => zlib.deflateRaw(buf, (err2, out2) => err2 ? reject(err2) : resolve2(out2))) : new Promise((resolve2) => defer(resolve2)).then(() => zlib.deflateRawSync(buf));
+      for (const [name, content] of entries) {
+        const data = import_buffer.Buffer.isBuffer(content) ? content : import_buffer.Buffer.from(content, "utf8");
+        off = zipEntry(name, data, await deflate(data), off, local, central);
+      }
+      return zipEnd(entries, local, central, off);
+    }
+    function zip(entries) {
+      const local = [], central = [];
+      let off = 0;
+      for (const [name, content] of entries) {
+        const data = import_buffer.Buffer.isBuffer(content) ? content : import_buffer.Buffer.from(content, "utf8");
+        const comp = zlib.deflateRawSync(data);
+        const n = import_buffer.Buffer.from(name);
+        const crc = crc32(data);
+        const lh = import_buffer.Buffer.alloc(30);
+        lh.writeUInt32LE(67324752, 0);
+        lh.writeUInt16LE(20, 4);
+        lh.writeUInt16LE(2048, 6);
+        lh.writeUInt16LE(8, 8);
+        lh.writeUInt32LE(crc, 14);
+        lh.writeUInt32LE(comp.length, 18);
+        lh.writeUInt32LE(data.length, 22);
+        lh.writeUInt16LE(n.length, 26);
+        local.push(lh, n, comp);
+        const ch = import_buffer.Buffer.alloc(46);
+        ch.writeUInt32LE(33639248, 0);
+        ch.writeUInt16LE(20, 4);
+        ch.writeUInt16LE(20, 6);
+        ch.writeUInt16LE(2048, 8);
+        ch.writeUInt16LE(8, 10);
+        ch.writeUInt32LE(crc, 16);
+        ch.writeUInt32LE(comp.length, 20);
+        ch.writeUInt32LE(data.length, 24);
+        ch.writeUInt16LE(n.length, 28);
+        ch.writeUInt32LE(off, 42);
+        central.push(ch, n);
+        off += 30 + n.length + comp.length;
+      }
+      return zipEnd(entries, local, central, off);
+    }
+    var EXCEL_EPOCH = Date.UTC(1899, 11, 30);
+    var xmlEsc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
+    function colRef(i) {
+      let s = "";
+      i++;
+      while (i > 0) {
+        const m = (i - 1) % 26;
+        s = String.fromCharCode(65 + m) + s;
+        i = Math.floor((i - 1) / 26);
+      }
+      return s;
+    }
+    function writeSheetXml(sh) {
+      const cols2 = sh.columns.map((c) => typeof c === "string" ? { key: c, label: c } : c);
+      const cell = (r, i, v) => {
+        const ref = colRef(i) + r;
+        if (v === null || v === void 0 || v === "") return "";
+        if (typeof v === "number" && Number.isFinite(v)) return `<c r="${ref}"><v>${v}</v></c>`;
+        if (typeof v === "boolean") return `<c r="${ref}" t="b"><v>${v ? 1 : 0}</v></c>`;
+        if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
+          const t = Date.parse(v + "T00:00:00Z");
+          if (Number.isFinite(t)) return `<c r="${ref}" s="2"><v>${(t - EXCEL_EPOCH) / 864e5}</v></c>`;
+        }
+        if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)) {
+          const t = Date.parse(v);
+          if (Number.isFinite(t)) return `<c r="${ref}" s="3"><v>${(t - EXCEL_EPOCH) / 864e5}</v></c>`;
+        }
+        return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${xmlEsc(typeof v === "object" ? JSON.stringify(v) : v)}</t></is></c>`;
+      };
+      const header = `<row r="1">${cols2.map((c, i) => `<c r="${colRef(i)}1" t="inlineStr" s="1"><is><t>${xmlEsc(c.label)}</t></is></c>`).join("")}</row>`;
+      const body = sh.rows.map((row, ri) => `<row r="${ri + 2}">${cols2.map((c, i) => cell(ri + 2, i, row[c.key])).join("")}</row>`).join("");
+      const widths = `<cols>${cols2.map((c, i) => `<col min="${i + 1}" max="${i + 1}" width="${Math.min(60, Math.max(10, c.width || String(c.label).length + 4))}" customWidth="1"/>`).join("")}</cols>`;
+      return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>${widths}<sheetData>${header}${body}</sheetData><autoFilter ref="A1:${colRef(cols2.length - 1)}${sh.rows.length + 1}"/></worksheet>`;
+    }
+    function writeWorkbookParts(sheets) {
+      const files = [];
+      const safeName = (n, i) => String(n).replace(/[\\/*?:\[\]]/g, " ").slice(0, 31) || `Sheet${i + 1}`;
+      files.push(["[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`]);
+      files.push(["_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`]);
+      files.push(["xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((s, i) => `<sheet name="${xmlEsc(safeName(s.name, i))}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("")}</sheets></workbook>`]);
+      files.push(["xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("")}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`]);
+      files.push(["xl/styles.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" applyFont="1"/><xf numFmtId="14" fontId="0" fillId="0" borderId="0" applyNumberFormat="1"/><xf numFmtId="22" fontId="0" fillId="0" borderId="0" applyNumberFormat="1"/></cellXfs></styleSheet>`]);
+      sheets.forEach((s, i) => files.push([`xl/worksheets/sheet${i + 1}.xml`, writeSheetXml(s)]));
+      return new Map(files);
+    }
+    function writeWorkbook(sheets) {
+      return zip([...writeWorkbookParts(sheets).entries()]);
+    }
+    async function writeWorkbookAsync(sheets) {
+      const breathe = () => new Promise((resolve2) => defer(resolve2));
+      const parts = writeWorkbookParts(sheets.map((s) => ({ name: s.name, columns: s.columns, rows: [] })));
+      for (let i = 0; i < sheets.length; i++) {
+        parts.set(`xl/worksheets/sheet${i + 1}.xml`, writeSheetXml(sheets[i]));
+        await breathe();
+      }
+      const out2 = await zipAsync([...parts.entries()]);
+      return out2;
+    }
+    function readWorkbook(buf) {
+      const files = unzip(buf);
+      const get = (n) => {
+        const f = files.get(n);
+        return f ? f.toString("utf8") : null;
+      };
+      const wb = get("xl/workbook.xml");
+      if (!wb) throw new Error("Not an Excel (.xlsx) file");
+      const rels = get("xl/_rels/workbook.xml.rels") || "";
+      const relMap = {};
+      for (const m of rels.matchAll(/<Relationship\b[^>]*>/g)) {
+        const id = /Id="([^"]+)"/.exec(m[0])?.[1];
+        const t = /Target="([^"]+)"/.exec(m[0])?.[1];
+        if (id && t) relMap[id] = t.replace(/^\/?xl\//, "").replace(/^\//, "");
+      }
+      const shared = [];
+      const ss = get("xl/sharedStrings.xml");
+      if (ss) for (const m of ss.matchAll(/<si>([\s\S]*?)<\/si>/g)) shared.push(decodeEntities([...m[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((x) => x[1]).join("")));
+      const sheets = [];
+      for (const m of wb.matchAll(/<sheet\b[^>]*>/g)) {
+        const name = decodeEntities(/name="([^"]*)"/.exec(m[0])?.[1] || "");
+        const rid = /r:id="([^"]+)"/.exec(m[0])?.[1];
+        const target = relMap[rid] || `worksheets/sheet${sheets.length + 1}.xml`;
+        const xml = get("xl/" + target) || get(target);
+        if (!xml) continue;
+        const rows = [];
+        for (const rm of xml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
+          const row = [];
+          for (const cm of rm[1].matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
+            const attrs = cm[1];
+            const inner = cm[2] || "";
+            const ref = /r="([A-Z]+)\d+"/.exec(attrs)?.[1];
+            const type = /t="([^"]+)"/.exec(attrs)?.[1];
+            const idx = ref ? colIndex(ref) : row.length;
+            let v = null;
+            const vm = /<v>([\s\S]*?)<\/v>/.exec(inner);
+            if (type === "s") v = shared[Number(vm?.[1])] ?? "";
+            else if (type === "inlineStr") v = decodeEntities([...inner.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((x) => x[1]).join(""));
+            else if (type === "b") v = vm?.[1] === "1";
+            else if (vm) {
+              const n = Number(vm[1]);
+              v = Number.isFinite(n) ? n : decodeEntities(vm[1]);
+            }
+            while (row.length < idx) row.push(null);
+            row[idx] = v;
+          }
+          if (row.some((x) => x !== null && x !== "")) rows.push(row);
+        }
+        sheets.push({ name, rows });
+      }
+      return sheets;
+    }
+    function colIndex(letters) {
+      let n = 0;
+      for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64);
+      return n - 1;
+    }
+    function excelDate(n) {
+      if (typeof n !== "number" || !Number.isFinite(n) || n < 1) return null;
+      const d = new Date(Math.round((n - 25569) * 864e5));
+      return isNaN(d) ? null : d.toISOString().slice(0, 10);
+    }
+    function parseFile(buf, filename = "") {
+      const isZip = buf[0] === 80 && buf[1] === 75;
+      const sheets = isZip ? readWorkbook(buf) : [{ name: filename.replace(/\.[^.]+$/, "") || "Sheet1", rows: parseCsv(buf.toString("utf8")) }];
+      return { sheets: sheets.map((s) => {
+        const [h, ...rest] = s.rows;
+        const headers = (h || []).map((x) => String(x ?? "").trim());
+        return { name: s.name, headers, rows: rest.map((r) => Object.fromEntries(headers.map((k, i) => [k, r[i] === void 0 ? null : r[i]]))) };
+      }) };
+    }
+    module.exports = { parseCsv, toCsv, writeWorkbook, writeWorkbookAsync, readWorkbook, parseFile, excelDate, zip, defer };
+  }
+});
+
+// server/caloms.js
+var require_caloms = __commonJS({
+  "server/caloms.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var S = require_caloms_spec();
+    var { encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
+    function enabled() {
+      return db3.getSetting("caloms_enabled", "0") === "1";
+    }
+    function providers() {
+      try {
+        const v = JSON.parse(db3.getSetting("caloms_providers", "[]") || "[]");
+        return Array.isArray(v) ? v.filter((p) => p && p.id) : [];
+      } catch {
+        return [];
+      }
+    }
+    function startDate() {
+      return db3.getSetting("caloms_start_date", null) || null;
+    }
+    var PROVIDER_ID = /^[0-9A-Za-z]{4,10}$/;
+    function config() {
+      return {
+        enabled: enabled(),
+        providers: providers(),
+        start_date: startDate(),
+        spec: {
+          version: S.SPEC_VERSION,
+          source: S.SPEC_SOURCE,
+          sets: S.SETS,
+          record_types: S.RECORD_TYPES,
+          multi_max: S.MULTI_MAX,
+          administrative_discharge: S.ADMINISTRATIVE_DISCHARGE,
+          fields: S.FIELDS.map((f) => ({
+            key: f.key,
+            name: f.name,
+            label: f.label,
+            set: f.set || null,
+            type: f.type || (f.set ? "code" : "text"),
+            multi: !!f.multi,
+            min: f.min,
+            max: f.max,
+            in: f.in,
+            group: f.group,
+            help: f.help || null,
+            req: typeof f.req === "function" ? "conditional" : f.req
+          }))
+        },
+        from_suds: S.FROM_SUDS
+      };
+    }
+    var DAY = /^\d{4}-\d{2}-\d{2}$/;
+    var validDay = (v) => typeof v === "string" && DAY.test(v) && Number.isFinite(Date.parse(`${v}T00:00:00Z`)) && (/* @__PURE__ */ new Date(`${v}T00:00:00Z`)).toISOString().slice(0, 10) === v;
+    var addDays = (d, n) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
+    var addYears = (d, n) => {
+      const [y, m, dd] = d.split("-").map(Number);
+      const t = new Date(Date.UTC(y + n, m - 1, dd));
+      if (t.getUTCMonth() !== m - 1) t.setUTCDate(0);
+      return t.toISOString().slice(0, 10);
+    };
+    function ageOn(dob, day) {
+      const [by, bm, bd] = dob.split("-").map(Number);
+      const [y, m, d] = day.split("-").map(Number);
+      return y - by - (m < bm || m === bm && d < bd ? 1 : 0);
+    }
+    function today() {
+      try {
+        return require_budget().localDate();
+      } catch {
+        return (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      }
+    }
+    var ANNUAL_EARLY = 60;
+    var ANNUAL_LATE = 30;
+    var empty = (v) => v === void 0 || v === null || v === "" || Array.isArray(v) && !v.length;
+    function normalize(type, raw = {}) {
+      const out2 = {};
+      for (const f of S.fieldsFor(type)) {
+        let v = raw[f.key];
+        if (empty(v)) continue;
+        if (f.multi) v = (Array.isArray(v) ? v : String(v).split(/[,;]/)).map((x) => String(x).trim()).filter(Boolean);
+        else if (f.type === "int") v = typeof v === "number" ? v : /^-?\d+$/.test(String(v).trim()) ? Number(String(v).trim()) : String(v);
+        else v = String(v).trim();
+        if (!empty(v)) out2[f.key] = v;
+      }
+      return out2;
+    }
+    var CROSS_RECORD = /* @__PURE__ */ new Set(["no_admission", "admission_has_errors"]);
+    function check(rec, ctx) {
+      const out2 = [];
+      const add = (field, code, message, severity = "fatal") => out2.push({ field, severity, code, message });
+      const type = rec.record_type;
+      const a = rec.answers || {};
+      const label = (k) => (S.FIELD[k] || {}).label || k;
+      if (!S.RECORD_TYPES.includes(type)) {
+        add("record_type", "invalid_record_type", `"${type}" is not a CalOMS record type`);
+        return out2;
+      }
+      if (empty(rec.provider_id)) add("provider_id", "provider_missing", "Provider ID is required");
+      else if (!(ctx.providers || []).includes(rec.provider_id)) add("provider_id", "provider_unknown", `Provider ID ${rec.provider_id} is not one of this program's CalOMS provider IDs (Settings)`);
+      const date = rec.record_date;
+      const dateLabel = type === "admission" ? "Admission date" : type === "discharge" ? "Discharge date" : "Annual update date";
+      const dateOk = validDay(date);
+      if (!dateOk) add("record_date", "date_invalid", `${dateLabel} is required as a real date (YYYY-MM-DD)`);
+      else if (date > (ctx.today || today())) add("record_date", "date_future", `${dateLabel} is in the future`);
+      const standard = type !== "discharge" || !S.ADMINISTRATIVE_DISCHARGE.includes(a.discharge_status);
+      const rctx = { record_type: type, admission: ctx.admission, standard };
+      for (const f of S.fieldsFor(type)) {
+        const v = a[f.key];
+        const required = f.req === "always" || f.req === "standard" && standard || typeof f.req === "function" && f.req(a, rctx);
+        if (empty(v)) {
+          if (required) add(f.key, "required", `${f.label} is required`);
+          continue;
+        }
+        if (f.set) {
+          const codes = S.SETS[f.set].map((c) => c.code);
+          const vals = f.multi ? Array.isArray(v) ? v : [v] : [v];
+          if (!f.multi && Array.isArray(v)) {
+            add(f.key, "invalid_code", `${f.label} takes one answer`);
+            continue;
+          }
+          const bad = vals.filter((x) => !codes.includes(String(x)));
+          if (bad.length) add(f.key, "invalid_code", `${f.label}: ${bad.join(", ")} is not a valid code`);
+          if (f.multi && vals.length > S.MULTI_MAX) add(f.key, "too_many_codes", `${f.label} takes at most ${S.MULTI_MAX} answers`);
+          if (f.multi && new Set(vals).size !== vals.length) add(f.key, "duplicate_code", `${f.label} lists the same answer twice`);
+        } else if (f.type === "int") {
+          if (typeof v !== "number" || !Number.isInteger(v)) add(f.key, "not_a_number", `${f.label} must be a whole number`);
+          else if (v < f.min || v > f.max) add(f.key, "out_of_range", `${f.label} must be between ${f.min} and ${f.max}`);
+        } else if (f.type === "date") {
+          if (!validDay(v)) add(f.key, "date_invalid", `${f.label} must be a real date (YYYY-MM-DD)`);
+        } else if (f.type === "zip") {
+          if (!/^\d{5}$/.test(v)) add(f.key, "zip_invalid", `${f.label} must be 5 digits`);
+        }
+      }
+      const has = (k) => !empty(a[k]);
+      const num = (k) => typeof a[k] === "number" ? a[k] : null;
+      if (type === "admission") {
+        if (!ctx.dob || !validDay(ctx.dob)) add("dob", "dob_missing", "The client's date of birth is required for a CalOMS admission (add it on the client record)");
+        else if (dateOk) {
+          if (ctx.dob > date) add("dob", "admission_before_birth", "Admission date is before the client's date of birth");
+          else {
+            const age = ageOn(ctx.dob, date);
+            if (age > 110) add("dob", "age_out_of_range", `Age at admission (${age}) is over 110; check the date of birth`);
+            else if (age < 12) add("dob", "age_under_12", `Age at admission is ${age}; confirm the date of birth`, "warning");
+            for (const k of ["primary_age_first_use", "secondary_age_first_use"]) if (num(k) !== null && num(k) > age) add(k, "first_use_after_admission", `${label(k)} (${num(k)}) is older than the client's age at admission (${age})`);
+          }
+        }
+        if (a.pregnant === "Y" && a.sex_at_birth && a.sex_at_birth !== "F") add("pregnant", "pregnant_not_female", "Pregnant can only be Yes when sex at birth is Female");
+        if (a.primary_drug === "00") add("primary_drug", "primary_drug_none", "Primary drug cannot be None");
+        if (has("secondary_drug") && a.secondary_drug !== "00" && a.secondary_drug === a.primary_drug) add("secondary_drug", "secondary_same_as_primary", "Secondary drug must differ from the primary drug");
+        if (a.iv_use_30 === "Y" && a.iv_use_12m === "N") add("iv_use_12m", "needle_use_inconsistent", "Needle use in the past 30 days means needle use in the past 12 months too");
+        if (num("children_cps") !== null && num("children_under_18") !== null && num("children_cps") > num("children_under_18")) add("children_cps", "children_cps_exceeds", "Children living with others by protective order cannot exceed the number of children under 18");
+        for (const [k, exclusive] of [["disability", ["1", "9"]], ["race", ["19"]]]) {
+          const vals = Array.isArray(a[k]) ? a[k] : [];
+          if (vals.length > 1 && vals.some((x) => exclusive.includes(x))) add(k, "exclusive_code_combined", `${label(k)}: "${S.SETS[S.FIELD[k].set].find((c) => c.code === vals.find((x) => exclusive.includes(x))).label}" cannot be combined with other answers`);
+        }
+        if (dateOk && ctx.episode && ctx.episode.opened_at && ctx.episode.opened_at.slice(0, 10) !== date) add("record_date", "admission_date_differs", `Admission date differs from the episode's start (${ctx.episode.opened_at.slice(0, 10)})`, "warning");
+      }
+      const secondaryDrug = type === "admission" ? a.secondary_drug : (ctx.admission || {}).secondary_drug;
+      if (secondaryDrug === "00" && num("secondary_days_used") > 0) add("secondary_days_used", "secondary_days_without_drug", "Days secondary drug used must be 0 or blank when there is no secondary drug");
+      if (num("jail_days_30") !== null && num("prison_days_30") !== null && num("jail_days_30") + num("prison_days_30") > 30) add("prison_days_30", "jail_prison_over_30", "Days in jail and in prison together cannot exceed 30");
+      if (num("hospital_nights_30") !== null && num("psych_inpatient_days_30") !== null && num("hospital_nights_30") + num("psych_inpatient_days_30") > 30) add("psych_inpatient_days_30", "inpatient_over_30", "Hospital nights and psychiatric inpatient days together exceed 30; check both", "warning");
+      if (type === "discharge" || type === "annual_update") {
+        if (!ctx.admission) add("record_type", "no_admission", `There is no CalOMS admission record for this episode, so this ${type === "discharge" ? "discharge" : "annual update"} cannot be submitted`);
+        else if (ctx.admissionFatal) add("record_type", "admission_has_errors", "The admission this record follows has fatal errors; fix the admission first");
+      }
+      const admitted = ctx.admissionDate || (ctx.episode && ctx.episode.opened_at ? ctx.episode.opened_at.slice(0, 10) : null);
+      if (type === "discharge" && dateOk && admitted) {
+        if (date < admitted) add("record_date", "discharge_before_admission", `Discharge date is before the admission date (${admitted})`);
+        if (validDay(a.last_service_date) && (a.last_service_date > date || a.last_service_date < admitted)) add("last_service_date", "last_service_outside_episode", `Date of last service must fall between admission (${admitted}) and discharge (${date})`);
+      }
+      if (type === "annual_update" && dateOk && admitted) {
+        if (date < addDays(addYears(admitted, 1), -ANNUAL_EARLY)) add("record_date", "annual_update_too_early", `An annual update is due from ${addDays(addYears(admitted, 1), -ANNUAL_EARLY)} (the first anniversary of admission ${admitted}, less ${ANNUAL_EARLY} days)`);
+        if (ctx.dischargeDate && date > ctx.dischargeDate) add("record_date", "annual_update_after_discharge", `Annual update date is after the discharge (${ctx.dischargeDate})`);
+      }
+      return out2;
+    }
+    var fatal = (issues) => issues.filter((i) => i.severity === "fatal");
+    var blocking = (issues) => fatal(issues).filter((i) => !CROSS_RECORD.has(i.code));
+    function present(row) {
+      if (!row) return null;
+      const o = { ...row };
+      let answers = {};
+      try {
+        answers = row.answers_enc ? JSON.parse(decrypt3(row.answers_enc)) : {};
+      } catch {
+        answers = {};
+      }
+      o.answers = answers;
+      delete o.answers_enc;
+      return o;
+    }
+    function recordsForEpisode(episodeId) {
+      return db3.all(`SELECT * FROM caloms_records WHERE episode_id=? ORDER BY record_date, created_at`, episodeId).map(present);
+    }
+    function contextFor(episode, { records = null, dob = void 0 } = {}) {
+      const recs = records || recordsForEpisode(episode.id);
+      const adm = recs.find((r) => r.record_type === "admission") || null;
+      const dis = recs.find((r) => r.record_type === "discharge") || null;
+      if (dob === void 0) {
+        const c = db3.one(`SELECT dob_enc FROM clients WHERE id=?`, episode.client_id);
+        try {
+          dob = c && c.dob_enc ? decrypt3(c.dob_enc) : null;
+        } catch {
+          dob = null;
+        }
+      }
+      const base = { dob, episode, providers: providers().map((p) => p.id), today: today() };
+      let admissionFatal = false;
+      if (adm) admissionFatal = fatal(check(adm, { ...base, admission: null })).length > 0;
+      return { ...base, admission: adm ? adm.answers : null, admissionDate: adm ? adm.record_date : null, admissionFatal, dischargeDate: dis ? dis.record_date : episode.closed_at || null, records: recs };
+    }
+    function save({ episode, record_type, provider_id, record_date, answers, user, id = null }) {
+      const { badRequest } = require_http();
+      const ctx = contextFor(episode);
+      const provs = ctx.providers;
+      const admittedUnder = (ctx.records.find((r) => r.record_type === "admission") || {}).provider_id;
+      const rec = { record_type, provider_id: provider_id || record_type !== "admission" && admittedUnder || (provs.length === 1 ? provs[0] : null), record_date, answers: normalize(record_type, answers) };
+      const issues = check(rec, ctx);
+      const stop = blocking(issues);
+      if (stop.length) throw badRequest(`The CalOMS ${record_type.replace("_", " ")} record has ${stop.length} problem${stop.length === 1 ? "" : "s"}: ${stop.map((i) => i.message).join("; ")}`, { fields: Object.fromEntries(stop.map((i) => [`caloms_${i.field}`, i.message])), caloms_issues: stop });
+      let existing = id ? db3.one(`SELECT * FROM caloms_records WHERE id=? AND episode_id=?`, id, episode.id) : null;
+      if (!existing && record_type !== "annual_update") existing = db3.one(`SELECT * FROM caloms_records WHERE episode_id=? AND record_type=?`, episode.id, record_type);
+      if (!existing && record_type === "annual_update") existing = db3.one(`SELECT * FROM caloms_records WHERE episode_id=? AND record_type='annual_update' AND record_date=?`, episode.id, record_date);
+      const enc2 = encrypt3(JSON.stringify(rec.answers));
+      const service = record_type === "admission" ? rec.answers.service_type || null : null;
+      const dstatus = record_type === "discharge" ? rec.answers.discharge_status || null : null;
+      let recId;
+      if (existing) {
+        recId = existing.id;
+        db3.run(
+          `UPDATE caloms_records SET record_type=?, provider_id=?, record_date=?, service_type=?, discharge_status=?, answers_enc=?, updated_by=?, updated_at=? WHERE id=?`,
+          record_type,
+          rec.provider_id,
+          record_date,
+          service,
+          dstatus,
+          enc2,
+          user.id,
+          db3.now(),
+          recId
+        );
+      } else {
+        recId = require_crypto().uuid();
+        db3.run(
+          `INSERT INTO caloms_records(id,client_id,episode_id,record_type,provider_id,record_date,service_type,discharge_status,answers_enc,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+          recId,
+          episode.client_id,
+          episode.id,
+          record_type,
+          rec.provider_id,
+          record_date,
+          service,
+          dstatus,
+          enc2,
+          user.id,
+          user.id
+        );
+      }
+      return { id: recId, updated: !!existing, warnings: issues.filter((i) => i.severity === "warning" || CROSS_RECORD.has(i.code)) };
+    }
+    function report({ from, to, scope = () => ({ sql: "1=1", params: [] }) }) {
+      const now = today();
+      const start2 = startDate();
+      const recs = db3.all(`SELECT r.*, c.client_code, e.opened_at, e.closed_at, e.status AS episode_status FROM caloms_records r JOIN clients c ON c.id=r.client_id JOIN episodes e ON e.id=r.episode_id
+    WHERE r.record_date BETWEEN ? AND ? AND c.deleted_at IS NULL AND ${scope("r.client_id").sql} ORDER BY r.record_date, c.client_code`, from, to, ...scope("r.client_id").params).map(present);
+      const epWhere = `e.opened_at <= ? AND (e.closed_at IS NULL OR e.closed_at >= ?) AND c.deleted_at IS NULL AND c.merged_into IS NULL AND ${scope("e.client_id").sql}${start2 ? " AND e.opened_at >= ?" : ""}`;
+      const eps = db3.all(`SELECT e.*, c.client_code, c.dob_enc FROM episodes e JOIN clients c ON c.id=e.client_id WHERE ${epWhere} ORDER BY c.client_code`, to, from, ...scope("e.client_id").params, ...start2 ? [start2] : []);
+      const ctxCache = /* @__PURE__ */ new Map();
+      const ctxOf = (episodeId) => {
+        if (ctxCache.has(episodeId)) return ctxCache.get(episodeId);
+        const e = db3.one(`SELECT e.*, c.dob_enc FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.id=?`, episodeId);
+        let dob = null;
+        try {
+          dob = e.dob_enc ? decrypt3(e.dob_enc) : null;
+        } catch {
+        }
+        const c = contextFor(e, { dob });
+        ctxCache.set(episodeId, c);
+        return c;
+      };
+      const rows = [];
+      const labelOf = (field) => (S.FIELD[field] || {}).label || ({ provider_id: "Provider ID", record_date: "Record date", dob: "Date of birth", record_type: "Record" }[field] || field);
+      const checked = [];
+      for (const r of recs) {
+        const issues = check(r, ctxOf(r.episode_id));
+        checked.push({ record: r, issues });
+        for (const i of issues) rows.push({ client_code: r.client_code, client_id: r.client_id, episode_id: r.episode_id, record_id: r.id, record_type: r.record_type, record_date: r.record_date, provider_id: r.provider_id, field: i.field, field_label: labelOf(i.field), severity: i.severity, code: i.code, message: i.message });
+      }
+      for (const e of eps) {
+        const c = ctxOf(e.id);
+        const has = (t) => c.records.some((r) => r.record_type === t);
+        const base = { client_code: e.client_code, client_id: e.client_id, episode_id: e.id, record_id: null, provider_id: null, field: "record_type", field_label: "Record" };
+        if (!has("admission")) rows.push({ ...base, record_type: "admission", record_date: e.opened_at.slice(0, 10), severity: "fatal", code: "missing_admission", message: `No CalOMS admission record for the episode opened ${e.opened_at.slice(0, 10)}` });
+        if (e.status === "closed" && !has("discharge")) rows.push({ ...base, record_type: "discharge", record_date: e.closed_at, severity: "fatal", code: "missing_discharge", message: `The episode was closed on ${e.closed_at} but has no CalOMS discharge record` });
+        const opened = e.opened_at.slice(0, 10);
+        const endBy = e.closed_at && e.closed_at < now ? e.closed_at : now;
+        for (let n = 1; n < 100; n++) {
+          const anniv = addYears(opened, n);
+          if (anniv > endBy || anniv > to) break;
+          if (anniv < from && addDays(anniv, ANNUAL_LATE) < from) continue;
+          const done = c.records.some((r) => r.record_type === "annual_update" && r.record_date >= addDays(anniv, -ANNUAL_EARLY) && r.record_date <= addDays(anniv, ANNUAL_LATE));
+          if (done) continue;
+          const overdue = now > addDays(anniv, ANNUAL_LATE);
+          rows.push({
+            ...base,
+            record_type: "annual_update",
+            record_date: anniv,
+            severity: overdue ? "fatal" : "warning",
+            code: overdue ? "annual_update_overdue" : "annual_update_due",
+            message: overdue ? `Annual update for the ${ordinal(n)} anniversary (${anniv}) is overdue` : `Annual update for the ${ordinal(n)} anniversary (${anniv}) is due by ${addDays(anniv, ANNUAL_LATE)}`
+          });
+        }
+      }
+      rows.sort((x, y) => (x.severity === y.severity ? 0 : x.severity === "fatal" ? -1 : 1) || String(x.client_code).localeCompare(String(y.client_code)) || String(x.record_date).localeCompare(String(y.record_date)));
+      const ready = checked.filter((x) => !fatal(x.issues).length);
+      const summary = {
+        records: recs.length,
+        ready: ready.length,
+        blocked: recs.length - ready.length,
+        fatal: rows.filter((r) => r.severity === "fatal").length,
+        warnings: rows.filter((r) => r.severity === "warning").length,
+        by_type: Object.fromEntries(S.RECORD_TYPES.map((t) => [t, { records: recs.filter((r) => r.record_type === t).length, ready: ready.filter((x) => x.record.record_type === t).length }])),
+        missing: rows.filter((r) => r.code.startsWith("missing_") || r.code === "annual_update_overdue").length,
+        not_yet_extracted: ready.filter((x) => !x.record.extracted_at).length
+      };
+      return { from, to, spec_version: S.SPEC_VERSION, enabled: enabled(), providers: providers(), start_date: start2, summary, rows, checked };
+    }
+    var ordinal = (n) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : { 1: "st", 2: "nd", 3: "rd" }[n % 10] || "th"}`;
+    function monthsBetween(from, to) {
+      const out2 = [];
+      let [y, m] = from.slice(0, 7).split("-").map(Number);
+      const [ty, tm] = to.slice(0, 7).split("-").map(Number);
+      while (y < ty || y === ty && m <= tm) {
+        out2.push(`${y}-${String(m).padStart(2, "0")}`);
+        m++;
+        if (m > 12) {
+          m = 1;
+          y++;
+        }
+        if (out2.length > 240) break;
+      }
+      return out2;
+    }
+    var MULTI_COLS = (f) => Array.from({ length: S.MULTI_MAX }, (_, i) => ({ key: `${f.key}_${i + 1}`, name: `${f.name}${i + 1}` }));
+    function columnsFor(type) {
+      const cols2 = [...S.ID_COLUMNS, { key: "record_date", name: type === "admission" ? "AdmissionTransactionDate" : type === "discharge" ? "DischargeDate" : "AnnualUpdateDate" }];
+      for (const f of S.fieldsFor(type)) {
+        if (f.multi) cols2.push(...MULTI_COLS(f));
+        else cols2.push({ key: f.key, name: f.name });
+      }
+      return cols2;
+    }
+    function buildExtract({ from, to, scope, generatedBy }) {
+      const rep = report({ from, to, scope });
+      const ready = rep.checked.filter((x) => !fatal(x.issues).length).map((x) => x.record);
+      const names = /* @__PURE__ */ new Map();
+      const nameOf = (clientId) => {
+        if (names.has(clientId)) return names.get(clientId);
+        const c = db3.one(`SELECT client_code, first_name_enc, last_name_enc, dob_enc FROM clients WHERE id=?`, clientId);
+        const d = (v) => {
+          try {
+            return v ? decrypt3(v) : "";
+          } catch {
+            return "";
+          }
+        };
+        const o = { client_id: c.client_code, first_name: d(c.first_name_enc), last_name: d(c.last_name_enc), dob: d(c.dob_enc) };
+        names.set(clientId, o);
+        return o;
+      };
+      const admissionDate = (episodeId) => (db3.one(`SELECT record_date FROM caloms_records WHERE episode_id=? AND record_type='admission'`, episodeId) || {}).record_date || "";
+      const T = require_spreadsheet();
+      const files = [];
+      const counts = {};
+      const FILE = { admission: "admissions.csv", discharge: "discharges.csv", annual_update: "annual_updates.csv" };
+      for (const type of S.RECORD_TYPES) {
+        const cols2 = columnsFor(type);
+        const rows = ready.filter((r) => r.record_type === type).map((r) => {
+          const o = { record_type: S.RECORD_CODE[type], provider_id: r.provider_id, ...nameOf(r.client_id), admission_date: type === "admission" ? r.record_date : admissionDate(r.episode_id), record_date: r.record_date };
+          for (const f of S.fieldsFor(type)) {
+            const v = r.answers[f.key];
+            if (f.multi) (Array.isArray(v) ? v : []).forEach((x, i) => {
+              o[`${f.key}_${i + 1}`] = x;
+            });
+            else o[f.key] = v === void 0 ? "" : v;
+          }
+          return o;
+        });
+        counts[type] = rows.length;
+        files.push([FILE[type], T.toCsv(rows, cols2.map((c) => ({ key: c.key, label: c.name })))]);
+      }
+      const activity = [];
+      for (const p of providers()) for (const month of monthsBetween(from, to)) {
+        const inMonth = ready.filter((r) => r.provider_id === p.id && r.record_date.slice(0, 7) === month);
+        const n = (t) => inMonth.filter((r) => r.record_type === t).length;
+        activity.push({ provider_id: p.id, report_month: month.replace("-", ""), admissions: n("admission"), discharges: n("discharge"), annual_updates: n("annual_update"), no_activity: inMonth.length ? "N" : "Y" });
+      }
+      files.push(["provider_activity.csv", T.toCsv(activity, [{ key: "provider_id", label: "ProviderID" }, { key: "report_month", label: "ReportMonth" }, { key: "admissions", label: "Admissions" }, { key: "discharges", label: "Discharges" }, { key: "annual_updates", label: "AnnualUpdates" }, { key: "no_activity", label: "NoActivity" }])]);
+      const excluded = rep.summary.blocked;
+      files.push(["README.txt", readme({ from, to, counts, excluded, activity, generatedBy, missing: rep.summary.missing })]);
+      return { files, ready, clientIds: [...new Set(ready.map((r) => r.client_id))], counts, excluded, activity_rows: activity.length, no_activity_months: activity.filter((a) => a.no_activity === "Y").length };
+    }
+    function readme({ from, to, counts, excluded, activity, generatedBy, missing }) {
+      return [
+        "CalOMS Tx submission prepared by SUDS",
+        "====================================",
+        "",
+        "CONTAINS PHI. Identified client records for the California Department of Health Care Services (DHCS),",
+        "disclosed as required by law for state treatment outcome reporting. The disclosure is recorded in each",
+        "client's accounting of disclosures in SUDS. Transmit only through the county's approved DHCS channel.",
+        "",
+        `Period: ${from} to ${to}`,
+        `Generated: ${db3.now()}${generatedBy ? ` by ${generatedBy}` : ""}`,
+        `Layout: ${S.SPEC_VERSION}`,
+        `Source: ${S.SPEC_SOURCE}`,
+        "",
+        "Files",
+        `  admissions.csv          ${counts.admission} admission record(s)`,
+        `  discharges.csv          ${counts.discharge} discharge record(s)`,
+        `  annual_updates.csv      ${counts.annual_update} annual update record(s)`,
+        `  provider_activity.csv   ${activity.length} provider-month row(s); NoActivity=Y marks a month with nothing to report`,
+        "",
+        `Records held back because of fatal errors: ${excluded}. Missing or overdue records: ${missing}.`,
+        "Fix them in SUDS (Reports -> State reporting -> Validation) and produce the extract again.",
+        "",
+        "IMPORTANT: the code values and column names in these files follow SUDS's CalOMS Tx layout, which has",
+        "NOT been verified against the current DHCS CalOMS Tx data dictionary / file specification. Before the",
+        "first submission the county must check every code table (server/caloms-spec.js, docs/compliance/CALOMS.md)",
+        "against the dictionary DHCS has issued, and convert these CSV files to the DHCS upload format if it is",
+        "not CSV. Dates are YYYY-MM-DD; multi-answer elements (race, disability) are split into numbered columns.",
+        "",
+        "How to submit (county process)",
+        "  1. Resolve every fatal error in the SUDS validation report for the period.",
+        "  2. Produce this extract (it holds back anything still in error).",
+        "  3. Load the files through the county's CalOMS Tx submission tool or DHCS upload, per the county's",
+        "     CalOMS Tx procedure, by the monthly deadline. Submit a provider activity (no activity) report for",
+        "     any month with no admissions, discharges or annual updates.",
+        "  4. Resolve any errors DHCS returns in SUDS and resubmit.",
+        ""
+      ].join("\r\n");
+    }
+    module.exports = { enabled, providers, startDate, config, PROVIDER_ID, normalize, check, fatal, blocking, CROSS_RECORD, present, recordsForEpisode, contextFor, save, report, buildExtract, monthsBetween, columnsFor, ANNUAL_EARLY, ANNUAL_LATE, addYears, addDays };
+  }
+});
+
+// server/disclosure.js
+var require_disclosure = __commonJS({
+  "server/disclosure.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
+    var { badRequest, forbidden } = require_http();
+    var BASES = ["consent", "court_order", "medical_emergency", "qsoa", "audit_evaluation", "research", "crime_on_premises", "child_abuse_report", "other"];
+    var NEEDS_JUSTIFICATION = ["other", "medical_emergency"];
+    var SYSTEM_BASES = ["export", "state_reporting"];
+    var STATE_REPORTING = {
+      basis: "state_reporting",
+      recipient: "California Department of Health Care Services (DHCS) \u2014 CalOMS Tx",
+      purpose: "State reporting (CalOMS Tx): treatment admission, discharge and annual update data required by law (HIPAA \xA7164.512(a); 42 CFR \xA72.53)"
+    };
+    var MIN_JUSTIFICATION = 20;
+    function activeConsent(clientId, consentId) {
+      if (!consentId) return null;
+      return db3.one(`SELECT * FROM consents WHERE id=? AND client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, consentId, clientId) || null;
+    }
+    function requireBasis(clientId, { consent_id, basis, justification, user } = {}) {
+      const b = basis || "consent";
+      if (!BASES.includes(b)) throw badRequest(`"${b}" is not a lawful basis for disclosure`);
+      if (b === "consent") {
+        const consent = activeConsent(clientId, consent_id);
+        if (!consent) throw badRequest("A valid, unexpired consent must be selected before information can be shared. Record the consent first, or choose another lawful basis.");
+        return { basis: "consent", consent, justification: null };
+      }
+      const why = String(justification || "").trim();
+      if (NEEDS_JUSTIFICATION.includes(b) && why.length < MIN_JUSTIFICATION) {
+        throw badRequest(b === "other" ? `Sharing without consent on an "other" basis needs a written justification of at least ${MIN_JUSTIFICATION} characters, which is kept with the disclosure record.` : `A medical emergency disclosure (42 CFR \xA72.51) needs a written justification of at least ${MIN_JUSTIFICATION} characters: the nature of the emergency and who was told.`);
+      }
+      if (b === "other" && !require_auth().hasPerm(user, "disclosures:override")) throw forbidden('Only a supervisor or administrator can record a disclosure on an "other" basis');
+      return { basis: b, consent: null, justification: why || null };
+    }
+    function record({ clientId, consentId = null, recipient, purpose, what, method = null, basis = "consent", justification = null, source = "manual", sourceRef = null, disclosedAt = null, user, ip }) {
+      const id = uuid2();
+      const at = disclosedAt || db3.now();
+      db3.run(
+        `INSERT INTO disclosures(id,client_id,consent_id,recipient_enc,purpose_enc,what_enc,method,disclosed_at,disclosed_by,basis,justification_enc,source,source_ref) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        id,
+        clientId,
+        consentId,
+        encrypt3(String(recipient)),
+        encrypt3(String(purpose)),
+        encrypt3(String(what)),
+        method,
+        at,
+        user.id,
+        basis,
+        justification ? encrypt3(String(justification)) : null,
+        source,
+        sourceRef
+      );
+      audit3.log({ user, action: "disclosure.record", entity: "disclosure", entityId: id, clientId, ip, details: { basis, source, consent_id: consentId || void 0, justified: justification ? true : void 0 } });
+      return id;
+    }
+    function recordStateReport({ clientIds, what, sourceRef, user, ip }) {
+      return clientIds.map((clientId) => record({ clientId, recipient: STATE_REPORTING.recipient, purpose: STATE_REPORTING.purpose, what, method: "export", basis: STATE_REPORTING.basis, source: "caloms", sourceRef, user, ip }));
+    }
+    function present(row) {
+      if (!row) return null;
+      const out2 = { ...row };
+      out2.recipient = row.recipient_enc ? decrypt3(row.recipient_enc) : null;
+      out2.purpose = row.purpose_enc ? decrypt3(row.purpose_enc) : null;
+      out2.what = row.what_enc ? decrypt3(row.what_enc) : null;
+      out2.justification = row.justification_enc ? decrypt3(row.justification_enc) : null;
+      delete out2.recipient_enc;
+      delete out2.purpose_enc;
+      delete out2.what_enc;
+      delete out2.justification_enc;
+      return out2;
+    }
+    function accounting(clientId) {
+      const client = db3.one(`SELECT id, client_code FROM clients WHERE id=?`, clientId);
+      const disclosures = db3.all(`SELECT d.*, u.display_name AS disclosed_by_name, u.username AS disclosed_by_username FROM disclosures d JOIN users u ON u.id=d.disclosed_by WHERE d.client_id=? ORDER BY d.disclosed_at`, clientId).map(present);
+      const consents = db3.all(`SELECT id, type, recipient_enc, purpose_enc, signed_at, expires_at, expires_event, revoked_at FROM consents WHERE client_id=? ORDER BY signed_at`, clientId).map((c) => ({ id: c.id, type: c.type, recipient: c.recipient_enc ? decrypt3(c.recipient_enc) : null, purpose: c.purpose_enc ? decrypt3(c.purpose_enc) : null, signed_at: c.signed_at, expires_at: c.expires_at, expires_event: c.expires_event, revoked_at: c.revoked_at }));
+      return { client_id: client?.id, client_code: client?.client_code, generated_at: db3.now(), disclosures, consents };
+    }
+    module.exports = { BASES, SYSTEM_BASES, STATE_REPORTING, recordStateReport, NEEDS_JUSTIFICATION, MIN_JUSTIFICATION, activeConsent, requireBasis, record, present, accounting };
+  }
+});
+
+// server/routes/caloms.js
+var require_caloms2 = __commonJS({
+  "server/routes/caloms.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var C = require_caloms();
+    var S = require_caloms_spec();
+    var { badRequest, notFound } = require_http();
+    var { validate } = require_validate();
+    var DAY = /^\d{4}-\d{2}-\d{2}$/;
+    function period(ctx) {
+      const today = require_budget().localDate();
+      const to = ctx.query.get("to") || today;
+      const from = ctx.query.get("from") || `${to.slice(0, 7)}-01`;
+      for (const v of [from, to]) if (!DAY.test(v) || !Number.isFinite(Date.parse(v))) throw badRequest("from and to must be dates (YYYY-MM-DD)");
+      if (from > to) throw badRequest("from must not be after to");
+      return { from, to };
+    }
+    var scopeFor = (user) => (col) => auth3.caseloadFilter(user, col);
+    function episodeFor(ctx, id) {
+      const e = db3.one(`SELECT * FROM episodes WHERE id=?`, id);
+      if (!e) throw notFound("Episode not found");
+      auth3.assertClientAccess(ctx, e.client_id);
+      return e;
+    }
+    function expectedFor(e, records) {
+      const out2 = [];
+      const has = (t) => records.some((r) => r.record_type === t);
+      if (!has("admission")) out2.push({ record_type: "admission", record_date: e.opened_at.slice(0, 10), message: "CalOMS admission record not yet completed" });
+      if (e.status === "closed" && !has("discharge")) out2.push({ record_type: "discharge", record_date: e.closed_at, message: "CalOMS discharge record not yet completed" });
+      const today = require_budget().localDate();
+      const end = e.closed_at && e.closed_at < today ? e.closed_at : today;
+      for (let n = 1; n < 100; n++) {
+        const anniv = C.addYears(e.opened_at.slice(0, 10), n);
+        if (C.addDays(anniv, -C.ANNUAL_EARLY) > end) break;
+        const done = records.some((r) => r.record_type === "annual_update" && r.record_date >= C.addDays(anniv, -C.ANNUAL_EARLY) && r.record_date <= C.addDays(anniv, C.ANNUAL_LATE));
+        if (!done && anniv <= C.addDays(end, C.ANNUAL_EARLY)) out2.push({ record_type: "annual_update", record_date: anniv, message: `Annual update due for the anniversary on ${anniv}` });
+      }
+      return out2;
+    }
+    var RECORD_SHAPE = {
+      record_type: { type: "string", required: true, enum: S.RECORD_TYPES },
+      provider_id: { type: "string", maxLen: 20 },
+      record_date: { type: "date" },
+      answers: { type: "object", required: true }
+    };
+    function saveRecord(ctx, e, v, id = null) {
+      if (v.record_type === "discharge" && e.status !== "closed") throw badRequest("A CalOMS discharge record is completed when the episode is discharged (Discharge on the Episodes tab)");
+      const date = v.record_type === "discharge" ? e.closed_at : v.record_date || (v.record_type === "admission" ? e.opened_at.slice(0, 10) : null);
+      const r = db3.transaction(() => C.save({ episode: e, record_type: v.record_type, provider_id: v.provider_id, record_date: date, answers: v.answers, user: ctx.user, id }));
+      audit3.log({ user: ctx.user, action: "caloms.record.save", entity: "caloms_record", entityId: r.id, clientId: e.client_id, ip: ctx.ip, details: { record_type: v.record_type, updated: r.updated || void 0, warnings: r.warnings.length || void 0 } });
+      return r;
+    }
+    module.exports = (r) => {
+      r.get("/api/caloms/config", auth3.requireAuth, () => C.config());
+      r.put("/api/caloms/settings", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+        const v = validate(ctx.body, { enabled: { type: "boolean" }, providers: { type: "array", maxLen: 20 }, start_date: { type: "date" } });
+        const provs = v.providers === void 0 ? C.providers() : (v.providers || []).map((p) => ({ id: String(p && p.id || "").trim(), name: String(p && p.name || "").trim().slice(0, 120) }));
+        const fields = {};
+        provs.forEach((p, i) => {
+          if (!C.PROVIDER_ID.test(p.id)) fields[`providers.${i}.id`] = "must be 4 to 10 letters or digits (the CalOMS provider ID DHCS assigned)";
+        });
+        if (new Set(provs.map((p) => p.id)).size !== provs.length) fields.providers = "lists the same provider ID twice";
+        const on = v.enabled === void 0 ? C.enabled() : !!v.enabled;
+        if (on && !provs.length) fields.providers = "add at least one CalOMS provider ID before turning CalOMS reporting on";
+        if (Object.keys(fields).length) throw badRequest("Validation failed", { fields });
+        db3.transaction(() => {
+          db3.setSetting("caloms_enabled", on ? "1" : "0");
+          db3.setSetting("caloms_providers", JSON.stringify(provs));
+          if (v.start_date !== void 0 && v.start_date !== null) db3.setSetting("caloms_start_date", v.start_date);
+          else if (on && !C.startDate()) db3.setSetting("caloms_start_date", require_budget().localDate());
+        });
+        audit3.log({ user: ctx.user, action: "caloms.settings.update", ip: ctx.ip, details: { enabled: on, providers: provs.length } });
+        return C.config();
+      });
+      r.get("/api/episodes/:id/caloms", auth3.requireAuth, auth3.requirePerm("episodes:read", "episodes:write"), (ctx) => {
+        const e = episodeFor(ctx, ctx.params.id);
+        const cx = C.contextFor(e);
+        const records = cx.records.map((rec) => ({ ...rec, issues: C.check(rec, cx) }));
+        audit3.log({ user: ctx.user, action: "caloms.record.view", entity: "episode", entityId: e.id, clientId: e.client_id, ip: ctx.ip, details: { count: records.length } });
+        return { enabled: C.enabled(), records, expected: expectedFor(e, records) };
+      });
+      r.post("/api/episodes/:id/caloms", auth3.requireAuth, auth3.requirePerm("episodes:write"), (ctx) => {
+        const e = episodeFor(ctx, ctx.params.id);
+        const res = saveRecord(ctx, e, validate(ctx.body, RECORD_SHAPE));
+        ctx.status = res.updated ? 200 : 201;
+        return { id: res.id, updated: res.updated, warnings: res.warnings };
+      });
+      r.put("/api/caloms/records/:id", auth3.requireAuth, auth3.requirePerm("episodes:write"), (ctx) => {
+        const rec = db3.one(`SELECT * FROM caloms_records WHERE id=?`, ctx.params.id);
+        if (!rec) throw notFound("CalOMS record not found");
+        const e = episodeFor(ctx, rec.episode_id);
+        const v = validate({ record_type: rec.record_type, ...ctx.body }, RECORD_SHAPE);
+        if (v.record_type !== rec.record_type) throw badRequest("A record cannot change its type; delete it and record the other kind");
+        const res = saveRecord(ctx, e, v, rec.id);
+        return { id: res.id, updated: true, warnings: res.warnings };
+      });
+      r.delete("/api/caloms/records/:id", auth3.requireAuth, auth3.requirePerm("episodes:write"), (ctx) => {
+        const rec = db3.one(`SELECT id, client_id, episode_id, record_type, extracted_at FROM caloms_records WHERE id=?`, ctx.params.id);
+        if (!rec) throw notFound("CalOMS record not found");
+        episodeFor(ctx, rec.episode_id);
+        db3.transaction(() => {
+          db3.run(`DELETE FROM caloms_records WHERE id=?`, rec.id);
+          db3.tombstone("caloms_records", rec.id);
+        });
+        audit3.log({ user: ctx.user, action: "caloms.record.delete", entity: "caloms_record", entityId: rec.id, clientId: rec.client_id, ip: ctx.ip, details: { record_type: rec.record_type, was_extracted: rec.extracted_at ? true : void 0 } });
+        return { ok: true, warning: rec.extracted_at ? "This record was already sent to DHCS in an extract; the state copy must be corrected through the county's CalOMS process." : null };
+      });
+      r.get("/api/caloms/validation", auth3.requireAuth, auth3.requirePerm("episodes:read", "episodes:write"), (ctx) => {
+        const { from, to } = period(ctx);
+        const rep = C.report({ from, to, scope: scopeFor(ctx.user) });
+        audit3.log({ user: ctx.user, action: "caloms.validate", ip: ctx.ip, details: { from, to, records: rep.summary.records, fatal: rep.summary.fatal, warnings: rep.summary.warnings } });
+        const rows = rep.rows;
+        if (ctx.query.get("format") === "csv") {
+          const cols2 = ["severity", "client_code", "record_type", "record_date", "provider_id", "field_label", "code", "message"].map((k) => ({ key: k, label: k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) }));
+          ctx.res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="caloms-validation-${from}_${to}.csv"` });
+          ctx.res.end(require_spreadsheet().toCsv(rows, cols2));
+          return;
+        }
+        return { from, to, spec_version: rep.spec_version, enabled: rep.enabled, providers: rep.providers, start_date: rep.start_date, summary: rep.summary, rows };
+      });
+      r.get("/api/caloms/extract", auth3.requireAuth, auth3.requirePerm("export:identified"), (ctx) => {
+        const { from, to } = period(ctx);
+        if (!C.enabled()) throw badRequest("CalOMS Tx reporting is switched off for this program (Reports \u2192 State reporting \u2192 Settings)");
+        if (!C.providers().length) throw badRequest("Add this program's CalOMS provider ID first (Reports \u2192 State reporting \u2192 Settings)");
+        const x = C.buildExtract({ from, to, scope: scopeFor(ctx.user), generatedBy: ctx.user.display_name || ctx.user.username });
+        const disclosure = require_disclosure();
+        const stamp2 = db3.now();
+        db3.transaction(() => {
+          disclosure.recordStateReport({ clientIds: x.clientIds, what: `CalOMS Tx records (${from} to ${to}): ${x.counts.admission} admission, ${x.counts.discharge} discharge, ${x.counts.annual_update} annual update`, sourceRef: `caloms:${from}_${to}`, user: ctx.user, ip: ctx.ip });
+          for (const rec of x.ready) db3.run(`UPDATE caloms_records SET extracted_at=?, updated_at=? WHERE id=?`, stamp2, stamp2, rec.id);
+        });
+        audit3.log({ user: ctx.user, action: "caloms.extract", ip: ctx.ip, details: { from, to, ...x.counts, held_back: x.excluded, provider_months: x.activity_rows, no_activity_months: x.no_activity_months, clients_disclosed: x.clientIds.length } });
+        const body = require_spreadsheet().zip(x.files);
+        ctx.res.writeHead(200, {
+          "Content-Type": "application/zip",
+          "Content-Disposition": `attachment; filename="caloms-tx-${from}_${to}.zip"`,
+          "X-SUDS-Export": `Identified - PHI. CalOMS Tx submission for DHCS (state reporting, required by law). ${x.clientIds.length} client(s). Generated ${stamp2}.`,
+          "X-SUDS-CalOMS-Counts": `admission=${x.counts.admission}; discharge=${x.counts.discharge}; annual_update=${x.counts.annual_update}; held_back=${x.excluded}`
+        });
+        ctx.res.end(body);
+      });
+    };
+  }
+});
+
 // server/routes/client-errors.js
 var require_client_errors = __commonJS({
   "server/routes/client-errors.js"(exports, module) {
@@ -14023,82 +15379,6 @@ var require_clients = __commonJS({
   }
 });
 
-// server/disclosure.js
-var require_disclosure = __commonJS({
-  "server/disclosure.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var audit3 = require_audit();
-    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
-    var { badRequest, forbidden } = require_http();
-    var BASES = ["consent", "court_order", "medical_emergency", "qsoa", "audit_evaluation", "research", "crime_on_premises", "child_abuse_report", "other"];
-    var NEEDS_JUSTIFICATION = ["other", "medical_emergency"];
-    var MIN_JUSTIFICATION = 20;
-    function activeConsent(clientId, consentId) {
-      if (!consentId) return null;
-      return db3.one(`SELECT * FROM consents WHERE id=? AND client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, consentId, clientId) || null;
-    }
-    function requireBasis(clientId, { consent_id, basis, justification, user } = {}) {
-      const b = basis || "consent";
-      if (!BASES.includes(b)) throw badRequest(`"${b}" is not a lawful basis for disclosure`);
-      if (b === "consent") {
-        const consent = activeConsent(clientId, consent_id);
-        if (!consent) throw badRequest("A valid, unexpired consent must be selected before information can be shared. Record the consent first, or choose another lawful basis.");
-        return { basis: "consent", consent, justification: null };
-      }
-      const why = String(justification || "").trim();
-      if (NEEDS_JUSTIFICATION.includes(b) && why.length < MIN_JUSTIFICATION) {
-        throw badRequest(b === "other" ? `Sharing without consent on an "other" basis needs a written justification of at least ${MIN_JUSTIFICATION} characters, which is kept with the disclosure record.` : `A medical emergency disclosure (42 CFR \xA72.51) needs a written justification of at least ${MIN_JUSTIFICATION} characters: the nature of the emergency and who was told.`);
-      }
-      if (b === "other" && !require_auth().hasPerm(user, "disclosures:override")) throw forbidden('Only a supervisor or administrator can record a disclosure on an "other" basis');
-      return { basis: b, consent: null, justification: why || null };
-    }
-    function record({ clientId, consentId = null, recipient, purpose, what, method = null, basis = "consent", justification = null, source = "manual", sourceRef = null, disclosedAt = null, user, ip }) {
-      const id = uuid2();
-      const at = disclosedAt || db3.now();
-      db3.run(
-        `INSERT INTO disclosures(id,client_id,consent_id,recipient_enc,purpose_enc,what_enc,method,disclosed_at,disclosed_by,basis,justification_enc,source,source_ref) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        id,
-        clientId,
-        consentId,
-        encrypt3(String(recipient)),
-        encrypt3(String(purpose)),
-        encrypt3(String(what)),
-        method,
-        at,
-        user.id,
-        basis,
-        justification ? encrypt3(String(justification)) : null,
-        source,
-        sourceRef
-      );
-      audit3.log({ user, action: "disclosure.record", entity: "disclosure", entityId: id, clientId, ip, details: { basis, source, consent_id: consentId || void 0, justified: justification ? true : void 0 } });
-      return id;
-    }
-    function present(row) {
-      if (!row) return null;
-      const out2 = { ...row };
-      out2.recipient = row.recipient_enc ? decrypt3(row.recipient_enc) : null;
-      out2.purpose = row.purpose_enc ? decrypt3(row.purpose_enc) : null;
-      out2.what = row.what_enc ? decrypt3(row.what_enc) : null;
-      out2.justification = row.justification_enc ? decrypt3(row.justification_enc) : null;
-      delete out2.recipient_enc;
-      delete out2.purpose_enc;
-      delete out2.what_enc;
-      delete out2.justification_enc;
-      return out2;
-    }
-    function accounting(clientId) {
-      const client = db3.one(`SELECT id, client_code FROM clients WHERE id=?`, clientId);
-      const disclosures = db3.all(`SELECT d.*, u.display_name AS disclosed_by_name, u.username AS disclosed_by_username FROM disclosures d JOIN users u ON u.id=d.disclosed_by WHERE d.client_id=? ORDER BY d.disclosed_at`, clientId).map(present);
-      const consents = db3.all(`SELECT id, type, recipient_enc, purpose_enc, signed_at, expires_at, expires_event, revoked_at FROM consents WHERE client_id=? ORDER BY signed_at`, clientId).map((c) => ({ id: c.id, type: c.type, recipient: c.recipient_enc ? decrypt3(c.recipient_enc) : null, purpose: c.purpose_enc ? decrypt3(c.purpose_enc) : null, signed_at: c.signed_at, expires_at: c.expires_at, expires_event: c.expires_event, revoked_at: c.revoked_at }));
-      return { client_id: client?.id, client_code: client?.client_code, generated_at: db3.now(), disclosures, consents };
-    }
-    module.exports = { BASES, NEEDS_JUSTIFICATION, MIN_JUSTIFICATION, activeConsent, requireBasis, record, present, accounting };
-  }
-});
-
 // server/routes/consents.js
 var require_consents = __commonJS({
   "server/routes/consents.js"(exports, module) {
@@ -14234,409 +15514,6 @@ var require_consents = __commonJS({
         return out2;
       });
     };
-  }
-});
-
-// server/importers/text.js
-var require_text = __commonJS({
-  "server/importers/text.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var zlib = (init_zlib(), __toCommonJS(zlib_exports));
-    function decodeEntities(s) {
-      const map = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", ndash: "\u2013", mdash: "\u2014", hellip: "\u2026", rsquo: "\u2019", lsquo: "\u2018", rdquo: "\u201D", ldquo: "\u201C" };
-      return s.replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z]+);/g, (m, e) => {
-        if (e[0] === "#") {
-          const code = e[1].toLowerCase() === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
-          return Number.isFinite(code) ? String.fromCodePoint(code) : m;
-        }
-        return map[e] ?? m;
-      });
-    }
-    function htmlToText(html) {
-      let s = String(html);
-      s = s.replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, "");
-      s = s.replace(/<!--[\s\S]*?-->/g, "");
-      s = s.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li|h[1-6]|tr|blockquote|pre)>/gi, "\n").replace(/<li[^>]*>/gi, "\u2022 ").replace(/<\/td>/gi, "	");
-      s = s.replace(/<[^>]+>/g, "");
-      s = decodeEntities(s);
-      return s.replace(/\r/g, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-    }
-    function extractTitle(html) {
-      const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html) || /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html);
-      return m ? htmlToText(m[1]).trim() : "";
-    }
-    function quotedPrintableDecode(s) {
-      return import_buffer.Buffer.from(String(s).replace(/=\r?\n/g, "").replace(/=([0-9A-F]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16))), "binary").toString("utf8");
-    }
-    function parseMime(raw) {
-      const text = import_buffer.Buffer.isBuffer(raw) ? raw.toString("latin1") : String(raw);
-      const headerEnd = text.search(/\r?\n\r?\n/);
-      const headers = text.slice(0, headerEnd);
-      const bm = /boundary="?([^"\r\n;]+)"?/i.exec(headers);
-      if (!bm) {
-        return [{ contentType: (/content-type:\s*([^;\r\n]+)/i.exec(headers) || [, "text/html"])[1].trim(), body: decodePart(headers, text.slice(headerEnd).trim()) }];
-      }
-      const parts = text.split(new RegExp("--" + bm[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?:--)?\\r?\\n"));
-      const out2 = [];
-      for (const p of parts.slice(1)) {
-        const he = p.search(/\r?\n\r?\n/);
-        if (he < 0) continue;
-        const h = p.slice(0, he);
-        const b = p.slice(he).replace(/^\r?\n\r?\n/, "");
-        const ct = (/content-type:\s*([^;\r\n]+)/i.exec(h) || [, ""])[1].trim().toLowerCase();
-        const loc = (/content-location:\s*([^\r\n]+)/i.exec(h) || [, ""])[1].trim();
-        if (!ct) continue;
-        out2.push({ contentType: ct, location: loc, body: decodePart(h, b) });
-      }
-      return out2;
-    }
-    function decodePart(headers, body) {
-      const enc2 = (/content-transfer-encoding:\s*([^\r\n]+)/i.exec(headers) || [, "7bit"])[1].trim().toLowerCase();
-      if (enc2 === "quoted-printable") return quotedPrintableDecode(body);
-      if (enc2 === "base64") return import_buffer.Buffer.from(body.replace(/\s+/g, ""), "base64");
-      return import_buffer.Buffer.from(body, "latin1").toString("utf8");
-    }
-    function unzip(buf) {
-      const files = /* @__PURE__ */ new Map();
-      const eocd = buf.lastIndexOf(import_buffer.Buffer.from([80, 75, 5, 6]));
-      if (eocd < 0) throw new Error("Not a ZIP archive");
-      const count = buf.readUInt16LE(eocd + 10);
-      let off = buf.readUInt32LE(eocd + 16);
-      for (let i = 0; i < count; i++) {
-        if (buf.readUInt32LE(off) !== 33639248) break;
-        const method = buf.readUInt16LE(off + 10);
-        const csize = buf.readUInt32LE(off + 20);
-        const nlen = buf.readUInt16LE(off + 28), elen = buf.readUInt16LE(off + 30), clen2 = buf.readUInt16LE(off + 32);
-        const lho = buf.readUInt32LE(off + 42);
-        const name = buf.toString("utf8", off + 46, off + 46 + nlen);
-        const lnlen = buf.readUInt16LE(lho + 26), lelen = buf.readUInt16LE(lho + 28);
-        const dataStart = lho + 30 + lnlen + lelen;
-        const data = buf.subarray(dataStart, dataStart + csize);
-        files.set(name, method === 8 ? zlib.inflateRawSync(data) : import_buffer.Buffer.from(data));
-        off += 46 + nlen + elen + clen2;
-      }
-      return files;
-    }
-    function docxToText(buf) {
-      const files = unzip(buf);
-      const xml = files.get("word/document.xml");
-      if (!xml) throw new Error("Not a DOCX file (word/document.xml missing)");
-      let s = xml.toString("utf8");
-      s = s.replace(/<w:tab\/>/g, "	").replace(/<w:br\/>|<w:cr\/>/g, "\n").replace(/<\/w:p>/g, "\n").replace(/<[^>]+>/g, "");
-      return decodeEntities(s).replace(/\n{3,}/g, "\n\n").trim();
-    }
-    function sniffDate(text) {
-      const s = String(text || "");
-      let m = /(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?))?/.exec(s);
-      if (m) {
-        const d = /* @__PURE__ */ new Date(m[1] + (m[2] ? "T" + m[2] : "T12:00:00"));
-        if (!isNaN(d)) return d.toISOString();
-      }
-      m = /\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b(?:,?\s+(\d{1,2}:\d{2}\s*(?:AM|PM)?))?/i.exec(s);
-      if (m) {
-        const y = m[3].length === 2 ? "20" + m[3] : m[3];
-        const d = /* @__PURE__ */ new Date(`${y}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}T12:00:00`);
-        if (!isNaN(d)) return d.toISOString();
-      }
-      m = /\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+(\d{1,2}),?\s+(\d{4})/i.exec(s);
-      if (m) {
-        const d = /* @__PURE__ */ new Date(`${m[1].slice(0, 3)} ${m[2]}, ${m[3]} 12:00:00`);
-        if (!isNaN(d)) return d.toISOString();
-      }
-      return null;
-    }
-    function sniffClientHints(text) {
-      const s = String(text || "");
-      const hints = { codes: [], names: [] };
-      for (const m of s.matchAll(/\b([CM]\d{2}-\d{4})\b/gi)) hints.codes.push(m[1].toUpperCase());
-      const kw = /\b(?:(?:client|participant|pt|patient|re|name|regarding)\s*[:\-]\s*|(?:with|for|regarding)\s+)/gi;
-      const nameRe = /^([A-Z][a-zA-Z'\-]+(?:,\s*|\s+)[A-Z][a-zA-Z'\-]+)/;
-      for (const m of s.matchAll(kw)) {
-        const nm = nameRe.exec(s.slice(m.index + m[0].length));
-        if (nm) hints.names.push(nm[1].trim());
-      }
-      hints.codes = [...new Set(hints.codes)];
-      hints.names = [...new Set(hints.names)].slice(0, 5);
-      return hints;
-    }
-    module.exports = { htmlToText, extractTitle, quotedPrintableDecode, parseMime, unzip, docxToText, sniffDate, sniffClientHints, decodeEntities };
-  }
-});
-
-// server/spreadsheet.js
-var require_spreadsheet = __commonJS({
-  "server/spreadsheet.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var zlib = (init_zlib(), __toCommonJS(zlib_exports));
-    var { unzip, decodeEntities } = require_text();
-    function parseCsv(text) {
-      const s = String(text).replace(/^﻿/, "");
-      const rows = [];
-      let row = [];
-      let field = "";
-      let q = false;
-      for (let i = 0; i < s.length; i++) {
-        const c = s[i];
-        if (q) {
-          if (c === '"') {
-            if (s[i + 1] === '"') {
-              field += '"';
-              i++;
-            } else q = false;
-          } else field += c;
-        } else if (c === '"') q = true;
-        else if (c === ",") {
-          row.push(field);
-          field = "";
-        } else if (c === "\n" || c === "\r") {
-          if (c === "\r" && s[i + 1] === "\n") i++;
-          row.push(field);
-          rows.push(row);
-          row = [];
-          field = "";
-        } else field += c;
-      }
-      if (field !== "" || row.length) {
-        row.push(field);
-        rows.push(row);
-      }
-      return rows.filter((r) => r.some((v) => String(v).trim() !== ""));
-    }
-    var FORMULA_START = /^[=+\-@\t\r]/;
-    function toCsv(rows, columns) {
-      const esc = (v) => {
-        if (v === null || v === void 0) return "";
-        if (typeof v === "number") return Number.isFinite(v) ? String(v) : "";
-        let t = typeof v === "object" ? JSON.stringify(v) : String(v);
-        if (FORMULA_START.test(t)) return `"'` + t.replace(/"/g, '""') + '"';
-        return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
-      };
-      return "\uFEFF" + [columns.map((c) => esc(c.label || c.key || c)).join(","), ...rows.map((r) => columns.map((c) => esc(r[c.key || c])).join(","))].join("\r\n");
-    }
-    function crc32(buf) {
-      let c, crc = 4294967295;
-      for (let n = 0; n < buf.length; n++) {
-        c = (crc ^ buf[n]) & 255;
-        for (let k = 0; k < 8; k++) c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
-        crc = crc >>> 8 ^ c;
-      }
-      return (crc ^ 4294967295) >>> 0;
-    }
-    function zipEntry(name, content, comp, off, local, central) {
-      const data = import_buffer.Buffer.isBuffer(content) ? content : import_buffer.Buffer.from(content, "utf8");
-      const n = import_buffer.Buffer.from(name);
-      const crc = crc32(data);
-      const lh = import_buffer.Buffer.alloc(30);
-      lh.writeUInt32LE(67324752, 0);
-      lh.writeUInt16LE(20, 4);
-      lh.writeUInt16LE(2048, 6);
-      lh.writeUInt16LE(8, 8);
-      lh.writeUInt32LE(crc, 14);
-      lh.writeUInt32LE(comp.length, 18);
-      lh.writeUInt32LE(data.length, 22);
-      lh.writeUInt16LE(n.length, 26);
-      local.push(lh, n, comp);
-      const ch = import_buffer.Buffer.alloc(46);
-      ch.writeUInt32LE(33639248, 0);
-      ch.writeUInt16LE(20, 4);
-      ch.writeUInt16LE(20, 6);
-      ch.writeUInt16LE(2048, 8);
-      ch.writeUInt16LE(8, 10);
-      ch.writeUInt32LE(crc, 16);
-      ch.writeUInt32LE(comp.length, 20);
-      ch.writeUInt32LE(data.length, 24);
-      ch.writeUInt16LE(n.length, 28);
-      ch.writeUInt32LE(off, 42);
-      central.push(ch, n);
-      return off + 30 + n.length + comp.length;
-    }
-    function zipEnd(entries, local, central, off) {
-      const cd = import_buffer.Buffer.concat(central);
-      const eocd = import_buffer.Buffer.alloc(22);
-      eocd.writeUInt32LE(101010256, 0);
-      eocd.writeUInt16LE(entries.length, 8);
-      eocd.writeUInt16LE(entries.length, 10);
-      eocd.writeUInt32LE(cd.length, 12);
-      eocd.writeUInt32LE(off, 16);
-      return import_buffer.Buffer.concat([...local, cd, eocd]);
-    }
-    var defer = globalThis.setImmediate ? (f) => setImmediate(f) : (f) => setTimeout(f, 0);
-    async function zipAsync(entries) {
-      const local = [], central = [];
-      let off = 0;
-      const deflate = (buf) => typeof zlib.deflateRaw === "function" ? new Promise((resolve2, reject) => zlib.deflateRaw(buf, (err2, out2) => err2 ? reject(err2) : resolve2(out2))) : new Promise((resolve2) => defer(resolve2)).then(() => zlib.deflateRawSync(buf));
-      for (const [name, content] of entries) {
-        const data = import_buffer.Buffer.isBuffer(content) ? content : import_buffer.Buffer.from(content, "utf8");
-        off = zipEntry(name, data, await deflate(data), off, local, central);
-      }
-      return zipEnd(entries, local, central, off);
-    }
-    function zip(entries) {
-      const local = [], central = [];
-      let off = 0;
-      for (const [name, content] of entries) {
-        const data = import_buffer.Buffer.isBuffer(content) ? content : import_buffer.Buffer.from(content, "utf8");
-        const comp = zlib.deflateRawSync(data);
-        const n = import_buffer.Buffer.from(name);
-        const crc = crc32(data);
-        const lh = import_buffer.Buffer.alloc(30);
-        lh.writeUInt32LE(67324752, 0);
-        lh.writeUInt16LE(20, 4);
-        lh.writeUInt16LE(2048, 6);
-        lh.writeUInt16LE(8, 8);
-        lh.writeUInt32LE(crc, 14);
-        lh.writeUInt32LE(comp.length, 18);
-        lh.writeUInt32LE(data.length, 22);
-        lh.writeUInt16LE(n.length, 26);
-        local.push(lh, n, comp);
-        const ch = import_buffer.Buffer.alloc(46);
-        ch.writeUInt32LE(33639248, 0);
-        ch.writeUInt16LE(20, 4);
-        ch.writeUInt16LE(20, 6);
-        ch.writeUInt16LE(2048, 8);
-        ch.writeUInt16LE(8, 10);
-        ch.writeUInt32LE(crc, 16);
-        ch.writeUInt32LE(comp.length, 20);
-        ch.writeUInt32LE(data.length, 24);
-        ch.writeUInt16LE(n.length, 28);
-        ch.writeUInt32LE(off, 42);
-        central.push(ch, n);
-        off += 30 + n.length + comp.length;
-      }
-      return zipEnd(entries, local, central, off);
-    }
-    var EXCEL_EPOCH = Date.UTC(1899, 11, 30);
-    var xmlEsc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
-    function colRef(i) {
-      let s = "";
-      i++;
-      while (i > 0) {
-        const m = (i - 1) % 26;
-        s = String.fromCharCode(65 + m) + s;
-        i = Math.floor((i - 1) / 26);
-      }
-      return s;
-    }
-    function writeSheetXml(sh) {
-      const cols2 = sh.columns.map((c) => typeof c === "string" ? { key: c, label: c } : c);
-      const cell = (r, i, v) => {
-        const ref = colRef(i) + r;
-        if (v === null || v === void 0 || v === "") return "";
-        if (typeof v === "number" && Number.isFinite(v)) return `<c r="${ref}"><v>${v}</v></c>`;
-        if (typeof v === "boolean") return `<c r="${ref}" t="b"><v>${v ? 1 : 0}</v></c>`;
-        if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
-          const t = Date.parse(v + "T00:00:00Z");
-          if (Number.isFinite(t)) return `<c r="${ref}" s="2"><v>${(t - EXCEL_EPOCH) / 864e5}</v></c>`;
-        }
-        if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)) {
-          const t = Date.parse(v);
-          if (Number.isFinite(t)) return `<c r="${ref}" s="3"><v>${(t - EXCEL_EPOCH) / 864e5}</v></c>`;
-        }
-        return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${xmlEsc(typeof v === "object" ? JSON.stringify(v) : v)}</t></is></c>`;
-      };
-      const header = `<row r="1">${cols2.map((c, i) => `<c r="${colRef(i)}1" t="inlineStr" s="1"><is><t>${xmlEsc(c.label)}</t></is></c>`).join("")}</row>`;
-      const body = sh.rows.map((row, ri) => `<row r="${ri + 2}">${cols2.map((c, i) => cell(ri + 2, i, row[c.key])).join("")}</row>`).join("");
-      const widths = `<cols>${cols2.map((c, i) => `<col min="${i + 1}" max="${i + 1}" width="${Math.min(60, Math.max(10, c.width || String(c.label).length + 4))}" customWidth="1"/>`).join("")}</cols>`;
-      return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>${widths}<sheetData>${header}${body}</sheetData><autoFilter ref="A1:${colRef(cols2.length - 1)}${sh.rows.length + 1}"/></worksheet>`;
-    }
-    function writeWorkbookParts(sheets) {
-      const files = [];
-      const safeName = (n, i) => String(n).replace(/[\\/*?:\[\]]/g, " ").slice(0, 31) || `Sheet${i + 1}`;
-      files.push(["[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`]);
-      files.push(["_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`]);
-      files.push(["xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((s, i) => `<sheet name="${xmlEsc(safeName(s.name, i))}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("")}</sheets></workbook>`]);
-      files.push(["xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("")}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`]);
-      files.push(["xl/styles.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" applyFont="1"/><xf numFmtId="14" fontId="0" fillId="0" borderId="0" applyNumberFormat="1"/><xf numFmtId="22" fontId="0" fillId="0" borderId="0" applyNumberFormat="1"/></cellXfs></styleSheet>`]);
-      sheets.forEach((s, i) => files.push([`xl/worksheets/sheet${i + 1}.xml`, writeSheetXml(s)]));
-      return new Map(files);
-    }
-    function writeWorkbook(sheets) {
-      return zip([...writeWorkbookParts(sheets).entries()]);
-    }
-    async function writeWorkbookAsync(sheets) {
-      const breathe = () => new Promise((resolve2) => defer(resolve2));
-      const parts = writeWorkbookParts(sheets.map((s) => ({ name: s.name, columns: s.columns, rows: [] })));
-      for (let i = 0; i < sheets.length; i++) {
-        parts.set(`xl/worksheets/sheet${i + 1}.xml`, writeSheetXml(sheets[i]));
-        await breathe();
-      }
-      const out2 = await zipAsync([...parts.entries()]);
-      return out2;
-    }
-    function readWorkbook(buf) {
-      const files = unzip(buf);
-      const get = (n) => {
-        const f = files.get(n);
-        return f ? f.toString("utf8") : null;
-      };
-      const wb = get("xl/workbook.xml");
-      if (!wb) throw new Error("Not an Excel (.xlsx) file");
-      const rels = get("xl/_rels/workbook.xml.rels") || "";
-      const relMap = {};
-      for (const m of rels.matchAll(/<Relationship\b[^>]*>/g)) {
-        const id = /Id="([^"]+)"/.exec(m[0])?.[1];
-        const t = /Target="([^"]+)"/.exec(m[0])?.[1];
-        if (id && t) relMap[id] = t.replace(/^\/?xl\//, "").replace(/^\//, "");
-      }
-      const shared = [];
-      const ss = get("xl/sharedStrings.xml");
-      if (ss) for (const m of ss.matchAll(/<si>([\s\S]*?)<\/si>/g)) shared.push(decodeEntities([...m[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((x) => x[1]).join("")));
-      const sheets = [];
-      for (const m of wb.matchAll(/<sheet\b[^>]*>/g)) {
-        const name = decodeEntities(/name="([^"]*)"/.exec(m[0])?.[1] || "");
-        const rid = /r:id="([^"]+)"/.exec(m[0])?.[1];
-        const target = relMap[rid] || `worksheets/sheet${sheets.length + 1}.xml`;
-        const xml = get("xl/" + target) || get(target);
-        if (!xml) continue;
-        const rows = [];
-        for (const rm of xml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
-          const row = [];
-          for (const cm of rm[1].matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
-            const attrs = cm[1];
-            const inner = cm[2] || "";
-            const ref = /r="([A-Z]+)\d+"/.exec(attrs)?.[1];
-            const type = /t="([^"]+)"/.exec(attrs)?.[1];
-            const idx = ref ? colIndex(ref) : row.length;
-            let v = null;
-            const vm = /<v>([\s\S]*?)<\/v>/.exec(inner);
-            if (type === "s") v = shared[Number(vm?.[1])] ?? "";
-            else if (type === "inlineStr") v = decodeEntities([...inner.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((x) => x[1]).join(""));
-            else if (type === "b") v = vm?.[1] === "1";
-            else if (vm) {
-              const n = Number(vm[1]);
-              v = Number.isFinite(n) ? n : decodeEntities(vm[1]);
-            }
-            while (row.length < idx) row.push(null);
-            row[idx] = v;
-          }
-          if (row.some((x) => x !== null && x !== "")) rows.push(row);
-        }
-        sheets.push({ name, rows });
-      }
-      return sheets;
-    }
-    function colIndex(letters) {
-      let n = 0;
-      for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64);
-      return n - 1;
-    }
-    function excelDate(n) {
-      if (typeof n !== "number" || !Number.isFinite(n) || n < 1) return null;
-      const d = new Date(Math.round((n - 25569) * 864e5));
-      return isNaN(d) ? null : d.toISOString().slice(0, 10);
-    }
-    function parseFile(buf, filename = "") {
-      const isZip = buf[0] === 80 && buf[1] === 75;
-      const sheets = isZip ? readWorkbook(buf) : [{ name: filename.replace(/\.[^.]+$/, "") || "Sheet1", rows: parseCsv(buf.toString("utf8")) }];
-      return { sheets: sheets.map((s) => {
-        const [h, ...rest] = s.rows;
-        const headers = (h || []).map((x) => String(x ?? "").trim());
-        return { name: s.name, headers, rows: rest.map((r) => Object.fromEntries(headers.map((k, i) => [k, r[i] === void 0 ? null : r[i]]))) };
-      }) };
-    }
-    module.exports = { parseCsv, toCsv, writeWorkbook, writeWorkbookAsync, readWorkbook, parseFile, excelDate, zip, defer };
   }
 });
 
@@ -15369,6 +16246,14 @@ var require_episodes = __commonJS({
       delete o.discharge_summary_enc;
       return o;
     }
+    var CalOMS = require_caloms();
+    function calomsPart(raw, type) {
+      if (!CalOMS.enabled()) return null;
+      if (!raw || typeof raw !== "object" || !raw.answers || typeof raw.answers !== "object") {
+        throw badRequest(`This program reports CalOMS Tx: the CalOMS ${type} questions must be answered`, { fields: { caloms: "required" } });
+      }
+      return { provider_id: raw.provider_id ? String(raw.provider_id).trim() : null, record_date: typeof raw.record_date === "string" ? raw.record_date : null, answers: raw.answers };
+    }
     module.exports = (r) => {
       r.get("/api/clients/:id/episodes", auth3.requireAuth, auth3.requirePerm("episodes:read", "episodes:write"), (ctx) => {
         auth3.assertClientAccess(ctx, ctx.params.id);
@@ -15385,10 +16270,13 @@ var require_episodes = __commonJS({
           opened_at: { type: "date" },
           funding_source_id: { type: "string" },
           referral_source: { type: "string", maxLen: 120 },
-          presenting_problem: { type: "string", maxLen: 4e3 }
+          presenting_problem: { type: "string", maxLen: 4e3 },
+          caloms: { type: "object" }
         });
         if (db3.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, ctx.params.id)) throw badRequest("This client already has an open episode. Close it before opening another.");
+        const cal = calomsPart(v.caloms, "admission");
         const id = uuid2();
+        let calRec = null;
         db3.transaction(() => {
           db3.run(
             `INSERT INTO episodes(id,client_id,funding_source_id,opened_at,opened_by,referral_source,presenting_problem_enc) VALUES(?,?,?,?,?,?,?)`,
@@ -15401,10 +16289,15 @@ var require_episodes = __commonJS({
             v.presenting_problem ? encrypt3(v.presenting_problem) : null
           );
           db3.run(`UPDATE clients SET status=CASE WHEN status IN ('closed','waitlist') THEN 'active' ELSE status END, discharge_date=NULL, discharge_reason=NULL, updated_at=? WHERE id=?`, db3.now(), ctx.params.id);
+          if (cal) {
+            const ep = db3.one(`SELECT * FROM episodes WHERE id=?`, id);
+            calRec = CalOMS.save({ episode: ep, record_type: "admission", provider_id: cal.provider_id, record_date: cal.record_date || ep.opened_at.slice(0, 10), answers: cal.answers, user: ctx.user });
+          }
         });
         audit3.log({ user: ctx.user, action: "episode.open", entity: "episode", entityId: id, clientId: ctx.params.id, ip: ctx.ip });
+        if (calRec) audit3.log({ user: ctx.user, action: "caloms.record.save", entity: "caloms_record", entityId: calRec.id, clientId: ctx.params.id, ip: ctx.ip, details: { record_type: "admission", warnings: calRec.warnings.length || void 0 } });
         ctx.status = 201;
-        return { id };
+        return { id, caloms_record_id: calRec ? calRec.id : void 0, caloms_warnings: calRec && calRec.warnings.length ? calRec.warnings : void 0 };
       });
       r.post("/api/episodes/:id/close", auth3.requireAuth, auth3.requirePerm("episodes:write"), (ctx) => {
         const e = db3.one(`SELECT * FROM episodes WHERE id=?`, ctx.params.id);
@@ -15416,13 +16309,16 @@ var require_episodes = __commonJS({
           discharge_disposition: { type: "string", maxLen: 200 },
           discharge_summary: { type: "string", maxLen: 8e3 },
           closed_at: { type: "date" },
-          keep_client_active: { type: "boolean" }
+          keep_client_active: { type: "boolean" },
+          caloms: { type: "object" }
         });
+        const cal = calomsPart(v.caloms, "discharge");
         const when = v.closed_at || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
         const openNotes = db3.one(`SELECT COUNT(*) n FROM notes WHERE client_id=? AND status='draft' AND deleted_at IS NULL`, e.client_id).n;
         let endedAssignments = 0;
         let cancelledTasks = 0;
         let openReferrals = 0;
+        let calRec = null;
         db3.transaction(() => {
           db3.run(
             `UPDATE episodes SET status='closed', closed_at=?, closed_by=?, discharge_reason=?, discharge_disposition=?, discharge_summary_enc=?, updated_at=? WHERE id=?`,
@@ -15441,12 +16337,15 @@ var require_episodes = __commonJS({
             cancelledTasks = db3.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE client_id=? AND status IN ('open','in_progress')`, db3.now(), e.client_id).changes;
           }
           openReferrals = db3.one(`SELECT COUNT(*) n FROM referrals WHERE client_id=? AND status IN ('pending','contacted','accepted','waitlisted','scheduled')`, e.client_id).n;
+          if (cal) calRec = CalOMS.save({ episode: db3.one(`SELECT * FROM episodes WHERE id=?`, e.id), record_type: "discharge", provider_id: cal.provider_id, record_date: when, answers: cal.answers, user: ctx.user });
         });
         audit3.log({ user: ctx.user, action: "episode.close", entity: "episode", entityId: e.id, clientId: e.client_id, ip: ctx.ip, details: { reason: v.discharge_reason, ended_assignments: endedAssignments, cancelled_tasks: cancelledTasks } });
+        if (calRec) audit3.log({ user: ctx.user, action: "caloms.record.save", entity: "caloms_record", entityId: calRec.id, clientId: e.client_id, ip: ctx.ip, details: { record_type: "discharge", warnings: calRec.warnings.length || void 0 } });
         return {
           ok: true,
           ended_assignments: endedAssignments,
           cancelled_tasks: cancelledTasks,
+          caloms_record_id: calRec ? calRec.id : void 0,
           warnings: [
             openNotes ? `${openNotes} note(s) are still unsigned for this client.` : null,
             openReferrals ? `${openReferrals} referral(s) are still open; record their outcome.` : null
@@ -15460,7 +16359,12 @@ var require_episodes = __commonJS({
         if (e.status !== "closed") throw badRequest("This episode is still open");
         if (db3.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, e.client_id)) throw badRequest("This client already has an open episode. Discharge it first, or record this as that episode.");
         const { reason } = validate(ctx.body || {}, { reason: { type: "string", maxLen: 300 } });
+        const calDischarge = db3.one(`SELECT id, extracted_at FROM caloms_records WHERE episode_id=? AND record_type='discharge'`, e.id);
         db3.transaction(() => {
+          if (calDischarge) {
+            db3.run(`DELETE FROM caloms_records WHERE id=?`, calDischarge.id);
+            db3.tombstone("caloms_records", calDischarge.id);
+          }
           db3.run(`UPDATE episodes SET status='open', closed_at=NULL, closed_by=NULL, discharge_reason=NULL, discharge_disposition=NULL, discharge_summary_enc=NULL, updated_at=? WHERE id=?`, db3.now(), e.id);
           db3.run(`UPDATE clients SET status='active', discharge_date=NULL, discharge_reason=NULL, updated_at=? WHERE id=?`, db3.now(), e.client_id);
           if (e.closed_at) db3.run(`UPDATE assignments SET end_date=NULL, updated_at=? WHERE client_id=? AND end_date=? AND ended_at IS NULL`, db3.now(), e.client_id, e.closed_at);
@@ -15468,8 +16372,8 @@ var require_episodes = __commonJS({
             db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, uuid2(), e.client_id, ctx.user.id, "primary", (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), ctx.user.id);
           }
         });
-        audit3.log({ user: ctx.user, action: "episode.reopen", entity: "episode", entityId: e.id, clientId: e.client_id, ip: ctx.ip, details: { reason: reason || void 0, was_discharged: e.discharge_reason } });
-        return { ok: true };
+        audit3.log({ user: ctx.user, action: "episode.reopen", entity: "episode", entityId: e.id, clientId: e.client_id, ip: ctx.ip, details: { reason: reason || void 0, was_discharged: e.discharge_reason, caloms_discharge_removed: calDischarge ? true : void 0 } });
+        return { ok: true, warnings: calDischarge && calDischarge.extracted_at ? ["The CalOMS discharge record for this episode had already been sent to DHCS; correct it through the county's CalOMS process."] : [] };
       });
       r.get("/api/episodes", auth3.requireAuth, auth3.requirePerm("episodes:read", "episodes:write"), (ctx) => {
         const { limit: limit2, offset } = paging(ctx.query, { limit: 100, max: 500 });
@@ -16160,6 +17064,664 @@ var require_forms = __commonJS({
         return { ok: true, form_updated_at: stamp2 };
       });
     };
+  }
+});
+
+// server/exports.js
+var require_exports = __commonJS({
+  "server/exports.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var M = require_clients_model();
+    var { decrypt: decrypt3 } = require_crypto();
+    var MAX_ROWS = 5e4;
+    var DEID_LABEL = "De-identified (HIPAA Safe Harbor): dates reduced to year-month, ZIP codes to the first three digits, city omitted, ages banded, free text redacted.";
+    var AGE_BANDS = [[0, 17, "0-17"], [18, 24, "18-24"], [25, 34, "25-34"], [35, 44, "35-44"], [45, 54, "45-54"], [55, 64, "55-64"], [65, 89, "65-89"]];
+    function ageBand(dob, now = /* @__PURE__ */ new Date()) {
+      if (!dob) return "";
+      const born = new Date(dob);
+      if (!Number.isFinite(born.getTime())) return "";
+      let age = now.getUTCFullYear() - born.getUTCFullYear();
+      if (now.getUTCMonth() < born.getUTCMonth() || now.getUTCMonth() === born.getUTCMonth() && now.getUTCDate() < born.getUTCDate()) age--;
+      if (age >= 90) return "90+";
+      const band = AGE_BANDS.find(([lo, hi]) => age >= lo && age <= hi);
+      return band ? band[2] : "";
+    }
+    var isDateCol = (k) => /(_at|_date|_due|_on)$/.test(k) || k === "date";
+    var toMonth = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 7) : v;
+    var zip3 = (v) => v ? String(v).replace(/\D/g, "").slice(0, 3) : v;
+    function deidentifyRow(r) {
+      const o = {};
+      for (const [k, v] of Object.entries(r)) {
+        if (k === "city") continue;
+        if (k === "zip") {
+          o[k] = zip3(v);
+          continue;
+        }
+        o[k] = isDateCol(k) ? toMonth(v) : v;
+      }
+      return o;
+    }
+    var DEID_COLUMNS = {
+      clients: ["client_code", "age_band", "status", "intake_date", "discharge_date", "discharge_reason", "referral_source", "referral_date", "engagement_date", "days_to_engagement", "primary_substance", "secondary_substances", "asam_level", "mat_status", "mat_medication", "risk_level", "housing_status", "insurance", "overdose_history", "naloxone_provided", "naloxone_last_date", "co_occurring_mh", "justice_involved", "pregnant_or_parenting", "zip", "gender", "preferred_language"],
+      interventions: ["occurred_at", "client_code", "type", "duration_minutes", "modality", "outcome", "stage_of_change", "naloxone_kits", "fentanyl_strips", "worker", "funding_source", "cost", "follow_up_due"],
+      calls: ["started_at", "client_code", "direction", "contact_type", "duration_minutes", "outcome", "crisis", "follow_up_needed", "follow_up_due", "worker"],
+      time: ["work_date", "worker", "client_code", "category", "minutes", "billable", "funding_source"],
+      referrals: ["referred_at", "client_code", "resource", "category", "status", "urgency", "warm_handoff", "appointment_at", "admitted_at", "closed_at", "worker"],
+      tasks: ["client_code", "assignee", "due_at", "priority", "status", "is_milestone", "completed_at"],
+      forms: ["created_at", "client_code", "template_name", "status", "completed_at", "completed_by", "created_by", "attachments"],
+      consents: ["client_code", "type", "signed_at", "expires_at", "expires_event", "revoked_at", "redisclosure_notice_given"],
+      disclosures: ["client_code", "disclosed_at", "method", "basis", "source", "disclosed_by"],
+      episodes: ["client_code", "opened_at", "closed_at", "status", "referral_source", "discharge_reason", "discharge_disposition", "funding_source"],
+      overdose_events: ["occurred_at", "client_code", "kind", "naloxone_used", "naloxone_doses", "administered_by", "ems_called", "hospitalized", "survived", "location_type"],
+      expenditures: ["spent_at", "fund", "line", "category", "amount", "status", "client_code", "worker", "approver"]
+    };
+    var LIST_COLUMNS = {
+      interventions: { type: "INTERVENTION_TYPES", location: "LOCATIONS", modality: "MODALITIES", outcome: "OUTCOMES" },
+      calls: { contact_type: "CALL_CONTACT_TYPES", outcome: (r) => r.method === "text" ? "TEXT_OUTCOMES" : "CALL_OUTCOMES" },
+      time: { category: "TIME_CATEGORIES" },
+      referrals: { status: "REFERRAL_STATUSES", barrier: "REFERRAL_BARRIERS" },
+      episodes: { discharge_reason: "DISCHARGE_REASONS" },
+      overdose_events: { kind: "OVERDOSE_KINDS", administered_by: "ADMINISTERED_BY" },
+      clients: { primary_substance: "SUBSTANCES", discharge_reason: "DISCHARGE_REASONS" }
+    };
+    function labelRows(kind, rows) {
+      const cols2 = LIST_COLUMNS[kind];
+      if (!cols2) return rows;
+      const O = require_options();
+      const maps = {};
+      const mapFor = (key) => maps[key] = maps[key] || O.labelMap(key);
+      return rows.map((r) => {
+        const o = { ...r };
+        for (const [col, list] of Object.entries(cols2)) {
+          const v = o[col];
+          if (typeof v !== "string" || !v) continue;
+          const key = typeof list === "function" ? list(r) : list;
+          o[col] = mapFor(key)[v] || (/^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(v) ? O.humanize(v) : v);
+        }
+        return o;
+      });
+    }
+    function projectRow(r, cols2) {
+      const o = {};
+      for (const c of cols2) if (c in r) o[c] = r[c];
+      if (r._client_id !== void 0) o._client_id = r._client_id;
+      return o;
+    }
+    var cents = (v) => typeof v === "number" && Number.isFinite(v) ? Math.round(v * 100) / 100 : v;
+    function datasets(ctx, { from, to, ts, tsP, identified }) {
+      const cf = auth3.caseloadFilter(ctx.user, "c.id");
+      const all = auth3.hasPerm(ctx.user, "time:all") ? 1 : 0;
+      const phi = (v) => identified && v ? decrypt3(v) : v ? "[redacted]" : "";
+      const idCols = identified ? ["last_name", "first_name", "dob", "phone", "email", "address"] : ["age_band"];
+      const strip = (cols2) => identified ? cols2 : cols2.filter((c) => c !== "city");
+      const D = {
+        clients: {
+          label: "Clients",
+          columns: strip(["client_code", ...idCols, "status", "intake_date", "discharge_date", "discharge_reason", "referral_source", "referral_date", "engagement_date", "days_to_engagement", "primary_substance", "secondary_substances", "asam_level", "mat_status", "mat_medication", "risk_level", "housing_status", "insurance", "overdose_history", "naloxone_provided", "naloxone_last_date", "co_occurring_mh", "justice_involved", "pregnant_or_parenting", "city", "zip", "gender", "preferred_language", "goals", "flags"]),
+          rows: () => db3.all(`SELECT c.* FROM clients c WHERE c.deleted_at IS NULL AND ${cf.sql} ORDER BY c.client_code LIMIT ?`, ...cf.params, MAX_ROWS).map((x) => ({ ...M.decryptRow(x, { deidentify: !identified }), _client_id: x.id, age_band: identified ? void 0 : ageBand(x.dob_enc ? decrypt3(x.dob_enc) : null) })).map((x) => ({ ...x, days_to_engagement: M.daysToEngagement(x), goals: identified ? x.goals : x.goals_enc ? "[redacted]" : "", flags: identified ? x.flags : x.flags_enc ? "[redacted]" : "" }))
+        },
+        interventions: {
+          label: "Visits & services",
+          columns: ["occurred_at", "client_code", "type", "duration_minutes", "location", "modality", "outcome", "stage_of_change", "naloxone_kits", "fentanyl_strips", "worker", "funding_source", "cost", "summary", "follow_up_due"],
+          rows: () => db3.all(`SELECT i.*, c.client_code, i.client_id AS _client_id, u.display_name worker, f.name funding_source FROM interventions i LEFT JOIN clients c ON c.id=i.client_id JOIN users u ON u.id=i.user_id LEFT JOIN funding_sources f ON f.id=i.funding_source_id WHERE ${ts("i.occurred_at")} AND (i.client_id IS NULL OR ${cf.sql}) ORDER BY i.occurred_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, summary: phi(r.summary_enc) }))
+        },
+        calls: {
+          label: "Calls",
+          columns: ["started_at", "client_code", "direction", "contact_type", "contact_name", "duration_minutes", "outcome", "crisis", "purpose", "summary", "follow_up_needed", "follow_up_due", "worker"],
+          rows: () => db3.all(`SELECT ca.*, c.client_code, ca.client_id AS _client_id, u.display_name worker FROM calls ca LEFT JOIN clients c ON c.id=ca.client_id JOIN users u ON u.id=ca.user_id WHERE ${ts("ca.started_at")} AND (ca.client_id IS NULL OR ${cf.sql}) ORDER BY ca.started_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, contact_name: phi(r.contact_name_enc), summary: phi(r.summary_enc), purpose: phi(r.purpose_enc) }))
+        },
+        time: {
+          label: "Time",
+          columns: ["work_date", "worker", "client_code", "category", "minutes", "billable", "funding_source", "description"],
+          rows: () => db3.all(`SELECT t.*, u.display_name worker, c.client_code, t.client_id AS _client_id, f.name funding_source FROM time_entries t JOIN users u ON u.id=t.user_id LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN funding_sources f ON f.id=t.funding_source_id WHERE t.work_date BETWEEN ? AND ? AND (t.user_id=? OR ?) ORDER BY t.work_date LIMIT ?`, from, to, ctx.user.id, all, MAX_ROWS)
+        },
+        referrals: {
+          label: "Referrals",
+          columns: ["referred_at", "client_code", "resource", "category", "status", "urgency", "warm_handoff", "appointment_at", "admitted_at", "closed_at", "outcome", "barrier", "worker", "notes"],
+          rows: () => db3.all(`SELECT r.*, c.client_code, r.client_id AS _client_id, res.name resource, res.category, u.display_name worker FROM referrals r JOIN clients c ON c.id=r.client_id JOIN resources res ON res.id=r.resource_id JOIN users u ON u.id=r.user_id WHERE ${ts("r.referred_at")} AND ${cf.sql} ORDER BY r.referred_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, outcome: phi(r.outcome_enc), barrier: phi(r.barrier_enc), notes: phi(r.notes_enc) }))
+        },
+        tasks: {
+          label: "To-dos",
+          columns: ["title", "client_code", "assignee", "due_at", "priority", "status", "is_milestone", "completed_at", "description"],
+          rows: () => db3.all(`SELECT t.*, c.client_code, t.client_id AS _client_id, u.display_name assignee FROM tasks t LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN users u ON u.id=t.assigned_to WHERE ${ts("t.created_at")} AND (t.client_id IS NULL OR ${cf.sql}) ORDER BY t.due_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, title: phi(r.title_enc), description: phi(r.description_enc) }))
+        },
+        forms: {
+          label: "Client forms",
+          columns: ["created_at", "client_code", "template_name", "status", "completed_at", "completed_by", "created_by", "attachments"],
+          rows: () => db3.all(`SELECT f.created_at, c.client_code, f.client_id AS _client_id, f.template_name, f.status, f.completed_at, cu.display_name completed_by, cr.display_name created_by, (SELECT COUNT(*) FROM client_form_files x WHERE x.client_form_id=f.id) attachments FROM client_forms f JOIN clients c ON c.id=f.client_id LEFT JOIN users cu ON cu.id=f.completed_by JOIN users cr ON cr.id=f.created_by WHERE f.deleted_at IS NULL AND ${ts("f.created_at")} AND ${cf.sql} ORDER BY f.created_at DESC LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS)
+        },
+        resources: {
+          label: "Resource directory",
+          noClients: true,
+          columns: ["name", "category", "organization", "phone", "fax", "email", "website", "address", "city", "zip", "hours", "eligibility", "services", "languages", "accepts_medicaid", "accepts_uninsured", "mat_offered", "capacity_notes", "contact_person", "summary", "service_tags", "levels_of_care", "populations", "intake_process", "cost_notes", "is_active", "last_verified_at", "notes"],
+          rows: () => db3.all(`SELECT * FROM resources ORDER BY category, name LIMIT ?`, MAX_ROWS)
+        },
+        consents: {
+          label: "Consents",
+          columns: ["client_code", "type", "recipient", "purpose", "scope", "signed_at", "expires_at", "expires_event", "revoked_at", "document_ref", "redisclosure_notice_given"],
+          rows: () => db3.all(`SELECT co.*, c.client_code, co.client_id AS _client_id FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.signed_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY co.signed_at LIMIT ?`, from, to, ...cf.params, MAX_ROWS).map((r) => ({ ...r, recipient: phi(r.recipient_enc), purpose: phi(r.purpose_enc), scope: phi(r.scope_enc) }))
+        },
+        disclosures: {
+          label: "Accounting of disclosures",
+          columns: ["client_code", "disclosed_at", "recipient", "purpose", "what", "method", "basis", "justification", "source", "disclosed_by"],
+          rows: () => db3.all(`SELECT d.*, c.client_code, d.client_id AS _client_id, u.display_name disclosed_by FROM disclosures d JOIN clients c ON c.id=d.client_id JOIN users u ON u.id=d.disclosed_by WHERE ${ts("d.disclosed_at")} AND ${cf.sql} ORDER BY d.disclosed_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, recipient: phi(r.recipient_enc), purpose: phi(r.purpose_enc), what: phi(r.what_enc), justification: phi(r.justification_enc) }))
+        },
+        episodes: {
+          label: "Episodes of care",
+          columns: ["client_code", "opened_at", "closed_at", "status", "referral_source", "discharge_reason", "discharge_disposition", "funding_source"],
+          rows: () => db3.all(`SELECT e.*, c.client_code, e.client_id AS _client_id, f.name funding_source FROM episodes e JOIN clients c ON c.id=e.client_id LEFT JOIN funding_sources f ON f.id=e.funding_source_id WHERE e.opened_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY e.opened_at LIMIT ?`, from, to, ...cf.params, MAX_ROWS)
+        },
+        overdose_events: {
+          label: "Overdose & reversal events",
+          columns: strip(["occurred_at", "client_code", "kind", "substances", "naloxone_used", "naloxone_doses", "administered_by", "ems_called", "hospitalized", "survived", "location_type", "city"]),
+          rows: () => db3.all(`SELECT o.*, c.client_code, o.client_id AS _client_id FROM overdose_events o LEFT JOIN clients c ON c.id=o.client_id WHERE ${ts("o.occurred_at")} AND (o.client_id IS NULL OR ${cf.sql}) ORDER BY o.occurred_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, substances: phi(r.substances_enc) }))
+        }
+      };
+      if (auth3.hasPerm(ctx.user, "budget:read")) {
+        D.funds = { label: "Funding sources", noClients: true, columns: ["name", "source_type", "grant_number", "fiscal_year_start", "fiscal_year_end", "total_amount", "restrictions", "is_active"], rows: () => db3.all(`SELECT * FROM funding_sources ORDER BY fiscal_year_start DESC`) };
+        D.budget_lines = { label: "Budget lines", noClients: true, columns: ["fund", "category", "label", "allocated_amount", "notes"], rows: () => db3.all(`SELECT b.*, f.name fund FROM budget_lines b JOIN funding_sources f ON f.id=b.funding_source_id ORDER BY f.name, b.category`) };
+        D.expenditures = {
+          label: "Expenditures",
+          columns: ["spent_at", "fund", "line", "category", "amount", "status", "client_code", "vendor", "description", "receipt_ref", "worker", "approver"],
+          rows: () => db3.all(`SELECT e.*, f.name fund, b.label line, c.client_code, e.client_id AS _client_id, u.display_name worker, a.display_name approver FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id LEFT JOIN budget_lines b ON b.id=e.budget_line_id LEFT JOIN clients c ON c.id=e.client_id JOIN users u ON u.id=e.user_id LEFT JOIN users a ON a.id=e.approved_by WHERE e.spent_at BETWEEN ? AND ? ORDER BY e.spent_at`, from, to).map((r) => ({ ...r, amount: cents(r.amount) }))
+        };
+      }
+      for (const [kind, d] of Object.entries(D)) {
+        const coded = d.rows;
+        const raw = () => labelRows(kind, coded());
+        if (identified || d.noClients) {
+          d.rows = raw;
+          continue;
+        }
+        const allowed = DEID_COLUMNS[kind];
+        if (!allowed) throw new Error(`No de-identified column list is defined for the ${kind} dataset`);
+        d.columns = d.columns.filter((c) => allowed.includes(c));
+        d.rows = () => raw().map((r) => projectRow(deidentifyRow(r), allowed));
+      }
+      return D;
+    }
+    function clientIdsOf(rows) {
+      return [...new Set(rows.map((r) => r._client_id).filter(Boolean))];
+    }
+    function publicRows(rows) {
+      return rows.map((r) => {
+        const o = { ...r };
+        delete o._client_id;
+        return o;
+      });
+    }
+    module.exports = { LIST_COLUMNS, labelRows, datasets, ageBand, deidentifyRow, clientIdsOf, publicRows, DEID_LABEL, DEID_COLUMNS, cents };
+  }
+});
+
+// server/routes/reports.js
+var require_reports = __commonJS({
+  "server/routes/reports.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var { sendJson, badRequest } = require_http();
+    var M = require_clients_model();
+    var CFX = require_client_filters();
+    var { defer } = require_spreadsheet();
+    var DAY = /^\d{4}-\d{2}-\d{2}$/;
+    var addDays = (date, n) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
+    function range(ctx) {
+      const { localDate, localMidnight } = require_budget();
+      const to = ctx.query.get("to") || localDate();
+      const from = ctx.query.get("from") || addDays(to, -89);
+      if (!DAY.test(to) || !DAY.test(from) || !Number.isFinite(Date.parse(to)) || !Number.isFinite(Date.parse(from))) throw badRequest("from and to must be dates (YYYY-MM-DD)");
+      const fromTs = localMidnight(from);
+      const toEnd = new Date(Date.parse(localMidnight(addDays(to, 1))) - 1).toISOString();
+      const ts = (col) => `((length(${col})>10 AND ${col} BETWEEN ? AND ?) OR (length(${col})=10 AND ${col} BETWEEN ? AND ?))`;
+      return { from, to, fromTs, toEnd, ts, tsP: [fromTs, toEnd, from, to] };
+    }
+    module.exports = (r) => {
+      r.get("/api/reports/dashboard", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
+        const { from, to, ts, tsP } = range(ctx);
+        const cf = auth3.caseloadFilter(ctx.user, "c.id");
+        const expand = (sql, p) => {
+          const before = sql.slice(0, sql.indexOf("{CF}"));
+          const n = (before.match(/\?/g) || []).length;
+          return [sql.replace("{CF}", cf.sql), [...p.slice(0, n), ...cf.params, ...p.slice(n)]];
+        };
+        const scoped = (sql, ...p) => {
+          const [q, a] = expand(sql, p);
+          return db3.all(q, ...a);
+        };
+        const scoped1 = (sql, ...p) => {
+          const [q, a] = expand(sql, p);
+          return db3.one(q, ...a);
+        };
+        const today = require_budget().localDate();
+        const out2 = {
+          from,
+          to,
+          clients: {
+            active: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF}`).n,
+            waitlist: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='waitlist' AND {CF}`).n,
+            new_in_range: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND intake_date BETWEEN ? AND ? AND {CF}`, from, to).n,
+            // The tiles use the client list's own predicates (server/client-filters.js), so a tile and the list it
+            // opens count the same people.
+            high_risk: (() => {
+              const f = CFX.risk("high");
+              return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND ${f.sql} AND {CF}`, ...f.params).n;
+            })(),
+            no_contact_30d: (() => {
+              const f = CFX.noContactSince();
+              return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} AND ${f.sql}`, ...f.params).n;
+            })(),
+            by_status: scoped(`SELECT status, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND {CF} GROUP BY status`),
+            by_substance: scoped(`SELECT COALESCE(primary_substance,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k ORDER BY n DESC`),
+            mat: scoped(`SELECT COALESCE(mat_status,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k`)
+          },
+          interventions: {
+            total: scoped1(`SELECT COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP).n,
+            minutes: scoped1(`SELECT COALESCE(SUM(duration_minutes),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP).n,
+            by_type: db3.all(`SELECT i.type k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${cf.sql} GROUP BY i.type ORDER BY n DESC`, ...tsP, ...cf.params),
+            by_week: db3.all(`SELECT strftime('%Y-%W', i.occurred_at) k, COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${cf.sql} GROUP BY k ORDER BY k`, ...tsP, ...cf.params),
+            naloxone_kits: scoped1(`SELECT COALESCE(SUM(naloxone_kits),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP).n,
+            fentanyl_strips: scoped1(`SELECT COALESCE(SUM(fentanyl_strips),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP).n,
+            by_worker: db3.all(`SELECT u.display_name k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN users u ON u.id=i.user_id JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${cf.sql} GROUP BY u.id ORDER BY n DESC`, ...tsP, ...cf.params)
+          },
+          calls: {
+            total: db3.one(`SELECT COUNT(*) n FROM calls WHERE ${ts("started_at")}`, ...tsP).n,
+            minutes: db3.one(`SELECT COALESCE(SUM(duration_minutes),0) n FROM calls WHERE ${ts("started_at")}`, ...tsP).n,
+            crisis: db3.one(`SELECT COUNT(*) n FROM calls WHERE crisis=1 AND ${ts("started_at")}`, ...tsP).n,
+            by_outcome: db3.all(`SELECT outcome k, COUNT(*) n FROM calls WHERE ${ts("started_at")} GROUP BY outcome ORDER BY n DESC`, ...tsP),
+            by_direction: db3.all(`SELECT direction k, COUNT(*) n FROM calls WHERE ${ts("started_at")} GROUP BY direction`, ...tsP),
+            // Texts are logged alongside calls, so say how the total splits rather than reporting them as calls.
+            texts: db3.one(`SELECT COUNT(*) n FROM calls WHERE method='text' AND ${ts("started_at")}`, ...tsP).n
+          },
+          referrals: {
+            total: db3.one(`SELECT COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${ts("r.referred_at")} AND ${cf.sql}`, ...tsP, ...cf.params).n,
+            by_status: db3.all(`SELECT r.status k, COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${ts("r.referred_at")} AND ${cf.sql} GROUP BY r.status ORDER BY n DESC`, ...tsP, ...cf.params),
+            by_category: db3.all(`SELECT res.category k, COUNT(*) n, SUM(CASE WHEN r.status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id WHERE ${ts("r.referred_at")} AND ${cf.sql} GROUP BY res.category ORDER BY n DESC`, ...tsP, ...cf.params),
+            open: db3.one(`SELECT COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE r.status IN ('pending','contacted','accepted','waitlisted','scheduled') AND ${cf.sql}`, ...cf.params).n,
+            median_days_to_admit: (() => {
+              const d = db3.all(`SELECT (julianday(admitted_at)-julianday(referred_at)) d FROM referrals WHERE admitted_at IS NOT NULL AND ${ts("referred_at")} ORDER BY d`, ...tsP).map((x) => x.d);
+              return d.length ? d[Math.floor(d.length / 2)] : null;
+            })()
+          },
+          tasks: {
+            open: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (assigned_to=? OR ?)`, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n,
+            overdue: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (CASE WHEN length(due_at)=10 THEN due_at < ? ELSE due_at < ? END) AND (assigned_to=? OR ?)`, today, db3.now(), ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n,
+            due_today: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND substr(due_at,1,10)=? AND (assigned_to=? OR ?)`, today, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n
+          },
+          time: auth3.hasPerm(ctx.user, "time:read") || auth3.hasPerm(ctx.user, "time:write") ? {
+            minutes: db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE work_date BETWEEN ? AND ? AND (user_id=? OR ?)`, from, to, ctx.user.id, auth3.hasPerm(ctx.user, "time:all") ? 1 : 0).n,
+            by_category: db3.all(`SELECT category k, SUM(minutes) n FROM time_entries WHERE work_date BETWEEN ? AND ? AND (user_id=? OR ?) GROUP BY category ORDER BY n DESC`, from, to, ctx.user.id, auth3.hasPerm(ctx.user, "time:all") ? 1 : 0)
+          } : null,
+          // A supervisor's unsigned-notes alert covers the team's drafts, the same way the overdue-tasks alert
+          // above already covers the team's to-dos -- a program manager rarely writes routine notes themselves,
+          // so an alert scoped to their own drafts was dead for exactly the role it matters most to.
+          notes: (() => {
+            const team = auth3.hasPerm(ctx.user, "notes:cosign") && auth3.hasPerm(ctx.user, "clients:all");
+            const scope = team ? "1=1" : "author_id=?";
+            const p = team ? [] : [ctx.user.id];
+            return {
+              team,
+              unsigned: db3.one(`SELECT COUNT(*) n FROM notes WHERE status='draft' AND deleted_at IS NULL AND ${scope}`, ...p).n,
+              unsigned_overdue: db3.one(`SELECT COUNT(*) n FROM notes WHERE status='draft' AND deleted_at IS NULL AND ${scope} AND created_at < ?`, ...p, new Date(Date.now() - Number(db3.getSetting("note_lock_days", "3")) * 864e5).toISOString()).n,
+              staged_imports: db3.one(`SELECT COUNT(*) n FROM import_items x JOIN imports i ON i.id=x.import_id WHERE x.status='staged' AND (i.imported_by=? OR i.imported_by IS NULL OR ?)`, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n
+            };
+          })(),
+          budget: auth3.hasPerm(ctx.user, "budget:read") ? db3.one(`SELECT ROUND((SELECT COALESCE(SUM(total_amount),0) FROM funding_sources WHERE is_active=1),2) total, ROUND((SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status IN ('approved','reimbursed')),2) spent, ROUND((SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status='pending'),2) pending`) : null,
+          // Scoped to active clients so this count matches what #/clients?consent_expiring=1 shows by default —
+          // otherwise the badge counts a closed or inactive client's consent that the deep-linked list, filtered
+          // to active, never displays.
+          // Emergency accesses nobody has reviewed yet — the count a supervisor sees on their home page.
+          breakglass_pending: auth3.hasPerm(ctx.user, "audit:read") ? db3.one(`SELECT COUNT(*) n FROM breakglass_events WHERE acknowledged_at IS NULL`).n : null,
+          // Patient-rights requests (access, amendment, restriction, accounting) each run a 30-day clock; the
+          // count of open ones, and how many have run out, so a deadline is not first noticed when it is missed.
+          patient_requests: auth3.hasPerm(ctx.user, "patient-requests:read") || auth3.hasPerm(ctx.user, "patient-requests:write") ? scoped1(`SELECT COUNT(*) n, COALESCE(SUM(CASE WHEN p.due_at < ? THEN 1 ELSE 0 END),0) overdue FROM patient_requests p JOIN clients c ON c.id=p.client_id WHERE p.status='open' AND c.deleted_at IS NULL AND {CF}`, today) : null,
+          // The number of clients the "consent expiring" list shows (the card below lists the first 20 consents).
+          consents_expiring_clients: (() => {
+            const f = CFX.consentExpiring();
+            return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND ${f.sql} AND {CF}`, ...f.params).n;
+          })(),
+          consents_expiring: db3.all(`SELECT co.id, co.client_id, co.type, co.recipient_enc, co.expires_at, c.client_code FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ? AND c.status='active' AND ${cf.sql} ORDER BY co.expires_at LIMIT 20`, today, new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10), ...cf.params).map((x) => ({ ...x, recipient: x.recipient_enc ? require_crypto().decrypt(x.recipient_enc) : null, recipient_enc: void 0 }))
+        };
+        audit3.log({ user: ctx.user, action: "report.dashboard", ip: ctx.ip, details: { from, to } });
+        return out2;
+      });
+      r.get("/api/reports/monthly", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
+        const months = Math.min(24, Math.max(1, Number(ctx.query.get("months") || 12)));
+        const start2 = /* @__PURE__ */ new Date();
+        start2.setUTCDate(1);
+        start2.setUTCMonth(start2.getUTCMonth() - months + 1);
+        const s = start2.toISOString().slice(0, 10);
+        return {
+          intakes: db3.all(`SELECT substr(intake_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND intake_date >= ? GROUP BY month ORDER BY month`, s),
+          discharges: db3.all(`SELECT substr(discharge_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND discharge_date >= ? GROUP BY month ORDER BY month`, s),
+          interventions: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
+          calls: db3.all(`SELECT substr(started_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes FROM calls WHERE started_at >= ? GROUP BY month ORDER BY month`, s),
+          referrals: db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals WHERE referred_at >= ? GROUP BY month ORDER BY month`, s),
+          naloxone: db3.all(`SELECT substr(occurred_at,1,7) month, SUM(naloxone_kits) kits, SUM(fentanyl_strips) strips FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
+          overdose_events: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN naloxone_used=1 AND survived=1 THEN 1 ELSE 0 END) reversals, SUM(CASE WHEN kind='fatal' OR survived=0 THEN 1 ELSE 0 END) fatal FROM overdose_events WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
+          episodes: db3.all(`SELECT substr(opened_at,1,7) month, COUNT(*) admissions, (SELECT COUNT(*) FROM episodes x WHERE substr(x.closed_at,1,7)=substr(e.opened_at,1,7)) discharges FROM episodes e WHERE opened_at >= ? GROUP BY month ORDER BY month`, s),
+          unduplicated_clients: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? AND client_id IS NOT NULL GROUP BY month ORDER BY month`, s),
+          mat_linkage: db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n FROM referrals r JOIN resources res ON res.id=r.resource_id WHERE res.category IN ('mat_otp','mat_obot') AND r.status IN ('admitted','completed') AND referred_at >= ? GROUP BY month ORDER BY month`, s),
+          spend: auth3.hasPerm(ctx.user, "budget:read") ? db3.all(`SELECT substr(spent_at,1,7) month, ROUND(SUM(amount),2) amount FROM expenditures WHERE status IN ('approved','reimbursed') AND spent_at >= ? GROUP BY month ORDER BY month`, s) : [],
+          time: db3.all(`SELECT substr(work_date,1,7) month, SUM(minutes) minutes FROM time_entries WHERE work_date >= ? GROUP BY month ORDER BY month`, s)
+        };
+      });
+      r.get("/api/reports/funder", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
+        const { from, to, ts, tsP } = range(ctx);
+        const cf = auth3.caseloadFilter(ctx.user, "c.id");
+        const fund = ctx.query.get("funding_source_id") || null;
+        const fundJoin = fund ? "AND i.funding_source_id=?" : "";
+        const fundP = fund ? [fund] : [];
+        const servedSql = `SELECT DISTINCT i.client_id AS id FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND c.deleted_at IS NULL AND ${cf.sql} ${fundJoin}` + (fund ? "" : ` UNION SELECT ca.client_id FROM calls ca JOIN clients c ON c.id=ca.client_id WHERE ${ts("ca.started_at")} AND c.deleted_at IS NULL AND ${cf.sql}`);
+        const servedP = fund ? [...tsP, ...cf.params, ...fundP] : [...tsP, ...cf.params, ...tsP, ...cf.params];
+        const inServed = (sql, ...p) => [`WITH served(id) AS (${servedSql}) ${sql}`, ...servedP, ...p];
+        const one = (sql, ...p) => {
+          const [q, ...a] = inServed(sql, ...p);
+          return db3.one(q, ...a);
+        };
+        const all = (sql, ...p) => {
+          const [q, ...a] = inServed(sql, ...p);
+          return db3.all(q, ...a);
+        };
+        const served = one(`SELECT COUNT(*) n FROM served`).n;
+        const demographics = (col, label) => all(`SELECT COALESCE(NULLIF(c.${col},''),'unknown') k, COUNT(*) n
+      FROM clients c JOIN served s ON s.id=c.id GROUP BY k ORDER BY n DESC`).map((x) => ({ ...x, dimension: label }));
+        const raceRows = all(`SELECT c.race_codes FROM clients c JOIN served s ON s.id=c.id`);
+        const byRace = {};
+        for (const row of raceRows) {
+          const codes = String(row.race_codes || "").split(",").map((x) => x.trim()).filter(Boolean);
+          for (const code of codes.length ? codes : ["unknown"]) byRace[code] = (byRace[code] || 0) + 1;
+        }
+        const episodes = {
+          admissions: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.opened_at BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
+          discharges: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
+          open_at_end: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.opened_at <= ? AND (e.closed_at IS NULL OR e.closed_at > ?) AND ${cf.sql}`, to, to, ...cf.params).n,
+          by_discharge_reason: db3.all(`SELECT COALESCE(e.discharge_reason,'unknown') k, COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql} GROUP BY k ORDER BY n DESC`, from, to, ...cf.params),
+          median_length_of_stay_days: (() => {
+            const d = db3.all(`SELECT (julianday(e.closed_at)-julianday(e.opened_at)) d FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY d`, from, to, ...cf.params).map((x) => x.d);
+            return d.length ? Math.round(d[Math.floor(d.length / 2)]) : null;
+          })()
+        };
+        const overdose = {
+          events: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")}`, ...tsP).n,
+          reversals: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND o.naloxone_used=1 AND o.survived=1`, ...tsP).n,
+          fatal: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND (o.kind='fatal' OR o.survived=0)`, ...tsP).n,
+          community_reported: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND o.client_id IS NULL`, ...tsP).n,
+          naloxone_doses: db3.one(`SELECT COALESCE(SUM(o.naloxone_doses),0) n FROM overdose_events o WHERE ${ts("o.occurred_at")}`, ...tsP).n,
+          by_month: db3.all(`SELECT substr(o.occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN o.naloxone_used=1 AND o.survived=1 THEN 1 ELSE 0 END) reversals FROM overdose_events o WHERE ${ts("o.occurred_at")} GROUP BY month ORDER BY month`, ...tsP),
+          by_administered_by: db3.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND o.naloxone_used=1 GROUP BY k ORDER BY n DESC`, ...tsP)
+        };
+        const distribution = db3.one(`SELECT COALESCE(SUM(i.naloxone_kits),0) kits, COALESCE(SUM(i.fentanyl_strips),0) strips,
+      COALESCE(SUM(CASE WHEN i.client_id IS NULL THEN i.naloxone_kits ELSE 0 END),0) community_kits
+      FROM interventions i WHERE ${ts("i.occurred_at")} ${fundJoin}`, ...tsP, ...fundP);
+        const SMALL_CELL = 11;
+        const suppress = (rows) => rows.map((x) => typeof x.n === "number" && x.n > 0 && x.n < SMALL_CELL ? { ...x, n: "<11", suppressed: true } : x);
+        const out2 = {
+          from,
+          to,
+          funding_source_id: fund,
+          small_cell_threshold: SMALL_CELL,
+          unduplicated: {
+            served,
+            new_admissions: db3.one(`SELECT COUNT(DISTINCT c.id) n FROM clients c WHERE c.deleted_at IS NULL AND c.intake_date BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
+            // Of the people served: how many were referred on, admitted somewhere, and are on MAT.
+            with_a_referral: one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN served s ON s.id=r.client_id WHERE ${ts("r.referred_at")}`, ...tsP).n,
+            admitted_after_referral: one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN served s ON s.id=r.client_id WHERE ${ts("r.admitted_at")}`, ...tsP).n,
+            on_mat: one(`SELECT COUNT(*) n FROM clients c JOIN served s ON s.id=c.id WHERE c.mat_status='active'`).n
+          },
+          demographics: {
+            by_gender: suppress(demographics("gender", "gender")),
+            by_language: suppress(demographics("preferred_language", "language")),
+            by_housing: suppress(demographics("housing_status", "housing")),
+            by_insurance: suppress(demographics("insurance", "insurance")),
+            by_race_code: suppress(Object.entries(byRace).map(([k, n]) => ({ k, n })).sort((a, b) => b.n - a.n)),
+            by_ethnicity: suppress(demographics("race_ethnicity", "ethnicity"))
+          },
+          episodes: { ...episodes, by_discharge_reason: suppress(episodes.by_discharge_reason) },
+          overdose: { ...overdose, by_administered_by: suppress(overdose.by_administered_by) },
+          naloxone_distribution: distribution,
+          by_funding_source: db3.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end,
+          (SELECT COUNT(DISTINCT i.client_id) FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.funding_source_id=f.id AND c.deleted_at IS NULL AND ${ts("i.occurred_at")}) AS clients_served,
+          (SELECT COUNT(*) FROM interventions i WHERE i.funding_source_id=f.id AND ${ts("i.occurred_at")}) AS services,
+          (SELECT COALESCE(SUM(t.minutes),0) FROM time_entries t WHERE t.funding_source_id=f.id AND t.work_date BETWEEN ? AND ? AND t.status='approved') AS approved_minutes
+        FROM funding_sources f WHERE f.is_active=1 ORDER BY f.name`, ...tsP, ...tsP, from, to)
+        };
+        audit3.log({ user: ctx.user, action: "report.funder", ip: ctx.ip, details: { from, to, funding_source_id: fund || void 0, served } });
+        return out2;
+      });
+      r.get("/api/reports/export/:kind", auth3.requireAuth, auth3.requirePerm("export:read"), async (ctx) => {
+        const period = range(ctx);
+        const { from, to } = period;
+        const identified = ctx.query.get("identified") === "1" && auth3.hasPerm(ctx.user, "export:identified");
+        const recipient = (ctx.query.get("recipient") || "").trim();
+        const purpose = (ctx.query.get("purpose") || "").trim();
+        if (identified && (!recipient || !purpose)) throw require_http().badRequest("An identified export must name its recipient and purpose (recipient= and purpose=); they are written to the accounting of disclosures for every client it contains");
+        const format = ctx.query.get("format") === "xlsx" || ctx.params.kind === "workbook" ? "xlsx" : "csv";
+        const X = require_exports();
+        const D = X.datasets(ctx, { ...period, identified });
+        const S = require_spreadsheet();
+        const disclosure = require_disclosure();
+        const accountFor = (kind, ids) => {
+          if (!identified) return [];
+          return ids.map((clientId) => disclosure.record({ clientId, recipient, purpose, what: `Identified export: ${kind} (${from} to ${to})`, method: "export", basis: "export", source: "export", sourceRef: kind, user: ctx.user, ip: ctx.ip }));
+        };
+        const aboutSheet = { name: "About", columns: [{ key: "k", label: "Field" }, { key: "v", label: "Value" }], rows: [
+          { k: "Classification", v: identified ? `Identified export \u2014 PHI. Disclosed to: ${recipient}. Purpose: ${purpose}.` : X.DEID_LABEL },
+          { k: "Period", v: `${from} to ${to}` },
+          { k: "Generated", v: db3.now() },
+          { k: "Generated by", v: ctx.user.display_name || ctx.user.username }
+        ] };
+        const label = (k) => ({ key: k, label: k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) });
+        const RAW = /* @__PURE__ */ new Set(["client_code", "receipt_ref", "grant_number", "email", "website", "phone", "fax", "zip", "username", "document_ref", "medicaid_id", "address", "first_name", "last_name", "contact_name", "name", "organization", "vendor", "title", "template_name", "fund", "line", "resource", "worker", "approver", "assignee", "completed_by", "created_by", "disclosed_by", "recipient", "summary", "description", "notes", "purpose", "what", "goals", "flags", "hours", "eligibility", "services", "languages", "capacity_notes", "contact_person", "intake_process", "cost_notes", "restrictions", "label", "city"]);
+        const humanize = (v) => String(v).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).replace(/\bSbirt\b/, "SBIRT").replace(/\bMat\b/g, "MAT").replace(/\bOtp\b/, "OTP").replace(/\bObot\b/, "OBOT").replace(/\bEd\b/, "ED").replace(/\bMh\b/, "MH").replace(/\bIds\b/, "IDs").replace(/\bRoi\b/, "ROI");
+        const pretty = (rows, kind) => rows.map((r2) => {
+          const listed = X.LIST_COLUMNS[kind] || {};
+          const o = {};
+          for (const [k, v] of Object.entries(r2)) o[k] = typeof v === "string" && !RAW.has(k) && !(k in listed) && /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(v) && v.length <= 40 ? humanize(v) : v;
+          return o;
+        });
+        const classification = identified ? `Identified export - PHI. Disclosed to: ${recipient}. Purpose: ${purpose}. Generated ${db3.now()}.` : `${X.DEID_LABEL} Generated ${db3.now()}.`;
+        const headerSafe = (s) => String(s).replace(/[^\x20-\x7e]/g, "?").slice(0, 900);
+        let body, filename, type;
+        if (ctx.params.kind === "workbook") {
+          const sheets = [aboutSheet];
+          const clientIds = /* @__PURE__ */ new Set();
+          let disclosuresSlot = -1;
+          for (const [kind, d] of Object.entries(D)) {
+            if (kind === "disclosures") {
+              disclosuresSlot = sheets.length;
+              sheets.push(null);
+              continue;
+            }
+            const rows = d.rows();
+            for (const id of X.clientIdsOf(rows)) clientIds.add(id);
+            sheets.push({ name: d.label, columns: d.columns.map(label), rows: pretty(X.publicRows(rows), kind) });
+            await new Promise((resolve2) => defer(resolve2));
+          }
+          const written = new Set(accountFor("workbook", [...clientIds]));
+          if (disclosuresSlot >= 0) {
+            const rows = D.disclosures.rows().filter((r2) => !written.has(r2.id));
+            sheets[disclosuresSlot] = { name: D.disclosures.label, columns: D.disclosures.columns.map(label), rows: pretty(X.publicRows(rows), "disclosures") };
+          }
+          audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: "workbook", sheets: sheets.map((s) => [s.name, s.rows.length]), identified, from, to, clients_disclosed: identified ? clientIds.size : void 0 } });
+          body = await S.writeWorkbookAsync(sheets);
+          filename = `suds-export-${from}_${to}-${identified ? "identified" : "deidentified"}.xlsx`;
+          type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        } else {
+          const d = D[ctx.params.kind === "clients" ? "clients" : ctx.params.kind];
+          if (!d) throw require_http().notFound("Unknown export");
+          const raw = d.rows();
+          const clientsDisclosed = accountFor(ctx.params.kind, X.clientIdsOf(raw)).length;
+          const rows = pretty(X.publicRows(raw), ctx.params.kind);
+          audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: ctx.params.kind, rows: rows.length, identified, from, to, format, clients_disclosed: identified ? clientsDisclosed : void 0 } });
+          const suffix = identified ? "identified" : "deidentified";
+          if (format === "xlsx") {
+            body = S.writeWorkbook([{ name: d.label, columns: d.columns.map(label), rows }, aboutSheet]);
+            filename = `suds-${ctx.params.kind}-${from}_${to}-${suffix}.xlsx`;
+            type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+          } else {
+            body = S.toCsv(rows, d.columns.map(label));
+            filename = `suds-${ctx.params.kind}-${from}_${to}-${suffix}.csv`;
+            type = "text/csv; charset=utf-8";
+          }
+        }
+        ctx.res.writeHead(200, { "Content-Type": type, "Content-Disposition": `attachment; filename="${filename}"`, "X-SUDS-Export": headerSafe(classification) });
+        ctx.res.end(body);
+      });
+    };
+    module.exports.range = range;
+  }
+});
+
+// server/routes/handoff.js
+var require_handoff = __commonJS({
+  "server/routes/handoff.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth();
+    var audit3 = require_audit();
+    var { badRequest } = require_http();
+    var { decrypt: decrypt3 } = require_crypto();
+    var NOT_A_CLAIM = "Encounter hand-off for entry into the county EHR / billing system. This is not a claim: SUDS does not submit Drug Medi-Cal (837 / Short-Doyle) claims. Minutes are the total of the services recorded; the county EHR decides what is billable.";
+    var BASES = ["consent", "qsoa", "other"];
+    var CONSENT_TYPES = ["part2_disclosure", "roi"];
+    var COLUMNS = [
+      ["service_date", "Service Date"],
+      ["client_code", "Client Code"],
+      ["last_name", "Last Name"],
+      ["first_name", "First Name"],
+      ["dob", "Date Of Birth"],
+      ["medi_cal_id", "Medi-Cal ID"],
+      ["insurance", "Insurance"],
+      ["service_type", "Service Type"],
+      ["service_type_code", "Service Type Code"],
+      ["contacts", "Contacts"],
+      ["minutes", "Minutes"],
+      ["location", "Location"],
+      ["modality", "Modality"],
+      ["staff", "Staff"],
+      ["staff_title", "Staff Title"],
+      ["funding_source", "Funding Source"]
+    ].map(([key, label]) => ({ key, label }));
+    function encounters(ctx, { tsP, ts }) {
+      const cf = auth3.caseloadFilter(ctx.user, "c.id");
+      const rows = db3.all(`SELECT i.client_id, i.type, i.occurred_at, i.duration_minutes, i.location, i.modality, i.user_id, i.funding_source_id, c.client_code, c.first_name_enc, c.last_name_enc, c.dob_enc, c.medicaid_id_enc, c.insurance,
+      u.display_name staff, u.title staff_title, f.name funding_source
+    FROM interventions i JOIN clients c ON c.id=i.client_id JOIN users u ON u.id=i.user_id LEFT JOIN funding_sources f ON f.id=i.funding_source_id
+    WHERE i.client_id IS NOT NULL AND c.deleted_at IS NULL AND ${ts("i.occurred_at")} AND ${cf.sql} ORDER BY i.occurred_at LIMIT 50000`, ...tsP, ...cf.params);
+      const { localDate } = require_budget();
+      const O = require_options();
+      const types = O.labelMap("INTERVENTION_TYPES"), locs = O.labelMap("LOCATIONS"), mods = O.labelMap("MODALITIES");
+      const d = (v) => {
+        try {
+          return v ? decrypt3(v) : "";
+        } catch {
+          return "";
+        }
+      };
+      const groups = /* @__PURE__ */ new Map();
+      for (const r of rows) {
+        const day = String(r.occurred_at).length === 10 ? r.occurred_at : localDate(r.occurred_at);
+        const key = [r.client_id, day, r.type, r.user_id, r.location || "", r.modality || "", r.funding_source_id || ""].join("|");
+        let g = groups.get(key);
+        if (!g) {
+          g = {
+            _client_id: r.client_id,
+            service_date: day,
+            client_code: r.client_code,
+            _enc: r,
+            insurance: r.insurance || "",
+            service_type: types[r.type] || O.humanize(r.type),
+            service_type_code: r.type,
+            contacts: 0,
+            minutes: 0,
+            location: locs[r.location] || (r.location ? O.humanize(r.location) : ""),
+            modality: mods[r.modality] || (r.modality ? O.humanize(r.modality) : ""),
+            staff: r.staff,
+            staff_title: r.staff_title || "",
+            funding_source: r.funding_source || ""
+          };
+          groups.set(key, g);
+        }
+        g.contacts++;
+        g.minutes += Number(r.duration_minutes) || 0;
+      }
+      const names = /* @__PURE__ */ new Map();
+      return [...groups.values()].map((g) => {
+        if (!names.has(g._client_id)) names.set(g._client_id, { last_name: d(g._enc.last_name_enc), first_name: d(g._enc.first_name_enc), dob: d(g._enc.dob_enc), medi_cal_id: d(g._enc.medicaid_id_enc) });
+        const o = { ...g, ...names.get(g._client_id) };
+        delete o._enc;
+        return o;
+      }).sort((a, b) => a.service_date.localeCompare(b.service_date) || a.client_code.localeCompare(b.client_code));
+    }
+    function consentFor(clientId) {
+      return db3.one(`SELECT id FROM consents WHERE client_id=? AND type IN (${CONSENT_TYPES.map(() => "?").join(",")}) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now')) ORDER BY signed_at DESC LIMIT 1`, clientId, ...CONSENT_TYPES) || null;
+    }
+    module.exports = (r) => {
+      r.get("/api/handoff/summary", auth3.requireAuth, auth3.requirePerm("export:identified"), (ctx) => {
+        const p = require_reports().range(ctx);
+        const rows = encounters(ctx, p);
+        const clients = [...new Map(rows.map((x) => [x._client_id, x.client_code])).entries()];
+        const without = clients.filter(([id]) => !consentFor(id)).map(([, code]) => code).sort();
+        audit3.log({ user: ctx.user, action: "handoff.preview", ip: ctx.ip, details: { from: p.from, to: p.to, rows: rows.length, clients: clients.length } });
+        return { from: p.from, to: p.to, rows: rows.length, clients: clients.length, minutes: rows.reduce((s, x) => s + x.minutes, 0), without_consent: without, not_a_claim: NOT_A_CLAIM, consent_types: CONSENT_TYPES };
+      });
+      r.get("/api/handoff/export", auth3.requireAuth, auth3.requirePerm("export:identified"), async (ctx) => {
+        const p = require_reports().range(ctx);
+        const recipient = (ctx.query.get("recipient") || "").trim().slice(0, 200);
+        const purpose = (ctx.query.get("purpose") || "").trim().slice(0, 500);
+        if (!recipient || !purpose) throw badRequest("The hand-off names clients: say who receives it and why (recipient= and purpose=); both go into each client's accounting of disclosures");
+        const basis = ctx.query.get("basis") || "consent";
+        if (!BASES.includes(basis)) throw badRequest(`basis must be one of ${BASES.join(", ")}`);
+        const disclosure = require_disclosure();
+        const fileBasis = basis === "consent" ? null : disclosure.requireBasis(null, { basis, justification: ctx.query.get("justification"), user: ctx.user });
+        const all = encounters(ctx, p);
+        const consentOf = /* @__PURE__ */ new Map();
+        const excluded = /* @__PURE__ */ new Set();
+        if (basis === "consent") for (const id of new Set(all.map((x) => x._client_id))) {
+          const c = consentFor(id);
+          if (c) consentOf.set(id, c.id);
+          else excluded.add(id);
+        }
+        const rows = all.filter((x) => !excluded.has(x._client_id));
+        const excludedCodes = [...new Set(all.filter((x) => excluded.has(x._client_id)).map((x) => x.client_code))].sort();
+        const clientIds = [...new Set(rows.map((x) => x._client_id))];
+        db3.transaction(() => {
+          for (const clientId of clientIds) disclosure.record({ clientId, consentId: consentOf.get(clientId) || null, recipient, purpose, what: `County EHR encounter hand-off (${p.from} to ${p.to}): service dates, types, minutes, staff and funding; name, date of birth, Medi-Cal ID`, method: "export", basis, justification: fileBasis ? fileBasis.justification : null, source: "ehr_handoff", sourceRef: `handoff:${p.from}_${p.to}`, user: ctx.user, ip: ctx.ip });
+        });
+        audit3.log({ user: ctx.user, action: "handoff.export", ip: ctx.ip, details: { from: p.from, to: p.to, rows: rows.length, basis, clients_disclosed: clientIds.length, excluded_no_consent: excludedCodes.length || void 0 } });
+        const out2 = rows.map((x) => {
+          const o = { ...x };
+          delete o._client_id;
+          return o;
+        });
+        const S = require_spreadsheet();
+        const xlsx = ctx.query.get("format") === "xlsx";
+        const name = `suds-ehr-handoff-${p.from}_${p.to}-identified.${xlsx ? "xlsx" : "csv"}`;
+        const body = xlsx ? await S.writeWorkbookAsync([{ name: "Encounters", columns: COLUMNS, rows: out2 }, { name: "About", columns: [{ key: "k", label: "Field" }, { key: "v", label: "Value" }], rows: [
+          { k: "Not a claim", v: NOT_A_CLAIM },
+          { k: "Classification", v: `Identified \u2014 PHI. Disclosed to: ${recipient}. Purpose: ${purpose}. Basis: ${basis}.` },
+          { k: "Period", v: `${p.from} to ${p.to}` },
+          { k: "Generated", v: db3.now() },
+          { k: "Generated by", v: ctx.user.display_name || ctx.user.username },
+          { k: "Left out (no consent on file)", v: excludedCodes.join(", ") || "none" }
+        ] }]) : S.toCsv(out2, COLUMNS);
+        ctx.res.writeHead(200, {
+          "Content-Type": xlsx ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "text/csv; charset=utf-8",
+          "Content-Disposition": `attachment; filename="${name}"`,
+          "X-SUDS-Export": `Identified export - PHI. Disclosed to: ${recipient}. Purpose: ${purpose}. Not a claim.`.replace(/[^\x20-\x7e]/g, "?").slice(0, 900),
+          "X-SUDS-Handoff-Excluded": excludedCodes.join(",").slice(0, 900)
+        });
+        ctx.res.end(body);
+      });
+    };
+    module.exports.NOT_A_CLAIM = NOT_A_CLAIM;
   }
 });
 
@@ -21855,516 +23417,6 @@ var require_regions2 = __commonJS({
   }
 });
 
-// server/exports.js
-var require_exports = __commonJS({
-  "server/exports.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth();
-    var M = require_clients_model();
-    var { decrypt: decrypt3 } = require_crypto();
-    var MAX_ROWS = 5e4;
-    var DEID_LABEL = "De-identified (HIPAA Safe Harbor): dates reduced to year-month, ZIP codes to the first three digits, city omitted, ages banded, free text redacted.";
-    var AGE_BANDS = [[0, 17, "0-17"], [18, 24, "18-24"], [25, 34, "25-34"], [35, 44, "35-44"], [45, 54, "45-54"], [55, 64, "55-64"], [65, 89, "65-89"]];
-    function ageBand(dob, now = /* @__PURE__ */ new Date()) {
-      if (!dob) return "";
-      const born = new Date(dob);
-      if (!Number.isFinite(born.getTime())) return "";
-      let age = now.getUTCFullYear() - born.getUTCFullYear();
-      if (now.getUTCMonth() < born.getUTCMonth() || now.getUTCMonth() === born.getUTCMonth() && now.getUTCDate() < born.getUTCDate()) age--;
-      if (age >= 90) return "90+";
-      const band = AGE_BANDS.find(([lo, hi]) => age >= lo && age <= hi);
-      return band ? band[2] : "";
-    }
-    var isDateCol = (k) => /(_at|_date|_due|_on)$/.test(k) || k === "date";
-    var toMonth = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 7) : v;
-    var zip3 = (v) => v ? String(v).replace(/\D/g, "").slice(0, 3) : v;
-    function deidentifyRow(r) {
-      const o = {};
-      for (const [k, v] of Object.entries(r)) {
-        if (k === "city") continue;
-        if (k === "zip") {
-          o[k] = zip3(v);
-          continue;
-        }
-        o[k] = isDateCol(k) ? toMonth(v) : v;
-      }
-      return o;
-    }
-    var DEID_COLUMNS = {
-      clients: ["client_code", "age_band", "status", "intake_date", "discharge_date", "discharge_reason", "referral_source", "referral_date", "engagement_date", "days_to_engagement", "primary_substance", "secondary_substances", "asam_level", "mat_status", "mat_medication", "risk_level", "housing_status", "insurance", "overdose_history", "naloxone_provided", "naloxone_last_date", "co_occurring_mh", "justice_involved", "pregnant_or_parenting", "zip", "gender", "preferred_language"],
-      interventions: ["occurred_at", "client_code", "type", "duration_minutes", "modality", "outcome", "stage_of_change", "naloxone_kits", "fentanyl_strips", "worker", "funding_source", "cost", "follow_up_due"],
-      calls: ["started_at", "client_code", "direction", "contact_type", "duration_minutes", "outcome", "crisis", "follow_up_needed", "follow_up_due", "worker"],
-      time: ["work_date", "worker", "client_code", "category", "minutes", "billable", "funding_source"],
-      referrals: ["referred_at", "client_code", "resource", "category", "status", "urgency", "warm_handoff", "appointment_at", "admitted_at", "closed_at", "worker"],
-      tasks: ["client_code", "assignee", "due_at", "priority", "status", "is_milestone", "completed_at"],
-      forms: ["created_at", "client_code", "template_name", "status", "completed_at", "completed_by", "created_by", "attachments"],
-      consents: ["client_code", "type", "signed_at", "expires_at", "expires_event", "revoked_at", "redisclosure_notice_given"],
-      disclosures: ["client_code", "disclosed_at", "method", "basis", "source", "disclosed_by"],
-      episodes: ["client_code", "opened_at", "closed_at", "status", "referral_source", "discharge_reason", "discharge_disposition", "funding_source"],
-      overdose_events: ["occurred_at", "client_code", "kind", "naloxone_used", "naloxone_doses", "administered_by", "ems_called", "hospitalized", "survived", "location_type"],
-      expenditures: ["spent_at", "fund", "line", "category", "amount", "status", "client_code", "worker", "approver"]
-    };
-    var LIST_COLUMNS = {
-      interventions: { type: "INTERVENTION_TYPES", location: "LOCATIONS", modality: "MODALITIES", outcome: "OUTCOMES" },
-      calls: { contact_type: "CALL_CONTACT_TYPES", outcome: (r) => r.method === "text" ? "TEXT_OUTCOMES" : "CALL_OUTCOMES" },
-      time: { category: "TIME_CATEGORIES" },
-      referrals: { status: "REFERRAL_STATUSES", barrier: "REFERRAL_BARRIERS" },
-      episodes: { discharge_reason: "DISCHARGE_REASONS" },
-      overdose_events: { kind: "OVERDOSE_KINDS", administered_by: "ADMINISTERED_BY" },
-      clients: { primary_substance: "SUBSTANCES", discharge_reason: "DISCHARGE_REASONS" }
-    };
-    function labelRows(kind, rows) {
-      const cols2 = LIST_COLUMNS[kind];
-      if (!cols2) return rows;
-      const O = require_options();
-      const maps = {};
-      const mapFor = (key) => maps[key] = maps[key] || O.labelMap(key);
-      return rows.map((r) => {
-        const o = { ...r };
-        for (const [col, list] of Object.entries(cols2)) {
-          const v = o[col];
-          if (typeof v !== "string" || !v) continue;
-          const key = typeof list === "function" ? list(r) : list;
-          o[col] = mapFor(key)[v] || (/^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(v) ? O.humanize(v) : v);
-        }
-        return o;
-      });
-    }
-    function projectRow(r, cols2) {
-      const o = {};
-      for (const c of cols2) if (c in r) o[c] = r[c];
-      if (r._client_id !== void 0) o._client_id = r._client_id;
-      return o;
-    }
-    var cents = (v) => typeof v === "number" && Number.isFinite(v) ? Math.round(v * 100) / 100 : v;
-    function datasets(ctx, { from, to, ts, tsP, identified }) {
-      const cf = auth3.caseloadFilter(ctx.user, "c.id");
-      const all = auth3.hasPerm(ctx.user, "time:all") ? 1 : 0;
-      const phi = (v) => identified && v ? decrypt3(v) : v ? "[redacted]" : "";
-      const idCols = identified ? ["last_name", "first_name", "dob", "phone", "email", "address"] : ["age_band"];
-      const strip = (cols2) => identified ? cols2 : cols2.filter((c) => c !== "city");
-      const D = {
-        clients: {
-          label: "Clients",
-          columns: strip(["client_code", ...idCols, "status", "intake_date", "discharge_date", "discharge_reason", "referral_source", "referral_date", "engagement_date", "days_to_engagement", "primary_substance", "secondary_substances", "asam_level", "mat_status", "mat_medication", "risk_level", "housing_status", "insurance", "overdose_history", "naloxone_provided", "naloxone_last_date", "co_occurring_mh", "justice_involved", "pregnant_or_parenting", "city", "zip", "gender", "preferred_language", "goals", "flags"]),
-          rows: () => db3.all(`SELECT c.* FROM clients c WHERE c.deleted_at IS NULL AND ${cf.sql} ORDER BY c.client_code LIMIT ?`, ...cf.params, MAX_ROWS).map((x) => ({ ...M.decryptRow(x, { deidentify: !identified }), _client_id: x.id, age_band: identified ? void 0 : ageBand(x.dob_enc ? decrypt3(x.dob_enc) : null) })).map((x) => ({ ...x, days_to_engagement: M.daysToEngagement(x), goals: identified ? x.goals : x.goals_enc ? "[redacted]" : "", flags: identified ? x.flags : x.flags_enc ? "[redacted]" : "" }))
-        },
-        interventions: {
-          label: "Visits & services",
-          columns: ["occurred_at", "client_code", "type", "duration_minutes", "location", "modality", "outcome", "stage_of_change", "naloxone_kits", "fentanyl_strips", "worker", "funding_source", "cost", "summary", "follow_up_due"],
-          rows: () => db3.all(`SELECT i.*, c.client_code, i.client_id AS _client_id, u.display_name worker, f.name funding_source FROM interventions i LEFT JOIN clients c ON c.id=i.client_id JOIN users u ON u.id=i.user_id LEFT JOIN funding_sources f ON f.id=i.funding_source_id WHERE ${ts("i.occurred_at")} AND (i.client_id IS NULL OR ${cf.sql}) ORDER BY i.occurred_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, summary: phi(r.summary_enc) }))
-        },
-        calls: {
-          label: "Calls",
-          columns: ["started_at", "client_code", "direction", "contact_type", "contact_name", "duration_minutes", "outcome", "crisis", "purpose", "summary", "follow_up_needed", "follow_up_due", "worker"],
-          rows: () => db3.all(`SELECT ca.*, c.client_code, ca.client_id AS _client_id, u.display_name worker FROM calls ca LEFT JOIN clients c ON c.id=ca.client_id JOIN users u ON u.id=ca.user_id WHERE ${ts("ca.started_at")} AND (ca.client_id IS NULL OR ${cf.sql}) ORDER BY ca.started_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, contact_name: phi(r.contact_name_enc), summary: phi(r.summary_enc), purpose: phi(r.purpose_enc) }))
-        },
-        time: {
-          label: "Time",
-          columns: ["work_date", "worker", "client_code", "category", "minutes", "billable", "funding_source", "description"],
-          rows: () => db3.all(`SELECT t.*, u.display_name worker, c.client_code, t.client_id AS _client_id, f.name funding_source FROM time_entries t JOIN users u ON u.id=t.user_id LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN funding_sources f ON f.id=t.funding_source_id WHERE t.work_date BETWEEN ? AND ? AND (t.user_id=? OR ?) ORDER BY t.work_date LIMIT ?`, from, to, ctx.user.id, all, MAX_ROWS)
-        },
-        referrals: {
-          label: "Referrals",
-          columns: ["referred_at", "client_code", "resource", "category", "status", "urgency", "warm_handoff", "appointment_at", "admitted_at", "closed_at", "outcome", "barrier", "worker", "notes"],
-          rows: () => db3.all(`SELECT r.*, c.client_code, r.client_id AS _client_id, res.name resource, res.category, u.display_name worker FROM referrals r JOIN clients c ON c.id=r.client_id JOIN resources res ON res.id=r.resource_id JOIN users u ON u.id=r.user_id WHERE ${ts("r.referred_at")} AND ${cf.sql} ORDER BY r.referred_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, outcome: phi(r.outcome_enc), barrier: phi(r.barrier_enc), notes: phi(r.notes_enc) }))
-        },
-        tasks: {
-          label: "To-dos",
-          columns: ["title", "client_code", "assignee", "due_at", "priority", "status", "is_milestone", "completed_at", "description"],
-          rows: () => db3.all(`SELECT t.*, c.client_code, t.client_id AS _client_id, u.display_name assignee FROM tasks t LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN users u ON u.id=t.assigned_to WHERE ${ts("t.created_at")} AND (t.client_id IS NULL OR ${cf.sql}) ORDER BY t.due_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, title: phi(r.title_enc), description: phi(r.description_enc) }))
-        },
-        forms: {
-          label: "Client forms",
-          columns: ["created_at", "client_code", "template_name", "status", "completed_at", "completed_by", "created_by", "attachments"],
-          rows: () => db3.all(`SELECT f.created_at, c.client_code, f.client_id AS _client_id, f.template_name, f.status, f.completed_at, cu.display_name completed_by, cr.display_name created_by, (SELECT COUNT(*) FROM client_form_files x WHERE x.client_form_id=f.id) attachments FROM client_forms f JOIN clients c ON c.id=f.client_id LEFT JOIN users cu ON cu.id=f.completed_by JOIN users cr ON cr.id=f.created_by WHERE f.deleted_at IS NULL AND ${ts("f.created_at")} AND ${cf.sql} ORDER BY f.created_at DESC LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS)
-        },
-        resources: {
-          label: "Resource directory",
-          noClients: true,
-          columns: ["name", "category", "organization", "phone", "fax", "email", "website", "address", "city", "zip", "hours", "eligibility", "services", "languages", "accepts_medicaid", "accepts_uninsured", "mat_offered", "capacity_notes", "contact_person", "summary", "service_tags", "levels_of_care", "populations", "intake_process", "cost_notes", "is_active", "last_verified_at", "notes"],
-          rows: () => db3.all(`SELECT * FROM resources ORDER BY category, name LIMIT ?`, MAX_ROWS)
-        },
-        consents: {
-          label: "Consents",
-          columns: ["client_code", "type", "recipient", "purpose", "scope", "signed_at", "expires_at", "expires_event", "revoked_at", "document_ref", "redisclosure_notice_given"],
-          rows: () => db3.all(`SELECT co.*, c.client_code, co.client_id AS _client_id FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.signed_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY co.signed_at LIMIT ?`, from, to, ...cf.params, MAX_ROWS).map((r) => ({ ...r, recipient: phi(r.recipient_enc), purpose: phi(r.purpose_enc), scope: phi(r.scope_enc) }))
-        },
-        disclosures: {
-          label: "Accounting of disclosures",
-          columns: ["client_code", "disclosed_at", "recipient", "purpose", "what", "method", "basis", "justification", "source", "disclosed_by"],
-          rows: () => db3.all(`SELECT d.*, c.client_code, d.client_id AS _client_id, u.display_name disclosed_by FROM disclosures d JOIN clients c ON c.id=d.client_id JOIN users u ON u.id=d.disclosed_by WHERE ${ts("d.disclosed_at")} AND ${cf.sql} ORDER BY d.disclosed_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, recipient: phi(r.recipient_enc), purpose: phi(r.purpose_enc), what: phi(r.what_enc), justification: phi(r.justification_enc) }))
-        },
-        episodes: {
-          label: "Episodes of care",
-          columns: ["client_code", "opened_at", "closed_at", "status", "referral_source", "discharge_reason", "discharge_disposition", "funding_source"],
-          rows: () => db3.all(`SELECT e.*, c.client_code, e.client_id AS _client_id, f.name funding_source FROM episodes e JOIN clients c ON c.id=e.client_id LEFT JOIN funding_sources f ON f.id=e.funding_source_id WHERE e.opened_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY e.opened_at LIMIT ?`, from, to, ...cf.params, MAX_ROWS)
-        },
-        overdose_events: {
-          label: "Overdose & reversal events",
-          columns: strip(["occurred_at", "client_code", "kind", "substances", "naloxone_used", "naloxone_doses", "administered_by", "ems_called", "hospitalized", "survived", "location_type", "city"]),
-          rows: () => db3.all(`SELECT o.*, c.client_code, o.client_id AS _client_id FROM overdose_events o LEFT JOIN clients c ON c.id=o.client_id WHERE ${ts("o.occurred_at")} AND (o.client_id IS NULL OR ${cf.sql}) ORDER BY o.occurred_at LIMIT ?`, ...tsP, ...cf.params, MAX_ROWS).map((r) => ({ ...r, substances: phi(r.substances_enc) }))
-        }
-      };
-      if (auth3.hasPerm(ctx.user, "budget:read")) {
-        D.funds = { label: "Funding sources", noClients: true, columns: ["name", "source_type", "grant_number", "fiscal_year_start", "fiscal_year_end", "total_amount", "restrictions", "is_active"], rows: () => db3.all(`SELECT * FROM funding_sources ORDER BY fiscal_year_start DESC`) };
-        D.budget_lines = { label: "Budget lines", noClients: true, columns: ["fund", "category", "label", "allocated_amount", "notes"], rows: () => db3.all(`SELECT b.*, f.name fund FROM budget_lines b JOIN funding_sources f ON f.id=b.funding_source_id ORDER BY f.name, b.category`) };
-        D.expenditures = {
-          label: "Expenditures",
-          columns: ["spent_at", "fund", "line", "category", "amount", "status", "client_code", "vendor", "description", "receipt_ref", "worker", "approver"],
-          rows: () => db3.all(`SELECT e.*, f.name fund, b.label line, c.client_code, e.client_id AS _client_id, u.display_name worker, a.display_name approver FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id LEFT JOIN budget_lines b ON b.id=e.budget_line_id LEFT JOIN clients c ON c.id=e.client_id JOIN users u ON u.id=e.user_id LEFT JOIN users a ON a.id=e.approved_by WHERE e.spent_at BETWEEN ? AND ? ORDER BY e.spent_at`, from, to).map((r) => ({ ...r, amount: cents(r.amount) }))
-        };
-      }
-      for (const [kind, d] of Object.entries(D)) {
-        const coded = d.rows;
-        const raw = () => labelRows(kind, coded());
-        if (identified || d.noClients) {
-          d.rows = raw;
-          continue;
-        }
-        const allowed = DEID_COLUMNS[kind];
-        if (!allowed) throw new Error(`No de-identified column list is defined for the ${kind} dataset`);
-        d.columns = d.columns.filter((c) => allowed.includes(c));
-        d.rows = () => raw().map((r) => projectRow(deidentifyRow(r), allowed));
-      }
-      return D;
-    }
-    function clientIdsOf(rows) {
-      return [...new Set(rows.map((r) => r._client_id).filter(Boolean))];
-    }
-    function publicRows(rows) {
-      return rows.map((r) => {
-        const o = { ...r };
-        delete o._client_id;
-        return o;
-      });
-    }
-    module.exports = { LIST_COLUMNS, labelRows, datasets, ageBand, deidentifyRow, clientIdsOf, publicRows, DEID_LABEL, DEID_COLUMNS, cents };
-  }
-});
-
-// server/routes/reports.js
-var require_reports = __commonJS({
-  "server/routes/reports.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth();
-    var audit3 = require_audit();
-    var { sendJson, badRequest } = require_http();
-    var M = require_clients_model();
-    var CFX = require_client_filters();
-    var { defer } = require_spreadsheet();
-    var DAY = /^\d{4}-\d{2}-\d{2}$/;
-    var addDays = (date, n) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
-    function range(ctx) {
-      const { localDate, localMidnight } = require_budget();
-      const to = ctx.query.get("to") || localDate();
-      const from = ctx.query.get("from") || addDays(to, -89);
-      if (!DAY.test(to) || !DAY.test(from) || !Number.isFinite(Date.parse(to)) || !Number.isFinite(Date.parse(from))) throw badRequest("from and to must be dates (YYYY-MM-DD)");
-      const fromTs = localMidnight(from);
-      const toEnd = new Date(Date.parse(localMidnight(addDays(to, 1))) - 1).toISOString();
-      const ts = (col) => `((length(${col})>10 AND ${col} BETWEEN ? AND ?) OR (length(${col})=10 AND ${col} BETWEEN ? AND ?))`;
-      return { from, to, fromTs, toEnd, ts, tsP: [fromTs, toEnd, from, to] };
-    }
-    module.exports = (r) => {
-      r.get("/api/reports/dashboard", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
-        const { from, to, ts, tsP } = range(ctx);
-        const cf = auth3.caseloadFilter(ctx.user, "c.id");
-        const expand = (sql, p) => {
-          const before = sql.slice(0, sql.indexOf("{CF}"));
-          const n = (before.match(/\?/g) || []).length;
-          return [sql.replace("{CF}", cf.sql), [...p.slice(0, n), ...cf.params, ...p.slice(n)]];
-        };
-        const scoped = (sql, ...p) => {
-          const [q, a] = expand(sql, p);
-          return db3.all(q, ...a);
-        };
-        const scoped1 = (sql, ...p) => {
-          const [q, a] = expand(sql, p);
-          return db3.one(q, ...a);
-        };
-        const today = require_budget().localDate();
-        const out2 = {
-          from,
-          to,
-          clients: {
-            active: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF}`).n,
-            waitlist: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='waitlist' AND {CF}`).n,
-            new_in_range: scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND intake_date BETWEEN ? AND ? AND {CF}`, from, to).n,
-            // The tiles use the client list's own predicates (server/client-filters.js), so a tile and the list it
-            // opens count the same people.
-            high_risk: (() => {
-              const f = CFX.risk("high");
-              return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND ${f.sql} AND {CF}`, ...f.params).n;
-            })(),
-            no_contact_30d: (() => {
-              const f = CFX.noContactSince();
-              return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} AND ${f.sql}`, ...f.params).n;
-            })(),
-            by_status: scoped(`SELECT status, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND {CF} GROUP BY status`),
-            by_substance: scoped(`SELECT COALESCE(primary_substance,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k ORDER BY n DESC`),
-            mat: scoped(`SELECT COALESCE(mat_status,'unknown') k, COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND {CF} GROUP BY k`)
-          },
-          interventions: {
-            total: scoped1(`SELECT COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP).n,
-            minutes: scoped1(`SELECT COALESCE(SUM(duration_minutes),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP).n,
-            by_type: db3.all(`SELECT i.type k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${cf.sql} GROUP BY i.type ORDER BY n DESC`, ...tsP, ...cf.params),
-            by_week: db3.all(`SELECT strftime('%Y-%W', i.occurred_at) k, COUNT(*) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${cf.sql} GROUP BY k ORDER BY k`, ...tsP, ...cf.params),
-            naloxone_kits: scoped1(`SELECT COALESCE(SUM(naloxone_kits),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP).n,
-            fentanyl_strips: scoped1(`SELECT COALESCE(SUM(fentanyl_strips),0) n FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND {CF}`, ...tsP).n,
-            by_worker: db3.all(`SELECT u.display_name k, COUNT(*) n, SUM(duration_minutes) minutes FROM interventions i JOIN users u ON u.id=i.user_id JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${cf.sql} GROUP BY u.id ORDER BY n DESC`, ...tsP, ...cf.params)
-          },
-          calls: {
-            total: db3.one(`SELECT COUNT(*) n FROM calls WHERE ${ts("started_at")}`, ...tsP).n,
-            minutes: db3.one(`SELECT COALESCE(SUM(duration_minutes),0) n FROM calls WHERE ${ts("started_at")}`, ...tsP).n,
-            crisis: db3.one(`SELECT COUNT(*) n FROM calls WHERE crisis=1 AND ${ts("started_at")}`, ...tsP).n,
-            by_outcome: db3.all(`SELECT outcome k, COUNT(*) n FROM calls WHERE ${ts("started_at")} GROUP BY outcome ORDER BY n DESC`, ...tsP),
-            by_direction: db3.all(`SELECT direction k, COUNT(*) n FROM calls WHERE ${ts("started_at")} GROUP BY direction`, ...tsP),
-            // Texts are logged alongside calls, so say how the total splits rather than reporting them as calls.
-            texts: db3.one(`SELECT COUNT(*) n FROM calls WHERE method='text' AND ${ts("started_at")}`, ...tsP).n
-          },
-          referrals: {
-            total: db3.one(`SELECT COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${ts("r.referred_at")} AND ${cf.sql}`, ...tsP, ...cf.params).n,
-            by_status: db3.all(`SELECT r.status k, COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE ${ts("r.referred_at")} AND ${cf.sql} GROUP BY r.status ORDER BY n DESC`, ...tsP, ...cf.params),
-            by_category: db3.all(`SELECT res.category k, COUNT(*) n, SUM(CASE WHEN r.status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id WHERE ${ts("r.referred_at")} AND ${cf.sql} GROUP BY res.category ORDER BY n DESC`, ...tsP, ...cf.params),
-            open: db3.one(`SELECT COUNT(*) n FROM referrals r JOIN clients c ON c.id=r.client_id WHERE r.status IN ('pending','contacted','accepted','waitlisted','scheduled') AND ${cf.sql}`, ...cf.params).n,
-            median_days_to_admit: (() => {
-              const d = db3.all(`SELECT (julianday(admitted_at)-julianday(referred_at)) d FROM referrals WHERE admitted_at IS NOT NULL AND ${ts("referred_at")} ORDER BY d`, ...tsP).map((x) => x.d);
-              return d.length ? d[Math.floor(d.length / 2)] : null;
-            })()
-          },
-          tasks: {
-            open: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (assigned_to=? OR ?)`, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n,
-            overdue: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (CASE WHEN length(due_at)=10 THEN due_at < ? ELSE due_at < ? END) AND (assigned_to=? OR ?)`, today, db3.now(), ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n,
-            due_today: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND substr(due_at,1,10)=? AND (assigned_to=? OR ?)`, today, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n
-          },
-          time: auth3.hasPerm(ctx.user, "time:read") || auth3.hasPerm(ctx.user, "time:write") ? {
-            minutes: db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE work_date BETWEEN ? AND ? AND (user_id=? OR ?)`, from, to, ctx.user.id, auth3.hasPerm(ctx.user, "time:all") ? 1 : 0).n,
-            by_category: db3.all(`SELECT category k, SUM(minutes) n FROM time_entries WHERE work_date BETWEEN ? AND ? AND (user_id=? OR ?) GROUP BY category ORDER BY n DESC`, from, to, ctx.user.id, auth3.hasPerm(ctx.user, "time:all") ? 1 : 0)
-          } : null,
-          // A supervisor's unsigned-notes alert covers the team's drafts, the same way the overdue-tasks alert
-          // above already covers the team's to-dos -- a program manager rarely writes routine notes themselves,
-          // so an alert scoped to their own drafts was dead for exactly the role it matters most to.
-          notes: (() => {
-            const team = auth3.hasPerm(ctx.user, "notes:cosign") && auth3.hasPerm(ctx.user, "clients:all");
-            const scope = team ? "1=1" : "author_id=?";
-            const p = team ? [] : [ctx.user.id];
-            return {
-              team,
-              unsigned: db3.one(`SELECT COUNT(*) n FROM notes WHERE status='draft' AND deleted_at IS NULL AND ${scope}`, ...p).n,
-              unsigned_overdue: db3.one(`SELECT COUNT(*) n FROM notes WHERE status='draft' AND deleted_at IS NULL AND ${scope} AND created_at < ?`, ...p, new Date(Date.now() - Number(db3.getSetting("note_lock_days", "3")) * 864e5).toISOString()).n,
-              staged_imports: db3.one(`SELECT COUNT(*) n FROM import_items x JOIN imports i ON i.id=x.import_id WHERE x.status='staged' AND (i.imported_by=? OR i.imported_by IS NULL OR ?)`, ctx.user.id, auth3.hasPerm(ctx.user, "clients:all") ? 1 : 0).n
-            };
-          })(),
-          budget: auth3.hasPerm(ctx.user, "budget:read") ? db3.one(`SELECT ROUND((SELECT COALESCE(SUM(total_amount),0) FROM funding_sources WHERE is_active=1),2) total, ROUND((SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status IN ('approved','reimbursed')),2) spent, ROUND((SELECT COALESCE(SUM(amount),0) FROM expenditures e JOIN funding_sources f ON f.id=e.funding_source_id WHERE f.is_active=1 AND e.status='pending'),2) pending`) : null,
-          // Scoped to active clients so this count matches what #/clients?consent_expiring=1 shows by default —
-          // otherwise the badge counts a closed or inactive client's consent that the deep-linked list, filtered
-          // to active, never displays.
-          // Emergency accesses nobody has reviewed yet — the count a supervisor sees on their home page.
-          breakglass_pending: auth3.hasPerm(ctx.user, "audit:read") ? db3.one(`SELECT COUNT(*) n FROM breakglass_events WHERE acknowledged_at IS NULL`).n : null,
-          // Patient-rights requests (access, amendment, restriction, accounting) each run a 30-day clock; the
-          // count of open ones, and how many have run out, so a deadline is not first noticed when it is missed.
-          patient_requests: auth3.hasPerm(ctx.user, "patient-requests:read") || auth3.hasPerm(ctx.user, "patient-requests:write") ? scoped1(`SELECT COUNT(*) n, COALESCE(SUM(CASE WHEN p.due_at < ? THEN 1 ELSE 0 END),0) overdue FROM patient_requests p JOIN clients c ON c.id=p.client_id WHERE p.status='open' AND c.deleted_at IS NULL AND {CF}`, today) : null,
-          // The number of clients the "consent expiring" list shows (the card below lists the first 20 consents).
-          consents_expiring_clients: (() => {
-            const f = CFX.consentExpiring();
-            return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND ${f.sql} AND {CF}`, ...f.params).n;
-          })(),
-          consents_expiring: db3.all(`SELECT co.id, co.client_id, co.type, co.recipient_enc, co.expires_at, c.client_code FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ? AND c.status='active' AND ${cf.sql} ORDER BY co.expires_at LIMIT 20`, today, new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10), ...cf.params).map((x) => ({ ...x, recipient: x.recipient_enc ? require_crypto().decrypt(x.recipient_enc) : null, recipient_enc: void 0 }))
-        };
-        audit3.log({ user: ctx.user, action: "report.dashboard", ip: ctx.ip, details: { from, to } });
-        return out2;
-      });
-      r.get("/api/reports/monthly", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
-        const months = Math.min(24, Math.max(1, Number(ctx.query.get("months") || 12)));
-        const start2 = /* @__PURE__ */ new Date();
-        start2.setUTCDate(1);
-        start2.setUTCMonth(start2.getUTCMonth() - months + 1);
-        const s = start2.toISOString().slice(0, 10);
-        return {
-          intakes: db3.all(`SELECT substr(intake_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND intake_date >= ? GROUP BY month ORDER BY month`, s),
-          discharges: db3.all(`SELECT substr(discharge_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND discharge_date >= ? GROUP BY month ORDER BY month`, s),
-          interventions: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
-          calls: db3.all(`SELECT substr(started_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes FROM calls WHERE started_at >= ? GROUP BY month ORDER BY month`, s),
-          referrals: db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals WHERE referred_at >= ? GROUP BY month ORDER BY month`, s),
-          naloxone: db3.all(`SELECT substr(occurred_at,1,7) month, SUM(naloxone_kits) kits, SUM(fentanyl_strips) strips FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
-          overdose_events: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN naloxone_used=1 AND survived=1 THEN 1 ELSE 0 END) reversals, SUM(CASE WHEN kind='fatal' OR survived=0 THEN 1 ELSE 0 END) fatal FROM overdose_events WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s),
-          episodes: db3.all(`SELECT substr(opened_at,1,7) month, COUNT(*) admissions, (SELECT COUNT(*) FROM episodes x WHERE substr(x.closed_at,1,7)=substr(e.opened_at,1,7)) discharges FROM episodes e WHERE opened_at >= ? GROUP BY month ORDER BY month`, s),
-          unduplicated_clients: db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? AND client_id IS NOT NULL GROUP BY month ORDER BY month`, s),
-          mat_linkage: db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n FROM referrals r JOIN resources res ON res.id=r.resource_id WHERE res.category IN ('mat_otp','mat_obot') AND r.status IN ('admitted','completed') AND referred_at >= ? GROUP BY month ORDER BY month`, s),
-          spend: auth3.hasPerm(ctx.user, "budget:read") ? db3.all(`SELECT substr(spent_at,1,7) month, ROUND(SUM(amount),2) amount FROM expenditures WHERE status IN ('approved','reimbursed') AND spent_at >= ? GROUP BY month ORDER BY month`, s) : [],
-          time: db3.all(`SELECT substr(work_date,1,7) month, SUM(minutes) minutes FROM time_entries WHERE work_date >= ? GROUP BY month ORDER BY month`, s)
-        };
-      });
-      r.get("/api/reports/funder", auth3.requireAuth, auth3.requirePerm("reports:read"), (ctx) => {
-        const { from, to, ts, tsP } = range(ctx);
-        const cf = auth3.caseloadFilter(ctx.user, "c.id");
-        const fund = ctx.query.get("funding_source_id") || null;
-        const fundJoin = fund ? "AND i.funding_source_id=?" : "";
-        const fundP = fund ? [fund] : [];
-        const servedSql = `SELECT DISTINCT i.client_id AS id FROM interventions i JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND c.deleted_at IS NULL AND ${cf.sql} ${fundJoin}` + (fund ? "" : ` UNION SELECT ca.client_id FROM calls ca JOIN clients c ON c.id=ca.client_id WHERE ${ts("ca.started_at")} AND c.deleted_at IS NULL AND ${cf.sql}`);
-        const servedP = fund ? [...tsP, ...cf.params, ...fundP] : [...tsP, ...cf.params, ...tsP, ...cf.params];
-        const inServed = (sql, ...p) => [`WITH served(id) AS (${servedSql}) ${sql}`, ...servedP, ...p];
-        const one = (sql, ...p) => {
-          const [q, ...a] = inServed(sql, ...p);
-          return db3.one(q, ...a);
-        };
-        const all = (sql, ...p) => {
-          const [q, ...a] = inServed(sql, ...p);
-          return db3.all(q, ...a);
-        };
-        const served = one(`SELECT COUNT(*) n FROM served`).n;
-        const demographics = (col, label) => all(`SELECT COALESCE(NULLIF(c.${col},''),'unknown') k, COUNT(*) n
-      FROM clients c JOIN served s ON s.id=c.id GROUP BY k ORDER BY n DESC`).map((x) => ({ ...x, dimension: label }));
-        const raceRows = all(`SELECT c.race_codes FROM clients c JOIN served s ON s.id=c.id`);
-        const byRace = {};
-        for (const row of raceRows) {
-          const codes = String(row.race_codes || "").split(",").map((x) => x.trim()).filter(Boolean);
-          for (const code of codes.length ? codes : ["unknown"]) byRace[code] = (byRace[code] || 0) + 1;
-        }
-        const episodes = {
-          admissions: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.opened_at BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
-          discharges: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
-          open_at_end: db3.one(`SELECT COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.opened_at <= ? AND (e.closed_at IS NULL OR e.closed_at > ?) AND ${cf.sql}`, to, to, ...cf.params).n,
-          by_discharge_reason: db3.all(`SELECT COALESCE(e.discharge_reason,'unknown') k, COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql} GROUP BY k ORDER BY n DESC`, from, to, ...cf.params),
-          median_length_of_stay_days: (() => {
-            const d = db3.all(`SELECT (julianday(e.closed_at)-julianday(e.opened_at)) d FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.closed_at BETWEEN ? AND ? AND ${cf.sql} ORDER BY d`, from, to, ...cf.params).map((x) => x.d);
-            return d.length ? Math.round(d[Math.floor(d.length / 2)]) : null;
-          })()
-        };
-        const overdose = {
-          events: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")}`, ...tsP).n,
-          reversals: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND o.naloxone_used=1 AND o.survived=1`, ...tsP).n,
-          fatal: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND (o.kind='fatal' OR o.survived=0)`, ...tsP).n,
-          community_reported: db3.one(`SELECT COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND o.client_id IS NULL`, ...tsP).n,
-          naloxone_doses: db3.one(`SELECT COALESCE(SUM(o.naloxone_doses),0) n FROM overdose_events o WHERE ${ts("o.occurred_at")}`, ...tsP).n,
-          by_month: db3.all(`SELECT substr(o.occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN o.naloxone_used=1 AND o.survived=1 THEN 1 ELSE 0 END) reversals FROM overdose_events o WHERE ${ts("o.occurred_at")} GROUP BY month ORDER BY month`, ...tsP),
-          by_administered_by: db3.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND o.naloxone_used=1 GROUP BY k ORDER BY n DESC`, ...tsP)
-        };
-        const distribution = db3.one(`SELECT COALESCE(SUM(i.naloxone_kits),0) kits, COALESCE(SUM(i.fentanyl_strips),0) strips,
-      COALESCE(SUM(CASE WHEN i.client_id IS NULL THEN i.naloxone_kits ELSE 0 END),0) community_kits
-      FROM interventions i WHERE ${ts("i.occurred_at")} ${fundJoin}`, ...tsP, ...fundP);
-        const SMALL_CELL = 11;
-        const suppress = (rows) => rows.map((x) => typeof x.n === "number" && x.n > 0 && x.n < SMALL_CELL ? { ...x, n: "<11", suppressed: true } : x);
-        const out2 = {
-          from,
-          to,
-          funding_source_id: fund,
-          small_cell_threshold: SMALL_CELL,
-          unduplicated: {
-            served,
-            new_admissions: db3.one(`SELECT COUNT(DISTINCT c.id) n FROM clients c WHERE c.deleted_at IS NULL AND c.intake_date BETWEEN ? AND ? AND ${cf.sql}`, from, to, ...cf.params).n,
-            // Of the people served: how many were referred on, admitted somewhere, and are on MAT.
-            with_a_referral: one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN served s ON s.id=r.client_id WHERE ${ts("r.referred_at")}`, ...tsP).n,
-            admitted_after_referral: one(`SELECT COUNT(DISTINCT r.client_id) n FROM referrals r JOIN served s ON s.id=r.client_id WHERE ${ts("r.admitted_at")}`, ...tsP).n,
-            on_mat: one(`SELECT COUNT(*) n FROM clients c JOIN served s ON s.id=c.id WHERE c.mat_status='active'`).n
-          },
-          demographics: {
-            by_gender: suppress(demographics("gender", "gender")),
-            by_language: suppress(demographics("preferred_language", "language")),
-            by_housing: suppress(demographics("housing_status", "housing")),
-            by_insurance: suppress(demographics("insurance", "insurance")),
-            by_race_code: suppress(Object.entries(byRace).map(([k, n]) => ({ k, n })).sort((a, b) => b.n - a.n)),
-            by_ethnicity: suppress(demographics("race_ethnicity", "ethnicity"))
-          },
-          episodes: { ...episodes, by_discharge_reason: suppress(episodes.by_discharge_reason) },
-          overdose: { ...overdose, by_administered_by: suppress(overdose.by_administered_by) },
-          naloxone_distribution: distribution,
-          by_funding_source: db3.all(`SELECT f.id, f.name, f.grant_number, f.fiscal_year_start, f.fiscal_year_end,
-          (SELECT COUNT(DISTINCT i.client_id) FROM interventions i JOIN clients c ON c.id=i.client_id WHERE i.funding_source_id=f.id AND c.deleted_at IS NULL AND ${ts("i.occurred_at")}) AS clients_served,
-          (SELECT COUNT(*) FROM interventions i WHERE i.funding_source_id=f.id AND ${ts("i.occurred_at")}) AS services,
-          (SELECT COALESCE(SUM(t.minutes),0) FROM time_entries t WHERE t.funding_source_id=f.id AND t.work_date BETWEEN ? AND ? AND t.status='approved') AS approved_minutes
-        FROM funding_sources f WHERE f.is_active=1 ORDER BY f.name`, ...tsP, ...tsP, from, to)
-        };
-        audit3.log({ user: ctx.user, action: "report.funder", ip: ctx.ip, details: { from, to, funding_source_id: fund || void 0, served } });
-        return out2;
-      });
-      r.get("/api/reports/export/:kind", auth3.requireAuth, auth3.requirePerm("export:read"), async (ctx) => {
-        const period = range(ctx);
-        const { from, to } = period;
-        const identified = ctx.query.get("identified") === "1" && auth3.hasPerm(ctx.user, "export:identified");
-        const recipient = (ctx.query.get("recipient") || "").trim();
-        const purpose = (ctx.query.get("purpose") || "").trim();
-        if (identified && (!recipient || !purpose)) throw require_http().badRequest("An identified export must name its recipient and purpose (recipient= and purpose=); they are written to the accounting of disclosures for every client it contains");
-        const format = ctx.query.get("format") === "xlsx" || ctx.params.kind === "workbook" ? "xlsx" : "csv";
-        const X = require_exports();
-        const D = X.datasets(ctx, { ...period, identified });
-        const S = require_spreadsheet();
-        const disclosure = require_disclosure();
-        const accountFor = (kind, ids) => {
-          if (!identified) return [];
-          return ids.map((clientId) => disclosure.record({ clientId, recipient, purpose, what: `Identified export: ${kind} (${from} to ${to})`, method: "export", basis: "export", source: "export", sourceRef: kind, user: ctx.user, ip: ctx.ip }));
-        };
-        const aboutSheet = { name: "About", columns: [{ key: "k", label: "Field" }, { key: "v", label: "Value" }], rows: [
-          { k: "Classification", v: identified ? `Identified export \u2014 PHI. Disclosed to: ${recipient}. Purpose: ${purpose}.` : X.DEID_LABEL },
-          { k: "Period", v: `${from} to ${to}` },
-          { k: "Generated", v: db3.now() },
-          { k: "Generated by", v: ctx.user.display_name || ctx.user.username }
-        ] };
-        const label = (k) => ({ key: k, label: k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) });
-        const RAW = /* @__PURE__ */ new Set(["client_code", "receipt_ref", "grant_number", "email", "website", "phone", "fax", "zip", "username", "document_ref", "medicaid_id", "address", "first_name", "last_name", "contact_name", "name", "organization", "vendor", "title", "template_name", "fund", "line", "resource", "worker", "approver", "assignee", "completed_by", "created_by", "disclosed_by", "recipient", "summary", "description", "notes", "purpose", "what", "goals", "flags", "hours", "eligibility", "services", "languages", "capacity_notes", "contact_person", "intake_process", "cost_notes", "restrictions", "label", "city"]);
-        const humanize = (v) => String(v).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).replace(/\bSbirt\b/, "SBIRT").replace(/\bMat\b/g, "MAT").replace(/\bOtp\b/, "OTP").replace(/\bObot\b/, "OBOT").replace(/\bEd\b/, "ED").replace(/\bMh\b/, "MH").replace(/\bIds\b/, "IDs").replace(/\bRoi\b/, "ROI");
-        const pretty = (rows, kind) => rows.map((r2) => {
-          const listed = X.LIST_COLUMNS[kind] || {};
-          const o = {};
-          for (const [k, v] of Object.entries(r2)) o[k] = typeof v === "string" && !RAW.has(k) && !(k in listed) && /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(v) && v.length <= 40 ? humanize(v) : v;
-          return o;
-        });
-        const classification = identified ? `Identified export - PHI. Disclosed to: ${recipient}. Purpose: ${purpose}. Generated ${db3.now()}.` : `${X.DEID_LABEL} Generated ${db3.now()}.`;
-        const headerSafe = (s) => String(s).replace(/[^\x20-\x7e]/g, "?").slice(0, 900);
-        let body, filename, type;
-        if (ctx.params.kind === "workbook") {
-          const sheets = [aboutSheet];
-          const clientIds = /* @__PURE__ */ new Set();
-          let disclosuresSlot = -1;
-          for (const [kind, d] of Object.entries(D)) {
-            if (kind === "disclosures") {
-              disclosuresSlot = sheets.length;
-              sheets.push(null);
-              continue;
-            }
-            const rows = d.rows();
-            for (const id of X.clientIdsOf(rows)) clientIds.add(id);
-            sheets.push({ name: d.label, columns: d.columns.map(label), rows: pretty(X.publicRows(rows), kind) });
-            await new Promise((resolve2) => defer(resolve2));
-          }
-          const written = new Set(accountFor("workbook", [...clientIds]));
-          if (disclosuresSlot >= 0) {
-            const rows = D.disclosures.rows().filter((r2) => !written.has(r2.id));
-            sheets[disclosuresSlot] = { name: D.disclosures.label, columns: D.disclosures.columns.map(label), rows: pretty(X.publicRows(rows), "disclosures") };
-          }
-          audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: "workbook", sheets: sheets.map((s) => [s.name, s.rows.length]), identified, from, to, clients_disclosed: identified ? clientIds.size : void 0 } });
-          body = await S.writeWorkbookAsync(sheets);
-          filename = `suds-export-${from}_${to}-${identified ? "identified" : "deidentified"}.xlsx`;
-          type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-        } else {
-          const d = D[ctx.params.kind === "clients" ? "clients" : ctx.params.kind];
-          if (!d) throw require_http().notFound("Unknown export");
-          const raw = d.rows();
-          const clientsDisclosed = accountFor(ctx.params.kind, X.clientIdsOf(raw)).length;
-          const rows = pretty(X.publicRows(raw), ctx.params.kind);
-          audit3.log({ user: ctx.user, action: "report.export", ip: ctx.ip, details: { kind: ctx.params.kind, rows: rows.length, identified, from, to, format, clients_disclosed: identified ? clientsDisclosed : void 0 } });
-          const suffix = identified ? "identified" : "deidentified";
-          if (format === "xlsx") {
-            body = S.writeWorkbook([{ name: d.label, columns: d.columns.map(label), rows }, aboutSheet]);
-            filename = `suds-${ctx.params.kind}-${from}_${to}-${suffix}.xlsx`;
-            type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-          } else {
-            body = S.toCsv(rows, d.columns.map(label));
-            filename = `suds-${ctx.params.kind}-${from}_${to}-${suffix}.csv`;
-            type = "text/csv; charset=utf-8";
-          }
-        }
-        ctx.res.writeHead(200, { "Content-Type": type, "Content-Disposition": `attachment; filename="${filename}"`, "X-SUDS-Export": headerSafe(classification) });
-        ctx.res.end(body);
-      });
-    };
-  }
-});
-
 // server/routes/resources.js
 var require_resources = __commonJS({
   "server/routes/resources.js"(exports, module) {
@@ -23647,6 +24699,7 @@ var init_ = __esm({
       "./routes/auth.js": () => require_auth2(),
       "./routes/budget.js": () => require_budget(),
       "./routes/calls.js": () => require_calls(),
+      "./routes/caloms.js": () => require_caloms2(),
       "./routes/client-errors.js": () => require_client_errors(),
       "./routes/clients.js": () => require_clients(),
       "./routes/consents.js": () => require_consents(),
@@ -23654,6 +24707,7 @@ var init_ = __esm({
       "./routes/documents.js": () => require_documents(),
       "./routes/episodes.js": () => require_episodes(),
       "./routes/forms.js": () => require_forms(),
+      "./routes/handoff.js": () => require_handoff(),
       "./routes/imports.js": () => require_imports(),
       "./routes/intake.js": () => require_intake(),
       "./routes/interventions.js": () => require_interventions(),
@@ -23740,6 +24794,8 @@ var require_app2 = __commonJS({
       "documents",
       "imports",
       "reports",
+      "caloms",
+      "handoff",
       "admin",
       "options",
       "regions",
@@ -24496,6 +25552,8 @@ var routeLoaders = {
   imports: () => Promise.resolve().then(() => __toESM(require_imports())),
   dataimport: () => Promise.resolve().then(() => __toESM(require_dataimport2())),
   reports: () => Promise.resolve().then(() => __toESM(require_reports())),
+  caloms: () => Promise.resolve().then(() => __toESM(require_caloms2())),
+  handoff: () => Promise.resolve().then(() => __toESM(require_handoff())),
   admin: () => Promise.resolve().then(() => __toESM(require_admin())),
   options: () => Promise.resolve().then(() => __toESM(require_options2()))
 };

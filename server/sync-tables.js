@@ -14,7 +14,9 @@
 //   keeps sending the old name, which no longer exists here and would be dropped with its value (see
 //   upgradeLegacyRow). The new column must be listed in enc when the move was into an encrypted column.
 module.exports = {
-  settings_keys: ['org_name', 'county_name', 'program_contact', 'note_lock_days'],
+  // caloms_*: whether this programme reports CalOMS Tx (which turns on the CalOMS questions in the admission
+  // and discharge forms) and its provider IDs — a device needs both to offer the same forms offline.
+  settings_keys: ['org_name', 'county_name', 'program_contact', 'note_lock_days', 'caloms_enabled', 'caloms_providers', 'caloms_start_date'],
   tables: [
     // supervisor_id points at another user: a supervisor must land before the people who report to them.
     { name: 'users', enc: ['mfa_secret_enc'], scope: 'users', cols: null, selfParent: 'supervisor_id' },
@@ -28,6 +30,8 @@ module.exports = {
     { name: 'clients', enc: ['first_name_enc', 'last_name_enc', 'preferred_name_enc', 'dob_enc', 'phone_enc', 'alt_phone_enc', 'email_enc', 'address_enc', 'medicaid_id_enc', 'emergency_contact_enc', 'goals_enc', 'flags_enc'], scope: 'client', clientCol: 'id', idx: true, writePerm: 'clients:write', selfParent: 'merged_into' },
     { name: 'assignments', enc: [], scope: 'client', clientCol: 'client_id', writePerm: 'assignments:manage', parent: ['clients', 'client_id'] },
     { name: 'episodes', enc: ['presenting_problem_enc', 'discharge_summary_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'episodes:write', parent: ['clients', 'client_id'] },
+    // CalOMS Tx records hang off an episode: the episode must land first.
+    { name: 'caloms_records', enc: ['answers_enc'], scope: 'client', clientCol: 'client_id', writePerm: 'episodes:write', parent: ['episodes', 'episode_id'] },
     { name: 'interventions', enc: ['summary_enc'], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'interventions:write', parent: ['clients', 'client_id'] },
     { name: 'overdose_events', enc: ['notes_enc', 'substances_enc'], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'overdose:write', parent: ['clients', 'client_id'] },
     { name: 'calls', enc: ['contact_name_enc', 'phone_enc', 'summary_enc', 'purpose_enc'], scope: 'client-or-null', clientCol: 'client_id', writePerm: 'calls:write', parent: ['clients', 'client_id'] },
@@ -89,7 +93,7 @@ module.exports = {
     ['resource_photos', 'uploaded_by'], ['form_templates', 'uploaded_by'], ['policy_documents', 'uploaded_by'],
     ['breakglass_events', 'user_id'], ['breakglass_events', 'acknowledged_by'], ['patient_requests', 'handled_by'], ['patient_requests', 'created_by'],
     ['audit_log', 'user_id'], ['sessions', 'user_id'], ['user_prefs', 'user_id'], ['api_keys', 'created_by'], ['users', 'supervisor_id'], ['devices', 'user_id'],
-    ['supply_stock', 'updated_by'], ['option_overrides', 'updated_by'],
+    ['supply_stock', 'updated_by'], ['option_overrides', 'updated_by'], ['caloms_records', 'created_by'], ['caloms_records', 'updated_by'],
   ],
 };
 // Every column name above that points at users(id), for remapping a single pushed row.

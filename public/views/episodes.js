@@ -1,13 +1,18 @@
 // Episodes of care: admitting someone, discharging them, and the waitlist. Before this a client entered
 // once stayed "active" forever, because there was no step that ended anything.
 import { h, route, get, pagedList, post, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, emptyState, confirmDialog, kv } from '../app.js';
+import { calomsConfig, calomsFields, splitCaloms, calomsDefaults, calomsEpisodeDialog } from './caloms.js';
 
 // The discharge reasons are a documentation list (Settings → Lists): offered and worded as the office set
 // them up, with a reason retired since an episode was closed still shown on that episode.
 
 /** The episodes panel shown on a client's page. */
-export async function episodesPanel(clientId, { onChange } = {}) {
+export async function episodesPanel(clientId, { onChange, client = null } = {}) {
   const { episodes } = await get(`/api/clients/${clientId}/episodes`);
+  // A programme that reports CalOMS Tx (Reports → State reporting) gets the CalOMS questions in the
+  // admission and discharge dialogs, and each episode's CalOMS records; one that does not sees none of it.
+  const cal = await calomsConfig({ fresh: true });
+  const calOn = !!(cal && cal.enabled);
   const open = episodes.find(e => e.status === 'open');
   const box = h('section', { class: 'card' });
 
@@ -17,8 +22,12 @@ export async function episodesPanel(clientId, { onChange } = {}) {
       { name: 'referral_source', label: 'Referred by', placeholder: 'e.g. jail release, hospital, self' },
       { name: 'funding_source_id', label: 'Funding source', type: 'fund' },
       { name: 'presenting_problem', label: 'What brought them in', type: 'textarea', span: true, help: 'Stored encrypted, like the rest of the record.' },
-    ], { submitText: 'Open episode', onSubmit: async (d) => { await post(`/api/clients/${clientId}/episodes`, d); toast('Episode opened', 'ok'); m.close(); onChange ? onChange() : nav(`client/${clientId}`); } });
-    const m = modal('Start an episode of care', f);
+      ...(calOn ? calomsFields(cal, 'admission', { values: calomsDefaults(cal, client) }) : []),
+    ], { submitText: 'Open episode', onSubmit: async (d) => {
+      const { plain, caloms } = calOn ? splitCaloms(cal, 'admission', d) : { plain: d, caloms: null };
+      await post(`/api/clients/${clientId}/episodes`, caloms ? { ...plain, caloms } : plain); toast('Episode opened', 'ok'); m.close(); onChange ? onChange() : nav(`client/${clientId}`);
+    } });
+    const m = modal('Start an episode of care', calOn ? h('div', {}, h('p', { class: 'small muted', 'data-caloms-admission': '1' }, 'This program reports CalOMS Tx: answer the CalOMS admission questions below. They are sent to the state (DHCS) in the monthly extract.'), f) : f, { wide: calOn });
   };
 
   const closeEpisode = (e) => {
@@ -30,8 +39,10 @@ export async function episodesPanel(clientId, { onChange } = {}) {
       { name: 'closed_at', label: 'Discharge date', type: 'date', value: new Date().toISOString().slice(0, 10) },
       { name: 'discharge_summary', label: 'Discharge summary', type: 'textarea', rows: 5, span: true },
       { name: 'keep_client_active', label: 'Keep this client active (they are still being served under another episode)', type: 'checkbox', span: true },
+      ...(calOn ? calomsFields(cal, 'discharge', { standardHint: true }) : []),
     ], { submitText: 'Discharge', onSubmit: async (d) => {
-      const r = await post(`/api/episodes/${e.id}/close`, d);
+      const { plain, caloms } = calOn ? splitCaloms(cal, 'discharge', d) : { plain: d, caloms: null };
+      const r = await post(`/api/episodes/${e.id}/close`, caloms ? { ...plain, caloms } : plain);
       m.close();
       toast(`Discharged. ${r.ended_assignments} assignment(s) ended, ${r.cancelled_tasks} to-do(s) closed.`, 'ok');
       if (r.warnings && r.warnings.length) {
@@ -39,8 +50,14 @@ export async function episodesPanel(clientId, { onChange } = {}) {
       }
       onChange ? onChange() : nav(`client/${clientId}`);
     } });
+    // The CalOMS discharge status follows from the reason unless the worker has already chosen one.
+    if (calOn && f.inputs.caloms_discharge_status) f.inputs.discharge_reason.addEventListener('change', () => {
+      const code = (cal.from_suds.discharge_reason || {})[f.inputs.discharge_reason.value];
+      if (code && !f.inputs.caloms_discharge_status.value) f.inputs.caloms_discharge_status.value = code;
+    });
     const m = modal('Discharge from this episode', h('div', {},
-      h('p', { class: 'small muted' }, 'This ends the assignments on this client and closes their open to-dos, so they stop appearing on everyone\'s overdue list. Their record stays exactly as it is.'), f));
+      h('p', { class: 'small muted' }, 'This ends the assignments on this client and closes their open to-dos, so they stop appearing on everyone\'s overdue list. Their record stays exactly as it is.'),
+      calOn ? h('p', { class: 'small muted', 'data-caloms-discharge': '1' }, 'This program reports CalOMS Tx: the CalOMS discharge status and date of last service are required; the past-30-day questions are required unless the status is administrative (4, 6, 7 or 8).') : null, f), { wide: calOn });
   };
 
   // Re-admit on the same episode: for a discharge made in error or a return within days. A genuine return
@@ -48,7 +65,7 @@ export async function episodesPanel(clientId, { onChange } = {}) {
   const reopenEpisode = async (e) => {
     const reason = await confirmDialog('Re-admit on this episode', `Reopen the episode from ${fmt.date(e.opened_at)} (discharged ${fmt.date(e.closed_at)})? The client becomes active again and their care team is restored. Use "Start a new episode" instead if this is a genuine return after a gap — funders count that as a new admission.`, { okText: 'Reopen & re-admit', requireReason: true });
     if (!reason) return;
-    try { await post(`/api/episodes/${e.id}/reopen`, { reason }); toast('Re-admitted — the episode is open again', 'ok'); onChange ? onChange() : nav(`client/${clientId}`); }
+    try { const r = await post(`/api/episodes/${e.id}/reopen`, { reason }); toast(r.warnings && r.warnings.length ? `Re-admitted. ${r.warnings.join(' ')}` : 'Re-admitted — the episode is open again', 'ok'); onChange ? onChange() : nav(`client/${clientId}`); }
     catch (err) { toast(err.message, 'error'); }
   };
 
@@ -70,8 +87,9 @@ export async function episodesPanel(clientId, { onChange } = {}) {
       { label: 'Discharge', render: e => (e.discharge_reason ? fmt.label(e.discharge_reason, 'DISCHARGE_REASONS') : '—') },
       { label: 'Going to', render: e => e.discharge_disposition || '—' },
       { label: 'Fund', render: e => e.funding_source || '—' },
+      calOn ? { label: 'CalOMS', render: e => h('button', { class: 'btn sm', 'data-caloms-episode-open': e.id, onClick: (ev) => { ev.stopPropagation(); calomsEpisodeDialog(e, { onChange }); } }, 'CalOMS records') } : null,
       { label: '', render: e => e.status === 'closed' && !open && can('episodes:write') ? h('button', { class: 'btn sm', 'data-reopen': e.id, onClick: (ev) => { ev.stopPropagation(); reopenEpisode(e); } }, 'Reopen / re-admit') : null },
-    ], rows, {
+    ].filter(Boolean), rows, {
       onRow: (e) => modal(`Episode from ${fmt.date(e.opened_at)}`, h('div', {}, kv([
         ['Opened', `${fmt.date(e.opened_at)} by ${e.opened_by_name || '—'}`],
         ['Referred by', e.referral_source ? fmt.label(e.referral_source) : '—'],

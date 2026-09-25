@@ -23,6 +23,20 @@ function present(e) {
   return o;
 }
 
+const CalOMS = require('../caloms');
+/**
+ * The CalOMS part of an admission or discharge. When the programme reports CalOMS Tx it is required (the
+ * questions are on the form); when it does not, anything sent is ignored — a prevention or navigation
+ * programme is never asked for state treatment data.
+ */
+function calomsPart(raw, type) {
+  if (!CalOMS.enabled()) return null;
+  if (!raw || typeof raw !== 'object' || !raw.answers || typeof raw.answers !== 'object') {
+    throw badRequest(`This program reports CalOMS Tx: the CalOMS ${type} questions must be answered`, { fields: { caloms: 'required' } });
+  }
+  return { provider_id: raw.provider_id ? String(raw.provider_id).trim() : null, record_date: typeof raw.record_date === 'string' ? raw.record_date : null, answers: raw.answers };
+}
+
 module.exports = (r) => {
   r.get('/api/clients/:id/episodes', auth.requireAuth, auth.requirePerm('episodes:read', 'episodes:write'), (ctx) => {
     auth.assertClientAccess(ctx, ctx.params.id);
@@ -38,10 +52,12 @@ module.exports = (r) => {
     auth.assertClientAccess(ctx, ctx.params.id);
     const v = validate(ctx.body, {
       opened_at: { type: 'date' }, funding_source_id: { type: 'string' }, referral_source: { type: 'string', maxLen: 120 },
-      presenting_problem: { type: 'string', maxLen: 4000 },
+      presenting_problem: { type: 'string', maxLen: 4000 }, caloms: { type: 'object' },
     });
     if (db.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, ctx.params.id)) throw badRequest('This client already has an open episode. Close it before opening another.');
+    const cal = calomsPart(v.caloms, 'admission');
     const id = uuid();
+    let calRec = null;
     db.transaction(() => {
       db.run(`INSERT INTO episodes(id,client_id,funding_source_id,opened_at,opened_by,referral_source,presenting_problem_enc) VALUES(?,?,?,?,?,?,?)`,
         id, ctx.params.id, v.funding_source_id || null, v.opened_at || new Date().toISOString().slice(0, 10), ctx.user.id, v.referral_source || null, v.presenting_problem ? encrypt(v.presenting_problem) : null);
@@ -51,9 +67,12 @@ module.exports = (r) => {
       // unreachable, incarcerated) with no discharge attached to clear, and a worker who set it did not stop
       // meaning it just because someone opened an episode — so it is left alone, as is "deceased".
       db.run(`UPDATE clients SET status=CASE WHEN status IN ('closed','waitlist') THEN 'active' ELSE status END, discharge_date=NULL, discharge_reason=NULL, updated_at=? WHERE id=?`, db.now(), ctx.params.id);
+      // The CalOMS admission record goes in with the admission, or neither does.
+      if (cal) { const ep = db.one(`SELECT * FROM episodes WHERE id=?`, id); calRec = CalOMS.save({ episode: ep, record_type: 'admission', provider_id: cal.provider_id, record_date: cal.record_date || ep.opened_at.slice(0, 10), answers: cal.answers, user: ctx.user }); }
     });
     audit.log({ user: ctx.user, action: 'episode.open', entity: 'episode', entityId: id, clientId: ctx.params.id, ip: ctx.ip });
-    ctx.status = 201; return { id };
+    if (calRec) audit.log({ user: ctx.user, action: 'caloms.record.save', entity: 'caloms_record', entityId: calRec.id, clientId: ctx.params.id, ip: ctx.ip, details: { record_type: 'admission', warnings: calRec.warnings.length || undefined } });
+    ctx.status = 201; return { id, caloms_record_id: calRec ? calRec.id : undefined, caloms_warnings: calRec && calRec.warnings.length ? calRec.warnings : undefined };
   });
 
   // Discharge. This is the step that was missing entirely: it closes the episode, sets the client's status,
@@ -66,11 +85,12 @@ module.exports = (r) => {
     const v = validate(ctx.body, {
       discharge_reason: { type: 'string', required: true, list: 'DISCHARGE_REASONS' },
       discharge_disposition: { type: 'string', maxLen: 200 }, discharge_summary: { type: 'string', maxLen: 8000 },
-      closed_at: { type: 'date' }, keep_client_active: { type: 'boolean' },
+      closed_at: { type: 'date' }, keep_client_active: { type: 'boolean' }, caloms: { type: 'object' },
     });
+    const cal = calomsPart(v.caloms, 'discharge');
     const when = v.closed_at || new Date().toISOString().slice(0, 10);
     const openNotes = db.one(`SELECT COUNT(*) n FROM notes WHERE client_id=? AND status='draft' AND deleted_at IS NULL`, e.client_id).n;
-    let endedAssignments = 0; let cancelledTasks = 0; let openReferrals = 0;
+    let endedAssignments = 0; let cancelledTasks = 0; let openReferrals = 0; let calRec = null;
     db.transaction(() => {
       db.run(`UPDATE episodes SET status='closed', closed_at=?, closed_by=?, discharge_reason=?, discharge_disposition=?, discharge_summary_enc=?, updated_at=? WHERE id=?`,
         when, ctx.user.id, v.discharge_reason, v.discharge_disposition || null, v.discharge_summary ? encrypt(v.discharge_summary) : null, db.now(), e.id);
@@ -83,9 +103,12 @@ module.exports = (r) => {
         cancelledTasks = db.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE client_id=? AND status IN ('open','in_progress')`, db.now(), e.client_id).changes;
       }
       openReferrals = db.one(`SELECT COUNT(*) n FROM referrals WHERE client_id=? AND status IN ('pending','contacted','accepted','waitlisted','scheduled')`, e.client_id).n;
+      // The CalOMS discharge record is dated by this discharge; a problem in it undoes the discharge too.
+      if (cal) calRec = CalOMS.save({ episode: db.one(`SELECT * FROM episodes WHERE id=?`, e.id), record_type: 'discharge', provider_id: cal.provider_id, record_date: when, answers: cal.answers, user: ctx.user });
     });
     audit.log({ user: ctx.user, action: 'episode.close', entity: 'episode', entityId: e.id, clientId: e.client_id, ip: ctx.ip, details: { reason: v.discharge_reason, ended_assignments: endedAssignments, cancelled_tasks: cancelledTasks } });
-    return { ok: true, ended_assignments: endedAssignments, cancelled_tasks: cancelledTasks,
+    if (calRec) audit.log({ user: ctx.user, action: 'caloms.record.save', entity: 'caloms_record', entityId: calRec.id, clientId: e.client_id, ip: ctx.ip, details: { record_type: 'discharge', warnings: calRec.warnings.length || undefined } });
+    return { ok: true, ended_assignments: endedAssignments, cancelled_tasks: cancelledTasks, caloms_record_id: calRec ? calRec.id : undefined,
       warnings: [
         openNotes ? `${openNotes} note(s) are still unsigned for this client.` : null,
         openReferrals ? `${openReferrals} referral(s) are still open; record their outcome.` : null,
@@ -102,7 +125,11 @@ module.exports = (r) => {
     if (e.status !== 'closed') throw badRequest('This episode is still open');
     if (db.one(`SELECT 1 FROM episodes WHERE client_id=? AND status='open'`, e.client_id)) throw badRequest('This client already has an open episode. Discharge it first, or record this as that episode.');
     const { reason } = validate(ctx.body || {}, { reason: { type: 'string', maxLen: 300 } });
+    // A discharge made in error takes its CalOMS discharge record with it. One already sent to DHCS has to
+    // be corrected there as well, which the worker is told.
+    const calDischarge = db.one(`SELECT id, extracted_at FROM caloms_records WHERE episode_id=? AND record_type='discharge'`, e.id);
     db.transaction(() => {
+      if (calDischarge) { db.run(`DELETE FROM caloms_records WHERE id=?`, calDischarge.id); db.tombstone('caloms_records', calDischarge.id); }
       db.run(`UPDATE episodes SET status='open', closed_at=NULL, closed_by=NULL, discharge_reason=NULL, discharge_disposition=NULL, discharge_summary_enc=NULL, updated_at=? WHERE id=?`, db.now(), e.id);
       // Re-admission is an explicit act, so the client is active again whatever status the discharge left.
       db.run(`UPDATE clients SET status='active', discharge_date=NULL, discharge_reason=NULL, updated_at=? WHERE id=?`, db.now(), e.client_id);
@@ -113,8 +140,8 @@ module.exports = (r) => {
         db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, uuid(), e.client_id, ctx.user.id, 'primary', new Date().toISOString().slice(0, 10), ctx.user.id);
       }
     });
-    audit.log({ user: ctx.user, action: 'episode.reopen', entity: 'episode', entityId: e.id, clientId: e.client_id, ip: ctx.ip, details: { reason: reason || undefined, was_discharged: e.discharge_reason } });
-    return { ok: true };
+    audit.log({ user: ctx.user, action: 'episode.reopen', entity: 'episode', entityId: e.id, clientId: e.client_id, ip: ctx.ip, details: { reason: reason || undefined, was_discharged: e.discharge_reason, caloms_discharge_removed: calDischarge ? true : undefined } });
+    return { ok: true, warnings: calDischarge && calDischarge.extracted_at ? ['The CalOMS discharge record for this episode had already been sent to DHCS; correct it through the county\'s CalOMS process.'] : [] };
   });
 
   // Program-wide view: who was admitted and discharged in a period, and who is waiting.
